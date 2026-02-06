@@ -14,7 +14,225 @@ export type Database = {
   }
   public: {
     Tables: {
-      [_ in never]: never
+      addresses: {
+        Row: {
+          city: string
+          complement: string | null
+          created_at: string
+          id: string
+          is_default: boolean
+          label: string
+          neighborhood: string
+          number: string
+          state: string
+          street: string
+          user_id: string
+          zip_code: string
+        }
+        Insert: {
+          city: string
+          complement?: string | null
+          created_at?: string
+          id?: string
+          is_default?: boolean
+          label: string
+          neighborhood: string
+          number: string
+          state: string
+          street: string
+          user_id: string
+          zip_code: string
+        }
+        Update: {
+          city?: string
+          complement?: string | null
+          created_at?: string
+          id?: string
+          is_default?: boolean
+          label?: string
+          neighborhood?: string
+          number?: string
+          state?: string
+          street?: string
+          user_id?: string
+          zip_code?: string
+        }
+        Relationships: []
+      }
+      omie_clientes: {
+        Row: {
+          created_at: string
+          id: string
+          omie_codigo_cliente: number
+          omie_codigo_cliente_integracao: string | null
+          updated_at: string
+          user_id: string
+        }
+        Insert: {
+          created_at?: string
+          id?: string
+          omie_codigo_cliente: number
+          omie_codigo_cliente_integracao?: string | null
+          updated_at?: string
+          user_id: string
+        }
+        Update: {
+          created_at?: string
+          id?: string
+          omie_codigo_cliente?: number
+          omie_codigo_cliente_integracao?: string | null
+          updated_at?: string
+          user_id?: string
+        }
+        Relationships: []
+      }
+      omie_ordens_servico: {
+        Row: {
+          created_at: string
+          id: string
+          omie_codigo_os: number | null
+          omie_numero_os: string
+          order_id: string
+          payload_enviado: Json | null
+          resposta_omie: Json | null
+          status: string
+          updated_at: string
+        }
+        Insert: {
+          created_at?: string
+          id?: string
+          omie_codigo_os?: number | null
+          omie_numero_os: string
+          order_id: string
+          payload_enviado?: Json | null
+          resposta_omie?: Json | null
+          status?: string
+          updated_at?: string
+        }
+        Update: {
+          created_at?: string
+          id?: string
+          omie_codigo_os?: number | null
+          omie_numero_os?: string
+          order_id?: string
+          payload_enviado?: Json | null
+          resposta_omie?: Json | null
+          status?: string
+          updated_at?: string
+        }
+        Relationships: []
+      }
+      omie_servicos: {
+        Row: {
+          app_service_type: string
+          created_at: string
+          descricao: string
+          id: string
+          omie_codigo_integracao: string | null
+          omie_codigo_servico: number
+        }
+        Insert: {
+          app_service_type: string
+          created_at?: string
+          descricao: string
+          id?: string
+          omie_codigo_integracao?: string | null
+          omie_codigo_servico: number
+        }
+        Update: {
+          app_service_type?: string
+          created_at?: string
+          descricao?: string
+          id?: string
+          omie_codigo_integracao?: string | null
+          omie_codigo_servico?: number
+        }
+        Relationships: []
+      }
+      orders: {
+        Row: {
+          address: Json | null
+          created_at: string
+          delivery_fee: number
+          delivery_option: string
+          id: string
+          items: Json
+          notes: string | null
+          service_type: string
+          status: string
+          subtotal: number
+          time_slot: string | null
+          total: number
+          updated_at: string
+          user_id: string
+        }
+        Insert: {
+          address?: Json | null
+          created_at?: string
+          delivery_fee?: number
+          delivery_option: string
+          id?: string
+          items?: Json
+          notes?: string | null
+          service_type: string
+          status?: string
+          subtotal?: number
+          time_slot?: string | null
+          total?: number
+          updated_at?: string
+          user_id: string
+        }
+        Update: {
+          address?: Json | null
+          created_at?: string
+          delivery_fee?: number
+          delivery_option?: string
+          id?: string
+          items?: Json
+          notes?: string | null
+          service_type?: string
+          status?: string
+          subtotal?: number
+          time_slot?: string | null
+          total?: number
+          updated_at?: string
+          user_id?: string
+        }
+        Relationships: []
+      }
+      profiles: {
+        Row: {
+          created_at: string
+          document: string | null
+          email: string | null
+          id: string
+          name: string
+          phone: string | null
+          updated_at: string
+          user_id: string
+        }
+        Insert: {
+          created_at?: string
+          document?: string | null
+          email?: string | null
+          id?: string
+          name: string
+          phone?: string | null
+          updated_at?: string
+          user_id: string
+        }
+        Update: {
+          created_at?: string
+          document?: string | null
+          email?: string | null
+          id?: string
+          name?: string
+          phone?: string | null
+          updated_at?: string
+          user_id?: string
+        }
+        Relationships: []
+      }
     }
     Views: {
       [_ in never]: never

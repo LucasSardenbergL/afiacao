@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Plus, Trash2, Camera, ChevronRight, Check, MapPin, Clock, CreditCard } from 'lucide-react';
+import { Plus, Trash2, Camera, ChevronRight, Check, MapPin, Clock, CreditCard, Loader2 } from 'lucide-react';
 import { Header } from '@/components/Header';
 import { Button } from '@/components/ui/button';
 import { 
@@ -15,18 +15,22 @@ import {
   DeliveryOption,
   ToolItem 
 } from '@/types';
-import { mockAddresses, priceTable } from '@/data/mockData';
+import { mockAddresses, priceTable, mockUser } from '@/data/mockData';
 import { cn } from '@/lib/utils';
+import { syncOrderToOmie } from '@/services/omieService';
+import { useToast } from '@/hooks/use-toast';
 
 type Step = 'items' | 'service' | 'delivery' | 'review';
 
 const NewOrder = () => {
   const navigate = useNavigate();
+  const { toast } = useToast();
   const [currentStep, setCurrentStep] = useState<Step>('items');
   const [items, setItems] = useState<Partial<ToolItem>[]>([{ id: '1', quantity: 1 }]);
   const [deliveryOption, setDeliveryOption] = useState<DeliveryOption>('coleta_entrega');
   const [selectedAddress, setSelectedAddress] = useState(mockAddresses[0]?.id);
   const [selectedTimeSlot, setSelectedTimeSlot] = useState<string>('');
+  const [isSubmitting, setIsSubmitting] = useState(false);
 
   const steps: { id: Step; label: string; number: number }[] = [
     { id: 'items', label: 'Itens', number: 1 },
@@ -97,9 +101,75 @@ const NewOrder = () => {
     }
   };
 
-  const handleSubmit = () => {
-    // Here would go the order submission logic
-    navigate('/orders');
+  const handleSubmit = async () => {
+    setIsSubmitting(true);
+    
+    try {
+      // Gerar ID único para o pedido
+      const orderId = crypto.randomUUID();
+      
+      // Preparar dados do pedido para o Omie
+      const orderData = {
+        items: items.map(item => ({
+          category: item.category || '',
+          quantity: item.quantity || 1,
+        })),
+        service_type: items[0]?.serviceType || 'standard',
+        subtotal,
+        delivery_fee: deliveryFee,
+        total,
+        notes: items.map(item => item.notes).filter(Boolean).join(' | '),
+      };
+
+      // Dados do perfil (mock por enquanto)
+      const profileData = {
+        name: mockUser.name,
+        email: mockUser.email,
+        phone: mockUser.phone,
+        document: undefined,
+      };
+
+      // Dados do endereço selecionado
+      const selectedAddressData = mockAddresses.find(a => a.id === selectedAddress);
+      const addressData = selectedAddressData ? {
+        street: selectedAddressData.street,
+        number: selectedAddressData.number,
+        complement: selectedAddressData.complement,
+        neighborhood: selectedAddressData.neighborhood,
+        city: selectedAddressData.city,
+        state: selectedAddressData.state,
+        zip_code: selectedAddressData.zipCode,
+      } : undefined;
+
+      // Sincronizar com Omie
+      const result = await syncOrderToOmie(orderId, orderData, profileData, addressData);
+
+      if (result.success) {
+        toast({
+          title: "Pedido enviado!",
+          description: `OS criada no Omie: ${result.omie_os?.cNumOS || 'Processando...'}`,
+        });
+        navigate('/orders');
+      } else {
+        // Se falhar no Omie, ainda assim navega (pode ser configurado diferente)
+        console.warn('[NewOrder] Falha ao sincronizar com Omie:', result.error);
+        toast({
+          title: "Pedido criado",
+          description: "Pedido registrado. Sincronização com ERP pendente.",
+          variant: "default",
+        });
+        navigate('/orders');
+      }
+    } catch (error) {
+      console.error('[NewOrder] Erro ao enviar pedido:', error);
+      toast({
+        title: "Erro ao enviar pedido",
+        description: "Tente novamente em alguns instantes.",
+        variant: "destructive",
+      });
+    } finally {
+      setIsSubmitting(false);
+    }
   };
 
   return (
@@ -495,8 +565,15 @@ const NewOrder = () => {
             Voltar
           </Button>
           {currentStep === 'review' ? (
-            <Button onClick={handleSubmit} className="flex-1">
-              Enviar Pedido
+            <Button onClick={handleSubmit} disabled={isSubmitting} className="flex-1">
+              {isSubmitting ? (
+                <>
+                  <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+                  Enviando...
+                </>
+              ) : (
+                'Enviar Pedido'
+              )}
             </Button>
           ) : (
             <Button onClick={nextStep} disabled={!canProceed()} className="flex-1">
