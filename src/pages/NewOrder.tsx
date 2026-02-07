@@ -7,13 +7,10 @@ import {
   TOOL_CATEGORIES, 
   DELIVERY_OPTIONS,
   TIME_SLOTS,
-  USAGE_TYPES,
   DELIVERY_FEES,
   ToolCategory, 
   DeliveryOption,
-  UsageType,
   ToolItem,
-  Address
 } from '@/types';
 import { priceTable } from '@/data/mockData';
 import { cn } from '@/lib/utils';
@@ -52,7 +49,7 @@ const NewOrder = () => {
   const { user } = useAuth();
   
   const [currentStep, setCurrentStep] = useState<Step>('items');
-  const [items, setItems] = useState<Partial<ToolItem>[]>([{ id: '1', quantity: 1, usageType: 'domestico' }]);
+  const [items, setItems] = useState<Partial<ToolItem>[]>([{ id: '1', quantity: 1 }]);
   const [deliveryOption, setDeliveryOption] = useState<DeliveryOption>('coleta_entrega');
   const [selectedAddress, setSelectedAddress] = useState<string>('');
   const [selectedTimeSlot, setSelectedTimeSlot] = useState<string>('');
@@ -129,12 +126,8 @@ const NewOrder = () => {
 
   const currentStepIndex = steps.findIndex(s => s.id === currentStep);
 
-  // Check if any item is industrial (for delivery fee calculation)
-  const hasIndustrialItem = items.some(item => item.usageType === 'industrial');
-  const usageTypeForFees: UsageType = hasIndustrialItem ? 'industrial' : 'domestico';
-
   const addItem = () => {
-    setItems([...items, { id: String(items.length + 1), quantity: 1, usageType: 'domestico' }]);
+    setItems([...items, { id: String(items.length + 1), quantity: 1 }]);
   };
 
   const removeItem = (index: number) => {
@@ -152,7 +145,6 @@ const NewOrder = () => {
   const calculateSubtotal = () => {
     return items.reduce((acc, item) => {
       if (item.category) {
-        // Use 'padrao' as default service type for pricing
         const price = priceTable[item.category]?.['padrao'] || 0;
         return acc + price * (item.quantity || 1);
       }
@@ -160,14 +152,15 @@ const NewOrder = () => {
     }, 0);
   };
 
-  const deliveryFee = DELIVERY_FEES[usageTypeForFees][deliveryOption];
+  // Industrial clients always have free shipping
+  const deliveryFee = DELIVERY_FEES[deliveryOption];
   const subtotal = calculateSubtotal();
   const total = subtotal + deliveryFee;
 
   const canProceed = () => {
     switch (currentStep) {
       case 'items':
-        return items.every(item => item.category && item.quantity && item.usageType);
+        return items.every(item => item.category && item.quantity);
       case 'delivery':
         if (deliveryOption === 'balcao') return true;
         return selectedAddress && selectedTimeSlot;
@@ -205,23 +198,20 @@ const NewOrder = () => {
     setIsSubmitting(true);
     
     try {
-      // Gerar ID único para o pedido
       const orderId = crypto.randomUUID();
       
-      // Preparar dados do pedido para o Omie
       const orderData = {
         items: items.map(item => ({
           category: item.category || '',
           quantity: item.quantity || 1,
         })),
-        service_type: 'padrao', // Default service type
+        service_type: 'padrao',
         subtotal,
         delivery_fee: deliveryFee,
         total,
         notes: items.map(item => item.notes).filter(Boolean).join(' | '),
       };
 
-      // Dados do perfil
       const profilePayload = {
         name: profile.name,
         email: profile.email || undefined,
@@ -229,7 +219,6 @@ const NewOrder = () => {
         document: profile.document || undefined,
       };
 
-      // Dados do endereço selecionado
       const selectedAddressData = addresses.find(a => a.id === selectedAddress);
       const addressPayload = selectedAddressData ? {
         street: selectedAddressData.street,
@@ -241,7 +230,6 @@ const NewOrder = () => {
         zip_code: selectedAddressData.zipCode,
       } : undefined;
 
-      // Sincronizar com Omie
       const result = await syncOrderToOmie(orderId, orderData, profilePayload, addressPayload);
 
       if (result.success) {
@@ -251,7 +239,6 @@ const NewOrder = () => {
         });
         navigate('/orders');
       } else {
-        // Se falhar no Omie, ainda assim navega (pode ser configurado diferente)
         console.warn('[NewOrder] Falha ao sincronizar com Omie:', result.error);
         toast({
           title: "Pedido criado",
@@ -324,7 +311,7 @@ const NewOrder = () => {
             <div>
               <h2 className="font-display font-bold text-xl mb-1">Adicionar Ferramentas</h2>
               <p className="text-sm text-muted-foreground mb-6">
-                Selecione as ferramentas que deseja afiar
+                Selecione as ferramentas de marcenaria que deseja afiar
               </p>
 
               <div className="space-y-4">
@@ -359,28 +346,6 @@ const NewOrder = () => {
                       </select>
                     </div>
 
-                    {/* Usage type (Industrial/Domestic) */}
-                    <div className="mb-3">
-                      <label className="text-sm font-medium mb-2 block">Tipo de uso</label>
-                      <div className="grid grid-cols-2 gap-2">
-                        {Object.entries(USAGE_TYPES).map(([key, { label, description }]) => (
-                          <button
-                            key={key}
-                            onClick={() => updateItem(index, 'usageType', key as UsageType)}
-                            className={cn(
-                              'p-3 rounded-lg border-2 text-left transition-all',
-                              item.usageType === key
-                                ? 'border-primary bg-primary/5'
-                                : 'border-border hover:border-primary/50'
-                            )}
-                          >
-                            <span className="text-sm font-medium block">{label}</span>
-                            <span className="text-[10px] text-muted-foreground">{description}</span>
-                          </button>
-                        ))}
-                      </div>
-                    </div>
-
                     {/* Brand/Model */}
                     <div className="mb-3">
                       <label className="text-sm font-medium mb-2 block">Marca/Modelo (opcional)</label>
@@ -388,7 +353,7 @@ const NewOrder = () => {
                         type="text"
                         value={item.brandModel || ''}
                         onChange={(e) => updateItem(index, 'brandModel', e.target.value)}
-                        placeholder="Ex: Tramontina Chef 8 polegadas"
+                        placeholder="Ex: Makita, Dewalt..."
                         className="w-full h-11 px-3 rounded-lg border border-input bg-background text-sm focus:outline-none focus:ring-2 focus:ring-ring"
                       />
                     </div>
@@ -413,7 +378,7 @@ const NewOrder = () => {
                       </div>
                     </div>
 
-                    {/* Notes (moved from service step) */}
+                    {/* Notes */}
                     <div className="mb-3">
                       <label className="text-sm font-medium mb-2 block">Observações (opcional)</label>
                       <textarea
@@ -452,19 +417,17 @@ const NewOrder = () => {
                 Como deseja receber suas ferramentas?
               </p>
 
-              {/* Info about industrial pricing */}
-              {hasIndustrialItem && (
-                <div className="bg-primary/10 border border-primary/20 rounded-lg p-3 mb-4">
-                  <p className="text-sm text-primary font-medium">
-                    ✓ Frete grátis para ferramentas de uso industrial
-                  </p>
-                </div>
-              )}
+              {/* Free shipping notice for industrial clients */}
+              <div className="bg-primary/10 border border-primary/20 rounded-lg p-3 mb-4">
+                <p className="text-sm text-primary font-medium">
+                  ✓ Frete grátis em todas as modalidades de entrega
+                </p>
+              </div>
 
               {/* Delivery options */}
               <div className="space-y-3 mb-6">
                 {Object.entries(DELIVERY_OPTIONS).map(([key, { label, description }]) => {
-                  const fee = DELIVERY_FEES[usageTypeForFees][key as DeliveryOption];
+                  const fee = DELIVERY_FEES[key as DeliveryOption];
                   return (
                     <button
                       key={key}
@@ -490,11 +453,9 @@ const NewOrder = () => {
                         <span className="font-medium block">{label}</span>
                         <span className="text-sm text-muted-foreground">{description}</span>
                       </div>
-                      {fee > 0 ? (
-                        <span className="text-sm font-semibold text-primary">R$ {fee}</span>
-                      ) : key !== 'balcao' ? (
+                      {key !== 'balcao' && (
                         <span className="text-sm font-semibold text-primary">Grátis</span>
-                      ) : null}
+                      )}
                     </button>
                   );
                 })}
@@ -531,7 +492,7 @@ const NewOrder = () => {
                     ) : (
                       <div className="bg-muted/50 rounded-lg p-4 text-center">
                         <p className="text-sm text-muted-foreground mb-2">Nenhum endereço cadastrado</p>
-                        <Button variant="outline" size="sm" onClick={() => navigate('/profile')}>
+                        <Button variant="outline" size="sm" onClick={() => navigate('/addresses')}>
                           Adicionar endereço
                         </Button>
                       </div>
@@ -588,9 +549,9 @@ const NewOrder = () => {
                           <p className="font-medium">
                             {item.quantity}x {item.category ? TOOL_CATEGORIES[item.category as ToolCategory] : 'Item'}
                           </p>
-                          <p className="text-sm text-muted-foreground">
-                            {item.usageType && USAGE_TYPES[item.usageType as UsageType].label}
-                          </p>
+                          {item.brandModel && (
+                            <p className="text-sm text-muted-foreground">{item.brandModel}</p>
+                          )}
                           {item.notes && (
                             <p className="text-xs text-muted-foreground mt-1 italic">
                               Obs: {item.notes}
@@ -669,63 +630,68 @@ const NewOrder = () => {
                     </div>
                     <Banknote className="w-5 h-5 text-muted-foreground" />
                     <div className="flex-1">
-                      <span className="font-medium block">Pagamento na Entrega</span>
-                      <span className="text-xs text-muted-foreground">Dinheiro ou PIX no local</span>
+                      <span className="font-medium block">Na Entrega</span>
+                      <span className="text-xs text-muted-foreground">Pague ao receber</span>
                     </div>
                   </button>
                 </div>
               </div>
 
               {/* Totals */}
-              <div className="bg-card rounded-xl p-4 shadow-soft border border-border mb-6">
+              <div className="bg-card rounded-xl p-4 shadow-soft border border-border">
                 <div className="space-y-2 text-sm">
                   <div className="flex justify-between">
                     <span className="text-muted-foreground">Subtotal</span>
                     <span>R$ {subtotal.toFixed(2).replace('.', ',')}</span>
                   </div>
                   <div className="flex justify-between">
-                    <span className="text-muted-foreground">Taxa de entrega</span>
-                    <span>{deliveryFee > 0 ? `R$ ${deliveryFee.toFixed(2).replace('.', ',')}` : 'Grátis'}</span>
+                    <span className="text-muted-foreground">Frete</span>
+                    <span className="text-primary font-medium">Grátis</span>
                   </div>
-                  <div className="border-t border-border pt-2 flex justify-between font-bold text-base">
-                    <span>Total estimado</span>
+                  <div className="border-t border-border pt-2 flex justify-between font-semibold text-base">
+                    <span>Total</span>
                     <span className="text-primary">R$ {total.toFixed(2).replace('.', ',')}</span>
                   </div>
                 </div>
-                <p className="text-xs text-muted-foreground mt-2">
-                  * Valor final após análise das ferramentas
-                </p>
               </div>
             </div>
           )}
         </div>
-      </main>
 
-      {/* Fixed bottom buttons */}
-      <div className="fixed bottom-0 left-0 right-0 bg-background border-t border-border p-4 safe-bottom">
-        <div className="max-w-lg mx-auto flex gap-3">
-          <Button variant="outline" onClick={prevStep} className="flex-1">
-            Voltar
-          </Button>
-          {currentStep === 'review' ? (
-            <Button onClick={handleSubmit} disabled={isSubmitting} className="flex-1">
-              {isSubmitting ? (
-                <>
-                  <Loader2 className="w-4 h-4 mr-2 animate-spin" />
-                  Enviando...
-                </>
-              ) : (
-                'Enviar Pedido'
-              )}
+        {/* Navigation buttons */}
+        <div className="fixed bottom-0 left-0 right-0 bg-background border-t border-border p-4 safe-bottom">
+          <div className="max-w-lg mx-auto flex gap-3">
+            <Button variant="outline" onClick={prevStep} className="flex-1">
+              {currentStepIndex === 0 ? 'Cancelar' : 'Voltar'}
             </Button>
-          ) : (
-            <Button onClick={nextStep} disabled={!canProceed()} className="flex-1">
-              Continuar
-              <ChevronRight className="w-4 h-4 ml-1" />
-            </Button>
-          )}
+            {currentStep === 'review' ? (
+              <Button 
+                onClick={handleSubmit} 
+                className="flex-1"
+                disabled={isSubmitting}
+              >
+                {isSubmitting ? (
+                  <>
+                    <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+                    Enviando...
+                  </>
+                ) : (
+                  'Enviar Pedido'
+                )}
+              </Button>
+            ) : (
+              <Button 
+                onClick={nextStep} 
+                className="flex-1"
+                disabled={!canProceed()}
+              >
+                Continuar
+                <ChevronRight className="w-4 h-4 ml-1" />
+              </Button>
+            )}
+          </div>
         </div>
-      </div>
+      </main>
     </div>
   );
 };

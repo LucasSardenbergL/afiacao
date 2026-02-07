@@ -24,34 +24,26 @@ export interface Address {
   isDefault: boolean;
 }
 
-// Tool categories
+// Tool categories - Marcenaria (Woodworking)
 export type ToolCategory = 
-  | 'facas_cozinha'
-  | 'tesouras'
-  | 'alicates'
+  | 'tesoura_profissional'
   | 'formoes'
-  | 'plainas'
-  | 'brocas'
-  | 'serras'
-  | 'laminas_serra'
-  | 'laminas_industriais'
-  | 'ferramentas_marcenaria'
-  | 'ferramentas_jardinagem'
-  | 'outro';
+  | 'faca_plaina_estreita'
+  | 'cabecote'
+  | 'faca_desengrosso'
+  | 'faca_plaina_manual'
+  | 'fresa'
+  | 'serra_circular_widea';
 
 export const TOOL_CATEGORIES: Record<ToolCategory, string> = {
-  facas_cozinha: 'Facas de Cozinha/Chef',
-  tesouras: 'Tesouras',
-  alicates: 'Alicates',
+  tesoura_profissional: 'Tesoura Profissional',
   formoes: 'Formões',
-  plainas: 'Plainas',
-  brocas: 'Brocas',
-  serras: 'Serras',
-  laminas_serra: 'Lâminas de Serra',
-  laminas_industriais: 'Lâminas Industriais',
-  ferramentas_marcenaria: 'Ferramentas de Marcenaria',
-  ferramentas_jardinagem: 'Ferramentas de Jardinagem',
-  outro: 'Outro',
+  faca_plaina_estreita: 'Faca de Plaina (Estreita)',
+  cabecote: 'Cabeçote',
+  faca_desengrosso: 'Faca de Desengrosso',
+  faca_plaina_manual: 'Faca de Plaina Manual',
+  fresa: 'Fresa',
+  serra_circular_widea: 'Serra Circular de Widea',
 };
 
 // Service types
@@ -73,14 +65,6 @@ export const WEAR_LEVELS: Record<WearLevel, { label: string; color: string }> = 
   pesado: { label: 'Pesado', color: 'status-danger' },
 };
 
-// Usage type (industrial vs domestic)
-export type UsageType = 'industrial' | 'domestico';
-
-export const USAGE_TYPES: Record<UsageType, { label: string; description: string }> = {
-  domestico: { label: 'Uso Doméstico', description: 'Ferramentas de uso doméstico/residencial' },
-  industrial: { label: 'Uso Industrial', description: 'Ferramentas de uso profissional/industrial' },
-};
-
 // Delivery options
 export type DeliveryOption = 'coleta_entrega' | 'somente_coleta' | 'somente_entrega' | 'balcao';
 
@@ -91,20 +75,12 @@ export const DELIVERY_OPTIONS: Record<DeliveryOption, { label: string; descripti
   balcao: { label: 'Levar e Retirar no Balcão', description: 'Você traz e retira na nossa loja' },
 };
 
-// Delivery fees by usage type
-export const DELIVERY_FEES: Record<UsageType, Record<DeliveryOption, number>> = {
-  domestico: {
-    coleta_entrega: 15,
-    somente_coleta: 10,
-    somente_entrega: 10,
-    balcao: 0,
-  },
-  industrial: {
-    coleta_entrega: 0,
-    somente_coleta: 0,
-    somente_entrega: 0,
-    balcao: 0,
-  },
+// Delivery fees - Industrial clients get free shipping
+export const DELIVERY_FEES: Record<DeliveryOption, number> = {
+  coleta_entrega: 0,
+  somente_coleta: 0,
+  somente_entrega: 0,
+  balcao: 0,
 };
 
 // Time slots
@@ -153,7 +129,6 @@ export interface ToolItem {
   notes?: string;
   serviceType?: ServiceType;
   unitPrice?: number;
-  usageType?: UsageType;
 }
 
 // Order

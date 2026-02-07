@@ -743,14 +743,9 @@ const Auth = () => {
                     <p className="text-xs text-muted-foreground">Documento</p>
                     <p className="font-medium">{formData.document}</p>
                   </div>
-                  <div className={cn(
-                    'flex items-center gap-1.5 px-2 py-1 rounded-full text-xs font-medium',
-                    isIndustrial 
-                      ? 'bg-amber-100 text-amber-800' 
-                      : 'bg-blue-100 text-blue-800'
-                  )}>
-                    {isIndustrial ? <Factory className="w-3 h-3" /> : <Home className="w-3 h-3" />}
-                    {isIndustrial ? 'Industrial' : 'Doméstico'}
+                  <div className="flex items-center gap-1.5 px-2 py-1 rounded-full text-xs font-medium bg-amber-100 text-amber-800">
+                    <Factory className="w-3 h-3" />
+                    Industrial
                   </div>
                 </div>
                 {omieCliente && (
@@ -761,9 +756,7 @@ const Auth = () => {
                     CNAE: {cnae} - {cnaeDescricao}
                   </p>
                 )}
-                {isIndustrial && (
-                  <p className="text-xs text-green-600 mt-1">✓ Frete gratuito para cliente industrial</p>
-                )}
+                <p className="text-xs text-emerald-600 mt-1">✓ Frete gratuito em todos os pedidos</p>
               </div>
 
               {/* Personal/Company Info */}
