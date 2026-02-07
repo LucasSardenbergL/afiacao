@@ -24,7 +24,11 @@ const faqItems = [
 
 const Support = () => {
   const openWhatsApp = () => {
-    window.open('https://wa.me/5511999999999?text=Olá! Preciso de ajuda com meu pedido.', '_blank');
+    window.open('https://wa.me/553732221035?text=Olá! Preciso de ajuda com meu pedido.', '_blank');
+  };
+
+  const openPhone = () => {
+    window.location.href = 'tel:+553732221035';
   };
 
   return (
@@ -39,15 +43,20 @@ const Support = () => {
           <div className="grid grid-cols-2 gap-3">
             <button
               onClick={openWhatsApp}
-              className="bg-emerald-500 text-white rounded-xl p-4 flex flex-col items-center gap-2 hover:bg-emerald-600 transition-colors"
+              className="bg-primary text-primary-foreground rounded-xl p-4 flex flex-col items-center gap-2 hover:bg-primary/90 transition-colors"
             >
               <MessageCircle className="w-6 h-6" />
               <span className="font-semibold text-sm">WhatsApp</span>
+              <span className="text-xs opacity-80">(37) 3222-1035</span>
             </button>
 
-            <button className="bg-card rounded-xl p-4 flex flex-col items-center gap-2 border border-border hover:bg-muted transition-colors">
+            <button
+              onClick={openPhone}
+              className="bg-card rounded-xl p-4 flex flex-col items-center gap-2 border border-border hover:bg-muted transition-colors"
+            >
               <Phone className="w-6 h-6 text-muted-foreground" />
               <span className="font-semibold text-sm">Ligar</span>
+              <span className="text-xs text-muted-foreground">(37) 3222-1035</span>
             </button>
           </div>
 
