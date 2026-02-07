@@ -202,7 +202,9 @@ export type Database = {
       }
       profiles: {
         Row: {
+          cnae: string | null
           created_at: string
+          customer_type: string | null
           document: string | null
           email: string | null
           id: string
@@ -212,7 +214,9 @@ export type Database = {
           user_id: string
         }
         Insert: {
+          cnae?: string | null
           created_at?: string
+          customer_type?: string | null
           document?: string | null
           email?: string | null
           id?: string
@@ -222,7 +226,9 @@ export type Database = {
           user_id: string
         }
         Update: {
+          cnae?: string | null
           created_at?: string
+          customer_type?: string | null
           document?: string | null
           email?: string | null
           id?: string
@@ -232,6 +238,83 @@ export type Database = {
           user_id?: string
         }
         Relationships: []
+      }
+      tool_categories: {
+        Row: {
+          created_at: string
+          description: string | null
+          icon: string | null
+          id: string
+          name: string
+          suggested_interval_days: number | null
+          usage_type: string
+        }
+        Insert: {
+          created_at?: string
+          description?: string | null
+          icon?: string | null
+          id?: string
+          name: string
+          suggested_interval_days?: number | null
+          usage_type?: string
+        }
+        Update: {
+          created_at?: string
+          description?: string | null
+          icon?: string | null
+          id?: string
+          name?: string
+          suggested_interval_days?: number | null
+          usage_type?: string
+        }
+        Relationships: []
+      }
+      user_tools: {
+        Row: {
+          created_at: string
+          custom_name: string | null
+          id: string
+          last_sharpened_at: string | null
+          next_sharpening_due: string | null
+          quantity: number | null
+          sharpening_interval_days: number | null
+          tool_category_id: string
+          updated_at: string
+          user_id: string
+        }
+        Insert: {
+          created_at?: string
+          custom_name?: string | null
+          id?: string
+          last_sharpened_at?: string | null
+          next_sharpening_due?: string | null
+          quantity?: number | null
+          sharpening_interval_days?: number | null
+          tool_category_id: string
+          updated_at?: string
+          user_id: string
+        }
+        Update: {
+          created_at?: string
+          custom_name?: string | null
+          id?: string
+          last_sharpened_at?: string | null
+          next_sharpening_due?: string | null
+          quantity?: number | null
+          sharpening_interval_days?: number | null
+          tool_category_id?: string
+          updated_at?: string
+          user_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "user_tools_tool_category_id_fkey"
+            columns: ["tool_category_id"]
+            isOneToOne: false
+            referencedRelation: "tool_categories"
+            referencedColumns: ["id"]
+          },
+        ]
       }
     }
     Views: {

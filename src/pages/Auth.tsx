@@ -1,7 +1,7 @@
 import { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { z } from 'zod';
-import { Loader2, Mail, Lock, User, Eye, EyeOff, FileText, Phone, MapPin, Building, ChevronLeft } from 'lucide-react';
+import { Loader2, Mail, Lock, User, Eye, EyeOff, FileText, Phone, MapPin, ChevronLeft, Wrench, Check, Factory, Home, AlertCircle } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
@@ -9,6 +9,7 @@ import { useAuth } from '@/contexts/AuthContext';
 import { useToast } from '@/hooks/use-toast';
 import { cn } from '@/lib/utils';
 import { supabase } from '@/integrations/supabase/client';
+import { Checkbox } from '@/components/ui/checkbox';
 
 const loginSchema = z.object({
   email: z.string().email('E-mail inválido'),
@@ -26,7 +27,6 @@ const signupSchema = z.object({
   phone: z.string().min(10, 'Telefone inválido'),
   password: z.string().min(6, 'A senha deve ter pelo menos 6 caracteres'),
   confirmPassword: z.string(),
-  // Address fields
   street: z.string().min(3, 'Endereço é obrigatório'),
   number: z.string().min(1, 'Número é obrigatório'),
   complement: z.string().optional(),
@@ -40,7 +40,7 @@ const signupSchema = z.object({
 });
 
 type AuthMode = 'login' | 'signup';
-type SignupStep = 'document' | 'form';
+type SignupStep = 'document' | 'form' | 'tools';
 
 interface OmieClienteData {
   codigo_cliente?: number;
@@ -59,23 +59,29 @@ interface OmieClienteData {
   pessoa_fisica?: string;
 }
 
+interface ToolCategory {
+  id: string;
+  name: string;
+  description: string;
+  icon: string;
+  usage_type: string;
+  suggested_interval_days: number;
+}
+
 const BRAZILIAN_STATES = [
   'AC', 'AL', 'AP', 'AM', 'BA', 'CE', 'DF', 'ES', 'GO', 'MA', 
   'MT', 'MS', 'MG', 'PA', 'PB', 'PR', 'PE', 'PI', 'RJ', 'RN', 
   'RS', 'RO', 'RR', 'SC', 'SP', 'SE', 'TO'
 ];
 
-// Formatação de CPF/CNPJ
 const formatDocument = (value: string): string => {
   const numbers = value.replace(/\D/g, '');
   if (numbers.length <= 11) {
-    // CPF: 000.000.000-00
     return numbers
       .replace(/(\d{3})(\d)/, '$1.$2')
       .replace(/(\d{3})(\d)/, '$1.$2')
       .replace(/(\d{3})(\d{1,2})$/, '$1-$2');
   } else {
-    // CNPJ: 00.000.000/0000-00
     return numbers
       .replace(/(\d{2})(\d)/, '$1.$2')
       .replace(/(\d{3})(\d)/, '$1.$2')
@@ -84,7 +90,6 @@ const formatDocument = (value: string): string => {
   }
 };
 
-// Formatação de telefone
 const formatPhone = (value: string): string => {
   const numbers = value.replace(/\D/g, '');
   if (numbers.length <= 10) {
@@ -98,7 +103,6 @@ const formatPhone = (value: string): string => {
   }
 };
 
-// Formatação de CEP
 const formatZipCode = (value: string): string => {
   const numbers = value.replace(/\D/g, '');
   return numbers.replace(/(\d{5})(\d)/, '$1-$2');
@@ -117,6 +121,12 @@ const Auth = () => {
   const [errors, setErrors] = useState<Record<string, string>>({});
   const [omieCliente, setOmieCliente] = useState<OmieClienteData | null>(null);
   const [documentChecked, setDocumentChecked] = useState(false);
+  const [isIndustrial, setIsIndustrial] = useState(false);
+  const [cnae, setCnae] = useState<string | null>(null);
+  const [cnaeDescricao, setCnaeDescricao] = useState<string | null>(null);
+  const [toolCategories, setToolCategories] = useState<ToolCategory[]>([]);
+  const [selectedTools, setSelectedTools] = useState<string[]>([]);
+  const [existingUserError, setExistingUserError] = useState(false);
   
   const [formData, setFormData] = useState({
     document: '',
@@ -142,10 +152,23 @@ const Auth = () => {
     }
   }, [user, authLoading, navigate]);
 
+  // Load tool categories
+  useEffect(() => {
+    const loadToolCategories = async () => {
+      const { data } = await supabase
+        .from('tool_categories')
+        .select('*')
+        .order('name');
+      if (data) {
+        setToolCategories(data);
+      }
+    };
+    loadToolCategories();
+  }, []);
+
   const handleInputChange = (field: string, value: string) => {
     let formattedValue = value;
     
-    // Apply formatting
     if (field === 'document') {
       formattedValue = formatDocument(value);
     } else if (field === 'phone') {
@@ -157,7 +180,6 @@ const Auth = () => {
     }
     
     setFormData((prev) => ({ ...prev, [field]: formattedValue }));
-    // Clear error when user types
     if (errors[field]) {
       setErrors((prev) => ({ ...prev, [field]: '' }));
     }
@@ -175,8 +197,28 @@ const Auth = () => {
 
     setIsCheckingDocument(true);
     setErrors({});
+    setExistingUserError(false);
 
     try {
+      // Primeiro verificar se já existe usuário com este documento no app
+      const docLimpo = formData.document.replace(/\D/g, '');
+      const { data: existingProfile } = await supabase
+        .from('profiles')
+        .select('id')
+        .eq('document', docLimpo)
+        .maybeSingle();
+
+      if (existingProfile) {
+        setExistingUserError(true);
+        toast({
+          title: 'Cadastro existente',
+          description: 'Este documento já está cadastrado. Faça login com seu e-mail.',
+          variant: 'destructive',
+        });
+        setIsCheckingDocument(false);
+        return;
+      }
+
       const { data, error } = await supabase.functions.invoke('omie-cliente', {
         body: {
           action: 'buscar_por_documento',
@@ -186,10 +228,14 @@ const Auth = () => {
 
       if (error) throw error;
 
-      if (data.found && data.cliente) {
-        // Cliente encontrado no Omie - preencher dados
+      // Set industrial flag based on CNAE
+      setIsIndustrial(data.isIndustrial || false);
+      setCnae(data.cnae || null);
+      setCnaeDescricao(data.cnaeDescricao || null);
+
+      if (data.cliente) {
         const cliente = data.cliente as OmieClienteData;
-        setOmieCliente(cliente);
+        setOmieCliente(data.found ? cliente : null);
         setFormData(prev => ({
           ...prev,
           name: cliente.razao_social || '',
@@ -205,11 +251,12 @@ const Auth = () => {
           zipCode: cliente.cep ? formatZipCode(cliente.cep) : '',
         }));
         toast({
-          title: 'Cliente encontrado!',
-          description: 'Seus dados foram carregados do cadastro existente.',
+          title: data.found ? 'Cliente encontrado!' : 'Dados carregados',
+          description: data.found 
+            ? 'Seus dados foram carregados do cadastro existente.' 
+            : 'Dados da empresa carregados. Complete o cadastro.',
         });
       } else {
-        // Cliente não encontrado - formulário vazio
         setOmieCliente(null);
         toast({
           title: 'Novo cadastro',
@@ -254,11 +301,24 @@ const Auth = () => {
     }
   };
 
-  const handleSubmit = async (e: React.FormEvent) => {
+  const handleFormSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     
     if (!validateForm()) return;
     
+    // Go to tools selection
+    setSignupStep('tools');
+  };
+
+  const handleToolToggle = (toolId: string) => {
+    setSelectedTools(prev => 
+      prev.includes(toolId) 
+        ? prev.filter(id => id !== toolId)
+        : [...prev, toolId]
+    );
+  };
+
+  const handleFinalSubmit = async () => {
     setIsLoading(true);
 
     try {
@@ -325,14 +385,16 @@ const Auth = () => {
           return;
         }
 
-        // Create profile with all data
         if (signUpData.user) {
+          // Create profile with customer type
           await supabase.from('profiles').insert({
             user_id: signUpData.user.id,
             name: formData.name,
             email: formData.email,
             phone: formData.phone.replace(/\D/g, ''),
             document: formData.document.replace(/\D/g, ''),
+            customer_type: isIndustrial ? 'industrial' : 'domestic',
+            cnae: cnae,
           });
 
           // Create default address
@@ -348,6 +410,19 @@ const Auth = () => {
             zip_code: formData.zipCode.replace(/\D/g, ''),
             is_default: true,
           });
+
+          // Save user's selected tools
+          if (selectedTools.length > 0) {
+            const toolsToInsert = selectedTools.map(toolCategoryId => {
+              const category = toolCategories.find(c => c.id === toolCategoryId);
+              return {
+                user_id: signUpData.user!.id,
+                tool_category_id: toolCategoryId,
+                sharpening_interval_days: category?.suggested_interval_days || 90,
+              };
+            });
+            await supabase.from('user_tools').insert(toolsToInsert);
+          }
 
           // If we found an Omie client, save the mapping
           if (omieCliente?.codigo_cliente) {
@@ -371,10 +446,55 @@ const Auth = () => {
     }
   };
 
+  const handleLoginSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!validateForm()) return;
+    
+    setIsLoading(true);
+    try {
+      const { error } = await signIn(formData.email, formData.password);
+      
+      if (error) {
+        if (error.message.includes('Invalid login credentials')) {
+          toast({
+            title: 'Erro ao entrar',
+            description: 'E-mail ou senha incorretos',
+            variant: 'destructive',
+          });
+        } else if (error.message.includes('Email not confirmed')) {
+          toast({
+            title: 'E-mail não confirmado',
+            description: 'Verifique sua caixa de entrada para confirmar seu e-mail',
+            variant: 'destructive',
+          });
+        } else {
+          toast({
+            title: 'Erro ao entrar',
+            description: error.message,
+            variant: 'destructive',
+          });
+        }
+        return;
+      }
+
+      toast({
+        title: 'Bem-vindo!',
+        description: 'Login realizado com sucesso',
+      });
+      navigate('/', { replace: true });
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
   const resetSignup = () => {
     setSignupStep('document');
     setDocumentChecked(false);
     setOmieCliente(null);
+    setSelectedTools([]);
+    setIsIndustrial(false);
+    setCnae(null);
+    setExistingUserError(false);
     setFormData({
       document: formData.document,
       name: '',
@@ -393,6 +513,13 @@ const Auth = () => {
     });
   };
 
+  // Filter tools based on customer type
+  const filteredTools = toolCategories.filter(tool => 
+    tool.usage_type === 'both' || 
+    (isIndustrial && tool.usage_type === 'industrial') ||
+    (!isIndustrial && tool.usage_type === 'domestic')
+  );
+
   if (authLoading) {
     return (
       <div className="min-h-screen flex items-center justify-center bg-background">
@@ -407,14 +534,16 @@ const Auth = () => {
         {/* Logo/Brand */}
         <div className="text-center mb-6">
           <h1 className="font-display font-bold text-3xl text-primary mb-2">
-            Afiação Express
+            Colacor
           </h1>
           <p className="text-muted-foreground">
             {mode === 'login' 
               ? 'Entre na sua conta' 
               : signupStep === 'document' 
                 ? 'Informe seu CPF ou CNPJ' 
-                : 'Complete seu cadastro'}
+                : signupStep === 'form'
+                  ? 'Complete seu cadastro'
+                  : 'Selecione suas ferramentas'}
           </p>
         </div>
 
@@ -425,7 +554,7 @@ const Auth = () => {
             <div className="flex gap-2 mb-6">
               <button
                 type="button"
-                onClick={() => { setMode('login'); setSignupStep('document'); }}
+                onClick={() => { setMode('login'); setSignupStep('document'); setExistingUserError(false); }}
                 className={cn(
                   'flex-1 py-2 rounded-lg font-medium text-sm transition-all',
                   mode === 'login'
@@ -437,7 +566,7 @@ const Auth = () => {
               </button>
               <button
                 type="button"
-                onClick={() => { setMode('signup'); setSignupStep('document'); }}
+                onClick={() => { setMode('signup'); setSignupStep('document'); setExistingUserError(false); }}
                 className={cn(
                   'flex-1 py-2 rounded-lg font-medium text-sm transition-all',
                   mode === 'signup'
@@ -450,11 +579,11 @@ const Auth = () => {
             </div>
           )}
 
-          {/* Back button for signup form step */}
-          {mode === 'signup' && signupStep === 'form' && (
+          {/* Back button for signup form/tools step */}
+          {mode === 'signup' && (signupStep === 'form' || signupStep === 'tools') && (
             <button
               type="button"
-              onClick={resetSignup}
+              onClick={() => signupStep === 'tools' ? setSignupStep('form') : resetSignup()}
               className="flex items-center gap-1 text-sm text-muted-foreground hover:text-foreground mb-4"
             >
               <ChevronLeft className="w-4 h-4" />
@@ -464,7 +593,7 @@ const Auth = () => {
 
           {/* Login Form */}
           {mode === 'login' && (
-            <form onSubmit={handleSubmit} className="space-y-4">
+            <form onSubmit={handleLoginSubmit} className="space-y-4">
               <div>
                 <Label htmlFor="email" className="text-sm font-medium">
                   E-mail
@@ -555,6 +684,25 @@ const Auth = () => {
                 </p>
               </div>
 
+              {existingUserError && (
+                <div className="bg-destructive/10 border border-destructive/30 rounded-lg p-3 flex items-start gap-2">
+                  <AlertCircle className="w-4 h-4 text-destructive mt-0.5 flex-shrink-0" />
+                  <div className="text-sm">
+                    <p className="font-medium text-destructive">Cadastro já existe</p>
+                    <p className="text-muted-foreground">
+                      Este documento já está cadastrado.{' '}
+                      <button 
+                        type="button"
+                        onClick={() => setMode('login')}
+                        className="text-primary hover:underline font-medium"
+                      >
+                        Faça login
+                      </button>
+                    </p>
+                  </div>
+                </div>
+              )}
+
               <Button 
                 type="button" 
                 className="w-full" 
@@ -575,13 +723,34 @@ const Auth = () => {
 
           {/* Signup - Form Step */}
           {mode === 'signup' && signupStep === 'form' && (
-            <form onSubmit={handleSubmit} className="space-y-4">
-              {/* Document display */}
+            <form onSubmit={handleFormSubmit} className="space-y-4">
+              {/* Document display with customer type */}
               <div className="bg-muted/50 rounded-lg p-3 mb-2">
-                <p className="text-xs text-muted-foreground">Documento</p>
-                <p className="font-medium">{formData.document}</p>
+                <div className="flex items-center justify-between">
+                  <div>
+                    <p className="text-xs text-muted-foreground">Documento</p>
+                    <p className="font-medium">{formData.document}</p>
+                  </div>
+                  <div className={cn(
+                    'flex items-center gap-1.5 px-2 py-1 rounded-full text-xs font-medium',
+                    isIndustrial 
+                      ? 'bg-amber-100 text-amber-800' 
+                      : 'bg-blue-100 text-blue-800'
+                  )}>
+                    {isIndustrial ? <Factory className="w-3 h-3" /> : <Home className="w-3 h-3" />}
+                    {isIndustrial ? 'Industrial' : 'Doméstico'}
+                  </div>
+                </div>
                 {omieCliente && (
-                  <p className="text-xs text-primary mt-1">✓ Cliente existente no sistema</p>
+                  <p className="text-xs text-primary mt-1">✓ Cliente existente no Omie</p>
+                )}
+                {cnaeDescricao && (
+                  <p className="text-xs text-muted-foreground mt-1">
+                    CNAE: {cnae} - {cnaeDescricao}
+                  </p>
+                )}
+                {isIndustrial && (
+                  <p className="text-xs text-green-600 mt-1">✓ Frete gratuito para cliente industrial</p>
                 )}
               </div>
 
@@ -860,6 +1029,58 @@ const Auth = () => {
               </div>
 
               <Button type="submit" className="w-full" disabled={isLoading}>
+                Próximo: Selecionar Ferramentas
+              </Button>
+            </form>
+          )}
+
+          {/* Signup - Tools Selection Step */}
+          {mode === 'signup' && signupStep === 'tools' && (
+            <div className="space-y-4">
+              <div className="text-center mb-4">
+                <Wrench className="w-10 h-10 mx-auto text-primary mb-2" />
+                <h3 className="font-semibold text-foreground">Suas Ferramentas</h3>
+                <p className="text-sm text-muted-foreground">
+                  Selecione as ferramentas que você costuma afiar. Iremos lembrar você quando chegar a hora!
+                </p>
+              </div>
+
+              <div className="space-y-2 max-h-64 overflow-y-auto">
+                {filteredTools.map((tool) => (
+                  <label
+                    key={tool.id}
+                    className={cn(
+                      'flex items-center gap-3 p-3 rounded-lg border cursor-pointer transition-all',
+                      selectedTools.includes(tool.id)
+                        ? 'border-primary bg-primary/5'
+                        : 'border-border hover:border-primary/50'
+                    )}
+                  >
+                    <Checkbox
+                      checked={selectedTools.includes(tool.id)}
+                      onCheckedChange={() => handleToolToggle(tool.id)}
+                    />
+                    <div className="flex-1">
+                      <p className="font-medium text-sm">{tool.name}</p>
+                      <p className="text-xs text-muted-foreground">{tool.description}</p>
+                    </div>
+                    {selectedTools.includes(tool.id) && (
+                      <Check className="w-4 h-4 text-primary" />
+                    )}
+                  </label>
+                ))}
+              </div>
+
+              <p className="text-xs text-muted-foreground text-center">
+                {selectedTools.length} ferramenta(s) selecionada(s)
+              </p>
+
+              <Button 
+                type="button" 
+                className="w-full" 
+                disabled={isLoading}
+                onClick={handleFinalSubmit}
+              >
                 {isLoading ? (
                   <>
                     <Loader2 className="w-4 h-4 mr-2 animate-spin" />
@@ -869,7 +1090,16 @@ const Auth = () => {
                   'Criar Conta'
                 )}
               </Button>
-            </form>
+
+              <button
+                type="button"
+                onClick={handleFinalSubmit}
+                className="w-full text-sm text-muted-foreground hover:text-foreground"
+                disabled={isLoading}
+              >
+                Pular por agora
+              </button>
+            </div>
           )}
         </div>
 
