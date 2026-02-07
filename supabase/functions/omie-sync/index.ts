@@ -422,6 +422,48 @@ serve(async (req) => {
         break;
       }
 
+      case "list_clientes": {
+        // Buscar clientes do Omie
+        console.log("[Omie] Buscando clientes...");
+        
+        try {
+          const omieResult = await callOmieApi(
+            "geral/clientes/",
+            "ListarClientes",
+            { 
+              pagina: 1, 
+              registros_por_pagina: 20 
+            }
+          ) as any;
+
+          const clientes = omieResult.clientes_cadastro || [];
+          console.log(`[Omie] ${clientes.length} clientes encontrados`);
+
+          // Formatar para o app
+          const clientesFormatados = clientes.map((c: any) => ({
+            codigo_cliente_omie: c.codigo_cliente_omie,
+            razao_social: c.razao_social,
+            nome_fantasia: c.nome_fantasia,
+            cnpj_cpf: c.cnpj_cpf,
+            email: c.email,
+            telefone: c.telefone1_numero,
+          }));
+
+          result = {
+            success: true,
+            clientes: clientesFormatados,
+          };
+        } catch (listError) {
+          console.error("[Omie] Erro ao listar clientes:", listError);
+          result = {
+            success: false,
+            error: listError instanceof Error ? listError.message : "Erro ao listar clientes",
+            clientes: [],
+          };
+        }
+        break;
+      }
+
       default:
         return new Response(
           JSON.stringify({ error: "Ação não reconhecida" }),
