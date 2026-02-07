@@ -2,3 +2,6 @@ project_id = "fzvklzpomgnyikkfkzai"
 
 [functions.omie-sync]
 verify_jwt = false
+
+[functions.omie-cliente]
+verify_jwt = false
