@@ -471,41 +471,49 @@ serve(async (req) => {
   }
 
   try {
-    // Verificar autenticação
-    const authHeader = req.headers.get("Authorization");
-    if (!authHeader?.startsWith("Bearer ")) {
-      return new Response(
-        JSON.stringify({ error: "Não autorizado" }),
-        { status: 401, headers: { ...corsHeaders, "Content-Type": "application/json" } }
-      );
-    }
-
     const supabaseUrl = Deno.env.get("SUPABASE_URL")!;
     const supabaseServiceKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
     
     // Cliente com service role para operações internas
     const supabaseAdmin = createClient(supabaseUrl, supabaseServiceKey);
-    
-    // Cliente autenticado para validar usuário
-    const supabaseAuth = createClient(supabaseUrl, Deno.env.get("SUPABASE_ANON_KEY")!, {
-      global: { headers: { Authorization: authHeader } },
-    });
 
-    const token = authHeader.replace("Bearer ", "");
-    const { data: claimsData, error: claimsError } = await supabaseAuth.auth.getUser(token);
-    
-    if (claimsError || !claimsData?.user) {
-      return new Response(
-        JSON.stringify({ error: "Token inválido" }),
-        { status: 401, headers: { ...corsHeaders, "Content-Type": "application/json" } }
-      );
-    }
-
-    const userId = claimsData.user.id;
     const body = await req.json();
     const { action, orderId, orderData, profileData, addressData } = body;
 
-    console.log(`[Omie Sync] Ação: ${action}, Usuário: ${userId}`);
+    // Ações que não requerem autenticação (cron jobs, webhooks)
+    const publicActions = ["sync_services"];
+    
+    let userId: string | null = null;
+    
+    if (!publicActions.includes(action)) {
+      // Verificar autenticação para ações protegidas
+      const authHeader = req.headers.get("Authorization");
+      if (!authHeader?.startsWith("Bearer ")) {
+        return new Response(
+          JSON.stringify({ error: "Não autorizado" }),
+          { status: 401, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+        );
+      }
+      
+      // Cliente autenticado para validar usuário
+      const supabaseAuth = createClient(supabaseUrl, Deno.env.get("SUPABASE_ANON_KEY")!, {
+        global: { headers: { Authorization: authHeader } },
+      });
+
+      const token = authHeader.replace("Bearer ", "");
+      const { data: claimsData, error: claimsError } = await supabaseAuth.auth.getUser(token);
+      
+      if (claimsError || !claimsData?.user) {
+        return new Response(
+          JSON.stringify({ error: "Token inválido" }),
+          { status: 401, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+        );
+      }
+
+      userId = claimsData.user.id;
+    }
+
+    console.log(`[Omie Sync] Ação: ${action}, Usuário: ${userId || 'N/A (público)'}`);
 
     let result: Record<string, unknown> = {};
 
