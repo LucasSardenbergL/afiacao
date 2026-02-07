@@ -251,16 +251,18 @@ const NewOrder = () => {
     }
   };
 
-  // Filtra serviços baseado no nome completo da ferramenta
+  // Filtra serviços baseado no nome da categoria da ferramenta (sem especificações)
   const getFilteredServicos = (tool: UserTool | undefined): OmieServico[] => {
     if (!tool) return [];
     
-    const toolName = getToolDisplayName(tool).toLowerCase().trim();
+    // Usa o nome da categoria base da ferramenta (ex: "Faca Circular", "Serra")
+    const categoryName = tool.tool_categories?.name?.toLowerCase().trim();
+    if (!categoryName) return [];
     
-    // Filtra serviços que contenham o nome completo da ferramenta na descrição
+    // Filtra serviços que contenham o nome da categoria na descrição
     return servicos.filter(servico => {
       const descricaoLower = servico.descricao.toLowerCase();
-      return descricaoLower.includes(toolName);
+      return descricaoLower.includes(categoryName);
     });
   };
 
