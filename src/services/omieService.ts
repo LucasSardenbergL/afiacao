@@ -93,3 +93,41 @@ export async function checkOmieClient(): Promise<{
     return { exists: false, omie_codigo_cliente: null };
   }
 }
+
+export interface OmieServico {
+  omie_codigo_servico: number;
+  omie_codigo_integracao: string;
+  descricao: string;
+  codigo_lc116: string;
+  codigo_servico_municipio: string;
+  valor_unitario: number;
+  unidade: string;
+}
+
+export async function listOmieServices(): Promise<{
+  success: boolean;
+  servicos: OmieServico[];
+  error?: string;
+}> {
+  try {
+    const { data, error } = await supabase.functions.invoke("omie-sync", {
+      body: {
+        action: "list_services",
+      },
+    });
+
+    if (error) {
+      console.error("[Omie Service] Erro ao listar serviços:", error);
+      return { success: false, servicos: [], error: error.message };
+    }
+
+    return data;
+  } catch (err) {
+    console.error("[Omie Service] Erro inesperado:", err);
+    return {
+      success: false,
+      servicos: [],
+      error: err instanceof Error ? err.message : "Erro desconhecido",
+    };
+  }
+}
