@@ -182,7 +182,7 @@ const Admin = () => {
 
       <main className="pt-16 px-4 max-w-lg mx-auto">
         {/* Quick actions */}
-        <div className="mb-6">
+        <div className="space-y-2 mb-6">
           <Button 
             variant="outline" 
             className="w-full justify-between"
@@ -193,6 +193,18 @@ const Admin = () => {
               <span>Gerenciar Clientes e Ferramentas</span>
             </div>
             <ChevronRight className="w-4 h-4" />
+          </Button>
+          
+          <Button 
+            variant="outline" 
+            className="w-full justify-between border-amber-300 bg-amber-50 hover:bg-amber-100"
+            onClick={() => navigate('/admin/demand-forecast')}
+          >
+            <div className="flex items-center gap-2">
+              <Clock className="w-4 h-4 text-amber-600" />
+              <span className="text-amber-900">Previsão de Demanda</span>
+            </div>
+            <ChevronRight className="w-4 h-4 text-amber-600" />
           </Button>
         </div>
 
