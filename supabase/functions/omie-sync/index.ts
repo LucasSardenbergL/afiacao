@@ -230,27 +230,30 @@ async function criarOrdemServicoOmie(
   // - nQtde: Quantidade
   // - nValUnit: Valor unitário
   const servicosPrestados = order.items.map((item) => {
-    const servicoBase: Record<string, unknown> = {
-      cCodServLC116: "14.01", // Código LC 116 padrão para serviços de manutenção
-      cCodServMun: "01015", // Código do serviço no município (padrão)
+    // Quando o serviço já existe no Omie, a API espera o campo **nCodServico** (não nCodServ)
+    // e pode receber apenas ele + quantidade.
+    if (item.omie_codigo_servico && item.omie_codigo_servico > 0) {
+      return {
+        nCodServico: item.omie_codigo_servico,
+        nQtde: item.quantity,
+      } as Record<string, unknown>;
+    }
+
+    // Caso não exista serviço cadastrado, enviamos a estrutura completa do serviço prestado
+    return {
+      cCodServLC116: "14.01", // Código LC 116 padrão (ajuste conforme sua operação)
+      cCodServMun: "01015", // Código do serviço no município (ajuste conforme sua operação)
       cDescServ: item.category,
-      cDadosAdicItem: item.brandModel 
-        ? `Marca/Modelo: ${item.brandModel}${item.notes ? ` | Obs: ${item.notes}` : ''}`
-        : item.notes || '',
+      cDadosAdicItem: item.brandModel
+        ? `Marca/Modelo: ${item.brandModel}${item.notes ? ` | Obs: ${item.notes}` : ""}`
+        : item.notes || "",
+      cRetemISS: "N",
+      cTribServ: "01",
       nQtde: item.quantity,
       nValUnit: 0, // Valor a definir após triagem
       cTpDesconto: "V",
       nValorDesconto: 0,
-      cRetemISS: "N",
-      cTribServ: "T",
-    };
-
-    // Se tiver código do serviço Omie, adiciona
-    if (item.omie_codigo_servico && item.omie_codigo_servico > 0) {
-      servicoBase.nCodServ = item.omie_codigo_servico;
-    }
-
-    return servicoBase;
+    } as Record<string, unknown>;
   });
 
   const osParams: Record<string, unknown> = {
