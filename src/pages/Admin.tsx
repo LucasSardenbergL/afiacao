@@ -278,13 +278,17 @@ interface OrderCardProps {
 }
 
 const OrderCard = ({ order, onStatusChange, updatingOrder, getNextStatus }: OrderCardProps) => {
+  const navigate = useNavigate();
   const statusInfo = EMPLOYEE_ORDER_STATUS[order.status as keyof typeof EMPLOYEE_ORDER_STATUS];
   const nextStatus = getNextStatus(order.status);
   const StatusIcon = statusInfo?.icon || Package;
   const items = Array.isArray(order.items) ? order.items : [];
 
   return (
-    <Card>
+    <Card 
+      className="cursor-pointer hover:border-primary/50 transition-colors"
+      onClick={() => navigate(`/admin/orders/${order.id}`)}
+    >
       <CardContent className="p-4">
         <div className="flex items-start justify-between gap-2 mb-3">
           <div>
@@ -313,7 +317,10 @@ const OrderCard = ({ order, onStatusChange, updatingOrder, getNextStatus }: Orde
             size="sm"
             className="w-full"
             disabled={updatingOrder === order.id}
-            onClick={() => onStatusChange(order.id, nextStatus)}
+            onClick={(e) => {
+              e.stopPropagation();
+              onStatusChange(order.id, nextStatus);
+            }}
           >
             {updatingOrder === order.id ? (
               <Loader2 className="w-4 h-4 mr-2 animate-spin" />

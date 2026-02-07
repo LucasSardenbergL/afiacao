@@ -17,6 +17,7 @@ import Auth from "./pages/Auth";
 import ResetPassword from "./pages/ResetPassword";
 import Admin from "./pages/Admin";
 import AdminCustomers from "./pages/AdminCustomers";
+import AdminOrderDetail from "./pages/AdminOrderDetail";
 import NotFound from "./pages/NotFound";
 
 const queryClient = new QueryClient();
@@ -116,6 +117,14 @@ const App = () => (
               element={
                 <ProtectedRoute>
                   <AdminCustomers />
+                </ProtectedRoute>
+              }
+            />
+            <Route
+              path="/admin/orders/:id"
+              element={
+                <ProtectedRoute>
+                  <AdminOrderDetail />
                 </ProtectedRoute>
               }
             />
