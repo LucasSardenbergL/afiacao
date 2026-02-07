@@ -1,50 +1,8 @@
-import { useState, useRef, useEffect } from 'react';
-import { Mic, MicOff, Send, Loader2, Sparkles, X } from 'lucide-react';
+import { useState, useRef, useEffect, useCallback } from 'react';
+import { Mic, MicOff, Send, Loader2, Sparkles, X, Square } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { cn } from '@/lib/utils';
 import { useToast } from '@/hooks/use-toast';
-
-// Tipos para Web Speech API
-interface SpeechRecognitionEvent {
-  resultIndex: number;
-  results: SpeechRecognitionResultList;
-}
-
-interface SpeechRecognitionResultList {
-  length: number;
-  item(index: number): SpeechRecognitionResult;
-  [index: number]: SpeechRecognitionResult;
-}
-
-interface SpeechRecognitionResult {
-  isFinal: boolean;
-  [index: number]: SpeechRecognitionAlternative;
-}
-
-interface SpeechRecognitionAlternative {
-  transcript: string;
-  confidence: number;
-}
-
-interface SpeechRecognition extends EventTarget {
-  continuous: boolean;
-  interimResults: boolean;
-  lang: string;
-  start(): void;
-  stop(): void;
-  abort(): void;
-  onresult: ((event: SpeechRecognitionEvent) => void) | null;
-  onerror: ((event: Event & { error: string }) => void) | null;
-  onend: (() => void) | null;
-  onstart: (() => void) | null;
-}
-
-declare global {
-  interface Window {
-    SpeechRecognition: new () => SpeechRecognition;
-    webkitSpeechRecognition: new () => SpeechRecognition;
-  }
-}
 
 export interface SuggestedService {
   omie_codigo_servico: number;
@@ -61,217 +19,227 @@ interface VoiceServiceInputProps {
 export function VoiceServiceInput({ onServicesIdentified, isLoading = false }: VoiceServiceInputProps) {
   const { toast } = useToast();
   const [text, setText] = useState('');
-  const [isListening, setIsListening] = useState(false);
+  const [isRecording, setIsRecording] = useState(false);
+  const [isTranscribing, setIsTranscribing] = useState(false);
   const [isAnalyzing, setIsAnalyzing] = useState(false);
-  const [interimText, setInterimText] = useState('');
   const [aiMessage, setAiMessage] = useState<string | null>(null);
   const [suggestedServices, setSuggestedServices] = useState<SuggestedService[]>([]);
+  const [recordingDuration, setRecordingDuration] = useState(0);
   
-  const recognitionRef = useRef<SpeechRecognition | null>(null);
-  const isListeningRef = useRef(false); // Track intent to keep listening
+  const mediaRecorderRef = useRef<MediaRecorder | null>(null);
+  const audioChunksRef = useRef<Blob[]>([]);
+  const streamRef = useRef<MediaStream | null>(null);
+  const timerRef = useRef<number | null>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
 
-  // Verificar suporte ao Web Speech API
-  const isSpeechSupported = typeof window !== 'undefined' && 
-    ('SpeechRecognition' in window || 'webkitSpeechRecognition' in window);
-
-  // Initialize recognition only once
-  const initRecognition = () => {
-    if (!isSpeechSupported) return null;
-    
-    const SpeechRecognitionAPI = window.SpeechRecognition || window.webkitSpeechRecognition;
-    const recognition = new SpeechRecognitionAPI();
-    
-    recognition.continuous = true;
-    recognition.interimResults = true;
-    recognition.lang = 'pt-BR';
-
-    recognition.onresult = (event: SpeechRecognitionEvent) => {
-      console.log('Speech recognition result received:', event.results);
-      
-      let interim = '';
-      let final = '';
-
-      for (let i = event.resultIndex; i < event.results.length; i++) {
-        const transcript = event.results[i][0].transcript;
-        console.log('Transcript:', transcript, 'isFinal:', event.results[i].isFinal);
-        
-        if (event.results[i].isFinal) {
-          final += transcript;
-        } else {
-          interim += transcript;
-        }
-      }
-
-      if (final) {
-        setText(prev => prev + (prev ? ' ' : '') + final);
-        setInterimText('');
-      } else {
-        setInterimText(interim);
-      }
-    };
-
-    recognition.onerror = (event) => {
-      console.error('Speech recognition error:', event.error);
-
-      const commonHelp =
-        'Verifique se você permitiu o microfone e se está usando Chrome/Edge/Safari.';
-
-      if (event.error === 'not-allowed' || event.error === 'service-not-allowed') {
-        isListeningRef.current = false;
-        setIsListening(false);
-        toast({
-          title: 'Permissão do microfone',
-          description: 'A permissão do microfone foi negada. ' + commonHelp,
-          variant: 'destructive',
-        });
-        return;
-      }
-
-      if (event.error === 'audio-capture') {
-        isListeningRef.current = false;
-        setIsListening(false);
-        toast({
-          title: 'Microfone indisponível',
-          description: 'Não foi possível acessar o microfone. ' + commonHelp,
-          variant: 'destructive',
-        });
-        return;
-      }
-
-      if (event.error === 'network') {
-        toast({
-          title: 'Falha de rede',
-          description: 'O reconhecimento de voz falhou por rede. Tente novamente.',
-          variant: 'destructive',
-        });
-        return;
-      }
-
-      if (event.error === 'no-speech') {
-        // Normal timeout - will auto-restart via onend
-        console.log('No speech detected, will auto-restart');
-        return;
-      }
-
-      if (event.error === 'aborted') {
-        console.log('Recognition aborted');
-        return;
-      }
-
-      // Unknown error
-      toast({
-        title: 'Erro no reconhecimento',
-        description: `Erro: ${event.error}. ${commonHelp}`,
-        variant: 'destructive',
-      });
-    };
-
-    recognition.onend = () => {
-      console.log('Recognition ended, isListeningRef:', isListeningRef.current);
-      // Auto-restart if user intent is still to listen
-      if (isListeningRef.current) {
-        // Some browsers throw if start() is called too fast
-        setTimeout(() => {
-          try {
-            console.log('Auto-restarting recognition');
-            recognition.start();
-          } catch (error) {
-            console.error('Error restarting recognition:', error);
-            isListeningRef.current = false;
-            setIsListening(false);
-          }
-        }, 250);
-      } else {
-        setIsListening(false);
-        setInterimText('');
-      }
-    };
-
-    recognition.onstart = () => {
-      console.log('Recognition started');
-    };
-
-    return recognition;
-  };
-
+  // Cleanup on unmount
   useEffect(() => {
     return () => {
-      // Cleanup on unmount
-      if (recognitionRef.current) {
-        isListeningRef.current = false;
-        recognitionRef.current.abort();
+      if (timerRef.current) {
+        clearInterval(timerRef.current);
+      }
+      if (streamRef.current) {
+        streamRef.current.getTracks().forEach(track => track.stop());
       }
     };
   }, []);
 
-  const startListening = () => {
-    // Initialize recognition if needed
-    if (!recognitionRef.current) {
-      recognitionRef.current = initRecognition();
-    }
-    
-    if (!recognitionRef.current) {
-      toast({
-        title: 'Não suportado',
-        description: 'Seu navegador não suporta reconhecimento de voz.',
-        variant: 'destructive',
+  const startRecording = useCallback(async () => {
+    try {
+      // Request microphone permission
+      const stream = await navigator.mediaDevices.getUserMedia({ 
+        audio: {
+          echoCancellation: true,
+          noiseSuppression: true,
+          autoGainControl: true,
+        } 
       });
-      return;
+      
+      streamRef.current = stream;
+      audioChunksRef.current = [];
+
+      // Determine best supported format
+      let mimeType = 'audio/webm';
+      if (MediaRecorder.isTypeSupported('audio/webm;codecs=opus')) {
+        mimeType = 'audio/webm;codecs=opus';
+      } else if (MediaRecorder.isTypeSupported('audio/mp4')) {
+        mimeType = 'audio/mp4';
+      } else if (MediaRecorder.isTypeSupported('audio/ogg')) {
+        mimeType = 'audio/ogg';
+      }
+
+      console.log('Using MIME type:', mimeType);
+      
+      const mediaRecorder = new MediaRecorder(stream, { mimeType });
+      mediaRecorderRef.current = mediaRecorder;
+
+      mediaRecorder.ondataavailable = (event) => {
+        if (event.data.size > 0) {
+          audioChunksRef.current.push(event.data);
+        }
+      };
+
+      mediaRecorder.onstop = async () => {
+        // Stop all tracks
+        stream.getTracks().forEach(track => track.stop());
+        
+        if (audioChunksRef.current.length > 0) {
+          const audioBlob = new Blob(audioChunksRef.current, { type: mimeType });
+          console.log('Audio blob created:', audioBlob.size, 'bytes');
+          await transcribeAudio(audioBlob);
+        }
+      };
+
+      mediaRecorder.onerror = (event) => {
+        console.error('MediaRecorder error:', event);
+        toast({
+          title: 'Erro na gravação',
+          description: 'Ocorreu um erro ao gravar o áudio.',
+          variant: 'destructive',
+        });
+        stopRecording();
+      };
+
+      // Start recording
+      mediaRecorder.start(1000); // Collect data every second
+      setIsRecording(true);
+      setRecordingDuration(0);
+
+      // Start timer
+      timerRef.current = window.setInterval(() => {
+        setRecordingDuration(prev => prev + 1);
+      }, 1000);
+
+      console.log('Recording started');
+    } catch (error) {
+      console.error('Error starting recording:', error);
+      
+      const err = error as { name?: string; message?: string };
+      
+      if (err.name === 'NotAllowedError') {
+        toast({
+          title: 'Permissão negada',
+          description: 'Permita o acesso ao microfone nas configurações do navegador.',
+          variant: 'destructive',
+        });
+      } else if (err.name === 'NotFoundError') {
+        toast({
+          title: 'Microfone não encontrado',
+          description: 'Verifique se um microfone está conectado ao dispositivo.',
+          variant: 'destructive',
+        });
+      } else {
+        toast({
+          title: 'Erro ao iniciar gravação',
+          description: err.message || 'Não foi possível acessar o microfone.',
+          variant: 'destructive',
+        });
+      }
     }
+  }, [toast]);
+
+  const stopRecording = useCallback(() => {
+    if (timerRef.current) {
+      clearInterval(timerRef.current);
+      timerRef.current = null;
+    }
+
+    if (mediaRecorderRef.current && mediaRecorderRef.current.state !== 'inactive') {
+      mediaRecorderRef.current.stop();
+    }
+
+    setIsRecording(false);
+    console.log('Recording stopped');
+  }, []);
+
+  const transcribeAudio = async (audioBlob: Blob) => {
+    setIsTranscribing(true);
 
     try {
-      isListeningRef.current = true;
-      setIsListening(true);
-      recognitionRef.current.start();
-      console.log('Started listening');
-    } catch (error) {
-      console.error('Error starting recognition:', error);
-      isListeningRef.current = false;
-      setIsListening(false);
+      // Determine file extension based on blob type
+      let extension = 'webm';
+      if (audioBlob.type.includes('mp4')) {
+        extension = 'mp4';
+      } else if (audioBlob.type.includes('ogg')) {
+        extension = 'ogg';
+      }
 
-      const err = error as unknown as { name?: string; message?: string };
+      const formData = new FormData();
+      formData.append('audio', audioBlob, `recording.${extension}`);
+
+      console.log('Sending audio to transcription service...');
+
+      const response = await fetch(
+        `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/elevenlabs-transcribe`,
+        {
+          method: 'POST',
+          headers: {
+            Authorization: `Bearer ${import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY}`,
+          },
+          body: formData,
+        }
+      );
+
+      if (!response.ok) {
+        const error = await response.json();
+        throw new Error(error.error || 'Erro na transcrição');
+      }
+
+      const result = await response.json();
+      console.log('Transcription result:', result);
+
+      if (result.text) {
+        setText(prev => prev + (prev ? ' ' : '') + result.text);
+        toast({
+          title: 'Transcrição concluída',
+          description: 'O áudio foi convertido em texto.',
+        });
+      } else {
+        toast({
+          title: 'Nenhum texto detectado',
+          description: 'Não foi possível identificar fala no áudio.',
+          variant: 'destructive',
+        });
+      }
+    } catch (error) {
+      console.error('Transcription error:', error);
       toast({
-        title: 'Não foi possível iniciar',
-        description:
-          err?.name === 'NotAllowedError'
-            ? 'Permissão de microfone negada. Verifique as permissões do navegador.'
-            : err?.message || 'Tente novamente.',
+        title: 'Erro na transcrição',
+        description: error instanceof Error ? error.message : 'Tente novamente.',
         variant: 'destructive',
       });
+    } finally {
+      setIsTranscribing(false);
     }
   };
 
-  const stopListening = () => {
-    console.log('Stopping listening');
-    isListeningRef.current = false;
-    if (recognitionRef.current) {
-      recognitionRef.current.stop();
-    }
-    setIsListening(false);
-  };
-
-  const toggleListening = () => {
-    if (isListening) {
-      stopListening();
+  const toggleRecording = () => {
+    if (isRecording) {
+      stopRecording();
     } else {
-      startListening();
+      startRecording();
     }
+  };
+
+  const formatDuration = (seconds: number) => {
+    const mins = Math.floor(seconds / 60);
+    const secs = seconds % 60;
+    return `${mins}:${secs.toString().padStart(2, '0')}`;
   };
 
   const analyzeText = async () => {
     if (!text.trim()) {
       toast({
         title: 'Texto vazio',
-        description: 'Digite ou fale o que você precisa.',
+        description: 'Digite ou grave o que você precisa.',
         variant: 'destructive',
       });
       return;
     }
 
-    // Parar gravação se estiver ativa
-    if (isListening && recognitionRef.current) {
-      recognitionRef.current.stop();
+    // Stop recording if active
+    if (isRecording) {
+      stopRecording();
     }
 
     setIsAnalyzing(true);
@@ -318,7 +286,7 @@ export function VoiceServiceInput({ onServicesIdentified, isLoading = false }: V
 
   const confirmServices = () => {
     onServicesIdentified(suggestedServices);
-    // Limpar estado
+    // Clear state
     setText('');
     setAiMessage(null);
     setSuggestedServices([]);
@@ -332,6 +300,8 @@ export function VoiceServiceInput({ onServicesIdentified, isLoading = false }: V
     setAiMessage(null);
     setSuggestedServices([]);
   };
+
+  const isProcessing = isRecording || isTranscribing || isAnalyzing || isLoading;
 
   return (
     <div className="bg-card rounded-xl p-4 shadow-soft border border-border space-y-4">
@@ -348,44 +318,51 @@ export function VoiceServiceInput({ onServicesIdentified, isLoading = false }: V
       <div className="relative">
         <textarea
           ref={textareaRef}
-          value={text + (interimText ? ' ' + interimText : '')}
+          value={text}
           onChange={(e) => setText(e.target.value)}
           placeholder="Ex: Preciso afiar 3 serras circulares de widea e 2 facas HSS..."
           className={cn(
             "w-full min-h-[100px] p-3 pr-12 rounded-lg border bg-background text-sm resize-none",
             "focus:outline-none focus:ring-2 focus:ring-ring",
-            isListening && "border-primary ring-2 ring-primary/20"
+            isRecording && "border-primary ring-2 ring-primary/20"
           )}
-          disabled={isAnalyzing || isLoading}
+          disabled={isAnalyzing || isLoading || isTranscribing}
         />
         
-        {/* Microfone button */}
-        {isSpeechSupported && (
-          <button
-            type="button"
-            onClick={(e) => {
-              e.stopPropagation();
-              e.preventDefault();
-              toggleListening();
-            }}
-            disabled={isAnalyzing || isLoading}
-            className={cn(
-              "absolute right-3 top-3 p-2 rounded-full transition-all z-10",
-              isListening 
-                ? "bg-primary text-primary-foreground animate-pulse" 
-                : "bg-muted text-muted-foreground hover:bg-primary/10 hover:text-primary"
-            )}
-          >
-            {isListening ? <MicOff className="w-5 h-5" /> : <Mic className="w-5 h-5" />}
-          </button>
-        )}
+        {/* Microphone button */}
+        <button
+          type="button"
+          onClick={(e) => {
+            e.stopPropagation();
+            e.preventDefault();
+            toggleRecording();
+          }}
+          disabled={isAnalyzing || isLoading || isTranscribing}
+          className={cn(
+            "absolute right-3 top-3 p-2 rounded-full transition-all z-10",
+            isRecording 
+              ? "bg-destructive text-destructive-foreground animate-pulse" 
+              : "bg-muted text-muted-foreground hover:bg-primary/10 hover:text-primary"
+          )}
+        >
+          {isRecording ? <Square className="w-5 h-5" /> : <Mic className="w-5 h-5" />}
+        </button>
       </div>
 
-      {/* Listening indicator */}
-      {isListening && (
+      {/* Recording indicator */}
+      {isRecording && (
+        <div className="flex items-center gap-2 text-destructive text-sm">
+          <div className="w-2 h-2 rounded-full bg-destructive animate-pulse" />
+          <span>Gravando... {formatDuration(recordingDuration)}</span>
+          <span className="text-muted-foreground text-xs">(Clique para parar)</span>
+        </div>
+      )}
+
+      {/* Transcribing indicator */}
+      {isTranscribing && (
         <div className="flex items-center gap-2 text-primary text-sm">
-          <div className="w-2 h-2 rounded-full bg-primary animate-pulse" />
-          <span>Ouvindo... Fale agora</span>
+          <Loader2 className="w-4 h-4 animate-spin" />
+          <span>Transcrevendo áudio...</span>
         </div>
       )}
 
@@ -393,13 +370,12 @@ export function VoiceServiceInput({ onServicesIdentified, isLoading = false }: V
       <Button
         onClick={(e) => {
           e.stopPropagation();
-          // Stop listening before analyzing
-          if (isListening) {
-            stopListening();
+          if (isRecording) {
+            stopRecording();
           }
           analyzeText();
         }}
-        disabled={(!text.trim() && !interimText.trim()) || isAnalyzing || isLoading}
+        disabled={!text.trim() || isProcessing}
         className="w-full"
       >
         {isAnalyzing ? (
@@ -469,11 +445,9 @@ export function VoiceServiceInput({ onServicesIdentified, isLoading = false }: V
         </div>
       )}
 
-      {!isSpeechSupported && (
-        <p className="text-xs text-muted-foreground text-center">
-          Reconhecimento de voz não suportado neste navegador. Use Chrome, Edge ou Safari.
-        </p>
-      )}
+      <p className="text-xs text-muted-foreground text-center">
+        🎙️ Funciona em todos os navegadores e dispositivos
+      </p>
     </div>
   );
 }
