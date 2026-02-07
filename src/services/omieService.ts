@@ -131,3 +131,41 @@ export async function listOmieServices(): Promise<{
     };
   }
 }
+
+export interface OmieContaCorrente {
+  nCodCC: number;
+  cDescricao: string;
+  cCodCCInt: string;
+  cNomeBanco: string;
+  cAgencia: string;
+  cNumeroConta: string;
+  cTipo: string;
+}
+
+export async function listOmieContasCorrentes(): Promise<{
+  success: boolean;
+  contas_correntes: OmieContaCorrente[];
+  error?: string;
+}> {
+  try {
+    const { data, error } = await supabase.functions.invoke("omie-sync", {
+      body: {
+        action: "list_contas_correntes",
+      },
+    });
+
+    if (error) {
+      console.error("[Omie Service] Erro ao listar contas correntes:", error);
+      return { success: false, contas_correntes: [], error: error.message };
+    }
+
+    return data;
+  } catch (err) {
+    console.error("[Omie Service] Erro inesperado:", err);
+    return {
+      success: false,
+      contas_correntes: [],
+      error: err instanceof Error ? err.message : "Erro desconhecido",
+    };
+  }
+}

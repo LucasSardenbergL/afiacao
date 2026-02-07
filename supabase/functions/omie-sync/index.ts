@@ -435,6 +435,51 @@ serve(async (req) => {
         break;
       }
 
+      case "list_contas_correntes": {
+        // Buscar contas correntes do Omie para encontrar o nCodCC
+        console.log("[Omie] Buscando contas correntes...");
+        
+        try {
+          const omieResult = await callOmieApi(
+            "geral/contacorrente/",
+            "ListarContasCorrentes",
+            { 
+              pagina: 1, 
+              registros_por_pagina: 50 
+            }
+          ) as any;
+
+          const contas = omieResult.ListarContasCorrentes || omieResult.conta_corrente_lista || [];
+          console.log(`[Omie] ${contas.length} contas correntes encontradas`);
+          console.log("[Omie] Resposta completa:", JSON.stringify(omieResult, null, 2));
+
+          // Formatar para o app
+          const contasFormatadas = contas.map((c: any) => ({
+            nCodCC: c.nCodCC,
+            cDescricao: c.descricao || c.cDescricao || "Sem descrição",
+            cCodCCInt: c.cCodCCInt || "",
+            cNomeBanco: c.cNomeBanco || "",
+            cAgencia: c.cAgencia || "",
+            cNumeroConta: c.cNumeroConta || "",
+            cTipo: c.tipo || c.cTipo || "",
+          }));
+
+          result = {
+            success: true,
+            contas_correntes: contasFormatadas,
+            raw_response: omieResult, // para debug
+          };
+        } catch (listError) {
+          console.error("[Omie] Erro ao listar contas correntes:", listError);
+          result = {
+            success: false,
+            error: listError instanceof Error ? listError.message : "Erro ao listar contas correntes",
+            contas_correntes: [],
+          };
+        }
+        break;
+      }
+
       default:
         return new Response(
           JSON.stringify({ error: "Ação não reconhecida" }),
