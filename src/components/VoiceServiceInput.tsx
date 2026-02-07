@@ -113,36 +113,75 @@ export function VoiceServiceInput({ onServicesIdentified, isLoading = false }: V
 
     recognition.onerror = (event) => {
       console.error('Speech recognition error:', event.error);
-      
-      if (event.error === 'not-allowed') {
+
+      const commonHelp =
+        'Verifique se você permitiu o microfone e se está usando Chrome/Edge/Safari.';
+
+      if (event.error === 'not-allowed' || event.error === 'service-not-allowed') {
         isListeningRef.current = false;
         setIsListening(false);
         toast({
-          title: 'Permissão negada',
-          description: 'Permita o acesso ao microfone nas configurações do navegador.',
+          title: 'Permissão do microfone',
+          description: 'A permissão do microfone foi negada. ' + commonHelp,
           variant: 'destructive',
         });
-      } else if (event.error === 'no-speech') {
+        return;
+      }
+
+      if (event.error === 'audio-capture') {
+        isListeningRef.current = false;
+        setIsListening(false);
+        toast({
+          title: 'Microfone indisponível',
+          description: 'Não foi possível acessar o microfone. ' + commonHelp,
+          variant: 'destructive',
+        });
+        return;
+      }
+
+      if (event.error === 'network') {
+        toast({
+          title: 'Falha de rede',
+          description: 'O reconhecimento de voz falhou por rede. Tente novamente.',
+          variant: 'destructive',
+        });
+        return;
+      }
+
+      if (event.error === 'no-speech') {
         // Normal timeout - will auto-restart via onend
         console.log('No speech detected, will auto-restart');
-      } else if (event.error === 'aborted') {
-        // User stopped manually
-        console.log('Recognition aborted');
+        return;
       }
+
+      if (event.error === 'aborted') {
+        console.log('Recognition aborted');
+        return;
+      }
+
+      // Unknown error
+      toast({
+        title: 'Erro no reconhecimento',
+        description: `Erro: ${event.error}. ${commonHelp}`,
+        variant: 'destructive',
+      });
     };
 
     recognition.onend = () => {
       console.log('Recognition ended, isListeningRef:', isListeningRef.current);
       // Auto-restart if user intent is still to listen
       if (isListeningRef.current) {
-        try {
-          console.log('Auto-restarting recognition');
-          recognition.start();
-        } catch (error) {
-          console.error('Error restarting recognition:', error);
-          isListeningRef.current = false;
-          setIsListening(false);
-        }
+        // Some browsers throw if start() is called too fast
+        setTimeout(() => {
+          try {
+            console.log('Auto-restarting recognition');
+            recognition.start();
+          } catch (error) {
+            console.error('Error restarting recognition:', error);
+            isListeningRef.current = false;
+            setIsListening(false);
+          }
+        }, 250);
       } else {
         setIsListening(false);
         setInterimText('');
@@ -190,6 +229,16 @@ export function VoiceServiceInput({ onServicesIdentified, isLoading = false }: V
       console.error('Error starting recognition:', error);
       isListeningRef.current = false;
       setIsListening(false);
+
+      const err = error as unknown as { name?: string; message?: string };
+      toast({
+        title: 'Não foi possível iniciar',
+        description:
+          err?.name === 'NotAllowedError'
+            ? 'Permissão de microfone negada. Verifique as permissões do navegador.'
+            : err?.message || 'Tente novamente.',
+        variant: 'destructive',
+      });
     }
   };
 
