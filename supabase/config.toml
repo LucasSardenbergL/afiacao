@@ -5,3 +5,6 @@ verify_jwt = false
 
 [functions.omie-cliente]
 verify_jwt = false
+
+[functions.elevenlabs-transcribe]
+verify_jwt = false
