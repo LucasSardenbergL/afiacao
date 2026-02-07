@@ -198,3 +198,54 @@ export async function syncOmieServices(): Promise<{
     };
   }
 }
+
+export interface UpdateOrderData {
+  items: Array<{
+    category: string;
+    quantity: number;
+    omie_codigo_servico?: number;
+    brandModel?: string;
+    notes?: string;
+    unitPrice?: number;
+  }>;
+  subtotal: number;
+  delivery_fee: number;
+  total: number;
+  notes?: string;
+  status?: string;
+}
+
+export interface UpdateOrderResult {
+  success: boolean;
+  nCodOS?: number;
+  cNumOS?: string;
+  error?: string;
+}
+
+export async function updateOrderInOmie(
+  orderId: string,
+  orderData: UpdateOrderData
+): Promise<UpdateOrderResult> {
+  try {
+    const { data, error } = await supabase.functions.invoke("omie-sync", {
+      body: {
+        action: "update_order",
+        orderId,
+        orderData,
+      },
+    });
+
+    if (error) {
+      console.error("[Omie Service] Erro ao atualizar pedido:", error);
+      return { success: false, error: error.message };
+    }
+
+    return data as UpdateOrderResult;
+  } catch (err) {
+    console.error("[Omie Service] Erro inesperado:", err);
+    return {
+      success: false,
+      error: err instanceof Error ? err.message : "Erro desconhecido",
+    };
+  }
+}

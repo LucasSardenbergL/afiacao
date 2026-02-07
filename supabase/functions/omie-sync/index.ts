@@ -322,6 +322,148 @@ async function criarOrdemServicoOmie(
   return { nCodOS, cNumOS };
 }
 
+// Função para alterar Ordem de Serviço no Omie
+async function alterarOrdemServicoOmie(
+  supabase: ReturnType<typeof createClient>,
+  orderId: string,
+  order: {
+    items: Array<{
+      category: string;
+      quantity: number;
+      omie_codigo_servico?: number;
+      brandModel?: string;
+      notes?: string;
+      unitPrice?: number;
+    }>;
+    subtotal: number;
+    delivery_fee: number;
+    total: number;
+    notes?: string;
+    status?: string;
+  }
+): Promise<{ success: boolean; nCodOS?: number; cNumOS?: string; error?: string }> {
+  // Buscar a OS existente no banco
+  const { data: osData, error: osError } = await supabase
+    .from("omie_ordens_servico")
+    .select("omie_codigo_os, omie_numero_os")
+    .eq("order_id", orderId)
+    .maybeSingle();
+
+  if (osError || !osData?.omie_codigo_os) {
+    console.log(`[Omie] OS não encontrada para o pedido ${orderId}`);
+    return { success: false, error: "Ordem de Serviço não encontrada no Omie" };
+  }
+
+  const nCodOS = osData.omie_codigo_os;
+  const cNumOS = osData.omie_numero_os;
+
+  console.log(`[Omie] Alterando OS ${cNumOS} (código: ${nCodOS})`);
+
+  // Montar lista de serviços prestados com preços atualizados
+  const servicosPrestados = order.items.map((item) => {
+    const baseService: Record<string, unknown> = {
+      nQtde: item.quantity,
+      nValUnit: item.unitPrice || 0,
+    };
+
+    if (item.omie_codigo_servico && item.omie_codigo_servico > 0) {
+      baseService.nCodServico = item.omie_codigo_servico;
+    } else {
+      baseService.cCodServLC116 = "14.01";
+      baseService.cCodServMun = "01015";
+      baseService.cDescServ = item.category;
+      baseService.cRetemISS = "N";
+      baseService.cTribServ = "01";
+      baseService.cTpDesconto = "V";
+      baseService.nValorDesconto = 0;
+    }
+
+    if (item.brandModel || item.notes) {
+      baseService.cDadosAdicItem = item.brandModel
+        ? `Marca/Modelo: ${item.brandModel}${item.notes ? ` | Obs: ${item.notes}` : ""}`
+        : item.notes || "";
+    }
+
+    return baseService;
+  });
+
+  // Mapear status do app para etapa do Omie
+  const etapaOmie = (() => {
+    switch (order.status) {
+      case "pedido_recebido":
+      case "aguardando_coleta":
+        return "10"; // Aberta
+      case "em_triagem":
+      case "em_afiacao":
+        return "20"; // Em andamento
+      case "pronto_entrega":
+      case "em_rota":
+        return "30"; // Aguardando faturamento
+      case "entregue":
+        return "50"; // Faturada
+      default:
+        return "10";
+    }
+  })();
+
+  const osParams: Record<string, unknown> = {
+    Cabecalho: {
+      nCodOS: nCodOS,
+      cEtapa: etapaOmie,
+    },
+    InformacoesAdicionais: {
+      cCodCateg: "1.01.03",
+      nCodCC: 3543828789,
+    },
+    ServicosPrestados: servicosPrestados,
+    Observacoes: {
+      cObsOS: order.notes || `Pedido via App - Atualizado`,
+    },
+  };
+
+  console.log("[Omie] Payload AlterarOS:", JSON.stringify(osParams, null, 2));
+
+  try {
+    const result = await callOmieApi(
+      "servicos/os/",
+      "AlterarOS",
+      osParams
+    );
+
+    // Atualizar registro no banco
+    await supabase
+      .from("omie_ordens_servico")
+      .update({
+        status: "atualizado",
+        payload_enviado: osParams,
+        resposta_omie: result,
+        updated_at: new Date().toISOString(),
+      })
+      .eq("order_id", orderId);
+
+    console.log(`[Omie] OS ${cNumOS} alterada com sucesso`);
+
+    return { success: true, nCodOS, cNumOS };
+  } catch (alterError) {
+    console.error(`[Omie] Erro ao alterar OS ${cNumOS}:`, alterError);
+    
+    // Registrar erro no banco
+    await supabase
+      .from("omie_ordens_servico")
+      .update({
+        status: "erro_atualizacao",
+        resposta_omie: { error: alterError instanceof Error ? alterError.message : "Erro desconhecido" },
+        updated_at: new Date().toISOString(),
+      })
+      .eq("order_id", orderId);
+
+    return { 
+      success: false, 
+      error: alterError instanceof Error ? alterError.message : "Erro ao alterar OS no Omie" 
+    };
+  }
+}
+
 serve(async (req) => {
   // Handle CORS preflight
   if (req.method === "OPTIONS") {
@@ -554,6 +696,43 @@ serve(async (req) => {
             clientes: [],
           };
         }
+        break;
+      }
+
+      case "update_order": {
+        // Alterar OS existente no Omie
+        const { orderId: updateOrderId, orderData: updateOrderData } = body;
+        
+        if (!updateOrderId || !updateOrderData) {
+          return new Response(
+            JSON.stringify({ error: "Dados incompletos para atualização" }),
+            { status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+          );
+        }
+
+        // Verificar se usuário é funcionário/admin
+        const { data: roleData } = await supabaseAdmin
+          .from("user_roles")
+          .select("role")
+          .eq("user_id", userId)
+          .maybeSingle();
+
+        if (!roleData || (roleData.role !== "admin" && roleData.role !== "employee")) {
+          return new Response(
+            JSON.stringify({ error: "Apenas funcionários podem alterar pedidos" }),
+            { status: 403, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+          );
+        }
+
+        console.log(`[Omie] Funcionário ${userId} alterando pedido ${updateOrderId}`);
+
+        const updateResult = await alterarOrdemServicoOmie(
+          supabaseAdmin,
+          updateOrderId,
+          updateOrderData
+        );
+
+        result = updateResult;
         break;
       }
 
