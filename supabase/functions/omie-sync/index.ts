@@ -79,14 +79,14 @@ async function syncClienteOmie(
     zip_code: string;
   }
 ): Promise<number> {
-  // VALIDAÇÃO: CPF/CNPJ é obrigatório para criar cliente no Omie
+  // VALIDAÇÃO: CPF/CNPJ é obrigatório
   if (!profile.document || profile.document.replace(/\D/g, "").length < 11) {
     throw new Error("CPF ou CNPJ é obrigatório para criar pedidos. Por favor, atualize seu perfil.");
   }
 
   const documentClean = profile.document.replace(/\D/g, "");
 
-  // Verificar se já existe mapeamento
+  // Verificar se já existe mapeamento local
   const { data: existingMapping } = await supabase
     .from("omie_clientes")
     .select("omie_codigo_cliente")
@@ -94,144 +94,46 @@ async function syncClienteOmie(
     .maybeSingle();
 
   if (existingMapping?.omie_codigo_cliente) {
-    console.log(`[Omie] Cliente já mapeado: ${existingMapping.omie_codigo_cliente}`);
+    console.log(`[Omie] Cliente já mapeado localmente: ${existingMapping.omie_codigo_cliente}`);
     return existingMapping.omie_codigo_cliente;
   }
 
-  // Primeiro, verificar se já existe cliente no Omie com esse CPF/CNPJ
+  // Buscar cliente existente no Omie pelo CPF/CNPJ
   console.log(`[Omie] Buscando cliente existente por CPF/CNPJ: ${documentClean}`);
-  try {
-    const searchResult = await callOmieApi(
-      "geral/clientes/",
-      "ListarClientes",
-      { 
-        pagina: 1, 
-        registros_por_pagina: 1,
-        clientesFiltro: {
-          cnpj_cpf: documentClean
-        }
-      }
-    ) as any;
-    
-    if (searchResult.clientes_cadastro?.[0]?.codigo_cliente_omie) {
-      const omieCodigoCliente = searchResult.clientes_cadastro[0].codigo_cliente_omie;
-      console.log(`[Omie] Cliente encontrado no Omie: ${omieCodigoCliente} - ${searchResult.clientes_cadastro[0].razao_social}`);
-      
-      // Criar mapeamento local
-      await supabase.from("omie_clientes").insert({
-        user_id: userId,
-        omie_codigo_cliente: omieCodigoCliente,
-        omie_codigo_cliente_integracao: searchResult.clientes_cadastro[0].codigo_cliente_integracao || null,
-      });
-
-      return omieCodigoCliente;
-    }
-  } catch (searchError) {
-    console.log("[Omie] Nenhum cliente encontrado com esse CPF/CNPJ, criando novo...");
-  }
-
-  // Cadastrar novo cliente no Omie
-  const cCodIntCli = `APP_${userId.substring(0, 8)}_${Date.now()}`;
   
-  const clienteParams: Record<string, unknown> = {
-    codigo_cliente_integracao: cCodIntCli,
-    razao_social: profile.name,
-    nome_fantasia: profile.name,
-    email: profile.email || "",
-    telefone1_numero: profile.phone?.replace(/\D/g, "") || "",
-    pessoa_fisica: documentClean.length <= 11 ? "S" : "N",
-    cnpj_cpf: documentClean,
-    endereco: address?.street || "",
-    endereco_numero: address?.number || "",
-    complemento: address?.complement || "",
-    bairro: address?.neighborhood || "",
-    cidade: address?.city || "",
-    estado: address?.state || "",
-    cep: address?.zip_code?.replace(/\D/g, "") || "",
-    contribuinte: "N",
-    optante_simples_nacional: "N",
-  };
-
-  try {
-    const result = await callOmieApi(
-      "geral/clientes/",
-      "IncluirCliente",
-      clienteParams
-    );
-
-    const omieCodigoCliente = result.nCodCli!;
-
-    // Salvar mapeamento
-    await supabase.from("omie_clientes").insert({
-      user_id: userId,
-      omie_codigo_cliente: omieCodigoCliente,
-      omie_codigo_cliente_integracao: cCodIntCli,
-    });
-
-    console.log(`[Omie] Cliente criado com sucesso: ${omieCodigoCliente}`);
-    return omieCodigoCliente;
-  } catch (error) {
-    // Se o cliente já existe, extrair o ID da mensagem de erro
-    if (error instanceof Error && error.message.includes("já cadastrado")) {
-      console.log("[Omie] Cliente já existe, extraindo ID da resposta...");
-      
-      // Tentar extrair o ID do cliente da mensagem de erro
-      // Formato: "Cliente já cadastrado para o CPF/CNPJ [XX] com o Id [XXXXX]"
-      const idMatch = error.message.match(/com o Id \[(\d+)\]/);
-      if (idMatch && idMatch[1]) {
-        const omieCodigoCliente = parseInt(idMatch[1], 10);
-        console.log(`[Omie] ID do cliente extraído: ${omieCodigoCliente}`);
-        
-        // Verificar se já existe mapeamento, se não, criar
-        const { data: existingMap } = await supabase
-          .from("omie_clientes")
-          .select("id")
-          .eq("user_id", userId)
-          .maybeSingle();
-          
-        if (!existingMap) {
-          await supabase.from("omie_clientes").insert({
-            user_id: userId,
-            omie_codigo_cliente: omieCodigoCliente,
-            omie_codigo_cliente_integracao: cCodIntCli,
-          });
-        }
-
-        return omieCodigoCliente;
-      }
-      
-      // Fallback: tentar buscar por CPF/CNPJ
-      console.log("[Omie] Tentando buscar cliente por CPF/CNPJ...");
-      try {
-        const searchResult = await callOmieApi(
-          "geral/clientes/",
-          "ListarClientes",
-          { 
-            pagina: 1, 
-            registros_por_pagina: 1,
-            clientesFiltro: {
-              cnpj_cpf: profile.document?.replace(/\D/g, "") || ""
-            }
-          }
-        );
-        
-        if ((searchResult as any).clientes_cadastro?.[0]?.codigo_cliente_omie) {
-          const omieCodigoCliente = (searchResult as any).clientes_cadastro[0].codigo_cliente_omie;
-          
-          await supabase.from("omie_clientes").insert({
-            user_id: userId,
-            omie_codigo_cliente: omieCodigoCliente,
-            omie_codigo_cliente_integracao: cCodIntCli,
-          });
-
-          return omieCodigoCliente;
-        }
-      } catch (searchError) {
-        console.error("[Omie] Erro ao buscar cliente:", searchError);
+  const searchResult = await callOmieApi(
+    "geral/clientes/",
+    "ListarClientes",
+    { 
+      pagina: 1, 
+      registros_por_pagina: 1,
+      clientesFiltro: {
+        cnpj_cpf: documentClean
       }
     }
-    throw error;
+  ) as any;
+  
+  if (!searchResult.clientes_cadastro?.[0]?.codigo_cliente_omie) {
+    // Cliente NÃO encontrado no Omie - não permitir criar pedido
+    throw new Error(
+      `Cliente não encontrado no Omie com o CPF/CNPJ informado (${documentClean}). ` +
+      `Por favor, verifique se você está cadastrado como cliente ou entre em contato conosco.`
+    );
   }
+
+  // Cliente encontrado - criar mapeamento local
+  const cliente = searchResult.clientes_cadastro[0];
+  const omieCodigoCliente = cliente.codigo_cliente_omie;
+  
+  console.log(`[Omie] Cliente encontrado: ${omieCodigoCliente} - ${cliente.razao_social}`);
+  
+  await supabase.from("omie_clientes").insert({
+    user_id: userId,
+    omie_codigo_cliente: omieCodigoCliente,
+    omie_codigo_cliente_integracao: cliente.codigo_cliente_integracao || null,
+  });
+
+  return omieCodigoCliente;
 }
 
 // Função para criar Ordem de Serviço no Omie
