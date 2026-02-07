@@ -24,11 +24,18 @@ const faqItems = [
 
 const Support = () => {
   const openWhatsApp = () => {
-    window.open('https://wa.me/553732221035?text=Olá! Preciso de ajuda com meu pedido.', '_blank');
+    // Opens WhatsApp app directly with pre-filled message
+    window.location.href = 'https://wa.me/5537999991035?text=Olá! Preciso de ajuda com meu pedido.';
   };
 
   const openPhone = () => {
+    // Opens phone dialer with number
     window.location.href = 'tel:+553732221035';
+  };
+
+  const openEmail = () => {
+    // Opens email client
+    window.location.href = 'mailto:colacorcomercial@gmail.com?subject=Suporte Colacor';
   };
 
   return (
@@ -60,7 +67,10 @@ const Support = () => {
             </button>
           </div>
 
-          <button className="w-full mt-3 bg-card rounded-xl p-4 flex items-center gap-3 border border-border hover:bg-muted transition-colors">
+          <button 
+            onClick={openEmail}
+            className="w-full mt-3 bg-card rounded-xl p-4 flex items-center gap-3 border border-border hover:bg-muted transition-colors"
+          >
             <Mail className="w-5 h-5 text-muted-foreground" />
             <div className="flex-1 text-left">
               <span className="font-medium block">Email</span>
