@@ -1,5 +1,6 @@
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
+import { Resend } from "npm:resend@2.0.0";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -59,7 +60,69 @@ async function callOmieApi(
   return result;
 }
 
-// Interface para retorno do cliente com vendedor
+// Função para enviar notificação de novo pedido para administração
+async function sendOrderNotificationEmail(
+  profileData: { name: string; email?: string; phone?: string; document?: string },
+  osNumber: string,
+  orderItems: Array<{ category: string; quantity: number; toolName?: string }>
+): Promise<void> {
+  const RESEND_API_KEY = Deno.env.get("RESEND_API_KEY");
+  const ADMIN_EMAIL = "colacorcomercial@gmail.com";
+
+  if (!RESEND_API_KEY) {
+    console.log("[Notificação] RESEND_API_KEY não configurada, pulando envio de email");
+    return;
+  }
+
+  try {
+    const resend = new Resend(RESEND_API_KEY);
+
+    // Formatar lista de itens
+    const itemsList = orderItems
+      .map(item => `• ${item.quantity}x ${item.toolName || item.category}`)
+      .join("<br>");
+
+    const emailHtml = `
+      <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto;">
+        <h2 style="color: #1a1a2e; border-bottom: 2px solid #e94560; padding-bottom: 10px;">
+          🔔 Novo Pedido Recebido
+        </h2>
+        
+        <div style="background-color: #f8f9fa; padding: 20px; border-radius: 8px; margin: 20px 0;">
+          <h3 style="color: #16213e; margin-top: 0;">Ordem de Serviço: ${osNumber}</h3>
+          
+          <p><strong>Cliente:</strong> ${profileData.name}</p>
+          ${profileData.email ? `<p><strong>Email:</strong> ${profileData.email}</p>` : ""}
+          ${profileData.phone ? `<p><strong>Telefone:</strong> ${profileData.phone}</p>` : ""}
+          ${profileData.document ? `<p><strong>Documento:</strong> ${profileData.document}</p>` : ""}
+        </div>
+        
+        <div style="margin: 20px 0;">
+          <h4 style="color: #16213e;">Itens do Pedido:</h4>
+          <div style="background-color: #fff; border: 1px solid #ddd; padding: 15px; border-radius: 8px;">
+            ${itemsList}
+          </div>
+        </div>
+        
+        <p style="color: #666; font-size: 12px; margin-top: 30px;">
+          Este é um email automático enviado pelo sistema ColaCor App.
+        </p>
+      </div>
+    `;
+
+    const emailResponse = await resend.emails.send({
+      from: "ColaCor App <onboarding@resend.dev>",
+      to: [ADMIN_EMAIL],
+      subject: `Novo Pedido - OS ${osNumber} - ${profileData.name}`,
+      html: emailHtml,
+    });
+
+    console.log("[Notificação] Email enviado com sucesso:", emailResponse);
+  } catch (error) {
+    // Não lançar erro para não afetar o fluxo principal do pedido
+    console.error("[Notificação] Erro ao enviar email de notificação:", error);
+  }
+}
 interface ClienteOmieResult {
   omieCodigoCliente: number;
   omieCodigoVendedor?: number;
@@ -329,6 +392,17 @@ serve(async (req) => {
           clienteResult.omieCodigoVendedor,
           orderData
         );
+
+        // 3. Enviar notificação por email para administração (não bloqueia o fluxo)
+        try {
+          await sendOrderNotificationEmail(
+            profileData,
+            osResult.cNumOS,
+            orderData.items
+          );
+        } catch (notifyError) {
+          console.error("[Omie Sync] Erro ao enviar notificação (não crítico):", notifyError);
+        }
 
         result = {
           success: true,
