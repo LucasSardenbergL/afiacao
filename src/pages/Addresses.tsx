@@ -210,10 +210,10 @@ const Addresses = () => {
               >
                 <div className="flex items-start gap-3">
                   <div className={`w-10 h-10 rounded-lg flex items-center justify-center ${
-                    address.is_from_omie ? 'bg-blue-100' : address.is_default ? 'bg-primary/10' : 'bg-muted'
+                    address.is_from_omie ? 'bg-secondary' : address.is_default ? 'bg-primary/10' : 'bg-muted'
                   }`}>
                     {address.is_from_omie ? (
-                      <Cloud className="w-5 h-5 text-blue-600" />
+                      <Cloud className="w-5 h-5 text-primary" />
                     ) : address.label.toLowerCase().includes('casa') ? (
                       <Home className={`w-5 h-5 ${address.is_default ? 'text-primary' : 'text-muted-foreground'}`} />
                     ) : (
@@ -224,7 +224,7 @@ const Addresses = () => {
                     <div className="flex items-center gap-2 flex-wrap">
                       <h3 className="font-semibold">{address.label}</h3>
                       {address.is_from_omie && (
-                        <span className="text-xs bg-blue-100 text-blue-800 px-2 py-0.5 rounded-full">
+                        <span className="text-xs bg-secondary text-secondary-foreground px-2 py-0.5 rounded-full">
                           Omie
                         </span>
                       )}
@@ -248,15 +248,19 @@ const Addresses = () => {
                 </div>
                 
                 <div className="flex gap-2 mt-3 pt-3 border-t border-border">
-                  {!address.is_default && (
+                  {!address.is_default ? (
                     <Button
                       variant="outline"
                       size="sm"
                       className="flex-1"
                       onClick={() => handleSetDefault(address.id)}
                     >
-                      Definir como padrão
+                      Usar como padrão para coleta/entrega
                     </Button>
+                  ) : (
+                    <p className="text-xs text-primary flex-1 flex items-center gap-1">
+                      ✓ Endereço padrão para coleta e entrega
+                    </p>
                   )}
                   {!address.is_from_omie && (
                     <Button
