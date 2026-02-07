@@ -211,6 +211,41 @@ export type Database = {
         }
         Relationships: []
       }
+      order_price_history: {
+        Row: {
+          created_at: string
+          id: string
+          service_type: string
+          unit_price: number
+          user_id: string
+          user_tool_id: string | null
+        }
+        Insert: {
+          created_at?: string
+          id?: string
+          service_type: string
+          unit_price: number
+          user_id: string
+          user_tool_id?: string | null
+        }
+        Update: {
+          created_at?: string
+          id?: string
+          service_type?: string
+          unit_price?: number
+          user_id?: string
+          user_tool_id?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "order_price_history_user_tool_id_fkey"
+            columns: ["user_tool_id"]
+            isOneToOne: false
+            referencedRelation: "user_tools"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       orders: {
         Row: {
           address: Json | null
@@ -340,6 +375,50 @@ export type Database = {
         }
         Relationships: []
       }
+      tool_specifications: {
+        Row: {
+          created_at: string
+          display_order: number | null
+          id: string
+          is_required: boolean | null
+          options: Json | null
+          spec_key: string
+          spec_label: string
+          spec_type: string
+          tool_category_id: string | null
+        }
+        Insert: {
+          created_at?: string
+          display_order?: number | null
+          id?: string
+          is_required?: boolean | null
+          options?: Json | null
+          spec_key: string
+          spec_label: string
+          spec_type?: string
+          tool_category_id?: string | null
+        }
+        Update: {
+          created_at?: string
+          display_order?: number | null
+          id?: string
+          is_required?: boolean | null
+          options?: Json | null
+          spec_key?: string
+          spec_label?: string
+          spec_type?: string
+          tool_category_id?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "tool_specifications_tool_category_id_fkey"
+            columns: ["tool_category_id"]
+            isOneToOne: false
+            referencedRelation: "tool_categories"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       user_roles: {
         Row: {
           created_at: string
@@ -368,11 +447,13 @@ export type Database = {
         Row: {
           created_at: string
           custom_name: string | null
+          generated_name: string | null
           id: string
           last_sharpened_at: string | null
           next_sharpening_due: string | null
           quantity: number | null
           sharpening_interval_days: number | null
+          specifications: Json | null
           tool_category_id: string
           updated_at: string
           user_id: string
@@ -380,11 +461,13 @@ export type Database = {
         Insert: {
           created_at?: string
           custom_name?: string | null
+          generated_name?: string | null
           id?: string
           last_sharpened_at?: string | null
           next_sharpening_due?: string | null
           quantity?: number | null
           sharpening_interval_days?: number | null
+          specifications?: Json | null
           tool_category_id: string
           updated_at?: string
           user_id: string
@@ -392,11 +475,13 @@ export type Database = {
         Update: {
           created_at?: string
           custom_name?: string | null
+          generated_name?: string | null
           id?: string
           last_sharpened_at?: string | null
           next_sharpening_due?: string | null
           quantity?: number | null
           sharpening_interval_days?: number | null
+          specifications?: Json | null
           tool_category_id?: string
           updated_at?: string
           user_id?: string

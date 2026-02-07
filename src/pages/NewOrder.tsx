@@ -1,8 +1,9 @@
 import { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Plus, Trash2, ChevronRight, Check, MapPin, Clock, Loader2, QrCode, Banknote } from 'lucide-react';
+import { Plus, Trash2, ChevronRight, Check, MapPin, Clock, Loader2, QrCode, Banknote, Wrench } from 'lucide-react';
 import { Header } from '@/components/Header';
 import { Button } from '@/components/ui/button';
+import { PhotoUpload } from '@/components/PhotoUpload';
 import { 
   DELIVERY_OPTIONS,
   TIME_SLOTS,
@@ -16,17 +17,29 @@ import { useAuth } from '@/contexts/AuthContext';
 import { supabase } from '@/integrations/supabase/client';
 import { VoiceServiceInput, SuggestedService } from '@/components/VoiceServiceInput';
 
-type Step = 'items' | 'delivery' | 'review';
+type Step = 'tools' | 'items' | 'delivery' | 'review';
 type PaymentMethod = 'pix' | 'on_delivery';
 
 const PIX_KEY = '55.555.305/0001-51';
 
+interface UserTool {
+  id: string;
+  tool_category_id: string;
+  generated_name: string | null;
+  custom_name: string | null;
+  tool_categories?: {
+    name: string;
+  };
+}
+
 interface ServiceItem {
   id: string;
+  userToolId?: string; // Reference to user's registered tool
   servico?: OmieServico;
   quantity: number;
   brandModel?: string;
   notes?: string;
+  photos: string[]; // Photos for this item
 }
 
 interface ProfileData {
@@ -54,7 +67,7 @@ const NewOrder = () => {
   const { user } = useAuth();
   
   const [currentStep, setCurrentStep] = useState<Step>('items');
-  const [items, setItems] = useState<ServiceItem[]>([{ id: '1', quantity: 1 }]);
+  const [items, setItems] = useState<ServiceItem[]>([{ id: '1', quantity: 1, photos: [] }]);
   const [deliveryOption, setDeliveryOption] = useState<DeliveryOption>('coleta_entrega');
   const [selectedAddress, setSelectedAddress] = useState<string>('');
   const [selectedTimeSlot, setSelectedTimeSlot] = useState<string>('');
@@ -182,7 +195,7 @@ const NewOrder = () => {
   const currentStepIndex = steps.findIndex(s => s.id === currentStep);
 
   const addItem = () => {
-    setItems([...items, { id: String(items.length + 1), quantity: 1 }]);
+    setItems([...items, { id: String(items.length + 1), quantity: 1, photos: [] }]);
   };
 
   const removeItem = (index: number) => {
@@ -221,6 +234,7 @@ const NewOrder = () => {
         },
         quantity: suggested.quantity,
         notes: suggested.notes,
+        photos: [],
       };
     });
     
@@ -279,13 +293,15 @@ const NewOrder = () => {
     try {
       const orderId = crypto.randomUUID();
       
-      // Montar itens com código do serviço Omie
+      // Montar itens com código do serviço Omie e fotos
       const orderItems = items.map(item => ({
         category: item.servico?.descricao || '',
         quantity: item.quantity || 1,
         omie_codigo_servico: item.servico?.omie_codigo_servico,
         brandModel: item.brandModel,
         notes: item.notes,
+        photos: item.photos || [],
+        userToolId: item.userToolId,
       }));
 
       const orderData = {
@@ -499,6 +515,19 @@ const NewOrder = () => {
                           rows={2}
                         />
                       </div>
+
+                      {/* Photos */}
+                      {user && (
+                        <div>
+                          <label className="text-sm font-medium mb-2 block">Fotos da ferramenta (opcional)</label>
+                          <PhotoUpload
+                            photos={item.photos || []}
+                            onPhotosChange={(photos) => updateItem(index, 'photos', photos)}
+                            userId={user.id}
+                            maxPhotos={3}
+                          />
+                        </div>
+                      )}
                     </div>
                   ))}
 
