@@ -266,6 +266,7 @@ async function criarOrdemServicoOmie(
     InformacoesAdicionais: {
       cDadosAdicNF: `Pedido App - ${descricaoItens}`,
       cCodCateg: "1.01.03", // Categoria padrão
+      nCodCC: 3543828789, // Conta Corrente: Omie.CASH
     },
     ServicosPrestados: servicosPrestados,
     Observacoes: {
