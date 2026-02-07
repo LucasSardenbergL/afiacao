@@ -64,7 +64,7 @@ const Support = () => {
             <Mail className="w-5 h-5 text-muted-foreground" />
             <div className="flex-1 text-left">
               <span className="font-medium block">Email</span>
-              <span className="text-sm text-muted-foreground">contato@afiacaoexpress.com.br</span>
+              <span className="text-sm text-muted-foreground">colacorcomercial@gmail.com</span>
             </div>
             <ExternalLink className="w-4 h-4 text-muted-foreground" />
           </button>
