@@ -12,6 +12,7 @@ import { ptBR } from 'date-fns/locale';
 interface Profile {
   name: string;
   customer_type: string | null;
+  document: string | null;
 }
 
 interface Order {
@@ -48,7 +49,7 @@ const Index = () => {
         // Load profile
         const { data: profileData } = await supabase
           .from('profiles')
-          .select('name, customer_type')
+          .select('name, customer_type, document')
           .eq('user_id', user.id)
           .single();
 
@@ -109,7 +110,11 @@ const Index = () => {
     return labels[status] || status;
   };
 
-  const firstName = profile?.name?.split(' ')[0] || 'Cliente';
+  // Para CNPJ (14 dígitos), mostrar nome completo (razão social). Para CPF, mostrar primeiro nome.
+  const isCNPJ = profile?.document && profile.document.replace(/\D/g, '').length === 14;
+  const displayName = isCNPJ 
+    ? profile?.name || 'Cliente'
+    : profile?.name?.split(' ')[0] || 'Cliente';
 
   if (loading) {
     return (
@@ -127,7 +132,7 @@ const Index = () => {
           <div className="flex items-center justify-between mb-6">
             <div>
               <p className="text-sm text-secondary-foreground/70">Olá,</p>
-              <h1 className="text-2xl font-display font-bold">{firstName}</h1>
+              <h1 className="text-2xl font-display font-bold">{displayName}</h1>
               {profile?.customer_type && (
                 <span className={`inline-flex items-center gap-1 text-xs px-2 py-0.5 rounded-full mt-1 ${
                   profile.customer_type === 'industrial' 
