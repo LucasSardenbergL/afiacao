@@ -1,6 +1,6 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { User, MapPin, Phone, Mail, ChevronRight, LogOut, Settings, HelpCircle, FileText, Star, Loader2, Wrench } from 'lucide-react';
+import { User, MapPin, Phone, Mail, ChevronRight, LogOut, Settings, HelpCircle, FileText, Star, Loader2, Wrench, Camera, Pencil } from 'lucide-react';
 import { Header } from '@/components/Header';
 import { BottomNav } from '@/components/BottomNav';
 import { Button } from '@/components/ui/button';
@@ -8,20 +8,25 @@ import { SharpeningSuggestions } from '@/components/SharpeningSuggestions';
 import { useAuth } from '@/contexts/AuthContext';
 import { supabase } from '@/integrations/supabase/client';
 import { useToast } from '@/hooks/use-toast';
+import { cn } from '@/lib/utils';
 
 interface ProfileData {
   name: string;
   email: string | null;
   phone: string | null;
   customer_type: string | null;
+  avatar_url: string | null;
 }
 
 const Profile = () => {
   const navigate = useNavigate();
   const { user, signOut } = useAuth();
   const { toast } = useToast();
+  const fileInputRef = useRef<HTMLInputElement>(null);
+  
   const [profile, setProfile] = useState<ProfileData | null>(null);
   const [loading, setLoading] = useState(true);
+  const [uploading, setUploading] = useState(false);
   const [addressCount, setAddressCount] = useState(0);
   const [orderCount, setOrderCount] = useState(0);
   const [toolCount, setToolCount] = useState(0);
@@ -39,7 +44,7 @@ const Profile = () => {
       // Load profile
       const { data: profileData } = await supabase
         .from('profiles')
-        .select('name, email, phone, customer_type')
+        .select('name, email, phone, customer_type, avatar_url')
         .eq('user_id', user.id)
         .maybeSingle();
 
@@ -52,6 +57,7 @@ const Profile = () => {
           email: user.email || null,
           phone: null,
           customer_type: null,
+          avatar_url: null,
         });
       }
 
@@ -83,6 +89,79 @@ const Profile = () => {
       console.error('Error loading profile:', error);
     } finally {
       setLoading(false);
+    }
+  };
+
+  const handleAvatarClick = () => {
+    fileInputRef.current?.click();
+  };
+
+  const handleAvatarUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file || !user) return;
+
+    // Validate file
+    if (!file.type.startsWith('image/')) {
+      toast({
+        title: 'Arquivo inválido',
+        description: 'Por favor, selecione uma imagem',
+        variant: 'destructive',
+      });
+      return;
+    }
+
+    if (file.size > 5 * 1024 * 1024) {
+      toast({
+        title: 'Arquivo muito grande',
+        description: 'A imagem deve ter no máximo 5MB',
+        variant: 'destructive',
+      });
+      return;
+    }
+
+    setUploading(true);
+
+    try {
+      // Generate unique filename
+      const fileExt = file.name.split('.').pop();
+      const fileName = `${user.id}/avatar.${fileExt}`;
+
+      // Upload to storage
+      const { error: uploadError } = await supabase.storage
+        .from('avatars')
+        .upload(fileName, file, { upsert: true });
+
+      if (uploadError) throw uploadError;
+
+      // Get public URL
+      const { data: { publicUrl } } = supabase.storage
+        .from('avatars')
+        .getPublicUrl(fileName);
+
+      // Update profile with new avatar URL
+      const { error: updateError } = await supabase
+        .from('profiles')
+        .update({ avatar_url: publicUrl })
+        .eq('user_id', user.id);
+
+      if (updateError) throw updateError;
+
+      // Update local state
+      setProfile(prev => prev ? { ...prev, avatar_url: publicUrl } : null);
+
+      toast({
+        title: 'Foto atualizada!',
+        description: 'Sua foto de perfil foi alterada com sucesso',
+      });
+    } catch (error) {
+      console.error('Error uploading avatar:', error);
+      toast({
+        title: 'Erro ao enviar foto',
+        description: 'Tente novamente mais tarde',
+        variant: 'destructive',
+      });
+    } finally {
+      setUploading(false);
     }
   };
 
@@ -131,29 +210,59 @@ const Profile = () => {
         {/* Profile card */}
         <div className="bg-card rounded-xl p-6 shadow-soft border border-border mb-6">
           <div className="flex items-center gap-4 mb-4">
-            <div className="w-16 h-16 rounded-full bg-gradient-primary flex items-center justify-center">
-              <span className="text-2xl font-bold text-primary-foreground">
-                {profile?.name?.charAt(0).toUpperCase() || 'U'}
-              </span>
+            {/* Avatar with upload */}
+            <div className="relative">
+              <input
+                ref={fileInputRef}
+                type="file"
+                accept="image/jpeg,image/png,image/webp"
+                onChange={handleAvatarUpload}
+                className="hidden"
+              />
+              <button
+                onClick={handleAvatarClick}
+                disabled={uploading}
+                className={cn(
+                  'w-16 h-16 rounded-full overflow-hidden flex items-center justify-center transition-all',
+                  uploading ? 'opacity-50' : 'hover:opacity-90',
+                  profile?.avatar_url ? '' : 'bg-gradient-primary'
+                )}
+              >
+                {uploading ? (
+                  <Loader2 className="w-6 h-6 animate-spin text-primary" />
+                ) : profile?.avatar_url ? (
+                  <img 
+                    src={profile.avatar_url} 
+                    alt="Avatar" 
+                    className="w-full h-full object-cover"
+                  />
+                ) : (
+                  <span className="text-2xl font-bold text-primary-foreground">
+                    {profile?.name?.charAt(0).toUpperCase() || 'U'}
+                  </span>
+                )}
+              </button>
+              {/* Edit badge */}
+              <div className="absolute -bottom-1 -right-1 w-6 h-6 rounded-full bg-primary flex items-center justify-center shadow-md">
+                <Camera className="w-3 h-3 text-primary-foreground" />
+              </div>
             </div>
+
             <div className="flex-1">
               <h2 className="font-display font-bold text-lg">{profile?.name || 'Usuário'}</h2>
               <div className="flex items-center gap-2">
                 <p className="text-sm text-muted-foreground">
                   Cliente desde {new Date(user?.created_at || Date.now()).toLocaleDateString('pt-BR', { month: 'short', year: 'numeric' })}
                 </p>
-                {profile?.customer_type && (
-                  <span className={`text-xs px-2 py-0.5 rounded-full ${
-                    profile.customer_type === 'industrial' 
-                      ? 'bg-amber-100 text-amber-800' 
-                      : 'bg-blue-100 text-blue-800'
-                  }`}>
-                    {profile.customer_type === 'industrial' ? 'Industrial' : 'Doméstico'}
-                  </span>
-                )}
               </div>
+              {profile?.customer_type && (
+                <span className="inline-flex items-center text-xs px-2 py-0.5 rounded-full mt-1 bg-amber-100 text-amber-800">
+                  Industrial
+                </span>
+              )}
             </div>
             <Button variant="outline" size="sm">
+              <Pencil className="w-3 h-3 mr-1" />
               Editar
             </Button>
           </div>

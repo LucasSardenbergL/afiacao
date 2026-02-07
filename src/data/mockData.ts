@@ -42,7 +42,7 @@ export const mockAddresses: Address[] = [
   },
 ];
 
-// Mock orders
+// Mock orders - updated with marcenaria tools
 export const mockOrders: Order[] = [
   {
     id: '1',
@@ -51,8 +51,8 @@ export const mockOrders: Order[] = [
     items: [
       {
         id: '1',
-        category: 'facas_cozinha',
-        brandModel: 'Tramontina Chef 8"',
+        category: 'faca_plaina_estreita',
+        brandModel: 'Makita',
         quantity: 2,
         photos: [],
         wearLevel: 'medio',
@@ -62,7 +62,7 @@ export const mockOrders: Order[] = [
       },
       {
         id: '2',
-        category: 'tesouras',
+        category: 'tesoura_profissional',
         quantity: 1,
         photos: [],
         wearLevel: 'leve',
@@ -75,9 +75,9 @@ export const mockOrders: Order[] = [
     addressId: '1',
     timeSlot: '12-16',
     subtotal: 95,
-    deliveryFee: 15,
+    deliveryFee: 0,
     discount: 0,
-    total: 110,
+    total: 95,
     paymentMethod: 'pix',
     paymentStatus: 'paid',
     quoteApproved: true,
@@ -100,8 +100,8 @@ export const mockOrders: Order[] = [
     items: [
       {
         id: '3',
-        category: 'ferramentas_jardinagem',
-        brandModel: 'Tesoura de Poda Tramontina',
+        category: 'serra_circular_widea',
+        brandModel: 'Dewalt 10"',
         quantity: 3,
         photos: [],
         wearLevel: 'pesado',
@@ -133,8 +133,8 @@ export const mockOrders: Order[] = [
     items: [
       {
         id: '4',
-        category: 'facas_cozinha',
-        brandModel: 'Kit Facas Zwilling',
+        category: 'formoes',
+        brandModel: 'Kit Formões Stanley',
         quantity: 5,
         photos: [],
         wearLevel: 'leve',
@@ -147,9 +147,9 @@ export const mockOrders: Order[] = [
     addressId: '1',
     timeSlot: '08-12',
     subtotal: 200,
-    deliveryFee: 15,
+    deliveryFee: 0,
     discount: 20,
-    total: 195,
+    total: 180,
     paymentMethod: 'card',
     paymentStatus: 'paid',
     quoteApproved: true,
@@ -170,28 +170,24 @@ export const mockOrders: Order[] = [
   },
 ];
 
-// Price table
+// Price table - Marcenaria tools
 export const priceTable: Record<string, Record<string, number>> = {
-  facas_cozinha: { padrao: 25, premium: 35, recuperacao: 50, polimento: 15 },
-  tesouras: { padrao: 20, premium: 30, recuperacao: 40, polimento: 12 },
-  alicates: { padrao: 18, premium: 28, recuperacao: 38, polimento: 10 },
-  formoes: { padrao: 22, premium: 32, recuperacao: 45, polimento: 12 },
-  plainas: { padrao: 30, premium: 45, recuperacao: 60, polimento: 18 },
-  brocas: { padrao: 15, premium: 22, recuperacao: 30, polimento: 8 },
-  serras: { padrao: 35, premium: 50, recuperacao: 70, polimento: 20 },
-  laminas_serra: { padrao: 40, premium: 55, recuperacao: 75, polimento: 22 },
-  laminas_industriais: { padrao: 60, premium: 85, recuperacao: 120, polimento: 35 },
-  ferramentas_marcenaria: { padrao: 28, premium: 40, recuperacao: 55, polimento: 15 },
-  ferramentas_jardinagem: { padrao: 25, premium: 38, recuperacao: 50, polimento: 14 },
-  outro: { padrao: 30, premium: 45, recuperacao: 60, polimento: 18 },
+  tesoura_profissional: { padrao: 30, premium: 45, recuperacao: 60, polimento: 18 },
+  formoes: { padrao: 25, premium: 38, recuperacao: 50, polimento: 15 },
+  faca_plaina_estreita: { padrao: 35, premium: 50, recuperacao: 70, polimento: 20 },
+  cabecote: { padrao: 80, premium: 120, recuperacao: 160, polimento: 40 },
+  faca_desengrosso: { padrao: 45, premium: 65, recuperacao: 90, polimento: 25 },
+  faca_plaina_manual: { padrao: 30, premium: 45, recuperacao: 60, polimento: 18 },
+  fresa: { padrao: 40, premium: 60, recuperacao: 85, polimento: 22 },
+  serra_circular_widea: { padrao: 50, premium: 75, recuperacao: 100, polimento: 30 },
 };
 
 // Delivery fees by region
 export const deliveryFees: Record<string, number> = {
-  'zona_sul': 15,
-  'zona_norte': 18,
-  'zona_leste': 20,
-  'zona_oeste': 16,
-  'centro': 12,
-  'grande_sp': 35,
+  'zona_sul': 0,
+  'zona_norte': 0,
+  'zona_leste': 0,
+  'zona_oeste': 0,
+  'centro': 0,
+  'grande_sp': 0,
 };
