@@ -4,16 +4,12 @@ import { Header } from '@/components/Header';
 import { BottomNav } from '@/components/BottomNav';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent } from '@/components/ui/card';
-import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from '@/components/ui/dialog';
-import { Label } from '@/components/ui/label';
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
-import { Input } from '@/components/ui/input';
+import { AddToolDialog } from '@/components/AddToolDialog';
 import { supabase } from '@/integrations/supabase/client';
 import { useAuth } from '@/contexts/AuthContext';
 import { useToast } from '@/hooks/use-toast';
-import { Loader2, Plus, Wrench, Calendar, Trash2, AlertCircle, CheckCircle2, Clock } from 'lucide-react';
-import { format, differenceInDays } from 'date-fns';
-import { ptBR } from 'date-fns/locale';
+import { Loader2, Plus, Wrench, Calendar, Trash2 } from 'lucide-react';
+import { differenceInDays } from 'date-fns';
 import { cn } from '@/lib/utils';
 
 interface ToolCategory {
@@ -28,7 +24,9 @@ interface UserTool {
   id: string;
   tool_category_id: string;
   custom_name: string | null;
+  generated_name: string | null;
   quantity: number | null;
+  specifications: Record<string, string> | null;
   sharpening_interval_days: number | null;
   last_sharpened_at: string | null;
   next_sharpening_due: string | null;
@@ -43,13 +41,7 @@ const Tools = () => {
   const [tools, setTools] = useState<UserTool[]>([]);
   const [categories, setCategories] = useState<ToolCategory[]>([]);
   const [loading, setLoading] = useState(true);
-  const [isAddingTool, setIsAddingTool] = useState(false);
   const [dialogOpen, setDialogOpen] = useState(false);
-  
-  // Form state
-  const [selectedCategory, setSelectedCategory] = useState('');
-  const [customName, setCustomName] = useState('');
-  const [quantity, setQuantity] = useState(1);
 
   useEffect(() => {
     if (user) {
@@ -88,49 +80,6 @@ const Tools = () => {
       console.error('Error loading tools:', error);
     } finally {
       setLoading(false);
-    }
-  };
-
-  const handleAddTool = async () => {
-    if (!user || !selectedCategory) return;
-    
-    setIsAddingTool(true);
-    try {
-      const category = categories.find(c => c.id === selectedCategory);
-      
-      // Don't set next_sharpening_due - it will be calculated automatically
-      // based on order history when the user makes their first order
-      const { error } = await supabase.from('user_tools').insert({
-        user_id: user.id,
-        tool_category_id: selectedCategory,
-        custom_name: customName || null,
-        quantity,
-      });
-
-      if (error) throw error;
-
-      toast({
-        title: 'Ferramenta adicionada!',
-        description: `${category?.name} foi adicionada ao seu inventário. O intervalo de afiação será calculado com base nos seus pedidos.`,
-      });
-
-      // Reset form
-      setSelectedCategory('');
-      setCustomName('');
-      setQuantity(1);
-      setDialogOpen(false);
-      
-      // Reload data
-      loadData();
-    } catch (error) {
-      console.error('Error adding tool:', error);
-      toast({
-        title: 'Erro ao adicionar',
-        description: 'Não foi possível adicionar a ferramenta',
-        variant: 'destructive',
-      });
-    } finally {
-      setIsAddingTool(false);
     }
   };
 
@@ -173,6 +122,10 @@ const Tools = () => {
     }
   };
 
+  const getToolDisplayName = (tool: UserTool): string => {
+    return tool.generated_name || tool.custom_name || tool.tool_categories?.name || 'Ferramenta';
+  };
+
   if (loading) {
     return (
       <div className="min-h-screen bg-background pb-24">
@@ -191,73 +144,22 @@ const Tools = () => {
         title="Minhas Ferramentas" 
         showBack 
         rightElement={
-          <Dialog open={dialogOpen} onOpenChange={setDialogOpen}>
-            <DialogTrigger asChild>
-              <Button size="icon" variant="ghost" className="rounded-full">
-                <Plus className="w-5 h-5" />
-              </Button>
-            </DialogTrigger>
-            <DialogContent className="max-w-sm mx-4">
-              <DialogHeader>
-                <DialogTitle className="font-display">Adicionar Ferramenta</DialogTitle>
-              </DialogHeader>
-              
-              <div className="space-y-4 pt-4">
-                <div className="space-y-2">
-                  <Label>Tipo de ferramenta</Label>
-                  <Select value={selectedCategory} onValueChange={setSelectedCategory}>
-                    <SelectTrigger>
-                      <SelectValue placeholder="Selecione..." />
-                    </SelectTrigger>
-                    <SelectContent className="bg-popover">
-                      {categories.map((cat) => (
-                        <SelectItem key={cat.id} value={cat.id}>
-                          {cat.name}
-                        </SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
-                </div>
-
-                <div className="space-y-2">
-                  <Label>Nome personalizado (opcional)</Label>
-                  <Input 
-                    placeholder="Ex: Faca do chef principal"
-                    value={customName}
-                    onChange={(e) => setCustomName(e.target.value)}
-                  />
-                </div>
-
-                <div className="space-y-2">
-                  <Label>Quantidade</Label>
-                  <Input 
-                    type="number"
-                    min={1}
-                    value={quantity}
-                    onChange={(e) => setQuantity(Number(e.target.value))}
-                  />
-                </div>
-
-                <p className="text-xs text-muted-foreground bg-muted/50 rounded-lg p-3">
-                  💡 O intervalo de afiação será calculado automaticamente com base na frequência dos seus pedidos.
-                </p>
-
-                <Button 
-                  className="w-full" 
-                  onClick={handleAddTool}
-                  disabled={!selectedCategory || isAddingTool}
-                >
-                  {isAddingTool ? (
-                    <Loader2 className="w-4 h-4 mr-2 animate-spin" />
-                  ) : (
-                    <Plus className="w-4 h-4 mr-2" />
-                  )}
-                  Adicionar
-                </Button>
-              </div>
-            </DialogContent>
-          </Dialog>
+          <Button 
+            size="icon" 
+            variant="ghost" 
+            className="rounded-full"
+            onClick={() => setDialogOpen(true)}
+          >
+            <Plus className="w-5 h-5" />
+          </Button>
         }
+      />
+
+      <AddToolDialog
+        open={dialogOpen}
+        onOpenChange={setDialogOpen}
+        onToolAdded={loadData}
+        categories={categories}
       />
 
       <main className="pt-16 px-4 max-w-lg mx-auto">
@@ -292,6 +194,7 @@ const Tools = () => {
               const daysUntilDue = tool.next_sharpening_due 
                 ? differenceInDays(new Date(tool.next_sharpening_due), new Date())
                 : null;
+              const displayName = getToolDisplayName(tool);
 
               return (
                 <Card key={tool.id} className="overflow-hidden">
@@ -306,12 +209,12 @@ const Tools = () => {
                       
                       <div className="flex-1 min-w-0">
                         <div className="flex items-start justify-between gap-2">
-                          <div>
-                            <h3 className="font-semibold text-foreground truncate">
-                              {tool.custom_name || tool.tool_categories?.name}
+                          <div className="min-w-0 flex-1">
+                            <h3 className="font-semibold text-foreground text-sm leading-tight">
+                              {displayName}
                             </h3>
-                            {tool.custom_name && (
-                              <p className="text-xs text-muted-foreground">
+                            {tool.generated_name && (
+                              <p className="text-xs text-muted-foreground mt-0.5">
                                 {tool.tool_categories?.name}
                               </p>
                             )}

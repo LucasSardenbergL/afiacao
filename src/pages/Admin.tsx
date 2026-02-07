@@ -181,6 +181,21 @@ const Admin = () => {
       />
 
       <main className="pt-16 px-4 max-w-lg mx-auto">
+        {/* Quick actions */}
+        <div className="mb-6">
+          <Button 
+            variant="outline" 
+            className="w-full justify-between"
+            onClick={() => navigate('/admin/customers')}
+          >
+            <div className="flex items-center gap-2">
+              <Users className="w-4 h-4" />
+              <span>Gerenciar Clientes e Ferramentas</span>
+            </div>
+            <ChevronRight className="w-4 h-4" />
+          </Button>
+        </div>
+
         {/* Stats */}
         <div className="grid grid-cols-3 gap-3 mb-6">
           <Card className="text-center">
