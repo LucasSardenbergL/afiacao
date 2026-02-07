@@ -12,7 +12,7 @@ import { supabase } from '@/integrations/supabase/client';
 import { useAuth } from '@/contexts/AuthContext';
 import { useToast } from '@/hooks/use-toast';
 import { Loader2, Plus, Wrench, Calendar, Trash2, AlertCircle, CheckCircle2, Clock } from 'lucide-react';
-import { format, differenceInDays, addDays } from 'date-fns';
+import { format, differenceInDays } from 'date-fns';
 import { ptBR } from 'date-fns/locale';
 import { cn } from '@/lib/utils';
 
@@ -50,7 +50,6 @@ const Tools = () => {
   const [selectedCategory, setSelectedCategory] = useState('');
   const [customName, setCustomName] = useState('');
   const [quantity, setQuantity] = useState(1);
-  const [intervalDays, setIntervalDays] = useState(90);
 
   useEffect(() => {
     if (user) {
@@ -98,29 +97,27 @@ const Tools = () => {
     setIsAddingTool(true);
     try {
       const category = categories.find(c => c.id === selectedCategory);
-      const nextDue = addDays(new Date(), intervalDays);
       
+      // Don't set next_sharpening_due - it will be calculated automatically
+      // based on order history when the user makes their first order
       const { error } = await supabase.from('user_tools').insert({
         user_id: user.id,
         tool_category_id: selectedCategory,
         custom_name: customName || null,
         quantity,
-        sharpening_interval_days: intervalDays,
-        next_sharpening_due: nextDue.toISOString(),
       });
 
       if (error) throw error;
 
       toast({
         title: 'Ferramenta adicionada!',
-        description: `${category?.name} foi adicionada ao seu inventário`,
+        description: `${category?.name} foi adicionada ao seu inventário. O intervalo de afiação será calculado com base nos seus pedidos.`,
       });
 
       // Reset form
       setSelectedCategory('');
       setCustomName('');
       setQuantity(1);
-      setIntervalDays(90);
       setDialogOpen(false);
       
       // Reload data
@@ -231,26 +228,19 @@ const Tools = () => {
                   />
                 </div>
 
-                <div className="grid grid-cols-2 gap-4">
-                  <div className="space-y-2">
-                    <Label>Quantidade</Label>
-                    <Input 
-                      type="number"
-                      min={1}
-                      value={quantity}
-                      onChange={(e) => setQuantity(Number(e.target.value))}
-                    />
-                  </div>
-                  <div className="space-y-2">
-                    <Label>Intervalo (dias)</Label>
-                    <Input 
-                      type="number"
-                      min={7}
-                      value={intervalDays}
-                      onChange={(e) => setIntervalDays(Number(e.target.value))}
-                    />
-                  </div>
+                <div className="space-y-2">
+                  <Label>Quantidade</Label>
+                  <Input 
+                    type="number"
+                    min={1}
+                    value={quantity}
+                    onChange={(e) => setQuantity(Number(e.target.value))}
+                  />
                 </div>
+
+                <p className="text-xs text-muted-foreground bg-muted/50 rounded-lg p-3">
+                  💡 O intervalo de afiação será calculado automaticamente com base na frequência dos seus pedidos.
+                </p>
 
                 <Button 
                   className="w-full" 
