@@ -1,18 +1,17 @@
 import { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Plus, Trash2, Camera, ChevronRight, Check, MapPin, Clock, CreditCard, Loader2 } from 'lucide-react';
+import { Plus, Trash2, Camera, ChevronRight, Check, MapPin, Clock, Loader2, QrCode, Banknote } from 'lucide-react';
 import { Header } from '@/components/Header';
 import { Button } from '@/components/ui/button';
 import { 
   TOOL_CATEGORIES, 
-  SERVICE_TYPES, 
-  WEAR_LEVELS, 
   DELIVERY_OPTIONS,
   TIME_SLOTS,
+  USAGE_TYPES,
+  DELIVERY_FEES,
   ToolCategory, 
-  ServiceType, 
-  WearLevel,
   DeliveryOption,
+  UsageType,
   ToolItem 
 } from '@/types';
 import { mockAddresses, priceTable, mockUser } from '@/data/mockData';
@@ -20,29 +19,36 @@ import { cn } from '@/lib/utils';
 import { syncOrderToOmie } from '@/services/omieService';
 import { useToast } from '@/hooks/use-toast';
 
-type Step = 'items' | 'service' | 'delivery' | 'review';
+type Step = 'items' | 'delivery' | 'review';
+type PaymentMethod = 'pix' | 'on_delivery';
+
+const PIX_KEY = '55.555.305/0001-51';
 
 const NewOrder = () => {
   const navigate = useNavigate();
   const { toast } = useToast();
   const [currentStep, setCurrentStep] = useState<Step>('items');
-  const [items, setItems] = useState<Partial<ToolItem>[]>([{ id: '1', quantity: 1 }]);
+  const [items, setItems] = useState<Partial<ToolItem>[]>([{ id: '1', quantity: 1, usageType: 'domestico' }]);
   const [deliveryOption, setDeliveryOption] = useState<DeliveryOption>('coleta_entrega');
   const [selectedAddress, setSelectedAddress] = useState(mockAddresses[0]?.id);
   const [selectedTimeSlot, setSelectedTimeSlot] = useState<string>('');
+  const [paymentMethod, setPaymentMethod] = useState<PaymentMethod>('pix');
   const [isSubmitting, setIsSubmitting] = useState(false);
 
   const steps: { id: Step; label: string; number: number }[] = [
     { id: 'items', label: 'Itens', number: 1 },
-    { id: 'service', label: 'Serviço', number: 2 },
-    { id: 'delivery', label: 'Entrega', number: 3 },
-    { id: 'review', label: 'Revisão', number: 4 },
+    { id: 'delivery', label: 'Entrega', number: 2 },
+    { id: 'review', label: 'Revisão', number: 3 },
   ];
 
   const currentStepIndex = steps.findIndex(s => s.id === currentStep);
 
+  // Check if any item is industrial (for delivery fee calculation)
+  const hasIndustrialItem = items.some(item => item.usageType === 'industrial');
+  const usageTypeForFees: UsageType = hasIndustrialItem ? 'industrial' : 'domestico';
+
   const addItem = () => {
-    setItems([...items, { id: String(items.length + 1), quantity: 1 }]);
+    setItems([...items, { id: String(items.length + 1), quantity: 1, usageType: 'domestico' }]);
   };
 
   const removeItem = (index: number) => {
@@ -59,24 +65,23 @@ const NewOrder = () => {
 
   const calculateSubtotal = () => {
     return items.reduce((acc, item) => {
-      if (item.category && item.serviceType) {
-        const price = priceTable[item.category]?.[item.serviceType] || 0;
+      if (item.category) {
+        // Use 'padrao' as default service type for pricing
+        const price = priceTable[item.category]?.['padrao'] || 0;
         return acc + price * (item.quantity || 1);
       }
       return acc;
     }, 0);
   };
 
-  const deliveryFee = deliveryOption === 'balcao' ? 0 : 15;
+  const deliveryFee = DELIVERY_FEES[usageTypeForFees][deliveryOption];
   const subtotal = calculateSubtotal();
   const total = subtotal + deliveryFee;
 
   const canProceed = () => {
     switch (currentStep) {
       case 'items':
-        return items.every(item => item.category && item.quantity);
-      case 'service':
-        return items.every(item => item.serviceType && item.wearLevel);
+        return items.every(item => item.category && item.quantity && item.usageType);
       case 'delivery':
         if (deliveryOption === 'balcao') return true;
         return selectedAddress && selectedTimeSlot;
@@ -114,7 +119,7 @@ const NewOrder = () => {
           category: item.category || '',
           quantity: item.quantity || 1,
         })),
-        service_type: items[0]?.serviceType || 'standard',
+        service_type: 'padrao', // Default service type
         subtotal,
         delivery_fee: deliveryFee,
         total,
@@ -197,7 +202,7 @@ const NewOrder = () => {
               {index < steps.length - 1 && (
                 <div
                   className={cn(
-                    'w-12 h-0.5 mx-1 mt-[-12px]',
+                    'w-16 h-0.5 mx-2 mt-[-12px]',
                     index < currentStepIndex ? 'bg-primary' : 'bg-border'
                   )}
                 />
@@ -248,6 +253,28 @@ const NewOrder = () => {
                       </select>
                     </div>
 
+                    {/* Usage type (Industrial/Domestic) */}
+                    <div className="mb-3">
+                      <label className="text-sm font-medium mb-2 block">Tipo de uso</label>
+                      <div className="grid grid-cols-2 gap-2">
+                        {Object.entries(USAGE_TYPES).map(([key, { label, description }]) => (
+                          <button
+                            key={key}
+                            onClick={() => updateItem(index, 'usageType', key as UsageType)}
+                            className={cn(
+                              'p-3 rounded-lg border-2 text-left transition-all',
+                              item.usageType === key
+                                ? 'border-primary bg-primary/5'
+                                : 'border-border hover:border-primary/50'
+                            )}
+                          >
+                            <span className="text-sm font-medium block">{label}</span>
+                            <span className="text-[10px] text-muted-foreground">{description}</span>
+                          </button>
+                        ))}
+                      </div>
+                    </div>
+
                     {/* Brand/Model */}
                     <div className="mb-3">
                       <label className="text-sm font-medium mb-2 block">Marca/Modelo (opcional)</label>
@@ -280,6 +307,18 @@ const NewOrder = () => {
                       </div>
                     </div>
 
+                    {/* Notes (moved from service step) */}
+                    <div className="mb-3">
+                      <label className="text-sm font-medium mb-2 block">Observações (opcional)</label>
+                      <textarea
+                        value={item.notes || ''}
+                        onChange={(e) => updateItem(index, 'notes', e.target.value)}
+                        placeholder="Descreva danos, lascados, ou instruções especiais..."
+                        className="w-full px-3 py-2 rounded-lg border border-input bg-background text-sm focus:outline-none focus:ring-2 focus:ring-ring resize-none"
+                        rows={2}
+                      />
+                    </div>
+
                     {/* Photos placeholder */}
                     <button className="w-full h-20 rounded-lg border-2 border-dashed border-border flex items-center justify-center gap-2 text-muted-foreground hover:border-primary hover:text-primary transition-colors">
                       <Camera className="w-5 h-5" />
@@ -299,83 +338,7 @@ const NewOrder = () => {
             </div>
           )}
 
-          {/* Step 2: Service type */}
-          {currentStep === 'service' && (
-            <div>
-              <h2 className="font-display font-bold text-xl mb-1">Tipo de Serviço</h2>
-              <p className="text-sm text-muted-foreground mb-6">
-                Escolha o serviço e nível de desgaste para cada item
-              </p>
-
-              <div className="space-y-6">
-                {items.map((item, index) => (
-                  <div key={index} className="bg-card rounded-xl p-4 shadow-soft border border-border">
-                    <h3 className="font-semibold mb-4">
-                      {item.category ? TOOL_CATEGORIES[item.category as ToolCategory] : `Item ${index + 1}`}
-                      {item.brandModel && <span className="text-sm font-normal text-muted-foreground ml-2">{item.brandModel}</span>}
-                    </h3>
-
-                    {/* Service type */}
-                    <div className="mb-4">
-                      <label className="text-sm font-medium mb-2 block">Serviço desejado</label>
-                      <div className="grid grid-cols-2 gap-2">
-                        {Object.entries(SERVICE_TYPES).map(([key, { label, description }]) => (
-                          <button
-                            key={key}
-                            onClick={() => updateItem(index, 'serviceType', key as ServiceType)}
-                            className={cn(
-                              'p-3 rounded-lg border-2 text-left transition-all',
-                              item.serviceType === key
-                                ? 'border-primary bg-primary/5'
-                                : 'border-border hover:border-primary/50'
-                            )}
-                          >
-                            <span className="text-sm font-medium block">{label}</span>
-                            <span className="text-[10px] text-muted-foreground">{description}</span>
-                          </button>
-                        ))}
-                      </div>
-                    </div>
-
-                    {/* Wear level */}
-                    <div className="mb-4">
-                      <label className="text-sm font-medium mb-2 block">Nível de desgaste</label>
-                      <div className="flex gap-2">
-                        {Object.entries(WEAR_LEVELS).map(([key, { label, color }]) => (
-                          <button
-                            key={key}
-                            onClick={() => updateItem(index, 'wearLevel', key as WearLevel)}
-                            className={cn(
-                              'flex-1 py-2 px-3 rounded-lg border-2 text-sm font-medium transition-all',
-                              item.wearLevel === key
-                                ? 'border-primary bg-primary/5'
-                                : 'border-border hover:border-primary/50'
-                            )}
-                          >
-                            {label}
-                          </button>
-                        ))}
-                      </div>
-                    </div>
-
-                    {/* Notes */}
-                    <div>
-                      <label className="text-sm font-medium mb-2 block">Observações (opcional)</label>
-                      <textarea
-                        value={item.notes || ''}
-                        onChange={(e) => updateItem(index, 'notes', e.target.value)}
-                        placeholder="Descreva danos, lascados, ou instruções especiais..."
-                        className="w-full px-3 py-2 rounded-lg border border-input bg-background text-sm focus:outline-none focus:ring-2 focus:ring-ring resize-none"
-                        rows={2}
-                      />
-                    </div>
-                  </div>
-                ))}
-              </div>
-            </div>
-          )}
-
-          {/* Step 3: Delivery */}
+          {/* Step 2: Delivery */}
           {currentStep === 'delivery' && (
             <div>
               <h2 className="font-display font-bold text-xl mb-1">Entrega</h2>
@@ -383,38 +346,52 @@ const NewOrder = () => {
                 Como deseja receber suas ferramentas?
               </p>
 
+              {/* Info about industrial pricing */}
+              {hasIndustrialItem && (
+                <div className="bg-primary/10 border border-primary/20 rounded-lg p-3 mb-4">
+                  <p className="text-sm text-primary font-medium">
+                    ✓ Frete grátis para ferramentas de uso industrial
+                  </p>
+                </div>
+              )}
+
               {/* Delivery options */}
               <div className="space-y-3 mb-6">
-                {Object.entries(DELIVERY_OPTIONS).map(([key, { label, description }]) => (
-                  <button
-                    key={key}
-                    onClick={() => setDeliveryOption(key as DeliveryOption)}
-                    className={cn(
-                      'w-full p-4 rounded-xl border-2 text-left transition-all flex items-start gap-3',
-                      deliveryOption === key
-                        ? 'border-primary bg-primary/5'
-                        : 'border-border hover:border-primary/50'
-                    )}
-                  >
-                    <div
+                {Object.entries(DELIVERY_OPTIONS).map(([key, { label, description }]) => {
+                  const fee = DELIVERY_FEES[usageTypeForFees][key as DeliveryOption];
+                  return (
+                    <button
+                      key={key}
+                      onClick={() => setDeliveryOption(key as DeliveryOption)}
                       className={cn(
-                        'w-5 h-5 rounded-full border-2 flex items-center justify-center mt-0.5',
-                        deliveryOption === key ? 'border-primary' : 'border-muted-foreground'
+                        'w-full p-4 rounded-xl border-2 text-left transition-all flex items-start gap-3',
+                        deliveryOption === key
+                          ? 'border-primary bg-primary/5'
+                          : 'border-border hover:border-primary/50'
                       )}
                     >
-                      {deliveryOption === key && (
-                        <div className="w-2.5 h-2.5 rounded-full bg-primary" />
-                      )}
-                    </div>
-                    <div className="flex-1">
-                      <span className="font-medium block">{label}</span>
-                      <span className="text-sm text-muted-foreground">{description}</span>
-                    </div>
-                    {key !== 'balcao' && (
-                      <span className="text-sm font-semibold text-primary">R$ 15</span>
-                    )}
-                  </button>
-                ))}
+                      <div
+                        className={cn(
+                          'w-5 h-5 rounded-full border-2 flex items-center justify-center mt-0.5',
+                          deliveryOption === key ? 'border-primary' : 'border-muted-foreground'
+                        )}
+                      >
+                        {deliveryOption === key && (
+                          <div className="w-2.5 h-2.5 rounded-full bg-primary" />
+                        )}
+                      </div>
+                      <div className="flex-1">
+                        <span className="font-medium block">{label}</span>
+                        <span className="text-sm text-muted-foreground">{description}</span>
+                      </div>
+                      {fee > 0 ? (
+                        <span className="text-sm font-semibold text-primary">R$ {fee}</span>
+                      ) : key !== 'balcao' ? (
+                        <span className="text-sm font-semibold text-primary">Grátis</span>
+                      ) : null}
+                    </button>
+                  );
+                })}
               </div>
 
               {/* Address selection */}
@@ -474,7 +451,7 @@ const NewOrder = () => {
             </div>
           )}
 
-          {/* Step 4: Review */}
+          {/* Step 3: Review */}
           {currentStep === 'review' && (
             <div>
               <h2 className="font-display font-bold text-xl mb-1">Revisar Pedido</h2>
@@ -487,8 +464,8 @@ const NewOrder = () => {
                 <h3 className="font-semibold mb-3">Itens</h3>
                 <div className="space-y-3">
                   {items.map((item, index) => {
-                    const price = item.category && item.serviceType
-                      ? priceTable[item.category]?.[item.serviceType] || 0
+                    const price = item.category
+                      ? priceTable[item.category]?.['padrao'] || 0
                       : 0;
                     return (
                       <div key={index} className="flex justify-between items-start">
@@ -497,8 +474,13 @@ const NewOrder = () => {
                             {item.quantity}x {item.category ? TOOL_CATEGORIES[item.category as ToolCategory] : 'Item'}
                           </p>
                           <p className="text-sm text-muted-foreground">
-                            {item.serviceType && SERVICE_TYPES[item.serviceType as ServiceType].label}
+                            {item.usageType && USAGE_TYPES[item.usageType as UsageType].label}
                           </p>
+                          {item.notes && (
+                            <p className="text-xs text-muted-foreground mt-1 italic">
+                              Obs: {item.notes}
+                            </p>
+                          )}
                         </div>
                         <span className="font-semibold">
                           R$ {(price * (item.quantity || 1)).toFixed(2).replace('.', ',')}
@@ -521,6 +503,64 @@ const NewOrder = () => {
                 )}
               </div>
 
+              {/* Payment method selection */}
+              <div className="bg-card rounded-xl p-4 shadow-soft border border-border mb-4">
+                <h3 className="font-semibold mb-3">Forma de Pagamento</h3>
+                <div className="space-y-3">
+                  <button
+                    onClick={() => setPaymentMethod('pix')}
+                    className={cn(
+                      'w-full p-3 rounded-lg border-2 text-left transition-all flex items-center gap-3',
+                      paymentMethod === 'pix'
+                        ? 'border-primary bg-primary/5'
+                        : 'border-border hover:border-primary/50'
+                    )}
+                  >
+                    <div
+                      className={cn(
+                        'w-5 h-5 rounded-full border-2 flex items-center justify-center',
+                        paymentMethod === 'pix' ? 'border-primary' : 'border-muted-foreground'
+                      )}
+                    >
+                      {paymentMethod === 'pix' && (
+                        <div className="w-2.5 h-2.5 rounded-full bg-primary" />
+                      )}
+                    </div>
+                    <QrCode className="w-5 h-5 text-muted-foreground" />
+                    <div className="flex-1">
+                      <span className="font-medium block">PIX</span>
+                      <span className="text-xs text-muted-foreground">Chave: {PIX_KEY}</span>
+                    </div>
+                  </button>
+
+                  <button
+                    onClick={() => setPaymentMethod('on_delivery')}
+                    className={cn(
+                      'w-full p-3 rounded-lg border-2 text-left transition-all flex items-center gap-3',
+                      paymentMethod === 'on_delivery'
+                        ? 'border-primary bg-primary/5'
+                        : 'border-border hover:border-primary/50'
+                    )}
+                  >
+                    <div
+                      className={cn(
+                        'w-5 h-5 rounded-full border-2 flex items-center justify-center',
+                        paymentMethod === 'on_delivery' ? 'border-primary' : 'border-muted-foreground'
+                      )}
+                    >
+                      {paymentMethod === 'on_delivery' && (
+                        <div className="w-2.5 h-2.5 rounded-full bg-primary" />
+                      )}
+                    </div>
+                    <Banknote className="w-5 h-5 text-muted-foreground" />
+                    <div className="flex-1">
+                      <span className="font-medium block">Pagamento na Entrega</span>
+                      <span className="text-xs text-muted-foreground">Dinheiro ou PIX no local</span>
+                    </div>
+                  </button>
+                </div>
+              </div>
+
               {/* Totals */}
               <div className="bg-card rounded-xl p-4 shadow-soft border border-border mb-6">
                 <div className="space-y-2 text-sm">
@@ -530,7 +570,7 @@ const NewOrder = () => {
                   </div>
                   <div className="flex justify-between">
                     <span className="text-muted-foreground">Taxa de entrega</span>
-                    <span>R$ {deliveryFee.toFixed(2).replace('.', ',')}</span>
+                    <span>{deliveryFee > 0 ? `R$ ${deliveryFee.toFixed(2).replace('.', ',')}` : 'Grátis'}</span>
                   </div>
                   <div className="border-t border-border pt-2 flex justify-between font-bold text-base">
                     <span>Total estimado</span>
@@ -541,18 +581,6 @@ const NewOrder = () => {
                   * Valor final após análise das ferramentas
                 </p>
               </div>
-
-              {/* Payment method preview */}
-              <button className="w-full bg-card rounded-xl p-4 shadow-soft border border-border flex items-center justify-between">
-                <div className="flex items-center gap-3">
-                  <CreditCard className="w-5 h-5 text-muted-foreground" />
-                  <div className="text-left">
-                    <p className="font-medium">Forma de pagamento</p>
-                    <p className="text-sm text-muted-foreground">Pix, Cartão ou na entrega</p>
-                  </div>
-                </div>
-                <ChevronRight className="w-5 h-5 text-muted-foreground" />
-              </button>
             </div>
           )}
         </div>

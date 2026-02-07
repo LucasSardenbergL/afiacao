@@ -73,6 +73,14 @@ export const WEAR_LEVELS: Record<WearLevel, { label: string; color: string }> = 
   pesado: { label: 'Pesado', color: 'status-danger' },
 };
 
+// Usage type (industrial vs domestic)
+export type UsageType = 'industrial' | 'domestico';
+
+export const USAGE_TYPES: Record<UsageType, { label: string; description: string }> = {
+  domestico: { label: 'Uso Doméstico', description: 'Ferramentas de uso doméstico/residencial' },
+  industrial: { label: 'Uso Industrial', description: 'Ferramentas de uso profissional/industrial' },
+};
+
 // Delivery options
 export type DeliveryOption = 'coleta_entrega' | 'somente_coleta' | 'somente_entrega' | 'balcao';
 
@@ -81,6 +89,22 @@ export const DELIVERY_OPTIONS: Record<DeliveryOption, { label: string; descripti
   somente_coleta: { label: 'Somente Coleta', description: 'Buscamos em casa, você retira no balcão' },
   somente_entrega: { label: 'Somente Entrega', description: 'Você traz ao balcão, entregamos em casa' },
   balcao: { label: 'Levar e Retirar no Balcão', description: 'Você traz e retira na nossa loja' },
+};
+
+// Delivery fees by usage type
+export const DELIVERY_FEES: Record<UsageType, Record<DeliveryOption, number>> = {
+  domestico: {
+    coleta_entrega: 15,
+    somente_coleta: 10,
+    somente_entrega: 10,
+    balcao: 0,
+  },
+  industrial: {
+    coleta_entrega: 0,
+    somente_coleta: 0,
+    somente_entrega: 0,
+    balcao: 0,
+  },
 };
 
 // Time slots
@@ -125,10 +149,11 @@ export interface ToolItem {
   brandModel?: string;
   quantity: number;
   photos: string[];
-  wearLevel: WearLevel;
+  wearLevel?: WearLevel;
   notes?: string;
-  serviceType: ServiceType;
+  serviceType?: ServiceType;
   unitPrice?: number;
+  usageType?: UsageType;
 }
 
 // Order
