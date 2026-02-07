@@ -59,7 +59,13 @@ async function callOmieApi(
   return result;
 }
 
-// Função para cadastrar ou buscar cliente no Omie
+// Interface para retorno do cliente com vendedor
+interface ClienteOmieResult {
+  omieCodigoCliente: number;
+  omieCodigoVendedor?: number;
+}
+
+// Função para buscar cliente no Omie (apenas existentes)
 async function syncClienteOmie(
   supabase: ReturnType<typeof createClient>,
   userId: string,
@@ -78,7 +84,7 @@ async function syncClienteOmie(
     state: string;
     zip_code: string;
   }
-): Promise<number> {
+): Promise<ClienteOmieResult> {
   // VALIDAÇÃO: CPF/CNPJ é obrigatório
   if (!profile.document || profile.document.replace(/\D/g, "").length < 11) {
     throw new Error("CPF ou CNPJ é obrigatório para criar pedidos. Por favor, atualize seu perfil.");
@@ -89,13 +95,16 @@ async function syncClienteOmie(
   // Verificar se já existe mapeamento local
   const { data: existingMapping } = await supabase
     .from("omie_clientes")
-    .select("omie_codigo_cliente")
+    .select("omie_codigo_cliente, omie_codigo_vendedor")
     .eq("user_id", userId)
     .maybeSingle();
 
   if (existingMapping?.omie_codigo_cliente) {
-    console.log(`[Omie] Cliente já mapeado localmente: ${existingMapping.omie_codigo_cliente}`);
-    return existingMapping.omie_codigo_cliente;
+    console.log(`[Omie] Cliente já mapeado localmente: ${existingMapping.omie_codigo_cliente}, vendedor: ${existingMapping.omie_codigo_vendedor || 'N/A'}`);
+    return {
+      omieCodigoCliente: existingMapping.omie_codigo_cliente,
+      omieCodigoVendedor: existingMapping.omie_codigo_vendedor || undefined,
+    };
   }
 
   // Buscar cliente existente no Omie pelo CPF/CNPJ
@@ -121,19 +130,26 @@ async function syncClienteOmie(
     );
   }
 
-  // Cliente encontrado - criar mapeamento local
+  // Cliente encontrado - extrair dados incluindo vendedor
   const cliente = searchResult.clientes_cadastro[0];
   const omieCodigoCliente = cliente.codigo_cliente_omie;
+  const omieCodigoVendedor = cliente.codigo_vendedor || null;
   
   console.log(`[Omie] Cliente encontrado: ${omieCodigoCliente} - ${cliente.razao_social}`);
+  console.log(`[Omie] Vendedor associado: ${omieCodigoVendedor || 'Nenhum'}`);
   
+  // Criar mapeamento local incluindo o vendedor
   await supabase.from("omie_clientes").insert({
     user_id: userId,
     omie_codigo_cliente: omieCodigoCliente,
     omie_codigo_cliente_integracao: cliente.codigo_cliente_integracao || null,
+    omie_codigo_vendedor: omieCodigoVendedor,
   });
 
-  return omieCodigoCliente;
+  return {
+    omieCodigoCliente,
+    omieCodigoVendedor: omieCodigoVendedor || undefined,
+  };
 }
 
 // Função para criar Ordem de Serviço no Omie
@@ -141,6 +157,7 @@ async function criarOrdemServicoOmie(
   supabase: ReturnType<typeof createClient>,
   orderId: string,
   omieCodigoCliente: number,
+  omieCodigoVendedor: number | undefined,
   order: {
     items: Array<{
       category: string;
@@ -164,15 +181,7 @@ async function criarOrdemServicoOmie(
     .join(", ");
 
   // Montar lista de serviços prestados a partir dos itens
-  // Campos obrigatórios conforme documentação Omie API:
-  // - cCodServLC116: Código LC 116 do serviço (ex: "7.07")
-  // - cCodServMun: Código do serviço no município
-  // - cDescServ: Descrição do serviço
-  // - nQtde: Quantidade
-  // - nValUnit: Valor unitário
   const servicosPrestados = order.items.map((item) => {
-    // Quando o serviço já existe no Omie, a API espera o campo **nCodServico** (não nCodServ)
-    // e pode receber apenas ele + quantidade.
     if (item.omie_codigo_servico && item.omie_codigo_servico > 0) {
       return {
         nCodServico: item.omie_codigo_servico,
@@ -180,10 +189,9 @@ async function criarOrdemServicoOmie(
       } as Record<string, unknown>;
     }
 
-    // Caso não exista serviço cadastrado, enviamos a estrutura completa do serviço prestado
     return {
-      cCodServLC116: "14.01", // Código LC 116 padrão (ajuste conforme sua operação)
-      cCodServMun: "01015", // Código do serviço no município (ajuste conforme sua operação)
+      cCodServLC116: "14.01",
+      cCodServMun: "01015",
       cDescServ: item.category,
       cDadosAdicItem: item.brandModel
         ? `Marca/Modelo: ${item.brandModel}${item.notes ? ` | Obs: ${item.notes}` : ""}`
@@ -191,22 +199,31 @@ async function criarOrdemServicoOmie(
       cRetemISS: "N",
       cTribServ: "01",
       nQtde: item.quantity,
-      nValUnit: 0, // Valor a definir após triagem
+      nValUnit: 0,
       cTpDesconto: "V",
       nValorDesconto: 0,
     } as Record<string, unknown>;
   });
 
+  // Montar cabeçalho com vendedor se existir
+  const cabecalho: Record<string, unknown> = {
+    cCodIntOS: cCodIntOS,
+    nCodCli: omieCodigoCliente,
+    cEtapa: "10", // 10 = Aberta
+    nQtdeParc: 1,
+  };
+
+  // Adicionar vendedor se o cliente tiver um associado
+  if (omieCodigoVendedor && omieCodigoVendedor > 0) {
+    cabecalho.nCodVend = omieCodigoVendedor;
+    console.log(`[Omie] Vendedor associado à OS: ${omieCodigoVendedor}`);
+  }
+
   const osParams: Record<string, unknown> = {
-    Cabecalho: {
-      cCodIntOS: cCodIntOS,
-      nCodCli: omieCodigoCliente,
-      cEtapa: "10", // 10 = Aberta
-      nQtdeParc: 1,
-    },
+    Cabecalho: cabecalho,
     InformacoesAdicionais: {
       cDadosAdicNF: `Pedido App - ${descricaoItens}`,
-      cCodCateg: "1.01.03", // Categoria padrão
+      cCodCateg: "1.01.03",
       nCodCC: 3543828789, // Conta Corrente: Omie.CASH
     },
     ServicosPrestados: servicosPrestados,
@@ -296,25 +313,27 @@ serve(async (req) => {
           );
         }
 
-        // 1. Sincronizar cliente
-        const omieCodigoCliente = await syncClienteOmie(
+        // 1. Sincronizar cliente (busca existente no Omie)
+        const clienteResult = await syncClienteOmie(
           supabaseAdmin,
           userId,
           profileData,
           addressData
         );
 
-        // 2. Criar Ordem de Serviço
+        // 2. Criar Ordem de Serviço (com vendedor se existir)
         const osResult = await criarOrdemServicoOmie(
           supabaseAdmin,
           orderId,
-          omieCodigoCliente,
+          clienteResult.omieCodigoCliente,
+          clienteResult.omieCodigoVendedor,
           orderData
         );
 
         result = {
           success: true,
-          omie_cliente: omieCodigoCliente,
+          omie_cliente: clienteResult.omieCodigoCliente,
+          omie_vendedor: clienteResult.omieCodigoVendedor || null,
           omie_os: osResult,
         };
         break;
