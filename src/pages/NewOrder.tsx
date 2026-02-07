@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Plus, Trash2, ChevronRight, Check, MapPin, Clock, Loader2, QrCode, Banknote, Wrench } from 'lucide-react';
+import { Plus, Trash2, ChevronRight, Check, MapPin, Clock, Loader2, QrCode, Banknote, Wrench, AlertCircle } from 'lucide-react';
 import { Header } from '@/components/Header';
 import { Button } from '@/components/ui/button';
 import { PhotoUpload } from '@/components/PhotoUpload';
@@ -11,13 +11,12 @@ import {
   DeliveryOption,
 } from '@/types';
 import { cn } from '@/lib/utils';
-import { syncOrderToOmie, listOmieServices, OmieServico } from '@/services/omieService';
+import { syncOrderToOmie, OmieServico } from '@/services/omieService';
 import { useToast } from '@/hooks/use-toast';
 import { useAuth } from '@/contexts/AuthContext';
 import { supabase } from '@/integrations/supabase/client';
-import { VoiceServiceInput, SuggestedService } from '@/components/VoiceServiceInput';
 
-type Step = 'tools' | 'items' | 'delivery' | 'review';
+type Step = 'items' | 'delivery' | 'review';
 type PaymentMethod = 'pix' | 'on_delivery';
 
 const PIX_KEY = '55.555.305/0001-51';
@@ -27,6 +26,7 @@ interface UserTool {
   tool_category_id: string;
   generated_name: string | null;
   custom_name: string | null;
+  quantity: number | null;
   tool_categories?: {
     name: string;
   };
@@ -34,12 +34,12 @@ interface UserTool {
 
 interface ServiceItem {
   id: string;
-  userToolId?: string; // Reference to user's registered tool
+  userToolId: string; // OBRIGATÓRIO - referência à ferramenta cadastrada
+  userTool?: UserTool;
   servico?: OmieServico;
   quantity: number;
-  brandModel?: string;
   notes?: string;
-  photos: string[]; // Photos for this item
+  photos: string[];
 }
 
 interface ProfileData {
@@ -67,7 +67,7 @@ const NewOrder = () => {
   const { user } = useAuth();
   
   const [currentStep, setCurrentStep] = useState<Step>('items');
-  const [items, setItems] = useState<ServiceItem[]>([{ id: '1', quantity: 1, photos: [] }]);
+  const [items, setItems] = useState<ServiceItem[]>([]);
   const [deliveryOption, setDeliveryOption] = useState<DeliveryOption>('coleta_entrega');
   const [selectedAddress, setSelectedAddress] = useState<string>('');
   const [selectedTimeSlot, setSelectedTimeSlot] = useState<string>('');
@@ -77,6 +77,10 @@ const NewOrder = () => {
   // Serviços do Omie
   const [servicos, setServicos] = useState<OmieServico[]>([]);
   const [loadingServicos, setLoadingServicos] = useState(true);
+  
+  // Ferramentas do usuário
+  const [userTools, setUserTools] = useState<UserTool[]>([]);
+  const [loadingTools, setLoadingTools] = useState(true);
   
   // User data from database
   const [profile, setProfile] = useState<ProfileData | null>(null);
@@ -88,14 +92,41 @@ const NewOrder = () => {
     if (user) {
       loadUserData();
       loadServicos();
+      loadUserTools();
     }
   }, [user]);
+
+  const loadUserTools = async () => {
+    if (!user) return;
+    
+    try {
+      setLoadingTools(true);
+      const { data, error } = await supabase
+        .from('user_tools')
+        .select(`
+          id,
+          tool_category_id,
+          generated_name,
+          custom_name,
+          quantity,
+          tool_categories (name)
+        `)
+        .eq('user_id', user.id)
+        .order('created_at', { ascending: false });
+
+      if (error) throw error;
+      setUserTools(data || []);
+    } catch (error) {
+      console.error('Erro ao carregar ferramentas:', error);
+    } finally {
+      setLoadingTools(false);
+    }
+  };
 
   const loadServicos = async () => {
     try {
       setLoadingServicos(true);
       
-      // Buscar serviços ativos do banco local (sincronizados do Omie)
       const { data: servicosData, error } = await supabase
         .from('omie_servicos')
         .select('omie_codigo_servico, omie_codigo_integracao, descricao')
@@ -104,13 +135,7 @@ const NewOrder = () => {
       
       if (error) {
         console.error('Erro ao carregar serviços do banco:', error);
-        // Fallback: buscar direto do Omie
-        const result = await listOmieServices();
-        if (result.success && result.servicos.length > 0) {
-          setServicos(result.servicos);
-        }
       } else if (servicosData && servicosData.length > 0) {
-        // Formatar para o formato esperado
         const servicosFormatados: OmieServico[] = servicosData.map(s => ({
           omie_codigo_servico: s.omie_codigo_servico,
           omie_codigo_integracao: s.omie_codigo_integracao || '',
@@ -121,12 +146,6 @@ const NewOrder = () => {
           unidade: 'UN',
         }));
         setServicos(servicosFormatados);
-      } else {
-        // Se não houver serviços no banco, buscar do Omie
-        const result = await listOmieServices();
-        if (result.success && result.servicos.length > 0) {
-          setServicos(result.servicos);
-        }
       }
     } catch (error) {
       console.error('Erro ao carregar serviços:', error);
@@ -139,7 +158,6 @@ const NewOrder = () => {
     if (!user) return;
     
     try {
-      // Load profile
       const { data: profileData } = await supabase
         .from('profiles')
         .select('name, email, phone, document')
@@ -157,7 +175,6 @@ const NewOrder = () => {
         });
       }
 
-      // Load addresses
       const { data: addressesData } = await supabase
         .from('addresses')
         .select('*')
@@ -194,17 +211,34 @@ const NewOrder = () => {
 
   const currentStepIndex = steps.findIndex(s => s.id === currentStep);
 
-  const addItem = () => {
-    setItems([...items, { id: String(items.length + 1), quantity: 1, photos: [] }]);
+  const addItem = (toolId: string) => {
+    const tool = userTools.find(t => t.id === toolId);
+    if (!tool) return;
+    
+    // Verificar se já existe item com essa ferramenta
+    if (items.some(item => item.userToolId === toolId)) {
+      toast({
+        title: 'Ferramenta já adicionada',
+        description: 'Esta ferramenta já está no pedido',
+        variant: 'default',
+      });
+      return;
+    }
+    
+    setItems([...items, { 
+      id: String(items.length + 1), 
+      userToolId: toolId,
+      userTool: tool,
+      quantity: 1, 
+      photos: [] 
+    }]);
   };
 
   const removeItem = (index: number) => {
-    if (items.length > 1) {
-      setItems(items.filter((_, i) => i !== index));
-    }
+    setItems(items.filter((_, i) => i !== index));
   };
 
-  const updateItem = (index: number, field: keyof ServiceItem, value: any) => {
+  const updateItem = (index: number, field: keyof ServiceItem, value: unknown) => {
     const newItems = [...items];
     newItems[index] = { ...newItems[index], [field]: value };
     setItems(newItems);
@@ -217,43 +251,13 @@ const NewOrder = () => {
     }
   };
 
-  // Handler para serviços identificados pela IA
-  const handleServicesFromAI = (suggestedServices: SuggestedService[]) => {
-    const newItems: ServiceItem[] = suggestedServices.map((suggested, index) => {
-      const servico = servicos.find(s => s.omie_codigo_servico === suggested.omie_codigo_servico);
-      return {
-        id: String(items.length + index + 1),
-        servico: servico || {
-          omie_codigo_servico: suggested.omie_codigo_servico,
-          omie_codigo_integracao: '',
-          descricao: suggested.descricao,
-          codigo_lc116: '',
-          codigo_servico_municipio: '',
-          valor_unitario: 0,
-          unidade: 'UN',
-        },
-        quantity: suggested.quantity,
-        notes: suggested.notes,
-        photos: [],
-      };
-    });
-    
-    // Substituir itens vazios ou adicionar aos existentes
-    const hasEmptyItem = items.length === 1 && !items[0].servico;
-    if (hasEmptyItem) {
-      setItems(newItems);
-    } else {
-      setItems([...items, ...newItems]);
-    }
-  };
-
-  // Industrial clients always have free shipping
   const deliveryFee = DELIVERY_FEES[deliveryOption];
 
   const canProceed = () => {
     switch (currentStep) {
       case 'items':
-        return items.every(item => item.servico && item.quantity);
+        // Cada item deve ter ferramenta e serviço selecionados
+        return items.length > 0 && items.every(item => item.userToolId && item.servico && item.quantity > 0);
       case 'delivery':
         if (deliveryOption === 'balcao') return true;
         return selectedAddress && selectedTimeSlot;
@@ -293,23 +297,22 @@ const NewOrder = () => {
     try {
       const orderId = crypto.randomUUID();
       
-      // Montar itens com código do serviço Omie e fotos
       const orderItems = items.map(item => ({
         category: item.servico?.descricao || '',
         quantity: item.quantity || 1,
         omie_codigo_servico: item.servico?.omie_codigo_servico,
-        brandModel: item.brandModel,
+        userToolId: item.userToolId,
+        toolName: item.userTool?.generated_name || item.userTool?.custom_name || item.userTool?.tool_categories?.name || '',
         notes: item.notes,
         photos: item.photos || [],
-        userToolId: item.userToolId,
       }));
 
       const orderData = {
         items: orderItems,
         service_type: 'padrao',
-        subtotal: 0, // Sem preço - será definido após triagem
+        subtotal: 0,
         delivery_fee: deliveryFee,
-        total: deliveryFee, // Apenas frete por enquanto
+        total: deliveryFee,
         notes: items.map(item => item.notes).filter(Boolean).join(' | '),
       };
 
@@ -340,7 +343,6 @@ const NewOrder = () => {
         });
         navigate('/orders');
       } else {
-        console.warn('[NewOrder] Falha ao sincronizar com Omie:', result.error);
         toast({
           title: "Pedido criado",
           description: "Pedido registrado. Sincronização com ERP pendente.",
@@ -360,17 +362,24 @@ const NewOrder = () => {
     }
   };
 
-  if (loadingData || loadingServicos) {
+  const getToolDisplayName = (tool: UserTool) => {
+    return tool.generated_name || tool.custom_name || tool.tool_categories?.name || 'Ferramenta';
+  };
+
+  if (loadingData || loadingServicos || loadingTools) {
     return (
       <div className="min-h-screen bg-background pb-32">
         <Header title="Novo Pedido" showBack />
         <div className="flex flex-col items-center justify-center pt-32 gap-2">
           <Loader2 className="w-8 h-8 animate-spin text-primary" />
-          <p className="text-sm text-muted-foreground">Carregando serviços...</p>
+          <p className="text-sm text-muted-foreground">Carregando...</p>
         </div>
       </div>
     );
   }
+
+  // Ferramentas disponíveis (não selecionadas ainda)
+  const availableTools = userTools.filter(tool => !items.some(item => item.userToolId === tool.id));
 
   return (
     <div className="min-h-screen bg-background pb-32">
@@ -411,134 +420,151 @@ const NewOrder = () => {
           {/* Step 1: Services */}
           {currentStep === 'items' && (
             <div>
-              <h2 className="font-display font-bold text-xl mb-1">Selecionar Serviços</h2>
+              <h2 className="font-display font-bold text-xl mb-1">Selecionar Ferramentas</h2>
               <p className="text-sm text-muted-foreground mb-6">
-                Escolha os serviços que deseja para suas ferramentas
+                Escolha suas ferramentas cadastradas e o serviço desejado
               </p>
 
-              {/* Voice/Text AI Input */}
-              <div className="mb-6">
-                <VoiceServiceInput 
-                  onServicesIdentified={handleServicesFromAI}
-                  isLoading={loadingServicos}
-                />
-              </div>
-
-              <div className="relative flex items-center my-6">
-                <div className="flex-grow border-t border-border"></div>
-                <span className="mx-4 text-xs text-muted-foreground uppercase tracking-wider">ou selecione manualmente</span>
-                <div className="flex-grow border-t border-border"></div>
-              </div>
-
-              {servicos.length === 0 ? (
-                <div className="bg-muted/50 rounded-lg p-6 text-center">
-                  <p className="text-muted-foreground">Nenhum serviço disponível no momento.</p>
-                  <Button variant="outline" size="sm" className="mt-3" onClick={loadServicos}>
-                    Tentar novamente
+              {/* Ferramentas sem cadastro */}
+              {userTools.length === 0 ? (
+                <div className="bg-muted/50 rounded-xl p-6 text-center">
+                  <AlertCircle className="w-10 h-10 text-muted-foreground mx-auto mb-3" />
+                  <h3 className="font-semibold mb-2">Nenhuma ferramenta cadastrada</h3>
+                  <p className="text-sm text-muted-foreground mb-4">
+                    Você precisa cadastrar suas ferramentas antes de solicitar um serviço
+                  </p>
+                  <Button onClick={() => navigate('/tools')}>
+                    <Wrench className="w-4 h-4 mr-2" />
+                    Cadastrar Ferramentas
                   </Button>
                 </div>
               ) : (
-                <div className="space-y-4">
-                  {items.map((item, index) => (
-                    <div key={index} className="bg-card rounded-xl p-4 shadow-soft border border-border">
-                      <div className="flex items-start justify-between mb-3">
-                        <span className="text-sm font-medium text-muted-foreground">
-                          Item {index + 1}
-                        </span>
-                        {items.length > 1 && (
-                          <button
-                            onClick={() => removeItem(index)}
-                            className="p-1 text-muted-foreground hover:text-destructive transition-colors"
-                          >
-                            <Trash2 className="w-4 h-4" />
-                          </button>
-                        )}
-                      </div>
+                <>
+                  {/* Itens adicionados */}
+                  {items.length > 0 && (
+                    <div className="space-y-4 mb-6">
+                      {items.map((item, index) => (
+                        <div key={index} className="bg-card rounded-xl p-4 shadow-soft border border-border">
+                          <div className="flex items-start justify-between mb-3">
+                            <div className="flex items-center gap-2">
+                              <Wrench className="w-4 h-4 text-primary" />
+                              <span className="font-medium">
+                                {getToolDisplayName(item.userTool!)}
+                              </span>
+                            </div>
+                            <button
+                              onClick={() => removeItem(index)}
+                              className="p-1 text-muted-foreground hover:text-destructive transition-colors"
+                            >
+                              <Trash2 className="w-4 h-4" />
+                            </button>
+                          </div>
 
-                      {/* Service select */}
-                      <div className="mb-3">
-                        <label className="text-sm font-medium mb-2 block">Tipo de serviço</label>
-                        <select
-                          value={item.servico?.omie_codigo_servico || ''}
-                          onChange={(e) => selectServico(index, Number(e.target.value))}
-                          className="w-full h-11 px-3 rounded-lg border border-input bg-background text-sm focus:outline-none focus:ring-2 focus:ring-ring"
-                        >
-                          <option value="">Selecione um serviço...</option>
-                          {servicos.map((servico) => (
-                            <option key={servico.omie_codigo_servico} value={servico.omie_codigo_servico}>
-                              {servico.descricao}
-                            </option>
-                          ))}
-                        </select>
-                      </div>
+                          {/* Seleção de serviço */}
+                          <div className="mb-3">
+                            <label className="text-sm font-medium mb-2 block">Tipo de serviço *</label>
+                            <select
+                              value={item.servico?.omie_codigo_servico || ''}
+                              onChange={(e) => selectServico(index, Number(e.target.value))}
+                              className="w-full h-11 px-3 rounded-lg border border-input bg-background text-sm focus:outline-none focus:ring-2 focus:ring-ring"
+                            >
+                              <option value="">Selecione um serviço...</option>
+                              {servicos.map((servico) => (
+                                <option key={servico.omie_codigo_servico} value={servico.omie_codigo_servico}>
+                                  {servico.descricao}
+                                </option>
+                              ))}
+                            </select>
+                          </div>
 
-                      {/* Brand/Model */}
-                      <div className="mb-3">
-                        <label className="text-sm font-medium mb-2 block">Marca/Modelo (opcional)</label>
-                        <input
-                          type="text"
-                          value={item.brandModel || ''}
-                          onChange={(e) => updateItem(index, 'brandModel', e.target.value)}
-                          placeholder="Ex: Makita, Dewalt..."
-                          className="w-full h-11 px-3 rounded-lg border border-input bg-background text-sm focus:outline-none focus:ring-2 focus:ring-ring"
-                        />
-                      </div>
+                          {/* Quantidade */}
+                          <div className="mb-3">
+                            <label className="text-sm font-medium mb-2 block">Quantidade</label>
+                            <div className="flex items-center gap-3">
+                              <button
+                                onClick={() => updateItem(index, 'quantity', Math.max(1, (item.quantity || 1) - 1))}
+                                className="w-10 h-10 rounded-lg border border-input flex items-center justify-center hover:bg-muted"
+                              >
+                                -
+                              </button>
+                              <span className="w-10 text-center font-semibold">{item.quantity || 1}</span>
+                              <button
+                                onClick={() => updateItem(index, 'quantity', (item.quantity || 1) + 1)}
+                                className="w-10 h-10 rounded-lg border border-input flex items-center justify-center hover:bg-muted"
+                              >
+                                +
+                              </button>
+                            </div>
+                          </div>
 
-                      {/* Quantity */}
-                      <div className="mb-3">
-                        <label className="text-sm font-medium mb-2 block">Quantidade</label>
-                        <div className="flex items-center gap-3">
-                          <button
-                            onClick={() => updateItem(index, 'quantity', Math.max(1, (item.quantity || 1) - 1))}
-                            className="w-10 h-10 rounded-lg border border-input flex items-center justify-center hover:bg-muted"
-                          >
-                            -
-                          </button>
-                          <span className="w-10 text-center font-semibold">{item.quantity || 1}</span>
-                          <button
-                            onClick={() => updateItem(index, 'quantity', (item.quantity || 1) + 1)}
-                            className="w-10 h-10 rounded-lg border border-input flex items-center justify-center hover:bg-muted"
-                          >
-                            +
-                          </button>
+                          {/* Observações */}
+                          <div className="mb-3">
+                            <label className="text-sm font-medium mb-2 block">Observações (opcional)</label>
+                            <textarea
+                              value={item.notes || ''}
+                              onChange={(e) => updateItem(index, 'notes', e.target.value)}
+                              placeholder="Descreva danos, lascados, ou instruções especiais..."
+                              className="w-full px-3 py-2 rounded-lg border border-input bg-background text-sm focus:outline-none focus:ring-2 focus:ring-ring resize-none"
+                              rows={2}
+                            />
+                          </div>
+
+                          {/* Fotos */}
+                          {user && (
+                            <div>
+                              <label className="text-sm font-medium mb-2 block">Fotos (opcional)</label>
+                              <PhotoUpload
+                                photos={item.photos || []}
+                                onPhotosChange={(photos) => updateItem(index, 'photos', photos)}
+                                userId={user.id}
+                                maxPhotos={3}
+                              />
+                            </div>
+                          )}
                         </div>
-                      </div>
-
-                      {/* Notes */}
-                      <div>
-                        <label className="text-sm font-medium mb-2 block">Observações (opcional)</label>
-                        <textarea
-                          value={item.notes || ''}
-                          onChange={(e) => updateItem(index, 'notes', e.target.value)}
-                          placeholder="Descreva danos, lascados, ou instruções especiais..."
-                          className="w-full px-3 py-2 rounded-lg border border-input bg-background text-sm focus:outline-none focus:ring-2 focus:ring-ring resize-none"
-                          rows={2}
-                        />
-                      </div>
-
-                      {/* Photos */}
-                      {user && (
-                        <div>
-                          <label className="text-sm font-medium mb-2 block">Fotos da ferramenta (opcional)</label>
-                          <PhotoUpload
-                            photos={item.photos || []}
-                            onPhotosChange={(photos) => updateItem(index, 'photos', photos)}
-                            userId={user.id}
-                            maxPhotos={3}
-                          />
-                        </div>
-                      )}
+                      ))}
                     </div>
-                  ))}
+                  )}
 
-                  <button
-                    onClick={addItem}
-                    className="w-full py-3 rounded-xl border-2 border-dashed border-border flex items-center justify-center gap-2 text-muted-foreground hover:border-primary hover:text-primary transition-colors"
+                  {/* Adicionar ferramentas */}
+                  {availableTools.length > 0 && (
+                    <div>
+                      <h3 className="text-sm font-medium text-muted-foreground mb-3">
+                        {items.length > 0 ? 'Adicionar mais ferramentas:' : 'Suas ferramentas cadastradas:'}
+                      </h3>
+                      <div className="space-y-2">
+                        {availableTools.map((tool) => (
+                          <button
+                            key={tool.id}
+                            onClick={() => addItem(tool.id)}
+                            className="w-full p-3 rounded-xl border-2 border-dashed border-border flex items-center gap-3 text-left hover:border-primary hover:bg-primary/5 transition-colors"
+                          >
+                            <div className="w-10 h-10 rounded-lg bg-muted flex items-center justify-center">
+                              <Wrench className="w-5 h-5 text-muted-foreground" />
+                            </div>
+                            <div className="flex-1">
+                              <p className="font-medium">{getToolDisplayName(tool)}</p>
+                              <p className="text-xs text-muted-foreground">
+                                {tool.tool_categories?.name}
+                              </p>
+                            </div>
+                            <Plus className="w-5 h-5 text-primary" />
+                          </button>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+
+                  {/* Link para cadastrar mais */}
+                  <Button
+                    variant="ghost"
+                    className="w-full mt-4"
+                    onClick={() => navigate('/tools')}
                   >
-                    <Plus className="w-5 h-5" />
-                    <span className="font-medium">Adicionar outro serviço</span>
-                  </button>
-                </div>
+                    <Plus className="w-4 h-4 mr-2" />
+                    Cadastrar nova ferramenta
+                  </Button>
+                </>
               )}
             </div>
           )}
@@ -551,50 +577,45 @@ const NewOrder = () => {
                 Como deseja receber suas ferramentas?
               </p>
 
-              {/* Free shipping notice for industrial clients */}
               <div className="bg-primary/10 border border-primary/20 rounded-lg p-3 mb-4">
                 <p className="text-sm text-primary font-medium">
                   ✓ Frete grátis em todas as modalidades de entrega
                 </p>
               </div>
 
-              {/* Delivery options */}
               <div className="space-y-3 mb-6">
-                {Object.entries(DELIVERY_OPTIONS).map(([key, { label, description }]) => {
-                  return (
-                    <button
-                      key={key}
-                      onClick={() => setDeliveryOption(key as DeliveryOption)}
+                {Object.entries(DELIVERY_OPTIONS).map(([key, { label, description }]) => (
+                  <button
+                    key={key}
+                    onClick={() => setDeliveryOption(key as DeliveryOption)}
+                    className={cn(
+                      'w-full p-4 rounded-xl border-2 text-left transition-all flex items-start gap-3',
+                      deliveryOption === key
+                        ? 'border-primary bg-primary/5'
+                        : 'border-border hover:border-primary/50'
+                    )}
+                  >
+                    <div
                       className={cn(
-                        'w-full p-4 rounded-xl border-2 text-left transition-all flex items-start gap-3',
-                        deliveryOption === key
-                          ? 'border-primary bg-primary/5'
-                          : 'border-border hover:border-primary/50'
+                        'w-5 h-5 rounded-full border-2 flex items-center justify-center mt-0.5',
+                        deliveryOption === key ? 'border-primary' : 'border-muted-foreground'
                       )}
                     >
-                      <div
-                        className={cn(
-                          'w-5 h-5 rounded-full border-2 flex items-center justify-center mt-0.5',
-                          deliveryOption === key ? 'border-primary' : 'border-muted-foreground'
-                        )}
-                      >
-                        {deliveryOption === key && (
-                          <div className="w-2.5 h-2.5 rounded-full bg-primary" />
-                        )}
-                      </div>
-                      <div className="flex-1">
-                        <span className="font-medium block">{label}</span>
-                        <span className="text-sm text-muted-foreground">{description}</span>
-                      </div>
-                      {key !== 'balcao' && (
-                        <span className="text-sm font-semibold text-primary">Grátis</span>
+                      {deliveryOption === key && (
+                        <div className="w-2.5 h-2.5 rounded-full bg-primary" />
                       )}
-                    </button>
-                  );
-                })}
+                    </div>
+                    <div className="flex-1">
+                      <span className="font-medium block">{label}</span>
+                      <span className="text-sm text-muted-foreground">{description}</span>
+                    </div>
+                    {key !== 'balcao' && (
+                      <span className="text-sm font-semibold text-primary">Grátis</span>
+                    )}
+                  </button>
+                ))}
               </div>
 
-              {/* Address selection */}
               {deliveryOption !== 'balcao' && (
                 <>
                   <div className="mb-6">
@@ -605,7 +626,6 @@ const NewOrder = () => {
                     
                     {addresses.length > 0 ? (
                       <>
-                        {/* Default address display */}
                         {(() => {
                           const defaultAddr = addresses.find(a => a.id === selectedAddress);
                           if (!defaultAddr) return null;
@@ -634,7 +654,6 @@ const NewOrder = () => {
                           );
                         })()}
 
-                        {/* Change address toggle */}
                         {!showAddressOptions && addresses.length > 1 && (
                           <Button 
                             variant="outline" 
@@ -646,7 +665,6 @@ const NewOrder = () => {
                           </Button>
                         )}
 
-                        {/* Other addresses */}
                         {showAddressOptions && (
                           <div className="space-y-2 mt-3">
                             <p className="text-sm font-medium text-muted-foreground">Outros endereços:</p>
@@ -699,7 +717,6 @@ const NewOrder = () => {
                     )}
                   </div>
 
-                  {/* Time slot */}
                   <div>
                     <label className="text-sm font-medium mb-3 flex items-center gap-2">
                       <Clock className="w-4 h-4" />
@@ -735,14 +752,12 @@ const NewOrder = () => {
                 Confira os detalhes antes de enviar
               </p>
 
-              {/* Info notice about pricing */}
               <div className="bg-secondary border border-border rounded-lg p-3 mb-4">
                 <p className="text-sm text-muted-foreground">
                   💡 O valor será informado após a triagem das ferramentas
                 </p>
               </div>
 
-              {/* Items summary */}
               <div className="bg-card rounded-xl p-4 shadow-soft border border-border mb-4">
                 <h3 className="font-semibold mb-3">Serviços Solicitados</h3>
                 <div className="space-y-3">
@@ -751,11 +766,11 @@ const NewOrder = () => {
                       <div className="flex justify-between items-start">
                         <div>
                           <p className="font-medium">
+                            {getToolDisplayName(item.userTool!)}
+                          </p>
+                          <p className="text-sm text-muted-foreground">
                             {item.quantity}x {item.servico?.descricao || 'Serviço'}
                           </p>
-                          {item.brandModel && (
-                            <p className="text-sm text-muted-foreground">{item.brandModel}</p>
-                          )}
                           {item.notes && (
                             <p className="text-xs text-muted-foreground mt-1 italic">
                               Obs: {item.notes}
@@ -771,7 +786,6 @@ const NewOrder = () => {
                 </div>
               </div>
 
-              {/* Delivery summary */}
               <div className="bg-card rounded-xl p-4 shadow-soft border border-border mb-4">
                 <h3 className="font-semibold mb-2">Entrega</h3>
                 <p className="text-sm">{DELIVERY_OPTIONS[deliveryOption].label}</p>
@@ -783,7 +797,6 @@ const NewOrder = () => {
                 )}
               </div>
 
-              {/* Payment method selection */}
               <div className="bg-card rounded-xl p-4 shadow-soft border border-border mb-4">
                 <h3 className="font-semibold mb-3">Forma de Pagamento</h3>
                 <div className="space-y-3">
@@ -841,7 +854,6 @@ const NewOrder = () => {
                 </div>
               </div>
 
-              {/* Totals */}
               <div className="bg-card rounded-xl p-4 shadow-soft border border-border">
                 <div className="space-y-2 text-sm">
                   <div className="flex justify-between">
