@@ -12,7 +12,8 @@ import { supabase } from '@/integrations/supabase/client';
 import { useAuth } from '@/contexts/AuthContext';
 import { useToast } from '@/hooks/use-toast';
 import { usePriceHistory } from '@/hooks/usePriceHistory';
-import { Loader2, Save, Package, Clock, Truck, CheckCircle, Building2, DollarSign, Sparkles, ImageIcon } from 'lucide-react';
+import { updateOrderInOmie } from '@/services/omieService';
+import { Loader2, Save, Package, Clock, Truck, CheckCircle, Building2, DollarSign, Sparkles, ImageIcon, RefreshCw } from 'lucide-react';
 import { format } from 'date-fns';
 import { ptBR } from 'date-fns/locale';
 
@@ -65,6 +66,7 @@ const AdminOrderDetail = () => {
   const [profile, setProfile] = useState<Profile | null>(null);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
+  const [syncingOmie, setSyncingOmie] = useState(false);
   
   // Item prices state
   const [itemPrices, setItemPrices] = useState<{ [key: number]: string }>({});
@@ -190,10 +192,12 @@ const AdminOrderDetail = () => {
     return getLastPrice(item.userToolId, item.category) !== null;
   };
 
-  const handleSave = async () => {
+  const handleSave = async (syncToOmie: boolean = false) => {
     if (!order) return;
     
     setSaving(true);
+    if (syncToOmie) setSyncingOmie(true);
+    
     try {
       // Build updated items with prices
       const updatedItems = order.items.map((item, index) => ({
@@ -207,7 +211,7 @@ const AdminOrderDetail = () => {
       }, 0);
       const total = subtotal + (order.delivery_fee || 0);
 
-      // Update order
+      // Update order locally first
       const { error } = await supabase
         .from('orders')
         .update({
@@ -233,10 +237,39 @@ const AdminOrderDetail = () => {
         }
       }
 
-      toast({
-        title: 'Pedido atualizado!',
-        description: 'Preços salvos e histórico atualizado',
-      });
+      // Sync to Omie if requested
+      if (syncToOmie) {
+        const omieResult = await updateOrderInOmie(order.id, {
+          items: updatedItems,
+          subtotal,
+          delivery_fee: order.delivery_fee || 0,
+          total,
+          notes: order.notes || undefined,
+          status: selectedStatus,
+        });
+
+        if (omieResult.success) {
+          toast({
+            title: 'Pedido sincronizado!',
+            description: `OS ${omieResult.cNumOS} atualizada no Omie`,
+          });
+        } else {
+          toast({
+            title: 'Erro ao sincronizar com Omie',
+            description: omieResult.error || 'Tente novamente',
+            variant: 'destructive',
+          });
+          // Don't navigate away on Omie error
+          setSaving(false);
+          setSyncingOmie(false);
+          return;
+        }
+      } else {
+        toast({
+          title: 'Pedido atualizado!',
+          description: 'Preços salvos localmente',
+        });
+      }
       
       navigate('/admin');
     } catch (error) {
@@ -248,6 +281,7 @@ const AdminOrderDetail = () => {
       });
     } finally {
       setSaving(false);
+      setSyncingOmie(false);
     }
   };
 
@@ -447,20 +481,37 @@ const AdminOrderDetail = () => {
           </CardContent>
         </Card>
 
-        {/* Save button */}
-        <Button
-          className="w-full"
-          size="lg"
-          onClick={handleSave}
-          disabled={saving}
-        >
-          {saving ? (
-            <Loader2 className="w-4 h-4 mr-2 animate-spin" />
-          ) : (
-            <Save className="w-4 h-4 mr-2" />
-          )}
-          Salvar Alterações
-        </Button>
+        {/* Action buttons */}
+        <div className="space-y-3 mb-6">
+          <Button
+            className="w-full"
+            size="lg"
+            onClick={() => handleSave(true)}
+            disabled={saving || syncingOmie}
+          >
+            {syncingOmie ? (
+              <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+            ) : (
+              <RefreshCw className="w-4 h-4 mr-2" />
+            )}
+            Salvar e Sincronizar com Omie
+          </Button>
+          
+          <Button
+            variant="outline"
+            className="w-full"
+            size="lg"
+            onClick={() => handleSave(false)}
+            disabled={saving || syncingOmie}
+          >
+            {saving && !syncingOmie ? (
+              <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+            ) : (
+              <Save className="w-4 h-4 mr-2" />
+            )}
+            Salvar Apenas Localmente
+          </Button>
+        </div>
       </main>
 
       <BottomNav />
