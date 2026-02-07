@@ -10,6 +10,7 @@ import Orders from "./pages/Orders";
 import OrderDetail from "./pages/OrderDetail";
 import NewOrder from "./pages/NewOrder";
 import Profile from "./pages/Profile";
+import Addresses from "./pages/Addresses";
 import Support from "./pages/Support";
 import Auth from "./pages/Auth";
 import NotFound from "./pages/NotFound";
@@ -62,6 +63,14 @@ const App = () => (
               element={
                 <ProtectedRoute>
                   <Profile />
+                </ProtectedRoute>
+              }
+            />
+            <Route
+              path="/addresses"
+              element={
+                <ProtectedRoute>
+                  <Addresses />
                 </ProtectedRoute>
               }
             />
