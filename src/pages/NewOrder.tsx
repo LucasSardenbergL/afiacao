@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { Plus, Trash2, Camera, ChevronRight, Check, MapPin, Clock, Loader2, QrCode, Banknote } from 'lucide-react';
 import { Header } from '@/components/Header';
@@ -12,28 +12,114 @@ import {
   ToolCategory, 
   DeliveryOption,
   UsageType,
-  ToolItem 
+  ToolItem,
+  Address
 } from '@/types';
-import { mockAddresses, priceTable, mockUser } from '@/data/mockData';
+import { priceTable } from '@/data/mockData';
 import { cn } from '@/lib/utils';
 import { syncOrderToOmie } from '@/services/omieService';
 import { useToast } from '@/hooks/use-toast';
+import { useAuth } from '@/contexts/AuthContext';
+import { supabase } from '@/integrations/supabase/client';
 
 type Step = 'items' | 'delivery' | 'review';
 type PaymentMethod = 'pix' | 'on_delivery';
 
 const PIX_KEY = '55.555.305/0001-51';
 
+interface ProfileData {
+  name: string;
+  email: string | null;
+  phone: string | null;
+  document: string | null;
+}
+
+interface AddressData {
+  id: string;
+  label: string;
+  street: string;
+  number: string;
+  complement: string | null;
+  neighborhood: string;
+  city: string;
+  state: string;
+  zipCode: string;
+}
+
 const NewOrder = () => {
   const navigate = useNavigate();
   const { toast } = useToast();
+  const { user } = useAuth();
+  
   const [currentStep, setCurrentStep] = useState<Step>('items');
   const [items, setItems] = useState<Partial<ToolItem>[]>([{ id: '1', quantity: 1, usageType: 'domestico' }]);
   const [deliveryOption, setDeliveryOption] = useState<DeliveryOption>('coleta_entrega');
-  const [selectedAddress, setSelectedAddress] = useState(mockAddresses[0]?.id);
+  const [selectedAddress, setSelectedAddress] = useState<string>('');
   const [selectedTimeSlot, setSelectedTimeSlot] = useState<string>('');
   const [paymentMethod, setPaymentMethod] = useState<PaymentMethod>('pix');
   const [isSubmitting, setIsSubmitting] = useState(false);
+  
+  // User data from database
+  const [profile, setProfile] = useState<ProfileData | null>(null);
+  const [addresses, setAddresses] = useState<AddressData[]>([]);
+  const [loadingData, setLoadingData] = useState(true);
+
+  useEffect(() => {
+    if (user) {
+      loadUserData();
+    }
+  }, [user]);
+
+  const loadUserData = async () => {
+    if (!user) return;
+    
+    try {
+      // Load profile
+      const { data: profileData } = await supabase
+        .from('profiles')
+        .select('name, email, phone, document')
+        .eq('user_id', user.id)
+        .maybeSingle();
+
+      if (profileData) {
+        setProfile(profileData);
+      } else {
+        setProfile({
+          name: user.email?.split('@')[0] || 'Usuário',
+          email: user.email || null,
+          phone: null,
+          document: null,
+        });
+      }
+
+      // Load addresses
+      const { data: addressesData } = await supabase
+        .from('addresses')
+        .select('*')
+        .eq('user_id', user.id)
+        .order('is_default', { ascending: false });
+
+      if (addressesData && addressesData.length > 0) {
+        const formattedAddresses: AddressData[] = addressesData.map(addr => ({
+          id: addr.id,
+          label: addr.label,
+          street: addr.street,
+          number: addr.number,
+          complement: addr.complement,
+          neighborhood: addr.neighborhood,
+          city: addr.city,
+          state: addr.state,
+          zipCode: addr.zip_code,
+        }));
+        setAddresses(formattedAddresses);
+        setSelectedAddress(formattedAddresses[0].id);
+      }
+    } catch (error) {
+      console.error('Error loading user data:', error);
+    } finally {
+      setLoadingData(false);
+    }
+  };
 
   const steps: { id: Step; label: string; number: number }[] = [
     { id: 'items', label: 'Itens', number: 1 },
@@ -107,6 +193,15 @@ const NewOrder = () => {
   };
 
   const handleSubmit = async () => {
+    if (!user || !profile) {
+      toast({
+        title: 'Erro',
+        description: 'Você precisa estar logado para fazer um pedido',
+        variant: 'destructive',
+      });
+      return;
+    }
+
     setIsSubmitting(true);
     
     try {
@@ -126,20 +221,20 @@ const NewOrder = () => {
         notes: items.map(item => item.notes).filter(Boolean).join(' | '),
       };
 
-      // Dados do perfil (mock por enquanto)
-      const profileData = {
-        name: mockUser.name,
-        email: mockUser.email,
-        phone: mockUser.phone,
-        document: undefined,
+      // Dados do perfil
+      const profilePayload = {
+        name: profile.name,
+        email: profile.email || undefined,
+        phone: profile.phone || undefined,
+        document: profile.document || undefined,
       };
 
       // Dados do endereço selecionado
-      const selectedAddressData = mockAddresses.find(a => a.id === selectedAddress);
-      const addressData = selectedAddressData ? {
+      const selectedAddressData = addresses.find(a => a.id === selectedAddress);
+      const addressPayload = selectedAddressData ? {
         street: selectedAddressData.street,
         number: selectedAddressData.number,
-        complement: selectedAddressData.complement,
+        complement: selectedAddressData.complement || undefined,
         neighborhood: selectedAddressData.neighborhood,
         city: selectedAddressData.city,
         state: selectedAddressData.state,
@@ -147,7 +242,7 @@ const NewOrder = () => {
       } : undefined;
 
       // Sincronizar com Omie
-      const result = await syncOrderToOmie(orderId, orderData, profileData, addressData);
+      const result = await syncOrderToOmie(orderId, orderData, profilePayload, addressPayload);
 
       if (result.success) {
         toast({
@@ -176,6 +271,17 @@ const NewOrder = () => {
       setIsSubmitting(false);
     }
   };
+
+  if (loadingData) {
+    return (
+      <div className="min-h-screen bg-background pb-32">
+        <Header title="Novo Pedido" showBack />
+        <div className="flex items-center justify-center pt-32">
+          <Loader2 className="w-8 h-8 animate-spin text-primary" />
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="min-h-screen bg-background pb-32">
@@ -402,25 +508,34 @@ const NewOrder = () => {
                       <MapPin className="w-4 h-4" />
                       Endereço
                     </label>
-                    <div className="space-y-2">
-                      {mockAddresses.map((address) => (
-                        <button
-                          key={address.id}
-                          onClick={() => setSelectedAddress(address.id)}
-                          className={cn(
-                            'w-full p-3 rounded-lg border-2 text-left transition-all',
-                            selectedAddress === address.id
-                              ? 'border-primary bg-primary/5'
-                              : 'border-border hover:border-primary/50'
-                          )}
-                        >
-                          <span className="font-medium">{address.label}</span>
-                          <p className="text-sm text-muted-foreground">
-                            {address.street}, {address.number} - {address.neighborhood}
-                          </p>
-                        </button>
-                      ))}
-                    </div>
+                    {addresses.length > 0 ? (
+                      <div className="space-y-2">
+                        {addresses.map((address) => (
+                          <button
+                            key={address.id}
+                            onClick={() => setSelectedAddress(address.id)}
+                            className={cn(
+                              'w-full p-3 rounded-lg border-2 text-left transition-all',
+                              selectedAddress === address.id
+                                ? 'border-primary bg-primary/5'
+                                : 'border-border hover:border-primary/50'
+                            )}
+                          >
+                            <span className="font-medium">{address.label}</span>
+                            <p className="text-sm text-muted-foreground">
+                              {address.street}, {address.number} - {address.neighborhood}
+                            </p>
+                          </button>
+                        ))}
+                      </div>
+                    ) : (
+                      <div className="bg-muted/50 rounded-lg p-4 text-center">
+                        <p className="text-sm text-muted-foreground mb-2">Nenhum endereço cadastrado</p>
+                        <Button variant="outline" size="sm" onClick={() => navigate('/profile')}>
+                          Adicionar endereço
+                        </Button>
+                      </div>
+                    )}
                   </div>
 
                   {/* Time slot */}
@@ -497,7 +612,7 @@ const NewOrder = () => {
                 <p className="text-sm">{DELIVERY_OPTIONS[deliveryOption].label}</p>
                 {deliveryOption !== 'balcao' && selectedAddress && (
                   <p className="text-sm text-muted-foreground mt-1">
-                    {mockAddresses.find(a => a.id === selectedAddress)?.street}
+                    {addresses.find(a => a.id === selectedAddress)?.street}
                     {selectedTimeSlot && ` • ${TIME_SLOTS.find(s => s.id === selectedTimeSlot)?.label}`}
                   </p>
                 )}
