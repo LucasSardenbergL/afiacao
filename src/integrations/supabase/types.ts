@@ -21,6 +21,7 @@ export type Database = {
           created_at: string
           id: string
           is_default: boolean
+          is_from_omie: boolean
           label: string
           neighborhood: string
           number: string
@@ -35,6 +36,7 @@ export type Database = {
           created_at?: string
           id?: string
           is_default?: boolean
+          is_from_omie?: boolean
           label: string
           neighborhood: string
           number: string
@@ -49,6 +51,7 @@ export type Database = {
           created_at?: string
           id?: string
           is_default?: boolean
+          is_from_omie?: boolean
           label?: string
           neighborhood?: string
           number?: string

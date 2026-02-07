@@ -2,9 +2,17 @@ import { useState, useEffect } from 'react';
 import { Header } from '@/components/Header';
 import { BottomNav } from '@/components/BottomNav';
 import { Button } from '@/components/ui/button';
+import { Input } from '@/components/ui/input';
+import { Label } from '@/components/ui/label';
 import { supabase } from '@/integrations/supabase/client';
-import { MapPin, Plus, Loader2, Home, Building, Trash2 } from 'lucide-react';
+import { MapPin, Plus, Loader2, Home, Building, Trash2, Cloud, X } from 'lucide-react';
 import { useToast } from '@/hooks/use-toast';
+import {
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+} from '@/components/ui/dialog';
 
 interface Address {
   id: string;
@@ -17,12 +25,37 @@ interface Address {
   state: string;
   zip_code: string;
   is_default: boolean;
+  is_from_omie: boolean;
 }
+
+const BRAZILIAN_STATES = [
+  'AC', 'AL', 'AP', 'AM', 'BA', 'CE', 'DF', 'ES', 'GO', 'MA', 
+  'MT', 'MS', 'MG', 'PA', 'PB', 'PR', 'PE', 'PI', 'RJ', 'RN', 
+  'RS', 'RO', 'RR', 'SC', 'SP', 'SE', 'TO'
+];
+
+const formatZipCode = (value: string): string => {
+  const numbers = value.replace(/\D/g, '');
+  return numbers.replace(/(\d{5})(\d)/, '$1-$2');
+};
 
 const Addresses = () => {
   const [addresses, setAddresses] = useState<Address[]>([]);
   const [loading, setLoading] = useState(true);
+  const [showAddDialog, setShowAddDialog] = useState(false);
+  const [saving, setSaving] = useState(false);
   const { toast } = useToast();
+
+  const [newAddress, setNewAddress] = useState({
+    label: '',
+    street: '',
+    number: '',
+    complement: '',
+    neighborhood: '',
+    city: '',
+    state: '',
+    zip_code: '',
+  });
 
   useEffect(() => {
     loadAddresses();
@@ -36,10 +69,11 @@ const Addresses = () => {
       .from('addresses')
       .select('*')
       .eq('user_id', user.id)
+      .order('is_from_omie', { ascending: false })
       .order('is_default', { ascending: false });
 
     if (!error && data) {
-      setAddresses(data);
+      setAddresses(data as Address[]);
     }
     setLoading(false);
   };
@@ -68,6 +102,16 @@ const Addresses = () => {
   };
 
   const handleDelete = async (addressId: string) => {
+    const address = addresses.find(a => a.id === addressId);
+    if (address?.is_from_omie) {
+      toast({
+        title: 'Não é possível excluir',
+        description: 'Este endereço está sincronizado com o Omie',
+        variant: 'destructive',
+      });
+      return;
+    }
+
     const { error } = await supabase
       .from('addresses')
       .delete()
@@ -81,6 +125,62 @@ const Addresses = () => {
     } else {
       toast({
         title: 'Erro ao remover endereço',
+        variant: 'destructive',
+      });
+    }
+  };
+
+  const handleAddAddress = async () => {
+    if (!newAddress.label || !newAddress.street || !newAddress.number || 
+        !newAddress.neighborhood || !newAddress.city || !newAddress.state || !newAddress.zip_code) {
+      toast({
+        title: 'Preencha todos os campos obrigatórios',
+        variant: 'destructive',
+      });
+      return;
+    }
+
+    setSaving(true);
+    const { data: { user } } = await supabase.auth.getUser();
+    if (!user) return;
+
+    const { error } = await supabase
+      .from('addresses')
+      .insert({
+        user_id: user.id,
+        label: newAddress.label,
+        street: newAddress.street,
+        number: newAddress.number,
+        complement: newAddress.complement || null,
+        neighborhood: newAddress.neighborhood,
+        city: newAddress.city,
+        state: newAddress.state.toUpperCase(),
+        zip_code: newAddress.zip_code.replace(/\D/g, ''),
+        is_default: addresses.length === 0,
+        is_from_omie: false,
+      });
+
+    setSaving(false);
+
+    if (!error) {
+      toast({
+        title: 'Endereço adicionado',
+      });
+      setShowAddDialog(false);
+      setNewAddress({
+        label: '',
+        street: '',
+        number: '',
+        complement: '',
+        neighborhood: '',
+        city: '',
+        state: '',
+        zip_code: '',
+      });
+      loadAddresses();
+    } else {
+      toast({
+        title: 'Erro ao adicionar endereço',
         variant: 'destructive',
       });
     }
@@ -110,17 +210,24 @@ const Addresses = () => {
               >
                 <div className="flex items-start gap-3">
                   <div className={`w-10 h-10 rounded-lg flex items-center justify-center ${
-                    address.is_default ? 'bg-primary/10' : 'bg-muted'
+                    address.is_from_omie ? 'bg-blue-100' : address.is_default ? 'bg-primary/10' : 'bg-muted'
                   }`}>
-                    {address.label.toLowerCase().includes('casa') ? (
+                    {address.is_from_omie ? (
+                      <Cloud className="w-5 h-5 text-blue-600" />
+                    ) : address.label.toLowerCase().includes('casa') ? (
                       <Home className={`w-5 h-5 ${address.is_default ? 'text-primary' : 'text-muted-foreground'}`} />
                     ) : (
                       <Building className={`w-5 h-5 ${address.is_default ? 'text-primary' : 'text-muted-foreground'}`} />
                     )}
                   </div>
                   <div className="flex-1">
-                    <div className="flex items-center gap-2">
+                    <div className="flex items-center gap-2 flex-wrap">
                       <h3 className="font-semibold">{address.label}</h3>
+                      {address.is_from_omie && (
+                        <span className="text-xs bg-blue-100 text-blue-800 px-2 py-0.5 rounded-full">
+                          Omie
+                        </span>
+                      )}
                       {address.is_default && (
                         <span className="text-xs bg-primary/10 text-primary px-2 py-0.5 rounded-full">
                           Padrão
@@ -135,7 +242,7 @@ const Addresses = () => {
                       {address.neighborhood} - {address.city}/{address.state}
                     </p>
                     <p className="text-sm text-muted-foreground">
-                      CEP: {address.zip_code}
+                      CEP: {address.zip_code.replace(/(\d{5})(\d{3})/, '$1-$2')}
                     </p>
                   </div>
                 </div>
@@ -151,14 +258,16 @@ const Addresses = () => {
                       Definir como padrão
                     </Button>
                   )}
-                  <Button
-                    variant="ghost"
-                    size="sm"
-                    className="text-destructive hover:text-destructive hover:bg-destructive/10"
-                    onClick={() => handleDelete(address.id)}
-                  >
-                    <Trash2 className="w-4 h-4" />
-                  </Button>
+                  {!address.is_from_omie && (
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      className="text-destructive hover:text-destructive hover:bg-destructive/10"
+                      onClick={() => handleDelete(address.id)}
+                    >
+                      <Trash2 className="w-4 h-4" />
+                    </Button>
+                  )}
                 </div>
               </div>
             ))}
@@ -175,11 +284,122 @@ const Addresses = () => {
           </div>
         )}
 
-        <Button className="w-full">
+        <Button className="w-full" onClick={() => setShowAddDialog(true)}>
           <Plus className="w-4 h-4 mr-2" />
-          Adicionar Endereço
+          Adicionar Endereço Extra
         </Button>
+
+        <p className="text-xs text-muted-foreground text-center mt-4">
+          Endereços marcados com "Omie" são sincronizados do seu cadastro e não podem ser alterados aqui.
+        </p>
       </main>
+
+      <Dialog open={showAddDialog} onOpenChange={setShowAddDialog}>
+        <DialogContent className="max-w-md max-h-[90vh] overflow-y-auto">
+          <DialogHeader>
+            <DialogTitle>Adicionar Endereço</DialogTitle>
+          </DialogHeader>
+          
+          <div className="space-y-4 py-4">
+            <div className="space-y-2">
+              <Label htmlFor="label">Nome do endereço *</Label>
+              <Input
+                id="label"
+                placeholder="Ex: Casa, Trabalho, Fábrica"
+                value={newAddress.label}
+                onChange={(e) => setNewAddress(prev => ({ ...prev, label: e.target.value }))}
+              />
+            </div>
+
+            <div className="space-y-2">
+              <Label htmlFor="zip_code">CEP *</Label>
+              <Input
+                id="zip_code"
+                placeholder="00000-000"
+                value={newAddress.zip_code}
+                onChange={(e) => setNewAddress(prev => ({ ...prev, zip_code: formatZipCode(e.target.value) }))}
+                maxLength={9}
+              />
+            </div>
+
+            <div className="space-y-2">
+              <Label htmlFor="street">Rua *</Label>
+              <Input
+                id="street"
+                placeholder="Nome da rua"
+                value={newAddress.street}
+                onChange={(e) => setNewAddress(prev => ({ ...prev, street: e.target.value }))}
+              />
+            </div>
+
+            <div className="grid grid-cols-2 gap-3">
+              <div className="space-y-2">
+                <Label htmlFor="number">Número *</Label>
+                <Input
+                  id="number"
+                  placeholder="Nº"
+                  value={newAddress.number}
+                  onChange={(e) => setNewAddress(prev => ({ ...prev, number: e.target.value }))}
+                />
+              </div>
+              <div className="space-y-2">
+                <Label htmlFor="complement">Complemento</Label>
+                <Input
+                  id="complement"
+                  placeholder="Apto, Sala..."
+                  value={newAddress.complement}
+                  onChange={(e) => setNewAddress(prev => ({ ...prev, complement: e.target.value }))}
+                />
+              </div>
+            </div>
+
+            <div className="space-y-2">
+              <Label htmlFor="neighborhood">Bairro *</Label>
+              <Input
+                id="neighborhood"
+                placeholder="Bairro"
+                value={newAddress.neighborhood}
+                onChange={(e) => setNewAddress(prev => ({ ...prev, neighborhood: e.target.value }))}
+              />
+            </div>
+
+            <div className="grid grid-cols-3 gap-3">
+              <div className="col-span-2 space-y-2">
+                <Label htmlFor="city">Cidade *</Label>
+                <Input
+                  id="city"
+                  placeholder="Cidade"
+                  value={newAddress.city}
+                  onChange={(e) => setNewAddress(prev => ({ ...prev, city: e.target.value }))}
+                />
+              </div>
+              <div className="space-y-2">
+                <Label htmlFor="state">UF *</Label>
+                <select
+                  id="state"
+                  className="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm"
+                  value={newAddress.state}
+                  onChange={(e) => setNewAddress(prev => ({ ...prev, state: e.target.value }))}
+                >
+                  <option value="">UF</option>
+                  {BRAZILIAN_STATES.map(state => (
+                    <option key={state} value={state}>{state}</option>
+                  ))}
+                </select>
+              </div>
+            </div>
+          </div>
+
+          <div className="flex gap-3">
+            <Button variant="outline" className="flex-1" onClick={() => setShowAddDialog(false)}>
+              Cancelar
+            </Button>
+            <Button className="flex-1" onClick={handleAddAddress} disabled={saving}>
+              {saving ? <Loader2 className="w-4 h-4 animate-spin" /> : 'Salvar'}
+            </Button>
+          </div>
+        </DialogContent>
+      </Dialog>
 
       <BottomNav />
     </div>

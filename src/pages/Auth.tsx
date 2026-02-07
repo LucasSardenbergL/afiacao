@@ -397,7 +397,7 @@ const Auth = () => {
             cnae: cnae,
           });
 
-          // Create default address
+          // Create default address from Omie
           await supabase.from('addresses').insert({
             user_id: signUpData.user.id,
             label: 'Principal',
@@ -409,6 +409,7 @@ const Auth = () => {
             state: formData.state,
             zip_code: formData.zipCode.replace(/\D/g, ''),
             is_default: true,
+            is_from_omie: true,
           });
 
           // Save user's selected tools
