@@ -251,6 +251,25 @@ const NewOrder = () => {
     }
   };
 
+  // Filtra serviços baseado no nome da ferramenta
+  const getFilteredServicos = (tool: UserTool | undefined): OmieServico[] => {
+    if (!tool) return [];
+    
+    const toolName = getToolDisplayName(tool).toLowerCase();
+    
+    // Extrai palavras-chave do nome da ferramenta (remove números, medidas, etc)
+    const keywords = toolName
+      .split(/[\s,\-\/]+/)
+      .filter(word => word.length > 2 && !/^\d+/.test(word))
+      .map(word => word.trim());
+    
+    // Filtra serviços que contenham alguma palavra-chave do nome da ferramenta
+    return servicos.filter(servico => {
+      const descricaoLower = servico.descricao.toLowerCase();
+      return keywords.some(keyword => descricaoLower.includes(keyword));
+    });
+  };
+
   const deliveryFee = DELIVERY_FEES[deliveryOption];
 
   const canProceed = () => {
@@ -460,21 +479,31 @@ const NewOrder = () => {
                             </button>
                           </div>
 
-                          {/* Seleção de serviço */}
+                          {/* Seleção de serviço - filtrado pelo nome da ferramenta */}
                           <div className="mb-3">
                             <label className="text-sm font-medium mb-2 block">Tipo de serviço *</label>
-                            <select
-                              value={item.servico?.omie_codigo_servico || ''}
-                              onChange={(e) => selectServico(index, Number(e.target.value))}
-                              className="w-full h-11 px-3 rounded-lg border border-input bg-background text-sm focus:outline-none focus:ring-2 focus:ring-ring"
-                            >
-                              <option value="">Selecione um serviço...</option>
-                              {servicos.map((servico) => (
-                                <option key={servico.omie_codigo_servico} value={servico.omie_codigo_servico}>
-                                  {servico.descricao}
-                                </option>
-                              ))}
-                            </select>
+                            {(() => {
+                              const filteredServicos = getFilteredServicos(item.userTool);
+                              return filteredServicos.length > 0 ? (
+                                <select
+                                  value={item.servico?.omie_codigo_servico || ''}
+                                  onChange={(e) => selectServico(index, Number(e.target.value))}
+                                  className="w-full h-11 px-3 rounded-lg border border-input bg-background text-sm focus:outline-none focus:ring-2 focus:ring-ring"
+                                >
+                                  <option value="">Selecione um serviço...</option>
+                                  {filteredServicos.map((servico) => (
+                                    <option key={servico.omie_codigo_servico} value={servico.omie_codigo_servico}>
+                                      {servico.descricao}
+                                    </option>
+                                  ))}
+                                </select>
+                              ) : (
+                                <div className="bg-muted/50 rounded-lg p-3 text-sm text-muted-foreground">
+                                  <AlertCircle className="w-4 h-4 inline mr-2" />
+                                  Nenhum serviço disponível para "{getToolDisplayName(item.userTool!)}"
+                                </div>
+                              );
+                            })()}
                           </div>
 
                           {/* Quantidade */}
