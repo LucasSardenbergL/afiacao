@@ -659,14 +659,28 @@ const NewOrder = () => {
         </div>
 
         {/* Navigation buttons */}
-        <div className="fixed bottom-0 left-0 right-0 bg-background border-t border-border p-4 safe-bottom">
+        <div className="fixed bottom-0 left-0 right-0 bg-background border-t border-border p-4 safe-bottom z-50">
           <div className="max-w-lg mx-auto flex gap-3">
-            <Button variant="outline" onClick={prevStep} className="flex-1">
+            <Button 
+              type="button"
+              variant="outline" 
+              onClick={(e) => {
+                e.preventDefault();
+                e.stopPropagation();
+                prevStep();
+              }} 
+              className="flex-1"
+            >
               {currentStepIndex === 0 ? 'Cancelar' : 'Voltar'}
             </Button>
             {currentStep === 'review' ? (
               <Button 
-                onClick={handleSubmit} 
+                type="button"
+                onClick={(e) => {
+                  e.preventDefault();
+                  e.stopPropagation();
+                  handleSubmit();
+                }} 
                 className="flex-1"
                 disabled={isSubmitting}
               >
@@ -681,7 +695,12 @@ const NewOrder = () => {
               </Button>
             ) : (
               <Button 
-                onClick={nextStep} 
+                type="button"
+                onClick={(e) => {
+                  e.preventDefault();
+                  e.stopPropagation();
+                  nextStep();
+                }} 
                 className="flex-1"
                 disabled={!canProceed()}
               >
