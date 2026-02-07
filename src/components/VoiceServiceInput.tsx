@@ -68,28 +68,34 @@ export function VoiceServiceInput({ onServicesIdentified, isLoading = false }: V
   const [suggestedServices, setSuggestedServices] = useState<SuggestedService[]>([]);
   
   const recognitionRef = useRef<SpeechRecognition | null>(null);
+  const isListeningRef = useRef(false); // Track intent to keep listening
   const textareaRef = useRef<HTMLTextAreaElement>(null);
 
   // Verificar suporte ao Web Speech API
   const isSpeechSupported = typeof window !== 'undefined' && 
     ('SpeechRecognition' in window || 'webkitSpeechRecognition' in window);
 
-  useEffect(() => {
-    if (!isSpeechSupported) return;
-
-    const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
-    const recognition = new SpeechRecognition();
+  // Initialize recognition only once
+  const initRecognition = () => {
+    if (!isSpeechSupported) return null;
+    
+    const SpeechRecognitionAPI = window.SpeechRecognition || window.webkitSpeechRecognition;
+    const recognition = new SpeechRecognitionAPI();
     
     recognition.continuous = true;
     recognition.interimResults = true;
     recognition.lang = 'pt-BR';
 
     recognition.onresult = (event: SpeechRecognitionEvent) => {
+      console.log('Speech recognition result received:', event.results);
+      
       let interim = '';
       let final = '';
 
       for (let i = event.resultIndex; i < event.results.length; i++) {
         const transcript = event.results[i][0].transcript;
+        console.log('Transcript:', transcript, 'isFinal:', event.results[i].isFinal);
+        
         if (event.results[i].isFinal) {
           final += transcript;
         } else {
@@ -107,43 +113,100 @@ export function VoiceServiceInput({ onServicesIdentified, isLoading = false }: V
 
     recognition.onerror = (event) => {
       console.error('Speech recognition error:', event.error);
-      setIsListening(false);
       
       if (event.error === 'not-allowed') {
+        isListeningRef.current = false;
+        setIsListening(false);
         toast({
           title: 'Permissão negada',
-          description: 'Permita o acesso ao microfone para usar o reconhecimento de voz.',
+          description: 'Permita o acesso ao microfone nas configurações do navegador.',
           variant: 'destructive',
         });
+      } else if (event.error === 'no-speech') {
+        // Normal timeout - will auto-restart via onend
+        console.log('No speech detected, will auto-restart');
+      } else if (event.error === 'aborted') {
+        // User stopped manually
+        console.log('Recognition aborted');
       }
     };
 
     recognition.onend = () => {
-      setIsListening(false);
-      setInterimText('');
+      console.log('Recognition ended, isListeningRef:', isListeningRef.current);
+      // Auto-restart if user intent is still to listen
+      if (isListeningRef.current) {
+        try {
+          console.log('Auto-restarting recognition');
+          recognition.start();
+        } catch (error) {
+          console.error('Error restarting recognition:', error);
+          isListeningRef.current = false;
+          setIsListening(false);
+        }
+      } else {
+        setIsListening(false);
+        setInterimText('');
+      }
     };
 
-    recognitionRef.current = recognition;
+    recognition.onstart = () => {
+      console.log('Recognition started');
+    };
 
+    return recognition;
+  };
+
+  useEffect(() => {
     return () => {
+      // Cleanup on unmount
       if (recognitionRef.current) {
+        isListeningRef.current = false;
         recognitionRef.current.abort();
       }
     };
-  }, [isSpeechSupported, toast]);
+  }, []);
+
+  const startListening = () => {
+    // Initialize recognition if needed
+    if (!recognitionRef.current) {
+      recognitionRef.current = initRecognition();
+    }
+    
+    if (!recognitionRef.current) {
+      toast({
+        title: 'Não suportado',
+        description: 'Seu navegador não suporta reconhecimento de voz.',
+        variant: 'destructive',
+      });
+      return;
+    }
+
+    try {
+      isListeningRef.current = true;
+      setIsListening(true);
+      recognitionRef.current.start();
+      console.log('Started listening');
+    } catch (error) {
+      console.error('Error starting recognition:', error);
+      isListeningRef.current = false;
+      setIsListening(false);
+    }
+  };
+
+  const stopListening = () => {
+    console.log('Stopping listening');
+    isListeningRef.current = false;
+    if (recognitionRef.current) {
+      recognitionRef.current.stop();
+    }
+    setIsListening(false);
+  };
 
   const toggleListening = () => {
-    if (!recognitionRef.current) return;
-
     if (isListening) {
-      recognitionRef.current.stop();
+      stopListening();
     } else {
-      try {
-        recognitionRef.current.start();
-        setIsListening(true);
-      } catch (error) {
-        console.error('Error starting recognition:', error);
-      }
+      startListening();
     }
   };
 
@@ -279,8 +342,15 @@ export function VoiceServiceInput({ onServicesIdentified, isLoading = false }: V
 
       {/* Analyze button */}
       <Button
-        onClick={analyzeText}
-        disabled={!text.trim() || isAnalyzing || isLoading}
+        onClick={(e) => {
+          e.stopPropagation();
+          // Stop listening before analyzing
+          if (isListening) {
+            stopListening();
+          }
+          analyzeText();
+        }}
+        disabled={(!text.trim() && !interimText.trim()) || isAnalyzing || isLoading}
         className="w-full"
       >
         {isAnalyzing ? (
