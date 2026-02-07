@@ -94,6 +94,7 @@ export type Database = {
           id: string
           omie_codigo_cliente: number
           omie_codigo_cliente_integracao: string | null
+          omie_codigo_vendedor: number | null
           updated_at: string
           user_id: string
         }
@@ -102,6 +103,7 @@ export type Database = {
           id?: string
           omie_codigo_cliente: number
           omie_codigo_cliente_integracao?: string | null
+          omie_codigo_vendedor?: number | null
           updated_at?: string
           user_id: string
         }
@@ -110,6 +112,7 @@ export type Database = {
           id?: string
           omie_codigo_cliente?: number
           omie_codigo_cliente_integracao?: string | null
+          omie_codigo_vendedor?: number | null
           updated_at?: string
           user_id?: string
         }
