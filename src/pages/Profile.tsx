@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { MapPin, Phone, Mail, ChevronRight, LogOut, HelpCircle, Loader2, Wrench, Camera, Pencil, Fingerprint, Scan, Check, X, Bell, BellOff } from 'lucide-react';
+import { MapPin, Phone, Mail, ChevronRight, LogOut, HelpCircle, Loader2, Wrench, Camera, Pencil, Fingerprint, Scan, Check, X, Bell, BellOff, Plus } from 'lucide-react';
 import { Header } from '@/components/Header';
 import { BottomNav } from '@/components/BottomNav';
 import { Button } from '@/components/ui/button';
@@ -306,6 +306,14 @@ const Profile = () => {
         <div className="mb-6">
           <h3 className="font-display font-bold text-lg mb-3">Agenda de Afiação</h3>
           <SharpeningSuggestions />
+          <Button 
+            variant="outline" 
+            className="w-full mt-3"
+            onClick={() => navigate('/tools')}
+          >
+            <Plus className="w-4 h-4 mr-2" />
+            Adicionar Ferramenta
+          </Button>
         </div>
 
         {/* Notification Settings */}
