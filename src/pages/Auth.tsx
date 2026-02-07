@@ -11,6 +11,7 @@ import { cn } from '@/lib/utils';
 import { supabase } from '@/integrations/supabase/client';
 import { Checkbox } from '@/components/ui/checkbox';
 import { BiometricLoginButton } from '@/components/BiometricLoginButton';
+import { ForgotPasswordDialog } from '@/components/ForgotPasswordDialog';
 
 const loginSchema = z.object({
   email: z.string().email('E-mail inválido'),
@@ -128,7 +129,7 @@ const Auth = () => {
   const [toolCategories, setToolCategories] = useState<ToolCategory[]>([]);
   const [selectedTools, setSelectedTools] = useState<string[]>([]);
   const [existingUserError, setExistingUserError] = useState(false);
-  
+  const [showForgotPassword, setShowForgotPassword] = useState(false);
   const [formData, setFormData] = useState({
     document: '',
     name: '',
@@ -668,6 +669,16 @@ const Auth = () => {
                 )}
               </div>
 
+              <div className="flex justify-end">
+                <button
+                  type="button"
+                  onClick={() => setShowForgotPassword(true)}
+                  className="text-sm text-primary hover:underline"
+                >
+                  Esqueci minha senha
+                </button>
+              </div>
+
               <Button type="submit" className="w-full h-12 text-base font-semibold shadow-glow" disabled={isLoading}>
                 {isLoading ? (
                   <>
@@ -680,6 +691,12 @@ const Auth = () => {
               </Button>
             </form>
           )}
+
+          {/* Forgot Password Dialog */}
+          <ForgotPasswordDialog 
+            open={showForgotPassword} 
+            onOpenChange={setShowForgotPassword} 
+          />
 
           {/* Signup - Document Step */}
           {mode === 'signup' && signupStep === 'document' && (
