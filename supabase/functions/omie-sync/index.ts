@@ -109,7 +109,7 @@ async function syncClienteOmie(
     cidade: address?.city || "",
     estado: address?.state || "",
     cep: address?.zip_code?.replace(/\D/g, "") || "",
-    contribuinte: "2", // Não contribuinte
+    contribuinte: "N", // N = Não contribuinte (para empresas sem IE)
     optante_simples_nacional: "N",
   };
 
@@ -132,24 +132,64 @@ async function syncClienteOmie(
     console.log(`[Omie] Cliente criado com sucesso: ${omieCodigoCliente}`);
     return omieCodigoCliente;
   } catch (error) {
-    // Se o cliente já existe, tentar buscar
+    // Se o cliente já existe, extrair o ID da mensagem de erro
     if (error instanceof Error && error.message.includes("já cadastrado")) {
-      console.log("[Omie] Cliente já existe, buscando...");
-      const searchResult = await callOmieApi(
-        "geral/clientes/",
-        "ConsultarCliente",
-        { codigo_cliente_integracao: cCodIntCli }
-      );
+      console.log("[Omie] Cliente já existe, extraindo ID da resposta...");
       
-      const omieCodigoCliente = searchResult.nCodCli!;
-      
-      await supabase.from("omie_clientes").insert({
-        user_id: userId,
-        omie_codigo_cliente: omieCodigoCliente,
-        omie_codigo_cliente_integracao: cCodIntCli,
-      });
+      // Tentar extrair o ID do cliente da mensagem de erro
+      // Formato: "Cliente já cadastrado para o CPF/CNPJ [XX] com o Id [XXXXX]"
+      const idMatch = error.message.match(/com o Id \[(\d+)\]/);
+      if (idMatch && idMatch[1]) {
+        const omieCodigoCliente = parseInt(idMatch[1], 10);
+        console.log(`[Omie] ID do cliente extraído: ${omieCodigoCliente}`);
+        
+        // Verificar se já existe mapeamento, se não, criar
+        const { data: existingMap } = await supabase
+          .from("omie_clientes")
+          .select("id")
+          .eq("user_id", userId)
+          .maybeSingle();
+          
+        if (!existingMap) {
+          await supabase.from("omie_clientes").insert({
+            user_id: userId,
+            omie_codigo_cliente: omieCodigoCliente,
+            omie_codigo_cliente_integracao: cCodIntCli,
+          });
+        }
 
-      return omieCodigoCliente;
+        return omieCodigoCliente;
+      }
+      
+      // Fallback: tentar buscar por CPF/CNPJ
+      console.log("[Omie] Tentando buscar cliente por CPF/CNPJ...");
+      try {
+        const searchResult = await callOmieApi(
+          "geral/clientes/",
+          "ListarClientes",
+          { 
+            pagina: 1, 
+            registros_por_pagina: 1,
+            clientesFiltro: {
+              cnpj_cpf: profile.document?.replace(/\D/g, "") || ""
+            }
+          }
+        );
+        
+        if ((searchResult as any).clientes_cadastro?.[0]?.codigo_cliente_omie) {
+          const omieCodigoCliente = (searchResult as any).clientes_cadastro[0].codigo_cliente_omie;
+          
+          await supabase.from("omie_clientes").insert({
+            user_id: userId,
+            omie_codigo_cliente: omieCodigoCliente,
+            omie_codigo_cliente_integracao: cCodIntCli,
+          });
+
+          return omieCodigoCliente;
+        }
+      } catch (searchError) {
+        console.error("[Omie] Erro ao buscar cliente:", searchError);
+      }
     }
     throw error;
   }
@@ -202,9 +242,10 @@ async function criarOrdemServicoOmie(
     },
     ServicosPrestados: [
       {
-        cCodServico: servicoMapping?.omie_codigo_integracao || "AFIACAO_PADRAO",
-        nCodServico: servicoMapping?.omie_codigo_servico || 0,
-        cDescServ: `Serviço de Afiação - ${order.service_type === "premium" ? "Premium" : order.service_type === "restoration" ? "Restauração" : order.service_type === "polishing" ? "Polimento" : "Padrão"}`,
+        cCodServLC116: "14.01", // Código LC 116 para serviços de manutenção
+        cCodServMun: "1401", // Código do serviço no município
+        cDescServ: `Serviço de Afiação - ${order.service_type === "premium" ? "Premium" : order.service_type === "restoration" ? "Restauração" : order.service_type === "polishing" ? "Polimento" : "Padrão"} - ${descricaoItens}`,
+        cDadosAdicItem: `Pedido App - ${descricaoItens}`,
         nQtde: qtdTotal,
         nValUnit: order.subtotal / qtdTotal,
         cTpDesconto: "V",
@@ -219,8 +260,10 @@ async function criarOrdemServicoOmie(
   // Se tiver taxa de entrega, adicionar como serviço adicional
   if (order.delivery_fee > 0) {
     (osParams.ServicosPrestados as Array<Record<string, unknown>>).push({
-      cCodServico: "TAXA_ENTREGA",
+      cCodServLC116: "14.01",
+      cCodServMun: "1401",
       cDescServ: "Taxa de Coleta/Entrega",
+      cDadosAdicItem: "Serviço de logística",
       nQtde: 1,
       nValUnit: order.delivery_fee,
       cTpDesconto: "V",
