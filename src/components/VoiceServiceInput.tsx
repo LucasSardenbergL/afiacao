@@ -251,10 +251,14 @@ export function VoiceServiceInput({ onServicesIdentified, isLoading = false }: V
         {isSpeechSupported && (
           <button
             type="button"
-            onClick={toggleListening}
+            onClick={(e) => {
+              e.stopPropagation();
+              e.preventDefault();
+              toggleListening();
+            }}
             disabled={isAnalyzing || isLoading}
             className={cn(
-              "absolute right-3 top-3 p-2 rounded-full transition-all",
+              "absolute right-3 top-3 p-2 rounded-full transition-all z-10",
               isListening 
                 ? "bg-primary text-primary-foreground animate-pulse" 
                 : "bg-muted text-muted-foreground hover:bg-primary/10 hover:text-primary"
