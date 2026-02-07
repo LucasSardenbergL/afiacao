@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { MapPin, Phone, Mail, ChevronRight, LogOut, HelpCircle, Loader2, Wrench, Camera, Pencil, Fingerprint, Scan, Check, X } from 'lucide-react';
+import { MapPin, Phone, Mail, ChevronRight, LogOut, HelpCircle, Loader2, Wrench, Camera, Pencil, Fingerprint, Scan, Check, X, Bell, BellOff } from 'lucide-react';
 import { Header } from '@/components/Header';
 import { BottomNav } from '@/components/BottomNav';
 import { Button } from '@/components/ui/button';
@@ -10,6 +10,7 @@ import { supabase } from '@/integrations/supabase/client';
 import { useToast } from '@/hooks/use-toast';
 import { cn } from '@/lib/utils';
 import { useBiometricAuth } from '@/hooks/useBiometricAuth';
+import { usePushNotifications } from '@/hooks/usePushNotifications';
 
 interface ProfileData {
   name: string;
@@ -33,6 +34,7 @@ const Profile = () => {
   const [toolCount, setToolCount] = useState(0);
   
   const { isSupported: biometricSupported, isRegistered: biometricRegistered, isLoading: biometricLoading, register: registerBiometric, removeCredential: removeBiometric, checkRegistration } = useBiometricAuth();
+  const { isSupported: notificationSupported, permission: notificationPermission, requestPermission } = usePushNotifications();
 
   useEffect(() => {
     if (user) {
@@ -305,6 +307,50 @@ const Profile = () => {
           <h3 className="font-display font-bold text-lg mb-3">Agenda de Afiação</h3>
           <SharpeningSuggestions />
         </div>
+
+        {/* Notification Settings */}
+        {notificationSupported && (
+          <div className="bg-card rounded-xl shadow-soft border border-border overflow-hidden mb-6">
+            <div className="p-4">
+              <div className="flex items-center gap-3">
+                <div className="w-10 h-10 rounded-full bg-primary/10 flex items-center justify-center">
+                  {notificationPermission === 'granted' ? (
+                    <Bell className="w-5 h-5 text-primary" />
+                  ) : (
+                    <BellOff className="w-5 h-5 text-muted-foreground" />
+                  )}
+                </div>
+                <div className="flex-1">
+                  <h4 className="font-medium">Notificações</h4>
+                  <p className="text-xs text-muted-foreground">
+                    {notificationPermission === 'granted' 
+                      ? 'Ativadas - Você receberá alertas' 
+                      : notificationPermission === 'denied'
+                        ? 'Bloqueadas no navegador'
+                        : 'Receba alertas sobre seus pedidos'}
+                  </p>
+                </div>
+                {notificationPermission === 'granted' ? (
+                  <span className="flex items-center gap-1 text-xs text-green-600 bg-green-100 px-2 py-1 rounded-full">
+                    <Check className="w-3 h-3" />
+                    Ativo
+                  </span>
+                ) : notificationPermission === 'denied' ? (
+                  <span className="text-xs text-muted-foreground">
+                    Desbloquear no navegador
+                  </span>
+                ) : (
+                  <Button 
+                    size="sm"
+                    onClick={requestPermission}
+                  >
+                    Ativar
+                  </Button>
+                )}
+              </div>
+            </div>
+          </div>
+        )}
 
         {/* Biometric Settings */}
         {biometricSupported && (
