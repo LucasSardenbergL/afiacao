@@ -68,6 +68,7 @@ const NewOrder = () => {
   const [profile, setProfile] = useState<ProfileData | null>(null);
   const [addresses, setAddresses] = useState<AddressData[]>([]);
   const [loadingData, setLoadingData] = useState(true);
+  const [showAddressOptions, setShowAddressOptions] = useState(false);
 
   useEffect(() => {
     if (user) {
@@ -496,28 +497,95 @@ const NewOrder = () => {
                   <div className="mb-6">
                     <label className="text-sm font-medium mb-3 flex items-center gap-2">
                       <MapPin className="w-4 h-4" />
-                      Endereço
+                      Endereço de coleta/entrega
                     </label>
+                    
                     {addresses.length > 0 ? (
-                      <div className="space-y-2">
-                        {addresses.map((address) => (
-                          <button
-                            key={address.id}
-                            onClick={() => setSelectedAddress(address.id)}
-                            className={cn(
-                              'w-full p-3 rounded-lg border-2 text-left transition-all',
-                              selectedAddress === address.id
-                                ? 'border-primary bg-primary/5'
-                                : 'border-border hover:border-primary/50'
-                            )}
+                      <>
+                        {/* Default address display */}
+                        {(() => {
+                          const defaultAddr = addresses.find(a => a.id === selectedAddress);
+                          if (!defaultAddr) return null;
+                          
+                          return (
+                            <div className="bg-card rounded-xl p-4 border-2 border-primary mb-3">
+                              <div className="flex items-start justify-between">
+                                <div>
+                                  <div className="flex items-center gap-2 mb-1">
+                                    <span className="font-semibold">{defaultAddr.label}</span>
+                                    <span className="text-xs bg-primary/10 text-primary px-2 py-0.5 rounded-full">
+                                      Selecionado
+                                    </span>
+                                  </div>
+                                  <p className="text-sm text-muted-foreground">
+                                    {defaultAddr.street}, {defaultAddr.number}
+                                    {defaultAddr.complement && ` - ${defaultAddr.complement}`}
+                                  </p>
+                                  <p className="text-sm text-muted-foreground">
+                                    {defaultAddr.neighborhood} - {defaultAddr.city}/{defaultAddr.state}
+                                  </p>
+                                </div>
+                                <Check className="w-5 h-5 text-primary mt-1" />
+                              </div>
+                            </div>
+                          );
+                        })()}
+
+                        {/* Change address toggle */}
+                        {!showAddressOptions && addresses.length > 1 && (
+                          <Button 
+                            variant="outline" 
+                            size="sm" 
+                            className="w-full"
+                            onClick={() => setShowAddressOptions(true)}
                           >
-                            <span className="font-medium">{address.label}</span>
-                            <p className="text-sm text-muted-foreground">
-                              {address.street}, {address.number} - {address.neighborhood}
-                            </p>
-                          </button>
-                        ))}
-                      </div>
+                            Alterar endereço
+                          </Button>
+                        )}
+
+                        {/* Other addresses */}
+                        {showAddressOptions && (
+                          <div className="space-y-2 mt-3">
+                            <p className="text-sm font-medium text-muted-foreground">Outros endereços:</p>
+                            {addresses
+                              .filter(a => a.id !== selectedAddress)
+                              .map((address) => (
+                                <button
+                                  key={address.id}
+                                  onClick={() => {
+                                    setSelectedAddress(address.id);
+                                    setShowAddressOptions(false);
+                                  }}
+                                  className="w-full p-3 rounded-lg border border-border text-left hover:border-primary/50 transition-all"
+                                >
+                                  <span className="font-medium">{address.label}</span>
+                                  <p className="text-sm text-muted-foreground">
+                                    {address.street}, {address.number} - {address.neighborhood}
+                                  </p>
+                                </button>
+                              ))}
+                            
+                            <Button 
+                              variant="ghost" 
+                              size="sm" 
+                              className="w-full mt-2"
+                              onClick={() => navigate('/addresses')}
+                            >
+                              <Plus className="w-4 h-4 mr-2" />
+                              Adicionar novo endereço
+                            </Button>
+                            
+                            <Button 
+                              variant="ghost" 
+                              size="sm" 
+                              className="w-full text-muted-foreground"
+                              onClick={() => setShowAddressOptions(false)}
+                            >
+                              Cancelar
+                            </Button>
+                          </div>
+                        )}
+                      </>
                     ) : (
                       <div className="bg-muted/50 rounded-lg p-4 text-center">
                         <p className="text-sm text-muted-foreground mb-2">Nenhum endereço cadastrado</p>
