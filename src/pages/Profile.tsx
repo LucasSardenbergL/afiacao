@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { User, MapPin, Phone, Mail, ChevronRight, LogOut, Settings, HelpCircle, FileText, Star, Loader2, Wrench, Camera, Pencil } from 'lucide-react';
+import { MapPin, Phone, Mail, ChevronRight, LogOut, HelpCircle, Loader2, Wrench, Camera, Pencil } from 'lucide-react';
 import { Header } from '@/components/Header';
 import { BottomNav } from '@/components/BottomNav';
 import { Button } from '@/components/ui/button';
@@ -184,9 +184,6 @@ const Profile = () => {
   const menuItems = [
     { icon: Wrench, label: 'Minhas Ferramentas', count: toolCount, path: '/tools' },
     { icon: MapPin, label: 'Meus Endereços', count: addressCount, path: '/addresses' },
-    { icon: FileText, label: 'Dados Fiscais', path: null },
-    { icon: Star, label: 'Avaliações', path: null },
-    { icon: Settings, label: 'Configurações', path: null },
     { icon: HelpCircle, label: 'Ajuda e FAQ', path: '/support' },
   ];
 
