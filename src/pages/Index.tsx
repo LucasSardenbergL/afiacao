@@ -1,8 +1,9 @@
 import { useEffect, useState } from 'react';
-import { PlusCircle, ClipboardList, Headphones, ChevronRight, Wrench, Bell, Calendar, User } from 'lucide-react';
+import { PlusCircle, ClipboardList, Headphones, ChevronRight, Wrench, Calendar, User } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 import { Button } from '@/components/ui/button';
 import { BottomNav } from '@/components/BottomNav';
+import { SharpeningSuggestions } from '@/components/SharpeningSuggestions';
 import { supabase } from '@/integrations/supabase/client';
 import { useAuth } from '@/contexts/AuthContext';
 import { format } from 'date-fns';
@@ -36,7 +37,7 @@ const Index = () => {
   const [profile, setProfile] = useState<Profile | null>(null);
   const [pendingOrders, setPendingOrders] = useState<Order[]>([]);
   const [userTools, setUserTools] = useState<UserTool[]>([]);
-  const [toolsDue, setToolsDue] = useState<UserTool[]>([]);
+  // toolsDue moved to SharpeningSuggestions component
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
@@ -81,14 +82,6 @@ const Index = () => {
 
         if (toolsData) {
           setUserTools(toolsData as unknown as UserTool[]);
-          
-          // Filter tools that are due or overdue
-          const now = new Date();
-          const dueTools = toolsData.filter(tool => {
-            if (!tool.next_sharpening_due) return false;
-            return new Date(tool.next_sharpening_due) <= now;
-          });
-          setToolsDue(dueTools as unknown as UserTool[]);
         }
       } catch (error) {
         console.error('Error loading data:', error);
@@ -168,32 +161,10 @@ const Index = () => {
       </header>
 
       <main className="px-4 -mt-4 max-w-lg mx-auto">
-        {/* Alerts for tools due */}
-        {toolsDue.length > 0 && (
-          <div className="bg-amber-50 border border-amber-200 rounded-xl p-4 mb-6">
-            <div className="flex items-start gap-3">
-              <div className="w-10 h-10 rounded-full bg-amber-100 flex items-center justify-center flex-shrink-0">
-                <Bell className="w-5 h-5 text-amber-600" />
-              </div>
-              <div className="flex-1">
-                <p className="font-semibold text-amber-900">
-                  {toolsDue.length} ferramenta(s) precisam de afiação
-                </p>
-                <p className="text-sm text-amber-700 mt-1">
-                  {toolsDue.slice(0, 2).map(t => t.tool_categories?.name).join(', ')}
-                  {toolsDue.length > 2 && ` e mais ${toolsDue.length - 2}`}
-                </p>
-                <Button 
-                  size="sm" 
-                  className="mt-3"
-                  onClick={() => navigate('/new-order')}
-                >
-                  Agendar Afiação
-                </Button>
-              </div>
-            </div>
-          </div>
-        )}
+        {/* Sharpening Suggestions */}
+        <section className="mb-6">
+          <SharpeningSuggestions compact />
+        </section>
 
         {/* Action cards */}
         <div className="grid grid-cols-3 gap-3 mb-6">

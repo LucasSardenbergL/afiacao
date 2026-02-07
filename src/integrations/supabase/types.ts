@@ -59,6 +59,32 @@ export type Database = {
         }
         Relationships: []
       }
+      category_mappings: {
+        Row: {
+          id: string
+          order_category: string
+          tool_category_id: string | null
+        }
+        Insert: {
+          id?: string
+          order_category: string
+          tool_category_id?: string | null
+        }
+        Update: {
+          id?: string
+          order_category?: string
+          tool_category_id?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "category_mappings_tool_category_id_fkey"
+            columns: ["tool_category_id"]
+            isOneToOne: false
+            referencedRelation: "tool_categories"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       omie_clientes: {
         Row: {
           created_at: string

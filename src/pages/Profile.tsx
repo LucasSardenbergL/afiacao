@@ -1,8 +1,9 @@
 import { useState, useEffect } from 'react';
-import { User, MapPin, Phone, Mail, ChevronRight, LogOut, Settings, HelpCircle, FileText, Star, Loader2 } from 'lucide-react';
+import { User, MapPin, Phone, Mail, ChevronRight, LogOut, Settings, HelpCircle, FileText, Star, Loader2, Wrench } from 'lucide-react';
 import { Header } from '@/components/Header';
 import { BottomNav } from '@/components/BottomNav';
 import { Button } from '@/components/ui/button';
+import { SharpeningSuggestions } from '@/components/SharpeningSuggestions';
 import { useAuth } from '@/contexts/AuthContext';
 import { supabase } from '@/integrations/supabase/client';
 import { useToast } from '@/hooks/use-toast';
@@ -11,6 +12,7 @@ interface ProfileData {
   name: string;
   email: string | null;
   phone: string | null;
+  customer_type: string | null;
 }
 
 const Profile = () => {
@@ -20,6 +22,7 @@ const Profile = () => {
   const [loading, setLoading] = useState(true);
   const [addressCount, setAddressCount] = useState(0);
   const [orderCount, setOrderCount] = useState(0);
+  const [toolCount, setToolCount] = useState(0);
 
   useEffect(() => {
     if (user) {
@@ -34,7 +37,7 @@ const Profile = () => {
       // Load profile
       const { data: profileData } = await supabase
         .from('profiles')
-        .select('name, email, phone')
+        .select('name, email, phone, customer_type')
         .eq('user_id', user.id)
         .maybeSingle();
 
@@ -46,6 +49,7 @@ const Profile = () => {
           name: user.email?.split('@')[0] || 'Usuário',
           email: user.email || null,
           phone: null,
+          customer_type: null,
         });
       }
 
@@ -65,6 +69,14 @@ const Profile = () => {
         .eq('status', 'entregue');
       
       setOrderCount(ordCount || 0);
+
+      // Load tool count
+      const { count: tlCount } = await supabase
+        .from('user_tools')
+        .select('*', { count: 'exact', head: true })
+        .eq('user_id', user.id);
+      
+      setToolCount(tlCount || 0);
     } catch (error) {
       console.error('Error loading profile:', error);
     } finally {
@@ -89,6 +101,7 @@ const Profile = () => {
   };
 
   const menuItems = [
+    { icon: Wrench, label: 'Minhas Ferramentas', count: toolCount },
     { icon: MapPin, label: 'Meus Endereços', count: addressCount },
     { icon: FileText, label: 'Dados Fiscais' },
     { icon: Star, label: 'Avaliações' },
@@ -123,9 +136,20 @@ const Profile = () => {
             </div>
             <div className="flex-1">
               <h2 className="font-display font-bold text-lg">{profile?.name || 'Usuário'}</h2>
-              <p className="text-sm text-muted-foreground">
-                Cliente desde {new Date(user?.created_at || Date.now()).toLocaleDateString('pt-BR', { month: 'short', year: 'numeric' })}
-              </p>
+              <div className="flex items-center gap-2">
+                <p className="text-sm text-muted-foreground">
+                  Cliente desde {new Date(user?.created_at || Date.now()).toLocaleDateString('pt-BR', { month: 'short', year: 'numeric' })}
+                </p>
+                {profile?.customer_type && (
+                  <span className={`text-xs px-2 py-0.5 rounded-full ${
+                    profile.customer_type === 'industrial' 
+                      ? 'bg-amber-100 text-amber-800' 
+                      : 'bg-blue-100 text-blue-800'
+                  }`}>
+                    {profile.customer_type === 'industrial' ? 'Industrial' : 'Doméstico'}
+                  </span>
+                )}
+              </div>
             </div>
             <Button variant="outline" size="sm">
               Editar
@@ -154,14 +178,20 @@ const Profile = () => {
               <p className="text-xs text-muted-foreground">Pedidos</p>
             </div>
             <div className="flex-1 text-center border-l border-border">
-              <p className="text-2xl font-bold text-foreground">-</p>
-              <p className="text-xs text-muted-foreground">Avaliação</p>
+              <p className="text-2xl font-bold text-foreground">{toolCount}</p>
+              <p className="text-xs text-muted-foreground">Ferramentas</p>
             </div>
             <div className="flex-1 text-center border-l border-border">
               <p className="text-2xl font-bold text-foreground">{addressCount}</p>
               <p className="text-xs text-muted-foreground">Endereços</p>
             </div>
           </div>
+        </div>
+
+        {/* Sharpening Suggestions */}
+        <div className="mb-6">
+          <h3 className="font-display font-bold text-lg mb-3">Agenda de Afiação</h3>
+          <SharpeningSuggestions />
         </div>
 
         {/* Menu items */}
