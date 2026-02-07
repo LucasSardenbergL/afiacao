@@ -524,43 +524,55 @@ const Auth = () => {
   if (authLoading) {
     return (
       <div className="min-h-screen flex items-center justify-center bg-background">
-        <Loader2 className="w-8 h-8 animate-spin text-primary" />
+        <div className="flex flex-col items-center gap-3">
+          <Loader2 className="w-10 h-10 animate-spin text-primary" />
+          <p className="text-sm text-muted-foreground">Carregando...</p>
+        </div>
       </div>
     );
   }
 
   return (
-    <div className="min-h-screen flex flex-col items-center justify-center bg-background px-4 py-8">
-      <div className="w-full max-w-md">
-        {/* Logo/Brand */}
-        <div className="text-center mb-6">
-          <h1 className="font-display font-bold text-3xl text-primary mb-2">
-            Colacor
-          </h1>
-          <p className="text-muted-foreground">
-            {mode === 'login' 
-              ? 'Entre na sua conta' 
-              : signupStep === 'document' 
-                ? 'Informe seu CPF ou CNPJ' 
-                : signupStep === 'form'
-                  ? 'Complete seu cadastro'
-                  : 'Selecione suas ferramentas'}
-          </p>
-        </div>
+    <div className="min-h-screen flex flex-col bg-background">
+      {/* Header decorativo */}
+      <div className="absolute inset-0 overflow-hidden pointer-events-none">
+        <div className="absolute top-0 left-1/2 -translate-x-1/2 w-[600px] h-[400px] bg-gradient-radial from-primary/10 via-primary/5 to-transparent rounded-full blur-3xl -translate-y-1/2" />
+      </div>
+      
+      <div className="flex-1 flex flex-col items-center justify-center px-4 py-8 relative z-10">
+        <div className="w-full max-w-md">
+          {/* Logo/Brand */}
+          <div className="text-center mb-8 animate-fade-in">
+            <div className="inline-flex items-center justify-center w-16 h-16 rounded-2xl bg-gradient-primary shadow-glow mb-4">
+              <Wrench className="w-8 h-8 text-primary-foreground" />
+            </div>
+            <h1 className="font-display font-bold text-4xl text-foreground tracking-tight mb-2">
+              Colacor
+            </h1>
+            <p className="text-muted-foreground text-lg">
+              {mode === 'login' 
+                ? 'Bem-vindo de volta!' 
+                : signupStep === 'document' 
+                  ? 'Vamos começar' 
+                  : signupStep === 'form'
+                    ? 'Complete seu cadastro'
+                    : 'Suas ferramentas'}
+            </p>
+          </div>
 
-        {/* Auth Card */}
-        <div className="bg-card rounded-2xl shadow-soft border border-border p-6">
+          {/* Auth Card */}
+          <div className="bg-card rounded-2xl shadow-strong border border-border p-6 animate-fade-in" style={{ animationDelay: '0.1s' }}>
           {/* Mode Toggle - only show on login or document step */}
           {(mode === 'login' || signupStep === 'document') && (
-            <div className="flex gap-2 mb-6">
+            <div className="flex gap-2 mb-6 p-1 bg-muted rounded-xl">
               <button
                 type="button"
                 onClick={() => { setMode('login'); setSignupStep('document'); setExistingUserError(false); }}
                 className={cn(
-                  'flex-1 py-2 rounded-lg font-medium text-sm transition-all',
+                  'flex-1 py-2.5 rounded-lg font-semibold text-sm transition-all',
                   mode === 'login'
-                    ? 'bg-primary text-primary-foreground'
-                    : 'bg-muted text-muted-foreground hover:bg-muted/80'
+                    ? 'bg-card text-foreground shadow-medium'
+                    : 'text-muted-foreground hover:text-foreground'
                 )}
               >
                 Entrar
@@ -569,10 +581,10 @@ const Auth = () => {
                 type="button"
                 onClick={() => { setMode('signup'); setSignupStep('document'); setExistingUserError(false); }}
                 className={cn(
-                  'flex-1 py-2 rounded-lg font-medium text-sm transition-all',
+                  'flex-1 py-2.5 rounded-lg font-semibold text-sm transition-all',
                   mode === 'signup'
-                    ? 'bg-primary text-primary-foreground'
-                    : 'bg-muted text-muted-foreground hover:bg-muted/80'
+                    ? 'bg-card text-foreground shadow-medium'
+                    : 'text-muted-foreground hover:text-foreground'
                 )}
               >
                 Cadastrar
@@ -580,14 +592,13 @@ const Auth = () => {
             </div>
           )}
 
-          {/* Back button for signup form/tools step */}
           {mode === 'signup' && (signupStep === 'form' || signupStep === 'tools') && (
             <button
               type="button"
               onClick={() => signupStep === 'tools' ? setSignupStep('form') : resetSignup()}
-              className="flex items-center gap-1 text-sm text-muted-foreground hover:text-foreground mb-4"
+              className="flex items-center gap-1.5 text-sm text-muted-foreground hover:text-foreground mb-4 transition-colors group"
             >
-              <ChevronLeft className="w-4 h-4" />
+              <ChevronLeft className="w-4 h-4 group-hover:-translate-x-0.5 transition-transform" />
               Voltar
             </button>
           )}
@@ -644,10 +655,10 @@ const Auth = () => {
                 )}
               </div>
 
-              <Button type="submit" className="w-full" disabled={isLoading}>
+              <Button type="submit" className="w-full h-12 text-base font-semibold shadow-glow" disabled={isLoading}>
                 {isLoading ? (
                   <>
-                    <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+                    <Loader2 className="w-5 h-5 mr-2 animate-spin" />
                     Entrando...
                   </>
                 ) : (
@@ -706,13 +717,13 @@ const Auth = () => {
 
               <Button 
                 type="button" 
-                className="w-full" 
+                className="w-full h-12 text-base font-semibold shadow-glow" 
                 disabled={isCheckingDocument || !formData.document}
                 onClick={checkDocumentInOmie}
               >
                 {isCheckingDocument ? (
                   <>
-                    <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+                    <Loader2 className="w-5 h-5 mr-2 animate-spin" />
                     Verificando...
                   </>
                 ) : (
@@ -1029,7 +1040,7 @@ const Auth = () => {
                 </div>
               </div>
 
-              <Button type="submit" className="w-full" disabled={isLoading}>
+              <Button type="submit" className="w-full h-12 text-base font-semibold" disabled={isLoading}>
                 Próximo: Selecionar Ferramentas
               </Button>
             </form>
@@ -1078,13 +1089,13 @@ const Auth = () => {
 
               <Button 
                 type="button" 
-                className="w-full" 
+                className="w-full h-12 text-base font-semibold shadow-glow" 
                 disabled={isLoading}
                 onClick={handleFinalSubmit}
               >
                 {isLoading ? (
                   <>
-                    <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+                    <Loader2 className="w-5 h-5 mr-2 animate-spin" />
                     Cadastrando...
                   </>
                 ) : (
@@ -1102,34 +1113,35 @@ const Auth = () => {
               </button>
             </div>
           )}
-        </div>
+          </div>
 
-        {/* Footer */}
-        <p className="text-center text-sm text-muted-foreground mt-6">
-          {mode === 'login' ? (
-            <>
-              Não tem uma conta?{' '}
-              <button
-                type="button"
-                onClick={() => { setMode('signup'); setSignupStep('document'); }}
-                className="text-primary hover:underline font-medium"
-              >
-                Cadastre-se
-              </button>
-            </>
-          ) : (
-            <>
-              Já tem uma conta?{' '}
-              <button
-                type="button"
-                onClick={() => setMode('login')}
-                className="text-primary hover:underline font-medium"
-              >
-                Faça login
-              </button>
-            </>
-          )}
-        </p>
+          {/* Footer */}
+          <p className="text-center text-sm text-muted-foreground mt-6 animate-fade-in" style={{ animationDelay: '0.2s' }}>
+            {mode === 'login' ? (
+              <>
+                Não tem uma conta?{' '}
+                <button
+                  type="button"
+                  onClick={() => { setMode('signup'); setSignupStep('document'); }}
+                  className="text-primary hover:underline font-semibold"
+                >
+                  Cadastre-se
+                </button>
+              </>
+            ) : (
+              <>
+                Já tem uma conta?{' '}
+                <button
+                  type="button"
+                  onClick={() => setMode('login')}
+                  className="text-primary hover:underline font-semibold"
+                >
+                  Faça login
+                </button>
+              </>
+            )}
+          </p>
+        </div>
       </div>
     </div>
   );
