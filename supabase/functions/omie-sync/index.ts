@@ -223,17 +223,35 @@ async function criarOrdemServicoOmie(
     .join(", ");
 
   // Montar lista de serviços prestados a partir dos itens
-  const servicosPrestados = order.items.map((item) => ({
-    nCodServ: item.omie_codigo_servico || 0, // Código do serviço no Omie
-    cDescServ: item.category,
-    cDadosAdicItem: item.brandModel 
-      ? `Marca/Modelo: ${item.brandModel}${item.notes ? ` | Obs: ${item.notes}` : ''}`
-      : item.notes || '',
-    nQtde: item.quantity,
-    nValUnit: 0, // Valor a definir após triagem
-    cTpDesconto: "V",
-    nValorDesconto: 0,
-  }));
+  // Campos obrigatórios conforme documentação Omie API:
+  // - cCodServLC116: Código LC 116 do serviço (ex: "7.07")
+  // - cCodServMun: Código do serviço no município
+  // - cDescServ: Descrição do serviço
+  // - nQtde: Quantidade
+  // - nValUnit: Valor unitário
+  const servicosPrestados = order.items.map((item) => {
+    const servicoBase: Record<string, unknown> = {
+      cCodServLC116: "14.01", // Código LC 116 padrão para serviços de manutenção
+      cCodServMun: "01015", // Código do serviço no município (padrão)
+      cDescServ: item.category,
+      cDadosAdicItem: item.brandModel 
+        ? `Marca/Modelo: ${item.brandModel}${item.notes ? ` | Obs: ${item.notes}` : ''}`
+        : item.notes || '',
+      nQtde: item.quantity,
+      nValUnit: 0, // Valor a definir após triagem
+      cTpDesconto: "V",
+      nValorDesconto: 0,
+      cRetemISS: "N",
+      cTribServ: "T",
+    };
+
+    // Se tiver código do serviço Omie, adiciona
+    if (item.omie_codigo_servico && item.omie_codigo_servico > 0) {
+      servicoBase.nCodServ = item.omie_codigo_servico;
+    }
+
+    return servicoBase;
+  });
 
   const osParams: Record<string, unknown> = {
     Cabecalho: {
