@@ -133,9 +133,9 @@ export const mockOrders: Order[] = [
     items: [
       {
         id: '4',
-        category: 'formoes',
-        brandModel: 'Kit Formões Stanley',
-        quantity: 5,
+        category: 'serra_circular_hss',
+        brandModel: 'Serra HSS Industrial',
+        quantity: 3,
         photos: [],
         wearLevel: 'leve',
         serviceType: 'premium',
