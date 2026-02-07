@@ -14,6 +14,7 @@ import { syncOrderToOmie, listOmieServices, OmieServico } from '@/services/omieS
 import { useToast } from '@/hooks/use-toast';
 import { useAuth } from '@/contexts/AuthContext';
 import { supabase } from '@/integrations/supabase/client';
+import { VoiceServiceInput, SuggestedService } from '@/components/VoiceServiceInput';
 
 type Step = 'items' | 'delivery' | 'review';
 type PaymentMethod = 'pix' | 'on_delivery';
@@ -203,6 +204,35 @@ const NewOrder = () => {
     }
   };
 
+  // Handler para serviços identificados pela IA
+  const handleServicesFromAI = (suggestedServices: SuggestedService[]) => {
+    const newItems: ServiceItem[] = suggestedServices.map((suggested, index) => {
+      const servico = servicos.find(s => s.omie_codigo_servico === suggested.omie_codigo_servico);
+      return {
+        id: String(items.length + index + 1),
+        servico: servico || {
+          omie_codigo_servico: suggested.omie_codigo_servico,
+          omie_codigo_integracao: '',
+          descricao: suggested.descricao,
+          codigo_lc116: '',
+          codigo_servico_municipio: '',
+          valor_unitario: 0,
+          unidade: 'UN',
+        },
+        quantity: suggested.quantity,
+        notes: suggested.notes,
+      };
+    });
+    
+    // Substituir itens vazios ou adicionar aos existentes
+    const hasEmptyItem = items.length === 1 && !items[0].servico;
+    if (hasEmptyItem) {
+      setItems(newItems);
+    } else {
+      setItems([...items, ...newItems]);
+    }
+  };
+
   // Industrial clients always have free shipping
   const deliveryFee = DELIVERY_FEES[deliveryOption];
 
@@ -369,6 +399,20 @@ const NewOrder = () => {
               <p className="text-sm text-muted-foreground mb-6">
                 Escolha os serviços que deseja para suas ferramentas
               </p>
+
+              {/* Voice/Text AI Input */}
+              <div className="mb-6">
+                <VoiceServiceInput 
+                  onServicesIdentified={handleServicesFromAI}
+                  isLoading={loadingServicos}
+                />
+              </div>
+
+              <div className="relative flex items-center my-6">
+                <div className="flex-grow border-t border-border"></div>
+                <span className="mx-4 text-xs text-muted-foreground uppercase tracking-wider">ou selecione manualmente</span>
+                <div className="flex-grow border-t border-border"></div>
+              </div>
 
               {servicos.length === 0 ? (
                 <div className="bg-muted/50 rounded-lg p-6 text-center">
