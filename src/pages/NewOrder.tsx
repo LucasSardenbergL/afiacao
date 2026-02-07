@@ -80,9 +80,39 @@ const NewOrder = () => {
   const loadServicos = async () => {
     try {
       setLoadingServicos(true);
-      const result = await listOmieServices();
-      if (result.success && result.servicos.length > 0) {
-        setServicos(result.servicos);
+      
+      // Buscar serviços ativos do banco local (sincronizados do Omie)
+      const { data: servicosData, error } = await supabase
+        .from('omie_servicos')
+        .select('omie_codigo_servico, omie_codigo_integracao, descricao')
+        .eq('inativo', false)
+        .order('descricao');
+      
+      if (error) {
+        console.error('Erro ao carregar serviços do banco:', error);
+        // Fallback: buscar direto do Omie
+        const result = await listOmieServices();
+        if (result.success && result.servicos.length > 0) {
+          setServicos(result.servicos);
+        }
+      } else if (servicosData && servicosData.length > 0) {
+        // Formatar para o formato esperado
+        const servicosFormatados: OmieServico[] = servicosData.map(s => ({
+          omie_codigo_servico: s.omie_codigo_servico,
+          omie_codigo_integracao: s.omie_codigo_integracao || '',
+          descricao: s.descricao,
+          codigo_lc116: '',
+          codigo_servico_municipio: '',
+          valor_unitario: 0,
+          unidade: 'UN',
+        }));
+        setServicos(servicosFormatados);
+      } else {
+        // Se não houver serviços no banco, buscar do Omie
+        const result = await listOmieServices();
+        if (result.success && result.servicos.length > 0) {
+          setServicos(result.servicos);
+        }
       }
     } catch (error) {
       console.error('Erro ao carregar serviços:', error);

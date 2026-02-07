@@ -483,6 +483,123 @@ serve(async (req) => {
         break;
       }
 
+      case "sync_services": {
+        // Sincronizar serviços do Omie com o banco local
+        console.log("[Omie] Iniciando sincronização de serviços...");
+        
+        try {
+          // 1. Buscar todos os serviços do Omie (ativos e inativos)
+          const omieResult = await callOmieApi(
+            "servicos/servico/",
+            "ListarCadastroServico",
+            { 
+              nPagina: 1, 
+              nRegPorPagina: 500 // Buscar mais para garantir todos
+            }
+          ) as any;
+
+          const servicosOmie = omieResult.cadastros || [];
+          console.log(`[Omie] ${servicosOmie.length} serviços encontrados no Omie`);
+
+          // 2. Buscar serviços existentes no banco
+          const { data: servicosLocais } = await supabaseAdmin
+            .from("omie_servicos")
+            .select("id, omie_codigo_servico, descricao, inativo");
+
+          const servicosLocaisMap = new Map(
+            (servicosLocais || []).map((s: any) => [s.omie_codigo_servico, s])
+          );
+
+          let adicionados = 0;
+          let atualizados = 0;
+          let inativados = 0;
+
+          // 3. Processar serviços do Omie
+          const codigosOmie = new Set<number>();
+          
+          for (const s of servicosOmie) {
+            const codigoServico = s.intListar?.nCodServ;
+            if (!codigoServico) continue;
+            
+            codigosOmie.add(codigoServico);
+            
+            const descricao = s.descricao?.cDescrCompleta || s.cabecalho?.cDescricao || "Sem descrição";
+            const inativoOmie = s.info?.inativo === "S";
+            const codigoIntegracao = s.intListar?.cCodIntServ || null;
+
+            const servicoLocal = servicosLocaisMap.get(codigoServico);
+
+            if (servicoLocal) {
+              // Atualizar serviço existente
+              const { error: updateError } = await supabaseAdmin
+                .from("omie_servicos")
+                .update({
+                  descricao,
+                  inativo: inativoOmie,
+                  omie_codigo_integracao: codigoIntegracao,
+                  updated_at: new Date().toISOString(),
+                })
+                .eq("omie_codigo_servico", codigoServico);
+
+              if (!updateError) {
+                if (servicoLocal.inativo !== inativoOmie || servicoLocal.descricao !== descricao) {
+                  atualizados++;
+                }
+              }
+            } else {
+              // Adicionar novo serviço
+              console.log(`[Omie] Inserindo serviço: ${codigoServico} - ${descricao}`);
+              const { error: insertError } = await supabaseAdmin
+                .from("omie_servicos")
+                .insert({
+                  omie_codigo_servico: codigoServico,
+                  omie_codigo_integracao: codigoIntegracao,
+                  descricao,
+                  app_service_type: "afiacao", // Tipo padrão
+                  inativo: inativoOmie,
+                });
+
+              if (insertError) {
+                console.error(`[Omie] Erro ao inserir serviço ${codigoServico}:`, insertError);
+              } else {
+                adicionados++;
+                console.log(`[Omie] Novo serviço adicionado: ${descricao}`);
+              }
+            }
+          }
+
+          // 4. Inativar serviços locais que não existem mais no Omie
+          for (const [codigo, servicoLocal] of servicosLocaisMap) {
+            if (!codigosOmie.has(codigo) && !servicoLocal.inativo) {
+              await supabaseAdmin
+                .from("omie_servicos")
+                .update({ inativo: true, updated_at: new Date().toISOString() })
+                .eq("omie_codigo_servico", codigo);
+              
+              inativados++;
+              console.log(`[Omie] Serviço inativado (removido do Omie): ${servicoLocal.descricao}`);
+            }
+          }
+
+          console.log(`[Omie] Sincronização concluída: ${adicionados} adicionados, ${atualizados} atualizados, ${inativados} inativados`);
+
+          result = {
+            success: true,
+            adicionados,
+            atualizados,
+            inativados,
+            total_omie: servicosOmie.length,
+          };
+        } catch (syncError) {
+          console.error("[Omie] Erro ao sincronizar serviços:", syncError);
+          result = {
+            success: false,
+            error: syncError instanceof Error ? syncError.message : "Erro ao sincronizar serviços",
+          };
+        }
+        break;
+      }
+
       default:
         return new Response(
           JSON.stringify({ error: "Ação não reconhecida" }),

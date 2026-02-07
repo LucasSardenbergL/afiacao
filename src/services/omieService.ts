@@ -169,3 +169,32 @@ export async function listOmieContasCorrentes(): Promise<{
     };
   }
 }
+
+export async function syncOmieServices(): Promise<{
+  success: boolean;
+  adicionados?: number;
+  atualizados?: number;
+  inativados?: number;
+  error?: string;
+}> {
+  try {
+    const { data, error } = await supabase.functions.invoke("omie-sync", {
+      body: {
+        action: "sync_services",
+      },
+    });
+
+    if (error) {
+      console.error("[Omie Service] Erro ao sincronizar serviços:", error);
+      return { success: false, error: error.message };
+    }
+
+    return data;
+  } catch (err) {
+    console.error("[Omie Service] Erro inesperado:", err);
+    return {
+      success: false,
+      error: err instanceof Error ? err.message : "Erro desconhecido",
+    };
+  }
+}

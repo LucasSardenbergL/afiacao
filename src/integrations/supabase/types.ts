@@ -160,24 +160,30 @@ export type Database = {
           created_at: string
           descricao: string
           id: string
+          inativo: boolean
           omie_codigo_integracao: string | null
           omie_codigo_servico: number
+          updated_at: string
         }
         Insert: {
           app_service_type: string
           created_at?: string
           descricao: string
           id?: string
+          inativo?: boolean
           omie_codigo_integracao?: string | null
           omie_codigo_servico: number
+          updated_at?: string
         }
         Update: {
           app_service_type?: string
           created_at?: string
           descricao?: string
           id?: string
+          inativo?: boolean
           omie_codigo_integracao?: string | null
           omie_codigo_servico?: number
+          updated_at?: string
         }
         Relationships: []
       }
