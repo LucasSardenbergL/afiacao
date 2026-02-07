@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Plus, Trash2, ChevronRight, Check, MapPin, Clock, Loader2, QrCode, Banknote, Wrench, AlertCircle } from 'lucide-react';
+import { Plus, Trash2, ChevronRight, Check, MapPin, Clock, Loader2, Wrench, AlertCircle } from 'lucide-react';
 import { Header } from '@/components/Header';
 import { Button } from '@/components/ui/button';
 import { PhotoUpload } from '@/components/PhotoUpload';
@@ -18,9 +18,6 @@ import { useAuth } from '@/contexts/AuthContext';
 import { supabase } from '@/integrations/supabase/client';
 
 type Step = 'items' | 'delivery' | 'review';
-type PaymentMethod = 'pix' | 'on_delivery';
-
-const PIX_KEY = '55.555.305/0001-51';
 
 interface UserTool {
   id: string;
@@ -72,7 +69,7 @@ const NewOrder = () => {
   const [deliveryOption, setDeliveryOption] = useState<DeliveryOption>('coleta_entrega');
   const [selectedAddress, setSelectedAddress] = useState<string>('');
   const [selectedTimeSlot, setSelectedTimeSlot] = useState<string>('');
-  const [paymentMethod, setPaymentMethod] = useState<PaymentMethod>('pix');
+  
   const [isSubmitting, setIsSubmitting] = useState(false);
   
   // Serviços do Omie
@@ -868,62 +865,6 @@ const NewOrder = () => {
                 )}
               </div>
 
-              <div className="bg-card rounded-xl p-4 shadow-soft border border-border mb-4">
-                <h3 className="font-semibold mb-3">Forma de Pagamento</h3>
-                <div className="space-y-3">
-                  <button
-                    onClick={() => setPaymentMethod('pix')}
-                    className={cn(
-                      'w-full p-3 rounded-lg border-2 text-left transition-all flex items-center gap-3',
-                      paymentMethod === 'pix'
-                        ? 'border-primary bg-primary/5'
-                        : 'border-border hover:border-primary/50'
-                    )}
-                  >
-                    <div
-                      className={cn(
-                        'w-5 h-5 rounded-full border-2 flex items-center justify-center',
-                        paymentMethod === 'pix' ? 'border-primary' : 'border-muted-foreground'
-                      )}
-                    >
-                      {paymentMethod === 'pix' && (
-                        <div className="w-2.5 h-2.5 rounded-full bg-primary" />
-                      )}
-                    </div>
-                    <QrCode className="w-5 h-5 text-muted-foreground" />
-                    <div className="flex-1">
-                      <span className="font-medium block">PIX</span>
-                      <span className="text-xs text-muted-foreground">Chave: {PIX_KEY}</span>
-                    </div>
-                  </button>
-
-                  <button
-                    onClick={() => setPaymentMethod('on_delivery')}
-                    className={cn(
-                      'w-full p-3 rounded-lg border-2 text-left transition-all flex items-center gap-3',
-                      paymentMethod === 'on_delivery'
-                        ? 'border-primary bg-primary/5'
-                        : 'border-border hover:border-primary/50'
-                    )}
-                  >
-                    <div
-                      className={cn(
-                        'w-5 h-5 rounded-full border-2 flex items-center justify-center',
-                        paymentMethod === 'on_delivery' ? 'border-primary' : 'border-muted-foreground'
-                      )}
-                    >
-                      {paymentMethod === 'on_delivery' && (
-                        <div className="w-2.5 h-2.5 rounded-full bg-primary" />
-                      )}
-                    </div>
-                    <Banknote className="w-5 h-5 text-muted-foreground" />
-                    <div className="flex-1">
-                      <span className="font-medium block">Na Entrega</span>
-                      <span className="text-xs text-muted-foreground">Pague ao receber</span>
-                    </div>
-                  </button>
-                </div>
-              </div>
 
               <div className="bg-card rounded-xl p-4 shadow-soft border border-border">
                 <div className="space-y-2 text-sm">
