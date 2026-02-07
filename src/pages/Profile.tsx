@@ -1,4 +1,5 @@
 import { useState, useEffect } from 'react';
+import { useNavigate } from 'react-router-dom';
 import { User, MapPin, Phone, Mail, ChevronRight, LogOut, Settings, HelpCircle, FileText, Star, Loader2, Wrench } from 'lucide-react';
 import { Header } from '@/components/Header';
 import { BottomNav } from '@/components/BottomNav';
@@ -16,6 +17,7 @@ interface ProfileData {
 }
 
 const Profile = () => {
+  const navigate = useNavigate();
   const { user, signOut } = useAuth();
   const { toast } = useToast();
   const [profile, setProfile] = useState<ProfileData | null>(null);
@@ -101,12 +103,12 @@ const Profile = () => {
   };
 
   const menuItems = [
-    { icon: Wrench, label: 'Minhas Ferramentas', count: toolCount },
-    { icon: MapPin, label: 'Meus Endereços', count: addressCount },
-    { icon: FileText, label: 'Dados Fiscais' },
-    { icon: Star, label: 'Avaliações' },
-    { icon: Settings, label: 'Configurações' },
-    { icon: HelpCircle, label: 'Ajuda e FAQ' },
+    { icon: Wrench, label: 'Minhas Ferramentas', count: toolCount, path: '/tools' },
+    { icon: MapPin, label: 'Meus Endereços', count: addressCount, path: '/addresses' },
+    { icon: FileText, label: 'Dados Fiscais', path: null },
+    { icon: Star, label: 'Avaliações', path: null },
+    { icon: Settings, label: 'Configurações', path: null },
+    { icon: HelpCircle, label: 'Ajuda e FAQ', path: '/support' },
   ];
 
   if (loading) {
@@ -199,6 +201,7 @@ const Profile = () => {
           {menuItems.map((item) => (
             <button
               key={item.label}
+              onClick={() => item.path && navigate(item.path)}
               className="w-full flex items-center gap-3 p-4 hover:bg-muted/50 transition-colors border-b border-border last:border-b-0"
             >
               <item.icon className="w-5 h-5 text-muted-foreground" />
