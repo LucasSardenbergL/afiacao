@@ -251,22 +251,16 @@ const NewOrder = () => {
     }
   };
 
-  // Filtra serviços baseado no nome da ferramenta
+  // Filtra serviços baseado no nome completo da ferramenta
   const getFilteredServicos = (tool: UserTool | undefined): OmieServico[] => {
     if (!tool) return [];
     
-    const toolName = getToolDisplayName(tool).toLowerCase();
+    const toolName = getToolDisplayName(tool).toLowerCase().trim();
     
-    // Extrai palavras-chave do nome da ferramenta (remove números, medidas, etc)
-    const keywords = toolName
-      .split(/[\s,\-\/]+/)
-      .filter(word => word.length > 2 && !/^\d+/.test(word))
-      .map(word => word.trim());
-    
-    // Filtra serviços que contenham alguma palavra-chave do nome da ferramenta
+    // Filtra serviços que contenham o nome completo da ferramenta na descrição
     return servicos.filter(servico => {
       const descricaoLower = servico.descricao.toLowerCase();
-      return keywords.some(keyword => descricaoLower.includes(keyword));
+      return descricaoLower.includes(toolName);
     });
   };
 
