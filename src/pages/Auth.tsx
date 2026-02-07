@@ -124,6 +124,7 @@ const Auth = () => {
   const [omieCliente, setOmieCliente] = useState<OmieClienteData | null>(null);
   const [documentChecked, setDocumentChecked] = useState(false);
   const [isIndustrial, setIsIndustrial] = useState(false);
+  const [isEmployee, setIsEmployee] = useState(false);
   const [cnae, setCnae] = useState<string | null>(null);
   const [cnaeDescricao, setCnaeDescricao] = useState<string | null>(null);
   const [toolCategories, setToolCategories] = useState<ToolCategory[]>([]);
@@ -230,10 +231,19 @@ const Auth = () => {
 
       if (error) throw error;
 
-      // Set industrial flag based on CNAE
+      // Set flags based on Omie data
       setIsIndustrial(data.isIndustrial || false);
+      setIsEmployee(data.isEmployee || false);
       setCnae(data.cnae || null);
       setCnaeDescricao(data.cnaeDescricao || null);
+
+      // If employee, show a message
+      if (data.isEmployee) {
+        toast({
+          title: 'Funcionário identificado!',
+          description: 'Você terá acesso ao painel administrativo após o cadastro.',
+        });
+      }
 
       if (data.cliente) {
         const cliente = data.cliente as OmieClienteData;
@@ -388,7 +398,7 @@ const Auth = () => {
         }
 
         if (signUpData.user) {
-          // Create profile with customer type
+          // Create profile with customer type and employee flag
           await supabase.from('profiles').insert({
             user_id: signUpData.user.id,
             name: formData.name,
@@ -397,6 +407,7 @@ const Auth = () => {
             document: formData.document.replace(/\D/g, ''),
             customer_type: isIndustrial ? 'industrial' : 'domestic',
             cnae: cnae,
+            is_employee: isEmployee,
           });
 
           // Create default address from Omie
@@ -496,6 +507,7 @@ const Auth = () => {
     setOmieCliente(null);
     setSelectedTools([]);
     setIsIndustrial(false);
+    setIsEmployee(false);
     setCnae(null);
     setExistingUserError(false);
     setFormData({
