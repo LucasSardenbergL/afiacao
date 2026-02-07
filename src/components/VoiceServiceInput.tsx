@@ -1,29 +1,42 @@
 import { useState, useRef, useEffect, useCallback } from 'react';
-import { Mic, MicOff, Send, Loader2, Sparkles, X, Square } from 'lucide-react';
+import { Mic, Send, Loader2, Sparkles, X, Square, Wrench } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { cn } from '@/lib/utils';
 import { useToast } from '@/hooks/use-toast';
 
-export interface SuggestedService {
+interface UserTool {
+  id: string;
+  tool_category_id: string;
+  generated_name: string | null;
+  custom_name: string | null;
+  quantity: number | null;
+  tool_categories?: {
+    name: string;
+  } | null;
+}
+
+export interface IdentifiedItem {
+  userToolId: string;
   omie_codigo_servico: number;
-  descricao: string;
+  servico_descricao: string;
   quantity: number;
   notes?: string;
 }
 
 interface VoiceServiceInputProps {
-  onServicesIdentified: (services: SuggestedService[]) => void;
+  userTools: UserTool[];
+  onItemsIdentified: (items: IdentifiedItem[]) => void;
   isLoading?: boolean;
 }
 
-export function VoiceServiceInput({ onServicesIdentified, isLoading = false }: VoiceServiceInputProps) {
+export function VoiceServiceInput({ userTools, onItemsIdentified, isLoading = false }: VoiceServiceInputProps) {
   const { toast } = useToast();
   const [text, setText] = useState('');
   const [isRecording, setIsRecording] = useState(false);
   const [isTranscribing, setIsTranscribing] = useState(false);
   const [isAnalyzing, setIsAnalyzing] = useState(false);
   const [aiMessage, setAiMessage] = useState<string | null>(null);
-  const [suggestedServices, setSuggestedServices] = useState<SuggestedService[]>([]);
+  const [identifiedItems, setIdentifiedItems] = useState<IdentifiedItem[]>([]);
   const [recordingDuration, setRecordingDuration] = useState(0);
   
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
@@ -44,9 +57,12 @@ export function VoiceServiceInput({ onServicesIdentified, isLoading = false }: V
     };
   }, []);
 
+  const getToolDisplayName = (tool: UserTool) => {
+    return tool.generated_name || tool.custom_name || tool.tool_categories?.name || 'Ferramenta';
+  };
+
   const startRecording = useCallback(async () => {
     try {
-      // Request microphone permission
       const stream = await navigator.mediaDevices.getUserMedia({ 
         audio: {
           echoCancellation: true,
@@ -58,7 +74,6 @@ export function VoiceServiceInput({ onServicesIdentified, isLoading = false }: V
       streamRef.current = stream;
       audioChunksRef.current = [];
 
-      // Determine best supported format
       let mimeType = 'audio/webm';
       if (MediaRecorder.isTypeSupported('audio/webm;codecs=opus')) {
         mimeType = 'audio/webm;codecs=opus';
@@ -80,7 +95,6 @@ export function VoiceServiceInput({ onServicesIdentified, isLoading = false }: V
       };
 
       mediaRecorder.onstop = async () => {
-        // Stop all tracks
         stream.getTracks().forEach(track => track.stop());
         
         if (audioChunksRef.current.length > 0) {
@@ -100,12 +114,10 @@ export function VoiceServiceInput({ onServicesIdentified, isLoading = false }: V
         stopRecording();
       };
 
-      // Start recording
-      mediaRecorder.start(1000); // Collect data every second
+      mediaRecorder.start(1000);
       setIsRecording(true);
       setRecordingDuration(0);
 
-      // Start timer
       timerRef.current = window.setInterval(() => {
         setRecordingDuration(prev => prev + 1);
       }, 1000);
@@ -156,7 +168,6 @@ export function VoiceServiceInput({ onServicesIdentified, isLoading = false }: V
     setIsTranscribing(true);
 
     try {
-      // Determine file extension based on blob type
       let extension = 'webm';
       if (audioBlob.type.includes('mp4')) {
         extension = 'mp4';
@@ -237,14 +248,22 @@ export function VoiceServiceInput({ onServicesIdentified, isLoading = false }: V
       return;
     }
 
-    // Stop recording if active
+    if (userTools.length === 0) {
+      toast({
+        title: 'Nenhuma ferramenta cadastrada',
+        description: 'Cadastre suas ferramentas antes de usar o assistente por voz.',
+        variant: 'destructive',
+      });
+      return;
+    }
+
     if (isRecording) {
       stopRecording();
     }
 
     setIsAnalyzing(true);
     setAiMessage(null);
-    setSuggestedServices([]);
+    setIdentifiedItems([]);
 
     try {
       const response = await fetch(
@@ -255,22 +274,31 @@ export function VoiceServiceInput({ onServicesIdentified, isLoading = false }: V
             'Content-Type': 'application/json',
             Authorization: `Bearer ${import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY}`,
           },
-          body: JSON.stringify({ text: text.trim() }),
+          body: JSON.stringify({ 
+            text: text.trim(),
+            userTools: userTools.map(t => ({
+              id: t.id,
+              generated_name: t.generated_name,
+              custom_name: t.custom_name,
+              quantity: t.quantity,
+              tool_categories: t.tool_categories,
+            })),
+          }),
         }
       );
 
       if (!response.ok) {
         const error = await response.json();
-        throw new Error(error.error || 'Erro ao analisar serviços');
+        throw new Error(error.error || 'Erro ao analisar');
       }
 
       const result = await response.json();
       
-      if (result.services && result.services.length > 0) {
-        setSuggestedServices(result.services);
-        setAiMessage(result.message || `Encontrei ${result.services.length} serviço(s) para você.`);
+      if (result.items && result.items.length > 0) {
+        setIdentifiedItems(result.items);
+        setAiMessage(result.message || `Encontrei ${result.items.length} item(ns) para o pedido.`);
       } else {
-        setAiMessage('Não consegui identificar serviços específicos. Tente descrever as ferramentas que precisa afiar.');
+        setAiMessage('Não consegui identificar ferramentas no seu texto. Tente mencionar o nome das suas ferramentas cadastradas.');
       }
     } catch (error) {
       console.error('Erro ao analisar:', error);
@@ -284,24 +312,31 @@ export function VoiceServiceInput({ onServicesIdentified, isLoading = false }: V
     }
   };
 
-  const confirmServices = () => {
-    onServicesIdentified(suggestedServices);
-    // Clear state
+  const confirmItems = () => {
+    onItemsIdentified(identifiedItems);
     setText('');
     setAiMessage(null);
-    setSuggestedServices([]);
+    setIdentifiedItems([]);
     toast({
-      title: 'Serviços adicionados!',
-      description: `${suggestedServices.length} serviço(s) adicionado(s) ao pedido.`,
+      title: 'Itens adicionados!',
+      description: `${identifiedItems.length} item(ns) adicionado(s) ao pedido. Adicione fotos se desejar.`,
     });
   };
 
   const clearSuggestions = () => {
     setAiMessage(null);
-    setSuggestedServices([]);
+    setIdentifiedItems([]);
+  };
+
+  const getToolById = (toolId: string) => {
+    return userTools.find(t => t.id === toolId);
   };
 
   const isProcessing = isRecording || isTranscribing || isAnalyzing || isLoading;
+
+  if (userTools.length === 0) {
+    return null;
+  }
 
   return (
     <div className="bg-card rounded-xl p-4 shadow-soft border border-border space-y-4">
@@ -311,7 +346,7 @@ export function VoiceServiceInput({ onServicesIdentified, isLoading = false }: V
       </div>
 
       <p className="text-sm text-muted-foreground">
-        Descreva quais ferramentas você precisa afiar e a IA vai identificar os serviços automaticamente.
+        Diga quais ferramentas deseja afiar e a IA identificará automaticamente.
       </p>
 
       {/* Input area */}
@@ -320,7 +355,7 @@ export function VoiceServiceInput({ onServicesIdentified, isLoading = false }: V
           ref={textareaRef}
           value={text}
           onChange={(e) => setText(e.target.value)}
-          placeholder="Ex: Preciso afiar 3 serras circulares de widea e 2 facas HSS..."
+          placeholder="Ex: Quero afiar minhas serras circulares, a de 250mm está lascada..."
           className={cn(
             "w-full min-h-[100px] p-3 pr-12 rounded-lg border bg-background text-sm resize-none",
             "focus:outline-none focus:ring-2 focus:ring-ring",
@@ -386,7 +421,7 @@ export function VoiceServiceInput({ onServicesIdentified, isLoading = false }: V
         ) : (
           <>
             <Sparkles className="w-4 h-4 mr-2" />
-            Identificar Serviços
+            Identificar Ferramentas e Serviços
           </>
         )}
       </Button>
@@ -409,31 +444,44 @@ export function VoiceServiceInput({ onServicesIdentified, isLoading = false }: V
           
           <p className="text-sm text-foreground">{aiMessage}</p>
 
-          {suggestedServices.length > 0 && (
+          {identifiedItems.length > 0 && (
             <>
               <div className="space-y-2">
-                {suggestedServices.map((service, idx) => (
-                  <div
-                    key={idx}
-                    className="bg-background rounded-lg p-3 border border-border"
-                  >
-                    <div className="flex justify-between items-start">
-                      <div>
-                        <p className="font-medium text-sm">{service.descricao}</p>
-                        {service.notes && (
-                          <p className="text-xs text-muted-foreground mt-1">{service.notes}</p>
-                        )}
+                {identifiedItems.map((item, idx) => {
+                  const tool = getToolById(item.userToolId);
+                  return (
+                    <div
+                      key={idx}
+                      className="bg-background rounded-lg p-3 border border-border"
+                    >
+                      <div className="flex justify-between items-start">
+                        <div className="flex-1">
+                          <div className="flex items-center gap-2 mb-1">
+                            <Wrench className="w-4 h-4 text-primary" />
+                            <p className="font-medium text-sm">
+                              {tool ? getToolDisplayName(tool) : 'Ferramenta'}
+                            </p>
+                          </div>
+                          <p className="text-xs text-muted-foreground">
+                            Serviço: {item.servico_descricao}
+                          </p>
+                          {item.notes && (
+                            <p className="text-xs text-muted-foreground mt-1 italic">
+                              Obs: {item.notes}
+                            </p>
+                          )}
+                        </div>
+                        <span className="bg-primary/10 text-primary text-xs font-medium px-2 py-1 rounded">
+                          Qtd: {item.quantity}
+                        </span>
                       </div>
-                      <span className="bg-primary/10 text-primary text-xs font-medium px-2 py-1 rounded">
-                        Qtd: {service.quantity}
-                      </span>
                     </div>
-                  </div>
-                ))}
+                  );
+                })}
               </div>
 
               <Button 
-                onClick={confirmServices} 
+                onClick={confirmItems} 
                 className="w-full"
                 disabled={isLoading}
               >

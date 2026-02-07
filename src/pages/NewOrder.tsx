@@ -4,6 +4,7 @@ import { Plus, Trash2, ChevronRight, Check, MapPin, Clock, Loader2, QrCode, Bank
 import { Header } from '@/components/Header';
 import { Button } from '@/components/ui/button';
 import { PhotoUpload } from '@/components/PhotoUpload';
+import { VoiceServiceInput, IdentifiedItem } from '@/components/VoiceServiceInput';
 import { 
   DELIVERY_OPTIONS,
   TIME_SLOTS,
@@ -251,6 +252,40 @@ const NewOrder = () => {
     }
   };
 
+  // Handler para itens identificados pela IA
+  const handleVoiceItemsIdentified = (identifiedItems: IdentifiedItem[]) => {
+    const newItems: ServiceItem[] = identifiedItems.map((item, idx) => {
+      const tool = userTools.find(t => t.id === item.userToolId);
+      const servico = servicos.find(s => s.omie_codigo_servico === item.omie_codigo_servico);
+      
+      return {
+        id: String(items.length + idx + 1),
+        userToolId: item.userToolId,
+        userTool: tool,
+        servico: servico,
+        quantity: item.quantity,
+        notes: item.notes,
+        photos: [],
+      };
+    });
+
+    // Filtrar itens que já existem no pedido
+    const filteredNewItems = newItems.filter(
+      newItem => !items.some(existing => existing.userToolId === newItem.userToolId)
+    );
+
+    if (filteredNewItems.length === 0) {
+      toast({
+        title: 'Ferramentas já adicionadas',
+        description: 'Todas as ferramentas identificadas já estão no pedido.',
+        variant: 'default',
+      });
+      return;
+    }
+
+    setItems([...items, ...filteredNewItems]);
+  };
+
   // Filtra serviços baseado no nome da categoria da ferramenta (sem especificações)
   const getFilteredServicos = (tool: UserTool | undefined): OmieServico[] => {
     if (!tool) return [];
@@ -439,6 +474,17 @@ const NewOrder = () => {
               <p className="text-sm text-muted-foreground mb-6">
                 Escolha suas ferramentas cadastradas e o serviço desejado
               </p>
+
+              {/* Assistente por voz/texto */}
+              {userTools.length > 0 && (
+                <div className="mb-6">
+                  <VoiceServiceInput
+                    userTools={userTools}
+                    onItemsIdentified={handleVoiceItemsIdentified}
+                    isLoading={isSubmitting}
+                  />
+                </div>
+              )}
 
               {/* Ferramentas sem cadastro */}
               {userTools.length === 0 ? (

@@ -3,8 +3,18 @@ import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
-  "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type",
+  "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type, x-supabase-client-platform, x-supabase-client-platform-version, x-supabase-client-runtime, x-supabase-client-runtime-version",
 };
+
+interface UserTool {
+  id: string;
+  generated_name: string | null;
+  custom_name: string | null;
+  quantity: number | null;
+  tool_categories: {
+    name: string;
+  } | null;
+}
 
 serve(async (req) => {
   if (req.method === "OPTIONS") {
@@ -12,7 +22,7 @@ serve(async (req) => {
   }
 
   try {
-    const { text } = await req.json();
+    const { text, userTools } = await req.json();
 
     if (!text || typeof text !== "string") {
       return new Response(
@@ -43,19 +53,38 @@ serve(async (req) => {
 
     const servicosLista = servicos?.map(s => `- ${s.omie_codigo_servico}: ${s.descricao}`).join("\n") || "";
 
+    // Formatar lista de ferramentas do usuário
+    const tools = userTools as UserTool[] || [];
+    const ferramentasLista = tools.map(t => {
+      const nome = t.generated_name || t.custom_name || t.tool_categories?.name || "Ferramenta";
+      const categoria = t.tool_categories?.name || "";
+      return `- ID: ${t.id} | Nome: ${nome} | Categoria: ${categoria} | Qtd cadastrada: ${t.quantity || 1}`;
+    }).join("\n") || "Nenhuma ferramenta cadastrada";
+
     const systemPrompt = `Você é um assistente especializado em serviços de afiação de ferramentas industriais.
 
-Sua tarefa é analisar o texto do cliente e identificar quais serviços ele precisa.
+Sua tarefa é analisar o texto do cliente e identificar:
+1. Quais FERRAMENTAS CADASTRADAS ele quer afiar
+2. Qual SERVIÇO deve ser aplicado a cada ferramenta
+
+FERRAMENTAS CADASTRADAS DO CLIENTE:
+${ferramentasLista}
 
 SERVIÇOS DISPONÍVEIS:
 ${servicosLista}
 
-REGRAS:
-1. Analise o texto e identifique as ferramentas/serviços mencionados
-2. Para cada ferramenta identificada, encontre o serviço mais adequado da lista
-3. Se o cliente mencionar quantidade, use-a. Caso contrário, use 1
-4. Se não conseguir identificar nenhum serviço, retorne um array vazio
-5. Seja flexível com sinônimos (ex: "serra circular" = "serra circular de widea")
+REGRAS IMPORTANTES:
+1. PRIORIZE identificar as ferramentas cadastradas do cliente pelo nome ou categoria
+2. Para cada ferramenta identificada, encontre o serviço compatível (a descrição do serviço deve conter o nome da CATEGORIA da ferramenta)
+3. Se o cliente mencionar quantidade, use-a. Caso contrário, use a quantidade cadastrada ou 1
+4. Se o cliente mencionar observações (danos, lascados, urgência), inclua no campo notes
+5. Se não conseguir identificar nenhuma ferramenta ou serviço, retorne arrays vazios
+6. Seja flexível com sinônimos e variações de nomes
+
+EXEMPLOS:
+- "quero afiar minhas serras" → identifique todas as ferramentas que tenham "serra" no nome ou categoria
+- "afia a faca 250mm" → identifique a ferramenta específica com 250mm
+- "preciso de afiação urgente da serra, está lascada" → notes: "urgente, lascada"
 
 Responda SEMPRE usando a função suggest_services.`;
 
@@ -76,20 +105,25 @@ Responda SEMPRE usando a função suggest_services.`;
             type: "function",
             function: {
               name: "suggest_services",
-              description: "Retorna os serviços identificados no texto do cliente",
+              description: "Retorna as ferramentas e serviços identificados no texto do cliente",
               parameters: {
                 type: "object",
                 properties: {
-                  services: {
+                  items: {
                     type: "array",
+                    description: "Lista de itens identificados (ferramenta + serviço)",
                     items: {
                       type: "object",
                       properties: {
+                        userToolId: { 
+                          type: "string", 
+                          description: "ID da ferramenta cadastrada do usuário" 
+                        },
                         omie_codigo_servico: { 
                           type: "number", 
                           description: "Código do serviço no Omie" 
                         },
-                        descricao: { 
+                        servico_descricao: { 
                           type: "string", 
                           description: "Descrição do serviço" 
                         },
@@ -99,10 +133,10 @@ Responda SEMPRE usando a função suggest_services.`;
                         },
                         notes: { 
                           type: "string", 
-                          description: "Observações extraídas do texto (opcional)" 
+                          description: "Observações extraídas do texto (danos, urgência, etc)" 
                         },
                       },
-                      required: ["omie_codigo_servico", "descricao", "quantity"],
+                      required: ["userToolId", "omie_codigo_servico", "servico_descricao", "quantity"],
                     },
                   },
                   message: {
@@ -110,7 +144,7 @@ Responda SEMPRE usando a função suggest_services.`;
                     description: "Mensagem amigável para o cliente confirmando o que foi identificado",
                   },
                 },
-                required: ["services", "message"],
+                required: ["items", "message"],
               },
             },
           },
@@ -145,8 +179,8 @@ Responda SEMPRE usando a função suggest_services.`;
     if (!toolCall) {
       return new Response(
         JSON.stringify({ 
-          services: [], 
-          message: "Não consegui identificar serviços específicos. Por favor, seja mais específico ou selecione manualmente." 
+          items: [], 
+          message: "Não consegui identificar ferramentas ou serviços. Por favor, seja mais específico ou selecione manualmente." 
         }),
         { headers: { ...corsHeaders, "Content-Type": "application/json" } }
       );
@@ -154,8 +188,16 @@ Responda SEMPRE usando a função suggest_services.`;
 
     const result = JSON.parse(toolCall.function.arguments);
 
+    // Validar que os IDs de ferramentas existem
+    const validItems = (result.items || []).filter((item: { userToolId: string }) => 
+      tools.some(t => t.id === item.userToolId)
+    );
+
     return new Response(
-      JSON.stringify(result),
+      JSON.stringify({
+        items: validItems,
+        message: result.message || `Identificado ${validItems.length} item(s) para o pedido.`,
+      }),
       { headers: { ...corsHeaders, "Content-Type": "application/json" } }
     );
   } catch (error) {
