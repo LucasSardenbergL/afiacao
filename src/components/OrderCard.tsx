@@ -1,20 +1,41 @@
 import { ChevronRight, Package } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
-import { Order, TOOL_CATEGORIES, ORDER_STATUS } from '@/types';
+import { TOOL_CATEGORIES, ORDER_STATUS, ToolCategory } from '@/types';
 import { StatusBadgeSimple } from './StatusBadge';
 import { format } from 'date-fns';
 import { ptBR } from 'date-fns/locale';
 
+interface OrderItem {
+  category: string;
+  quantity: number;
+}
+
 interface OrderCardProps {
-  order: Order;
+  order: {
+    id: string;
+    status: string;
+    items: OrderItem[] | any;
+    total: number;
+    created_at: string;
+  };
 }
 
 export function OrderCard({ order }: OrderCardProps) {
   const navigate = useNavigate();
 
-  const itemsSummary = order.items.length === 1
-    ? `${order.items[0].quantity}x ${TOOL_CATEGORIES[order.items[0].category]}`
-    : `${order.items.reduce((acc, item) => acc + item.quantity, 0)} itens`;
+  // Parse items if it's a JSON string
+  const items: OrderItem[] = Array.isArray(order.items) 
+    ? order.items 
+    : typeof order.items === 'string' 
+      ? JSON.parse(order.items) 
+      : [];
+
+  const itemsSummary = items.length === 1
+    ? `${items[0].quantity}x ${TOOL_CATEGORIES[items[0].category as ToolCategory] || items[0].category}`
+    : `${items.reduce((acc, item) => acc + (item.quantity || 1), 0)} itens`;
+
+  // Generate order number from id (first 8 chars uppercase)
+  const orderNumber = `#${order.id.slice(0, 8).toUpperCase()}`;
 
   return (
     <button
@@ -27,9 +48,9 @@ export function OrderCard({ order }: OrderCardProps) {
             <Package className="w-5 h-5 text-muted-foreground" />
           </div>
           <div>
-            <h3 className="font-semibold text-foreground">{order.orderNumber}</h3>
+            <h3 className="font-semibold text-foreground">{orderNumber}</h3>
             <p className="text-xs text-muted-foreground">
-              {format(order.createdAt, "dd 'de' MMM", { locale: ptBR })}
+              {format(new Date(order.created_at), "dd 'de' MMM", { locale: ptBR })}
             </p>
           </div>
         </div>
@@ -39,17 +60,12 @@ export function OrderCard({ order }: OrderCardProps) {
       <div className="flex items-center justify-between">
         <div>
           <p className="text-sm text-muted-foreground mb-1">{itemsSummary}</p>
-          <StatusBadgeSimple status={order.status} size="sm" />
+          <StatusBadgeSimple status={order.status as any} size="sm" />
         </div>
         <div className="text-right">
           <p className="text-lg font-bold text-foreground">
-            R$ {order.total.toFixed(2).replace('.', ',')}
+            R$ {Number(order.total).toFixed(2).replace('.', ',')}
           </p>
-          {order.estimatedDelivery && order.status !== 'entregue' && (
-            <p className="text-xs text-muted-foreground">
-              Previsão: {format(order.estimatedDelivery, 'dd/MM')}
-            </p>
-          )}
         </div>
       </div>
     </button>
