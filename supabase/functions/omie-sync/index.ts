@@ -79,6 +79,13 @@ async function syncClienteOmie(
     zip_code: string;
   }
 ): Promise<number> {
+  // VALIDAÇÃO: CPF/CNPJ é obrigatório para criar cliente no Omie
+  if (!profile.document || profile.document.replace(/\D/g, "").length < 11) {
+    throw new Error("CPF ou CNPJ é obrigatório para criar pedidos. Por favor, atualize seu perfil.");
+  }
+
+  const documentClean = profile.document.replace(/\D/g, "");
+
   // Verificar se já existe mapeamento
   const { data: existingMapping } = await supabase
     .from("omie_clientes")
@@ -91,8 +98,40 @@ async function syncClienteOmie(
     return existingMapping.omie_codigo_cliente;
   }
 
+  // Primeiro, verificar se já existe cliente no Omie com esse CPF/CNPJ
+  console.log(`[Omie] Buscando cliente existente por CPF/CNPJ: ${documentClean}`);
+  try {
+    const searchResult = await callOmieApi(
+      "geral/clientes/",
+      "ListarClientes",
+      { 
+        pagina: 1, 
+        registros_por_pagina: 1,
+        clientesFiltro: {
+          cnpj_cpf: documentClean
+        }
+      }
+    ) as any;
+    
+    if (searchResult.clientes_cadastro?.[0]?.codigo_cliente_omie) {
+      const omieCodigoCliente = searchResult.clientes_cadastro[0].codigo_cliente_omie;
+      console.log(`[Omie] Cliente encontrado no Omie: ${omieCodigoCliente} - ${searchResult.clientes_cadastro[0].razao_social}`);
+      
+      // Criar mapeamento local
+      await supabase.from("omie_clientes").insert({
+        user_id: userId,
+        omie_codigo_cliente: omieCodigoCliente,
+        omie_codigo_cliente_integracao: searchResult.clientes_cadastro[0].codigo_cliente_integracao || null,
+      });
+
+      return omieCodigoCliente;
+    }
+  } catch (searchError) {
+    console.log("[Omie] Nenhum cliente encontrado com esse CPF/CNPJ, criando novo...");
+  }
+
   // Cadastrar novo cliente no Omie
-  const cCodIntCli = `APP_${userId.substring(0, 8)}`;
+  const cCodIntCli = `APP_${userId.substring(0, 8)}_${Date.now()}`;
   
   const clienteParams: Record<string, unknown> = {
     codigo_cliente_integracao: cCodIntCli,
@@ -100,8 +139,8 @@ async function syncClienteOmie(
     nome_fantasia: profile.name,
     email: profile.email || "",
     telefone1_numero: profile.phone?.replace(/\D/g, "") || "",
-    pessoa_fisica: profile.document && profile.document.length <= 14 ? "S" : "N",
-    cnpj_cpf: profile.document?.replace(/\D/g, "") || "",
+    pessoa_fisica: documentClean.length <= 11 ? "S" : "N",
+    cnpj_cpf: documentClean,
     endereco: address?.street || "",
     endereco_numero: address?.number || "",
     complemento: address?.complement || "",
@@ -109,7 +148,7 @@ async function syncClienteOmie(
     cidade: address?.city || "",
     estado: address?.state || "",
     cep: address?.zip_code?.replace(/\D/g, "") || "",
-    contribuinte: "N", // N = Não contribuinte (para empresas sem IE)
+    contribuinte: "N",
     optante_simples_nacional: "N",
   };
 
