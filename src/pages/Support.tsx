@@ -25,7 +25,9 @@ const faqItems = [
 const Support = () => {
   const openWhatsApp = () => {
     // Opens WhatsApp app directly with pre-filled message
-    window.location.href = 'https://wa.me/5537999991035?text=Olá! Preciso de ajuda com meu pedido.';
+    const message = encodeURIComponent('Olá! Preciso de ajuda com meu pedido.');
+    const whatsappUrl = `https://wa.me/5537999991035?text=${message}`;
+    window.open(whatsappUrl, '_blank', 'noopener,noreferrer');
   };
 
   const openPhone = () => {
@@ -35,7 +37,7 @@ const Support = () => {
 
   const openEmail = () => {
     // Opens email client
-    window.location.href = 'mailto:colacorcomercial@gmail.com?subject=Suporte Colacor';
+    window.location.href = 'mailto:colacorcomercial@gmail.com?subject=Suporte%20Colacor';
   };
 
   return (
