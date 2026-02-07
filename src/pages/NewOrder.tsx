@@ -1,20 +1,16 @@
 import { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Plus, Trash2, Camera, ChevronRight, Check, MapPin, Clock, Loader2, QrCode, Banknote } from 'lucide-react';
+import { Plus, Trash2, ChevronRight, Check, MapPin, Clock, Loader2, QrCode, Banknote } from 'lucide-react';
 import { Header } from '@/components/Header';
 import { Button } from '@/components/ui/button';
 import { 
-  TOOL_CATEGORIES, 
   DELIVERY_OPTIONS,
   TIME_SLOTS,
   DELIVERY_FEES,
-  ToolCategory, 
   DeliveryOption,
-  ToolItem,
 } from '@/types';
-import { priceTable } from '@/data/mockData';
 import { cn } from '@/lib/utils';
-import { syncOrderToOmie } from '@/services/omieService';
+import { syncOrderToOmie, listOmieServices, OmieServico } from '@/services/omieService';
 import { useToast } from '@/hooks/use-toast';
 import { useAuth } from '@/contexts/AuthContext';
 import { supabase } from '@/integrations/supabase/client';
@@ -23,6 +19,14 @@ type Step = 'items' | 'delivery' | 'review';
 type PaymentMethod = 'pix' | 'on_delivery';
 
 const PIX_KEY = '55.555.305/0001-51';
+
+interface ServiceItem {
+  id: string;
+  servico?: OmieServico;
+  quantity: number;
+  brandModel?: string;
+  notes?: string;
+}
 
 interface ProfileData {
   name: string;
@@ -49,12 +53,16 @@ const NewOrder = () => {
   const { user } = useAuth();
   
   const [currentStep, setCurrentStep] = useState<Step>('items');
-  const [items, setItems] = useState<Partial<ToolItem>[]>([{ id: '1', quantity: 1 }]);
+  const [items, setItems] = useState<ServiceItem[]>([{ id: '1', quantity: 1 }]);
   const [deliveryOption, setDeliveryOption] = useState<DeliveryOption>('coleta_entrega');
   const [selectedAddress, setSelectedAddress] = useState<string>('');
   const [selectedTimeSlot, setSelectedTimeSlot] = useState<string>('');
   const [paymentMethod, setPaymentMethod] = useState<PaymentMethod>('pix');
   const [isSubmitting, setIsSubmitting] = useState(false);
+  
+  // Serviços do Omie
+  const [servicos, setServicos] = useState<OmieServico[]>([]);
+  const [loadingServicos, setLoadingServicos] = useState(true);
   
   // User data from database
   const [profile, setProfile] = useState<ProfileData | null>(null);
@@ -64,8 +72,23 @@ const NewOrder = () => {
   useEffect(() => {
     if (user) {
       loadUserData();
+      loadServicos();
     }
   }, [user]);
+
+  const loadServicos = async () => {
+    try {
+      setLoadingServicos(true);
+      const result = await listOmieServices();
+      if (result.success && result.servicos.length > 0) {
+        setServicos(result.servicos);
+      }
+    } catch (error) {
+      console.error('Erro ao carregar serviços:', error);
+    } finally {
+      setLoadingServicos(false);
+    }
+  };
 
   const loadUserData = async () => {
     if (!user) return;
@@ -119,7 +142,7 @@ const NewOrder = () => {
   };
 
   const steps: { id: Step; label: string; number: number }[] = [
-    { id: 'items', label: 'Itens', number: 1 },
+    { id: 'items', label: 'Serviços', number: 1 },
     { id: 'delivery', label: 'Entrega', number: 2 },
     { id: 'review', label: 'Revisão', number: 3 },
   ];
@@ -136,31 +159,26 @@ const NewOrder = () => {
     }
   };
 
-  const updateItem = (index: number, field: keyof ToolItem, value: any) => {
+  const updateItem = (index: number, field: keyof ServiceItem, value: any) => {
     const newItems = [...items];
     newItems[index] = { ...newItems[index], [field]: value };
     setItems(newItems);
   };
 
-  const calculateSubtotal = () => {
-    return items.reduce((acc, item) => {
-      if (item.category) {
-        const price = priceTable[item.category]?.['padrao'] || 0;
-        return acc + price * (item.quantity || 1);
-      }
-      return acc;
-    }, 0);
+  const selectServico = (index: number, codigoServico: number) => {
+    const servico = servicos.find(s => s.omie_codigo_servico === codigoServico);
+    if (servico) {
+      updateItem(index, 'servico', servico);
+    }
   };
 
   // Industrial clients always have free shipping
   const deliveryFee = DELIVERY_FEES[deliveryOption];
-  const subtotal = calculateSubtotal();
-  const total = subtotal + deliveryFee;
 
   const canProceed = () => {
     switch (currentStep) {
       case 'items':
-        return items.every(item => item.category && item.quantity);
+        return items.every(item => item.servico && item.quantity);
       case 'delivery':
         if (deliveryOption === 'balcao') return true;
         return selectedAddress && selectedTimeSlot;
@@ -200,15 +218,21 @@ const NewOrder = () => {
     try {
       const orderId = crypto.randomUUID();
       
+      // Montar itens com código do serviço Omie
+      const orderItems = items.map(item => ({
+        category: item.servico?.descricao || '',
+        quantity: item.quantity || 1,
+        omie_codigo_servico: item.servico?.omie_codigo_servico,
+        brandModel: item.brandModel,
+        notes: item.notes,
+      }));
+
       const orderData = {
-        items: items.map(item => ({
-          category: item.category || '',
-          quantity: item.quantity || 1,
-        })),
+        items: orderItems,
         service_type: 'padrao',
-        subtotal,
+        subtotal: 0, // Sem preço - será definido após triagem
         delivery_fee: deliveryFee,
-        total,
+        total: deliveryFee, // Apenas frete por enquanto
         notes: items.map(item => item.notes).filter(Boolean).join(' | '),
       };
 
@@ -259,12 +283,13 @@ const NewOrder = () => {
     }
   };
 
-  if (loadingData) {
+  if (loadingData || loadingServicos) {
     return (
       <div className="min-h-screen bg-background pb-32">
         <Header title="Novo Pedido" showBack />
-        <div className="flex items-center justify-center pt-32">
+        <div className="flex flex-col items-center justify-center pt-32 gap-2">
           <Loader2 className="w-8 h-8 animate-spin text-primary" />
+          <p className="text-sm text-muted-foreground">Carregando serviços...</p>
         </div>
       </div>
     );
@@ -306,106 +331,111 @@ const NewOrder = () => {
 
         {/* Step content */}
         <div className="animate-fade-in">
-          {/* Step 1: Items */}
+          {/* Step 1: Services */}
           {currentStep === 'items' && (
             <div>
-              <h2 className="font-display font-bold text-xl mb-1">Adicionar Ferramentas</h2>
+              <h2 className="font-display font-bold text-xl mb-1">Selecionar Serviços</h2>
               <p className="text-sm text-muted-foreground mb-6">
-                Selecione as ferramentas de marcenaria que deseja afiar
+                Escolha os serviços que deseja para suas ferramentas
               </p>
 
-              <div className="space-y-4">
-                {items.map((item, index) => (
-                  <div key={index} className="bg-card rounded-xl p-4 shadow-soft border border-border">
-                    <div className="flex items-start justify-between mb-3">
-                      <span className="text-sm font-medium text-muted-foreground">
-                        Item {index + 1}
-                      </span>
-                      {items.length > 1 && (
-                        <button
-                          onClick={() => removeItem(index)}
-                          className="p-1 text-muted-foreground hover:text-destructive transition-colors"
-                        >
-                          <Trash2 className="w-4 h-4" />
-                        </button>
-                      )}
-                    </div>
+              {servicos.length === 0 ? (
+                <div className="bg-muted/50 rounded-lg p-6 text-center">
+                  <p className="text-muted-foreground">Nenhum serviço disponível no momento.</p>
+                  <Button variant="outline" size="sm" className="mt-3" onClick={loadServicos}>
+                    Tentar novamente
+                  </Button>
+                </div>
+              ) : (
+                <div className="space-y-4">
+                  {items.map((item, index) => (
+                    <div key={index} className="bg-card rounded-xl p-4 shadow-soft border border-border">
+                      <div className="flex items-start justify-between mb-3">
+                        <span className="text-sm font-medium text-muted-foreground">
+                          Item {index + 1}
+                        </span>
+                        {items.length > 1 && (
+                          <button
+                            onClick={() => removeItem(index)}
+                            className="p-1 text-muted-foreground hover:text-destructive transition-colors"
+                          >
+                            <Trash2 className="w-4 h-4" />
+                          </button>
+                        )}
+                      </div>
 
-                    {/* Category select */}
-                    <div className="mb-3">
-                      <label className="text-sm font-medium mb-2 block">Tipo de ferramenta</label>
-                      <select
-                        value={item.category || ''}
-                        onChange={(e) => updateItem(index, 'category', e.target.value as ToolCategory)}
-                        className="w-full h-11 px-3 rounded-lg border border-input bg-background text-sm focus:outline-none focus:ring-2 focus:ring-ring"
-                      >
-                        <option value="">Selecione...</option>
-                        {Object.entries(TOOL_CATEGORIES).map(([key, label]) => (
-                          <option key={key} value={key}>{label}</option>
-                        ))}
-                      </select>
-                    </div>
-
-                    {/* Brand/Model */}
-                    <div className="mb-3">
-                      <label className="text-sm font-medium mb-2 block">Marca/Modelo (opcional)</label>
-                      <input
-                        type="text"
-                        value={item.brandModel || ''}
-                        onChange={(e) => updateItem(index, 'brandModel', e.target.value)}
-                        placeholder="Ex: Makita, Dewalt..."
-                        className="w-full h-11 px-3 rounded-lg border border-input bg-background text-sm focus:outline-none focus:ring-2 focus:ring-ring"
-                      />
-                    </div>
-
-                    {/* Quantity */}
-                    <div className="mb-3">
-                      <label className="text-sm font-medium mb-2 block">Quantidade</label>
-                      <div className="flex items-center gap-3">
-                        <button
-                          onClick={() => updateItem(index, 'quantity', Math.max(1, (item.quantity || 1) - 1))}
-                          className="w-10 h-10 rounded-lg border border-input flex items-center justify-center hover:bg-muted"
+                      {/* Service select */}
+                      <div className="mb-3">
+                        <label className="text-sm font-medium mb-2 block">Tipo de serviço</label>
+                        <select
+                          value={item.servico?.omie_codigo_servico || ''}
+                          onChange={(e) => selectServico(index, Number(e.target.value))}
+                          className="w-full h-11 px-3 rounded-lg border border-input bg-background text-sm focus:outline-none focus:ring-2 focus:ring-ring"
                         >
-                          -
-                        </button>
-                        <span className="w-10 text-center font-semibold">{item.quantity || 1}</span>
-                        <button
-                          onClick={() => updateItem(index, 'quantity', (item.quantity || 1) + 1)}
-                          className="w-10 h-10 rounded-lg border border-input flex items-center justify-center hover:bg-muted"
-                        >
-                          +
-                        </button>
+                          <option value="">Selecione um serviço...</option>
+                          {servicos.map((servico) => (
+                            <option key={servico.omie_codigo_servico} value={servico.omie_codigo_servico}>
+                              {servico.descricao}
+                            </option>
+                          ))}
+                        </select>
+                      </div>
+
+                      {/* Brand/Model */}
+                      <div className="mb-3">
+                        <label className="text-sm font-medium mb-2 block">Marca/Modelo (opcional)</label>
+                        <input
+                          type="text"
+                          value={item.brandModel || ''}
+                          onChange={(e) => updateItem(index, 'brandModel', e.target.value)}
+                          placeholder="Ex: Makita, Dewalt..."
+                          className="w-full h-11 px-3 rounded-lg border border-input bg-background text-sm focus:outline-none focus:ring-2 focus:ring-ring"
+                        />
+                      </div>
+
+                      {/* Quantity */}
+                      <div className="mb-3">
+                        <label className="text-sm font-medium mb-2 block">Quantidade</label>
+                        <div className="flex items-center gap-3">
+                          <button
+                            onClick={() => updateItem(index, 'quantity', Math.max(1, (item.quantity || 1) - 1))}
+                            className="w-10 h-10 rounded-lg border border-input flex items-center justify-center hover:bg-muted"
+                          >
+                            -
+                          </button>
+                          <span className="w-10 text-center font-semibold">{item.quantity || 1}</span>
+                          <button
+                            onClick={() => updateItem(index, 'quantity', (item.quantity || 1) + 1)}
+                            className="w-10 h-10 rounded-lg border border-input flex items-center justify-center hover:bg-muted"
+                          >
+                            +
+                          </button>
+                        </div>
+                      </div>
+
+                      {/* Notes */}
+                      <div>
+                        <label className="text-sm font-medium mb-2 block">Observações (opcional)</label>
+                        <textarea
+                          value={item.notes || ''}
+                          onChange={(e) => updateItem(index, 'notes', e.target.value)}
+                          placeholder="Descreva danos, lascados, ou instruções especiais..."
+                          className="w-full px-3 py-2 rounded-lg border border-input bg-background text-sm focus:outline-none focus:ring-2 focus:ring-ring resize-none"
+                          rows={2}
+                        />
                       </div>
                     </div>
+                  ))}
 
-                    {/* Notes */}
-                    <div className="mb-3">
-                      <label className="text-sm font-medium mb-2 block">Observações (opcional)</label>
-                      <textarea
-                        value={item.notes || ''}
-                        onChange={(e) => updateItem(index, 'notes', e.target.value)}
-                        placeholder="Descreva danos, lascados, ou instruções especiais..."
-                        className="w-full px-3 py-2 rounded-lg border border-input bg-background text-sm focus:outline-none focus:ring-2 focus:ring-ring resize-none"
-                        rows={2}
-                      />
-                    </div>
-
-                    {/* Photos placeholder */}
-                    <button className="w-full h-20 rounded-lg border-2 border-dashed border-border flex items-center justify-center gap-2 text-muted-foreground hover:border-primary hover:text-primary transition-colors">
-                      <Camera className="w-5 h-5" />
-                      <span className="text-sm">Adicionar fotos</span>
-                    </button>
-                  </div>
-                ))}
-
-                <button
-                  onClick={addItem}
-                  className="w-full py-3 rounded-xl border-2 border-dashed border-border flex items-center justify-center gap-2 text-muted-foreground hover:border-primary hover:text-primary transition-colors"
-                >
-                  <Plus className="w-5 h-5" />
-                  <span className="font-medium">Adicionar outro item</span>
-                </button>
-              </div>
+                  <button
+                    onClick={addItem}
+                    className="w-full py-3 rounded-xl border-2 border-dashed border-border flex items-center justify-center gap-2 text-muted-foreground hover:border-primary hover:text-primary transition-colors"
+                  >
+                    <Plus className="w-5 h-5" />
+                    <span className="font-medium">Adicionar outro serviço</span>
+                  </button>
+                </div>
+              )}
             </div>
           )}
 
@@ -427,7 +457,6 @@ const NewOrder = () => {
               {/* Delivery options */}
               <div className="space-y-3 mb-6">
                 {Object.entries(DELIVERY_OPTIONS).map(([key, { label, description }]) => {
-                  const fee = DELIVERY_FEES[key as DeliveryOption];
                   return (
                     <button
                       key={key}
@@ -535,19 +564,23 @@ const NewOrder = () => {
                 Confira os detalhes antes de enviar
               </p>
 
+              {/* Info notice about pricing */}
+              <div className="bg-secondary border border-border rounded-lg p-3 mb-4">
+                <p className="text-sm text-muted-foreground">
+                  💡 O valor será informado após a triagem das ferramentas
+                </p>
+              </div>
+
               {/* Items summary */}
               <div className="bg-card rounded-xl p-4 shadow-soft border border-border mb-4">
-                <h3 className="font-semibold mb-3">Itens</h3>
+                <h3 className="font-semibold mb-3">Serviços Solicitados</h3>
                 <div className="space-y-3">
-                  {items.map((item, index) => {
-                    const price = item.category
-                      ? priceTable[item.category]?.['padrao'] || 0
-                      : 0;
-                    return (
-                      <div key={index} className="flex justify-between items-start">
+                  {items.map((item, index) => (
+                    <div key={index} className="border-b border-border last:border-0 pb-3 last:pb-0">
+                      <div className="flex justify-between items-start">
                         <div>
                           <p className="font-medium">
-                            {item.quantity}x {item.category ? TOOL_CATEGORIES[item.category as ToolCategory] : 'Item'}
+                            {item.quantity}x {item.servico?.descricao || 'Serviço'}
                           </p>
                           {item.brandModel && (
                             <p className="text-sm text-muted-foreground">{item.brandModel}</p>
@@ -558,12 +591,12 @@ const NewOrder = () => {
                             </p>
                           )}
                         </div>
-                        <span className="font-semibold">
-                          R$ {(price * (item.quantity || 1)).toFixed(2).replace('.', ',')}
+                        <span className="text-sm text-muted-foreground italic">
+                          A orçar
                         </span>
                       </div>
-                    );
-                  })}
+                    </div>
+                  ))}
                 </div>
               </div>
 
@@ -641,8 +674,8 @@ const NewOrder = () => {
               <div className="bg-card rounded-xl p-4 shadow-soft border border-border">
                 <div className="space-y-2 text-sm">
                   <div className="flex justify-between">
-                    <span className="text-muted-foreground">Subtotal</span>
-                    <span>R$ {subtotal.toFixed(2).replace('.', ',')}</span>
+                    <span className="text-muted-foreground">Serviços</span>
+                    <span className="italic text-muted-foreground">A orçar após triagem</span>
                   </div>
                   <div className="flex justify-between">
                     <span className="text-muted-foreground">Frete</span>
@@ -650,7 +683,7 @@ const NewOrder = () => {
                   </div>
                   <div className="border-t border-border pt-2 flex justify-between font-semibold text-base">
                     <span>Total</span>
-                    <span className="text-primary">R$ {total.toFixed(2).replace('.', ',')}</span>
+                    <span className="text-muted-foreground italic">A definir</span>
                   </div>
                 </div>
               </div>

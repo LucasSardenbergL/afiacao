@@ -204,6 +204,9 @@ async function criarOrdemServicoOmie(
     items: Array<{
       category: string;
       quantity: number;
+      omie_codigo_servico?: number;
+      brandModel?: string;
+      notes?: string;
     }>;
     service_type: string;
     subtotal: number;
@@ -212,22 +215,25 @@ async function criarOrdemServicoOmie(
     notes?: string;
   }
 ): Promise<{ nCodOS: number; cNumOS: string }> {
-  // Buscar mapeamento de serviço
-  const { data: servicoMapping } = await supabase
-    .from("omie_servicos")
-    .select("omie_codigo_servico, omie_codigo_integracao")
-    .eq("app_service_type", order.service_type)
-    .maybeSingle();
-
   const cCodIntOS = `OS_${orderId.substring(0, 8)}_${Date.now()}`;
   
   // Montar descrição dos itens
   const descricaoItens = order.items
-    .map((item) => `${item.quantity}x ${item.category}`)
+    .map((item) => `${item.quantity}x ${item.category}${item.brandModel ? ` (${item.brandModel})` : ''}`)
     .join(", ");
 
-  // Calcular quantidade total
-  const qtdTotal = order.items.reduce((sum, item) => sum + item.quantity, 0);
+  // Montar lista de serviços prestados a partir dos itens
+  const servicosPrestados = order.items.map((item) => ({
+    nCodServ: item.omie_codigo_servico || 0, // Código do serviço no Omie
+    cDescServ: item.category,
+    cDadosAdicItem: item.brandModel 
+      ? `Marca/Modelo: ${item.brandModel}${item.notes ? ` | Obs: ${item.notes}` : ''}`
+      : item.notes || '',
+    nQtde: item.quantity,
+    nValUnit: 0, // Valor a definir após triagem
+    cTpDesconto: "V",
+    nValorDesconto: 0,
+  }));
 
   const osParams: Record<string, unknown> = {
     Cabecalho: {
@@ -237,39 +243,17 @@ async function criarOrdemServicoOmie(
       nQtdeParc: 1,
     },
     InformacoesAdicionais: {
-      cDadosAdicNF: `Itens: ${descricaoItens}`,
-      cCodCateg: "1.01.03", // Categoria padrão - ajustar conforme necessário
+      cDadosAdicNF: `Pedido App - ${descricaoItens}`,
+      cCodCateg: "1.01.03", // Categoria padrão
     },
-    ServicosPrestados: [
-      {
-        cCodServLC116: "14.01", // Código LC 116 para serviços de manutenção
-        cCodServMun: "1401", // Código do serviço no município
-        cDescServ: `Serviço de Afiação - ${order.service_type === "premium" ? "Premium" : order.service_type === "restoration" ? "Restauração" : order.service_type === "polishing" ? "Polimento" : "Padrão"} - ${descricaoItens}`,
-        cDadosAdicItem: `Pedido App - ${descricaoItens}`,
-        nQtde: qtdTotal,
-        nValUnit: order.subtotal / qtdTotal,
-        cTpDesconto: "V",
-        nValorDesconto: 0,
-      },
-    ],
+    ServicosPrestados: servicosPrestados,
     Observacoes: {
-      cObsOS: order.notes || `Pedido App - ${descricaoItens}`,
+      cObsOS: order.notes || `Pedido via App - ${descricaoItens}`,
     },
   };
 
-  // Se tiver taxa de entrega, adicionar como serviço adicional
-  if (order.delivery_fee > 0) {
-    (osParams.ServicosPrestados as Array<Record<string, unknown>>).push({
-      cCodServLC116: "14.01",
-      cCodServMun: "1401",
-      cDescServ: "Taxa de Coleta/Entrega",
-      cDadosAdicItem: "Serviço de logística",
-      nQtde: 1,
-      nValUnit: order.delivery_fee,
-      cTpDesconto: "V",
-      nValorDesconto: 0,
-    });
-  }
+  // Log do payload para debug
+  console.log("[Omie] Payload OS:", JSON.stringify(osParams, null, 2));
 
   const result = await callOmieApi(
     "servicos/os/",
@@ -384,6 +368,49 @@ serve(async (req) => {
           exists: !!mapping,
           omie_codigo_cliente: mapping?.omie_codigo_cliente || null,
         };
+        break;
+      }
+
+      case "list_services": {
+        // Buscar serviços do Omie
+        console.log("[Omie] Buscando serviços do Omie...");
+        
+        try {
+          const omieResult = await callOmieApi(
+            "servicos/servico/",
+            "ListarCadastroServico",
+            { 
+              nPagina: 1, 
+              nRegPorPagina: 100 
+            }
+          ) as any;
+
+          const servicos = omieResult.cadastros || [];
+          console.log(`[Omie] ${servicos.length} serviços encontrados`);
+
+          // Formatar para o app
+          const servicosFormatados = servicos.map((s: any) => ({
+            omie_codigo_servico: s.intListar?.nCodServ || 0,
+            omie_codigo_integracao: s.intListar?.cCodIntServ || "",
+            descricao: s.descricao?.cDescricao || s.cabecalho?.cDescricao || "Sem descrição",
+            codigo_lc116: s.cabecalho?.cIdTrib || "",
+            codigo_servico_municipio: s.impostos?.nCodServ || "",
+            valor_unitario: s.cabecalho?.nValorUnit || 0,
+            unidade: s.cabecalho?.cUnidade || "UN",
+          }));
+
+          result = {
+            success: true,
+            servicos: servicosFormatados,
+          };
+        } catch (listError) {
+          console.error("[Omie] Erro ao listar serviços:", listError);
+          result = {
+            success: false,
+            error: listError instanceof Error ? listError.message : "Erro ao listar serviços",
+            servicos: [],
+          };
+        }
         break;
       }
 
