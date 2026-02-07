@@ -8,3 +8,9 @@ verify_jwt = false
 
 [functions.elevenlabs-transcribe]
 verify_jwt = false
+
+[functions.biometric-auth]
+verify_jwt = false
+
+[functions.verify-employee]
+verify_jwt = false

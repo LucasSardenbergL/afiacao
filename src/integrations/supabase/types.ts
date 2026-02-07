@@ -88,6 +88,30 @@ export type Database = {
           },
         ]
       }
+      company_config: {
+        Row: {
+          created_at: string
+          id: string
+          key: string
+          updated_at: string
+          value: string
+        }
+        Insert: {
+          created_at?: string
+          id?: string
+          key: string
+          updated_at?: string
+          value: string
+        }
+        Update: {
+          created_at?: string
+          id?: string
+          key?: string
+          updated_at?: string
+          value?: string
+        }
+        Relationships: []
+      }
       omie_clientes: {
         Row: {
           created_at: string
@@ -246,7 +270,9 @@ export type Database = {
           customer_type: string | null
           document: string | null
           email: string | null
+          employee_code: string | null
           id: string
+          is_employee: boolean | null
           name: string
           phone: string | null
           updated_at: string
@@ -259,7 +285,9 @@ export type Database = {
           customer_type?: string | null
           document?: string | null
           email?: string | null
+          employee_code?: string | null
           id?: string
+          is_employee?: boolean | null
           name: string
           phone?: string | null
           updated_at?: string
@@ -272,7 +300,9 @@ export type Database = {
           customer_type?: string | null
           document?: string | null
           email?: string | null
+          employee_code?: string | null
           id?: string
+          is_employee?: boolean | null
           name?: string
           phone?: string | null
           updated_at?: string
@@ -307,6 +337,30 @@ export type Database = {
           name?: string
           suggested_interval_days?: number | null
           usage_type?: string
+        }
+        Relationships: []
+      }
+      user_roles: {
+        Row: {
+          created_at: string
+          id: string
+          role: Database["public"]["Enums"]["app_role"]
+          updated_at: string
+          user_id: string
+        }
+        Insert: {
+          created_at?: string
+          id?: string
+          role?: Database["public"]["Enums"]["app_role"]
+          updated_at?: string
+          user_id: string
+        }
+        Update: {
+          created_at?: string
+          id?: string
+          role?: Database["public"]["Enums"]["app_role"]
+          updated_at?: string
+          user_id?: string
         }
         Relationships: []
       }
@@ -395,10 +449,20 @@ export type Database = {
       [_ in never]: never
     }
     Functions: {
-      [_ in never]: never
+      get_user_role: {
+        Args: { _user_id: string }
+        Returns: Database["public"]["Enums"]["app_role"]
+      }
+      has_role: {
+        Args: {
+          _role: Database["public"]["Enums"]["app_role"]
+          _user_id: string
+        }
+        Returns: boolean
+      }
     }
     Enums: {
-      [_ in never]: never
+      app_role: "admin" | "employee" | "customer"
     }
     CompositeTypes: {
       [_ in never]: never
@@ -525,6 +589,8 @@ export type CompositeTypes<
 
 export const Constants = {
   public: {
-    Enums: {},
+    Enums: {
+      app_role: ["admin", "employee", "customer"],
+    },
   },
 } as const

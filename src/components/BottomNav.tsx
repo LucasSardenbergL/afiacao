@@ -1,8 +1,9 @@
-import { Home, PlusCircle, ClipboardList, User, MessageCircle } from 'lucide-react';
+import { Home, PlusCircle, ClipboardList, User, MessageCircle, Shield } from 'lucide-react';
 import { useNavigate, useLocation } from 'react-router-dom';
 import { cn } from '@/lib/utils';
+import { useAuth } from '@/contexts/AuthContext';
 
-const navItems = [
+const baseNavItems = [
   { icon: Home, label: 'Início', path: '/' },
   { icon: ClipboardList, label: 'Pedidos', path: '/orders' },
   { icon: PlusCircle, label: 'Novo', path: '/new-order', isPrimary: true },
@@ -13,6 +14,18 @@ const navItems = [
 export function BottomNav() {
   const navigate = useNavigate();
   const location = useLocation();
+  const { isStaff } = useAuth();
+
+  // Add admin item for staff members
+  const navItems = isStaff 
+    ? [
+        { icon: Home, label: 'Início', path: '/' },
+        { icon: ClipboardList, label: 'Pedidos', path: '/orders' },
+        { icon: PlusCircle, label: 'Novo', path: '/new-order', isPrimary: true },
+        { icon: Shield, label: 'Admin', path: '/admin' },
+        { icon: User, label: 'Perfil', path: '/profile' },
+      ]
+    : baseNavItems;
 
   return (
     <nav className="fixed bottom-0 left-0 right-0 z-50 bg-card/95 backdrop-blur-lg border-t border-border safe-bottom">

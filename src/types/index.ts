@@ -27,23 +27,23 @@ export interface Address {
 // Tool categories - Marcenaria (Woodworking)
 export type ToolCategory = 
   | 'tesoura_profissional'
-  | 'formoes'
   | 'faca_plaina_estreita'
-  | 'cabecote'
+  | 'cabecote_desintegrador'
   | 'faca_desengrosso'
   | 'faca_plaina_manual'
   | 'fresa'
-  | 'serra_circular_widea';
+  | 'serra_circular_widea'
+  | 'serra_circular_hss';
 
 export const TOOL_CATEGORIES: Record<ToolCategory, string> = {
   tesoura_profissional: 'Tesoura Profissional',
-  formoes: 'Formões',
   faca_plaina_estreita: 'Faca de Plaina (Estreita)',
-  cabecote: 'Cabeçote',
+  cabecote_desintegrador: 'Cabeçote Desintegrador',
   faca_desengrosso: 'Faca de Desengrosso',
   faca_plaina_manual: 'Faca de Plaina Manual',
   fresa: 'Fresa',
   serra_circular_widea: 'Serra Circular de Widea',
+  serra_circular_hss: 'Serra Circular de HSS',
 };
 
 // Service types
