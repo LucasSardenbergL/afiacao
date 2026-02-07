@@ -7,6 +7,22 @@ const corsHeaders = {
 };
 
 const OMIE_API_URL = "https://app.omie.com.br/api/v1";
+const RECEITA_API_URL = "https://receitaws.com.br/v1/cnpj";
+
+// CNAEs industriais comuns
+const CNAES_INDUSTRIAIS = [
+  "10", // Fabricação de produtos alimentícios
+  "13", // Fabricação de produtos têxteis
+  "14", // Confecção de artigos do vestuário
+  "15", // Preparação de couros e fabricação de artefatos
+  "16", // Fabricação de produtos de madeira
+  "25", // Fabricação de produtos de metal
+  "31", // Fabricação de móveis
+  "47", // Comércio varejista (alguns)
+  "56", // Alimentação (restaurantes, bares)
+  "96.02", // Cabeleireiros e outras atividades de tratamento de beleza
+  "96.01", // Lavanderias
+];
 
 interface OmieCliente {
   codigo_cliente?: number;
@@ -25,6 +41,24 @@ interface OmieCliente {
   cep?: string;
   pessoa_fisica?: string;
   inscricao_estadual?: string;
+}
+
+interface CNPJData {
+  cnpj?: string;
+  nome?: string;
+  fantasia?: string;
+  email?: string;
+  telefone?: string;
+  atividade_principal?: Array<{ code: string; text: string }>;
+  logradouro?: string;
+  numero?: string;
+  complemento?: string;
+  bairro?: string;
+  municipio?: string;
+  uf?: string;
+  cep?: string;
+  status?: string;
+  message?: string;
 }
 
 interface OmieListResponse {
@@ -74,8 +108,46 @@ async function callOmieApi(
   return result;
 }
 
+// Função para verificar CNAE e determinar se é industrial
+function isIndustrialByCNAE(cnae: string): boolean {
+  if (!cnae) return false;
+  const cnaeCode = cnae.replace(/\D/g, '');
+  return CNAES_INDUSTRIAIS.some(prefix => cnaeCode.startsWith(prefix.replace('.', '')));
+}
+
+// Função para consultar CNPJ na Receita Federal
+async function consultarCNPJ(cnpj: string): Promise<CNPJData | null> {
+  const cnpjLimpo = cnpj.replace(/\D/g, '');
+  
+  if (cnpjLimpo.length !== 14) {
+    return null;
+  }
+
+  try {
+    console.log(`[ReceitaWS] Consultando CNPJ: ${cnpjLimpo}`);
+    const response = await fetch(`${RECEITA_API_URL}/${cnpjLimpo}`, {
+      headers: {
+        'Accept': 'application/json',
+      },
+    });
+    
+    const data = await response.json();
+    console.log(`[ReceitaWS] Resposta:`, JSON.stringify(data, null, 2));
+    
+    if (data.status === 'ERROR') {
+      console.log(`[ReceitaWS] Erro: ${data.message}`);
+      return null;
+    }
+    
+    return data;
+  } catch (error) {
+    console.error('[ReceitaWS] Erro:', error);
+    return null;
+  }
+}
+
 // Função para buscar cliente por CPF/CNPJ
-async function buscarClientePorDocumento(documento: string): Promise<OmieCliente | null> {
+async function buscarClientePorDocumento(documento: string): Promise<{ cliente: OmieCliente | null; cnpjData: CNPJData | null; isIndustrial: boolean }> {
   // Limpar documento (remover pontos, traços, barras)
   const docLimpo = documento.replace(/\D/g, "");
   
@@ -83,8 +155,20 @@ async function buscarClientePorDocumento(documento: string): Promise<OmieCliente
     throw new Error("Documento inválido. Informe um CPF (11 dígitos) ou CNPJ (14 dígitos)");
   }
 
+  let cnpjData: CNPJData | null = null;
+  let isIndustrial = false;
+
+  // Se for CNPJ, consultar na Receita para obter CNAE
+  if (docLimpo.length === 14) {
+    cnpjData = await consultarCNPJ(docLimpo);
+    if (cnpjData?.atividade_principal?.[0]?.code) {
+      isIndustrial = isIndustrialByCNAE(cnpjData.atividade_principal[0].code);
+      console.log(`[CNAE] Atividade: ${cnpjData.atividade_principal[0].code} - Industrial: ${isIndustrial}`);
+    }
+  }
+
   try {
-    // Buscar cliente pelo CPF/CNPJ
+    // Buscar cliente pelo CPF/CNPJ no Omie
     const result = await callOmieApi(
       "geral/clientes/",
       "ListarClientes",
@@ -100,7 +184,7 @@ async function buscarClientePorDocumento(documento: string): Promise<OmieCliente
     if (result.faultstring) {
       // Se não encontrou, retornar null
       if (result.faultstring.includes("Nenhum registro") || result.faultstring.includes("não encontrado")) {
-        return null;
+        return { cliente: null, cnpjData, isIndustrial };
       }
       throw new Error(`Erro Omie: ${result.faultstring}`);
     }
@@ -108,7 +192,7 @@ async function buscarClientePorDocumento(documento: string): Promise<OmieCliente
     // Verificar se encontrou algum cliente
     const clientes = result.clientes_cadastro || result.clientes_cadastro_resumido;
     if (!clientes || clientes.length === 0) {
-      return null;
+      return { cliente: null, cnpjData, isIndustrial };
     }
 
     // Buscar dados completos do cliente
@@ -122,10 +206,10 @@ async function buscarClientePorDocumento(documento: string): Promise<OmieCliente
         }
       ) as unknown as OmieCliente;
 
-      return detalheResult;
+      return { cliente: detalheResult, cnpjData, isIndustrial };
     }
 
-    return clienteResumo;
+    return { cliente: clienteResumo, cnpjData, isIndustrial };
   } catch (error) {
     console.error("[Omie] Erro ao buscar cliente:", error);
     // Se for erro de "não encontrado", retornar null
@@ -133,7 +217,7 @@ async function buscarClientePorDocumento(documento: string): Promise<OmieCliente
         (error.message.includes("Nenhum registro") || 
          error.message.includes("não encontrado") ||
          error.message.includes("não localizado"))) {
-      return null;
+      return { cliente: null, cnpjData, isIndustrial };
     }
     throw error;
   }
@@ -162,11 +246,14 @@ serve(async (req) => {
           );
         }
 
-        const cliente = await buscarClientePorDocumento(documento);
+        const { cliente, cnpjData, isIndustrial } = await buscarClientePorDocumento(documento);
 
         if (cliente) {
           result = {
             found: true,
+            isIndustrial,
+            cnae: cnpjData?.atividade_principal?.[0]?.code || null,
+            cnaeDescricao: cnpjData?.atividade_principal?.[0]?.text || null,
             cliente: {
               codigo_cliente: cliente.codigo_cliente,
               razao_social: cliente.razao_social,
@@ -185,9 +272,32 @@ serve(async (req) => {
               inscricao_estadual: cliente.inscricao_estadual,
             },
           };
+        } else if (cnpjData) {
+          // CNPJ encontrado na Receita, mas não no Omie
+          result = {
+            found: false,
+            isIndustrial,
+            cnae: cnpjData.atividade_principal?.[0]?.code || null,
+            cnaeDescricao: cnpjData.atividade_principal?.[0]?.text || null,
+            cliente: {
+              razao_social: cnpjData.nome,
+              nome_fantasia: cnpjData.fantasia,
+              email: cnpjData.email,
+              telefone: cnpjData.telefone,
+              endereco: cnpjData.logradouro,
+              endereco_numero: cnpjData.numero,
+              complemento: cnpjData.complemento,
+              bairro: cnpjData.bairro,
+              cidade: cnpjData.municipio,
+              estado: cnpjData.uf,
+              cep: cnpjData.cep,
+            },
+          };
         } else {
           result = {
             found: false,
+            isIndustrial: false,
+            cnae: null,
             cliente: null,
           };
         }
