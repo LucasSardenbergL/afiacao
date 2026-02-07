@@ -69,9 +69,9 @@ export const WEAR_LEVELS: Record<WearLevel, { label: string; color: string }> = 
 export type DeliveryOption = 'coleta_entrega' | 'somente_coleta' | 'somente_entrega' | 'balcao';
 
 export const DELIVERY_OPTIONS: Record<DeliveryOption, { label: string; description: string }> = {
-  coleta_entrega: { label: 'Coleta e Entrega em Casa', description: 'Buscamos e entregamos no seu endereço' },
-  somente_coleta: { label: 'Somente Coleta', description: 'Buscamos em casa, você retira no balcão' },
-  somente_entrega: { label: 'Somente Entrega', description: 'Você traz ao balcão, entregamos em casa' },
+  coleta_entrega: { label: 'Coleta e Entrega no Endereço', description: 'Buscamos e entregamos no seu endereço' },
+  somente_coleta: { label: 'Somente Coleta', description: 'Buscamos no endereço, você retira no balcão' },
+  somente_entrega: { label: 'Somente Entrega', description: 'Você traz ao balcão, entregamos no endereço' },
   balcao: { label: 'Levar e Retirar no Balcão', description: 'Você traz e retira na nossa loja' },
 };
 
