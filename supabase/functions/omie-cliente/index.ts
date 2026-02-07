@@ -41,6 +41,7 @@ interface OmieCliente {
   cep?: string;
   pessoa_fisica?: string;
   inscricao_estadual?: string;
+  tags?: Array<{ tag: string }>;
 }
 
 interface CNPJData {
@@ -146,8 +147,17 @@ async function consultarCNPJ(cnpj: string): Promise<CNPJData | null> {
   }
 }
 
+// Função para verificar se cliente é funcionário pela tag
+function isEmployeeByTags(tags: Array<{ tag: string }> | undefined): boolean {
+  if (!tags || !Array.isArray(tags)) return false;
+  return tags.some(t => 
+    t.tag?.toLowerCase().includes('funcionário') || 
+    t.tag?.toLowerCase().includes('funcionario')
+  );
+}
+
 // Função para buscar cliente por CPF/CNPJ
-async function buscarClientePorDocumento(documento: string): Promise<{ cliente: OmieCliente | null; cnpjData: CNPJData | null; isIndustrial: boolean }> {
+async function buscarClientePorDocumento(documento: string): Promise<{ cliente: OmieCliente | null; cnpjData: CNPJData | null; isIndustrial: boolean; isEmployee: boolean }> {
   // Limpar documento (remover pontos, traços, barras)
   const docLimpo = documento.replace(/\D/g, "");
   
@@ -184,7 +194,7 @@ async function buscarClientePorDocumento(documento: string): Promise<{ cliente: 
     if (result.faultstring) {
       // Se não encontrou, retornar null
       if (result.faultstring.includes("Nenhum registro") || result.faultstring.includes("não encontrado")) {
-        return { cliente: null, cnpjData, isIndustrial };
+        return { cliente: null, cnpjData, isIndustrial, isEmployee: false };
       }
       throw new Error(`Erro Omie: ${result.faultstring}`);
     }
@@ -192,11 +202,13 @@ async function buscarClientePorDocumento(documento: string): Promise<{ cliente: 
     // Verificar se encontrou algum cliente
     const clientes = result.clientes_cadastro || result.clientes_cadastro_resumido;
     if (!clientes || clientes.length === 0) {
-      return { cliente: null, cnpjData, isIndustrial };
+      return { cliente: null, cnpjData, isIndustrial, isEmployee: false };
     }
 
-    // Buscar dados completos do cliente
+    // Buscar dados completos do cliente (inclui tags)
     const clienteResumo = clientes[0];
+    let clienteCompleto = clienteResumo;
+    
     if (clienteResumo.codigo_cliente) {
       const detalheResult = await callOmieApi(
         "geral/clientes/",
@@ -205,11 +217,14 @@ async function buscarClientePorDocumento(documento: string): Promise<{ cliente: 
           codigo_cliente: clienteResumo.codigo_cliente,
         }
       ) as unknown as OmieCliente;
-
-      return { cliente: detalheResult, cnpjData, isIndustrial };
+      clienteCompleto = detalheResult;
     }
 
-    return { cliente: clienteResumo, cnpjData, isIndustrial };
+    // Verificar se é funcionário pela tag
+    const isEmployee = isEmployeeByTags(clienteCompleto.tags);
+    console.log(`[Omie] Cliente: ${clienteCompleto.razao_social} - Tags: ${JSON.stringify(clienteCompleto.tags)} - Funcionário: ${isEmployee}`);
+
+    return { cliente: clienteCompleto, cnpjData, isIndustrial, isEmployee };
   } catch (error) {
     console.error("[Omie] Erro ao buscar cliente:", error);
     // Se for erro de "não encontrado", retornar null
@@ -217,7 +232,7 @@ async function buscarClientePorDocumento(documento: string): Promise<{ cliente: 
         (error.message.includes("Nenhum registro") || 
          error.message.includes("não encontrado") ||
          error.message.includes("não localizado"))) {
-      return { cliente: null, cnpjData, isIndustrial };
+      return { cliente: null, cnpjData, isIndustrial, isEmployee: false };
     }
     throw error;
   }
@@ -246,12 +261,13 @@ serve(async (req) => {
           );
         }
 
-        const { cliente, cnpjData, isIndustrial } = await buscarClientePorDocumento(documento);
+        const { cliente, cnpjData, isIndustrial, isEmployee } = await buscarClientePorDocumento(documento);
 
         if (cliente) {
           result = {
             found: true,
             isIndustrial,
+            isEmployee,
             cnae: cnpjData?.atividade_principal?.[0]?.code || null,
             cnaeDescricao: cnpjData?.atividade_principal?.[0]?.text || null,
             cliente: {
@@ -277,6 +293,7 @@ serve(async (req) => {
           result = {
             found: false,
             isIndustrial,
+            isEmployee: false,
             cnae: cnpjData.atividade_principal?.[0]?.code || null,
             cnaeDescricao: cnpjData.atividade_principal?.[0]?.text || null,
             cliente: {
@@ -297,6 +314,7 @@ serve(async (req) => {
           result = {
             found: false,
             isIndustrial: false,
+            isEmployee: false,
             cnae: null,
             cliente: null,
           };
