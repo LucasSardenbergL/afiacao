@@ -21,6 +21,7 @@ import AdminCustomers from "./pages/AdminCustomers";
 import AdminOrderDetail from "./pages/AdminOrderDetail";
 import AdminDemandForecast from "./pages/AdminDemandForecast";
 import AdminRoutePlanner from "./pages/AdminRoutePlanner";
+import AdminMonthlyReports from "./pages/AdminMonthlyReports";
 import ToolHistory from "./pages/ToolHistory";
 import ToolPublicHistory from "./pages/ToolPublicHistory";
 import NotFound from "./pages/NotFound";
@@ -146,6 +147,14 @@ const App = () => (
               element={
                 <ProtectedRoute>
                   <AdminRoutePlanner />
+                </ProtectedRoute>
+              }
+            />
+            <Route
+              path="/admin/monthly-reports"
+              element={
+                <ProtectedRoute>
+                  <AdminMonthlyReports />
                 </ProtectedRoute>
               }
             />

@@ -17,3 +17,6 @@ verify_jwt = false
 
 [functions.identify-tool]
 verify_jwt = false
+
+[functions.monthly-report]
+verify_jwt = false
