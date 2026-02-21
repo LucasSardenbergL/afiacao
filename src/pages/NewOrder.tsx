@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Plus, Trash2, ChevronRight, Check, MapPin, Clock, Loader2, Wrench, AlertCircle } from 'lucide-react';
+import { Plus, Trash2, ChevronRight, Check, MapPin, Clock, Loader2, Wrench, AlertCircle, Camera } from 'lucide-react';
 import { Header } from '@/components/Header';
 import { Button } from '@/components/ui/button';
 import { PhotoUpload } from '@/components/PhotoUpload';
@@ -17,6 +17,7 @@ import { useToast } from '@/hooks/use-toast';
 import { useAuth } from '@/contexts/AuthContext';
 import { useUserRole } from '@/hooks/useUserRole';
 import { supabase } from '@/integrations/supabase/client';
+import { ToolImageIdentifier } from '@/components/ToolImageIdentifier';
 
 type Step = 'items' | 'delivery' | 'review';
 
@@ -93,6 +94,9 @@ const NewOrder = () => {
   // Ferramentas do usuário
   const [userTools, setUserTools] = useState<UserTool[]>([]);
   const [loadingTools, setLoadingTools] = useState(true);
+
+  // Categorias de ferramentas (para identificação por imagem)
+  const [toolCategories, setToolCategories] = useState<{ id: string; name: string; description: string | null }[]>([]);
   
   // User data from database
   const [profile, setProfile] = useState<ProfileData | null>(null);
@@ -105,8 +109,21 @@ const NewOrder = () => {
       loadUserData();
       loadServicos();
       loadUserTools();
+      loadCategories();
     }
   }, [user]);
+
+  const loadCategories = async () => {
+    try {
+      const { data } = await supabase
+        .from('tool_categories')
+        .select('id, name, description')
+        .order('name');
+      if (data) setToolCategories(data);
+    } catch (error) {
+      console.error('Erro ao carregar categorias:', error);
+    }
+  };
 
   const loadUserTools = async () => {
     if (!user) return;
@@ -509,11 +526,37 @@ const NewOrder = () => {
 
               {/* Assistente por voz/texto */}
               {userTools.length > 0 && (
-                <div className="mb-6">
+                <div className="mb-6 space-y-4">
                   <VoiceServiceInput
                     userTools={userTools}
                     onItemsIdentified={handleVoiceItemsIdentified}
                     isLoading={isSubmitting}
+                  />
+                  
+                  {/* Identificação por imagem */}
+                  <ToolImageIdentifier
+                    categories={toolCategories}
+                    onCategoryIdentified={(categoryId, _specs) => {
+                      // Find user tools matching this category
+                      const matchingTools = userTools.filter(t => t.tool_category_id === categoryId);
+                      if (matchingTools.length > 0) {
+                        matchingTools.forEach(tool => {
+                          if (!items.some(item => item.userToolId === tool.id)) {
+                            addItem(tool.id);
+                          }
+                        });
+                        toast({
+                          title: 'Ferramenta encontrada!',
+                          description: `${matchingTools.length} ferramenta(s) adicionada(s) ao pedido`,
+                        });
+                      } else {
+                        toast({
+                          title: 'Ferramenta não cadastrada',
+                          description: 'Nenhuma ferramenta dessa categoria foi encontrada no seu cadastro. Cadastre-a primeiro.',
+                          variant: 'destructive',
+                        });
+                      }
+                    }}
                   />
                 </div>
               )}
