@@ -22,6 +22,9 @@ import AdminOrderDetail from "./pages/AdminOrderDetail";
 import AdminDemandForecast from "./pages/AdminDemandForecast";
 import AdminRoutePlanner from "./pages/AdminRoutePlanner";
 import AdminMonthlyReports from "./pages/AdminMonthlyReports";
+import QualityChecklist from "./pages/QualityChecklist";
+import RecurringSchedules from "./pages/RecurringSchedules";
+import SavingsDashboard from "./pages/SavingsDashboard";
 import ToolHistory from "./pages/ToolHistory";
 import ToolPublicHistory from "./pages/ToolPublicHistory";
 import NotFound from "./pages/NotFound";
@@ -155,6 +158,30 @@ const App = () => (
               element={
                 <ProtectedRoute>
                   <AdminMonthlyReports />
+                </ProtectedRoute>
+              }
+            />
+            <Route
+              path="/admin/orders/:id/quality"
+              element={
+                <ProtectedRoute>
+                  <QualityChecklist />
+                </ProtectedRoute>
+              }
+            />
+            <Route
+              path="/recurring-schedules"
+              element={
+                <ProtectedRoute>
+                  <RecurringSchedules />
+                </ProtectedRoute>
+              }
+            />
+            <Route
+              path="/savings"
+              element={
+                <ProtectedRoute>
+                  <SavingsDashboard />
                 </ProtectedRoute>
               }
             />

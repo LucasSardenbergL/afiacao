@@ -1,22 +1,49 @@
 import { useParams, useNavigate } from 'react-router-dom';
-import { Phone, MessageCircle, Copy, Check, RefreshCw, Star } from 'lucide-react';
-import { useState } from 'react';
+import { Phone, MessageCircle, Copy, Check, RefreshCw, Star, Camera } from 'lucide-react';
+import { useState, useEffect } from 'react';
 import { Header } from '@/components/Header';
 import { BottomNav } from '@/components/BottomNav';
 import { OrderTimeline } from '@/components/OrderTimeline';
 import { StatusBadgeSimple } from '@/components/StatusBadge';
 import { Button } from '@/components/ui/button';
+import { Badge } from '@/components/ui/badge';
 import { mockOrders } from '@/data/mockData';
 import { TOOL_CATEGORIES, SERVICE_TYPES, DELIVERY_OPTIONS } from '@/types';
+import { supabase } from '@/integrations/supabase/client';
 import { format } from 'date-fns';
 import { ptBR } from 'date-fns/locale';
+
+interface QualityData {
+  item_index: number;
+  before_photos: string[];
+  after_photos: string[];
+  approved: boolean;
+}
 
 const OrderDetail = () => {
   const { id } = useParams();
   const navigate = useNavigate();
   const [copied, setCopied] = useState(false);
+  const [qualityData, setQualityData] = useState<QualityData[]>([]);
 
   const order = mockOrders.find((o) => o.id === id);
+
+  useEffect(() => {
+    if (id) loadQualityData();
+  }, [id]);
+
+  const loadQualityData = async () => {
+    if (!id) return;
+    try {
+      const { data } = await (supabase as any)
+        .from('quality_checklists')
+        .select('item_index, before_photos, after_photos, approved')
+        .eq('order_id', id);
+      if (data) setQualityData(data as QualityData[]);
+    } catch (error) {
+      console.error('Error loading quality data:', error);
+    }
+  };
 
   if (!order) {
     return (
@@ -119,6 +146,45 @@ const OrderDetail = () => {
                 {item.notes && (
                   <p className="text-sm text-muted-foreground mt-2 italic">"{item.notes}"</p>
                 )}
+
+                {/* Before/After Photos from Quality Checklist */}
+                {(() => {
+                  const qd = qualityData.find(q => q.item_index === parseInt(item.id) - 1);
+                  if (!qd || (qd.before_photos.length === 0 && qd.after_photos.length === 0)) return null;
+                  return (
+                    <div className="mt-3 pt-3 border-t border-border">
+                      <div className="flex items-center gap-1.5 mb-2">
+                        <Camera className="w-3.5 h-3.5 text-primary" />
+                        <span className="text-xs font-medium text-primary">Fotos do Serviço</span>
+                        {qd.approved && (
+                          <Badge variant="outline" className="text-xs ml-auto border-emerald-300 text-emerald-600">
+                            ✓ Aprovado
+                          </Badge>
+                        )}
+                      </div>
+                      {qd.before_photos.length > 0 && (
+                        <div className="mb-2">
+                          <p className="text-xs text-muted-foreground mb-1">Antes:</p>
+                          <div className="flex gap-2 overflow-x-auto">
+                            {qd.before_photos.map((photo, pi) => (
+                              <img key={pi} src={photo} alt="Antes" className="w-14 h-14 object-cover rounded-lg border" />
+                            ))}
+                          </div>
+                        </div>
+                      )}
+                      {qd.after_photos.length > 0 && (
+                        <div>
+                          <p className="text-xs text-muted-foreground mb-1">Depois:</p>
+                          <div className="flex gap-2 overflow-x-auto">
+                            {qd.after_photos.map((photo, pi) => (
+                              <img key={pi} src={photo} alt="Depois" className="w-14 h-14 object-cover rounded-lg border border-primary/30" />
+                            ))}
+                          </div>
+                        </div>
+                      )}
+                    </div>
+                  );
+                })()}
               </div>
             ))}
           </div>
