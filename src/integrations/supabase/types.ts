@@ -300,6 +300,8 @@ export type Database = {
       profiles: {
         Row: {
           avatar_url: string | null
+          business_hours_close: string | null
+          business_hours_open: string | null
           cnae: string | null
           created_at: string
           customer_type: string | null
@@ -315,6 +317,8 @@ export type Database = {
         }
         Insert: {
           avatar_url?: string | null
+          business_hours_close?: string | null
+          business_hours_open?: string | null
           cnae?: string | null
           created_at?: string
           customer_type?: string | null
@@ -330,6 +334,8 @@ export type Database = {
         }
         Update: {
           avatar_url?: string | null
+          business_hours_close?: string | null
+          business_hours_open?: string | null
           cnae?: string | null
           created_at?: string
           customer_type?: string | null

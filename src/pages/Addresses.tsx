@@ -44,6 +44,7 @@ const Addresses = () => {
   const [loading, setLoading] = useState(true);
   const [showAddDialog, setShowAddDialog] = useState(false);
   const [saving, setSaving] = useState(false);
+  const [fetchingCep, setFetchingCep] = useState(false);
   const { toast } = useToast();
 
   const [newAddress, setNewAddress] = useState({
@@ -56,6 +57,44 @@ const Addresses = () => {
     state: '',
     zip_code: '',
   });
+
+  const fetchAddressFromCep = async (cep: string) => {
+    const cleanCep = cep.replace(/\D/g, '');
+    if (cleanCep.length !== 8) return;
+
+    setFetchingCep(true);
+    try {
+      const response = await fetch(`https://viacep.com.br/ws/${cleanCep}/json/`);
+      const data = await response.json();
+      
+      if (data.erro) {
+        toast({ title: 'CEP não encontrado', variant: 'destructive' });
+        return;
+      }
+
+      setNewAddress(prev => ({
+        ...prev,
+        street: data.logradouro || prev.street,
+        neighborhood: data.bairro || prev.neighborhood,
+        city: data.localidade || prev.city,
+        state: data.uf || prev.state,
+      }));
+    } catch {
+      console.error('Erro ao buscar CEP');
+    } finally {
+      setFetchingCep(false);
+    }
+  };
+
+  const handleCepChange = (value: string) => {
+    const formatted = formatZipCode(value);
+    setNewAddress(prev => ({ ...prev, zip_code: formatted }));
+    
+    const cleanCep = value.replace(/\D/g, '');
+    if (cleanCep.length === 8) {
+      fetchAddressFromCep(cleanCep);
+    }
+  };
 
   useEffect(() => {
     loadAddresses();
@@ -317,13 +356,18 @@ const Addresses = () => {
 
             <div className="space-y-2">
               <Label htmlFor="zip_code">CEP *</Label>
-              <Input
-                id="zip_code"
-                placeholder="00000-000"
-                value={newAddress.zip_code}
-                onChange={(e) => setNewAddress(prev => ({ ...prev, zip_code: formatZipCode(e.target.value) }))}
-                maxLength={9}
-              />
+              <div className="relative">
+                <Input
+                  id="zip_code"
+                  placeholder="00000-000"
+                  value={newAddress.zip_code}
+                  onChange={(e) => handleCepChange(e.target.value)}
+                  maxLength={9}
+                />
+                {fetchingCep && (
+                  <Loader2 className="absolute right-3 top-1/2 -translate-y-1/2 w-4 h-4 animate-spin text-muted-foreground" />
+                )}
+              </div>
             </div>
 
             <div className="space-y-2">

@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useMemo } from 'react';
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { Button } from '@/components/ui/button';
 import { Label } from '@/components/ui/label';
@@ -7,7 +7,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import { supabase } from '@/integrations/supabase/client';
 import { useAuth } from '@/contexts/AuthContext';
 import { useToast } from '@/hooks/use-toast';
-import { Loader2, Plus, ChevronRight, ChevronLeft } from 'lucide-react';
+import { Loader2, Plus, ChevronRight, ChevronLeft, Search } from 'lucide-react';
 
 interface ToolCategory {
   id: string;
@@ -45,6 +45,7 @@ export function AddToolDialog({ open, onOpenChange, onToolAdded, categories, tar
   const [quantity, setQuantity] = useState(1);
   const [isLoading, setIsLoading] = useState(false);
   const [isLoadingSpecs, setIsLoadingSpecs] = useState(false);
+  const [searchQuery, setSearchQuery] = useState('');
 
   // Reset state when dialog closes
   useEffect(() => {
@@ -54,8 +55,18 @@ export function AddToolDialog({ open, onOpenChange, onToolAdded, categories, tar
       setSpecifications([]);
       setSpecValues({});
       setQuantity(1);
+      setSearchQuery('');
     }
   }, [open]);
+
+  const filteredCategories = useMemo(() => {
+    if (!searchQuery.trim()) return categories;
+    const q = searchQuery.toLowerCase();
+    return categories.filter(c =>
+      c.name.toLowerCase().includes(q) ||
+      (c.description && c.description.toLowerCase().includes(q))
+    );
+  }, [categories, searchQuery]);
 
   // Load specifications when category changes
   useEffect(() => {
@@ -190,22 +201,42 @@ export function AddToolDialog({ open, onOpenChange, onToolAdded, categories, tar
         </DialogHeader>
 
         {step === 'category' && (
-          <div className="space-y-2 pt-2">
-            {categories.map((category) => (
-              <button
-                key={category.id}
-                onClick={() => handleCategorySelect(category.id)}
-                className="w-full flex items-center justify-between p-4 rounded-xl border border-border hover:border-primary hover:bg-primary/5 transition-colors text-left"
-              >
-                <div>
-                  <p className="font-medium text-foreground">{category.name}</p>
-                  {category.description && (
-                    <p className="text-sm text-muted-foreground">{category.description}</p>
-                  )}
-                </div>
-                <ChevronRight className="w-5 h-5 text-muted-foreground" />
-              </button>
-            ))}
+          <div className="space-y-3 pt-2">
+            {/* Search input */}
+            <div className="relative">
+              <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
+              <Input
+                placeholder="Buscar ferramenta..."
+                value={searchQuery}
+                onChange={(e) => setSearchQuery(e.target.value)}
+                className="pl-9"
+                autoFocus
+              />
+            </div>
+
+            <div className="space-y-2 max-h-[50vh] overflow-y-auto">
+              {filteredCategories.length > 0 ? (
+                filteredCategories.map((category) => (
+                  <button
+                    key={category.id}
+                    onClick={() => handleCategorySelect(category.id)}
+                    className="w-full flex items-center justify-between p-4 rounded-xl border border-border hover:border-primary hover:bg-primary/5 transition-colors text-left"
+                  >
+                    <div>
+                      <p className="font-medium text-foreground">{category.name}</p>
+                      {category.description && (
+                        <p className="text-sm text-muted-foreground">{category.description}</p>
+                      )}
+                    </div>
+                    <ChevronRight className="w-5 h-5 text-muted-foreground" />
+                  </button>
+                ))
+              ) : (
+                <p className="text-sm text-muted-foreground text-center py-4">
+                  Nenhuma ferramenta encontrada para "{searchQuery}"
+                </p>
+              )}
+            </div>
           </div>
         )}
 

@@ -85,9 +85,8 @@ export const DELIVERY_FEES: Record<DeliveryOption, number> = {
 
 // Time slots
 export const TIME_SLOTS = [
-  { id: '08-12', label: '08:00 - 12:00' },
-  { id: '12-16', label: '12:00 - 16:00' },
-  { id: '16-20', label: '16:00 - 20:00' },
+  { id: 'manha', label: 'Parte da Manhã' },
+  { id: 'tarde', label: 'Parte da Tarde' },
 ];
 
 // Order status
