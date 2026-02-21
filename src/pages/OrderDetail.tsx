@@ -4,6 +4,8 @@ import { useState, useEffect } from 'react';
 import { Header } from '@/components/Header';
 import { BottomNav } from '@/components/BottomNav';
 import { OrderTimeline } from '@/components/OrderTimeline';
+import { OrderChat } from '@/components/OrderChat';
+import { OrderReview } from '@/components/OrderReview';
 import { StatusBadgeSimple } from '@/components/StatusBadge';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
@@ -259,6 +261,14 @@ const OrderDetail = () => {
           </div>
         </section>
 
+        {/* Chat */}
+        <section className="mb-6">
+          <h3 className="font-display font-bold mb-3">Mensagens</h3>
+          <div className="bg-card rounded-xl p-4 shadow-soft border border-border">
+            <OrderChat orderId={order.id} />
+          </div>
+        </section>
+
         {/* Actions */}
         <section className="space-y-3">
           {order.status === 'entregue' && (
@@ -267,10 +277,7 @@ const OrderDetail = () => {
                 <RefreshCw className="w-4 h-4 mr-2" />
                 Repetir Pedido
               </Button>
-              <Button className="w-full" variant="muted">
-                <Star className="w-4 h-4 mr-2" />
-                Avaliar Serviço
-              </Button>
+              <OrderReview orderId={order.id} />
             </>
           )}
 

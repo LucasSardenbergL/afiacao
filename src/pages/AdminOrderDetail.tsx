@@ -2,6 +2,7 @@ import { useState, useEffect } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { Header } from '@/components/Header';
 import { BottomNav } from '@/components/BottomNav';
+import { OrderChat } from '@/components/OrderChat';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
@@ -478,6 +479,16 @@ const AdminOrderDetail = () => {
                 <span>R$ {currentTotal.toFixed(2)}</span>
               </div>
             </div>
+          </CardContent>
+        </Card>
+
+        {/* Chat with customer */}
+        <Card className="mb-4">
+          <CardHeader className="pb-2">
+            <CardTitle className="text-base">💬 Chat com Cliente</CardTitle>
+          </CardHeader>
+          <CardContent>
+            <OrderChat orderId={order.id} />
           </CardContent>
         </Card>
 
