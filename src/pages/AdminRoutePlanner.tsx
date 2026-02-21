@@ -5,10 +5,11 @@ import { BottomNav } from '@/components/BottomNav';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
+import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from '@/components/ui/dropdown-menu';
 import { supabase } from '@/integrations/supabase/client';
 import { useAuth } from '@/contexts/AuthContext';
 import { useToast } from '@/hooks/use-toast';
-import { Loader2, MapPin, Clock, Route, Filter, Navigation } from 'lucide-react';
+import { Loader2, MapPin, Clock, Route, Filter, Navigation, ExternalLink } from 'lucide-react';
 import L from 'leaflet';
 import 'leaflet/dist/leaflet.css';
 
@@ -317,6 +318,24 @@ const AdminRoutePlanner = () => {
     return map[status] || status;
   };
 
+  const openInWaze = (stop: RouteStop) => {
+    if (stop.lat && stop.lng) {
+      window.open(`https://waze.com/ul?ll=${stop.lat},${stop.lng}&navigate=yes`, '_blank');
+    } else {
+      const q = `${stop.address.street}, ${stop.address.number}, ${stop.address.city}, ${stop.address.state}`;
+      window.open(`https://waze.com/ul?q=${encodeURIComponent(q)}&navigate=yes`, '_blank');
+    }
+  };
+
+  const openInGoogleMaps = (stop: RouteStop) => {
+    if (stop.lat && stop.lng) {
+      window.open(`https://www.google.com/maps/dir/?api=1&destination=${stop.lat},${stop.lng}`, '_blank');
+    } else {
+      const q = `${stop.address.street}, ${stop.address.number}, ${stop.address.city}, ${stop.address.state}`;
+      window.open(`https://www.google.com/maps/dir/?api=1&destination=${encodeURIComponent(q)}`, '_blank');
+    }
+  };
+
   if (authLoading || loading) {
     return (
       <div className="min-h-screen bg-background pb-24">
@@ -412,15 +431,17 @@ const AdminRoutePlanner = () => {
             optimizedRoute.map((stop, idx) => (
               <Card
                 key={stop.orderId}
-                className="cursor-pointer hover:shadow-medium transition-shadow"
-                onClick={() => navigate(`/admin/orders/${stop.orderId}`)}
+                className="hover:shadow-medium transition-shadow"
               >
                 <CardContent className="py-3 px-4">
                   <div className="flex items-start gap-3">
                     <div className="flex-shrink-0 w-8 h-8 rounded-full bg-primary text-primary-foreground flex items-center justify-center font-bold text-sm">
                       {idx + 1}
                     </div>
-                    <div className="flex-1 min-w-0">
+                    <div
+                      className="flex-1 min-w-0 cursor-pointer"
+                      onClick={() => navigate(`/admin/orders/${stop.orderId}`)}
+                    >
                       <div className="flex items-center justify-between mb-1">
                         <p className="font-semibold text-foreground truncate">
                           {stop.customerName}
@@ -447,6 +468,21 @@ const AdminRoutePlanner = () => {
                         )}
                       </div>
                     </div>
+                    <DropdownMenu>
+                      <DropdownMenuTrigger asChild>
+                        <Button size="icon" variant="outline" className="flex-shrink-0 h-9 w-9">
+                          <ExternalLink className="w-4 h-4" />
+                        </Button>
+                      </DropdownMenuTrigger>
+                      <DropdownMenuContent align="end">
+                        <DropdownMenuItem onClick={() => openInWaze(stop)}>
+                          Abrir no Waze
+                        </DropdownMenuItem>
+                        <DropdownMenuItem onClick={() => openInGoogleMaps(stop)}>
+                          Abrir no Google Maps
+                        </DropdownMenuItem>
+                      </DropdownMenuContent>
+                    </DropdownMenu>
                   </div>
                 </CardContent>
               </Card>
