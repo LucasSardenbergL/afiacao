@@ -8,6 +8,7 @@ import { supabase } from '@/integrations/supabase/client';
 import { useAuth } from '@/contexts/AuthContext';
 import { useToast } from '@/hooks/use-toast';
 import { Loader2, Plus, ChevronRight, ChevronLeft, Search } from 'lucide-react';
+import { ToolImageIdentifier } from '@/components/ToolImageIdentifier';
 
 interface ToolCategory {
   id: string;
@@ -132,6 +133,15 @@ export function AddToolDialog({ open, onOpenChange, onToolAdded, categories, tar
     setStep('specs');
   };
 
+  const handleImageIdentified = (categoryId: string, detectedSpecs: Record<string, string>) => {
+    setSelectedCategory(categoryId);
+    setStep('specs');
+    // Pre-fill detected specs after specs load
+    setTimeout(() => {
+      setSpecValues(prev => ({ ...prev, ...detectedSpecs }));
+    }, 500);
+  };
+
   const handleSpecChange = (key: string, value: string) => {
     setSpecValues(prev => ({ ...prev, [key]: value }));
   };
@@ -202,6 +212,19 @@ export function AddToolDialog({ open, onOpenChange, onToolAdded, categories, tar
 
         {step === 'category' && (
           <div className="space-y-3 pt-2">
+            {/* Image identification */}
+            <ToolImageIdentifier
+              categories={categories}
+              onCategoryIdentified={handleImageIdentified}
+              className="mb-2"
+            />
+
+            <div className="relative flex items-center gap-3">
+              <div className="flex-1 h-px bg-border" />
+              <span className="text-xs text-muted-foreground">ou selecione manualmente</span>
+              <div className="flex-1 h-px bg-border" />
+            </div>
+
             {/* Search input */}
             <div className="relative">
               <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
@@ -210,7 +233,6 @@ export function AddToolDialog({ open, onOpenChange, onToolAdded, categories, tar
                 value={searchQuery}
                 onChange={(e) => setSearchQuery(e.target.value)}
                 className="pl-9"
-                autoFocus
               />
             </div>
 

@@ -14,3 +14,6 @@ verify_jwt = false
 
 [functions.verify-employee]
 verify_jwt = false
+
+[functions.identify-tool]
+verify_jwt = false
