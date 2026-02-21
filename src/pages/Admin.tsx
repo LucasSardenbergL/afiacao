@@ -3,27 +3,12 @@ import { useNavigate } from 'react-router-dom';
 import { Header } from '@/components/Header';
 import { BottomNav } from '@/components/BottomNav';
 import { Button } from '@/components/ui/button';
-import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
-import { Badge } from '@/components/ui/badge';
-import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
-import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from '@/components/ui/dialog';
-import { Label } from '@/components/ui/label';
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
+import { Card, CardContent } from '@/components/ui/card';
+import { KanbanBoard } from '@/components/KanbanBoard';
 import { supabase } from '@/integrations/supabase/client';
 import { useAuth } from '@/contexts/AuthContext';
 import { useToast } from '@/hooks/use-toast';
-import { Loader2, Package, Users, Wrench, ChevronRight, Clock, Truck, CheckCircle, Building2 } from 'lucide-react';
-import { format } from 'date-fns';
-import { ptBR } from 'date-fns/locale';
-
-// Employee-specific order statuses
-const EMPLOYEE_ORDER_STATUS = {
-  pedido_recebido: { label: 'Pedido Recebido', icon: Package, color: 'bg-blue-500' },
-  aguardando_coleta: { label: 'Aguardando Coleta', icon: Clock, color: 'bg-amber-500' },
-  em_triagem: { label: 'Coletado e na Empresa', icon: Building2, color: 'bg-purple-500' },
-  em_rota: { label: 'A Caminho da Entrega', icon: Truck, color: 'bg-amber-500' },
-  entregue: { label: 'Entregue', icon: CheckCircle, color: 'bg-emerald-500' },
-};
+import { Loader2, Users, ChevronRight, Clock } from 'lucide-react';
 
 interface OrderWithProfile {
   id: string;
@@ -49,7 +34,6 @@ const Admin = () => {
   const [orders, setOrders] = useState<OrderWithProfile[]>([]);
   const [loading, setLoading] = useState(true);
   const [updatingOrder, setUpdatingOrder] = useState<string | null>(null);
-  const [selectedTab, setSelectedTab] = useState('pending');
 
   useEffect(() => {
     if (!authLoading && !isStaff) {
@@ -122,7 +106,7 @@ const Admin = () => {
 
       toast({
         title: 'Status atualizado!',
-        description: `Pedido alterado para: ${EMPLOYEE_ORDER_STATUS[newStatus as keyof typeof EMPLOYEE_ORDER_STATUS]?.label || newStatus}`,
+        description: `Status do pedido atualizado com sucesso`,
       });
 
       loadOrders();
@@ -138,24 +122,6 @@ const Admin = () => {
     }
   };
 
-  const getNextStatus = (currentStatus: string): string | null => {
-    const statusFlow = ['pedido_recebido', 'aguardando_coleta', 'em_triagem', 'em_rota', 'entregue'];
-    const currentIndex = statusFlow.indexOf(currentStatus);
-    if (currentIndex < statusFlow.length - 1) {
-      return statusFlow[currentIndex + 1];
-    }
-    return null;
-  };
-
-  const filterOrders = (status: string) => {
-    if (status === 'pending') {
-      return orders.filter(o => !['entregue'].includes(o.status));
-    }
-    if (status === 'completed') {
-      return orders.filter(o => o.status === 'entregue');
-    }
-    return orders;
-  };
 
   if (authLoading || loading) {
     return (
@@ -180,7 +146,7 @@ const Admin = () => {
         showBack 
       />
 
-      <main className="pt-16 px-4 max-w-lg mx-auto">
+      <main className="pt-16 px-4 max-w-4xl mx-auto">
         {/* Quick actions */}
         <div className="space-y-2 mb-6">
           <Button 
@@ -234,47 +200,12 @@ const Admin = () => {
           </Card>
         </div>
 
-        {/* Tabs */}
-        <Tabs value={selectedTab} onValueChange={setSelectedTab}>
-          <TabsList className="grid w-full grid-cols-2 mb-4">
-            <TabsTrigger value="pending">Pendentes</TabsTrigger>
-            <TabsTrigger value="completed">Concluídos</TabsTrigger>
-          </TabsList>
-
-          <TabsContent value="pending" className="space-y-3">
-            {filterOrders('pending').map(order => (
-              <OrderCard 
-                key={order.id} 
-                order={order}
-                onStatusChange={updateOrderStatus}
-                updatingOrder={updatingOrder}
-                getNextStatus={getNextStatus}
-              />
-            ))}
-            {filterOrders('pending').length === 0 && (
-              <div className="text-center py-8 text-muted-foreground">
-                Nenhum pedido pendente
-              </div>
-            )}
-          </TabsContent>
-
-          <TabsContent value="completed" className="space-y-3">
-            {filterOrders('completed').map(order => (
-              <OrderCard 
-                key={order.id} 
-                order={order}
-                onStatusChange={updateOrderStatus}
-                updatingOrder={updatingOrder}
-                getNextStatus={getNextStatus}
-              />
-            ))}
-            {filterOrders('completed').length === 0 && (
-              <div className="text-center py-8 text-muted-foreground">
-                Nenhum pedido concluído
-              </div>
-            )}
-          </TabsContent>
-        </Tabs>
+        {/* Kanban Board */}
+        <KanbanBoard
+          orders={orders}
+          onStatusChange={updateOrderStatus}
+          updatingOrder={updatingOrder}
+        />
       </main>
 
       <BottomNav />
@@ -282,67 +213,5 @@ const Admin = () => {
   );
 };
 
-interface OrderCardProps {
-  order: OrderWithProfile;
-  onStatusChange: (orderId: string, status: string) => Promise<void>;
-  updatingOrder: string | null;
-  getNextStatus: (status: string) => string | null;
-}
-
-const OrderCard = ({ order, onStatusChange, updatingOrder, getNextStatus }: OrderCardProps) => {
-  const navigate = useNavigate();
-  const statusInfo = EMPLOYEE_ORDER_STATUS[order.status as keyof typeof EMPLOYEE_ORDER_STATUS];
-  const nextStatus = getNextStatus(order.status);
-  const StatusIcon = statusInfo?.icon || Package;
-  const items = Array.isArray(order.items) ? order.items : [];
-
-  return (
-    <Card 
-      className="cursor-pointer hover:border-primary/50 transition-colors"
-      onClick={() => navigate(`/admin/orders/${order.id}`)}
-    >
-      <CardContent className="p-4">
-        <div className="flex items-start justify-between gap-2 mb-3">
-          <div>
-            <p className="font-semibold text-foreground">
-              {order.profiles?.name || 'Cliente'}
-            </p>
-            {order.profiles?.document && (
-              <p className="text-xs text-muted-foreground">
-                Doc: {order.profiles.document}
-              </p>
-            )}
-          </div>
-          <Badge variant="secondary" className={`${statusInfo?.color || 'bg-gray-500'} text-white`}>
-            {statusInfo?.label || order.status}
-          </Badge>
-        </div>
-
-        <div className="space-y-1 text-sm text-muted-foreground mb-3">
-          <p>📅 {format(new Date(order.created_at), "dd/MM/yyyy 'às' HH:mm", { locale: ptBR })}</p>
-          <p>🔧 {items.length} {items.length === 1 ? 'item' : 'itens'}</p>
-          {order.total > 0 && <p>💰 R$ {order.total.toFixed(2)}</p>}
-        </div>
-
-        {nextStatus && (
-          <Button
-            size="sm"
-            className="w-full"
-            disabled={updatingOrder === order.id}
-            onClick={(e) => {
-              e.stopPropagation();
-              onStatusChange(order.id, nextStatus);
-            }}
-          >
-            {updatingOrder === order.id ? (
-              <Loader2 className="w-4 h-4 mr-2 animate-spin" />
-            ) : null}
-            Avançar para: {EMPLOYEE_ORDER_STATUS[nextStatus as keyof typeof EMPLOYEE_ORDER_STATUS]?.label}
-          </Button>
-        )}
-      </CardContent>
-    </Card>
-  );
-};
 
 export default Admin;
