@@ -22,6 +22,7 @@ import AdminOrderDetail from "./pages/AdminOrderDetail";
 import AdminDemandForecast from "./pages/AdminDemandForecast";
 import AdminRoutePlanner from "./pages/AdminRoutePlanner";
 import AdminMonthlyReports from "./pages/AdminMonthlyReports";
+import AdminProductivity from "./pages/AdminProductivity";
 import QualityChecklist from "./pages/QualityChecklist";
 import RecurringSchedules from "./pages/RecurringSchedules";
 import SavingsDashboard from "./pages/SavingsDashboard";
@@ -158,6 +159,14 @@ const App = () => (
               element={
                 <ProtectedRoute>
                   <AdminMonthlyReports />
+                </ProtectedRoute>
+              }
+            />
+            <Route
+              path="/admin/productivity"
+              element={
+                <ProtectedRoute>
+                  <AdminProductivity />
                 </ProtectedRoute>
               }
             />
