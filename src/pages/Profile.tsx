@@ -1,9 +1,11 @@
 import { useState, useEffect, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { MapPin, Phone, Mail, ChevronRight, LogOut, HelpCircle, Loader2, Wrench, Camera, Pencil, Fingerprint, Scan, Check, X, Plus } from 'lucide-react';
+import { MapPin, Phone, Mail, ChevronRight, LogOut, HelpCircle, Loader2, Wrench, Camera, Pencil, Fingerprint, Scan, Check, X, Plus, Clock } from 'lucide-react';
 import { Header } from '@/components/Header';
 import { BottomNav } from '@/components/BottomNav';
 import { Button } from '@/components/ui/button';
+import { Input } from '@/components/ui/input';
+import { Label } from '@/components/ui/label';
 import { SharpeningSuggestions } from '@/components/SharpeningSuggestions';
 import { useAuth } from '@/contexts/AuthContext';
 import { supabase } from '@/integrations/supabase/client';
@@ -18,6 +20,8 @@ interface ProfileData {
   phone: string | null;
   customer_type: string | null;
   avatar_url: string | null;
+  business_hours_open: string | null;
+  business_hours_close: string | null;
 }
 
 const Profile = () => {
@@ -50,7 +54,7 @@ const Profile = () => {
       // Load profile
       const { data: profileData } = await supabase
         .from('profiles')
-        .select('name, email, phone, customer_type, avatar_url')
+        .select('name, email, phone, customer_type, avatar_url, business_hours_open, business_hours_close')
         .eq('user_id', user.id)
         .maybeSingle();
 
@@ -64,6 +68,8 @@ const Profile = () => {
           phone: null,
           customer_type: null,
           avatar_url: null,
+          business_hours_open: null,
+          business_hours_close: null,
         });
       }
 
@@ -302,7 +308,49 @@ const Profile = () => {
           </div>
         </div>
 
-        {/* Sharpening Suggestions */}
+        {/* Business Hours */}
+        <div className="bg-card rounded-xl shadow-soft border border-border p-4 mb-6">
+          <div className="flex items-center gap-2 mb-3">
+            <Clock className="w-5 h-5 text-muted-foreground" />
+            <h3 className="font-display font-bold text-base">Horário de Funcionamento</h3>
+          </div>
+          <p className="text-xs text-muted-foreground mb-3">
+            Informe o horário de abertura e fechamento da sua empresa
+          </p>
+          <div className="grid grid-cols-2 gap-3">
+            <div className="space-y-1">
+              <Label htmlFor="hours_open" className="text-xs">Abertura</Label>
+              <Input
+                id="hours_open"
+                type="time"
+                value={profile?.business_hours_open || ''}
+                onChange={async (e) => {
+                  const val = e.target.value;
+                  setProfile(prev => prev ? { ...prev, business_hours_open: val } : null);
+                  if (user) {
+                    await supabase.from('profiles').update({ business_hours_open: val }).eq('user_id', user.id);
+                  }
+                }}
+              />
+            </div>
+            <div className="space-y-1">
+              <Label htmlFor="hours_close" className="text-xs">Fechamento</Label>
+              <Input
+                id="hours_close"
+                type="time"
+                value={profile?.business_hours_close || ''}
+                onChange={async (e) => {
+                  const val = e.target.value;
+                  setProfile(prev => prev ? { ...prev, business_hours_close: val } : null);
+                  if (user) {
+                    await supabase.from('profiles').update({ business_hours_close: val }).eq('user_id', user.id);
+                  }
+                }}
+              />
+            </div>
+          </div>
+        </div>
+
         <div className="mb-6">
           <h3 className="font-display font-bold text-lg mb-3">Agenda de Afiação</h3>
           <SharpeningSuggestions />
