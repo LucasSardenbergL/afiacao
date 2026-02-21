@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { PlusCircle, ClipboardList, Headphones, ChevronRight, Wrench, Calendar, User, Sparkles, ArrowRight, TrendingUp, Package, Users, Clock, Truck, CheckCircle, Building2 } from 'lucide-react';
+import { PlusCircle, ClipboardList, Headphones, ChevronRight, Wrench, Calendar, User, Sparkles, ArrowRight, TrendingUp, Package, Users, Clock, Truck, CheckCircle, Building2, PiggyBank, CalendarClock } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent } from '@/components/ui/card';
@@ -456,12 +456,12 @@ const Index = () => {
         </Card>
 
         {/* Quick Actions */}
-        <div className="grid grid-cols-3 gap-3 mb-6">
+        <div className="grid grid-cols-4 gap-2 mb-6">
           <button
             onClick={() => navigate('/orders')}
-            className="bg-card rounded-2xl p-4 shadow-medium border border-border hover:shadow-strong hover:border-primary/30 transition-all flex flex-col items-center gap-2 group"
+            className="bg-card rounded-2xl p-3 shadow-medium border border-border hover:shadow-strong hover:border-primary/30 transition-all flex flex-col items-center gap-2 group"
           >
-            <div className="w-11 h-11 rounded-xl bg-muted flex items-center justify-center group-hover:bg-primary/10 transition-colors">
+            <div className="w-10 h-10 rounded-xl bg-muted flex items-center justify-center group-hover:bg-primary/10 transition-colors">
               <ClipboardList className="w-5 h-5 text-muted-foreground group-hover:text-primary transition-colors" />
             </div>
             <span className="text-xs font-medium text-foreground">Pedidos</span>
@@ -469,22 +469,32 @@ const Index = () => {
 
           <button
             onClick={() => navigate('/tools')}
-            className="bg-card rounded-2xl p-4 shadow-medium border border-border hover:shadow-strong hover:border-primary/30 transition-all flex flex-col items-center gap-2 group"
+            className="bg-card rounded-2xl p-3 shadow-medium border border-border hover:shadow-strong hover:border-primary/30 transition-all flex flex-col items-center gap-2 group"
           >
-            <div className="w-11 h-11 rounded-xl bg-muted flex items-center justify-center group-hover:bg-primary/10 transition-colors">
+            <div className="w-10 h-10 rounded-xl bg-muted flex items-center justify-center group-hover:bg-primary/10 transition-colors">
               <Wrench className="w-5 h-5 text-muted-foreground group-hover:text-primary transition-colors" />
             </div>
             <span className="text-xs font-medium text-foreground">Ferramentas</span>
           </button>
 
           <button
-            onClick={() => navigate('/support')}
-            className="bg-card rounded-2xl p-4 shadow-medium border border-border hover:shadow-strong hover:border-primary/30 transition-all flex flex-col items-center gap-2 group"
+            onClick={() => navigate('/recurring-schedules')}
+            className="bg-card rounded-2xl p-3 shadow-medium border border-border hover:shadow-strong hover:border-primary/30 transition-all flex flex-col items-center gap-2 group"
           >
-            <div className="w-11 h-11 rounded-xl bg-muted flex items-center justify-center group-hover:bg-primary/10 transition-colors">
-              <Headphones className="w-5 h-5 text-muted-foreground group-hover:text-primary transition-colors" />
+            <div className="w-10 h-10 rounded-xl bg-muted flex items-center justify-center group-hover:bg-primary/10 transition-colors">
+              <CalendarClock className="w-5 h-5 text-muted-foreground group-hover:text-primary transition-colors" />
             </div>
-            <span className="text-xs font-medium text-foreground">Suporte</span>
+            <span className="text-xs font-medium text-foreground">Agendar</span>
+          </button>
+
+          <button
+            onClick={() => navigate('/savings')}
+            className="bg-card rounded-2xl p-3 shadow-medium border border-border hover:shadow-strong hover:border-primary/30 transition-all flex flex-col items-center gap-2 group"
+          >
+            <div className="w-10 h-10 rounded-xl bg-muted flex items-center justify-center group-hover:bg-primary/10 transition-colors">
+              <PiggyBank className="w-5 h-5 text-muted-foreground group-hover:text-primary transition-colors" />
+            </div>
+            <span className="text-xs font-medium text-foreground">Economia</span>
           </button>
         </div>
 

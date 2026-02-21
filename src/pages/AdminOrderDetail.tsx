@@ -484,6 +484,16 @@ const AdminOrderDetail = () => {
         {/* Action buttons */}
         <div className="space-y-3 mb-6">
           <Button
+            variant="outline"
+            className="w-full"
+            size="lg"
+            onClick={() => navigate(`/admin/orders/${order.id}/quality`)}
+          >
+            <CheckCircle className="w-4 h-4 mr-2" />
+            Checklist de Qualidade
+          </Button>
+          
+          <Button
             className="w-full"
             size="lg"
             onClick={() => handleSave(true)}
