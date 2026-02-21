@@ -424,6 +424,56 @@ export type Database = {
         }
         Relationships: []
       }
+      recurring_schedules: {
+        Row: {
+          address_id: string | null
+          created_at: string
+          delivery_option: string
+          frequency_days: number
+          id: string
+          is_active: boolean
+          next_order_date: string
+          time_slot: string | null
+          tool_ids: string[]
+          updated_at: string
+          user_id: string
+        }
+        Insert: {
+          address_id?: string | null
+          created_at?: string
+          delivery_option?: string
+          frequency_days?: number
+          id?: string
+          is_active?: boolean
+          next_order_date: string
+          time_slot?: string | null
+          tool_ids?: string[]
+          updated_at?: string
+          user_id: string
+        }
+        Update: {
+          address_id?: string | null
+          created_at?: string
+          delivery_option?: string
+          frequency_days?: number
+          id?: string
+          is_active?: boolean
+          next_order_date?: string
+          time_slot?: string | null
+          tool_ids?: string[]
+          updated_at?: string
+          user_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "recurring_schedules_address_id_fkey"
+            columns: ["address_id"]
+            isOneToOne: false
+            referencedRelation: "addresses"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       tool_categories: {
         Row: {
           created_at: string
