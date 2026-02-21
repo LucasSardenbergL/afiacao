@@ -70,6 +70,7 @@ const NewOrder = () => {
   const [deliveryOption, setDeliveryOption] = useState<DeliveryOption>('coleta_entrega');
   const [selectedAddress, setSelectedAddress] = useState<string>('');
   const [selectedTimeSlot, setSelectedTimeSlot] = useState<string>('');
+  const [paymentMethod] = useState<string>('a_vista');
   
   const [isSubmitting, setIsSubmitting] = useState(false);
   
@@ -382,6 +383,7 @@ const NewOrder = () => {
         delivery_fee: deliveryFee,
         total: deliveryFee,
         notes: items.map(buildToolInfo).filter(Boolean).join(' || '),
+        payment_method: paymentMethod,
       };
 
       const profilePayload = {
@@ -884,6 +886,14 @@ const NewOrder = () => {
                     {selectedTimeSlot && ` • ${TIME_SLOTS.find(s => s.id === selectedTimeSlot)?.label}`}
                   </p>
                 )}
+              </div>
+
+              <div className="bg-card rounded-xl p-4 shadow-soft border border-border mb-4">
+                <h3 className="font-semibold mb-2">Pagamento</h3>
+                <p className="text-sm">À vista</p>
+                <p className="text-xs text-muted-foreground mt-1">
+                  PIX ou pagamento presencial na entrega/retirada
+                </p>
               </div>
 
 
