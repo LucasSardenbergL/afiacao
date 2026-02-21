@@ -15,9 +15,20 @@ import { cn } from '@/lib/utils';
 import { syncOrderToOmie, OmieServico } from '@/services/omieService';
 import { useToast } from '@/hooks/use-toast';
 import { useAuth } from '@/contexts/AuthContext';
+import { useUserRole } from '@/hooks/useUserRole';
 import { supabase } from '@/integrations/supabase/client';
 
 type Step = 'items' | 'delivery' | 'review';
+
+const PAYMENT_OPTIONS = [
+  { id: 'a_vista', label: 'À vista', parcelas: 1, description: 'PIX ou pagamento presencial na entrega/retirada' },
+  { id: '30dd', label: '30 dias', parcelas: 1, description: 'Vencimento em 30 dias' },
+  { id: '30_60dd', label: '30/60 dias', parcelas: 2, description: '2 parcelas: 30 e 60 dias' },
+  { id: '30_60_90dd', label: '30/60/90 dias', parcelas: 3, description: '3 parcelas: 30, 60 e 90 dias' },
+  { id: '28dd', label: '28 dias', parcelas: 1, description: 'Vencimento em 28 dias' },
+  { id: '28_56dd', label: '28/56 dias', parcelas: 2, description: '2 parcelas: 28 e 56 dias' },
+  { id: '28_56_84dd', label: '28/56/84 dias', parcelas: 3, description: '3 parcelas: 28, 56 e 84 dias' },
+] as const;
 
 interface UserTool {
   id: string;
@@ -64,13 +75,14 @@ const NewOrder = () => {
   const navigate = useNavigate();
   const { toast } = useToast();
   const { user } = useAuth();
+  const { isStaff } = useUserRole();
   
   const [currentStep, setCurrentStep] = useState<Step>('items');
   const [items, setItems] = useState<ServiceItem[]>([]);
   const [deliveryOption, setDeliveryOption] = useState<DeliveryOption>('coleta_entrega');
   const [selectedAddress, setSelectedAddress] = useState<string>('');
   const [selectedTimeSlot, setSelectedTimeSlot] = useState<string>('');
-  const [paymentMethod] = useState<string>('a_vista');
+  const [paymentMethod, setPaymentMethod] = useState<string>('a_vista');
   
   const [isSubmitting, setIsSubmitting] = useState(false);
   
@@ -890,10 +902,39 @@ const NewOrder = () => {
 
               <div className="bg-card rounded-xl p-4 shadow-soft border border-border mb-4">
                 <h3 className="font-semibold mb-2">Pagamento</h3>
-                <p className="text-sm">À vista</p>
-                <p className="text-xs text-muted-foreground mt-1">
-                  PIX ou pagamento presencial na entrega/retirada
-                </p>
+                {isStaff ? (
+                  <div className="space-y-2">
+                    {PAYMENT_OPTIONS.map((option) => (
+                      <button
+                        key={option.id}
+                        onClick={() => setPaymentMethod(option.id)}
+                        className={cn(
+                          'w-full p-3 rounded-lg border-2 text-left transition-all',
+                          paymentMethod === option.id
+                            ? 'border-primary bg-primary/5'
+                            : 'border-border hover:border-primary/50'
+                        )}
+                      >
+                        <div className="flex items-center justify-between">
+                          <div>
+                            <span className="font-medium text-sm">{option.label}</span>
+                            <p className="text-xs text-muted-foreground">{option.description}</p>
+                          </div>
+                          {paymentMethod === option.id && (
+                            <Check className="w-4 h-4 text-primary" />
+                          )}
+                        </div>
+                      </button>
+                    ))}
+                  </div>
+                ) : (
+                  <>
+                    <p className="text-sm">À vista</p>
+                    <p className="text-xs text-muted-foreground mt-1">
+                      PIX ou pagamento presencial na entrega/retirada
+                    </p>
+                  </>
+                )}
               </div>
 
 
