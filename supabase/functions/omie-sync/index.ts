@@ -234,6 +234,7 @@ async function criarOrdemServicoOmie(
     delivery_fee: number;
     total: number;
     notes?: string;
+    payment_method?: string;
   }
 ): Promise<{ nCodOS: number; cNumOS: string }> {
   const cCodIntOS = `OS_${orderId.substring(0, 8)}_${Date.now()}`;
@@ -268,12 +269,47 @@ async function criarOrdemServicoOmie(
     } as Record<string, unknown>;
   });
 
+  // Calcular parcelas com base no método de pagamento
+  const paymentMethod = order.payment_method || 'a_vista';
+  
+  const buildParcelas = (method: string): { parcelas: Array<Record<string, unknown>>; nQtdeParc: number } => {
+    const hoje = new Date();
+    const formatDate = (d: Date) => `${String(d.getDate()).padStart(2, '0')}/${String(d.getMonth() + 1).padStart(2, '0')}/${d.getFullYear()}`;
+    const addDays = (d: Date, days: number) => { const r = new Date(d); r.setDate(r.getDate() + days); return r; };
+    
+    const configs: Record<string, number[]> = {
+      'a_vista': [0],
+      '30dd': [30],
+      '30_60dd': [30, 60],
+      '30_60_90dd': [30, 60, 90],
+      '28dd': [28],
+      '28_56dd': [28, 56],
+      '28_56_84dd': [28, 56, 84],
+    };
+    
+    const dias = configs[method] || [0];
+    const percentual = Math.round((100 / dias.length) * 100) / 100;
+    
+    return {
+      nQtdeParc: dias.length,
+      parcelas: dias.map((d, i) => ({
+        nParcela: i + 1,
+        dDtVenc: formatDate(addDays(hoje, d)),
+        nPercentual: i === dias.length - 1 ? Math.round((100 - percentual * (dias.length - 1)) * 100) / 100 : percentual,
+        nValor: 0,
+      })),
+    };
+  };
+  
+  const { parcelas, nQtdeParc } = buildParcelas(paymentMethod);
+  console.log(`[Omie] Pagamento: ${paymentMethod}, ${nQtdeParc} parcela(s)`);
+
   // Montar cabeçalho com vendedor se existir
   const cabecalho: Record<string, unknown> = {
     cCodIntOS: cCodIntOS,
     nCodCli: omieCodigoCliente,
     cEtapa: "10", // 10 = Aberta
-    nQtdeParc: 1,
+    nQtdeParc: nQtdeParc,
   };
 
   // Adicionar vendedor se o cliente tiver um associado
@@ -281,10 +317,6 @@ async function criarOrdemServicoOmie(
     cabecalho.nCodVend = omieCodigoVendedor;
     console.log(`[Omie] Vendedor associado à OS: ${omieCodigoVendedor}`);
   }
-
-  // Data de vencimento = hoje (à vista)
-  const hoje = new Date();
-  const dVenc = `${String(hoje.getDate()).padStart(2, '0')}/${String(hoje.getMonth() + 1).padStart(2, '0')}/${hoje.getFullYear()}`;
 
   const osParams: Record<string, unknown> = {
     Cabecalho: cabecalho,
@@ -294,14 +326,7 @@ async function criarOrdemServicoOmie(
       nCodCC: 3543828789, // Conta Corrente: Omie.CASH
     },
     ServicosPrestados: servicosPrestados,
-    Parcelas: [
-      {
-        nParcela: 1,
-        dDtVenc: dVenc,
-        nPercentual: 100,
-        nValor: 0,
-      },
-    ],
+    Parcelas: parcelas,
     Observacoes: {
       cObsOS: order.notes || `Pedido via App - ${descricaoItens}`,
     },
