@@ -8,7 +8,7 @@ import { AddToolDialog } from '@/components/AddToolDialog';
 import { supabase } from '@/integrations/supabase/client';
 import { useAuth } from '@/contexts/AuthContext';
 import { useToast } from '@/hooks/use-toast';
-import { Loader2, Plus, Wrench, Calendar, Trash2 } from 'lucide-react';
+import { Loader2, Plus, Wrench, Calendar, Trash2, Hash } from 'lucide-react';
 import { differenceInDays } from 'date-fns';
 import { cn } from '@/lib/utils';
 
@@ -25,6 +25,7 @@ interface UserTool {
   tool_category_id: string;
   custom_name: string | null;
   generated_name: string | null;
+  internal_code: string | null;
   quantity: number | null;
   specifications: Record<string, string> | null;
   sharpening_interval_days: number | null;
@@ -197,7 +198,11 @@ const Tools = () => {
               const displayName = getToolDisplayName(tool);
 
               return (
-                <Card key={tool.id} className="overflow-hidden">
+                <Card 
+                  key={tool.id} 
+                  className="overflow-hidden cursor-pointer hover:border-primary/50 transition-colors"
+                  onClick={() => navigate(`/tools/${tool.id}`)}
+                >
                   <CardContent className="p-4">
                     <div className="flex items-start gap-3">
                       <div className={cn(
@@ -217,6 +222,14 @@ const Tools = () => {
                               <p className="text-xs text-muted-foreground mt-0.5">
                                 {tool.tool_categories?.name}
                               </p>
+                            )}
+                            {tool.internal_code && (
+                              <div className="flex items-center gap-1 mt-0.5">
+                                <Hash className="w-3 h-3 text-muted-foreground" />
+                                <span className="text-xs font-mono font-semibold text-primary">
+                                  {tool.internal_code}
+                                </span>
+                              </div>
                             )}
                           </div>
                           <span className={cn(
@@ -249,7 +262,7 @@ const Tools = () => {
                         size="icon"
                         variant="ghost"
                         className="text-muted-foreground hover:text-destructive flex-shrink-0"
-                        onClick={() => handleDeleteTool(tool.id)}
+                        onClick={(e) => { e.stopPropagation(); handleDeleteTool(tool.id); }}
                       >
                         <Trash2 className="w-4 h-4" />
                       </Button>
