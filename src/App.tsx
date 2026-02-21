@@ -20,6 +20,7 @@ import Admin from "./pages/Admin";
 import AdminCustomers from "./pages/AdminCustomers";
 import AdminOrderDetail from "./pages/AdminOrderDetail";
 import AdminDemandForecast from "./pages/AdminDemandForecast";
+import AdminRoutePlanner from "./pages/AdminRoutePlanner";
 import NotFound from "./pages/NotFound";
 
 const queryClient = new QueryClient();
@@ -135,6 +136,14 @@ const App = () => (
               element={
                 <ProtectedRoute>
                   <AdminDemandForecast />
+                </ProtectedRoute>
+              }
+            />
+            <Route
+              path="/admin/route-planner"
+              element={
+                <ProtectedRoute>
+                  <AdminRoutePlanner />
                 </ProtectedRoute>
               }
             />
