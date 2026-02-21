@@ -1,11 +1,10 @@
-import { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
+import { DragDropContext, Droppable, Draggable, DropResult } from '@hello-pangea/dnd';
 import { Card, CardContent } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
-import { ScrollArea } from '@/components/ui/scroll-area';
-import { Package, Loader2, ChevronRight, Clock, Timer, ArrowRight } from 'lucide-react';
-import { format, formatDistanceToNow, differenceInHours, differenceInMinutes } from 'date-fns';
+import { Package, Loader2, ChevronRight, Clock, Timer, ArrowRight, GripVertical } from 'lucide-react';
+import { formatDistanceToNow, differenceInHours } from 'date-fns';
 import { ptBR } from 'date-fns/locale';
 import { cn } from '@/lib/utils';
 
@@ -38,36 +37,36 @@ const KANBAN_COLUMNS = [
     title: 'Em Nossa Posse',
     subtitle: 'Ferramentas recebidas',
     statuses: ['pedido_recebido', 'aguardando_coleta', 'em_triagem', 'orcamento_enviado', 'aprovado'],
-    color: 'hsl(var(--status-progress))',
     bgClass: 'bg-blue-50 dark:bg-blue-950/30',
     borderClass: 'border-blue-200 dark:border-blue-800',
     badgeClass: 'bg-blue-500',
     nextTargetStatus: 'em_afiacao',
     nextLabel: 'Enviar para Afiação',
+    dropTargetStatus: 'em_triagem', // status when dropped into this column
   },
   {
     id: 'em_afiacao',
     title: 'Em Afiação',
     subtitle: 'Sendo processadas',
     statuses: ['em_afiacao', 'controle_qualidade'],
-    color: 'hsl(var(--primary))',
     bgClass: 'bg-orange-50 dark:bg-orange-950/30',
     borderClass: 'border-orange-200 dark:border-orange-800',
     badgeClass: 'bg-primary',
     nextTargetStatus: 'pronto_entrega',
     nextLabel: 'Marcar como Afiada',
+    dropTargetStatus: 'em_afiacao',
   },
   {
     id: 'afiada',
     title: 'Afiada',
     subtitle: 'Prontas para entrega',
     statuses: ['pronto_entrega', 'em_rota', 'entregue'],
-    color: 'hsl(var(--status-success))',
     bgClass: 'bg-emerald-50 dark:bg-emerald-950/30',
     borderClass: 'border-emerald-200 dark:border-emerald-800',
     badgeClass: 'bg-emerald-500',
     nextTargetStatus: 'entregue',
     nextLabel: 'Marcar Entregue',
+    dropTargetStatus: 'pronto_entrega',
   },
 ];
 
@@ -101,65 +100,109 @@ function getUrgencyLevel(order: OrderWithProfile): 'normal' | 'warning' | 'urgen
   return 'normal';
 }
 
+function findColumnForOrder(order: OrderWithProfile) {
+  return KANBAN_COLUMNS.find((col) => col.statuses.includes(order.status));
+}
+
 export function KanbanBoard({ orders, onStatusChange, updatingOrder }: KanbanBoardProps) {
   const navigate = useNavigate();
 
+  const handleDragEnd = (result: DropResult) => {
+    const { draggableId, destination, source } = result;
+    if (!destination || destination.droppableId === source.droppableId) return;
+
+    const targetColumn = KANBAN_COLUMNS.find((col) => col.id === destination.droppableId);
+    if (!targetColumn) return;
+
+    // Don't allow dropping if already updating
+    if (updatingOrder) return;
+
+    onStatusChange(draggableId, targetColumn.dropTargetStatus);
+  };
+
   return (
-    <div className="flex gap-3 overflow-x-auto no-scrollbar pb-4 -mx-4 px-4 snap-x snap-mandatory">
-      {KANBAN_COLUMNS.map((column) => {
-        const columnOrders = orders.filter((o) =>
-          column.statuses.includes(o.status)
-        );
+    <DragDropContext onDragEnd={handleDragEnd}>
+      <div className="flex gap-3 overflow-x-auto no-scrollbar pb-4 -mx-4 px-4 snap-x snap-mandatory">
+        {KANBAN_COLUMNS.map((column) => {
+          const columnOrders = orders.filter((o) =>
+            column.statuses.includes(o.status)
+          );
 
-        return (
-          <div
-            key={column.id}
-            className={cn(
-              'flex-shrink-0 w-[85vw] max-w-[340px] rounded-2xl border p-3 snap-center',
-              column.bgClass,
-              column.borderClass
-            )}
-          >
-            {/* Column Header */}
-            <div className="flex items-center justify-between mb-3">
-              <div>
-                <h3 className="font-display font-bold text-sm text-foreground">
-                  {column.title}
-                </h3>
-                <p className="text-xs text-muted-foreground">{column.subtitle}</p>
-              </div>
-              <Badge
-                variant="secondary"
-                className={cn('text-white text-xs font-bold', column.badgeClass)}
-              >
-                {columnOrders.length}
-              </Badge>
-            </div>
+          return (
+            <Droppable droppableId={column.id} key={column.id}>
+              {(provided, snapshot) => (
+                <div
+                  ref={provided.innerRef}
+                  {...provided.droppableProps}
+                  className={cn(
+                    'flex-shrink-0 w-[85vw] max-w-[340px] rounded-2xl border p-3 snap-center transition-colors',
+                    column.bgClass,
+                    column.borderClass,
+                    snapshot.isDraggingOver && 'ring-2 ring-primary/40 border-primary/50'
+                  )}
+                >
+                  {/* Column Header */}
+                  <div className="flex items-center justify-between mb-3">
+                    <div>
+                      <h3 className="font-display font-bold text-sm text-foreground">
+                        {column.title}
+                      </h3>
+                      <p className="text-xs text-muted-foreground">{column.subtitle}</p>
+                    </div>
+                    <Badge
+                      variant="secondary"
+                      className={cn('text-white text-xs font-bold', column.badgeClass)}
+                    >
+                      {columnOrders.length}
+                    </Badge>
+                  </div>
 
-            {/* Column Orders */}
-            <div className="space-y-2 max-h-[60vh] overflow-y-auto no-scrollbar">
-              {columnOrders.length > 0 ? (
-                columnOrders.map((order) => (
-                  <KanbanCard
-                    key={order.id}
-                    order={order}
-                    column={column}
-                    updatingOrder={updatingOrder}
-                    onStatusChange={onStatusChange}
-                    onNavigate={() => navigate(`/admin/orders/${order.id}`)}
-                  />
-                ))
-              ) : (
-                <div className="text-center py-8 text-muted-foreground/60">
-                  <Package className="w-8 h-8 mx-auto mb-2 opacity-40" />
-                  <p className="text-xs">Nenhum pedido</p>
+                  {/* Column Orders */}
+                  <div className="space-y-2 max-h-[60vh] overflow-y-auto no-scrollbar min-h-[80px]">
+                    {columnOrders.length > 0 ? (
+                      columnOrders.map((order, index) => (
+                        <Draggable
+                          key={order.id}
+                          draggableId={order.id}
+                          index={index}
+                          isDragDisabled={order.status === 'entregue' || updatingOrder === order.id}
+                        >
+                          {(dragProvided, dragSnapshot) => (
+                            <div
+                              ref={dragProvided.innerRef}
+                              {...dragProvided.draggableProps}
+                              className={cn(
+                                dragSnapshot.isDragging && 'opacity-90 rotate-2 scale-105 z-50'
+                              )}
+                            >
+                              <KanbanCard
+                                order={order}
+                                column={column}
+                                updatingOrder={updatingOrder}
+                                onStatusChange={onStatusChange}
+                                onNavigate={() => navigate(`/admin/orders/${order.id}`)}
+                                dragHandleProps={dragProvided.dragHandleProps}
+                                isDragging={dragSnapshot.isDragging}
+                              />
+                            </div>
+                          )}
+                        </Draggable>
+                      ))
+                    ) : (
+                      <div className="text-center py-8 text-muted-foreground/60">
+                        <Package className="w-8 h-8 mx-auto mb-2 opacity-40" />
+                        <p className="text-xs">Nenhum pedido</p>
+                      </div>
+                    )}
+                    {provided.placeholder}
+                  </div>
                 </div>
               )}
-            </div>
-          </div>
-        );
-      })}
-    </div>
+            </Droppable>
+          );
+        })}
+      </div>
+    </DragDropContext>
   );
 }
 
@@ -169,9 +212,11 @@ interface KanbanCardProps {
   updatingOrder: string | null;
   onStatusChange: (orderId: string, status: string) => Promise<void>;
   onNavigate: () => void;
+  dragHandleProps: any;
+  isDragging: boolean;
 }
 
-function KanbanCard({ order, column, updatingOrder, onStatusChange, onNavigate }: KanbanCardProps) {
+function KanbanCard({ order, column, updatingOrder, onStatusChange, onNavigate, dragHandleProps, isDragging }: KanbanCardProps) {
   const urgency = getUrgencyLevel(order);
   const items = Array.isArray(order.items) ? order.items : [];
   const isCompleted = order.status === 'entregue';
@@ -182,16 +227,28 @@ function KanbanCard({ order, column, updatingOrder, onStatusChange, onNavigate }
         'cursor-pointer hover:shadow-medium transition-all border',
         urgency === 'urgent' && 'border-destructive/50 shadow-sm',
         urgency === 'warning' && 'border-amber-300 dark:border-amber-700',
-        isCompleted && 'opacity-60'
+        isCompleted && 'opacity-60',
+        isDragging && 'shadow-strong border-primary'
       )}
       onClick={onNavigate}
     >
       <CardContent className="p-3">
-        {/* Customer name + status */}
+        {/* Drag handle + Customer name */}
         <div className="flex items-start justify-between gap-2 mb-2">
-          <p className="font-semibold text-sm text-foreground truncate">
-            {order.profiles?.name || 'Cliente'}
-          </p>
+          <div className="flex items-center gap-1.5 min-w-0">
+            {!isCompleted && (
+              <div
+                {...dragHandleProps}
+                className="touch-none flex-shrink-0 text-muted-foreground/40 hover:text-muted-foreground cursor-grab active:cursor-grabbing"
+                onClick={(e) => e.stopPropagation()}
+              >
+                <GripVertical className="w-4 h-4" />
+              </div>
+            )}
+            <p className="font-semibold text-sm text-foreground truncate">
+              {order.profiles?.name || 'Cliente'}
+            </p>
+          </div>
           <ChevronRight className="w-4 h-4 text-muted-foreground flex-shrink-0" />
         </div>
 
