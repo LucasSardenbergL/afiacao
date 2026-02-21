@@ -21,6 +21,8 @@ import AdminCustomers from "./pages/AdminCustomers";
 import AdminOrderDetail from "./pages/AdminOrderDetail";
 import AdminDemandForecast from "./pages/AdminDemandForecast";
 import AdminRoutePlanner from "./pages/AdminRoutePlanner";
+import ToolHistory from "./pages/ToolHistory";
+import ToolPublicHistory from "./pages/ToolPublicHistory";
 import NotFound from "./pages/NotFound";
 
 const queryClient = new QueryClient();
@@ -147,6 +149,15 @@ const App = () => (
                 </ProtectedRoute>
               }
             />
+            <Route
+              path="/tools/:toolId"
+              element={
+                <ProtectedRoute>
+                  <ToolHistory />
+                </ProtectedRoute>
+              }
+            />
+            <Route path="/tool/:toolId" element={<ToolPublicHistory />} />
             <Route path="*" element={<NotFound />} />
           </Routes>
           <NotificationPrompt />

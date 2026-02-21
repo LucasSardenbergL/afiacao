@@ -381,6 +381,54 @@ export type Database = {
         }
         Relationships: []
       }
+      tool_events: {
+        Row: {
+          created_at: string
+          description: string | null
+          event_type: string
+          id: string
+          metadata: Json | null
+          order_id: string | null
+          performed_by: string | null
+          user_tool_id: string
+        }
+        Insert: {
+          created_at?: string
+          description?: string | null
+          event_type: string
+          id?: string
+          metadata?: Json | null
+          order_id?: string | null
+          performed_by?: string | null
+          user_tool_id: string
+        }
+        Update: {
+          created_at?: string
+          description?: string | null
+          event_type?: string
+          id?: string
+          metadata?: Json | null
+          order_id?: string | null
+          performed_by?: string | null
+          user_tool_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "tool_events_order_id_fkey"
+            columns: ["order_id"]
+            isOneToOne: false
+            referencedRelation: "orders"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "tool_events_user_tool_id_fkey"
+            columns: ["user_tool_id"]
+            isOneToOne: false
+            referencedRelation: "user_tools"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       tool_specifications: {
         Row: {
           created_at: string
@@ -455,6 +503,7 @@ export type Database = {
           custom_name: string | null
           generated_name: string | null
           id: string
+          internal_code: string | null
           last_sharpened_at: string | null
           next_sharpening_due: string | null
           quantity: number | null
@@ -469,6 +518,7 @@ export type Database = {
           custom_name?: string | null
           generated_name?: string | null
           id?: string
+          internal_code?: string | null
           last_sharpened_at?: string | null
           next_sharpening_due?: string | null
           quantity?: number | null
@@ -483,6 +533,7 @@ export type Database = {
           custom_name?: string | null
           generated_name?: string | null
           id?: string
+          internal_code?: string | null
           last_sharpened_at?: string | null
           next_sharpening_due?: string | null
           quantity?: number | null
