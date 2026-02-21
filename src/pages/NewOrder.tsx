@@ -25,6 +25,7 @@ interface UserTool {
   generated_name: string | null;
   custom_name: string | null;
   quantity: number | null;
+  specifications: Record<string, unknown> | null;
   tool_categories?: {
     name: string;
   };
@@ -107,13 +108,14 @@ const NewOrder = () => {
           generated_name,
           custom_name,
           quantity,
+          specifications,
           tool_categories (name)
         `)
         .eq('user_id', user.id)
         .order('created_at', { ascending: false });
 
       if (error) throw error;
-      setUserTools(data || []);
+      setUserTools((data || []) as UserTool[]);
     } catch (error) {
       console.error('Erro ao carregar ferramentas:', error);
     } finally {
@@ -354,13 +356,32 @@ const NewOrder = () => {
         photos: item.photos || [],
       }));
 
+      // Build notes with tool specifications
+      const buildToolInfo = (item: ServiceItem): string => {
+        const parts: string[] = [];
+        const toolName = item.userTool?.generated_name || item.userTool?.custom_name || item.userTool?.tool_categories?.name || '';
+        if (toolName) parts.push(toolName);
+        
+        // Add specifications
+        const specs = item.userTool?.specifications;
+        if (specs && typeof specs === 'object') {
+          const specEntries = Object.entries(specs).filter(([, v]) => v);
+          if (specEntries.length > 0) {
+            parts.push(specEntries.map(([k, v]) => `${k}: ${v}`).join(', '));
+          }
+        }
+        
+        if (item.notes) parts.push(item.notes);
+        return parts.join(' | ');
+      };
+
       const orderData = {
         items: orderItems,
         service_type: 'padrao',
         subtotal: 0,
         delivery_fee: deliveryFee,
         total: deliveryFee,
-        notes: items.map(item => item.notes).filter(Boolean).join(' | '),
+        notes: items.map(buildToolInfo).filter(Boolean).join(' || '),
       };
 
       const profilePayload = {
