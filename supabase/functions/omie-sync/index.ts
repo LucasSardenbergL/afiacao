@@ -282,6 +282,10 @@ async function criarOrdemServicoOmie(
     console.log(`[Omie] Vendedor associado à OS: ${omieCodigoVendedor}`);
   }
 
+  // Data de vencimento = hoje (à vista)
+  const hoje = new Date();
+  const dVenc = `${String(hoje.getDate()).padStart(2, '0')}/${String(hoje.getMonth() + 1).padStart(2, '0')}/${hoje.getFullYear()}`;
+
   const osParams: Record<string, unknown> = {
     Cabecalho: cabecalho,
     InformacoesAdicionais: {
@@ -290,6 +294,14 @@ async function criarOrdemServicoOmie(
       nCodCC: 3543828789, // Conta Corrente: Omie.CASH
     },
     ServicosPrestados: servicosPrestados,
+    Parcelas: [
+      {
+        nParcela: 1,
+        dDtVenc: dVenc,
+        nPercentual: 100,
+        nValor: 0,
+      },
+    ],
     Observacoes: {
       cObsOS: order.notes || `Pedido via App - ${descricaoItens}`,
     },
