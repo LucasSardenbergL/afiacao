@@ -329,11 +329,21 @@ async function criarOrdemServicoOmie(
       nCodCC: 3543828789, // Conta Corrente: Omie.CASH
     },
     ServicosPrestados: servicosPrestados,
-    Parcelas: parcelas,
     Observacoes: {
       cObsOS: order.notes || `Pedido via App - ${descricaoItens}`,
     },
   };
+
+  // Só incluir Parcelas se o total for > 0 (Omie exige nValor > 0)
+  if (order.total > 0) {
+    const parcelasComValor = parcelas.map((p, i) => ({
+      ...p,
+      nValor: i === parcelas.length - 1
+        ? Math.round((order.total - Math.floor(order.total / parcelas.length) * (parcelas.length - 1)) * 100) / 100
+        : Math.floor(order.total / parcelas.length * 100) / 100,
+    }));
+    osParams.Parcelas = parcelasComValor;
+  }
 
   // Log do payload para debug
   console.log("[Omie] Payload OS:", JSON.stringify(osParams, null, 2));
