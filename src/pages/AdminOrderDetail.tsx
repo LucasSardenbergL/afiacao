@@ -14,8 +14,9 @@ import { supabase } from '@/integrations/supabase/client';
 import { useAuth } from '@/contexts/AuthContext';
 import { useToast } from '@/hooks/use-toast';
 import { usePriceHistory } from '@/hooks/usePriceHistory';
+import { usePricingEngine } from '@/hooks/usePricingEngine';
 import { updateOrderInOmie } from '@/services/omieService';
-import { Loader2, Save, Package, Clock, Truck, CheckCircle, Building2, DollarSign, Sparkles, ImageIcon, RefreshCw } from 'lucide-react';
+import { Loader2, Save, Package, Clock, Truck, CheckCircle, Building2, DollarSign, Sparkles, ImageIcon, RefreshCw, Calculator } from 'lucide-react';
 import { format } from 'date-fns';
 import { ptBR } from 'date-fns/locale';
 
@@ -36,6 +37,8 @@ interface OrderItem {
   photos?: string[];
   userToolId?: string;
   unitPrice?: number;
+  toolCategoryId?: string;
+  toolSpecs?: Record<string, string>;
 }
 
 interface Order {
@@ -77,6 +80,7 @@ const AdminOrderDetail = () => {
   // Price history hook for customer
   const [customerUserId, setCustomerUserId] = useState<string | undefined>();
   const { priceHistory, loadPriceHistory, getLastPrice, savePriceEntry } = usePriceHistory(customerUserId);
+  const { defaultPrices, loadDefaultPrices, calculatePrice } = usePricingEngine();
 
   useEffect(() => {
     if (!authLoading && role !== null && !isStaff) {
@@ -87,6 +91,7 @@ const AdminOrderDetail = () => {
   useEffect(() => {
     if (id && isStaff) {
       loadOrder();
+      loadDefaultPrices();
     }
   }, [id, isStaff]);
 
@@ -121,15 +126,37 @@ const AdminOrderDetail = () => {
           photos: (i.photos as string[]) || [],
           userToolId: i.userToolId as string | undefined,
           unitPrice: i.unitPrice as number | undefined,
+          toolCategoryId: i.toolCategoryId as string | undefined,
+          toolSpecs: i.toolSpecs as Record<string, string> | undefined,
         };
       });
+
+      // Enrich items with tool specs if userToolId is present
+      const enrichedItems = await Promise.all(parsedItems.map(async (item) => {
+        if (item.userToolId && !item.toolCategoryId) {
+          const { data: toolData } = await supabase
+            .from('user_tools')
+            .select('tool_category_id, specifications')
+            .eq('id', item.userToolId)
+            .single();
+          
+          if (toolData) {
+            return {
+              ...item,
+              toolCategoryId: toolData.tool_category_id,
+              toolSpecs: (toolData.specifications as Record<string, string>) || {},
+            };
+          }
+        }
+        return item;
+      }));
 
       const orderData: Order = {
         id: data.id,
         status: data.status,
         created_at: data.created_at,
         updated_at: data.updated_at,
-        items: parsedItems,
+        items: enrichedItems,
         total: data.total,
         subtotal: data.subtotal,
         delivery_fee: data.delivery_fee,
@@ -171,28 +198,100 @@ const AdminOrderDetail = () => {
   };
 
   const applySuggestedPrice = (index: number, item: OrderItem) => {
+    // Priority 1: Historical price for this customer
     const lastPrice = getLastPrice(item.userToolId, item.category);
     if (lastPrice !== null) {
-      setItemPrices(prev => ({
-        ...prev,
-        [index]: lastPrice.toString(),
-      }));
+      setItemPrices(prev => ({ ...prev, [index]: lastPrice.toString() }));
       toast({
-        title: 'Preço aplicado',
-        description: `Último preço encontrado: R$ ${lastPrice.toFixed(2)}`,
+        title: 'Preço do histórico aplicado',
+        description: `Último preço cobrado: R$ ${lastPrice.toFixed(2)}`,
       });
-    } else {
-      toast({
-        title: 'Sem histórico',
-        description: 'Nenhum preço anterior encontrado para este item',
-        variant: 'default',
-      });
+      return;
     }
+
+    // Priority 2: Default pricing table
+    if (item.toolCategoryId) {
+      const tablePrice = calculatePrice({
+        tool_category_id: item.toolCategoryId,
+        specifications: item.toolSpecs || null,
+      });
+      if (tablePrice !== null) {
+        setItemPrices(prev => ({ ...prev, [index]: tablePrice.toString() }));
+        toast({
+          title: 'Preço da tabela aplicado',
+          description: `Valor da tabela padrão: R$ ${tablePrice.toFixed(2)}`,
+        });
+        return;
+      }
+    }
+
+    toast({
+      title: 'Sem preço sugerido',
+      description: 'Nenhum preço encontrado no histórico ou tabela padrão',
+      variant: 'default',
+    });
   };
 
-  const hasHistoricalPrice = (item: OrderItem): boolean => {
-    return getLastPrice(item.userToolId, item.category) !== null;
+  const hasAnySuggestedPrice = (item: OrderItem): boolean => {
+    if (getLastPrice(item.userToolId, item.category) !== null) return true;
+    if (item.toolCategoryId) {
+      const tablePrice = calculatePrice({
+        tool_category_id: item.toolCategoryId,
+        specifications: item.toolSpecs || null,
+      });
+      if (tablePrice !== null) return true;
+    }
+    return false;
   };
+
+  const getSuggestedPriceSource = (item: OrderItem): 'history' | 'table' | null => {
+    if (getLastPrice(item.userToolId, item.category) !== null) return 'history';
+    if (item.toolCategoryId) {
+      const tablePrice = calculatePrice({
+        tool_category_id: item.toolCategoryId,
+        specifications: item.toolSpecs || null,
+      });
+      if (tablePrice !== null) return 'table';
+    }
+    return null;
+  };
+
+  // Auto-apply prices from table when order loads and prices are empty
+  useEffect(() => {
+    if (!order || !defaultPrices.length || !Object.keys(priceHistory).length && !defaultPrices.length) return;
+    
+    const newPrices = { ...itemPrices };
+    let changed = false;
+
+    order.items.forEach((item, index) => {
+      // Only auto-apply if no price set yet
+      if (newPrices[index] && parseFloat(newPrices[index]) > 0) return;
+
+      // Priority 1: Historical price
+      const lastPrice = getLastPrice(item.userToolId, item.category);
+      if (lastPrice !== null) {
+        newPrices[index] = lastPrice.toString();
+        changed = true;
+        return;
+      }
+
+      // Priority 2: Default table price
+      if (item.toolCategoryId) {
+        const tablePrice = calculatePrice({
+          tool_category_id: item.toolCategoryId,
+          specifications: item.toolSpecs || null,
+        });
+        if (tablePrice !== null) {
+          newPrices[index] = tablePrice.toString();
+          changed = true;
+        }
+      }
+    });
+
+    if (changed) {
+      setItemPrices(newPrices);
+    }
+  }, [order, defaultPrices, priceHistory]);
 
   const handleSave = async (syncToOmie: boolean = false) => {
     if (!order) return;
@@ -439,7 +538,7 @@ const AdminOrderDetail = () => {
                     />
                   </div>
                   
-                  {hasHistoricalPrice(item) && (
+                  {hasAnySuggestedPrice(item) && (
                     <Button
                       type="button"
                       variant="outline"
@@ -447,8 +546,12 @@ const AdminOrderDetail = () => {
                       className="mt-5 gap-1"
                       onClick={() => applySuggestedPrice(index, item)}
                     >
-                      <Sparkles className="w-3 h-3" />
-                      Último
+                      {getSuggestedPriceSource(item) === 'history' ? (
+                        <Sparkles className="w-3 h-3" />
+                      ) : (
+                        <Calculator className="w-3 h-3" />
+                      )}
+                      {getSuggestedPriceSource(item) === 'history' ? 'Último' : 'Tabela'}
                     </Button>
                   )}
                 </div>
