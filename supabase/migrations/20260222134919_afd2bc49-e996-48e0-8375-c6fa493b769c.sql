@@ -1,0 +1,1 @@
+DELETE FROM orders WHERE id = '77fc643d-a20e-461d-98ab-3ad23522ea62'
