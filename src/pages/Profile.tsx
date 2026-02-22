@@ -36,6 +36,12 @@ const Profile = () => {
   const [addressCount, setAddressCount] = useState(0);
   const [orderCount, setOrderCount] = useState(0);
   const [toolCount, setToolCount] = useState(0);
+  const [isEditing, setIsEditing] = useState(false);
+  const [editName, setEditName] = useState('');
+  const [editPhone, setEditPhone] = useState('');
+  const [editBusinessOpen, setEditBusinessOpen] = useState('');
+  const [editBusinessClose, setEditBusinessClose] = useState('');
+  const [saving, setSaving] = useState(false);
   
   const { isSupported: biometricSupported, isRegistered: biometricRegistered, isLoading: biometricLoading, register: registerBiometric, removeCredential: removeBiometric, checkRegistration } = useBiometricAuth();
   
@@ -51,7 +57,6 @@ const Profile = () => {
     if (!user) return;
     
     try {
-      // Load profile
       const { data: profileData } = await supabase
         .from('profiles')
         .select('name, email, phone, customer_type, avatar_url, business_hours_open, business_hours_close')
@@ -61,7 +66,6 @@ const Profile = () => {
       if (profileData) {
         setProfile(profileData);
       } else {
-        // Use auth email if no profile
         setProfile({
           name: user.email?.split('@')[0] || 'Usuário',
           email: user.email || null,
@@ -73,7 +77,6 @@ const Profile = () => {
         });
       }
 
-      // Load address count
       const { count: addrCount } = await supabase
         .from('addresses')
         .select('*', { count: 'exact', head: true })
@@ -81,7 +84,6 @@ const Profile = () => {
       
       setAddressCount(addrCount || 0);
 
-      // Load completed order count
       const { count: ordCount } = await supabase
         .from('orders')
         .select('*', { count: 'exact', head: true })
@@ -90,7 +92,6 @@ const Profile = () => {
       
       setOrderCount(ordCount || 0);
 
-      // Load tool count
       const { count: tlCount } = await supabase
         .from('user_tools')
         .select('*', { count: 'exact', head: true })
@@ -112,7 +113,6 @@ const Profile = () => {
     const file = e.target.files?.[0];
     if (!file || !user) return;
 
-    // Validate file
     if (!file.type.startsWith('image/')) {
       toast({
         title: 'Arquivo inválido',
@@ -134,23 +134,19 @@ const Profile = () => {
     setUploading(true);
 
     try {
-      // Generate unique filename
       const fileExt = file.name.split('.').pop();
       const fileName = `${user.id}/avatar.${fileExt}`;
 
-      // Upload to storage
       const { error: uploadError } = await supabase.storage
         .from('avatars')
         .upload(fileName, file, { upsert: true });
 
       if (uploadError) throw uploadError;
 
-      // Get public URL
       const { data: { publicUrl } } = supabase.storage
         .from('avatars')
         .getPublicUrl(fileName);
 
-      // Update profile with new avatar URL
       const { error: updateError } = await supabase
         .from('profiles')
         .update({ avatar_url: publicUrl })
@@ -158,7 +154,6 @@ const Profile = () => {
 
       if (updateError) throw updateError;
 
-      // Update local state
       setProfile(prev => prev ? { ...prev, avatar_url: publicUrl } : null);
 
       toast({
@@ -190,6 +185,59 @@ const Profile = () => {
         description: 'Tente novamente',
         variant: 'destructive',
       });
+    }
+  };
+
+  const handleEditClick = () => {
+    setEditName(profile?.name || '');
+    setEditPhone(profile?.phone || '');
+    setEditBusinessOpen(profile?.business_hours_open || '');
+    setEditBusinessClose(profile?.business_hours_close || '');
+    setIsEditing(true);
+  };
+
+  const handleCancelEdit = () => {
+    setIsEditing(false);
+  };
+
+  const handleSaveProfile = async () => {
+    if (!user) return;
+    setSaving(true);
+    try {
+      const { error } = await supabase
+        .from('profiles')
+        .update({
+          name: editName,
+          phone: editPhone || null,
+          business_hours_open: editBusinessOpen || null,
+          business_hours_close: editBusinessClose || null,
+        })
+        .eq('user_id', user.id);
+
+      if (error) throw error;
+
+      setProfile(prev => prev ? {
+        ...prev,
+        name: editName,
+        phone: editPhone || null,
+        business_hours_open: editBusinessOpen || null,
+        business_hours_close: editBusinessClose || null,
+      } : null);
+
+      setIsEditing(false);
+      toast({
+        title: 'Perfil atualizado!',
+        description: 'Suas informações foram salvas com sucesso',
+      });
+    } catch (error) {
+      console.error('Error saving profile:', error);
+      toast({
+        title: 'Erro ao salvar',
+        description: 'Tente novamente mais tarde',
+        variant: 'destructive',
+      });
+    } finally {
+      setSaving(false);
     }
   };
 
@@ -251,7 +299,6 @@ const Profile = () => {
                   </span>
                 )}
               </button>
-              {/* Edit badge */}
               <div className="absolute -bottom-1 -right-1 w-6 h-6 rounded-full bg-primary flex items-center justify-center shadow-md">
                 <Camera className="w-3 h-3 text-primary-foreground" />
               </div>
@@ -270,42 +317,83 @@ const Profile = () => {
                 </span>
               )}
             </div>
-            <Button variant="outline" size="sm">
+            <Button variant="outline" size="sm" onClick={handleEditClick}>
               <Pencil className="w-3 h-3 mr-1" />
               Editar
             </Button>
           </div>
 
-          <div className="space-y-2 text-sm">
-            {profile?.phone && (
-              <div className="flex items-center gap-2 text-muted-foreground">
-                <Phone className="w-4 h-4" />
-                <span>{profile.phone}</span>
+          {isEditing ? (
+            <div className="space-y-3 border-t border-border pt-4">
+              <div>
+                <Label htmlFor="editName">Nome</Label>
+                <Input id="editName" value={editName} onChange={e => setEditName(e.target.value)} />
               </div>
-            )}
-            {profile?.email && (
-              <div className="flex items-center gap-2 text-muted-foreground">
-                <Mail className="w-4 h-4" />
-                <span>{profile.email}</span>
+              <div>
+                <Label htmlFor="editPhone">Telefone</Label>
+                <Input id="editPhone" value={editPhone} onChange={e => setEditPhone(e.target.value)} placeholder="(11) 99999-9999" />
               </div>
-            )}
-          </div>
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <Label htmlFor="editOpen">Horário Abertura</Label>
+                  <Input id="editOpen" type="time" value={editBusinessOpen} onChange={e => setEditBusinessOpen(e.target.value)} />
+                </div>
+                <div>
+                  <Label htmlFor="editClose">Horário Fechamento</Label>
+                  <Input id="editClose" type="time" value={editBusinessClose} onChange={e => setEditBusinessClose(e.target.value)} />
+                </div>
+              </div>
+              <div className="flex gap-2 pt-2">
+                <Button onClick={handleSaveProfile} disabled={saving} className="flex-1">
+                  {saving ? <Loader2 className="w-4 h-4 animate-spin mr-1" /> : <Check className="w-4 h-4 mr-1" />}
+                  Salvar
+                </Button>
+                <Button variant="outline" onClick={handleCancelEdit} disabled={saving}>
+                  <X className="w-4 h-4 mr-1" />
+                  Cancelar
+                </Button>
+              </div>
+            </div>
+          ) : (
+            <>
+              <div className="space-y-2 text-sm">
+                {profile?.phone && (
+                  <div className="flex items-center gap-2 text-muted-foreground">
+                    <Phone className="w-4 h-4" />
+                    <span>{profile.phone}</span>
+                  </div>
+                )}
+                {profile?.email && (
+                  <div className="flex items-center gap-2 text-muted-foreground">
+                    <Mail className="w-4 h-4" />
+                    <span>{profile.email}</span>
+                  </div>
+                )}
+                {(profile?.business_hours_open || profile?.business_hours_close) && (
+                  <div className="flex items-center gap-2 text-muted-foreground">
+                    <Clock className="w-4 h-4" />
+                    <span>{profile.business_hours_open || '--:--'} às {profile.business_hours_close || '--:--'}</span>
+                  </div>
+                )}
+              </div>
 
-          {/* Stats */}
-          <div className="flex gap-4 mt-4 pt-4 border-t border-border">
-            <div className="flex-1 text-center">
-              <p className="text-2xl font-bold text-primary">{orderCount}</p>
-              <p className="text-xs text-muted-foreground">Pedidos</p>
-            </div>
-            <div className="flex-1 text-center border-l border-border">
-              <p className="text-2xl font-bold text-foreground">{toolCount}</p>
-              <p className="text-xs text-muted-foreground">Ferramentas</p>
-            </div>
-            <div className="flex-1 text-center border-l border-border">
-              <p className="text-2xl font-bold text-foreground">{addressCount}</p>
-              <p className="text-xs text-muted-foreground">Endereços</p>
-            </div>
-          </div>
+              {/* Stats */}
+              <div className="flex gap-4 mt-4 pt-4 border-t border-border">
+                <div className="flex-1 text-center">
+                  <p className="text-2xl font-bold text-primary">{orderCount}</p>
+                  <p className="text-xs text-muted-foreground">Pedidos</p>
+                </div>
+                <div className="flex-1 text-center border-l border-border">
+                  <p className="text-2xl font-bold text-foreground">{toolCount}</p>
+                  <p className="text-xs text-muted-foreground">Ferramentas</p>
+                </div>
+                <div className="flex-1 text-center border-l border-border">
+                  <p className="text-2xl font-bold text-foreground">{addressCount}</p>
+                  <p className="text-xs text-muted-foreground">Endereços</p>
+                </div>
+              </div>
+            </>
+          )}
         </div>
 
         <div className="mb-6">
