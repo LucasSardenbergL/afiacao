@@ -112,6 +112,44 @@ export type Database = {
         }
         Relationships: []
       }
+      default_prices: {
+        Row: {
+          created_at: string
+          description: string | null
+          id: string
+          price: number
+          spec_filter: Json
+          tool_category_id: string | null
+          updated_at: string
+        }
+        Insert: {
+          created_at?: string
+          description?: string | null
+          id?: string
+          price: number
+          spec_filter?: Json
+          tool_category_id?: string | null
+          updated_at?: string
+        }
+        Update: {
+          created_at?: string
+          description?: string | null
+          id?: string
+          price?: number
+          spec_filter?: Json
+          tool_category_id?: string | null
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "default_prices_tool_category_id_fkey"
+            columns: ["tool_category_id"]
+            isOneToOne: false
+            referencedRelation: "tool_categories"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       gamification_scores: {
         Row: {
           consistency_score: number
