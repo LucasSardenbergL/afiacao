@@ -620,17 +620,7 @@ const Auth = () => {
           {/* Login Form */}
           {mode === 'login' && (
             <form onSubmit={handleLoginSubmit} className="space-y-4">
-              {/* Biometric Login Button */}
-              <BiometricLoginButton 
-                onSuccess={() => navigate('/', { replace: true })}
-                className="mb-2"
-              />
-              
-              <div className="relative flex items-center gap-3 my-4">
-                <div className="flex-1 h-px bg-border" />
-                <span className="text-xs text-muted-foreground">ou entre com e-mail</span>
-                <div className="flex-1 h-px bg-border" />
-              </div>
+              {/* Biometric Login Button - hidden for now */}
 
               <div>
                 <Label htmlFor="email" className="text-sm font-medium">
