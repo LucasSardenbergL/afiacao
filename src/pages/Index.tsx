@@ -102,7 +102,8 @@ const Index = () => {
               .limit(10),
             supabase
               .from('profiles')
-              .select('id', { count: 'exact', head: true }),
+              .select('id', { count: 'exact', head: true })
+              .or('is_employee.is.null,is_employee.eq.false'),
           ]);
 
           if (ordersResult.data) setAllPendingOrders(ordersResult.data as unknown as Order[]);
