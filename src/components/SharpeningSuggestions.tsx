@@ -1,3 +1,4 @@
+import React from 'react';
 import { useNavigate } from 'react-router-dom';
 import { Bell, Calendar, ChevronRight, AlertTriangle, Clock, Wrench } from 'lucide-react';
 import { Button } from '@/components/ui/button';
@@ -10,7 +11,7 @@ interface SharpeningSuggestionsProps {
   compact?: boolean;
 }
 
-export function SharpeningSuggestions({ compact = false }: SharpeningSuggestionsProps) {
+export const SharpeningSuggestions = React.forwardRef<HTMLDivElement, SharpeningSuggestionsProps>(function SharpeningSuggestions({ compact = false }, ref) {
   const navigate = useNavigate();
   const { overdueTools, dueSoonTools, upcomingTools, loading } = useSharpeningSuggestions();
 
@@ -153,7 +154,7 @@ export function SharpeningSuggestions({ compact = false }: SharpeningSuggestions
       )}
     </div>
   );
-}
+});
 
 interface ToolCardProps {
   tool: SharpeningTool;
