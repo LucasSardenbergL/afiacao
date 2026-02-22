@@ -3,6 +3,7 @@ import { useParams, useNavigate } from 'react-router-dom';
 import { Header } from '@/components/Header';
 import { BottomNav } from '@/components/BottomNav';
 import { OrderChat } from '@/components/OrderChat';
+import { SendingQualityChecklist } from '@/components/SendingQualityChecklist';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
@@ -461,6 +462,11 @@ const AdminOrderDetail = () => {
             ))}
           </CardContent>
         </Card>
+
+        {/* Sending Quality Checklist */}
+        <div className="mb-4">
+          <SendingQualityChecklist orderId={order.id} userId={order.user_id} />
+        </div>
 
         {/* Summary */}
         <Card className="mb-6">
