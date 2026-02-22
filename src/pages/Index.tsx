@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { PlusCircle, ClipboardList, Headphones, ChevronRight, Wrench, Calendar, User, Sparkles, ArrowRight, TrendingUp, Package, Users, Clock, Truck, CheckCircle, Building2, PiggyBank, CalendarClock, Trophy } from 'lucide-react';
+import { PlusCircle, ClipboardList, Headphones, ChevronRight, Wrench, Calendar, User, Sparkles, ArrowRight, TrendingUp, Package, Users, Clock, Truck, CheckCircle, Building2, PiggyBank, CalendarClock, Trophy, Gamepad2 } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent } from '@/components/ui/card';
@@ -456,7 +456,7 @@ const Index = () => {
         </Card>
 
         {/* Quick Actions */}
-        <div className="grid grid-cols-5 gap-2 mb-6">
+        <div className="grid grid-cols-3 gap-2 mb-3">
           <button
             onClick={() => navigate('/orders')}
             className="bg-card rounded-2xl p-3 shadow-medium border border-border hover:shadow-strong hover:border-primary/30 transition-all flex flex-col items-center gap-2 group"
@@ -486,7 +486,9 @@ const Index = () => {
             </div>
             <span className="text-xs font-medium text-foreground">Agendar</span>
           </button>
+        </div>
 
+        <div className="grid grid-cols-3 gap-2 mb-6">
           <button
             onClick={() => navigate('/savings')}
             className="bg-card rounded-2xl p-3 shadow-medium border border-border hover:shadow-strong hover:border-primary/30 transition-all flex flex-col items-center gap-2 group"
@@ -505,6 +507,16 @@ const Index = () => {
               <Trophy className="w-5 h-5 text-muted-foreground group-hover:text-primary transition-colors" />
             </div>
             <span className="text-xs font-medium text-foreground">Pontos</span>
+          </button>
+
+          <button
+            onClick={() => navigate('/gamification')}
+            className="bg-card rounded-2xl p-3 shadow-medium border border-border hover:shadow-strong hover:border-primary/30 transition-all flex flex-col items-center gap-2 group"
+          >
+            <div className="w-10 h-10 rounded-xl bg-muted flex items-center justify-center group-hover:bg-primary/10 transition-colors">
+              <Gamepad2 className="w-5 h-5 text-muted-foreground group-hover:text-primary transition-colors" />
+            </div>
+            <span className="text-xs font-medium text-foreground">Ranking</span>
           </button>
         </div>
 

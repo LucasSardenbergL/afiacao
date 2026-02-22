@@ -24,6 +24,8 @@ import AdminRoutePlanner from "./pages/AdminRoutePlanner";
 import AdminMonthlyReports from "./pages/AdminMonthlyReports";
 import AdminProductivity from "./pages/AdminProductivity";
 import AdminLoyalty from "./pages/AdminLoyalty";
+import AdminGamification from "./pages/AdminGamification";
+import Gamification from "./pages/Gamification";
 import QualityChecklist from "./pages/QualityChecklist";
 import RecurringSchedules from "./pages/RecurringSchedules";
 import SavingsDashboard from "./pages/SavingsDashboard";
@@ -209,6 +211,22 @@ const App = () => (
               element={
                 <ProtectedRoute>
                   <Loyalty />
+                </ProtectedRoute>
+              }
+            />
+            <Route
+              path="/gamification"
+              element={
+                <ProtectedRoute>
+                  <Gamification />
+                </ProtectedRoute>
+              }
+            />
+            <Route
+              path="/admin/gamification"
+              element={
+                <ProtectedRoute>
+                  <AdminGamification />
                 </ProtectedRoute>
               }
             />
