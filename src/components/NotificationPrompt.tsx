@@ -1,10 +1,16 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, Component, type ReactNode } from 'react';
 import { Bell, X } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { usePushNotifications } from '@/hooks/usePushNotifications';
 import { cn } from '@/lib/utils';
 
-export function NotificationPrompt() {
+class NotificationErrorBoundary extends Component<{ children: ReactNode }, { hasError: boolean }> {
+  state = { hasError: false };
+  static getDerivedStateFromError() { return { hasError: true }; }
+  render() { return this.state.hasError ? null : this.props.children; }
+}
+
+function NotificationPromptInner() {
   const { isSupported, permission, requestPermission } = usePushNotifications();
   const [dismissed, setDismissed] = useState(false);
   const [visible, setVisible] = useState(false);
@@ -83,5 +89,13 @@ export function NotificationPrompt() {
         </div>
       </div>
     </div>
+  );
+}
+
+export function NotificationPrompt() {
+  return (
+    <NotificationErrorBoundary>
+      <NotificationPromptInner />
+    </NotificationErrorBoundary>
   );
 }
