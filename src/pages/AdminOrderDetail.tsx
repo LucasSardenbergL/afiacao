@@ -61,7 +61,7 @@ interface Profile {
 const AdminOrderDetail = () => {
   const { id } = useParams<{ id: string }>();
   const navigate = useNavigate();
-  const { user, isStaff, loading: authLoading } = useAuth();
+  const { user, isStaff, loading: authLoading, role } = useAuth();
   const { toast } = useToast();
 
   const [order, setOrder] = useState<Order | null>(null);
@@ -79,10 +79,10 @@ const AdminOrderDetail = () => {
   const { priceHistory, loadPriceHistory, getLastPrice, savePriceEntry } = usePriceHistory(customerUserId);
 
   useEffect(() => {
-    if (!authLoading && !isStaff) {
+    if (!authLoading && role !== null && !isStaff) {
       navigate('/', { replace: true });
     }
-  }, [authLoading, isStaff, navigate]);
+  }, [authLoading, isStaff, role, navigate]);
 
   useEffect(() => {
     if (id && isStaff) {
