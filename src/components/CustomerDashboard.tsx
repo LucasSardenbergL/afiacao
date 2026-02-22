@@ -9,6 +9,7 @@ import {
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { BottomNav } from '@/components/BottomNav';
+import { OnboardingWizard } from '@/components/OnboardingWizard';
 import { useGamificationScore, getLevelInfo } from '@/hooks/useGamificationScore';
 import { differenceInDays, format } from 'date-fns';
 import { ptBR } from 'date-fns/locale';
@@ -142,6 +143,9 @@ export function CustomerDashboard({ profile, pendingOrders, userTools, getGreeti
       </header>
 
       <main className="px-4 -mt-5 max-w-lg mx-auto relative z-20">
+        {/* Onboarding for new users */}
+        <OnboardingWizard hasTools={userTools.length > 0} hasOrders={pendingOrders.length > 0} />
+
         {/* Gamification Mini Card */}
         {gamScore && levelInfo && (
           <Card 
