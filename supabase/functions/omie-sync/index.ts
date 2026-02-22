@@ -228,6 +228,7 @@ async function criarOrdemServicoOmie(
       omie_codigo_servico?: number;
       brandModel?: string;
       notes?: string;
+      unitPrice?: number;
     }>;
     service_type: string;
     subtotal: number;
@@ -247,10 +248,14 @@ async function criarOrdemServicoOmie(
   // Montar lista de serviços prestados a partir dos itens
   const servicosPrestados = order.items.map((item) => {
     if (item.omie_codigo_servico && item.omie_codigo_servico > 0) {
-      return {
+      const svc: Record<string, unknown> = {
         nCodServico: item.omie_codigo_servico,
         nQtde: item.quantity,
-      } as Record<string, unknown>;
+      };
+      if (item.unitPrice && item.unitPrice > 0) {
+        svc.nValUnit = item.unitPrice;
+      }
+      return svc;
     }
 
     return {
