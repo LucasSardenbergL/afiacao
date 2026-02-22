@@ -18,6 +18,8 @@ import { useAuth } from '@/contexts/AuthContext';
 import { useUserRole } from '@/hooks/useUserRole';
 import { supabase } from '@/integrations/supabase/client';
 import { ToolImageIdentifier } from '@/components/ToolImageIdentifier';
+import { usePricingEngine } from '@/hooks/usePricingEngine';
+import { usePriceHistory } from '@/hooks/usePriceHistory';
 
 type Step = 'items' | 'delivery' | 'review';
 
@@ -104,12 +106,18 @@ const NewOrder = () => {
   const [loadingData, setLoadingData] = useState(true);
   const [showAddressOptions, setShowAddressOptions] = useState(false);
 
+  // Pricing engine
+  const { loadDefaultPrices, calculatePrice } = usePricingEngine();
+  const { loadPriceHistory, getLastPrice } = usePriceHistory(user?.id);
+
   useEffect(() => {
     if (user) {
       loadUserData();
       loadServicos();
       loadUserTools();
       loadCategories();
+      loadDefaultPrices();
+      loadPriceHistory();
     }
   }, [user]);
 
@@ -330,6 +338,24 @@ const NewOrder = () => {
     });
   };
 
+  // Calculate price for a service item
+  const getItemPrice = (item: ServiceItem): number | null => {
+    if (!item.userTool) return null;
+    
+    // Priority 1: Historical price for this customer
+    const serviceType = item.servico?.descricao || '';
+    const lastPrice = getLastPrice(item.userToolId, serviceType);
+    if (lastPrice !== null) return lastPrice;
+
+    // Priority 2: Default pricing table
+    const specs = item.userTool.specifications as Record<string, string> | null;
+    const tablePrice = calculatePrice({
+      tool_category_id: item.userTool.tool_category_id,
+      specifications: specs,
+    });
+    return tablePrice;
+  };
+
   const deliveryFee = DELIVERY_FEES[deliveryOption];
 
   const canProceed = () => {
@@ -376,15 +402,21 @@ const NewOrder = () => {
     try {
       const orderId = crypto.randomUUID();
       
-      const orderItems = items.map(item => ({
-        category: item.servico?.descricao || '',
-        quantity: item.quantity || 1,
-        omie_codigo_servico: item.servico?.omie_codigo_servico,
-        userToolId: item.userToolId,
-        toolName: item.userTool?.generated_name || item.userTool?.custom_name || item.userTool?.tool_categories?.name || '',
-        notes: item.notes,
-        photos: item.photos || [],
-      }));
+      const orderItems = items.map(item => {
+        const estimatedPrice = getItemPrice(item);
+        return {
+          category: item.servico?.descricao || '',
+          quantity: item.quantity || 1,
+          omie_codigo_servico: item.servico?.omie_codigo_servico,
+          userToolId: item.userToolId,
+          toolName: item.userTool?.generated_name || item.userTool?.custom_name || item.userTool?.tool_categories?.name || '',
+          notes: item.notes,
+          photos: item.photos || [],
+          unitPrice: estimatedPrice || 0,
+          toolCategoryId: item.userTool?.tool_category_id,
+          toolSpecs: item.userTool?.specifications || {},
+        };
+      });
 
       // Build notes with tool specifications
       const buildToolInfo = (item: ServiceItem): string => {
@@ -405,12 +437,14 @@ const NewOrder = () => {
         return parts.join(' | ');
       };
 
+      const subtotal = orderItems.reduce((sum, item) => sum + (item.unitPrice * item.quantity), 0);
+
       const orderData = {
         items: orderItems,
         service_type: 'padrao',
-        subtotal: 0,
+        subtotal,
         delivery_fee: deliveryFee,
-        total: deliveryFee,
+        total: subtotal + deliveryFee,
         notes: items.map(buildToolInfo).filter(Boolean).join(' || '),
         payment_method: paymentMethod,
       };
@@ -900,35 +934,46 @@ const NewOrder = () => {
 
               <div className="bg-secondary border border-border rounded-lg p-3 mb-4">
                 <p className="text-sm text-muted-foreground">
-                  💡 O valor será informado após a triagem das ferramentas
+                  💡 {items.some(item => getItemPrice(item) !== null)
+                    ? 'Preços estimados com base na tabela de preços. O valor final pode ser ajustado na triagem.'
+                    : 'O valor será informado após a triagem das ferramentas'}
                 </p>
               </div>
 
               <div className="bg-card rounded-xl p-4 shadow-soft border border-border mb-4">
                 <h3 className="font-semibold mb-3">Serviços Solicitados</h3>
                 <div className="space-y-3">
-                  {items.map((item, index) => (
-                    <div key={index} className="border-b border-border last:border-0 pb-3 last:pb-0">
-                      <div className="flex justify-between items-start">
-                        <div>
-                          <p className="font-medium">
-                            {getToolDisplayName(item.userTool!)}
-                          </p>
-                          <p className="text-sm text-muted-foreground">
-                            {item.quantity}x {item.servico?.descricao || 'Serviço'}
-                          </p>
-                          {item.notes && (
-                            <p className="text-xs text-muted-foreground mt-1 italic">
-                              Obs: {item.notes}
+                  {items.map((item, index) => {
+                    const price = getItemPrice(item);
+                    return (
+                      <div key={index} className="border-b border-border last:border-0 pb-3 last:pb-0">
+                        <div className="flex justify-between items-start">
+                          <div>
+                            <p className="font-medium">
+                              {getToolDisplayName(item.userTool!)}
                             </p>
+                            <p className="text-sm text-muted-foreground">
+                              {item.quantity}x {item.servico?.descricao || 'Serviço'}
+                            </p>
+                            {item.notes && (
+                              <p className="text-xs text-muted-foreground mt-1 italic">
+                                Obs: {item.notes}
+                              </p>
+                            )}
+                          </div>
+                          {price !== null ? (
+                            <span className="text-sm font-medium text-primary">
+                              R$ {(price * (item.quantity || 1)).toFixed(2)}
+                            </span>
+                          ) : (
+                            <span className="text-sm text-muted-foreground italic">
+                              A orçar
+                            </span>
                           )}
                         </div>
-                        <span className="text-sm text-muted-foreground italic">
-                          A orçar
-                        </span>
                       </div>
-                    </div>
-                  ))}
+                    );
+                  })}
                 </div>
               </div>
 
@@ -982,20 +1027,45 @@ const NewOrder = () => {
 
 
               <div className="bg-card rounded-xl p-4 shadow-soft border border-border">
-                <div className="space-y-2 text-sm">
-                  <div className="flex justify-between">
-                    <span className="text-muted-foreground">Serviços</span>
-                    <span className="italic text-muted-foreground">A orçar após triagem</span>
-                  </div>
-                  <div className="flex justify-between">
-                    <span className="text-muted-foreground">Frete</span>
-                    <span className="text-primary font-medium">Grátis</span>
-                  </div>
-                  <div className="border-t border-border pt-2 flex justify-between font-semibold text-base">
-                    <span>Total</span>
-                    <span className="text-muted-foreground italic">A definir</span>
-                  </div>
-                </div>
+                {(() => {
+                  const estimatedSubtotal = items.reduce((sum, item) => {
+                    const price = getItemPrice(item);
+                    return sum + (price !== null ? price * (item.quantity || 1) : 0);
+                  }, 0);
+                  const hasAllPrices = items.every(item => getItemPrice(item) !== null);
+                  const hasAnyPrices = items.some(item => getItemPrice(item) !== null);
+
+                  return (
+                    <div className="space-y-2 text-sm">
+                      <div className="flex justify-between">
+                        <span className="text-muted-foreground">Serviços</span>
+                        {hasAnyPrices ? (
+                          <span className="text-primary font-medium">
+                            R$ {estimatedSubtotal.toFixed(2)}
+                            {!hasAllPrices && ' *'}
+                          </span>
+                        ) : (
+                          <span className="italic text-muted-foreground">A orçar após triagem</span>
+                        )}
+                      </div>
+                      <div className="flex justify-between">
+                        <span className="text-muted-foreground">Frete</span>
+                        <span className="text-primary font-medium">Grátis</span>
+                      </div>
+                      <div className="border-t border-border pt-2 flex justify-between font-semibold text-base">
+                        <span>Total{!hasAllPrices && hasAnyPrices ? ' (estimado)' : ''}</span>
+                        {hasAnyPrices ? (
+                          <span className="text-primary">R$ {(estimatedSubtotal + deliveryFee).toFixed(2)}</span>
+                        ) : (
+                          <span className="text-muted-foreground italic">A definir</span>
+                        )}
+                      </div>
+                      {hasAnyPrices && !hasAllPrices && (
+                        <p className="text-xs text-muted-foreground">* Alguns itens ainda serão orçados na triagem</p>
+                      )}
+                    </div>
+                  );
+                })()}
               </div>
             </div>
           )}
