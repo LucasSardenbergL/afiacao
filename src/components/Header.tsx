@@ -1,3 +1,4 @@
+import React from 'react';
 import { ArrowLeft, Bell } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 import { cn } from '@/lib/utils';
@@ -11,18 +12,19 @@ interface HeaderProps {
   rightElement?: React.ReactNode;
 }
 
-export function Header({
+export const Header = React.forwardRef<HTMLElement, HeaderProps>(function Header({
   title,
   showBack = false,
   showNotifications = false,
   transparent = false,
   className,
   rightElement,
-}: HeaderProps) {
+}, ref) {
   const navigate = useNavigate();
 
   return (
     <header
+      ref={ref}
       className={cn(
         'fixed top-0 left-0 right-0 z-40 safe-top',
         transparent 
@@ -65,4 +67,4 @@ export function Header({
       </div>
     </header>
   );
-}
+});

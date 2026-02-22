@@ -1,3 +1,4 @@
+import React from 'react';
 import { Home, PlusCircle, ClipboardList, User, MessageCircle, Shield } from 'lucide-react';
 import { useNavigate, useLocation } from 'react-router-dom';
 import { motion } from 'framer-motion';
@@ -13,7 +14,7 @@ const baseNavItems = [
   { icon: User, label: 'Perfil', path: '/profile' },
 ];
 
-export function BottomNav() {
+export const BottomNav = React.forwardRef<HTMLElement, object>(function BottomNav(_props, ref) {
   const navigate = useNavigate();
   const location = useLocation();
   const { isStaff } = useAuth();
@@ -30,7 +31,7 @@ export function BottomNav() {
     : baseNavItems;
 
   return (
-    <nav className="fixed bottom-0 left-0 right-0 z-50 safe-bottom">
+    <nav ref={ref} className="fixed bottom-0 left-0 right-0 z-50 safe-bottom">
       <div className="bg-card/90 backdrop-blur-xl border-t border-border/50 shadow-[0_-4px_20px_-4px_hsl(0_0%_0%/0.08)]">
         <div className="flex items-center justify-around h-[4.25rem] max-w-lg mx-auto px-2">
           {navItems.map((item) => {
@@ -118,4 +119,4 @@ export function BottomNav() {
       </div>
     </nav>
   );
-}
+});
