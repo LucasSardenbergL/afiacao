@@ -109,13 +109,77 @@ export function usePushNotifications() {
     };
   }, [user, showNotification]);
 
+  // Subscribe to new training modules
+  const subscribeToNewTraining = useCallback(() => {
+    if (!user) return () => {};
+
+    const channel = supabase
+      .channel('new-training-modules')
+      .on(
+        'postgres_changes',
+        {
+          event: 'INSERT',
+          schema: 'public',
+          table: 'training_modules',
+        },
+        (payload) => {
+          const title = (payload.new as { title?: string })?.title;
+          showNotification('Novo Treinamento Disponível', {
+            body: `"${title}" — Complete para ganhar pontos de educação!`,
+            tag: `training-${(payload.new as { id?: string })?.id}`,
+          });
+        }
+      )
+      .subscribe();
+
+    return () => {
+      supabase.removeChannel(channel);
+    };
+  }, [user, showNotification]);
+
+  // Check tools needing sharpening
+  const checkSharpeningAlerts = useCallback(async () => {
+    if (!user) return;
+
+    try {
+      const { data: tools } = await supabase
+        .from('user_tools')
+        .select('id, next_sharpening_due, tool_categories(name)')
+        .eq('user_id', user.id)
+        .not('next_sharpening_due', 'is', null);
+
+      if (!tools) return;
+
+      const now = new Date();
+      const overdue = tools.filter(t => new Date(t.next_sharpening_due!) < now);
+      
+      if (overdue.length > 0) {
+        const names = overdue.slice(0, 2).map(t => (t.tool_categories as any)?.name).filter(Boolean).join(', ');
+        showNotification('Ferramentas precisam de afiação', {
+          body: `${overdue.length} ferramenta(s) com afiação atrasada: ${names}${overdue.length > 2 ? '...' : ''}`,
+          tag: 'sharpening-alert',
+        });
+      }
+    } catch (error) {
+      console.error('Error checking sharpening alerts:', error);
+    }
+  }, [user, showNotification]);
+
   // Auto-subscribe when user is logged in
   useEffect(() => {
     if (user && permission === 'granted') {
-      const unsubscribe = subscribeToOrderUpdates();
-      return unsubscribe;
+      const unsubOrders = subscribeToOrderUpdates();
+      const unsubTraining = subscribeToNewTraining();
+      
+      // Check sharpening alerts on load (once per session)
+      checkSharpeningAlerts();
+
+      return () => {
+        unsubOrders();
+        unsubTraining();
+      };
     }
-  }, [user, permission, subscribeToOrderUpdates]);
+  }, [user, permission, subscribeToOrderUpdates, subscribeToNewTraining, checkSharpeningAlerts]);
 
   return {
     isSupported,
@@ -123,5 +187,7 @@ export function usePushNotifications() {
     requestPermission,
     showNotification,
     subscribeToOrderUpdates,
+    subscribeToNewTraining,
+    checkSharpeningAlerts,
   };
 }

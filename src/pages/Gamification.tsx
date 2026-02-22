@@ -6,6 +6,7 @@ import { Card, CardContent } from '@/components/ui/card';
 import { Progress } from '@/components/ui/progress';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
+import { GamificationCertificate } from '@/components/GamificationCertificate';
 import { useGamificationScore, getLevelInfo } from '@/hooks/useGamificationScore';
 import { supabase } from '@/integrations/supabase/client';
 import { useAuth } from '@/contexts/AuthContext';
@@ -224,6 +225,16 @@ const Gamification = () => {
             })}
           </div>
         </div>
+
+        {/* Certificate */}
+        {score && score.level >= 3 && (
+          <GamificationCertificate
+            userName={user?.email?.split('@')[0] || 'Cliente'}
+            levelName={score.level_name}
+            level={score.level}
+            totalScore={score.total_score}
+          />
+        )}
 
         {/* Quick Actions */}
         <div className="grid grid-cols-3 gap-3">
