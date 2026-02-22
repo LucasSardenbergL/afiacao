@@ -26,6 +26,7 @@ import AdminProductivity from "./pages/AdminProductivity";
 import QualityChecklist from "./pages/QualityChecklist";
 import RecurringSchedules from "./pages/RecurringSchedules";
 import SavingsDashboard from "./pages/SavingsDashboard";
+import Loyalty from "./pages/Loyalty";
 import ToolHistory from "./pages/ToolHistory";
 import ToolPublicHistory from "./pages/ToolPublicHistory";
 import NotFound from "./pages/NotFound";
@@ -191,6 +192,14 @@ const App = () => (
               element={
                 <ProtectedRoute>
                   <SavingsDashboard />
+                </ProtectedRoute>
+              }
+            />
+            <Route
+              path="/loyalty"
+              element={
+                <ProtectedRoute>
+                  <Loyalty />
                 </ProtectedRoute>
               }
             />

@@ -2,6 +2,7 @@ import { Home, PlusCircle, ClipboardList, User, MessageCircle, Shield } from 'lu
 import { useNavigate, useLocation } from 'react-router-dom';
 import { cn } from '@/lib/utils';
 import { useAuth } from '@/contexts/AuthContext';
+import { useUnreadMessages } from '@/hooks/useUnreadMessages';
 
 const baseNavItems = [
   { icon: Home, label: 'Início', path: '/' },
@@ -15,6 +16,7 @@ export function BottomNav() {
   const navigate = useNavigate();
   const location = useLocation();
   const { isStaff } = useAuth();
+  const { unreadCount } = useUnreadMessages();
 
   // Add admin item for staff members
   const navItems = isStaff 
@@ -33,6 +35,7 @@ export function BottomNav() {
         {navItems.map((item) => {
           const isActive = location.pathname === item.path;
           const Icon = item.icon;
+          const showBadge = item.path === '/orders' && unreadCount > 0;
 
           if (item.isPrimary) {
             return (
@@ -56,20 +59,25 @@ export function BottomNav() {
               key={item.path}
               onClick={() => navigate(item.path)}
               className={cn(
-                'flex flex-col items-center justify-center py-2 px-3 rounded-xl transition-all min-w-[4rem] group',
+                'flex flex-col items-center justify-center py-2 px-3 rounded-xl transition-all min-w-[4rem] group relative',
                 isActive 
                   ? 'text-primary' 
                   : 'text-muted-foreground hover:text-foreground'
               )}
             >
               <div className={cn(
-                'p-1.5 rounded-lg transition-colors',
+                'p-1.5 rounded-lg transition-colors relative',
                 isActive && 'bg-primary/10'
               )}>
                 <Icon className={cn(
                   'w-5 h-5 transition-all',
                   isActive && 'stroke-[2.5]'
                 )} />
+                {showBadge && (
+                  <span className="absolute -top-1 -right-1 w-4 h-4 rounded-full bg-destructive text-destructive-foreground text-[9px] font-bold flex items-center justify-center animate-pulse">
+                    {unreadCount > 9 ? '9+' : unreadCount}
+                  </span>
+                )}
               </div>
               <span className={cn(
                 'text-[10px] mt-0.5 transition-all',
