@@ -93,10 +93,7 @@ const Index = () => {
           const [ordersResult, customersResult] = await Promise.all([
             supabase
               .from('orders')
-              .select(`
-                id, status, created_at, service_type, user_id,
-                profiles!inner (name)
-              `)
+              .select('id, status, created_at, service_type, user_id')
               .neq('status', 'entregue')
               .order('created_at', { ascending: false })
               .limit(10),
@@ -106,8 +103,26 @@ const Index = () => {
               .or('is_employee.is.null,is_employee.eq.false'),
           ]);
 
-          if (ordersResult.data) setAllPendingOrders(ordersResult.data as unknown as Order[]);
-          if (customersResult.count) setCustomerCount(customersResult.count);
+          if (ordersResult.data) {
+            const orders = ordersResult.data as unknown as Order[];
+            // Fetch profile names for order user_ids
+            const userIds = [...new Set(orders.map(o => o.user_id).filter(Boolean))];
+            if (userIds.length > 0) {
+              const { data: profiles } = await supabase
+                .from('profiles')
+                .select('user_id, name')
+                .in('user_id', userIds as string[]);
+              
+              const nameMap = new Map(profiles?.map(p => [p.user_id, p.name]) || []);
+              orders.forEach(o => {
+                if (o.user_id) {
+                  o.profiles = { name: nameMap.get(o.user_id) || 'Cliente' };
+                }
+              });
+            }
+            setAllPendingOrders(orders);
+          }
+          if (customersResult.count !== null) setCustomerCount(customersResult.count);
         } else {
           // Customer: Load their own orders and tools
           const [ordersResult, toolsResult] = await Promise.all([
