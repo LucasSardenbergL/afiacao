@@ -1,4 +1,5 @@
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
+import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -9,19 +10,8 @@ const corsHeaders = {
 const OMIE_API_URL = "https://app.omie.com.br/api/v1";
 const RECEITA_API_URL = "https://receitaws.com.br/v1/cnpj";
 
-// CNAEs industriais comuns
 const CNAES_INDUSTRIAIS = [
-  "10", // Fabricação de produtos alimentícios
-  "13", // Fabricação de produtos têxteis
-  "14", // Confecção de artigos do vestuário
-  "15", // Preparação de couros e fabricação de artefatos
-  "16", // Fabricação de produtos de madeira
-  "25", // Fabricação de produtos de metal
-  "31", // Fabricação de móveis
-  "47", // Comércio varejista (alguns)
-  "56", // Alimentação (restaurantes, bares)
-  "96.02", // Cabeleireiros e outras atividades de tratamento de beleza
-  "96.01", // Lavanderias
+  "10", "13", "14", "15", "16", "25", "31", "47", "56", "96.02", "96.01",
 ];
 
 interface OmieCliente {
@@ -73,7 +63,6 @@ interface OmieListResponse {
   faultcode?: string;
 }
 
-// Função para fazer chamadas à API do Omie
 async function callOmieApi(
   endpoint: string,
   call: string,
@@ -93,53 +82,31 @@ async function callOmieApi(
     param: [params],
   };
 
-  console.log(`[Omie API] Chamando ${endpoint} - ${call}`);
-
   const response = await fetch(`${OMIE_API_URL}/${endpoint}`, {
     method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-    },
+    headers: { "Content-Type": "application/json" },
     body: JSON.stringify(body),
   });
 
-  const result = await response.json();
-  console.log(`[Omie API] Resposta:`, JSON.stringify(result, null, 2));
-
-  return result;
+  return await response.json();
 }
 
-// Função para verificar CNAE e determinar se é industrial
 function isIndustrialByCNAE(cnae: string): boolean {
   if (!cnae) return false;
   const cnaeCode = cnae.replace(/\D/g, '');
   return CNAES_INDUSTRIAIS.some(prefix => cnaeCode.startsWith(prefix.replace('.', '')));
 }
 
-// Função para consultar CNPJ na Receita Federal
 async function consultarCNPJ(cnpj: string): Promise<CNPJData | null> {
   const cnpjLimpo = cnpj.replace(/\D/g, '');
-  
-  if (cnpjLimpo.length !== 14) {
-    return null;
-  }
+  if (cnpjLimpo.length !== 14) return null;
 
   try {
-    console.log(`[ReceitaWS] Consultando CNPJ: ${cnpjLimpo}`);
     const response = await fetch(`${RECEITA_API_URL}/${cnpjLimpo}`, {
-      headers: {
-        'Accept': 'application/json',
-      },
+      headers: { 'Accept': 'application/json' },
     });
-    
     const data = await response.json();
-    console.log(`[ReceitaWS] Resposta:`, JSON.stringify(data, null, 2));
-    
-    if (data.status === 'ERROR') {
-      console.log(`[ReceitaWS] Erro: ${data.message}`);
-      return null;
-    }
-    
+    if (data.status === 'ERROR') return null;
     return data;
   } catch (error) {
     console.error('[ReceitaWS] Erro:', error);
@@ -147,7 +114,6 @@ async function consultarCNPJ(cnpj: string): Promise<CNPJData | null> {
   }
 }
 
-// Função para verificar se cliente é funcionário pela tag
 function isEmployeeByTags(tags: Array<{ tag: string }> | undefined): boolean {
   if (!tags || !Array.isArray(tags)) return false;
   return tags.some(t => 
@@ -156,9 +122,7 @@ function isEmployeeByTags(tags: Array<{ tag: string }> | undefined): boolean {
   );
 }
 
-// Função para buscar cliente por CPF/CNPJ
 async function buscarClientePorDocumento(documento: string): Promise<{ cliente: OmieCliente | null; cnpjData: CNPJData | null; isIndustrial: boolean; isEmployee: boolean }> {
-  // Limpar documento (remover pontos, traços, barras)
   const docLimpo = documento.replace(/\D/g, "");
   
   if (docLimpo.length !== 11 && docLimpo.length !== 14) {
@@ -168,66 +132,45 @@ async function buscarClientePorDocumento(documento: string): Promise<{ cliente: 
   let cnpjData: CNPJData | null = null;
   let isIndustrial = false;
 
-  // Se for CNPJ, consultar na Receita para obter CNAE
   if (docLimpo.length === 14) {
     cnpjData = await consultarCNPJ(docLimpo);
     if (cnpjData?.atividade_principal?.[0]?.code) {
       isIndustrial = isIndustrialByCNAE(cnpjData.atividade_principal[0].code);
-      console.log(`[CNAE] Atividade: ${cnpjData.atividade_principal[0].code} - Industrial: ${isIndustrial}`);
     }
   }
 
   try {
-    // Buscar cliente pelo CPF/CNPJ no Omie
-    const result = await callOmieApi(
-      "geral/clientes/",
-      "ListarClientes",
-      {
-        pagina: 1,
-        registros_por_pagina: 1,
-        clientesFiltro: {
-          cnpj_cpf: docLimpo,
-        },
-      }
-    );
+    const result = await callOmieApi("geral/clientes/", "ListarClientes", {
+      pagina: 1,
+      registros_por_pagina: 1,
+      clientesFiltro: { cnpj_cpf: docLimpo },
+    });
 
     if (result.faultstring) {
-      // Se não encontrou, retornar null
       if (result.faultstring.includes("Nenhum registro") || result.faultstring.includes("não encontrado")) {
         return { cliente: null, cnpjData, isIndustrial, isEmployee: false };
       }
       throw new Error(`Erro Omie: ${result.faultstring}`);
     }
 
-    // Verificar se encontrou algum cliente
     const clientes = result.clientes_cadastro || result.clientes_cadastro_resumido;
     if (!clientes || clientes.length === 0) {
       return { cliente: null, cnpjData, isIndustrial, isEmployee: false };
     }
 
-    // Buscar dados completos do cliente (inclui tags)
     const clienteResumo = clientes[0];
     let clienteCompleto = clienteResumo;
     
     if (clienteResumo.codigo_cliente) {
-      const detalheResult = await callOmieApi(
-        "geral/clientes/",
-        "ConsultarCliente",
-        {
-          codigo_cliente: clienteResumo.codigo_cliente,
-        }
-      ) as unknown as OmieCliente;
+      const detalheResult = await callOmieApi("geral/clientes/", "ConsultarCliente", {
+        codigo_cliente: clienteResumo.codigo_cliente,
+      }) as unknown as OmieCliente;
       clienteCompleto = detalheResult;
     }
 
-    // Verificar se é funcionário pela tag
     const isEmployee = isEmployeeByTags(clienteCompleto.tags);
-    console.log(`[Omie] Cliente: ${clienteCompleto.razao_social} - Tags: ${JSON.stringify(clienteCompleto.tags)} - Funcionário: ${isEmployee}`);
-
     return { cliente: clienteCompleto, cnpjData, isIndustrial, isEmployee };
   } catch (error) {
-    console.error("[Omie] Erro ao buscar cliente:", error);
-    // Se for erro de "não encontrado", retornar null
     if (error instanceof Error && 
         (error.message.includes("Nenhum registro") || 
          error.message.includes("não encontrado") ||
@@ -239,24 +182,52 @@ async function buscarClientePorDocumento(documento: string): Promise<{ cliente: 
 }
 
 serve(async (req) => {
-  // Handle CORS preflight
   if (req.method === "OPTIONS") {
     return new Response("ok", { headers: corsHeaders });
   }
 
   try {
+    // Authentication
+    const authHeader = req.headers.get("Authorization");
+    if (!authHeader?.startsWith("Bearer ")) {
+      return new Response(
+        JSON.stringify({ error: "Não autorizado" }),
+        { status: 401, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+      );
+    }
+
+    const supabaseUrl = Deno.env.get("SUPABASE_URL")!;
+    const supabaseAnonKey = Deno.env.get("SUPABASE_ANON_KEY")!;
+    const supabaseAuth = createClient(supabaseUrl, supabaseAnonKey, {
+      global: { headers: { Authorization: authHeader } },
+    });
+
+    const { data: { user }, error: authError } = await supabaseAuth.auth.getUser();
+    if (authError || !user) {
+      return new Response(
+        JSON.stringify({ error: "Token inválido" }),
+        { status: 401, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+      );
+    }
+
     const body = await req.json();
     const { action, documento } = body;
 
-    console.log(`[Omie Cliente] Ação: ${action}`);
+    // Input validation
+    if (!action || typeof action !== "string") {
+      return new Response(
+        JSON.stringify({ error: "Ação inválida" }),
+        { status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+      );
+    }
 
     let result: Record<string, unknown> = {};
 
     switch (action) {
       case "buscar_por_documento": {
-        if (!documento) {
+        if (!documento || typeof documento !== "string" || documento.length > 20) {
           return new Response(
-            JSON.stringify({ error: "Documento é obrigatório" }),
+            JSON.stringify({ error: "Documento inválido" }),
             { status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" } }
           );
         }
@@ -289,7 +260,6 @@ serve(async (req) => {
             },
           };
         } else if (cnpjData) {
-          // CNPJ encontrado na Receita, mas não no Omie
           result = {
             found: false,
             isIndustrial,
@@ -335,9 +305,8 @@ serve(async (req) => {
     });
   } catch (error) {
     console.error("[Omie Cliente] Erro:", error);
-    const errorMessage = error instanceof Error ? error.message : "Erro desconhecido";
     return new Response(
-      JSON.stringify({ error: errorMessage }),
+      JSON.stringify({ error: "Erro ao processar solicitação" }),
       { status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" } }
     );
   }

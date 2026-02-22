@@ -22,11 +22,49 @@ serve(async (req) => {
   }
 
   try {
+    // Authentication
+    const authHeader = req.headers.get("Authorization");
+    if (!authHeader?.startsWith("Bearer ")) {
+      return new Response(
+        JSON.stringify({ error: "Não autorizado" }),
+        { status: 401, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+      );
+    }
+
+    const supabaseUrl = Deno.env.get("SUPABASE_URL")!;
+    const supabaseAnonKey = Deno.env.get("SUPABASE_ANON_KEY")!;
+    const supabaseAuth = createClient(supabaseUrl, supabaseAnonKey, {
+      global: { headers: { Authorization: authHeader } },
+    });
+
+    const { data: { user }, error: authError } = await supabaseAuth.auth.getUser();
+    if (authError || !user) {
+      return new Response(
+        JSON.stringify({ error: "Token inválido" }),
+        { status: 401, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+      );
+    }
+
     const { text, userTools } = await req.json();
 
+    // Input validation
     if (!text || typeof text !== "string") {
       return new Response(
         JSON.stringify({ error: "Texto é obrigatório" }),
+        { status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+      );
+    }
+
+    if (text.length > 5000) {
+      return new Response(
+        JSON.stringify({ error: "Texto muito longo (máximo 5000 caracteres)" }),
+        { status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+      );
+    }
+
+    if (userTools && (!Array.isArray(userTools) || userTools.length > 100)) {
+      return new Response(
+        JSON.stringify({ error: "Lista de ferramentas inválida (máximo 100)" }),
         { status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" } }
       );
     }
@@ -37,7 +75,6 @@ serve(async (req) => {
     }
 
     // Buscar serviços disponíveis do banco
-    const supabaseUrl = Deno.env.get("SUPABASE_URL")!;
     const supabaseKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
     const supabase = createClient(supabaseUrl, supabaseKey);
 
@@ -115,34 +152,16 @@ Responda SEMPRE usando a função suggest_services.`;
                     items: {
                       type: "object",
                       properties: {
-                        userToolId: { 
-                          type: "string", 
-                          description: "ID da ferramenta cadastrada do usuário" 
-                        },
-                        omie_codigo_servico: { 
-                          type: "number", 
-                          description: "Código do serviço no Omie" 
-                        },
-                        servico_descricao: { 
-                          type: "string", 
-                          description: "Descrição do serviço" 
-                        },
-                        quantity: { 
-                          type: "number", 
-                          description: "Quantidade de itens (padrão 1)" 
-                        },
-                        notes: { 
-                          type: "string", 
-                          description: "Observações extraídas do texto (danos, urgência, etc)" 
-                        },
+                        userToolId: { type: "string", description: "ID da ferramenta cadastrada do usuário" },
+                        omie_codigo_servico: { type: "number", description: "Código do serviço no Omie" },
+                        servico_descricao: { type: "string", description: "Descrição do serviço" },
+                        quantity: { type: "number", description: "Quantidade de itens (padrão 1)" },
+                        notes: { type: "string", description: "Observações extraídas do texto (danos, urgência, etc)" },
                       },
                       required: ["userToolId", "omie_codigo_servico", "servico_descricao", "quantity"],
                     },
                   },
-                  message: {
-                    type: "string",
-                    description: "Mensagem amigável para o cliente confirmando o que foi identificado",
-                  },
+                  message: { type: "string", description: "Mensagem amigável para o cliente confirmando o que foi identificado" },
                 },
                 required: ["items", "message"],
               },
@@ -174,7 +193,6 @@ Responda SEMPRE usando a função suggest_services.`;
     const aiResponse = await response.json();
     console.log("AI Response:", JSON.stringify(aiResponse, null, 2));
 
-    // Extrair resultado da tool call
     const toolCall = aiResponse.choices?.[0]?.message?.tool_calls?.[0];
     if (!toolCall) {
       return new Response(
@@ -188,7 +206,6 @@ Responda SEMPRE usando a função suggest_services.`;
 
     const result = JSON.parse(toolCall.function.arguments);
 
-    // Validar que os IDs de ferramentas existem
     const validItems = (result.items || []).filter((item: { userToolId: string }) => 
       tools.some(t => t.id === item.userToolId)
     );
@@ -203,7 +220,7 @@ Responda SEMPRE usando a função suggest_services.`;
   } catch (error) {
     console.error("Erro na função analyze-services:", error);
     return new Response(
-      JSON.stringify({ error: error instanceof Error ? error.message : "Erro desconhecido" }),
+      JSON.stringify({ error: "Erro ao processar solicitação" }),
       { status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" } }
     );
   }

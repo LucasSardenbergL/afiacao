@@ -25,8 +25,6 @@ interface ToolCategory {
   name: string;
 }
 
-const MASTER_CPF = '013.633.836-47';
-const MASTER_CPF_CLEAN = '01363383647';
 
 const AdminPriceTable = () => {
   const navigate = useNavigate();
@@ -51,22 +49,13 @@ const AdminPriceTable = () => {
   const checkAuthorization = async () => {
     if (!user) return;
 
-    // Check if user is admin OR has the master CPF
-    const { data: profile } = await supabase
-      .from('profiles')
-      .select('document')
-      .eq('user_id', user.id)
-      .single();
-
-    const doc = profile?.document?.replace(/\D/g, '') || '';
-    
     const { data: roleData } = await supabase
       .from('user_roles')
       .select('role')
       .eq('user_id', user.id)
       .single();
 
-    if (doc === MASTER_CPF_CLEAN || roleData?.role === 'admin') {
+    if (roleData?.role === 'admin') {
       setAuthorized(true);
     } else {
       navigate('/', { replace: true });
