@@ -19,7 +19,22 @@ serve(async (req) => {
 
     const { action, credentialId } = await req.json();
 
+    // Input validation
+    if (!action || typeof action !== "string") {
+      return new Response(
+        JSON.stringify({ error: "Ação inválida" }),
+        { headers: { ...corsHeaders, "Content-Type": "application/json" }, status: 400 }
+      );
+    }
+
     if (action === "verify") {
+      if (!credentialId || typeof credentialId !== "string" || credentialId.length > 500) {
+        return new Response(
+          JSON.stringify({ success: false, error: "Credencial inválida" }),
+          { headers: { ...corsHeaders, "Content-Type": "application/json" }, status: 400 }
+        );
+      }
+
       // Find the credential
       const { data: credential, error: credError } = await supabase
         .from("webauthn_credentials")
@@ -29,7 +44,7 @@ serve(async (req) => {
 
       if (credError || !credential) {
         return new Response(
-          JSON.stringify({ success: false, error: "Credential not found" }),
+          JSON.stringify({ success: false, error: "Credencial não encontrada" }),
           { headers: { ...corsHeaders, "Content-Type": "application/json" }, status: 404 }
         );
       }
@@ -43,7 +58,7 @@ serve(async (req) => {
 
       if (profileError || !profile) {
         return new Response(
-          JSON.stringify({ success: false, error: "User not found" }),
+          JSON.stringify({ success: false, error: "Usuário não encontrado" }),
           { headers: { ...corsHeaders, "Content-Type": "application/json" }, status: 404 }
         );
       }
@@ -68,12 +83,11 @@ serve(async (req) => {
 
       if (signInError || !signInData) {
         return new Response(
-          JSON.stringify({ success: false, error: "Failed to generate auth" }),
+          JSON.stringify({ success: false, error: "Falha ao gerar autenticação" }),
           { headers: { ...corsHeaders, "Content-Type": "application/json" }, status: 500 }
         );
       }
 
-      // Extract the token from the action link
       const actionLink = signInData.properties?.action_link || "";
       const tokenMatch = actionLink.match(/token=([^&]+)/);
       const token = tokenMatch ? tokenMatch[1] : "";
@@ -90,13 +104,13 @@ serve(async (req) => {
     }
 
     return new Response(
-      JSON.stringify({ error: "Invalid action" }),
+      JSON.stringify({ error: "Ação não reconhecida" }),
       { headers: { ...corsHeaders, "Content-Type": "application/json" }, status: 400 }
     );
   } catch (error) {
     console.error("Biometric auth error:", error);
     return new Response(
-      JSON.stringify({ error: error.message }),
+      JSON.stringify({ error: "Erro interno" }),
       { headers: { ...corsHeaders, "Content-Type": "application/json" }, status: 500 }
     );
   }

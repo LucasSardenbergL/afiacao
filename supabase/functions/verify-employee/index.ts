@@ -34,7 +34,6 @@ interface OmieListResponse {
   faultcode?: string;
 }
 
-// Call Omie API
 async function callOmieApi(
   endpoint: string,
   call: string,
@@ -58,21 +57,15 @@ async function callOmieApi(
 
   const response = await fetch(`${OMIE_API_URL}/${endpoint}`, {
     method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-    },
+    headers: { "Content-Type": "application/json" },
     body: JSON.stringify(body),
   });
 
   const result = await response.json();
-  console.log(`[Omie API] Resposta:`, JSON.stringify(result, null, 2));
-
   return result;
 }
 
-// Check if client has employee tag
 function hasEmployeeTag(cliente: OmieCliente, employeeTag: string): boolean {
-  // Check tags array
   if (cliente.tags && Array.isArray(cliente.tags)) {
     const hasTag = cliente.tags.some(
       (t) => t.tag?.toUpperCase() === employeeTag.toUpperCase()
@@ -80,7 +73,6 @@ function hasEmployeeTag(cliente: OmieCliente, employeeTag: string): boolean {
     if (hasTag) return true;
   }
 
-  // Check caracteristicas array
   if (cliente.caracteristicas && Array.isArray(cliente.caracteristicas)) {
     const hasCarac = cliente.caracteristicas.some(
       (c) =>
@@ -93,7 +85,6 @@ function hasEmployeeTag(cliente: OmieCliente, employeeTag: string): boolean {
   return false;
 }
 
-// Search for employee by CPF in Omie
 async function buscarFuncionarioPorCPF(
   cpf: string,
   employeeTag: string
@@ -105,13 +96,10 @@ async function buscarFuncionarioPorCPF(
   }
 
   try {
-    // Search client by CPF in Omie
     const result = await callOmieApi("geral/clientes/", "ListarClientes", {
       pagina: 1,
       registros_por_pagina: 1,
-      clientesFiltro: {
-        cnpj_cpf: cpfLimpo,
-      },
+      clientesFiltro: { cnpj_cpf: cpfLimpo },
     });
 
     if (result.faultstring) {
@@ -129,28 +117,20 @@ async function buscarFuncionarioPorCPF(
       return { isEmployee: false, cliente: null };
     }
 
-    // Get full client details
     const clienteResumo = clientes[0];
     if (clienteResumo.codigo_cliente) {
       const detalheResult = (await callOmieApi(
         "geral/clientes/",
         "ConsultarCliente",
-        {
-          codigo_cliente: clienteResumo.codigo_cliente,
-        }
+        { codigo_cliente: clienteResumo.codigo_cliente }
       )) as unknown as OmieCliente;
 
       const isEmployee = hasEmployeeTag(detalheResult, employeeTag);
-      console.log(
-        `[Verify Employee] CPF: ${cpfLimpo}, Tag: ${employeeTag}, IsEmployee: ${isEmployee}`
-      );
-
       return { isEmployee, cliente: detalheResult };
     }
 
     return { isEmployee: false, cliente: clienteResumo };
   } catch (error) {
-    console.error("[Verify Employee] Erro:", error);
     if (
       error instanceof Error &&
       (error.message.includes("Nenhum registro") ||
@@ -163,20 +143,48 @@ async function buscarFuncionarioPorCPF(
 }
 
 serve(async (req) => {
-  // Handle CORS preflight
   if (req.method === "OPTIONS") {
     return new Response("ok", { headers: corsHeaders });
   }
 
   try {
+    // Authentication required
+    const authHeader = req.headers.get("Authorization");
+    if (!authHeader?.startsWith("Bearer ")) {
+      return new Response(
+        JSON.stringify({ error: "Não autorizado" }),
+        { status: 401, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+      );
+    }
+
     const supabaseUrl = Deno.env.get("SUPABASE_URL")!;
+    const supabaseAnonKey = Deno.env.get("SUPABASE_ANON_KEY")!;
     const supabaseServiceKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
+
+    const supabaseAuth = createClient(supabaseUrl, supabaseAnonKey, {
+      global: { headers: { Authorization: authHeader } },
+    });
+
+    const { data: { user }, error: authError } = await supabaseAuth.auth.getUser();
+    if (authError || !user) {
+      return new Response(
+        JSON.stringify({ error: "Token inválido" }),
+        { status: 401, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+      );
+    }
+
     const supabase = createClient(supabaseUrl, supabaseServiceKey);
 
     const body = await req.json();
     const { action, cpf, userId } = body;
 
-    console.log(`[Verify Employee] Ação: ${action}`);
+    // Input validation
+    if (!action || typeof action !== "string") {
+      return new Response(
+        JSON.stringify({ error: "Ação inválida" }),
+        { status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+      );
+    }
 
     // Get employee tag from config
     const { data: configData } = await supabase
@@ -189,20 +197,14 @@ serve(async (req) => {
 
     switch (action) {
       case "verify_employee": {
-        if (!cpf) {
+        if (!cpf || typeof cpf !== "string" || cpf.replace(/\D/g, "").length !== 11) {
           return new Response(
-            JSON.stringify({ error: "CPF é obrigatório" }),
-            {
-              status: 400,
-              headers: { ...corsHeaders, "Content-Type": "application/json" },
-            }
+            JSON.stringify({ error: "CPF inválido" }),
+            { status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" } }
           );
         }
 
-        const { isEmployee, cliente } = await buscarFuncionarioPorCPF(
-          cpf,
-          employeeTag
-        );
+        const { isEmployee, cliente } = await buscarFuncionarioPorCPF(cpf, employeeTag);
 
         return new Response(
           JSON.stringify({
@@ -217,49 +219,59 @@ serve(async (req) => {
                 }
               : null,
           }),
-          {
-            status: 200,
-            headers: { ...corsHeaders, "Content-Type": "application/json" },
-          }
+          { status: 200, headers: { ...corsHeaders, "Content-Type": "application/json" } }
         );
       }
 
       case "set_employee_role": {
-        if (!userId) {
+        // Only allow setting own role or admin setting others
+        const targetUserId = userId || user.id;
+        
+        // Check if caller is admin or setting their own role
+        const { data: callerRole } = await supabase
+          .from("user_roles")
+          .select("role")
+          .eq("user_id", user.id)
+          .single();
+
+        if (targetUserId !== user.id && callerRole?.role !== "admin") {
           return new Response(
-            JSON.stringify({ error: "userId é obrigatório" }),
-            {
-              status: 400,
-              headers: { ...corsHeaders, "Content-Type": "application/json" },
-            }
+            JSON.stringify({ error: "Sem permissão" }),
+            { status: 403, headers: { ...corsHeaders, "Content-Type": "application/json" } }
           );
         }
 
-        // Update profile to mark as employee
         await supabase
           .from("profiles")
           .update({ is_employee: true })
-          .eq("user_id", userId);
+          .eq("user_id", targetUserId);
 
-        // Insert employee role
         await supabase.from("user_roles").upsert(
-          {
-            user_id: userId,
-            role: "employee",
-          },
+          { user_id: targetUserId, role: "employee" },
           { onConflict: "user_id,role" }
         );
 
         return new Response(
           JSON.stringify({ success: true }),
-          {
-            status: 200,
-            headers: { ...corsHeaders, "Content-Type": "application/json" },
-          }
+          { status: 200, headers: { ...corsHeaders, "Content-Type": "application/json" } }
         );
       }
 
       case "get_master_cnpj": {
+        // Only admins can get master CNPJ
+        const { data: roleData } = await supabase
+          .from("user_roles")
+          .select("role")
+          .eq("user_id", user.id)
+          .single();
+
+        if (roleData?.role !== "admin") {
+          return new Response(
+            JSON.stringify({ error: "Sem permissão" }),
+            { status: 403, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+          );
+        }
+
         const { data: masterCnpj } = await supabase
           .from("company_config")
           .select("value")
@@ -268,29 +280,21 @@ serve(async (req) => {
 
         return new Response(
           JSON.stringify({ masterCnpj: masterCnpj?.value || null }),
-          {
-            status: 200,
-            headers: { ...corsHeaders, "Content-Type": "application/json" },
-          }
+          { status: 200, headers: { ...corsHeaders, "Content-Type": "application/json" } }
         );
       }
 
       default:
         return new Response(
           JSON.stringify({ error: "Ação não reconhecida" }),
-          {
-            status: 400,
-            headers: { ...corsHeaders, "Content-Type": "application/json" },
-          }
+          { status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" } }
         );
     }
   } catch (error) {
     console.error("[Verify Employee] Erro:", error);
-    const errorMessage =
-      error instanceof Error ? error.message : "Erro desconhecido";
-    return new Response(JSON.stringify({ error: errorMessage }), {
-      status: 500,
-      headers: { ...corsHeaders, "Content-Type": "application/json" },
-    });
+    return new Response(
+      JSON.stringify({ error: "Erro interno" }),
+      { status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+    );
   }
 });

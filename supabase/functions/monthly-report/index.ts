@@ -4,7 +4,7 @@ import { Resend } from "npm:resend@2.0.0";
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
-  'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type, x-supabase-client-platform, x-supabase-client-platform-version, x-supabase-client-runtime, x-supabase-client-runtime-version',
+  'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type, x-cron-secret, x-supabase-client-platform, x-supabase-client-platform-version, x-supabase-client-runtime, x-supabase-client-runtime-version',
 };
 
 interface ToolSummary {
@@ -96,18 +96,13 @@ function generateEmailHtml(report: CustomerReport): string {
 <head><meta charset="utf-8"></head>
 <body style="margin: 0; padding: 0; background-color: #ffffff; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;">
   <div style="max-width: 600px; margin: 0 auto; padding: 20px;">
-    <!-- Header -->
     <div style="background: linear-gradient(135deg, #dc2626 0%, #991b1b 100%); border-radius: 12px; padding: 28px; margin-bottom: 24px; text-align: center;">
       <h1 style="color: #ffffff; margin: 0 0 6px 0; font-size: 22px;">Relatório Mensal de Ferramentas</h1>
       <p style="color: rgba(255,255,255,0.85); margin: 0; font-size: 14px;">${monthYear}</p>
     </div>
-
-    <!-- Greeting -->
     <p style="font-size: 15px; color: #333; margin-bottom: 20px;">
       Olá <strong>${report.name}</strong>, aqui está o resumo das suas ferramentas:
     </p>
-
-    <!-- Stats -->
     <div style="display: flex; gap: 12px; margin-bottom: 24px;">
       <div style="flex: 1; background: #f8f8f8; border-radius: 10px; padding: 16px; text-align: center;">
         <div style="font-size: 28px; font-weight: 700; color: #333;">${report.total_tools}</div>
@@ -122,8 +117,6 @@ function generateEmailHtml(report: CustomerReport): string {
         <div style="font-size: 12px; color: #d97706;">Em breve</div>
       </div>
     </div>
-
-    <!-- Tools table -->
     ${report.tools.length > 0 ? `
     <table style="width: 100%; border-collapse: collapse; border-radius: 10px; overflow: hidden; border: 1px solid #e5e5e5;">
       <thead>
@@ -138,23 +131,19 @@ function generateEmailHtml(report: CustomerReport): string {
         ${overdueRows}${dueSoonRows}${okRows}
       </tbody>
     </table>
-    ` : '<p style="text-align: center; color: #888;">Nenhuma ferramenta cadastrada.</p>'}
-
-    <!-- CTA -->
+    ` : '<p style="text-align: center; color: #888;">Nenhuma ferramenta cadastrada.</p>' }
     ${report.overdue_count > 0 ? `
     <div style="text-align: center; margin-top: 24px;">
       <p style="font-size: 14px; color: #666; margin-bottom: 12px;">
         Você tem ferramentas que precisam de afiação!
       </p>
-      <a href="https://colacor.lovable.app/new-order" 
+      <a href="https://afiacao.lovable.app/new-order" 
          style="display: inline-block; background: linear-gradient(135deg, #dc2626, #991b1b); color: #fff; 
                 padding: 14px 32px; border-radius: 8px; text-decoration: none; font-weight: 600; font-size: 15px;">
         Agendar Afiação
       </a>
     </div>
     ` : ''}
-
-    <!-- Footer -->
     <div style="text-align: center; margin-top: 32px; padding-top: 20px; border-top: 1px solid #e5e5e5;">
       <p style="font-size: 12px; color: #aaa; margin: 0;">
         Colacor • Relatório automático mensal
@@ -202,8 +191,47 @@ function generateWhatsAppMessage(report: CustomerReport): string {
   }
 
   msg += `\nPrecisa agendar afiação? Entre em contato conosco! 💬`;
-
   return msg;
+}
+
+// Authentication: requires admin auth OR cron secret
+async function authenticateRequest(req: Request): Promise<{ authenticated: boolean; isAdmin: boolean }> {
+  const supabaseUrl = Deno.env.get('SUPABASE_URL')!;
+  const supabaseAnonKey = Deno.env.get('SUPABASE_ANON_KEY')!;
+  const supabaseServiceKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!;
+
+  // Check cron secret first
+  const cronSecret = req.headers.get('x-cron-secret');
+  const expectedCronSecret = Deno.env.get('CRON_SECRET');
+  if (cronSecret && expectedCronSecret && cronSecret === expectedCronSecret) {
+    return { authenticated: true, isAdmin: true };
+  }
+
+  // Check auth header
+  const authHeader = req.headers.get('Authorization');
+  if (!authHeader?.startsWith('Bearer ')) {
+    return { authenticated: false, isAdmin: false };
+  }
+
+  const supabaseAuth = createClient(supabaseUrl, supabaseAnonKey, {
+    global: { headers: { Authorization: authHeader } },
+  });
+
+  const { data: { user }, error } = await supabaseAuth.auth.getUser();
+  if (error || !user) {
+    return { authenticated: false, isAdmin: false };
+  }
+
+  // Check admin/employee role
+  const supabase = createClient(supabaseUrl, supabaseServiceKey);
+  const { data: roleData } = await supabase
+    .from('user_roles')
+    .select('role')
+    .eq('user_id', user.id)
+    .single();
+
+  const isStaff = roleData?.role === 'admin' || roleData?.role === 'employee';
+  return { authenticated: isStaff, isAdmin: roleData?.role === 'admin' };
 }
 
 serve(async (req) => {
@@ -212,6 +240,14 @@ serve(async (req) => {
   }
 
   try {
+    const { authenticated } = await authenticateRequest(req);
+    if (!authenticated) {
+      return new Response(
+        JSON.stringify({ error: 'Não autorizado' }),
+        { status: 401, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+      );
+    }
+
     const supabaseUrl = Deno.env.get('SUPABASE_URL')!;
     const supabaseKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!;
     const resendApiKey = Deno.env.get('RESEND_API_KEY');
@@ -219,11 +255,10 @@ serve(async (req) => {
     const supabase = createClient(supabaseUrl, supabaseKey);
 
     const body = await req.json().catch(() => ({}));
-    const targetUserId = body.user_id; // optional: send to specific user
+    const targetUserId = body.user_id;
     const sendEmail = body.send_email !== false;
     const previewOnly = body.preview_only === true;
 
-    // Get all customers with tools
     let profilesQuery = supabase
       .from('profiles')
       .select('user_id, name, email, phone');
@@ -238,7 +273,6 @@ serve(async (req) => {
     const reports: CustomerReport[] = [];
 
     for (const profile of (profiles || [])) {
-      // Get user tools
       const { data: tools } = await supabase
         .from('user_tools')
         .select('*, tool_categories(name)')
@@ -250,7 +284,6 @@ serve(async (req) => {
       const toolSummaries: ToolSummary[] = [];
 
       for (const tool of tools) {
-        // Get event counts
         const { count: sharpeningCount } = await supabase
           .from('tool_events')
           .select('*', { count: 'exact', head: true })
@@ -282,7 +315,6 @@ serve(async (req) => {
         });
       }
 
-      // Sort: overdue first, then due soon, then by days until due
       toolSummaries.sort((a, b) => {
         if (a.is_overdue && !b.is_overdue) return -1;
         if (!a.is_overdue && b.is_overdue) return 1;
@@ -304,7 +336,6 @@ serve(async (req) => {
 
       reports.push(report);
 
-      // Send email if not preview-only
       if (sendEmail && !previewOnly && resendApiKey && profile.email) {
         const resend = new Resend(resendApiKey);
         const html = generateEmailHtml(report);
@@ -323,7 +354,6 @@ serve(async (req) => {
       }
     }
 
-    // Generate WhatsApp messages
     const reportsWithWhatsApp = reports.map(report => ({
       ...report,
       whatsapp_message: generateWhatsAppMessage(report),
@@ -343,7 +373,7 @@ serve(async (req) => {
     });
   } catch (error: any) {
     console.error('Error in monthly-report:', error);
-    return new Response(JSON.stringify({ error: error.message }), {
+    return new Response(JSON.stringify({ error: 'Erro ao gerar relatório' }), {
       status: 500,
       headers: { ...corsHeaders, 'Content-Type': 'application/json' },
     });

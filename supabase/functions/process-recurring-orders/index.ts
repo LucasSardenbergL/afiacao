@@ -3,8 +3,42 @@ import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
-  'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
+  'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type, x-cron-secret',
 };
+
+// Authentication: requires admin auth OR cron secret
+async function authenticateRequest(req: Request): Promise<boolean> {
+  const supabaseUrl = Deno.env.get('SUPABASE_URL')!;
+  const supabaseAnonKey = Deno.env.get('SUPABASE_ANON_KEY')!;
+  const supabaseServiceKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!;
+
+  // Check cron secret
+  const cronSecret = req.headers.get('x-cron-secret');
+  const expectedCronSecret = Deno.env.get('CRON_SECRET');
+  if (cronSecret && expectedCronSecret && cronSecret === expectedCronSecret) {
+    return true;
+  }
+
+  // Check auth header for admin
+  const authHeader = req.headers.get('Authorization');
+  if (!authHeader?.startsWith('Bearer ')) return false;
+
+  const supabaseAuth = createClient(supabaseUrl, supabaseAnonKey, {
+    global: { headers: { Authorization: authHeader } },
+  });
+
+  const { data: { user }, error } = await supabaseAuth.auth.getUser();
+  if (error || !user) return false;
+
+  const supabase = createClient(supabaseUrl, supabaseServiceKey);
+  const { data: roleData } = await supabase
+    .from('user_roles')
+    .select('role')
+    .eq('user_id', user.id)
+    .single();
+
+  return roleData?.role === 'admin' || roleData?.role === 'employee';
+}
 
 serve(async (req) => {
   if (req.method === 'OPTIONS') {
@@ -12,11 +46,18 @@ serve(async (req) => {
   }
 
   try {
+    const authenticated = await authenticateRequest(req);
+    if (!authenticated) {
+      return new Response(
+        JSON.stringify({ error: 'Não autorizado' }),
+        { status: 401, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+      );
+    }
+
     const supabaseUrl = Deno.env.get('SUPABASE_URL')!;
     const supabaseKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!;
     const supabase = createClient(supabaseUrl, supabaseKey);
 
-    // Find active schedules where next_order_date is today or in the past
     const today = new Date().toISOString().split('T')[0];
     
     const { data: schedules, error: schedError } = await supabase
@@ -31,7 +72,6 @@ serve(async (req) => {
 
     for (const schedule of schedules || []) {
       try {
-        // Get user tools info
         const { data: tools } = await supabase
           .from('user_tools')
           .select('id, tool_category_id, generated_name, custom_name, specifications, tool_categories(name)')
@@ -42,13 +82,11 @@ serve(async (req) => {
           continue;
         }
 
-        // Get matching services for each tool
         const { data: servicos } = await supabase
           .from('omie_servicos')
           .select('*')
           .eq('inativo', false);
 
-        // Build order items
         const orderItems = tools.map((tool: any) => {
           const categoryName = tool.tool_categories?.name?.toLowerCase() || '';
           const matchingService = (servicos || []).find((s: any) => 
@@ -65,7 +103,6 @@ serve(async (req) => {
           };
         });
 
-        // Get address if specified
         let addressData = null;
         if (schedule.address_id) {
           const { data: addr } = await supabase
@@ -86,7 +123,6 @@ serve(async (req) => {
           }
         }
 
-        // Create order
         const { error: orderError } = await supabase
           .from('orders')
           .insert({
@@ -105,7 +141,6 @@ serve(async (req) => {
 
         if (orderError) throw orderError;
 
-        // Update next_order_date
         const nextDate = new Date(schedule.next_order_date);
         nextDate.setDate(nextDate.getDate() + schedule.frequency_days);
 
@@ -129,7 +164,7 @@ serve(async (req) => {
     );
   } catch (error) {
     return new Response(
-      JSON.stringify({ error: String(error) }),
+      JSON.stringify({ error: 'Erro ao processar agendamentos' }),
       { status: 500, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
     );
   }
