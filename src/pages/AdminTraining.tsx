@@ -37,7 +37,7 @@ const emptyQuestion: QuizQuestion = { question: '', options: ['', '', '', ''], c
 
 const AdminTraining = () => {
   const navigate = useNavigate();
-  const { isStaff, loading: authLoading } = useAuth();
+  const { isStaff, loading: authLoading, role } = useAuth();
   const { toast } = useToast();
 
   const [modules, setModules] = useState<TrainingModule[]>([]);
@@ -56,12 +56,12 @@ const AdminTraining = () => {
   const [questions, setQuestions] = useState<QuizQuestion[]>([{ ...emptyQuestion }]);
 
   useEffect(() => {
-    if (!authLoading && !isStaff) navigate('/', { replace: true });
-  }, [authLoading, isStaff, navigate]);
+    if (!authLoading && role !== null && !isStaff) navigate('/', { replace: true });
+  }, [authLoading, isStaff, role, navigate]);
 
   useEffect(() => {
-    loadModules();
-  }, []);
+    if (isStaff) loadModules();
+  }, [isStaff]);
 
   const loadModules = async () => {
     const { data } = await supabase
