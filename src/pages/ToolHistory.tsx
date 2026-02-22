@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef } from 'react';
-import { useParams } from 'react-router-dom';
+import { useParams, useNavigate } from 'react-router-dom';
 import { Header } from '@/components/Header';
 import { BottomNav } from '@/components/BottomNav';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
@@ -11,7 +11,7 @@ import { useAuth } from '@/contexts/AuthContext';
 import { 
   Loader2, Wrench, Calendar, QrCode, Printer, 
   AlertTriangle, CheckCircle, FileText, Settings, 
-  Clock, Hash, ChevronDown, ChevronUp 
+  Clock, Hash, ChevronDown, ChevronUp, BarChart3 
 } from 'lucide-react';
 import { format, formatDistanceToNow } from 'date-fns';
 import { ptBR } from 'date-fns/locale';
@@ -55,6 +55,7 @@ const EVENT_TYPE_CONFIG: Record<string, { label: string; icon: typeof Wrench; co
 
 const ToolHistory = () => {
   const { toolId } = useParams<{ toolId: string }>();
+  const navigate = useNavigate();
   const { user } = useAuth();
   const [tool, setTool] = useState<ToolData | null>(null);
   const [events, setEvents] = useState<ToolEvent[]>([]);
@@ -221,6 +222,12 @@ const ToolHistory = () => {
             </CardContent>
           </Card>
         )}
+
+        {/* Reports link */}
+        <Button variant="outline" className="w-full gap-2" onClick={() => navigate(`/tools/${toolId}/reports`)}>
+          <BarChart3 className="w-4 h-4" />
+          Ver Relatório Completo
+        </Button>
 
         {/* Stats */}
         <div className="grid grid-cols-3 gap-3">

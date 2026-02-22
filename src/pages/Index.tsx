@@ -1,11 +1,11 @@
 import { useEffect, useState } from 'react';
-import { PlusCircle, ClipboardList, Headphones, ChevronRight, Wrench, Calendar, User, Sparkles, ArrowRight, TrendingUp, Package, Users, Clock, Truck, CheckCircle, Building2, PiggyBank, CalendarClock, Trophy, Gamepad2 } from 'lucide-react';
+import { PlusCircle, ClipboardList, ChevronRight, Wrench, Calendar, User, ArrowRight, TrendingUp, Package, Users, Clock, CheckCircle, Building2 } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { BottomNav } from '@/components/BottomNav';
-import { SharpeningSuggestions } from '@/components/SharpeningSuggestions';
+import { CustomerDashboard } from '@/components/CustomerDashboard';
 import { supabase } from '@/integrations/supabase/client';
 import { useAuth } from '@/contexts/AuthContext';
 import { useUserRole } from '@/hooks/useUserRole';
@@ -143,18 +143,18 @@ const Index = () => {
     }
   }, [user, isStaff, roleLoading]);
 
-  // Para CNPJ mostrar razão social, para CPF mostrar primeiro nome
-  const isCNPJ = profile?.document && profile.document.replace(/\D/g, '').length === 14;
-  const displayName = isCNPJ 
-    ? profile?.name || 'Cliente'
-    : profile?.name?.split(' ')[0] || 'Cliente';
-
   const getGreeting = () => {
     const hour = new Date().getHours();
     if (hour < 12) return 'Bom dia';
     if (hour < 18) return 'Boa tarde';
     return 'Boa noite';
   };
+
+  // Para CNPJ mostrar razão social, para CPF mostrar primeiro nome
+  const isCNPJ = profile?.document && profile.document.replace(/\D/g, '').length === 14;
+  const displayName = isCNPJ 
+    ? profile?.name || 'Cliente'
+    : profile?.name?.split(' ')[0] || 'Cliente';
 
   const toolsNeedingSharpening = userTools.filter(tool => {
     if (!tool.next_sharpening_due) return false;
@@ -371,327 +371,12 @@ const Index = () => {
   }
 
   return (
-    <div className="min-h-screen bg-background pb-24">
-      {/* Hero Header */}
-      <header className="bg-gradient-dark text-secondary-foreground px-4 pt-12 pb-10 relative overflow-hidden">
-        {/* Decorative elements */}
-        <div className="absolute top-0 right-0 w-64 h-64 bg-primary/10 rounded-full blur-3xl -translate-y-1/2 translate-x-1/2" />
-        <div className="absolute bottom-0 left-0 w-40 h-40 bg-primary/5 rounded-full blur-2xl translate-y-1/2 -translate-x-1/2" />
-        
-        <div className="max-w-lg mx-auto relative z-10">
-          <div className="flex items-start justify-between mb-8">
-            <div className="space-y-1">
-              <p className="text-sm text-secondary-foreground/70 font-medium">{getGreeting()},</p>
-              <h1 className="text-2xl font-display font-bold tracking-tight">{displayName}</h1>
-              {profile?.customer_type && (
-                <span className={cn(
-                  'inline-flex items-center gap-1.5 text-xs px-2.5 py-1 rounded-full font-medium',
-                  profile.customer_type === 'industrial' 
-                    ? 'bg-amber-500/20 text-amber-300' 
-                    : 'bg-blue-500/20 text-blue-300'
-                )}>
-                  {profile.customer_type === 'industrial' ? (
-                    <>
-                      <TrendingUp className="w-3 h-3" />
-                      Industrial
-                    </>
-                  ) : 'Doméstico'}
-                </span>
-              )}
-            </div>
-            <button 
-              onClick={() => navigate('/profile')}
-              className="w-12 h-12 rounded-full bg-primary/90 hover:bg-primary flex items-center justify-center transition-all hover:scale-105 shadow-glow"
-            >
-              <User className="w-6 h-6 text-primary-foreground" />
-            </button>
-          </div>
-
-          {/* Stats Cards */}
-          <div className="grid grid-cols-2 gap-3">
-            <button
-              onClick={() => navigate('/orders')}
-              className="bg-secondary-foreground/10 hover:bg-secondary-foreground/15 rounded-2xl p-4 backdrop-blur-sm border border-secondary-foreground/5 transition-all text-left group"
-            >
-              <div className="flex items-center justify-between mb-2">
-                <Package className="w-5 h-5 text-secondary-foreground/60" />
-                <ChevronRight className="w-4 h-4 text-secondary-foreground/40 group-hover:translate-x-1 transition-transform" />
-              </div>
-              <p className="text-3xl font-bold">{pendingOrders.length}</p>
-              <p className="text-xs text-secondary-foreground/60">Pedidos pendentes</p>
-            </button>
-            <button
-              onClick={() => navigate('/tools')}
-              className="bg-secondary-foreground/10 hover:bg-secondary-foreground/15 rounded-2xl p-4 backdrop-blur-sm border border-secondary-foreground/5 transition-all text-left group"
-            >
-              <div className="flex items-center justify-between mb-2">
-                <Wrench className="w-5 h-5 text-secondary-foreground/60" />
-                <ChevronRight className="w-4 h-4 text-secondary-foreground/40 group-hover:translate-x-1 transition-transform" />
-              </div>
-              <p className="text-3xl font-bold">{userTools.length}</p>
-              <p className="text-xs text-secondary-foreground/60">Ferramentas</p>
-            </button>
-          </div>
-        </div>
-      </header>
-
-      <main className="px-4 -mt-5 max-w-lg mx-auto relative z-20">
-        {/* CTA Principal */}
-        <Card className="shadow-strong border-0 mb-6 overflow-hidden animate-fade-in">
-          <CardContent className="p-0">
-            <button
-              onClick={() => navigate('/new-order')}
-              className="w-full p-5 flex items-center gap-4 group hover:bg-muted/30 transition-colors"
-            >
-              <div className="w-14 h-14 rounded-2xl bg-gradient-primary flex items-center justify-center shadow-glow flex-shrink-0 group-hover:scale-105 transition-transform">
-                <PlusCircle className="w-7 h-7 text-primary-foreground" />
-              </div>
-              <div className="flex-1 text-left">
-                <h2 className="font-display font-bold text-lg text-foreground">Novo Pedido de Afiação</h2>
-                <p className="text-sm text-muted-foreground">Agende a coleta das suas ferramentas</p>
-              </div>
-              <ArrowRight className="w-5 h-5 text-muted-foreground group-hover:translate-x-1 group-hover:text-primary transition-all" />
-            </button>
-          </CardContent>
-        </Card>
-
-        {/* Quick Actions */}
-        <div className="grid grid-cols-3 gap-2 mb-3">
-          <button
-            onClick={() => navigate('/orders')}
-            className="bg-card rounded-2xl p-3 shadow-medium border border-border hover:shadow-strong hover:border-primary/30 transition-all flex flex-col items-center gap-2 group"
-          >
-            <div className="w-10 h-10 rounded-xl bg-muted flex items-center justify-center group-hover:bg-primary/10 transition-colors">
-              <ClipboardList className="w-5 h-5 text-muted-foreground group-hover:text-primary transition-colors" />
-            </div>
-            <span className="text-xs font-medium text-foreground">Pedidos</span>
-          </button>
-
-          <button
-            onClick={() => navigate('/tools')}
-            className="bg-card rounded-2xl p-3 shadow-medium border border-border hover:shadow-strong hover:border-primary/30 transition-all flex flex-col items-center gap-2 group"
-          >
-            <div className="w-10 h-10 rounded-xl bg-muted flex items-center justify-center group-hover:bg-primary/10 transition-colors">
-              <Wrench className="w-5 h-5 text-muted-foreground group-hover:text-primary transition-colors" />
-            </div>
-            <span className="text-xs font-medium text-foreground">Ferramentas</span>
-          </button>
-
-          <button
-            onClick={() => navigate('/recurring-schedules')}
-            className="bg-card rounded-2xl p-3 shadow-medium border border-border hover:shadow-strong hover:border-primary/30 transition-all flex flex-col items-center gap-2 group"
-          >
-            <div className="w-10 h-10 rounded-xl bg-muted flex items-center justify-center group-hover:bg-primary/10 transition-colors">
-              <CalendarClock className="w-5 h-5 text-muted-foreground group-hover:text-primary transition-colors" />
-            </div>
-            <span className="text-xs font-medium text-foreground">Agendar</span>
-          </button>
-        </div>
-
-        <div className="grid grid-cols-3 gap-2 mb-6">
-          <button
-            onClick={() => navigate('/savings')}
-            className="bg-card rounded-2xl p-3 shadow-medium border border-border hover:shadow-strong hover:border-primary/30 transition-all flex flex-col items-center gap-2 group"
-          >
-            <div className="w-10 h-10 rounded-xl bg-muted flex items-center justify-center group-hover:bg-primary/10 transition-colors">
-              <PiggyBank className="w-5 h-5 text-muted-foreground group-hover:text-primary transition-colors" />
-            </div>
-            <span className="text-xs font-medium text-foreground">Economia</span>
-          </button>
-
-          <button
-            onClick={() => navigate('/loyalty')}
-            className="bg-card rounded-2xl p-3 shadow-medium border border-border hover:shadow-strong hover:border-primary/30 transition-all flex flex-col items-center gap-2 group"
-          >
-            <div className="w-10 h-10 rounded-xl bg-muted flex items-center justify-center group-hover:bg-primary/10 transition-colors">
-              <Trophy className="w-5 h-5 text-muted-foreground group-hover:text-primary transition-colors" />
-            </div>
-            <span className="text-xs font-medium text-foreground">Pontos</span>
-          </button>
-
-          <button
-            onClick={() => navigate('/gamification')}
-            className="bg-card rounded-2xl p-3 shadow-medium border border-border hover:shadow-strong hover:border-primary/30 transition-all flex flex-col items-center gap-2 group"
-          >
-            <div className="w-10 h-10 rounded-xl bg-muted flex items-center justify-center group-hover:bg-primary/10 transition-colors">
-              <Gamepad2 className="w-5 h-5 text-muted-foreground group-hover:text-primary transition-colors" />
-            </div>
-            <span className="text-xs font-medium text-foreground">Ranking</span>
-          </button>
-        </div>
-
-        {/* Sharpening Suggestions */}
-        {toolsNeedingSharpening.length > 0 && (
-          <section className="mb-6 animate-fade-in" style={{ animationDelay: '0.1s' }}>
-            <SharpeningSuggestions compact />
-          </section>
-        )}
-
-        {/* Pending Orders */}
-        {pendingOrders.length > 0 && (
-          <section className="mb-6 animate-fade-in" style={{ animationDelay: '0.15s' }}>
-            <div className="flex items-center justify-between mb-4">
-              <h2 className="font-display font-bold text-lg text-foreground">Em Andamento</h2>
-              <button
-                onClick={() => navigate('/orders')}
-                className="text-sm font-medium text-primary flex items-center gap-1 hover:gap-2 transition-all"
-              >
-                Ver todos
-                <ChevronRight className="w-4 h-4" />
-              </button>
-            </div>
-
-            <div className="space-y-3">
-              {pendingOrders.slice(0, 3).map((order, index) => {
-                const config = statusConfig[order.status] || statusConfig['pedido_recebido'];
-                
-                return (
-                  <Card 
-                    key={order.id}
-                    className="overflow-hidden hover:shadow-medium transition-shadow cursor-pointer group animate-fade-in"
-                    style={{ animationDelay: `${0.2 + index * 0.05}s` }}
-                    onClick={() => navigate(`/orders/${order.id}`)}
-                  >
-                    <CardContent className="p-4">
-                      <div className="flex items-center justify-between">
-                        <div className="flex items-center gap-3">
-                          <div className="w-10 h-10 rounded-xl bg-muted flex items-center justify-center">
-                            <Package className="w-5 h-5 text-muted-foreground" />
-                          </div>
-                          <div>
-                            <p className="font-semibold text-foreground">
-                              {format(new Date(order.created_at), "dd 'de' MMM", { locale: ptBR })}
-                            </p>
-                            <p className="text-xs text-muted-foreground capitalize">{order.service_type}</p>
-                          </div>
-                        </div>
-                        <div className="flex items-center gap-2">
-                          <span className={cn(
-                            'text-xs px-2.5 py-1 rounded-full font-medium',
-                            config.bgColor, config.color
-                          )}>
-                            {config.label}
-                          </span>
-                          <ChevronRight className="w-4 h-4 text-muted-foreground group-hover:translate-x-1 transition-transform" />
-                        </div>
-                      </div>
-                    </CardContent>
-                  </Card>
-                );
-              })}
-            </div>
-          </section>
-        )}
-
-        {/* My Tools Preview */}
-        {userTools.length > 0 && (
-          <section className="mb-6 animate-fade-in" style={{ animationDelay: '0.25s' }}>
-            <div className="flex items-center justify-between mb-4">
-              <h2 className="font-display font-bold text-lg text-foreground">Minhas Ferramentas</h2>
-              <button
-                onClick={() => navigate('/tools')}
-                className="text-sm font-medium text-primary flex items-center gap-1 hover:gap-2 transition-all"
-              >
-                Gerenciar
-                <ChevronRight className="w-4 h-4" />
-              </button>
-            </div>
-
-            <div className="grid grid-cols-2 gap-3">
-              {userTools.slice(0, 4).map((tool, index) => {
-                const daysUntil = tool.next_sharpening_due 
-                  ? differenceInDays(new Date(tool.next_sharpening_due), new Date())
-                  : null;
-                const needsSharpening = daysUntil !== null && daysUntil <= 7;
-
-                return (
-                  <Card 
-                    key={tool.id} 
-                    className={cn(
-                      'animate-fade-in',
-                      needsSharpening && 'ring-1 ring-amber-300 bg-amber-50/50'
-                    )}
-                    style={{ animationDelay: `${0.3 + index * 0.05}s` }}
-                  >
-                    <CardContent className="p-3">
-                      <div className="flex items-center gap-2 mb-2">
-                        <div className={cn(
-                          'w-8 h-8 rounded-lg flex items-center justify-center',
-                          needsSharpening ? 'bg-amber-100' : 'bg-muted'
-                        )}>
-                          <Wrench className={cn(
-                            'w-4 h-4',
-                            needsSharpening ? 'text-amber-600' : 'text-muted-foreground'
-                          )} />
-                        </div>
-                        <p className="font-medium text-sm text-foreground truncate flex-1">
-                          {tool.tool_categories?.name}
-                        </p>
-                      </div>
-                      {tool.next_sharpening_due && (
-                        <p className={cn(
-                          'text-xs flex items-center gap-1',
-                          needsSharpening ? 'text-amber-600 font-medium' : 'text-muted-foreground'
-                        )}>
-                          <Calendar className="w-3 h-3" />
-                          {daysUntil !== null && daysUntil < 0 
-                            ? 'Atrasado'
-                            : daysUntil === 0 
-                              ? 'Hoje'
-                              : `Em ${daysUntil} dias`
-                          }
-                        </p>
-                      )}
-                    </CardContent>
-                  </Card>
-                );
-              })}
-            </div>
-          </section>
-        )}
-
-        {/* Empty state for new users */}
-        {pendingOrders.length === 0 && userTools.length === 0 && (
-          <Card className="overflow-hidden animate-fade-in">
-            <CardContent className="p-8 text-center">
-              <div className="w-20 h-20 rounded-full bg-gradient-primary/10 mx-auto mb-4 flex items-center justify-center">
-                <Sparkles className="w-10 h-10 text-primary" />
-              </div>
-              <h3 className="font-display font-bold text-xl text-foreground mb-2">Bem-vindo à Colacor!</h3>
-              <p className="text-sm text-muted-foreground mb-6 max-w-xs mx-auto">
-                Faça seu primeiro pedido de afiação e mantenha suas ferramentas sempre afiadas
-              </p>
-              <Button size="lg" onClick={() => navigate('/new-order')} className="shadow-glow">
-                <PlusCircle className="w-5 h-5 mr-2" />
-                Criar Primeiro Pedido
-              </Button>
-            </CardContent>
-          </Card>
-        )}
-
-        {/* Industrial benefit card */}
-        {profile?.customer_type === 'industrial' && (
-          <section className="mt-6 animate-fade-in" style={{ animationDelay: '0.35s' }}>
-            <Card className="bg-gradient-primary text-primary-foreground border-0 overflow-hidden">
-              <CardContent className="p-5 relative">
-                <div className="absolute top-0 right-0 w-32 h-32 bg-white/10 rounded-full blur-2xl -translate-y-1/2 translate-x-1/2" />
-                <div className="relative z-10">
-                  <div className="flex items-center gap-2 mb-2">
-                    <TrendingUp className="w-5 h-5" />
-                    <span className="font-semibold">Cliente Industrial</span>
-                  </div>
-                  <p className="text-sm text-primary-foreground/80">
-                    Você tem frete gratuito em todos os seus pedidos!
-                  </p>
-                </div>
-              </CardContent>
-            </Card>
-          </section>
-        )}
-      </main>
-
-      <BottomNav />
-    </div>
+    <CustomerDashboard
+      profile={profile}
+      pendingOrders={pendingOrders}
+      userTools={userTools}
+      getGreeting={getGreeting}
+    />
   );
 };
 
