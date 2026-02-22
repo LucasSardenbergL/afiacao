@@ -37,6 +37,7 @@ import AdminTraining from "./pages/AdminTraining";
 import Training from "./pages/Training";
 import NotFound from "./pages/NotFound";
 
+
 const queryClient = new QueryClient();
 
 const App = () => (
