@@ -52,15 +52,15 @@ const LEVEL_COLORS: Record<number, string> = {
 
 const AdminGamification = () => {
   const navigate = useNavigate();
-  const { isStaff, loading: authLoading } = useAuth();
+  const { isStaff, loading: authLoading, role: userRole } = useAuth();
   const [users, setUsers] = useState<RankedUser[]>([]);
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState('');
   const [selectedUser, setSelectedUser] = useState<RankedUser | null>(null);
 
   useEffect(() => {
-    if (!authLoading && !isStaff) navigate('/', { replace: true });
-  }, [authLoading, isStaff]);
+    if (!authLoading && userRole !== null && !isStaff) navigate('/', { replace: true });
+  }, [authLoading, isStaff, userRole]);
 
   useEffect(() => {
     if (!isStaff) return;
@@ -112,7 +112,7 @@ const AdminGamification = () => {
     count: users.filter(u => u.level === l).length,
   }));
 
-  if (authLoading || loading) {
+  if (authLoading || loading || userRole === null) {
     return (
       <div className="min-h-screen bg-background pb-24">
         <Header title="Ranking Gamificação" showBack />
