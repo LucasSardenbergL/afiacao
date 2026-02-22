@@ -8,7 +8,7 @@ import { KanbanBoard } from '@/components/KanbanBoard';
 import { supabase } from '@/integrations/supabase/client';
 import { useAuth } from '@/contexts/AuthContext';
 import { useToast } from '@/hooks/use-toast';
-import { Loader2, Users, ChevronRight, Clock, MapPin, Mail, BarChart3, Trophy, Gamepad2 } from 'lucide-react';
+import { Loader2, Users, ChevronRight, Clock, MapPin, Mail, BarChart3, Trophy, Gamepad2, BookOpen } from 'lucide-react';
 
 interface OrderWithProfile {
   id: string;
@@ -231,6 +231,18 @@ const Admin = () => {
               <span className="text-rose-900">Ranking de Gamificação</span>
             </div>
             <ChevronRight className="w-4 h-4 text-rose-600" />
+          </Button>
+          
+          <Button 
+            variant="outline" 
+            className="w-full justify-between border-teal-300 bg-teal-50 hover:bg-teal-100"
+            onClick={() => navigate('/admin/training')}
+          >
+            <div className="flex items-center gap-2">
+              <BookOpen className="w-4 h-4 text-teal-600" />
+              <span className="text-teal-900">Treinamentos Técnicos</span>
+            </div>
+            <ChevronRight className="w-4 h-4 text-teal-600" />
           </Button>
         </div>
 

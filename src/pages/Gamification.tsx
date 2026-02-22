@@ -226,14 +226,18 @@ const Gamification = () => {
         </div>
 
         {/* Quick Actions */}
-        <div className="grid grid-cols-2 gap-3">
+        <div className="grid grid-cols-3 gap-3">
           <Button variant="outline" className="h-auto py-3 flex-col gap-1" onClick={() => navigate('/tools')}>
             <Target className="w-5 h-5" />
-            <span className="text-xs">Minhas Ferramentas</span>
+            <span className="text-xs">Ferramentas</span>
+          </Button>
+          <Button variant="outline" className="h-auto py-3 flex-col gap-1" onClick={() => navigate('/training')}>
+            <BookOpen className="w-5 h-5" />
+            <span className="text-xs">Treinamentos</span>
           </Button>
           <Button variant="outline" className="h-auto py-3 flex-col gap-1" onClick={() => navigate('/loyalty')}>
             <Trophy className="w-5 h-5" />
-            <span className="text-xs">Pontos de Fidelidade</span>
+            <span className="text-xs">Fidelidade</span>
           </Button>
         </div>
       </main>

@@ -32,6 +32,8 @@ import SavingsDashboard from "./pages/SavingsDashboard";
 import Loyalty from "./pages/Loyalty";
 import ToolHistory from "./pages/ToolHistory";
 import ToolPublicHistory from "./pages/ToolPublicHistory";
+import AdminTraining from "./pages/AdminTraining";
+import Training from "./pages/Training";
 import NotFound from "./pages/NotFound";
 
 const queryClient = new QueryClient();
@@ -235,6 +237,22 @@ const App = () => (
               element={
                 <ProtectedRoute>
                   <ToolHistory />
+                </ProtectedRoute>
+              }
+            />
+            <Route
+              path="/admin/training"
+              element={
+                <ProtectedRoute>
+                  <AdminTraining />
+                </ProtectedRoute>
+              }
+            />
+            <Route
+              path="/training"
+              element={
+                <ProtectedRoute>
+                  <Training />
                 </ProtectedRoute>
               }
             />
