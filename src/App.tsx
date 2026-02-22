@@ -34,6 +34,7 @@ import ToolHistory from "./pages/ToolHistory";
 import ToolPublicHistory from "./pages/ToolPublicHistory";
 import ToolReports from "./pages/ToolReports";
 import AdminTraining from "./pages/AdminTraining";
+import AdminPriceTable from "./pages/AdminPriceTable";
 import Training from "./pages/Training";
 import NotFound from "./pages/NotFound";
 
@@ -263,6 +264,14 @@ const App = () => (
               element={
                 <ProtectedRoute>
                   <Training />
+                </ProtectedRoute>
+              }
+            />
+            <Route
+              path="/admin/price-table"
+              element={
+                <ProtectedRoute>
+                  <AdminPriceTable />
                 </ProtectedRoute>
               }
             />
