@@ -292,12 +292,15 @@ async function criarOrdemServicoOmie(
     
     return {
       nQtdeParc: dias.length,
-      parcelas: dias.map((d, i) => ({
-        nParcela: i + 1,
-        dDtVenc: formatDate(addDays(hoje, d)),
-        nPercentual: i === dias.length - 1 ? Math.round((100 - percentual * (dias.length - 1)) * 100) / 100 : percentual,
-        nValor: 0,
-      })),
+      parcelas: dias.map((d, i) => {
+        const parc: Record<string, unknown> = {
+          nParcela: i + 1,
+          dDtVenc: formatDate(addDays(hoje, d)),
+          nPercentual: i === dias.length - 1 ? Math.round((100 - percentual * (dias.length - 1)) * 100) / 100 : percentual,
+        };
+        // Omie exige nValor > 0 se presente; omitir quando total é 0 (preço ainda não definido)
+        return parc;
+      }),
     };
   };
   
