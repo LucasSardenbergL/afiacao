@@ -37,7 +37,7 @@ const emptyQuestion: QuizQuestion = { question: '', options: ['', '', '', ''], c
 
 const AdminTraining = () => {
   const navigate = useNavigate();
-  const { isAdmin, loading: authLoading } = useAuth();
+  const { isStaff, loading: authLoading } = useAuth();
   const { toast } = useToast();
 
   const [modules, setModules] = useState<TrainingModule[]>([]);
@@ -56,8 +56,8 @@ const AdminTraining = () => {
   const [questions, setQuestions] = useState<QuizQuestion[]>([{ ...emptyQuestion }]);
 
   useEffect(() => {
-    if (!authLoading && !isAdmin) navigate('/', { replace: true });
-  }, [authLoading, isAdmin, navigate]);
+    if (!authLoading && !isStaff) navigate('/', { replace: true });
+  }, [authLoading, isStaff, navigate]);
 
   useEffect(() => {
     loadModules();
