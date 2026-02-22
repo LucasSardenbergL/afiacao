@@ -112,6 +112,51 @@ export type Database = {
         }
         Relationships: []
       }
+      gamification_scores: {
+        Row: {
+          consistency_score: number
+          education_score: number
+          efficiency_score: number
+          id: string
+          level: number
+          level_name: string
+          organization_score: number
+          referral_score: number
+          tool_health_index: number
+          total_score: number
+          updated_at: string
+          user_id: string
+        }
+        Insert: {
+          consistency_score?: number
+          education_score?: number
+          efficiency_score?: number
+          id?: string
+          level?: number
+          level_name?: string
+          organization_score?: number
+          referral_score?: number
+          tool_health_index?: number
+          total_score?: number
+          updated_at?: string
+          user_id: string
+        }
+        Update: {
+          consistency_score?: number
+          education_score?: number
+          efficiency_score?: number
+          id?: string
+          level?: number
+          level_name?: string
+          organization_score?: number
+          referral_score?: number
+          tool_health_index?: number
+          total_score?: number
+          updated_at?: string
+          user_id?: string
+        }
+        Relationships: []
+      }
       loyalty_points: {
         Row: {
           created_at: string
@@ -512,6 +557,86 @@ export type Database = {
           },
         ]
       }
+      referrals: {
+        Row: {
+          converted_at: string | null
+          created_at: string
+          id: string
+          points_awarded: boolean
+          referred_email: string
+          referred_user_id: string | null
+          referrer_id: string
+          status: string
+        }
+        Insert: {
+          converted_at?: string | null
+          created_at?: string
+          id?: string
+          points_awarded?: boolean
+          referred_email: string
+          referred_user_id?: string | null
+          referrer_id: string
+          status?: string
+        }
+        Update: {
+          converted_at?: string | null
+          created_at?: string
+          id?: string
+          points_awarded?: boolean
+          referred_email?: string
+          referred_user_id?: string | null
+          referrer_id?: string
+          status?: string
+        }
+        Relationships: []
+      }
+      sending_quality_logs: {
+        Row: {
+          created_at: string
+          evaluated_by: string | null
+          id: string
+          is_clean: boolean
+          is_identified: boolean
+          is_properly_packed: boolean
+          is_separated: boolean
+          order_id: string
+          score: number
+          user_id: string
+        }
+        Insert: {
+          created_at?: string
+          evaluated_by?: string | null
+          id?: string
+          is_clean?: boolean
+          is_identified?: boolean
+          is_properly_packed?: boolean
+          is_separated?: boolean
+          order_id: string
+          score?: number
+          user_id: string
+        }
+        Update: {
+          created_at?: string
+          evaluated_by?: string | null
+          id?: string
+          is_clean?: boolean
+          is_identified?: boolean
+          is_properly_packed?: boolean
+          is_separated?: boolean
+          order_id?: string
+          score?: number
+          user_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "sending_quality_logs_order_id_fkey"
+            columns: ["order_id"]
+            isOneToOne: false
+            referencedRelation: "orders"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       tool_categories: {
         Row: {
           created_at: string
@@ -633,6 +758,77 @@ export type Database = {
             referencedColumns: ["id"]
           },
         ]
+      }
+      training_completions: {
+        Row: {
+          completed_at: string
+          id: string
+          module_id: string
+          passed: boolean
+          quiz_score: number
+          user_id: string
+        }
+        Insert: {
+          completed_at?: string
+          id?: string
+          module_id: string
+          passed?: boolean
+          quiz_score?: number
+          user_id: string
+        }
+        Update: {
+          completed_at?: string
+          id?: string
+          module_id?: string
+          passed?: boolean
+          quiz_score?: number
+          user_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "training_completions_module_id_fkey"
+            columns: ["module_id"]
+            isOneToOne: false
+            referencedRelation: "training_modules"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      training_modules: {
+        Row: {
+          created_at: string
+          description: string | null
+          id: string
+          is_active: boolean
+          min_score: number
+          points_reward: number
+          quiz_questions: Json
+          title: string
+          video_url: string | null
+        }
+        Insert: {
+          created_at?: string
+          description?: string | null
+          id?: string
+          is_active?: boolean
+          min_score?: number
+          points_reward?: number
+          quiz_questions?: Json
+          title: string
+          video_url?: string | null
+        }
+        Update: {
+          created_at?: string
+          description?: string | null
+          id?: string
+          is_active?: boolean
+          min_score?: number
+          points_reward?: number
+          quiz_questions?: Json
+          title?: string
+          video_url?: string | null
+        }
+        Relationships: []
       }
       user_roles: {
         Row: {
