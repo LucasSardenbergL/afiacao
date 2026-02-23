@@ -96,13 +96,19 @@ const SalesProducts = () => {
   const syncStock = async () => {
     setSyncingStock(true);
     try {
-      const { data, error } = await supabase.functions.invoke('omie-vendas-sync', {
-        body: { action: 'sync_estoque' },
-      });
-      if (error) throw error;
+      let nextPage: number | null = 1;
+      let totalUpdated = 0;
+      while (nextPage) {
+        const { data, error } = await supabase.functions.invoke('omie-vendas-sync', {
+          body: { action: 'sync_estoque', start_page: nextPage },
+        });
+        if (error) throw error;
+        totalUpdated += data.totalUpdated || 0;
+        nextPage = data.nextPage || null;
+      }
       toast({
         title: 'Estoque atualizado!',
-        description: `${data.totalUpdated} produtos com estoque atualizado.`,
+        description: `${totalUpdated} produtos com estoque atualizado.`,
       });
       await loadProducts();
     } catch (error: any) {
