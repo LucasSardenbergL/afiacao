@@ -109,6 +109,82 @@ async function syncProducts(supabase: ReturnType<typeof createClient>) {
   return totalSynced;
 }
 
+// Buscar/listar clientes na empresa de vendas
+async function listarClientesVendas(searchTerm: string) {
+  const results: Array<{
+    codigo_cliente: number;
+    razao_social: string;
+    nome_fantasia: string;
+    cnpj_cpf: string;
+    codigo_vendedor: number | null;
+  }> = [];
+
+  // Try searching by name first
+  try {
+    const result = await callOmieVendasApi(
+      "geral/clientes/",
+      "ListarClientes",
+      {
+        pagina: 1,
+        registros_por_pagina: 20,
+        clientesFiltro: {
+          razao_social: searchTerm,
+        },
+      }
+    ) as any;
+
+    if (result.clientes_cadastro) {
+      for (const c of result.clientes_cadastro) {
+        results.push({
+          codigo_cliente: c.codigo_cliente_omie,
+          razao_social: c.razao_social || "",
+          nome_fantasia: c.nome_fantasia || "",
+          cnpj_cpf: c.cnpj_cpf || "",
+          codigo_vendedor: c.codigo_vendedor || null,
+        });
+      }
+    }
+  } catch (e) {
+    console.log("[Omie Vendas] Busca por razão social falhou:", e);
+  }
+
+  // Also try by document if search looks like a number
+  const cleanSearch = searchTerm.replace(/\D/g, "");
+  if (cleanSearch.length >= 3 && results.length === 0) {
+    try {
+      const result = await callOmieVendasApi(
+        "geral/clientes/",
+        "ListarClientes",
+        {
+          pagina: 1,
+          registros_por_pagina: 10,
+          clientesFiltro: {
+            cnpj_cpf: cleanSearch,
+          },
+        }
+      ) as any;
+
+      if (result.clientes_cadastro) {
+        for (const c of result.clientes_cadastro) {
+          if (!results.find(r => r.codigo_cliente === c.codigo_cliente_omie)) {
+            results.push({
+              codigo_cliente: c.codigo_cliente_omie,
+              razao_social: c.razao_social || "",
+              nome_fantasia: c.nome_fantasia || "",
+              cnpj_cpf: c.cnpj_cpf || "",
+              codigo_vendedor: c.codigo_vendedor || null,
+            });
+          }
+        }
+      }
+    } catch (e) {
+      console.log("[Omie Vendas] Busca por documento falhou:", e);
+    }
+  }
+
+  return results;
+}
+
 // Buscar cliente na empresa de vendas pelo CPF/CNPJ
 async function buscarClienteVendas(document: string) {
   const documentClean = document.replace(/\D/g, "");
@@ -287,6 +363,14 @@ serve(async (req) => {
       case "sync_products": {
         const totalSynced = await syncProducts(supabase);
         result = { success: true, totalSynced };
+        break;
+      }
+
+      case "listar_clientes": {
+        const { search } = params;
+        if (!search || String(search).length < 2) throw new Error("Busca deve ter ao menos 2 caracteres");
+        const clientes = await listarClientesVendas(String(search));
+        result = { success: true, clientes };
         break;
       }
 

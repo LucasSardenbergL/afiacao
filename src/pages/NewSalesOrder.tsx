@@ -32,8 +32,15 @@ interface CartItem {
   unit_price: number;
 }
 
+interface OmieCustomer {
+  codigo_cliente: number;
+  razao_social: string;
+  nome_fantasia: string;
+  cnpj_cpf: string;
+  codigo_vendedor: number | null;
+}
+
 interface SelectedCustomer {
-  user_id: string;
   name: string;
   document: string;
   omie_codigo_cliente: number;
@@ -47,9 +54,10 @@ const NewSalesOrder = () => {
 
   // Customer selection
   const [customerSearch, setCustomerSearch] = useState('');
-  const [customers, setCustomers] = useState<Array<{ user_id: string; name: string; document: string | null }>>([]);
+  const [customers, setCustomers] = useState<OmieCustomer[]>([]);
   const [selectedCustomer, setSelectedCustomer] = useState<SelectedCustomer | null>(null);
   const [loadingCustomer, setLoadingCustomer] = useState(false);
+  const [searchingCustomers, setSearchingCustomers] = useState(false);
 
   // Products
   const [products, setProducts] = useState<Product[]>([]);
@@ -87,79 +95,51 @@ const NewSalesOrder = () => {
     }
   };
 
-  // Search customers
+  // Search customers from Omie Vendas API
   useEffect(() => {
     if (customerSearch.length < 2) {
       setCustomers([]);
       return;
     }
     const timeout = setTimeout(async () => {
-      const { data } = await supabase
-        .from('profiles')
-        .select('user_id, name, document')
-        .or(`name.ilike.%${customerSearch}%,document.ilike.%${customerSearch}%`)
-        .limit(10);
-      setCustomers((data || []) as any);
-    }, 300);
+      setSearchingCustomers(true);
+      try {
+        const { data, error } = await supabase.functions.invoke('omie-vendas-sync', {
+          body: { action: 'listar_clientes', search: customerSearch },
+        });
+        if (!error && data?.clientes) {
+          setCustomers(data.clientes);
+        }
+      } catch (e) {
+        console.error('Erro ao buscar clientes:', e);
+      } finally {
+        setSearchingCustomers(false);
+      }
+    }, 500);
     return () => clearTimeout(timeout);
   }, [customerSearch]);
 
-  // Select customer and fetch Omie data + price history
-  const selectCustomer = async (cust: { user_id: string; name: string; document: string | null }) => {
-    if (!cust.document) {
-      toast({ title: 'Cliente sem documento', description: 'Esse cliente não possui CPF/CNPJ cadastrado.', variant: 'destructive' });
-      return;
-    }
+  // Select customer from Omie results
+  const selectCustomer = async (cust: OmieCustomer) => {
     setLoadingCustomer(true);
     setCustomerSearch('');
     setCustomers([]);
 
     try {
-      // Buscar cliente na empresa de vendas
-      const { data, error } = await supabase.functions.invoke('omie-vendas-sync', {
-        body: { action: 'buscar_cliente', document: cust.document },
-      });
-
-      if (error) throw error;
-      if (!data?.cliente) {
-        toast({ title: 'Cliente não encontrado', description: 'Este cliente não está cadastrado na empresa de vendas do Omie.', variant: 'destructive' });
-        setLoadingCustomer(false);
-        return;
-      }
-
       const selected: SelectedCustomer = {
-        user_id: cust.user_id,
-        name: cust.name,
-        document: cust.document,
-        omie_codigo_cliente: data.cliente.codigo_cliente,
-        omie_codigo_vendedor: data.cliente.codigo_vendedor,
+        name: cust.nome_fantasia || cust.razao_social,
+        document: cust.cnpj_cpf,
+        omie_codigo_cliente: cust.codigo_cliente,
+        omie_codigo_vendedor: cust.codigo_vendedor,
       };
       setSelectedCustomer(selected);
 
       // Buscar histórico de preços desse cliente
       const { data: priceData } = await supabase.functions.invoke('omie-vendas-sync', {
-        body: { action: 'buscar_precos_cliente', codigo_cliente: data.cliente.codigo_cliente },
+        body: { action: 'buscar_precos_cliente', codigo_cliente: cust.codigo_cliente },
       });
       if (priceData?.precos) {
         setCustomerPrices(priceData.precos);
-      }
-
-      // Also load from local price history
-      const { data: localPrices } = await supabase
-        .from('sales_price_history')
-        .select('product_id, unit_price, created_at')
-        .eq('customer_user_id', cust.user_id)
-        .order('created_at', { ascending: false });
-
-      if (localPrices?.length) {
-        const localMap: Record<string, number> = {};
-        for (const lp of localPrices) {
-          if (!localMap[lp.product_id]) {
-            localMap[lp.product_id] = lp.unit_price;
-          }
-        }
-        // Merge local prices (by product id) - these override if product has a match
-        // We'll use this when adding items to cart
       }
     } catch (error: any) {
       console.error(error);
@@ -168,6 +148,8 @@ const NewSalesOrder = () => {
       setLoadingCustomer(false);
     }
   };
+
+
 
   // Get price for a product for the selected customer
   const getProductPrice = useCallback((product: Product): number => {
@@ -243,7 +225,7 @@ const NewSalesOrder = () => {
       const { data: salesOrder, error: insertError } = await supabase
         .from('sales_orders')
         .insert({
-          customer_user_id: selectedCustomer.user_id,
+          customer_user_id: user.id,
           created_by: user.id,
           items: itemsPayload,
           subtotal,
@@ -280,15 +262,8 @@ const NewSalesOrder = () => {
           variant: 'destructive',
         });
       } else {
-        // Save price history
-        for (const c of cart) {
-          await supabase.from('sales_price_history').insert({
-            customer_user_id: selectedCustomer.user_id,
-            product_id: c.product.id,
-            unit_price: c.unit_price,
-            sales_order_id: salesOrder.id,
-          });
-        }
+        // Save price history (skip local history since customer may not be in app)
+
 
         toast({
           title: 'Pedido de venda criado!',
@@ -352,22 +327,22 @@ const NewSalesOrder = () => {
                     className="pl-9"
                   />
                 </div>
-                {loadingCustomer && (
+                {(loadingCustomer || searchingCustomers) && (
                   <div className="flex items-center gap-2 text-sm text-muted-foreground">
-                    <Loader2 className="w-4 h-4 animate-spin" /> Buscando cliente no Omie...
+                    <Loader2 className="w-4 h-4 animate-spin" /> Buscando clientes no Omie...
                   </div>
                 )}
                 {customers.length > 0 && (
                   <div className="border rounded-lg divide-y max-h-48 overflow-y-auto">
                     {customers.map((c) => (
                       <button
-                        key={c.user_id}
+                        key={c.codigo_cliente}
                         className="w-full text-left px-3 py-2 hover:bg-muted/50 transition-colors"
                         onClick={() => selectCustomer(c)}
                         disabled={loadingCustomer}
                       >
-                        <p className="text-sm font-medium">{c.name}</p>
-                        <p className="text-xs text-muted-foreground">{c.document || 'Sem documento'}</p>
+                        <p className="text-sm font-medium">{c.nome_fantasia || c.razao_social}</p>
+                        <p className="text-xs text-muted-foreground">{c.cnpj_cpf || 'Sem documento'}</p>
                       </button>
                     ))}
                   </div>
