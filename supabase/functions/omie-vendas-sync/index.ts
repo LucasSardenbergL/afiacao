@@ -337,9 +337,16 @@ serve(async (req) => {
       });
     }
 
+    // Admin client (bypasses RLS) for DB operations
+    const supabaseAdmin = createClient(
+      Deno.env.get("SUPABASE_URL")!,
+      Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!
+    );
+
+    // User client for auth validation
     const supabase = createClient(
       Deno.env.get("SUPABASE_URL")!,
-      Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!,
+      Deno.env.get("SUPABASE_ANON_KEY")!,
       { global: { headers: { Authorization: authHeader } } }
     );
 
@@ -361,7 +368,7 @@ serve(async (req) => {
 
     switch (action) {
       case "sync_products": {
-        const totalSynced = await syncProducts(supabase);
+        const totalSynced = await syncProducts(supabaseAdmin);
         result = { success: true, totalSynced };
         break;
       }
@@ -396,7 +403,7 @@ serve(async (req) => {
           throw new Error("Dados insuficientes para criar pedido de venda");
         }
         const pedido = await criarPedidoVenda(
-          supabase,
+          supabaseAdmin,
           sales_order_id,
           codigo_cliente,
           codigo_vendedor,
