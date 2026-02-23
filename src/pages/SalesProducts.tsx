@@ -49,7 +49,7 @@ const SalesProducts = () => {
       const { data, error } = await supabase
         .from('omie_products')
         .select('*')
-        .eq('ativo', true)
+        .order('ativo', { ascending: false })
         .order('descricao');
 
       if (error) throw error;
@@ -216,6 +216,11 @@ const SalesProducts = () => {
                       <p className="font-medium text-sm text-foreground truncate">
                         {product.descricao}
                       </p>
+                      {!product.ativo && (
+                        <Badge variant="destructive" className="text-[10px] mt-0.5">
+                          Inativo
+                        </Badge>
+                      )}
                       <p className="text-xs text-muted-foreground mt-0.5">
                         Cód: {product.codigo} · {product.unidade}
                       </p>
