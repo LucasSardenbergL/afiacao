@@ -36,6 +36,9 @@ import ToolReports from "./pages/ToolReports";
 import AdminTraining from "./pages/AdminTraining";
 import AdminPriceTable from "./pages/AdminPriceTable";
 import Training from "./pages/Training";
+import SalesProducts from "./pages/SalesProducts";
+import SalesOrders from "./pages/SalesOrders";
+import NewSalesOrder from "./pages/NewSalesOrder";
 import NotFound from "./pages/NotFound";
 
 
@@ -276,6 +279,30 @@ const App = () => (
               }
             />
             <Route path="/tool/:toolId" element={<ToolPublicHistory />} />
+            <Route
+              path="/sales"
+              element={
+                <ProtectedRoute>
+                  <SalesOrders />
+                </ProtectedRoute>
+              }
+            />
+            <Route
+              path="/sales/products"
+              element={
+                <ProtectedRoute>
+                  <SalesProducts />
+                </ProtectedRoute>
+              }
+            />
+            <Route
+              path="/sales/new"
+              element={
+                <ProtectedRoute>
+                  <NewSalesOrder />
+                </ProtectedRoute>
+              }
+            />
             <Route path="*" element={<NotFound />} />
           </Routes>
           <NotificationPrompt />
