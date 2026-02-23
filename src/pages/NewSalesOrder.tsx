@@ -471,6 +471,9 @@ const NewSalesOrder = () => {
                                 Preço cliente
                               </Badge>
                             )}
+                            <Badge variant={product.estoque > 0 ? 'outline' : 'destructive'} className="text-[10px] px-1 py-0">
+                              Est: {product.estoque ?? 0}
+                            </Badge>
                           </div>
                         </div>
                         <Button
