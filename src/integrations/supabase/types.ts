@@ -310,11 +310,17 @@ export type Database = {
           accepted_at: string | null
           accepted_products: Json | null
           actual_margin: number | null
+          approach_type: string | null
+          argument_effectiveness: number | null
+          argument_phone: string | null
+          argument_technical: string | null
+          argument_whatsapp: string | null
           bundle_products: Json
           bundle_type: string
           complexity_factor: number | null
           confidence: number | null
           created_at: string | null
+          customer_profile: string | null
           customer_user_id: string
           farmer_id: string
           id: string
@@ -333,11 +339,17 @@ export type Database = {
           accepted_at?: string | null
           accepted_products?: Json | null
           actual_margin?: number | null
+          approach_type?: string | null
+          argument_effectiveness?: number | null
+          argument_phone?: string | null
+          argument_technical?: string | null
+          argument_whatsapp?: string | null
           bundle_products?: Json
           bundle_type?: string
           complexity_factor?: number | null
           confidence?: number | null
           created_at?: string | null
+          customer_profile?: string | null
           customer_user_id: string
           farmer_id: string
           id?: string
@@ -356,11 +368,17 @@ export type Database = {
           accepted_at?: string | null
           accepted_products?: Json | null
           actual_margin?: number | null
+          approach_type?: string | null
+          argument_effectiveness?: number | null
+          argument_phone?: string | null
+          argument_technical?: string | null
+          argument_whatsapp?: string | null
           bundle_products?: Json
           bundle_type?: string
           complexity_factor?: number | null
           confidence?: number | null
           created_at?: string | null
+          customer_profile?: string | null
           customer_user_id?: string
           farmer_id?: string
           id?: string
