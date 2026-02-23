@@ -21,6 +21,7 @@ interface SalesOrder {
   total: number;
   status: string;
   omie_numero_pedido: string | null;
+  omie_pedido_id: number | null;
   created_at: string;
   notes: string | null;
 }
@@ -76,13 +77,19 @@ const SalesOrders = () => {
     }
   };
 
-  const deleteOrder = async (orderId: string) => {
+  const deleteOrder = async (order: SalesOrder) => {
     try {
-      const { error } = await supabase.from('sales_orders').delete().eq('id', orderId);
+      const { error } = await supabase.functions.invoke('omie-vendas-sync', {
+        body: {
+          action: 'excluir_pedido',
+          sales_order_id: order.id,
+          omie_pedido_id: order.omie_pedido_id,
+        },
+      });
       if (error) throw error;
-      setOrders((prev) => prev.filter((o) => o.id !== orderId));
+      setOrders((prev) => prev.filter((o) => o.id !== order.id));
       toast.success('Pedido excluído com sucesso');
-    } catch (e) {
+    } catch (e: any) {
       console.error(e);
       toast.error('Erro ao excluir pedido');
     }
@@ -161,7 +168,7 @@ const SalesOrders = () => {
                             </AlertDialogHeader>
                             <AlertDialogFooter>
                               <AlertDialogCancel>Cancelar</AlertDialogCancel>
-                              <AlertDialogAction onClick={() => deleteOrder(order.id)} className="bg-destructive text-destructive-foreground hover:bg-destructive/90">
+                              <AlertDialogAction onClick={() => deleteOrder(order)} className="bg-destructive text-destructive-foreground hover:bg-destructive/90">
                                 Excluir
                               </AlertDialogAction>
                             </AlertDialogFooter>
