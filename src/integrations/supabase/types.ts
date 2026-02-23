@@ -299,6 +299,57 @@ export type Database = {
         }
         Relationships: []
       }
+      omie_products: {
+        Row: {
+          ativo: boolean
+          codigo: string
+          created_at: string
+          descricao: string
+          estoque: number | null
+          id: string
+          imagem_url: string | null
+          metadata: Json | null
+          ncm: string | null
+          omie_codigo_produto: number
+          omie_codigo_produto_integracao: string | null
+          unidade: string
+          updated_at: string
+          valor_unitario: number
+        }
+        Insert: {
+          ativo?: boolean
+          codigo: string
+          created_at?: string
+          descricao: string
+          estoque?: number | null
+          id?: string
+          imagem_url?: string | null
+          metadata?: Json | null
+          ncm?: string | null
+          omie_codigo_produto: number
+          omie_codigo_produto_integracao?: string | null
+          unidade?: string
+          updated_at?: string
+          valor_unitario?: number
+        }
+        Update: {
+          ativo?: boolean
+          codigo?: string
+          created_at?: string
+          descricao?: string
+          estoque?: number | null
+          id?: string
+          imagem_url?: string | null
+          metadata?: Json | null
+          ncm?: string | null
+          omie_codigo_produto?: number
+          omie_codigo_produto_integracao?: string | null
+          unidade?: string
+          updated_at?: string
+          valor_unitario?: number
+        }
+        Relationships: []
+      }
       omie_servicos: {
         Row: {
           app_service_type: string
@@ -627,6 +678,102 @@ export type Database = {
           status?: string
         }
         Relationships: []
+      }
+      sales_orders: {
+        Row: {
+          created_at: string
+          created_by: string
+          customer_user_id: string
+          discount: number
+          id: string
+          items: Json
+          notes: string | null
+          omie_numero_pedido: string | null
+          omie_payload: Json | null
+          omie_pedido_id: number | null
+          omie_response: Json | null
+          status: string
+          subtotal: number
+          total: number
+          updated_at: string
+        }
+        Insert: {
+          created_at?: string
+          created_by: string
+          customer_user_id: string
+          discount?: number
+          id?: string
+          items?: Json
+          notes?: string | null
+          omie_numero_pedido?: string | null
+          omie_payload?: Json | null
+          omie_pedido_id?: number | null
+          omie_response?: Json | null
+          status?: string
+          subtotal?: number
+          total?: number
+          updated_at?: string
+        }
+        Update: {
+          created_at?: string
+          created_by?: string
+          customer_user_id?: string
+          discount?: number
+          id?: string
+          items?: Json
+          notes?: string | null
+          omie_numero_pedido?: string | null
+          omie_payload?: Json | null
+          omie_pedido_id?: number | null
+          omie_response?: Json | null
+          status?: string
+          subtotal?: number
+          total?: number
+          updated_at?: string
+        }
+        Relationships: []
+      }
+      sales_price_history: {
+        Row: {
+          created_at: string
+          customer_user_id: string
+          id: string
+          product_id: string
+          sales_order_id: string | null
+          unit_price: number
+        }
+        Insert: {
+          created_at?: string
+          customer_user_id: string
+          id?: string
+          product_id: string
+          sales_order_id?: string | null
+          unit_price: number
+        }
+        Update: {
+          created_at?: string
+          customer_user_id?: string
+          id?: string
+          product_id?: string
+          sales_order_id?: string | null
+          unit_price?: number
+        }
+        Relationships: [
+          {
+            foreignKeyName: "sales_price_history_product_id_fkey"
+            columns: ["product_id"]
+            isOneToOne: false
+            referencedRelation: "omie_products"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "sales_price_history_sales_order_id_fkey"
+            columns: ["sales_order_id"]
+            isOneToOne: false
+            referencedRelation: "sales_orders"
+            referencedColumns: ["id"]
+          },
+        ]
       }
       sending_quality_logs: {
         Row: {

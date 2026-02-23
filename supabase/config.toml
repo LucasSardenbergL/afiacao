@@ -23,3 +23,6 @@ verify_jwt = false
 
 [functions.process-recurring-orders]
 verify_jwt = false
+
+[functions.omie-vendas-sync]
+verify_jwt = false
