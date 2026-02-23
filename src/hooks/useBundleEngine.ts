@@ -43,6 +43,13 @@ export interface CustomerBundles {
   healthScore: number;
   bundles: BundleRecommendation[];
   bestIndividual: IndividualComparison | null;
+  avgMonthlySpend: number;
+  grossMarginPct: number;
+  categoryCount: number;
+  daysSinceLastPurchase: number;
+  cnae: string;
+  customerType: string;
+  recentProducts: string[];
 }
 
 const clamp = (v: number, lo: number, hi: number) => Math.max(lo, Math.min(hi, v));
@@ -374,12 +381,20 @@ export const useBundleEngine = () => {
         }
 
         if (topBundles.length > 0 || bestIndividual) {
+          const purchasedProducts = [...purchased].map(pid => productMap.get(pid)?.descricao).filter(Boolean);
           allCustomerBundles.push({
             customerId: cid,
             customerName: profile.name,
             healthScore,
             bundles: topBundles,
             bestIndividual,
+            avgMonthlySpend: Number(score.avg_monthly_spend_180d || 0),
+            grossMarginPct: Number(score.gross_margin_pct || 0),
+            categoryCount: Number(score.category_count || 0),
+            daysSinceLastPurchase: Number(score.days_since_last_purchase || 0),
+            cnae: profile.cnae || '',
+            customerType: profile.customer_type || '',
+            recentProducts: purchasedProducts.slice(0, 5),
           });
         }
       }
