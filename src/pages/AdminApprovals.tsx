@@ -23,23 +23,25 @@ interface PendingUser {
 
 const AdminApprovals = () => {
   const navigate = useNavigate();
-  const { user, isAdmin, loading: authLoading } = useAuth();
+  const { user, isStaff, loading: authLoading } = useAuth();
   const { toast } = useToast();
   const [pendingUsers, setPendingUsers] = useState<PendingUser[]>([]);
   const [loading, setLoading] = useState(true);
   const [processing, setProcessing] = useState<string | null>(null);
 
-  useEffect(() => {
-    if (!authLoading && !isAdmin) {
-      navigate('/', { replace: true });
-    }
-  }, [authLoading, isAdmin, navigate]);
+  
 
   useEffect(() => {
-    if (user && isAdmin) {
+    if (!authLoading && !isStaff) {
+      navigate('/', { replace: true });
+    }
+  }, [authLoading, isStaff, navigate]);
+
+  useEffect(() => {
+    if (user && isStaff) {
       loadPendingUsers();
     }
-  }, [user, isAdmin]);
+  }, [user, isStaff]);
 
   const loadPendingUsers = async () => {
     try {

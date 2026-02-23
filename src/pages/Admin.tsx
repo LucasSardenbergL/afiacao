@@ -149,19 +149,17 @@ const Admin = () => {
       <main className="pt-16 px-4 max-w-4xl mx-auto">
         {/* Quick actions */}
         <div className="space-y-2 mb-6">
-          {isAdmin && (
-            <Button 
-              variant="outline" 
-              className="w-full justify-between border-orange-300 bg-orange-50 hover:bg-orange-100"
-              onClick={() => navigate('/admin/approvals')}
-            >
-              <div className="flex items-center gap-2">
-                <Users className="w-4 h-4 text-orange-600" />
-                <span className="text-orange-900">Aprovação de Cadastros</span>
-              </div>
-              <ChevronRight className="w-4 h-4 text-orange-600" />
-            </Button>
-          )}
+          <Button 
+            variant="outline" 
+            className="w-full justify-between border-orange-300 bg-orange-50 hover:bg-orange-100"
+            onClick={() => navigate('/admin/approvals')}
+          >
+            <div className="flex items-center gap-2">
+              <Users className="w-4 h-4 text-orange-600" />
+              <span className="text-orange-900">Aprovação de Cadastros</span>
+            </div>
+            <ChevronRight className="w-4 h-4 text-orange-600" />
+          </Button>
           <Button 
             variant="outline" 
             className="w-full justify-between"
