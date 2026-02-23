@@ -487,6 +487,125 @@ export type Database = {
         }
         Relationships: []
       }
+      farmer_experiment_clients: {
+        Row: {
+          calls_count: number | null
+          created_at: string | null
+          customer_user_id: string
+          experiment_id: string
+          group_type: string
+          id: string
+          margin_generated: number | null
+          metric_value: number | null
+          revenue_generated: number | null
+          total_time_seconds: number | null
+          updated_at: string | null
+        }
+        Insert: {
+          calls_count?: number | null
+          created_at?: string | null
+          customer_user_id: string
+          experiment_id: string
+          group_type: string
+          id?: string
+          margin_generated?: number | null
+          metric_value?: number | null
+          revenue_generated?: number | null
+          total_time_seconds?: number | null
+          updated_at?: string | null
+        }
+        Update: {
+          calls_count?: number | null
+          created_at?: string | null
+          customer_user_id?: string
+          experiment_id?: string
+          group_type?: string
+          id?: string
+          margin_generated?: number | null
+          metric_value?: number | null
+          revenue_generated?: number | null
+          total_time_seconds?: number | null
+          updated_at?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "farmer_experiment_clients_experiment_id_fkey"
+            columns: ["experiment_id"]
+            isOneToOne: false
+            referencedRelation: "farmer_experiments"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      farmer_experiments: {
+        Row: {
+          control_description: string | null
+          control_metric_value: number | null
+          created_at: string | null
+          ended_at: string | null
+          farmer_id: string
+          hypothesis: string
+          id: string
+          lift_pct: number | null
+          min_duration_days: number
+          min_sample_size: number
+          min_significance: number
+          p_value: number | null
+          primary_metric: string
+          started_at: string | null
+          status: string
+          test_description: string | null
+          test_metric_value: number | null
+          title: string
+          updated_at: string | null
+          winner: string | null
+        }
+        Insert: {
+          control_description?: string | null
+          control_metric_value?: number | null
+          created_at?: string | null
+          ended_at?: string | null
+          farmer_id: string
+          hypothesis: string
+          id?: string
+          lift_pct?: number | null
+          min_duration_days?: number
+          min_sample_size?: number
+          min_significance?: number
+          p_value?: number | null
+          primary_metric: string
+          started_at?: string | null
+          status?: string
+          test_description?: string | null
+          test_metric_value?: number | null
+          title: string
+          updated_at?: string | null
+          winner?: string | null
+        }
+        Update: {
+          control_description?: string | null
+          control_metric_value?: number | null
+          created_at?: string | null
+          ended_at?: string | null
+          farmer_id?: string
+          hypothesis?: string
+          id?: string
+          lift_pct?: number | null
+          min_duration_days?: number
+          min_sample_size?: number
+          min_significance?: number
+          p_value?: number | null
+          primary_metric?: string
+          started_at?: string | null
+          status?: string
+          test_description?: string | null
+          test_metric_value?: number | null
+          title?: string
+          updated_at?: string | null
+          winner?: string | null
+        }
+        Relationships: []
+      }
       farmer_governance_proposals: {
         Row: {
           algorithm_version: string | null

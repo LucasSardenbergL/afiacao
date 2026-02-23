@@ -74,9 +74,9 @@ const FarmerDashboard = () => {
             <Zap className="w-4 h-4" />
             <span className="text-[10px]">Cross/Up</span>
           </Button>
-          <Button size="sm" variant="outline" onClick={recalculate} disabled={calculating} className="h-auto py-3 flex flex-col items-center gap-1">
-            {calculating ? <Loader2 className="w-4 h-4 animate-spin" /> : <RefreshCw className="w-4 h-4" />}
-            <span className="text-[10px]">Recalcular</span>
+          <Button size="sm" variant="outline" onClick={() => navigate('/farmer/locc')} className="h-auto py-3 flex flex-col items-center gap-1">
+            <Activity className="w-4 h-4" />
+            <span className="text-[10px]">LOCC</span>
           </Button>
         </div>
 
