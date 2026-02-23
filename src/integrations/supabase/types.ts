@@ -331,6 +331,45 @@ export type Database = {
           },
         ]
       }
+      farmer_category_conversion: {
+        Row: {
+          avg_margin_generated: number | null
+          avg_time_spent_seconds: number | null
+          category_id: string
+          complexity_factor: number | null
+          conversion_rate: number | null
+          id: string
+          profit_per_hour: number | null
+          total_accepts: number | null
+          total_offers: number | null
+          updated_at: string | null
+        }
+        Insert: {
+          avg_margin_generated?: number | null
+          avg_time_spent_seconds?: number | null
+          category_id: string
+          complexity_factor?: number | null
+          conversion_rate?: number | null
+          id?: string
+          profit_per_hour?: number | null
+          total_accepts?: number | null
+          total_offers?: number | null
+          updated_at?: string | null
+        }
+        Update: {
+          avg_margin_generated?: number | null
+          avg_time_spent_seconds?: number | null
+          category_id?: string
+          complexity_factor?: number | null
+          conversion_rate?: number | null
+          id?: string
+          profit_per_hour?: number | null
+          total_accepts?: number | null
+          total_offers?: number | null
+          updated_at?: string | null
+        }
+        Relationships: []
+      }
       farmer_client_scores: {
         Row: {
           answer_rate_60d: number | null
@@ -561,6 +600,87 @@ export type Database = {
           weight_recency?: number | null
         }
         Relationships: []
+      }
+      farmer_recommendations: {
+        Row: {
+          accepted_at: string | null
+          actual_margin: number | null
+          cluster_volume_estimate: number | null
+          complexity_factor: number | null
+          created_at: string | null
+          current_product_id: string | null
+          customer_user_id: string
+          farmer_id: string
+          id: string
+          lie: number | null
+          m_ij: number | null
+          offered_at: string | null
+          p_ij: number | null
+          product_id: string | null
+          recommendation_type: string
+          rejected_at: string | null
+          status: string | null
+          time_spent_seconds: number | null
+          updated_at: string | null
+        }
+        Insert: {
+          accepted_at?: string | null
+          actual_margin?: number | null
+          cluster_volume_estimate?: number | null
+          complexity_factor?: number | null
+          created_at?: string | null
+          current_product_id?: string | null
+          customer_user_id: string
+          farmer_id: string
+          id?: string
+          lie?: number | null
+          m_ij?: number | null
+          offered_at?: string | null
+          p_ij?: number | null
+          product_id?: string | null
+          recommendation_type: string
+          rejected_at?: string | null
+          status?: string | null
+          time_spent_seconds?: number | null
+          updated_at?: string | null
+        }
+        Update: {
+          accepted_at?: string | null
+          actual_margin?: number | null
+          cluster_volume_estimate?: number | null
+          complexity_factor?: number | null
+          created_at?: string | null
+          current_product_id?: string | null
+          customer_user_id?: string
+          farmer_id?: string
+          id?: string
+          lie?: number | null
+          m_ij?: number | null
+          offered_at?: string | null
+          p_ij?: number | null
+          product_id?: string | null
+          recommendation_type?: string
+          rejected_at?: string | null
+          status?: string | null
+          time_spent_seconds?: number | null
+          updated_at?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "farmer_recommendations_current_product_id_fkey"
+            columns: ["current_product_id"]
+            isOneToOne: false
+            referencedRelation: "omie_products"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "farmer_recommendations_product_id_fkey"
+            columns: ["product_id"]
+            isOneToOne: false
+            referencedRelation: "omie_products"
+            referencedColumns: ["id"]
+          },
+        ]
       }
       gamification_scores: {
         Row: {

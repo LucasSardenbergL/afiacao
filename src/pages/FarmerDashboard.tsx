@@ -61,7 +61,7 @@ const FarmerDashboard = () => {
 
       <main className="px-4 py-4 space-y-4 max-w-lg mx-auto">
         {/* Quick Actions */}
-        <div className="grid grid-cols-3 gap-2">
+        <div className="grid grid-cols-4 gap-2">
           <Button size="sm" onClick={() => navigate('/farmer/calls')} className="h-auto py-3 flex flex-col items-center gap-1">
             <Phone className="w-4 h-4" />
             <span className="text-[10px]">Ligações</span>
@@ -69,6 +69,10 @@ const FarmerDashboard = () => {
           <Button size="sm" variant="outline" onClick={() => navigate('/farmer/governance')} className="h-auto py-3 flex flex-col items-center gap-1">
             <Shield className="w-4 h-4" />
             <span className="text-[10px]">Governança</span>
+          </Button>
+          <Button size="sm" variant="outline" onClick={() => navigate('/farmer/recommendations')} className="h-auto py-3 flex flex-col items-center gap-1">
+            <Zap className="w-4 h-4" />
+            <span className="text-[10px]">Cross/Up</span>
           </Button>
           <Button size="sm" variant="outline" onClick={recalculate} disabled={calculating} className="h-auto py-3 flex flex-col items-center gap-1">
             {calculating ? <Loader2 className="w-4 h-4 animate-spin" /> : <RefreshCw className="w-4 h-4" />}

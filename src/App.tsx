@@ -43,6 +43,7 @@ import NewSalesOrder from "./pages/NewSalesOrder";
 import FarmerDashboard from "./pages/FarmerDashboard";
 import FarmerCalls from "./pages/FarmerCalls";
 import FarmerGovernance from "./pages/FarmerGovernance";
+import FarmerRecommendations from "./pages/FarmerRecommendations";
 import NotFound from "./pages/NotFound";
 
 
@@ -329,6 +330,14 @@ const App = () => (
               element={
                 <ProtectedRoute>
                   <FarmerGovernance />
+                </ProtectedRoute>
+              }
+            />
+            <Route
+              path="/farmer/recommendations"
+              element={
+                <ProtectedRoute>
+                  <FarmerRecommendations />
                 </ProtectedRoute>
               }
             />
