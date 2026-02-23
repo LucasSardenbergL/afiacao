@@ -42,6 +42,7 @@ import SalesOrders from "./pages/SalesOrders";
 import NewSalesOrder from "./pages/NewSalesOrder";
 import FarmerDashboard from "./pages/FarmerDashboard";
 import FarmerCalls from "./pages/FarmerCalls";
+import FarmerGovernance from "./pages/FarmerGovernance";
 import NotFound from "./pages/NotFound";
 
 
@@ -320,6 +321,14 @@ const App = () => (
               element={
                 <ProtectedRoute>
                   <FarmerCalls />
+                </ProtectedRoute>
+              }
+            />
+            <Route
+              path="/farmer/governance"
+              element={
+                <ProtectedRoute>
+                  <FarmerGovernance />
                 </ProtectedRoute>
               }
             />
