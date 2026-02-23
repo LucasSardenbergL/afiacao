@@ -150,6 +150,119 @@ export type Database = {
           },
         ]
       }
+      farmer_agenda: {
+        Row: {
+          agenda_date: string
+          agenda_type: string
+          call_id: string | null
+          completed_at: string | null
+          created_at: string | null
+          customer_user_id: string
+          farmer_id: string
+          id: string
+          priority_score: number | null
+          status: string | null
+        }
+        Insert: {
+          agenda_date?: string
+          agenda_type?: string
+          call_id?: string | null
+          completed_at?: string | null
+          created_at?: string | null
+          customer_user_id: string
+          farmer_id: string
+          id?: string
+          priority_score?: number | null
+          status?: string | null
+        }
+        Update: {
+          agenda_date?: string
+          agenda_type?: string
+          call_id?: string | null
+          completed_at?: string | null
+          created_at?: string | null
+          customer_user_id?: string
+          farmer_id?: string
+          id?: string
+          priority_score?: number | null
+          status?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "farmer_agenda_call_id_fkey"
+            columns: ["call_id"]
+            isOneToOne: false
+            referencedRelation: "farmer_calls"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      farmer_algorithm_config: {
+        Row: {
+          description: string | null
+          id: string
+          key: string
+          updated_at: string | null
+          value: number
+        }
+        Insert: {
+          description?: string | null
+          id?: string
+          key: string
+          updated_at?: string | null
+          value: number
+        }
+        Update: {
+          description?: string | null
+          id?: string
+          key?: string
+          updated_at?: string | null
+          value?: number
+        }
+        Relationships: []
+      }
+      farmer_audit_log: {
+        Row: {
+          action: string
+          algorithm_version: string | null
+          created_at: string | null
+          entity_id: string | null
+          entity_type: string
+          id: string
+          new_params: Json | null
+          notes: string | null
+          performed_by: string
+          previous_params: Json | null
+          projection: Json | null
+        }
+        Insert: {
+          action: string
+          algorithm_version?: string | null
+          created_at?: string | null
+          entity_id?: string | null
+          entity_type: string
+          id?: string
+          new_params?: Json | null
+          notes?: string | null
+          performed_by: string
+          previous_params?: Json | null
+          projection?: Json | null
+        }
+        Update: {
+          action?: string
+          algorithm_version?: string | null
+          created_at?: string | null
+          entity_id?: string | null
+          entity_type?: string
+          id?: string
+          new_params?: Json | null
+          notes?: string | null
+          performed_by?: string
+          previous_params?: Json | null
+          projection?: Json | null
+        }
+        Relationships: []
+      }
       farmer_calls: {
         Row: {
           attempt_number: number | null
@@ -162,11 +275,13 @@ export type Database = {
           farmer_id: string
           follow_up_duration_seconds: number | null
           id: string
+          is_whatsapp: boolean | null
           linked_sales_order_id: string | null
           margin_generated: number | null
           notes: string | null
           revenue_generated: number | null
           started_at: string
+          whatsapp_replied: boolean | null
         }
         Insert: {
           attempt_number?: number | null
@@ -179,11 +294,13 @@ export type Database = {
           farmer_id: string
           follow_up_duration_seconds?: number | null
           id?: string
+          is_whatsapp?: boolean | null
           linked_sales_order_id?: string | null
           margin_generated?: number | null
           notes?: string | null
           revenue_generated?: number | null
           started_at?: string
+          whatsapp_replied?: boolean | null
         }
         Update: {
           attempt_number?: number | null
@@ -196,11 +313,13 @@ export type Database = {
           farmer_id?: string
           follow_up_duration_seconds?: number | null
           id?: string
+          is_whatsapp?: boolean | null
           linked_sales_order_id?: string | null
           margin_generated?: number | null
           notes?: string | null
           revenue_generated?: number | null
           started_at?: string
+          whatsapp_replied?: boolean | null
         }
         Relationships: [
           {
@@ -211,6 +330,93 @@ export type Database = {
             referencedColumns: ["id"]
           },
         ]
+      }
+      farmer_client_scores: {
+        Row: {
+          answer_rate_60d: number | null
+          avg_monthly_spend_180d: number | null
+          avg_repurchase_interval: number | null
+          calculated_at: string | null
+          category_count: number | null
+          churn_risk: number | null
+          created_at: string | null
+          customer_user_id: string
+          days_since_last_purchase: number | null
+          eff_score: number | null
+          expansion_score: number | null
+          farmer_id: string
+          g_score: number | null
+          gross_margin_pct: number | null
+          health_class: string | null
+          health_score: number | null
+          id: string
+          m_score: number | null
+          priority_score: number | null
+          recover_score: number | null
+          revenue_potential: number | null
+          rf_score: number | null
+          s_score: number | null
+          updated_at: string | null
+          whatsapp_reply_rate_60d: number | null
+          x_score: number | null
+        }
+        Insert: {
+          answer_rate_60d?: number | null
+          avg_monthly_spend_180d?: number | null
+          avg_repurchase_interval?: number | null
+          calculated_at?: string | null
+          category_count?: number | null
+          churn_risk?: number | null
+          created_at?: string | null
+          customer_user_id: string
+          days_since_last_purchase?: number | null
+          eff_score?: number | null
+          expansion_score?: number | null
+          farmer_id: string
+          g_score?: number | null
+          gross_margin_pct?: number | null
+          health_class?: string | null
+          health_score?: number | null
+          id?: string
+          m_score?: number | null
+          priority_score?: number | null
+          recover_score?: number | null
+          revenue_potential?: number | null
+          rf_score?: number | null
+          s_score?: number | null
+          updated_at?: string | null
+          whatsapp_reply_rate_60d?: number | null
+          x_score?: number | null
+        }
+        Update: {
+          answer_rate_60d?: number | null
+          avg_monthly_spend_180d?: number | null
+          avg_repurchase_interval?: number | null
+          calculated_at?: string | null
+          category_count?: number | null
+          churn_risk?: number | null
+          created_at?: string | null
+          customer_user_id?: string
+          days_since_last_purchase?: number | null
+          eff_score?: number | null
+          expansion_score?: number | null
+          farmer_id?: string
+          g_score?: number | null
+          gross_margin_pct?: number | null
+          health_class?: string | null
+          health_score?: number | null
+          id?: string
+          m_score?: number | null
+          priority_score?: number | null
+          recover_score?: number | null
+          revenue_potential?: number | null
+          rf_score?: number | null
+          s_score?: number | null
+          updated_at?: string | null
+          whatsapp_reply_rate_60d?: number | null
+          x_score?: number | null
+        }
+        Relationships: []
       }
       farmer_config: {
         Row: {
@@ -239,6 +445,69 @@ export type Database = {
           id?: string
           updated_at?: string
           working_days_per_month?: number
+        }
+        Relationships: []
+      }
+      farmer_governance_proposals: {
+        Row: {
+          algorithm_version: string | null
+          approved_at: string | null
+          approved_by: string | null
+          created_at: string | null
+          current_params: Json
+          description: string | null
+          id: string
+          impact_churn_pct: number | null
+          impact_margin_pct: number | null
+          impact_margin_per_hour: number | null
+          impact_revenue_pct: number | null
+          proposal_type: string
+          proposed_by: string
+          proposed_params: Json
+          rejection_reason: string | null
+          status: string | null
+          title: string
+          updated_at: string | null
+        }
+        Insert: {
+          algorithm_version?: string | null
+          approved_at?: string | null
+          approved_by?: string | null
+          created_at?: string | null
+          current_params?: Json
+          description?: string | null
+          id?: string
+          impact_churn_pct?: number | null
+          impact_margin_pct?: number | null
+          impact_margin_per_hour?: number | null
+          impact_revenue_pct?: number | null
+          proposal_type: string
+          proposed_by: string
+          proposed_params?: Json
+          rejection_reason?: string | null
+          status?: string | null
+          title: string
+          updated_at?: string | null
+        }
+        Update: {
+          algorithm_version?: string | null
+          approved_at?: string | null
+          approved_by?: string | null
+          created_at?: string | null
+          current_params?: Json
+          description?: string | null
+          id?: string
+          impact_churn_pct?: number | null
+          impact_margin_pct?: number | null
+          impact_margin_per_hour?: number | null
+          impact_revenue_pct?: number | null
+          proposal_type?: string
+          proposed_by?: string
+          proposed_params?: Json
+          rejection_reason?: string | null
+          status?: string | null
+          title?: string
+          updated_at?: string | null
         }
         Relationships: []
       }
