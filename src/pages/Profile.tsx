@@ -12,6 +12,7 @@ import { supabase } from '@/integrations/supabase/client';
 import { useToast } from '@/hooks/use-toast';
 import { cn } from '@/lib/utils';
 import { useBiometricAuth } from '@/hooks/useBiometricAuth';
+import { useUserRole } from '@/hooks/useUserRole';
 
 
 interface ProfileData {
@@ -29,6 +30,7 @@ const Profile = () => {
   const navigate = useNavigate();
   const { user, signOut } = useAuth();
   const { toast } = useToast();
+  const { isStaff } = useUserRole();
   const fileInputRef = useRef<HTMLInputElement>(null);
   
   const [profile, setProfile] = useState<ProfileData | null>(null);
@@ -351,16 +353,18 @@ const Profile = () => {
                 <Label htmlFor="editDocument">CPF/CNPJ</Label>
                 <Input id="editDocument" value={editDocument} onChange={e => setEditDocument(e.target.value)} placeholder="000.000.000-00" />
               </div>
-              <div className="grid grid-cols-2 gap-3">
-                <div>
-                  <Label htmlFor="editOpen">Horário Abertura</Label>
-                  <Input id="editOpen" type="time" value={editBusinessOpen} onChange={e => setEditBusinessOpen(e.target.value)} />
+              {!isStaff && (
+                <div className="grid grid-cols-2 gap-3">
+                  <div>
+                    <Label htmlFor="editOpen">Horário Abertura</Label>
+                    <Input id="editOpen" type="time" value={editBusinessOpen} onChange={e => setEditBusinessOpen(e.target.value)} />
+                  </div>
+                  <div>
+                    <Label htmlFor="editClose">Horário Fechamento</Label>
+                    <Input id="editClose" type="time" value={editBusinessClose} onChange={e => setEditBusinessClose(e.target.value)} />
+                  </div>
                 </div>
-                <div>
-                  <Label htmlFor="editClose">Horário Fechamento</Label>
-                  <Input id="editClose" type="time" value={editBusinessClose} onChange={e => setEditBusinessClose(e.target.value)} />
-                </div>
-              </div>
+              )}
               <div className="flex gap-2 pt-2">
                 <Button onClick={handleSaveProfile} disabled={saving} className="flex-1">
                   {saving ? <Loader2 className="w-4 h-4 animate-spin mr-1" /> : <Check className="w-4 h-4 mr-1" />}
@@ -387,7 +391,7 @@ const Profile = () => {
                     <span>{profile.email}</span>
                   </div>
                 )}
-                {(profile?.business_hours_open || profile?.business_hours_close) && (
+                {!isStaff && (profile?.business_hours_open || profile?.business_hours_close) && (
                   <div className="flex items-center gap-2 text-muted-foreground">
                     <Clock className="w-4 h-4" />
                     <span>{profile.business_hours_open || '--:--'} às {profile.business_hours_close || '--:--'}</span>
