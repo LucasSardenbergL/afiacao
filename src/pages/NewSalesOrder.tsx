@@ -87,7 +87,28 @@ const NewSalesOrder = () => {
         .select('id, codigo, descricao, unidade, valor_unitario, estoque, omie_codigo_produto')
         .eq('ativo', true)
         .order('descricao');
-      setProducts((data || []) as Product[]);
+      
+      if (!data || data.length === 0) {
+        // Auto-sync products from Omie if table is empty
+        console.log('Nenhum produto local, sincronizando do Omie...');
+        try {
+          const { data: syncResult } = await supabase.functions.invoke('omie-vendas-sync', {
+            body: { action: 'sync_products' },
+          });
+          console.log('Sync result:', syncResult);
+          // Reload after sync
+          const { data: refreshed } = await supabase
+            .from('omie_products')
+            .select('id, codigo, descricao, unidade, valor_unitario, estoque, omie_codigo_produto')
+            .eq('ativo', true)
+            .order('descricao');
+          setProducts((refreshed || []) as Product[]);
+        } catch (syncErr) {
+          console.error('Erro ao sincronizar produtos:', syncErr);
+        }
+      } else {
+        setProducts(data as Product[]);
+      }
     } catch (e) {
       console.error(e);
     } finally {
