@@ -20,7 +20,7 @@ import { useAuth } from '@/contexts/AuthContext';
 import {
   Loader2, Heart, Users, Target, Brain, Shield, FlaskConical, Activity,
   TrendingUp, Phone, RefreshCw, Plus, Play, BarChart3, Package,
-  CheckCircle, XCircle, Clock, Zap, DollarSign, ChevronRight
+  CheckCircle, XCircle, Clock, Zap, DollarSign, ChevronRight, Radio
 } from 'lucide-react';
 
 // ─── Helpers ─────────────────────────────────────────────────────────
@@ -110,11 +110,18 @@ const FarmerLOCC = () => {
             <Package className="w-4 h-4" />
             <span className="text-[9px]">Bundles</span>
           </Button>
-          <Button size="sm" variant="outline" onClick={() => navigate('/farmer/governance')} className="h-auto py-2 flex flex-col items-center gap-1 relative">
+          <Button size="sm" variant="outline" onClick={() => navigate('/farmer/copilot')} className="h-auto py-2 flex flex-col items-center gap-1">
+            <Radio className="w-4 h-4" />
+            <span className="text-[9px]">Copiloto</span>
+          </Button>
+        </div>
+
+        <div className="grid grid-cols-1">
+          <Button size="sm" variant="outline" onClick={() => navigate('/farmer/governance')} className="h-auto py-2 flex flex-row items-center gap-2 relative">
             <Shield className="w-4 h-4" />
             <span className="text-[9px]">Governança</span>
             {pendingProposals > 0 && (
-              <span className="absolute -top-1 -right-1 bg-destructive text-destructive-foreground text-[8px] rounded-full w-4 h-4 flex items-center justify-center">
+              <span className="bg-destructive text-destructive-foreground text-[8px] rounded-full w-4 h-4 flex items-center justify-center">
                 {pendingProposals}
               </span>
             )}

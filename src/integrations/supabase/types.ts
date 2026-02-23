@@ -619,6 +619,128 @@ export type Database = {
         }
         Relationships: []
       }
+      farmer_copilot_events: {
+        Row: {
+          created_at: string | null
+          event_data: Json | null
+          event_type: string
+          id: string
+          session_id: string
+          suggestion_text: string | null
+          suggestion_used: boolean | null
+          transcript_snippet: string | null
+        }
+        Insert: {
+          created_at?: string | null
+          event_data?: Json | null
+          event_type: string
+          id?: string
+          session_id: string
+          suggestion_text?: string | null
+          suggestion_used?: boolean | null
+          transcript_snippet?: string | null
+        }
+        Update: {
+          created_at?: string | null
+          event_data?: Json | null
+          event_type?: string
+          id?: string
+          session_id?: string
+          suggestion_text?: string | null
+          suggestion_used?: boolean | null
+          transcript_snippet?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "farmer_copilot_events_session_id_fkey"
+            columns: ["session_id"]
+            isOneToOne: false
+            referencedRelation: "farmer_copilot_sessions"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      farmer_copilot_sessions: {
+        Row: {
+          bundle_recommendation_id: string | null
+          call_id: string | null
+          created_at: string | null
+          customer_user_id: string | null
+          duration_seconds: number | null
+          ended_at: string | null
+          farmer_id: string
+          final_direction: string | null
+          final_intent: string | null
+          final_phase: string | null
+          id: string
+          margin_generated: number | null
+          result: string | null
+          revenue_generated: number | null
+          started_at: string
+          suggestions_shown: number | null
+          suggestions_used: number | null
+          transcript_summary: string | null
+          updated_at: string | null
+        }
+        Insert: {
+          bundle_recommendation_id?: string | null
+          call_id?: string | null
+          created_at?: string | null
+          customer_user_id?: string | null
+          duration_seconds?: number | null
+          ended_at?: string | null
+          farmer_id: string
+          final_direction?: string | null
+          final_intent?: string | null
+          final_phase?: string | null
+          id?: string
+          margin_generated?: number | null
+          result?: string | null
+          revenue_generated?: number | null
+          started_at?: string
+          suggestions_shown?: number | null
+          suggestions_used?: number | null
+          transcript_summary?: string | null
+          updated_at?: string | null
+        }
+        Update: {
+          bundle_recommendation_id?: string | null
+          call_id?: string | null
+          created_at?: string | null
+          customer_user_id?: string | null
+          duration_seconds?: number | null
+          ended_at?: string | null
+          farmer_id?: string
+          final_direction?: string | null
+          final_intent?: string | null
+          final_phase?: string | null
+          id?: string
+          margin_generated?: number | null
+          result?: string | null
+          revenue_generated?: number | null
+          started_at?: string
+          suggestions_shown?: number | null
+          suggestions_used?: number | null
+          transcript_summary?: string | null
+          updated_at?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "farmer_copilot_sessions_bundle_recommendation_id_fkey"
+            columns: ["bundle_recommendation_id"]
+            isOneToOne: false
+            referencedRelation: "farmer_bundle_recommendations"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "farmer_copilot_sessions_call_id_fkey"
+            columns: ["call_id"]
+            isOneToOne: false
+            referencedRelation: "farmer_calls"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       farmer_diagnostic_questions: {
         Row: {
           alt_question_text: string | null
