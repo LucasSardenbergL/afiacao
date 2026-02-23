@@ -111,7 +111,7 @@ const FarmerLOCC = () => {
             <span className="text-[9px]">Bundles</span>
           </Button>
         </div>
-        <div className="grid grid-cols-3 gap-1.5">
+        <div className="grid grid-cols-4 gap-1.5">
           <Button size="sm" variant="outline" onClick={() => navigate('/farmer/tactical-plan')} className="h-auto py-2 flex flex-col items-center gap-1">
             <Target className="w-4 h-4" />
             <span className="text-[9px]">PTPL</span>
@@ -119,6 +119,10 @@ const FarmerLOCC = () => {
           <Button size="sm" variant="outline" onClick={() => navigate('/farmer/copilot')} className="h-auto py-2 flex flex-col items-center gap-1">
             <Radio className="w-4 h-4" />
             <span className="text-[9px]">Copiloto</span>
+          </Button>
+          <Button size="sm" variant="outline" onClick={() => navigate('/farmer/ipf')} className="h-auto py-2 flex flex-col items-center gap-1">
+            <DollarSign className="w-4 h-4" />
+            <span className="text-[9px]">IPF</span>
           </Button>
           <Button size="sm" variant="outline" onClick={() => navigate('/farmer/governance')} className="h-auto py-2 flex flex-col items-center gap-1 relative">
             <Shield className="w-4 h-4" />
