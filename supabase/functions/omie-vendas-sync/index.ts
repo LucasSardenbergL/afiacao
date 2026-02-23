@@ -292,7 +292,7 @@ async function criarPedidoVenda(
     },
     informacoes_adicionais: {
       codigo_categoria: "1.01.01",
-      codigo_conta_corrente: 3543828789,
+      codigo_conta_corrente: 8693825504, // Itaú Unibanco
     },
   };
 
