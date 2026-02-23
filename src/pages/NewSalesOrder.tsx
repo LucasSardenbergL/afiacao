@@ -89,13 +89,21 @@ const NewSalesOrder = () => {
         .order('descricao');
       
       if (!data || data.length === 0) {
-        // Auto-sync products from Omie if table is empty
+        // Auto-sync products from Omie in chunks
         console.log('Nenhum produto local, sincronizando do Omie...');
         try {
-          const { data: syncResult } = await supabase.functions.invoke('omie-vendas-sync', {
-            body: { action: 'sync_products' },
-          });
-          console.log('Sync result:', syncResult);
+          let nextPage: number | null = 1;
+          let totalSynced = 0;
+          while (nextPage) {
+            const { data: syncResult, error: syncError } = await supabase.functions.invoke('omie-vendas-sync', {
+              body: { action: 'sync_products', start_page: nextPage },
+            });
+            if (syncError) throw syncError;
+            console.log(`Sync chunk: página ${syncResult.lastPage}/${syncResult.totalPaginas}, ${syncResult.totalSynced} produtos`);
+            totalSynced += syncResult.totalSynced || 0;
+            nextPage = syncResult.nextPage || null;
+          }
+          console.log(`Sync completo: ${totalSynced} produtos sincronizados`);
           // Reload after sync
           const { data: refreshed } = await supabase
             .from('omie_products')

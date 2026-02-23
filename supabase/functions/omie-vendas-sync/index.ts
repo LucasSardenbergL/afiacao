@@ -46,18 +46,19 @@ async function callOmieVendasApi(
 }
 
 // Sincronizar todos os produtos da empresa de vendas
-async function syncProducts(supabase: ReturnType<typeof createClient>) {
-  let pagina = 1;
+async function syncProducts(supabase: ReturnType<typeof createClient>, startPage = 1, maxPages = 12) {
+  let pagina = startPage;
   let totalPaginas = 1;
   let totalSynced = 0;
+  let pagesProcessed = 0;
 
-  while (pagina <= totalPaginas) {
+  while (pagina <= totalPaginas && pagesProcessed < maxPages) {
     const result = await callOmieVendasApi(
       "geral/produtos/",
       "ListarProdutos",
       {
         pagina,
-        registros_por_pagina: 500,
+        registros_por_pagina: 100,
         apenas_importado_api: "N",
         filtrar_apenas_omiepdv: "N",
       }
@@ -66,47 +67,46 @@ async function syncProducts(supabase: ReturnType<typeof createClient>) {
     totalPaginas = result.total_de_paginas || 1;
     const produtos = result.produto_servico_cadastro || [];
 
-    for (const prod of produtos) {
-      if (prod.inativo === "S") continue;
-
-      const { error } = await supabase.from("omie_products").upsert(
-        {
-          omie_codigo_produto: prod.codigo_produto,
-          omie_codigo_produto_integracao: prod.codigo_produto_integracao || null,
-          codigo: prod.codigo || `PROD-${prod.codigo_produto}`,
-          descricao: prod.descricao || prod.descricao_familia || "Produto sem descrição",
-          unidade: prod.unidade || "UN",
-          ncm: prod.ncm || null,
-          valor_unitario: prod.valor_unitario || 0,
-          estoque: prod.quantidade_estoque || 0,
-          ativo: prod.inativo !== "S",
-          imagem_url: prod.imagens?.[0]?.url_imagem || null,
-          metadata: {
-            marca: prod.marca,
-            modelo: prod.modelo,
-            peso_bruto: prod.peso_bruto,
-            peso_liq: prod.peso_liq,
-            descricao_familia: prod.descricao_familia,
-            cfop: prod.cfop,
-          },
-          updated_at: new Date().toISOString(),
+    const rows = produtos
+      .filter((prod: any) => prod.inativo !== "S")
+      .map((prod: any) => ({
+        omie_codigo_produto: prod.codigo_produto,
+        omie_codigo_produto_integracao: prod.codigo_produto_integracao || null,
+        codigo: prod.codigo || `PROD-${prod.codigo_produto}`,
+        descricao: prod.descricao || prod.descricao_familia || "Produto sem descrição",
+        unidade: prod.unidade || "UN",
+        ncm: prod.ncm || null,
+        valor_unitario: prod.valor_unitario || 0,
+        estoque: prod.quantidade_estoque || 0,
+        ativo: true,
+        imagem_url: prod.imagens?.[0]?.url_imagem || null,
+        metadata: {
+          marca: prod.marca,
+          modelo: prod.modelo,
+          peso_bruto: prod.peso_bruto,
+          peso_liq: prod.peso_liq,
+          descricao_familia: prod.descricao_familia,
+          cfop: prod.cfop,
         },
-        { onConflict: "omie_codigo_produto" }
-      );
+        updated_at: new Date().toISOString(),
+      }));
 
+    if (rows.length > 0) {
+      const { error } = await supabase.from("omie_products").upsert(rows, { onConflict: "omie_codigo_produto" });
       if (error) {
-        console.error(`[Omie Vendas] Erro ao upsert produto ${prod.codigo_produto}:`, error);
+        console.error(`[Omie Vendas] Erro batch upsert página ${pagina}:`, error);
       } else {
-        totalSynced++;
+        totalSynced += rows.length;
       }
     }
 
     console.log(`[Omie Vendas] Página ${pagina}/${totalPaginas} - ${produtos.length} produtos processados`);
     pagina++;
+    pagesProcessed++;
   }
 
-  // Marcar como inativos os produtos que não estão mais no Omie
-  return totalSynced;
+  const complete = pagina > totalPaginas;
+  return { totalSynced, totalPaginas, lastPage: pagina - 1, nextPage: complete ? null : pagina, complete };
 }
 
 // Buscar/listar clientes na empresa de vendas
@@ -368,8 +368,9 @@ serve(async (req) => {
 
     switch (action) {
       case "sync_products": {
-        const totalSynced = await syncProducts(supabaseAdmin);
-        result = { success: true, totalSynced };
+        const startPage = params.start_page || 1;
+        const syncResult = await syncProducts(supabaseAdmin, startPage);
+        result = { success: true, ...syncResult };
         break;
       }
 
