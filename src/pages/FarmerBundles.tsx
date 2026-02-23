@@ -1,17 +1,19 @@
 import { useState } from 'react';
 import { Header } from '@/components/Header';
 import { BottomNav } from '@/components/BottomNav';
-import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
+import { Card, CardContent } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
-import { Progress } from '@/components/ui/progress';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
+import { Textarea } from '@/components/ui/textarea';
 import { useBundleEngine, type BundleRecommendation, type AssociationRule, type CustomerBundles } from '@/hooks/useBundleEngine';
 import { useBundleArguments, classifyCustomerProfile, profileLabels, type CustomerProfile, type BundleArgument } from '@/hooks/useBundleArguments';
+import { useDiagnosticQuestions, typeLabels, type QuestionWithResponse, type QuestionResponse } from '@/hooks/useDiagnosticQuestions';
 import {
-  Loader2, Package, TrendingUp, RefreshCw, ChevronDown, ChevronUp,
-  CheckCircle, XCircle, DollarSign, BarChart3, Layers, Zap, ArrowRight,
-  MessageSquare, Phone, Send, FileText, Sparkles, Copy, Check
+  Loader2, Package, RefreshCw, ChevronDown, ChevronUp,
+  BarChart3, Layers, Zap, ArrowRight,
+  Phone, Send, FileText, Sparkles, Copy, Check,
+  HelpCircle, ThumbsUp, ThumbsDown, Minus, RotateCcw, Save
 } from 'lucide-react';
 import { useToast } from '@/hooks/use-toast';
 
@@ -19,7 +21,8 @@ const fmt = (v: number) => v.toLocaleString('pt-BR', { style: 'currency', curren
 
 const FarmerBundles = () => {
   const { customerBundles, rules, loading, calculating, calculateBundles } = useBundleEngine();
-  const { arguments: bundleArgs, generating, generateArgument } = useBundleArguments();
+  const { arguments: bundleArgs, generating: argGenerating, generateArgument } = useBundleArguments();
+  const diagHook = useDiagnosticQuestions();
   const [expandedCustomer, setExpandedCustomer] = useState<string | null>(null);
 
   const totalLIE = customerBundles.reduce((s, c) => s + c.bundles.reduce((s2, b) => s2 + b.lieBundle, 0), 0);
@@ -35,7 +38,7 @@ const FarmerBundles = () => {
             <div className="flex items-center justify-between mb-1">
               <div className="flex items-center gap-2">
                 <Package className="w-5 h-5 text-primary" />
-                <h2 className="text-sm font-bold">Motor de Bundles + IA Consultiva</h2>
+                <h2 className="text-sm font-bold">Bundles + IA Consultiva</h2>
               </div>
               <Button size="sm" onClick={() => calculateBundles()} disabled={calculating} className="h-7 text-[10px]">
                 {calculating ? <Loader2 className="w-3 h-3 animate-spin mr-1" /> : <RefreshCw className="w-3 h-3 mr-1" />}
@@ -43,31 +46,16 @@ const FarmerBundles = () => {
               </Button>
             </div>
             <p className="text-[10px] text-muted-foreground">
-              Bundles baseados em padrões estatísticos + argumentação consultiva personalizada por IA.
+              Bundles estatísticos + argumentação consultiva + perguntas diagnósticas SPIN por IA.
             </p>
           </CardContent>
         </Card>
 
         {/* KPIs */}
         <div className="grid grid-cols-3 gap-2">
-          <Card>
-            <CardContent className="p-2.5 text-center">
-              <p className="text-lg font-bold">{rules.length}</p>
-              <p className="text-[9px] text-muted-foreground">Regras</p>
-            </CardContent>
-          </Card>
-          <Card>
-            <CardContent className="p-2.5 text-center">
-              <p className="text-lg font-bold">{totalBundles}</p>
-              <p className="text-[9px] text-muted-foreground">Bundles</p>
-            </CardContent>
-          </Card>
-          <Card>
-            <CardContent className="p-2.5 text-center">
-              <p className="text-lg font-bold text-emerald-700">{fmt(totalLIE)}</p>
-              <p className="text-[9px] text-muted-foreground">LIE Total</p>
-            </CardContent>
-          </Card>
+          <Card><CardContent className="p-2.5 text-center"><p className="text-lg font-bold">{rules.length}</p><p className="text-[9px] text-muted-foreground">Regras</p></CardContent></Card>
+          <Card><CardContent className="p-2.5 text-center"><p className="text-lg font-bold">{totalBundles}</p><p className="text-[9px] text-muted-foreground">Bundles</p></CardContent></Card>
+          <Card><CardContent className="p-2.5 text-center"><p className="text-lg font-bold text-emerald-700">{fmt(totalLIE)}</p><p className="text-[9px] text-muted-foreground">LIE Total</p></CardContent></Card>
         </div>
 
         <Tabs defaultValue="bundles" className="w-full">
@@ -78,16 +66,9 @@ const FarmerBundles = () => {
 
           <TabsContent value="bundles" className="space-y-3 mt-3">
             {loading && !customerBundles.length ? (
-              <div className="flex justify-center py-8">
-                <Loader2 className="w-6 h-6 animate-spin text-primary" />
-              </div>
+              <div className="flex justify-center py-8"><Loader2 className="w-6 h-6 animate-spin text-primary" /></div>
             ) : customerBundles.length === 0 ? (
-              <Card>
-                <CardContent className="p-6 text-center">
-                  <Package className="w-8 h-8 mx-auto mb-2 opacity-40" />
-                  <p className="text-xs text-muted-foreground">Clique em "Calcular" para gerar bundles baseados em padrões de compra.</p>
-                </CardContent>
-              </Card>
+              <Card><CardContent className="p-6 text-center"><Package className="w-8 h-8 mx-auto mb-2 opacity-40" /><p className="text-xs text-muted-foreground">Clique em "Calcular" para gerar bundles.</p></CardContent></Card>
             ) : (
               customerBundles.map(cb => (
                 <CustomerBundleCard
@@ -96,8 +77,9 @@ const FarmerBundles = () => {
                   expanded={expandedCustomer === cb.customerId}
                   onToggle={() => setExpandedCustomer(expandedCustomer === cb.customerId ? null : cb.customerId)}
                   bundleArgs={bundleArgs}
-                  generating={generating}
+                  argGenerating={argGenerating}
                   onGenerateArgument={generateArgument}
+                  diagHook={diagHook}
                 />
               ))
             )}
@@ -105,18 +87,11 @@ const FarmerBundles = () => {
 
           <TabsContent value="rules" className="space-y-3 mt-3">
             {rules.length === 0 ? (
-              <Card>
-                <CardContent className="p-6 text-center">
-                  <BarChart3 className="w-8 h-8 mx-auto mb-2 opacity-40" />
-                  <p className="text-xs text-muted-foreground">Nenhuma regra de associação descoberta ainda.</p>
-                </CardContent>
-              </Card>
+              <Card><CardContent className="p-6 text-center"><BarChart3 className="w-8 h-8 mx-auto mb-2 opacity-40" /><p className="text-xs text-muted-foreground">Nenhuma regra descoberta ainda.</p></CardContent></Card>
             ) : (
               <>
                 <p className="text-[10px] text-muted-foreground">Top {rules.length} regras por Lift (mínimo 1.2)</p>
-                {rules.slice(0, 20).map((rule, i) => (
-                  <RuleCard key={i} rule={rule} />
-                ))}
+                {rules.slice(0, 20).map((rule, i) => <RuleCard key={i} rule={rule} />)}
               </>
             )}
           </TabsContent>
@@ -128,27 +103,35 @@ const FarmerBundles = () => {
 };
 
 // ─── Customer Bundle Card ────────────────────────────────────────────
-const CustomerBundleCard = ({ data, expanded, onToggle, bundleArgs, generating, onGenerateArgument }: {
+interface CustomerBundleCardProps {
   data: CustomerBundles;
   expanded: boolean;
   onToggle: () => void;
   bundleArgs: Record<string, BundleArgument>;
-  generating: Record<string, boolean>;
+  argGenerating: Record<string, boolean>;
   onGenerateArgument: (key: string, bundle: any, customer: any, profile: CustomerProfile) => void;
-}) => {
+  diagHook: ReturnType<typeof useDiagnosticQuestions>;
+}
+
+const CustomerBundleCard = ({ data, expanded, onToggle, bundleArgs, argGenerating, onGenerateArgument, diagHook }: CustomerBundleCardProps) => {
   const totalBundleLIE = data.bundles.reduce((s, b) => s + b.lieBundle, 0);
   const bestBundleLIE = data.bundles[0]?.lieBundle || 0;
   const individualLIE = data.bestIndividual?.lie || 0;
   const bundleWins = bestBundleLIE > individualLIE;
 
-  // Classify customer profile
-  const profile = classifyCustomerProfile(
-    data.healthScore,
-    (data as any).avgMonthlySpend || 0,
-    (data as any).grossMarginPct || 0,
-    (data as any).categoryCount || 0
-  );
+  const profile = classifyCustomerProfile(data.healthScore, data.avgMonthlySpend || 0, data.grossMarginPct || 0, data.categoryCount || 0);
   const profileInfo = profileLabels[profile];
+
+  const customerCtx = {
+    name: data.customerName,
+    healthScore: data.healthScore,
+    avgMonthlySpend: data.avgMonthlySpend,
+    categoryCount: data.categoryCount,
+    daysSinceLastPurchase: data.daysSinceLastPurchase,
+    cnae: data.cnae,
+    customerType: data.customerType,
+    recentProducts: data.recentProducts,
+  };
 
   return (
     <Card>
@@ -190,31 +173,29 @@ const CustomerBundleCard = ({ data, expanded, onToggle, bundleArgs, generating, 
               </div>
             </div>
 
-            {/* Bundles with arguments */}
+            {/* Bundles */}
             {data.bundles.map((bundle, i) => {
               const bundleKey = `${data.customerId}_${i}`;
               return (
-                <BundleCardWithArgument
+                <BundleCardFull
                   key={i}
                   bundle={bundle}
                   rank={i + 1}
                   bundleKey={bundleKey}
+                  customerId={data.customerId}
+                  customerCtx={customerCtx}
+                  profile={profile}
                   argument={bundleArgs[bundleKey]}
-                  isGenerating={generating[bundleKey] || false}
-                  onGenerate={() => onGenerateArgument(
-                    bundleKey,
-                    bundle,
-                    {
-                      name: data.customerName,
-                      healthScore: data.healthScore,
-                      avgMonthlySpend: (data as any).avgMonthlySpend,
-                      categoryCount: (data as any).categoryCount,
-                      daysSinceLastPurchase: (data as any).daysSinceLastPurchase,
-                      cnae: (data as any).cnae,
-                      customerType: (data as any).customerType,
-                    },
-                    profile
-                  )}
+                  isArgGenerating={argGenerating[bundleKey] || false}
+                  onGenerateArg={() => onGenerateArgument(bundleKey, bundle, customerCtx, profile)}
+                  questions={diagHook.questions[bundleKey] || []}
+                  isQuestionsGenerating={diagHook.generating[bundleKey] || false}
+                  onGenerateQuestions={() => diagHook.generateQuestions(bundleKey, bundle, customerCtx, profile)}
+                  onSetResponse={(idx, resp, notes) => diagHook.setResponse(bundleKey, idx, resp, notes)}
+                  onToggleAlt={(idx) => diagHook.toggleAlt(bundleKey, idx)}
+                  onSaveQuestions={(offered, result, margin, time) =>
+                    diagHook.saveQuestionsToDb(bundleKey, bundle.id, data.customerId, profile, offered, result, margin, time)
+                  }
                 />
               );
             })}
@@ -225,16 +206,31 @@ const CustomerBundleCard = ({ data, expanded, onToggle, bundleArgs, generating, 
   );
 };
 
-// ─── Bundle Card with Argument ───────────────────────────────────────
-const BundleCardWithArgument = ({ bundle, rank, bundleKey, argument, isGenerating, onGenerate }: {
+// ─── Full Bundle Card ────────────────────────────────────────────────
+interface BundleCardFullProps {
   bundle: BundleRecommendation;
   rank: number;
   bundleKey: string;
+  customerId: string;
+  customerCtx: any;
+  profile: CustomerProfile;
   argument?: BundleArgument;
-  isGenerating: boolean;
-  onGenerate: () => void;
-}) => {
+  isArgGenerating: boolean;
+  onGenerateArg: () => void;
+  questions: QuestionWithResponse[];
+  isQuestionsGenerating: boolean;
+  onGenerateQuestions: () => void;
+  onSetResponse: (idx: number, resp: QuestionResponse, notes?: string) => void;
+  onToggleAlt: (idx: number) => void;
+  onSaveQuestions: (offered: boolean, result?: string, margin?: number, time?: number) => void;
+}
+
+const BundleCardFull = ({
+  bundle, rank, bundleKey, argument, isArgGenerating, onGenerateArg,
+  questions, isQuestionsGenerating, onGenerateQuestions, onSetResponse, onToggleAlt, onSaveQuestions,
+}: BundleCardFullProps) => {
   const [argTab, setArgTab] = useState<'phone' | 'whatsapp' | 'tecnica'>('phone');
+  const [activeSection, setActiveSection] = useState<'none' | 'args' | 'questions'>('none');
   const [copied, setCopied] = useState(false);
   const { toast } = useToast();
 
@@ -274,107 +270,208 @@ const BundleCardWithArgument = ({ bundle, rank, bundleKey, argument, isGeneratin
 
       {/* Metrics */}
       <div className="grid grid-cols-4 gap-1 text-center mb-2">
-        <div>
-          <p className="text-[8px] text-muted-foreground">Support</p>
-          <p className="text-[10px] font-semibold">{(bundle.support * 100).toFixed(1)}%</p>
-        </div>
-        <div>
-          <p className="text-[8px] text-muted-foreground">Confidence</p>
-          <p className="text-[10px] font-semibold">{(bundle.confidence * 100).toFixed(1)}%</p>
-        </div>
-        <div>
-          <p className="text-[8px] text-muted-foreground">Lift</p>
-          <p className="text-[10px] font-semibold">{bundle.lift.toFixed(2)}</p>
-        </div>
-        <div>
-          <p className="text-[8px] text-muted-foreground">P(Bundle)</p>
-          <p className="text-[10px] font-semibold">{bundle.pBundle.toFixed(1)}%</p>
-        </div>
+        <div><p className="text-[8px] text-muted-foreground">Support</p><p className="text-[10px] font-semibold">{(bundle.support * 100).toFixed(1)}%</p></div>
+        <div><p className="text-[8px] text-muted-foreground">Confidence</p><p className="text-[10px] font-semibold">{(bundle.confidence * 100).toFixed(1)}%</p></div>
+        <div><p className="text-[8px] text-muted-foreground">Lift</p><p className="text-[10px] font-semibold">{bundle.lift.toFixed(2)}</p></div>
+        <div><p className="text-[8px] text-muted-foreground">P(Bundle)</p><p className="text-[10px] font-semibold">{bundle.pBundle.toFixed(1)}%</p></div>
       </div>
 
-      {/* AI Argument Section */}
-      {!argument && !isGenerating && (
+      {/* Action buttons */}
+      <div className="flex gap-1.5 mb-2">
         <Button
           size="sm"
-          variant="outline"
-          className="w-full h-8 text-[10px] gap-1"
-          onClick={onGenerate}
+          variant={activeSection === 'questions' ? 'default' : 'outline'}
+          className="flex-1 h-7 text-[9px] gap-1"
+          onClick={() => {
+            if (activeSection === 'questions') { setActiveSection('none'); return; }
+            setActiveSection('questions');
+            if (!questions.length && !isQuestionsGenerating) onGenerateQuestions();
+          }}
         >
-          <Sparkles className="w-3 h-3" />
-          Gerar Argumentação Consultiva por IA
+          <HelpCircle className="w-3 h-3" /> Perguntas SPIN
         </Button>
-      )}
+        <Button
+          size="sm"
+          variant={activeSection === 'args' ? 'default' : 'outline'}
+          className="flex-1 h-7 text-[9px] gap-1"
+          onClick={() => {
+            if (activeSection === 'args') { setActiveSection('none'); return; }
+            setActiveSection('args');
+            if (!argument && !isArgGenerating) onGenerateArg();
+          }}
+        >
+          <Sparkles className="w-3 h-3" /> Argumentação
+        </Button>
+      </div>
 
-      {isGenerating && (
-        <div className="flex items-center justify-center gap-2 py-3">
-          <Loader2 className="w-4 h-4 animate-spin text-primary" />
-          <span className="text-[10px] text-muted-foreground">Gerando argumentação personalizada...</span>
+      {/* ─── DIAGNOSTIC QUESTIONS ──────────────────────────────── */}
+      {activeSection === 'questions' && (
+        <div className="space-y-2">
+          {isQuestionsGenerating && (
+            <div className="flex items-center justify-center gap-2 py-3">
+              <Loader2 className="w-4 h-4 animate-spin text-primary" />
+              <span className="text-[10px] text-muted-foreground">Gerando perguntas diagnósticas...</span>
+            </div>
+          )}
+
+          {questions.length > 0 && (
+            <div className="bg-background rounded-lg p-2 space-y-2">
+              <p className="text-[9px] font-semibold flex items-center gap-1">
+                <HelpCircle className="w-3 h-3 text-primary" /> Perguntas Diagnósticas SPIN
+              </p>
+              {questions.map((q, idx) => (
+                <QuestionCard
+                  key={idx}
+                  question={q}
+                  onSetResponse={(resp, notes) => onSetResponse(idx, resp, notes)}
+                  onToggleAlt={() => onToggleAlt(idx)}
+                />
+              ))}
+
+              {/* Save responses */}
+              <div className="flex gap-1.5 pt-1">
+                <Button
+                  size="sm"
+                  variant="outline"
+                  className="flex-1 h-7 text-[9px] gap-1"
+                  onClick={() => onSaveQuestions(false)}
+                >
+                  <Save className="w-3 h-3" /> Salvar (sem oferta)
+                </Button>
+                <Button
+                  size="sm"
+                  className="flex-1 h-7 text-[9px] gap-1"
+                  onClick={() => onSaveQuestions(true)}
+                >
+                  <Save className="w-3 h-3" /> Salvar (ofertou)
+                </Button>
+              </div>
+            </div>
+          )}
         </div>
       )}
 
-      {argument && (
-        <div className="mt-2 space-y-2">
-          {/* Diagnostic cards */}
-          <div className="bg-background rounded-lg p-2 space-y-1.5">
-            <p className="text-[9px] font-semibold flex items-center gap-1">
-              <Sparkles className="w-3 h-3 text-primary" /> Argumentação IA
-            </p>
-            <div className="space-y-1">
-              <ArgLine icon="🔍" label="Diagnóstico" text={argument.diagnostico} />
-              <ArgLine icon="🔬" label="Insight Técnico" text={argument.insight_tecnico} />
-              <ArgLine icon="⚙️" label="Benefício Operacional" text={argument.beneficio_operacional} />
-              <ArgLine icon="💰" label="Benefício Econômico" text={argument.beneficio_economico} />
-              <ArgLine icon="🛡️" label="Objeção Antecipada" text={argument.objecao_antecipada} />
+      {/* ─── ARGUMENT SECTION ──────────────────────────────────── */}
+      {activeSection === 'args' && (
+        <div className="space-y-2">
+          {isArgGenerating && (
+            <div className="flex items-center justify-center gap-2 py-3">
+              <Loader2 className="w-4 h-4 animate-spin text-primary" />
+              <span className="text-[10px] text-muted-foreground">Gerando argumentação...</span>
             </div>
-          </div>
+          )}
 
-          {/* Format tabs */}
-          <div className="bg-background rounded-lg p-2">
-            <div className="flex items-center gap-1 mb-2">
-              <Button
-                size="sm"
-                variant={argTab === 'phone' ? 'default' : 'ghost'}
-                className="h-6 text-[9px] gap-1 px-2"
-                onClick={() => setArgTab('phone')}
-              >
-                <Phone className="w-3 h-3" /> Ligação
-              </Button>
-              <Button
-                size="sm"
-                variant={argTab === 'whatsapp' ? 'default' : 'ghost'}
-                className="h-6 text-[9px] gap-1 px-2"
-                onClick={() => setArgTab('whatsapp')}
-              >
-                <Send className="w-3 h-3" /> WhatsApp
-              </Button>
-              <Button
-                size="sm"
-                variant={argTab === 'tecnica' ? 'default' : 'ghost'}
-                className="h-6 text-[9px] gap-1 px-2"
-                onClick={() => setArgTab('tecnica')}
-              >
-                <FileText className="w-3 h-3" /> Técnica
-              </Button>
-              <Button
-                size="sm"
-                variant="ghost"
-                className="h-6 text-[9px] gap-1 px-2 ml-auto"
-                onClick={() => copyText(getActiveText())}
-              >
-                {copied ? <Check className="w-3 h-3 text-emerald-600" /> : <Copy className="w-3 h-3" />}
-              </Button>
-            </div>
-            <div className="bg-muted/50 rounded p-2">
-              <p className="text-[10px] whitespace-pre-line leading-relaxed">{getActiveText()}</p>
-            </div>
-          </div>
+          {argument && (
+            <>
+              <div className="bg-background rounded-lg p-2 space-y-1.5">
+                <p className="text-[9px] font-semibold flex items-center gap-1">
+                  <Sparkles className="w-3 h-3 text-primary" /> Argumentação IA
+                </p>
+                <ArgLine icon="🔍" label="Diagnóstico" text={argument.diagnostico} />
+                <ArgLine icon="🔬" label="Insight Técnico" text={argument.insight_tecnico} />
+                <ArgLine icon="⚙️" label="Benefício Operacional" text={argument.beneficio_operacional} />
+                <ArgLine icon="💰" label="Benefício Econômico" text={argument.beneficio_economico} />
+                <ArgLine icon="🛡️" label="Objeção Antecipada" text={argument.objecao_antecipada} />
+              </div>
+
+              <div className="bg-background rounded-lg p-2">
+                <div className="flex items-center gap-1 mb-2">
+                  <Button size="sm" variant={argTab === 'phone' ? 'default' : 'ghost'} className="h-6 text-[9px] gap-1 px-2" onClick={() => setArgTab('phone')}>
+                    <Phone className="w-3 h-3" /> Ligação
+                  </Button>
+                  <Button size="sm" variant={argTab === 'whatsapp' ? 'default' : 'ghost'} className="h-6 text-[9px] gap-1 px-2" onClick={() => setArgTab('whatsapp')}>
+                    <Send className="w-3 h-3" /> WhatsApp
+                  </Button>
+                  <Button size="sm" variant={argTab === 'tecnica' ? 'default' : 'ghost'} className="h-6 text-[9px] gap-1 px-2" onClick={() => setArgTab('tecnica')}>
+                    <FileText className="w-3 h-3" /> Técnica
+                  </Button>
+                  <Button size="sm" variant="ghost" className="h-6 text-[9px] gap-1 px-2 ml-auto" onClick={() => copyText(getActiveText())}>
+                    {copied ? <Check className="w-3 h-3 text-emerald-600" /> : <Copy className="w-3 h-3" />}
+                  </Button>
+                </div>
+                <div className="bg-muted/50 rounded p-2">
+                  <p className="text-[10px] whitespace-pre-line leading-relaxed">{getActiveText()}</p>
+                </div>
+              </div>
+            </>
+          )}
         </div>
       )}
     </div>
   );
 };
 
-// ─── Argument Line ───────────────────────────────────────────────────
+// ─── Question Card ───────────────────────────────────────────────────
+const QuestionCard = ({ question, onSetResponse, onToggleAlt }: {
+  question: QuestionWithResponse;
+  onSetResponse: (resp: QuestionResponse, notes?: string) => void;
+  onToggleAlt: () => void;
+}) => {
+  const [showNotes, setShowNotes] = useState(false);
+  const [notes, setNotes] = useState(question.notes || '');
+  const info = typeLabels[question.type] || { label: question.type, emoji: '❓', color: 'text-foreground' };
+  const displayText = question.useAlt ? question.alt : question.main;
+
+  const responseIcons: Record<QuestionResponse, { icon: typeof ThumbsUp; label: string; color: string }> = {
+    interesse: { icon: ThumbsUp, label: 'Interesse', color: 'bg-emerald-100 text-emerald-700 border-emerald-300' },
+    objecao: { icon: ThumbsDown, label: 'Objeção', color: 'bg-red-100 text-red-700 border-red-300' },
+    indiferenca: { icon: Minus, label: 'Indiferença', color: 'bg-muted text-muted-foreground border-border' },
+  };
+
+  return (
+    <div className="border rounded-lg p-2 space-y-1.5">
+      <div className="flex items-center justify-between">
+        <div className="flex items-center gap-1.5">
+          <span className="text-xs">{info.emoji}</span>
+          <span className={`text-[9px] font-bold uppercase ${info.color}`}>{info.label}</span>
+        </div>
+        <Button size="sm" variant="ghost" className="h-5 text-[8px] px-1.5 gap-0.5" onClick={onToggleAlt} title="Alternar variação">
+          <RotateCcw className="w-2.5 h-2.5" /> Alt
+        </Button>
+      </div>
+
+      <p className="text-[10px] leading-relaxed font-medium">"{displayText}"</p>
+      <p className="text-[8px] text-muted-foreground italic">💡 {question.rationale}</p>
+
+      {/* Response buttons */}
+      <div className="flex items-center gap-1">
+        {(Object.entries(responseIcons) as [QuestionResponse, typeof responseIcons[QuestionResponse]][]).map(([key, val]) => {
+          const Icon = val.icon;
+          const isActive = question.response === key;
+          return (
+            <Button
+              key={key}
+              size="sm"
+              variant="outline"
+              className={`h-6 text-[8px] gap-0.5 px-2 ${isActive ? val.color + ' border' : ''}`}
+              onClick={() => {
+                onSetResponse(key, notes);
+                if (!showNotes) setShowNotes(true);
+              }}
+            >
+              <Icon className="w-2.5 h-2.5" /> {val.label}
+            </Button>
+          );
+        })}
+      </div>
+
+      {/* Notes */}
+      {showNotes && (
+        <Textarea
+          placeholder="Notas da resposta..."
+          className="text-[10px] h-12 resize-none"
+          value={notes}
+          onChange={e => {
+            setNotes(e.target.value);
+            onSetResponse(question.response || 'indiferenca', e.target.value);
+          }}
+        />
+      )}
+    </div>
+  );
+};
+
+// ─── Small components ────────────────────────────────────────────────
 const ArgLine = ({ icon, label, text }: { icon: string; label: string; text: string }) => (
   <div className="flex items-start gap-1.5">
     <span className="text-[10px] shrink-0">{icon}</span>
@@ -385,18 +482,13 @@ const ArgLine = ({ icon, label, text }: { icon: string; label: string; text: str
   </div>
 );
 
-// ─── Rule Card ───────────────────────────────────────────────────────
 const RuleCard = ({ rule }: { rule: AssociationRule }) => (
   <Card>
     <CardContent className="p-2.5">
       <div className="flex items-center gap-1 mb-1 flex-wrap">
-        {rule.antecedentNames.map((n, i) => (
-          <Badge key={i} variant="outline" className="text-[8px]">{n}</Badge>
-        ))}
+        {rule.antecedentNames.map((n, i) => <Badge key={i} variant="outline" className="text-[8px]">{n}</Badge>)}
         <ArrowRight className="w-3 h-3 text-muted-foreground shrink-0" />
-        {rule.consequentNames.map((n, i) => (
-          <Badge key={i} className="text-[8px] bg-emerald-100 text-emerald-800">{n}</Badge>
-        ))}
+        {rule.consequentNames.map((n, i) => <Badge key={i} className="text-[8px] bg-emerald-100 text-emerald-800">{n}</Badge>)}
       </div>
       <div className="flex gap-3 text-[9px]">
         <span>Sup: <strong>{(rule.support * 100).toFixed(1)}%</strong></span>

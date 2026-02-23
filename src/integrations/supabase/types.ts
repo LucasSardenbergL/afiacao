@@ -619,6 +619,74 @@ export type Database = {
         }
         Relationships: []
       }
+      farmer_diagnostic_questions: {
+        Row: {
+          alt_question_text: string | null
+          bundle_recommendation_id: string | null
+          bundle_result: string | null
+          created_at: string | null
+          customer_profile: string | null
+          customer_user_id: string
+          effectiveness_score: number | null
+          farmer_id: string
+          id: string
+          margin_generated: number | null
+          question_text: string
+          question_type: string
+          response_notes: string | null
+          response_type: string | null
+          time_spent_seconds: number | null
+          updated_at: string | null
+          was_bundle_offered: boolean | null
+        }
+        Insert: {
+          alt_question_text?: string | null
+          bundle_recommendation_id?: string | null
+          bundle_result?: string | null
+          created_at?: string | null
+          customer_profile?: string | null
+          customer_user_id: string
+          effectiveness_score?: number | null
+          farmer_id: string
+          id?: string
+          margin_generated?: number | null
+          question_text: string
+          question_type: string
+          response_notes?: string | null
+          response_type?: string | null
+          time_spent_seconds?: number | null
+          updated_at?: string | null
+          was_bundle_offered?: boolean | null
+        }
+        Update: {
+          alt_question_text?: string | null
+          bundle_recommendation_id?: string | null
+          bundle_result?: string | null
+          created_at?: string | null
+          customer_profile?: string | null
+          customer_user_id?: string
+          effectiveness_score?: number | null
+          farmer_id?: string
+          id?: string
+          margin_generated?: number | null
+          question_text?: string
+          question_type?: string
+          response_notes?: string | null
+          response_type?: string | null
+          time_spent_seconds?: number | null
+          updated_at?: string | null
+          was_bundle_offered?: boolean | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "farmer_diagnostic_questions_bundle_recommendation_id_fkey"
+            columns: ["bundle_recommendation_id"]
+            isOneToOne: false
+            referencedRelation: "farmer_bundle_recommendations"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       farmer_experiment_clients: {
         Row: {
           calls_count: number | null
