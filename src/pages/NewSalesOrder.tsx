@@ -24,6 +24,7 @@ interface Product {
   unidade: string;
   valor_unitario: number;
   estoque: number;
+  ativo: boolean;
   omie_codigo_produto: number;
 }
 
@@ -95,8 +96,7 @@ const NewSalesOrder = () => {
     try {
       const { data } = await supabase
         .from('omie_products')
-        .select('id, codigo, descricao, unidade, valor_unitario, estoque, omie_codigo_produto')
-        .eq('ativo', true)
+        .select('id, codigo, descricao, unidade, valor_unitario, estoque, ativo, omie_codigo_produto')
         .order('descricao');
       
       if (!data || data.length === 0) {
@@ -118,8 +118,7 @@ const NewSalesOrder = () => {
           // Reload after sync
           const { data: refreshed } = await supabase
             .from('omie_products')
-            .select('id, codigo, descricao, unidade, valor_unitario, estoque, omie_codigo_produto')
-            .eq('ativo', true)
+            .select('id, codigo, descricao, unidade, valor_unitario, estoque, ativo, omie_codigo_produto')
             .order('descricao');
           setProducts((refreshed || []) as Product[]);
         } catch (syncErr) {
@@ -461,7 +460,14 @@ const NewSalesOrder = () => {
                         className="flex items-center justify-between px-2 py-1.5 rounded-lg hover:bg-muted/50"
                       >
                         <div className="flex-1 min-w-0">
-                          <p className="text-xs font-medium truncate">{product.descricao}</p>
+                          <div className="flex items-center gap-1">
+                            <p className="text-xs font-medium truncate">{product.descricao}</p>
+                            {!product.ativo && (
+                              <Badge variant="destructive" className="text-[10px] px-1 py-0 shrink-0">
+                                Inativo
+                              </Badge>
+                            )}
+                          </div>
                           <div className="flex items-center gap-2">
                             <span className="text-xs text-muted-foreground">
                               R$ {(customerPrice || product.valor_unitario).toFixed(2)}
