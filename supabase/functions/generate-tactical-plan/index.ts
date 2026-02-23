@@ -11,7 +11,8 @@ serve(async (req) => {
   }
 
   try {
-    const { customerContext, bundleContext, diagnosticData, historicalObjections } = await req.json();
+    const { customerContext, bundleContext, diagnosticData, historicalObjections, planType } = await req.json();
+    const mode = planType || 'essencial';
 
     const LOVABLE_API_KEY = Deno.env.get('LOVABLE_API_KEY');
     if (!LOVABLE_API_KEY) {
@@ -21,34 +22,71 @@ serve(async (req) => {
       );
     }
 
-    const systemPrompt = `Você é um estrategista comercial especializado em afiação de ferramentas industriais.
+    const essentialPrompt = `Você é um estrategista comercial especializado em afiação de ferramentas industriais.
 
-Gere um Plano Tático Pré-Ligação completo para o vendedor (Farmer).
+Gere um Plano Tático ESSENCIAL (rápido) para o vendedor (Farmer).
 
 Retorne um JSON com:
 
 1. "strategic_objective": Exatamente um de: "recuperacao", "expansao_mix", "upsell_premium", "reativacao", "consolidacao_margem"
-   Escolha baseado em: churn_risk > 60 → recuperacao/reativacao; mix_gap > 3 → expansao_mix; margin < cluster → consolidacao_margem; else → upsell_premium
 
-2. "approach_strategy": Texto curto (2-3 frases) descrevendo a abordagem ideal baseada no perfil do cliente
+2. "approach_strategy": Texto curto (1-2 frases) descrevendo a abordagem ideal
 
 3. "diagnostic_questions": Array de 3 objetos com:
    - "question": Pergunta diagnóstica
    - "purpose": Por que fazer essa pergunta
    - "expected_insight": O que esperar da resposta
 
-4. "implication_question": Uma pergunta de implicação (impacto financeiro/operacional)
+4. "probable_objections": Array de 1 objeto com:
+   - "objection": Objeção mais provável
+   - "technical_response": Resposta técnica
+   - "economic_response": Resposta econômica
+   - "probability": 0-100
 
-5. "offer_transition": Frase de transição para a oferta do bundle
+IMPORTANTE: Retorne APENAS o JSON, sem markdown. Personalize com dados reais.`;
 
-6. "probable_objections": Array de até 3 objetos com:
+    const strategicPrompt = `Você é um estrategista comercial sênior especializado em afiação de ferramentas industriais.
+
+Gere um Plano Tático ESTRATÉGICO COMPLETO para o vendedor (Farmer).
+
+Retorne um JSON com:
+
+1. "strategic_objective": Exatamente um de: "recuperacao", "expansao_mix", "upsell_premium", "reativacao", "consolidacao_margem"
+
+2. "approach_strategy": Texto detalhado (3-4 frases) da abordagem ideal
+
+3. "approach_strategy_b": Texto (2-3 frases) com abordagem alternativa caso a principal falhe
+
+4. "diagnostic_questions": Array de 3 objetos com:
+   - "question": Pergunta diagnóstica
+   - "purpose": Por que fazer essa pergunta
+   - "expected_insight": O que esperar da resposta
+
+5. "implication_question": Uma pergunta de implicação (impacto financeiro/operacional)
+
+6. "offer_transition": Frase de transição para a oferta do bundle
+
+7. "probable_objections": Array de até 3 objetos com:
    - "objection": Objeção provável
    - "technical_response": Resposta técnica
    - "economic_response": Resposta econômica
    - "probability": 0-100
 
-IMPORTANTE: Retorne APENAS o JSON, sem markdown.
-Personalize tudo com base nos dados reais do cliente.`;
+8. "ltv_projection": Objeto com:
+   - "current_annual": Estimativa de faturamento anual atual
+   - "projected_annual": Faturamento anual projetado após ação
+   - "growth_pct": Percentual de crescimento estimado
+
+9. "expected_result": Objeto com:
+   - "best_case_margin": Margem no melhor cenário
+   - "likely_margin": Margem mais provável
+   - "worst_case_margin": Margem no pior cenário
+
+10. "operational_risks": Array de strings com riscos operacionais
+
+IMPORTANTE: Retorne APENAS o JSON, sem markdown. Use dados reais do cliente.`;
+
+    const systemPrompt = mode === 'estrategico' ? strategicPrompt : essentialPrompt;
 
     const userPrompt = `Dados do cliente:
 ${JSON.stringify(customerContext || {}, null, 2)}
@@ -122,6 +160,9 @@ ${JSON.stringify(historicalObjections || [], null, 2)}`;
         probable_objections: [],
       };
     }
+
+    // Add plan_type to response
+    plan.plan_type = mode;
 
     return new Response(
       JSON.stringify(plan),

@@ -1127,6 +1127,7 @@ export type Database = {
         Row: {
           actual_margin: number | null
           approach_strategy: string | null
+          approach_strategy_b: string | null
           best_individual_lie: number | null
           bundle_incremental_margin: number | null
           bundle_lie: number | null
@@ -1144,17 +1145,22 @@ export type Database = {
           diagnostic_questions: Json | null
           effectiveness_score: number | null
           expansion_potential: number | null
+          expected_result: Json | null
           farmer_id: string
           generated_at: string | null
           health_score: number | null
           id: string
           implication_question: string | null
+          ltv_projection: Json | null
           mix_gap: number | null
           notes: string | null
           objection_type: string | null
           offer_transition: string | null
+          operational_risks: Json | null
           plan_followed: boolean | null
+          plan_type: string | null
           probable_objections: Json | null
+          second_bundle: Json | null
           status: string | null
           strategic_objective: string
           top_bundle: Json | null
@@ -1164,6 +1170,7 @@ export type Database = {
         Insert: {
           actual_margin?: number | null
           approach_strategy?: string | null
+          approach_strategy_b?: string | null
           best_individual_lie?: number | null
           bundle_incremental_margin?: number | null
           bundle_lie?: number | null
@@ -1181,17 +1188,22 @@ export type Database = {
           diagnostic_questions?: Json | null
           effectiveness_score?: number | null
           expansion_potential?: number | null
+          expected_result?: Json | null
           farmer_id: string
           generated_at?: string | null
           health_score?: number | null
           id?: string
           implication_question?: string | null
+          ltv_projection?: Json | null
           mix_gap?: number | null
           notes?: string | null
           objection_type?: string | null
           offer_transition?: string | null
+          operational_risks?: Json | null
           plan_followed?: boolean | null
+          plan_type?: string | null
           probable_objections?: Json | null
+          second_bundle?: Json | null
           status?: string | null
           strategic_objective?: string
           top_bundle?: Json | null
@@ -1201,6 +1213,7 @@ export type Database = {
         Update: {
           actual_margin?: number | null
           approach_strategy?: string | null
+          approach_strategy_b?: string | null
           best_individual_lie?: number | null
           bundle_incremental_margin?: number | null
           bundle_lie?: number | null
@@ -1218,17 +1231,22 @@ export type Database = {
           diagnostic_questions?: Json | null
           effectiveness_score?: number | null
           expansion_potential?: number | null
+          expected_result?: Json | null
           farmer_id?: string
           generated_at?: string | null
           health_score?: number | null
           id?: string
           implication_question?: string | null
+          ltv_projection?: Json | null
           mix_gap?: number | null
           notes?: string | null
           objection_type?: string | null
           offer_transition?: string | null
+          operational_risks?: Json | null
           plan_followed?: boolean | null
+          plan_type?: string | null
           probable_objections?: Json | null
+          second_bundle?: Json | null
           status?: string | null
           strategic_objective?: string
           top_bundle?: Json | null
