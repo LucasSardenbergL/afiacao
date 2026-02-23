@@ -398,6 +398,9 @@ const Auth = () => {
         }
 
         if (signUpData.user) {
+          // Auto-approve if employee or found in Omie
+          const shouldAutoApprove = isEmployee || !!omieCliente;
+          
           // Create profile with customer type and employee flag
           await supabase.from('profiles').insert({
             user_id: signUpData.user.id,
@@ -408,6 +411,7 @@ const Auth = () => {
             customer_type: isIndustrial ? 'industrial' : 'domestic',
             cnae: cnae,
             is_employee: isEmployee,
+            is_approved: shouldAutoApprove,
           });
 
           // Create default address from Omie
