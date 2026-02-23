@@ -9,11 +9,12 @@ import { Label } from '@/components/ui/label';
 import { Textarea } from '@/components/ui/textarea';
 import { Badge } from '@/components/ui/badge';
 import { Separator } from '@/components/ui/separator';
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { supabase } from '@/integrations/supabase/client';
 import { useAuth } from '@/contexts/AuthContext';
 import { useToast } from '@/hooks/use-toast';
 import {
-  Loader2, Search, Plus, Minus, Trash2, User, ShoppingCart, Send,
+  Loader2, Search, Plus, Minus, Trash2, User, ShoppingCart, Send, CreditCard,
 } from 'lucide-react';
 
 interface Product {
@@ -47,6 +48,11 @@ interface SelectedCustomer {
   omie_codigo_vendedor: number | null;
 }
 
+interface FormaPagamento {
+  codigo: string;
+  descricao: string;
+}
+
 const NewSalesOrder = () => {
   const navigate = useNavigate();
   const { user, isStaff, loading: authLoading } = useAuth();
@@ -68,6 +74,11 @@ const NewSalesOrder = () => {
   const [cart, setCart] = useState<CartItem[]>([]);
   const [notes, setNotes] = useState('');
   const [submitting, setSubmitting] = useState(false);
+
+  // Payment
+  const [formasPagamento, setFormasPagamento] = useState<FormaPagamento[]>([]);
+  const [selectedParcela, setSelectedParcela] = useState<string>('999');
+  const [loadingFormas, setLoadingFormas] = useState(false);
 
   // Customer price history from Omie
   const [customerPrices, setCustomerPrices] = useState<Record<number, number>>({});
@@ -148,6 +159,27 @@ const NewSalesOrder = () => {
     return () => clearTimeout(timeout);
   }, [customerSearch]);
 
+  // Load payment methods on mount
+  useEffect(() => {
+    if (isStaff) loadFormasPagamento();
+  }, [isStaff]);
+
+  const loadFormasPagamento = async () => {
+    setLoadingFormas(true);
+    try {
+      const { data } = await supabase.functions.invoke('omie-vendas-sync', {
+        body: { action: 'listar_formas_pagamento' },
+      });
+      if (data?.formas) {
+        setFormasPagamento(data.formas);
+      }
+    } catch (e) {
+      console.error('Erro ao carregar formas de pagamento:', e);
+    } finally {
+      setLoadingFormas(false);
+    }
+  };
+
   // Select customer from Omie results
   const selectCustomer = async (cust: OmieCustomer) => {
     setLoadingCustomer(true);
@@ -163,12 +195,21 @@ const NewSalesOrder = () => {
       };
       setSelectedCustomer(selected);
 
-      // Buscar histórico de preços desse cliente
-      const { data: priceData } = await supabase.functions.invoke('omie-vendas-sync', {
-        body: { action: 'buscar_precos_cliente', codigo_cliente: cust.codigo_cliente },
-      });
-      if (priceData?.precos) {
-        setCustomerPrices(priceData.precos);
+      // Buscar histórico de preços e última parcela em paralelo
+      const [priceResult, parcelaResult] = await Promise.all([
+        supabase.functions.invoke('omie-vendas-sync', {
+          body: { action: 'buscar_precos_cliente', codigo_cliente: cust.codigo_cliente },
+        }),
+        supabase.functions.invoke('omie-vendas-sync', {
+          body: { action: 'buscar_ultima_parcela', codigo_cliente: cust.codigo_cliente },
+        }),
+      ]);
+
+      if (priceResult.data?.precos) {
+        setCustomerPrices(priceResult.data.precos);
+      }
+      if (parcelaResult.data?.ultima_parcela) {
+        setSelectedParcela(parcelaResult.data.ultima_parcela);
       }
     } catch (error: any) {
       console.error(error);
@@ -280,6 +321,7 @@ const NewSalesOrder = () => {
             valor_unitario: c.unit_price,
           })),
           observacao: notes,
+          codigo_parcela: selectedParcela,
         },
       });
 
@@ -340,8 +382,13 @@ const NewSalesOrder = () => {
                 <div>
                   <p className="font-medium text-sm">{selectedCustomer.name}</p>
                   <p className="text-xs text-muted-foreground">{selectedCustomer.document}</p>
+                  {selectedCustomer.omie_codigo_vendedor && (
+                    <p className="text-xs text-muted-foreground mt-0.5">
+                      Vendedor: {selectedCustomer.omie_codigo_vendedor}
+                    </p>
+                  )}
                 </div>
-                <Button variant="ghost" size="sm" onClick={() => { setSelectedCustomer(null); setCustomerPrices({}); setCart([]); }}>
+                <Button variant="ghost" size="sm" onClick={() => { setSelectedCustomer(null); setCustomerPrices({}); setCart([]); setSelectedParcela('999'); }}>
                   Trocar
                 </Button>
               </div>
@@ -497,7 +544,37 @@ const NewSalesOrder = () => {
           </Card>
         )}
 
-        {/* 4. Notes + Submit */}
+        {/* 4. Payment Method */}
+        {cart.length > 0 && selectedCustomer && (
+          <Card>
+            <CardHeader className="pb-2">
+              <CardTitle className="text-sm flex items-center gap-2">
+                <CreditCard className="w-4 h-4" />
+                Forma de Pagamento
+              </CardTitle>
+            </CardHeader>
+            <CardContent>
+              {loadingFormas ? (
+                <Loader2 className="w-4 h-4 animate-spin" />
+              ) : (
+                <Select value={selectedParcela} onValueChange={setSelectedParcela}>
+                  <SelectTrigger className="text-sm">
+                    <SelectValue placeholder="Selecione a forma de pagamento" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {formasPagamento.map((f) => (
+                      <SelectItem key={f.codigo} value={f.codigo}>
+                        {f.descricao}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              )}
+            </CardContent>
+          </Card>
+        )}
+
+        {/* 5. Notes + Submit */}
         {cart.length > 0 && selectedCustomer && (
           <Card>
             <CardContent className="pt-4 space-y-3">
