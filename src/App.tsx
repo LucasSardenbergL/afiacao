@@ -50,6 +50,7 @@ import FarmerCopilot from "./pages/FarmerCopilot";
 import FarmerTacticalPlan from "./pages/FarmerTacticalPlan";
 import FarmerIPFDashboard from "./pages/FarmerIPFDashboard";
 import ExecutiveDashboard from "./pages/ExecutiveDashboard";
+import AdminApprovals from "./pages/AdminApprovals";
 import NotFound from "./pages/NotFound";
 
 
@@ -135,6 +136,14 @@ const App = () => (
               element={
                 <ProtectedRoute>
                   <Admin />
+                </ProtectedRoute>
+              }
+            />
+            <Route
+              path="/admin/approvals"
+              element={
+                <ProtectedRoute>
+                  <AdminApprovals />
                 </ProtectedRoute>
               }
             />
