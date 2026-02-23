@@ -1042,6 +1042,81 @@ export type Database = {
         }
         Relationships: []
       }
+      farmer_performance_scores: {
+        Row: {
+          calculated_at: string
+          created_at: string | null
+          farmer_id: string
+          id: string
+          iee_bundle_offered: number | null
+          iee_objective_adherence: number | null
+          iee_post_call_registration: number | null
+          iee_ptpl_usage: number | null
+          iee_questions_usage: number | null
+          iee_total: number | null
+          ipf_churn_reduction: number | null
+          ipf_incremental_margin: number | null
+          ipf_ltv_evolution: number | null
+          ipf_margin_per_hour: number | null
+          ipf_mix_expansion: number | null
+          ipf_total: number | null
+          period_end: string
+          period_start: string
+          total_calls: number | null
+          total_margin: number | null
+          total_plans: number | null
+          total_time_seconds: number | null
+        }
+        Insert: {
+          calculated_at?: string
+          created_at?: string | null
+          farmer_id: string
+          id?: string
+          iee_bundle_offered?: number | null
+          iee_objective_adherence?: number | null
+          iee_post_call_registration?: number | null
+          iee_ptpl_usage?: number | null
+          iee_questions_usage?: number | null
+          iee_total?: number | null
+          ipf_churn_reduction?: number | null
+          ipf_incremental_margin?: number | null
+          ipf_ltv_evolution?: number | null
+          ipf_margin_per_hour?: number | null
+          ipf_mix_expansion?: number | null
+          ipf_total?: number | null
+          period_end: string
+          period_start: string
+          total_calls?: number | null
+          total_margin?: number | null
+          total_plans?: number | null
+          total_time_seconds?: number | null
+        }
+        Update: {
+          calculated_at?: string
+          created_at?: string | null
+          farmer_id?: string
+          id?: string
+          iee_bundle_offered?: number | null
+          iee_objective_adherence?: number | null
+          iee_post_call_registration?: number | null
+          iee_ptpl_usage?: number | null
+          iee_questions_usage?: number | null
+          iee_total?: number | null
+          ipf_churn_reduction?: number | null
+          ipf_incremental_margin?: number | null
+          ipf_ltv_evolution?: number | null
+          ipf_margin_per_hour?: number | null
+          ipf_mix_expansion?: number | null
+          ipf_total?: number | null
+          period_end?: string
+          period_start?: string
+          total_calls?: number | null
+          total_margin?: number | null
+          total_plans?: number | null
+          total_time_seconds?: number | null
+        }
+        Relationships: []
+      }
       farmer_recommendations: {
         Row: {
           accepted_at: string | null

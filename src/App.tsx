@@ -48,6 +48,8 @@ import FarmerLOCC from "./pages/FarmerLOCC";
 import FarmerBundles from "./pages/FarmerBundles";
 import FarmerCopilot from "./pages/FarmerCopilot";
 import FarmerTacticalPlan from "./pages/FarmerTacticalPlan";
+import FarmerIPFDashboard from "./pages/FarmerIPFDashboard";
+import ExecutiveDashboard from "./pages/ExecutiveDashboard";
 import NotFound from "./pages/NotFound";
 
 
@@ -374,6 +376,22 @@ const App = () => (
               element={
                 <ProtectedRoute>
                   <FarmerTacticalPlan />
+                </ProtectedRoute>
+              }
+            />
+            <Route
+              path="/farmer/ipf"
+              element={
+                <ProtectedRoute>
+                  <FarmerIPFDashboard />
+                </ProtectedRoute>
+              }
+            />
+            <Route
+              path="/executive/dashboard"
+              element={
+                <ProtectedRoute>
+                  <ExecutiveDashboard />
                 </ProtectedRoute>
               }
             />
