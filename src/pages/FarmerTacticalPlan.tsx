@@ -13,12 +13,13 @@ import { Label } from '@/components/ui/label';
 import { ScrollArea } from '@/components/ui/scroll-area';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from '@/components/ui/dialog';
 import { useAuth } from '@/contexts/AuthContext';
-import { useTacticalPlan, getObjectiveLabel, type TacticalPlan } from '@/hooks/useTacticalPlan';
+import { useTacticalPlan, getObjectiveLabel, type TacticalPlan, type PlanType } from '@/hooks/useTacticalPlan';
 import { supabase } from '@/integrations/supabase/client';
 import {
   Loader2, Target, Heart, AlertTriangle, TrendingUp, Package,
   MessageSquare, Shield, Copy, Check, ChevronDown, ChevronUp,
-  Plus, FileText, Brain, DollarSign, Clock, Zap
+  Plus, FileText, Brain, DollarSign, Clock, Zap, BarChart3,
+  AlertCircle, Layers
 } from 'lucide-react';
 import { useToast } from '@/hooks/use-toast';
 
@@ -44,10 +45,12 @@ const FarmerTacticalPlan = () => {
   const navigate = useNavigate();
   const { user, isStaff } = useAuth();
   const { toast } = useToast();
-  const { plans, loading, generating, loadPlans, generatePlan, recordResult } = useTacticalPlan();
+  const { plans, loading, generating, loadPlans, generatePlan, checkEfficiency, recordResult } = useTacticalPlan();
   const [customers, setCustomers] = useState<{ id: string; name: string; healthScore: number; churnRisk: number }[]>([]);
   const [expandedPlan, setExpandedPlan] = useState<string | null>(null);
   const [copiedText, setCopiedText] = useState<string | null>(null);
+  const [searchTerm, setSearchTerm] = useState('');
+  const [efficiencyAlert, setEfficiencyAlert] = useState<{ customerId: string; profitPerHour: number; planType: PlanType } | null>(null);
 
   useEffect(() => {
     if (user?.id && isStaff) {
@@ -81,11 +84,31 @@ const FarmerTacticalPlan = () => {
     })));
   };
 
+  const handleGenerateWithCheck = async (customerId: string, planType: PlanType) => {
+    const check = await checkEfficiency(customerId);
+    if (!check.isAboveThreshold) {
+      setEfficiencyAlert({ customerId, profitPerHour: check.estimatedProfitPerHour, planType });
+      return;
+    }
+    generatePlan(customerId, planType);
+  };
+
+  const confirmGenerate = () => {
+    if (efficiencyAlert) {
+      generatePlan(efficiencyAlert.customerId, efficiencyAlert.planType);
+      setEfficiencyAlert(null);
+    }
+  };
+
   const handleCopy = (text: string) => {
     navigator.clipboard.writeText(text);
     setCopiedText(text);
     setTimeout(() => setCopiedText(null), 2000);
   };
+
+  const filteredCustomers = searchTerm
+    ? customers.filter(c => c.name.toLowerCase().includes(searchTerm.toLowerCase()))
+    : customers;
 
   if (!isStaff) { navigate('/', { replace: true }); return null; }
 
@@ -102,24 +125,27 @@ const FarmerTacticalPlan = () => {
               <h2 className="text-sm font-bold">PTPL — Plano Tático Pré-Ligação</h2>
             </div>
             <p className="text-[10px] text-muted-foreground">
-              Estratégia personalizada antes de cada ligação para maximizar lucro incremental.
+              Dois modos: <strong>Essencial</strong> (rápido) ou <strong>Estratégico</strong> (completo com LTV, simulação e riscos).
             </p>
           </CardContent>
         </Card>
 
-        {/* Generate for customer */}
+        {/* Generate for any customer */}
         <Card>
           <CardHeader className="p-3 pb-2">
             <CardTitle className="text-xs flex items-center gap-2">
-              <Plus className="w-3 h-3" /> Gerar Plano Tático
+              <Plus className="w-3 h-3" /> Gerar Plano para Qualquer Cliente
             </CardTitle>
           </CardHeader>
           <CardContent className="p-3 pt-0 space-y-2">
-            <p className="text-[10px] text-muted-foreground">
-              Selecione um cliente prioritário para gerar o plano automaticamente.
-            </p>
-            <div className="space-y-1.5 max-h-48 overflow-y-auto">
-              {customers.slice(0, 10).map(c => (
+            <Input
+              placeholder="Buscar cliente..."
+              value={searchTerm}
+              onChange={e => setSearchTerm(e.target.value)}
+              className="h-8 text-xs"
+            />
+            <div className="space-y-1.5 max-h-60 overflow-y-auto">
+              {filteredCustomers.map(c => (
                 <div key={c.id} className="flex items-center justify-between p-2 rounded-lg border text-xs">
                   <div className="flex items-center gap-2 flex-1 min-w-0">
                     <div className={`w-2 h-2 rounded-full shrink-0 ${
@@ -129,20 +155,62 @@ const FarmerTacticalPlan = () => {
                     <span className="truncate font-medium">{c.name}</span>
                     <span className="text-[9px] text-muted-foreground shrink-0">HS:{Math.round(c.healthScore)}</span>
                   </div>
-                  <Button
-                    size="sm"
-                    variant="outline"
-                    className="h-6 text-[9px] ml-2 shrink-0"
-                    disabled={generating === c.id}
-                    onClick={() => generatePlan(c.id)}
-                  >
-                    {generating === c.id ? <Loader2 className="w-3 h-3 animate-spin" /> : 'Gerar'}
-                  </Button>
+                  <div className="flex gap-1 shrink-0 ml-2">
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      className="h-6 text-[8px] px-2"
+                      disabled={generating === c.id}
+                      onClick={() => handleGenerateWithCheck(c.id, 'essencial')}
+                    >
+                      {generating === c.id ? <Loader2 className="w-3 h-3 animate-spin" /> : <><Zap className="w-2.5 h-2.5 mr-0.5" />Essencial</>}
+                    </Button>
+                    <Button
+                      size="sm"
+                      variant="default"
+                      className="h-6 text-[8px] px-2"
+                      disabled={generating === c.id}
+                      onClick={() => handleGenerateWithCheck(c.id, 'estrategico')}
+                    >
+                      {generating === c.id ? <Loader2 className="w-3 h-3 animate-spin" /> : <><Layers className="w-2.5 h-2.5 mr-0.5" />Estratégico</>}
+                    </Button>
+                  </div>
                 </div>
               ))}
+              {filteredCustomers.length === 0 && (
+                <p className="text-[10px] text-muted-foreground text-center py-4">Nenhum cliente encontrado</p>
+              )}
             </div>
           </CardContent>
         </Card>
+
+        {/* Efficiency Alert Dialog */}
+        <Dialog open={!!efficiencyAlert} onOpenChange={() => setEfficiencyAlert(null)}>
+          <DialogContent className="max-w-xs">
+            <DialogHeader>
+              <DialogTitle className="text-sm flex items-center gap-2">
+                <AlertCircle className="w-4 h-4 text-amber-500" />
+                Potencial Baixo
+              </DialogTitle>
+            </DialogHeader>
+            <div className="space-y-3">
+              <p className="text-xs text-muted-foreground">
+                O lucro estimado por hora para este cliente é de{' '}
+                <strong className="text-foreground">{fmt(efficiencyAlert?.profitPerHour || 0)}/h</strong>,
+                abaixo do limiar recomendado de <strong className="text-foreground">{fmt(50)}/h</strong>.
+              </p>
+              <p className="text-xs text-muted-foreground">Deseja continuar mesmo assim?</p>
+              <div className="flex gap-2">
+                <Button variant="outline" size="sm" className="flex-1 text-xs" onClick={() => setEfficiencyAlert(null)}>
+                  Cancelar
+                </Button>
+                <Button size="sm" className="flex-1 text-xs" onClick={confirmGenerate}>
+                  Continuar
+                </Button>
+              </div>
+            </div>
+          </DialogContent>
+        </Dialog>
 
         {/* Plans List */}
         {loading ? (
@@ -189,7 +257,6 @@ const PlanCard = ({
 }) => {
   return (
     <Card className={plan.status === 'concluido' ? 'opacity-70' : ''}>
-      {/* Header - always visible */}
       <CardContent className="p-3">
         <div className="flex items-center justify-between mb-2" onClick={onToggle} role="button">
           <div className="flex items-center gap-2 flex-1 min-w-0">
@@ -197,6 +264,9 @@ const PlanCard = ({
             <span className="text-xs font-bold truncate">{plan.customerName}</span>
           </div>
           <div className="flex items-center gap-1.5">
+            <Badge variant="outline" className={`text-[7px] ${plan.planType === 'estrategico' ? 'border-primary text-primary' : ''}`}>
+              {plan.planType === 'estrategico' ? '⚡ Estratégico' : '📋 Essencial'}
+            </Badge>
             <Badge className={`text-[8px] ${objectiveColors[plan.strategicObjective] || ''}`}>
               {getObjectiveLabel(plan.strategicObjective)}
             </Badge>
@@ -224,6 +294,16 @@ const PlanCard = ({
           </div>
         </div>
 
+        {/* Efficiency indicator */}
+        {plan.estimatedProfitPerHour > 0 && (
+          <div className={`mt-1.5 flex items-center gap-1 text-[9px] ${
+            plan.estimatedProfitPerHour >= 50 ? 'text-emerald-600' : 'text-amber-600'
+          }`}>
+            <DollarSign className="w-3 h-3" />
+            <span>Lucro estimado: {fmt(plan.estimatedProfitPerHour)}/h</span>
+          </div>
+        )}
+
         {/* Expanded content */}
         {expanded && (
           <div className="mt-3 space-y-3">
@@ -235,11 +315,37 @@ const PlanCard = ({
               <MetricRow label="Perfil" value={profileLabels[plan.customerProfile] || plan.customerProfile} />
             </Section>
 
-            {/* Strategy */}
+            {/* LTV Projection (strategic only) */}
+            {plan.ltvProjection && (
+              <Section title="Projeção de LTV" icon={BarChart3}>
+                <MetricRow label="Faturamento atual/ano" value={fmt(plan.ltvProjection.current_annual)} />
+                <MetricRow label="Projetado/ano" value={fmt(plan.ltvProjection.projected_annual)} />
+                <MetricRow label="Crescimento" value={`+${plan.ltvProjection.growth_pct}%`} />
+              </Section>
+            )}
+
+            {/* Expected Result (strategic only) */}
+            {plan.expectedResult && (
+              <Section title="Simulação de Resultado" icon={TrendingUp}>
+                <MetricRow label="Melhor cenário" value={fmt(plan.expectedResult.best_case_margin)} />
+                <MetricRow label="Cenário provável" value={fmt(plan.expectedResult.likely_margin)} />
+                <MetricRow label="Pior cenário" value={fmt(plan.expectedResult.worst_case_margin)} />
+              </Section>
+            )}
+
+            {/* Strategy A */}
             {plan.approachStrategy && (
-              <Section title="Estratégia de Abordagem" icon={Brain}>
+              <Section title="Estratégia de Abordagem A" icon={Brain}>
                 <p className="text-xs leading-relaxed">{plan.approachStrategy}</p>
                 <CopyButton text={plan.approachStrategy} copied={copiedText === plan.approachStrategy} onCopy={onCopy} />
+              </Section>
+            )}
+
+            {/* Strategy B (strategic only) */}
+            {plan.approachStrategyB && (
+              <Section title="Estratégia Alternativa B" icon={Shield}>
+                <p className="text-xs leading-relaxed">{plan.approachStrategyB}</p>
+                <CopyButton text={plan.approachStrategyB} copied={copiedText === plan.approachStrategyB} onCopy={onCopy} />
               </Section>
             )}
 
@@ -315,6 +421,18 @@ const PlanCard = ({
                         <p className="text-[10px]">{obj.economic_response}</p>
                       </div>
                     </div>
+                  </div>
+                ))}
+              </Section>
+            )}
+
+            {/* Operational Risks (strategic only) */}
+            {plan.operationalRisks.length > 0 && (
+              <Section title="Riscos Operacionais" icon={AlertTriangle}>
+                {plan.operationalRisks.map((risk, i) => (
+                  <div key={i} className="flex items-start gap-1.5 text-[10px]">
+                    <AlertCircle className="w-3 h-3 text-amber-500 shrink-0 mt-0.5" />
+                    <span>{risk}</span>
                   </div>
                 ))}
               </Section>

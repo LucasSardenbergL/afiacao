@@ -10,11 +10,13 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import { ScrollArea } from '@/components/ui/scroll-area';
 import { useAuth } from '@/contexts/AuthContext';
 import { useCopilotEngine, type CopilotDirection, type CopilotPhase, type CopilotIntent } from '@/hooks/useCopilotEngine';
+import { useTacticalPlan, getObjectiveLabel, type TacticalPlan } from '@/hooks/useTacticalPlan';
 import { supabase } from '@/integrations/supabase/client';
 import {
   Mic, MicOff, Radio, StopCircle, Lightbulb, Copy, Check,
   MessageSquare, Brain, Target, Shield, TrendingUp, TrendingDown,
-  Minus, AlertTriangle, Loader2, ChevronRight, Phone
+  Minus, AlertTriangle, Loader2, ChevronRight, Phone, FileText,
+  ChevronDown, ChevronUp
 } from 'lucide-react';
 import { useToast } from '@/hooks/use-toast';
 
@@ -54,10 +56,13 @@ const FarmerCopilot = () => {
   const { user, isStaff } = useAuth();
   const { toast } = useToast();
   const copilot = useCopilotEngine();
+  const { getActivePlan } = useTacticalPlan();
   const [selectedCustomer, setSelectedCustomer] = useState<string>('');
   const [customers, setCustomers] = useState<{ id: string; name: string }[]>([]);
   const [isConnecting, setIsConnecting] = useState(false);
   const [copied, setCopied] = useState(false);
+  const [activePlan, setActivePlan] = useState<TacticalPlan | null>(null);
+  const [showPlan, setShowPlan] = useState(false);
   const transcriptEndRef = useRef<HTMLDivElement>(null);
 
   // ElevenLabs realtime scribe
@@ -101,13 +106,13 @@ const FarmerCopilot = () => {
   const handleStart = useCallback(async () => {
     setIsConnecting(true);
     try {
-      // Get scribe token
       const { data: tokenData, error: tokenError } = await supabase.functions.invoke('elevenlabs-scribe-token');
       if (tokenError || !tokenData?.token) throw new Error('Falha ao obter token de transcrição');
 
-      // Get customer context
       let customerContext: any = null;
       let customerName = '';
+      let bundleContext: any = null;
+
       if (selectedCustomer) {
         const { data: score } = await supabase
           .from('farmer_client_scores')
@@ -134,16 +139,36 @@ const FarmerCopilot = () => {
           daysSinceLastPurchase: score?.days_since_last_purchase,
           churnRisk: score?.churn_risk,
         };
+
+        // Auto-load active PTPL for this customer
+        const plan = await getActivePlan(selectedCustomer);
+        if (plan) {
+          setActivePlan(plan);
+          setShowPlan(true);
+          toast({ title: 'PTPL carregado', description: `Plano ${plan.planType} ativo para ${plan.customerName}` });
+          
+          // Pass plan context to copilot for smarter suggestions
+          bundleContext = plan.topBundle;
+          if (customerContext) {
+            customerContext.activePlan = {
+              objective: plan.strategicObjective,
+              profile: plan.customerProfile,
+              approachStrategy: plan.approachStrategy,
+              diagnosticQuestions: plan.diagnosticQuestions,
+            };
+          }
+        } else {
+          setActivePlan(null);
+        }
       }
 
-      // Start copilot session
       await copilot.startSession({
         customerId: selectedCustomer || undefined,
         customerName: customerName || undefined,
         customerContext,
+        bundleContext,
       });
 
-      // Connect scribe
       await scribe.connect({
         token: tokenData.token,
         microphone: {
@@ -159,7 +184,7 @@ const FarmerCopilot = () => {
     } finally {
       setIsConnecting(false);
     }
-  }, [selectedCustomer, user, copilot, scribe, toast]);
+  }, [selectedCustomer, user, copilot, scribe, toast, getActivePlan]);
 
   // Stop recording
   const handleStop = useCallback(async () => {
@@ -308,6 +333,36 @@ const FarmerCopilot = () => {
                       {copilot.suggestionsShown} sugestões • {copilot.suggestionsUsed} usadas
                     </span>
                   </div>
+                </CardContent>
+              </Card>
+            )}
+
+            {/* Active PTPL */}
+            {activePlan && (
+              <Card className="border-dashed border-primary/30">
+                <CardContent className="p-3">
+                  <div className="flex items-center justify-between" onClick={() => setShowPlan(!showPlan)} role="button">
+                    <div className="flex items-center gap-2">
+                      <FileText className="w-3.5 h-3.5 text-primary" />
+                      <span className="text-[10px] font-semibold">PTPL Ativo — {activePlan.planType === 'estrategico' ? 'Estratégico' : 'Essencial'}</span>
+                    </div>
+                    {showPlan ? <ChevronUp className="w-3 h-3" /> : <ChevronDown className="w-3 h-3" />}
+                  </div>
+                  {showPlan && (
+                    <div className="mt-2 space-y-1.5 text-[9px]">
+                      <div className="flex gap-1.5">
+                        <Badge variant="outline" className="text-[7px]">{getObjectiveLabel(activePlan.strategicObjective)}</Badge>
+                        <Badge variant="outline" className="text-[7px]">HS: {Math.round(activePlan.healthScore)}</Badge>
+                        <Badge variant="outline" className="text-[7px]">Churn: {Math.round(activePlan.churnRisk)}%</Badge>
+                      </div>
+                      {activePlan.approachStrategy && (
+                        <p className="text-muted-foreground">{activePlan.approachStrategy}</p>
+                      )}
+                      {activePlan.diagnosticQuestions.slice(0, 2).map((q, i) => (
+                        <p key={i} className="text-muted-foreground">• {q.question}</p>
+                      ))}
+                    </div>
+                  )}
                 </CardContent>
               </Card>
             )}
