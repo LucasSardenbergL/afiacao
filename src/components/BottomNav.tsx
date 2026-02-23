@@ -1,12 +1,13 @@
 import React from 'react';
-import { Home, PlusCircle, ClipboardList, User, MessageCircle, Shield } from 'lucide-react';
+import { Home, PlusCircle, ClipboardList, User, MessageCircle, Shield, ShoppingCart } from 'lucide-react';
 import { useNavigate, useLocation } from 'react-router-dom';
 import { motion } from 'framer-motion';
 import { cn } from '@/lib/utils';
 import { useAuth } from '@/contexts/AuthContext';
+import { useCompany } from '@/contexts/CompanyContext';
 import { useUnreadMessages } from '@/hooks/useUnreadMessages';
 
-const baseNavItems = [
+const customerNavItems = [
   { icon: Home, label: 'Início', path: '/' },
   { icon: ClipboardList, label: 'Pedidos', path: '/orders' },
   { icon: PlusCircle, label: 'Novo', path: '/new-order', isPrimary: true },
@@ -14,21 +15,32 @@ const baseNavItems = [
   { icon: User, label: 'Perfil', path: '/profile' },
 ];
 
+const staffColacorNavItems = [
+  { icon: Home, label: 'Início', path: '/' },
+  { icon: ClipboardList, label: 'Pedidos', path: '/orders' },
+  { icon: PlusCircle, label: 'Novo', path: '/new-order', isPrimary: true },
+  { icon: Shield, label: 'Admin', path: '/admin' },
+  { icon: User, label: 'Perfil', path: '/profile' },
+];
+
+const staffObenNavItems = [
+  { icon: ShoppingCart, label: 'Vendas', path: '/sales' },
+  { icon: PlusCircle, label: 'Novo', path: '/sales/new', isPrimary: true },
+  { icon: User, label: 'Perfil', path: '/profile' },
+];
+
 export const BottomNav = React.forwardRef<HTMLElement, object>(function BottomNav(_props, ref) {
   const navigate = useNavigate();
   const location = useLocation();
   const { isStaff } = useAuth();
+  const { activeCompany } = useCompany();
   const { unreadCount } = useUnreadMessages();
 
-  const navItems = isStaff 
-    ? [
-        { icon: Home, label: 'Início', path: '/' },
-        { icon: ClipboardList, label: 'Pedidos', path: '/orders' },
-        { icon: PlusCircle, label: 'Novo', path: '/new-order', isPrimary: true },
-        { icon: Shield, label: 'Admin', path: '/admin' },
-        { icon: User, label: 'Perfil', path: '/profile' },
-      ]
-    : baseNavItems;
+  const navItems = !isStaff
+    ? customerNavItems
+    : activeCompany === 'oben'
+      ? staffObenNavItems
+      : staffColacorNavItems;
 
   return (
     <nav ref={ref} className="fixed bottom-0 left-0 right-0 z-50 safe-bottom">
