@@ -109,6 +109,57 @@ async function syncProducts(supabase: ReturnType<typeof createClient>, startPage
   return { totalSynced, totalPaginas, lastPage: pagina - 1, nextPage: complete ? null : pagina, complete };
 }
 
+// Sincronizar estoque real dos produtos via consulta de posição de estoque
+async function syncEstoque(supabase: ReturnType<typeof createClient>) {
+  // Get all local products
+  const { data: localProducts, error: fetchErr } = await supabase
+    .from("omie_products")
+    .select("id, omie_codigo_produto")
+    .eq("ativo", true);
+
+  if (fetchErr) throw fetchErr;
+  if (!localProducts || localProducts.length === 0) return { totalUpdated: 0 };
+
+  let totalUpdated = 0;
+
+  // Process in batches of 20 to avoid timeouts
+  const batchSize = 20;
+  for (let i = 0; i < localProducts.length; i += batchSize) {
+    const batch = localProducts.slice(i, i + batchSize);
+    
+    const updates = await Promise.all(
+      batch.map(async (prod) => {
+        try {
+          const result = await callOmieVendasApi(
+            "estoque/consulta/",
+            "ConsultarEstoqueProduto",
+            { nCodProd: prod.omie_codigo_produto }
+          ) as any;
+          
+          const saldo = result?.nSaldo ?? result?.lista_estoques?.[0]?.nSaldo ?? 0;
+          return { id: prod.id, estoque: saldo };
+        } catch (e: any) {
+          console.warn(`[Omie Vendas] Erro estoque produto ${prod.omie_codigo_produto}:`, e.message);
+          return null;
+        }
+      })
+    );
+
+    for (const upd of updates) {
+      if (upd) {
+        const { error } = await supabase
+          .from("omie_products")
+          .update({ estoque: upd.estoque, updated_at: new Date().toISOString() })
+          .eq("id", upd.id);
+        if (!error) totalUpdated++;
+      }
+    }
+  }
+
+  console.log(`[Omie Vendas] Estoque atualizado: ${totalUpdated} produtos`);
+  return { totalUpdated };
+}
+
 // Buscar/listar clientes na empresa de vendas
 async function listarClientesVendas(searchTerm: string) {
   const results: Array<{
@@ -415,6 +466,12 @@ serve(async (req) => {
         const startPage = params.start_page || 1;
         const syncResult = await syncProducts(supabaseAdmin, startPage);
         result = { success: true, ...syncResult };
+        break;
+      }
+
+      case "sync_estoque": {
+        const estoqueResult = await syncEstoque(supabaseAdmin);
+        result = { success: true, ...estoqueResult };
         break;
       }
 

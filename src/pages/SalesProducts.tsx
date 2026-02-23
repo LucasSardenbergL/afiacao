@@ -9,7 +9,7 @@ import { Badge } from '@/components/ui/badge';
 import { supabase } from '@/integrations/supabase/client';
 import { useAuth } from '@/contexts/AuthContext';
 import { useToast } from '@/hooks/use-toast';
-import { Loader2, Search, RefreshCw, Package, ShoppingCart } from 'lucide-react';
+import { Loader2, Search, RefreshCw, Package, ShoppingCart, BarChart3 } from 'lucide-react';
 
 interface Product {
   id: string;
@@ -31,6 +31,7 @@ const SalesProducts = () => {
   const [products, setProducts] = useState<Product[]>([]);
   const [loading, setLoading] = useState(true);
   const [syncing, setSyncing] = useState(false);
+  const [syncingStock, setSyncingStock] = useState(false);
   const [search, setSearch] = useState('');
 
   useEffect(() => {
@@ -92,6 +93,30 @@ const SalesProducts = () => {
     }
   };
 
+  const syncStock = async () => {
+    setSyncingStock(true);
+    try {
+      const { data, error } = await supabase.functions.invoke('omie-vendas-sync', {
+        body: { action: 'sync_estoque' },
+      });
+      if (error) throw error;
+      toast({
+        title: 'Estoque atualizado!',
+        description: `${data.totalUpdated} produtos com estoque atualizado.`,
+      });
+      await loadProducts();
+    } catch (error: any) {
+      console.error('Erro ao sincronizar estoque:', error);
+      toast({
+        title: 'Erro ao atualizar estoque',
+        description: error.message || 'Não foi possível sincronizar o estoque.',
+        variant: 'destructive',
+      });
+    } finally {
+      setSyncingStock(false);
+    }
+  };
+
   const filteredProducts = products.filter(
     (p) =>
       p.descricao.toLowerCase().includes(search.toLowerCase()) ||
@@ -113,17 +138,29 @@ const SalesProducts = () => {
   return (
     <div className="min-h-screen bg-background pb-24">
       <Header
-        title="Catálogo de Produtos"
+        title="Catálogo"
         showBack
         rightElement={
-          <Button
-            size="sm"
-            variant="ghost"
-            onClick={syncProducts}
-            disabled={syncing}
-          >
-            <RefreshCw className={`w-4 h-4 ${syncing ? 'animate-spin' : ''}`} />
-          </Button>
+          <div className="flex gap-1">
+            <Button
+              size="sm"
+              variant="ghost"
+              onClick={syncStock}
+              disabled={syncingStock}
+              title="Atualizar estoque"
+            >
+              <BarChart3 className={`w-4 h-4 ${syncingStock ? 'animate-pulse' : ''}`} />
+            </Button>
+            <Button
+              size="sm"
+              variant="ghost"
+              onClick={syncProducts}
+              disabled={syncing}
+              title="Sincronizar produtos"
+            >
+              <RefreshCw className={`w-4 h-4 ${syncing ? 'animate-spin' : ''}`} />
+            </Button>
+          </div>
         }
       />
 
@@ -186,9 +223,12 @@ const SalesProducts = () => {
                       <p className="font-bold text-sm text-foreground">
                         R$ {product.valor_unitario.toFixed(2)}
                       </p>
-                      <p className="text-xs text-muted-foreground">
-                        Estoque: {product.estoque}
-                      </p>
+                      <Badge 
+                        variant={product.estoque > 10 ? 'secondary' : product.estoque > 0 ? 'outline' : 'destructive'}
+                        className="text-[10px] mt-1"
+                      >
+                        Est: {product.estoque}
+                      </Badge>
                     </div>
                   </div>
                 </CardContent>
