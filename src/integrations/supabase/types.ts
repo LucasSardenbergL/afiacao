@@ -150,6 +150,149 @@ export type Database = {
           },
         ]
       }
+      farmer_calls: {
+        Row: {
+          attempt_number: number | null
+          call_result: Database["public"]["Enums"]["farmer_call_result"]
+          call_type: Database["public"]["Enums"]["farmer_call_type"]
+          created_at: string
+          customer_user_id: string
+          duration_seconds: number | null
+          ended_at: string | null
+          farmer_id: string
+          follow_up_duration_seconds: number | null
+          id: string
+          linked_sales_order_id: string | null
+          margin_generated: number | null
+          notes: string | null
+          revenue_generated: number | null
+          started_at: string
+        }
+        Insert: {
+          attempt_number?: number | null
+          call_result?: Database["public"]["Enums"]["farmer_call_result"]
+          call_type: Database["public"]["Enums"]["farmer_call_type"]
+          created_at?: string
+          customer_user_id: string
+          duration_seconds?: number | null
+          ended_at?: string | null
+          farmer_id: string
+          follow_up_duration_seconds?: number | null
+          id?: string
+          linked_sales_order_id?: string | null
+          margin_generated?: number | null
+          notes?: string | null
+          revenue_generated?: number | null
+          started_at?: string
+        }
+        Update: {
+          attempt_number?: number | null
+          call_result?: Database["public"]["Enums"]["farmer_call_result"]
+          call_type?: Database["public"]["Enums"]["farmer_call_type"]
+          created_at?: string
+          customer_user_id?: string
+          duration_seconds?: number | null
+          ended_at?: string | null
+          farmer_id?: string
+          follow_up_duration_seconds?: number | null
+          id?: string
+          linked_sales_order_id?: string | null
+          margin_generated?: number | null
+          notes?: string | null
+          revenue_generated?: number | null
+          started_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "farmer_calls_linked_sales_order_id_fkey"
+            columns: ["linked_sales_order_id"]
+            isOneToOne: false
+            referencedRelation: "sales_orders"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      farmer_config: {
+        Row: {
+          created_at: string
+          farmer_id: string
+          hours_friday: number
+          hours_weekday: number
+          id: string
+          updated_at: string
+          working_days_per_month: number
+        }
+        Insert: {
+          created_at?: string
+          farmer_id: string
+          hours_friday?: number
+          hours_weekday?: number
+          id?: string
+          updated_at?: string
+          working_days_per_month?: number
+        }
+        Update: {
+          created_at?: string
+          farmer_id?: string
+          hours_friday?: number
+          hours_weekday?: number
+          id?: string
+          updated_at?: string
+          working_days_per_month?: number
+        }
+        Relationships: []
+      }
+      farmer_learning_weights: {
+        Row: {
+          agenda_pct_expansion: number | null
+          agenda_pct_recovery: number | null
+          agenda_pct_risk: number | null
+          created_at: string
+          farmer_id: string
+          id: string
+          last_adjusted_at: string | null
+          suggested_calls_per_day: number | null
+          suggested_portfolio_size: number | null
+          updated_at: string
+          weight_frequency: number | null
+          weight_margin: number | null
+          weight_monetary: number | null
+          weight_recency: number | null
+        }
+        Insert: {
+          agenda_pct_expansion?: number | null
+          agenda_pct_recovery?: number | null
+          agenda_pct_risk?: number | null
+          created_at?: string
+          farmer_id: string
+          id?: string
+          last_adjusted_at?: string | null
+          suggested_calls_per_day?: number | null
+          suggested_portfolio_size?: number | null
+          updated_at?: string
+          weight_frequency?: number | null
+          weight_margin?: number | null
+          weight_monetary?: number | null
+          weight_recency?: number | null
+        }
+        Update: {
+          agenda_pct_expansion?: number | null
+          agenda_pct_recovery?: number | null
+          agenda_pct_risk?: number | null
+          created_at?: string
+          farmer_id?: string
+          id?: string
+          last_adjusted_at?: string | null
+          suggested_calls_per_day?: number | null
+          suggested_portfolio_size?: number | null
+          updated_at?: string
+          weight_frequency?: number | null
+          weight_margin?: number | null
+          weight_monetary?: number | null
+          weight_recency?: number | null
+        }
+        Relationships: []
+      }
       gamification_scores: {
         Row: {
           consistency_score: number
@@ -541,6 +684,35 @@ export type Database = {
           user_id?: string
         }
         Relationships: []
+      }
+      product_costs: {
+        Row: {
+          cost_price: number
+          id: string
+          product_id: string
+          updated_at: string
+        }
+        Insert: {
+          cost_price?: number
+          id?: string
+          product_id: string
+          updated_at?: string
+        }
+        Update: {
+          cost_price?: number
+          id?: string
+          product_id?: string
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "product_costs_product_id_fkey"
+            columns: ["product_id"]
+            isOneToOne: true
+            referencedRelation: "omie_products"
+            referencedColumns: ["id"]
+          },
+        ]
       }
       profiles: {
         Row: {
@@ -1147,6 +1319,14 @@ export type Database = {
     }
     Enums: {
       app_role: "admin" | "employee" | "customer"
+      farmer_call_result:
+        | "contato_sucesso"
+        | "sem_resposta"
+        | "ocupado"
+        | "caixa_postal"
+        | "numero_invalido"
+        | "reagendado"
+      farmer_call_type: "reativacao" | "cross_sell" | "up_sell" | "follow_up"
     }
     CompositeTypes: {
       [_ in never]: never
@@ -1275,6 +1455,15 @@ export const Constants = {
   public: {
     Enums: {
       app_role: ["admin", "employee", "customer"],
+      farmer_call_result: [
+        "contato_sucesso",
+        "sem_resposta",
+        "ocupado",
+        "caixa_postal",
+        "numero_invalido",
+        "reagendado",
+      ],
+      farmer_call_type: ["reativacao", "cross_sell", "up_sell", "follow_up"],
     },
   },
 } as const
