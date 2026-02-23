@@ -339,21 +339,21 @@ serve(async (req) => {
 
     const supabase = createClient(
       Deno.env.get("SUPABASE_URL")!,
-      Deno.env.get("SUPABASE_ANON_KEY")!,
+      Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!,
       { global: { headers: { Authorization: authHeader } } }
     );
 
-    const { data: claims, error: claimsError } = await supabase.auth.getClaims(
+    const { data: { user }, error: userError } = await supabase.auth.getUser(
       authHeader.replace("Bearer ", "")
     );
-    if (claimsError || !claims?.claims) {
+    if (userError || !user) {
       return new Response(JSON.stringify({ error: "Token inválido" }), {
         status: 401,
         headers: { ...corsHeaders, "Content-Type": "application/json" },
       });
     }
 
-    const userId = claims.claims.sub as string;
+    const userId = user.id;
 
     const { action, ...params } = await req.json();
 
