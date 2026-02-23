@@ -2,6 +2,7 @@ import React from 'react';
 import { ArrowLeft, Bell } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 import { cn } from '@/lib/utils';
+import { CompanySelector } from '@/components/CompanySelector';
 
 interface HeaderProps {
   title?: string;
@@ -46,11 +47,14 @@ export const Header = React.forwardRef<HTMLElement, HeaderProps>(function Header
           )}
         </div>
 
-        {title && (
-          <h1 className="font-display font-bold text-lg text-foreground tracking-tight">
-            {title}
-          </h1>
-        )}
+        <div className="flex items-center gap-2">
+          {title && (
+            <h1 className="font-display font-bold text-lg text-foreground tracking-tight">
+              {title}
+            </h1>
+          )}
+          <CompanySelector />
+        </div>
 
         <div className="w-10 flex justify-end">
           {showNotifications && (
