@@ -474,6 +474,35 @@ serve(async (req) => {
         break;
       }
 
+      case "excluir_pedido": {
+        const { omie_pedido_id: pedidoId, sales_order_id: soId } = params;
+        if (!soId) throw new Error("ID do pedido é obrigatório");
+
+        // Try to cancel in Omie if it was synced
+        if (pedidoId && Number(pedidoId) > 0) {
+          try {
+            await callOmieVendasApi(
+              "produtos/pedido/",
+              "CancelarPedido",
+              { nCodPed: Number(pedidoId) }
+            );
+            console.log(`[Omie Vendas] Pedido ${pedidoId} cancelado no Omie`);
+          } catch (omieErr: any) {
+            console.warn(`[Omie Vendas] Erro ao cancelar no Omie (continuando exclusão local):`, omieErr.message);
+          }
+        }
+
+        // Delete locally
+        const { error: delError } = await supabaseAdmin
+          .from("sales_orders")
+          .delete()
+          .eq("id", soId);
+        if (delError) throw delError;
+
+        result = { success: true };
+        break;
+      }
+
       default:
         throw new Error(`Ação desconhecida: ${action}`);
     }
