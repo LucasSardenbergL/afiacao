@@ -247,6 +247,49 @@ async function buscarHistoricoPrecosOmie(codigoCliente: number) {
   }
 }
 
+// Listar formas de pagamento do Omie
+async function listarFormasPagamento() {
+  const result = await callOmieVendasApi(
+    "geral/formaspagamento/",
+    "ListarFormasPagamento",
+    { pagina: 1, registros_por_pagina: 100 }
+  ) as any;
+
+  const formas = result.forma_pagamento_cadastro || [];
+  return formas
+    .filter((f: any) => f.cInativo !== "S")
+    .map((f: any) => ({
+      codigo: f.cCodigo,
+      descricao: f.cDescricao,
+    }));
+}
+
+// Buscar última forma de pagamento usada pelo cliente
+async function buscarUltimaParcela(codigoCliente: number) {
+  try {
+    const result = await callOmieVendasApi(
+      "produtos/pedido/",
+      "ListarPedidos",
+      {
+        pagina: 1,
+        registros_por_pagina: 5,
+        filtrar_por_cliente: codigoCliente,
+        filtrar_apenas_inclusao: "N",
+      }
+    ) as any;
+
+    const pedidos = result.pedido_venda_produto || [];
+    if (pedidos.length > 0) {
+      const ultimoPedido = pedidos[0];
+      return ultimoPedido.cabecalho?.codigo_parcela || null;
+    }
+    return null;
+  } catch (error) {
+    console.error("[Omie Vendas] Erro ao buscar última parcela:", error);
+    return null;
+  }
+}
+
 // Criar pedido de venda no Omie
 async function criarPedidoVenda(
   supabase: ReturnType<typeof createClient>,
@@ -259,7 +302,8 @@ async function criarPedidoVenda(
     valor_unitario: number;
     descricao?: string;
   }>,
-  observacao?: string
+  observacao?: string,
+  codigoParcela?: string
 ) {
   const cCodIntPed = `PV_${salesOrderId.substring(0, 8)}_${Date.now()}`;
 
@@ -276,8 +320,8 @@ async function criarPedidoVenda(
     codigo_pedido_integracao: cCodIntPed,
     codigo_cliente: codigoCliente,
     data_previsao: new Date().toISOString().split("T")[0].split("-").reverse().join("/"),
-    etapa: "10", // 10 = Proposta/Orçamento
-    codigo_parcela: "999", // A vista
+    etapa: "10",
+    codigo_parcela: codigoParcela || "999",
   };
 
   if (codigoVendedor && codigoVendedor > 0) {
@@ -399,7 +443,7 @@ serve(async (req) => {
       }
 
       case "criar_pedido": {
-        const { sales_order_id, codigo_cliente, codigo_vendedor, items, observacao } = params;
+        const { sales_order_id, codigo_cliente, codigo_vendedor, items, observacao, codigo_parcela } = params;
         if (!sales_order_id || !codigo_cliente || !items?.length) {
           throw new Error("Dados insuficientes para criar pedido de venda");
         }
@@ -409,9 +453,24 @@ serve(async (req) => {
           codigo_cliente,
           codigo_vendedor,
           items,
-          observacao
+          observacao,
+          codigo_parcela
         );
         result = { success: true, ...pedido };
+        break;
+      }
+
+      case "listar_formas_pagamento": {
+        const formas = await listarFormasPagamento();
+        result = { success: true, formas };
+        break;
+      }
+
+      case "buscar_ultima_parcela": {
+        const { codigo_cliente: codCli } = params;
+        if (!codCli) throw new Error("Código do cliente é obrigatório");
+        const ultimaParcela = await buscarUltimaParcela(codCli);
+        result = { success: true, ultima_parcela: ultimaParcela };
         break;
       }
 
