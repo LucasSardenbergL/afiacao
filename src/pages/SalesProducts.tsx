@@ -63,15 +63,20 @@ const SalesProducts = () => {
   const syncProducts = async () => {
     setSyncing(true);
     try {
-      const { data, error } = await supabase.functions.invoke('omie-vendas-sync', {
-        body: { action: 'sync_products' },
-      });
-
-      if (error) throw error;
+      let nextPage: number | null = 1;
+      let totalSynced = 0;
+      while (nextPage) {
+        const { data, error } = await supabase.functions.invoke('omie-vendas-sync', {
+          body: { action: 'sync_products', start_page: nextPage },
+        });
+        if (error) throw error;
+        totalSynced += data.totalSynced || 0;
+        nextPage = data.nextPage || null;
+      }
 
       toast({
         title: 'Sincronização concluída!',
-        description: `${data.totalSynced} produtos sincronizados do Omie.`,
+        description: `${totalSynced} produtos sincronizados do Omie.`,
       });
 
       await loadProducts();
