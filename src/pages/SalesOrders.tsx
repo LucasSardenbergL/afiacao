@@ -5,11 +5,13 @@ import { BottomNav } from '@/components/BottomNav';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
+import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle, AlertDialogTrigger } from '@/components/ui/alert-dialog';
 import { supabase } from '@/integrations/supabase/client';
 import { useAuth } from '@/contexts/AuthContext';
-import { Loader2, ShoppingCart, Plus, Package } from 'lucide-react';
+import { Loader2, ShoppingCart, Plus, Package, Trash2 } from 'lucide-react';
 import { format } from 'date-fns';
 import { ptBR } from 'date-fns/locale';
+import { toast } from 'sonner';
 
 interface SalesOrder {
   id: string;
@@ -74,6 +76,17 @@ const SalesOrders = () => {
     }
   };
 
+  const deleteOrder = async (orderId: string) => {
+    try {
+      const { error } = await supabase.from('sales_orders').delete().eq('id', orderId);
+      if (error) throw error;
+      setOrders((prev) => prev.filter((o) => o.id !== orderId));
+      toast.success('Pedido excluído com sucesso');
+    } catch (e) {
+      console.error(e);
+      toast.error('Erro ao excluir pedido');
+    }
+  };
   if (authLoading || loading) {
     return (
       <div className="min-h-screen bg-background pb-24">
@@ -133,6 +146,27 @@ const SalesOrders = () => {
                         <Badge variant={status.variant}>{status.label}</Badge>
                         <p className="text-sm font-bold">R$ {order.total.toFixed(2)}</p>
                         <p className="text-xs text-muted-foreground">{totalItems} itens</p>
+                        <AlertDialog>
+                          <AlertDialogTrigger asChild>
+                            <Button variant="ghost" size="icon" className="h-7 w-7 text-destructive hover:text-destructive">
+                              <Trash2 className="w-3.5 h-3.5" />
+                            </Button>
+                          </AlertDialogTrigger>
+                          <AlertDialogContent>
+                            <AlertDialogHeader>
+                              <AlertDialogTitle>Excluir pedido?</AlertDialogTitle>
+                              <AlertDialogDescription>
+                                Esta ação não pode ser desfeita. O pedido será removido permanentemente do sistema.
+                              </AlertDialogDescription>
+                            </AlertDialogHeader>
+                            <AlertDialogFooter>
+                              <AlertDialogCancel>Cancelar</AlertDialogCancel>
+                              <AlertDialogAction onClick={() => deleteOrder(order.id)} className="bg-destructive text-destructive-foreground hover:bg-destructive/90">
+                                Excluir
+                              </AlertDialogAction>
+                            </AlertDialogFooter>
+                          </AlertDialogContent>
+                        </AlertDialog>
                       </div>
                     </div>
                   </CardContent>
