@@ -19,8 +19,8 @@ import { useCrossSellEngine } from '@/hooks/useCrossSellEngine';
 import { useAuth } from '@/contexts/AuthContext';
 import {
   Loader2, Heart, Users, Target, Brain, Shield, FlaskConical, Activity,
-  TrendingUp, Phone, RefreshCw, Plus, Play, BarChart3, Package,
-  CheckCircle, XCircle, Clock, Zap, DollarSign, ChevronRight, Radio
+  TrendingUp, Phone, RefreshCw, Plus, Play, BarChart3, Package, Radio,
+  CheckCircle, XCircle, Clock, Zap, DollarSign, ChevronRight
 } from 'lucide-react';
 
 // ─── Helpers ─────────────────────────────────────────────────────────
@@ -93,7 +93,7 @@ const FarmerLOCC = () => {
         </Card>
 
         {/* Quick Navigation */}
-        <div className="grid grid-cols-5 gap-1.5">
+        <div className="grid grid-cols-4 gap-1.5">
           <Button size="sm" variant="outline" onClick={() => navigate('/farmer')} className="h-auto py-2 flex flex-col items-center gap-1">
             <Heart className="w-4 h-4" />
             <span className="text-[9px]">Diagnóstico</span>
@@ -110,18 +110,21 @@ const FarmerLOCC = () => {
             <Package className="w-4 h-4" />
             <span className="text-[9px]">Bundles</span>
           </Button>
+        </div>
+        <div className="grid grid-cols-3 gap-1.5">
+          <Button size="sm" variant="outline" onClick={() => navigate('/farmer/tactical-plan')} className="h-auto py-2 flex flex-col items-center gap-1">
+            <Target className="w-4 h-4" />
+            <span className="text-[9px]">PTPL</span>
+          </Button>
           <Button size="sm" variant="outline" onClick={() => navigate('/farmer/copilot')} className="h-auto py-2 flex flex-col items-center gap-1">
             <Radio className="w-4 h-4" />
             <span className="text-[9px]">Copiloto</span>
           </Button>
-        </div>
-
-        <div className="grid grid-cols-1">
-          <Button size="sm" variant="outline" onClick={() => navigate('/farmer/governance')} className="h-auto py-2 flex flex-row items-center gap-2 relative">
+          <Button size="sm" variant="outline" onClick={() => navigate('/farmer/governance')} className="h-auto py-2 flex flex-col items-center gap-1 relative">
             <Shield className="w-4 h-4" />
             <span className="text-[9px]">Governança</span>
             {pendingProposals > 0 && (
-              <span className="bg-destructive text-destructive-foreground text-[8px] rounded-full w-4 h-4 flex items-center justify-center">
+              <span className="absolute -top-1 -right-1 bg-destructive text-destructive-foreground text-[8px] rounded-full w-4 h-4 flex items-center justify-center">
                 {pendingProposals}
               </span>
             )}
