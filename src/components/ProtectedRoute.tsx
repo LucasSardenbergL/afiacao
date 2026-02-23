@@ -24,6 +24,19 @@ export const ProtectedRoute = ({ children }: ProtectedRouteProps) => {
       }
 
       try {
+        // Check if user is staff (admin or employee) - they skip approval
+        const { data: roleData } = await supabase
+          .from('user_roles')
+          .select('role')
+          .eq('user_id', user.id)
+          .maybeSingle();
+
+        if (roleData?.role === 'admin' || roleData?.role === 'employee') {
+          setApprovalStatus(true);
+          setCheckingApproval(false);
+          return;
+        }
+
         const { data, error } = await supabase
           .from('profiles')
           .select('is_approved')
@@ -32,7 +45,7 @@ export const ProtectedRoute = ({ children }: ProtectedRouteProps) => {
 
         if (error) {
           console.error('Error checking approval:', error);
-          setApprovalStatus(true); // Fail open for existing users
+          setApprovalStatus(true);
         } else {
           setApprovalStatus(data?.is_approved ?? false);
         }

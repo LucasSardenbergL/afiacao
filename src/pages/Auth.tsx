@@ -318,6 +318,12 @@ const Auth = () => {
     
     if (!validateForm()) return;
     
+    // Employees skip tool selection
+    if (isEmployee) {
+      handleFinalSubmit();
+      return;
+    }
+    
     // Go to tools selection
     setSignupStep('tools');
   };

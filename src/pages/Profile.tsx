@@ -18,6 +18,7 @@ interface ProfileData {
   name: string;
   email: string | null;
   phone: string | null;
+  document: string | null;
   customer_type: string | null;
   avatar_url: string | null;
   business_hours_open: string | null;
@@ -39,6 +40,8 @@ const Profile = () => {
   const [isEditing, setIsEditing] = useState(false);
   const [editName, setEditName] = useState('');
   const [editPhone, setEditPhone] = useState('');
+  const [editEmail, setEditEmail] = useState('');
+  const [editDocument, setEditDocument] = useState('');
   const [editBusinessOpen, setEditBusinessOpen] = useState('');
   const [editBusinessClose, setEditBusinessClose] = useState('');
   const [saving, setSaving] = useState(false);
@@ -59,7 +62,7 @@ const Profile = () => {
     try {
       const { data: profileData } = await supabase
         .from('profiles')
-        .select('name, email, phone, customer_type, avatar_url, business_hours_open, business_hours_close')
+        .select('name, email, phone, document, customer_type, avatar_url, business_hours_open, business_hours_close')
         .eq('user_id', user.id)
         .maybeSingle();
 
@@ -70,6 +73,7 @@ const Profile = () => {
           name: user.email?.split('@')[0] || 'Usuário',
           email: user.email || null,
           phone: null,
+          document: null,
           customer_type: null,
           avatar_url: null,
           business_hours_open: null,
@@ -191,6 +195,8 @@ const Profile = () => {
   const handleEditClick = () => {
     setEditName(profile?.name || '');
     setEditPhone(profile?.phone || '');
+    setEditEmail(profile?.email || '');
+    setEditDocument(profile?.document || '');
     setEditBusinessOpen(profile?.business_hours_open || '');
     setEditBusinessClose(profile?.business_hours_close || '');
     setIsEditing(true);
@@ -208,7 +214,9 @@ const Profile = () => {
         .from('profiles')
         .update({
           name: editName,
+          email: editEmail || null,
           phone: editPhone || null,
+          document: editDocument?.replace(/\D/g, '') || null,
           business_hours_open: editBusinessOpen || null,
           business_hours_close: editBusinessClose || null,
         })
@@ -219,7 +227,9 @@ const Profile = () => {
       setProfile(prev => prev ? {
         ...prev,
         name: editName,
+        email: editEmail || null,
         phone: editPhone || null,
+        document: editDocument?.replace(/\D/g, '') || null,
         business_hours_open: editBusinessOpen || null,
         business_hours_close: editBusinessClose || null,
       } : null);
@@ -330,8 +340,16 @@ const Profile = () => {
                 <Input id="editName" value={editName} onChange={e => setEditName(e.target.value)} />
               </div>
               <div>
+                <Label htmlFor="editEmail">E-mail</Label>
+                <Input id="editEmail" type="email" value={editEmail} onChange={e => setEditEmail(e.target.value)} placeholder="seu@email.com" />
+              </div>
+              <div>
                 <Label htmlFor="editPhone">Telefone</Label>
                 <Input id="editPhone" value={editPhone} onChange={e => setEditPhone(e.target.value)} placeholder="(11) 99999-9999" />
+              </div>
+              <div>
+                <Label htmlFor="editDocument">CPF/CNPJ</Label>
+                <Input id="editDocument" value={editDocument} onChange={e => setEditDocument(e.target.value)} placeholder="000.000.000-00" />
               </div>
               <div className="grid grid-cols-2 gap-3">
                 <div>
