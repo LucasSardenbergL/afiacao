@@ -221,6 +221,48 @@ export type Database = {
         }
         Relationships: []
       }
+      farmer_association_rules: {
+        Row: {
+          antecedent_product_ids: string[]
+          cluster_segment: string | null
+          confidence: number
+          consequent_product_ids: string[]
+          created_at: string | null
+          id: string
+          lift: number
+          rule_type: string
+          sample_size: number | null
+          support: number
+          updated_at: string | null
+        }
+        Insert: {
+          antecedent_product_ids: string[]
+          cluster_segment?: string | null
+          confidence?: number
+          consequent_product_ids: string[]
+          created_at?: string | null
+          id?: string
+          lift?: number
+          rule_type?: string
+          sample_size?: number | null
+          support?: number
+          updated_at?: string | null
+        }
+        Update: {
+          antecedent_product_ids?: string[]
+          cluster_segment?: string | null
+          confidence?: number
+          consequent_product_ids?: string[]
+          created_at?: string | null
+          id?: string
+          lift?: number
+          rule_type?: string
+          sample_size?: number | null
+          support?: number
+          updated_at?: string | null
+        }
+        Relationships: []
+      }
       farmer_audit_log: {
         Row: {
           action: string
@@ -260,6 +302,78 @@ export type Database = {
           performed_by?: string
           previous_params?: Json | null
           projection?: Json | null
+        }
+        Relationships: []
+      }
+      farmer_bundle_recommendations: {
+        Row: {
+          accepted_at: string | null
+          accepted_products: Json | null
+          actual_margin: number | null
+          bundle_products: Json
+          bundle_type: string
+          complexity_factor: number | null
+          confidence: number | null
+          created_at: string | null
+          customer_user_id: string
+          farmer_id: string
+          id: string
+          lie_bundle: number | null
+          lift: number | null
+          m_bundle: number | null
+          offered_at: string | null
+          p_bundle: number | null
+          rejected_at: string | null
+          status: string | null
+          support: number | null
+          time_spent_seconds: number | null
+          updated_at: string | null
+        }
+        Insert: {
+          accepted_at?: string | null
+          accepted_products?: Json | null
+          actual_margin?: number | null
+          bundle_products?: Json
+          bundle_type?: string
+          complexity_factor?: number | null
+          confidence?: number | null
+          created_at?: string | null
+          customer_user_id: string
+          farmer_id: string
+          id?: string
+          lie_bundle?: number | null
+          lift?: number | null
+          m_bundle?: number | null
+          offered_at?: string | null
+          p_bundle?: number | null
+          rejected_at?: string | null
+          status?: string | null
+          support?: number | null
+          time_spent_seconds?: number | null
+          updated_at?: string | null
+        }
+        Update: {
+          accepted_at?: string | null
+          accepted_products?: Json | null
+          actual_margin?: number | null
+          bundle_products?: Json
+          bundle_type?: string
+          complexity_factor?: number | null
+          confidence?: number | null
+          created_at?: string | null
+          customer_user_id?: string
+          farmer_id?: string
+          id?: string
+          lie_bundle?: number | null
+          lift?: number | null
+          m_bundle?: number | null
+          offered_at?: string | null
+          p_bundle?: number | null
+          rejected_at?: string | null
+          status?: string | null
+          support?: number | null
+          time_spent_seconds?: number | null
+          updated_at?: string | null
         }
         Relationships: []
       }

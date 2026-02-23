@@ -19,7 +19,7 @@ import { useCrossSellEngine } from '@/hooks/useCrossSellEngine';
 import { useAuth } from '@/contexts/AuthContext';
 import {
   Loader2, Heart, Users, Target, Brain, Shield, FlaskConical, Activity,
-  TrendingUp, Phone, RefreshCw, Plus, Play, BarChart3,
+  TrendingUp, Phone, RefreshCw, Plus, Play, BarChart3, Package,
   CheckCircle, XCircle, Clock, Zap, DollarSign, ChevronRight
 } from 'lucide-react';
 
@@ -93,7 +93,7 @@ const FarmerLOCC = () => {
         </Card>
 
         {/* Quick Navigation */}
-        <div className="grid grid-cols-4 gap-2">
+        <div className="grid grid-cols-5 gap-1.5">
           <Button size="sm" variant="outline" onClick={() => navigate('/farmer')} className="h-auto py-2 flex flex-col items-center gap-1">
             <Heart className="w-4 h-4" />
             <span className="text-[9px]">Diagnóstico</span>
@@ -105,6 +105,10 @@ const FarmerLOCC = () => {
           <Button size="sm" variant="outline" onClick={() => navigate('/farmer/recommendations')} className="h-auto py-2 flex flex-col items-center gap-1">
             <Zap className="w-4 h-4" />
             <span className="text-[9px]">Cross/Up</span>
+          </Button>
+          <Button size="sm" variant="outline" onClick={() => navigate('/farmer/bundles')} className="h-auto py-2 flex flex-col items-center gap-1">
+            <Package className="w-4 h-4" />
+            <span className="text-[9px]">Bundles</span>
           </Button>
           <Button size="sm" variant="outline" onClick={() => navigate('/farmer/governance')} className="h-auto py-2 flex flex-col items-center gap-1 relative">
             <Shield className="w-4 h-4" />
