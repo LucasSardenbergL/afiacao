@@ -1123,6 +1123,128 @@ export type Database = {
           },
         ]
       }
+      farmer_tactical_plans: {
+        Row: {
+          actual_margin: number | null
+          approach_strategy: string | null
+          best_individual_lie: number | null
+          bundle_incremental_margin: number | null
+          bundle_lie: number | null
+          bundle_probability: number | null
+          bundle_recommendation_id: string | null
+          call_duration_seconds: number | null
+          call_result: string | null
+          churn_risk: number | null
+          cluster_avg_margin_pct: number | null
+          completed_at: string | null
+          created_at: string | null
+          current_margin_pct: number | null
+          customer_profile: string | null
+          customer_user_id: string
+          diagnostic_questions: Json | null
+          effectiveness_score: number | null
+          expansion_potential: number | null
+          farmer_id: string
+          generated_at: string | null
+          health_score: number | null
+          id: string
+          implication_question: string | null
+          mix_gap: number | null
+          notes: string | null
+          objection_type: string | null
+          offer_transition: string | null
+          plan_followed: boolean | null
+          probable_objections: Json | null
+          status: string | null
+          strategic_objective: string
+          top_bundle: Json | null
+          updated_at: string | null
+          used_at: string | null
+        }
+        Insert: {
+          actual_margin?: number | null
+          approach_strategy?: string | null
+          best_individual_lie?: number | null
+          bundle_incremental_margin?: number | null
+          bundle_lie?: number | null
+          bundle_probability?: number | null
+          bundle_recommendation_id?: string | null
+          call_duration_seconds?: number | null
+          call_result?: string | null
+          churn_risk?: number | null
+          cluster_avg_margin_pct?: number | null
+          completed_at?: string | null
+          created_at?: string | null
+          current_margin_pct?: number | null
+          customer_profile?: string | null
+          customer_user_id: string
+          diagnostic_questions?: Json | null
+          effectiveness_score?: number | null
+          expansion_potential?: number | null
+          farmer_id: string
+          generated_at?: string | null
+          health_score?: number | null
+          id?: string
+          implication_question?: string | null
+          mix_gap?: number | null
+          notes?: string | null
+          objection_type?: string | null
+          offer_transition?: string | null
+          plan_followed?: boolean | null
+          probable_objections?: Json | null
+          status?: string | null
+          strategic_objective?: string
+          top_bundle?: Json | null
+          updated_at?: string | null
+          used_at?: string | null
+        }
+        Update: {
+          actual_margin?: number | null
+          approach_strategy?: string | null
+          best_individual_lie?: number | null
+          bundle_incremental_margin?: number | null
+          bundle_lie?: number | null
+          bundle_probability?: number | null
+          bundle_recommendation_id?: string | null
+          call_duration_seconds?: number | null
+          call_result?: string | null
+          churn_risk?: number | null
+          cluster_avg_margin_pct?: number | null
+          completed_at?: string | null
+          created_at?: string | null
+          current_margin_pct?: number | null
+          customer_profile?: string | null
+          customer_user_id?: string
+          diagnostic_questions?: Json | null
+          effectiveness_score?: number | null
+          expansion_potential?: number | null
+          farmer_id?: string
+          generated_at?: string | null
+          health_score?: number | null
+          id?: string
+          implication_question?: string | null
+          mix_gap?: number | null
+          notes?: string | null
+          objection_type?: string | null
+          offer_transition?: string | null
+          plan_followed?: boolean | null
+          probable_objections?: Json | null
+          status?: string | null
+          strategic_objective?: string
+          top_bundle?: Json | null
+          updated_at?: string | null
+          used_at?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "farmer_tactical_plans_bundle_recommendation_id_fkey"
+            columns: ["bundle_recommendation_id"]
+            isOneToOne: false
+            referencedRelation: "farmer_bundle_recommendations"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       gamification_scores: {
         Row: {
           consistency_score: number

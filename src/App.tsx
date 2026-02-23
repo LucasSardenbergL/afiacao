@@ -47,6 +47,7 @@ import FarmerRecommendations from "./pages/FarmerRecommendations";
 import FarmerLOCC from "./pages/FarmerLOCC";
 import FarmerBundles from "./pages/FarmerBundles";
 import FarmerCopilot from "./pages/FarmerCopilot";
+import FarmerTacticalPlan from "./pages/FarmerTacticalPlan";
 import NotFound from "./pages/NotFound";
 
 
@@ -365,6 +366,14 @@ const App = () => (
               element={
                 <ProtectedRoute>
                   <FarmerCopilot />
+                </ProtectedRoute>
+              }
+            />
+            <Route
+              path="/farmer/tactical-plan"
+              element={
+                <ProtectedRoute>
+                  <FarmerTacticalPlan />
                 </ProtectedRoute>
               }
             />
