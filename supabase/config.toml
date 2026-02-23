@@ -26,3 +26,9 @@ verify_jwt = false
 
 [functions.omie-vendas-sync]
 verify_jwt = false
+
+[functions.copilot-analyze]
+verify_jwt = false
+
+[functions.elevenlabs-scribe-token]
+verify_jwt = false
