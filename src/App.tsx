@@ -52,6 +52,7 @@ import FarmerIPFDashboard from "./pages/FarmerIPFDashboard";
 import ExecutiveDashboard from "./pages/ExecutiveDashboard";
 import AdminApprovals from "./pages/AdminApprovals";
 import NotFound from "./pages/NotFound";
+import DesignSystem from "./pages/DesignSystem";
 
 
 const queryClient = new QueryClient();
@@ -404,6 +405,7 @@ const App = () => (
                 </ProtectedRoute>
               }
             />
+            <Route path="/design-system" element={<ProtectedRoute><DesignSystem /></ProtectedRoute>} />
             <Route path="*" element={<NotFound />} />
           </Routes>
           <NotificationPrompt />

@@ -14,7 +14,7 @@ export default {
       center: true,
       padding: "1rem",
       screens: {
-        "2xl": "1400px",
+        "2xl": "1440px",
       },
     },
     extend: {
@@ -61,23 +61,72 @@ export default {
           "accent-foreground": "hsl(var(--sidebar-accent-foreground))",
           border: "hsl(var(--sidebar-border))",
           ring: "hsl(var(--sidebar-ring))",
+          muted: "hsl(var(--sidebar-muted))",
         },
         status: {
+          success: "hsl(var(--status-success))",
+          warning: "hsl(var(--status-warning))",
+          error: "hsl(var(--status-error))",
+          info: "hsl(var(--status-info))",
           pending: "hsl(var(--status-pending))",
           progress: "hsl(var(--status-progress))",
-          success: "hsl(var(--status-success))",
           danger: "hsl(var(--status-danger))",
+        },
+        surface: {
+          0: "hsl(var(--surface-0))",
+          1: "hsl(var(--surface-1))",
+          2: "hsl(var(--surface-2))",
+          3: "hsl(var(--surface-3))",
         },
       },
       fontFamily: {
-        sans: ["Inter", "system-ui", "sans-serif"],
-        display: ["Space Grotesk", "system-ui", "sans-serif"],
-        headline: ["Bebas Neue", "Space Grotesk", "system-ui", "sans-serif"],
+        sans: ["Inter", "system-ui", "-apple-system", "sans-serif"],
+        mono: ["JetBrains Mono", "Fira Code", "monospace"],
+      },
+      fontSize: {
+        "2xs": ["0.625rem", { lineHeight: "0.875rem" }],   // 10px
+        xs: ["0.75rem", { lineHeight: "1rem" }],            // 12px
+        sm: ["0.8125rem", { lineHeight: "1.25rem" }],       // 13px
+        base: ["0.875rem", { lineHeight: "1.375rem" }],     // 14px — default body
+        md: ["0.9375rem", { lineHeight: "1.5rem" }],        // 15px
+        lg: ["1rem", { lineHeight: "1.5rem" }],             // 16px
+        xl: ["1.125rem", { lineHeight: "1.75rem" }],        // 18px
+        "2xl": ["1.25rem", { lineHeight: "1.875rem" }],     // 20px
+        "3xl": ["1.5rem", { lineHeight: "2rem" }],          // 24px
+        "4xl": ["1.875rem", { lineHeight: "2.25rem" }],     // 30px
+        "5xl": ["2.25rem", { lineHeight: "2.5rem" }],       // 36px
+      },
+      spacing: {
+        "0.5": "2px",
+        "1": "4px",
+        "1.5": "6px",
+        "2": "8px",
+        "3": "12px",
+        "4": "16px",
+        "5": "20px",
+        "6": "24px",
+        "8": "32px",
+        "10": "40px",
+        "12": "48px",
+        "16": "64px",
+        "20": "80px",
+        "24": "96px",
+        "sidebar": "240px",
+        "sidebar-collapsed": "56px",
+        "topbar": "48px",
       },
       borderRadius: {
         lg: "var(--radius)",
         md: "calc(var(--radius) - 2px)",
         sm: "calc(var(--radius) - 4px)",
+      },
+      boxShadow: {
+        xs: "var(--shadow-xs)",
+        sm: "var(--shadow-sm)",
+        md: "var(--shadow-md)",
+        lg: "var(--shadow-lg)",
+        xl: "var(--shadow-xl)",
+        focus: "var(--shadow-focus)",
       },
       keyframes: {
         "accordion-down": {
@@ -89,11 +138,11 @@ export default {
           to: { height: "0", opacity: "0" },
         },
         "fade-in": {
-          "0%": { opacity: "0", transform: "translateY(10px)" },
+          "0%": { opacity: "0", transform: "translateY(4px)" },
           "100%": { opacity: "1", transform: "translateY(0)" },
         },
         "scale-in": {
-          "0%": { transform: "scale(0.95)", opacity: "0" },
+          "0%": { transform: "scale(0.96)", opacity: "0" },
           "100%": { transform: "scale(1)", opacity: "1" },
         },
         "slide-in-right": {
@@ -104,10 +153,9 @@ export default {
       animation: {
         "accordion-down": "accordion-down 0.2s ease-out",
         "accordion-up": "accordion-up 0.2s ease-out",
-        "fade-in": "fade-in 0.3s ease-out both",
-        "scale-in": "scale-in 0.2s ease-out both",
-        "slide-in-right": "slide-in-right 0.3s ease-out",
-        "enter": "fade-in 0.3s ease-out, scale-in 0.2s ease-out",
+        "fade-in": "fade-in 0.2s ease-out both",
+        "scale-in": "scale-in 0.15s ease-out both",
+        "slide-in-right": "slide-in-right 0.25s ease-out",
       },
     },
   },
