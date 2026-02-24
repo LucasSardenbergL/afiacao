@@ -53,6 +53,8 @@ import ExecutiveDashboard from "./pages/ExecutiveDashboard";
 import AdminApprovals from "./pages/AdminApprovals";
 import NotFound from "./pages/NotFound";
 import DesignSystem from "./pages/DesignSystem";
+import CoachingSPIN from "./pages/CoachingSPIN";
+import SettingsConfig from "./pages/SettingsConfig";
 
 
 const queryClient = new QueryClient();
@@ -406,6 +408,8 @@ const App = () => (
               }
             />
             <Route path="/design-system" element={<ProtectedRoute><DesignSystem /></ProtectedRoute>} />
+            <Route path="/coaching" element={<ProtectedRoute><CoachingSPIN /></ProtectedRoute>} />
+            <Route path="/settings" element={<ProtectedRoute><SettingsConfig /></ProtectedRoute>} />
             <Route path="*" element={<NotFound />} />
           </Routes>
           <NotificationPrompt />
