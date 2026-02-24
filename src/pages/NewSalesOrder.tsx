@@ -1,7 +1,6 @@
 import { useState, useEffect, useCallback, useMemo } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Header } from '@/components/Header';
-import { BottomNav } from '@/components/BottomNav';
+import { AppShell } from '@/components/AppShell';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
@@ -13,10 +12,13 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import { supabase } from '@/integrations/supabase/client';
 import { useAuth } from '@/contexts/AuthContext';
 import { useToast } from '@/hooks/use-toast';
+import { cn } from '@/lib/utils';
 import {
   Loader2, Search, Plus, Minus, Trash2, User, ShoppingCart, Send, CreditCard,
+  ChevronLeft, Package, TrendingUp, Sparkles, ArrowUpRight, CheckCircle,
 } from 'lucide-react';
 
+/* ─── Types ─── */
 interface Product {
   id: string;
   codigo: string;
@@ -54,42 +56,111 @@ interface FormaPagamento {
   descricao: string;
 }
 
+const fmt = (v: number) => v.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' });
+
+/* ─── Cross-sell Recommendation Card ─── */
+function RecommendationCard({ product, reason, impact, onAdd }: {
+  product: Product;
+  reason: string;
+  impact: string;
+  onAdd: () => void;
+}) {
+  return (
+    <div className="flex items-center gap-3 p-3 rounded-lg border border-dashed border-primary/30 bg-accent/30">
+      <div className="w-8 h-8 rounded-lg bg-primary/10 flex items-center justify-center shrink-0">
+        <Sparkles className="w-4 h-4 text-primary" />
+      </div>
+      <div className="flex-1 min-w-0">
+        <p className="text-xs font-medium truncate">{product.descricao}</p>
+        <p className="text-[10px] text-muted-foreground">{reason}</p>
+        <Badge variant="outline" className="text-[10px] mt-0.5 status-success">{impact}</Badge>
+      </div>
+      <Button size="sm" variant="outline" className="h-7 gap-1 shrink-0" onClick={onAdd}>
+        <Plus className="w-3 h-3" /> Adicionar
+      </Button>
+    </div>
+  );
+}
+
+/* ─── Stepper ─── */
+function OrderStepper({ step }: { step: number }) {
+  const steps = ['Cliente', 'Produtos', 'Revisão'];
+  return (
+    <div className="flex items-center gap-2 mb-4">
+      {steps.map((s, i) => (
+        <div key={s} className="flex items-center gap-2">
+          <div className={cn(
+            'w-6 h-6 rounded-full flex items-center justify-center text-xs font-medium transition-colors',
+            i < step ? 'bg-primary text-primary-foreground' :
+            i === step ? 'bg-primary text-primary-foreground' :
+            'bg-muted text-muted-foreground'
+          )}>
+            {i < step ? <CheckCircle className="w-3.5 h-3.5" /> : i + 1}
+          </div>
+          <span className={cn(
+            'text-xs font-medium',
+            i <= step ? 'text-foreground' : 'text-muted-foreground'
+          )}>{s}</span>
+          {i < steps.length - 1 && (
+            <div className={cn('w-8 h-px', i < step ? 'bg-primary' : 'bg-border')} />
+          )}
+        </div>
+      ))}
+    </div>
+  );
+}
+
+/* ─── Main Component ─── */
 const NewSalesOrder = () => {
   const navigate = useNavigate();
   const { user, isStaff, loading: authLoading } = useAuth();
   const { toast } = useToast();
 
-  // Customer selection
   const [customerSearch, setCustomerSearch] = useState('');
   const [customers, setCustomers] = useState<OmieCustomer[]>([]);
   const [selectedCustomer, setSelectedCustomer] = useState<SelectedCustomer | null>(null);
   const [loadingCustomer, setLoadingCustomer] = useState(false);
   const [searchingCustomers, setSearchingCustomers] = useState(false);
 
-  // Products
   const [products, setProducts] = useState<Product[]>([]);
   const [productSearch, setProductSearch] = useState('');
   const [loadingProducts, setLoadingProducts] = useState(true);
 
-  // Cart
   const [cart, setCart] = useState<CartItem[]>([]);
   const [notes, setNotes] = useState('');
   const [submitting, setSubmitting] = useState(false);
 
-  // Payment
   const [formasPagamento, setFormasPagamento] = useState<FormaPagamento[]>([]);
   const [selectedParcela, setSelectedParcela] = useState<string>('999');
   const [loadingFormas, setLoadingFormas] = useState(false);
 
-  // Customer price history from Omie
   const [customerPrices, setCustomerPrices] = useState<Record<number, number>>({});
+
+  // Mock cross-sell suggestions based on cart
+  const crossSellSuggestions = useMemo(() => {
+    if (cart.length === 0 || products.length === 0) return [];
+    const cartIds = new Set(cart.map(c => c.product.id));
+    return products
+      .filter(p => !cartIds.has(p.id) && p.ativo && p.estoque > 0)
+      .slice(0, 2)
+      .map(p => ({
+        product: p,
+        reason: 'Comprado por clientes similares',
+        impact: `+${fmt(p.valor_unitario)} no ticket`,
+      }));
+  }, [cart, products]);
+
+  const currentStep = !selectedCustomer ? 0 : cart.length === 0 ? 1 : 2;
 
   useEffect(() => {
     if (!authLoading && !isStaff) navigate('/', { replace: true });
   }, [authLoading, isStaff, navigate]);
 
   useEffect(() => {
-    if (isStaff) loadProducts();
+    if (isStaff) {
+      loadProducts();
+      loadFormasPagamento();
+    }
   }, [isStaff]);
 
   const loadProducts = async () => {
@@ -98,24 +169,17 @@ const NewSalesOrder = () => {
         .from('omie_products')
         .select('id, codigo, descricao, unidade, valor_unitario, estoque, ativo, omie_codigo_produto')
         .order('descricao');
-      
+
       if (!data || data.length === 0) {
-        // Auto-sync products from Omie in chunks
-        console.log('Nenhum produto local, sincronizando do Omie...');
         try {
           let nextPage: number | null = 1;
-          let totalSynced = 0;
           while (nextPage) {
             const { data: syncResult, error: syncError } = await supabase.functions.invoke('omie-vendas-sync', {
               body: { action: 'sync_products', start_page: nextPage },
             });
             if (syncError) throw syncError;
-            console.log(`Sync chunk: página ${syncResult.lastPage}/${syncResult.totalPaginas}, ${syncResult.totalSynced} produtos`);
-            totalSynced += syncResult.totalSynced || 0;
             nextPage = syncResult.nextPage || null;
           }
-          console.log(`Sync completo: ${totalSynced} produtos sincronizados`);
-          // Reload after sync
           const { data: refreshed } = await supabase
             .from('omie_products')
             .select('id, codigo, descricao, unidade, valor_unitario, estoque, ativo, omie_codigo_produto')
@@ -134,34 +198,20 @@ const NewSalesOrder = () => {
     }
   };
 
-  // Search customers from Omie Vendas API
   useEffect(() => {
-    if (customerSearch.length < 2) {
-      setCustomers([]);
-      return;
-    }
+    if (customerSearch.length < 2) { setCustomers([]); return; }
     const timeout = setTimeout(async () => {
       setSearchingCustomers(true);
       try {
         const { data, error } = await supabase.functions.invoke('omie-vendas-sync', {
           body: { action: 'listar_clientes', search: customerSearch },
         });
-        if (!error && data?.clientes) {
-          setCustomers(data.clientes);
-        }
-      } catch (e) {
-        console.error('Erro ao buscar clientes:', e);
-      } finally {
-        setSearchingCustomers(false);
-      }
+        if (!error && data?.clientes) setCustomers(data.clientes);
+      } catch (e) { console.error(e); }
+      finally { setSearchingCustomers(false); }
     }, 500);
     return () => clearTimeout(timeout);
   }, [customerSearch]);
-
-  // Load payment methods on mount
-  useEffect(() => {
-    if (isStaff) loadFormasPagamento();
-  }, [isStaff]);
 
   const loadFormasPagamento = async () => {
     setLoadingFormas(true);
@@ -169,32 +219,22 @@ const NewSalesOrder = () => {
       const { data } = await supabase.functions.invoke('omie-vendas-sync', {
         body: { action: 'listar_formas_pagamento' },
       });
-      if (data?.formas) {
-        setFormasPagamento(data.formas);
-      }
-    } catch (e) {
-      console.error('Erro ao carregar formas de pagamento:', e);
-    } finally {
-      setLoadingFormas(false);
-    }
+      if (data?.formas) setFormasPagamento(data.formas);
+    } catch (e) { console.error(e); }
+    finally { setLoadingFormas(false); }
   };
 
-  // Select customer from Omie results
   const selectCustomer = async (cust: OmieCustomer) => {
     setLoadingCustomer(true);
     setCustomerSearch('');
     setCustomers([]);
-
     try {
-      const selected: SelectedCustomer = {
+      setSelectedCustomer({
         name: cust.nome_fantasia || cust.razao_social,
         document: cust.cnpj_cpf,
         omie_codigo_cliente: cust.codigo_cliente,
         omie_codigo_vendedor: cust.codigo_vendedor,
-      };
-      setSelectedCustomer(selected);
-
-      // Buscar histórico de preços e última parcela em paralelo
+      });
       const [priceResult, parcelaResult] = await Promise.all([
         supabase.functions.invoke('omie-vendas-sync', {
           body: { action: 'buscar_precos_cliente', codigo_cliente: cust.codigo_cliente },
@@ -203,46 +243,32 @@ const NewSalesOrder = () => {
           body: { action: 'buscar_ultima_parcela', codigo_cliente: cust.codigo_cliente },
         }),
       ]);
-
-      if (priceResult.data?.precos) {
-        setCustomerPrices(priceResult.data.precos);
-      }
-      if (parcelaResult.data?.ultima_parcela) {
-        setSelectedParcela(parcelaResult.data.ultima_parcela);
-      }
+      if (priceResult.data?.precos) setCustomerPrices(priceResult.data.precos);
+      if (parcelaResult.data?.ultima_parcela) setSelectedParcela(parcelaResult.data.ultima_parcela);
     } catch (error: any) {
-      console.error(error);
       toast({ title: 'Erro', description: error.message, variant: 'destructive' });
     } finally {
       setLoadingCustomer(false);
     }
   };
 
-
-
-  // Get price for a product for the selected customer
   const getProductPrice = useCallback((product: Product): number => {
-    // Priority: customer's last purchase price from Omie
     const omiePrice = customerPrices[product.omie_codigo_produto];
     if (omiePrice && omiePrice > 0) return omiePrice;
-    // Fallback: default product price
     return product.valor_unitario;
   }, [customerPrices]);
 
-  // Add product to cart
   const addToCart = (product: Product) => {
-    const existing = cart.find((c) => c.product.id === product.id);
+    const existing = cart.find(c => c.product.id === product.id);
     if (existing) {
-      setCart(cart.map((c) =>
-        c.product.id === product.id ? { ...c, quantity: c.quantity + 1 } : c
-      ));
+      setCart(cart.map(c => c.product.id === product.id ? { ...c, quantity: c.quantity + 1 } : c));
     } else {
       setCart([...cart, { product, quantity: 1, unit_price: getProductPrice(product) }]);
     }
   };
 
   const updateQuantity = (productId: string, delta: number) => {
-    setCart(cart.map((c) => {
+    setCart(cart.map(c => {
       if (c.product.id !== productId) return c;
       const newQty = c.quantity + delta;
       return newQty > 0 ? { ...c, quantity: newQty } : c;
@@ -250,37 +276,28 @@ const NewSalesOrder = () => {
   };
 
   const updatePrice = (productId: string, price: number) => {
-    setCart(cart.map((c) =>
-      c.product.id === productId ? { ...c, unit_price: price } : c
-    ));
+    setCart(cart.map(c => c.product.id === productId ? { ...c, unit_price: price } : c));
   };
 
   const removeFromCart = (productId: string) => {
-    setCart(cart.filter((c) => c.product.id !== productId));
+    setCart(cart.filter(c => c.product.id !== productId));
   };
 
-  const subtotal = useMemo(
-    () => cart.reduce((sum, c) => sum + c.quantity * c.unit_price, 0),
-    [cart]
-  );
+  const subtotal = useMemo(() => cart.reduce((sum, c) => sum + c.quantity * c.unit_price, 0), [cart]);
 
   const filteredProducts = useMemo(() => {
-    if (!productSearch) return products.slice(0, 20);
-    return products.filter(
-      (p) =>
-        p.descricao.toLowerCase().includes(productSearch.toLowerCase()) ||
-        p.codigo.toLowerCase().includes(productSearch.toLowerCase())
-    ).slice(0, 20);
+    if (!productSearch) return products.slice(0, 30);
+    return products.filter(p =>
+      p.descricao.toLowerCase().includes(productSearch.toLowerCase()) ||
+      p.codigo.toLowerCase().includes(productSearch.toLowerCase())
+    ).slice(0, 30);
   }, [products, productSearch]);
 
-  // Submit order
   const submitOrder = async () => {
     if (!selectedCustomer || cart.length === 0 || !user) return;
     setSubmitting(true);
-
     try {
-      // Create sales_order locally
-      const itemsPayload = cart.map((c) => ({
+      const itemsPayload = cart.map(c => ({
         product_id: c.product.id,
         omie_codigo_produto: c.product.omie_codigo_produto,
         codigo: c.product.codigo,
@@ -290,31 +307,25 @@ const NewSalesOrder = () => {
         valor_unitario: c.unit_price,
         valor_total: c.quantity * c.unit_price,
       }));
-
       const { data: salesOrder, error: insertError } = await supabase
         .from('sales_orders')
         .insert({
           customer_user_id: user.id,
           created_by: user.id,
           items: itemsPayload,
-          subtotal,
-          total: subtotal,
-          status: 'rascunho',
-          notes,
+          subtotal, total: subtotal,
+          status: 'rascunho', notes,
         })
-        .select('id')
-        .single();
-
+        .select('id').single();
       if (insertError) throw insertError;
 
-      // Send to Omie
       const { data: omieResult, error: omieError } = await supabase.functions.invoke('omie-vendas-sync', {
         body: {
           action: 'criar_pedido',
           sales_order_id: salesOrder.id,
           codigo_cliente: selectedCustomer.omie_codigo_cliente,
           codigo_vendedor: selectedCustomer.omie_codigo_vendedor,
-          items: cart.map((c) => ({
+          items: cart.map(c => ({
             omie_codigo_produto: c.product.omie_codigo_produto,
             quantidade: c.quantity,
             valor_unitario: c.unit_price,
@@ -325,25 +336,12 @@ const NewSalesOrder = () => {
       });
 
       if (omieError) {
-        console.error('Erro ao enviar ao Omie:', omieError);
-        toast({
-          title: 'Pedido criado localmente',
-          description: 'O pedido foi salvo mas houve erro ao enviar ao Omie. Tente reenviar depois.',
-          variant: 'destructive',
-        });
+        toast({ title: 'Pedido criado localmente', description: 'Erro ao enviar ao ERP.', variant: 'destructive' });
       } else {
-        // Save price history (skip local history since customer may not be in app)
-
-
-        toast({
-          title: 'Pedido de venda criado!',
-          description: `Pedido ${omieResult?.omie_numero_pedido || ''} enviado ao Omie com sucesso.`,
-        });
+        toast({ title: 'Pedido enviado!', description: `Pedido ${omieResult?.omie_numero_pedido || ''} criado.` });
       }
-
       navigate('/sales');
     } catch (error: any) {
-      console.error(error);
       toast({ title: 'Erro ao criar pedido', description: error.message, variant: 'destructive' });
     } finally {
       setSubmitting(false);
@@ -352,270 +350,261 @@ const NewSalesOrder = () => {
 
   if (authLoading) {
     return (
-      <div className="min-h-screen bg-background pb-24">
-        <Header title="Novo Pedido de Venda" showBack />
-        <div className="flex items-center justify-center pt-32">
-          <Loader2 className="w-8 h-8 animate-spin text-primary" />
+      <AppShell>
+        <div className="flex items-center justify-center py-32">
+          <Loader2 className="w-6 h-6 animate-spin text-muted-foreground" />
         </div>
-        <BottomNav />
-      </div>
+      </AppShell>
     );
   }
 
   return (
-    <div className="min-h-screen bg-background pb-24">
-      <Header title="Novo Pedido de Venda" showBack />
+    <AppShell>
+      <div className="max-w-4xl mx-auto space-y-4">
+        {/* Header */}
+        <div className="flex items-center justify-between">
+          <div className="flex items-center gap-3">
+            <button onClick={() => navigate('/sales')} className="flex items-center gap-1 text-sm text-muted-foreground hover:text-foreground">
+              <ChevronLeft className="w-4 h-4" />
+            </button>
+            <div>
+              <h1 className="text-lg font-semibold">Novo pedido de venda</h1>
+              <p className="text-xs text-muted-foreground">Selecione cliente, adicione produtos e envie.</p>
+            </div>
+          </div>
+        </div>
 
-      <main className="pt-16 px-4 max-w-4xl mx-auto space-y-4">
-        {/* 1. Customer Selection */}
-        <Card>
-          <CardHeader className="pb-2">
-            <CardTitle className="text-sm flex items-center gap-2">
-              <User className="w-4 h-4" />
-              Cliente
-            </CardTitle>
-          </CardHeader>
-          <CardContent>
-            {selectedCustomer ? (
-              <div className="flex items-center justify-between">
-                <div>
-                  <p className="font-medium text-sm">{selectedCustomer.name}</p>
-                  <p className="text-xs text-muted-foreground">{selectedCustomer.document}</p>
-                  {selectedCustomer.omie_codigo_vendedor && (
-                    <p className="text-xs text-muted-foreground mt-0.5">
-                      Vendedor: {selectedCustomer.omie_codigo_vendedor}
-                    </p>
-                  )}
-                </div>
-                <Button variant="ghost" size="sm" onClick={() => { setSelectedCustomer(null); setCustomerPrices({}); setCart([]); setSelectedParcela('999'); }}>
-                  Trocar
-                </Button>
-              </div>
-            ) : (
-              <div className="space-y-2">
-                <div className="relative">
-                  <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
-                  <Input
-                    placeholder="Buscar por nome ou CPF/CNPJ..."
-                    value={customerSearch}
-                    onChange={(e) => setCustomerSearch(e.target.value)}
-                    className="pl-9"
-                  />
-                </div>
-                {(loadingCustomer || searchingCustomers) && (
-                  <div className="flex items-center gap-2 text-sm text-muted-foreground">
-                    <Loader2 className="w-4 h-4 animate-spin" /> Buscando clientes no Omie...
-                  </div>
-                )}
-                {customers.length > 0 && (
-                  <div className="border rounded-lg divide-y max-h-48 overflow-y-auto">
-                    {customers.map((c) => (
-                      <button
-                        key={c.codigo_cliente}
-                        className="w-full text-left px-3 py-2 hover:bg-muted/50 transition-colors"
-                        onClick={() => selectCustomer(c)}
-                        disabled={loadingCustomer}
-                      >
-                        <p className="text-sm font-medium">{c.nome_fantasia || c.razao_social}</p>
-                        <p className="text-xs text-muted-foreground">{c.cnpj_cpf || 'Sem documento'}</p>
-                      </button>
-                    ))}
-                  </div>
-                )}
-              </div>
-            )}
-          </CardContent>
-        </Card>
+        <OrderStepper step={currentStep} />
 
-        {/* 2. Product Search + Add */}
-        {selectedCustomer && (
-          <Card>
-            <CardHeader className="pb-2">
-              <CardTitle className="text-sm flex items-center gap-2">
-                <ShoppingCart className="w-4 h-4" />
-                Produtos
-              </CardTitle>
-            </CardHeader>
-            <CardContent>
-              <div className="relative mb-3">
-                <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
-                <Input
-                  placeholder="Buscar produto..."
-                  value={productSearch}
-                  onChange={(e) => setProductSearch(e.target.value)}
-                  className="pl-9"
-                />
-              </div>
-
-              {loadingProducts ? (
-                <Loader2 className="w-5 h-5 animate-spin mx-auto" />
-              ) : (
-                <div className="space-y-1 max-h-48 overflow-y-auto">
-                  {filteredProducts.map((product) => {
-                    const isInCart = cart.some((c) => c.product.id === product.id);
-                    const customerPrice = customerPrices[product.omie_codigo_produto];
-                    return (
-                      <div
-                        key={product.id}
-                        className="flex items-center justify-between px-2 py-1.5 rounded-lg hover:bg-muted/50"
-                      >
-                        <div className="flex-1 min-w-0">
-                          <div className="flex items-center gap-1">
-                            <p className="text-xs font-medium truncate">{product.descricao}</p>
-                            {!product.ativo && (
-                              <Badge variant="destructive" className="text-[10px] px-1 py-0 shrink-0">
-                                Inativo
-                              </Badge>
-                            )}
-                          </div>
-                          <div className="flex items-center gap-2">
-                            <span className="text-xs text-muted-foreground">
-                              R$ {(customerPrice || product.valor_unitario).toFixed(2)}
-                            </span>
-                            {customerPrice && customerPrice !== product.valor_unitario && (
-                              <Badge variant="secondary" className="text-[10px] px-1 py-0">
-                                Preço cliente
-                              </Badge>
-                            )}
-                            <Badge variant={product.estoque > 0 ? 'outline' : 'destructive'} className="text-[10px] px-1 py-0">
-                              Est: {product.estoque ?? 0}
-                            </Badge>
-                          </div>
-                        </div>
-                        <Button
-                          size="sm"
-                          variant={isInCart ? 'secondary' : 'outline'}
-                          className="h-7 w-7 p-0"
-                          onClick={() => addToCart(product)}
-                        >
-                          <Plus className="w-3 h-3" />
-                        </Button>
-                      </div>
-                    );
-                  })}
-                </div>
-              )}
-            </CardContent>
-          </Card>
-        )}
-
-        {/* 3. Cart */}
-        {cart.length > 0 && (
-          <Card>
-            <CardHeader className="pb-2">
-              <CardTitle className="text-sm">
-                Carrinho ({cart.length} {cart.length === 1 ? 'item' : 'itens'})
-              </CardTitle>
-            </CardHeader>
-            <CardContent className="space-y-3">
-              {cart.map((item) => (
-                <div key={item.product.id} className="space-y-1">
-                  <div className="flex items-start justify-between gap-2">
-                    <p className="text-xs font-medium flex-1">{item.product.descricao}</p>
-                    <button onClick={() => removeFromCart(item.product.id)}>
-                      <Trash2 className="w-3.5 h-3.5 text-destructive" />
-                    </button>
-                  </div>
-                  <div className="flex items-center gap-3">
-                    <div className="flex items-center gap-1">
-                      <Button size="sm" variant="outline" className="h-6 w-6 p-0" onClick={() => updateQuantity(item.product.id, -1)}>
-                        <Minus className="w-3 h-3" />
-                      </Button>
-                      <span className="text-xs w-6 text-center">{item.quantity}</span>
-                      <Button size="sm" variant="outline" className="h-6 w-6 p-0" onClick={() => updateQuantity(item.product.id, 1)}>
-                        <Plus className="w-3 h-3" />
-                      </Button>
+        <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
+          {/* Left: Main flow */}
+          <div className="lg:col-span-2 space-y-4">
+            {/* 1. Customer */}
+            <Card>
+              <CardHeader className="pb-2">
+                <CardTitle className="text-sm flex items-center gap-2">
+                  <User className="w-4 h-4" /> Cliente
+                </CardTitle>
+              </CardHeader>
+              <CardContent>
+                {selectedCustomer ? (
+                  <div className="flex items-center justify-between">
+                    <div>
+                      <p className="font-medium text-sm">{selectedCustomer.name}</p>
+                      <p className="text-xs text-muted-foreground">{selectedCustomer.document}</p>
                     </div>
-                    <div className="flex items-center gap-1">
-                      <Label className="text-xs text-muted-foreground">R$</Label>
-                      <Input
-                        type="number"
-                        step="0.01"
-                        value={item.unit_price}
-                        onChange={(e) => updatePrice(item.product.id, parseFloat(e.target.value) || 0)}
-                        className="h-6 w-20 text-xs"
-                      />
-                    </div>
-                    <span className="text-xs font-medium ml-auto">
-                      R$ {(item.quantity * item.unit_price).toFixed(2)}
-                    </span>
+                    <Button variant="ghost" size="sm" onClick={() => { setSelectedCustomer(null); setCustomerPrices({}); setCart([]); setSelectedParcela('999'); }}>
+                      Trocar
+                    </Button>
                   </div>
-                </div>
-              ))}
-
-              <Separator />
-
-              <div className="flex justify-between items-center">
-                <span className="text-sm font-bold">Total</span>
-                <span className="text-sm font-bold">R$ {subtotal.toFixed(2)}</span>
-              </div>
-            </CardContent>
-          </Card>
-        )}
-
-        {/* 4. Payment Method */}
-        {cart.length > 0 && selectedCustomer && (
-          <Card>
-            <CardHeader className="pb-2">
-              <CardTitle className="text-sm flex items-center gap-2">
-                <CreditCard className="w-4 h-4" />
-                Forma de Pagamento
-              </CardTitle>
-            </CardHeader>
-            <CardContent>
-              {loadingFormas ? (
-                <Loader2 className="w-4 h-4 animate-spin" />
-              ) : (
-                <Select value={selectedParcela} onValueChange={setSelectedParcela}>
-                  <SelectTrigger className="text-sm">
-                    <SelectValue placeholder="Selecione a forma de pagamento" />
-                  </SelectTrigger>
-                  <SelectContent>
-                    {formasPagamento.map((f) => (
-                      <SelectItem key={f.codigo} value={f.codigo}>
-                        {f.descricao}
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-              )}
-            </CardContent>
-          </Card>
-        )}
-
-        {/* 5. Notes + Submit */}
-        {cart.length > 0 && selectedCustomer && (
-          <Card>
-            <CardContent className="pt-4 space-y-3">
-              <div>
-                <Label className="text-xs">Observações</Label>
-                <Textarea
-                  placeholder="Observações do pedido..."
-                  value={notes}
-                  onChange={(e) => setNotes(e.target.value)}
-                  rows={2}
-                  className="text-sm"
-                />
-              </div>
-              <Button
-                className="w-full gap-2"
-                onClick={submitOrder}
-                disabled={submitting}
-              >
-                {submitting ? (
-                  <Loader2 className="w-4 h-4 animate-spin" />
                 ) : (
-                  <Send className="w-4 h-4" />
+                  <div className="space-y-2">
+                    <div className="relative">
+                      <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
+                      <Input placeholder="Buscar por nome ou CPF/CNPJ..." value={customerSearch} onChange={e => setCustomerSearch(e.target.value)} className="pl-9 h-9" />
+                    </div>
+                    {(loadingCustomer || searchingCustomers) && (
+                      <div className="flex items-center gap-2 text-sm text-muted-foreground">
+                        <Loader2 className="w-4 h-4 animate-spin" /> Buscando...
+                      </div>
+                    )}
+                    {customers.length > 0 && (
+                      <div className="border rounded-lg divide-y max-h-48 overflow-y-auto">
+                        {customers.map(c => (
+                          <button key={c.codigo_cliente} className="w-full text-left px-3 py-2 hover:bg-muted/50 transition-colors" onClick={() => selectCustomer(c)} disabled={loadingCustomer}>
+                            <p className="text-sm font-medium">{c.nome_fantasia || c.razao_social}</p>
+                            <p className="text-xs text-muted-foreground">{c.cnpj_cpf || 'Sem documento'}</p>
+                          </button>
+                        ))}
+                      </div>
+                    )}
+                  </div>
                 )}
-                Enviar Pedido de Venda
-              </Button>
-            </CardContent>
-          </Card>
-        )}
-      </main>
+              </CardContent>
+            </Card>
 
-      <BottomNav />
-    </div>
+            {/* 2. Products */}
+            {selectedCustomer && (
+              <Card>
+                <CardHeader className="pb-2">
+                  <CardTitle className="text-sm flex items-center gap-2">
+                    <Package className="w-4 h-4" /> Catálogo
+                  </CardTitle>
+                </CardHeader>
+                <CardContent>
+                  <div className="relative mb-3">
+                    <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
+                    <Input placeholder="Buscar produto por nome ou código..." value={productSearch} onChange={e => setProductSearch(e.target.value)} className="pl-9 h-9" />
+                  </div>
+                  {loadingProducts ? (
+                    <Loader2 className="w-5 h-5 animate-spin mx-auto" />
+                  ) : (
+                    <div className="overflow-x-auto">
+                      <table className="w-full text-sm">
+                        <thead>
+                          <tr className="border-b bg-muted/30">
+                            <th className="text-left px-3 py-2 font-medium text-muted-foreground">Produto</th>
+                            <th className="text-right px-3 py-2 font-medium text-muted-foreground">Preço</th>
+                            <th className="text-center px-3 py-2 font-medium text-muted-foreground">Estoque</th>
+                            <th className="w-10"></th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {filteredProducts.map(product => {
+                            const isInCart = cart.some(c => c.product.id === product.id);
+                            const customerPrice = customerPrices[product.omie_codigo_produto];
+                            return (
+                              <tr key={product.id} className={cn('border-b last:border-b-0 hover:bg-muted/20 transition-colors', isInCart && 'bg-accent/20')}>
+                                <td className="px-3 py-2">
+                                  <div className="flex items-center gap-1.5">
+                                    <span className="text-xs truncate max-w-[200px]">{product.descricao}</span>
+                                    {!product.ativo && <Badge variant="destructive" className="text-[9px] px-1 py-0">Inativo</Badge>}
+                                    {customerPrice && customerPrice !== product.valor_unitario && (
+                                      <Badge variant="secondary" className="text-[9px] px-1 py-0">Preço cliente</Badge>
+                                    )}
+                                  </div>
+                                  <span className="text-[10px] text-muted-foreground font-mono">{product.codigo}</span>
+                                </td>
+                                <td className="px-3 py-2 text-right text-xs font-medium">
+                                  {fmt(customerPrice || product.valor_unitario)}
+                                </td>
+                                <td className="px-3 py-2 text-center">
+                                  <Badge variant={product.estoque > 0 ? 'outline' : 'destructive'} className="text-[10px]">
+                                    {product.estoque ?? 0}
+                                  </Badge>
+                                </td>
+                                <td className="px-2 py-2">
+                                  <Button size="sm" variant={isInCart ? 'secondary' : 'ghost'} className="h-7 w-7 p-0" onClick={() => addToCart(product)}>
+                                    <Plus className="w-3.5 h-3.5" />
+                                  </Button>
+                                </td>
+                              </tr>
+                            );
+                          })}
+                        </tbody>
+                      </table>
+                    </div>
+                  )}
+                </CardContent>
+              </Card>
+            )}
+          </div>
+
+          {/* Right: Cart sidebar */}
+          <div className="space-y-4">
+            {/* Cart */}
+            <Card className="sticky top-20">
+              <CardHeader className="pb-2">
+                <CardTitle className="text-sm flex items-center gap-2">
+                  <ShoppingCart className="w-4 h-4" />
+                  Carrinho
+                  {cart.length > 0 && (
+                    <Badge variant="secondary" className="text-[10px] px-1.5 py-0">{cart.length}</Badge>
+                  )}
+                </CardTitle>
+              </CardHeader>
+              <CardContent>
+                {cart.length === 0 ? (
+                  <p className="text-xs text-muted-foreground text-center py-6">Nenhum item adicionado</p>
+                ) : (
+                  <div className="space-y-3">
+                    {cart.map(item => (
+                      <div key={item.product.id} className="space-y-1.5">
+                        <div className="flex items-start justify-between gap-1.5">
+                          <p className="text-xs font-medium flex-1 leading-tight">{item.product.descricao}</p>
+                          <button onClick={() => removeFromCart(item.product.id)} className="shrink-0">
+                            <Trash2 className="w-3.5 h-3.5 text-muted-foreground hover:text-destructive transition-colors" />
+                          </button>
+                        </div>
+                        <div className="flex items-center gap-2">
+                          <div className="flex items-center gap-0.5">
+                            <Button size="sm" variant="outline" className="h-6 w-6 p-0" onClick={() => updateQuantity(item.product.id, -1)}>
+                              <Minus className="w-3 h-3" />
+                            </Button>
+                            <span className="text-xs w-6 text-center font-medium">{item.quantity}</span>
+                            <Button size="sm" variant="outline" className="h-6 w-6 p-0" onClick={() => updateQuantity(item.product.id, 1)}>
+                              <Plus className="w-3 h-3" />
+                            </Button>
+                          </div>
+                          <div className="flex items-center gap-0.5 flex-1">
+                            <span className="text-[10px] text-muted-foreground">R$</span>
+                            <Input type="number" step="0.01" value={item.unit_price} onChange={e => updatePrice(item.product.id, parseFloat(e.target.value) || 0)} className="h-6 text-xs" />
+                          </div>
+                          <span className="text-xs font-semibold shrink-0">{fmt(item.quantity * item.unit_price)}</span>
+                        </div>
+                      </div>
+                    ))}
+
+                    <Separator />
+
+                    <div className="flex justify-between items-center">
+                      <span className="text-sm font-bold">Total</span>
+                      <span className="text-sm font-bold">{fmt(subtotal)}</span>
+                    </div>
+                  </div>
+                )}
+              </CardContent>
+            </Card>
+
+            {/* Cross-sell suggestions */}
+            {crossSellSuggestions.length > 0 && cart.length > 0 && (
+              <Card>
+                <CardHeader className="pb-2">
+                  <CardTitle className="text-sm flex items-center gap-2">
+                    <Sparkles className="w-4 h-4 text-primary" />
+                    Combine com
+                  </CardTitle>
+                </CardHeader>
+                <CardContent className="space-y-2">
+                  {crossSellSuggestions.map(s => (
+                    <RecommendationCard
+                      key={s.product.id}
+                      product={s.product}
+                      reason={s.reason}
+                      impact={s.impact}
+                      onAdd={() => addToCart(s.product)}
+                    />
+                  ))}
+                </CardContent>
+              </Card>
+            )}
+
+            {/* Payment + Notes + Submit */}
+            {cart.length > 0 && selectedCustomer && (
+              <Card>
+                <CardContent className="pt-4 space-y-3">
+                  <div>
+                    <Label className="text-xs font-medium">Forma de pagamento</Label>
+                    {loadingFormas ? (
+                      <Loader2 className="w-4 h-4 animate-spin mt-1" />
+                    ) : (
+                      <Select value={selectedParcela} onValueChange={setSelectedParcela}>
+                        <SelectTrigger className="text-sm h-9 mt-1">
+                          <SelectValue placeholder="Selecione..." />
+                        </SelectTrigger>
+                        <SelectContent>
+                          {formasPagamento.map(f => (
+                            <SelectItem key={f.codigo} value={f.codigo}>{f.descricao}</SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
+                    )}
+                  </div>
+                  <div>
+                    <Label className="text-xs font-medium">Observações</Label>
+                    <Textarea placeholder="Observações do pedido..." value={notes} onChange={e => setNotes(e.target.value)} rows={2} className="text-sm mt-1" />
+                  </div>
+                  <Button className="w-full gap-2" onClick={submitOrder} disabled={submitting}>
+                    {submitting ? <Loader2 className="w-4 h-4 animate-spin" /> : <Send className="w-4 h-4" />}
+                    Enviar pedido
+                  </Button>
+                </CardContent>
+              </Card>
+            )}
+          </div>
+        </div>
+      </div>
+    </AppShell>
   );
 };
 
