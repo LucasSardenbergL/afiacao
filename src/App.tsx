@@ -7,6 +7,7 @@ import { AuthProvider } from "@/contexts/AuthContext";
 import { CompanyProvider } from "@/contexts/CompanyContext";
 import { ProtectedRoute } from "@/components/ProtectedRoute";
 import { NotificationPrompt } from "@/components/NotificationPrompt";
+import { AppShellLayout } from "@/components/AppShellLayout";
 import Index from "./pages/Index";
 import Orders from "./pages/Orders";
 import OrderDetail from "./pages/OrderDetail";
@@ -56,7 +57,6 @@ import DesignSystem from "./pages/DesignSystem";
 import CoachingSPIN from "./pages/CoachingSPIN";
 import SettingsConfig from "./pages/SettingsConfig";
 
-
 const queryClient = new QueryClient();
 
 const App = () => (
@@ -68,348 +68,60 @@ const App = () => (
         <AuthProvider>
           <CompanyProvider>
           <Routes>
+            {/* Public routes */}
             <Route path="/auth" element={<Auth />} />
             <Route path="/reset-password" element={<ResetPassword />} />
-            <Route
-              path="/"
-              element={
-                <ProtectedRoute>
-                  <Index />
-                </ProtectedRoute>
-              }
-            />
-            <Route
-              path="/orders"
-              element={
-                <ProtectedRoute>
-                  <Orders />
-                </ProtectedRoute>
-              }
-            />
-            <Route
-              path="/orders/:id"
-              element={
-                <ProtectedRoute>
-                  <OrderDetail />
-                </ProtectedRoute>
-              }
-            />
-            <Route
-              path="/new-order"
-              element={
-                <ProtectedRoute>
-                  <NewOrder />
-                </ProtectedRoute>
-              }
-            />
-            <Route
-              path="/profile"
-              element={
-                <ProtectedRoute>
-                  <Profile />
-                </ProtectedRoute>
-              }
-            />
-            <Route
-              path="/addresses"
-              element={
-                <ProtectedRoute>
-                  <Addresses />
-                </ProtectedRoute>
-              }
-            />
-            <Route
-              path="/tools"
-              element={
-                <ProtectedRoute>
-                  <Tools />
-                </ProtectedRoute>
-              }
-            />
-            <Route
-              path="/support"
-              element={
-                <ProtectedRoute>
-                  <Support />
-                </ProtectedRoute>
-              }
-            />
-            <Route
-              path="/admin"
-              element={
-                <ProtectedRoute>
-                  <Admin />
-                </ProtectedRoute>
-              }
-            />
-            <Route
-              path="/admin/approvals"
-              element={
-                <ProtectedRoute>
-                  <AdminApprovals />
-                </ProtectedRoute>
-              }
-            />
-            <Route
-              path="/admin/customers"
-              element={
-                <ProtectedRoute>
-                  <AdminCustomers />
-                </ProtectedRoute>
-              }
-            />
-            <Route
-              path="/admin/customers/:customerId"
-              element={
-                <ProtectedRoute>
-                  <AdminCustomers />
-                </ProtectedRoute>
-              }
-            />
-            <Route
-              path="/admin/orders/:id"
-              element={
-                <ProtectedRoute>
-                  <AdminOrderDetail />
-                </ProtectedRoute>
-              }
-            />
-            <Route
-              path="/admin/demand-forecast"
-              element={
-                <ProtectedRoute>
-                  <AdminDemandForecast />
-                </ProtectedRoute>
-              }
-            />
-            <Route
-              path="/admin/route-planner"
-              element={
-                <ProtectedRoute>
-                  <AdminRoutePlanner />
-                </ProtectedRoute>
-              }
-            />
-            <Route
-              path="/admin/monthly-reports"
-              element={
-                <ProtectedRoute>
-                  <AdminMonthlyReports />
-                </ProtectedRoute>
-              }
-            />
-            <Route
-              path="/admin/productivity"
-              element={
-                <ProtectedRoute>
-                  <AdminProductivity />
-                </ProtectedRoute>
-              }
-            />
-            <Route
-              path="/admin/loyalty"
-              element={
-                <ProtectedRoute>
-                  <AdminLoyalty />
-                </ProtectedRoute>
-              }
-            />
-            <Route
-              path="/admin/orders/:id/quality"
-              element={
-                <ProtectedRoute>
-                  <QualityChecklist />
-                </ProtectedRoute>
-              }
-            />
-            <Route
-              path="/recurring-schedules"
-              element={
-                <ProtectedRoute>
-                  <RecurringSchedules />
-                </ProtectedRoute>
-              }
-            />
-            <Route
-              path="/savings"
-              element={
-                <ProtectedRoute>
-                  <SavingsDashboard />
-                </ProtectedRoute>
-              }
-            />
-            <Route
-              path="/loyalty"
-              element={
-                <ProtectedRoute>
-                  <Loyalty />
-                </ProtectedRoute>
-              }
-            />
-            <Route
-              path="/gamification"
-              element={
-                <ProtectedRoute>
-                  <Gamification />
-                </ProtectedRoute>
-              }
-            />
-            <Route
-              path="/admin/gamification"
-              element={
-                <ProtectedRoute>
-                  <AdminGamification />
-                </ProtectedRoute>
-              }
-            />
-            <Route
-              path="/tools/:toolId"
-              element={
-                <ProtectedRoute>
-                  <ToolHistory />
-                </ProtectedRoute>
-              }
-            />
-            <Route
-              path="/tools/:toolId/reports"
-              element={
-                <ProtectedRoute>
-                  <ToolReports />
-                </ProtectedRoute>
-              }
-            />
-            <Route
-              path="/admin/training"
-              element={
-                <ProtectedRoute>
-                  <AdminTraining />
-                </ProtectedRoute>
-              }
-            />
-            <Route
-              path="/training"
-              element={
-                <ProtectedRoute>
-                  <Training />
-                </ProtectedRoute>
-              }
-            />
-            <Route
-              path="/admin/price-table"
-              element={
-                <ProtectedRoute>
-                  <AdminPriceTable />
-                </ProtectedRoute>
-              }
-            />
             <Route path="/tool/:toolId" element={<ToolPublicHistory />} />
-            <Route
-              path="/sales"
-              element={
-                <ProtectedRoute>
-                  <SalesOrders />
-                </ProtectedRoute>
-              }
-            />
-            <Route
-              path="/sales/products"
-              element={
-                <ProtectedRoute>
-                  <SalesProducts />
-                </ProtectedRoute>
-              }
-            />
-            <Route
-              path="/sales/new"
-              element={
-                <ProtectedRoute>
-                  <NewSalesOrder />
-                </ProtectedRoute>
-              }
-            />
-            <Route
-              path="/farmer"
-              element={
-                <ProtectedRoute>
-                  <FarmerDashboard />
-                </ProtectedRoute>
-              }
-            />
-            <Route
-              path="/farmer/calls"
-              element={
-                <ProtectedRoute>
-                  <FarmerCalls />
-                </ProtectedRoute>
-              }
-            />
-            <Route
-              path="/farmer/governance"
-              element={
-                <ProtectedRoute>
-                  <FarmerGovernance />
-                </ProtectedRoute>
-              }
-            />
-            <Route
-              path="/farmer/recommendations"
-              element={
-                <ProtectedRoute>
-                  <FarmerRecommendations />
-                </ProtectedRoute>
-              }
-            />
-            <Route
-              path="/farmer/locc"
-              element={
-                <ProtectedRoute>
-                  <FarmerLOCC />
-                </ProtectedRoute>
-              }
-            />
-            <Route
-              path="/farmer/bundles"
-              element={
-                <ProtectedRoute>
-                  <FarmerBundles />
-                </ProtectedRoute>
-              }
-            />
-            <Route
-              path="/farmer/copilot"
-              element={
-                <ProtectedRoute>
-                  <FarmerCopilot />
-                </ProtectedRoute>
-              }
-            />
-            <Route
-              path="/farmer/tactical-plan"
-              element={
-                <ProtectedRoute>
-                  <FarmerTacticalPlan />
-                </ProtectedRoute>
-              }
-            />
-            <Route
-              path="/farmer/ipf"
-              element={
-                <ProtectedRoute>
-                  <FarmerIPFDashboard />
-                </ProtectedRoute>
-              }
-            />
-            <Route
-              path="/executive/dashboard"
-              element={
-                <ProtectedRoute>
-                  <ExecutiveDashboard />
-                </ProtectedRoute>
-              }
-            />
-            <Route path="/design-system" element={<ProtectedRoute><DesignSystem /></ProtectedRoute>} />
-            <Route path="/coaching" element={<ProtectedRoute><CoachingSPIN /></ProtectedRoute>} />
-            <Route path="/settings" element={<ProtectedRoute><SettingsConfig /></ProtectedRoute>} />
+
+            {/* All authenticated routes inside AppShell */}
+            <Route element={<ProtectedRoute><AppShellLayout /></ProtectedRoute>}>
+              <Route index element={<Index />} />
+              <Route path="orders" element={<Orders />} />
+              <Route path="orders/:id" element={<OrderDetail />} />
+              <Route path="new-order" element={<NewOrder />} />
+              <Route path="profile" element={<Profile />} />
+              <Route path="addresses" element={<Addresses />} />
+              <Route path="tools" element={<Tools />} />
+              <Route path="tools/:toolId" element={<ToolHistory />} />
+              <Route path="tools/:toolId/reports" element={<ToolReports />} />
+              <Route path="support" element={<Support />} />
+              <Route path="admin" element={<Admin />} />
+              <Route path="admin/approvals" element={<AdminApprovals />} />
+              <Route path="admin/customers" element={<AdminCustomers />} />
+              <Route path="admin/customers/:customerId" element={<AdminCustomers />} />
+              <Route path="admin/orders/:id" element={<AdminOrderDetail />} />
+              <Route path="admin/orders/:id/quality" element={<QualityChecklist />} />
+              <Route path="admin/demand-forecast" element={<AdminDemandForecast />} />
+              <Route path="admin/route-planner" element={<AdminRoutePlanner />} />
+              <Route path="admin/monthly-reports" element={<AdminMonthlyReports />} />
+              <Route path="admin/productivity" element={<AdminProductivity />} />
+              <Route path="admin/loyalty" element={<AdminLoyalty />} />
+              <Route path="admin/gamification" element={<AdminGamification />} />
+              <Route path="admin/training" element={<AdminTraining />} />
+              <Route path="admin/price-table" element={<AdminPriceTable />} />
+              <Route path="recurring-schedules" element={<RecurringSchedules />} />
+              <Route path="savings" element={<SavingsDashboard />} />
+              <Route path="loyalty" element={<Loyalty />} />
+              <Route path="gamification" element={<Gamification />} />
+              <Route path="training" element={<Training />} />
+              <Route path="sales" element={<SalesOrders />} />
+              <Route path="sales/products" element={<SalesProducts />} />
+              <Route path="sales/new" element={<NewSalesOrder />} />
+              <Route path="farmer" element={<FarmerDashboard />} />
+              <Route path="farmer/calls" element={<FarmerCalls />} />
+              <Route path="farmer/governance" element={<FarmerGovernance />} />
+              <Route path="farmer/recommendations" element={<FarmerRecommendations />} />
+              <Route path="farmer/locc" element={<FarmerLOCC />} />
+              <Route path="farmer/bundles" element={<FarmerBundles />} />
+              <Route path="farmer/copilot" element={<FarmerCopilot />} />
+              <Route path="farmer/tactical-plan" element={<FarmerTacticalPlan />} />
+              <Route path="farmer/ipf" element={<FarmerIPFDashboard />} />
+              <Route path="executive/dashboard" element={<ExecutiveDashboard />} />
+              <Route path="design-system" element={<DesignSystem />} />
+              <Route path="coaching" element={<CoachingSPIN />} />
+              <Route path="settings" element={<SettingsConfig />} />
+            </Route>
+
             <Route path="*" element={<NotFound />} />
           </Routes>
           <NotificationPrompt />

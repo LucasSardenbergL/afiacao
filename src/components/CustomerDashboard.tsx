@@ -8,7 +8,7 @@ import {
   PiggyBank, Sparkles, AlertTriangle, BookOpen, Award
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
-import { BottomNav } from '@/components/BottomNav';
+
 import { OnboardingWizard } from '@/components/OnboardingWizard';
 import { EmptyState } from '@/components/EmptyState';
 import { useGamificationScore, getLevelInfo } from '@/hooks/useGamificationScore';
@@ -100,7 +100,7 @@ export function CustomerDashboard({ profile, pendingOrders, userTools, getGreeti
   ];
 
   return (
-    <div className="min-h-screen bg-background pb-24">
+    <div className="space-y-6">
       {/* Hero Header */}
       <header className="bg-gradient-dark text-secondary-foreground px-4 pt-12 pb-10 relative overflow-hidden">
         <div className="absolute top-0 right-0 w-72 h-72 bg-primary/8 rounded-full blur-3xl -translate-y-1/2 translate-x-1/2" />
@@ -426,7 +426,6 @@ export function CustomerDashboard({ profile, pendingOrders, userTools, getGreeti
         )}
       </motion.main>
 
-      <BottomNav />
     </div>
   );
 }

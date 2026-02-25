@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { AppShell } from '@/components/AppShell';
+
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
@@ -321,12 +321,12 @@ const FarmerCalls = () => {
   const filteredLogs = filterType === 'all' ? callLogs : callLogs.filter(c => c.call_type === filterType);
 
   if (authLoading) {
-    return <AppShell><div className="flex items-center justify-center py-32"><Loader2 className="w-6 h-6 animate-spin text-muted-foreground" /></div></AppShell>;
+    return <div className="flex items-center justify-center py-32"><Loader2 className="w-6 h-6 animate-spin text-muted-foreground" /></div>;
   }
 
   return (
-    <AppShell>
-      <div className="space-y-4">
+    <>
+    <div className="space-y-4">
         {/* Header */}
         <div className="flex items-center justify-between">
           <div>
@@ -536,7 +536,7 @@ const FarmerCalls = () => {
           </DialogFooter>
         </DialogContent>
       </Dialog>
-    </AppShell>
+    </>
   );
 };
 

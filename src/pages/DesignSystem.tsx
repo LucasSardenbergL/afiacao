@@ -1,5 +1,5 @@
 import React from 'react';
-import { AppShell } from '@/components/AppShell';
+
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Badge } from '@/components/ui/badge';
@@ -41,8 +41,7 @@ function Section({ title, description, children }: { title: string; description?
 
 export default function DesignSystem() {
   return (
-    <AppShell>
-      <div className="max-w-5xl mx-auto space-y-10">
+    <div className="max-w-5xl mx-auto space-y-10">
         {/* Header */}
         <div>
           <h1 className="text-3xl font-semibold tracking-tight">Design System</h1>
@@ -366,7 +365,6 @@ export default function DesignSystem() {
           <p>Design System v1.0 — Colacor CRM</p>
           <p>Referências: HubSpot Canvas · Shopify Polaris · Gong</p>
         </div>
-      </div>
-    </AppShell>
+    </div>
   );
 }

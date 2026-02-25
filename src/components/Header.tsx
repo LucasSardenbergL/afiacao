@@ -3,7 +3,7 @@ import { ArrowLeft, Bell } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 import { cn } from '@/lib/utils';
 import { CompanySelector } from '@/components/CompanySelector';
-
+import { useInsideAppShell } from '@/contexts/AppShellContext';
 interface HeaderProps {
   title?: string;
   showBack?: boolean;
@@ -22,6 +22,8 @@ export const Header = React.forwardRef<HTMLElement, HeaderProps>(function Header
   rightElement,
 }, ref) {
   const navigate = useNavigate();
+  const insideShell = useInsideAppShell();
+  if (insideShell) return null;
 
   return (
     <header
