@@ -41,25 +41,25 @@ interface UserTool {
   };
 }
 
-const statusConfig: Record<string, { label: string; color: string; bgColor: string }> = {
-  'pedido_recebido': { label: 'Recebido', color: 'text-blue-700', bgColor: 'bg-blue-100' },
-  'aguardando_coleta': { label: 'Aguardando Coleta', color: 'text-amber-700', bgColor: 'bg-amber-100' },
-  'em_triagem': { label: 'Em Triagem', color: 'text-purple-700', bgColor: 'bg-purple-100' },
-  'orcamento_enviado': { label: 'Orçamento', color: 'text-orange-700', bgColor: 'bg-orange-100' },
-  'aprovado': { label: 'Aprovado', color: 'text-emerald-700', bgColor: 'bg-emerald-100' },
-  'em_afiacao': { label: 'Em Afiação', color: 'text-primary', bgColor: 'bg-primary/10' },
-  'controle_qualidade': { label: 'Qualidade', color: 'text-cyan-700', bgColor: 'bg-cyan-100' },
-  'pronto_entrega': { label: 'Pronto!', color: 'text-emerald-700', bgColor: 'bg-emerald-100' },
-  'em_rota': { label: 'Em Rota', color: 'text-indigo-700', bgColor: 'bg-indigo-100' },
-  'entregue': { label: 'Entregue', color: 'text-muted-foreground', bgColor: 'bg-muted' },
+const statusConfig: Record<string, { label: string; statusClass: string }> = {
+  'pedido_recebido': { label: 'Recebido', statusClass: 'status-progress' },
+  'aguardando_coleta': { label: 'Aguardando Coleta', statusClass: 'status-pending' },
+  'em_triagem': { label: 'Em Triagem', statusClass: 'status-purple' },
+  'orcamento_enviado': { label: 'Orçamento', statusClass: 'status-pending' },
+  'aprovado': { label: 'Aprovado', statusClass: 'status-success' },
+  'em_afiacao': { label: 'Em Afiação', statusClass: 'status-progress' },
+  'controle_qualidade': { label: 'Qualidade', statusClass: 'status-indigo' },
+  'pronto_entrega': { label: 'Pronto!', statusClass: 'status-success' },
+  'em_rota': { label: 'Em Rota', statusClass: 'status-indigo' },
+  'entregue': { label: 'Entregue', statusClass: 'bg-muted text-muted-foreground' },
 };
 
-const EMPLOYEE_ORDER_STATUS: Record<string, { label: string; color: string }> = {
-  pedido_recebido: { label: 'Recebido', color: 'bg-blue-500' },
-  aguardando_coleta: { label: 'Aguardando Coleta', color: 'bg-amber-500' },
-  em_triagem: { label: 'Coletado', color: 'bg-purple-500' },
-  em_rota: { label: 'Em Rota', color: 'bg-amber-500' },
-  entregue: { label: 'Entregue', color: 'bg-emerald-500' },
+const EMPLOYEE_ORDER_STATUS: Record<string, { label: string; statusClass: string }> = {
+  pedido_recebido: { label: 'Recebido', statusClass: 'status-progress' },
+  aguardando_coleta: { label: 'Aguardando Coleta', statusClass: 'status-pending' },
+  em_triagem: { label: 'Coletado', statusClass: 'status-purple' },
+  em_rota: { label: 'Em Rota', statusClass: 'status-indigo' },
+  entregue: { label: 'Entregue', statusClass: 'status-success' },
 };
 
 const Index = () => {
@@ -312,7 +312,7 @@ const Index = () => {
 
               <div className="space-y-3">
                 {allPendingOrders.slice(0, 5).map((order, index) => {
-                  const config = EMPLOYEE_ORDER_STATUS[order.status] || { label: order.status, color: 'bg-gray-500' };
+                  const config = EMPLOYEE_ORDER_STATUS[order.status] || { label: order.status, statusClass: 'status-progress' };
                   
                   return (
                     <Card 
@@ -337,9 +337,9 @@ const Index = () => {
                             </div>
                           </div>
                           <div className="flex items-center gap-2">
-                            <Badge variant="secondary" className={`${config.color} text-white text-xs`}>
+                            <span className={cn('text-[11px] px-2.5 py-1 rounded-full font-semibold border', config.statusClass)}>
                               {config.label}
-                            </Badge>
+                            </span>
                             <ChevronRight className="w-4 h-4 text-muted-foreground group-hover:translate-x-1 transition-transform" />
                           </div>
                         </div>
@@ -354,7 +354,7 @@ const Index = () => {
           {allPendingOrders.length === 0 && (
             <Card className="text-center py-8">
               <CardContent>
-                <CheckCircle className="w-12 h-12 text-emerald-500 mx-auto mb-3" />
+                <CheckCircle className="w-12 h-12 text-status-success mx-auto mb-3" />
                 <p className="font-semibold text-foreground">Tudo em dia!</p>
                 <p className="text-sm text-muted-foreground">Nenhum pedido pendente no momento</p>
               </CardContent>

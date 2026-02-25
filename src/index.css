@@ -74,12 +74,26 @@
 
     /* ── Status semantic ── */
     --status-success: 142 71% 45%;
+    --status-success-foreground: 142 72% 22%;
+    --status-success-bg: 142 76% 94%;
     --status-warning: 38 92% 50%;
+    --status-warning-foreground: 32 95% 30%;
+    --status-warning-bg: 45 93% 93%;
     --status-error: 0 72% 51%;
+    --status-error-foreground: 0 72% 30%;
+    --status-error-bg: 0 86% 95%;
     --status-info: 222 83% 53%;
+    --status-info-foreground: 222 83% 30%;
+    --status-info-bg: 222 83% 96%;
     --status-pending: 38 92% 50%;
     --status-progress: 222 83% 53%;
     --status-danger: 0 72% 51%;
+    --status-purple: 271 68% 53%;
+    --status-purple-foreground: 271 68% 28%;
+    --status-purple-bg: 271 70% 95%;
+    --status-indigo: 234 85% 60%;
+    --status-indigo-foreground: 234 85% 28%;
+    --status-indigo-bg: 234 85% 95%;
 
     /* ── Surface levels ── */
     --surface-0: 0 0% 100%;
@@ -204,6 +218,24 @@
     @apply text-sm font-semibold;
     line-height: 1.4;
   }
+
+  /* ── Accessible focus ── */
+  :focus-visible {
+    @apply outline-none ring-2 ring-ring ring-offset-2 ring-offset-background;
+  }
+
+  /* ── Touch targets ── */
+  button, a, [role="button"] {
+    min-height: 32px;
+  }
+
+  /* ── Caption / small text ── */
+  .caption {
+    @apply text-xs text-muted-foreground leading-tight;
+  }
+  .overline {
+    @apply text-2xs font-medium uppercase tracking-wider text-muted-foreground;
+  }
 }
 
 @layer utilities {
@@ -246,11 +278,37 @@
     --list-gap: 8px;
   }
 
-  /* ── Status badge colors ── */
-  .status-pending { @apply bg-amber-50 text-amber-700 border-amber-200; }
-  .status-progress { @apply bg-blue-50 text-blue-700 border-blue-200; }
-  .status-success { @apply bg-emerald-50 text-emerald-700 border-emerald-200; }
-  .status-danger { @apply bg-red-50 text-red-700 border-red-200; }
+  /* ── Status badge colors (semantic) ── */
+  .status-pending {
+    background-color: hsl(var(--status-warning-bg));
+    color: hsl(var(--status-warning-foreground));
+    border-color: hsl(var(--status-warning) / 0.2);
+  }
+  .status-progress {
+    background-color: hsl(var(--status-info-bg));
+    color: hsl(var(--status-info-foreground));
+    border-color: hsl(var(--status-info) / 0.2);
+  }
+  .status-success {
+    background-color: hsl(var(--status-success-bg));
+    color: hsl(var(--status-success-foreground));
+    border-color: hsl(var(--status-success) / 0.2);
+  }
+  .status-danger {
+    background-color: hsl(var(--status-error-bg));
+    color: hsl(var(--status-error-foreground));
+    border-color: hsl(var(--status-error) / 0.2);
+  }
+  .status-purple {
+    background-color: hsl(var(--status-purple-bg));
+    color: hsl(var(--status-purple-foreground));
+    border-color: hsl(var(--status-purple) / 0.2);
+  }
+  .status-indigo {
+    background-color: hsl(var(--status-indigo-bg));
+    color: hsl(var(--status-indigo-foreground));
+    border-color: hsl(var(--status-indigo) / 0.2);
+  }
 
   /* ── Focus ring ── */
   .focus-ring {
