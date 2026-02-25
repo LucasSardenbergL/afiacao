@@ -1,6 +1,6 @@
 import { useState, useEffect, useMemo } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
-import { AppShell } from '@/components/AppShell';
+
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
@@ -672,18 +672,16 @@ const AdminCustomers = () => {
 
   if (authLoading || loading) {
     return (
-      <AppShell>
-        <div className="flex items-center justify-center py-32">
-          <Loader2 className="w-6 h-6 animate-spin text-muted-foreground" />
-        </div>
-      </AppShell>
+      <div className="flex items-center justify-center py-32">
+        <Loader2 className="w-6 h-6 animate-spin text-muted-foreground" />
+      </div>
     );
   }
 
   if (!isStaff) return null;
 
   return (
-    <AppShell>
+    <>
       <AddToolDialog
         open={addToolDialogOpen}
         onOpenChange={setAddToolDialogOpen}
@@ -716,7 +714,7 @@ const AdminCustomers = () => {
           onSelect={handleSelectCustomer}
         />
       )}
-    </AppShell>
+    </>
   );
 };
 

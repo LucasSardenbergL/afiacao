@@ -1,8 +1,9 @@
 import React, { useState } from 'react';
-import { useLocation, useNavigate, Outlet } from 'react-router-dom';
+import { useLocation, useNavigate } from 'react-router-dom';
 import { cn } from '@/lib/utils';
 import { useAuth } from '@/contexts/AuthContext';
 import { useUserRole } from '@/hooks/useUserRole';
+import { AppShellProvider } from '@/contexts/AppShellContext';
 import {
   LayoutDashboard,
   Users,
@@ -304,6 +305,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
   const [mobileOpen, setMobileOpen] = useState(false);
 
   return (
+    <AppShellProvider>
     <div className="min-h-screen bg-background density-compact">
       {/* Desktop sidebar */}
       <div className="hidden lg:block">
@@ -329,5 +331,6 @@ export function AppShell({ children }: { children: React.ReactNode }) {
         </div>
       </main>
     </div>
+    </AppShellProvider>
   );
 }

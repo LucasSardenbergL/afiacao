@@ -6,6 +6,7 @@ import { cn } from '@/lib/utils';
 import { useAuth } from '@/contexts/AuthContext';
 import { useCompany } from '@/contexts/CompanyContext';
 import { useUnreadMessages } from '@/hooks/useUnreadMessages';
+import { useInsideAppShell } from '@/contexts/AppShellContext';
 
 const customerNavItems = [
   { icon: Home, label: 'Início', path: '/' },
@@ -35,6 +36,9 @@ export const BottomNav = React.forwardRef<HTMLElement, object>(function BottomNa
   const { isStaff } = useAuth();
   const { activeCompany } = useCompany();
   const { unreadCount } = useUnreadMessages();
+  const insideShell = useInsideAppShell();
+
+  if (insideShell) return null;
 
   const navItems = !isStaff
     ? customerNavItems

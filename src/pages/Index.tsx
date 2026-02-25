@@ -4,7 +4,7 @@ import { useNavigate } from 'react-router-dom';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
-import { BottomNav } from '@/components/BottomNav';
+
 import { CustomerDashboard } from '@/components/CustomerDashboard';
 import { supabase } from '@/integrations/supabase/client';
 import { useAuth } from '@/contexts/AuthContext';
@@ -180,29 +180,10 @@ const Index = () => {
 
   if (loading || roleLoading) {
     return (
-      <div className="min-h-screen bg-background pb-24">
-        {/* Skeleton Header */}
-        <header className="bg-gradient-dark text-secondary-foreground px-4 pt-12 pb-8">
-          <div className="max-w-lg mx-auto">
-            <div className="flex items-center justify-between mb-6">
-              <div className="space-y-2">
-                <Skeleton className="h-4 w-20 bg-secondary-foreground/10" />
-                <Skeleton className="h-8 w-40 bg-secondary-foreground/10" />
-              </div>
-              <Skeleton className="w-12 h-12 rounded-full bg-secondary-foreground/10" />
-            </div>
-            <div className="grid grid-cols-2 gap-3">
-              <Skeleton className="h-20 rounded-xl bg-secondary-foreground/10" />
-              <Skeleton className="h-20 rounded-xl bg-secondary-foreground/10" />
-            </div>
-          </div>
-        </header>
-        <main className="px-4 -mt-4 max-w-lg mx-auto space-y-4">
-          <Skeleton className="h-32 rounded-xl" />
-          <Skeleton className="h-24 rounded-xl" />
-          <Skeleton className="h-24 rounded-xl" />
-        </main>
-        <BottomNav />
+      <div className="space-y-4">
+        <Skeleton className="h-32 rounded-xl" />
+        <Skeleton className="h-24 rounded-xl" />
+        <Skeleton className="h-24 rounded-xl" />
       </div>
     );
   }
@@ -210,7 +191,7 @@ const Index = () => {
   // Employee/Admin Home
   if (isStaff) {
     return (
-      <div className="min-h-screen bg-background pb-24">
+      <div className="space-y-6">
         {/* Hero Header for Staff */}
         <header className="bg-gradient-dark text-secondary-foreground px-4 pt-12 pb-10 relative overflow-hidden">
           <div className="absolute top-0 right-0 w-64 h-64 bg-primary/10 rounded-full blur-3xl -translate-y-1/2 translate-x-1/2" />
@@ -381,7 +362,6 @@ const Index = () => {
           )}
         </main>
 
-        <BottomNav />
       </div>
     );
   }

@@ -1,5 +1,5 @@
 import { useState, useMemo } from 'react';
-import { AppShell } from '@/components/AppShell';
+
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
@@ -158,8 +158,7 @@ const CoachingSPIN = () => {
   }, []);
 
   return (
-    <AppShell>
-      <div className="space-y-4">
+    <div className="space-y-4">
         {/* Page Header */}
         <div className="flex items-center justify-between">
           <div>
@@ -490,8 +489,7 @@ const CoachingSPIN = () => {
             </div>
           </TabsContent>
         </Tabs>
-      </div>
-    </AppShell>
+    </div>
   );
 };
 
