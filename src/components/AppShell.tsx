@@ -3,7 +3,9 @@ import { useLocation, useNavigate } from 'react-router-dom';
 import { BookOpen } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { useAuth } from '@/contexts/AuthContext';
+import { CompanySelector } from '@/components/CompanySelector';
 import { useUserRole } from '@/hooks/useUserRole';
+import { useCompany } from '@/contexts/CompanyContext';
 import { AppShellProvider } from '@/contexts/AppShellContext';
 import {
   LayoutDashboard,
@@ -25,6 +27,10 @@ import {
   Target,
   Menu,
   X,
+  ClipboardList,
+  Shield,
+  Wrench,
+  Award,
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import {
@@ -50,7 +56,7 @@ interface NavItem {
   managerOnly?: boolean;
 }
 
-const navSections: { title: string; items: NavItem[] }[] = [
+const obenNavSections: { title: string; items: NavItem[] }[] = [
   {
     title: 'Principal',
     items: [
@@ -83,20 +89,47 @@ const navSections: { title: string; items: NavItem[] }[] = [
       { icon: Settings, label: 'Configurações', path: '/settings', managerOnly: true },
     ],
   },
+];
+
+const colacorNavSections: { title: string; items: NavItem[] }[] = [
   {
-    title: 'Documentação',
+    title: 'Principal',
     items: [
-      { icon: BookOpen, label: 'Design System', path: '/design-system' },
-      { icon: BookOpen, label: 'UX Rules', path: '/ux-rules' },
+      { icon: LayoutDashboard, label: 'Início', path: '/' },
+      { icon: ClipboardList, label: 'Pedidos', path: '/orders' },
+    ],
+  },
+  {
+    title: 'Afiação',
+    items: [
+      { icon: Wrench, label: 'Ferramentas', path: '/tools' },
+      { icon: Award, label: 'Gamificação', path: '/gamification' },
+    ],
+  },
+  {
+    title: 'Gestão',
+    items: [
+      { icon: Shield, label: 'Admin', path: '/admin', managerOnly: true },
+      { icon: Users, label: 'Clientes', path: '/admin/customers', managerOnly: true },
+      { icon: Settings, label: 'Configurações', path: '/settings', managerOnly: true },
     ],
   },
 ];
+
+const docNavSection: { title: string; items: NavItem[] } = {
+  title: 'Documentação',
+  items: [
+    { icon: BookOpen, label: 'Design System', path: '/design-system' },
+    { icon: BookOpen, label: 'UX Rules', path: '/ux-rules' },
+  ],
+};
 
 /* ─── Sidebar ─── */
 function AppSidebar({ collapsed, onToggle }: { collapsed: boolean; onToggle: () => void }) {
   const location = useLocation();
   const navigate = useNavigate();
   const { isAdmin } = useUserRole();
+  const { activeCompany, companyInfo } = useCompany();
 
   const isActive = (path: string) => {
     if (path === '/') return location.pathname === '/';
@@ -117,7 +150,7 @@ function AppSidebar({ collapsed, onToggle }: { collapsed: boolean; onToggle: () 
       )}>
         {!collapsed && (
           <span className="text-sidebar-primary-foreground font-semibold text-lg tracking-tight">
-            Colacor
+            {companyInfo.shortName}
           </span>
         )}
         <button
@@ -131,7 +164,7 @@ function AppSidebar({ collapsed, onToggle }: { collapsed: boolean; onToggle: () 
 
       {/* Navigation */}
       <nav className="flex-1 overflow-y-auto py-2 no-scrollbar">
-        {navSections.map((section) => {
+        {[...(activeCompany === 'oben' ? obenNavSections : colacorNavSections), docNavSection].map((section) => {
           const visibleItems = section.items.filter(item => !item.managerOnly || isAdmin);
           if (visibleItems.length === 0) return null;
 
@@ -226,6 +259,7 @@ function AppTopbar({ sidebarCollapsed, onMobileMenuToggle }: { sidebarCollapsed:
       </button>
 
       <div className="flex items-center gap-1">
+        <CompanySelector />
         <Button variant="ghost" size="icon" className="h-8 w-8 text-muted-foreground">
           <Bell className="w-4 h-4" />
         </Button>
@@ -256,6 +290,7 @@ function MobileNav({ open, onClose }: { open: boolean; onClose: () => void }) {
   const location = useLocation();
   const navigate = useNavigate();
   const { isAdmin } = useUserRole();
+  const { activeCompany, companyInfo } = useCompany();
 
   if (!open) return null;
 
@@ -264,13 +299,13 @@ function MobileNav({ open, onClose }: { open: boolean; onClose: () => void }) {
       <div className="fixed inset-0 z-50 bg-black/50 lg:hidden" onClick={onClose} />
       <div className="fixed left-0 top-0 bottom-0 z-50 w-64 bg-sidebar border-r border-sidebar-border lg:hidden animate-slide-in-right">
         <div className="flex items-center justify-between h-topbar border-b border-sidebar-border px-3">
-          <span className="text-sidebar-primary-foreground font-semibold text-lg">Colacor</span>
+          <span className="text-sidebar-primary-foreground font-semibold text-lg">{companyInfo.shortName}</span>
           <button onClick={onClose} className="p-1.5 rounded-md text-sidebar-muted hover:text-sidebar-foreground">
             <X className="w-4 h-4" />
           </button>
         </div>
         <nav className="py-2 overflow-y-auto">
-          {navSections.map((section) => {
+          {[...(activeCompany === 'oben' ? obenNavSections : colacorNavSections), docNavSection].map((section) => {
             const visibleItems = section.items.filter(item => !item.managerOnly || isAdmin);
             if (visibleItems.length === 0) return null;
             return (
