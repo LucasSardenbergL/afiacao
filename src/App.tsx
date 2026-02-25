@@ -56,6 +56,7 @@ import NotFound from "./pages/NotFound";
 import DesignSystem from "./pages/DesignSystem";
 import CoachingSPIN from "./pages/CoachingSPIN";
 import SettingsConfig from "./pages/SettingsConfig";
+import UXRules from "./pages/UXRules";
 
 const queryClient = new QueryClient();
 
@@ -118,7 +119,9 @@ const App = () => (
               <Route path="farmer/ipf" element={<FarmerIPFDashboard />} />
               <Route path="executive/dashboard" element={<ExecutiveDashboard />} />
               <Route path="design-system" element={<DesignSystem />} />
+              <Route path="ux-rules" element={<UXRules />} />
               <Route path="coaching" element={<CoachingSPIN />} />
+              <Route path="settings" element={<SettingsConfig />} />
               <Route path="settings" element={<SettingsConfig />} />
             </Route>
 
