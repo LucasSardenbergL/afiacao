@@ -39,17 +39,17 @@ interface UserTool {
   };
 }
 
-const statusConfig: Record<string, { label: string; color: string; bgColor: string }> = {
-  'pedido_recebido': { label: 'Recebido', color: 'text-blue-700', bgColor: 'bg-blue-100' },
-  'aguardando_coleta': { label: 'Aguardando Coleta', color: 'text-amber-700', bgColor: 'bg-amber-100' },
-  'em_triagem': { label: 'Em Triagem', color: 'text-purple-700', bgColor: 'bg-purple-100' },
-  'orcamento_enviado': { label: 'Orçamento', color: 'text-orange-700', bgColor: 'bg-orange-100' },
-  'aprovado': { label: 'Aprovado', color: 'text-emerald-700', bgColor: 'bg-emerald-100' },
-  'em_afiacao': { label: 'Em Afiação', color: 'text-primary', bgColor: 'bg-primary/10' },
-  'controle_qualidade': { label: 'Qualidade', color: 'text-cyan-700', bgColor: 'bg-cyan-100' },
-  'pronto_entrega': { label: 'Pronto!', color: 'text-emerald-700', bgColor: 'bg-emerald-100' },
-  'em_rota': { label: 'Em Rota', color: 'text-indigo-700', bgColor: 'bg-indigo-100' },
-  'entregue': { label: 'Entregue', color: 'text-muted-foreground', bgColor: 'bg-muted' },
+const statusConfig: Record<string, { label: string; statusClass: string }> = {
+  'pedido_recebido': { label: 'Recebido', statusClass: 'status-progress' },
+  'aguardando_coleta': { label: 'Aguardando Coleta', statusClass: 'status-pending' },
+  'em_triagem': { label: 'Em Triagem', statusClass: 'status-purple' },
+  'orcamento_enviado': { label: 'Orçamento', statusClass: 'status-pending' },
+  'aprovado': { label: 'Aprovado', statusClass: 'status-success' },
+  'em_afiacao': { label: 'Em Afiação', statusClass: 'status-progress' },
+  'controle_qualidade': { label: 'Qualidade', statusClass: 'status-indigo' },
+  'pronto_entrega': { label: 'Pronto!', statusClass: 'status-success' },
+  'em_rota': { label: 'Em Rota', statusClass: 'status-indigo' },
+  'entregue': { label: 'Entregue', statusClass: 'bg-muted text-muted-foreground' },
 };
 
 interface CustomerDashboardProps {
@@ -120,8 +120,8 @@ export function CustomerDashboard({ profile, pendingOrders, userTools, getGreeti
                 <span className={cn(
                   'inline-flex items-center gap-1.5 text-[11px] px-2.5 py-1 rounded-full font-semibold uppercase tracking-wider',
                   profile.customer_type === 'industrial' 
-                    ? 'bg-amber-500/20 text-amber-300' 
-                    : 'bg-blue-500/20 text-blue-300'
+                    ? 'bg-status-warning/20 text-status-warning-bg' 
+                    : 'bg-status-info/20 text-status-info-bg'
                 )}>
                   {profile.customer_type === 'industrial' ? (
                     <><TrendingUp className="w-3 h-3" /> Industrial</>
@@ -184,8 +184,8 @@ export function CustomerDashboard({ profile, pendingOrders, userTools, getGreeti
             >
               <CardContent className="p-4">
                 <div className="flex items-center gap-3">
-                  <div className="w-11 h-11 rounded-xl bg-amber-100 flex items-center justify-center flex-shrink-0">
-                    <Award className="w-6 h-6 text-amber-600" />
+                  <div className="w-11 h-11 rounded-xl bg-status-warning-bg flex items-center justify-center flex-shrink-0">
+                    <Award className="w-6 h-6 text-status-warning" />
                   </div>
                   <div className="flex-1 min-w-0">
                     <div className="flex items-center justify-between mb-1">
@@ -214,13 +214,13 @@ export function CustomerDashboard({ profile, pendingOrders, userTools, getGreeti
         <AnimatePresence>
           {urgentTools.length > 0 && (
             <motion.div variants={fadeUp}>
-              <Card className="border-amber-200 bg-amber-50/80 mb-4">
+              <Card className="border-status-warning/20 bg-status-warning-bg/80 mb-4">
                 <CardContent className="p-4">
                   <div className="flex items-center gap-2 mb-3">
-                    <div className="w-8 h-8 rounded-lg bg-amber-100 flex items-center justify-center">
-                      <AlertTriangle className="w-4 h-4 text-amber-600" />
+                    <div className="w-8 h-8 rounded-lg bg-status-warning-bg flex items-center justify-center">
+                      <AlertTriangle className="w-4 h-4 text-status-warning" />
                     </div>
-                    <span className="font-semibold text-sm text-amber-800">
+                    <span className="font-semibold text-sm text-status-warning-foreground">
                       {toolsOverdue.length > 0 
                         ? `${toolsOverdue.length} ferramenta(s) com afiação atrasada`
                         : `${toolsSoon.length} ferramenta(s) precisam de afiação em breve`
@@ -235,7 +235,7 @@ export function CustomerDashboard({ profile, pendingOrders, userTools, getGreeti
                           <span className="text-foreground">{tool.tool_categories?.name}</span>
                           <span className={cn(
                             'text-xs font-medium px-2 py-0.5 rounded-full',
-                            days < 0 ? 'bg-destructive/10 text-destructive' : 'bg-amber-100 text-amber-700'
+                            days < 0 ? 'bg-destructive/10 text-destructive' : 'bg-status-warning-bg text-status-warning-foreground'
                           )}>
                             {days < 0 ? `${Math.abs(days)}d atrasado` : days === 0 ? 'Hoje' : `Em ${days}d`}
                           </span>
@@ -334,7 +334,7 @@ export function CustomerDashboard({ profile, pendingOrders, userTools, getGreeti
                             </div>
                           </div>
                           <div className="flex items-center gap-2">
-                            <span className={cn('text-[11px] px-2.5 py-1 rounded-full font-semibold', config.bgColor, config.color)}>
+                            <span className={cn('text-[11px] px-2.5 py-1 rounded-full font-semibold border', config.statusClass)}>
                               {config.label}
                             </span>
                             <ChevronRight className="w-4 h-4 text-muted-foreground group-hover:translate-x-1 transition-transform" />
@@ -372,17 +372,17 @@ export function CustomerDashboard({ profile, pendingOrders, userTools, getGreeti
                   >
                     <Card className={cn(
                       'border-border/60 hover:shadow-medium transition-all',
-                      needsSharpening && 'ring-1 ring-amber-300 bg-amber-50/50'
+                      needsSharpening && 'ring-1 ring-status-warning/40 bg-status-warning-bg/50'
                     )}>
                       <CardContent className="p-3">
                         <div className="flex items-center gap-2 mb-2">
-                          <div className={cn('w-8 h-8 rounded-lg flex items-center justify-center', needsSharpening ? 'bg-amber-100' : 'bg-muted')}>
-                            <Wrench className={cn('w-4 h-4', needsSharpening ? 'text-amber-600' : 'text-muted-foreground')} />
+                          <div className={cn('w-8 h-8 rounded-lg flex items-center justify-center', needsSharpening ? 'bg-status-warning-bg' : 'bg-muted')}>
+                            <Wrench className={cn('w-4 h-4', needsSharpening ? 'text-status-warning' : 'text-muted-foreground')} />
                           </div>
                           <p className="font-semibold text-sm text-foreground truncate flex-1">{tool.tool_categories?.name}</p>
                         </div>
                         {tool.next_sharpening_due && (
-                          <p className={cn('text-xs flex items-center gap-1', needsSharpening ? 'text-amber-600 font-medium' : 'text-muted-foreground')}>
+                          <p className={cn('text-xs flex items-center gap-1', needsSharpening ? 'text-status-warning font-medium' : 'text-muted-foreground')}>
                             <Calendar className="w-3 h-3" />
                             {daysUntil !== null && daysUntil < 0 ? 'Atrasado' : daysUntil === 0 ? 'Hoje' : `Em ${daysUntil} dias`}
                           </p>

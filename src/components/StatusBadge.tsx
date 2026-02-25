@@ -6,71 +6,51 @@ interface StatusBadgeProps {
   size?: 'sm' | 'md' | 'lg';
 }
 
+/* Maps the legacy bg-color class from ORDER_STATUS to a semantic CSS class */
+const semanticMap: Record<string, string> = {
+  'bg-blue-500': 'status-progress',
+  'bg-amber-500': 'status-pending',
+  'bg-purple-500': 'status-purple',
+  'bg-emerald-500': 'status-success',
+  'bg-emerald-600': 'status-success',
+  'bg-primary': 'status-progress',
+  'bg-indigo-500': 'status-indigo',
+};
+
+const dotMap: Record<string, string> = {
+  'bg-blue-500': 'bg-status-info',
+  'bg-amber-500': 'bg-status-warning',
+  'bg-purple-500': 'bg-status-purple',
+  'bg-emerald-500': 'bg-status-success',
+  'bg-emerald-600': 'bg-status-success',
+  'bg-primary': 'bg-primary',
+  'bg-indigo-500': 'bg-status-indigo',
+};
+
+const sizeClasses = {
+  sm: 'text-[10px] px-2 py-0.5',
+  md: 'text-xs px-2.5 py-1',
+  lg: 'text-sm px-3 py-1.5',
+};
+
 export function StatusBadge({ status, size = 'md' }: StatusBadgeProps) {
   const statusInfo = ORDER_STATUS[status];
-
-  const sizeClasses = {
-    sm: 'text-[10px] px-2 py-0.5',
-    md: 'text-xs px-2.5 py-1',
-    lg: 'text-sm px-3 py-1.5',
-  };
+  const semantic = semanticMap[statusInfo.color] || 'status-progress';
+  const dot = dotMap[statusInfo.color] || 'bg-muted-foreground';
 
   return (
     <span
       className={cn(
-        'inline-flex items-center gap-1.5 rounded-full font-medium',
-        sizeClasses[size]
-      )}
-      style={{
-        backgroundColor: `color-mix(in srgb, ${statusInfo.color.replace('bg-', 'var(--')}), transparent 85%)`,
-      }}
-    >
-      <span className={cn('w-1.5 h-1.5 rounded-full', statusInfo.color)} />
-      {statusInfo.label}
-    </span>
-  );
-}
-
-// Simplified version with direct color mapping
-export function StatusBadgeSimple({ status, size = 'md' }: StatusBadgeProps) {
-  const statusInfo = ORDER_STATUS[status];
-
-  const sizeClasses = {
-    sm: 'text-[10px] px-2 py-0.5',
-    md: 'text-xs px-2.5 py-1',
-    lg: 'text-sm px-3 py-1.5',
-  };
-
-  const colorMap: Record<string, string> = {
-    'bg-blue-500': 'bg-blue-100 text-blue-800',
-    'bg-amber-500': 'bg-amber-100 text-amber-800',
-    'bg-purple-500': 'bg-purple-100 text-purple-800',
-    'bg-emerald-500': 'bg-emerald-100 text-emerald-800',
-    'bg-emerald-600': 'bg-emerald-100 text-emerald-800',
-    'bg-primary': 'bg-red-100 text-red-800',
-    'bg-indigo-500': 'bg-indigo-100 text-indigo-800',
-  };
-
-  const dotColorMap: Record<string, string> = {
-    'bg-blue-500': 'bg-blue-500',
-    'bg-amber-500': 'bg-amber-500',
-    'bg-purple-500': 'bg-purple-500',
-    'bg-emerald-500': 'bg-emerald-500',
-    'bg-emerald-600': 'bg-emerald-600',
-    'bg-primary': 'bg-primary',
-    'bg-indigo-500': 'bg-indigo-500',
-  };
-
-  return (
-    <span
-      className={cn(
-        'inline-flex items-center gap-1.5 rounded-full font-medium',
+        'inline-flex items-center gap-1.5 rounded-full font-medium border',
         sizeClasses[size],
-        colorMap[statusInfo.color] || 'bg-gray-100 text-gray-800'
+        semantic,
       )}
     >
-      <span className={cn('w-1.5 h-1.5 rounded-full', dotColorMap[statusInfo.color] || 'bg-gray-500')} />
+      <span className={cn('w-1.5 h-1.5 rounded-full', dot)} />
       {statusInfo.label}
     </span>
   );
 }
+
+/** @deprecated Use StatusBadge instead */
+export const StatusBadgeSimple = StatusBadge;
