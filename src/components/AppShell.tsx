@@ -79,6 +79,7 @@ const navSections: { title: string; items: NavItem[] }[] = [
     title: 'Gestão',
     items: [
       { icon: BarChart3, label: 'Relatórios', path: '/admin/monthly-reports', managerOnly: true },
+      { icon: TrendingUp, label: 'Analytics & Sync', path: '/admin/analytics-sync', managerOnly: true },
       { icon: Settings, label: 'Configurações', path: '/settings', managerOnly: true },
     ],
   },
