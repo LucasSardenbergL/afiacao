@@ -57,6 +57,7 @@ import DesignSystem from "./pages/DesignSystem";
 import CoachingSPIN from "./pages/CoachingSPIN";
 import SettingsConfig from "./pages/SettingsConfig";
 import UXRules from "./pages/UXRules";
+import AdminAnalyticsSync from "./pages/AdminAnalyticsSync";
 
 const queryClient = new QueryClient();
 
@@ -100,6 +101,7 @@ const App = () => (
               <Route path="admin/gamification" element={<AdminGamification />} />
               <Route path="admin/training" element={<AdminTraining />} />
               <Route path="admin/price-table" element={<AdminPriceTable />} />
+              <Route path="admin/analytics-sync" element={<AdminAnalyticsSync />} />
               <Route path="recurring-schedules" element={<RecurringSchedules />} />
               <Route path="savings" element={<SavingsDashboard />} />
               <Route path="loyalty" element={<Loyalty />} />

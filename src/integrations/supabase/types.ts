@@ -1383,6 +1383,53 @@ export type Database = {
         }
         Relationships: []
       }
+      inventory_position: {
+        Row: {
+          account: string
+          cmc: number | null
+          created_at: string | null
+          id: string
+          omie_codigo_produto: number
+          preco_medio: number | null
+          product_id: string | null
+          saldo: number | null
+          synced_at: string | null
+          updated_at: string | null
+        }
+        Insert: {
+          account?: string
+          cmc?: number | null
+          created_at?: string | null
+          id?: string
+          omie_codigo_produto: number
+          preco_medio?: number | null
+          product_id?: string | null
+          saldo?: number | null
+          synced_at?: string | null
+          updated_at?: string | null
+        }
+        Update: {
+          account?: string
+          cmc?: number | null
+          created_at?: string | null
+          id?: string
+          omie_codigo_produto?: number
+          preco_medio?: number | null
+          product_id?: string | null
+          saldo?: number | null
+          synced_at?: string | null
+          updated_at?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "inventory_position_product_id_fkey"
+            columns: ["product_id"]
+            isOneToOne: false
+            referencedRelation: "omie_products"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       loyalty_points: {
         Row: {
           created_at: string
@@ -1494,12 +1541,14 @@ export type Database = {
           created_at: string
           descricao: string
           estoque: number | null
+          familia: string | null
           id: string
           imagem_url: string | null
           metadata: Json | null
           ncm: string | null
           omie_codigo_produto: number
           omie_codigo_produto_integracao: string | null
+          subfamilia: string | null
           unidade: string
           updated_at: string
           valor_unitario: number
@@ -1510,12 +1559,14 @@ export type Database = {
           created_at?: string
           descricao: string
           estoque?: number | null
+          familia?: string | null
           id?: string
           imagem_url?: string | null
           metadata?: Json | null
           ncm?: string | null
           omie_codigo_produto: number
           omie_codigo_produto_integracao?: string | null
+          subfamilia?: string | null
           unidade?: string
           updated_at?: string
           valor_unitario?: number
@@ -1526,12 +1577,14 @@ export type Database = {
           created_at?: string
           descricao?: string
           estoque?: number | null
+          familia?: string | null
           id?: string
           imagem_url?: string | null
           metadata?: Json | null
           ncm?: string | null
           omie_codigo_produto?: number
           omie_codigo_produto_integracao?: string | null
+          subfamilia?: string | null
           unidade?: string
           updated_at?: string
           valor_unitario?: number
@@ -1570,6 +1623,57 @@ export type Database = {
           updated_at?: string
         }
         Relationships: []
+      }
+      order_items: {
+        Row: {
+          created_at: string | null
+          customer_user_id: string
+          discount: number | null
+          id: string
+          omie_codigo_produto: number | null
+          product_id: string | null
+          quantity: number
+          sales_order_id: string
+          unit_price: number
+        }
+        Insert: {
+          created_at?: string | null
+          customer_user_id: string
+          discount?: number | null
+          id?: string
+          omie_codigo_produto?: number | null
+          product_id?: string | null
+          quantity?: number
+          sales_order_id: string
+          unit_price?: number
+        }
+        Update: {
+          created_at?: string | null
+          customer_user_id?: string
+          discount?: number | null
+          id?: string
+          omie_codigo_produto?: number | null
+          product_id?: string | null
+          quantity?: number
+          sales_order_id?: string
+          unit_price?: number
+        }
+        Relationships: [
+          {
+            foreignKeyName: "order_items_product_id_fkey"
+            columns: ["product_id"]
+            isOneToOne: false
+            referencedRelation: "omie_products"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "order_items_sales_order_id_fkey"
+            columns: ["sales_order_id"]
+            isOneToOne: false
+            referencedRelation: "sales_orders"
+            referencedColumns: ["id"]
+          },
+        ]
       }
       order_messages: {
         Row: {
@@ -1732,19 +1836,34 @@ export type Database = {
       }
       product_costs: {
         Row: {
+          cmc: number | null
+          cost_confidence: number | null
+          cost_final: number | null
           cost_price: number
+          cost_source: string | null
+          family_category: string | null
           id: string
           product_id: string
           updated_at: string
         }
         Insert: {
+          cmc?: number | null
+          cost_confidence?: number | null
+          cost_final?: number | null
           cost_price?: number
+          cost_source?: string | null
+          family_category?: string | null
           id?: string
           product_id: string
           updated_at?: string
         }
         Update: {
+          cmc?: number | null
+          cost_confidence?: number | null
+          cost_final?: number | null
           cost_price?: number
+          cost_source?: string | null
+          family_category?: string | null
           id?: string
           product_id?: string
           updated_at?: string
@@ -1815,6 +1934,132 @@ export type Database = {
           user_id?: string
         }
         Relationships: []
+      }
+      recommendation_config: {
+        Row: {
+          description: string | null
+          id: string
+          key: string
+          updated_at: string | null
+          updated_by: string | null
+          value: number
+        }
+        Insert: {
+          description?: string | null
+          id?: string
+          key: string
+          updated_at?: string | null
+          updated_by?: string | null
+          value?: number
+        }
+        Update: {
+          description?: string | null
+          id?: string
+          key?: string
+          updated_at?: string | null
+          updated_by?: string | null
+          value?: number
+        }
+        Relationships: []
+      }
+      recommendation_log: {
+        Row: {
+          cost_source: string | null
+          created_at: string | null
+          customer_user_id: string
+          eip: number | null
+          event_type: string | null
+          explanation_key: string | null
+          explanation_text: string | null
+          farmer_id: string
+          id: string
+          margin: number | null
+          margin_realized: number | null
+          mode: string | null
+          probability: number | null
+          product_id: string | null
+          quantity_accepted: number | null
+          quantity_suggested: number | null
+          recommendation_type: string
+          sales_order_id: string | null
+          score_assoc: number | null
+          score_ctx: number | null
+          score_eip: number | null
+          score_final: number | null
+          score_sim: number | null
+          unit_cost: number | null
+          weights: Json | null
+        }
+        Insert: {
+          cost_source?: string | null
+          created_at?: string | null
+          customer_user_id: string
+          eip?: number | null
+          event_type?: string | null
+          explanation_key?: string | null
+          explanation_text?: string | null
+          farmer_id: string
+          id?: string
+          margin?: number | null
+          margin_realized?: number | null
+          mode?: string | null
+          probability?: number | null
+          product_id?: string | null
+          quantity_accepted?: number | null
+          quantity_suggested?: number | null
+          recommendation_type?: string
+          sales_order_id?: string | null
+          score_assoc?: number | null
+          score_ctx?: number | null
+          score_eip?: number | null
+          score_final?: number | null
+          score_sim?: number | null
+          unit_cost?: number | null
+          weights?: Json | null
+        }
+        Update: {
+          cost_source?: string | null
+          created_at?: string | null
+          customer_user_id?: string
+          eip?: number | null
+          event_type?: string | null
+          explanation_key?: string | null
+          explanation_text?: string | null
+          farmer_id?: string
+          id?: string
+          margin?: number | null
+          margin_realized?: number | null
+          mode?: string | null
+          probability?: number | null
+          product_id?: string | null
+          quantity_accepted?: number | null
+          quantity_suggested?: number | null
+          recommendation_type?: string
+          sales_order_id?: string | null
+          score_assoc?: number | null
+          score_ctx?: number | null
+          score_eip?: number | null
+          score_final?: number | null
+          score_sim?: number | null
+          unit_cost?: number | null
+          weights?: Json | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "recommendation_log_product_id_fkey"
+            columns: ["product_id"]
+            isOneToOne: false
+            referencedRelation: "omie_products"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "recommendation_log_sales_order_id_fkey"
+            columns: ["sales_order_id"]
+            isOneToOne: false
+            referencedRelation: "sales_orders"
+            referencedColumns: ["id"]
+          },
+        ]
       }
       recurring_schedules: {
         Row: {
@@ -2041,6 +2286,51 @@ export type Database = {
             referencedColumns: ["id"]
           },
         ]
+      }
+      sync_state: {
+        Row: {
+          account: string
+          created_at: string | null
+          entity_type: string
+          error_message: string | null
+          id: string
+          last_cursor: string | null
+          last_page: number | null
+          last_sync_at: string | null
+          metadata: Json | null
+          status: string | null
+          total_synced: number | null
+          updated_at: string | null
+        }
+        Insert: {
+          account?: string
+          created_at?: string | null
+          entity_type: string
+          error_message?: string | null
+          id?: string
+          last_cursor?: string | null
+          last_page?: number | null
+          last_sync_at?: string | null
+          metadata?: Json | null
+          status?: string | null
+          total_synced?: number | null
+          updated_at?: string | null
+        }
+        Update: {
+          account?: string
+          created_at?: string | null
+          entity_type?: string
+          error_message?: string | null
+          id?: string
+          last_cursor?: string | null
+          last_page?: number | null
+          last_sync_at?: string | null
+          metadata?: Json | null
+          status?: string | null
+          total_synced?: number | null
+          updated_at?: string | null
+        }
+        Relationships: []
       }
       tool_categories: {
         Row: {
