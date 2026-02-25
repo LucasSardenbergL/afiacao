@@ -4,8 +4,10 @@ import { supabase } from "@/integrations/supabase/client";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
+import { Input } from "@/components/ui/input";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { RefreshCw, Database, Package, ShoppingCart, Warehouse, Calculator, Play, CheckCircle, AlertCircle, Clock, Loader2 } from "lucide-react";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { RefreshCw, Database, Package, ShoppingCart, Warehouse, Calculator, Play, CheckCircle, AlertCircle, Clock, Loader2, Save, GitBranch, Sparkles, FlaskConical, Settings } from "lucide-react";
 import { toast } from "sonner";
 
 type SyncEntity = "customers" | "products" | "orders" | "inventory";
@@ -102,6 +104,43 @@ export default function AdminAnalyticsSync() {
     },
   });
 
+  const assocRulesMutation = useMutation({
+    mutationFn: async () => {
+      const { data, error } = await supabase.functions.invoke("omie-analytics-sync", {
+        body: { action: "compute_association_rules" },
+      });
+      if (error) throw error;
+      return data;
+    },
+    onSuccess: (data) => {
+      toast.success("Regras de associação geradas", {
+        description: `${data?.data?.rules_generated || 0} regras a partir de ${data?.data?.total_transactions || 0} transações`,
+      });
+    },
+    onError: (error) => {
+      toast.error("Erro ao gerar regras", { description: String(error) });
+    },
+  });
+
+  const updateConfigMutation = useMutation({
+    mutationFn: async ({ id, value }: { id: string; value: number }) => {
+      const { error } = await supabase
+        .from("recommendation_config")
+        .update({ value, updated_at: new Date().toISOString() })
+        .eq("id", id);
+      if (error) throw error;
+    },
+    onSuccess: () => {
+      toast.success("Parâmetro atualizado");
+      queryClient.invalidateQueries({ queryKey: ["recommendation-config"] });
+    },
+    onError: (error) => {
+      toast.error("Erro ao atualizar", { description: String(error) });
+    },
+  });
+
+  const [editingConfig, setEditingConfig] = useState<Record<string, string>>({});
+
   const getStateFor = (entity: string, account: string) =>
     syncStates?.find((s) => s.entity_type === entity && s.account === account);
 
@@ -110,7 +149,15 @@ export default function AdminAnalyticsSync() {
     return new Date(d).toLocaleString("pt-BR", { dateStyle: "short", timeStyle: "short" });
   };
 
-  const isRunning = syncMutation.isPending || computeCostsMutation.isPending;
+  const isRunning = syncMutation.isPending || computeCostsMutation.isPending || assocRulesMutation.isPending;
+
+  const handleConfigSave = (id: string) => {
+    const val = parseFloat(editingConfig[id]);
+    if (!isNaN(val)) {
+      updateConfigMutation.mutate({ id, value: val });
+      setEditingConfig(prev => { const n = { ...prev }; delete n[id]; return n; });
+    }
+  };
 
   return (
     <div className="space-y-6">
@@ -239,10 +286,41 @@ export default function AdminAnalyticsSync() {
         </CardContent>
       </Card>
 
-      {/* Engine Config */}
+      {/* Association Rules */}
       <Card>
         <CardHeader>
-          <CardTitle className="text-base">Configuração do Motor de Recomendação</CardTitle>
+          <div className="flex items-center justify-between">
+            <div className="flex items-center gap-2">
+              <GitBranch className="h-5 w-5 text-muted-foreground" />
+              <CardTitle className="text-base">Regras de Associação (Apriori)</CardTitle>
+            </div>
+            <Button
+              variant="outline"
+              size="sm"
+              disabled={isRunning}
+              onClick={() => assocRulesMutation.mutate()}
+            >
+              <RefreshCw className={`h-3 w-3 mr-2 ${assocRulesMutation.isPending ? "animate-spin" : ""}`} />
+              Recalcular Regras
+            </Button>
+          </div>
+        </CardHeader>
+        <CardContent>
+          <p className="text-xs text-muted-foreground">
+            Analisa co-ocorrências em pedidos para gerar regras do tipo "quem comprou A também comprou B".
+            Filtros: lift ≥ {recConfigs?.find(c => c.key === "l_min")?.value ?? 1.2}, support ≥ {recConfigs?.find(c => c.key === "s_min")?.value ?? 0.01}.
+            As regras alimentam o score Assoc(j|B) do motor de recomendação.
+          </p>
+        </CardContent>
+      </Card>
+
+      {/* Engine Config (Editable) */}
+      <Card>
+        <CardHeader>
+          <div className="flex items-center gap-2">
+            <Settings className="h-5 w-5 text-muted-foreground" />
+            <CardTitle className="text-base">Parâmetros do Motor</CardTitle>
+          </div>
         </CardHeader>
         <CardContent>
           {isLoading ? (
@@ -250,14 +328,30 @@ export default function AdminAnalyticsSync() {
               <Loader2 className="h-6 w-6 animate-spin" />
             </div>
           ) : (
-            <div className="grid gap-2 md:grid-cols-3 lg:grid-cols-4">
-              {(recConfigs || []).map((config) => (
-                <div key={config.id} className="p-3 rounded border text-sm">
-                  <div className="font-mono font-medium text-xs">{config.key}</div>
-                  <div className="text-lg font-bold mt-1">{config.value}</div>
-                  <div className="text-xs text-muted-foreground mt-1">{config.description}</div>
-                </div>
-              ))}
+            <div className="grid gap-3 md:grid-cols-2 lg:grid-cols-3">
+              {(recConfigs || []).map((config) => {
+                const isEditing = editingConfig[config.id] !== undefined;
+                return (
+                  <div key={config.id} className="p-3 rounded border text-sm space-y-2">
+                    <div className="font-mono font-medium text-xs">{config.key}</div>
+                    <div className="text-xs text-muted-foreground">{config.description}</div>
+                    <div className="flex items-center gap-2">
+                      <Input
+                        type="number"
+                        step="0.01"
+                        className="h-8 text-sm font-semibold"
+                        value={isEditing ? editingConfig[config.id] : config.value}
+                        onChange={(e) => setEditingConfig(prev => ({ ...prev, [config.id]: e.target.value }))}
+                      />
+                      {isEditing && (
+                        <Button size="sm" className="h-8 w-8 p-0" onClick={() => handleConfigSave(config.id)}>
+                          <Save className="h-3.5 w-3.5" />
+                        </Button>
+                      )}
+                    </div>
+                  </div>
+                );
+              })}
             </div>
           )}
         </CardContent>
