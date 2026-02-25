@@ -1,5 +1,6 @@
 import React, { useState } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
+import { BookOpen } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { useAuth } from '@/contexts/AuthContext';
 import { useUserRole } from '@/hooks/useUserRole';
@@ -79,6 +80,13 @@ const navSections: { title: string; items: NavItem[] }[] = [
     items: [
       { icon: BarChart3, label: 'Relatórios', path: '/admin/monthly-reports', managerOnly: true },
       { icon: Settings, label: 'Configurações', path: '/settings', managerOnly: true },
+    ],
+  },
+  {
+    title: 'Documentação',
+    items: [
+      { icon: BookOpen, label: 'Design System', path: '/design-system' },
+      { icon: BookOpen, label: 'UX Rules', path: '/ux-rules' },
     ],
   },
 ];
