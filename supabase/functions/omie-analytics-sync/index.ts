@@ -546,6 +546,124 @@ async function computeCosts(db: ReturnType<typeof createClient>) {
   return { updated };
 }
 
+// ======== COMPUTE ASSOCIATION RULES (Apriori-like) ========
+
+async function computeAssociationRules(db: ReturnType<typeof createClient>) {
+  // Load config
+  const { data: configs } = await db.from("recommendation_config").select("key, value");
+  const cfg: Record<string, number> = {};
+  for (const c of configs || []) cfg[c.key] = c.value;
+
+  const minSupport = cfg.s_min ?? 0.01;
+  const minLift = cfg.l_min ?? 1.2;
+  const maxRules = cfg.max_association_rules ?? 500;
+
+  // Load all order_items grouped by sales_order_id
+  const { data: items } = await db
+    .from("order_items")
+    .select("sales_order_id, product_id")
+    .not("product_id", "is", null);
+
+  if (!items?.length) return { rules_generated: 0 };
+
+  // Build transactions: Map<order_id, Set<product_id>>
+  const transactions = new Map<string, Set<string>>();
+  for (const item of items) {
+    if (!item.product_id || !item.sales_order_id) continue;
+    if (!transactions.has(item.sales_order_id)) transactions.set(item.sales_order_id, new Set());
+    transactions.get(item.sales_order_id)!.add(item.product_id);
+  }
+
+  const totalTx = transactions.size;
+  if (totalTx < 5) return { rules_generated: 0, reason: "Insufficient transactions" };
+
+  // Count single item support
+  const itemCounts = new Map<string, number>();
+  for (const [, basket] of transactions) {
+    for (const pid of basket) {
+      itemCounts.set(pid, (itemCounts.get(pid) || 0) + 1);
+    }
+  }
+
+  // Filter frequent items
+  const frequentItems = new Map<string, number>();
+  for (const [pid, count] of itemCounts) {
+    if (count / totalTx >= minSupport) {
+      frequentItems.set(pid, count);
+    }
+  }
+
+  // Count pair co-occurrences
+  const pairCounts = new Map<string, number>();
+  for (const [, basket] of transactions) {
+    const items = Array.from(basket).filter(p => frequentItems.has(p));
+    for (let i = 0; i < items.length; i++) {
+      for (let j = i + 1; j < items.length; j++) {
+        const key = [items[i], items[j]].sort().join("|");
+        pairCounts.set(key, (pairCounts.get(key) || 0) + 1);
+      }
+    }
+  }
+
+  // Generate rules
+  interface Rule {
+    antecedent: string[];
+    consequent: string[];
+    support: number;
+    confidence: number;
+    lift: number;
+  }
+
+  const rules: Rule[] = [];
+
+  for (const [pairKey, pairCount] of pairCounts) {
+    const [a, b] = pairKey.split("|");
+    const supportAB = pairCount / totalTx;
+    if (supportAB < minSupport) continue;
+
+    const supportA = (frequentItems.get(a) || 0) / totalTx;
+    const supportB = (frequentItems.get(b) || 0) / totalTx;
+
+    // Rule A→B
+    const confAB = supportAB / supportA;
+    const liftAB = confAB / supportB;
+    if (liftAB >= minLift) {
+      rules.push({ antecedent: [a], consequent: [b], support: supportAB, confidence: confAB, lift: liftAB });
+    }
+
+    // Rule B→A
+    const confBA = supportAB / supportB;
+    const liftBA = confBA / supportA;
+    if (liftBA >= minLift) {
+      rules.push({ antecedent: [b], consequent: [a], support: supportAB, confidence: confBA, lift: liftBA });
+    }
+  }
+
+  // Sort by lift*confidence descending, take top N
+  rules.sort((a, b) => (b.lift * b.confidence) - (a.lift * a.confidence));
+  const topRules = rules.slice(0, maxRules);
+
+  // Clear old rules and insert new ones
+  await db.from("farmer_association_rules").delete().neq("id", "00000000-0000-0000-0000-000000000000");
+
+  let inserted = 0;
+  for (const rule of topRules) {
+    const { error } = await db.from("farmer_association_rules").insert({
+      antecedent_product_ids: rule.antecedent,
+      consequent_product_ids: rule.consequent,
+      support: rule.support,
+      confidence: rule.confidence,
+      lift: rule.lift,
+      rule_type: "association",
+      sample_size: totalTx,
+    });
+    if (!error) inserted++;
+  }
+
+  console.log(`[AssocRules] Generated ${inserted} rules from ${totalTx} transactions`);
+  return { rules_generated: inserted, total_transactions: totalTx, frequent_items: frequentItems.size };
+}
+
 // ======== MAIN HANDLER ========
 
 serve(async (req) => {
@@ -602,6 +720,9 @@ serve(async (req) => {
       case "compute_costs":
         result = await computeCosts(supabaseAdmin);
         break;
+      case "compute_association_rules":
+        result = await computeAssociationRules(supabaseAdmin);
+        break;
       case "sync_all": {
         const acct = account as OmieAccount;
         const customers = await syncCustomers(supabaseAdmin, acct);
@@ -609,7 +730,8 @@ serve(async (req) => {
         const orders = await syncOrdersIncremental(supabaseAdmin, acct);
         const inventory = await syncInventory(supabaseAdmin, acct);
         const costs = await computeCosts(supabaseAdmin);
-        result = { customers, products, orders, inventory, costs };
+        const assocRules = await computeAssociationRules(supabaseAdmin);
+        result = { customers, products, orders, inventory, costs, assocRules };
         break;
       }
       case "get_sync_state": {

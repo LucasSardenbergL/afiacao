@@ -1,4 +1,5 @@
 import { useState, useEffect, useMemo } from 'react';
+import { RecommendationsPanel } from '@/components/RecommendationsPanel';
 import { useNavigate, useParams } from 'react-router-dom';
 
 import { Button } from '@/components/ui/button';
@@ -407,6 +408,9 @@ function Customer360View({
             <Wrench className="w-3.5 h-3.5" /> Ferramentas
             <Badge variant="secondary" className="text-[10px] px-1 py-0 ml-1">{tools.length}</Badge>
           </TabsTrigger>
+          <TabsTrigger value="recommendations" className="gap-1.5">
+            <TrendingUp className="w-3.5 h-3.5" /> Oportunidades
+          </TabsTrigger>
         </TabsList>
 
         <TabsContent value="orders" className="mt-3">
@@ -503,6 +507,13 @@ function Customer360View({
               ))}
             </div>
           )}
+        </TabsContent>
+
+        <TabsContent value="recommendations" className="mt-3">
+          <RecommendationsPanel
+            customerId={customer.user_id}
+            title="O que está faltando no mix"
+          />
         </TabsContent>
       </Tabs>
     </div>

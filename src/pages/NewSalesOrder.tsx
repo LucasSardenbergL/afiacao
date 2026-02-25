@@ -9,10 +9,12 @@ import { Textarea } from '@/components/ui/textarea';
 import { Badge } from '@/components/ui/badge';
 import { Separator } from '@/components/ui/separator';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
+import { RecommendationsPanel } from '@/components/RecommendationsPanel';
 import { supabase } from '@/integrations/supabase/client';
 import { useAuth } from '@/contexts/AuthContext';
 import { useToast } from '@/hooks/use-toast';
 import { cn } from '@/lib/utils';
+import type { RecommendationItem } from '@/hooks/useRecommendationEngine';
 import {
   Loader2, Search, Plus, Minus, Trash2, User, ShoppingCart, Send, CreditCard,
   ChevronLeft, Package, TrendingUp, Sparkles, ArrowUpRight, CheckCircle,
@@ -58,29 +60,7 @@ interface FormaPagamento {
 
 const fmt = (v: number) => v.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' });
 
-/* ─── Cross-sell Recommendation Card ─── */
-function RecommendationCard({ product, reason, impact, onAdd }: {
-  product: Product;
-  reason: string;
-  impact: string;
-  onAdd: () => void;
-}) {
-  return (
-    <div className="flex items-center gap-3 p-3 rounded-lg border border-dashed border-primary/30 bg-accent/30">
-      <div className="w-8 h-8 rounded-lg bg-primary/10 flex items-center justify-center shrink-0">
-        <Sparkles className="w-4 h-4 text-primary" />
-      </div>
-      <div className="flex-1 min-w-0">
-        <p className="text-xs font-medium truncate">{product.descricao}</p>
-        <p className="text-[10px] text-muted-foreground">{reason}</p>
-        <Badge variant="outline" className="text-[10px] mt-0.5 status-success">{impact}</Badge>
-      </div>
-      <Button size="sm" variant="outline" className="h-7 gap-1 shrink-0" onClick={onAdd}>
-        <Plus className="w-3 h-3" /> Adicionar
-      </Button>
-    </div>
-  );
-}
+/* (Old inline RecommendationCard removed — now using RecommendationsPanel) */
 
 /* ─── Stepper ─── */
 function OrderStepper({ step }: { step: number }) {
@@ -136,19 +116,19 @@ const NewSalesOrder = () => {
 
   const [customerPrices, setCustomerPrices] = useState<Record<number, number>>({});
 
-  // Mock cross-sell suggestions based on cart
-  const crossSellSuggestions = useMemo(() => {
-    if (cart.length === 0 || products.length === 0) return [];
-    const cartIds = new Set(cart.map(c => c.product.id));
-    return products
-      .filter(p => !cartIds.has(p.id) && p.ativo && p.estoque > 0)
-      .slice(0, 2)
-      .map(p => ({
-        product: p,
-        reason: 'Comprado por clientes similares',
-        impact: `+${fmt(p.valor_unitario)} no ticket`,
-      }));
-  }, [cart, products]);
+  // Customer user_id for recommendation engine
+  const [customerUserId, setCustomerUserId] = useState<string | null>(null);
+
+  // Cart product IDs for contextual recommendations
+  const cartProductIds = useMemo(() => cart.map(c => c.product.id), [cart]);
+
+  // Handle adding a recommended product to cart
+  const handleAddRecommendation = useCallback((item: RecommendationItem) => {
+    const product = products.find(p => p.id === item.product_id);
+    if (product) {
+      addToCart(product);
+    }
+  }, [products]);
 
   const currentStep = !selectedCustomer ? 0 : cart.length === 0 ? 1 : 2;
 
@@ -229,12 +209,21 @@ const NewSalesOrder = () => {
     setCustomerSearch('');
     setCustomers([]);
     try {
-      setSelectedCustomer({
+      const custData = {
         name: cust.nome_fantasia || cust.razao_social,
         document: cust.cnpj_cpf,
         omie_codigo_cliente: cust.codigo_cliente,
         omie_codigo_vendedor: cust.codigo_vendedor,
-      });
+      };
+      setSelectedCustomer(custData);
+
+      // Find user_id from omie_clientes for recommendation engine
+      const { data: omieMapping } = await supabase
+        .from('omie_clientes')
+        .select('user_id')
+        .eq('omie_codigo_cliente', cust.codigo_cliente)
+        .maybeSingle();
+      if (omieMapping?.user_id) setCustomerUserId(omieMapping.user_id);
       const [priceResult, parcelaResult] = await Promise.all([
         supabase.functions.invoke('omie-vendas-sync', {
           body: { action: 'buscar_precos_cliente', codigo_cliente: cust.codigo_cliente },
@@ -543,27 +532,16 @@ const NewSalesOrder = () => {
               </CardContent>
             </Card>
 
-            {/* Cross-sell suggestions */}
-            {crossSellSuggestions.length > 0 && cart.length > 0 && (
-              <Card>
-                <CardHeader className="pb-2">
-                  <CardTitle className="text-sm flex items-center gap-2">
-                    <Sparkles className="w-4 h-4 text-primary" />
-                    Combine com
-                  </CardTitle>
-                </CardHeader>
-                <CardContent className="space-y-2">
-                  {crossSellSuggestions.map(s => (
-                    <RecommendationCard
-                      key={s.product.id}
-                      product={s.product}
-                      reason={s.reason}
-                      impact={s.impact}
-                      onAdd={() => addToCart(s.product)}
-                    />
-                  ))}
-                </CardContent>
-              </Card>
+            {/* AI Recommendations */}
+            {customerUserId && cart.length > 0 && (
+              <RecommendationsPanel
+                customerId={customerUserId}
+                basketProductIds={cartProductIds}
+                onAddToCart={handleAddRecommendation}
+                title="Combine com"
+                compact
+                maxItems={5}
+              />
             )}
 
             {/* Payment + Notes + Submit */}
