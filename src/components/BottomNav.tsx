@@ -1,10 +1,9 @@
 import React from 'react';
-import { Home, PlusCircle, ClipboardList, User, MessageCircle, Shield, ShoppingCart } from 'lucide-react';
+import { Home, PlusCircle, ClipboardList, User, MessageCircle, ShoppingCart } from 'lucide-react';
 import { useNavigate, useLocation } from 'react-router-dom';
 import { motion } from 'framer-motion';
 import { cn } from '@/lib/utils';
 import { useAuth } from '@/contexts/AuthContext';
-import { useCompany } from '@/contexts/CompanyContext';
 import { useUnreadMessages } from '@/hooks/useUnreadMessages';
 import { useInsideAppShell } from '@/contexts/AppShellContext';
 
@@ -16,17 +15,11 @@ const customerNavItems = [
   { icon: User, label: 'Perfil', path: '/profile' },
 ];
 
-const staffColacorNavItems = [
+const staffNavItems = [
   { icon: Home, label: 'Início', path: '/' },
-  { icon: ClipboardList, label: 'Pedidos', path: '/orders' },
+  { icon: ClipboardList, label: 'OS', path: '/orders' },
   { icon: PlusCircle, label: 'Novo', path: '/new-order', isPrimary: true },
-  { icon: Shield, label: 'Admin', path: '/admin' },
-  { icon: User, label: 'Perfil', path: '/profile' },
-];
-
-const staffObenNavItems = [
   { icon: ShoppingCart, label: 'Vendas', path: '/sales' },
-  { icon: PlusCircle, label: 'Novo', path: '/sales/new', isPrimary: true },
   { icon: User, label: 'Perfil', path: '/profile' },
 ];
 
@@ -34,17 +27,12 @@ export const BottomNav = React.forwardRef<HTMLElement, object>(function BottomNa
   const navigate = useNavigate();
   const location = useLocation();
   const { isStaff } = useAuth();
-  const { activeCompany } = useCompany();
   const { unreadCount } = useUnreadMessages();
   const insideShell = useInsideAppShell();
 
   if (insideShell) return null;
 
-  const navItems = !isStaff
-    ? customerNavItems
-    : activeCompany === 'oben'
-      ? staffObenNavItems
-      : staffColacorNavItems;
+  const navItems = isStaff ? staffNavItems : customerNavItems;
 
   return (
     <nav ref={ref} className="fixed bottom-0 left-0 right-0 z-50 safe-bottom">

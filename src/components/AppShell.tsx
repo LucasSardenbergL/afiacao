@@ -3,9 +3,7 @@ import { useLocation, useNavigate } from 'react-router-dom';
 import { BookOpen } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { useAuth } from '@/contexts/AuthContext';
-import { CompanySelector } from '@/components/CompanySelector';
 import { useUserRole } from '@/hooks/useUserRole';
-import { useCompany } from '@/contexts/CompanyContext';
 import { AppShellProvider } from '@/contexts/AppShellContext';
 import {
   LayoutDashboard,
@@ -32,6 +30,7 @@ import {
   Shield,
   Wrench,
   Award,
+  Scissors,
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import {
@@ -53,22 +52,30 @@ interface NavItem {
   label: string;
   path: string;
   badge?: number;
-  children?: { label: string; path: string }[];
   managerOnly?: boolean;
 }
 
-const obenNavSections: { title: string; items: NavItem[] }[] = [
+const unifiedNavSections: { title: string; items: NavItem[] }[] = [
   {
     title: 'Principal',
     items: [
       { icon: LayoutDashboard, label: 'Dashboard', path: '/' },
       { icon: Users, label: 'Clientes', path: '/admin/customers' },
-      { icon: ShoppingCart, label: 'Pedidos', path: '/sales' },
+    ],
+  },
+  {
+    title: 'Afiação',
+    items: [
+      { icon: ClipboardList, label: 'Ordens de Serviço', path: '/orders' },
+      { icon: PlusCircle, label: 'Nova OS', path: '/new-order' },
+      { icon: Wrench, label: 'Ferramentas', path: '/tools' },
+      { icon: Award, label: 'Gamificação', path: '/gamification' },
     ],
   },
   {
     title: 'Vendas',
     items: [
+      { icon: ShoppingCart, label: 'Pedidos', path: '/sales' },
       { icon: Package, label: 'Produtos', path: '/sales/products' },
       { icon: TrendingUp, label: 'Recomendações', path: '/farmer/recommendations' },
       { icon: Target, label: 'Bundles', path: '/farmer/bundles' },
@@ -85,34 +92,9 @@ const obenNavSections: { title: string; items: NavItem[] }[] = [
   {
     title: 'Gestão',
     items: [
+      { icon: Shield, label: 'Admin', path: '/admin', managerOnly: true },
       { icon: BarChart3, label: 'Relatórios', path: '/admin/monthly-reports', managerOnly: true },
       { icon: TrendingUp, label: 'Analytics & Sync', path: '/admin/analytics-sync', managerOnly: true },
-      { icon: Settings, label: 'Configurações', path: '/settings', managerOnly: true },
-    ],
-  },
-];
-
-const colacorNavSections: { title: string; items: NavItem[] }[] = [
-  {
-    title: 'Principal',
-    items: [
-      { icon: LayoutDashboard, label: 'Início', path: '/' },
-      { icon: ClipboardList, label: 'Pedidos', path: '/orders' },
-      { icon: PlusCircle, label: 'Novo Pedido', path: '/new-order' },
-    ],
-  },
-  {
-    title: 'Afiação',
-    items: [
-      { icon: Wrench, label: 'Ferramentas', path: '/tools' },
-      { icon: Award, label: 'Gamificação', path: '/gamification' },
-    ],
-  },
-  {
-    title: 'Gestão',
-    items: [
-      { icon: Shield, label: 'Admin', path: '/admin', managerOnly: true },
-      { icon: Users, label: 'Clientes', path: '/admin/customers', managerOnly: true },
       { icon: Settings, label: 'Configurações', path: '/settings', managerOnly: true },
     ],
   },
@@ -131,7 +113,6 @@ function AppSidebar({ collapsed, onToggle }: { collapsed: boolean; onToggle: () 
   const location = useLocation();
   const navigate = useNavigate();
   const { isAdmin } = useUserRole();
-  const { activeCompany, companyInfo } = useCompany();
 
   const isActive = (path: string) => {
     if (path === '/') return location.pathname === '/';
@@ -151,22 +132,28 @@ function AppSidebar({ collapsed, onToggle }: { collapsed: boolean; onToggle: () 
         collapsed ? 'justify-center' : 'justify-between'
       )}>
         {!collapsed && (
-          <span className="text-sidebar-primary-foreground font-semibold text-lg tracking-tight">
-            {companyInfo.shortName}
-          </span>
+          <div className="flex items-center gap-2">
+            <Scissors className="w-5 h-5 text-primary" />
+            <span className="text-sidebar-primary-foreground font-semibold text-lg tracking-tight">
+              Central
+            </span>
+          </div>
         )}
-        <button
-          onClick={onToggle}
-          className="p-1.5 rounded-md text-sidebar-muted hover:text-sidebar-foreground hover:bg-sidebar-accent transition-colors"
-          aria-label={collapsed ? 'Expandir menu' : 'Recolher menu'}
-        >
-          {collapsed ? <ChevronRight className="w-4 h-4" /> : <ChevronLeft className="w-4 h-4" />}
-        </button>
+        {collapsed && <Scissors className="w-5 h-5 text-primary" />}
+        {!collapsed && (
+          <button
+            onClick={onToggle}
+            className="p-1.5 rounded-md text-sidebar-muted hover:text-sidebar-foreground hover:bg-sidebar-accent transition-colors"
+            aria-label="Recolher menu"
+          >
+            <ChevronLeft className="w-4 h-4" />
+          </button>
+        )}
       </div>
 
       {/* Navigation */}
       <nav className="flex-1 overflow-y-auto py-2 no-scrollbar">
-        {[...(activeCompany === 'oben' ? obenNavSections : colacorNavSections), docNavSection].map((section) => {
+        {[...unifiedNavSections, docNavSection].map((section) => {
           const visibleItems = section.items.filter(item => !item.managerOnly || isAdmin);
           if (visibleItems.length === 0) return null;
 
@@ -179,6 +166,7 @@ function AppSidebar({ collapsed, onToggle }: { collapsed: boolean; onToggle: () 
                   </span>
                 </div>
               )}
+              {collapsed && <div className="my-1 mx-2 border-t border-sidebar-border/50" />}
               {visibleItems.map((item) => {
                 const active = isActive(item.path);
                 const Icon = item.icon;
@@ -216,12 +204,25 @@ function AppSidebar({ collapsed, onToggle }: { collapsed: boolean; onToggle: () 
                   );
                 }
 
-                return button;
+                return <React.Fragment key={item.path}>{button}</React.Fragment>;
               })}
             </div>
           );
         })}
       </nav>
+
+      {/* Collapse trigger at bottom when collapsed */}
+      {collapsed && (
+        <div className="border-t border-sidebar-border p-2">
+          <button
+            onClick={onToggle}
+            className="w-full p-1.5 rounded-md text-sidebar-muted hover:text-sidebar-foreground hover:bg-sidebar-accent transition-colors flex justify-center"
+            aria-label="Expandir menu"
+          >
+            <ChevronRight className="w-4 h-4" />
+          </button>
+        </div>
+      )}
     </aside>
   );
 }
@@ -261,7 +262,6 @@ function AppTopbar({ sidebarCollapsed, onMobileMenuToggle }: { sidebarCollapsed:
       </button>
 
       <div className="flex items-center gap-1">
-        <CompanySelector />
         <Button variant="ghost" size="icon" className="h-8 w-8 text-muted-foreground">
           <Bell className="w-4 h-4" />
         </Button>
@@ -292,7 +292,6 @@ function MobileNav({ open, onClose }: { open: boolean; onClose: () => void }) {
   const location = useLocation();
   const navigate = useNavigate();
   const { isAdmin } = useUserRole();
-  const { activeCompany, companyInfo } = useCompany();
 
   if (!open) return null;
 
@@ -301,13 +300,16 @@ function MobileNav({ open, onClose }: { open: boolean; onClose: () => void }) {
       <div className="fixed inset-0 z-50 bg-black/50 lg:hidden" onClick={onClose} />
       <div className="fixed left-0 top-0 bottom-0 z-50 w-64 bg-sidebar border-r border-sidebar-border lg:hidden animate-slide-in-right">
         <div className="flex items-center justify-between h-topbar border-b border-sidebar-border px-3">
-          <span className="text-sidebar-primary-foreground font-semibold text-lg">{companyInfo.shortName}</span>
+          <div className="flex items-center gap-2">
+            <Scissors className="w-5 h-5 text-primary" />
+            <span className="text-sidebar-primary-foreground font-semibold text-lg">Central</span>
+          </div>
           <button onClick={onClose} className="p-1.5 rounded-md text-sidebar-muted hover:text-sidebar-foreground">
             <X className="w-4 h-4" />
           </button>
         </div>
         <nav className="py-2 overflow-y-auto">
-          {[...(activeCompany === 'oben' ? obenNavSections : colacorNavSections), docNavSection].map((section) => {
+          {[...unifiedNavSections, docNavSection].map((section) => {
             const visibleItems = section.items.filter(item => !item.managerOnly || isAdmin);
             if (visibleItems.length === 0) return null;
             return (

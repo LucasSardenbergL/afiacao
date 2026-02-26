@@ -2,7 +2,6 @@ import React from 'react';
 import { ArrowLeft, Bell } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 import { cn } from '@/lib/utils';
-import { CompanySelector } from '@/components/CompanySelector';
 import { useInsideAppShell } from '@/contexts/AppShellContext';
 interface HeaderProps {
   title?: string;
@@ -55,7 +54,6 @@ export const Header = React.forwardRef<HTMLElement, HeaderProps>(function Header
               {title}
             </h1>
           )}
-          <CompanySelector />
         </div>
 
         <div className="w-10 flex justify-end">
