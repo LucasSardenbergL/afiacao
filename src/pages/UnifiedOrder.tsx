@@ -222,8 +222,29 @@ const UnifiedOrder = () => {
       } else {
         setProducts(data as Product[]);
       }
+      // Sync stock in background (Oben - ListarPosEstoque)
+      syncStockInBackground();
     } catch (e) { console.error(e); }
     finally { setLoadingProducts(false); }
+  };
+
+  const syncStockInBackground = async () => {
+    try {
+      let nextPage: number | null = 1;
+      while (nextPage) {
+        const { data, error } = await supabase.functions.invoke('omie-vendas-sync', {
+          body: { action: 'sync_estoque', start_page: nextPage },
+        });
+        if (error) break;
+        nextPage = data?.nextPage || null;
+      }
+      // Refresh products with updated stock
+      const { data: refreshed } = await supabase
+        .from('omie_products')
+        .select('id, codigo, descricao, unidade, valor_unitario, estoque, ativo, omie_codigo_produto')
+        .order('descricao');
+      if (refreshed) setProducts(refreshed as Product[]);
+    } catch (e) { console.error('Background stock sync error:', e); }
   };
 
   const loadServicosColacor = async () => {
