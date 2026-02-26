@@ -32,6 +32,7 @@ interface OmieCliente {
   pessoa_fisica?: string;
   inscricao_estadual?: string;
   tags?: Array<{ tag: string }>;
+  codigo_vendedor?: number;
 }
 
 interface CNPJData {
@@ -181,6 +182,49 @@ async function buscarClientePorDocumento(documento: string): Promise<{ cliente: 
   }
 }
 
+async function pesquisarClientes(query: string, pagina: number = 1): Promise<{ clientes: OmieCliente[]; total: number }> {
+  try {
+    // Search by name (razao_social or nome_fantasia)
+    const result = await callOmieApi("geral/clientes/", "ListarClientesResumido", {
+      pagina,
+      registros_por_pagina: 50,
+      clientesFiltro: { nome_fantasia: query },
+    });
+
+    if (result.faultstring) {
+      if (result.faultstring.includes("Nenhum registro") || result.faultstring.includes("não encontrado")) {
+        return { clientes: [], total: 0 };
+      }
+      throw new Error(`Erro Omie: ${result.faultstring}`);
+    }
+
+    const clientes = result.clientes_cadastro_resumido || result.clientes_cadastro || [];
+    return { 
+      clientes, 
+      total: result.total_de_registros || clientes.length 
+    };
+  } catch (error) {
+    if (error instanceof Error && 
+        (error.message.includes("Nenhum registro") || 
+         error.message.includes("não encontrado"))) {
+      return { clientes: [], total: 0 };
+    }
+    throw error;
+  }
+}
+
+async function consultarClienteCompleto(codigoCliente: number): Promise<OmieCliente | null> {
+  try {
+    const result = await callOmieApi("geral/clientes/", "ConsultarCliente", {
+      codigo_cliente: codigoCliente,
+    }) as unknown as OmieCliente;
+    return result;
+  } catch (error) {
+    console.error('[Omie] Erro ao consultar cliente:', error);
+    return null;
+  }
+}
+
 serve(async (req) => {
   if (req.method === "OPTIONS") {
     return new Response("ok", { headers: corsHeaders });
@@ -188,7 +232,7 @@ serve(async (req) => {
 
   try {
     const body = await req.json();
-    const { action, documento } = body;
+    const { action, documento, query, codigo_cliente } = body;
 
     // Input validation
     if (!action || typeof action !== "string") {
@@ -291,6 +335,68 @@ serve(async (req) => {
             cnae: null,
             cliente: null,
           };
+        }
+        break;
+      }
+
+      case "pesquisar_clientes": {
+        if (!query || typeof query !== "string" || query.length < 2) {
+          return new Response(
+            JSON.stringify({ error: "Informe pelo menos 2 caracteres para pesquisar" }),
+            { status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+          );
+        }
+
+        const searchResult = await pesquisarClientes(query);
+        result = {
+          clientes: searchResult.clientes.map(c => ({
+            codigo_cliente: c.codigo_cliente,
+            razao_social: c.razao_social,
+            nome_fantasia: c.nome_fantasia,
+            cnpj_cpf: c.cnpj_cpf,
+            email: c.email,
+            telefone: c.telefone1_numero,
+            cidade: c.cidade,
+            estado: c.estado,
+          })),
+          total: searchResult.total,
+        };
+        break;
+      }
+
+      case "consultar_cliente": {
+        if (!codigo_cliente || typeof codigo_cliente !== "number") {
+          return new Response(
+            JSON.stringify({ error: "Código do cliente inválido" }),
+            { status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+          );
+        }
+
+        const clienteCompleto = await consultarClienteCompleto(codigo_cliente);
+        if (clienteCompleto) {
+          result = {
+            found: true,
+            cliente: {
+              codigo_cliente: clienteCompleto.codigo_cliente,
+              razao_social: clienteCompleto.razao_social,
+              nome_fantasia: clienteCompleto.nome_fantasia,
+              cnpj_cpf: clienteCompleto.cnpj_cpf,
+              email: clienteCompleto.email,
+              telefone: clienteCompleto.telefone1_numero,
+              endereco: clienteCompleto.endereco,
+              endereco_numero: clienteCompleto.endereco_numero,
+              complemento: clienteCompleto.complemento,
+              bairro: clienteCompleto.bairro,
+              cidade: clienteCompleto.cidade,
+              estado: clienteCompleto.estado,
+              cep: clienteCompleto.cep,
+              pessoa_fisica: clienteCompleto.pessoa_fisica,
+              inscricao_estadual: clienteCompleto.inscricao_estadual,
+              codigo_vendedor: clienteCompleto.codigo_vendedor,
+            },
+          };
+        } else {
+          result = { found: false, cliente: null };
         }
         break;
       }

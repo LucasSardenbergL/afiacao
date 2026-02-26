@@ -76,12 +76,22 @@ interface AddressData {
   zipCode: string;
 }
 
-interface CustomerOption {
-  user_id: string;
-  name: string;
+interface OmieCustomer {
+  codigo_cliente: number;
+  razao_social: string | null;
+  nome_fantasia: string | null;
+  cnpj_cpf: string | null;
   email: string | null;
-  phone: string | null;
-  document: string | null;
+  telefone: string | null;
+  cidade: string | null;
+  estado: string | null;
+  endereco: string | null;
+  endereco_numero: string | null;
+  complemento: string | null;
+  bairro: string | null;
+  cep: string | null;
+  // Mapped local user_id (if exists in app)
+  local_user_id?: string | null;
 }
 
 interface ToolCategory {
@@ -97,15 +107,15 @@ const NewOrder = () => {
   const { user } = useAuth();
   const { isStaff } = useUserRole();
   
-  // For staff: customer selection
-  const [selectedCustomerId, setSelectedCustomerId] = useState<string | null>(null);
-  const [selectedCustomer, setSelectedCustomer] = useState<CustomerOption | null>(null);
-  const [customers, setCustomers] = useState<CustomerOption[]>([]);
+  // For staff: customer selection from Omie
+  const [selectedOmieCustomer, setSelectedOmieCustomer] = useState<OmieCustomer | null>(null);
+  const [omieCustomers, setOmieCustomers] = useState<OmieCustomer[]>([]);
   const [customerSearch, setCustomerSearch] = useState('');
   const [loadingCustomers, setLoadingCustomers] = useState(false);
+  const [searchTimer, setSearchTimer] = useState<ReturnType<typeof setTimeout> | null>(null);
   
-  // The effective user ID for the order (customer's ID for staff, own ID for customers)
-  const effectiveUserId = isStaff ? selectedCustomerId : user?.id;
+  // The effective user ID for the order (customer's local user_id if mapped, otherwise null)
+  const effectiveUserId = isStaff ? (selectedOmieCustomer?.local_user_id || null) : user?.id;
 
   const [currentStep, setCurrentStep] = useState<Step>(isStaff ? 'customer' : 'items');
   const [items, setItems] = useState<ServiceItem[]>([]);
@@ -140,12 +150,24 @@ const NewOrder = () => {
   const { loadDefaultPrices, calculatePrice } = usePricingEngine();
   const { loadPriceHistory, getLastPrice } = usePriceHistory(effectiveUserId || undefined);
 
-  // Load customers for staff
+  // Debounced Omie customer search
   useEffect(() => {
-    if (isStaff && user) {
-      loadCustomers();
+    if (!isStaff) return;
+    if (searchTimer) clearTimeout(searchTimer);
+    
+    if (customerSearch.trim().length >= 2) {
+      const timer = setTimeout(() => {
+        searchOmieCustomers(customerSearch.trim());
+      }, 500);
+      setSearchTimer(timer);
+    } else {
+      setOmieCustomers([]);
     }
-  }, [isStaff, user]);
+    
+    return () => {
+      if (searchTimer) clearTimeout(searchTimer);
+    };
+  }, [customerSearch, isStaff]);
 
   // Load data when effective user is determined
   useEffect(() => {
@@ -154,8 +176,20 @@ const NewOrder = () => {
       loadUserTools();
       loadDefaultPrices();
       loadPriceHistory();
+    } else if (isStaff && selectedOmieCustomer) {
+      // Customer exists in Omie but not in the app - set profile from Omie data
+      setProfile({
+        name: selectedOmieCustomer.nome_fantasia || selectedOmieCustomer.razao_social || 'Cliente',
+        email: selectedOmieCustomer.email || null,
+        phone: selectedOmieCustomer.telefone || null,
+        document: selectedOmieCustomer.cnpj_cpf || null,
+      });
+      setAddresses([]);
+      setUserTools([]);
+      setLoadingData(false);
+      setLoadingTools(false);
     }
-  }, [effectiveUserId]);
+  }, [effectiveUserId, selectedOmieCustomer]);
 
   // Load services and categories once
   useEffect(() => {
@@ -172,38 +206,59 @@ const NewOrder = () => {
     }
   }, [isStaff]);
 
-  const loadCustomers = async () => {
+  const searchOmieCustomers = async (query: string) => {
     setLoadingCustomers(true);
     try {
-      const { data, error } = await supabase
-        .from('profiles')
-        .select('user_id, name, email, phone, document')
-        .eq('is_employee', false)
-        .order('name');
+      const { data, error } = await supabase.functions.invoke('omie-cliente', {
+        body: { action: 'pesquisar_clientes', query },
+      });
 
       if (error) throw error;
-      setCustomers(data || []);
+
+      const clientes: OmieCustomer[] = (data?.clientes || []).map((c: any) => ({
+        codigo_cliente: c.codigo_cliente,
+        razao_social: c.razao_social,
+        nome_fantasia: c.nome_fantasia,
+        cnpj_cpf: c.cnpj_cpf,
+        email: c.email,
+        telefone: c.telefone,
+        cidade: c.cidade,
+        estado: c.estado,
+      }));
+
+      // Try to find local user_ids via omie_clientes mapping
+      if (clientes.length > 0) {
+        const codigosCliente = clientes.map(c => c.codigo_cliente);
+        const { data: mappings } = await supabase
+          .from('omie_clientes')
+          .select('user_id, omie_codigo_cliente')
+          .in('omie_codigo_cliente', codigosCliente);
+
+        if (mappings) {
+          for (const cliente of clientes) {
+            const mapping = mappings.find(m => m.omie_codigo_cliente === cliente.codigo_cliente);
+            if (mapping) {
+              cliente.local_user_id = mapping.user_id;
+            }
+          }
+        }
+      }
+
+      setOmieCustomers(clientes);
     } catch (error) {
-      console.error('Erro ao carregar clientes:', error);
+      console.error('Erro ao pesquisar clientes Omie:', error);
+      toast({
+        title: 'Erro na pesquisa',
+        description: 'Não foi possível pesquisar clientes no Omie',
+        variant: 'destructive',
+      });
     } finally {
       setLoadingCustomers(false);
     }
   };
 
-  const filteredCustomers = customers.filter(c => {
-    if (!customerSearch.trim()) return true;
-    const q = customerSearch.toLowerCase();
-    return (
-      c.name.toLowerCase().includes(q) ||
-      (c.email && c.email.toLowerCase().includes(q)) ||
-      (c.phone && c.phone.includes(q)) ||
-      (c.document && c.document.includes(q))
-    );
-  });
-
-  const handleSelectCustomer = (customer: CustomerOption) => {
-    setSelectedCustomerId(customer.user_id);
-    setSelectedCustomer(customer);
+  const handleSelectCustomer = (customer: OmieCustomer) => {
+    setSelectedOmieCustomer(customer);
     // Reset items when switching customer
     setItems([]);
     setUserTools([]);
@@ -447,7 +502,7 @@ const NewOrder = () => {
   const canProceed = () => {
     switch (currentStep) {
       case 'customer':
-        return !!selectedCustomerId;
+        return !!selectedOmieCustomer;
       case 'items':
         return items.length > 0 && items.every(item => item.userToolId && item.servico && item.quantity > 0);
       case 'delivery':
@@ -475,7 +530,15 @@ const NewOrder = () => {
   };
 
   const handleSubmit = async () => {
-    if (!effectiveUserId || !profile) {
+    if (!profile) {
+      toast({
+        title: 'Erro',
+        description: 'Dados do cliente não disponíveis',
+        variant: 'destructive',
+      });
+      return;
+    }
+    if (!isStaff && !user) {
       toast({
         title: 'Erro',
         description: 'Você precisa estar logado para fazer um pedido',
@@ -582,9 +645,14 @@ const NewOrder = () => {
     return tool.generated_name || tool.custom_name || tool.tool_categories?.name || 'Ferramenta';
   };
 
+  const customerDisplayName = selectedOmieCustomer 
+    ? (selectedOmieCustomer.nome_fantasia || selectedOmieCustomer.razao_social || 'Cliente')
+    : '';
+  const customerFirstName = customerDisplayName.split(' ')[0] || 'Cliente';
+
   // Show loading only for non-staff or after customer is selected
   const showLoading = isStaff 
-    ? (selectedCustomerId && (loadingData || loadingServicos || loadingTools))
+    ? (selectedOmieCustomer && (loadingData || loadingServicos || loadingTools))
     : (loadingServicos || loadingTools);
 
   if (showLoading && currentStep !== 'customer') {
@@ -655,17 +723,22 @@ const NewOrder = () => {
                 />
               </div>
 
-              {selectedCustomer && (
+              {selectedOmieCustomer && (
                 <div className="bg-primary/5 border-2 border-primary rounded-xl p-4 mb-4">
                   <div className="flex items-center gap-3">
                     <div className="w-10 h-10 rounded-full bg-primary/10 flex items-center justify-center">
                       <User className="w-5 h-5 text-primary" />
                     </div>
                     <div className="flex-1">
-                      <p className="font-semibold">{selectedCustomer.name}</p>
+                      <p className="font-semibold">{selectedOmieCustomer.nome_fantasia || selectedOmieCustomer.razao_social}</p>
                       <p className="text-sm text-muted-foreground">
-                        {selectedCustomer.phone || selectedCustomer.email || selectedCustomer.document || ''}
+                        {selectedOmieCustomer.cnpj_cpf || selectedOmieCustomer.telefone || selectedOmieCustomer.email || ''}
                       </p>
+                      {selectedOmieCustomer.cidade && (
+                        <p className="text-xs text-muted-foreground">
+                          {selectedOmieCustomer.cidade}{selectedOmieCustomer.estado ? `/${selectedOmieCustomer.estado}` : ''}
+                        </p>
+                      )}
                     </div>
                     <Check className="w-5 h-5 text-primary" />
                   </div>
@@ -676,15 +749,19 @@ const NewOrder = () => {
                 <div className="flex items-center justify-center py-8">
                   <Loader2 className="w-6 h-6 animate-spin text-primary" />
                 </div>
+              ) : customerSearch.trim().length < 2 ? (
+                <p className="text-sm text-muted-foreground text-center py-4">
+                  Digite pelo menos 2 caracteres para pesquisar clientes no Omie
+                </p>
               ) : (
                 <div className="space-y-2 max-h-[50vh] overflow-y-auto">
-                  {filteredCustomers.map((customer) => (
+                  {omieCustomers.map((customer) => (
                     <button
-                      key={customer.user_id}
+                      key={customer.codigo_cliente}
                       onClick={() => handleSelectCustomer(customer)}
                       className={cn(
                         'w-full p-3 rounded-xl border-2 text-left transition-all flex items-center gap-3',
-                        selectedCustomerId === customer.user_id
+                        selectedOmieCustomer?.codigo_cliente === customer.codigo_cliente
                           ? 'border-primary bg-primary/5'
                           : 'border-border hover:border-primary/50'
                       )}
@@ -693,16 +770,19 @@ const NewOrder = () => {
                         <User className="w-5 h-5 text-muted-foreground" />
                       </div>
                       <div className="flex-1 min-w-0">
-                        <p className="font-medium truncate">{customer.name}</p>
+                        <p className="font-medium truncate">{customer.nome_fantasia || customer.razao_social}</p>
                         <p className="text-xs text-muted-foreground truncate">
-                          {[customer.phone, customer.email, customer.document].filter(Boolean).join(' • ')}
+                          {[customer.cnpj_cpf, customer.telefone, customer.cidade && `${customer.cidade}/${customer.estado}`].filter(Boolean).join(' • ')}
                         </p>
+                        {!customer.local_user_id && (
+                          <p className="text-xs text-amber-600 mt-0.5">Sem cadastro no app</p>
+                        )}
                       </div>
                     </button>
                   ))}
-                  {filteredCustomers.length === 0 && (
+                  {omieCustomers.length === 0 && (
                     <p className="text-sm text-muted-foreground text-center py-4">
-                      Nenhum cliente encontrado
+                      Nenhum cliente encontrado no Omie
                     </p>
                   )}
                 </div>
@@ -715,13 +795,13 @@ const NewOrder = () => {
             <div>
               <h2 className="font-display font-bold text-xl mb-1">Selecionar Ferramentas</h2>
               <p className="text-sm text-muted-foreground mb-2">
-                {isStaff && selectedCustomer
-                  ? `Ferramentas de ${selectedCustomer.name}`
+                {isStaff && selectedOmieCustomer
+                  ? `Ferramentas de ${customerDisplayName}`
                   : 'Escolha suas ferramentas cadastradas e o serviço desejado'}
               </p>
-              {isStaff && selectedCustomer && (
+              {isStaff && selectedOmieCustomer && (
                 <p className="text-xs text-primary mb-6">
-                  Cliente: {selectedCustomer.name}
+                  Cliente: {customerDisplayName}
                 </p>
               )}
 
@@ -767,14 +847,20 @@ const NewOrder = () => {
                   <h3 className="font-semibold mb-2">Nenhuma ferramenta cadastrada</h3>
                   <p className="text-sm text-muted-foreground mb-4">
                     {isStaff 
-                      ? `${selectedCustomer?.name || 'O cliente'} não possui ferramentas cadastradas. Cadastre uma ferramenta para continuar.`
+                      ? `${customerDisplayName || 'O cliente'} não possui ferramentas cadastradas. Cadastre uma ferramenta para continuar.`
                       : 'Você precisa cadastrar suas ferramentas antes de solicitar um serviço'}
                   </p>
                   {isStaff ? (
-                    <Button onClick={() => setAddToolDialogOpen(true)}>
-                      <Plus className="w-4 h-4 mr-2" />
-                      Cadastrar Ferramenta para {selectedCustomer?.name?.split(' ')[0] || 'Cliente'}
-                    </Button>
+                    selectedOmieCustomer?.local_user_id ? (
+                      <Button onClick={() => setAddToolDialogOpen(true)}>
+                        <Plus className="w-4 h-4 mr-2" />
+                        Cadastrar Ferramenta para {customerFirstName}
+                      </Button>
+                    ) : (
+                      <div className="text-sm text-amber-600 bg-amber-50 rounded-lg p-3">
+                        Este cliente ainda não possui cadastro no aplicativo. As ferramentas poderão ser cadastradas após o primeiro pedido.
+                      </div>
+                    )
                   ) : (
                     <Button onClick={() => navigate('/tools')}>
                       <Wrench className="w-4 h-4 mr-2" />
@@ -910,16 +996,16 @@ const NewOrder = () => {
                   )}
 
                   {/* Link para cadastrar mais */}
-                  {isStaff ? (
+                  {isStaff && selectedOmieCustomer?.local_user_id ? (
                     <Button
                       variant="ghost"
                       className="w-full mt-4"
                       onClick={() => setAddToolDialogOpen(true)}
                     >
                       <Plus className="w-4 h-4 mr-2" />
-                      Cadastrar nova ferramenta para {selectedCustomer?.name?.split(' ')[0] || 'cliente'}
+                      Cadastrar nova ferramenta para {customerFirstName}
                     </Button>
-                  ) : (
+                  ) : isStaff ? null : (
                     <Button
                       variant="ghost"
                       className="w-full mt-4"
@@ -1117,12 +1203,12 @@ const NewOrder = () => {
                 Confira os detalhes antes de enviar
               </p>
 
-              {isStaff && selectedCustomer && (
+              {isStaff && selectedOmieCustomer && (
                 <div className="bg-card rounded-xl p-4 shadow-soft border border-border mb-4">
                   <h3 className="font-semibold mb-2">Cliente</h3>
-                  <p className="text-sm">{selectedCustomer.name}</p>
+                  <p className="text-sm">{customerDisplayName}</p>
                   <p className="text-sm text-muted-foreground">
-                    {[selectedCustomer.phone, selectedCustomer.email].filter(Boolean).join(' • ')}
+                    {[selectedOmieCustomer.cnpj_cpf, selectedOmieCustomer.telefone, selectedOmieCustomer.email].filter(Boolean).join(' • ')}
                   </p>
                 </div>
               )}
@@ -1320,13 +1406,13 @@ const NewOrder = () => {
       </main>
 
       {/* Add Tool Dialog for staff - adds tool to customer */}
-      {isStaff && selectedCustomerId && (
+      {isStaff && selectedOmieCustomer?.local_user_id && (
         <AddToolDialog
           open={addToolDialogOpen}
           onOpenChange={setAddToolDialogOpen}
           onToolAdded={loadUserTools}
           categories={toolCategories}
-          targetUserId={selectedCustomerId}
+          targetUserId={selectedOmieCustomer.local_user_id}
         />
       )}
     </div>
