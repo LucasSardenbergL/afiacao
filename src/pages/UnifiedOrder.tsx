@@ -75,11 +75,7 @@ interface OmieCustomer {
 interface FormaPagamento {
   codigo: string;
   descricao: string;
-  isPopular?: boolean;
 }
-
-// Most common payment codes for Oben — sorted to top
-const POPULAR_PARCELAS = ['999', '000', '001', '002', '003', '030', '030/060', '030/060/090'];
 
 const fmt = (v: number) => v.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' });
 
@@ -152,17 +148,6 @@ const UnifiedOrder = () => {
   const productItems = useMemo(() => cart.filter((c): c is ProductCartItem => c.type === 'product'), [cart]);
   const serviceItems = useMemo(() => cart.filter((c): c is ServiceCartItem => c.type === 'service'), [cart]);
   const cartProductIds = useMemo(() => productItems.map(c => c.product.id), [productItems]);
-  const sortedFormasPagamento = useMemo(() => {
-    const tagged = formasPagamento.map(f => ({
-      ...f,
-      isPopular: POPULAR_PARCELAS.includes(f.codigo),
-    }));
-    return tagged.sort((a, b) => {
-      if (a.isPopular && !b.isPopular) return -1;
-      if (!a.isPopular && b.isPopular) return 1;
-      return 0;
-    });
-  }, [formasPagamento]);
 
   const currentStep = !selectedCustomer ? 0 : cart.length === 0 ? 1 : 2;
 
@@ -1072,10 +1057,9 @@ const UnifiedOrder = () => {
                           <SelectValue placeholder="Selecione..." />
                         </SelectTrigger>
                         <SelectContent>
-                          {sortedFormasPagamento.map((f, i) => (
+                          {formasPagamento.map(f => (
                             <SelectItem key={f.codigo} value={f.codigo}>
                               {f.descricao}
-                              {f.isPopular && ' ⭐'}
                             </SelectItem>
                           ))}
                         </SelectContent>
