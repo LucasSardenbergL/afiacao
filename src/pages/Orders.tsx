@@ -1,10 +1,12 @@
 import { useState, useEffect } from 'react';
+import { useNavigate } from 'react-router-dom';
 import { Header } from '@/components/Header';
 import { BottomNav } from '@/components/BottomNav';
 import { OrderCard } from '@/components/OrderCard';
 import { cn } from '@/lib/utils';
 import { supabase } from '@/integrations/supabase/client';
-import { Loader2, Package } from 'lucide-react';
+import { Loader2, Package, Plus } from 'lucide-react';
+import { Button } from '@/components/ui/button';
 
 type FilterTab = 'all' | 'active' | 'completed';
 
@@ -19,6 +21,7 @@ interface Order {
 }
 
 const Orders = () => {
+  const navigate = useNavigate();
   const [activeTab, setActiveTab] = useState<FilterTab>('all');
   const [orders, setOrders] = useState<Order[]>([]);
   const [loading, setLoading] = useState(true);
@@ -68,6 +71,14 @@ const Orders = () => {
       <Header title="Meus Pedidos" showBack showNotifications />
 
       <main className="pt-16 px-4 max-w-lg mx-auto">
+        {/* New Order Button */}
+        <div className="mb-4">
+          <Button onClick={() => navigate('/new-order')} className="w-full gap-2">
+            <Plus className="w-4 h-4" />
+            Novo Pedido de Afiação
+          </Button>
+        </div>
+
         {/* Tabs */}
         <div className="flex gap-2 mb-6 overflow-x-auto no-scrollbar py-2">
           {tabs.map((tab) => (
