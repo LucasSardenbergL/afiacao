@@ -439,6 +439,11 @@ const NewOrder = () => {
 
   const updateItem = (index: number, field: keyof ServiceItem, value: unknown) => {
     const newItems = [...items];
+    // Enforce quantity limit based on tool's registered quantity
+    if (field === 'quantity') {
+      const maxQty = newItems[index].userTool?.quantity || 1;
+      value = Math.min(value as number, maxQty);
+    }
     newItems[index] = { ...newItems[index], [field]: value };
     setItems(newItems);
   };
@@ -1008,7 +1013,12 @@ const NewOrder = () => {
 
                           {/* Quantidade */}
                           <div className="mb-3">
-                            <label className="text-sm font-medium mb-2 block">Quantidade</label>
+                            <label className="text-sm font-medium mb-2 block">
+                              Quantidade
+                              {item.userTool?.quantity && (
+                                <span className="text-xs text-muted-foreground ml-1">(máx: {item.userTool.quantity})</span>
+                              )}
+                            </label>
                             <div className="flex items-center gap-3">
                               <button
                                 onClick={() => updateItem(index, 'quantity', Math.max(1, (item.quantity || 1) - 1))}
@@ -1018,8 +1028,21 @@ const NewOrder = () => {
                               </button>
                               <span className="w-10 text-center font-semibold">{item.quantity || 1}</span>
                               <button
-                                onClick={() => updateItem(index, 'quantity', (item.quantity || 1) + 1)}
-                                className="w-10 h-10 rounded-lg border border-input flex items-center justify-center hover:bg-muted"
+                                onClick={() => {
+                                  const maxQty = item.userTool?.quantity || 1;
+                                  const currentQty = item.quantity || 1;
+                                  if (currentQty >= maxQty) {
+                                    toast({
+                                      title: 'Quantidade máxima atingida',
+                                      description: `Esta ferramenta possui apenas ${maxQty} unidade(s) cadastrada(s).`,
+                                      variant: 'default',
+                                    });
+                                    return;
+                                  }
+                                  updateItem(index, 'quantity', currentQty + 1);
+                                }}
+                                disabled={(item.quantity || 1) >= (item.userTool?.quantity || 1)}
+                                className="w-10 h-10 rounded-lg border border-input flex items-center justify-center hover:bg-muted disabled:opacity-50 disabled:cursor-not-allowed"
                               >
                                 +
                               </button>
