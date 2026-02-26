@@ -401,6 +401,67 @@ serve(async (req) => {
         break;
       }
 
+      case "criar_perfil_local": {
+        const { cliente } = body;
+        if (!cliente || !cliente.codigo_cliente) {
+          return new Response(
+            JSON.stringify({ error: "Dados do cliente inválidos" }),
+            { status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+          );
+        }
+
+        const supabaseUrl = Deno.env.get("SUPABASE_URL")!;
+        const supabaseServiceKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
+        const adminClient = createClient(supabaseUrl, supabaseServiceKey);
+
+        // Check if mapping already exists
+        const { data: existingMapping } = await adminClient
+          .from("omie_clientes")
+          .select("user_id")
+          .eq("omie_codigo_cliente", cliente.codigo_cliente)
+          .maybeSingle();
+
+        if (existingMapping) {
+          result = { user_id: existingMapping.user_id };
+          break;
+        }
+
+        // Generate a UUID for this customer (no auth account, just a profile placeholder)
+        const newUserId = crypto.randomUUID();
+
+        // Create profile
+        const { error: profileError } = await adminClient
+          .from("profiles")
+          .insert({
+            user_id: newUserId,
+            name: cliente.nome_fantasia || cliente.razao_social || "Cliente",
+            email: cliente.email || null,
+            phone: cliente.telefone || null,
+            document: cliente.cnpj_cpf || null,
+          });
+
+        if (profileError) {
+          console.error("[criar_perfil_local] Profile error:", profileError);
+          throw new Error("Erro ao criar perfil local");
+        }
+
+        // Create omie_clientes mapping
+        const { error: mappingError } = await adminClient
+          .from("omie_clientes")
+          .insert({
+            user_id: newUserId,
+            omie_codigo_cliente: cliente.codigo_cliente,
+          });
+
+        if (mappingError) {
+          console.error("[criar_perfil_local] Mapping error:", mappingError);
+          throw new Error("Erro ao criar mapeamento Omie");
+        }
+
+        result = { user_id: newUserId };
+        break;
+      }
+
       default:
         return new Response(
           JSON.stringify({ error: "Ação não reconhecida" }),

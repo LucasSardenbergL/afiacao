@@ -146,6 +146,7 @@ const NewOrder = () => {
   
   // Add tool dialog for staff
   const [addToolDialogOpen, setAddToolDialogOpen] = useState(false);
+  const [creatingLocalProfile, setCreatingLocalProfile] = useState(false);
   
   // User data from database
   const [profile, setProfile] = useState<ProfileData | null>(null);
@@ -657,6 +658,76 @@ const NewOrder = () => {
     : '';
   const customerFirstName = customerDisplayName.split(' ')[0] || 'Cliente';
 
+  // Create local profile for Omie-only customers so we can register tools
+  const handleStaffAddTool = async () => {
+    if (!selectedOmieCustomer) return;
+
+    // If already has local_user_id, just open dialog
+    if (selectedOmieCustomer.local_user_id) {
+      setAddToolDialogOpen(true);
+      return;
+    }
+
+    // Create a placeholder profile + omie_clientes mapping
+    setCreatingLocalProfile(true);
+    try {
+      // Generate a deterministic UUID from omie_codigo_cliente to avoid duplicates
+      const { data: existingMapping } = await supabase
+        .from('omie_clientes')
+        .select('user_id')
+        .eq('omie_codigo_cliente', selectedOmieCustomer.codigo_cliente)
+        .maybeSingle();
+
+      if (existingMapping) {
+        // Mapping already exists, use it
+        setSelectedOmieCustomer(prev => prev ? { ...prev, local_user_id: existingMapping.user_id } : prev);
+        setAddToolDialogOpen(true);
+        return;
+      }
+
+      // Create a new auth user placeholder via edge function
+      const { data: result, error } = await supabase.functions.invoke('omie-cliente', {
+        body: { 
+          action: 'criar_perfil_local', 
+          cliente: {
+            codigo_cliente: selectedOmieCustomer.codigo_cliente,
+            razao_social: selectedOmieCustomer.razao_social,
+            nome_fantasia: selectedOmieCustomer.nome_fantasia,
+            cnpj_cpf: selectedOmieCustomer.cnpj_cpf,
+            email: selectedOmieCustomer.email,
+            telefone: selectedOmieCustomer.telefone,
+            cidade: selectedOmieCustomer.cidade,
+            estado: selectedOmieCustomer.estado,
+          }
+        },
+      });
+
+      if (error) throw error;
+
+      const localUserId = result?.user_id;
+      if (!localUserId) throw new Error('Não foi possível criar perfil local');
+
+      // Update local state
+      setSelectedOmieCustomer(prev => prev ? { ...prev, local_user_id: localUserId } : prev);
+      
+      toast({
+        title: 'Perfil criado',
+        description: `Perfil local criado para ${customerFirstName}. Agora cadastre as ferramentas.`,
+      });
+
+      setAddToolDialogOpen(true);
+    } catch (error) {
+      console.error('Erro ao criar perfil local:', error);
+      toast({
+        title: 'Erro',
+        description: 'Não foi possível preparar o cadastro do cliente. Tente novamente.',
+        variant: 'destructive',
+      });
+    } finally {
+      setCreatingLocalProfile(false);
+    }
+  };
+
   // Show loading while role is being determined
   if (roleLoading) {
     return (
@@ -871,16 +942,14 @@ const NewOrder = () => {
                       : 'Você precisa cadastrar suas ferramentas antes de solicitar um serviço'}
                   </p>
                   {isStaff ? (
-                    selectedOmieCustomer?.local_user_id ? (
-                      <Button onClick={() => setAddToolDialogOpen(true)}>
+                    <Button onClick={() => handleStaffAddTool()} disabled={creatingLocalProfile}>
+                      {creatingLocalProfile ? (
+                        <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+                      ) : (
                         <Plus className="w-4 h-4 mr-2" />
-                        Cadastrar Ferramenta para {customerFirstName}
-                      </Button>
-                    ) : (
-                      <div className="text-sm text-amber-600 bg-amber-50 rounded-lg p-3">
-                        Este cliente ainda não possui cadastro no aplicativo. As ferramentas poderão ser cadastradas após o primeiro pedido.
-                      </div>
-                    )
+                      )}
+                      Cadastrar Ferramenta para {customerFirstName}
+                    </Button>
                   ) : (
                     <Button onClick={() => navigate('/tools')}>
                       <Wrench className="w-4 h-4 mr-2" />
@@ -1016,16 +1085,16 @@ const NewOrder = () => {
                   )}
 
                   {/* Link para cadastrar mais */}
-                  {isStaff && selectedOmieCustomer?.local_user_id ? (
+                  {isStaff ? (
                     <Button
                       variant="ghost"
                       className="w-full mt-4"
-                      onClick={() => setAddToolDialogOpen(true)}
+                      onClick={() => handleStaffAddTool()}
                     >
                       <Plus className="w-4 h-4 mr-2" />
                       Cadastrar nova ferramenta para {customerFirstName}
                     </Button>
-                  ) : isStaff ? null : (
+                  ) : (
                     <Button
                       variant="ghost"
                       className="w-full mt-4"
@@ -1430,7 +1499,10 @@ const NewOrder = () => {
         <AddToolDialog
           open={addToolDialogOpen}
           onOpenChange={setAddToolDialogOpen}
-          onToolAdded={loadUserTools}
+          onToolAdded={() => {
+            // Refresh effectiveUserId and reload tools
+            loadUserTools();
+          }}
           categories={toolCategories}
           targetUserId={selectedOmieCustomer.local_user_id}
         />
