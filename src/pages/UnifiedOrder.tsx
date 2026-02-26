@@ -134,6 +134,7 @@ const UnifiedOrder = () => {
   const [formasPagamento, setFormasPagamento] = useState<FormaPagamento[]>([]);
   const [selectedParcela, setSelectedParcela] = useState<string>('999');
   const [loadingFormas, setLoadingFormas] = useState(false);
+  const [customerParcelaRanking, setCustomerParcelaRanking] = useState<string[]>([]);
 
   // Cart
   const [cart, setCart] = useState<CartItem[]>([]);
@@ -148,6 +149,20 @@ const UnifiedOrder = () => {
   const productItems = useMemo(() => cart.filter((c): c is ProductCartItem => c.type === 'product'), [cart]);
   const serviceItems = useMemo(() => cart.filter((c): c is ServiceCartItem => c.type === 'service'), [cart]);
   const cartProductIds = useMemo(() => productItems.map(c => c.product.id), [productItems]);
+  const sortedFormasPagamento = useMemo(() => {
+    if (customerParcelaRanking.length === 0) return formasPagamento;
+    const rankSet = new Set(customerParcelaRanking);
+    return [...formasPagamento].sort((a, b) => {
+      const aRank = customerParcelaRanking.indexOf(a.codigo);
+      const bRank = customerParcelaRanking.indexOf(b.codigo);
+      const aInRank = rankSet.has(a.codigo);
+      const bInRank = rankSet.has(b.codigo);
+      if (aInRank && !bInRank) return -1;
+      if (!aInRank && bInRank) return 1;
+      if (aInRank && bInRank) return aRank - bRank;
+      return 0;
+    });
+  }, [formasPagamento, customerParcelaRanking]);
 
   const currentStep = !selectedCustomer ? 0 : cart.length === 0 ? 1 : 2;
 
@@ -369,6 +384,9 @@ const UnifiedOrder = () => {
 
       setCustomerPrices(mergedPrices);
       if (parcelaResult.data?.ultima_parcela) setSelectedParcela(parcelaResult.data.ultima_parcela);
+      if (parcelaResult.data?.parcela_ranking) {
+        setCustomerParcelaRanking(parcelaResult.data.parcela_ranking.map((r: any) => r.codigo));
+      }
     } catch (error: any) {
       toast({ title: 'Erro', description: error.message, variant: 'destructive' });
     } finally {
@@ -1057,9 +1075,9 @@ const UnifiedOrder = () => {
                           <SelectValue placeholder="Selecione..." />
                         </SelectTrigger>
                         <SelectContent>
-                          {formasPagamento.map(f => (
+                          {sortedFormasPagamento.map(f => (
                             <SelectItem key={f.codigo} value={f.codigo}>
-                              {f.descricao}
+                              {customerParcelaRanking.includes(f.codigo) ? '⭐ ' : ''}{f.descricao}
                             </SelectItem>
                           ))}
                         </SelectContent>

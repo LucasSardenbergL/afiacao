@@ -333,7 +333,7 @@ async function listarFormasPagamento() {
   return defaultFormas;
 }
 
-// Buscar última forma de pagamento usada pelo cliente
+// Buscar última forma de pagamento e ranking de parcelas do cliente
 async function buscarUltimaParcela(codigoCliente: number) {
   try {
     const result = await callOmieVendasApi(
@@ -341,21 +341,33 @@ async function buscarUltimaParcela(codigoCliente: number) {
       "ListarPedidos",
       {
         pagina: 1,
-        registros_por_pagina: 5,
+        registros_por_pagina: 50,
         filtrar_por_cliente: codigoCliente,
         filtrar_apenas_inclusao: "N",
       }
     ) as any;
 
     const pedidos = result.pedido_venda_produto || [];
-    if (pedidos.length > 0) {
-      const ultimoPedido = pedidos[0];
-      return ultimoPedido.cabecalho?.codigo_parcela || null;
+    const parcelaCount: Record<string, number> = {};
+    let ultimaParcela: string | null = null;
+
+    for (const pedido of pedidos) {
+      const parcela = pedido.cabecalho?.codigo_parcela;
+      if (parcela) {
+        if (!ultimaParcela) ultimaParcela = parcela;
+        parcelaCount[parcela] = (parcelaCount[parcela] || 0) + 1;
+      }
     }
-    return null;
+
+    // Sort by frequency descending
+    const parcelaRanking = Object.entries(parcelaCount)
+      .sort((a, b) => b[1] - a[1])
+      .map(([codigo, count]) => ({ codigo, count }));
+
+    return { ultima_parcela: ultimaParcela, parcela_ranking: parcelaRanking };
   } catch (error) {
     console.error("[Omie Vendas] Erro ao buscar última parcela:", error);
-    return null;
+    return { ultima_parcela: null, parcela_ranking: [] };
   }
 }
 
@@ -545,8 +557,8 @@ serve(async (req) => {
       case "buscar_ultima_parcela": {
         const { codigo_cliente: codCli } = params;
         if (!codCli) throw new Error("Código do cliente é obrigatório");
-        const ultimaParcela = await buscarUltimaParcela(codCli);
-        result = { success: true, ultima_parcela: ultimaParcela };
+        const parcelaData = await buscarUltimaParcela(codCli);
+        result = { success: true, ...parcelaData };
         break;
       }
 
