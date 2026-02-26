@@ -1,10 +1,12 @@
 import { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Plus, Trash2, ChevronRight, Check, MapPin, Clock, Loader2, Wrench, AlertCircle, Camera } from 'lucide-react';
+import { Plus, Trash2, ChevronRight, Check, MapPin, Clock, Loader2, Wrench, AlertCircle, Camera, Search, User } from 'lucide-react';
 import { Header } from '@/components/Header';
 import { Button } from '@/components/ui/button';
+import { Input } from '@/components/ui/input';
 import { PhotoUpload } from '@/components/PhotoUpload';
 import { VoiceServiceInput, IdentifiedItem } from '@/components/VoiceServiceInput';
+import { AddToolDialog } from '@/components/AddToolDialog';
 import { 
   DELIVERY_OPTIONS,
   TIME_SLOTS,
@@ -21,7 +23,7 @@ import { ToolImageIdentifier } from '@/components/ToolImageIdentifier';
 import { usePricingEngine } from '@/hooks/usePricingEngine';
 import { usePriceHistory } from '@/hooks/usePriceHistory';
 
-type Step = 'items' | 'delivery' | 'review';
+type Step = 'customer' | 'items' | 'delivery' | 'review';
 
 const PAYMENT_OPTIONS = [
   { id: 'a_vista', label: 'À vista', parcelas: 1, description: 'PIX ou pagamento presencial na entrega/retirada' },
@@ -47,7 +49,7 @@ interface UserTool {
 
 interface ServiceItem {
   id: string;
-  userToolId: string; // OBRIGATÓRIO - referência à ferramenta cadastrada
+  userToolId: string;
   userTool?: UserTool;
   servico?: OmieServico;
   quantity: number;
@@ -74,13 +76,38 @@ interface AddressData {
   zipCode: string;
 }
 
+interface CustomerOption {
+  user_id: string;
+  name: string;
+  email: string | null;
+  phone: string | null;
+  document: string | null;
+}
+
+interface ToolCategory {
+  id: string;
+  name: string;
+  description: string | null;
+  suggested_interval_days: number | null;
+}
+
 const NewOrder = () => {
   const navigate = useNavigate();
   const { toast } = useToast();
   const { user } = useAuth();
   const { isStaff } = useUserRole();
   
-  const [currentStep, setCurrentStep] = useState<Step>('items');
+  // For staff: customer selection
+  const [selectedCustomerId, setSelectedCustomerId] = useState<string | null>(null);
+  const [selectedCustomer, setSelectedCustomer] = useState<CustomerOption | null>(null);
+  const [customers, setCustomers] = useState<CustomerOption[]>([]);
+  const [customerSearch, setCustomerSearch] = useState('');
+  const [loadingCustomers, setLoadingCustomers] = useState(false);
+  
+  // The effective user ID for the order (customer's ID for staff, own ID for customers)
+  const effectiveUserId = isStaff ? selectedCustomerId : user?.id;
+
+  const [currentStep, setCurrentStep] = useState<Step>(isStaff ? 'customer' : 'items');
   const [items, setItems] = useState<ServiceItem[]>([]);
   const [deliveryOption, setDeliveryOption] = useState<DeliveryOption>('coleta_entrega');
   const [selectedAddress, setSelectedAddress] = useState<string>('');
@@ -93,12 +120,15 @@ const NewOrder = () => {
   const [servicos, setServicos] = useState<OmieServico[]>([]);
   const [loadingServicos, setLoadingServicos] = useState(true);
   
-  // Ferramentas do usuário
+  // Ferramentas do usuário (customer's tools)
   const [userTools, setUserTools] = useState<UserTool[]>([]);
   const [loadingTools, setLoadingTools] = useState(true);
 
-  // Categorias de ferramentas (para identificação por imagem)
-  const [toolCategories, setToolCategories] = useState<{ id: string; name: string; description: string | null }[]>([]);
+  // Categorias de ferramentas
+  const [toolCategories, setToolCategories] = useState<ToolCategory[]>([]);
+  
+  // Add tool dialog for staff
+  const [addToolDialogOpen, setAddToolDialogOpen] = useState(false);
   
   // User data from database
   const [profile, setProfile] = useState<ProfileData | null>(null);
@@ -108,24 +138,84 @@ const NewOrder = () => {
 
   // Pricing engine
   const { loadDefaultPrices, calculatePrice } = usePricingEngine();
-  const { loadPriceHistory, getLastPrice } = usePriceHistory(user?.id);
+  const { loadPriceHistory, getLastPrice } = usePriceHistory(effectiveUserId || undefined);
 
+  // Load customers for staff
   useEffect(() => {
-    if (user) {
+    if (isStaff && user) {
+      loadCustomers();
+    }
+  }, [isStaff, user]);
+
+  // Load data when effective user is determined
+  useEffect(() => {
+    if (effectiveUserId) {
       loadUserData();
-      loadServicos();
       loadUserTools();
-      loadCategories();
       loadDefaultPrices();
       loadPriceHistory();
     }
+  }, [effectiveUserId]);
+
+  // Load services and categories once
+  useEffect(() => {
+    if (user) {
+      loadServicos();
+      loadCategories();
+    }
   }, [user]);
+
+  // For non-staff, set loading to false immediately for customers
+  useEffect(() => {
+    if (!isStaff) {
+      setLoadingData(false);
+    }
+  }, [isStaff]);
+
+  const loadCustomers = async () => {
+    setLoadingCustomers(true);
+    try {
+      const { data, error } = await supabase
+        .from('profiles')
+        .select('user_id, name, email, phone, document')
+        .eq('is_employee', false)
+        .order('name');
+
+      if (error) throw error;
+      setCustomers(data || []);
+    } catch (error) {
+      console.error('Erro ao carregar clientes:', error);
+    } finally {
+      setLoadingCustomers(false);
+    }
+  };
+
+  const filteredCustomers = customers.filter(c => {
+    if (!customerSearch.trim()) return true;
+    const q = customerSearch.toLowerCase();
+    return (
+      c.name.toLowerCase().includes(q) ||
+      (c.email && c.email.toLowerCase().includes(q)) ||
+      (c.phone && c.phone.includes(q)) ||
+      (c.document && c.document.includes(q))
+    );
+  });
+
+  const handleSelectCustomer = (customer: CustomerOption) => {
+    setSelectedCustomerId(customer.user_id);
+    setSelectedCustomer(customer);
+    // Reset items when switching customer
+    setItems([]);
+    setUserTools([]);
+    setLoadingTools(true);
+    setLoadingData(true);
+  };
 
   const loadCategories = async () => {
     try {
       const { data } = await supabase
         .from('tool_categories')
-        .select('id, name, description')
+        .select('id, name, description, suggested_interval_days')
         .order('name');
       if (data) setToolCategories(data);
     } catch (error) {
@@ -134,7 +224,7 @@ const NewOrder = () => {
   };
 
   const loadUserTools = async () => {
-    if (!user) return;
+    if (!effectiveUserId) return;
     
     try {
       setLoadingTools(true);
@@ -149,7 +239,7 @@ const NewOrder = () => {
           specifications,
           tool_categories (name)
         `)
-        .eq('user_id', user.id)
+        .eq('user_id', effectiveUserId)
         .order('created_at', { ascending: false });
 
       if (error) throw error;
@@ -193,21 +283,21 @@ const NewOrder = () => {
   };
 
   const loadUserData = async () => {
-    if (!user) return;
+    if (!effectiveUserId) return;
     
     try {
       const { data: profileData } = await supabase
         .from('profiles')
         .select('name, email, phone, document')
-        .eq('user_id', user.id)
+        .eq('user_id', effectiveUserId)
         .maybeSingle();
 
       if (profileData) {
         setProfile(profileData);
       } else {
         setProfile({
-          name: user.email?.split('@')[0] || 'Usuário',
-          email: user.email || null,
+          name: 'Usuário',
+          email: null,
           phone: null,
           document: null,
         });
@@ -216,7 +306,7 @@ const NewOrder = () => {
       const { data: addressesData } = await supabase
         .from('addresses')
         .select('*')
-        .eq('user_id', user.id)
+        .eq('user_id', effectiveUserId)
         .order('is_default', { ascending: false });
 
       if (addressesData && addressesData.length > 0) {
@@ -233,6 +323,8 @@ const NewOrder = () => {
         }));
         setAddresses(formattedAddresses);
         setSelectedAddress(formattedAddresses[0].id);
+      } else {
+        setAddresses([]);
       }
     } catch (error) {
       console.error('Error loading user data:', error);
@@ -241,11 +333,18 @@ const NewOrder = () => {
     }
   };
 
-  const steps: { id: Step; label: string; number: number }[] = [
-    { id: 'items', label: 'Serviços', number: 1 },
-    { id: 'delivery', label: 'Entrega', number: 2 },
-    { id: 'review', label: 'Revisão', number: 3 },
-  ];
+  const steps: { id: Step; label: string; number: number }[] = isStaff
+    ? [
+        { id: 'customer', label: 'Cliente', number: 1 },
+        { id: 'items', label: 'Serviços', number: 2 },
+        { id: 'delivery', label: 'Entrega', number: 3 },
+        { id: 'review', label: 'Revisão', number: 4 },
+      ]
+    : [
+        { id: 'items', label: 'Serviços', number: 1 },
+        { id: 'delivery', label: 'Entrega', number: 2 },
+        { id: 'review', label: 'Revisão', number: 3 },
+      ];
 
   const currentStepIndex = steps.findIndex(s => s.id === currentStep);
 
@@ -253,7 +352,6 @@ const NewOrder = () => {
     const tool = userTools.find(t => t.id === toolId);
     if (!tool) return;
     
-    // Verificar se já existe item com essa ferramenta
     if (items.some(item => item.userToolId === toolId)) {
       toast({
         title: 'Ferramenta já adicionada',
@@ -289,7 +387,6 @@ const NewOrder = () => {
     }
   };
 
-  // Handler para itens identificados pela IA
   const handleVoiceItemsIdentified = (identifiedItems: IdentifiedItem[]) => {
     const newItems: ServiceItem[] = identifiedItems.map((item, idx) => {
       const tool = userTools.find(t => t.id === item.userToolId);
@@ -306,7 +403,6 @@ const NewOrder = () => {
       };
     });
 
-    // Filtrar itens que já existem no pedido
     const filteredNewItems = newItems.filter(
       newItem => !items.some(existing => existing.userToolId === newItem.userToolId)
     );
@@ -323,31 +419,21 @@ const NewOrder = () => {
     setItems([...items, ...filteredNewItems]);
   };
 
-  // Filtra serviços baseado no nome da categoria da ferramenta (sem especificações)
   const getFilteredServicos = (tool: UserTool | undefined): OmieServico[] => {
     if (!tool) return [];
-    
-    // Usa o nome da categoria base da ferramenta (ex: "Faca Circular", "Serra")
     const categoryName = tool.tool_categories?.name?.toLowerCase().trim();
     if (!categoryName) return [];
-    
-    // Filtra serviços que contenham o nome da categoria na descrição
     return servicos.filter(servico => {
       const descricaoLower = servico.descricao.toLowerCase();
       return descricaoLower.includes(categoryName);
     });
   };
 
-  // Calculate price for a service item
   const getItemPrice = (item: ServiceItem): number | null => {
     if (!item.userTool) return null;
-    
-    // Priority 1: Historical price for this customer
     const serviceType = item.servico?.descricao || '';
     const lastPrice = getLastPrice(item.userToolId, serviceType);
     if (lastPrice !== null) return lastPrice;
-
-    // Priority 2: Default pricing table
     const specs = item.userTool.specifications as Record<string, string> | null;
     const tablePrice = calculatePrice({
       tool_category_id: item.userTool.tool_category_id,
@@ -360,8 +446,9 @@ const NewOrder = () => {
 
   const canProceed = () => {
     switch (currentStep) {
+      case 'customer':
+        return !!selectedCustomerId;
       case 'items':
-        // Cada item deve ter ferramenta e serviço selecionados
         return items.length > 0 && items.every(item => item.userToolId && item.servico && item.quantity > 0);
       case 'delivery':
         if (deliveryOption === 'balcao') return true;
@@ -388,7 +475,7 @@ const NewOrder = () => {
   };
 
   const handleSubmit = async () => {
-    if (!user || !profile) {
+    if (!effectiveUserId || !profile) {
       toast({
         title: 'Erro',
         description: 'Você precisa estar logado para fazer um pedido',
@@ -418,13 +505,10 @@ const NewOrder = () => {
         };
       });
 
-      // Build notes with tool specifications
       const buildToolInfo = (item: ServiceItem): string => {
         const parts: string[] = [];
         const toolName = item.userTool?.generated_name || item.userTool?.custom_name || item.userTool?.tool_categories?.name || '';
         if (toolName) parts.push(toolName);
-        
-        // Add specifications
         const specs = item.userTool?.specifications;
         if (specs && typeof specs === 'object') {
           const specEntries = Object.entries(specs).filter(([, v]) => v);
@@ -432,7 +516,6 @@ const NewOrder = () => {
             parts.push(specEntries.map(([k, v]) => `${k}: ${v}`).join(', '));
           }
         }
-        
         if (item.notes) parts.push(item.notes);
         return parts.join(' | ');
       };
@@ -499,7 +582,12 @@ const NewOrder = () => {
     return tool.generated_name || tool.custom_name || tool.tool_categories?.name || 'Ferramenta';
   };
 
-  if (loadingData || loadingServicos || loadingTools) {
+  // Show loading only for non-staff or after customer is selected
+  const showLoading = isStaff 
+    ? (selectedCustomerId && (loadingData || loadingServicos || loadingTools))
+    : (loadingServicos || loadingTools);
+
+  if (showLoading && currentStep !== 'customer') {
     return (
       <div className="min-h-screen bg-background pb-32">
         <Header title="Novo Pedido" showBack />
@@ -511,7 +599,6 @@ const NewOrder = () => {
     );
   }
 
-  // Ferramentas disponíveis (não selecionadas ainda)
   const availableTools = userTools.filter(tool => !items.some(item => item.userToolId === tool.id));
 
   return (
@@ -539,7 +626,7 @@ const NewOrder = () => {
               {index < steps.length - 1 && (
                 <div
                   className={cn(
-                    'w-16 h-0.5 mx-2 mt-[-12px]',
+                    'w-12 h-0.5 mx-1 mt-[-12px]',
                     index < currentStepIndex ? 'bg-primary' : 'bg-border'
                   )}
                 />
@@ -550,13 +637,93 @@ const NewOrder = () => {
 
         {/* Step content */}
         <div className="animate-fade-in">
-          {/* Step 1: Services */}
+          {/* Step: Customer Selection (staff only) */}
+          {currentStep === 'customer' && isStaff && (
+            <div>
+              <h2 className="font-display font-bold text-xl mb-1">Selecionar Cliente</h2>
+              <p className="text-sm text-muted-foreground mb-6">
+                Escolha o cliente para quem será feito o pedido
+              </p>
+
+              <div className="relative mb-4">
+                <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
+                <Input
+                  placeholder="Buscar por nome, email, telefone ou documento..."
+                  value={customerSearch}
+                  onChange={(e) => setCustomerSearch(e.target.value)}
+                  className="pl-9"
+                />
+              </div>
+
+              {selectedCustomer && (
+                <div className="bg-primary/5 border-2 border-primary rounded-xl p-4 mb-4">
+                  <div className="flex items-center gap-3">
+                    <div className="w-10 h-10 rounded-full bg-primary/10 flex items-center justify-center">
+                      <User className="w-5 h-5 text-primary" />
+                    </div>
+                    <div className="flex-1">
+                      <p className="font-semibold">{selectedCustomer.name}</p>
+                      <p className="text-sm text-muted-foreground">
+                        {selectedCustomer.phone || selectedCustomer.email || selectedCustomer.document || ''}
+                      </p>
+                    </div>
+                    <Check className="w-5 h-5 text-primary" />
+                  </div>
+                </div>
+              )}
+
+              {loadingCustomers ? (
+                <div className="flex items-center justify-center py-8">
+                  <Loader2 className="w-6 h-6 animate-spin text-primary" />
+                </div>
+              ) : (
+                <div className="space-y-2 max-h-[50vh] overflow-y-auto">
+                  {filteredCustomers.map((customer) => (
+                    <button
+                      key={customer.user_id}
+                      onClick={() => handleSelectCustomer(customer)}
+                      className={cn(
+                        'w-full p-3 rounded-xl border-2 text-left transition-all flex items-center gap-3',
+                        selectedCustomerId === customer.user_id
+                          ? 'border-primary bg-primary/5'
+                          : 'border-border hover:border-primary/50'
+                      )}
+                    >
+                      <div className="w-10 h-10 rounded-full bg-muted flex items-center justify-center flex-shrink-0">
+                        <User className="w-5 h-5 text-muted-foreground" />
+                      </div>
+                      <div className="flex-1 min-w-0">
+                        <p className="font-medium truncate">{customer.name}</p>
+                        <p className="text-xs text-muted-foreground truncate">
+                          {[customer.phone, customer.email, customer.document].filter(Boolean).join(' • ')}
+                        </p>
+                      </div>
+                    </button>
+                  ))}
+                  {filteredCustomers.length === 0 && (
+                    <p className="text-sm text-muted-foreground text-center py-4">
+                      Nenhum cliente encontrado
+                    </p>
+                  )}
+                </div>
+              )}
+            </div>
+          )}
+
+          {/* Step: Services / Items */}
           {currentStep === 'items' && (
             <div>
               <h2 className="font-display font-bold text-xl mb-1">Selecionar Ferramentas</h2>
-              <p className="text-sm text-muted-foreground mb-6">
-                Escolha suas ferramentas cadastradas e o serviço desejado
+              <p className="text-sm text-muted-foreground mb-2">
+                {isStaff && selectedCustomer
+                  ? `Ferramentas de ${selectedCustomer.name}`
+                  : 'Escolha suas ferramentas cadastradas e o serviço desejado'}
               </p>
+              {isStaff && selectedCustomer && (
+                <p className="text-xs text-primary mb-6">
+                  Cliente: {selectedCustomer.name}
+                </p>
+              )}
 
               {/* Assistente por voz/texto */}
               {userTools.length > 0 && (
@@ -567,11 +734,9 @@ const NewOrder = () => {
                     isLoading={isSubmitting}
                   />
                   
-                  {/* Identificação por imagem */}
                   <ToolImageIdentifier
                     categories={toolCategories}
                     onCategoryIdentified={(categoryId, _specs) => {
-                      // Find user tools matching this category
                       const matchingTools = userTools.filter(t => t.tool_category_id === categoryId);
                       if (matchingTools.length > 0) {
                         matchingTools.forEach(tool => {
@@ -586,7 +751,7 @@ const NewOrder = () => {
                       } else {
                         toast({
                           title: 'Ferramenta não cadastrada',
-                          description: 'Nenhuma ferramenta dessa categoria foi encontrada no seu cadastro. Cadastre-a primeiro.',
+                          description: 'Nenhuma ferramenta dessa categoria foi encontrada no cadastro. Cadastre-a primeiro.',
                           variant: 'destructive',
                         });
                       }
@@ -601,12 +766,21 @@ const NewOrder = () => {
                   <AlertCircle className="w-10 h-10 text-muted-foreground mx-auto mb-3" />
                   <h3 className="font-semibold mb-2">Nenhuma ferramenta cadastrada</h3>
                   <p className="text-sm text-muted-foreground mb-4">
-                    Você precisa cadastrar suas ferramentas antes de solicitar um serviço
+                    {isStaff 
+                      ? `${selectedCustomer?.name || 'O cliente'} não possui ferramentas cadastradas. Cadastre uma ferramenta para continuar.`
+                      : 'Você precisa cadastrar suas ferramentas antes de solicitar um serviço'}
                   </p>
-                  <Button onClick={() => navigate('/tools')}>
-                    <Wrench className="w-4 h-4 mr-2" />
-                    Cadastrar Ferramentas
-                  </Button>
+                  {isStaff ? (
+                    <Button onClick={() => setAddToolDialogOpen(true)}>
+                      <Plus className="w-4 h-4 mr-2" />
+                      Cadastrar Ferramenta para {selectedCustomer?.name?.split(' ')[0] || 'Cliente'}
+                    </Button>
+                  ) : (
+                    <Button onClick={() => navigate('/tools')}>
+                      <Wrench className="w-4 h-4 mr-2" />
+                      Cadastrar Ferramentas
+                    </Button>
+                  )}
                 </div>
               ) : (
                 <>
@@ -630,7 +804,7 @@ const NewOrder = () => {
                             </button>
                           </div>
 
-                          {/* Seleção de serviço - filtrado pelo nome da ferramenta */}
+                          {/* Seleção de serviço */}
                           <div className="mb-3">
                             <label className="text-sm font-medium mb-2 block">Tipo de serviço *</label>
                             {(() => {
@@ -690,13 +864,13 @@ const NewOrder = () => {
                           </div>
 
                           {/* Fotos */}
-                          {user && (
+                          {effectiveUserId && (
                             <div>
                               <label className="text-sm font-medium mb-2 block">Fotos (opcional)</label>
                               <PhotoUpload
                                 photos={item.photos || []}
                                 onPhotosChange={(photos) => updateItem(index, 'photos', photos)}
-                                userId={user.id}
+                                userId={effectiveUserId}
                                 maxPhotos={3}
                               />
                             </div>
@@ -710,7 +884,7 @@ const NewOrder = () => {
                   {availableTools.length > 0 && (
                     <div>
                       <h3 className="text-sm font-medium text-muted-foreground mb-3">
-                        {items.length > 0 ? 'Adicionar mais ferramentas:' : 'Suas ferramentas cadastradas:'}
+                        {items.length > 0 ? 'Adicionar mais ferramentas:' : 'Ferramentas cadastradas:'}
                       </h3>
                       <div className="space-y-2">
                         {availableTools.map((tool) => (
@@ -736,25 +910,36 @@ const NewOrder = () => {
                   )}
 
                   {/* Link para cadastrar mais */}
-                  <Button
-                    variant="ghost"
-                    className="w-full mt-4"
-                    onClick={() => navigate('/tools')}
-                  >
-                    <Plus className="w-4 h-4 mr-2" />
-                    Cadastrar nova ferramenta
-                  </Button>
+                  {isStaff ? (
+                    <Button
+                      variant="ghost"
+                      className="w-full mt-4"
+                      onClick={() => setAddToolDialogOpen(true)}
+                    >
+                      <Plus className="w-4 h-4 mr-2" />
+                      Cadastrar nova ferramenta para {selectedCustomer?.name?.split(' ')[0] || 'cliente'}
+                    </Button>
+                  ) : (
+                    <Button
+                      variant="ghost"
+                      className="w-full mt-4"
+                      onClick={() => navigate('/tools')}
+                    >
+                      <Plus className="w-4 h-4 mr-2" />
+                      Cadastrar nova ferramenta
+                    </Button>
+                  )}
                 </>
               )}
             </div>
           )}
 
-          {/* Step 2: Delivery */}
+          {/* Step: Delivery */}
           {currentStep === 'delivery' && (
             <div>
               <h2 className="font-display font-bold text-xl mb-1">Entrega</h2>
               <p className="text-sm text-muted-foreground mb-6">
-                Como deseja receber suas ferramentas?
+                Como deseja receber as ferramentas?
               </p>
 
               <div className="bg-primary/10 border border-primary/20 rounded-lg p-3 mb-4">
@@ -924,13 +1109,23 @@ const NewOrder = () => {
             </div>
           )}
 
-          {/* Step 3: Review */}
+          {/* Step: Review */}
           {currentStep === 'review' && (
             <div>
               <h2 className="font-display font-bold text-xl mb-1">Revisar Pedido</h2>
               <p className="text-sm text-muted-foreground mb-6">
                 Confira os detalhes antes de enviar
               </p>
+
+              {isStaff && selectedCustomer && (
+                <div className="bg-card rounded-xl p-4 shadow-soft border border-border mb-4">
+                  <h3 className="font-semibold mb-2">Cliente</h3>
+                  <p className="text-sm">{selectedCustomer.name}</p>
+                  <p className="text-sm text-muted-foreground">
+                    {[selectedCustomer.phone, selectedCustomer.email].filter(Boolean).join(' • ')}
+                  </p>
+                </div>
+              )}
 
               <div className="bg-secondary border border-border rounded-lg p-3 mb-4">
                 <p className="text-sm text-muted-foreground">
@@ -1024,7 +1219,6 @@ const NewOrder = () => {
                   </>
                 )}
               </div>
-
 
               <div className="bg-card rounded-xl p-4 shadow-soft border border-border">
                 {(() => {
@@ -1124,6 +1318,17 @@ const NewOrder = () => {
           </div>
         </div>
       </main>
+
+      {/* Add Tool Dialog for staff - adds tool to customer */}
+      {isStaff && selectedCustomerId && (
+        <AddToolDialog
+          open={addToolDialogOpen}
+          onOpenChange={setAddToolDialogOpen}
+          onToolAdded={loadUserTools}
+          categories={toolCategories}
+          targetUserId={selectedCustomerId}
+        />
+      )}
     </div>
   );
 };
