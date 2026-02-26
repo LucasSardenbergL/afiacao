@@ -626,7 +626,13 @@ const NewOrder = () => {
         zip_code: selectedAddressData.zipCode,
       } : undefined;
 
-      const result = await syncOrderToOmie(orderId, orderData, profilePayload, addressPayload);
+      // Build staff context if employee is creating for a customer
+      const staffContext = isStaff && selectedOmieCustomer ? {
+        customerOmieCode: selectedOmieCustomer.codigo_cliente,
+        customerUserId: selectedOmieCustomer.local_user_id || null,
+      } : undefined;
+
+      const result = await syncOrderToOmie(orderId, orderData, profilePayload, addressPayload, staffContext);
 
       if (result.success) {
         toast({
