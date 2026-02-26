@@ -599,13 +599,24 @@ const AdminCustomers = () => {
 
   const loadCustomers = async () => {
     try {
+      // Get employee user_ids to exclude them
+      const { data: employeeRoles } = await supabase
+        .from('user_roles')
+        .select('user_id')
+        .in('role', ['admin', 'employee']);
+
+      const employeeIds = new Set((employeeRoles || []).map(r => r.user_id));
+
       const { data, error } = await supabase
         .from('profiles')
         .select('user_id, name, email, phone, document, customer_type, created_at')
         .eq('is_employee', false)
         .order('name');
       if (error) throw error;
-      setCustomers(data || []);
+
+      // Filter out any staff users
+      const filtered = (data || []).filter(p => !employeeIds.has(p.user_id));
+      setCustomers(filtered);
     } catch (error) {
       console.error('Error loading customers:', error);
     } finally {

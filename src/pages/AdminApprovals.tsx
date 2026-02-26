@@ -45,6 +45,14 @@ const AdminApprovals = () => {
 
   const loadPendingUsers = async () => {
     try {
+      // Get employee user_ids to exclude them
+      const { data: employeeRoles } = await supabase
+        .from('user_roles')
+        .select('user_id')
+        .in('role', ['admin', 'employee']);
+
+      const employeeIds = new Set((employeeRoles || []).map(r => r.user_id));
+
       const { data, error } = await supabase
         .from('profiles')
         .select('id, user_id, name, email, phone, document, customer_type, created_at')
@@ -52,7 +60,19 @@ const AdminApprovals = () => {
         .order('created_at', { ascending: false });
 
       if (error) throw error;
-      setPendingUsers(data || []);
+
+      // Filter out employees - they should be auto-approved
+      const pendingOnly = (data || []).filter(p => !employeeIds.has(p.user_id));
+      setPendingUsers(pendingOnly);
+
+      // Auto-approve any employees that somehow ended up unapproved
+      const unapprovedEmployees = (data || []).filter(p => employeeIds.has(p.user_id));
+      for (const emp of unapprovedEmployees) {
+        await supabase
+          .from('profiles')
+          .update({ is_approved: true })
+          .eq('user_id', emp.user_id);
+      }
     } catch (error) {
       console.error('Error loading pending users:', error);
     } finally {
