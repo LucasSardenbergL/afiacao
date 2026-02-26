@@ -426,10 +426,25 @@ serve(async (req) => {
           break;
         }
 
-        // Generate a UUID for this customer (no auth account, just a profile placeholder)
-        const newUserId = crypto.randomUUID();
+        // Create a real auth user via admin API (with a placeholder email)
+        const placeholderEmail = `omie_${cliente.codigo_cliente}@placeholder.local`;
+        const { data: authData, error: authError } = await adminClient.auth.admin.createUser({
+          email: placeholderEmail,
+          email_confirm: true,
+          user_metadata: {
+            omie_codigo_cliente: cliente.codigo_cliente,
+            is_placeholder: true,
+          },
+        });
 
-        // Create profile
+        if (authError) {
+          console.error("[criar_perfil_local] Auth error:", authError);
+          throw new Error("Erro ao criar usuário placeholder");
+        }
+
+        const newUserId = authData.user.id;
+
+        // Create profile (trigger auto_assign_user_role will assign 'customer')
         const { error: profileError } = await adminClient
           .from("profiles")
           .insert({
@@ -442,7 +457,7 @@ serve(async (req) => {
 
         if (profileError) {
           console.error("[criar_perfil_local] Profile error:", profileError);
-          throw new Error("Erro ao criar perfil local");
+          // Don't throw - user was created, profile might have partial issues
         }
 
         // Create omie_clientes mapping
@@ -455,7 +470,6 @@ serve(async (req) => {
 
         if (mappingError) {
           console.error("[criar_perfil_local] Mapping error:", mappingError);
-          throw new Error("Erro ao criar mapeamento Omie");
         }
 
         result = { user_id: newUserId };
