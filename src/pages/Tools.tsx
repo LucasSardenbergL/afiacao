@@ -7,8 +7,9 @@ import { Card, CardContent } from '@/components/ui/card';
 import { AddToolDialog } from '@/components/AddToolDialog';
 import { supabase } from '@/integrations/supabase/client';
 import { useAuth } from '@/contexts/AuthContext';
+import { useUserRole } from '@/hooks/useUserRole';
 import { useToast } from '@/hooks/use-toast';
-import { Loader2, Plus, Wrench, Calendar, Trash2, Hash } from 'lucide-react';
+import { Loader2, Plus, Wrench, Calendar, Trash2, Hash, Users } from 'lucide-react';
 import { differenceInDays } from 'date-fns';
 import { cn } from '@/lib/utils';
 
@@ -37,6 +38,7 @@ interface UserTool {
 const Tools = () => {
   const navigate = useNavigate();
   const { user } = useAuth();
+  const { isStaff } = useUserRole();
   const { toast } = useToast();
   
   const [tools, setTools] = useState<UserTool[]>([]);
@@ -134,6 +136,37 @@ const Tools = () => {
         <div className="flex items-center justify-center pt-32">
           <Loader2 className="w-8 h-8 animate-spin text-primary" />
         </div>
+        <BottomNav />
+      </div>
+    );
+  }
+
+  // Staff should not manage their own tools - redirect to customer management
+  if (isStaff) {
+    return (
+      <div className="min-h-screen bg-background pb-24">
+        <Header title="Ferramentas" showBack />
+        <main className="pt-16 px-4 max-w-lg mx-auto">
+          <div className="text-center py-12">
+            <div className="w-20 h-20 bg-muted rounded-full flex items-center justify-center mx-auto mb-4">
+              <Users className="w-10 h-10 text-muted-foreground" />
+            </div>
+            <h3 className="font-semibold text-foreground mb-2">Gestão de Ferramentas</h3>
+            <p className="text-sm text-muted-foreground mb-6 max-w-xs mx-auto">
+              Como funcionário, as ferramentas são cadastradas para os clientes. Acesse a gestão de clientes ou crie um novo pedido.
+            </p>
+            <div className="space-y-3">
+              <Button onClick={() => navigate('/admin/customers')} className="w-full">
+                <Users className="w-4 h-4 mr-2" />
+                Gestão de Clientes
+              </Button>
+              <Button variant="outline" onClick={() => navigate('/new-order')} className="w-full">
+                <Plus className="w-4 h-4 mr-2" />
+                Novo Pedido
+              </Button>
+            </div>
+          </div>
+        </main>
         <BottomNav />
       </div>
     );
