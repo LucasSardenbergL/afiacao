@@ -533,7 +533,7 @@ serve(async (req) => {
     const supabaseAdmin = createClient(supabaseUrl, supabaseServiceKey);
 
     const body = await req.json();
-    const { action, orderId, orderData, profileData, addressData } = body;
+    const { action, orderId, orderData, profileData, addressData, staffContext } = body;
 
     // Ações que não requerem autenticação (cron jobs, webhooks)
     const publicActions = ["sync_services"];
@@ -581,13 +581,59 @@ serve(async (req) => {
           );
         }
 
-        // 1. Sincronizar cliente (busca existente no Omie)
-        const clienteResult = await syncClienteOmie(
-          supabaseAdmin,
-          userId,
-          profileData,
-          addressData
-        );
+        let clienteResult: ClienteOmieResult;
+
+        // If staff is creating an order for a customer, use the customer's Omie code directly
+        if (staffContext?.customerOmieCode) {
+          console.log(`[Omie] Staff criando pedido para cliente Omie: ${staffContext.customerOmieCode}`);
+          
+          // Look up the vendor code from omie_clientes if we have a local user_id
+          let omieCodigoVendedor: number | undefined;
+          if (staffContext.customerUserId) {
+            const { data: mapping } = await supabaseAdmin
+              .from("omie_clientes")
+              .select("omie_codigo_vendedor")
+              .eq("user_id", staffContext.customerUserId)
+              .maybeSingle();
+            omieCodigoVendedor = mapping?.omie_codigo_vendedor || undefined;
+          }
+
+          // If no vendor found via local mapping, search in Omie
+          if (!omieCodigoVendedor) {
+            try {
+              const searchResult = await callOmieApi(
+                "geral/clientes/",
+                "ListarClientes",
+                {
+                  pagina: 1,
+                  registros_por_pagina: 1,
+                  clientesFiltro: {
+                    codigo_cliente_omie: staffContext.customerOmieCode,
+                  },
+                }
+              ) as any;
+              omieCodigoVendedor = searchResult.clientes_cadastro?.[0]?.codigo_vendedor || undefined;
+            } catch (e) {
+              console.log("[Omie] Não foi possível buscar vendedor do cliente:", e);
+            }
+          }
+
+          clienteResult = {
+            omieCodigoCliente: staffContext.customerOmieCode,
+            omieCodigoVendedor,
+          };
+        } else {
+          // 1. Sincronizar cliente (busca existente no Omie) - fluxo normal do cliente
+          clienteResult = await syncClienteOmie(
+            supabaseAdmin,
+            userId,
+            profileData,
+            addressData
+          );
+        }
+
+        // Determine the effective user_id for the orders table
+        const orderUserId = staffContext?.customerUserId || userId;
 
         // 2. Criar Ordem de Serviço (com vendedor se existir)
         const osResult = await criarOrdemServicoOmie(
@@ -597,6 +643,26 @@ serve(async (req) => {
           clienteResult.omieCodigoVendedor,
           orderData
         );
+
+        // 3. Create the order record in the orders table
+        const { error: orderInsertError } = await supabaseAdmin
+          .from("orders")
+          .insert({
+            id: orderId,
+            user_id: orderUserId,
+            items: orderData.items,
+            service_type: orderData.service_type || 'padrao',
+            subtotal: orderData.subtotal || 0,
+            delivery_fee: orderData.delivery_fee || 0,
+            total: orderData.total || 0,
+            delivery_option: 'retirada',
+            notes: orderData.notes || null,
+            status: 'pedido_recebido',
+          });
+
+        if (orderInsertError) {
+          console.error("[Omie Sync] Erro ao inserir pedido na tabela orders:", orderInsertError);
+        }
 
         // 3. Enviar notificação por email para administração (não bloqueia o fluxo)
         try {

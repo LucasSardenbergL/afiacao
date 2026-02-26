@@ -43,7 +43,11 @@ export async function syncOrderToOmie(
   orderId: string,
   orderData: OrderData,
   profileData: ProfileData,
-  addressData?: AddressData
+  addressData?: AddressData,
+  staffContext?: {
+    customerOmieCode: number;
+    customerUserId?: string | null;
+  }
 ): Promise<OmieSyncResult> {
   try {
     const { data, error } = await supabase.functions.invoke("omie-sync", {
@@ -53,6 +57,7 @@ export async function syncOrderToOmie(
         orderData,
         profileData,
         addressData,
+        staffContext,
       },
     });
 
