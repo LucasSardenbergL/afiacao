@@ -58,6 +58,7 @@ import CoachingSPIN from "./pages/CoachingSPIN";
 import SettingsConfig from "./pages/SettingsConfig";
 import UXRules from "./pages/UXRules";
 import AdminAnalyticsSync from "./pages/AdminAnalyticsSync";
+import TechnicalDocs from "./pages/TechnicalDocs";
 
 const queryClient = new QueryClient();
 
@@ -124,7 +125,7 @@ const App = () => (
               <Route path="ux-rules" element={<UXRules />} />
               <Route path="coaching" element={<CoachingSPIN />} />
               <Route path="settings" element={<SettingsConfig />} />
-              <Route path="settings" element={<SettingsConfig />} />
+              <Route path="docs" element={<TechnicalDocs />} />
             </Route>
 
             <Route path="*" element={<NotFound />} />
