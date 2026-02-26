@@ -67,7 +67,6 @@ const unifiedNavSections: { title: string; items: NavItem[] }[] = [
     title: 'Afiação',
     items: [
       { icon: ClipboardList, label: 'Ordens de Serviço', path: '/orders' },
-      { icon: PlusCircle, label: 'Nova OS', path: '/new-order' },
       { icon: Wrench, label: 'Ferramentas', path: '/tools' },
       { icon: Award, label: 'Gamificação', path: '/gamification' },
     ],
@@ -76,6 +75,7 @@ const unifiedNavSections: { title: string; items: NavItem[] }[] = [
     title: 'Vendas',
     items: [
       { icon: ShoppingCart, label: 'Pedidos', path: '/sales' },
+      { icon: PlusCircle, label: 'Novo Pedido', path: '/unified-order' },
       { icon: Package, label: 'Produtos', path: '/sales/products' },
       { icon: TrendingUp, label: 'Recomendações', path: '/farmer/recommendations' },
       { icon: Target, label: 'Bundles', path: '/farmer/bundles' },
