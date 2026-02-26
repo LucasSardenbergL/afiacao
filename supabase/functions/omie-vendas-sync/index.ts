@@ -290,21 +290,47 @@ async function buscarHistoricoPrecosOmie(codigoCliente: number) {
   }
 }
 
-// Listar formas de pagamento do Omie
+// Listar formas de pagamento (parcelas) do Omie
 async function listarFormasPagamento() {
-  const result = await callOmieVendasApi(
-    "geral/formaspagamento/",
-    "ListarFormasPagamento",
-    { pagina: 1, registros_por_pagina: 100 }
-  ) as any;
+  // Common payment conditions used by Oben as hardcoded fallback
+  const defaultFormas = [
+    { codigo: "999", descricao: "A Vista" },
+    { codigo: "000", descricao: "A Vista (faturamento)" },
+    { codigo: "001", descricao: "30 dias" },
+    { codigo: "002", descricao: "30/60 dias" },
+    { codigo: "003", descricao: "30/60/90 dias" },
+    { codigo: "030", descricao: "30dd" },
+    { codigo: "A03", descricao: "30/60/90 DDL" },
+    { codigo: "A04", descricao: "28/56/84 DDL" },
+  ];
 
-  const formas = result.forma_pagamento_cadastro || [];
-  return formas
-    .filter((f: any) => f.cInativo !== "S")
-    .map((f: any) => ({
-      codigo: f.cCodigo,
-      descricao: f.cDescricao,
-    }));
+  try {
+    // Try Omie API for parcelas
+    const result = await callOmieVendasApi(
+      "geral/parcelas/",
+      "ListarParcelas",
+      { pagina: 1, registros_por_pagina: 100 }
+    ) as any;
+
+    const parcelas = result.cadastros || result.parcela_cadastro || result.lista_parcelas || [];
+    console.log(`[Omie Vendas] ListarParcelas retornou ${parcelas.length} parcelas. Keys: ${JSON.stringify(Object.keys(result))}`);
+
+    if (parcelas.length > 0) {
+      return parcelas
+        .filter((f: any) => f.cInativo !== "S")
+        .map((f: any) => ({
+          codigo: f.cCodigo || f.nCodigo?.toString() || '',
+          descricao: f.cDescricao || f.cDescParcela || '',
+        }))
+        .filter((f: any) => f.codigo && f.descricao);
+    }
+  } catch (error) {
+    console.error("[Omie Vendas] Erro ao buscar parcelas:", error);
+  }
+
+  // Fallback: return common payment conditions
+  console.log("[Omie Vendas] Usando formas de pagamento padrão (fallback)");
+  return defaultFormas;
 }
 
 // Buscar última forma de pagamento usada pelo cliente
