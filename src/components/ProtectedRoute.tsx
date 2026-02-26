@@ -32,6 +32,13 @@ export const ProtectedRoute = ({ children }: ProtectedRouteProps) => {
           .maybeSingle();
 
         if (roleData?.role === 'admin' || roleData?.role === 'employee') {
+          // Auto-approve employee profile if not yet approved
+          await supabase
+            .from('profiles')
+            .update({ is_approved: true })
+            .eq('user_id', user.id)
+            .eq('is_approved', false);
+
           setApprovalStatus(true);
           setCheckingApproval(false);
           return;
