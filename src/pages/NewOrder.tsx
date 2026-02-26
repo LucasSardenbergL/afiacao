@@ -105,7 +105,7 @@ const NewOrder = () => {
   const navigate = useNavigate();
   const { toast } = useToast();
   const { user } = useAuth();
-  const { isStaff } = useUserRole();
+  const { isStaff, loading: roleLoading } = useUserRole();
   
   // For staff: customer selection from Omie
   const [selectedOmieCustomer, setSelectedOmieCustomer] = useState<OmieCustomer | null>(null);
@@ -117,7 +117,14 @@ const NewOrder = () => {
   // The effective user ID for the order (customer's local user_id if mapped, otherwise null)
   const effectiveUserId = isStaff ? (selectedOmieCustomer?.local_user_id || null) : user?.id;
 
-  const [currentStep, setCurrentStep] = useState<Step>(isStaff ? 'customer' : 'items');
+  const [currentStep, setCurrentStep] = useState<Step>('items');
+
+  // Update initial step once role is known
+  useEffect(() => {
+    if (!roleLoading && isStaff && !selectedOmieCustomer) {
+      setCurrentStep('customer');
+    }
+  }, [roleLoading, isStaff]);
   const [items, setItems] = useState<ServiceItem[]>([]);
   const [deliveryOption, setDeliveryOption] = useState<DeliveryOption>('coleta_entrega');
   const [selectedAddress, setSelectedAddress] = useState<string>('');
@@ -649,6 +656,19 @@ const NewOrder = () => {
     ? (selectedOmieCustomer.nome_fantasia || selectedOmieCustomer.razao_social || 'Cliente')
     : '';
   const customerFirstName = customerDisplayName.split(' ')[0] || 'Cliente';
+
+  // Show loading while role is being determined
+  if (roleLoading) {
+    return (
+      <div className="min-h-screen bg-background pb-32">
+        <Header title="Novo Pedido" showBack />
+        <div className="flex flex-col items-center justify-center pt-32 gap-2">
+          <Loader2 className="w-8 h-8 animate-spin text-primary" />
+          <p className="text-sm text-muted-foreground">Carregando...</p>
+        </div>
+      </div>
+    );
+  }
 
   // Show loading only for non-staff or after customer is selected
   const showLoading = isStaff 
