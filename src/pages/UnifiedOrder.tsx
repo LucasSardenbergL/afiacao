@@ -316,16 +316,58 @@ const UnifiedOrder = () => {
         loadPriceHistory();
       }
 
-      // Load customer prices & last parcela from Oben
-      const [priceResult, parcelaResult] = await Promise.all([
+      // Load prices from Omie + local history + last parcela — all in parallel
+      const [priceResult, parcelaResult, localPriceResult] = await Promise.all([
         supabase.functions.invoke('omie-vendas-sync', {
           body: { action: 'buscar_precos_cliente', codigo_cliente: cust.codigo_cliente },
         }),
         supabase.functions.invoke('omie-vendas-sync', {
           body: { action: 'buscar_ultima_parcela', codigo_cliente: cust.codigo_cliente },
         }),
+        localUserId
+          ? supabase
+              .from('sales_price_history')
+              .select('product_id, unit_price, created_at')
+              .eq('customer_user_id', localUserId)
+              .order('created_at', { ascending: false })
+          : Promise.resolve({ data: null }),
       ]);
-      if (priceResult.data?.precos) setCustomerPrices(priceResult.data.precos);
+
+      // Merge: local history as base, Omie prices override
+      const mergedPrices: Record<number, number> = {};
+
+      // 1) Local sales_price_history → map product UUIDs to omie_codigo_produto
+      if (localPriceResult.data && localPriceResult.data.length > 0) {
+        const localPricesByProduct: Record<string, number> = {};
+        for (const row of localPriceResult.data) {
+          if (!localPricesByProduct[row.product_id]) {
+            localPricesByProduct[row.product_id] = row.unit_price;
+          }
+        }
+        const productIds = Object.keys(localPricesByProduct);
+        if (productIds.length > 0) {
+          const { data: productMappings } = await supabase
+            .from('omie_products')
+            .select('id, omie_codigo_produto')
+            .in('id', productIds);
+          if (productMappings) {
+            for (const pm of productMappings) {
+              const price = localPricesByProduct[pm.id];
+              if (price && price > 0) mergedPrices[pm.omie_codigo_produto] = price;
+            }
+          }
+        }
+      }
+
+      // 2) Omie prices override local (authoritative source)
+      if (priceResult.data?.precos) {
+        const omiePrecos = priceResult.data.precos as Record<string, number>;
+        for (const [key, val] of Object.entries(omiePrecos)) {
+          if (val && val > 0) mergedPrices[Number(key)] = val;
+        }
+      }
+
+      setCustomerPrices(mergedPrices);
       if (parcelaResult.data?.ultima_parcela) setSelectedParcela(parcelaResult.data.ultima_parcela);
     } catch (error: any) {
       toast({ title: 'Erro', description: error.message, variant: 'destructive' });
