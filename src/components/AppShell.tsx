@@ -28,6 +28,7 @@ import {
   Menu,
   X,
   ClipboardList,
+  PlusCircle,
   Shield,
   Wrench,
   Award,
@@ -97,6 +98,7 @@ const colacorNavSections: { title: string; items: NavItem[] }[] = [
     items: [
       { icon: LayoutDashboard, label: 'Início', path: '/' },
       { icon: ClipboardList, label: 'Pedidos', path: '/orders' },
+      { icon: PlusCircle, label: 'Novo Pedido', path: '/new-order' },
     ],
   },
   {
