@@ -7,7 +7,7 @@
     <meta name="description" content="Colacor - Serviço profissional de afiação de ferramentas. Agende sua coleta!">
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
-    <link href="https://fonts.googleapis.com/css2?family=Bebas+Neue&family=Inter:wght@400;500;600;700&family=Space+Grotesk:wght@500;600;700&display=swap" rel="stylesheet" />
+    <link href="https://fonts.googleapis.com/css2?family=Bebas+Neue&family=Inter:wght@400;500;600;700&family=Space+Grotesk:wght@500;600;700&display=swap" rel="stylesheet" media="print" onload="this.media='all'" />
     <meta name="author" content="Colacor" />
 
     <!-- PWA Meta Tags -->
@@ -33,7 +33,7 @@
 </head>
 
   <body>
-    <div id="root"></div>
+    <div id="root"><div style="display:flex;align-items:center;justify-content:center;min-height:100vh;background:#1a1a2e;"><div style="width:40px;height:40px;border:3px solid rgba(255,255,255,0.15);border-top-color:#fff;border-radius:50%;animation:spin 0.8s linear infinite;"></div></div><style>@keyframes spin{to{transform:rotate(360deg)}}</style></div>
     <script type="module" src="/src/main.tsx"></script>
   </body>
 </html>
