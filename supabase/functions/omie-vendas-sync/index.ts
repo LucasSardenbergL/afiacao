@@ -462,7 +462,7 @@ async function criarPedidoVenda(
   };
 
   if (codigoVendedor && codigoVendedor > 0) {
-    informacoes_adicionais.codigo_vendedor = codigoVendedor;
+    informacoes_adicionais.codVend = codigoVendedor;
   }
 
   const payload = {
