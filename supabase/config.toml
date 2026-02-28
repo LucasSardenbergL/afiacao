@@ -35,3 +35,9 @@ verify_jwt = false
 
 [functions.generate-tactical-plan]
 verify_jwt = false
+
+[functions.algorithm-a-audit]
+verify_jwt = false
+
+[functions.calculate-scores]
+verify_jwt = false

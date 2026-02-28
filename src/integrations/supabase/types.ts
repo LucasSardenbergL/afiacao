@@ -1410,6 +1410,54 @@ export type Database = {
         }
         Relationships: []
       }
+      health_score_history: {
+        Row: {
+          calculated_at: string
+          churn_risk: number | null
+          created_at: string
+          customer_user_id: string
+          farmer_id: string
+          g_score: number | null
+          health_class: string
+          health_score: number
+          id: string
+          m_score: number | null
+          rf_score: number | null
+          s_score: number | null
+          x_score: number | null
+        }
+        Insert: {
+          calculated_at?: string
+          churn_risk?: number | null
+          created_at?: string
+          customer_user_id: string
+          farmer_id: string
+          g_score?: number | null
+          health_class?: string
+          health_score?: number
+          id?: string
+          m_score?: number | null
+          rf_score?: number | null
+          s_score?: number | null
+          x_score?: number | null
+        }
+        Update: {
+          calculated_at?: string
+          churn_risk?: number | null
+          created_at?: string
+          customer_user_id?: string
+          farmer_id?: string
+          g_score?: number | null
+          health_class?: string
+          health_score?: number
+          id?: string
+          m_score?: number | null
+          rf_score?: number | null
+          s_score?: number | null
+          x_score?: number | null
+        }
+        Relationships: []
+      }
       inventory_position: {
         Row: {
           account: string
@@ -1963,6 +2011,48 @@ export type Database = {
           id?: string
           permission_key?: string
           user_id?: string
+        }
+        Relationships: []
+      }
+      priority_score_log: {
+        Row: {
+          calculated_at: string
+          churn_risk_component: number | null
+          created_at: string
+          customer_user_id: string
+          farmer_id: string
+          goal_proximity_component: number | null
+          id: string
+          margin_potential_component: number | null
+          priority_score: number
+          repurchase_component: number | null
+          score_date: string
+        }
+        Insert: {
+          calculated_at?: string
+          churn_risk_component?: number | null
+          created_at?: string
+          customer_user_id: string
+          farmer_id: string
+          goal_proximity_component?: number | null
+          id?: string
+          margin_potential_component?: number | null
+          priority_score?: number
+          repurchase_component?: number | null
+          score_date?: string
+        }
+        Update: {
+          calculated_at?: string
+          churn_risk_component?: number | null
+          created_at?: string
+          customer_user_id?: string
+          farmer_id?: string
+          goal_proximity_component?: number | null
+          id?: string
+          margin_potential_component?: number | null
+          priority_score?: number
+          repurchase_component?: number | null
+          score_date?: string
         }
         Relationships: []
       }
