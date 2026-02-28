@@ -71,6 +71,29 @@ interface OmieListResponse {
   faultcode?: string;
 }
 
+async function callOmieApiWithCredentials(
+  endpoint: string,
+  call: string,
+  params: Record<string, unknown>,
+  appKey: string,
+  appSecret: string
+): Promise<OmieListResponse> {
+  const body = {
+    call,
+    app_key: appKey,
+    app_secret: appSecret,
+    param: [params],
+  };
+
+  const response = await fetch(`${OMIE_API_URL}/${endpoint}`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+  });
+
+  return await response.json();
+}
+
 async function callOmieApi(
   endpoint: string,
   call: string,
@@ -83,20 +106,109 @@ async function callOmieApi(
     throw new Error("Credenciais do Omie não configuradas");
   }
 
-  const body = {
-    call,
-    app_key: OMIE_APP_KEY,
-    app_secret: OMIE_APP_SECRET,
-    param: [params],
-  };
+  return callOmieApiWithCredentials(endpoint, call, params, OMIE_APP_KEY, OMIE_APP_SECRET);
+}
 
-  const response = await fetch(`${OMIE_API_URL}/${endpoint}`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(body),
-  });
+interface OmieAccountConfig {
+  name: string;
+  appKey: string;
+  appSecret: string;
+}
 
-  return await response.json();
+function getOmieAccounts(): OmieAccountConfig[] {
+  const accounts: OmieAccountConfig[] = [];
+  
+  const colacorKey = Deno.env.get("OMIE_APP_KEY");
+  const colacorSecret = Deno.env.get("OMIE_APP_SECRET");
+  if (colacorKey && colacorSecret) {
+    accounts.push({ name: "Colacor (Afiação)", appKey: colacorKey, appSecret: colacorSecret });
+  }
+
+  const obenKey = Deno.env.get("OMIE_VENDAS_APP_KEY");
+  const obenSecret = Deno.env.get("OMIE_VENDAS_APP_SECRET");
+  if (obenKey && obenSecret) {
+    accounts.push({ name: "Oben (Vendas)", appKey: obenKey, appSecret: obenSecret });
+  }
+
+  const colacorVendasKey = Deno.env.get("OMIE_COLACOR_VENDAS_APP_KEY");
+  const colacorVendasSecret = Deno.env.get("OMIE_COLACOR_VENDAS_APP_SECRET");
+  if (colacorVendasKey && colacorVendasSecret) {
+    accounts.push({ name: "Colacor (Vendas)", appKey: colacorVendasKey, appSecret: colacorVendasSecret });
+  }
+
+  return accounts;
+}
+
+async function validarVendedorMultiOmie(cnpjCpf: string): Promise<{
+  consistente: boolean;
+  vendedores: Array<{ conta: string; codigo_vendedor: number | null; encontrado: boolean }>;
+  divergencias: string[];
+}> {
+  const docLimpo = cnpjCpf.replace(/\D/g, "");
+  const accounts = getOmieAccounts();
+  
+  const resultados = await Promise.all(
+    accounts.map(async (account) => {
+      try {
+        const result = await callOmieApiWithCredentials(
+          "geral/clientes/",
+          "ListarClientes",
+          { pagina: 1, registros_por_pagina: 1, clientesFiltro: { cnpj_cpf: docLimpo } },
+          account.appKey,
+          account.appSecret
+        );
+
+        if (result.faultstring) {
+          return { conta: account.name, codigo_vendedor: null as number | null, encontrado: false };
+        }
+
+        const clientes = result.clientes_cadastro || result.clientes_cadastro_resumido || [];
+        if (clientes.length === 0) {
+          return { conta: account.name, codigo_vendedor: null as number | null, encontrado: false };
+        }
+
+        const cliente = clientes[0];
+        const codigoCliente = cliente.codigo_cliente_omie || cliente.codigo_cliente;
+        
+        // Get full details to retrieve vendedor from recomendacoes
+        let vendedor: number | null = cliente.recomendacoes?.codigo_vendedor || cliente.codigo_vendedor || null;
+        
+        if (codigoCliente && !vendedor) {
+          try {
+            const detalhe = await callOmieApiWithCredentials(
+              "geral/clientes/",
+              "ConsultarCliente",
+              { codigo_cliente_omie: codigoCliente },
+              account.appKey,
+              account.appSecret
+            ) as unknown as OmieCliente;
+            vendedor = detalhe?.recomendacoes?.codigo_vendedor || detalhe?.codigo_vendedor || null;
+          } catch (e) {
+            console.error(`[validarVendedor] Erro ao consultar detalhe em ${account.name}:`, e);
+          }
+        }
+
+        return { conta: account.name, codigo_vendedor: vendedor, encontrado: true };
+      } catch (error) {
+        console.error(`[validarVendedor] Erro em ${account.name}:`, error);
+        return { conta: account.name, codigo_vendedor: null as number | null, encontrado: false };
+      }
+    })
+  );
+
+  // Check consistency: only compare accounts where the customer was found
+  const encontrados = resultados.filter(r => r.encontrado);
+  const vendedoresUnicos = [...new Set(encontrados.map(r => r.codigo_vendedor))];
+  const consistente = vendedoresUnicos.length <= 1;
+
+  const divergencias: string[] = [];
+  if (!consistente) {
+    for (const r of encontrados) {
+      divergencias.push(`${r.conta}: vendedor ${r.codigo_vendedor || 'não definido'}`);
+    }
+  }
+
+  return { consistente, vendedores: resultados, divergencias };
 }
 
 function isIndustrialByCNAE(cnae: string): boolean {
@@ -514,6 +626,20 @@ serve(async (req) => {
         }
 
         result = { user_id: newUserId };
+        break;
+      }
+
+      case "validar_vendedor": {
+        const { cnpj_cpf } = body;
+        if (!cnpj_cpf || typeof cnpj_cpf !== "string") {
+          return new Response(
+            JSON.stringify({ error: "CPF/CNPJ inválido" }),
+            { status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+          );
+        }
+
+        const validacao = await validarVendedorMultiOmie(cnpj_cpf);
+        result = validacao;
         break;
       }
 
