@@ -393,12 +393,16 @@ const NewOrder = () => {
     try {
       const { data: profileData } = await supabase
         .from('profiles')
-        .select('name, email, phone, document')
+        .select('name, email, phone, document, preferred_delivery_time')
         .eq('user_id', effectiveUserId)
         .maybeSingle();
 
       if (profileData) {
         setProfile(profileData);
+        // Auto-fill preferred delivery time
+        if (profileData.preferred_delivery_time) {
+          setSelectedTimeSlot(profileData.preferred_delivery_time);
+        }
       } else {
         setProfile({
           name: 'Usuário',
@@ -577,7 +581,7 @@ const NewOrder = () => {
         return items.length > 0 && items.every(item => item.userToolId && item.servico && item.quantity > 0);
       case 'delivery':
         if (deliveryOption === 'balcao') return true;
-        return selectedAddress && selectedTimeSlot;
+        return !!(selectedAddress && selectedTimeSlot);
       default:
         return true;
     }
@@ -1349,22 +1353,31 @@ const NewOrder = () => {
                       <Clock className="w-4 h-4" />
                       Horário preferido
                     </label>
-                    <div className="grid grid-cols-2 gap-2">
-                      {TIME_SLOTS.map((slot) => (
-                        <button
-                          key={slot.id}
-                          onClick={() => setSelectedTimeSlot(slot.id)}
-                          className={cn(
-                            'py-2 px-3 rounded-lg border-2 text-sm font-medium transition-all',
-                            selectedTimeSlot === slot.id
-                              ? 'border-primary bg-primary/5'
-                              : 'border-border hover:border-primary/50'
-                          )}
-                        >
-                          {slot.label}
-                        </button>
-                      ))}
-                    </div>
+                    {(profile as any)?.preferred_delivery_time ? (
+                      <div className="py-3 px-4 rounded-lg border-2 border-primary bg-primary/5 text-sm font-medium">
+                        <div className="flex items-center justify-between">
+                          <span>⏰ {selectedTimeSlot || (profile as any).preferred_delivery_time}</span>
+                          <span className="text-xs text-muted-foreground">Horário preferido do cliente</span>
+                        </div>
+                      </div>
+                    ) : (
+                      <div className="grid grid-cols-2 gap-2">
+                        {TIME_SLOTS.map((slot) => (
+                          <button
+                            key={slot.id}
+                            onClick={() => setSelectedTimeSlot(slot.id)}
+                            className={cn(
+                              'py-2 px-3 rounded-lg border-2 text-sm font-medium transition-all',
+                              selectedTimeSlot === slot.id
+                                ? 'border-primary bg-primary/5'
+                                : 'border-border hover:border-primary/50'
+                            )}
+                          >
+                            {slot.label}
+                          </button>
+                        ))}
+                      </div>
+                    )}
                   </div>
                 </>
               )}
@@ -1440,7 +1453,7 @@ const NewOrder = () => {
                 {deliveryOption !== 'balcao' && selectedAddress && (
                   <p className="text-sm text-muted-foreground mt-1">
                     {addresses.find(a => a.id === selectedAddress)?.street}
-                    {selectedTimeSlot && ` • ${TIME_SLOTS.find(s => s.id === selectedTimeSlot)?.label}`}
+                    {selectedTimeSlot && ` • ${TIME_SLOTS.find(s => s.id === selectedTimeSlot)?.label || selectedTimeSlot}`}
                   </p>
                 )}
               </div>

@@ -2114,8 +2114,11 @@ export type Database = {
           id: string
           is_approved: boolean
           is_employee: boolean | null
+          lunch_end: string | null
+          lunch_start: string | null
           name: string
           phone: string | null
+          preferred_delivery_time: string | null
           updated_at: string
           user_id: string
         }
@@ -2132,8 +2135,11 @@ export type Database = {
           id?: string
           is_approved?: boolean
           is_employee?: boolean | null
+          lunch_end?: string | null
+          lunch_start?: string | null
           name: string
           phone?: string | null
+          preferred_delivery_time?: string | null
           updated_at?: string
           user_id: string
         }
@@ -2150,8 +2156,11 @@ export type Database = {
           id?: string
           is_approved?: boolean
           is_employee?: boolean | null
+          lunch_end?: string | null
+          lunch_start?: string | null
           name?: string
           phone?: string | null
+          preferred_delivery_time?: string | null
           updated_at?: string
           user_id?: string
         }
