@@ -79,8 +79,15 @@ async function syncProducts(supabase: ReturnType<typeof createClient>, startPage
     totalPaginas = result.total_de_paginas || 1;
     const produtos = result.produto_servico_cadastro || [];
 
+    const EXCLUDED_FAMILIES = ['imobilizado', 'uso e consumo'];
+
     const rows = produtos
-      .filter((prod: any) => prod.inativo !== "S")
+      .filter((prod: any) => {
+        if (prod.inativo === "S") return false;
+        const familia = (prod.descricao_familia || '').toLowerCase().trim();
+        if (EXCLUDED_FAMILIES.some(ex => familia.includes(ex))) return false;
+        return true;
+      })
       .map((prod: any) => ({
         omie_codigo_produto: prod.codigo_produto,
         omie_codigo_produto_integracao: prod.codigo_produto_integracao || null,
@@ -91,6 +98,7 @@ async function syncProducts(supabase: ReturnType<typeof createClient>, startPage
         valor_unitario: prod.valor_unitario || 0,
         estoque: prod.quantidade_estoque || 0,
         ativo: true,
+        familia: prod.descricao_familia || null,
         imagem_url: prod.imagens?.[0]?.url_imagem || null,
         metadata: {
           marca: prod.marca,

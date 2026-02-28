@@ -217,8 +217,10 @@ const UnifiedOrder = () => {
     try {
       const { data } = await supabase
         .from('omie_products')
-        .select('id, codigo, descricao, unidade, valor_unitario, estoque, ativo, omie_codigo_produto')
+        .select('id, codigo, descricao, unidade, valor_unitario, estoque, ativo, omie_codigo_produto, familia')
         .eq('account', 'oben')
+        .not('familia', 'ilike', '%imobilizado%')
+        .not('familia', 'ilike', '%uso e consumo%')
         .order('descricao');
       if (!data || data.length === 0) {
         try {
@@ -232,8 +234,10 @@ const UnifiedOrder = () => {
           }
           const { data: refreshed } = await supabase
             .from('omie_products')
-            .select('id, codigo, descricao, unidade, valor_unitario, estoque, ativo, omie_codigo_produto')
+            .select('id, codigo, descricao, unidade, valor_unitario, estoque, ativo, omie_codigo_produto, familia')
             .eq('account', 'oben')
+            .not('familia', 'ilike', '%imobilizado%')
+            .not('familia', 'ilike', '%uso e consumo%')
             .order('descricao');
           setProducts((refreshed || []) as Product[]);
         } catch (syncErr) { console.error('Sync error:', syncErr); }
@@ -252,8 +256,10 @@ const UnifiedOrder = () => {
     try {
       const { data } = await supabase
         .from('omie_products')
-        .select('id, codigo, descricao, unidade, valor_unitario, estoque, ativo, omie_codigo_produto')
+        .select('id, codigo, descricao, unidade, valor_unitario, estoque, ativo, omie_codigo_produto, familia')
         .eq('account', 'colacor')
+        .not('familia', 'ilike', '%imobilizado%')
+        .not('familia', 'ilike', '%uso e consumo%')
         .order('descricao');
       if (data) setColacorProducts(data as Product[]);
     } catch (e) { console.error('Error loading Colacor products:', e); }
@@ -272,8 +278,10 @@ const UnifiedOrder = () => {
       // Refresh products with updated stock
       const { data: refreshed } = await supabase
         .from('omie_products')
-        .select('id, codigo, descricao, unidade, valor_unitario, estoque, ativo, omie_codigo_produto')
+        .select('id, codigo, descricao, unidade, valor_unitario, estoque, ativo, omie_codigo_produto, familia')
         .eq('account', 'oben')
+        .not('familia', 'ilike', '%imobilizado%')
+        .not('familia', 'ilike', '%uso e consumo%')
         .order('descricao');
       if (refreshed) setProducts(refreshed as Product[]);
     } catch (e) { console.error('Background stock sync error:', e); }
