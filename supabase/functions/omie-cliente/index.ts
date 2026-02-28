@@ -422,7 +422,7 @@ serve(async (req) => {
         const supabaseServiceKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
         const adminClient = createClient(supabaseUrl, supabaseServiceKey);
 
-        // Check if mapping already exists
+        // Check if mapping already exists by omie_codigo_cliente
         const { data: existingMapping } = await adminClient
           .from("omie_clientes")
           .select("user_id")
@@ -432,6 +432,38 @@ serve(async (req) => {
         if (existingMapping) {
           result = { user_id: existingMapping.user_id };
           break;
+        }
+
+        // Check if a profile with the same document (CPF/CNPJ) already exists
+        if (cliente.cnpj_cpf) {
+          const docLimpo = cliente.cnpj_cpf.replace(/\D/g, "");
+          if (docLimpo.length >= 11) {
+            const { data: existingProfiles } = await adminClient
+              .from("profiles")
+              .select("user_id, document")
+              .not("document", "is", null);
+
+            const matchedProfile = existingProfiles?.find(p => 
+              p.document?.replace(/\D/g, "") === docLimpo
+            );
+
+            if (matchedProfile) {
+              // Profile exists — just create the omie_clientes mapping
+              console.log(`[criar_perfil_local] Found existing profile by document ${docLimpo}, linking to user ${matchedProfile.user_id}`);
+              const { error: mappingError } = await adminClient
+                .from("omie_clientes")
+                .insert({
+                  user_id: matchedProfile.user_id,
+                  omie_codigo_cliente: cliente.codigo_cliente,
+                  omie_codigo_vendedor: cliente.codigo_vendedor || null,
+                });
+              if (mappingError) {
+                console.error("[criar_perfil_local] Mapping error:", mappingError);
+              }
+              result = { user_id: matchedProfile.user_id };
+              break;
+            }
+          }
         }
 
         // Create a real auth user via admin API (with a placeholder email)
