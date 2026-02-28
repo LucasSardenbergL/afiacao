@@ -1586,7 +1586,7 @@ const UnifiedOrder = () => {
 
         {/* Right: Cart sidebar */}
         <div className="space-y-4">
-          <Card className="sticky top-20">
+          <Card className="sticky top-20 flex flex-col" style={{ maxHeight: 'calc(100vh - 6rem)' }}>
             <CardHeader className="pb-2">
               <CardTitle className="text-sm flex items-center gap-2">
                 <ShoppingCart className="w-4 h-4" />
@@ -1594,7 +1594,7 @@ const UnifiedOrder = () => {
                 {cart.length > 0 && <Badge variant="secondary" className="text-[10px] px-1.5 py-0">{cart.length}</Badge>}
               </CardTitle>
             </CardHeader>
-            <CardContent>
+            <CardContent className="overflow-y-auto flex-1 min-h-0">
               {cart.length === 0 ? (
                 <p className="text-xs text-muted-foreground text-center py-6">Nenhum item adicionado</p>
               ) : (
