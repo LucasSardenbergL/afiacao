@@ -90,6 +90,7 @@ interface OmieCustomer {
   complemento: string | null;
   bairro: string | null;
   cep: string | null;
+  codigo_vendedor: number | null;
   // Mapped local user_id (if exists in app)
   local_user_id?: string | null;
 }
@@ -232,6 +233,7 @@ const NewOrder = () => {
         telefone: c.telefone,
         cidade: c.cidade,
         estado: c.estado,
+        codigo_vendedor: c.codigo_vendedor || null,
       }));
 
       // Try to find local user_ids via omie_clientes mapping
@@ -709,6 +711,7 @@ const NewOrder = () => {
             telefone: selectedOmieCustomer.telefone,
             cidade: selectedOmieCustomer.cidade,
             estado: selectedOmieCustomer.estado,
+            codigo_vendedor: selectedOmieCustomer.codigo_vendedor,
           }
         },
       });
