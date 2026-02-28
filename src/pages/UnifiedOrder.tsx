@@ -21,10 +21,12 @@ import { usePriceHistory } from '@/hooks/usePriceHistory';
 import type { RecommendationItem } from '@/hooks/useRecommendationEngine';
 import {
   Loader2, Search, Plus, Minus, Trash2, User, ShoppingCart, Send,
-  ChevronLeft, Package, CheckCircle, Wrench, AlertCircle, Scissors, AlertTriangle,
+  ChevronLeft, Package, CheckCircle, Wrench, AlertCircle, Scissors, AlertTriangle, Building2,
 } from 'lucide-react';
 
 /* ─── Types ─── */
+type ProductAccount = 'oben' | 'colacor';
+
 interface Product {
   id: string;
   codigo: string;
@@ -34,6 +36,7 @@ interface Product {
   estoque: number;
   ativo: boolean;
   omie_codigo_produto: number;
+  account?: string;
 }
 
 interface ProductCartItem {
@@ -41,6 +44,7 @@ interface ProductCartItem {
   product: Product;
   quantity: number;
   unit_price: number;
+  account: ProductAccount;
 }
 
 interface UserTool {
@@ -78,7 +82,6 @@ interface FormaPagamento {
 }
 
 const fmt = (v: number) => v.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' });
-
 const getToolName = (t: UserTool) => t.generated_name || t.custom_name || t.tool_categories?.name || 'Ferramenta';
 
 /* ─── Stepper ─── */
@@ -116,14 +119,16 @@ const UnifiedOrder = () => {
   const [loadingCustomer, setLoadingCustomer] = useState(false);
   const [customerUserId, setCustomerUserId] = useState<string | null>(null);
 
-  // Products (Oben)
-  const [products, setProducts] = useState<Product[]>([]);
+  // Products by account
+  const [obenProducts, setObenProducts] = useState<Product[]>([]);
   const [colacorProducts, setColacorProducts] = useState<Product[]>([]);
   const [productSearch, setProductSearch] = useState('');
-  const [loadingProducts, setLoadingProducts] = useState(true);
-  const [customerPrices, setCustomerPrices] = useState<Record<number, number>>({});
+  const [loadingObenProducts, setLoadingObenProducts] = useState(true);
+  const [loadingColacorProducts, setLoadingColacorProducts] = useState(true);
+  const [customerPricesOben, setCustomerPricesOben] = useState<Record<number, number>>({});
+  const [customerPricesColacor, setCustomerPricesColacor] = useState<Record<number, number>>({});
 
-  // Afiação (Colacor)
+  // Afiação (Colacor services)
   const [userTools, setUserTools] = useState<UserTool[]>([]);
   const [loadingTools, setLoadingTools] = useState(false);
   const [servicos, setServicos] = useState<OmieServico[]>([]);
@@ -136,38 +141,55 @@ const UnifiedOrder = () => {
   const [validatingVendedor, setValidatingVendedor] = useState(false);
 
   // Payment
-  const [formasPagamento, setFormasPagamento] = useState<FormaPagamento[]>([]);
-  const [selectedParcela, setSelectedParcela] = useState<string>('999');
+  const [formasPagamentoOben, setFormasPagamentoOben] = useState<FormaPagamento[]>([]);
+  const [formasPagamentoColacor, setFormasPagamentoColacor] = useState<FormaPagamento[]>([]);
+  const [selectedParcelaOben, setSelectedParcelaOben] = useState<string>('999');
+  const [selectedParcelaColacor, setSelectedParcelaColacor] = useState<string>('999');
   const [loadingFormas, setLoadingFormas] = useState(false);
-  const [customerParcelaRanking, setCustomerParcelaRanking] = useState<string[]>([]);
+  const [customerParcelaRankingOben, setCustomerParcelaRankingOben] = useState<string[]>([]);
+  const [customerParcelaRankingColacor, setCustomerParcelaRankingColacor] = useState<string[]>([]);
 
   // Cart
   const [cart, setCart] = useState<CartItem[]>([]);
   const [notes, setNotes] = useState('');
   const [submitting, setSubmitting] = useState(false);
-  const [activeTab, setActiveTab] = useState('products');
+  const [activeTab, setActiveTab] = useState('oben');
 
   // Pricing
   const { loadDefaultPrices, calculatePrice } = usePricingEngine();
   const { loadPriceHistory, getLastPrice } = usePriceHistory(customerUserId || undefined);
 
   const productItems = useMemo(() => cart.filter((c): c is ProductCartItem => c.type === 'product'), [cart]);
+  const obenProductItems = useMemo(() => productItems.filter(c => c.account === 'oben'), [productItems]);
+  const colacorProductItems = useMemo(() => productItems.filter(c => c.account === 'colacor'), [productItems]);
   const serviceItems = useMemo(() => cart.filter((c): c is ServiceCartItem => c.type === 'service'), [cart]);
   const cartProductIds = useMemo(() => productItems.map(c => c.product.id), [productItems]);
-  const sortedFormasPagamento = useMemo(() => {
-    if (customerParcelaRanking.length === 0) return formasPagamento;
-    const rankSet = new Set(customerParcelaRanking);
-    return [...formasPagamento].sort((a, b) => {
-      const aRank = customerParcelaRanking.indexOf(a.codigo);
-      const bRank = customerParcelaRanking.indexOf(b.codigo);
-      const aInRank = rankSet.has(a.codigo);
-      const bInRank = rankSet.has(b.codigo);
-      if (aInRank && !bInRank) return -1;
-      if (!aInRank && bInRank) return 1;
-      if (aInRank && bInRank) return aRank - bRank;
+
+  const sortedFormasPagamentoOben = useMemo(() => {
+    if (customerParcelaRankingOben.length === 0) return formasPagamentoOben;
+    const rankSet = new Set(customerParcelaRankingOben);
+    return [...formasPagamentoOben].sort((a, b) => {
+      const aR = customerParcelaRankingOben.indexOf(a.codigo);
+      const bR = customerParcelaRankingOben.indexOf(b.codigo);
+      if (rankSet.has(a.codigo) && !rankSet.has(b.codigo)) return -1;
+      if (!rankSet.has(a.codigo) && rankSet.has(b.codigo)) return 1;
+      if (rankSet.has(a.codigo) && rankSet.has(b.codigo)) return aR - bR;
       return 0;
     });
-  }, [formasPagamento, customerParcelaRanking]);
+  }, [formasPagamentoOben, customerParcelaRankingOben]);
+
+  const sortedFormasPagamentoColacor = useMemo(() => {
+    if (customerParcelaRankingColacor.length === 0) return formasPagamentoColacor;
+    const rankSet = new Set(customerParcelaRankingColacor);
+    return [...formasPagamentoColacor].sort((a, b) => {
+      const aR = customerParcelaRankingColacor.indexOf(a.codigo);
+      const bR = customerParcelaRankingColacor.indexOf(b.codigo);
+      if (rankSet.has(a.codigo) && !rankSet.has(b.codigo)) return -1;
+      if (!rankSet.has(a.codigo) && rankSet.has(b.codigo)) return 1;
+      if (rankSet.has(a.codigo) && rankSet.has(b.codigo)) return aR - bR;
+      return 0;
+    });
+  }, [formasPagamentoColacor, customerParcelaRankingColacor]);
 
   const currentStep = !selectedCustomer ? 0 : cart.length === 0 ? 1 : 2;
 
@@ -177,14 +199,16 @@ const UnifiedOrder = () => {
 
   useEffect(() => {
     if (isStaff) {
-      loadProducts();
-      loadFormasPagamento();
+      loadProductsForAccount('oben');
+      loadProductsForAccount('colacor');
+      loadFormasPagamento('oben');
+      loadFormasPagamento('colacor');
       loadServicosColacor();
       loadDefaultPrices();
     }
   }, [isStaff]);
 
-  // Customer search (Oben Omie account)
+  // Customer search (Oben Omie account - has all clients)
   useEffect(() => {
     if (customerSearch.length < 2) { setCustomers([]); return; }
     const timeout = setTimeout(async () => {
@@ -195,7 +219,6 @@ const UnifiedOrder = () => {
         });
         if (!error && data?.clientes) {
           const clientes = data.clientes as OmieCustomer[];
-          // Find local user mappings
           if (clientes.length > 0) {
             const codigos = clientes.map(c => c.codigo_cliente);
             const { data: mappings } = await supabase
@@ -217,12 +240,15 @@ const UnifiedOrder = () => {
     return () => clearTimeout(timeout);
   }, [customerSearch]);
 
-  const loadProducts = async () => {
+  const loadProductsForAccount = async (account: ProductAccount) => {
+    const setLoading = account === 'oben' ? setLoadingObenProducts : setLoadingColacorProducts;
+    const setProds = account === 'oben' ? setObenProducts : setColacorProducts;
+    setLoading(true);
     try {
       const { data } = await supabase
         .from('omie_products')
-        .select('id, codigo, descricao, unidade, valor_unitario, estoque, ativo, omie_codigo_produto, familia')
-        .eq('account', 'oben')
+        .select('id, codigo, descricao, unidade, valor_unitario, estoque, ativo, omie_codigo_produto, account')
+        .eq('account', account)
         .not('familia', 'ilike', '%imobilizado%')
         .not('familia', 'ilike', '%uso e consumo%')
         .not('familia', 'ilike', '%matérias primas para conversão de cintas%')
@@ -232,76 +258,51 @@ const UnifiedOrder = () => {
           let nextPage: number | null = 1;
           while (nextPage) {
             const { data: syncResult, error: syncError } = await supabase.functions.invoke('omie-vendas-sync', {
-              body: { action: 'sync_products', start_page: nextPage },
+              body: { action: 'sync_products', start_page: nextPage, account },
             });
             if (syncError) throw syncError;
             nextPage = syncResult.nextPage || null;
           }
           const { data: refreshed } = await supabase
             .from('omie_products')
-            .select('id, codigo, descricao, unidade, valor_unitario, estoque, ativo, omie_codigo_produto, familia')
-            .eq('account', 'oben')
+            .select('id, codigo, descricao, unidade, valor_unitario, estoque, ativo, omie_codigo_produto, account')
+            .eq('account', account)
             .not('familia', 'ilike', '%imobilizado%')
             .not('familia', 'ilike', '%uso e consumo%')
             .not('familia', 'ilike', '%matérias primas para conversão de cintas%')
             .order('descricao');
-          setProducts((refreshed || []) as Product[]);
+          setProds((refreshed || []) as Product[]);
         } catch (syncErr) { console.error('Sync error:', syncErr); }
       } else {
-        setProducts(data as Product[]);
+        setProds(data as Product[]);
       }
-      // Sync stock in background (Oben - ListarPosEstoque)
-      syncStockInBackground();
-      // Load Colacor products for cross-match
-      loadColacorProducts();
+      // Background stock sync
+      syncStockInBackground(account, setProds);
     } catch (e) { console.error(e); }
-    finally { setLoadingProducts(false); }
+    finally { setLoading(false); }
   };
 
-  const loadColacorProducts = async () => {
-    try {
-      const { data } = await supabase
-        .from('omie_products')
-        .select('id, codigo, descricao, unidade, valor_unitario, estoque, ativo, omie_codigo_produto, familia')
-        .eq('account', 'colacor')
-        .not('familia', 'ilike', '%imobilizado%')
-        .not('familia', 'ilike', '%uso e consumo%')
-        .not('familia', 'ilike', '%matérias primas para conversão de cintas%')
-        .order('descricao');
-      if (data) setColacorProducts(data as Product[]);
-    } catch (e) { console.error('Error loading Colacor products:', e); }
-  };
-
-  const syncStockInBackground = async () => {
+  const syncStockInBackground = async (account: ProductAccount, setProds: React.Dispatch<React.SetStateAction<Product[]>>) => {
     try {
       let nextPage: number | null = 1;
       while (nextPage) {
         const { data, error } = await supabase.functions.invoke('omie-vendas-sync', {
-          body: { action: 'sync_estoque', start_page: nextPage },
+          body: { action: 'sync_estoque', start_page: nextPage, account },
         });
         if (error) break;
         nextPage = data?.nextPage || null;
       }
-      // Refresh products with updated stock
       const { data: refreshed } = await supabase
         .from('omie_products')
-        .select('id, codigo, descricao, unidade, valor_unitario, estoque, ativo, omie_codigo_produto, familia')
-        .eq('account', 'oben')
+        .select('id, codigo, descricao, unidade, valor_unitario, estoque, ativo, omie_codigo_produto, account')
+        .eq('account', account)
         .not('familia', 'ilike', '%imobilizado%')
         .not('familia', 'ilike', '%uso e consumo%')
         .not('familia', 'ilike', '%matérias primas para conversão de cintas%')
         .order('descricao');
-      if (refreshed) setProducts(refreshed as Product[]);
-    } catch (e) { console.error('Background stock sync error:', e); }
+      if (refreshed) setProds(refreshed as Product[]);
+    } catch (e) { console.error(`Background stock sync error (${account}):`, e); }
   };
-
-  // Cross-match: find Colacor product by description
-  const findColacorMatch = useCallback((descricao: string) => {
-    const normalized = descricao.toLowerCase().trim();
-    return colacorProducts.find(cp =>
-      cp.descricao.toLowerCase().trim() === normalized && (cp.estoque ?? 0) > 0
-    ) || null;
-  }, [colacorProducts]);
 
   const loadServicosColacor = async () => {
     try {
@@ -324,13 +325,16 @@ const UnifiedOrder = () => {
     finally { setLoadingServicos(false); }
   };
 
-  const loadFormasPagamento = async () => {
+  const loadFormasPagamento = async (account: ProductAccount) => {
     setLoadingFormas(true);
     try {
       const { data } = await supabase.functions.invoke('omie-vendas-sync', {
-        body: { action: 'listar_formas_pagamento' },
+        body: { action: 'listar_formas_pagamento', account },
       });
-      if (data?.formas) setFormasPagamento(data.formas);
+      if (data?.formas) {
+        if (account === 'oben') setFormasPagamentoOben(data.formas);
+        else setFormasPagamentoColacor(data.formas);
+      }
     } catch (e) { console.error(e); }
     finally { setLoadingFormas(false); }
   };
@@ -373,13 +377,23 @@ const UnifiedOrder = () => {
         loadPriceHistory();
       }
 
-      // Load prices from Omie + local history + last parcela — all in parallel
-      const [priceResult, parcelaResult, localPriceResult] = await Promise.all([
+      // Load prices + parcela for BOTH accounts in parallel
+      const [
+        priceOben, priceColacor,
+        parcelaOben, parcelaColacor,
+        localPriceResult
+      ] = await Promise.all([
         supabase.functions.invoke('omie-vendas-sync', {
-          body: { action: 'buscar_precos_cliente', codigo_cliente: cust.codigo_cliente },
+          body: { action: 'buscar_precos_cliente', codigo_cliente: cust.codigo_cliente, account: 'oben' },
         }),
         supabase.functions.invoke('omie-vendas-sync', {
-          body: { action: 'buscar_ultima_parcela', codigo_cliente: cust.codigo_cliente },
+          body: { action: 'buscar_precos_cliente', codigo_cliente: cust.codigo_cliente, account: 'colacor' },
+        }),
+        supabase.functions.invoke('omie-vendas-sync', {
+          body: { action: 'buscar_ultima_parcela', codigo_cliente: cust.codigo_cliente, account: 'oben' },
+        }),
+        supabase.functions.invoke('omie-vendas-sync', {
+          body: { action: 'buscar_ultima_parcela', codigo_cliente: cust.codigo_cliente, account: 'colacor' },
         }),
         localUserId
           ? supabase
@@ -390,52 +404,60 @@ const UnifiedOrder = () => {
           : Promise.resolve({ data: null }),
       ]);
 
-      // Merge: local history as base, Omie prices override
-      const mergedPrices: Record<number, number> = {};
-
-      // 1) Local sales_price_history → map product UUIDs to omie_codigo_produto
+      // Build local prices map
+      const localPricesByProduct: Record<string, number> = {};
       if (localPriceResult.data && localPriceResult.data.length > 0) {
-        const localPricesByProduct: Record<string, number> = {};
         for (const row of localPriceResult.data) {
           if (!localPricesByProduct[row.product_id]) {
             localPricesByProduct[row.product_id] = row.unit_price;
           }
         }
-        const productIds = Object.keys(localPricesByProduct);
-        if (productIds.length > 0) {
-          const { data: productMappings } = await supabase
-            .from('omie_products')
-            .select('id, omie_codigo_produto')
-            .in('id', productIds);
-          if (productMappings) {
-            for (const pm of productMappings) {
-              const price = localPricesByProduct[pm.id];
-              if (price && price > 0) mergedPrices[pm.omie_codigo_produto] = price;
-            }
+      }
+
+      // Map product UUIDs → omie codes
+      let localPricesByOmie: Record<number, number> = {};
+      const productIds = Object.keys(localPricesByProduct);
+      if (productIds.length > 0) {
+        const { data: productMappings } = await supabase
+          .from('omie_products')
+          .select('id, omie_codigo_produto')
+          .in('id', productIds);
+        if (productMappings) {
+          for (const pm of productMappings) {
+            const price = localPricesByProduct[pm.id];
+            if (price && price > 0) localPricesByOmie[pm.omie_codigo_produto] = price;
           }
         }
       }
 
-      // 2) Omie prices override local (authoritative source)
-      if (priceResult.data?.precos) {
-        const omiePrecos = priceResult.data.precos as Record<string, number>;
-        for (const [key, val] of Object.entries(omiePrecos)) {
-          if (val && val > 0) mergedPrices[Number(key)] = val;
+      // Merge prices: local as base, Omie overrides
+      const mergedOben: Record<number, number> = { ...localPricesByOmie };
+      if (priceOben.data?.precos) {
+        for (const [k, v] of Object.entries(priceOben.data.precos as Record<string, number>)) {
+          if (v && v > 0) mergedOben[Number(k)] = v;
         }
       }
+      setCustomerPricesOben(mergedOben);
 
-      setCustomerPrices(mergedPrices);
-      if (parcelaResult.data?.ultima_parcela) setSelectedParcela(parcelaResult.data.ultima_parcela);
-      if (parcelaResult.data?.parcela_ranking) {
-        setCustomerParcelaRanking(parcelaResult.data.parcela_ranking.map((r: any) => r.codigo));
+      const mergedColacor: Record<number, number> = { ...localPricesByOmie };
+      if (priceColacor.data?.precos) {
+        for (const [k, v] of Object.entries(priceColacor.data.precos as Record<string, number>)) {
+          if (v && v > 0) mergedColacor[Number(k)] = v;
+        }
       }
+      setCustomerPricesColacor(mergedColacor);
+
+      if (parcelaOben.data?.ultima_parcela) setSelectedParcelaOben(parcelaOben.data.ultima_parcela);
+      if (parcelaOben.data?.parcela_ranking) setCustomerParcelaRankingOben(parcelaOben.data.parcela_ranking.map((r: any) => r.codigo));
+      if (parcelaColacor.data?.ultima_parcela) setSelectedParcelaColacor(parcelaColacor.data.ultima_parcela);
+      if (parcelaColacor.data?.parcela_ranking) setCustomerParcelaRankingColacor(parcelaColacor.data.parcela_ranking.map((r: any) => r.codigo));
     } catch (error: any) {
       toast({ title: 'Erro', description: error.message, variant: 'destructive' });
     } finally {
       setLoadingCustomer(false);
     }
 
-    // Validate vendedor across all 3 Omie accounts
+    // Validate vendedor
     if (cust.cnpj_cpf) {
       setValidatingVendedor(true);
       try {
@@ -455,17 +477,20 @@ const UnifiedOrder = () => {
 
   // ─── Product Cart Actions ───
   const getProductPrice = useCallback((product: Product): number => {
-    const omiePrice = customerPrices[product.omie_codigo_produto];
+    const account = (product.account || 'oben') as ProductAccount;
+    const prices = account === 'oben' ? customerPricesOben : customerPricesColacor;
+    const omiePrice = prices[product.omie_codigo_produto];
     return (omiePrice && omiePrice > 0) ? omiePrice : product.valor_unitario;
-  }, [customerPrices]);
+  }, [customerPricesOben, customerPricesColacor]);
 
   const addProductToCart = (product: Product) => {
+    const account = (product.account || 'oben') as ProductAccount;
     const existing = cart.find((c): c is ProductCartItem => c.type === 'product' && c.product.id === product.id);
     if (existing) {
       setCart(cart.map(c => c.type === 'product' && (c as ProductCartItem).product.id === product.id
         ? { ...c, quantity: c.quantity + 1 } as ProductCartItem : c));
     } else {
-      setCart([...cart, { type: 'product', product, quantity: 1, unit_price: getProductPrice(product) }]);
+      setCart([...cart, { type: 'product', product, quantity: 1, unit_price: getProductPrice(product), account }]);
     }
   };
 
@@ -522,23 +547,19 @@ const UnifiedOrder = () => {
     setCart(cart.filter((_, i) => i !== index));
   };
 
-  const productSubtotal = useMemo(() => productItems.reduce((s, c) => s + c.quantity * c.unit_price, 0), [productItems]);
+  const obenSubtotal = useMemo(() => obenProductItems.reduce((s, c) => s + c.quantity * c.unit_price, 0), [obenProductItems]);
+  const colacorProdSubtotal = useMemo(() => colacorProductItems.reduce((s, c) => s + c.quantity * c.unit_price, 0), [colacorProductItems]);
   const serviceSubtotal = useMemo(() => {
     return serviceItems.reduce((s, c) => {
       const price = getServicePrice(c);
       return s + (price !== null ? price * c.quantity : 0);
     }, 0);
   }, [serviceItems]);
-  const totalEstimated = productSubtotal + serviceSubtotal;
+  const totalEstimated = obenSubtotal + colacorProdSubtotal + serviceSubtotal;
 
-  const allProducts = useMemo(() => {
-    const obenWithAccount = products.map(p => ({ ...p, account: 'oben' as const }));
-    const colacorWithAccount = colacorProducts.map(p => ({ ...p, account: 'colacor' as const }));
-    return [...obenWithAccount, ...colacorWithAccount];
-  }, [products, colacorProducts]);
-
-  const filteredProducts = useMemo(() => {
-    const sorted = [...allProducts].sort((a, b) => {
+  // Filtered products per tab
+  const filteredObenProducts = useMemo(() => {
+    const sorted = [...obenProducts].sort((a, b) => {
       if (a.ativo && !b.ativo) return -1;
       if (!a.ativo && b.ativo) return 1;
       return a.descricao.localeCompare(b.descricao);
@@ -548,20 +569,34 @@ const UnifiedOrder = () => {
       p.descricao.toLowerCase().includes(productSearch.toLowerCase()) ||
       p.codigo.toLowerCase().includes(productSearch.toLowerCase())
     ).slice(0, 50);
-  }, [allProducts, productSearch]);
+  }, [obenProducts, productSearch]);
+
+  const filteredColacorProducts = useMemo(() => {
+    const sorted = [...colacorProducts].sort((a, b) => {
+      if (a.ativo && !b.ativo) return -1;
+      if (!a.ativo && b.ativo) return 1;
+      return a.descricao.localeCompare(b.descricao);
+    });
+    if (!productSearch) return sorted.slice(0, 50);
+    return sorted.filter(p =>
+      p.descricao.toLowerCase().includes(productSearch.toLowerCase()) ||
+      p.codigo.toLowerCase().includes(productSearch.toLowerCase())
+    ).slice(0, 50);
+  }, [colacorProducts, productSearch]);
 
   const availableTools = useMemo(() =>
     userTools.filter(t => !cart.some(c => c.type === 'service' && (c as ServiceCartItem).userTool.id === t.id)),
     [userTools, cart]
   );
 
-  // ─── Recommendation handler ───
+  // Recommendation handler
   const handleAddRecommendation = useCallback((item: RecommendationItem) => {
+    const allProducts = [...obenProducts, ...colacorProducts];
     const product = allProducts.find(p => p.id === item.product_id);
     if (product) addProductToCart(product);
-  }, [allProducts]);
+  }, [obenProducts, colacorProducts]);
 
-  // ─── Create local profile for Omie-only customers ───
+  // ─── Create local profile ───
   const handleStaffAddTool = async () => {
     if (!selectedCustomer) return;
     if (customerUserId) { setAddToolDialogOpen(true); return; }
@@ -609,14 +644,15 @@ const UnifiedOrder = () => {
     if (!selectedCustomer || cart.length === 0 || !user) return;
     setSubmitting(true);
 
-    const hasProducts = productItems.length > 0;
+    const hasObenProducts = obenProductItems.length > 0;
+    const hasColacorProducts = colacorProductItems.length > 0;
     const hasServices = serviceItems.length > 0;
     const results: string[] = [];
 
     try {
-      // 1. Oben: Sales order (products)
-      if (hasProducts) {
-        const itemsPayload = productItems.map(c => ({
+      // 1. Oben products
+      if (hasObenProducts) {
+        const itemsPayload = obenProductItems.map(c => ({
           product_id: c.product.id,
           omie_codigo_produto: c.product.omie_codigo_produto,
           codigo: c.product.codigo,
@@ -633,11 +669,12 @@ const UnifiedOrder = () => {
             customer_user_id: customerUserId || user.id,
             created_by: user.id,
             items: itemsPayload,
-            subtotal: productSubtotal,
-            total: productSubtotal,
+            subtotal: obenSubtotal,
+            total: obenSubtotal,
             status: 'rascunho',
             notes: notes || null,
-          })
+            account: 'oben',
+          } as any)
           .select('id')
           .single();
 
@@ -646,27 +683,82 @@ const UnifiedOrder = () => {
         const { data: omieResult, error: omieError } = await supabase.functions.invoke('omie-vendas-sync', {
           body: {
             action: 'criar_pedido',
+            account: 'oben',
             sales_order_id: salesOrder.id,
             codigo_cliente: selectedCustomer.codigo_cliente,
             codigo_vendedor: selectedCustomer.codigo_vendedor,
-            items: productItems.map(c => ({
+            items: obenProductItems.map(c => ({
               omie_codigo_produto: c.product.omie_codigo_produto,
               quantidade: c.quantity,
               valor_unitario: c.unit_price,
             })),
             observacao: notes,
-            codigo_parcela: selectedParcela,
+            codigo_parcela: selectedParcelaOben,
           },
         });
 
         if (!omieError) {
-          results.push(`Pedido Venda ${omieResult?.omie_numero_pedido || ''}`);
+          results.push(`PV Oben ${omieResult?.omie_numero_pedido || ''}`);
         } else {
-          results.push('Pedido Venda (pendente ERP)');
+          results.push('PV Oben (pendente ERP)');
         }
       }
 
-      // 2. Colacor: Service order (afiação)
+      // 2. Colacor products
+      if (hasColacorProducts) {
+        const itemsPayload = colacorProductItems.map(c => ({
+          product_id: c.product.id,
+          omie_codigo_produto: c.product.omie_codigo_produto,
+          codigo: c.product.codigo,
+          descricao: c.product.descricao,
+          unidade: c.product.unidade,
+          quantidade: c.quantity,
+          valor_unitario: c.unit_price,
+          valor_total: c.quantity * c.unit_price,
+        }));
+
+        const { data: salesOrder, error: insertError } = await supabase
+          .from('sales_orders')
+          .insert({
+            customer_user_id: customerUserId || user.id,
+            created_by: user.id,
+            items: itemsPayload,
+            subtotal: colacorProdSubtotal,
+            total: colacorProdSubtotal,
+            status: 'rascunho',
+            notes: notes || null,
+            account: 'colacor',
+          } as any)
+          .select('id')
+          .single();
+
+        if (insertError) throw insertError;
+
+        const { data: omieResult, error: omieError } = await supabase.functions.invoke('omie-vendas-sync', {
+          body: {
+            action: 'criar_pedido',
+            account: 'colacor',
+            sales_order_id: salesOrder.id,
+            codigo_cliente: selectedCustomer.codigo_cliente,
+            codigo_vendedor: selectedCustomer.codigo_vendedor,
+            items: colacorProductItems.map(c => ({
+              omie_codigo_produto: c.product.omie_codigo_produto,
+              quantidade: c.quantity,
+              valor_unitario: c.unit_price,
+            })),
+            observacao: notes,
+            codigo_parcela: selectedParcelaColacor,
+          },
+        });
+
+        if (!omieError) {
+          results.push(`PV Colacor ${omieResult?.omie_numero_pedido || ''}`);
+        } else {
+          results.push('PV Colacor (pendente ERP)');
+        }
+      }
+
+      // 3. Services (Afiação)
       if (hasServices) {
         const orderId = crypto.randomUUID();
         const orderItems = serviceItems.map(c => {
@@ -733,6 +825,65 @@ const UnifiedOrder = () => {
     return <div className="flex items-center justify-center py-32"><Loader2 className="w-6 h-6 animate-spin text-muted-foreground" /></div>;
   }
 
+  // Product table render helper
+  const renderProductTable = (prods: Product[], prices: Record<number, number>, loading: boolean) => (
+    <>
+      <div className="relative mb-3">
+        <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
+        <Input placeholder="Buscar produto..." value={productSearch} onChange={e => setProductSearch(e.target.value)} className="pl-9 h-9" />
+      </div>
+      {loading ? (
+        <Loader2 className="w-5 h-5 animate-spin mx-auto" />
+      ) : (
+        <div className="overflow-x-auto max-h-[400px] overflow-y-auto">
+          <table className="w-full text-sm">
+            <thead className="sticky top-0 bg-card">
+              <tr className="border-b bg-muted/30">
+                <th className="text-left px-3 py-2 font-medium text-muted-foreground">Produto</th>
+                <th className="text-right px-3 py-2 font-medium text-muted-foreground">Preço</th>
+                <th className="text-center px-3 py-2 font-medium text-muted-foreground">Estoque</th>
+                <th className="w-10"></th>
+              </tr>
+            </thead>
+            <tbody>
+              {prods.map(product => {
+                const isInCart = productItems.some(c => c.product.id === product.id);
+                const customerPrice = prices[product.omie_codigo_produto];
+                return (
+                  <tr key={product.id} className={cn('border-b last:border-b-0 hover:bg-muted/20 transition-colors', isInCart && 'bg-accent/20')}>
+                    <td className="px-3 py-2">
+                      <div className="flex items-center gap-1.5 flex-wrap">
+                        <span className="text-xs truncate max-w-[200px]">{product.descricao}</span>
+                        {!product.ativo && <Badge variant="destructive" className="text-[9px] px-1 py-0">Inativo</Badge>}
+                        {customerPrice && customerPrice !== product.valor_unitario && (
+                          <Badge variant="secondary" className="text-[9px] px-1 py-0">Preço cliente</Badge>
+                        )}
+                      </div>
+                      <span className="text-[10px] text-muted-foreground font-mono">{product.codigo}</span>
+                    </td>
+                    <td className="px-3 py-2 text-right text-xs font-medium">
+                      {fmt(customerPrice || product.valor_unitario)}
+                    </td>
+                    <td className="px-3 py-2 text-center">
+                      <Badge variant={product.estoque > 0 ? 'outline' : 'destructive'} className="text-[10px]">
+                        {product.estoque ?? 0}
+                      </Badge>
+                    </td>
+                    <td className="px-2 py-2">
+                      <Button size="sm" variant={isInCart ? 'secondary' : 'ghost'} className="h-7 w-7 p-0" onClick={() => addProductToCart(product)}>
+                        <Plus className="w-3.5 h-3.5" />
+                      </Button>
+                    </td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        </div>
+      )}
+    </>
+  );
+
   return (
     <div className="max-w-5xl mx-auto space-y-4">
       {/* Header */}
@@ -742,7 +893,7 @@ const UnifiedOrder = () => {
         </button>
         <div>
           <h1 className="text-lg font-semibold">Novo Pedido</h1>
-          <p className="text-xs text-muted-foreground">Pedido unificado: produtos + afiação para um único cliente.</p>
+          <p className="text-xs text-muted-foreground">Produtos Oben, Colacor e Afiação em um único pedido.</p>
         </div>
       </div>
 
@@ -769,11 +920,13 @@ const UnifiedOrder = () => {
                     </div>
                     <Button variant="ghost" size="sm" onClick={() => {
                       setSelectedCustomer(null);
-                      setCustomerPrices({});
+                      setCustomerPricesOben({});
+                      setCustomerPricesColacor({});
                       setCart([]);
                       setCustomerUserId(null);
                       setUserTools([]);
-                      setSelectedParcela('999');
+                      setSelectedParcelaOben('999');
+                      setSelectedParcelaColacor('999');
                       setVendedorDivergencias([]);
                     }}>
                       Trocar
@@ -830,18 +983,25 @@ const UnifiedOrder = () => {
             </CardContent>
           </Card>
 
-          {/* 2. Tabbed catalog */}
+          {/* 2. Tabbed catalog: Oben / Colacor / Afiação */}
           {selectedCustomer && (
             <Tabs value={activeTab} onValueChange={setActiveTab} className="space-y-3">
-              <TabsList className="w-full grid grid-cols-2">
-                <TabsTrigger value="products" className="gap-1.5">
-                  <Package className="w-3.5 h-3.5" />
-                  Produtos
-                  {productItems.length > 0 && (
-                    <Badge variant="secondary" className="text-[10px] px-1 py-0 ml-1">{productItems.length}</Badge>
+              <TabsList className="w-full grid grid-cols-3">
+                <TabsTrigger value="oben" className="gap-1">
+                  <Building2 className="w-3.5 h-3.5" />
+                  Oben
+                  {obenProductItems.length > 0 && (
+                    <Badge variant="secondary" className="text-[10px] px-1 py-0 ml-1">{obenProductItems.length}</Badge>
                   )}
                 </TabsTrigger>
-                <TabsTrigger value="services" className="gap-1.5">
+                <TabsTrigger value="colacor" className="gap-1">
+                  <Building2 className="w-3.5 h-3.5" />
+                  Colacor
+                  {colacorProductItems.length > 0 && (
+                    <Badge variant="secondary" className="text-[10px] px-1 py-0 ml-1">{colacorProductItems.length}</Badge>
+                  )}
+                </TabsTrigger>
+                <TabsTrigger value="services" className="gap-1">
                   <Scissors className="w-3.5 h-3.5" />
                   Afiação
                   {serviceItems.length > 0 && (
@@ -850,73 +1010,30 @@ const UnifiedOrder = () => {
                 </TabsTrigger>
               </TabsList>
 
-              {/* Products Tab */}
-              <TabsContent value="products">
+              {/* Oben Products Tab */}
+              <TabsContent value="oben">
                 <Card>
                   <CardHeader className="pb-2">
                     <CardTitle className="text-sm flex items-center gap-2">
-                      <Package className="w-4 h-4" /> Catálogo de Produtos
+                      <Package className="w-4 h-4" /> Produtos Oben
                     </CardTitle>
                   </CardHeader>
                   <CardContent>
-                    <div className="relative mb-3">
-                      <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
-                      <Input placeholder="Buscar produto..." value={productSearch} onChange={e => setProductSearch(e.target.value)} className="pl-9 h-9" />
-                    </div>
-                    {loadingProducts ? (
-                      <Loader2 className="w-5 h-5 animate-spin mx-auto" />
-                    ) : (
-                      <div className="overflow-x-auto max-h-[400px] overflow-y-auto">
-                        <table className="w-full text-sm">
-                          <thead className="sticky top-0 bg-card">
-                            <tr className="border-b bg-muted/30">
-                              <th className="text-left px-3 py-2 font-medium text-muted-foreground">Produto</th>
-                              <th className="text-right px-3 py-2 font-medium text-muted-foreground">Preço</th>
-                              <th className="text-center px-3 py-2 font-medium text-muted-foreground">Estoque</th>
-                              <th className="w-10"></th>
-                            </tr>
-                          </thead>
-                          <tbody>
-                            {filteredProducts.map(product => {
-                              const isInCart = productItems.some(c => c.product.id === product.id);
-                              const customerPrice = customerPrices[product.omie_codigo_produto];
-                              return (
-                                <tr key={product.id} className={cn('border-b last:border-b-0 hover:bg-muted/20 transition-colors', isInCart && 'bg-accent/20')}>
-                                  <td className="px-3 py-2">
-                                    <div className="flex items-center gap-1.5 flex-wrap">
-                                      <span className="text-xs truncate max-w-[200px]">{product.descricao}</span>
-                                      {product.account === 'colacor' && (
-                                        <Badge variant="outline" className="text-[9px] px-1 py-0 text-amber-700 bg-amber-50 border-amber-200">
-                                          Colacor
-                                        </Badge>
-                                      )}
-                                      {!product.ativo && <Badge variant="destructive" className="text-[9px] px-1 py-0">Inativo</Badge>}
-                                      {customerPrice && customerPrice !== product.valor_unitario && (
-                                        <Badge variant="secondary" className="text-[9px] px-1 py-0">Preço cliente</Badge>
-                                      )}
-                                    </div>
-                                    <span className="text-[10px] text-muted-foreground font-mono">{product.codigo}</span>
-                                  </td>
-                                  <td className="px-3 py-2 text-right text-xs font-medium">
-                                    {fmt(customerPrice || product.valor_unitario)}
-                                  </td>
-                                  <td className="px-3 py-2 text-center">
-                                    <Badge variant={product.estoque > 0 ? 'outline' : 'destructive'} className="text-[10px]">
-                                      {product.estoque ?? 0}
-                                    </Badge>
-                                  </td>
-                                  <td className="px-2 py-2">
-                                    <Button size="sm" variant={isInCart ? 'secondary' : 'ghost'} className="h-7 w-7 p-0" onClick={() => addProductToCart(product)}>
-                                      <Plus className="w-3.5 h-3.5" />
-                                    </Button>
-                                  </td>
-                                </tr>
-                              );
-                            })}
-                          </tbody>
-                        </table>
-                      </div>
-                    )}
+                    {renderProductTable(filteredObenProducts, customerPricesOben, loadingObenProducts)}
+                  </CardContent>
+                </Card>
+              </TabsContent>
+
+              {/* Colacor Products Tab */}
+              <TabsContent value="colacor">
+                <Card>
+                  <CardHeader className="pb-2">
+                    <CardTitle className="text-sm flex items-center gap-2">
+                      <Package className="w-4 h-4" /> Produtos Colacor
+                    </CardTitle>
+                  </CardHeader>
+                  <CardContent>
+                    {renderProductTable(filteredColacorProducts, customerPricesColacor, loadingColacorProducts)}
                   </CardContent>
                 </Card>
               </TabsContent>
@@ -953,8 +1070,7 @@ const UnifiedOrder = () => {
                       </div>
                     ) : (
                       <div className="space-y-3">
-                        {/* Tools in cart - edit servico */}
-                        {serviceItems.map((item, idx) => {
+                        {serviceItems.map((item) => {
                           const filteredSvcs = getFilteredServicos(item.userTool);
                           const cartIdx = cart.indexOf(item);
                           return (
@@ -997,7 +1113,6 @@ const UnifiedOrder = () => {
                           );
                         })}
 
-                        {/* Available tools */}
                         {availableTools.length > 0 && (
                           <div>
                             <p className="text-xs font-medium text-muted-foreground mb-2">
@@ -1049,13 +1164,52 @@ const UnifiedOrder = () => {
                 <p className="text-xs text-muted-foreground text-center py-6">Nenhum item adicionado</p>
               ) : (
                 <div className="space-y-3">
-                  {/* Product items */}
-                  {productItems.length > 0 && (
+                  {/* Oben Products */}
+                  {obenProductItems.length > 0 && (
                     <div>
                       <p className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground mb-1.5">
-                        <Package className="w-3 h-3 inline mr-1" />Produtos
+                        <Building2 className="w-3 h-3 inline mr-1" />Oben
                       </p>
-                      {productItems.map((item, idx) => {
+                      {obenProductItems.map(item => {
+                        const cartIdx = cart.indexOf(item);
+                        return (
+                          <div key={item.product.id} className="space-y-1.5 mb-2">
+                            <div className="flex items-start justify-between gap-1.5">
+                              <p className="text-xs font-medium flex-1 leading-tight">{item.product.descricao}</p>
+                              <button onClick={() => removeFromCart(cartIdx)}>
+                                <Trash2 className="w-3.5 h-3.5 text-muted-foreground hover:text-destructive" />
+                              </button>
+                            </div>
+                            <div className="flex items-center gap-2">
+                              <div className="flex items-center gap-0.5">
+                                <Button size="sm" variant="outline" className="h-6 w-6 p-0" onClick={() => updateQuantity(cartIdx, -1)}>
+                                  <Minus className="w-3 h-3" />
+                                </Button>
+                                <span className="text-xs w-6 text-center font-medium">{item.quantity}</span>
+                                <Button size="sm" variant="outline" className="h-6 w-6 p-0" onClick={() => updateQuantity(cartIdx, 1)}>
+                                  <Plus className="w-3 h-3" />
+                                </Button>
+                              </div>
+                              <div className="flex items-center gap-0.5 flex-1">
+                                <span className="text-[10px] text-muted-foreground">R$</span>
+                                <Input type="number" step="0.01" value={item.unit_price} onChange={e => updateProductPrice(cartIdx, parseFloat(e.target.value) || 0)} className="h-6 text-xs" />
+                              </div>
+                              <span className="text-xs font-semibold shrink-0">{fmt(item.quantity * item.unit_price)}</span>
+                            </div>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  )}
+
+                  {/* Colacor Products */}
+                  {colacorProductItems.length > 0 && (
+                    <div>
+                      {obenProductItems.length > 0 && <Separator className="my-2" />}
+                      <p className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground mb-1.5">
+                        <Building2 className="w-3 h-3 inline mr-1" />Colacor Produtos
+                      </p>
+                      {colacorProductItems.map(item => {
                         const cartIdx = cart.indexOf(item);
                         return (
                           <div key={item.product.id} className="space-y-1.5 mb-2">
@@ -1090,7 +1244,7 @@ const UnifiedOrder = () => {
                   {/* Service items */}
                   {serviceItems.length > 0 && (
                     <div>
-                      {productItems.length > 0 && <Separator className="my-2" />}
+                      {(obenProductItems.length > 0 || colacorProductItems.length > 0) && <Separator className="my-2" />}
                       <p className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground mb-1.5">
                         <Scissors className="w-3 h-3 inline mr-1" />Afiação
                       </p>
@@ -1118,10 +1272,16 @@ const UnifiedOrder = () => {
                   <Separator />
 
                   {/* Totals */}
-                  {productItems.length > 0 && (
+                  {obenProductItems.length > 0 && (
                     <div className="flex justify-between text-xs">
-                      <span className="text-muted-foreground">Produtos</span>
-                      <span className="font-medium">{fmt(productSubtotal)}</span>
+                      <span className="text-muted-foreground">Oben</span>
+                      <span className="font-medium">{fmt(obenSubtotal)}</span>
+                    </div>
+                  )}
+                  {colacorProductItems.length > 0 && (
+                    <div className="flex justify-between text-xs">
+                      <span className="text-muted-foreground">Colacor Prod.</span>
+                      <span className="font-medium">{fmt(colacorProdSubtotal)}</span>
                     </div>
                   )}
                   {serviceItems.length > 0 && (
@@ -1137,8 +1297,9 @@ const UnifiedOrder = () => {
 
                   {/* Info badges */}
                   <div className="flex flex-wrap gap-1">
-                    {productItems.length > 0 && <Badge variant="outline" className="text-[9px]"><Package className="w-2.5 h-2.5 mr-0.5" />Oben</Badge>}
-                    {serviceItems.length > 0 && <Badge variant="outline" className="text-[9px]"><Scissors className="w-2.5 h-2.5 mr-0.5" />Colacor</Badge>}
+                    {obenProductItems.length > 0 && <Badge variant="outline" className="text-[9px]"><Building2 className="w-2.5 h-2.5 mr-0.5" />Oben</Badge>}
+                    {colacorProductItems.length > 0 && <Badge variant="outline" className="text-[9px]"><Building2 className="w-2.5 h-2.5 mr-0.5" />Colacor</Badge>}
+                    {serviceItems.length > 0 && <Badge variant="outline" className="text-[9px]"><Scissors className="w-2.5 h-2.5 mr-0.5" />Afiação</Badge>}
                   </div>
                 </div>
               )}
@@ -1161,20 +1322,20 @@ const UnifiedOrder = () => {
           {cart.length > 0 && selectedCustomer && (
             <Card>
               <CardContent className="pt-4 space-y-3">
-                {productItems.length > 0 && (
+                {obenProductItems.length > 0 && (
                   <div>
-                    <Label className="text-xs font-medium">Pagamento (Produtos)</Label>
+                    <Label className="text-xs font-medium">Pagamento Oben</Label>
                     {loadingFormas ? (
                       <Loader2 className="w-4 h-4 animate-spin mt-1" />
                     ) : (
-                      <Select value={selectedParcela} onValueChange={setSelectedParcela}>
+                      <Select value={selectedParcelaOben} onValueChange={setSelectedParcelaOben}>
                         <SelectTrigger className="text-sm h-9 mt-1">
                           <SelectValue placeholder="Selecione..." />
                         </SelectTrigger>
                         <SelectContent>
-                          {sortedFormasPagamento.map(f => (
+                          {sortedFormasPagamentoOben.map(f => (
                             <SelectItem key={f.codigo} value={f.codigo}>
-                              {customerParcelaRanking.includes(f.codigo) ? '⭐ ' : ''}{f.descricao}
+                              {customerParcelaRankingOben.includes(f.codigo) ? '⭐ ' : ''}{f.descricao}
                             </SelectItem>
                           ))}
                         </SelectContent>
@@ -1182,12 +1343,34 @@ const UnifiedOrder = () => {
                     )}
                   </div>
                 )}
+
+                {colacorProductItems.length > 0 && (
+                  <div>
+                    <Label className="text-xs font-medium">Pagamento Colacor</Label>
+                    {loadingFormas ? (
+                      <Loader2 className="w-4 h-4 animate-spin mt-1" />
+                    ) : (
+                      <Select value={selectedParcelaColacor} onValueChange={setSelectedParcelaColacor}>
+                        <SelectTrigger className="text-sm h-9 mt-1">
+                          <SelectValue placeholder="Selecione..." />
+                        </SelectTrigger>
+                        <SelectContent>
+                          {sortedFormasPagamentoColacor.map(f => (
+                            <SelectItem key={f.codigo} value={f.codigo}>
+                              {customerParcelaRankingColacor.includes(f.codigo) ? '⭐ ' : ''}{f.descricao}
+                            </SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
+                    )}
+                  </div>
+                )}
+
                 <div>
                   <Label className="text-xs font-medium">Observações</Label>
                   <Textarea placeholder="Observações do pedido..." value={notes} onChange={e => setNotes(e.target.value)} rows={2} className="text-sm mt-1" />
                 </div>
 
-                {/* Validation */}
                 {serviceItems.some(s => !s.servico) && (
                   <p className="text-xs text-amber-600">
                     <AlertCircle className="w-3 h-3 inline mr-1" />
@@ -1202,9 +1385,10 @@ const UnifiedOrder = () => {
                 >
                   {submitting ? <Loader2 className="w-4 h-4 animate-spin" /> : <Send className="w-4 h-4" />}
                   Enviar pedido
-                  {productItems.length > 0 && serviceItems.length > 0 && (
-                    <span className="text-[10px] opacity-70">(2 pedidos)</span>
-                  )}
+                  {(() => {
+                    const count = (obenProductItems.length > 0 ? 1 : 0) + (colacorProductItems.length > 0 ? 1 : 0) + (serviceItems.length > 0 ? 1 : 0);
+                    return count > 1 ? <span className="text-[10px] opacity-70">({count} pedidos)</span> : null;
+                  })()}
                 </Button>
               </CardContent>
             </Card>
