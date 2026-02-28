@@ -16,6 +16,7 @@ const CNAES_INDUSTRIAIS = [
 
 interface OmieCliente {
   codigo_cliente?: number;
+  codigo_cliente_omie?: number;
   codigo_cliente_integracao?: string;
   razao_social?: string;
   nome_fantasia?: string;
@@ -350,7 +351,7 @@ serve(async (req) => {
         const searchResult = await pesquisarClientes(query);
         result = {
           clientes: searchResult.clientes.map(c => ({
-            codigo_cliente: c.codigo_cliente,
+            codigo_cliente: c.codigo_cliente_omie || c.codigo_cliente,
             razao_social: c.razao_social,
             nome_fantasia: c.nome_fantasia,
             cnpj_cpf: c.cnpj_cpf,
