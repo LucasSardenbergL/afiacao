@@ -196,7 +196,7 @@ async function syncClienteOmie(
   // Cliente encontrado - extrair dados incluindo vendedor
   const cliente = searchResult.clientes_cadastro[0];
   const omieCodigoCliente = cliente.codigo_cliente_omie;
-  const omieCodigoVendedor = cliente.codigo_vendedor || null;
+  const omieCodigoVendedor = cliente.recomendacoes?.codigo_vendedor || cliente.codigo_vendedor || null;
   
   console.log(`[Omie] Cliente encontrado: ${omieCodigoCliente} - ${cliente.razao_social}`);
   console.log(`[Omie] Vendedor associado: ${omieCodigoVendedor || 'Nenhum'}`);
@@ -612,7 +612,8 @@ serve(async (req) => {
                   },
                 }
               ) as any;
-              omieCodigoVendedor = searchResult.clientes_cadastro?.[0]?.codigo_vendedor || undefined;
+              const clienteOmie = searchResult.clientes_cadastro?.[0];
+              omieCodigoVendedor = clienteOmie?.recomendacoes?.codigo_vendedor || clienteOmie?.codigo_vendedor || undefined;
             } catch (e) {
               console.log("[Omie] Não foi possível buscar vendedor do cliente:", e);
             }

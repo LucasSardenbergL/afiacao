@@ -34,6 +34,12 @@ interface OmieCliente {
   inscricao_estadual?: string;
   tags?: Array<{ tag: string }>;
   codigo_vendedor?: number;
+  recomendacoes?: {
+    codigo_vendedor?: number;
+    codigo_transportadora?: number;
+    gerar_boletos?: string;
+    tipo_assinante?: string;
+  };
 }
 
 interface CNPJData {
@@ -359,7 +365,7 @@ serve(async (req) => {
             telefone: c.telefone1_numero,
             cidade: c.cidade,
             estado: c.estado,
-            codigo_vendedor: c.codigo_vendedor || null,
+            codigo_vendedor: c.recomendacoes?.codigo_vendedor || c.codigo_vendedor || null,
           })),
           total: searchResult.total,
         };
@@ -394,7 +400,7 @@ serve(async (req) => {
               cep: clienteCompleto.cep,
               pessoa_fisica: clienteCompleto.pessoa_fisica,
               inscricao_estadual: clienteCompleto.inscricao_estadual,
-              codigo_vendedor: clienteCompleto.codigo_vendedor,
+              codigo_vendedor: clienteCompleto.recomendacoes?.codigo_vendedor || clienteCompleto.codigo_vendedor,
             },
           };
         } else {
@@ -468,7 +474,7 @@ serve(async (req) => {
           .insert({
             user_id: newUserId,
             omie_codigo_cliente: cliente.codigo_cliente,
-            omie_codigo_vendedor: cliente.codigo_vendedor || null,
+            omie_codigo_vendedor: cliente.codigo_vendedor || null,  // Already extracted by frontend from recomendacoes
           });
 
         if (mappingError) {
