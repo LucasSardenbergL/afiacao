@@ -1117,7 +1117,7 @@ const UnifiedOrder = () => {
   );
 
   return (
-    <div className="max-w-5xl mx-auto space-y-4">
+    <div className="max-w-5xl mx-auto space-y-4 pb-20">
       {/* Header */}
       <div className="flex items-center gap-3">
         <button onClick={() => navigate(-1)} className="flex items-center gap-1 text-sm text-muted-foreground hover:text-foreground">
@@ -1586,7 +1586,7 @@ const UnifiedOrder = () => {
 
         {/* Right: Cart sidebar */}
         <div className="space-y-4">
-          <Card className="sticky top-20 flex flex-col" style={{ maxHeight: 'calc(100vh - 6rem)' }}>
+          <Card className="flex flex-col max-h-[50vh] overflow-hidden">
             <CardHeader className="pb-2">
               <CardTitle className="text-sm flex items-center gap-2">
                 <ShoppingCart className="w-4 h-4" />
@@ -1852,6 +1852,35 @@ const UnifiedOrder = () => {
           targetUserId={customerUserId}
           onToolAdded={() => loadUserTools(customerUserId)}
         />
+      )}
+
+      {/* Fixed bottom bar - cart summary */}
+      {cart.length > 0 && selectedCustomer && (
+        <div className="fixed bottom-0 left-0 right-0 z-50 bg-background border-t shadow-lg px-4 py-2.5 safe-bottom">
+          <div className="max-w-screen-xl mx-auto flex items-center justify-between gap-3">
+            <div className="flex items-center gap-3 min-w-0">
+              <ShoppingCart className="w-4 h-4 text-muted-foreground shrink-0" />
+              <div className="flex items-center gap-2 flex-wrap">
+                <span className="text-sm font-semibold">{cart.length} {cart.length === 1 ? 'item' : 'itens'}</span>
+                <span className="text-sm font-bold">{totalEstimated > 0 ? fmt(totalEstimated) : 'A definir'}</span>
+                <div className="flex gap-1">
+                  {obenProductItems.length > 0 && <Badge variant="outline" className="text-[9px] py-0"><Building2 className="w-2.5 h-2.5 mr-0.5" />Oben</Badge>}
+                  {colacorProductItems.length > 0 && <Badge variant="outline" className="text-[9px] py-0"><Building2 className="w-2.5 h-2.5 mr-0.5" />Colacor</Badge>}
+                  {serviceItems.length > 0 && <Badge variant="outline" className="text-[9px] py-0"><Scissors className="w-2.5 h-2.5 mr-0.5" />Afiação</Badge>}
+                </div>
+              </div>
+            </div>
+            <Button
+              size="sm"
+              className="gap-1.5 shrink-0"
+              onClick={submitOrder}
+              disabled={submitting || serviceItems.some(s => !s.servico) || vendedorDivergencias.length > 0}
+            >
+              {submitting ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Send className="w-3.5 h-3.5" />}
+              Enviar pedido
+            </Button>
+          </div>
+        </div>
       )}
     </div>
   );
