@@ -24,6 +24,9 @@ interface ProfileData {
   avatar_url: string | null;
   business_hours_open: string | null;
   business_hours_close: string | null;
+  lunch_start: string | null;
+  lunch_end: string | null;
+  preferred_delivery_time: string | null;
 }
 
 const Profile = () => {
@@ -46,6 +49,9 @@ const Profile = () => {
   const [editDocument, setEditDocument] = useState('');
   const [editBusinessOpen, setEditBusinessOpen] = useState('');
   const [editBusinessClose, setEditBusinessClose] = useState('');
+  const [editLunchStart, setEditLunchStart] = useState('');
+  const [editLunchEnd, setEditLunchEnd] = useState('');
+  const [editDeliveryTime, setEditDeliveryTime] = useState('');
   const [saving, setSaving] = useState(false);
   
   const { isSupported: biometricSupported, isRegistered: biometricRegistered, isLoading: biometricLoading, register: registerBiometric, removeCredential: removeBiometric, checkRegistration } = useBiometricAuth();
@@ -64,7 +70,7 @@ const Profile = () => {
     try {
       const { data: profileData } = await supabase
         .from('profiles')
-        .select('name, email, phone, document, customer_type, avatar_url, business_hours_open, business_hours_close')
+        .select('name, email, phone, document, customer_type, avatar_url, business_hours_open, business_hours_close, lunch_start, lunch_end, preferred_delivery_time')
         .eq('user_id', user.id)
         .maybeSingle();
 
@@ -80,6 +86,9 @@ const Profile = () => {
           avatar_url: null,
           business_hours_open: null,
           business_hours_close: null,
+          lunch_start: null,
+          lunch_end: null,
+          preferred_delivery_time: null,
         });
       }
 
@@ -201,6 +210,9 @@ const Profile = () => {
     setEditDocument(profile?.document || '');
     setEditBusinessOpen(profile?.business_hours_open || '');
     setEditBusinessClose(profile?.business_hours_close || '');
+    setEditLunchStart(profile?.lunch_start || '');
+    setEditLunchEnd(profile?.lunch_end || '');
+    setEditDeliveryTime(profile?.preferred_delivery_time || '');
     setIsEditing(true);
   };
 
@@ -212,16 +224,43 @@ const Profile = () => {
     if (!user) return;
     setSaving(true);
     try {
+      const updateData: Record<string, unknown> = {
+        name: editName,
+        email: editEmail || null,
+        phone: editPhone || null,
+        document: editDocument?.replace(/\D/g, '') || null,
+        business_hours_open: editBusinessOpen || null,
+        business_hours_close: editBusinessClose || null,
+        lunch_start: editLunchStart || null,
+        lunch_end: editLunchEnd || null,
+        preferred_delivery_time: editDeliveryTime || null,
+      };
+
+      // Validate delivery time against business hours and lunch
+      if (editDeliveryTime && editBusinessOpen && editBusinessClose) {
+        if (editDeliveryTime < editBusinessOpen || editDeliveryTime >= editBusinessClose) {
+          toast({
+            title: 'Horário inválido',
+            description: `O horário de entrega deve ser entre ${editBusinessOpen} e ${editBusinessClose}`,
+            variant: 'destructive',
+          });
+          setSaving(false);
+          return;
+        }
+        if (editLunchStart && editLunchEnd && editDeliveryTime >= editLunchStart && editDeliveryTime < editLunchEnd) {
+          toast({
+            title: 'Horário inválido',
+            description: `O horário de entrega não pode ser durante o almoço (${editLunchStart} - ${editLunchEnd})`,
+            variant: 'destructive',
+          });
+          setSaving(false);
+          return;
+        }
+      }
+
       const { error } = await supabase
         .from('profiles')
-        .update({
-          name: editName,
-          email: editEmail || null,
-          phone: editPhone || null,
-          document: editDocument?.replace(/\D/g, '') || null,
-          business_hours_open: editBusinessOpen || null,
-          business_hours_close: editBusinessClose || null,
-        })
+        .update(updateData)
         .eq('user_id', user.id);
 
       if (error) throw error;
@@ -234,6 +273,9 @@ const Profile = () => {
         document: editDocument?.replace(/\D/g, '') || null,
         business_hours_open: editBusinessOpen || null,
         business_hours_close: editBusinessClose || null,
+        lunch_start: editLunchStart || null,
+        lunch_end: editLunchEnd || null,
+        preferred_delivery_time: editDeliveryTime || null,
       } : null);
 
       setIsEditing(false);
@@ -354,16 +396,35 @@ const Profile = () => {
                 <Input id="editDocument" value={editDocument} onChange={e => setEditDocument(e.target.value)} placeholder="000.000.000-00" />
               </div>
               {!isStaff && (
-                <div className="grid grid-cols-2 gap-3">
-                  <div>
-                    <Label htmlFor="editOpen">Horário Abertura</Label>
-                    <Input id="editOpen" type="time" value={editBusinessOpen} onChange={e => setEditBusinessOpen(e.target.value)} />
+                <>
+                  <div className="grid grid-cols-2 gap-3">
+                    <div>
+                      <Label htmlFor="editOpen">Horário Abertura</Label>
+                      <Input id="editOpen" type="time" value={editBusinessOpen} onChange={e => setEditBusinessOpen(e.target.value)} />
+                    </div>
+                    <div>
+                      <Label htmlFor="editClose">Horário Fechamento</Label>
+                      <Input id="editClose" type="time" value={editBusinessClose} onChange={e => setEditBusinessClose(e.target.value)} />
+                    </div>
+                  </div>
+                  <div className="grid grid-cols-2 gap-3">
+                    <div>
+                      <Label htmlFor="editLunchStart">Início Almoço</Label>
+                      <Input id="editLunchStart" type="time" value={editLunchStart} onChange={e => setEditLunchStart(e.target.value)} />
+                    </div>
+                    <div>
+                      <Label htmlFor="editLunchEnd">Fim Almoço</Label>
+                      <Input id="editLunchEnd" type="time" value={editLunchEnd} onChange={e => setEditLunchEnd(e.target.value)} />
+                    </div>
                   </div>
                   <div>
-                    <Label htmlFor="editClose">Horário Fechamento</Label>
-                    <Input id="editClose" type="time" value={editBusinessClose} onChange={e => setEditBusinessClose(e.target.value)} />
+                    <Label htmlFor="editDelivery">Horário Preferido de Entrega</Label>
+                    <Input id="editDelivery" type="time" value={editDeliveryTime} onChange={e => setEditDeliveryTime(e.target.value)} placeholder="Ex: 14:30" />
+                    <p className="text-xs text-muted-foreground mt-1">
+                      Deve ser dentro do horário comercial e fora do almoço
+                    </p>
                   </div>
-                </div>
+                </>
               )}
               <div className="flex gap-2 pt-2">
                 <Button onClick={handleSaveProfile} disabled={saving} className="flex-1">
@@ -394,7 +455,19 @@ const Profile = () => {
                 {!isStaff && (profile?.business_hours_open || profile?.business_hours_close) && (
                   <div className="flex items-center gap-2 text-muted-foreground">
                     <Clock className="w-4 h-4" />
-                    <span>{profile.business_hours_open || '--:--'} às {profile.business_hours_close || '--:--'}</span>
+                    <span>Funcionamento: {profile.business_hours_open || '--:--'} às {profile.business_hours_close || '--:--'}</span>
+                  </div>
+                )}
+                {!isStaff && (profile?.lunch_start || profile?.lunch_end) && (
+                  <div className="flex items-center gap-2 text-muted-foreground">
+                    <Clock className="w-4 h-4" />
+                    <span>Almoço: {profile.lunch_start || '--:--'} às {profile.lunch_end || '--:--'}</span>
+                  </div>
+                )}
+                {!isStaff && profile?.preferred_delivery_time && (
+                  <div className="flex items-center gap-2 text-muted-foreground">
+                    <Clock className="w-4 h-4" />
+                    <span>Entrega preferida: {profile.preferred_delivery_time}</span>
                   </div>
                 )}
               </div>
