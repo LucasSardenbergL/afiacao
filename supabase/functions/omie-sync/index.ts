@@ -536,7 +536,7 @@ serve(async (req) => {
     const { action, orderId, orderData, profileData, addressData, staffContext } = body;
 
     // Ações que não requerem autenticação (cron jobs, webhooks)
-    const publicActions = ["sync_services"];
+    const publicActions = ["sync_services", "sync_deleted_orders"];
     
     let userId: string | null = null;
     
@@ -980,6 +980,150 @@ serve(async (req) => {
             error: syncError instanceof Error ? syncError.message : "Erro ao sincronizar serviços",
           };
         }
+        break;
+      }
+
+      case "delete_order": {
+        // Excluir OS no Omie e hard delete no banco
+        const { orderId: deleteOrderId } = body;
+        
+        if (!deleteOrderId) {
+          return new Response(
+            JSON.stringify({ error: "orderId obrigatório" }),
+            { status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+          );
+        }
+
+        // Verificar se usuário é staff
+        const { data: deleteRoleData } = await supabaseAdmin
+          .from("user_roles")
+          .select("role")
+          .eq("user_id", userId)
+          .maybeSingle();
+
+        if (!deleteRoleData || (deleteRoleData.role !== "admin" && deleteRoleData.role !== "employee")) {
+          return new Response(
+            JSON.stringify({ error: "Apenas funcionários podem excluir pedidos" }),
+            { status: 403, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+          );
+        }
+
+        // Buscar OS vinculada
+        const { data: osDelete } = await supabaseAdmin
+          .from("omie_ordens_servico")
+          .select("omie_codigo_os, omie_numero_os")
+          .eq("order_id", deleteOrderId)
+          .maybeSingle();
+
+        // Tentar excluir no Omie se existir OS
+        if (osDelete?.omie_codigo_os) {
+          try {
+            console.log(`[Omie] Excluindo OS ${osDelete.omie_numero_os} (código: ${osDelete.omie_codigo_os})`);
+            await callOmieApi("servicos/os/", "ExcluirOS", {
+              nCodOS: osDelete.omie_codigo_os,
+            });
+            console.log(`[Omie] OS ${osDelete.omie_numero_os} excluída com sucesso`);
+          } catch (excluirError) {
+            console.error(`[Omie] Erro ao excluir OS:`, excluirError);
+            // Continue with local delete even if Omie fails
+          }
+        }
+
+        // Hard delete: omie_ordens_servico, order_messages, order_reviews, loyalty_points, sending_quality_logs, then orders
+        await supabaseAdmin.from("omie_ordens_servico").delete().eq("order_id", deleteOrderId);
+        await supabaseAdmin.from("order_messages").delete().eq("order_id", deleteOrderId);
+        await supabaseAdmin.from("order_reviews").delete().eq("order_id", deleteOrderId);
+        await supabaseAdmin.from("loyalty_points").delete().eq("order_id", deleteOrderId);
+        await supabaseAdmin.from("sending_quality_logs").delete().eq("order_id", deleteOrderId);
+        const { error: deleteError } = await supabaseAdmin.from("orders").delete().eq("id", deleteOrderId);
+
+        if (deleteError) {
+          console.error("[Omie] Erro ao excluir pedido local:", deleteError);
+          result = { success: false, error: deleteError.message };
+        } else {
+          console.log(`[Omie] Pedido ${deleteOrderId} excluído com sucesso`);
+          result = { success: true };
+        }
+        break;
+      }
+
+      case "check_os_exists": {
+        // Verificar se uma OS ainda existe no Omie
+        const { orderId: checkOrderId } = body;
+        
+        if (!checkOrderId) {
+          return new Response(
+            JSON.stringify({ error: "orderId obrigatório" }),
+            { status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+          );
+        }
+
+        const { data: osCheck } = await supabaseAdmin
+          .from("omie_ordens_servico")
+          .select("omie_codigo_os")
+          .eq("order_id", checkOrderId)
+          .maybeSingle();
+
+        if (!osCheck?.omie_codigo_os) {
+          result = { exists: true }; // No OS linked, assume exists locally
+          break;
+        }
+
+        try {
+          const consultaResult = await callOmieApi("servicos/os/", "ConsultarOS", {
+            nCodOS: osCheck.omie_codigo_os,
+          }) as any;
+          
+          result = { exists: !consultaResult.faultstring };
+        } catch {
+          // If error contains "não encontrada" or similar, OS was deleted
+          result = { exists: false };
+        }
+        break;
+      }
+
+      case "sync_deleted_orders": {
+        // Cron job: check all orders with linked OS and verify they still exist in Omie
+        console.log("[Omie] Verificando OS excluídas no Omie...");
+        
+        const { data: allOs } = await supabaseAdmin
+          .from("omie_ordens_servico")
+          .select("order_id, omie_codigo_os, omie_numero_os")
+          .not("omie_codigo_os", "is", null);
+
+        let deletedCount = 0;
+        
+        for (const os of (allOs || [])) {
+          try {
+            const consultaResult = await callOmieApi("servicos/os/", "ConsultarOS", {
+              nCodOS: os.omie_codigo_os,
+            }) as any;
+            
+            if (consultaResult.faultstring) {
+              console.log(`[Omie] OS ${os.omie_numero_os} não existe mais no Omie, excluindo localmente...`);
+              // Hard delete
+              await supabaseAdmin.from("omie_ordens_servico").delete().eq("order_id", os.order_id);
+              await supabaseAdmin.from("order_messages").delete().eq("order_id", os.order_id);
+              await supabaseAdmin.from("order_reviews").delete().eq("order_id", os.order_id);
+              await supabaseAdmin.from("loyalty_points").delete().eq("order_id", os.order_id);
+              await supabaseAdmin.from("sending_quality_logs").delete().eq("order_id", os.order_id);
+              await supabaseAdmin.from("orders").delete().eq("id", os.order_id);
+              deletedCount++;
+            }
+          } catch {
+            console.log(`[Omie] OS ${os.omie_numero_os} possivelmente excluída, removendo...`);
+            await supabaseAdmin.from("omie_ordens_servico").delete().eq("order_id", os.order_id);
+            await supabaseAdmin.from("order_messages").delete().eq("order_id", os.order_id);
+            await supabaseAdmin.from("order_reviews").delete().eq("order_id", os.order_id);
+            await supabaseAdmin.from("loyalty_points").delete().eq("order_id", os.order_id);
+            await supabaseAdmin.from("sending_quality_logs").delete().eq("order_id", os.order_id);
+            await supabaseAdmin.from("orders").delete().eq("id", os.order_id);
+            deletedCount++;
+          }
+        }
+
+        console.log(`[Omie] Sincronização de exclusões concluída: ${deletedCount} pedidos removidos`);
+        result = { success: true, deleted: deletedCount };
         break;
       }
 

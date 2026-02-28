@@ -15,8 +15,9 @@ import { useAuth } from '@/contexts/AuthContext';
 import { useToast } from '@/hooks/use-toast';
 import { usePriceHistory } from '@/hooks/usePriceHistory';
 import { usePricingEngine } from '@/hooks/usePricingEngine';
-import { updateOrderInOmie } from '@/services/omieService';
-import { Loader2, Save, Package, Clock, Truck, CheckCircle, Building2, DollarSign, Sparkles, ImageIcon, RefreshCw, Calculator } from 'lucide-react';
+import { updateOrderInOmie, deleteOrderFromOmie, checkOsExistsInOmie } from '@/services/omieService';
+import { Loader2, Save, Package, Clock, Truck, CheckCircle, Building2, DollarSign, Sparkles, ImageIcon, RefreshCw, Calculator, Trash2 } from 'lucide-react';
+import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle, AlertDialogTrigger } from '@/components/ui/alert-dialog';
 import { format } from 'date-fns';
 import { ptBR } from 'date-fns/locale';
 
@@ -72,6 +73,7 @@ const AdminOrderDetail = () => {
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [syncingOmie, setSyncingOmie] = useState(false);
+  const [deleting, setDeleting] = useState(false);
   
   // Item prices state
   const [itemPrices, setItemPrices] = useState<{ [key: number]: string }>({});
@@ -184,6 +186,20 @@ const AdminOrderDetail = () => {
 
       if (profileData) {
         setProfile(profileData);
+      }
+
+      // Check if the OS still exists in Omie
+      const osCheck = await checkOsExistsInOmie(data.id);
+      if (!osCheck.exists) {
+        toast({
+          title: 'Pedido excluído no Omie',
+          description: 'Esta OS foi excluída no Omie. O pedido será removido.',
+          variant: 'destructive',
+        });
+        // Hard delete locally
+        await deleteOrderFromOmie(data.id);
+        navigate('/admin');
+        return;
       }
     } catch (error) {
       console.error('Error loading order:', error);
@@ -383,6 +399,24 @@ const AdminOrderDetail = () => {
     } finally {
       setSaving(false);
       setSyncingOmie(false);
+    }
+  };
+
+  const handleDelete = async () => {
+    if (!order) return;
+    setDeleting(true);
+    try {
+      const result = await deleteOrderFromOmie(order.id);
+      if (result.success) {
+        toast({ title: 'Pedido excluído', description: 'O pedido foi excluído do app e do Omie' });
+        navigate('/admin');
+      } else {
+        toast({ title: 'Erro ao excluir', description: result.error, variant: 'destructive' });
+      }
+    } catch {
+      toast({ title: 'Erro', description: 'Não foi possível excluir o pedido', variant: 'destructive' });
+    } finally {
+      setDeleting(false);
     }
   };
 
@@ -632,7 +666,7 @@ const AdminOrderDetail = () => {
             className="w-full"
             size="lg"
             onClick={() => handleSave(false)}
-            disabled={saving || syncingOmie}
+            disabled={saving || syncingOmie || deleting}
           >
             {saving && !syncingOmie ? (
               <Loader2 className="w-4 h-4 mr-2 animate-spin" />
@@ -641,6 +675,36 @@ const AdminOrderDetail = () => {
             )}
             Salvar Apenas Localmente
           </Button>
+
+          <AlertDialog>
+            <AlertDialogTrigger asChild>
+              <Button
+                variant="destructive"
+                className="w-full"
+                size="lg"
+                disabled={saving || syncingOmie || deleting}
+              >
+                {deleting ? (
+                  <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+                ) : (
+                  <Trash2 className="w-4 h-4 mr-2" />
+                )}
+                Excluir Pedido
+              </Button>
+            </AlertDialogTrigger>
+            <AlertDialogContent>
+              <AlertDialogHeader>
+                <AlertDialogTitle>Excluir pedido?</AlertDialogTitle>
+                <AlertDialogDescription>
+                  Esta ação irá excluir o pedido permanentemente do aplicativo e a OS correspondente no Omie. Não é possível desfazer.
+                </AlertDialogDescription>
+              </AlertDialogHeader>
+              <AlertDialogFooter>
+                <AlertDialogCancel>Cancelar</AlertDialogCancel>
+                <AlertDialogAction onClick={handleDelete}>Excluir</AlertDialogAction>
+              </AlertDialogFooter>
+            </AlertDialogContent>
+          </AlertDialog>
         </div>
       </main>
 

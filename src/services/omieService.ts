@@ -254,3 +254,27 @@ export async function updateOrderInOmie(
     };
   }
 }
+
+export async function deleteOrderFromOmie(orderId: string): Promise<{ success: boolean; error?: string }> {
+  try {
+    const { data, error } = await supabase.functions.invoke("omie-sync", {
+      body: { action: "delete_order", orderId },
+    });
+    if (error) return { success: false, error: error.message };
+    return data;
+  } catch (err) {
+    return { success: false, error: err instanceof Error ? err.message : "Erro desconhecido" };
+  }
+}
+
+export async function checkOsExistsInOmie(orderId: string): Promise<{ exists: boolean }> {
+  try {
+    const { data, error } = await supabase.functions.invoke("omie-sync", {
+      body: { action: "check_os_exists", orderId },
+    });
+    if (error) return { exists: true }; // Assume exists on error
+    return data;
+  } catch {
+    return { exists: true };
+  }
+}
