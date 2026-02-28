@@ -56,6 +56,8 @@ const SalesProducts = () => {
         .from('omie_products')
         .select('*')
         .eq('account', account)
+        .not('familia', 'ilike', '%imobilizado%')
+        .not('familia', 'ilike', '%uso e consumo%')
         .order('ativo', { ascending: false })
         .order('descricao');
 

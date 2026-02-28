@@ -170,6 +170,8 @@ const NewSalesOrder = () => {
         .from('omie_products')
         .select('id, codigo, descricao, unidade, valor_unitario, estoque, ativo, omie_codigo_produto, account')
         .eq('account', account)
+        .not('familia', 'ilike', '%imobilizado%')
+        .not('familia', 'ilike', '%uso e consumo%')
         .order('descricao');
 
       if (!data || data.length === 0) {
@@ -186,6 +188,8 @@ const NewSalesOrder = () => {
             .from('omie_products')
             .select('id, codigo, descricao, unidade, valor_unitario, estoque, ativo, omie_codigo_produto, account')
             .eq('account', account)
+            .not('familia', 'ilike', '%imobilizado%')
+            .not('familia', 'ilike', '%uso e consumo%')
             .order('descricao');
           setProducts((refreshed || []) as Product[]);
         } catch (syncErr) {
@@ -207,6 +211,8 @@ const NewSalesOrder = () => {
         .from('omie_products')
         .select('id, codigo, descricao, unidade, valor_unitario, estoque, ativo, omie_codigo_produto, account')
         .eq('account', 'colacor')
+        .not('familia', 'ilike', '%imobilizado%')
+        .not('familia', 'ilike', '%uso e consumo%')
         .gt('estoque', 0)
         .order('descricao');
       setColacorProducts((data || []) as Product[]);
