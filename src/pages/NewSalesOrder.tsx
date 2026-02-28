@@ -178,6 +178,7 @@ const NewSalesOrder = () => {
         .not('familia', 'ilike', '%uso e consumo%')
         .not('familia', 'ilike', '%matérias primas para conversão de cintas%')
         .not('familia', 'ilike', '%jumbos de lixa para discos%')
+        .not('familia', 'ilike', '%material para tingimix%')
         .order('descricao');
 
       if (!data || data.length === 0) {
@@ -198,6 +199,7 @@ const NewSalesOrder = () => {
             .not('familia', 'ilike', '%uso e consumo%')
             .not('familia', 'ilike', '%matérias primas para conversão de cintas%')
             .not('familia', 'ilike', '%jumbos de lixa para discos%')
+            .not('familia', 'ilike', '%material para tingimix%')
             .order('descricao');
           setProducts((refreshed || []) as Product[]);
         } catch (syncErr) {
@@ -223,6 +225,7 @@ const NewSalesOrder = () => {
         .not('familia', 'ilike', '%uso e consumo%')
         .not('familia', 'ilike', '%matérias primas para conversão de cintas%')
         .not('familia', 'ilike', '%jumbos de lixa para discos%')
+        .not('familia', 'ilike', '%material para tingimix%')
         .gt('estoque', 0)
         .order('descricao');
       setColacorProducts((data || []) as Product[]);
