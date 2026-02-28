@@ -58,6 +58,7 @@ const SalesProducts = () => {
         .eq('account', account)
         .not('familia', 'ilike', '%imobilizado%')
         .not('familia', 'ilike', '%uso e consumo%')
+        .not('familia', 'ilike', '%matérias primas para conversão de cintas%')
         .order('ativo', { ascending: false })
         .order('descricao');
 
