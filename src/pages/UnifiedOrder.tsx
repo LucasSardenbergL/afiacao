@@ -307,6 +307,7 @@ const UnifiedOrder = () => {
         .not('familia', 'ilike', '%imobilizado%')
         .not('familia', 'ilike', '%uso e consumo%')
         .not('familia', 'ilike', '%matérias primas para conversão de cintas%')
+        .not('familia', 'ilike', '%jumbos de lixa para discos%')
         .order('descricao');
       if (!data || data.length === 0) {
         try {
@@ -325,6 +326,7 @@ const UnifiedOrder = () => {
             .not('familia', 'ilike', '%imobilizado%')
             .not('familia', 'ilike', '%uso e consumo%')
             .not('familia', 'ilike', '%matérias primas para conversão de cintas%')
+            .not('familia', 'ilike', '%jumbos de lixa para discos%')
             .order('descricao');
           setProds((refreshed || []) as Product[]);
         } catch (syncErr) { console.error('Sync error:', syncErr); }
@@ -353,6 +355,7 @@ const UnifiedOrder = () => {
         .not('familia', 'ilike', '%imobilizado%')
         .not('familia', 'ilike', '%uso e consumo%')
         .not('familia', 'ilike', '%matérias primas para conversão de cintas%')
+        .not('familia', 'ilike', '%jumbos de lixa para discos%')
         .order('descricao');
       if (refreshed) setProds(refreshed as Product[]);
     } catch (e) { console.error(`Background stock sync error (${account}):`, e); }

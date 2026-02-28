@@ -294,7 +294,7 @@ async function reprocessProducts(
   let divergences = 0;
 
   try {
-    const EXCLUDED_FAMILIES = ['imobilizado', 'uso e consumo', 'matérias primas para conversão de cintas'];
+    const EXCLUDED_FAMILIES = ['imobilizado', 'uso e consumo', 'matérias primas para conversão de cintas', 'jumbos de lixa para discos'];
     let pagina = 1;
     let totalPaginas = 1;
 
