@@ -635,7 +635,7 @@ serve(async (req) => {
             name: cliente.nome_fantasia || cliente.razao_social || "Cliente",
             email: cliente.email || null,
             phone: cliente.telefone || null,
-            document: cliente.cnpj_cpf || null,
+            document: cliente.cnpj_cpf ? cliente.cnpj_cpf.replace(/\D/g, "") : null,
           });
 
         if (profileError) {
