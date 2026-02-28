@@ -1024,6 +1024,7 @@ const UnifiedOrder = () => {
         const staffContext = {
           customerOmieCode: selectedCustomer.codigo_cliente_afiacao || selectedCustomer.codigo_cliente,
           customerUserId: customerUserId || null,
+          customerCodigoVendedor: selectedCustomer.codigo_vendedor_afiacao ?? selectedCustomer.codigo_vendedor ?? null,
         };
 
         const result = await syncOrderToOmie(orderId, orderData, profileData, addressPayload, staffContext);
