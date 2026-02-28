@@ -5,13 +5,16 @@ import { BottomNav } from '@/components/BottomNav';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
+import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle, AlertDialogTrigger } from '@/components/ui/alert-dialog';
 import { supabase } from '@/integrations/supabase/client';
 import { useAuth } from '@/contexts/AuthContext';
-import { Loader2, ShoppingCart, Plus, Package, Trash2 } from 'lucide-react';
+import { Loader2, ShoppingCart, Plus, Package, Trash2, Building2 } from 'lucide-react';
 import { format } from 'date-fns';
 import { ptBR } from 'date-fns/locale';
 import { toast } from 'sonner';
+
+type Account = 'oben' | 'colacor' | 'all';
 
 interface SalesOrder {
   id: string;
@@ -24,6 +27,7 @@ interface SalesOrder {
   omie_pedido_id: number | null;
   created_at: string;
   notes: string | null;
+  account?: string;
 }
 
 const statusLabels: Record<string, { label: string; variant: 'default' | 'secondary' | 'destructive' | 'outline' }> = {
@@ -39,6 +43,7 @@ const SalesOrders = () => {
   const [orders, setOrders] = useState<SalesOrder[]>([]);
   const [profiles, setProfiles] = useState<Record<string, string>>({});
   const [loading, setLoading] = useState(true);
+  const [accountFilter, setAccountFilter] = useState<Account>('all');
 
   useEffect(() => {
     if (!authLoading && !isStaff) navigate('/', { replace: true });
@@ -94,6 +99,11 @@ const SalesOrders = () => {
       toast.error('Erro ao excluir pedido');
     }
   };
+
+  const filteredOrders = accountFilter === 'all'
+    ? orders
+    : orders.filter(o => (o.account || 'oben') === accountFilter);
+
   if (authLoading || loading) {
     return (
       <div className="min-h-screen bg-background pb-24">
@@ -122,24 +132,45 @@ const SalesOrders = () => {
           </Button>
         </div>
 
-        {orders.length === 0 ? (
+        {/* Account Filter */}
+        <Tabs value={accountFilter} onValueChange={(v) => setAccountFilter(v as Account)} className="mb-4">
+          <TabsList className="w-full grid grid-cols-3">
+            <TabsTrigger value="all">Todos</TabsTrigger>
+            <TabsTrigger value="oben" className="gap-1">
+              <Building2 className="w-3 h-3" />
+              Oben
+            </TabsTrigger>
+            <TabsTrigger value="colacor" className="gap-1">
+              <Building2 className="w-3 h-3" />
+              Colacor
+            </TabsTrigger>
+          </TabsList>
+        </Tabs>
+
+        {filteredOrders.length === 0 ? (
           <div className="text-center py-12">
             <ShoppingCart className="w-12 h-12 mx-auto text-muted-foreground/50 mb-3" />
             <p className="text-muted-foreground">Nenhum pedido de venda ainda.</p>
           </div>
         ) : (
           <div className="space-y-2">
-            {orders.map((order) => {
+            {filteredOrders.map((order) => {
               const status = statusLabels[order.status] || statusLabels.rascunho;
               const totalItems = order.items?.reduce((s, i) => s + (i.quantidade || 0), 0) || 0;
+              const orderAccount = order.account || 'oben';
               return (
                 <Card key={order.id}>
                   <CardContent className="p-3">
                     <div className="flex items-start justify-between gap-2">
                       <div className="flex-1 min-w-0">
-                        <p className="font-medium text-sm truncate">
-                          {profiles[order.customer_user_id] || 'Cliente'}
-                        </p>
+                        <div className="flex items-center gap-1.5">
+                          <p className="font-medium text-sm truncate">
+                            {profiles[order.customer_user_id] || 'Cliente'}
+                          </p>
+                          <Badge variant="outline" className="text-[9px] px-1 py-0 shrink-0">
+                            {orderAccount === 'colacor' ? 'Colacor' : 'Oben'}
+                          </Badge>
+                        </div>
                         <p className="text-xs text-muted-foreground mt-0.5">
                           {format(new Date(order.created_at), "dd/MM/yyyy 'às' HH:mm", { locale: ptBR })}
                         </p>

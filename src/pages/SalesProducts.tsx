@@ -6,10 +6,13 @@ import { Button } from '@/components/ui/button';
 import { Card, CardContent } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
 import { Badge } from '@/components/ui/badge';
+import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { supabase } from '@/integrations/supabase/client';
 import { useAuth } from '@/contexts/AuthContext';
 import { useToast } from '@/hooks/use-toast';
-import { Loader2, Search, RefreshCw, Package, ShoppingCart, BarChart3 } from 'lucide-react';
+import { Loader2, Search, RefreshCw, Package, ShoppingCart, BarChart3, Building2 } from 'lucide-react';
+
+type Account = 'oben' | 'colacor';
 
 interface Product {
   id: string;
@@ -21,6 +24,7 @@ interface Product {
   ativo: boolean;
   omie_codigo_produto: number;
   metadata: Record<string, unknown>;
+  account?: string;
 }
 
 const SalesProducts = () => {
@@ -28,6 +32,7 @@ const SalesProducts = () => {
   const { isStaff, loading: authLoading } = useAuth();
   const { toast } = useToast();
 
+  const [account, setAccount] = useState<Account>('oben');
   const [products, setProducts] = useState<Product[]>([]);
   const [loading, setLoading] = useState(true);
   const [syncing, setSyncing] = useState(false);
@@ -42,13 +47,15 @@ const SalesProducts = () => {
 
   useEffect(() => {
     if (isStaff) loadProducts();
-  }, [isStaff]);
+  }, [isStaff, account]);
 
   const loadProducts = async () => {
+    setLoading(true);
     try {
       const { data, error } = await supabase
         .from('omie_products')
         .select('*')
+        .eq('account', account)
         .order('ativo', { ascending: false })
         .order('descricao');
 
@@ -68,7 +75,7 @@ const SalesProducts = () => {
       let totalSynced = 0;
       while (nextPage) {
         const { data, error } = await supabase.functions.invoke('omie-vendas-sync', {
-          body: { action: 'sync_products', start_page: nextPage },
+          body: { action: 'sync_products', start_page: nextPage, account },
         });
         if (error) throw error;
         totalSynced += data.totalSynced || 0;
@@ -77,7 +84,7 @@ const SalesProducts = () => {
 
       toast({
         title: 'Sincronização concluída!',
-        description: `${totalSynced} produtos sincronizados do Omie.`,
+        description: `${totalSynced} produtos sincronizados (${account === 'oben' ? 'Oben' : 'Colacor'}).`,
       });
 
       await loadProducts();
@@ -100,7 +107,7 @@ const SalesProducts = () => {
       let totalUpdated = 0;
       while (nextPage) {
         const { data, error } = await supabase.functions.invoke('omie-vendas-sync', {
-          body: { action: 'sync_estoque', start_page: nextPage },
+          body: { action: 'sync_estoque', start_page: nextPage, account },
         });
         if (error) throw error;
         totalUpdated += data.totalUpdated || 0;
@@ -108,7 +115,7 @@ const SalesProducts = () => {
       }
       toast({
         title: 'Estoque atualizado!',
-        description: `${totalUpdated} produtos com estoque atualizado.`,
+        description: `${totalUpdated} produtos com estoque atualizado (${account === 'oben' ? 'Oben' : 'Colacor'}).`,
       });
       await loadProducts();
     } catch (error: any) {
@@ -171,6 +178,20 @@ const SalesProducts = () => {
       />
 
       <main className="pt-16 px-4 max-w-4xl mx-auto">
+        {/* Account Tabs */}
+        <Tabs value={account} onValueChange={(v) => setAccount(v as Account)} className="mb-4">
+          <TabsList className="w-full grid grid-cols-2">
+            <TabsTrigger value="oben" className="gap-1.5">
+              <Building2 className="w-3.5 h-3.5" />
+              Oben
+            </TabsTrigger>
+            <TabsTrigger value="colacor" className="gap-1.5">
+              <Building2 className="w-3.5 h-3.5" />
+              Colacor
+            </TabsTrigger>
+          </TabsList>
+        </Tabs>
+
         {/* Search + New Order */}
         <div className="flex gap-2 mb-4">
           <div className="relative flex-1">
@@ -193,6 +214,10 @@ const SalesProducts = () => {
           <Badge variant="secondary" className="gap-1">
             <Package className="w-3 h-3" />
             {products.length} produtos
+          </Badge>
+          <Badge variant="outline" className="gap-1 text-[10px]">
+            <Building2 className="w-3 h-3" />
+            {account === 'oben' ? 'Oben' : 'Colacor'}
           </Badge>
         </div>
 
