@@ -275,10 +275,12 @@ async function buscarClienteVendas(document: string, account: Account = "oben") 
   }
 
   const cliente = result.clientes_cadastro[0];
+  const codigoVendedor = cliente.recomendacoes?.codigo_vendedor || cliente.codigo_vendedor || null;
+  console.log(`[Omie Vendas][${account}] Cliente ${cliente.codigo_cliente_omie} vendedor: recomendacoes=${cliente.recomendacoes?.codigo_vendedor}, root=${cliente.codigo_vendedor}, resolved=${codigoVendedor}`);
   return {
     codigo_cliente: cliente.codigo_cliente_omie,
     razao_social: cliente.razao_social,
-    codigo_vendedor: cliente.codigo_vendedor || null,
+    codigo_vendedor: codigoVendedor,
   };
 }
 
