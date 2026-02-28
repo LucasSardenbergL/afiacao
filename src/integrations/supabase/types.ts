@@ -88,6 +88,33 @@ export type Database = {
           },
         ]
       }
+      commercial_roles: {
+        Row: {
+          assigned_by: string | null
+          commercial_role: Database["public"]["Enums"]["commercial_role"]
+          created_at: string
+          id: string
+          updated_at: string
+          user_id: string
+        }
+        Insert: {
+          assigned_by?: string | null
+          commercial_role?: Database["public"]["Enums"]["commercial_role"]
+          created_at?: string
+          id?: string
+          updated_at?: string
+          user_id: string
+        }
+        Update: {
+          assigned_by?: string | null
+          commercial_role?: Database["public"]["Enums"]["commercial_role"]
+          created_at?: string
+          id?: string
+          updated_at?: string
+          user_id?: string
+        }
+        Relationships: []
+      }
       company_config: {
         Row: {
           created_at: string
@@ -1468,6 +1495,51 @@ export type Database = {
           },
         ]
       }
+      margin_audit_log: {
+        Row: {
+          calculated_at: string
+          created_at: string | null
+          customer_user_id: string
+          farmer_id: string
+          gap_pct: number | null
+          id: string
+          margin_gap: number | null
+          margin_potential: number | null
+          margin_real: number | null
+          period_end: string
+          period_start: string
+          top_gap_products: Json | null
+        }
+        Insert: {
+          calculated_at?: string
+          created_at?: string | null
+          customer_user_id: string
+          farmer_id: string
+          gap_pct?: number | null
+          id?: string
+          margin_gap?: number | null
+          margin_potential?: number | null
+          margin_real?: number | null
+          period_end: string
+          period_start: string
+          top_gap_products?: Json | null
+        }
+        Update: {
+          calculated_at?: string
+          created_at?: string | null
+          customer_user_id?: string
+          farmer_id?: string
+          gap_pct?: number | null
+          id?: string
+          margin_gap?: number | null
+          margin_potential?: number | null
+          margin_real?: number | null
+          period_end?: string
+          period_start?: string
+          top_gap_products?: Json | null
+        }
+        Relationships: []
+      }
       omie_clientes: {
         Row: {
           created_at: string
@@ -1833,6 +1905,63 @@ export type Database = {
           time_slot?: string | null
           total?: number
           updated_at?: string
+          user_id?: string
+        }
+        Relationships: []
+      }
+      permission_change_log: {
+        Row: {
+          change_type: string
+          changed_by: string
+          created_at: string
+          id: string
+          new_value: string | null
+          previous_value: string | null
+          target_user_id: string
+        }
+        Insert: {
+          change_type: string
+          changed_by: string
+          created_at?: string
+          id?: string
+          new_value?: string | null
+          previous_value?: string | null
+          target_user_id: string
+        }
+        Update: {
+          change_type?: string
+          changed_by?: string
+          created_at?: string
+          id?: string
+          new_value?: string | null
+          previous_value?: string | null
+          target_user_id?: string
+        }
+        Relationships: []
+      }
+      permission_overrides: {
+        Row: {
+          created_at: string
+          granted: boolean
+          granted_by: string | null
+          id: string
+          permission_key: string
+          user_id: string
+        }
+        Insert: {
+          created_at?: string
+          granted?: boolean
+          granted_by?: string | null
+          id?: string
+          permission_key: string
+          user_id: string
+        }
+        Update: {
+          created_at?: string
+          granted?: boolean
+          granted_by?: string | null
+          id?: string
+          permission_key?: string
           user_id?: string
         }
         Relationships: []
@@ -2649,6 +2778,10 @@ export type Database = {
       [_ in never]: never
     }
     Functions: {
+      get_commercial_role: {
+        Args: { _user_id: string }
+        Returns: Database["public"]["Enums"]["commercial_role"]
+      }
       get_user_role: {
         Args: { _user_id: string }
         Returns: Database["public"]["Enums"]["app_role"]
@@ -2660,9 +2793,15 @@ export type Database = {
         }
         Returns: boolean
       }
+      is_super_admin: { Args: { _user_id: string }; Returns: boolean }
     }
     Enums: {
       app_role: "admin" | "employee" | "customer"
+      commercial_role:
+        | "operacional"
+        | "gerencial"
+        | "estrategico"
+        | "super_admin"
       farmer_call_result:
         | "contato_sucesso"
         | "sem_resposta"
@@ -2799,6 +2938,12 @@ export const Constants = {
   public: {
     Enums: {
       app_role: ["admin", "employee", "customer"],
+      commercial_role: [
+        "operacional",
+        "gerencial",
+        "estrategico",
+        "super_admin",
+      ],
       farmer_call_result: [
         "contato_sucesso",
         "sem_resposta",

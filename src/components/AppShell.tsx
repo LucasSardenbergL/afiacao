@@ -90,11 +90,18 @@ const unifiedNavSections: { title: string; items: NavItem[] }[] = [
     ],
   },
   {
+    title: 'Inteligência',
+    items: [
+      { icon: BarChart3, label: 'Dashboard Intel', path: '/intelligence' },
+    ],
+  },
+  {
     title: 'Gestão',
     items: [
       { icon: Shield, label: 'Admin', path: '/admin', managerOnly: true },
       { icon: BarChart3, label: 'Relatórios', path: '/admin/monthly-reports', managerOnly: true },
       { icon: TrendingUp, label: 'Analytics & Sync', path: '/admin/analytics-sync', managerOnly: true },
+      { icon: Shield, label: 'Governança', path: '/governance/users', managerOnly: true },
       { icon: Settings, label: 'Configurações', path: '/settings', managerOnly: true },
     ],
   },
