@@ -407,7 +407,7 @@ function getAccountConfig(account: Account) {
   if (account === "colacor") {
     return {
       codigo_categoria: "1.01.01",
-      codigo_conta_corrente: 3543828789, // Colacor conta corrente
+      codigo_conta_corrente: 8693825504, // Colacor conta corrente (Itaú)
       obs_prefix: "Pedido de venda via App Colacor",
     };
   }
