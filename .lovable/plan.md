@@ -1,64 +1,29 @@
 
 
-## Plano: Adicionar Colacor como empresa de vendas + Cross-match de estoque
+## Plano: Incluir Vendedor do Omie no Pedido de Afiação
 
-### Contexto
-Hoje o sistema de vendas (`omie-vendas-sync`) usa apenas as credenciais `OMIE_VENDAS_APP_KEY` / `OMIE_VENDAS_APP_SECRET` (Oben). A tabela `omie_products` armazena somente produtos da Oben. O objetivo é:
+### Problema
+Quando um funcionário seleciona um cliente na busca e cria um pedido de afiação, o `codigo_vendedor` associado ao cadastro do cliente no Omie não está sendo carregado nem salvo. Isso porque:
+- A busca resumida (`ListarClientesResumido`) não retorna `codigo_vendedor`
+- A interface `OmieCustomer` em `NewOrder.tsx` não tem esse campo
+- A ação `criar_perfil_local` não salva o `omie_codigo_vendedor` na tabela `omie_clientes`
 
-1. Sincronizar também os produtos da Colacor (que revende/fabrica itens com estoque remanescente)
-2. Ao tirar pedido pela Oben, mostrar se existe produto equivalente (por descrição) na Colacor com estoque
-3. Permitir tirar pedido pela Colacor com as mesmas funcionalidades (último preço, estoque, formas de pagamento)
+### Implementação
 
----
+**1. Edge function `omie-cliente/index.ts`**
+- Na ação `pesquisar_clientes`: após obter os resultados resumidos, para cada cliente fazer uma chamada `ConsultarCliente` para buscar o `codigo_vendedor` (ou alternativamente, trocar `ListarClientesResumido` por `ListarClientes` que retorna campos completos)
+- Retornar `codigo_vendedor` no mapeamento dos resultados
+- Na ação `criar_perfil_local`: receber e salvar `codigo_vendedor` no campo `omie_codigo_vendedor` da tabela `omie_clientes`
 
-### Detalhamento técnico
+**2. Frontend `src/pages/NewOrder.tsx`**
+- Adicionar `codigo_vendedor` à interface `OmieCustomer`
+- No `searchOmieCustomers`, mapear o novo campo dos resultados
+- No `handleSelectCustomer`, chamar `consultar_cliente` para obter dados completos incluindo `codigo_vendedor` (caso a busca resumida não retorne)
+- Ao salvar via `criar_perfil_local`, enviar `codigo_vendedor`
 
-#### 1. Adicionar coluna `account` à tabela `omie_products`
-- Migração SQL: `ALTER TABLE omie_products ADD COLUMN account text NOT NULL DEFAULT 'oben';`
-- Atualizar constraint de unicidade para incluir `account`: `DROP INDEX IF EXISTS omie_products_omie_codigo_produto_key; CREATE UNIQUE INDEX omie_products_omie_codigo_produto_account_key ON omie_products (omie_codigo_produto, account);`
-- Mesma abordagem que `sync_state` já usa com coluna `account`
+**3. Garantia no fluxo de sync (`omie-sync/index.ts`)**
+- O código já busca `omie_codigo_vendedor` da tabela `omie_clientes` ao criar a OS -- se salvarmos corretamente na criação do perfil, o vendedor será incluído automaticamente na OS
 
-#### 2. Secrets para Colacor (vendas)
-- Adicionar `OMIE_COLACOR_VENDAS_APP_KEY` e `OMIE_COLACOR_VENDAS_APP_SECRET` via ferramenta de secrets
-- Estes são os dados da conta Omie da Colacor para a API de produtos/pedidos de venda
-
-#### 3. Atualizar Edge Function `omie-vendas-sync`
-- Receber parâmetro `account` (default `'oben'`) em todas as actions
-- Selecionar credenciais com base no `account`:
-  - `oben` → `OMIE_VENDAS_APP_KEY` / `OMIE_VENDAS_APP_SECRET`
-  - `colacor` → `OMIE_COLACOR_VENDAS_APP_KEY` / `OMIE_COLACOR_VENDAS_APP_SECRET`
-- No `sync_products` e `sync_estoque`, passar `account` no upsert (conflict key agora inclui `account`)
-- Nos demais actions (`listar_clientes`, `buscar_precos_cliente`, `criar_pedido`, etc.), usar as credenciais correspondentes
-- No `criar_pedido`, usar conta corrente e categoria financeira adequadas por empresa (pode ser configurável, por ora hardcoded diferente para Colacor)
-
-#### 4. Adicionar coluna `account` à tabela `sales_orders`
-- Migração: `ALTER TABLE sales_orders ADD COLUMN account text NOT NULL DEFAULT 'oben';`
-- Permite distinguir pedidos de venda por empresa
-
-#### 5. Atualizar `NewSalesOrder.tsx` — Cross-match de estoque Colacor
-- Ao carregar produtos (Oben), carregar também produtos Colacor em paralelo (query `omie_products` com `account = 'colacor'`)
-- Na tabela de catálogo, para cada produto Oben, verificar se existe produto Colacor com descrição similar (match por substring normalizado)
-- Se existir, mostrar um badge/indicador "Disponível na Colacor (Est: X)" com destaque visual
-- Permitir que o vendedor clique para alternar e adicionar o item pelo pedido da Colacor
-
-#### 6. Atualizar `NewSalesOrder.tsx` — Seletor de empresa
-- Adicionar um seletor (tabs ou dropdown) no topo para escolher "Oben" ou "Colacor"
-- Quando Colacor selecionada: carregar catálogo Colacor, buscar clientes no Omie Colacor, buscar preços e formas de pagamento via Omie Colacor
-- O submit do pedido envia com `account: 'colacor'` para a edge function
-
-#### 7. Atualizar `SalesOrders.tsx` e `SalesProducts.tsx`
-- Filtrar/mostrar pedidos e produtos por empresa (tabs ou filtro)
-- Sync de produtos e estoque deve permitir sincronizar por empresa
-
-#### 8. Listas e páginas auxiliares
-- `UnifiedOrder.tsx` já tem lógica de split — atualizar para considerar a nova empresa Colacor como fonte de produtos (não apenas serviços)
-
----
-
-### Ordem de implementação
-1. Solicitar secrets `OMIE_COLACOR_VENDAS_APP_KEY` e `OMIE_COLACOR_VENDAS_APP_SECRET`
-2. Migração DB: adicionar `account` em `omie_products` e `sales_orders`
-3. Atualizar edge function `omie-vendas-sync` para multi-empresa
-4. Atualizar frontend: `NewSalesOrder.tsx` com seletor de empresa + cross-match de estoque
-5. Atualizar `SalesProducts.tsx` e `SalesOrders.tsx` com filtro por empresa
+### Abordagem mais eficiente
+Trocar `ListarClientesResumido` por `ListarClientes` na busca, que já retorna `codigo_vendedor`. Isso evita N chamadas extras de `ConsultarCliente`.
 
