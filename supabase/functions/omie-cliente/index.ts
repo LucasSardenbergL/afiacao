@@ -184,8 +184,8 @@ async function buscarClientePorDocumento(documento: string): Promise<{ cliente: 
 
 async function pesquisarClientes(query: string, pagina: number = 1): Promise<{ clientes: OmieCliente[]; total: number }> {
   try {
-    // Search by name (razao_social or nome_fantasia)
-    const result = await callOmieApi("geral/clientes/", "ListarClientesResumido", {
+    // Use ListarClientes (full) instead of ListarClientesResumido to get codigo_vendedor
+    const result = await callOmieApi("geral/clientes/", "ListarClientes", {
       pagina,
       registros_por_pagina: 50,
       clientesFiltro: { nome_fantasia: query },
@@ -198,7 +198,7 @@ async function pesquisarClientes(query: string, pagina: number = 1): Promise<{ c
       throw new Error(`Erro Omie: ${result.faultstring}`);
     }
 
-    const clientes = result.clientes_cadastro_resumido || result.clientes_cadastro || [];
+    const clientes = result.clientes_cadastro || result.clientes_cadastro_resumido || [];
     return { 
       clientes, 
       total: result.total_de_registros || clientes.length 
@@ -358,6 +358,7 @@ serve(async (req) => {
             telefone: c.telefone1_numero,
             cidade: c.cidade,
             estado: c.estado,
+            codigo_vendedor: c.codigo_vendedor || null,
           })),
           total: searchResult.total,
         };
@@ -460,12 +461,13 @@ serve(async (req) => {
           // Don't throw - user was created, profile might have partial issues
         }
 
-        // Create omie_clientes mapping
+        // Create omie_clientes mapping (including vendedor if available)
         const { error: mappingError } = await adminClient
           .from("omie_clientes")
           .insert({
             user_id: newUserId,
             omie_codigo_cliente: cliente.codigo_cliente,
+            omie_codigo_vendedor: cliente.codigo_vendedor || null,
           });
 
         if (mappingError) {
