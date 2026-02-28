@@ -11,6 +11,9 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { RecommendationsPanel } from '@/components/RecommendationsPanel';
 import { AddToolDialog } from '@/components/AddToolDialog';
+import { PhotoUpload } from '@/components/PhotoUpload';
+import { VoiceServiceInput, IdentifiedItem } from '@/components/VoiceServiceInput';
+import { ToolImageIdentifier } from '@/components/ToolImageIdentifier';
 import { supabase } from '@/integrations/supabase/client';
 import { useAuth } from '@/contexts/AuthContext';
 import { useToast } from '@/hooks/use-toast';
@@ -20,8 +23,15 @@ import { usePricingEngine } from '@/hooks/usePricingEngine';
 import { usePriceHistory } from '@/hooks/usePriceHistory';
 import type { RecommendationItem } from '@/hooks/useRecommendationEngine';
 import {
+  DELIVERY_OPTIONS,
+  TIME_SLOTS,
+  DELIVERY_FEES,
+  DeliveryOption,
+} from '@/types';
+import {
   Loader2, Search, Plus, Minus, Trash2, User, ShoppingCart, Send,
   ChevronLeft, Package, CheckCircle, Wrench, AlertCircle, Scissors, AlertTriangle, Building2,
+  MapPin, Clock, Check,
 } from 'lucide-react';
 
 /* ─── Types ─── */
@@ -63,6 +73,7 @@ interface ServiceCartItem {
   servico: OmieServico | null;
   quantity: number;
   notes?: string;
+  photos: string[];
 }
 
 type CartItem = ProductCartItem | ServiceCartItem;
@@ -80,6 +91,35 @@ interface FormaPagamento {
   codigo: string;
   descricao: string;
 }
+
+interface AddressData {
+  id: string;
+  label: string;
+  street: string;
+  number: string;
+  complement: string | null;
+  neighborhood: string;
+  city: string;
+  state: string;
+  zipCode: string;
+}
+
+interface ToolCategory {
+  id: string;
+  name: string;
+  description: string | null;
+  suggested_interval_days: number | null;
+}
+
+const PAYMENT_OPTIONS = [
+  { id: 'a_vista', label: 'À vista', description: 'PIX ou pagamento presencial na entrega/retirada' },
+  { id: '30dd', label: '30 dias', description: 'Vencimento em 30 dias' },
+  { id: '30_60dd', label: '30/60 dias', description: '2 parcelas: 30 e 60 dias' },
+  { id: '30_60_90dd', label: '30/60/90 dias', description: '3 parcelas: 30, 60 e 90 dias' },
+  { id: '28dd', label: '28 dias', description: 'Vencimento em 28 dias' },
+  { id: '28_56dd', label: '28/56 dias', description: '2 parcelas: 28 e 56 dias' },
+  { id: '28_56_84dd', label: '28/56/84 dias', description: '3 parcelas: 28, 56 e 84 dias' },
+] as const;
 
 const fmt = (v: number) => v.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' });
 const getToolName = (t: UserTool) => t.generated_name || t.custom_name || t.tool_categories?.name || 'Ferramenta';
@@ -135,6 +175,7 @@ const UnifiedOrder = () => {
   const [loadingServicos, setLoadingServicos] = useState(true);
   const [addToolDialogOpen, setAddToolDialogOpen] = useState(false);
   const [creatingLocalProfile, setCreatingLocalProfile] = useState(false);
+  const [toolCategories, setToolCategories] = useState<ToolCategory[]>([]);
 
   // Vendedor validation
   const [vendedorDivergencias, setVendedorDivergencias] = useState<string[]>([]);
@@ -148,6 +189,14 @@ const UnifiedOrder = () => {
   const [loadingFormas, setLoadingFormas] = useState(false);
   const [customerParcelaRankingOben, setCustomerParcelaRankingOben] = useState<string[]>([]);
   const [customerParcelaRankingColacor, setCustomerParcelaRankingColacor] = useState<string[]>([]);
+  const [afiacaoPaymentMethod, setAfiacaoPaymentMethod] = useState<string>('a_vista');
+
+  // Delivery (for afiação)
+  const [deliveryOption, setDeliveryOption] = useState<DeliveryOption>('coleta_entrega');
+  const [addresses, setAddresses] = useState<AddressData[]>([]);
+  const [selectedAddress, setSelectedAddress] = useState<string>('');
+  const [selectedTimeSlot, setSelectedTimeSlot] = useState<string>('');
+  const [showAddressOptions, setShowAddressOptions] = useState(false);
 
   // Cart
   const [cart, setCart] = useState<CartItem[]>([]);
@@ -205,6 +254,7 @@ const UnifiedOrder = () => {
       loadFormasPagamento('colacor');
       loadServicosColacor();
       loadDefaultPrices();
+      loadCategories();
     }
   }, [isStaff]);
 
@@ -276,7 +326,6 @@ const UnifiedOrder = () => {
       } else {
         setProds(data as Product[]);
       }
-      // Background stock sync
       syncStockInBackground(account, setProds);
     } catch (e) { console.error(e); }
     finally { setLoading(false); }
@@ -339,6 +388,16 @@ const UnifiedOrder = () => {
     finally { setLoadingFormas(false); }
   };
 
+  const loadCategories = async () => {
+    try {
+      const { data } = await supabase
+        .from('tool_categories')
+        .select('id, name, description, suggested_interval_days')
+        .order('name');
+      if (data) setToolCategories(data);
+    } catch (e) { console.error('Erro ao carregar categorias:', e); }
+  };
+
   const loadUserTools = async (userId: string) => {
     setLoadingTools(true);
     try {
@@ -352,12 +411,39 @@ const UnifiedOrder = () => {
     finally { setLoadingTools(false); }
   };
 
+  const loadAddresses = async (userId: string) => {
+    try {
+      const { data } = await supabase
+        .from('addresses')
+        .select('*')
+        .eq('user_id', userId)
+        .order('is_default', { ascending: false });
+      if (data && data.length > 0) {
+        const formatted: AddressData[] = data.map(addr => ({
+          id: addr.id,
+          label: addr.label,
+          street: addr.street,
+          number: addr.number,
+          complement: addr.complement,
+          neighborhood: addr.neighborhood,
+          city: addr.city,
+          state: addr.state,
+          zipCode: addr.zip_code,
+        }));
+        setAddresses(formatted);
+        setSelectedAddress(formatted[0].id);
+      }
+    } catch (e) { console.error(e); }
+  };
+
   const selectCustomer = async (cust: OmieCustomer) => {
     setLoadingCustomer(true);
     setCustomerSearch('');
     setCustomers([]);
     setCart([]);
     setVendedorDivergencias([]);
+    setAddresses([]);
+    setSelectedAddress('');
     try {
       setSelectedCustomer(cust);
 
@@ -375,7 +461,6 @@ const UnifiedOrder = () => {
       if (!localUserId && cust.cnpj_cpf) {
         const docClean = cust.cnpj_cpf.replace(/\D/g, '');
         if (docClean.length >= 11) {
-          // Try clean document first, then formatted (legacy data)
           const { data: profile } = await supabase
             .from('profiles')
             .select('user_id')
@@ -388,6 +473,7 @@ const UnifiedOrder = () => {
       if (localUserId) {
         setCustomerUserId(localUserId);
         loadUserTools(localUserId);
+        loadAddresses(localUserId);
         loadPriceHistory();
       }
 
@@ -514,13 +600,23 @@ const UnifiedOrder = () => {
       toast({ title: 'Já adicionada', description: 'Esta ferramenta já está no carrinho.' });
       return;
     }
-    setCart([...cart, { type: 'service', userTool: tool, servico: null, quantity: 1 }]);
+    setCart([...cart, { type: 'service', userTool: tool, servico: null, quantity: 1, photos: [] }]);
   };
 
   const updateServiceServico = (toolId: string, codigoServico: number) => {
     const servico = servicos.find(s => s.omie_codigo_servico === codigoServico) || null;
     setCart(cart.map(c => c.type === 'service' && (c as ServiceCartItem).userTool.id === toolId
       ? { ...c, servico } as ServiceCartItem : c));
+  };
+
+  const updateServiceNotes = (toolId: string, newNotes: string) => {
+    setCart(cart.map(c => c.type === 'service' && (c as ServiceCartItem).userTool.id === toolId
+      ? { ...c, notes: newNotes } as ServiceCartItem : c));
+  };
+
+  const updateServicePhotos = (toolId: string, photos: string[]) => {
+    setCart(cart.map(c => c.type === 'service' && (c as ServiceCartItem).userTool.id === toolId
+      ? { ...c, photos } as ServiceCartItem : c));
   };
 
   const getServicePrice = (item: ServiceCartItem): number | null => {
@@ -535,6 +631,51 @@ const UnifiedOrder = () => {
     const categoryName = tool.tool_categories?.name?.toLowerCase().trim();
     if (!categoryName) return [];
     return servicos.filter(s => s.descricao.toLowerCase().includes(categoryName));
+  };
+
+  // ─── Voice / Image handlers ───
+  const handleVoiceItemsIdentified = (identifiedItems: IdentifiedItem[]) => {
+    const newItems: ServiceCartItem[] = identifiedItems.map((item) => {
+      const tool = userTools.find(t => t.id === item.userToolId);
+      const servico = servicos.find(s => s.omie_codigo_servico === item.omie_codigo_servico) || null;
+      return {
+        type: 'service' as const,
+        userTool: tool!,
+        servico,
+        quantity: item.quantity,
+        notes: item.notes,
+        photos: [],
+      };
+    }).filter(item => item.userTool);
+
+    const filteredNew = newItems.filter(
+      newItem => !cart.some(c => c.type === 'service' && (c as ServiceCartItem).userTool.id === newItem.userTool.id)
+    );
+
+    if (filteredNew.length === 0) {
+      toast({ title: 'Ferramentas já adicionadas', description: 'Todas as ferramentas identificadas já estão no pedido.' });
+      return;
+    }
+
+    setCart([...cart, ...filteredNew]);
+  };
+
+  const handleImageCategoryIdentified = (categoryId: string) => {
+    const matchingTools = userTools.filter(t => t.tool_category_id === categoryId);
+    if (matchingTools.length > 0) {
+      let addedCount = 0;
+      matchingTools.forEach(tool => {
+        if (!cart.some(c => c.type === 'service' && (c as ServiceCartItem).userTool.id === tool.id)) {
+          addServiceToCart(tool);
+          addedCount++;
+        }
+      });
+      if (addedCount > 0) {
+        toast({ title: 'Ferramenta encontrada!', description: `${addedCount} ferramenta(s) adicionada(s) ao pedido` });
+      }
+    } else {
+      toast({ title: 'Ferramenta não cadastrada', description: 'Nenhuma ferramenta dessa categoria foi encontrada no cadastro.', variant: 'destructive' });
+    }
   };
 
   // ─── Generic Cart ───
@@ -794,6 +935,18 @@ const UnifiedOrder = () => {
       // 3. Services (Afiação)
       if (hasServices) {
         const orderId = crypto.randomUUID();
+        const buildToolInfo = (c: ServiceCartItem): string => {
+          const parts: string[] = [];
+          parts.push(getToolName(c.userTool));
+          const specs = c.userTool.specifications;
+          if (specs && typeof specs === 'object') {
+            const specEntries = Object.entries(specs).filter(([, v]) => v);
+            if (specEntries.length > 0) parts.push(specEntries.map(([k, v]) => `${k}: ${v}`).join(', '));
+          }
+          if (c.notes) parts.push(c.notes);
+          return parts.join(' | ');
+        };
+
         const orderItems = serviceItems.map(c => {
           const price = getServicePrice(c);
           return {
@@ -803,25 +956,32 @@ const UnifiedOrder = () => {
             userToolId: c.userTool.id,
             toolName: getToolName(c.userTool),
             notes: c.notes,
-            photos: [],
+            photos: c.photos || [],
             unitPrice: price || 0,
             toolCategoryId: c.userTool.tool_category_id,
             toolSpecs: c.userTool.specifications || {},
           };
         });
 
+        const selectedAddressData = addresses.find(a => a.id === selectedAddress);
+        const addressPayload = selectedAddressData ? {
+          street: selectedAddressData.street,
+          number: selectedAddressData.number,
+          complement: selectedAddressData.complement || undefined,
+          neighborhood: selectedAddressData.neighborhood,
+          city: selectedAddressData.city,
+          state: selectedAddressData.state,
+          zip_code: selectedAddressData.zipCode,
+        } : undefined;
+
         const orderData = {
           items: orderItems,
           service_type: 'padrao',
           subtotal: serviceSubtotal,
-          delivery_fee: 0,
-          total: serviceSubtotal,
-          notes: serviceItems.map(c => {
-            const parts: string[] = [];
-            parts.push(getToolName(c.userTool));
-            if (c.notes) parts.push(c.notes);
-            return parts.join(' | ');
-          }).join(' || '),
+          delivery_fee: DELIVERY_FEES[deliveryOption],
+          total: serviceSubtotal + DELIVERY_FEES[deliveryOption],
+          notes: serviceItems.map(buildToolInfo).filter(Boolean).join(' || '),
+          payment_method: afiacaoPaymentMethod,
         };
 
         const profileData = {
@@ -834,7 +994,7 @@ const UnifiedOrder = () => {
           customerUserId: customerUserId || null,
         };
 
-        const result = await syncOrderToOmie(orderId, orderData, profileData, undefined, staffContext);
+        const result = await syncOrderToOmie(orderId, orderData, profileData, addressPayload, staffContext);
         if (result.success) {
           results.push(`OS ${result.omie_os?.cNumOS || ''}`);
         } else {
@@ -961,6 +1121,8 @@ const UnifiedOrder = () => {
                       setSelectedParcelaOben('999');
                       setSelectedParcelaColacor('999');
                       setVendedorDivergencias([]);
+                      setAddresses([]);
+                      setSelectedAddress('');
                     }}>
                       Trocar
                     </Button>
@@ -1071,12 +1233,12 @@ const UnifiedOrder = () => {
                 </Card>
               </TabsContent>
 
-              {/* Services Tab (Afiação) */}
+              {/* Services Tab (Afiação) - FULL FEATURES */}
               <TabsContent value="services">
                 <Card>
                   <CardHeader className="pb-2">
                     <CardTitle className="text-sm flex items-center gap-2">
-                      <Wrench className="w-4 h-4" /> Ferramentas do Cliente
+                      <Wrench className="w-4 h-4" /> Afiação — Ferramentas do Cliente
                     </CardTitle>
                   </CardHeader>
                   <CardContent>
@@ -1102,54 +1264,120 @@ const UnifiedOrder = () => {
                         </Button>
                       </div>
                     ) : (
-                      <div className="space-y-3">
-                        {serviceItems.map((item) => {
-                          const filteredSvcs = getFilteredServicos(item.userTool);
-                          const cartIdx = cart.indexOf(item);
-                          return (
-                            <div key={item.userTool.id} className="border rounded-lg p-3 bg-accent/10 space-y-2">
-                              <div className="flex items-center justify-between">
-                                <div className="flex items-center gap-2">
-                                  <Wrench className="w-4 h-4 text-primary" />
-                                  <span className="text-sm font-medium">{getToolName(item.userTool)}</span>
-                                </div>
-                                <button onClick={() => removeFromCart(cartIdx)}>
-                                  <Trash2 className="w-3.5 h-3.5 text-muted-foreground hover:text-destructive" />
-                                </button>
-                              </div>
-                              {filteredSvcs.length > 0 ? (
-                                <select
-                                  value={item.servico?.omie_codigo_servico || ''}
-                                  onChange={e => updateServiceServico(item.userTool.id, Number(e.target.value))}
-                                  className="w-full h-9 px-3 rounded-md border border-input bg-background text-sm"
-                                >
-                                  <option value="">Selecione serviço...</option>
-                                  {filteredSvcs.map(s => (
-                                    <option key={s.omie_codigo_servico} value={s.omie_codigo_servico}>{s.descricao}</option>
-                                  ))}
-                                </select>
-                              ) : (
-                                <p className="text-xs text-muted-foreground"><AlertCircle className="w-3 h-3 inline mr-1" />Nenhum serviço disponível</p>
-                              )}
-                              <div className="flex items-center gap-2">
-                                <span className="text-xs text-muted-foreground">Qtd:</span>
-                                <Button size="sm" variant="outline" className="h-6 w-6 p-0" onClick={() => updateQuantity(cartIdx, -1)}>
-                                  <Minus className="w-3 h-3" />
-                                </Button>
-                                <span className="text-xs w-6 text-center font-medium">{item.quantity}</span>
-                                <Button size="sm" variant="outline" className="h-6 w-6 p-0" onClick={() => updateQuantity(cartIdx, 1)}>
-                                  <Plus className="w-3 h-3" />
-                                </Button>
-                                <span className="text-xs text-muted-foreground ml-1">(máx: {item.userTool.quantity || 1})</span>
-                              </div>
-                            </div>
-                          );
-                        })}
+                      <div className="space-y-4">
+                        {/* Voice & Image assistants */}
+                        <div className="space-y-3">
+                          <VoiceServiceInput
+                            userTools={userTools}
+                            onItemsIdentified={handleVoiceItemsIdentified}
+                            isLoading={submitting}
+                          />
+                          <ToolImageIdentifier
+                            categories={toolCategories}
+                            onCategoryIdentified={handleImageCategoryIdentified}
+                          />
+                        </div>
 
+                        {/* Service items in cart */}
+                        {serviceItems.length > 0 && (
+                          <div className="space-y-4">
+                            {serviceItems.map((item) => {
+                              const filteredSvcs = getFilteredServicos(item.userTool);
+                              const cartIdx = cart.indexOf(item);
+                              const price = getServicePrice(item);
+                              return (
+                                <div key={item.userTool.id} className="border rounded-xl p-4 bg-accent/10 space-y-3">
+                                  <div className="flex items-start justify-between">
+                                    <div className="flex items-center gap-2">
+                                      <Wrench className="w-4 h-4 text-primary" />
+                                      <span className="text-sm font-medium">{getToolName(item.userTool)}</span>
+                                    </div>
+                                    <button onClick={() => removeFromCart(cartIdx)}>
+                                      <Trash2 className="w-4 h-4 text-muted-foreground hover:text-destructive" />
+                                    </button>
+                                  </div>
+
+                                  {/* Service selection */}
+                                  <div>
+                                    <label className="text-xs font-medium mb-1 block">Tipo de serviço *</label>
+                                    {filteredSvcs.length > 0 ? (
+                                      <select
+                                        value={item.servico?.omie_codigo_servico || ''}
+                                        onChange={e => updateServiceServico(item.userTool.id, Number(e.target.value))}
+                                        className="w-full h-9 px-3 rounded-md border border-input bg-background text-sm"
+                                      >
+                                        <option value="">Selecione serviço...</option>
+                                        {filteredSvcs.map(s => (
+                                          <option key={s.omie_codigo_servico} value={s.omie_codigo_servico}>{s.descricao}</option>
+                                        ))}
+                                      </select>
+                                    ) : (
+                                      <p className="text-xs text-muted-foreground"><AlertCircle className="w-3 h-3 inline mr-1" />Nenhum serviço disponível</p>
+                                    )}
+                                  </div>
+
+                                  {/* Quantity */}
+                                  <div>
+                                    <label className="text-xs font-medium mb-1 block">
+                                      Quantidade
+                                      <span className="text-muted-foreground ml-1">(máx: {item.userTool.quantity || 1})</span>
+                                    </label>
+                                    <div className="flex items-center gap-3">
+                                      <Button size="sm" variant="outline" className="h-8 w-8 p-0" onClick={() => updateQuantity(cartIdx, -1)}>
+                                        <Minus className="w-3 h-3" />
+                                      </Button>
+                                      <span className="w-8 text-center font-semibold">{item.quantity}</span>
+                                      <Button size="sm" variant="outline" className="h-8 w-8 p-0" onClick={() => {
+                                        const maxQty = item.userTool.quantity || 1;
+                                        if (item.quantity >= maxQty) {
+                                          toast({ title: 'Quantidade máxima atingida', description: `Esta ferramenta possui apenas ${maxQty} unidade(s).` });
+                                          return;
+                                        }
+                                        updateQuantity(cartIdx, 1);
+                                      }}>
+                                        <Plus className="w-3 h-3" />
+                                      </Button>
+                                      {price !== null && (
+                                        <span className="text-xs text-primary font-medium ml-auto">{fmt(price * item.quantity)}</span>
+                                      )}
+                                    </div>
+                                  </div>
+
+                                  {/* Notes */}
+                                  <div>
+                                    <label className="text-xs font-medium mb-1 block">Observações (opcional)</label>
+                                    <textarea
+                                      value={item.notes || ''}
+                                      onChange={e => updateServiceNotes(item.userTool.id, e.target.value)}
+                                      placeholder="Descreva danos, lascados, ou instruções especiais..."
+                                      className="w-full px-3 py-2 rounded-lg border border-input bg-background text-sm resize-none"
+                                      rows={2}
+                                    />
+                                  </div>
+
+                                  {/* Photos */}
+                                  {customerUserId && (
+                                    <div>
+                                      <label className="text-xs font-medium mb-1 block">Fotos (opcional)</label>
+                                      <PhotoUpload
+                                        photos={item.photos || []}
+                                        onPhotosChange={(photos) => updateServicePhotos(item.userTool.id, photos)}
+                                        userId={customerUserId}
+                                        maxPhotos={3}
+                                      />
+                                    </div>
+                                  )}
+                                </div>
+                              );
+                            })}
+                          </div>
+                        )}
+
+                        {/* Available tools to add */}
                         {availableTools.length > 0 && (
                           <div>
                             <p className="text-xs font-medium text-muted-foreground mb-2">
-                              {serviceItems.length > 0 ? 'Adicionar mais:' : 'Ferramentas disponíveis:'}
+                              {serviceItems.length > 0 ? 'Adicionar mais ferramentas:' : 'Ferramentas cadastradas:'}
                             </p>
                             <div className="space-y-1.5">
                               {availableTools.map(tool => (
@@ -1173,6 +1401,141 @@ const UnifiedOrder = () => {
                         <Button variant="ghost" size="sm" className="w-full" onClick={() => setAddToolDialogOpen(true)}>
                           <Plus className="w-4 h-4 mr-2" /> Cadastrar nova ferramenta
                         </Button>
+
+                        {/* Delivery section for afiação */}
+                        {serviceItems.length > 0 && (
+                          <div className="border-t pt-4 space-y-4">
+                            <h3 className="text-sm font-semibold flex items-center gap-2">
+                              <MapPin className="w-4 h-4" /> Entrega da Afiação
+                            </h3>
+
+                            <div className="bg-primary/10 border border-primary/20 rounded-lg p-3">
+                              <p className="text-xs text-primary font-medium">✓ Frete grátis em todas as modalidades</p>
+                            </div>
+
+                            <div className="space-y-2">
+                              {Object.entries(DELIVERY_OPTIONS).map(([key, { label, description }]) => (
+                                <button
+                                  key={key}
+                                  onClick={() => setDeliveryOption(key as DeliveryOption)}
+                                  className={cn(
+                                    'w-full p-3 rounded-lg border-2 text-left transition-all flex items-start gap-2',
+                                    deliveryOption === key ? 'border-primary bg-primary/5' : 'border-border hover:border-primary/50'
+                                  )}
+                                >
+                                  <div className={cn(
+                                    'w-4 h-4 rounded-full border-2 flex items-center justify-center mt-0.5 shrink-0',
+                                    deliveryOption === key ? 'border-primary' : 'border-muted-foreground'
+                                  )}>
+                                    {deliveryOption === key && <div className="w-2 h-2 rounded-full bg-primary" />}
+                                  </div>
+                                  <div className="flex-1">
+                                    <span className="text-sm font-medium block">{label}</span>
+                                    <span className="text-xs text-muted-foreground">{description}</span>
+                                  </div>
+                                </button>
+                              ))}
+                            </div>
+
+                            {deliveryOption !== 'balcao' && (
+                              <>
+                                {/* Address */}
+                                {addresses.length > 0 ? (
+                                  <div>
+                                    <label className="text-xs font-medium mb-2 flex items-center gap-1">
+                                      <MapPin className="w-3 h-3" /> Endereço
+                                    </label>
+                                    {(() => {
+                                      const addr = addresses.find(a => a.id === selectedAddress);
+                                      if (!addr) return null;
+                                      return (
+                                        <div className="bg-card rounded-lg p-3 border-2 border-primary">
+                                          <div className="flex items-start justify-between">
+                                            <div>
+                                              <span className="text-xs font-semibold">{addr.label}</span>
+                                              <p className="text-xs text-muted-foreground">
+                                                {addr.street}, {addr.number}{addr.complement && ` - ${addr.complement}`}
+                                              </p>
+                                              <p className="text-xs text-muted-foreground">
+                                                {addr.neighborhood} - {addr.city}/{addr.state}
+                                              </p>
+                                            </div>
+                                            <Check className="w-4 h-4 text-primary" />
+                                          </div>
+                                        </div>
+                                      );
+                                    })()}
+                                    {!showAddressOptions && addresses.length > 1 && (
+                                      <Button variant="outline" size="sm" className="w-full mt-2" onClick={() => setShowAddressOptions(true)}>
+                                        Alterar endereço
+                                      </Button>
+                                    )}
+                                    {showAddressOptions && addresses.filter(a => a.id !== selectedAddress).map(addr => (
+                                      <button
+                                        key={addr.id}
+                                        onClick={() => { setSelectedAddress(addr.id); setShowAddressOptions(false); }}
+                                        className="w-full mt-2 p-3 rounded-lg border-2 border-border text-left hover:border-primary/50 transition-all"
+                                      >
+                                        <span className="text-xs font-semibold">{addr.label}</span>
+                                        <p className="text-xs text-muted-foreground">
+                                          {addr.street}, {addr.number} - {addr.city}/{addr.state}
+                                        </p>
+                                      </button>
+                                    ))}
+                                  </div>
+                                ) : (
+                                  <p className="text-xs text-muted-foreground">Nenhum endereço cadastrado para este cliente.</p>
+                                )}
+
+                                {/* Time slot */}
+                                <div>
+                                  <label className="text-xs font-medium mb-2 flex items-center gap-1">
+                                    <Clock className="w-3 h-3" /> Horário preferido
+                                  </label>
+                                  <div className="grid grid-cols-2 gap-2">
+                                    {TIME_SLOTS.map(slot => (
+                                      <button
+                                        key={slot.id}
+                                        onClick={() => setSelectedTimeSlot(slot.id)}
+                                        className={cn(
+                                          'py-2 px-3 rounded-lg border-2 text-xs font-medium transition-all',
+                                          selectedTimeSlot === slot.id ? 'border-primary bg-primary/5' : 'border-border hover:border-primary/50'
+                                        )}
+                                      >
+                                        {slot.label}
+                                      </button>
+                                    ))}
+                                  </div>
+                                </div>
+                              </>
+                            )}
+
+                            {/* Payment for afiação */}
+                            <div>
+                              <label className="text-xs font-medium mb-2 block">Pagamento Afiação</label>
+                              <div className="space-y-1.5">
+                                {PAYMENT_OPTIONS.map(option => (
+                                  <button
+                                    key={option.id}
+                                    onClick={() => setAfiacaoPaymentMethod(option.id)}
+                                    className={cn(
+                                      'w-full p-2.5 rounded-lg border-2 text-left transition-all',
+                                      afiacaoPaymentMethod === option.id ? 'border-primary bg-primary/5' : 'border-border hover:border-primary/50'
+                                    )}
+                                  >
+                                    <div className="flex items-center justify-between">
+                                      <div>
+                                        <span className="text-xs font-medium">{option.label}</span>
+                                        <p className="text-[10px] text-muted-foreground">{option.description}</p>
+                                      </div>
+                                      {afiacaoPaymentMethod === option.id && <Check className="w-3.5 h-3.5 text-primary" />}
+                                    </div>
+                                  </button>
+                                ))}
+                              </div>
+                            </div>
+                          </div>
+                        )}
                       </div>
                     )}
                   </CardContent>
@@ -1284,21 +1647,33 @@ const UnifiedOrder = () => {
                       {serviceItems.map(item => {
                         const price = getServicePrice(item);
                         return (
-                          <div key={item.userTool.id} className="flex items-center justify-between mb-1.5">
-                            <div className="flex-1 min-w-0">
-                              <p className="text-xs font-medium truncate">{getToolName(item.userTool)}</p>
-                              <p className="text-[10px] text-muted-foreground truncate">
-                                {item.quantity}x {item.servico?.descricao || 'Selecione serviço'}
-                              </p>
+                          <div key={item.userTool.id} className="mb-1.5">
+                            <div className="flex items-center justify-between">
+                              <div className="flex-1 min-w-0">
+                                <p className="text-xs font-medium truncate">{getToolName(item.userTool)}</p>
+                                <p className="text-[10px] text-muted-foreground truncate">
+                                  {item.quantity}x {item.servico?.descricao || 'Selecione serviço'}
+                                </p>
+                                {item.notes && <p className="text-[10px] text-muted-foreground italic truncate">Obs: {item.notes}</p>}
+                              </div>
+                              {price !== null ? (
+                                <span className="text-xs font-semibold shrink-0">{fmt(price * item.quantity)}</span>
+                              ) : (
+                                <span className="text-[10px] text-muted-foreground italic shrink-0">A orçar</span>
+                              )}
                             </div>
-                            {price !== null ? (
-                              <span className="text-xs font-semibold shrink-0">{fmt(price * item.quantity)}</span>
-                            ) : (
-                              <span className="text-[10px] text-muted-foreground italic shrink-0">A orçar</span>
-                            )}
                           </div>
                         );
                       })}
+                      {/* Delivery info in cart */}
+                      <div className="mt-1.5 pt-1.5 border-t border-dashed">
+                        <p className="text-[10px] text-muted-foreground">
+                          📦 {DELIVERY_OPTIONS[deliveryOption].label}
+                          {deliveryOption !== 'balcao' && selectedTimeSlot && (
+                            <> • {TIME_SLOTS.find(s => s.id === selectedTimeSlot)?.label}</>
+                          )}
+                        </p>
+                      </div>
                     </div>
                   )}
 
@@ -1400,7 +1775,7 @@ const UnifiedOrder = () => {
                 )}
 
                 <div>
-                  <Label className="text-xs font-medium">Observações</Label>
+                  <Label className="text-xs font-medium">Observações gerais</Label>
                   <Textarea placeholder="Observações do pedido..." value={notes} onChange={e => setNotes(e.target.value)} rows={2} className="text-sm mt-1" />
                 </div>
 
@@ -1434,7 +1809,7 @@ const UnifiedOrder = () => {
         <AddToolDialog
           open={addToolDialogOpen}
           onOpenChange={setAddToolDialogOpen}
-          categories={[]}
+          categories={toolCategories}
           targetUserId={customerUserId}
           onToolAdded={() => loadUserTools(customerUserId)}
         />
