@@ -375,10 +375,12 @@ const UnifiedOrder = () => {
       if (!localUserId && cust.cnpj_cpf) {
         const docClean = cust.cnpj_cpf.replace(/\D/g, '');
         if (docClean.length >= 11) {
+          // Try clean document first, then formatted (legacy data)
           const { data: profile } = await supabase
             .from('profiles')
             .select('user_id')
-            .eq('document', docClean)
+            .or(`document.eq.${docClean},document.eq.${cust.cnpj_cpf}`)
+            .limit(1)
             .maybeSingle();
           if (profile?.user_id) localUserId = profile.user_id;
         }
@@ -614,6 +616,7 @@ const UnifiedOrder = () => {
     if (customerUserId) { setAddToolDialogOpen(true); return; }
     setCreatingLocalProfile(true);
     try {
+      // Try omie_clientes mapping first
       const { data: existingMapping } = await supabase
         .from('omie_clientes')
         .select('user_id')
@@ -625,6 +628,24 @@ const UnifiedOrder = () => {
         setAddToolDialogOpen(true);
         return;
       }
+      // Fallback: search by document in profiles (handles cross-account mappings)
+      if (selectedCustomer.cnpj_cpf) {
+        const docClean = selectedCustomer.cnpj_cpf.replace(/\D/g, '');
+        if (docClean.length >= 11) {
+          const { data: profile } = await supabase
+            .from('profiles')
+            .select('user_id')
+            .eq('document', docClean)
+            .maybeSingle();
+          if (profile?.user_id) {
+            setCustomerUserId(profile.user_id);
+            loadUserTools(profile.user_id);
+            setAddToolDialogOpen(true);
+            return;
+          }
+        }
+      }
+      // No existing profile found — create one
       const { data: result, error } = await supabase.functions.invoke('omie-cliente', {
         body: {
           action: 'criar_perfil_local',
