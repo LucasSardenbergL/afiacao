@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
-import { BookOpen } from 'lucide-react';
+import { BookOpen, Lock, Calculator, FileText } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { useAuth } from '@/contexts/AuthContext';
 import { useUserRole } from '@/hooks/useUserRole';
@@ -102,6 +102,9 @@ const unifiedNavSections: { title: string; items: NavItem[] }[] = [
       { icon: BarChart3, label: 'Relatórios', path: '/admin/monthly-reports', managerOnly: true },
       { icon: TrendingUp, label: 'Analytics & Sync', path: '/admin/analytics-sync', managerOnly: true },
       { icon: Shield, label: 'Governança', path: '/governance/users', managerOnly: true },
+      { icon: Lock, label: 'Permissões', path: '/governance/permissions', managerOnly: true },
+      { icon: Calculator, label: 'Parâmetros', path: '/governance/math', managerOnly: true },
+      { icon: FileText, label: 'Auditoria', path: '/governance/audit', managerOnly: true },
       { icon: Settings, label: 'Configurações', path: '/settings', managerOnly: true },
     ],
   },
