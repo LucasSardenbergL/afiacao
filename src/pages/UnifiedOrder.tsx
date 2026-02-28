@@ -118,6 +118,7 @@ const UnifiedOrder = () => {
 
   // Products (Oben)
   const [products, setProducts] = useState<Product[]>([]);
+  const [colacorProducts, setColacorProducts] = useState<Product[]>([]);
   const [productSearch, setProductSearch] = useState('');
   const [loadingProducts, setLoadingProducts] = useState(true);
   const [customerPrices, setCustomerPrices] = useState<Record<number, number>>({});
@@ -217,6 +218,7 @@ const UnifiedOrder = () => {
       const { data } = await supabase
         .from('omie_products')
         .select('id, codigo, descricao, unidade, valor_unitario, estoque, ativo, omie_codigo_produto')
+        .eq('account', 'oben')
         .order('descricao');
       if (!data || data.length === 0) {
         try {
@@ -231,6 +233,7 @@ const UnifiedOrder = () => {
           const { data: refreshed } = await supabase
             .from('omie_products')
             .select('id, codigo, descricao, unidade, valor_unitario, estoque, ativo, omie_codigo_produto')
+            .eq('account', 'oben')
             .order('descricao');
           setProducts((refreshed || []) as Product[]);
         } catch (syncErr) { console.error('Sync error:', syncErr); }
@@ -239,8 +242,21 @@ const UnifiedOrder = () => {
       }
       // Sync stock in background (Oben - ListarPosEstoque)
       syncStockInBackground();
+      // Load Colacor products for cross-match
+      loadColacorProducts();
     } catch (e) { console.error(e); }
     finally { setLoadingProducts(false); }
+  };
+
+  const loadColacorProducts = async () => {
+    try {
+      const { data } = await supabase
+        .from('omie_products')
+        .select('id, codigo, descricao, unidade, valor_unitario, estoque, ativo, omie_codigo_produto')
+        .eq('account', 'colacor')
+        .order('descricao');
+      if (data) setColacorProducts(data as Product[]);
+    } catch (e) { console.error('Error loading Colacor products:', e); }
   };
 
   const syncStockInBackground = async () => {
@@ -257,10 +273,19 @@ const UnifiedOrder = () => {
       const { data: refreshed } = await supabase
         .from('omie_products')
         .select('id, codigo, descricao, unidade, valor_unitario, estoque, ativo, omie_codigo_produto')
+        .eq('account', 'oben')
         .order('descricao');
       if (refreshed) setProducts(refreshed as Product[]);
     } catch (e) { console.error('Background stock sync error:', e); }
   };
+
+  // Cross-match: find Colacor product by description
+  const findColacorMatch = useCallback((descricao: string) => {
+    const normalized = descricao.toLowerCase().trim();
+    return colacorProducts.find(cp =>
+      cp.descricao.toLowerCase().trim() === normalized && (cp.estoque ?? 0) > 0
+    ) || null;
+  }, [colacorProducts]);
 
   const loadServicosColacor = async () => {
     try {
@@ -788,14 +813,20 @@ const UnifiedOrder = () => {
                             {filteredProducts.map(product => {
                               const isInCart = productItems.some(c => c.product.id === product.id);
                               const customerPrice = customerPrices[product.omie_codigo_produto];
+                              const colacorMatch = findColacorMatch(product.descricao);
                               return (
                                 <tr key={product.id} className={cn('border-b last:border-b-0 hover:bg-muted/20 transition-colors', isInCart && 'bg-accent/20')}>
                                   <td className="px-3 py-2">
-                                    <div className="flex items-center gap-1.5">
+                                    <div className="flex items-center gap-1.5 flex-wrap">
                                       <span className="text-xs truncate max-w-[200px]">{product.descricao}</span>
                                       {!product.ativo && <Badge variant="destructive" className="text-[9px] px-1 py-0">Inativo</Badge>}
                                       {customerPrice && customerPrice !== product.valor_unitario && (
                                         <Badge variant="secondary" className="text-[9px] px-1 py-0">Preço cliente</Badge>
+                                      )}
+                                      {colacorMatch && (
+                                        <Badge variant="outline" className="text-[9px] px-1 py-0 text-amber-700 bg-amber-50 border-amber-200">
+                                          Colacor Est: {colacorMatch.estoque}
+                                        </Badge>
                                       )}
                                     </div>
                                     <span className="text-[10px] text-muted-foreground font-mono">{product.codigo}</span>
