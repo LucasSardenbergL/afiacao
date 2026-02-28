@@ -193,7 +193,24 @@ const NewOrder = () => {
         phone: selectedOmieCustomer.telefone || null,
         document: selectedOmieCustomer.cnpj_cpf || null,
       });
-      setAddresses([]);
+      // Use Omie address as fallback
+      if (selectedOmieCustomer.endereco && selectedOmieCustomer.cidade) {
+        const omieAddress: AddressData = {
+          id: 'omie-default',
+          label: 'Endereço Omie (Padrão)',
+          street: selectedOmieCustomer.endereco || '',
+          number: selectedOmieCustomer.endereco_numero || 'S/N',
+          complement: selectedOmieCustomer.complemento || null,
+          neighborhood: selectedOmieCustomer.bairro || '',
+          city: selectedOmieCustomer.cidade || '',
+          state: selectedOmieCustomer.estado || '',
+          zipCode: selectedOmieCustomer.cep || '',
+        };
+        setAddresses([omieAddress]);
+        setSelectedAddress('omie-default');
+      } else {
+        setAddresses([]);
+      }
       setUserTools([]);
       setLoadingData(false);
       setLoadingTools(false);
@@ -267,7 +284,30 @@ const NewOrder = () => {
     }
   };
 
-  const handleSelectCustomer = (customer: OmieCustomer) => {
+  const handleSelectCustomer = async (customer: OmieCustomer) => {
+    // Fetch full client details from Omie (including address and codigo_vendedor)
+    try {
+      const { data: fullData } = await supabase.functions.invoke('omie-cliente', {
+        body: { action: 'consultar_cliente', codigo_cliente: customer.codigo_cliente },
+      });
+      if (fullData?.found && fullData.cliente) {
+        const c = fullData.cliente;
+        customer = {
+          ...customer,
+          endereco: c.endereco || customer.endereco,
+          endereco_numero: c.endereco_numero || customer.endereco_numero,
+          complemento: c.complemento || customer.complemento,
+          bairro: c.bairro || customer.bairro,
+          cidade: c.cidade || customer.cidade,
+          estado: c.estado || customer.estado,
+          cep: c.cep || customer.cep,
+          codigo_vendedor: c.codigo_vendedor || customer.codigo_vendedor,
+        };
+      }
+    } catch (err) {
+      console.error('Erro ao buscar detalhes do cliente Omie:', err);
+    }
+
     setSelectedOmieCustomer(customer);
     // Reset items when switching customer
     setItems([]);
@@ -388,6 +428,21 @@ const NewOrder = () => {
         }));
         setAddresses(formattedAddresses);
         setSelectedAddress(formattedAddresses[0].id);
+      } else if (isStaff && selectedOmieCustomer?.endereco && selectedOmieCustomer?.cidade) {
+        // Fallback: use Omie address when no local addresses exist
+        const omieAddress: AddressData = {
+          id: 'omie-default',
+          label: 'Endereço Omie (Padrão)',
+          street: selectedOmieCustomer.endereco || '',
+          number: selectedOmieCustomer.endereco_numero || 'S/N',
+          complement: selectedOmieCustomer.complemento || null,
+          neighborhood: selectedOmieCustomer.bairro || '',
+          city: selectedOmieCustomer.cidade || '',
+          state: selectedOmieCustomer.estado || '',
+          zipCode: selectedOmieCustomer.cep || '',
+        };
+        setAddresses([omieAddress]);
+        setSelectedAddress('omie-default');
       } else {
         setAddresses([]);
       }
