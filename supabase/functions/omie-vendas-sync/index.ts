@@ -407,7 +407,7 @@ function getAccountConfig(account: Account) {
   if (account === "colacor") {
     return {
       codigo_categoria: "1.01.01",
-      codigo_conta_corrente: 8693825504, // Colacor conta corrente (Itaú)
+      codigo_conta_corrente: null, // Colacor: omitir para usar conta padrão do Omie
       obs_prefix: "Pedido de venda via App Colacor",
     };
   }
@@ -466,7 +466,7 @@ async function criarPedidoVenda(
     },
     informacoes_adicionais: {
       codigo_categoria: config.codigo_categoria,
-      codigo_conta_corrente: config.codigo_conta_corrente,
+      ...(config.codigo_conta_corrente ? { codigo_conta_corrente: config.codigo_conta_corrente } : {}),
     },
   };
 
