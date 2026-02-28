@@ -163,7 +163,7 @@ const NewOrder = () => {
     if (!isStaff) return;
     if (searchTimer) clearTimeout(searchTimer);
     
-    if (customerSearch.trim().length >= 2) {
+    if (customerSearch.trim().length >= 3) {
       const timer = setTimeout(() => {
         searchOmieCustomers(customerSearch.trim());
       }, 500);
