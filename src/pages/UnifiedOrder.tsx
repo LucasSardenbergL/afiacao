@@ -221,6 +221,7 @@ const UnifiedOrder = () => {
         .eq('account', 'oben')
         .not('familia', 'ilike', '%imobilizado%')
         .not('familia', 'ilike', '%uso e consumo%')
+        .not('familia', 'ilike', '%matérias primas para conversão de cintas%')
         .order('descricao');
       if (!data || data.length === 0) {
         try {
@@ -238,6 +239,7 @@ const UnifiedOrder = () => {
             .eq('account', 'oben')
             .not('familia', 'ilike', '%imobilizado%')
             .not('familia', 'ilike', '%uso e consumo%')
+            .not('familia', 'ilike', '%matérias primas para conversão de cintas%')
             .order('descricao');
           setProducts((refreshed || []) as Product[]);
         } catch (syncErr) { console.error('Sync error:', syncErr); }
@@ -260,6 +262,7 @@ const UnifiedOrder = () => {
         .eq('account', 'colacor')
         .not('familia', 'ilike', '%imobilizado%')
         .not('familia', 'ilike', '%uso e consumo%')
+        .not('familia', 'ilike', '%matérias primas para conversão de cintas%')
         .order('descricao');
       if (data) setColacorProducts(data as Product[]);
     } catch (e) { console.error('Error loading Colacor products:', e); }
@@ -282,6 +285,7 @@ const UnifiedOrder = () => {
         .eq('account', 'oben')
         .not('familia', 'ilike', '%imobilizado%')
         .not('familia', 'ilike', '%uso e consumo%')
+        .not('familia', 'ilike', '%matérias primas para conversão de cintas%')
         .order('descricao');
       if (refreshed) setProducts(refreshed as Product[]);
     } catch (e) { console.error('Background stock sync error:', e); }

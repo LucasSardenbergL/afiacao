@@ -79,7 +79,7 @@ async function syncProducts(supabase: ReturnType<typeof createClient>, startPage
     totalPaginas = result.total_de_paginas || 1;
     const produtos = result.produto_servico_cadastro || [];
 
-    const EXCLUDED_FAMILIES = ['imobilizado', 'uso e consumo'];
+    const EXCLUDED_FAMILIES = ['imobilizado', 'uso e consumo', 'matérias primas para conversão de cintas'];
 
     const rows = produtos
       .filter((prod: any) => {
