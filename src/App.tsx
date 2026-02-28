@@ -62,6 +62,9 @@ import AdminAnalyticsSync from "./pages/AdminAnalyticsSync";
 import TechnicalDocs from "./pages/TechnicalDocs";
 import IntelligenceDashboard from "./pages/IntelligenceDashboard";
 import GovernanceUsers from "./pages/GovernanceUsers";
+import GovernancePermissions from "./pages/GovernancePermissions";
+import GovernanceMathParams from "./pages/GovernanceMathParams";
+import GovernanceAudit from "./pages/GovernanceAudit";
 
 const queryClient = new QueryClient();
 
@@ -132,6 +135,9 @@ const App = () => (
               <Route path="docs" element={<TechnicalDocs />} />
               <Route path="intelligence" element={<IntelligenceDashboard />} />
               <Route path="governance/users" element={<GovernanceUsers />} />
+              <Route path="governance/permissions" element={<GovernancePermissions />} />
+              <Route path="governance/math" element={<GovernanceMathParams />} />
+              <Route path="governance/audit" element={<GovernanceAudit />} />
             </Route>
 
             <Route path="*" element={<NotFound />} />
