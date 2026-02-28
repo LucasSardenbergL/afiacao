@@ -854,9 +854,9 @@ const NewOrder = () => {
                 <div className="flex items-center justify-center py-8">
                   <Loader2 className="w-6 h-6 animate-spin text-primary" />
                 </div>
-              ) : customerSearch.trim().length < 2 ? (
+              ) : customerSearch.trim().length < 3 ? (
                 <p className="text-sm text-muted-foreground text-center py-4">
-                  Digite pelo menos 2 caracteres para pesquisar clientes no Omie
+                  Digite pelo menos 3 caracteres para pesquisar clientes no Omie
                 </p>
               ) : (
                 <div className="space-y-2 max-h-[50vh] overflow-y-auto">
