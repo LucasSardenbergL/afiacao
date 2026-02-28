@@ -85,6 +85,11 @@ interface OmieCustomer {
   cnpj_cpf: string;
   codigo_vendedor: number | null;
   local_user_id?: string | null;
+  // Per-account resolved codes
+  codigo_cliente_colacor?: number | null;
+  codigo_vendedor_colacor?: number | null;
+  codigo_cliente_afiacao?: number | null;
+  codigo_vendedor_afiacao?: number | null;
 }
 
 interface FormaPagamento {
@@ -477,15 +482,18 @@ const UnifiedOrder = () => {
         loadPriceHistory();
       }
 
-      // Load prices + parcela for BOTH accounts in parallel
+      // Resolve per-account codigo_cliente in parallel with price loading
       const [
         priceOben, priceColacor,
         parcelaOben, parcelaColacor,
-        localPriceResult
+        localPriceResult,
+        colacorClientResult,
+        afiacaoClientResult,
       ] = await Promise.all([
         supabase.functions.invoke('omie-vendas-sync', {
           body: { action: 'buscar_precos_cliente', codigo_cliente: cust.codigo_cliente, account: 'oben' },
         }),
+        // For colacor prices, we'll use colacor's codigo_cliente once resolved; for now fetch with oben's (may fail gracefully)
         supabase.functions.invoke('omie-vendas-sync', {
           body: { action: 'buscar_precos_cliente', codigo_cliente: cust.codigo_cliente, account: 'colacor' },
         }),
@@ -502,7 +510,31 @@ const UnifiedOrder = () => {
               .eq('customer_user_id', localUserId)
               .order('created_at', { ascending: false })
           : Promise.resolve({ data: null }),
+        // Resolve Colacor codigo_cliente by document
+        cust.cnpj_cpf
+          ? supabase.functions.invoke('omie-vendas-sync', {
+              body: { action: 'buscar_cliente', document: cust.cnpj_cpf, account: 'colacor' },
+            })
+          : Promise.resolve({ data: null }),
+        // Resolve Afiação codigo_cliente by document
+        cust.cnpj_cpf
+          ? supabase.functions.invoke('omie-sync', {
+              body: { action: 'buscar_cliente_por_documento', document: cust.cnpj_cpf },
+            })
+          : Promise.resolve({ data: null }),
       ]);
+
+      // Store per-account resolved codes
+      if (colacorClientResult?.data?.cliente) {
+        cust.codigo_cliente_colacor = colacorClientResult.data.cliente.codigo_cliente;
+        cust.codigo_vendedor_colacor = colacorClientResult.data.cliente.codigo_vendedor || null;
+      }
+      if (afiacaoClientResult?.data?.codigo_cliente) {
+        cust.codigo_cliente_afiacao = afiacaoClientResult.data.codigo_cliente;
+        cust.codigo_vendedor_afiacao = afiacaoClientResult.data.codigo_vendedor || null;
+      }
+      // Update the selectedCustomer with resolved codes
+      setSelectedCustomer({ ...cust });
 
       // Build local prices map
       const localPricesByProduct: Record<string, number> = {};
@@ -913,8 +945,8 @@ const UnifiedOrder = () => {
             action: 'criar_pedido',
             account: 'colacor',
             sales_order_id: salesOrder.id,
-            codigo_cliente: selectedCustomer.codigo_cliente,
-            codigo_vendedor: selectedCustomer.codigo_vendedor,
+            codigo_cliente: selectedCustomer.codigo_cliente_colacor || selectedCustomer.codigo_cliente,
+            codigo_vendedor: selectedCustomer.codigo_vendedor_colacor ?? selectedCustomer.codigo_vendedor,
             items: colacorProductItems.map(c => ({
               omie_codigo_produto: c.product.omie_codigo_produto,
               quantidade: c.quantity,
@@ -990,7 +1022,7 @@ const UnifiedOrder = () => {
         };
 
         const staffContext = {
-          customerOmieCode: selectedCustomer.codigo_cliente,
+          customerOmieCode: selectedCustomer.codigo_cliente_afiacao || selectedCustomer.codigo_cliente,
           customerUserId: customerUserId || null,
         };
 

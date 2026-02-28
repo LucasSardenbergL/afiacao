@@ -685,6 +685,42 @@ serve(async (req) => {
         break;
       }
 
+      case "buscar_cliente_por_documento": {
+        const { document } = body;
+        if (!document) {
+          return new Response(
+            JSON.stringify({ error: "Documento é obrigatório" }),
+            { status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+          );
+        }
+        const documentClean = document.replace(/\D/g, "");
+        try {
+          const searchResult = await callOmieApi(
+            "geral/clientes/",
+            "ListarClientes",
+            {
+              pagina: 1,
+              registros_por_pagina: 1,
+              clientesFiltro: { cnpj_cpf: documentClean },
+            }
+          ) as any;
+          const cliente = searchResult.clientes_cadastro?.[0];
+          if (cliente) {
+            result = {
+              success: true,
+              codigo_cliente: cliente.codigo_cliente_omie,
+              codigo_vendedor: cliente.recomendacoes?.codigo_vendedor || cliente.codigo_vendedor || null,
+            };
+          } else {
+            result = { success: true, codigo_cliente: null };
+          }
+        } catch (e) {
+          console.log("[Omie] Erro ao buscar cliente por documento:", e);
+          result = { success: true, codigo_cliente: null };
+        }
+        break;
+      }
+
       case "check_client": {
         const { data: mapping } = await supabaseAdmin
           .from("omie_clientes")
