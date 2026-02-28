@@ -1536,6 +1536,7 @@ export type Database = {
       }
       omie_products: {
         Row: {
+          account: string
           ativo: boolean
           codigo: string
           created_at: string
@@ -1554,6 +1555,7 @@ export type Database = {
           valor_unitario: number
         }
         Insert: {
+          account?: string
           ativo?: boolean
           codigo: string
           created_at?: string
@@ -1572,6 +1574,7 @@ export type Database = {
           valor_unitario?: number
         }
         Update: {
+          account?: string
           ativo?: boolean
           codigo?: string
           created_at?: string
@@ -2146,6 +2149,7 @@ export type Database = {
       }
       sales_orders: {
         Row: {
+          account: string
           created_at: string
           created_by: string
           customer_user_id: string
@@ -2163,6 +2167,7 @@ export type Database = {
           updated_at: string
         }
         Insert: {
+          account?: string
           created_at?: string
           created_by: string
           customer_user_id: string
@@ -2180,6 +2185,7 @@ export type Database = {
           updated_at?: string
         }
         Update: {
+          account?: string
           created_at?: string
           created_by?: string
           customer_user_id?: string

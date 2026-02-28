@@ -9,6 +9,7 @@ import { Textarea } from '@/components/ui/textarea';
 import { Badge } from '@/components/ui/badge';
 import { Separator } from '@/components/ui/separator';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
+import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { RecommendationsPanel } from '@/components/RecommendationsPanel';
 import { supabase } from '@/integrations/supabase/client';
 import { useAuth } from '@/contexts/AuthContext';
@@ -17,10 +18,12 @@ import { cn } from '@/lib/utils';
 import type { RecommendationItem } from '@/hooks/useRecommendationEngine';
 import {
   Loader2, Search, Plus, Minus, Trash2, User, ShoppingCart, Send, CreditCard,
-  ChevronLeft, Package, TrendingUp, Sparkles, ArrowUpRight, CheckCircle,
+  ChevronLeft, Package, TrendingUp, Sparkles, ArrowUpRight, CheckCircle, Building2,
 } from 'lucide-react';
 
 /* ─── Types ─── */
+type Account = 'oben' | 'colacor';
+
 interface Product {
   id: string;
   codigo: string;
@@ -30,6 +33,7 @@ interface Product {
   estoque: number;
   ativo: boolean;
   omie_codigo_produto: number;
+  account?: string;
 }
 
 interface CartItem {
@@ -60,7 +64,9 @@ interface FormaPagamento {
 
 const fmt = (v: number) => v.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' });
 
-/* (Old inline RecommendationCard removed — now using RecommendationsPanel) */
+function normalizeStr(s: string) {
+  return s.toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '').replace(/[^a-z0-9 ]/g, '').trim();
+}
 
 /* ─── Stepper ─── */
 function OrderStepper({ step }: { step: number }) {
@@ -96,6 +102,9 @@ const NewSalesOrder = () => {
   const { user, isStaff, loading: authLoading } = useAuth();
   const { toast } = useToast();
 
+  // Account selector
+  const [account, setAccount] = useState<Account>('oben');
+
   const [customerSearch, setCustomerSearch] = useState('');
   const [customers, setCustomers] = useState<OmieCustomer[]>([]);
   const [selectedCustomer, setSelectedCustomer] = useState<SelectedCustomer | null>(null);
@@ -103,6 +112,7 @@ const NewSalesOrder = () => {
   const [searchingCustomers, setSearchingCustomers] = useState(false);
 
   const [products, setProducts] = useState<Product[]>([]);
+  const [colacorProducts, setColacorProducts] = useState<Product[]>([]);
   const [productSearch, setProductSearch] = useState('');
   const [loadingProducts, setLoadingProducts] = useState(true);
 
@@ -124,11 +134,12 @@ const NewSalesOrder = () => {
 
   // Handle adding a recommended product to cart
   const handleAddRecommendation = useCallback((item: RecommendationItem) => {
-    const product = products.find(p => p.id === item.product_id);
+    const allProducts = [...products, ...colacorProducts];
+    const product = allProducts.find(p => p.id === item.product_id);
     if (product) {
       addToCart(product);
     }
-  }, [products]);
+  }, [products, colacorProducts]);
 
   const currentStep = !selectedCustomer ? 0 : cart.length === 0 ? 1 : 2;
 
@@ -141,13 +152,24 @@ const NewSalesOrder = () => {
       loadProducts();
       loadFormasPagamento();
     }
-  }, [isStaff]);
+  }, [isStaff, account]);
+
+  // Also load Colacor products for cross-match when on Oben
+  useEffect(() => {
+    if (isStaff && account === 'oben') {
+      loadColacorProducts();
+    } else {
+      setColacorProducts([]);
+    }
+  }, [isStaff, account]);
 
   const loadProducts = async () => {
+    setLoadingProducts(true);
     try {
       const { data } = await supabase
         .from('omie_products')
-        .select('id, codigo, descricao, unidade, valor_unitario, estoque, ativo, omie_codigo_produto')
+        .select('id, codigo, descricao, unidade, valor_unitario, estoque, ativo, omie_codigo_produto, account')
+        .eq('account', account)
         .order('descricao');
 
       if (!data || data.length === 0) {
@@ -155,14 +177,15 @@ const NewSalesOrder = () => {
           let nextPage: number | null = 1;
           while (nextPage) {
             const { data: syncResult, error: syncError } = await supabase.functions.invoke('omie-vendas-sync', {
-              body: { action: 'sync_products', start_page: nextPage },
+              body: { action: 'sync_products', start_page: nextPage, account },
             });
             if (syncError) throw syncError;
             nextPage = syncResult.nextPage || null;
           }
           const { data: refreshed } = await supabase
             .from('omie_products')
-            .select('id, codigo, descricao, unidade, valor_unitario, estoque, ativo, omie_codigo_produto')
+            .select('id, codigo, descricao, unidade, valor_unitario, estoque, ativo, omie_codigo_produto, account')
+            .eq('account', account)
             .order('descricao');
           setProducts((refreshed || []) as Product[]);
         } catch (syncErr) {
@@ -178,26 +201,57 @@ const NewSalesOrder = () => {
     }
   };
 
+  const loadColacorProducts = async () => {
+    try {
+      const { data } = await supabase
+        .from('omie_products')
+        .select('id, codigo, descricao, unidade, valor_unitario, estoque, ativo, omie_codigo_produto, account')
+        .eq('account', 'colacor')
+        .gt('estoque', 0)
+        .order('descricao');
+      setColacorProducts((data || []) as Product[]);
+    } catch (e) {
+      console.error('Erro ao carregar produtos Colacor:', e);
+    }
+  };
+
+  // Build cross-match map: normalized Oben description -> Colacor product with stock
+  const colacorMatchMap = useMemo(() => {
+    const map: Record<string, Product> = {};
+    for (const cp of colacorProducts) {
+      const key = normalizeStr(cp.descricao);
+      if (!map[key] || cp.estoque > (map[key].estoque || 0)) {
+        map[key] = cp;
+      }
+    }
+    return map;
+  }, [colacorProducts]);
+
+  const findColacorMatch = useCallback((descricao: string): Product | null => {
+    const key = normalizeStr(descricao);
+    return colacorMatchMap[key] || null;
+  }, [colacorMatchMap]);
+
   useEffect(() => {
     if (customerSearch.length < 2) { setCustomers([]); return; }
     const timeout = setTimeout(async () => {
       setSearchingCustomers(true);
       try {
         const { data, error } = await supabase.functions.invoke('omie-vendas-sync', {
-          body: { action: 'listar_clientes', search: customerSearch },
+          body: { action: 'listar_clientes', search: customerSearch, account },
         });
         if (!error && data?.clientes) setCustomers(data.clientes);
       } catch (e) { console.error(e); }
       finally { setSearchingCustomers(false); }
     }, 500);
     return () => clearTimeout(timeout);
-  }, [customerSearch]);
+  }, [customerSearch, account]);
 
   const loadFormasPagamento = async () => {
     setLoadingFormas(true);
     try {
       const { data } = await supabase.functions.invoke('omie-vendas-sync', {
-        body: { action: 'listar_formas_pagamento' },
+        body: { action: 'listar_formas_pagamento', account },
       });
       if (data?.formas) setFormasPagamento(data.formas);
     } catch (e) { console.error(e); }
@@ -226,10 +280,10 @@ const NewSalesOrder = () => {
       if (omieMapping?.user_id) setCustomerUserId(omieMapping.user_id);
       const [priceResult, parcelaResult] = await Promise.all([
         supabase.functions.invoke('omie-vendas-sync', {
-          body: { action: 'buscar_precos_cliente', codigo_cliente: cust.codigo_cliente },
+          body: { action: 'buscar_precos_cliente', codigo_cliente: cust.codigo_cliente, account },
         }),
         supabase.functions.invoke('omie-vendas-sync', {
-          body: { action: 'buscar_ultima_parcela', codigo_cliente: cust.codigo_cliente },
+          body: { action: 'buscar_ultima_parcela', codigo_cliente: cust.codigo_cliente, account },
         }),
       ]);
       if (priceResult.data?.precos) setCustomerPrices(priceResult.data.precos);
@@ -275,12 +329,27 @@ const NewSalesOrder = () => {
   const subtotal = useMemo(() => cart.reduce((sum, c) => sum + c.quantity * c.unit_price, 0), [cart]);
 
   const filteredProducts = useMemo(() => {
-    if (!productSearch) return products.slice(0, 30);
-    return products.filter(p =>
+    const sorted = [...products].sort((a, b) => {
+      if (a.ativo !== b.ativo) return a.ativo ? -1 : 1;
+      return a.descricao.localeCompare(b.descricao);
+    });
+    if (!productSearch) return sorted.slice(0, 30);
+    return sorted.filter(p =>
       p.descricao.toLowerCase().includes(productSearch.toLowerCase()) ||
       p.codigo.toLowerCase().includes(productSearch.toLowerCase())
     ).slice(0, 30);
   }, [products, productSearch]);
+
+  // When switching account, reset customer and cart
+  const handleAccountChange = (newAccount: string) => {
+    if (newAccount === account) return;
+    setAccount(newAccount as Account);
+    setSelectedCustomer(null);
+    setCustomerPrices({});
+    setCart([]);
+    setSelectedParcela('999');
+    setCustomerUserId(null);
+  };
 
   const submitOrder = async () => {
     if (!selectedCustomer || cart.length === 0 || !user) return;
@@ -304,13 +373,15 @@ const NewSalesOrder = () => {
           items: itemsPayload,
           subtotal, total: subtotal,
           status: 'rascunho', notes,
-        })
+          account,
+        } as any)
         .select('id').single();
       if (insertError) throw insertError;
 
       const { data: omieResult, error: omieError } = await supabase.functions.invoke('omie-vendas-sync', {
         body: {
           action: 'criar_pedido',
+          account,
           sales_order_id: salesOrder.id,
           codigo_cliente: selectedCustomer.omie_codigo_cliente,
           codigo_vendedor: selectedCustomer.omie_codigo_vendedor,
@@ -355,10 +426,24 @@ const NewSalesOrder = () => {
             </button>
             <div>
               <h1 className="text-lg font-semibold">Novo pedido de venda</h1>
-              <p className="text-xs text-muted-foreground">Selecione cliente, adicione produtos e envie.</p>
+              <p className="text-xs text-muted-foreground">Selecione empresa, cliente, adicione produtos e envie.</p>
             </div>
           </div>
         </div>
+
+        {/* Account Selector */}
+        <Tabs value={account} onValueChange={handleAccountChange}>
+          <TabsList className="w-full grid grid-cols-2">
+            <TabsTrigger value="oben" className="gap-1.5">
+              <Building2 className="w-3.5 h-3.5" />
+              Oben
+            </TabsTrigger>
+            <TabsTrigger value="colacor" className="gap-1.5">
+              <Building2 className="w-3.5 h-3.5" />
+              Colacor
+            </TabsTrigger>
+          </TabsList>
+        </Tabs>
 
         <OrderStepper step={currentStep} />
 
@@ -370,6 +455,7 @@ const NewSalesOrder = () => {
               <CardHeader className="pb-2">
                 <CardTitle className="text-sm flex items-center gap-2">
                   <User className="w-4 h-4" /> Cliente
+                  <Badge variant="outline" className="text-[10px] ml-auto">{account === 'oben' ? 'Oben' : 'Colacor'}</Badge>
                 </CardTitle>
               </CardHeader>
               <CardContent>
@@ -415,6 +501,7 @@ const NewSalesOrder = () => {
                 <CardHeader className="pb-2">
                   <CardTitle className="text-sm flex items-center gap-2">
                     <Package className="w-4 h-4" /> Catálogo
+                    <Badge variant="outline" className="text-[10px] ml-auto">{account === 'oben' ? 'Oben' : 'Colacor'}</Badge>
                   </CardTitle>
                 </CardHeader>
                 <CardContent>
@@ -439,10 +526,11 @@ const NewSalesOrder = () => {
                           {filteredProducts.map(product => {
                             const isInCart = cart.some(c => c.product.id === product.id);
                             const customerPrice = customerPrices[product.omie_codigo_produto];
+                            const colacorMatch = account === 'oben' ? findColacorMatch(product.descricao) : null;
                             return (
                               <tr key={product.id} className={cn('border-b last:border-b-0 hover:bg-muted/20 transition-colors', isInCart && 'bg-accent/20')}>
                                 <td className="px-3 py-2">
-                                  <div className="flex items-center gap-1.5">
+                                  <div className="flex items-center gap-1.5 flex-wrap">
                                     <span className="text-xs truncate max-w-[200px]">{product.descricao}</span>
                                     {!product.ativo && <Badge variant="destructive" className="text-[9px] px-1 py-0">Inativo</Badge>}
                                     {customerPrice && customerPrice !== product.valor_unitario && (
@@ -450,6 +538,18 @@ const NewSalesOrder = () => {
                                     )}
                                   </div>
                                   <span className="text-[10px] text-muted-foreground font-mono">{product.codigo}</span>
+                                  {colacorMatch && (
+                                    <button
+                                      className="flex items-center gap-1 mt-0.5"
+                                      onClick={() => addToCart(colacorMatch)}
+                                      title={`Adicionar ${colacorMatch.descricao} da Colacor ao carrinho`}
+                                    >
+                                      <Badge variant="outline" className="text-[9px] px-1.5 py-0 border-amber-500 text-amber-700 bg-amber-50 hover:bg-amber-100 cursor-pointer">
+                                        <Building2 className="w-2.5 h-2.5 mr-0.5" />
+                                        Colacor Est: {colacorMatch.estoque}
+                                      </Badge>
+                                    </button>
+                                  )}
                                 </td>
                                 <td className="px-3 py-2 text-right text-xs font-medium">
                                   {fmt(customerPrice || product.valor_unitario)}
@@ -497,8 +597,15 @@ const NewSalesOrder = () => {
                     {cart.map(item => (
                       <div key={item.product.id} className="space-y-1.5">
                         <div className="flex items-start justify-between gap-1.5">
-                          <p className="text-xs font-medium flex-1 leading-tight">{item.product.descricao}</p>
-                          <button onClick={() => removeFromCart(item.product.id)} className="shrink-0">
+                          <div className="flex-1">
+                            <p className="text-xs font-medium leading-tight">{item.product.descricao}</p>
+                            {item.product.account && item.product.account !== account && (
+                              <Badge variant="outline" className="text-[8px] px-1 py-0 mt-0.5 border-amber-500 text-amber-700">
+                                {item.product.account === 'colacor' ? 'Colacor' : 'Oben'}
+                              </Badge>
+                            )}
+                          </div>
+                          <button onClick={() => removeFromCart(item.product.id)} className="shrink-0" aria-label="Remover item">
                             <Trash2 className="w-3.5 h-3.5 text-muted-foreground hover:text-destructive transition-colors" />
                           </button>
                         </div>
@@ -571,7 +678,7 @@ const NewSalesOrder = () => {
                   </div>
                   <Button className="w-full gap-2" onClick={submitOrder} disabled={submitting}>
                     {submitting ? <Loader2 className="w-4 h-4 animate-spin" /> : <Send className="w-4 h-4" />}
-                    Enviar pedido
+                    Enviar pedido ({account === 'oben' ? 'Oben' : 'Colacor'})
                   </Button>
                 </CardContent>
               </Card>
