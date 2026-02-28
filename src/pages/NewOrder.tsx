@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Plus, Trash2, ChevronRight, Check, MapPin, Clock, Loader2, Wrench, AlertCircle, Camera, Search, User } from 'lucide-react';
+import { Plus, Trash2, ChevronRight, Check, MapPin, Clock, Loader2, Wrench, AlertCircle, Camera, Search, User, AlertTriangle } from 'lucide-react';
 import { Header } from '@/components/Header';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -149,6 +149,10 @@ const NewOrder = () => {
   const [addToolDialogOpen, setAddToolDialogOpen] = useState(false);
   const [creatingLocalProfile, setCreatingLocalProfile] = useState(false);
   
+  // Vendedor validation across Omie accounts
+  const [vendedorDivergencias, setVendedorDivergencias] = useState<string[]>([]);
+  const [validatingVendedor, setValidatingVendedor] = useState(false);
+  
   // User data from database
   const [profile, setProfile] = useState<ProfileData | null>(null);
   const [addresses, setAddresses] = useState<AddressData[]>([]);
@@ -285,6 +289,9 @@ const NewOrder = () => {
   };
 
   const handleSelectCustomer = async (customer: OmieCustomer) => {
+    // Reset divergences
+    setVendedorDivergencias([]);
+    
     // Fetch full client details from Omie (including address and codigo_vendedor)
     try {
       const { data: fullData } = await supabase.functions.invoke('omie-cliente', {
@@ -314,6 +321,24 @@ const NewOrder = () => {
     setUserTools([]);
     setLoadingTools(true);
     setLoadingData(true);
+
+    // Validate vendedor across all 3 Omie accounts
+    if (customer.cnpj_cpf) {
+      setValidatingVendedor(true);
+      try {
+        const { data: validacao, error } = await supabase.functions.invoke('omie-cliente', {
+          body: { action: 'validar_vendedor', cnpj_cpf: customer.cnpj_cpf },
+        });
+
+        if (!error && validacao && !validacao.consistente) {
+          setVendedorDivergencias(validacao.divergencias || []);
+        }
+      } catch (err) {
+        console.error('Erro ao validar vendedor:', err);
+      } finally {
+        setValidatingVendedor(false);
+      }
+    }
   };
 
   const loadCategories = async () => {
@@ -576,7 +601,7 @@ const NewOrder = () => {
   const canProceed = () => {
     switch (currentStep) {
       case 'customer':
-        return !!selectedOmieCustomer;
+        return !!selectedOmieCustomer && vendedorDivergencias.length === 0 && !validatingVendedor;
       case 'items':
         return items.length > 0 && items.every(item => item.userToolId && item.servico && item.quantity > 0);
       case 'delivery':
@@ -905,6 +930,33 @@ const NewOrder = () => {
                       )}
                     </div>
                     <Check className="w-5 h-5 text-primary" />
+                  </div>
+                </div>
+              )}
+
+              {/* Vendedor validation warning */}
+              {validatingVendedor && (
+                <div className="flex items-center gap-2 p-3 bg-muted rounded-xl mb-4">
+                  <Loader2 className="w-4 h-4 animate-spin text-muted-foreground" />
+                  <p className="text-sm text-muted-foreground">Validando vendedor nos 3 Omies...</p>
+                </div>
+              )}
+
+              {vendedorDivergencias.length > 0 && (
+                <div className="bg-destructive/10 border-2 border-destructive rounded-xl p-4 mb-4">
+                  <div className="flex items-start gap-3">
+                    <AlertTriangle className="w-5 h-5 text-destructive flex-shrink-0 mt-0.5" />
+                    <div>
+                      <p className="font-semibold text-destructive">Vendedor divergente entre contas Omie</p>
+                      <p className="text-sm text-muted-foreground mt-1 mb-2">
+                        O código do vendedor está diferente entre as contas. Corrija no Omie antes de prosseguir:
+                      </p>
+                      <ul className="text-sm space-y-1">
+                        {vendedorDivergencias.map((d, i) => (
+                          <li key={i} className="text-destructive font-medium">• {d}</li>
+                        ))}
+                      </ul>
+                    </div>
                   </div>
                 </div>
               )}
