@@ -18,7 +18,7 @@ import { cn } from '@/lib/utils';
 import type { RecommendationItem } from '@/hooks/useRecommendationEngine';
 import {
   Loader2, Search, Plus, Minus, Trash2, User, ShoppingCart, Send, CreditCard,
-  ChevronLeft, Package, TrendingUp, Sparkles, ArrowUpRight, CheckCircle, Building2,
+  ChevronLeft, Package, TrendingUp, Sparkles, ArrowUpRight, CheckCircle, Building2, AlertTriangle,
 } from 'lucide-react';
 
 /* ─── Types ─── */
@@ -125,6 +125,10 @@ const NewSalesOrder = () => {
   const [loadingFormas, setLoadingFormas] = useState(false);
 
   const [customerPrices, setCustomerPrices] = useState<Record<number, number>>({});
+
+  // Vendedor validation
+  const [vendedorDivergencias, setVendedorDivergencias] = useState<string[]>([]);
+  const [validatingVendedor, setValidatingVendedor] = useState(false);
 
   // Customer user_id for recommendation engine
   const [customerUserId, setCustomerUserId] = useState<string | null>(null);
@@ -271,6 +275,7 @@ const NewSalesOrder = () => {
     setLoadingCustomer(true);
     setCustomerSearch('');
     setCustomers([]);
+    setVendedorDivergencias([]);
     try {
       const custData = {
         name: cust.nome_fantasia || cust.razao_social,
@@ -301,6 +306,23 @@ const NewSalesOrder = () => {
       toast({ title: 'Erro', description: error.message, variant: 'destructive' });
     } finally {
       setLoadingCustomer(false);
+    }
+
+    // Validate vendedor across all 3 Omie accounts
+    if (cust.cnpj_cpf) {
+      setValidatingVendedor(true);
+      try {
+        const { data: validacao, error } = await supabase.functions.invoke('omie-cliente', {
+          body: { action: 'validar_vendedor', cnpj_cpf: cust.cnpj_cpf },
+        });
+        if (!error && validacao && !validacao.consistente) {
+          setVendedorDivergencias(validacao.divergencias || []);
+        }
+      } catch (err) {
+        console.error('Erro ao validar vendedor:', err);
+      } finally {
+        setValidatingVendedor(false);
+      }
     }
   };
 
@@ -469,14 +491,40 @@ const NewSalesOrder = () => {
               </CardHeader>
               <CardContent>
                 {selectedCustomer ? (
-                  <div className="flex items-center justify-between">
-                    <div>
-                      <p className="font-medium text-sm">{selectedCustomer.name}</p>
-                      <p className="text-xs text-muted-foreground">{selectedCustomer.document}</p>
+                  <div className="space-y-3">
+                    <div className="flex items-center justify-between">
+                      <div>
+                        <p className="font-medium text-sm">{selectedCustomer.name}</p>
+                        <p className="text-xs text-muted-foreground">{selectedCustomer.document}</p>
+                      </div>
+                      <Button variant="ghost" size="sm" onClick={() => { setSelectedCustomer(null); setCustomerPrices({}); setCart([]); setSelectedParcela('999'); setVendedorDivergencias([]); }}>
+                        Trocar
+                      </Button>
                     </div>
-                    <Button variant="ghost" size="sm" onClick={() => { setSelectedCustomer(null); setCustomerPrices({}); setCart([]); setSelectedParcela('999'); }}>
-                      Trocar
-                    </Button>
+
+                    {validatingVendedor && (
+                      <div className="flex items-center gap-2 p-2 bg-muted rounded-lg">
+                        <Loader2 className="w-4 h-4 animate-spin text-muted-foreground" />
+                        <p className="text-xs text-muted-foreground">Validando vendedor nos 3 Omies...</p>
+                      </div>
+                    )}
+
+                    {vendedorDivergencias.length > 0 && (
+                      <div className="bg-destructive/10 border border-destructive/30 rounded-lg p-3">
+                        <div className="flex items-start gap-2">
+                          <AlertTriangle className="w-4 h-4 text-destructive flex-shrink-0 mt-0.5" />
+                          <div>
+                            <p className="text-xs font-semibold text-destructive">Vendedor divergente entre contas Omie</p>
+                            <p className="text-xs text-muted-foreground mt-1">Corrija no Omie antes de prosseguir:</p>
+                            <ul className="text-xs mt-1 space-y-0.5">
+                              {vendedorDivergencias.map((d, i) => (
+                                <li key={i} className="text-destructive font-medium">• {d}</li>
+                              ))}
+                            </ul>
+                          </div>
+                        </div>
+                      </div>
+                    )}
                   </div>
                 ) : (
                   <div className="space-y-2">
@@ -685,7 +733,7 @@ const NewSalesOrder = () => {
                     <Label className="text-xs font-medium">Observações</Label>
                     <Textarea placeholder="Observações do pedido..." value={notes} onChange={e => setNotes(e.target.value)} rows={2} className="text-sm mt-1" />
                   </div>
-                  <Button className="w-full gap-2" onClick={submitOrder} disabled={submitting}>
+                  <Button className="w-full gap-2" onClick={submitOrder} disabled={submitting || vendedorDivergencias.length > 0}>
                     {submitting ? <Loader2 className="w-4 h-4 animate-spin" /> : <Send className="w-4 h-4" />}
                     Enviar pedido ({account === 'oben' ? 'Oben' : 'Colacor'})
                   </Button>

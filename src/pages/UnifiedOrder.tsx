@@ -21,7 +21,7 @@ import { usePriceHistory } from '@/hooks/usePriceHistory';
 import type { RecommendationItem } from '@/hooks/useRecommendationEngine';
 import {
   Loader2, Search, Plus, Minus, Trash2, User, ShoppingCart, Send,
-  ChevronLeft, Package, CheckCircle, Wrench, AlertCircle, Scissors,
+  ChevronLeft, Package, CheckCircle, Wrench, AlertCircle, Scissors, AlertTriangle,
 } from 'lucide-react';
 
 /* ─── Types ─── */
@@ -130,6 +130,10 @@ const UnifiedOrder = () => {
   const [loadingServicos, setLoadingServicos] = useState(true);
   const [addToolDialogOpen, setAddToolDialogOpen] = useState(false);
   const [creatingLocalProfile, setCreatingLocalProfile] = useState(false);
+
+  // Vendedor validation
+  const [vendedorDivergencias, setVendedorDivergencias] = useState<string[]>([]);
+  const [validatingVendedor, setValidatingVendedor] = useState(false);
 
   // Payment
   const [formasPagamento, setFormasPagamento] = useState<FormaPagamento[]>([]);
@@ -349,6 +353,7 @@ const UnifiedOrder = () => {
     setCustomerSearch('');
     setCustomers([]);
     setCart([]);
+    setVendedorDivergencias([]);
     try {
       setSelectedCustomer(cust);
 
@@ -428,6 +433,23 @@ const UnifiedOrder = () => {
       toast({ title: 'Erro', description: error.message, variant: 'destructive' });
     } finally {
       setLoadingCustomer(false);
+    }
+
+    // Validate vendedor across all 3 Omie accounts
+    if (cust.cnpj_cpf) {
+      setValidatingVendedor(true);
+      try {
+        const { data: validacao, error } = await supabase.functions.invoke('omie-cliente', {
+          body: { action: 'validar_vendedor', cnpj_cpf: cust.cnpj_cpf },
+        });
+        if (!error && validacao && !validacao.consistente) {
+          setVendedorDivergencias(validacao.divergencias || []);
+        }
+      } catch (err) {
+        console.error('Erro ao validar vendedor:', err);
+      } finally {
+        setValidatingVendedor(false);
+      }
     }
   };
 
@@ -736,24 +758,51 @@ const UnifiedOrder = () => {
             </CardHeader>
             <CardContent>
               {selectedCustomer ? (
-                <div className="flex items-center justify-between">
-                  <div>
-                    <p className="font-medium text-sm">{selectedCustomer.nome_fantasia || selectedCustomer.razao_social}</p>
-                    <p className="text-xs text-muted-foreground">{selectedCustomer.cnpj_cpf}</p>
-                    {!customerUserId && (
-                      <p className="text-xs text-amber-600 mt-0.5">Sem cadastro no app</p>
-                    )}
+                <div className="space-y-3">
+                  <div className="flex items-center justify-between">
+                    <div>
+                      <p className="font-medium text-sm">{selectedCustomer.nome_fantasia || selectedCustomer.razao_social}</p>
+                      <p className="text-xs text-muted-foreground">{selectedCustomer.cnpj_cpf}</p>
+                      {!customerUserId && (
+                        <p className="text-xs text-amber-600 mt-0.5">Sem cadastro no app</p>
+                      )}
+                    </div>
+                    <Button variant="ghost" size="sm" onClick={() => {
+                      setSelectedCustomer(null);
+                      setCustomerPrices({});
+                      setCart([]);
+                      setCustomerUserId(null);
+                      setUserTools([]);
+                      setSelectedParcela('999');
+                      setVendedorDivergencias([]);
+                    }}>
+                      Trocar
+                    </Button>
                   </div>
-                  <Button variant="ghost" size="sm" onClick={() => {
-                    setSelectedCustomer(null);
-                    setCustomerPrices({});
-                    setCart([]);
-                    setCustomerUserId(null);
-                    setUserTools([]);
-                    setSelectedParcela('999');
-                  }}>
-                    Trocar
-                  </Button>
+
+                  {validatingVendedor && (
+                    <div className="flex items-center gap-2 p-2 bg-muted rounded-lg">
+                      <Loader2 className="w-4 h-4 animate-spin text-muted-foreground" />
+                      <p className="text-xs text-muted-foreground">Validando vendedor nos 3 Omies...</p>
+                    </div>
+                  )}
+
+                  {vendedorDivergencias.length > 0 && (
+                    <div className="bg-destructive/10 border border-destructive/30 rounded-lg p-3">
+                      <div className="flex items-start gap-2">
+                        <AlertTriangle className="w-4 h-4 text-destructive flex-shrink-0 mt-0.5" />
+                        <div>
+                          <p className="text-xs font-semibold text-destructive">Vendedor divergente entre contas Omie</p>
+                          <p className="text-xs text-muted-foreground mt-1">Corrija no Omie antes de prosseguir:</p>
+                          <ul className="text-xs mt-1 space-y-0.5">
+                            {vendedorDivergencias.map((d, i) => (
+                              <li key={i} className="text-destructive font-medium">• {d}</li>
+                            ))}
+                          </ul>
+                        </div>
+                      </div>
+                    </div>
+                  )}
                 </div>
               ) : (
                 <div className="space-y-2">
@@ -1149,7 +1198,7 @@ const UnifiedOrder = () => {
                 <Button
                   className="w-full gap-2"
                   onClick={submitOrder}
-                  disabled={submitting || serviceItems.some(s => !s.servico)}
+                  disabled={submitting || serviceItems.some(s => !s.servico) || vendedorDivergencias.length > 0}
                 >
                   {submitting ? <Loader2 className="w-4 h-4 animate-spin" /> : <Send className="w-4 h-4" />}
                   Enviar pedido
