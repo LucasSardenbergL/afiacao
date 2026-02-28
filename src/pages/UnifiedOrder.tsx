@@ -497,18 +497,24 @@ const UnifiedOrder = () => {
   }, [serviceItems]);
   const totalEstimated = productSubtotal + serviceSubtotal;
 
+  const allProducts = useMemo(() => {
+    const obenWithAccount = products.map(p => ({ ...p, account: 'oben' as const }));
+    const colacorWithAccount = colacorProducts.map(p => ({ ...p, account: 'colacor' as const }));
+    return [...obenWithAccount, ...colacorWithAccount];
+  }, [products, colacorProducts]);
+
   const filteredProducts = useMemo(() => {
-    const sorted = [...products].sort((a, b) => {
+    const sorted = [...allProducts].sort((a, b) => {
       if (a.ativo && !b.ativo) return -1;
       if (!a.ativo && b.ativo) return 1;
-      return 0;
+      return a.descricao.localeCompare(b.descricao);
     });
-    if (!productSearch) return sorted.slice(0, 30);
+    if (!productSearch) return sorted.slice(0, 50);
     return sorted.filter(p =>
       p.descricao.toLowerCase().includes(productSearch.toLowerCase()) ||
       p.codigo.toLowerCase().includes(productSearch.toLowerCase())
-    ).slice(0, 30);
-  }, [products, productSearch]);
+    ).slice(0, 50);
+  }, [allProducts, productSearch]);
 
   const availableTools = useMemo(() =>
     userTools.filter(t => !cart.some(c => c.type === 'service' && (c as ServiceCartItem).userTool.id === t.id)),
@@ -517,9 +523,9 @@ const UnifiedOrder = () => {
 
   // ─── Recommendation handler ───
   const handleAddRecommendation = useCallback((item: RecommendationItem) => {
-    const product = products.find(p => p.id === item.product_id);
+    const product = allProducts.find(p => p.id === item.product_id);
     if (product) addProductToCart(product);
-  }, [products]);
+  }, [allProducts]);
 
   // ─── Create local profile for Omie-only customers ───
   const handleStaffAddTool = async () => {
@@ -813,20 +819,19 @@ const UnifiedOrder = () => {
                             {filteredProducts.map(product => {
                               const isInCart = productItems.some(c => c.product.id === product.id);
                               const customerPrice = customerPrices[product.omie_codigo_produto];
-                              const colacorMatch = findColacorMatch(product.descricao);
                               return (
                                 <tr key={product.id} className={cn('border-b last:border-b-0 hover:bg-muted/20 transition-colors', isInCart && 'bg-accent/20')}>
                                   <td className="px-3 py-2">
                                     <div className="flex items-center gap-1.5 flex-wrap">
                                       <span className="text-xs truncate max-w-[200px]">{product.descricao}</span>
+                                      {product.account === 'colacor' && (
+                                        <Badge variant="outline" className="text-[9px] px-1 py-0 text-amber-700 bg-amber-50 border-amber-200">
+                                          Colacor
+                                        </Badge>
+                                      )}
                                       {!product.ativo && <Badge variant="destructive" className="text-[9px] px-1 py-0">Inativo</Badge>}
                                       {customerPrice && customerPrice !== product.valor_unitario && (
                                         <Badge variant="secondary" className="text-[9px] px-1 py-0">Preço cliente</Badge>
-                                      )}
-                                      {colacorMatch && (
-                                        <Badge variant="outline" className="text-[9px] px-1 py-0 text-amber-700 bg-amber-50 border-amber-200">
-                                          Colacor Est: {colacorMatch.estoque}
-                                        </Badge>
                                       )}
                                     </div>
                                     <span className="text-[10px] text-muted-foreground font-mono">{product.codigo}</span>
