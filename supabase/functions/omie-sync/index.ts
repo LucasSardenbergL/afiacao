@@ -587,9 +587,11 @@ serve(async (req) => {
         if (staffContext?.customerOmieCode) {
           console.log(`[Omie] Staff criando pedido para cliente Omie: ${staffContext.customerOmieCode}`);
           
-          // Look up the vendor code from omie_clientes if we have a local user_id
-          let omieCodigoVendedor: number | undefined;
-          if (staffContext.customerUserId) {
+          // Use vendedor passed from frontend if available (already resolved per-account)
+          let omieCodigoVendedor: number | undefined = staffContext.customerCodigoVendedor || undefined;
+
+          // Fallback: look up from omie_clientes if not passed
+          if (!omieCodigoVendedor && staffContext.customerUserId) {
             const { data: mapping } = await supabaseAdmin
               .from("omie_clientes")
               .select("omie_codigo_vendedor")
@@ -598,7 +600,7 @@ serve(async (req) => {
             omieCodigoVendedor = mapping?.omie_codigo_vendedor || undefined;
           }
 
-          // If no vendor found via local mapping, search in Omie
+          // If still no vendor found, search in Omie
           if (!omieCodigoVendedor) {
             try {
               const searchResult = await callOmieApi(

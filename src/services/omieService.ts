@@ -47,6 +47,7 @@ export async function syncOrderToOmie(
   staffContext?: {
     customerOmieCode: number;
     customerUserId?: string | null;
+    customerCodigoVendedor?: number | null;
   }
 ): Promise<OmieSyncResult> {
   try {
