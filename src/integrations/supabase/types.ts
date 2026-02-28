@@ -1752,6 +1752,7 @@ export type Database = {
           created_at: string | null
           customer_user_id: string
           discount: number | null
+          hash_payload: string | null
           id: string
           omie_codigo_produto: number | null
           product_id: string | null
@@ -1763,6 +1764,7 @@ export type Database = {
           created_at?: string | null
           customer_user_id: string
           discount?: number | null
+          hash_payload?: string | null
           id?: string
           omie_codigo_produto?: number | null
           product_id?: string | null
@@ -1774,6 +1776,7 @@ export type Database = {
           created_at?: string | null
           customer_user_id?: string
           discount?: number | null
+          hash_payload?: string | null
           id?: string
           omie_codigo_produto?: number | null
           product_id?: string | null
@@ -2382,6 +2385,7 @@ export type Database = {
           created_by: string
           customer_user_id: string
           discount: number
+          hash_payload: string | null
           id: string
           items: Json
           notes: string | null
@@ -2400,6 +2404,7 @@ export type Database = {
           created_by: string
           customer_user_id: string
           discount?: number
+          hash_payload?: string | null
           id?: string
           items?: Json
           notes?: string | null
@@ -2418,6 +2423,7 @@ export type Database = {
           created_by?: string
           customer_user_id?: string
           discount?: number
+          hash_payload?: string | null
           id?: string
           items?: Json
           notes?: string | null
@@ -2520,6 +2526,84 @@ export type Database = {
             referencedColumns: ["id"]
           },
         ]
+      }
+      sync_reprocess_config: {
+        Row: {
+          description: string | null
+          id: string
+          key: string
+          updated_at: string | null
+          value: number
+        }
+        Insert: {
+          description?: string | null
+          id?: string
+          key: string
+          updated_at?: string | null
+          value: number
+        }
+        Update: {
+          description?: string | null
+          id?: string
+          key?: string
+          updated_at?: string | null
+          value?: number
+        }
+        Relationships: []
+      }
+      sync_reprocess_log: {
+        Row: {
+          account: string
+          corrections_applied: number | null
+          created_at: string
+          deletes_count: number | null
+          divergences_found: number | null
+          duration_ms: number | null
+          entity_type: string
+          error_message: string | null
+          id: string
+          metadata: Json | null
+          reprocess_type: string
+          status: string
+          upserts_count: number | null
+          window_end: string
+          window_start: string
+        }
+        Insert: {
+          account?: string
+          corrections_applied?: number | null
+          created_at?: string
+          deletes_count?: number | null
+          divergences_found?: number | null
+          duration_ms?: number | null
+          entity_type: string
+          error_message?: string | null
+          id?: string
+          metadata?: Json | null
+          reprocess_type?: string
+          status?: string
+          upserts_count?: number | null
+          window_end: string
+          window_start: string
+        }
+        Update: {
+          account?: string
+          corrections_applied?: number | null
+          created_at?: string
+          deletes_count?: number | null
+          divergences_found?: number | null
+          duration_ms?: number | null
+          entity_type?: string
+          error_message?: string | null
+          id?: string
+          metadata?: Json | null
+          reprocess_type?: string
+          status?: string
+          upserts_count?: number | null
+          window_end?: string
+          window_start?: string
+        }
+        Relationships: []
       }
       sync_state: {
         Row: {

@@ -1,14 +1,16 @@
 import { useState } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
+import { useAuth } from "@/contexts/AuthContext";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Input } from "@/components/ui/input";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { RefreshCw, Database, Package, ShoppingCart, Warehouse, Calculator, Play, CheckCircle, AlertCircle, Clock, Loader2, Save, GitBranch, Sparkles, FlaskConical, Settings } from "lucide-react";
+import { RefreshCw, Database, Package, ShoppingCart, Warehouse, Calculator, Play, CheckCircle, AlertCircle, Clock, Loader2, Save, GitBranch, Sparkles, FlaskConical, Settings, ShieldCheck } from "lucide-react";
 import { toast } from "sonner";
+import { SyncHealthTab } from "@/components/SyncHealthTab";
 
 type SyncEntity = "customers" | "products" | "orders" | "inventory";
 type OmieAccount = "vendas" | "servicos";
@@ -40,7 +42,26 @@ const STATUS_MAP: Record<string, { variant: "default" | "secondary" | "destructi
 
 export default function AdminAnalyticsSync() {
   const [selectedAccount, setSelectedAccount] = useState<OmieAccount>("vendas");
+  const { user } = useAuth();
   const queryClient = useQueryClient();
+
+  // Check if user has the master CPF for sync health access
+  const { data: profileData } = useQuery({
+    queryKey: ["profile-doc", user?.id],
+    queryFn: async () => {
+      if (!user?.id) return null;
+      const { data } = await supabase
+        .from("profiles")
+        .select("document")
+        .eq("user_id", user.id)
+        .maybeSingle();
+      return data;
+    },
+    enabled: !!user?.id,
+  });
+
+  const userDoc = (profileData?.document || "").replace(/\D/g, "");
+  const showSyncHealth = userDoc === "01363383647";
 
   const { data: syncStates, isLoading } = useQuery({
     queryKey: ["sync-state"],
@@ -356,6 +377,13 @@ export default function AdminAnalyticsSync() {
           )}
         </CardContent>
       </Card>
+
+      {/* Sync Health Tab - restricted to master CPF */}
+      {showSyncHealth && (
+        <div className="border-t pt-6 mt-6">
+          <SyncHealthTab />
+        </div>
+      )}
     </div>
   );
 }
