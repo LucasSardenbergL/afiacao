@@ -340,9 +340,9 @@ serve(async (req) => {
       }
 
       case "pesquisar_clientes": {
-        if (!query || typeof query !== "string" || query.length < 2) {
+        if (!query || typeof query !== "string" || query.length < 3) {
           return new Response(
-            JSON.stringify({ error: "Informe pelo menos 2 caracteres para pesquisar" }),
+            JSON.stringify({ error: "Informe pelo menos 3 caracteres para pesquisar" }),
             { status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" } }
           );
         }
