@@ -361,7 +361,7 @@ const UnifiedOrder = () => {
     try {
       setSelectedCustomer(cust);
 
-      // Resolve local user_id
+      // Resolve local user_id - try omie_clientes first, then fallback to profile by document
       let localUserId = cust.local_user_id || null;
       if (!localUserId) {
         const { data: mapping } = await supabase
@@ -370,6 +370,18 @@ const UnifiedOrder = () => {
           .eq('omie_codigo_cliente', cust.codigo_cliente)
           .maybeSingle();
         if (mapping?.user_id) localUserId = mapping.user_id;
+      }
+      // Fallback: search by CNPJ/CPF in profiles (handles different omie_codigo_cliente across accounts)
+      if (!localUserId && cust.cnpj_cpf) {
+        const docClean = cust.cnpj_cpf.replace(/\D/g, '');
+        if (docClean.length >= 11) {
+          const { data: profile } = await supabase
+            .from('profiles')
+            .select('user_id')
+            .eq('document', docClean)
+            .maybeSingle();
+          if (profile?.user_id) localUserId = profile.user_id;
+        }
       }
       if (localUserId) {
         setCustomerUserId(localUserId);
