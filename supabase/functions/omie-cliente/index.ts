@@ -217,7 +217,7 @@ async function pesquisarClientes(query: string, pagina: number = 1): Promise<{ c
 async function consultarClienteCompleto(codigoCliente: number): Promise<OmieCliente | null> {
   try {
     const result = await callOmieApi("geral/clientes/", "ConsultarCliente", {
-      codigo_cliente: codigoCliente,
+      codigo_cliente_omie: codigoCliente,
     }) as unknown as OmieCliente;
     return result;
   } catch (error) {
