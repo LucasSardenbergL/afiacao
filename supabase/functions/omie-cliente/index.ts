@@ -139,9 +139,34 @@ function getOmieAccounts(): OmieAccountConfig[] {
   return accounts;
 }
 
+async function buscarNomeVendedor(
+  codigoVendedor: number,
+  appKey: string,
+  appSecret: string
+): Promise<string | null> {
+  try {
+    // Omie API: ListarVendedores to get seller name by code
+    const result = await callOmieApiWithCredentials(
+      "geral/vendedores/",
+      "ListarVendedores",
+      { pagina: 1, registros_por_pagina: 50, filtrar_por_codigo: codigoVendedor },
+      appKey,
+      appSecret
+    ) as unknown as { cadastro?: Array<{ codigo?: number; nome?: string }> };
+
+    if (result?.cadastro && result.cadastro.length > 0) {
+      return result.cadastro[0].nome || null;
+    }
+    return null;
+  } catch (e) {
+    console.error(`[buscarNomeVendedor] Erro ao buscar vendedor ${codigoVendedor}:`, e);
+    return null;
+  }
+}
+
 async function validarVendedorMultiOmie(cnpjCpf: string): Promise<{
   consistente: boolean;
-  vendedores: Array<{ conta: string; codigo_vendedor: number | null; encontrado: boolean }>;
+  vendedores: Array<{ conta: string; codigo_vendedor: number | null; nome_vendedor: string | null; encontrado: boolean }>;
   divergencias: string[];
 }> {
   const docLimpo = cnpjCpf.replace(/\D/g, "");
@@ -159,18 +184,17 @@ async function validarVendedorMultiOmie(cnpjCpf: string): Promise<{
         );
 
         if (result.faultstring) {
-          return { conta: account.name, codigo_vendedor: null as number | null, encontrado: false };
+          return { conta: account.name, codigo_vendedor: null as number | null, nome_vendedor: null as string | null, encontrado: false };
         }
 
         const clientes = result.clientes_cadastro || result.clientes_cadastro_resumido || [];
         if (clientes.length === 0) {
-          return { conta: account.name, codigo_vendedor: null as number | null, encontrado: false };
+          return { conta: account.name, codigo_vendedor: null as number | null, nome_vendedor: null as string | null, encontrado: false };
         }
 
         const cliente = clientes[0];
         const codigoCliente = cliente.codigo_cliente_omie || cliente.codigo_cliente;
         
-        // Get full details to retrieve vendedor from recomendacoes
         let vendedor: number | null = cliente.recomendacoes?.codigo_vendedor || cliente.codigo_vendedor || null;
         
         if (codigoCliente && !vendedor) {
@@ -188,23 +212,30 @@ async function validarVendedorMultiOmie(cnpjCpf: string): Promise<{
           }
         }
 
-        return { conta: account.name, codigo_vendedor: vendedor, encontrado: true };
+        // Buscar o NOME do vendedor para comparação
+        let nomeVendedor: string | null = null;
+        if (vendedor) {
+          nomeVendedor = await buscarNomeVendedor(vendedor, account.appKey, account.appSecret);
+        }
+
+        return { conta: account.name, codigo_vendedor: vendedor, nome_vendedor: nomeVendedor, encontrado: true };
       } catch (error) {
         console.error(`[validarVendedor] Erro em ${account.name}:`, error);
-        return { conta: account.name, codigo_vendedor: null as number | null, encontrado: false };
+        return { conta: account.name, codigo_vendedor: null as number | null, nome_vendedor: null as string | null, encontrado: false };
       }
     })
   );
 
-  // Check consistency: only compare accounts where the customer was found
+  // Compare by seller NAME (normalized), not by code
   const encontrados = resultados.filter(r => r.encontrado);
-  const vendedoresUnicos = [...new Set(encontrados.map(r => r.codigo_vendedor))];
-  const consistente = vendedoresUnicos.length <= 1;
+  const nomesNormalizados = encontrados.map(r => (r.nome_vendedor || '').trim().toLowerCase());
+  const nomesUnicos = [...new Set(nomesNormalizados)];
+  const consistente = nomesUnicos.length <= 1;
 
   const divergencias: string[] = [];
   if (!consistente) {
     for (const r of encontrados) {
-      divergencias.push(`${r.conta}: vendedor ${r.codigo_vendedor || 'não definido'}`);
+      divergencias.push(`${r.conta}: vendedor "${r.nome_vendedor || 'não definido'}" (cód. ${r.codigo_vendedor || '-'})`);
     }
   }
 
