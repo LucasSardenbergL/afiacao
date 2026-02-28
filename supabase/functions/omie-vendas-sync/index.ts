@@ -456,8 +456,13 @@ async function criarPedidoVenda(
     codigo_parcela: codigoParcela || "999",
   };
 
+  const informacoes_adicionais: Record<string, unknown> = {
+    codigo_categoria: config.codigo_categoria,
+    codigo_conta_corrente: config.codigo_conta_corrente,
+  };
+
   if (codigoVendedor && codigoVendedor > 0) {
-    cabecalho.codigo_vendedor = codigoVendedor;
+    informacoes_adicionais.codigo_vendedor = codigoVendedor;
   }
 
   const payload = {
@@ -466,10 +471,7 @@ async function criarPedidoVenda(
     observacoes: {
       obs_venda: observacao || config.obs_prefix,
     },
-    informacoes_adicionais: {
-      codigo_categoria: config.codigo_categoria,
-      codigo_conta_corrente: config.codigo_conta_corrente,
-    },
+    informacoes_adicionais,
   };
 
   console.log(`[Omie Vendas][${account}] Payload PedidoVenda:`, JSON.stringify(payload, null, 2));
