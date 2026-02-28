@@ -60,6 +60,8 @@ import SettingsConfig from "./pages/SettingsConfig";
 import UXRules from "./pages/UXRules";
 import AdminAnalyticsSync from "./pages/AdminAnalyticsSync";
 import TechnicalDocs from "./pages/TechnicalDocs";
+import IntelligenceDashboard from "./pages/IntelligenceDashboard";
+import GovernanceUsers from "./pages/GovernanceUsers";
 
 const queryClient = new QueryClient();
 
@@ -128,6 +130,8 @@ const App = () => (
               <Route path="coaching" element={<CoachingSPIN />} />
               <Route path="settings" element={<SettingsConfig />} />
               <Route path="docs" element={<TechnicalDocs />} />
+              <Route path="intelligence" element={<IntelligenceDashboard />} />
+              <Route path="governance/users" element={<GovernanceUsers />} />
             </Route>
 
             <Route path="*" element={<NotFound />} />
