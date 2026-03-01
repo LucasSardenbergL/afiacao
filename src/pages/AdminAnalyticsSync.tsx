@@ -8,7 +8,7 @@ import { Badge } from "@/components/ui/badge";
 import { Input } from "@/components/ui/input";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { RefreshCw, Database, Package, ShoppingCart, Warehouse, Calculator, Play, CheckCircle, AlertCircle, Clock, Loader2, Save, GitBranch, Sparkles, FlaskConical, Settings, ShieldCheck } from "lucide-react";
+import { RefreshCw, Database, Package, ShoppingCart, Warehouse, Calculator, Play, CheckCircle, AlertCircle, Clock, Loader2, Save, GitBranch, Sparkles, FlaskConical, Settings, ShieldCheck, Users } from "lucide-react";
 import { toast } from "sonner";
 import { SyncHealthTab } from "@/components/SyncHealthTab";
 
@@ -160,6 +160,51 @@ export default function AdminAnalyticsSync() {
     },
   });
 
+  const [clientSyncProgress, setClientSyncProgress] = useState<string | null>(null);
+
+  const bulkClientSyncMutation = useMutation({
+    mutationFn: async () => {
+      let accountIndex = 0;
+      let startPage = 1;
+      let totalImported = 0;
+      let totalSkipped = 0;
+      let totalErrors = 0;
+
+      while (true) {
+        setClientSyncProgress(`Conta ${accountIndex + 1}/3 — página ${startPage}...`);
+        const { data, error } = await supabase.functions.invoke("omie-cliente", {
+          body: { action: "sync_all_clients", account_index: accountIndex, start_page: startPage },
+        });
+        if (error) throw error;
+
+        totalImported += data?.imported || 0;
+        totalSkipped += data?.skipped || 0;
+        totalErrors += data?.errors || 0;
+
+        if (data?.account) {
+          setClientSyncProgress(`${data.account}: +${data.imported} importados (pág ${data.lastPage}/${data.totalPages})`);
+        }
+
+        if (!data?.hasMore) break;
+        accountIndex = data.next.account_index;
+        startPage = data.next.start_page;
+      }
+
+      setClientSyncProgress(null);
+      return { totalImported, totalSkipped, totalErrors };
+    },
+    onSuccess: (data) => {
+      toast.success("Importação de clientes concluída", {
+        description: `${data.totalImported} importados, ${data.totalSkipped} já existiam, ${data.totalErrors} erros`,
+        duration: 10000,
+      });
+    },
+    onError: (error) => {
+      setClientSyncProgress(null);
+      toast.error("Erro na importação de clientes", { description: String(error) });
+    },
+  });
+
   const [editingConfig, setEditingConfig] = useState<Record<string, string>>({});
 
   const getStateFor = (entity: string, account: string) =>
@@ -170,7 +215,7 @@ export default function AdminAnalyticsSync() {
     return new Date(d).toLocaleString("pt-BR", { dateStyle: "short", timeStyle: "short" });
   };
 
-  const isRunning = syncMutation.isPending || computeCostsMutation.isPending || assocRulesMutation.isPending;
+  const isRunning = syncMutation.isPending || computeCostsMutation.isPending || assocRulesMutation.isPending || bulkClientSyncMutation.isPending;
 
   const handleConfigSave = (id: string) => {
     const val = parseFloat(editingConfig[id]);
@@ -268,6 +313,44 @@ export default function AdminAnalyticsSync() {
           }
         )}
       </div>
+
+      {/* Bulk Client Import */}
+      <Card>
+        <CardHeader>
+          <div className="flex items-center justify-between">
+            <div className="flex items-center gap-2">
+              <Users className="h-5 w-5 text-muted-foreground" />
+              <CardTitle className="text-base">Importar Clientes (3 Contas Omie)</CardTitle>
+            </div>
+            <Button
+              variant="outline"
+              size="sm"
+              disabled={isRunning}
+              onClick={() => bulkClientSyncMutation.mutate()}
+            >
+              {bulkClientSyncMutation.isPending ? (
+                <Loader2 className="h-3 w-3 mr-2 animate-spin" />
+              ) : (
+                <RefreshCw className="h-3 w-3 mr-2" />
+              )}
+              Importar Todos
+            </Button>
+          </div>
+        </CardHeader>
+        <CardContent>
+          <p className="text-xs text-muted-foreground">
+            Importa todos os clientes das 3 contas Omie (Colacor Afiação, Oben Vendas, Colacor Vendas), 
+            criando perfis placeholder e mapeamentos em <code className="font-mono">omie_clientes</code>. 
+            Pré-requisito para rodar os motores de inteligência (calculate-scores, algorithm-a-audit).
+          </p>
+          {clientSyncProgress && (
+            <div className="mt-3 flex items-center gap-2 text-xs text-primary font-medium">
+              <Loader2 className="h-3 w-3 animate-spin" />
+              {clientSyncProgress}
+            </div>
+          )}
+        </CardContent>
+      </Card>
 
       {/* Cost Engine */}
       <Card>

@@ -660,6 +660,152 @@ serve(async (req) => {
         break;
       }
 
+      case "sync_all_clients": {
+        // Bulk import clients from one Omie account at a time (to avoid timeout)
+        // Pass account_index: 0, 1, 2 and start_page (default 1)
+        const supabaseUrl = Deno.env.get("SUPABASE_URL")!;
+        const supabaseServiceKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
+        const adminClient = createClient(supabaseUrl, supabaseServiceKey);
+
+        const accounts = getOmieAccounts();
+        const accountIndex = body.account_index ?? 0;
+        const startPage = body.start_page ?? 1;
+        const maxPages = 20; // Process max 20 pages per call (~1000 clients) to stay within timeout
+
+        if (accountIndex >= accounts.length) {
+          result = { done: true, message: "All accounts processed" };
+          break;
+        }
+
+        const account = accounts[accountIndex];
+        let page = startPage;
+        let totalPages = startPage;
+        let accImported = 0;
+        let accSkipped = 0;
+        let accErrors = 0;
+        let pagesProcessed = 0;
+
+        // Pre-load all existing omie_clientes mappings for fast lookup
+        const { data: allMappings } = await adminClient
+          .from("omie_clientes")
+          .select("omie_codigo_cliente");
+        const existingCodes = new Set((allMappings || []).map(m => m.omie_codigo_cliente));
+
+        // Pre-load all profiles with documents for dedup
+        const { data: allProfiles } = await adminClient
+          .from("profiles")
+          .select("user_id, document")
+          .not("document", "is", null);
+        const profileByDoc = new Map<string, string>();
+        for (const p of allProfiles || []) {
+          if (p.document) {
+            profileByDoc.set(p.document.replace(/\D/g, ""), p.user_id);
+          }
+        }
+
+        console.log(`[sync_all_clients] Starting ${account.name} from page ${startPage}...`);
+
+        while (page <= totalPages && pagesProcessed < maxPages) {
+          try {
+            const listResult = await callOmieApiWithCredentials(
+              "geral/clientes/",
+              "ListarClientes",
+              { pagina: page, registros_por_pagina: 50 },
+              account.appKey,
+              account.appSecret
+            );
+
+            if (listResult.faultstring) {
+              console.error(`[sync_all_clients] ${account.name} page ${page} error: ${listResult.faultstring}`);
+              break;
+            }
+
+            totalPages = listResult.total_de_paginas || 1;
+            const clientes = listResult.clientes_cadastro || [];
+
+            for (const cliente of clientes) {
+              const codigoCliente = cliente.codigo_cliente_omie || cliente.codigo_cliente;
+              const cnpjCpf = cliente.cnpj_cpf?.replace(/\D/g, "") || "";
+
+              if (!codigoCliente || cnpjCpf.length < 11) {
+                accSkipped++;
+                continue;
+              }
+
+              if (existingCodes.has(codigoCliente)) {
+                accSkipped++;
+                continue;
+              }
+
+              try {
+                let userId = profileByDoc.get(cnpjCpf);
+
+                if (!userId) {
+                  // Create placeholder user
+                  const placeholderEmail = `omie_${codigoCliente}@placeholder.local`;
+                  const { data: authData, error: authError } = await adminClient.auth.admin.createUser({
+                    email: placeholderEmail,
+                    email_confirm: true,
+                    user_metadata: { omie_codigo_cliente: codigoCliente, is_placeholder: true },
+                  });
+
+                  if (authError) {
+                    accErrors++;
+                    continue;
+                  }
+
+                  userId = authData.user.id;
+                  await adminClient.from("profiles").insert({
+                    user_id: userId,
+                    name: cliente.nome_fantasia || cliente.razao_social || "Cliente",
+                    email: cliente.email || null,
+                    phone: cliente.telefone1_numero || null,
+                    document: cnpjCpf,
+                  });
+                  profileByDoc.set(cnpjCpf, userId);
+                }
+
+                const codigoVendedor = cliente.recomendacoes?.codigo_vendedor || cliente.codigo_vendedor || null;
+                await adminClient.from("omie_clientes").insert({
+                  user_id: userId,
+                  omie_codigo_cliente: codigoCliente,
+                  omie_codigo_vendedor: codigoVendedor,
+                  omie_codigo_cliente_integracao: cliente.codigo_cliente_integracao || null,
+                });
+
+                existingCodes.add(codigoCliente);
+                accImported++;
+              } catch (clientError) {
+                accErrors++;
+              }
+            }
+
+            console.log(`[sync_all_clients] ${account.name} page ${page}/${totalPages}: +${clientes.length} clientes`);
+            page++;
+            pagesProcessed++;
+          } catch (pageError) {
+            console.error(`[sync_all_clients] ${account.name} page ${page} failed:`, pageError);
+            break;
+          }
+        }
+
+        const hasMore = page <= totalPages;
+        const nextAccountIndex = hasMore ? accountIndex : accountIndex + 1;
+        const nextPage = hasMore ? page : 1;
+
+        result = {
+          account: account.name,
+          imported: accImported,
+          skipped: accSkipped,
+          errors: accErrors,
+          totalPages,
+          lastPage: page - 1,
+          hasMore: hasMore || nextAccountIndex < accounts.length,
+          next: { account_index: nextAccountIndex, start_page: nextPage },
+        };
+        break;
+      }
+
       case "validar_vendedor": {
         const { cnpj_cpf } = body;
         if (!cnpj_cpf || typeof cnpj_cpf !== "string") {
