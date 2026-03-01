@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { PlusCircle, ClipboardList, ChevronRight, Wrench, Calendar, User, ArrowRight, TrendingUp, Package, Users, Clock, CheckCircle, Building2 } from 'lucide-react';
+import { PlusCircle, ClipboardList, ChevronRight, Wrench, Calendar, User, ArrowRight, TrendingUp, Package, Users, Clock, CheckCircle, Building2, RefreshCw, Loader2, Database } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent } from '@/components/ui/card';
@@ -13,6 +13,8 @@ import { format, differenceInDays } from 'date-fns';
 import { ptBR } from 'date-fns/locale';
 import { cn } from '@/lib/utils';
 import { Skeleton } from '@/components/ui/skeleton';
+import { toast } from 'sonner';
+import { useMutation } from '@tanstack/react-query';
 
 interface Profile {
   name: string;
@@ -62,6 +64,8 @@ const EMPLOYEE_ORDER_STATUS: Record<string, { label: string; statusClass: string
   entregue: { label: 'Entregue', statusClass: 'status-success' },
 };
 
+const MASTER_CPF = "01363383647";
+
 const Index = () => {
   const navigate = useNavigate();
   const { user } = useAuth();
@@ -72,6 +76,80 @@ const Index = () => {
   const [userTools, setUserTools] = useState<UserTool[]>([]);
   const [loading, setLoading] = useState(true);
   const [customerCount, setCustomerCount] = useState(0);
+  const [clientSyncProgress, setClientSyncProgress] = useState<string | null>(null);
+
+  const isMaster = profile?.document?.replace(/\D/g, '') === MASTER_CPF;
+
+  const bulkClientSyncMutation = useMutation({
+    mutationFn: async () => {
+      let accountIndex = 0;
+      let startPage = 1;
+      let totalImported = 0;
+      let totalSkipped = 0;
+      let totalErrors = 0;
+
+      while (true) {
+        setClientSyncProgress(`Conta ${accountIndex + 1}/3 — página ${startPage}...`);
+        const { data, error } = await supabase.functions.invoke("omie-cliente", {
+          body: { action: "sync_all_clients", account_index: accountIndex, start_page: startPage },
+        });
+        if (error) throw error;
+
+        totalImported += data?.imported || 0;
+        totalSkipped += data?.skipped || 0;
+        totalErrors += data?.errors || 0;
+
+        if (data?.account) {
+          setClientSyncProgress(`${data.account}: +${data.imported} importados (pág ${data.lastPage}/${data.totalPages})`);
+        }
+
+        if (!data?.hasMore) break;
+        accountIndex = data.next.account_index;
+        startPage = data.next.start_page;
+      }
+
+      setClientSyncProgress(null);
+      return { totalImported, totalSkipped, totalErrors };
+    },
+    onSuccess: (data) => {
+      toast.success("Importação concluída", {
+        description: `${data.totalImported} importados, ${data.totalSkipped} existentes, ${data.totalErrors} erros`,
+        duration: 10000,
+      });
+    },
+    onError: (error) => {
+      setClientSyncProgress(null);
+      toast.error("Erro na importação", { description: String(error) });
+    },
+  });
+
+  const calculateScoresMutation = useMutation({
+    mutationFn: async () => {
+      const { data, error } = await supabase.functions.invoke("calculate-scores", { body: {} });
+      if (error) throw error;
+      return data;
+    },
+    onSuccess: (data) => {
+      toast.success("Scores calculados", { description: data?.message || "OK" });
+    },
+    onError: (error) => {
+      toast.error("Erro ao calcular scores", { description: String(error) });
+    },
+  });
+
+  const auditMutation = useMutation({
+    mutationFn: async () => {
+      const { data, error } = await supabase.functions.invoke("algorithm-a-audit", { body: {} });
+      if (error) throw error;
+      return data;
+    },
+    onSuccess: (data) => {
+      toast.success("Auditoria concluída", { description: data?.message || "OK" });
+    },
+    onError: (error) => {
+      toast.error("Erro na auditoria", { description: String(error) });
+    },
+  });
 
   useEffect(() => {
     const loadData = async () => {
@@ -359,6 +437,95 @@ const Index = () => {
                 <p className="text-sm text-muted-foreground">Nenhum pedido pendente no momento</p>
               </CardContent>
             </Card>
+          )}
+
+          {/* Master-only: Sync & Intelligence Pipeline */}
+          {isMaster && (
+            <section className="mb-6 animate-fade-in" style={{ animationDelay: '0.3s' }}>
+              <h2 className="font-display font-bold text-lg text-foreground mb-4 flex items-center gap-2">
+                <Database className="w-5 h-5 text-muted-foreground" />
+                Pipeline de Inteligência
+              </h2>
+              <div className="space-y-3">
+                {/* 1. Import Clients */}
+                <Card>
+                  <CardContent className="p-4">
+                    <div className="flex items-center justify-between">
+                      <div>
+                        <p className="font-semibold text-sm">1. Importar Clientes</p>
+                        <p className="text-xs text-muted-foreground">3 contas Omie → perfis + mapeamentos</p>
+                        {clientSyncProgress && (
+                          <p className="text-xs text-primary font-medium mt-1 flex items-center gap-1">
+                            <Loader2 className="h-3 w-3 animate-spin" />
+                            {clientSyncProgress}
+                          </p>
+                        )}
+                      </div>
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        disabled={bulkClientSyncMutation.isPending}
+                        onClick={() => bulkClientSyncMutation.mutate()}
+                      >
+                        {bulkClientSyncMutation.isPending ? (
+                          <Loader2 className="h-3 w-3 animate-spin" />
+                        ) : (
+                          <RefreshCw className="h-3 w-3" />
+                        )}
+                      </Button>
+                    </div>
+                  </CardContent>
+                </Card>
+
+                {/* 2. Calculate Scores */}
+                <Card>
+                  <CardContent className="p-4">
+                    <div className="flex items-center justify-between">
+                      <div>
+                        <p className="font-semibold text-sm">2. Calcular Scores</p>
+                        <p className="text-xs text-muted-foreground">Health, Priority, Performance</p>
+                      </div>
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        disabled={calculateScoresMutation.isPending}
+                        onClick={() => calculateScoresMutation.mutate()}
+                      >
+                        {calculateScoresMutation.isPending ? (
+                          <Loader2 className="h-3 w-3 animate-spin" />
+                        ) : (
+                          <RefreshCw className="h-3 w-3" />
+                        )}
+                      </Button>
+                    </div>
+                  </CardContent>
+                </Card>
+
+                {/* 3. Margin Audit */}
+                <Card>
+                  <CardContent className="p-4">
+                    <div className="flex items-center justify-between">
+                      <div>
+                        <p className="font-semibold text-sm">3. Auditoria de Margem</p>
+                        <p className="text-xs text-muted-foreground">Margem real vs potencial</p>
+                      </div>
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        disabled={auditMutation.isPending}
+                        onClick={() => auditMutation.mutate()}
+                      >
+                        {auditMutation.isPending ? (
+                          <Loader2 className="h-3 w-3 animate-spin" />
+                        ) : (
+                          <RefreshCw className="h-3 w-3" />
+                        )}
+                      </Button>
+                    </div>
+                  </CardContent>
+                </Card>
+              </div>
+            </section>
           )}
         </main>
 
