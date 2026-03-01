@@ -670,7 +670,7 @@ serve(async (req) => {
         const accounts = getOmieAccounts();
         const accountIndex = body.account_index ?? 0;
         const startPage = body.start_page ?? 1;
-        const maxPages = 20; // Process max 20 pages per call (~1000 clients) to stay within timeout
+        const maxPages = 5; // Process max 5 pages per call (~250 clients) to stay within timeout
 
         if (accountIndex >= accounts.length) {
           result = { done: true, message: "All accounts processed" };
