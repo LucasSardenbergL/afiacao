@@ -45,15 +45,19 @@ const TechnicalDocs = () => {
           <h2 className="text-xl font-bold mb-4" style={{ pageBreakBefore: 'avoid' }}>Sumário</h2>
           <ol className="space-y-1 text-sm list-decimal list-inside">
             <li><a href="#visao" className="hover:underline">Visão Geral do Produto</a></li>
-            <li><a href="#funcionalidades" className="hover:underline">Mapa Completo de Funcionalidades</a></li>
+            <li><a href="#funcionalidades" className="hover:underline">Mapa Completo de Funcionalidades (46 módulos)</a></li>
             <li><a href="#arquitetura" className="hover:underline">Arquitetura Técnica Atual</a></li>
             <li><a href="#algoritmos" className="hover:underline">Algoritmos Implementados</a></li>
             <li><a href="#regras" className="hover:underline">Regras de Negócio</a></li>
+            <li><a href="#rbac" className="hover:underline">RBAC e Hierarquia de Acessos</a></li>
+            <li><a href="#sync" className="hover:underline">Cadência de Sincronização e Cron Jobs</a></li>
+            <li><a href="#edge" className="hover:underline">Edge Functions (Backend Functions)</a></li>
             <li><a href="#ocultas" className="hover:underline">Capacidades Ocultas ou Subutilizadas</a></li>
             <li><a href="#limitacoes" className="hover:underline">Limitações Atuais</a></li>
             <li><a href="#riscos" className="hover:underline">Riscos Técnicos</a></li>
             <li><a href="#features" className="hover:underline">Features Ativáveis Sem Alterar Arquitetura</a></li>
             <li><a href="#manual" className="hover:underline">Manual Operacional Simplificado</a></li>
+            <li><a href="#rotas" className="hover:underline">Mapa de Rotas da Aplicação</a></li>
           </ol>
         </div>
 
@@ -282,11 +286,130 @@ const TechnicalDocs = () => {
             deps="Service Worker (vite-plugin-pwa), hook usePushNotifications"
           />
 
-          <Module
+           <Module
             name="2.29 Histórico Público de Ferramenta"
             desc="Página acessível por QR Code sem autenticação (/tool/:toolId). Mostra histórico de afiações da ferramenta."
             audience="Público (qualquer pessoa com o link/QR)"
             deps="Página ToolPublicHistory, rota pública"
+          />
+
+          <Module
+            name="2.30 Dashboard de Inteligência Comercial"
+            desc="Painel consolidado (/intelligence) que agrega métricas de todas as empresas do grupo (Oben, Colacor Vendas e Colacor Afiação) em KPIs únicos. Visibilidade segmentada por nível comercial: Operacional (Health/Priority Scores, SPIN), Gerencial (comparativos de equipe), Estratégico (projeção LTV 3 anos, estimativa CAC, elasticidade de preço, sensibilidade a desconto, Market Share). Super Admins possuem funcionalidade 'Simular como...' para visualizar o sistema sob a perspectiva de qualquer colaborador."
+            audience="Staff (visibilidade por nível RBAC comercial)"
+            deps="Página IntelligenceDashboard, tabelas farmer_client_scores, farmer_performance_scores, commercial_roles"
+          />
+
+          <Module
+            name="2.31 RBAC Hierárquico Comercial"
+            desc="Sistema de papéis comerciais para funcionários com 4 níveis: OPERACIONAL (acesso básico a carteira e scoring), GERENCIAL (comparativos de equipe), ESTRATÉGICO (métricas avançadas e auditoria de margem) e SUPER_ADMIN (acesso irrestrito + simulação de qualquer usuário). Override absoluto para CPF master configurado em company_config. Trigger automático auto_assign_commercial_super_admin para o CPF master."
+            audience="Staff (definido por admin/super_admin)"
+            deps="Tabela commercial_roles, enum commercial_role, funções is_super_admin(), get_commercial_role()"
+          />
+
+          <Module
+            name="2.32 Governança de Usuários"
+            desc="Gestão centralizada de papéis e permissões (/governance/users). Listagem de todos os usuários com seus papéis (app_role) e papéis comerciais (commercial_role). Possibilidade de alterar papéis com registro em log de auditoria."
+            audience="Admin / Super Admin"
+            deps="Página GovernanceUsers, tabelas user_roles, commercial_roles, permission_change_log"
+          />
+
+          <Module
+            name="2.33 Governança de Permissões"
+            desc="Sistema de overrides de permissão granular (/governance/permissions). Permite conceder ou revogar permissões específicas por usuário, independente do papel base. Registro completo de alterações."
+            audience="Admin / Super Admin"
+            deps="Página GovernancePermissions, tabela permission_overrides, permission_change_log"
+          />
+
+          <Module
+            name="2.34 Parâmetros Matemáticos"
+            desc="Interface para visualizar e alterar parâmetros dos algoritmos de scoring (/governance/math). Configuração de pesos, thresholds e fatores de decaimento. Alterações passam pelo fluxo de governança (proposta → aprovação)."
+            audience="Admin / Super Admin"
+            deps="Página GovernanceMathParams, tabela farmer_algorithm_config, farmer_governance_proposals"
+          />
+
+          <Module
+            name="2.35 Auditoria de Governança"
+            desc="Log completo de todas as alterações em parâmetros, papéis e permissões (/governance/audit). Registro de quem alterou, valores anteriores e novos, timestamp e versão do algoritmo."
+            audience="Admin / Super Admin"
+            deps="Página GovernanceAudit, tabela farmer_audit_log"
+          />
+
+          <Module
+            name="2.36 Pedido Unificado com Split Automático"
+            desc="Tela única (/sales/new) que consolida produtos (Oben/Colacor) e serviços (Afiação). A seleção do cliente persiste entre todos os catálogos. No checkout, o sistema realiza split automático: gera Pedidos de Venda (PV) independentes nas contas Oben e Colacor, e uma Ordem de Serviço (OS) na conta Afiação. Suporte completo a recursos de IA (voz, imagem), fotos e logística. Resolução automática de user_id e ferramentas do cliente via CNPJ/CPF. Carrinho com rolagem interna e barra flutuante de resumo para pedidos extensos."
+            audience="Staff (employee/admin)"
+            deps="Página UnifiedOrder, Edge Functions omie-sync, omie-vendas-sync, omie-cliente"
+          />
+
+          <Module
+            name="2.37 Listagem Unificada de Pedidos"
+            desc="Página (/sales/orders) que consolida Pedidos de Venda (Oben/Colacor) e Ordens de Serviço (Afiação) em interface única. Dados normalizados e categorizados por abas com filtros por empresa e status. Navegação contextualizada para detalhamento específico."
+            audience="Staff e Clientes (próprios pedidos)"
+            deps="Página SalesOrders, tabelas sales_orders, orders"
+          />
+
+          <Module
+            name="2.38 Algoritmo A — Auditoria de Margem"
+            desc="Motor de auditoria (Edge Function algorithm-a-audit) que calcula em background a Margem Potencial vs Margem Real. Identifica Margem Potencial comparando preços atuais contra o maior valor histórico praticado por SKU. O Margin Gap é registrado em margin_audit_log, permitindo que usuários Estratégicos ou Super Admins identifiquem perdas de oportunidade financeira. Execução automatizada semanalmente (domingos 03:00 UTC)."
+            audience="Estratégico / Super Admin"
+            deps="Edge Function algorithm-a-audit, tabela margin_audit_log, sales_price_history"
+          />
+
+          <Module
+            name="2.39 Pipeline de Inteligência (Master)"
+            desc="Seção exclusiva no dashboard principal (/) para o usuário Master que centraliza gatilhos manuais para população e sincronização de dados: Importar Clientes (bulk sync tri-empresa), Calcular Scores e Auditoria de Margem. Monitoramento de progresso em tempo real para garantir execução na ordem correta."
+            audience="Super Admin (CPF master)"
+            deps="Página Index, Edge Functions calculate-scores, algorithm-a-audit, omie-cliente"
+          />
+
+          <Module
+            name="2.40 Sincronização Automática (Cron Jobs)"
+            desc="Cadência automatizada via pg_cron: Estoque a cada 30min; Pedidos incremental a cada 2h; Reprocessamento de janela móvel operacional (7 dias) a cada 2h e estratégica (30 dias) diariamente 02:30 UTC; Produtos e Clientes diariamente 06:00 UTC; Scores diariamente 06:00 UTC; Auditoria de margem semanalmente domingos 03:00 UTC; Recálculo de custos 07:00 UTC; Regras de associação 07:30 UTC. Status monitorado via sync_state e sync_reprocess_log."
+            audience="Sistema automático"
+            deps="pg_cron, Edge Functions omie-sync, omie-vendas-sync, omie-analytics-sync, calculate-scores, algorithm-a-audit, sync-reprocess"
+          />
+
+          <Module
+            name="2.41 Economia e Savings Dashboard"
+            desc="Dashboard (/savings) que mostra ao cliente quanto economizou com manutenção preventiva vs substituição de ferramentas. Cálculos baseados em histórico de afiações e preços de reposição."
+            audience="Clientes"
+            deps="Página SavingsDashboard, tabelas orders, user_tools"
+          />
+
+          <Module
+            name="2.42 Configurações do Sistema"
+            desc="Página (/settings) para gerenciar configurações dinâmicas do sistema armazenadas em company_config (key-value). Inclui master_cnpj, master_cpf e outras configurações operacionais."
+            audience="Admin"
+            deps="Página SettingsConfig, tabela company_config"
+          />
+
+          <Module
+            name="2.43 Design System e UX Rules"
+            desc="Páginas de referência interna (/design-system, /ux-rules) documentando os componentes visuais, tokens de design e regras de UX do sistema para consistência no desenvolvimento."
+            audience="Desenvolvimento interno"
+            deps="Páginas DesignSystem, UXRules"
+          />
+
+          <Module
+            name="2.44 Produtividade Operacional"
+            desc="Dashboard (/admin/productivity) para análise de produtividade operacional da equipe. Métricas de volume de pedidos processados, tempo médio de atendimento e throughput."
+            audience="Admin"
+            deps="Página AdminProductivity"
+          />
+
+          <Module
+            name="2.45 Previsão de Demanda"
+            desc="Ferramenta (/admin/demand-forecast) para análise de tendências e previsão de demanda de serviços baseada em dados históricos."
+            audience="Admin"
+            deps="Página AdminDemandForecast"
+          />
+
+          <Module
+            name="2.46 Planejador de Rotas"
+            desc="Interface (/admin/route-planner) com mapa interativo (Leaflet) para planejamento de rotas de coleta e entrega de ferramentas."
+            audience="Admin / Staff"
+            deps="Página AdminRoutePlanner, Leaflet"
           />
         </Section>
 
@@ -517,8 +640,92 @@ Níveis: Operacional(0) → Organizado(20) → Profissional(40) → EliteTécnic
           </ul>
         </Section>
 
-        {/* ───────────────── 6. CAPACIDADES OCULTAS ───────────────── */}
-        <Section id="ocultas" title="6. Capacidades Ocultas ou Subutilizadas">
+        {/* ───────────────── 6. RBAC E HIERARQUIA ───────────────── */}
+        <Section id="rbac" title="6. RBAC e Hierarquia de Acessos">
+          <h3 className="font-semibold mt-4 mb-2">Papéis de Aplicação (app_role)</h3>
+          <table className="w-full text-sm border-collapse mb-4">
+            <thead><tr className="border-b font-bold"><td className="p-2">Papel</td><td className="p-2">Descrição</td><td className="p-2">Atribuição</td></tr></thead>
+            <tbody>
+              <tr className="border-b"><td className="p-2 font-mono">admin</td><td className="p-2">Acesso total: Kanban, tabela de preços, aprovações, governança, dashboards executivos</td><td className="p-2">Auto via master_cnpj em company_config</td></tr>
+              <tr className="border-b"><td className="p-2 font-mono">employee</td><td className="p-2">Staff: Kanban, vendas B2B, Farmer, recomendações</td><td className="p-2">Auto quando is_employee = true no profile</td></tr>
+              <tr className="border-b"><td className="p-2 font-mono">customer</td><td className="p-2">Cliente: pedidos próprios, ferramentas, gamificação, fidelidade</td><td className="p-2">Default para todos os demais</td></tr>
+            </tbody>
+          </table>
+
+          <h3 className="font-semibold mt-4 mb-2">Papéis Comerciais (commercial_role) — Hierarquia Farmer</h3>
+          <table className="w-full text-sm border-collapse mb-4">
+            <thead><tr className="border-b font-bold"><td className="p-2">Nível</td><td className="p-2">Acesso</td><td className="p-2">Visibilidade Intelligence</td></tr></thead>
+            <tbody>
+              <tr className="border-b"><td className="p-2 font-mono">operacional</td><td className="p-2">Carteira própria, Health/Priority Scores, SPIN</td><td className="p-2">Dados próprios</td></tr>
+              <tr className="border-b"><td className="p-2 font-mono">gerencial</td><td className="p-2">Comparativos de equipe, métricas agregadas</td><td className="p-2">Equipe</td></tr>
+              <tr className="border-b"><td className="p-2 font-mono">estrategico</td><td className="p-2">LTV 3 anos, CAC, elasticidade, auditoria de margem</td><td className="p-2">Global</td></tr>
+              <tr className="border-b"><td className="p-2 font-mono">super_admin</td><td className="p-2">Tudo + "Simular como..." qualquer colaborador</td><td className="p-2">Irrestrito</td></tr>
+            </tbody>
+          </table>
+
+          <h3 className="font-semibold mt-4 mb-2">Override Master</h3>
+          <p className="text-sm">O CPF configurado em <code>company_config.master_cpf</code> recebe automaticamente o papel <code>super_admin</code> via trigger <code>auto_assign_commercial_super_admin</code>. Este usuário tem acesso irrestrito a todos os painéis, filtros, parâmetros e auditorias.</p>
+
+          <h3 className="font-semibold mt-4 mb-2">Funções de Banco (Security Definer)</h3>
+          <ul className="list-disc list-inside space-y-1 text-sm">
+            <li><code>has_role(user_id, role)</code> — Verifica se usuário tem um app_role específico</li>
+            <li><code>get_user_role(user_id)</code> — Retorna o app_role do usuário</li>
+            <li><code>get_commercial_role(user_id)</code> — Retorna o commercial_role do funcionário</li>
+            <li><code>is_super_admin(user_id)</code> — Verifica se é super_admin comercial</li>
+            <li><code>auto_assign_user_role()</code> — Trigger: atribui role automaticamente no INSERT de profile</li>
+            <li><code>auto_assign_commercial_super_admin()</code> — Trigger: atribui super_admin ao CPF master</li>
+          </ul>
+        </Section>
+
+        {/* ───────────────── 7. SYNC E CRON JOBS ───────────────── */}
+        <Section id="sync" title="7. Cadência de Sincronização e Cron Jobs">
+          <table className="w-full text-sm border-collapse mb-4">
+            <thead><tr className="border-b font-bold"><td className="p-2">Processo</td><td className="p-2">Frequência</td><td className="p-2">Horário UTC</td></tr></thead>
+            <tbody>
+              <tr className="border-b"><td className="p-2">Estoque (inventory_position)</td><td className="p-2">A cada 30 minutos</td><td className="p-2">*/30 * * * *</td></tr>
+              <tr className="border-b"><td className="p-2">Pedidos (incremental)</td><td className="p-2">A cada 2 horas</td><td className="p-2">0 */2 * * *</td></tr>
+              <tr className="border-b"><td className="p-2">Reprocessamento Operacional (7 dias)</td><td className="p-2">A cada 2 horas</td><td className="p-2">15 */2 * * *</td></tr>
+              <tr className="border-b"><td className="p-2">Reprocessamento Estratégico (30 dias)</td><td className="p-2">Diariamente</td><td className="p-2">02:30</td></tr>
+              <tr className="border-b"><td className="p-2">Produtos e Clientes (full sync)</td><td className="p-2">Diariamente</td><td className="p-2">06:00</td></tr>
+              <tr className="border-b"><td className="p-2">Cálculo de Scores (calculate-scores)</td><td className="p-2">Diariamente</td><td className="p-2">06:00</td></tr>
+              <tr className="border-b"><td className="p-2">Recálculo de Custos</td><td className="p-2">Diariamente</td><td className="p-2">07:00</td></tr>
+              <tr className="border-b"><td className="p-2">Regras de Associação</td><td className="p-2">Diariamente</td><td className="p-2">07:30</td></tr>
+              <tr className="border-b"><td className="p-2">Auditoria de Margem (Algorithm A)</td><td className="p-2">Semanalmente</td><td className="p-2">Dom 03:00</td></tr>
+            </tbody>
+          </table>
+          <p className="text-sm">Status monitorado via tabelas <code>sync_state</code> e <code>sync_reprocess_log</code>. Configuração de janelas em <code>sync_reprocess_config</code>.</p>
+        </Section>
+
+        {/* ───────────────── 8. EDGE FUNCTIONS ───────────────── */}
+        <Section id="edge" title="8. Edge Functions (Backend Functions)">
+          <table className="w-full text-sm border-collapse mb-4">
+            <thead><tr className="border-b font-bold"><td className="p-2">Função</td><td className="p-2">Descrição</td><td className="p-2">Autenticação</td></tr></thead>
+            <tbody>
+              <tr className="border-b"><td className="p-2 font-mono">omie-sync</td><td className="p-2">Sincroniza pedidos, serviços, estoque e cria OS no Omie</td><td className="p-2">JWT</td></tr>
+              <tr className="border-b"><td className="p-2 font-mono">omie-cliente</td><td className="p-2">Pesquisa, consulta e cria perfis locais de clientes Omie</td><td className="p-2">JWT</td></tr>
+              <tr className="border-b"><td className="p-2 font-mono">omie-vendas-sync</td><td className="p-2">Sincroniza pedidos de venda com Omie (Oben/Colacor)</td><td className="p-2">JWT</td></tr>
+              <tr className="border-b"><td className="p-2 font-mono">omie-analytics-sync</td><td className="p-2">Sincronização analítica periódica de dados Omie</td><td className="p-2">JWT</td></tr>
+              <tr className="border-b"><td className="p-2 font-mono">recommend</td><td className="p-2">Motor de recomendações contextual server-side</td><td className="p-2">JWT</td></tr>
+              <tr className="border-b"><td className="p-2 font-mono">generate-tactical-plan</td><td className="p-2">Gera planos táticos pré-ligação via IA (Gemini/GPT)</td><td className="p-2">JWT</td></tr>
+              <tr className="border-b"><td className="p-2 font-mono">copilot-analyze</td><td className="p-2">Análise de transcrição em tempo real para copiloto IA</td><td className="p-2">JWT</td></tr>
+              <tr className="border-b"><td className="p-2 font-mono">generate-bundle-argument</td><td className="p-2">Gera argumentos de venda para bundles via IA</td><td className="p-2">JWT</td></tr>
+              <tr className="border-b"><td className="p-2 font-mono">calculate-scores</td><td className="p-2">Recálculo batch de Health/Priority Scores</td><td className="p-2">JWT</td></tr>
+              <tr className="border-b"><td className="p-2 font-mono">algorithm-a-audit</td><td className="p-2">Auditoria de margem potencial vs real</td><td className="p-2">JWT</td></tr>
+              <tr className="border-b"><td className="p-2 font-mono">identify-tool</td><td className="p-2">Identificação de ferramenta por foto via IA de visão</td><td className="p-2">JWT</td></tr>
+              <tr className="border-b"><td className="p-2 font-mono">analyze-services</td><td className="p-2">Análise de serviços por voz via IA</td><td className="p-2">JWT</td></tr>
+              <tr className="border-b"><td className="p-2 font-mono">monthly-report</td><td className="p-2">Geração de relatórios mensais consolidados</td><td className="p-2">JWT</td></tr>
+              <tr className="border-b"><td className="p-2 font-mono">process-recurring-orders</td><td className="p-2">Processa agendamentos recorrentes de pedidos</td><td className="p-2">JWT</td></tr>
+              <tr className="border-b"><td className="p-2 font-mono">sync-reprocess</td><td className="p-2">Reprocessamento de sincronização com janela móvel</td><td className="p-2">JWT</td></tr>
+              <tr className="border-b"><td className="p-2 font-mono">verify-employee</td><td className="p-2">Verifica código de funcionário no cadastro</td><td className="p-2">JWT</td></tr>
+              <tr className="border-b"><td className="p-2 font-mono">biometric-auth</td><td className="p-2">Registro e verificação de credenciais WebAuthn</td><td className="p-2">JWT</td></tr>
+              <tr className="border-b"><td className="p-2 font-mono">elevenlabs-transcribe</td><td className="p-2">Transcrição de áudio via ElevenLabs</td><td className="p-2">JWT</td></tr>
+              <tr className="border-b"><td className="p-2 font-mono">elevenlabs-scribe-token</td><td className="p-2">Geração de token para Scribe em tempo real</td><td className="p-2">JWT</td></tr>
+            </tbody>
+          </table>
+        </Section>
+
+        {/* ───────────────── 9. CAPACIDADES OCULTAS ───────────────── */}
+        <Section id="ocultas" title="9. Capacidades Ocultas ou Subutilizadas">
           <ul className="list-disc list-inside space-y-2 text-sm">
             <li><strong>Regras sequenciais</strong>: O Bundle Engine já detecta padrões sequenciais (produto A seguido de B em 90 dias), mas a UI não diferencia visualmente regras sequenciais de associações simples. Potencial para sugestões proativas ("Cliente comprou X há 45 dias → provavelmente precisa de Y em breve").</li>
             <li><strong>Campos de custo avançados</strong>: product_costs tem cost_confidence e cost_source — permite implementar precificação dinâmica com margem de segurança baseada na confiança do custo.</li>
@@ -533,8 +740,8 @@ Níveis: Operacional(0) → Organizado(20) → Profissional(40) → EliteTécnic
           </ul>
         </Section>
 
-        {/* ───────────────── 7. LIMITAÇÕES ───────────────── */}
-        <Section id="limitacoes" title="7. Limitações Atuais">
+        {/* ───────────────── 10. LIMITAÇÕES ───────────────── */}
+        <Section id="limitacoes" title="10. Limitações Atuais">
           <h3 className="font-semibold mt-4 mb-2">Técnicas</h3>
           <ul className="list-disc list-inside space-y-1 text-sm">
             <li>Algoritmos de scoring (Health, Cross-sell, Bundles) rodam client-side → limitados pela memória do browser e pelo limite de 1000 rows por query do banco</li>
@@ -566,8 +773,8 @@ Níveis: Operacional(0) → Organizado(20) → Profissional(40) → EliteTécnic
           </ul>
         </Section>
 
-        {/* ───────────────── 8. RISCOS ───────────────── */}
-        <Section id="riscos" title="8. Riscos Técnicos">
+        {/* ───────────────── 11. RISCOS ───────────────── */}
+        <Section id="riscos" title="11. Riscos Técnicos">
           <ul className="list-disc list-inside space-y-2 text-sm">
             <li><strong>Dependência Omie API</strong>: Se Omie ficar offline, sincronização falha silenciosamente. sync_state registra erros mas não há alerta automático.</li>
             <li><strong>Secrets em Edge Functions</strong>: Chaves Omie (OMIE_APP_KEY, OMIE_APP_SECRET) e ElevenLabs gerenciadas como secrets — rotação manual.</li>
@@ -578,8 +785,8 @@ Níveis: Operacional(0) → Organizado(20) → Profissional(40) → EliteTécnic
           </ul>
         </Section>
 
-        {/* ───────────────── 9. FEATURES IMEDIATAS ───────────────── */}
-        <Section id="features" title="9. Features Ativáveis Sem Alterar Arquitetura">
+        {/* ───────────────── 12. FEATURES IMEDIATAS ───────────────── */}
+        <Section id="features" title="12. Features Ativáveis Sem Alterar Arquitetura">
           <ol className="list-decimal list-inside space-y-2 text-sm">
             <li><strong>Modo LTV nas recomendações</strong>: Apenas mudar parâmetro na chamada da Edge Function recommend. Switch na UI do farmer.</li>
             <li><strong>Alerta de estoque baixo</strong>: inventory_position já tem saldo. Filtrar recomendações por estoque &gt; 0.</li>
@@ -594,8 +801,8 @@ Níveis: Operacional(0) → Organizado(20) → Profissional(40) → EliteTécnic
           </ol>
         </Section>
 
-        {/* ───────────────── 10. MANUAL ───────────────── */}
-        <Section id="manual" title="10. Manual Operacional Simplificado">
+        {/* ───────────────── 13. MANUAL ───────────────── */}
+        <Section id="manual" title="13. Manual Operacional Simplificado">
 
           <h3 className="font-bold mt-6 mb-2">Para Clientes</h3>
           <ol className="list-decimal list-inside space-y-1 text-sm mb-4">
@@ -632,6 +839,90 @@ Níveis: Operacional(0) → Organizado(20) → Profissional(40) → EliteTécnic
             <li>Monitore sincronização Omie em "Admin → Analytics Sync"</li>
             <li>Configure gamificação e programas de fidelidade</li>
           </ol>
+        </Section>
+
+        {/* ───────────────── 14. ROTAS ───────────────── */}
+        <Section id="rotas" title="14. Mapa de Rotas da Aplicação">
+          <h3 className="font-semibold mt-4 mb-2">Rotas Públicas</h3>
+          <table className="w-full text-sm border-collapse mb-4">
+            <thead><tr className="border-b font-bold"><td className="p-2">Rota</td><td className="p-2">Página</td><td className="p-2">Descrição</td></tr></thead>
+            <tbody>
+              <tr className="border-b"><td className="p-2 font-mono">/auth</td><td className="p-2">Auth</td><td className="p-2">Login e cadastro</td></tr>
+              <tr className="border-b"><td className="p-2 font-mono">/reset-password</td><td className="p-2">ResetPassword</td><td className="p-2">Redefinição de senha</td></tr>
+              <tr className="border-b"><td className="p-2 font-mono">/tool/:toolId</td><td className="p-2">ToolPublicHistory</td><td className="p-2">Histórico público via QR Code</td></tr>
+            </tbody>
+          </table>
+
+          <h3 className="font-semibold mt-4 mb-2">Rotas Autenticadas — Cliente</h3>
+          <table className="w-full text-sm border-collapse mb-4">
+            <thead><tr className="border-b font-bold"><td className="p-2">Rota</td><td className="p-2">Descrição</td></tr></thead>
+            <tbody>
+              <tr className="border-b"><td className="p-2 font-mono">/</td><td className="p-2">Dashboard principal</td></tr>
+              <tr className="border-b"><td className="p-2 font-mono">/orders</td><td className="p-2">Lista de pedidos de afiação</td></tr>
+              <tr className="border-b"><td className="p-2 font-mono">/orders/:id</td><td className="p-2">Detalhe do pedido</td></tr>
+              <tr className="border-b"><td className="p-2 font-mono">/new-order</td><td className="p-2">Novo pedido de afiação</td></tr>
+              <tr className="border-b"><td className="p-2 font-mono">/tools</td><td className="p-2">Gestão de ferramentas</td></tr>
+              <tr className="border-b"><td className="p-2 font-mono">/tools/:toolId</td><td className="p-2">Histórico da ferramenta</td></tr>
+              <tr className="border-b"><td className="p-2 font-mono">/tools/:toolId/reports</td><td className="p-2">Relatórios da ferramenta</td></tr>
+              <tr className="border-b"><td className="p-2 font-mono">/profile</td><td className="p-2">Perfil do usuário</td></tr>
+              <tr className="border-b"><td className="p-2 font-mono">/addresses</td><td className="p-2">Endereços de entrega</td></tr>
+              <tr className="border-b"><td className="p-2 font-mono">/recurring-schedules</td><td className="p-2">Agendamentos recorrentes</td></tr>
+              <tr className="border-b"><td className="p-2 font-mono">/savings</td><td className="p-2">Dashboard de economia</td></tr>
+              <tr className="border-b"><td className="p-2 font-mono">/loyalty</td><td className="p-2">Programa de fidelidade</td></tr>
+              <tr className="border-b"><td className="p-2 font-mono">/gamification</td><td className="p-2">Certificação e score</td></tr>
+              <tr className="border-b"><td className="p-2 font-mono">/training</td><td className="p-2">Treinamentos técnicos</td></tr>
+              <tr className="border-b"><td className="p-2 font-mono">/support</td><td className="p-2">Suporte</td></tr>
+            </tbody>
+          </table>
+
+          <h3 className="font-semibold mt-4 mb-2">Rotas Autenticadas — Staff (Employee/Admin)</h3>
+          <table className="w-full text-sm border-collapse mb-4">
+            <thead><tr className="border-b font-bold"><td className="p-2">Rota</td><td className="p-2">Descrição</td></tr></thead>
+            <tbody>
+              <tr className="border-b"><td className="p-2 font-mono">/sales</td><td className="p-2">Listagem unificada de pedidos</td></tr>
+              <tr className="border-b"><td className="p-2 font-mono">/sales/new</td><td className="p-2">Pedido unificado (produtos + serviços)</td></tr>
+              <tr className="border-b"><td className="p-2 font-mono">/sales/products</td><td className="p-2">Catálogo de produtos</td></tr>
+              <tr className="border-b"><td className="p-2 font-mono">/farmer</td><td className="p-2">Dashboard Farmer</td></tr>
+              <tr className="border-b"><td className="p-2 font-mono">/farmer/calls</td><td className="p-2">Registro de ligações</td></tr>
+              <tr className="border-b"><td className="p-2 font-mono">/farmer/recommendations</td><td className="p-2">Cross-sell / Up-sell</td></tr>
+              <tr className="border-b"><td className="p-2 font-mono">/farmer/bundles</td><td className="p-2">Bundle recommendations</td></tr>
+              <tr className="border-b"><td className="p-2 font-mono">/farmer/tactical-plan</td><td className="p-2">Planos táticos pré-ligação</td></tr>
+              <tr className="border-b"><td className="p-2 font-mono">/farmer/copilot</td><td className="p-2">Copiloto em tempo real</td></tr>
+              <tr className="border-b"><td className="p-2 font-mono">/farmer/ipf</td><td className="p-2">Dashboard IEE/IPF</td></tr>
+              <tr className="border-b"><td className="p-2 font-mono">/farmer/locc</td><td className="p-2">LOCC (Ligação/Oferta/Conversão/Ciclo)</td></tr>
+              <tr className="border-b"><td className="p-2 font-mono">/farmer/governance</td><td className="p-2">Propostas de governança</td></tr>
+              <tr className="border-b"><td className="p-2 font-mono">/intelligence</td><td className="p-2">Dashboard de Inteligência</td></tr>
+              <tr className="border-b"><td className="p-2 font-mono">/coaching</td><td className="p-2">Coaching SPIN Selling</td></tr>
+            </tbody>
+          </table>
+
+          <h3 className="font-semibold mt-4 mb-2">Rotas Autenticadas — Admin</h3>
+          <table className="w-full text-sm border-collapse mb-4">
+            <thead><tr className="border-b font-bold"><td className="p-2">Rota</td><td className="p-2">Descrição</td></tr></thead>
+            <tbody>
+              <tr className="border-b"><td className="p-2 font-mono">/admin</td><td className="p-2">Kanban de pedidos</td></tr>
+              <tr className="border-b"><td className="p-2 font-mono">/admin/approvals</td><td className="p-2">Aprovação de cadastros</td></tr>
+              <tr className="border-b"><td className="p-2 font-mono">/admin/customers</td><td className="p-2">Gestão de clientes</td></tr>
+              <tr className="border-b"><td className="p-2 font-mono">/admin/orders/:id</td><td className="p-2">Detalhe do pedido (admin)</td></tr>
+              <tr className="border-b"><td className="p-2 font-mono">/admin/orders/:id/quality</td><td className="p-2">Checklist de qualidade</td></tr>
+              <tr className="border-b"><td className="p-2 font-mono">/admin/price-table</td><td className="p-2">Tabela de preços</td></tr>
+              <tr className="border-b"><td className="p-2 font-mono">/admin/demand-forecast</td><td className="p-2">Previsão de demanda</td></tr>
+              <tr className="border-b"><td className="p-2 font-mono">/admin/route-planner</td><td className="p-2">Planejador de rotas</td></tr>
+              <tr className="border-b"><td className="p-2 font-mono">/admin/monthly-reports</td><td className="p-2">Relatórios mensais</td></tr>
+              <tr className="border-b"><td className="p-2 font-mono">/admin/productivity</td><td className="p-2">Produtividade operacional</td></tr>
+              <tr className="border-b"><td className="p-2 font-mono">/admin/loyalty</td><td className="p-2">Gestão de fidelidade</td></tr>
+              <tr className="border-b"><td className="p-2 font-mono">/admin/gamification</td><td className="p-2">Gestão de gamificação</td></tr>
+              <tr className="border-b"><td className="p-2 font-mono">/admin/training</td><td className="p-2">Gestão de treinamentos</td></tr>
+              <tr className="border-b"><td className="p-2 font-mono">/admin/analytics-sync</td><td className="p-2">Monitoramento de sincronização</td></tr>
+              <tr className="border-b"><td className="p-2 font-mono">/executive/dashboard</td><td className="p-2">Dashboard executivo</td></tr>
+              <tr className="border-b"><td className="p-2 font-mono">/governance/users</td><td className="p-2">Governança de usuários</td></tr>
+              <tr className="border-b"><td className="p-2 font-mono">/governance/permissions</td><td className="p-2">Overrides de permissão</td></tr>
+              <tr className="border-b"><td className="p-2 font-mono">/governance/math</td><td className="p-2">Parâmetros matemáticos</td></tr>
+              <tr className="border-b"><td className="p-2 font-mono">/governance/audit</td><td className="p-2">Log de auditoria</td></tr>
+              <tr className="border-b"><td className="p-2 font-mono">/settings</td><td className="p-2">Configurações do sistema</td></tr>
+              <tr className="border-b"><td className="p-2 font-mono">/docs</td><td className="p-2">Esta documentação</td></tr>
+            </tbody>
+          </table>
         </Section>
 
         {/* Footer */}
