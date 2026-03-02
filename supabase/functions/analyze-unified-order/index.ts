@@ -127,7 +127,7 @@ serve(async (req) => {
       }
     }
 
-    const systemPrompt = `Você é um assistente de pedidos para uma empresa de ferramentas industriais (serras, discos, lâminas, brocas, fresas, lixas, etc.). 
+    const systemPrompt = `Você é um assistente de pedidos para uma empresa que vende produtos industriais (serras, discos, lâminas, brocas, fresas, lixas, thinner, tintas, colas, abrasivos, EPIs, e QUALQUER outro produto do catálogo) e também presta serviços de afiação.
 O vendedor pode pedir PRODUTOS (Oben ou Colacor) e/ou SERVIÇOS DE AFIAÇÃO.
 
 Sua tarefa: analisar o pedido (texto ou imagem) e identificar:
@@ -146,23 +146,30 @@ ${servicosLista || "Nenhum serviço disponível"}
 ${historicoCompras}
 
 REGRAS:
-1. Para PRODUTOS: identifique pelo nome, código ou descrição. Use a quantidade mencionada ou 1.
+1. Para PRODUTOS: identifique pelo nome, código ou descrição parcial. Use a quantidade mencionada ou 1.
 2. Para AFIAÇÃO: identifique a ferramenta cadastrada e o serviço compatível.
-3. Priorize correspondências exatas de nome/código. Seja flexível com sinônimos.
+3. Priorize correspondências exatas de nome/código. Seja MUITO flexível com sinônimos, abreviações, erros de grafia (ex: "thiner" = "thinner", "disco 7" = "disco de corte 7 polegadas").
 4. Se o vendedor mencionar "afiar", "afiação", "serrar", "lâmina lascada" etc, trate como serviço.
 5. Se mencionar "comprar", "preciso de", "X unidades de", trate como produto.
 6. Extraia observações como danos, urgência, etc.
-7. Se estiver analisando uma IMAGEM: identifique os produtos/ferramentas visíveis e sugira os itens correspondentes do catálogo.
+7. Se estiver analisando uma IMAGEM: 
+   - Pode ser uma FOTO de produto/ferramenta real OU uma foto de um PAPEL/NOTA/LISTA escrita à mão
+   - Se a imagem contém TEXTO ESCRITO (em papel, quadro, bilhete, nota), LEIA O TEXTO e use-o como se fosse um pedido digitado
+   - NÃO rejeite a imagem só porque não mostra uma ferramenta física. Texto escrito em papel é válido!
+   - Identifique os itens mencionados no texto da imagem e busque no catálogo
 
-REGRAS DE SUGESTÃO (MUITO IMPORTANTE):
+REGRAS DE SUGESTÃO (MUITO IMPORTANTE - SEMPRE RETORNE SUGESTÕES):
 8. Se NÃO encontrar correspondência exata no catálogo para algo mencionado ou visível na imagem, NÃO descarte. Em vez disso:
-   a. Sugira os produtos MAIS SIMILARES do catálogo (por nome, categoria, ou uso semelhante)
+   a. Sugira os produtos MAIS SIMILARES do catálogo (por nome parcial, categoria, ou uso semelhante)
    b. Use o histórico de compras do cliente para sugerir produtos que ele costuma comprar e que possam ser relevantes
    c. Se identificar uma ferramenta na imagem mas ela não está cadastrada, sugira o serviço de afiação mais provável
-9. Sempre preencha o campo "suggestions" com itens sugeridos quando:
+   d. Quando o produto mencionado não existe no catálogo (ex: "Thiner 4403"), procure por produtos similares (ex: qualquer thinner/solvente do catálogo)
+9. SEMPRE preencha o campo "suggestions" com pelo menos 1-3 itens quando:
    - Não há correspondência exata
    - O cliente pode precisar de itens complementares baseados no histórico
    - A imagem mostra algo que se aproxima de um produto mas sem certeza total
+   - O texto menciona um produto que não existe exatamente no catálogo (sugira os mais próximos)
+10. Para sugestões que NÃO têm product_id exato do catálogo, use product_id="" e preencha a descrição e o motivo
 
 Responda SEMPRE usando a função identify_order_items.`;
 
@@ -298,11 +305,17 @@ Responda SEMPRE usando a função identify_order_items.`;
     const validToolIds = new Set(tools.map((t: any) => t.id));
     const validServices = (result.services || []).filter((s: any) => validToolIds.has(s.userToolId));
 
-    // Validate suggestions - keep product suggestions with valid IDs, keep all service suggestions
+    // Validate suggestions - keep those with valid IDs OR text-only suggestions
     const validSuggestions = (result.suggestions || []).filter((s: any) => {
-      if (s.type === 'product') return s.product_id && validProductIds.has(s.product_id);
-      if (s.type === 'service') return s.userToolId && validToolIds.has(s.userToolId);
-      return false;
+      if (s.type === 'product') {
+        if (s.product_id && s.product_id !== '') return validProductIds.has(s.product_id);
+        return true; // Allow text-only suggestions (no exact match)
+      }
+      if (s.type === 'service') {
+        if (s.userToolId) return validToolIds.has(s.userToolId);
+        return true;
+      }
+      return true;
     });
 
     return new Response(JSON.stringify({
