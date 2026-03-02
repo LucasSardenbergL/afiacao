@@ -52,14 +52,14 @@ Deno.serve(async (req) => {
     const productCosts = await fetchAllPaginated(supabase, 'product_costs', 'product_id, cost_final, family_category');
     console.log(`[algorithm-a-audit] Found ${productCosts.length} product costs`);
 
-    // Get order items for each client (last 90 days) - paginated
-    const ninetyDaysAgo = new Date();
-    ninetyDaysAgo.setDate(ninetyDaysAgo.getDate() - 90);
+    // Get order items for each client (last 365 days) - paginated
+    const periodStartDate = new Date();
+    periodStartDate.setDate(periodStartDate.getDate() - 365);
 
     const recentOrders = await fetchAllPaginated(supabase, 'order_items',
       'customer_user_id, product_id, quantity, unit_price, discount',
-      (q: any) => q.gte('created_at', ninetyDaysAgo.toISOString()));
-    console.log(`[algorithm-a-audit] Found ${recentOrders.length} recent order items`);
+      (q: any) => q.gte('created_at', periodStartDate.toISOString()));
+    console.log(`[algorithm-a-audit] Found ${recentOrders.length} order items (365d)`);
 
     // Get best prices per product (paginated)
     const allSalesPrices = await fetchAllPaginated(supabase, 'sales_price_history',
@@ -89,7 +89,7 @@ Deno.serve(async (req) => {
     });
 
     const now = new Date();
-    const periodStart = ninetyDaysAgo.toISOString().split('T')[0];
+    const periodStart = periodStartDate.toISOString().split('T')[0];
     const periodEnd = now.toISOString().split('T')[0];
 
     const auditRecords: any[] = [];
