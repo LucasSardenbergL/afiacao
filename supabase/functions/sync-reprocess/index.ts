@@ -313,7 +313,7 @@ async function reprocessProducts(
         if (prod.inativo === "S") continue;
         if (prod.tipo && prod.tipo.toUpperCase() === "K") continue;
         const familia = (prod.descricao_familia || '').toLowerCase().trim();
-        if (EXCLUDED_FAMILIES.some(ex => familia.includes(ex))) continue;
+        if (EXCLUDED_FAMILIES.some(ex => familia.includes(ex)) || familia.startsWith('jumbo')) continue;
 
         const newHash = hashObject({
           codigo: prod.codigo,

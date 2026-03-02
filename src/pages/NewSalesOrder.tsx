@@ -178,6 +178,7 @@ const NewSalesOrder = () => {
         .not('familia', 'ilike', '%uso e consumo%')
         .not('familia', 'ilike', '%matérias primas para conversão de cintas%')
         .not('familia', 'ilike', '%jumbos de lixa para discos%')
+        .not('familia', 'ilike', 'jumbo%')
         .not('familia', 'ilike', '%material para tingimix%')
         .order('descricao');
 
@@ -199,6 +200,7 @@ const NewSalesOrder = () => {
             .not('familia', 'ilike', '%uso e consumo%')
             .not('familia', 'ilike', '%matérias primas para conversão de cintas%')
             .not('familia', 'ilike', '%jumbos de lixa para discos%')
+            .not('familia', 'ilike', 'jumbo%')
             .not('familia', 'ilike', '%material para tingimix%')
             .order('descricao');
           setProducts((refreshed || []) as Product[]);
@@ -225,6 +227,7 @@ const NewSalesOrder = () => {
         .not('familia', 'ilike', '%uso e consumo%')
         .not('familia', 'ilike', '%matérias primas para conversão de cintas%')
         .not('familia', 'ilike', '%jumbos de lixa para discos%')
+        .not('familia', 'ilike', 'jumbo%')
         .not('familia', 'ilike', '%material para tingimix%')
         .gt('estoque', 0)
         .order('descricao');

@@ -87,7 +87,7 @@ async function syncProducts(supabase: ReturnType<typeof createClient>, startPage
         // Excluir produtos do tipo Kit (apenas Simples)
         if (prod.tipo && prod.tipo.toUpperCase() === "K") return false;
         const familia = (prod.descricao_familia || '').toLowerCase().trim();
-        if (EXCLUDED_FAMILIES.some(ex => familia.includes(ex))) return false;
+        if (EXCLUDED_FAMILIES.some(ex => familia.includes(ex)) || familia.startsWith('jumbo')) return false;
         return true;
       })
       .map((prod: any) => ({
