@@ -122,6 +122,29 @@ export const useCrossSellEngine = () => {
       const conversionMap = new Map<string, any>();
       (conversionData || []).forEach((c: any) => conversionMap.set(c.category_id, c));
 
+      // 4b. Load association rules for personalized recommendations
+      const { data: assocRules } = await supabase
+        .from('farmer_association_rules')
+        .select('antecedent_product_ids, consequent_product_ids, confidence, lift, support')
+        .gte('confidence', 0.05)
+        .gte('lift', 1.0) as any;
+
+      // Build map: antecedent product -> consequent products with scores
+      const assocMap = new Map<string, { productId: string; confidence: number; lift: number; support: number }[]>();
+      for (const rule of (assocRules || [])) {
+        for (const ant of (rule.antecedent_product_ids || [])) {
+          if (!assocMap.has(ant)) assocMap.set(ant, []);
+          for (const cons of (rule.consequent_product_ids || [])) {
+            assocMap.get(ant)!.push({
+              productId: cons,
+              confidence: Number(rule.confidence),
+              lift: Number(rule.lift),
+              support: Number(rule.support),
+            });
+          }
+        }
+      }
+
       // 5. Load customer profiles for active clients only
       // Split into batches of 100 to avoid URL limits
       const allProfiles: any[] = [];
@@ -195,7 +218,20 @@ export const useCrossSellEngine = () => {
         const crossSellRecs: Recommendation[] = [];
         const upSellRecs: Recommendation[] = [];
 
-        // ─── CROSS-SELL: Products not purchased but popular in cluster ───
+        // ─── CROSS-SELL: Products not purchased, personalized by association rules ───
+        // Build association boost map for this customer's purchased products
+        const assocBoostMap = new Map<string, number>(); // productId -> max association score
+        for (const purchasedId of purchasedIds) {
+          const rules = assocMap.get(purchasedId);
+          if (!rules) continue;
+          for (const rule of rules) {
+            if (purchasedIds.has(rule.productId)) continue; // already bought
+            const assocScore = rule.confidence * Math.min(rule.lift, 5) / 5; // normalize lift
+            const current = assocBoostMap.get(rule.productId) || 0;
+            assocBoostMap.set(rule.productId, Math.max(current, assocScore));
+          }
+        }
+
         for (const product of productList) {
           if (purchasedIds.has(product.id)) continue;
 
@@ -207,14 +243,20 @@ export const useCrossSellEngine = () => {
           // Cluster adherence: how many similar customers bought this
           const buyerCount = allProductPurchases.get(product.id) || 0;
           const clusterAdherence = clamp(buyerCount / totalCustomers, 0, 1);
-          if (clusterAdherence < 0.05) continue; // Less than 5% bought = not relevant
+
+          // Association boost: personalized score based on what THIS customer bought
+          const assocBoost = assocBoostMap.get(product.id) || 0;
+
+          // Skip if neither popular in cluster nor associated with customer's basket
+          if (clusterAdherence < 0.03 && assocBoost === 0) continue;
 
           // Historical conversion rate for this product
           const conv = conversionMap.get(product.id);
           const historicalRate = conv ? Number(conv.conversion_rate) : 0.15; // default 15%
 
-          // P_ij = HistoricalRate × (HealthScore/100) × Engagement × ClusterAdherence
-          const pij = historicalRate * (healthScore / 100) * engagementFactor * clusterAdherence;
+          // P_ij = HistoricalRate × (HealthScore/100) × Engagement × (ClusterAdherence + AssocBoost)
+          const relevance = clamp(clusterAdherence * 0.4 + assocBoost * 0.6, 0.01, 1.0);
+          const pij = historicalRate * (healthScore / 100) * engagementFactor * relevance;
 
           // M_ij = Margin × EstimatedClusterVolume
           const clusterVolume = Math.max(1, Math.round(buyerCount / totalCustomers * 12)); // monthly estimate
