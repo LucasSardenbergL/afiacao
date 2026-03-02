@@ -14,6 +14,7 @@ import { AddToolDialog } from '@/components/AddToolDialog';
 import { PhotoUpload } from '@/components/PhotoUpload';
 import { VoiceServiceInput, IdentifiedItem } from '@/components/VoiceServiceInput';
 import { ToolImageIdentifier } from '@/components/ToolImageIdentifier';
+import { UnifiedAIAssistant, AIOrderResult } from '@/components/UnifiedAIAssistant';
 import { supabase } from '@/integrations/supabase/client';
 import { useAuth } from '@/contexts/AuthContext';
 import { useToast } from '@/hooks/use-toast';
@@ -719,6 +720,48 @@ const UnifiedOrder = () => {
     }
   };
 
+  // ─── Unified AI handler ───
+  const handleUnifiedAIResult = useCallback((result: AIOrderResult) => {
+    const newCartItems: CartItem[] = [];
+
+    // Add products
+    const allProducts = [...obenProducts, ...colacorProducts];
+    for (const aiProd of result.products) {
+      const product = allProducts.find(p => p.id === aiProd.product_id);
+      if (!product) continue;
+      const existing = cart.find((c): c is ProductCartItem => c.type === 'product' && c.product.id === product.id);
+      if (existing) {
+        setCart(prev => prev.map(c =>
+          c.type === 'product' && (c as ProductCartItem).product.id === product.id
+            ? { ...c, quantity: c.quantity + aiProd.quantity } as ProductCartItem
+            : c
+        ));
+      } else {
+        const account = (product.account || aiProd.account || 'oben') as ProductAccount;
+        newCartItems.push({
+          type: 'product', product: product as Product,
+          quantity: aiProd.quantity, unit_price: getProductPrice(product as Product), account,
+        });
+      }
+    }
+
+    // Add services
+    for (const aiSvc of result.services) {
+      const tool = userTools.find(t => t.id === aiSvc.userToolId);
+      if (!tool) continue;
+      if (cart.some(c => c.type === 'service' && (c as ServiceCartItem).userTool.id === tool.id)) continue;
+      const servico = servicos.find(s => s.omie_codigo_servico === aiSvc.omie_codigo_servico) || null;
+      newCartItems.push({
+        type: 'service', userTool: tool, servico, quantity: aiSvc.quantity,
+        notes: aiSvc.notes, photos: [],
+      });
+    }
+
+    if (newCartItems.length > 0) {
+      setCart(prev => [...prev, ...newCartItems]);
+    }
+  }, [obenProducts, colacorProducts, userTools, servicos, cart, getProductPrice]);
+
   // ─── Generic Cart ───
   const updateQuantity = (index: number, delta: number) => {
     setCart(cart.map((c, i) => {
@@ -1219,6 +1262,16 @@ const UnifiedOrder = () => {
               )}
             </CardContent>
           </Card>
+
+          {/* Unified AI Assistant */}
+          {selectedCustomer && (
+            <UnifiedAIAssistant
+              products={[...obenProducts, ...colacorProducts] as any}
+              userTools={userTools}
+              onItemsIdentified={handleUnifiedAIResult}
+              isLoading={submitting}
+            />
+          )}
 
           {/* 2. Tabbed catalog: Oben / Colacor / Afiação */}
           {selectedCustomer && (
