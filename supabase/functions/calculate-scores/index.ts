@@ -42,12 +42,27 @@ Deno.serve(async (req) => {
       goal_proximity: (config['ps_weight_goal_proximity'] ?? 15) / 100,
     };
 
-    // Get all client scores
-    let { data: clients, error: cErr } = await supabase
-      .from('farmer_client_scores')
-      .select('*');
-
-    if (cErr) throw cErr;
+    // Get all client scores with pagination
+    let clients: any[] = [];
+    {
+      let pg = 0;
+      const sz = 1000;
+      let more = true;
+      while (more) {
+        const { data: batch, error: bErr } = await supabase
+          .from('farmer_client_scores')
+          .select('*')
+          .range(pg * sz, (pg + 1) * sz - 1);
+        if (bErr) throw bErr;
+        if (!batch || batch.length === 0) { more = false; }
+        else {
+          clients.push(...batch);
+          if (batch.length < sz) more = false;
+          pg++;
+        }
+      }
+    }
+    const cErr = null;
 
     // === AUTO-SEED: If no client scores exist, populate from omie_clientes ===
     if (!clients || clients.length === 0) {
@@ -196,13 +211,26 @@ Deno.serve(async (req) => {
 
       console.log(`[calculate-scores] Seeded ${seeded} client scores`);
 
-      // Re-fetch the newly seeded clients
-      const { data: refreshed, error: rErr } = await supabase
-        .from('farmer_client_scores')
-        .select('*');
-      
-      if (rErr) throw rErr;
-      clients = refreshed;
+      // Re-fetch the newly seeded clients with pagination
+      clients = [];
+      {
+        let pg2 = 0;
+        const sz2 = 1000;
+        let more2 = true;
+        while (more2) {
+          const { data: batch2, error: rErr2 } = await supabase
+            .from('farmer_client_scores')
+            .select('*')
+            .range(pg2 * sz2, (pg2 + 1) * sz2 - 1);
+          if (rErr2) throw rErr2;
+          if (!batch2 || batch2.length === 0) { more2 = false; }
+          else {
+            clients.push(...batch2);
+            if (batch2.length < sz2) more2 = false;
+            pg2++;
+          }
+        }
+      }
 
       if (!clients || clients.length === 0) {
         return new Response(JSON.stringify({ 
@@ -322,30 +350,22 @@ Deno.serve(async (req) => {
       });
     }
 
-    // Batch update scores
-    for (const upd of updates) {
-      await supabase
+    // Batch update scores using upsert (much faster than individual updates)
+    console.log(`[calculate-scores] Updating ${updates.length} client scores in batches...`);
+    for (let i = 0; i < updates.length; i += 200) {
+      const batch = updates.slice(i, i + 200);
+      const { error: uErr } = await supabase
         .from('farmer_client_scores')
-        .update({
-          health_score: upd.health_score,
-          health_class: upd.health_class,
-          churn_risk: upd.churn_risk,
-          priority_score: upd.priority_score,
-          rf_score: upd.rf_score,
-          m_score: upd.m_score,
-          g_score: upd.g_score,
-          calculated_at: upd.calculated_at,
-          updated_at: upd.updated_at,
-        })
-        .eq('id', upd.id);
+        .upsert(batch, { onConflict: 'id' });
+      if (uErr) console.error(`[calculate-scores] Batch update error at ${i}:`, uErr.message);
     }
 
-    // Insert history in batches of 100
-    for (let i = 0; i < healthHistoryRecords.length; i += 100) {
-      await supabase.from('health_score_history').insert(healthHistoryRecords.slice(i, i + 100));
+    // Insert history in batches of 500
+    for (let i = 0; i < healthHistoryRecords.length; i += 500) {
+      await supabase.from('health_score_history').insert(healthHistoryRecords.slice(i, i + 500));
     }
-    for (let i = 0; i < priorityLogRecords.length; i += 100) {
-      await supabase.from('priority_score_log').insert(priorityLogRecords.slice(i, i + 100));
+    for (let i = 0; i < priorityLogRecords.length; i += 500) {
+      await supabase.from('priority_score_log').insert(priorityLogRecords.slice(i, i + 500));
     }
 
     return new Response(JSON.stringify({
