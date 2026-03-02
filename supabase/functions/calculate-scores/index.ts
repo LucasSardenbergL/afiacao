@@ -96,8 +96,14 @@ Deno.serve(async (req) => {
       }
 
       // Get sales data per customer if available
-      const { data: salesAgg } = await supabase.rpc('get_customer_sales_summary') 
-        .catch(() => ({ data: null }));
+      let salesAgg: any[] | null = null;
+      try {
+        const { data } = await supabase.rpc('get_customer_sales_summary');
+        salesAgg = data;
+      } catch (_e) {
+        // RPC may not exist yet, skip
+        salesAgg = null;
+      }
 
       const salesMap = new Map<string, any>();
       if (salesAgg && Array.isArray(salesAgg)) {
