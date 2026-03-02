@@ -1263,14 +1263,20 @@ const UnifiedOrder = () => {
             </CardContent>
           </Card>
 
-          {/* Unified AI Assistant */}
+          {/* Unified AI Assistant + Tool Image Identifier */}
           {selectedCustomer && (
-            <UnifiedAIAssistant
-              products={[...obenProducts, ...colacorProducts] as any}
-              userTools={userTools}
-              onItemsIdentified={handleUnifiedAIResult}
-              isLoading={submitting}
-            />
+            <div className="space-y-3">
+              <UnifiedAIAssistant
+                products={[...obenProducts, ...colacorProducts] as any}
+                userTools={userTools}
+                onItemsIdentified={handleUnifiedAIResult}
+                isLoading={submitting}
+              />
+              <ToolImageIdentifier
+                categories={toolCategories}
+                onCategoryIdentified={handleImageCategoryIdentified}
+              />
+            </div>
           )}
 
           {/* 2. Tabbed catalog: Oben / Colacor / Afiação */}
@@ -1360,18 +1366,12 @@ const UnifiedOrder = () => {
                       </div>
                     ) : (
                       <div className="space-y-4">
-                        {/* Voice & Image assistants */}
-                        <div className="space-y-3">
-                          <VoiceServiceInput
-                            userTools={userTools}
-                            onItemsIdentified={handleVoiceItemsIdentified}
-                            isLoading={submitting}
-                          />
-                          <ToolImageIdentifier
-                            categories={toolCategories}
-                            onCategoryIdentified={handleImageCategoryIdentified}
-                          />
-                        </div>
+                        {/* Voice assistant (afiação-specific) */}
+                        <VoiceServiceInput
+                          userTools={userTools}
+                          onItemsIdentified={handleVoiceItemsIdentified}
+                          isLoading={submitting}
+                        />
 
                         {/* Service items in cart */}
                         {serviceItems.length > 0 && (
