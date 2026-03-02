@@ -83,13 +83,37 @@ export const useCrossSellEngine = () => {
       const costMap = new Map<string, number>();
       (productCosts || []).forEach((pc: any) => costMap.set(pc.product_id, Number(pc.cost_price)));
 
-      // 3. Load sales history for all customers
-      const customerIds = clientScores.map((c: any) => c.customer_user_id);
-      const { data: salesOrders } = await supabase
-        .from('sales_orders')
-        .select('customer_user_id, items, total, created_at')
-        .in('customer_user_id', customerIds)
-        .in('status', ['confirmado', 'faturado', 'entregue']) as any;
+      // 3. Load ALL sales history (avoid huge .in() URL with 3598 IDs)
+      const fetchAllSalesOrders = async () => {
+        const all: any[] = [];
+        let page = 0;
+        const sz = 1000;
+        let hasMore = true;
+        while (hasMore) {
+          const { data } = await supabase
+            .from('sales_orders')
+            .select('customer_user_id, items, total, created_at')
+            .in('status', ['confirmado', 'faturado', 'entregue'])
+            .range(page * sz, (page + 1) * sz - 1) as any;
+          if (!data || data.length === 0) hasMore = false;
+          else { all.push(...data); if (data.length < sz) hasMore = false; page++; }
+        }
+        return all;
+      };
+      const salesOrders = await fetchAllSalesOrders();
+
+      // Build set of customer IDs that have orders
+      const customerIdsWithOrders = new Set<string>();
+      (salesOrders || []).forEach((o: any) => customerIdsWithOrders.add(o.customer_user_id));
+
+      // Filter clientScores to only those with orders (avoid processing 3598 empty clients)
+      const activeClientScores = clientScores.filter((c: any) => customerIdsWithOrders.has(c.customer_user_id));
+      const customerIds = activeClientScores.map((c: any) => c.customer_user_id);
+
+      if (!customerIds.length) {
+        setRecommendations([]);
+        return;
+      }
 
       // 4. Load category conversion rates (learning data)
       const { data: conversionData } = await supabase
@@ -98,13 +122,19 @@ export const useCrossSellEngine = () => {
       const conversionMap = new Map<string, any>();
       (conversionData || []).forEach((c: any) => conversionMap.set(c.category_id, c));
 
-      // 5. Load customer profiles
-      const { data: profiles } = await supabase
-        .from('profiles')
-        .select('user_id, name, customer_type, cnae')
-        .in('user_id', customerIds);
+      // 5. Load customer profiles for active clients only
+      // Split into batches of 100 to avoid URL limits
+      const allProfiles: any[] = [];
+      for (let i = 0; i < customerIds.length; i += 100) {
+        const batch = customerIds.slice(i, i + 100);
+        const { data: batchProfiles } = await supabase
+          .from('profiles')
+          .select('user_id, name, customer_type, cnae')
+          .in('user_id', batch);
+        if (batchProfiles) allProfiles.push(...batchProfiles);
+      }
       const profileMap = new Map<string, any>();
-      (profiles || []).forEach((p: any) => profileMap.set(p.user_id, p));
+      allProfiles.forEach((p: any) => profileMap.set(p.user_id, p));
 
       // 6. Build per-customer purchase history
       const customerProducts = new Map<string, Map<string, { qty: number; price: number; cost: number }>>();
@@ -136,12 +166,12 @@ export const useCrossSellEngine = () => {
       // 7. Calculate recommendations per client
       const allRecs: CustomerRecommendations[] = [];
 
-      for (const score of clientScores) {
+      for (const score of activeClientScores) {
         const cid = score.customer_user_id;
         const profile = profileMap.get(cid);
         if (!profile) continue;
 
-        const healthScore = Number(score.health_score || 0);
+        const healthScore = Math.max(Number(score.health_score || 0), 10); // min 10 to avoid zero
         const customerPurchased = customerProducts.get(cid) || new Map();
         const purchasedIds = new Set(customerPurchased.keys());
 
