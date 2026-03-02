@@ -4,6 +4,7 @@ import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { cn } from '@/lib/utils';
 import { useToast } from '@/hooks/use-toast';
+import { supabase } from '@/integrations/supabase/client';
 
 export interface AIProduct {
   product_id: string;
@@ -141,9 +142,12 @@ export function UnifiedAIAssistant({ products, userTools, onItemsIdentified, isL
       const fd = new FormData();
       fd.append('audio', blob, `recording.${ext}`);
 
+      const { data: { session } } = await supabase.auth.getSession();
+      const accessToken = session?.access_token || import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY;
+
       const res = await fetch(`${import.meta.env.VITE_SUPABASE_URL}/functions/v1/elevenlabs-transcribe`, {
         method: 'POST',
-        headers: { Authorization: `Bearer ${import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY}` },
+        headers: { Authorization: `Bearer ${accessToken}` },
         body: fd,
       });
 
@@ -198,11 +202,14 @@ export function UnifiedAIAssistant({ products, userTools, onItemsIdentified, isL
     setIdentifiedServices([]);
 
     try {
+      const { data: { session } } = await supabase.auth.getSession();
+      const accessToken = session?.access_token || import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY;
+
       const res = await fetch(`${import.meta.env.VITE_SUPABASE_URL}/functions/v1/analyze-unified-order`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
-          Authorization: `Bearer ${import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY}`,
+          Authorization: `Bearer ${accessToken}`,
         },
         body: JSON.stringify({
           text: text.trim() || undefined,
