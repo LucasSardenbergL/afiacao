@@ -408,7 +408,7 @@ async function buscarUltimaParcela(codigoCliente: number, account: Account = "ob
 async function syncPedidos(
   supabase: ReturnType<typeof createClient>,
   startPage = 1,
-  maxPages = 3,
+  maxPages = 2,
   account: Account = "oben"
 ) {
   let pagina = startPage;
@@ -418,24 +418,33 @@ async function syncPedidos(
   let pagesProcessed = 0;
   let skippedNoClient = 0;
 
-  // Pre-load omie_clientes mapping
-  const clientMap = new Map<number, string>();
+  // Pre-load document -> user_id mapping from profiles
+  const docToUserMap = new Map<string, string>(); // clean document -> user_id
   let cPage = 0;
   const pgSize = 1000;
   let hasMore = true;
   while (hasMore) {
     const { data: batch } = await supabase
-      .from('omie_clientes')
-      .select('user_id, omie_codigo_cliente')
+      .from('profiles')
+      .select('user_id, document')
+      .not('document', 'is', null)
       .range(cPage * pgSize, (cPage + 1) * pgSize - 1);
     if (!batch || batch.length === 0) { hasMore = false; }
     else {
-      for (const c of batch) clientMap.set(c.omie_codigo_cliente, c.user_id);
+      for (const p of batch) {
+        if (p.document) {
+          const cleanDoc = p.document.replace(/\D/g, '');
+          if (cleanDoc.length >= 11) docToUserMap.set(cleanDoc, p.user_id);
+        }
+      }
       if (batch.length < pgSize) hasMore = false;
       cPage++;
     }
   }
-  console.log(`[sync_pedidos][${account}] Client map: ${clientMap.size}`);
+  console.log(`[sync_pedidos][${account}] Document map: ${docToUserMap.size} profiles`);
+
+  // Cache for Omie codigo_cliente -> user_id (resolved via document)
+  const clientCache = new Map<number, string | null>();
 
   // Pre-load product mapping
   const productMap = new Map<number, string>();
@@ -466,16 +475,47 @@ async function syncPedidos(
   const systemUserId = adminProfile?.user_id;
   if (!systemUserId) throw new Error('Nenhum funcionário encontrado para created_by');
 
+  // Helper: resolve codigo_cliente -> user_id via Omie ConsultarCliente + document match
+  async function resolveClientUserId(codigoCliente: number): Promise<string | null> {
+    if (clientCache.has(codigoCliente)) return clientCache.get(codigoCliente) || null;
+
+    try {
+      const result = await callOmieVendasApi(
+        "geral/clientes/",
+        "ConsultarCliente",
+        { codigo_cliente_omie: codigoCliente },
+        account
+      ) as any;
+
+      const doc = (result.cnpj_cpf || '').replace(/\D/g, '');
+      if (doc.length >= 11) {
+        const userId = docToUserMap.get(doc) || null;
+        clientCache.set(codigoCliente, userId);
+        return userId;
+      }
+    } catch (e) {
+      console.warn(`[sync_pedidos][${account}] ConsultarCliente ${codigoCliente} falhou:`, (e as Error).message);
+    }
+    clientCache.set(codigoCliente, null);
+    return null;
+  }
+
   while (pagina <= totalPaginas && pagesProcessed < maxPages) {
     const result = await callOmieVendasApi(
       "produtos/pedido/",
       "ListarPedidos",
-      { pagina, registros_por_pagina: 50, filtrar_apenas_inclusao: "N" },
+      { pagina, registros_por_pagina: 20, filtrar_apenas_inclusao: "N" },
       account
     ) as any;
 
     totalPaginas = result.total_de_paginas || 1;
     const pedidos = result.pedido_venda_produto || [];
+
+    // Pre-resolve all unique client codes in this page batch
+    const uniqueClientCodes = [...new Set(pedidos.map((p: any) => p.cabecalho?.codigo_cliente).filter(Boolean))] as number[];
+    for (const code of uniqueClientCodes) {
+      if (!clientCache.has(code)) await resolveClientUserId(code);
+    }
 
     for (const pedido of pedidos) {
       const cab = pedido.cabecalho || {};
@@ -484,7 +524,7 @@ async function syncPedidos(
       const numeroPedido = cab.numero_pedido;
       if (!codigoCliente || !codigoPedido) continue;
 
-      const customerUserId = clientMap.get(codigoCliente);
+      const customerUserId = clientCache.get(codigoCliente) || null;
       if (!customerUserId) { skippedNoClient++; continue; }
 
       const hashPayload = `omie_${account}_${codigoPedido}`;
