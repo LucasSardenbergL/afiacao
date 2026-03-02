@@ -1263,21 +1263,15 @@ const UnifiedOrder = () => {
             </CardContent>
           </Card>
 
-          {/* Unified AI Assistant + Tool Image Identifier */}
+          {/* Unified AI Assistant (handles text, voice, and image - products + services) */}
           {selectedCustomer && (
-            <div className="space-y-3">
-              <UnifiedAIAssistant
-                products={[...obenProducts, ...colacorProducts] as any}
-                userTools={userTools}
-                onItemsIdentified={handleUnifiedAIResult}
-                customerUserId={customerUserId}
-                isLoading={submitting}
-              />
-              <ToolImageIdentifier
-                categories={toolCategories}
-                onCategoryIdentified={handleImageCategoryIdentified}
-              />
-            </div>
+            <UnifiedAIAssistant
+              products={[...obenProducts, ...colacorProducts] as any}
+              userTools={userTools}
+              onItemsIdentified={handleUnifiedAIResult}
+              customerUserId={customerUserId}
+              isLoading={submitting}
+            />
           )}
 
           {/* 2. Tabbed catalog: Oben / Colacor / Afiação */}
