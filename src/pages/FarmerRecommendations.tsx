@@ -4,8 +4,7 @@ import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
-import { RecommendationsPanel } from '@/components/RecommendationsPanel';
-import { useCrossSellEngine, type CustomerRecommendations } from '@/hooks/useCrossSellEngine';
+import { useCrossSellEngine, type CustomerRecommendations, type Recommendation } from '@/hooks/useCrossSellEngine';
 import { useAuth } from '@/contexts/AuthContext';
 import { useUserRole } from '@/hooks/useUserRole';
 import { useNavigate } from 'react-router-dom';
@@ -168,12 +167,66 @@ const FarmerRecommendations = () => {
               </div>
 
               {isExpanded && (
-                <div className="border-t bg-muted/10 p-3">
-                  <RecommendationsPanel
-                    customerId={cr.customerId}
-                    title="Motor Híbrido — Sugestões"
-                    compact
-                  />
+                <div className="border-t bg-muted/10 p-3 space-y-3">
+                  {/* Cross-sell */}
+                  {cr.crossSell.length > 0 && (
+                    <div>
+                      <p className="text-xs font-semibold flex items-center gap-1 mb-2">
+                        <ShoppingCart className="w-3.5 h-3.5 text-blue-600" /> Cross-sell ({cr.crossSell.length})
+                      </p>
+                      <div className="space-y-2">
+                        {cr.crossSell.map(rec => (
+                          <Card key={rec.productId} className="border-l-4 border-l-blue-500">
+                            <CardContent className="p-3">
+                              <div className="flex items-start justify-between gap-2">
+                                <div className="min-w-0 flex-1">
+                                  <p className="text-sm font-medium truncate">{rec.productName}</p>
+                                  <p className="text-[10px] text-muted-foreground">Prob: {rec.pij}% · Margem: {fmt(rec.mij)}</p>
+                                </div>
+                                <div className="text-right shrink-0">
+                                  <p className="text-sm font-bold text-primary">{fmt(rec.lie)}</p>
+                                  <p className="text-[10px] text-muted-foreground">EIP</p>
+                                </div>
+                              </div>
+                            </CardContent>
+                          </Card>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+
+                  {/* Up-sell */}
+                  {cr.upSell.length > 0 && (
+                    <div>
+                      <p className="text-xs font-semibold flex items-center gap-1 mb-2">
+                        <ArrowUpRight className="w-3.5 h-3.5 text-purple-600" /> Up-sell ({cr.upSell.length})
+                      </p>
+                      <div className="space-y-2">
+                        {cr.upSell.map(rec => (
+                          <Card key={rec.productId} className="border-l-4 border-l-purple-500">
+                            <CardContent className="p-3">
+                              <div className="flex items-start justify-between gap-2">
+                                <div className="min-w-0 flex-1">
+                                  <p className="text-sm font-medium truncate">{rec.productName}</p>
+                                  <p className="text-[10px] text-muted-foreground">
+                                    De: {rec.currentProductName} · Prob: {rec.pij}%
+                                  </p>
+                                </div>
+                                <div className="text-right shrink-0">
+                                  <p className="text-sm font-bold text-primary">{fmt(rec.lie)}</p>
+                                  <p className="text-[10px] text-muted-foreground">EIP</p>
+                                </div>
+                              </div>
+                            </CardContent>
+                          </Card>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+
+                  {cr.crossSell.length === 0 && cr.upSell.length === 0 && (
+                    <p className="text-sm text-muted-foreground text-center py-4">Sem recomendações detalhadas.</p>
+                  )}
                 </div>
               )}
             </Card>
