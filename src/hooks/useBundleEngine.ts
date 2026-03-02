@@ -56,8 +56,8 @@ const clamp = (v: number, lo: number, hi: number) => Math.max(lo, Math.min(hi, v
 
 // ─── Configuration ──────────────────────────────────────────────────
 const DEFAULT_CONFIG = {
-  minSupport: 0.05,
-  minLift: 1.2,
+  minSupport: 0.01,      // 1% — was 5%, too restrictive with many products
+  minLift: 1.05,         // was 1.2, lowered to capture more meaningful rules
   sequentialWindowDays: 90,
   bundleSizeMin: 2,
   bundleSizeMax: 3,
