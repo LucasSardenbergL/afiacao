@@ -5,6 +5,26 @@ const corsHeaders = {
   'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
 };
 
+async function fetchAllPaginated(supabase: any, table: string, selectCols: string, filters?: (q: any) => any) {
+  const all: any[] = [];
+  const pageSize = 1000;
+  let page = 0;
+  let hasMore = true;
+  while (hasMore) {
+    let query = supabase.from(table).select(selectCols).range(page * pageSize, (page + 1) * pageSize - 1);
+    if (filters) query = filters(query);
+    const { data, error } = await query;
+    if (error) throw error;
+    if (!data || data.length === 0) { hasMore = false; }
+    else {
+      all.push(...data);
+      if (data.length < pageSize) hasMore = false;
+      page++;
+    }
+  }
+  return all;
+}
+
 Deno.serve(async (req) => {
   if (req.method === 'OPTIONS') {
     return new Response(null, { headers: corsHeaders });
@@ -16,41 +36,40 @@ Deno.serve(async (req) => {
       Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!
     );
 
-    // Get all clients with scores
-    const { data: clients, error: clientsErr } = await supabase
-      .from('farmer_client_scores')
-      .select('customer_user_id, farmer_id, avg_monthly_spend_180d, gross_margin_pct, category_count');
+    // Get all clients with scores (paginated)
+    console.log('[algorithm-a-audit] Fetching all clients...');
+    const clients = await fetchAllPaginated(supabase, 'farmer_client_scores', 
+      'customer_user_id, farmer_id, avg_monthly_spend_180d, gross_margin_pct, category_count');
 
-    if (clientsErr) throw clientsErr;
     if (!clients || clients.length === 0) {
       return new Response(JSON.stringify({ message: 'No clients to process' }), {
         headers: { ...corsHeaders, 'Content-Type': 'application/json' },
       });
     }
+    console.log(`[algorithm-a-audit] Found ${clients.length} clients`);
 
-    // Get product costs for potential margin calculation
-    const { data: productCosts } = await supabase
-      .from('product_costs')
-      .select('product_id, cost_final, family_category');
+    // Get product costs (paginated)
+    const productCosts = await fetchAllPaginated(supabase, 'product_costs', 'product_id, cost_final, family_category');
+    console.log(`[algorithm-a-audit] Found ${productCosts.length} product costs`);
 
-    // Get order items for each client (last 90 days)
+    // Get order items for each client (last 90 days) - paginated
     const ninetyDaysAgo = new Date();
     ninetyDaysAgo.setDate(ninetyDaysAgo.getDate() - 90);
 
-    const { data: recentOrders } = await supabase
-      .from('order_items')
-      .select('customer_user_id, product_id, quantity, unit_price, discount')
-      .gte('created_at', ninetyDaysAgo.toISOString());
+    const recentOrders = await fetchAllPaginated(supabase, 'order_items',
+      'customer_user_id, product_id, quantity, unit_price, discount',
+      (q: any) => q.gte('created_at', ninetyDaysAgo.toISOString()));
+    console.log(`[algorithm-a-audit] Found ${recentOrders.length} recent order items`);
 
-    // Get best prices per product across all clients (potential margin reference)
-    const { data: allSalesPrices } = await supabase
-      .from('sales_price_history')
-      .select('product_id, unit_price')
-      .order('unit_price', { ascending: false });
+    // Get best prices per product (paginated)
+    const allSalesPrices = await fetchAllPaginated(supabase, 'sales_price_history',
+      'product_id, unit_price',
+      (q: any) => q.order('unit_price', { ascending: false }));
+    console.log(`[algorithm-a-audit] Found ${allSalesPrices.length} sales price records`);
 
     // Build best price map (highest price achieved per product = potential)
     const bestPriceMap: Record<string, number> = {};
-    allSalesPrices?.forEach(sp => {
+    allSalesPrices.forEach(sp => {
       if (!bestPriceMap[sp.product_id] || sp.unit_price > bestPriceMap[sp.product_id]) {
         bestPriceMap[sp.product_id] = Number(sp.unit_price);
       }
@@ -58,13 +77,13 @@ Deno.serve(async (req) => {
 
     // Build cost map
     const costMap: Record<string, number> = {};
-    productCosts?.forEach(pc => {
+    productCosts.forEach(pc => {
       costMap[pc.product_id] = Number(pc.cost_final || 0);
     });
 
     // Group orders by customer
     const customerOrders: Record<string, typeof recentOrders> = {};
-    recentOrders?.forEach(oi => {
+    recentOrders.forEach(oi => {
       if (!customerOrders[oi.customer_user_id]) customerOrders[oi.customer_user_id] = [];
       customerOrders[oi.customer_user_id].push(oi);
     });
@@ -105,7 +124,6 @@ Deno.serve(async (req) => {
       const marginGap = marginPotential - marginReal;
       const gapPct = marginPotential > 0 ? (marginGap / marginPotential) * 100 : 0;
 
-      // Sort top gap products
       topGapProducts.sort((a, b) => b.gap - a.gap);
 
       auditRecords.push({
@@ -121,18 +139,26 @@ Deno.serve(async (req) => {
       });
     }
 
-    // Batch insert
-    if (auditRecords.length > 0) {
+    // Batch insert in chunks of 500
+    console.log(`[algorithm-a-audit] Inserting ${auditRecords.length} audit records...`);
+    for (let i = 0; i < auditRecords.length; i += 500) {
+      const batch = auditRecords.slice(i, i + 500);
       const { error: insertErr } = await supabase
         .from('margin_audit_log')
-        .insert(auditRecords);
-
-      if (insertErr) throw insertErr;
+        .insert(batch);
+      if (insertErr) {
+        console.error(`[algorithm-a-audit] Insert error at batch ${i}:`, insertErr.message);
+        throw insertErr;
+      }
     }
+
+    console.log(`[algorithm-a-audit] Done! Processed ${auditRecords.length} clients`);
 
     return new Response(JSON.stringify({
       message: `Algorithm A processed ${auditRecords.length} clients`,
       records: auditRecords.length,
+      totalClients: clients.length,
+      clientsWithOrders: auditRecords.length,
     }), {
       headers: { ...corsHeaders, 'Content-Type': 'application/json' },
     });
