@@ -137,6 +137,32 @@ const Index = () => {
     },
   });
 
+  const syncPedidosMutation = useMutation({
+    mutationFn: async () => {
+      const results = [];
+      for (const acc of ['oben', 'colacor'] as const) {
+        let nextPage: number | null = 1;
+        while (nextPage) {
+          const { data, error } = await supabase.functions.invoke("omie-vendas-sync", {
+            body: { action: "sync_pedidos", account: acc, start_page: nextPage },
+          });
+          if (error) throw error;
+          results.push({ account: acc, ...data });
+          nextPage = data?.nextPage || null;
+        }
+      }
+      return results;
+    },
+    onSuccess: (results) => {
+      const totalOrders = results.reduce((s, r) => s + (r.totalSynced || 0), 0);
+      const totalItems = results.reduce((s, r) => s + (r.totalItems || 0), 0);
+      toast.success("Pedidos sincronizados", { description: `${totalOrders} pedidos, ${totalItems} itens importados` });
+    },
+    onError: (error) => {
+      toast.error("Erro ao sincronizar pedidos", { description: String(error) });
+    },
+  });
+
   const auditMutation = useMutation({
     mutationFn: async () => {
       const { data, error } = await supabase.functions.invoke("algorithm-a-audit", { body: {} });
@@ -477,12 +503,36 @@ const Index = () => {
                   </CardContent>
                 </Card>
 
-                {/* 2. Calculate Scores */}
+                {/* 2. Sync Pedidos */}
                 <Card>
                   <CardContent className="p-4">
                     <div className="flex items-center justify-between">
                       <div>
-                        <p className="font-semibold text-sm">2. Calcular Scores</p>
+                        <p className="font-semibold text-sm">2. Sincronizar Pedidos</p>
+                        <p className="text-xs text-muted-foreground">Importar pedidos de venda do Omie (Oben + Colacor)</p>
+                      </div>
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        disabled={syncPedidosMutation.isPending}
+                        onClick={() => syncPedidosMutation.mutate()}
+                      >
+                        {syncPedidosMutation.isPending ? (
+                          <Loader2 className="h-3 w-3 animate-spin" />
+                        ) : (
+                          <RefreshCw className="h-3 w-3" />
+                        )}
+                      </Button>
+                    </div>
+                  </CardContent>
+                </Card>
+
+                {/* 3. Calculate Scores */}
+                <Card>
+                  <CardContent className="p-4">
+                    <div className="flex items-center justify-between">
+                      <div>
+                        <p className="font-semibold text-sm">3. Calcular Scores</p>
                         <p className="text-xs text-muted-foreground">Health, Priority, Performance</p>
                       </div>
                       <Button
@@ -506,7 +556,7 @@ const Index = () => {
                   <CardContent className="p-4">
                     <div className="flex items-center justify-between">
                       <div>
-                        <p className="font-semibold text-sm">3. Auditoria de Margem</p>
+                        <p className="font-semibold text-sm">4. Auditoria de Margem</p>
                         <p className="text-xs text-muted-foreground">Margem real vs potencial</p>
                       </div>
                       <Button

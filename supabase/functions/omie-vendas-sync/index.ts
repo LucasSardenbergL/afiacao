@@ -404,18 +404,216 @@ async function buscarUltimaParcela(codigoCliente: number, account: Account = "ob
   }
 }
 
+// Sincronizar pedidos de venda do Omie para o banco local
+async function syncPedidos(
+  supabase: ReturnType<typeof createClient>,
+  startPage = 1,
+  maxPages = 3,
+  account: Account = "oben"
+) {
+  let pagina = startPage;
+  let totalPaginas = 1;
+  let totalSynced = 0;
+  let totalItems = 0;
+  let pagesProcessed = 0;
+  let skippedNoClient = 0;
+
+  // Pre-load omie_clientes mapping
+  const clientMap = new Map<number, string>();
+  let cPage = 0;
+  const pgSize = 1000;
+  let hasMore = true;
+  while (hasMore) {
+    const { data: batch } = await supabase
+      .from('omie_clientes')
+      .select('user_id, omie_codigo_cliente')
+      .range(cPage * pgSize, (cPage + 1) * pgSize - 1);
+    if (!batch || batch.length === 0) { hasMore = false; }
+    else {
+      for (const c of batch) clientMap.set(c.omie_codigo_cliente, c.user_id);
+      if (batch.length < pgSize) hasMore = false;
+      cPage++;
+    }
+  }
+  console.log(`[sync_pedidos][${account}] Client map: ${clientMap.size}`);
+
+  // Pre-load product mapping
+  const productMap = new Map<number, string>();
+  let pPage = 0;
+  hasMore = true;
+  while (hasMore) {
+    const { data: batch } = await supabase
+      .from('omie_products')
+      .select('id, omie_codigo_produto')
+      .eq('account', account)
+      .range(pPage * pgSize, (pPage + 1) * pgSize - 1);
+    if (!batch || batch.length === 0) { hasMore = false; }
+    else {
+      for (const p of batch) productMap.set(p.omie_codigo_produto, p.id);
+      if (batch.length < pgSize) hasMore = false;
+      pPage++;
+    }
+  }
+  console.log(`[sync_pedidos][${account}] Product map: ${productMap.size}`);
+
+  // System user for created_by
+  const { data: adminProfile } = await supabase
+    .from('profiles')
+    .select('user_id')
+    .eq('is_employee', true)
+    .limit(1)
+    .single();
+  const systemUserId = adminProfile?.user_id;
+  if (!systemUserId) throw new Error('Nenhum funcionário encontrado para created_by');
+
+  while (pagina <= totalPaginas && pagesProcessed < maxPages) {
+    const result = await callOmieVendasApi(
+      "produtos/pedido/",
+      "ListarPedidos",
+      { pagina, registros_por_pagina: 50, filtrar_apenas_inclusao: "N" },
+      account
+    ) as any;
+
+    totalPaginas = result.total_de_paginas || 1;
+    const pedidos = result.pedido_venda_produto || [];
+
+    for (const pedido of pedidos) {
+      const cab = pedido.cabecalho || {};
+      const codigoCliente = cab.codigo_cliente;
+      const codigoPedido = cab.codigo_pedido;
+      const numeroPedido = cab.numero_pedido;
+      if (!codigoCliente || !codigoPedido) continue;
+
+      const customerUserId = clientMap.get(codigoCliente);
+      if (!customerUserId) { skippedNoClient++; continue; }
+
+      const hashPayload = `omie_${account}_${codigoPedido}`;
+
+      // Skip if already synced
+      const { data: existing } = await supabase
+        .from('sales_orders')
+        .select('id')
+        .eq('hash_payload', hashPayload)
+        .limit(1);
+      if (existing && existing.length > 0) continue;
+
+      const detalhes = pedido.det || [];
+      const itemsJson: any[] = [];
+      let subtotal = 0;
+
+      for (const det of detalhes) {
+        const prod = det.produto || {};
+        const qty = prod.quantidade || 1;
+        const price = prod.valor_unitario || 0;
+        const desc = prod.desconto || 0;
+        subtotal += qty * price * (1 - desc / 100);
+        itemsJson.push({
+          omie_codigo_produto: prod.codigo_produto,
+          descricao: prod.descricao || '',
+          quantidade: qty,
+          valor_unitario: price,
+          desconto: desc,
+        });
+      }
+
+      let status = 'importado';
+      const etapa = cab.etapa || '';
+      if (etapa === '60' || etapa === '70') status = 'faturado';
+      else if (etapa === '50') status = 'separacao';
+      else if (etapa === '20') status = 'enviado';
+      else if (etapa === '80') status = 'cancelado';
+
+      let createdAt = new Date().toISOString();
+      if (cab.data_previsao) {
+        const parts = cab.data_previsao.split('/');
+        if (parts.length === 3) createdAt = new Date(`${parts[2]}-${parts[1]}-${parts[0]}`).toISOString();
+      }
+
+      const { data: newOrder, error: orderErr } = await supabase
+        .from('sales_orders')
+        .insert({
+          customer_user_id: customerUserId,
+          created_by: systemUserId,
+          items: itemsJson,
+          subtotal: Math.round(subtotal * 100) / 100,
+          discount: 0,
+          total: Math.round(subtotal * 100) / 100,
+          status,
+          omie_pedido_id: codigoPedido,
+          omie_numero_pedido: String(numeroPedido || codigoPedido),
+          account,
+          hash_payload: hashPayload,
+          created_at: createdAt,
+          notes: cab.observacoes_pedido || null,
+        })
+        .select('id')
+        .single();
+
+      if (orderErr) {
+        console.error(`[sync_pedidos][${account}] Erro pedido ${codigoPedido}:`, orderErr.message);
+        continue;
+      }
+      totalSynced++;
+
+      if (newOrder?.id) {
+        const orderItemRows = detalhes.map((det: any) => {
+          const prod = det.produto || {};
+          return {
+            sales_order_id: newOrder.id,
+            customer_user_id: customerUserId,
+            product_id: productMap.get(prod.codigo_produto) || null,
+            omie_codigo_produto: prod.codigo_produto || null,
+            quantity: prod.quantidade || 1,
+            unit_price: prod.valor_unitario || 0,
+            discount: prod.desconto || 0,
+            hash_payload: `${hashPayload}_${prod.codigo_produto}`,
+          };
+        }).filter((i: any) => i.omie_codigo_produto);
+
+        if (orderItemRows.length > 0) {
+          const { error: itemsErr } = await supabase.from('order_items').insert(orderItemRows);
+          if (itemsErr) console.error(`[sync_pedidos][${account}] Erro items ${codigoPedido}:`, itemsErr.message);
+          else totalItems += orderItemRows.length;
+        }
+
+        // Populate sales_price_history
+        for (const det of detalhes) {
+          const prod = det.produto || {};
+          const productId = productMap.get(prod.codigo_produto);
+          if (productId && prod.valor_unitario > 0) {
+            await supabase.from('sales_price_history').insert({
+              customer_user_id: customerUserId,
+              product_id: productId,
+              unit_price: prod.valor_unitario,
+              sales_order_id: newOrder.id,
+              created_at: createdAt,
+            });
+          }
+        }
+      }
+    }
+
+    console.log(`[sync_pedidos][${account}] Página ${pagina}/${totalPaginas} - ${pedidos.length} pedidos`);
+    pagina++;
+    pagesProcessed++;
+  }
+
+  const complete = pagina > totalPaginas;
+  return { totalSynced, totalItems, skippedNoClient, totalPaginas, lastPage: pagina - 1, nextPage: complete ? null : pagina, complete };
+}
+
 // Config por empresa para criação de pedido
 function getAccountConfig(account: Account) {
   if (account === "colacor") {
     return {
       codigo_categoria: "1.01.01",
-      codigo_conta_corrente: 394054131, // Colacor Itaú Unibanco (ag 3156, cc 52100-1)
+      codigo_conta_corrente: 394054131,
       obs_prefix: "Pedido de venda via App Colacor",
     };
   }
   return {
     codigo_categoria: "1.01.01",
-    codigo_conta_corrente: 8693825504, // Itaú Unibanco (Oben)
+    codigo_conta_corrente: 8693825504,
     obs_prefix: "Pedido de venda via App ColaCor",
   };
 }
@@ -653,6 +851,13 @@ serve(async (req) => {
         if (delError) throw delError;
 
         result = { success: true };
+        break;
+      }
+
+      case "sync_pedidos": {
+        const startPagePedidos = params.start_page || 1;
+        const syncPedidosResult = await syncPedidos(supabaseAdmin, startPagePedidos, 3, account);
+        result = { success: true, ...syncPedidosResult };
         break;
       }
 
