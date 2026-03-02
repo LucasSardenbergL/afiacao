@@ -55,8 +55,87 @@ serve(async (req) => {
 
     const servicosLista = (servicos || []).map(s => `- CódigoServiço:${s.omie_codigo_servico} | ${s.descricao}`).join("\n");
 
-    // Format products list (top 200 by relevance)
-    const prodList = (products || []).slice(0, 200);
+    // Build product list: for image-only requests, fetch ALL active products since we can't pre-filter
+    // For text requests, start with client-provided and augment with server-side search
+    let prodList: any[] = [];
+    const prodIds = new Set<string>();
+
+    if (imageBase64 && !text) {
+      // Image-only: fetch all products from DB to maximize matching
+      const { data: allProducts } = await supabase
+        .from("omie_products")
+        .select("id, codigo, descricao, account, valor_unitario, estoque")
+        .eq("ativo", true)
+        .order("descricao")
+        .limit(1000);
+      if (allProducts) {
+        prodList = allProducts;
+        for (const p of allProducts) prodIds.add(p.id);
+      }
+    } else {
+      prodList = (products || []).slice(0, 150);
+      for (const p of prodList) prodIds.add(p.id);
+    }
+
+    // Extract search terms from text input to find relevant products in DB
+    const searchText = text || "";
+    const searchTerms = searchText
+      .split(/[\s,;]+/)
+      .map((t: string) => t.trim())
+      .filter((t: string) => t.length >= 3);
+
+    // Always search DB for products matching any meaningful terms
+    if (searchTerms.length > 0) {
+      for (const term of searchTerms.slice(0, 5)) {
+        try {
+          const { data: dbProducts } = await supabase
+            .from("omie_products")
+            .select("id, codigo, descricao, account, valor_unitario, estoque")
+            .eq("ativo", true)
+            .or(`descricao.ilike.%${term}%,codigo.ilike.%${term}%`)
+            .limit(20);
+          if (dbProducts) {
+            for (const p of dbProducts) {
+              if (!prodIds.has(p.id)) {
+                prodList.push(p);
+                prodIds.add(p.id);
+              }
+            }
+          }
+        } catch (e) {
+          console.error(`Error searching products for term "${term}":`, e);
+        }
+      }
+    }
+
+    // Also do a broad search for common product categories to ensure coverage
+    const broadTerms = ["thinner", "thiner", "cola", "lixa", "disco", "serra", "broca", "fresa", "lamina"];
+    const inputLower = searchText.toLowerCase();
+    for (const bt of broadTerms) {
+      if (inputLower.includes(bt) || searchTerms.some((t: string) => t.toLowerCase().includes(bt))) {
+        try {
+          const { data: dbProducts } = await supabase
+            .from("omie_products")
+            .select("id, codigo, descricao, account, valor_unitario, estoque")
+            .eq("ativo", true)
+            .ilike("descricao", `%${bt}%`)
+            .limit(20);
+          if (dbProducts) {
+            for (const p of dbProducts) {
+              if (!prodIds.has(p.id)) {
+                prodList.push(p);
+                prodIds.add(p.id);
+              }
+            }
+          }
+        } catch (e) {
+          console.error(`Error searching broad term "${bt}":`, e);
+        }
+      }
+    }
+
+    console.log(`[analyze-unified-order] Total products in context: ${prodList.length} (searched terms: ${searchTerms.join(', ')})`);
+
     const produtosLista = prodList.map((p: any) =>
       `- ID:${p.id} | Código:${p.codigo} | ${p.descricao} | Conta:${p.account || 'oben'} | Preço:${p.valor_unitario} | Estoque:${p.estoque ?? 0}`
     ).join("\n");
@@ -157,19 +236,18 @@ REGRAS:
    - Se a imagem contém TEXTO ESCRITO (em papel, quadro, bilhete, nota), LEIA O TEXTO e use-o como se fosse um pedido digitado
    - NÃO rejeite a imagem só porque não mostra uma ferramenta física. Texto escrito em papel é válido!
    - Identifique os itens mencionados no texto da imagem e busque no catálogo
+   - EXTRAIA TODOS os códigos, números e nomes de produtos que aparecem no texto (ex: "4403", "Thiner 4403")
+   - Use esses códigos para buscar no catálogo por correspondência parcial na descrição (ex: "4403" casa com "THINNER DR.4403LT")
 
 REGRAS DE SUGESTÃO (MUITO IMPORTANTE - SEMPRE RETORNE SUGESTÕES):
-8. Se NÃO encontrar correspondência exata no catálogo para algo mencionado ou visível na imagem, NÃO descarte. Em vez disso:
-   a. Sugira os produtos MAIS SIMILARES do catálogo (por nome parcial, categoria, ou uso semelhante)
-   b. Use o histórico de compras do cliente para sugerir produtos que ele costuma comprar e que possam ser relevantes
-   c. Se identificar uma ferramenta na imagem mas ela não está cadastrada, sugira o serviço de afiação mais provável
-   d. Quando o produto mencionado não existe no catálogo (ex: "Thiner 4403"), procure por produtos similares (ex: qualquer thinner/solvente do catálogo)
-9. SEMPRE preencha o campo "suggestions" com pelo menos 1-3 itens quando:
-   - Não há correspondência exata
-   - O cliente pode precisar de itens complementares baseados no histórico
-   - A imagem mostra algo que se aproxima de um produto mas sem certeza total
-   - O texto menciona um produto que não existe exatamente no catálogo (sugira os mais próximos)
-10. Para sugestões que NÃO têm product_id exato do catálogo, use product_id="" e preencha a descrição e o motivo
+8. Se NÃO encontrar correspondência exata, sugira os produtos MAIS SIMILARES do catálogo (por nome parcial, categoria, ou uso semelhante)
+9. Use o histórico de compras para sugestões complementares
+10. Para sugestões sem product_id exato, use product_id="" e preencha descrição e motivo
+
+REGRAS DE BUSCA NO CATÁLOGO:
+11. Ao buscar um produto, procure o termo EM QUALQUER PARTE da descrição. Ex: "4403" casa com "THINNER DR.4403LT" e "THINNER DR.4403L5".
+12. Números e códigos parciais são válidos. "02 Thiner 4403" → quantidade=2, produto=Thiner 4403.
+13. Se o texto contém quantidade + nome (ex: "02 Thiner 4403"), interprete como: quantidade=2, produto=Thiner 4403.
 
 Responda SEMPRE usando a função identify_order_items.`;
 
