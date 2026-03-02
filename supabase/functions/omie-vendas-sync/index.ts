@@ -41,19 +41,29 @@ async function callOmieVendasApi(
 
   console.log(`[Omie Vendas][${account}] Chamando ${endpoint} - ${call}`);
 
-  const response = await fetch(`${OMIE_API_URL}/${endpoint}`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(body),
-  });
+  const maxRetries = 3;
+  for (let attempt = 0; attempt <= maxRetries; attempt++) {
+    const response = await fetch(`${OMIE_API_URL}/${endpoint}`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    });
 
-  const result = await response.json();
+    const result = await response.json();
 
-  if (result.faultstring) {
-    throw new Error(`Erro Omie Vendas (${account}): ${result.faultstring}`);
+    if (result.faultstring) {
+      const isRateLimit = result.faultstring.includes("Já existe uma requisição desse método");
+      if (isRateLimit && attempt < maxRetries) {
+        const delay = (attempt + 1) * 2000; // 2s, 4s, 6s
+        console.log(`[Omie Vendas][${account}] Rate limit hit, retrying in ${delay}ms (attempt ${attempt + 1}/${maxRetries})`);
+        await new Promise(r => setTimeout(r, delay));
+        continue;
+      }
+      throw new Error(`Erro Omie Vendas (${account}): ${result.faultstring}`);
+    }
+
+    return result;
   }
-
-  return result;
 }
 
 // Sincronizar todos os produtos da empresa de vendas
