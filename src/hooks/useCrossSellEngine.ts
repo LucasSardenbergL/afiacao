@@ -43,11 +43,27 @@ export const useCrossSellEngine = () => {
     setLoading(true);
 
     try {
-      // 1. Load client scores (health, categories, engagement)
-      const { data: clientScores } = await supabase
-        .from('farmer_client_scores')
-        .select('*')
-        .eq('farmer_id', user.id) as any;
+      // 1. Load client scores with pagination
+      const fetchAllScores = async (filterFarmerId?: string) => {
+        const all: any[] = [];
+        let page = 0;
+        const sz = 1000;
+        let hasMore = true;
+        while (hasMore) {
+          let q = supabase.from('farmer_client_scores').select('*').range(page * sz, (page + 1) * sz - 1);
+          if (filterFarmerId) q = q.eq('farmer_id', filterFarmerId);
+          const { data } = await q as any;
+          if (!data || data.length === 0) hasMore = false;
+          else { all.push(...data); if (data.length < sz) hasMore = false; page++; }
+        }
+        return all;
+      };
+
+      // Try farmer-specific first, fallback to all (for super_admin)
+      let clientScores = await fetchAllScores(user.id);
+      if (!clientScores.length) {
+        clientScores = await fetchAllScores();
+      }
 
       if (!clientScores?.length) {
         setRecommendations([]);
