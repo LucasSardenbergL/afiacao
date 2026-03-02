@@ -1,3 +1,4 @@
+import { lazy, Suspense } from "react";
 import { Toaster } from "@/components/ui/toaster";
 import { Toaster as Sonner } from "@/components/ui/sonner";
 import { TooltipProvider } from "@/components/ui/tooltip";
@@ -8,63 +9,74 @@ import { CompanyProvider } from "@/contexts/CompanyContext";
 import { ProtectedRoute } from "@/components/ProtectedRoute";
 import { NotificationPrompt } from "@/components/NotificationPrompt";
 import { AppShellLayout } from "@/components/AppShellLayout";
-import Index from "./pages/Index";
-import Orders from "./pages/Orders";
-import OrderDetail from "./pages/OrderDetail";
-import NewOrder from "./pages/NewOrder";
-import Profile from "./pages/Profile";
-import Addresses from "./pages/Addresses";
-import Tools from "./pages/Tools";
-import Support from "./pages/Support";
-import Auth from "./pages/Auth";
-import ResetPassword from "./pages/ResetPassword";
-import Admin from "./pages/Admin";
-import AdminCustomers from "./pages/AdminCustomers";
-import AdminOrderDetail from "./pages/AdminOrderDetail";
-import AdminDemandForecast from "./pages/AdminDemandForecast";
-import AdminRoutePlanner from "./pages/AdminRoutePlanner";
-import AdminMonthlyReports from "./pages/AdminMonthlyReports";
-import AdminProductivity from "./pages/AdminProductivity";
-import AdminLoyalty from "./pages/AdminLoyalty";
-import AdminGamification from "./pages/AdminGamification";
-import Gamification from "./pages/Gamification";
-import QualityChecklist from "./pages/QualityChecklist";
-import RecurringSchedules from "./pages/RecurringSchedules";
-import SavingsDashboard from "./pages/SavingsDashboard";
-import Loyalty from "./pages/Loyalty";
-import ToolHistory from "./pages/ToolHistory";
-import ToolPublicHistory from "./pages/ToolPublicHistory";
-import ToolReports from "./pages/ToolReports";
-import AdminTraining from "./pages/AdminTraining";
-import AdminPriceTable from "./pages/AdminPriceTable";
-import Training from "./pages/Training";
-import SalesProducts from "./pages/SalesProducts";
-import SalesOrders from "./pages/SalesOrders";
-import NewSalesOrder from "./pages/NewSalesOrder";
-import UnifiedOrder from "./pages/UnifiedOrder";
-import FarmerDashboard from "./pages/FarmerDashboard";
-import FarmerCalls from "./pages/FarmerCalls";
-import FarmerGovernance from "./pages/FarmerGovernance";
-import FarmerRecommendations from "./pages/FarmerRecommendations";
-import FarmerLOCC from "./pages/FarmerLOCC";
-import FarmerBundles from "./pages/FarmerBundles";
-import FarmerCopilot from "./pages/FarmerCopilot";
-import FarmerTacticalPlan from "./pages/FarmerTacticalPlan";
-import FarmerIPFDashboard from "./pages/FarmerIPFDashboard";
-import ExecutiveDashboard from "./pages/ExecutiveDashboard";
-import AdminApprovals from "./pages/AdminApprovals";
-import NotFound from "./pages/NotFound";
-import DesignSystem from "./pages/DesignSystem";
-import CoachingSPIN from "./pages/CoachingSPIN";
-import SettingsConfig from "./pages/SettingsConfig";
-import UXRules from "./pages/UXRules";
-import AdminAnalyticsSync from "./pages/AdminAnalyticsSync";
-import TechnicalDocs from "./pages/TechnicalDocs";
-import IntelligenceDashboard from "./pages/IntelligenceDashboard";
-import GovernanceUsers from "./pages/GovernanceUsers";
-import GovernancePermissions from "./pages/GovernancePermissions";
-import GovernanceMathParams from "./pages/GovernanceMathParams";
-import GovernanceAudit from "./pages/GovernanceAudit";
+import { Skeleton } from "@/components/ui/skeleton";
+
+// Lazy-loaded pages
+const Index = lazy(() => import("./pages/Index"));
+const Orders = lazy(() => import("./pages/Orders"));
+const OrderDetail = lazy(() => import("./pages/OrderDetail"));
+const NewOrder = lazy(() => import("./pages/NewOrder"));
+const Profile = lazy(() => import("./pages/Profile"));
+const Addresses = lazy(() => import("./pages/Addresses"));
+const Tools = lazy(() => import("./pages/Tools"));
+const Support = lazy(() => import("./pages/Support"));
+const Auth = lazy(() => import("./pages/Auth"));
+const ResetPassword = lazy(() => import("./pages/ResetPassword"));
+const Admin = lazy(() => import("./pages/Admin"));
+const AdminCustomers = lazy(() => import("./pages/AdminCustomers"));
+const AdminOrderDetail = lazy(() => import("./pages/AdminOrderDetail"));
+const AdminDemandForecast = lazy(() => import("./pages/AdminDemandForecast"));
+const AdminRoutePlanner = lazy(() => import("./pages/AdminRoutePlanner"));
+const AdminMonthlyReports = lazy(() => import("./pages/AdminMonthlyReports"));
+const AdminProductivity = lazy(() => import("./pages/AdminProductivity"));
+const AdminLoyalty = lazy(() => import("./pages/AdminLoyalty"));
+const AdminGamification = lazy(() => import("./pages/AdminGamification"));
+const Gamification = lazy(() => import("./pages/Gamification"));
+const QualityChecklist = lazy(() => import("./pages/QualityChecklist"));
+const RecurringSchedules = lazy(() => import("./pages/RecurringSchedules"));
+const SavingsDashboard = lazy(() => import("./pages/SavingsDashboard"));
+const Loyalty = lazy(() => import("./pages/Loyalty"));
+const ToolHistory = lazy(() => import("./pages/ToolHistory"));
+const ToolPublicHistory = lazy(() => import("./pages/ToolPublicHistory"));
+const ToolReports = lazy(() => import("./pages/ToolReports"));
+const AdminTraining = lazy(() => import("./pages/AdminTraining"));
+const AdminPriceTable = lazy(() => import("./pages/AdminPriceTable"));
+const Training = lazy(() => import("./pages/Training"));
+const SalesProducts = lazy(() => import("./pages/SalesProducts"));
+const SalesOrders = lazy(() => import("./pages/SalesOrders"));
+const NewSalesOrder = lazy(() => import("./pages/NewSalesOrder"));
+const UnifiedOrder = lazy(() => import("./pages/UnifiedOrder"));
+const FarmerDashboard = lazy(() => import("./pages/FarmerDashboard"));
+const FarmerCalls = lazy(() => import("./pages/FarmerCalls"));
+const FarmerGovernance = lazy(() => import("./pages/FarmerGovernance"));
+const FarmerRecommendations = lazy(() => import("./pages/FarmerRecommendations"));
+const FarmerLOCC = lazy(() => import("./pages/FarmerLOCC"));
+const FarmerBundles = lazy(() => import("./pages/FarmerBundles"));
+const FarmerCopilot = lazy(() => import("./pages/FarmerCopilot"));
+const FarmerTacticalPlan = lazy(() => import("./pages/FarmerTacticalPlan"));
+const FarmerIPFDashboard = lazy(() => import("./pages/FarmerIPFDashboard"));
+const ExecutiveDashboard = lazy(() => import("./pages/ExecutiveDashboard"));
+const AdminApprovals = lazy(() => import("./pages/AdminApprovals"));
+const NotFound = lazy(() => import("./pages/NotFound"));
+const DesignSystem = lazy(() => import("./pages/DesignSystem"));
+const CoachingSPIN = lazy(() => import("./pages/CoachingSPIN"));
+const SettingsConfig = lazy(() => import("./pages/SettingsConfig"));
+const UXRules = lazy(() => import("./pages/UXRules"));
+const AdminAnalyticsSync = lazy(() => import("./pages/AdminAnalyticsSync"));
+const TechnicalDocs = lazy(() => import("./pages/TechnicalDocs"));
+const IntelligenceDashboard = lazy(() => import("./pages/IntelligenceDashboard"));
+const GovernanceUsers = lazy(() => import("./pages/GovernanceUsers"));
+const GovernancePermissions = lazy(() => import("./pages/GovernancePermissions"));
+const GovernanceMathParams = lazy(() => import("./pages/GovernanceMathParams"));
+const GovernanceAudit = lazy(() => import("./pages/GovernanceAudit"));
+
+const PageLoader = () => (
+  <div className="flex flex-col gap-4 p-6">
+    <Skeleton className="h-8 w-48" />
+    <Skeleton className="h-64 w-full" />
+    <Skeleton className="h-32 w-full" />
+  </div>
+);
 
 const queryClient = new QueryClient();
 
@@ -76,6 +88,7 @@ const App = () => (
       <BrowserRouter>
         <AuthProvider>
           <CompanyProvider>
+          <Suspense fallback={<PageLoader />}>
           <Routes>
             {/* Public routes */}
             <Route path="/auth" element={<Auth />} />
@@ -142,6 +155,7 @@ const App = () => (
 
             <Route path="*" element={<NotFound />} />
           </Routes>
+          </Suspense>
           <NotificationPrompt />
           </CompanyProvider>
         </AuthProvider>
