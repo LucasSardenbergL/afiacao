@@ -2,7 +2,7 @@ import { createClient } from 'https://esm.sh/@supabase/supabase-js@2.49.1';
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
-  'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
+  'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type, x-supabase-client-platform, x-supabase-client-platform-version, x-supabase-client-runtime, x-supabase-client-runtime-version',
 };
 
 Deno.serve(async (req) => {
@@ -43,15 +43,169 @@ Deno.serve(async (req) => {
     };
 
     // Get all client scores
-    const { data: clients, error: cErr } = await supabase
+    let { data: clients, error: cErr } = await supabase
       .from('farmer_client_scores')
       .select('*');
 
     if (cErr) throw cErr;
+
+    // === AUTO-SEED: If no client scores exist, populate from omie_clientes ===
     if (!clients || clients.length === 0) {
-      return new Response(JSON.stringify({ message: 'No clients' }), {
-        headers: { ...corsHeaders, 'Content-Type': 'application/json' },
-      });
+      console.log('[calculate-scores] No existing client scores found. Seeding from omie_clientes...');
+
+      // Find farmer (employee) user IDs
+      const { data: employees } = await supabase
+        .from('user_roles')
+        .select('user_id')
+        .in('role', ['admin', 'employee']);
+
+      // Default farmer: first employee or admin found
+      const defaultFarmerId = employees?.[0]?.user_id || '414a9727-ad1d-4998-914e-9c6ccf26cf50';
+
+      // Get all omie clients with pagination (bypass 1000 limit)
+      const allClients: any[] = [];
+      let page = 0;
+      const pageSize = 1000;
+      let hasMore = true;
+
+      while (hasMore) {
+        const { data: batch, error: bErr } = await supabase
+          .from('omie_clientes')
+          .select('user_id, omie_codigo_vendedor')
+          .range(page * pageSize, (page + 1) * pageSize - 1);
+        
+        if (bErr) throw bErr;
+        if (!batch || batch.length === 0) {
+          hasMore = false;
+        } else {
+          allClients.push(...batch);
+          if (batch.length < pageSize) hasMore = false;
+          page++;
+        }
+      }
+
+      console.log(`[calculate-scores] Found ${allClients.length} omie clients to seed`);
+
+      if (allClients.length === 0) {
+        return new Response(JSON.stringify({ 
+          message: 'No omie clients found. Run client sync first.',
+          seeded: 0 
+        }), {
+          headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+        });
+      }
+
+      // Get sales data per customer if available
+      const { data: salesAgg } = await supabase.rpc('get_customer_sales_summary') 
+        .catch(() => ({ data: null }));
+
+      const salesMap = new Map<string, any>();
+      if (salesAgg && Array.isArray(salesAgg)) {
+        for (const s of salesAgg) {
+          salesMap.set(s.customer_user_id, s);
+        }
+      }
+
+      // Also try to get data from order_items
+      const orderDataMap = new Map<string, any>();
+      const { data: orderAgg } = await supabase
+        .from('order_items')
+        .select('customer_user_id, unit_price, quantity, created_at, product_id')
+        .limit(10000);
+
+      if (orderAgg && orderAgg.length > 0) {
+        for (const item of orderAgg) {
+          const existing = orderDataMap.get(item.customer_user_id) || {
+            total_revenue: 0,
+            item_count: 0,
+            last_purchase: null,
+            product_ids: new Set(),
+          };
+          existing.total_revenue += (item.unit_price || 0) * (item.quantity || 1);
+          existing.item_count += 1;
+          if (item.created_at && (!existing.last_purchase || item.created_at > existing.last_purchase)) {
+            existing.last_purchase = item.created_at;
+          }
+          if (item.product_id) existing.product_ids.add(item.product_id);
+          orderDataMap.set(item.customer_user_id, existing);
+        }
+      }
+
+      // Build seed records in batches
+      const seedRecords: any[] = [];
+      const now = new Date();
+
+      for (const client of allClients) {
+        const orderData = orderDataMap.get(client.user_id);
+        const daysSinceLastPurchase = orderData?.last_purchase 
+          ? Math.floor((now.getTime() - new Date(orderData.last_purchase).getTime()) / (1000 * 60 * 60 * 24))
+          : 999;
+
+        seedRecords.push({
+          customer_user_id: client.user_id,
+          farmer_id: defaultFarmerId,
+          health_score: 0,
+          health_class: 'novo',
+          churn_risk: 0,
+          priority_score: 0,
+          days_since_last_purchase: daysSinceLastPurchase,
+          avg_monthly_spend_180d: orderData ? Math.round(orderData.total_revenue / 6) : 0,
+          category_count: orderData ? orderData.product_ids.size : 0,
+          gross_margin_pct: 0,
+          avg_repurchase_interval: 0,
+          expansion_score: 0,
+          recover_score: 0,
+          revenue_potential: 0,
+          rf_score: 0,
+          m_score: 0,
+          g_score: 0,
+          s_score: 0,
+          x_score: 0,
+          eff_score: 0,
+        });
+      }
+
+      // Insert in batches of 200
+      let seeded = 0;
+      for (let i = 0; i < seedRecords.length; i += 200) {
+        const batch = seedRecords.slice(i, i + 200);
+        const { error: insertErr } = await supabase
+          .from('farmer_client_scores')
+          .upsert(batch, { onConflict: 'customer_user_id,farmer_id' })
+          .select('id');
+
+        if (insertErr) {
+          console.error(`[calculate-scores] Batch insert error at ${i}:`, insertErr.message);
+          // Try individual inserts for this batch
+          for (const record of batch) {
+            const { error: singleErr } = await supabase
+              .from('farmer_client_scores')
+              .upsert(record, { onConflict: 'customer_user_id,farmer_id' });
+            if (!singleErr) seeded++;
+          }
+        } else {
+          seeded += batch.length;
+        }
+      }
+
+      console.log(`[calculate-scores] Seeded ${seeded} client scores`);
+
+      // Re-fetch the newly seeded clients
+      const { data: refreshed, error: rErr } = await supabase
+        .from('farmer_client_scores')
+        .select('*');
+      
+      if (rErr) throw rErr;
+      clients = refreshed;
+
+      if (!clients || clients.length === 0) {
+        return new Response(JSON.stringify({ 
+          message: `Seeded ${seeded} records but failed to re-fetch`, 
+          seeded 
+        }), {
+          headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+        });
+      }
     }
 
     // Compute normalization ranges
@@ -68,28 +222,21 @@ Deno.serve(async (req) => {
 
     for (const client of clients) {
       // --- Health Score ---
-      // Recency: inverse - fewer days = better
       const recencyScore = Math.max(0, 100 - (Number(client.days_since_last_purchase || 0) / maxDaysSince) * 100);
       
-      // Frequency: inverse of repurchase interval
       const freqScore = maxInterval > 0
         ? Math.max(0, 100 - (Number(client.avg_repurchase_interval || maxInterval) / maxInterval) * 100)
         : 50;
       
-      // Margin
       const marginScore = maxMarginPct > 0
         ? Math.min(100, (Number(client.gross_margin_pct || 0) / maxMarginPct) * 100)
         : 0;
       
-      // Diversity (category count)
       const diversityScore = maxCategories > 0
         ? Math.min(100, (Number(client.category_count || 0) / maxCategories) * 100)
         : 0;
       
-      // Cross-sell adoption (x_score already 0-100)
       const crossSellScore = Number(client.x_score || 0);
-      
-      // Engagement (s_score)
       const engagementScore = Number(client.s_score || 0);
 
       const healthScore = Math.round(
@@ -101,13 +248,11 @@ Deno.serve(async (req) => {
         engagementScore * hs_w.engagement
       );
 
-      // Health class
       let healthClass = 'critico';
       if (healthScore >= 75) healthClass = 'saudavel';
       else if (healthScore >= 50) healthClass = 'estavel';
       else if (healthScore >= 25) healthClass = 'atencao';
 
-      // Churn risk (inverse of health)
       const churnRisk = Math.max(0, Math.min(100, 100 - healthScore));
 
       // --- Priority Score ---
@@ -117,14 +262,12 @@ Deno.serve(async (req) => {
       
       const churnComp = churnRisk;
       
-      // Repurchase probability: based on recency and frequency pattern
       const daysSince = Number(client.days_since_last_purchase || 0);
       const avgInterval = Number(client.avg_repurchase_interval || 30);
       const repurchaseComp = avgInterval > 0
         ? Math.max(0, Math.min(100, (1 - Math.abs(daysSince - avgInterval) / avgInterval) * 100))
         : 50;
       
-      // Goal proximity (simplified - using spend vs potential)
       const goalComp = maxSpend > 0
         ? Math.min(100, (Number(client.avg_monthly_spend_180d || 0) / maxSpend) * 100)
         : 0;
@@ -136,7 +279,6 @@ Deno.serve(async (req) => {
         goalComp * ps_w.goal_proximity
       );
 
-      // Update client score
       updates.push({
         id: client.id,
         health_score: healthScore,
@@ -150,7 +292,6 @@ Deno.serve(async (req) => {
         updated_at: new Date().toISOString(),
       });
 
-      // History records
       healthHistoryRecords.push({
         customer_user_id: client.customer_user_id,
         farmer_id: client.farmer_id,
