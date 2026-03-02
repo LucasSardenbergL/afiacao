@@ -73,7 +73,7 @@ export const useCrossSellEngine = () => {
       // 2. Load all products with costs
       const { data: products } = await supabase
         .from('omie_products')
-        .select('id, codigo, descricao, valor_unitario, metadata, ativo')
+        .select('id, codigo, descricao, valor_unitario, metadata, ativo, omie_codigo_produto')
         .eq('ativo', true) as any;
 
       const { data: productCosts } = await supabase
@@ -136,7 +136,13 @@ export const useCrossSellEngine = () => {
       const profileMap = new Map<string, any>();
       allProfiles.forEach((p: any) => profileMap.set(p.user_id, p));
 
-      // 6. Build per-customer purchase history
+      // 6. Build omie_codigo_produto -> product UUID map
+      const omieToProductId = new Map<number, string>();
+      (products || []).forEach((p: any) => {
+        if (p.omie_codigo_produto) omieToProductId.set(Number(p.omie_codigo_produto), p.id);
+      });
+
+      // 7. Build per-customer purchase history
       const customerProducts = new Map<string, Map<string, { qty: number; price: number; cost: number }>>();
       const allProductPurchases = new Map<string, number>(); // product_id -> total customers who bought
 
@@ -147,16 +153,22 @@ export const useCrossSellEngine = () => {
 
         const items = Array.isArray(order.items) ? order.items : [];
         for (const item of items) {
-          if (!item.product_id) continue;
-          const existing = cp.get(item.product_id) || { qty: 0, price: 0, cost: 0 };
-          existing.qty += Number(item.quantity || 1);
-          existing.price = Number(item.unit_price || 0);
-          existing.cost = costMap.get(item.product_id) || 0;
-          cp.set(item.product_id, existing);
+          // Resolve product_id: use direct product_id or map from omie_codigo_produto
+          let productId = item.product_id;
+          if (!productId && item.omie_codigo_produto) {
+            productId = omieToProductId.get(Number(item.omie_codigo_produto));
+          }
+          if (!productId) continue;
+
+          const existing = cp.get(productId) || { qty: 0, price: 0, cost: 0 };
+          existing.qty += Number(item.quantity || item.quantidade || 1);
+          existing.price = Number(item.unit_price || item.valor_unitario || 0);
+          existing.cost = costMap.get(productId) || 0;
+          cp.set(productId, existing);
 
           // Track which products are popular
-          if (!allProductPurchases.has(item.product_id)) allProductPurchases.set(item.product_id, 0);
-          allProductPurchases.set(item.product_id, allProductPurchases.get(item.product_id)! + 1);
+          if (!allProductPurchases.has(productId)) allProductPurchases.set(productId, 0);
+          allProductPurchases.set(productId, allProductPurchases.get(productId)! + 1);
         }
       }
 
