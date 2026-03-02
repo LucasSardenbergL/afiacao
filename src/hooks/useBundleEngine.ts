@@ -78,16 +78,32 @@ export const useBundleEngine = () => {
     setLoading(true);
 
     try {
-      // 1. Load data
+      // 1. Load data with fallback for super_admin
+      const fetchAllScores = async (filterFarmerId?: string) => {
+        const all: any[] = [];
+        let page = 0;
+        const sz = 1000;
+        let hasMore = true;
+        while (hasMore) {
+          let q = supabase.from('farmer_client_scores').select('*').range(page * sz, (page + 1) * sz - 1);
+          if (filterFarmerId) q = q.eq('farmer_id', filterFarmerId);
+          const { data } = await q as any;
+          if (!data || data.length === 0) hasMore = false;
+          else { all.push(...data); if (data.length < sz) hasMore = false; page++; }
+        }
+        return all;
+      };
+
+      let clientScores = await fetchAllScores(user.id);
+      if (!clientScores.length) clientScores = await fetchAllScores();
+
       const [
-        { data: clientScores },
         { data: products },
         { data: productCosts },
         { data: profiles },
         { data: conversionData },
       ] = await Promise.all([
-        supabase.from('farmer_client_scores').select('*').eq('farmer_id', user.id) as any,
-        supabase.from('omie_products').select('id, codigo, descricao, valor_unitario, metadata, ativo').eq('ativo', true) as any,
+        supabase.from('omie_products').select('id, codigo, descricao, valor_unitario, metadata, ativo, omie_codigo_produto').eq('ativo', true) as any,
         supabase.from('product_costs').select('product_id, cost_price') as any,
         supabase.from('profiles').select('user_id, name, customer_type, cnae') as any,
         supabase.from('farmer_category_conversion').select('*') as any,
@@ -95,18 +111,34 @@ export const useBundleEngine = () => {
 
       if (!clientScores?.length) { setCustomerBundles([]); return; }
 
-      const customerIds = clientScores.map((c: any) => c.customer_user_id);
-      const { data: salesOrders } = await supabase
-        .from('sales_orders')
-        .select('customer_user_id, items, total, created_at')
-        .in('customer_user_id', customerIds)
-        .in('status', ['confirmado', 'faturado', 'entregue']) as any;
+      // Load ALL sales orders (avoid huge .in() URL)
+      const fetchAllSalesOrders = async () => {
+        const all: any[] = [];
+        let page = 0;
+        const sz = 1000;
+        let hasMore = true;
+        while (hasMore) {
+          const { data } = await supabase
+            .from('sales_orders')
+            .select('customer_user_id, items, total, created_at')
+            .in('status', ['confirmado', 'faturado', 'entregue'])
+            .range(page * sz, (page + 1) * sz - 1) as any;
+          if (!data || data.length === 0) hasMore = false;
+          else { all.push(...data); if (data.length < sz) hasMore = false; page++; }
+        }
+        return all;
+      };
+      const salesOrders = await fetchAllSalesOrders();
 
       // Build maps
       const costMap = new Map<string, number>();
       (productCosts || []).forEach((pc: any) => costMap.set(pc.product_id, Number(pc.cost_price)));
       const productMap = new Map<string, any>();
       (products || []).forEach((p: any) => productMap.set(p.id, p));
+      const omieToProductId = new Map<number, string>();
+      (products || []).forEach((p: any) => {
+        if (p.omie_codigo_produto) omieToProductId.set(Number(p.omie_codigo_produto), p.id);
+      });
       const profileMap = new Map<string, any>();
       (profiles || []).forEach((p: any) => profileMap.set(p.user_id, p));
       const conversionMap = new Map<string, any>();
@@ -119,7 +151,11 @@ export const useBundleEngine = () => {
 
       for (const order of (salesOrders || [])) {
         const items = Array.isArray(order.items) ? order.items : [];
-        const productIds = items.filter((i: any) => i.product_id).map((i: any) => i.product_id);
+        const productIds = items.map((i: any) => {
+          if (i.product_id) return i.product_id;
+          if (i.omie_codigo_produto) return omieToProductId.get(Number(i.omie_codigo_produto));
+          return null;
+        }).filter(Boolean) as string[];
         if (productIds.length > 0) {
           baskets.push(productIds);
           if (!customerBaskets.has(order.customer_user_id)) customerBaskets.set(order.customer_user_id, new Set());
@@ -264,7 +300,7 @@ export const useBundleEngine = () => {
         const profile = profileMap.get(cid);
         if (!profile) continue;
 
-        const healthScore = Number(score.health_score || 0);
+        const healthScore = Math.max(Number(score.health_score || 0), 10);
         const purchased = customerBaskets.get(cid) || new Set();
 
         // Engagement factor
