@@ -1270,6 +1270,7 @@ const UnifiedOrder = () => {
                 products={[...obenProducts, ...colacorProducts] as any}
                 userTools={userTools}
                 onItemsIdentified={handleUnifiedAIResult}
+                customerUserId={customerUserId}
                 isLoading={submitting}
               />
               <ToolImageIdentifier

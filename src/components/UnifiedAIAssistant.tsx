@@ -1,5 +1,5 @@
 import { useState, useRef, useCallback, useEffect } from 'react';
-import { Mic, Send, Loader2, Sparkles, X, Square, Camera, Package, Wrench, Image, Check } from 'lucide-react';
+import { Mic, Send, Loader2, Sparkles, X, Square, Camera, Package, Wrench, Image, Check, Lightbulb, Plus } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { cn } from '@/lib/utils';
@@ -23,9 +23,23 @@ export interface AIService {
   notes?: string;
 }
 
+export interface AISuggestion {
+  type: 'product' | 'service';
+  product_id?: string;
+  codigo?: string;
+  descricao: string;
+  quantity?: number;
+  account?: string;
+  reason: string;
+  userToolId?: string;
+  omie_codigo_servico?: number;
+  servico_descricao?: string;
+}
+
 export interface AIOrderResult {
   products: AIProduct[];
   services: AIService[];
+  suggestions?: AISuggestion[];
 }
 
 interface Product {
@@ -50,12 +64,13 @@ interface UnifiedAIAssistantProps {
   products: Product[];
   userTools: UserTool[];
   onItemsIdentified: (result: AIOrderResult) => void;
+  customerUserId?: string | null;
   isLoading?: boolean;
 }
 
 const fmt = (v: number) => v.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' });
 
-export function UnifiedAIAssistant({ products, userTools, onItemsIdentified, isLoading = false }: UnifiedAIAssistantProps) {
+export function UnifiedAIAssistant({ products, userTools, onItemsIdentified, customerUserId, isLoading = false }: UnifiedAIAssistantProps) {
   const { toast } = useToast();
   const [text, setText] = useState('');
   const [isRecording, setIsRecording] = useState(false);
@@ -64,6 +79,7 @@ export function UnifiedAIAssistant({ products, userTools, onItemsIdentified, isL
   const [aiMessage, setAiMessage] = useState<string | null>(null);
   const [identifiedProducts, setIdentifiedProducts] = useState<AIProduct[]>([]);
   const [identifiedServices, setIdentifiedServices] = useState<AIService[]>([]);
+  const [suggestions, setSuggestions] = useState<AISuggestion[]>([]);
   const [recordingDuration, setRecordingDuration] = useState(0);
   const [imagePreview, setImagePreview] = useState<string | null>(null);
   const [imageBase64, setImageBase64] = useState<string | null>(null);
@@ -200,6 +216,7 @@ export function UnifiedAIAssistant({ products, userTools, onItemsIdentified, isL
     setAiMessage(null);
     setIdentifiedProducts([]);
     setIdentifiedServices([]);
+    setSuggestions([]);
 
     try {
       const { data: { session } } = await supabase.auth.getSession();
@@ -214,6 +231,7 @@ export function UnifiedAIAssistant({ products, userTools, onItemsIdentified, isL
         body: JSON.stringify({
           text: text.trim() || undefined,
           imageBase64: imageBase64 || undefined,
+          customerUserId: customerUserId || undefined,
           products: products.map(p => ({
             id: p.id, codigo: p.codigo, descricao: p.descricao,
             valor_unitario: p.valor_unitario, estoque: p.estoque, account: p.account || 'oben',
@@ -230,10 +248,12 @@ export function UnifiedAIAssistant({ products, userTools, onItemsIdentified, isL
 
       const prods = result.products || [];
       const svcs = result.services || [];
+      const sugs = result.suggestions || [];
 
-      if (prods.length > 0 || svcs.length > 0) {
+      if (prods.length > 0 || svcs.length > 0 || sugs.length > 0) {
         setIdentifiedProducts(prods);
         setIdentifiedServices(svcs);
+        setSuggestions(sugs);
         setAiMessage(result.message || `Encontrei ${prods.length} produto(s) e ${svcs.length} serviço(s).`);
       } else {
         setAiMessage(result.message || 'Não consegui identificar itens. Tente ser mais específico.');
@@ -251,15 +271,42 @@ export function UnifiedAIAssistant({ products, userTools, onItemsIdentified, isL
     setAiMessage(null);
     setIdentifiedProducts([]);
     setIdentifiedServices([]);
+    setSuggestions([]);
     clearImage();
     const total = identifiedProducts.length + identifiedServices.length;
     toast({ title: 'Itens adicionados!', description: `${total} item(ns) adicionado(s) ao pedido.` });
+  };
+
+  const acceptSuggestion = (suggestion: AISuggestion) => {
+    if (suggestion.type === 'product' && suggestion.product_id) {
+      const prod: AIProduct = {
+        product_id: suggestion.product_id,
+        codigo: suggestion.codigo || '',
+        descricao: suggestion.descricao,
+        quantity: suggestion.quantity || 1,
+        account: (suggestion.account || 'oben') as 'oben' | 'colacor',
+      };
+      onItemsIdentified({ products: [prod], services: [] });
+      toast({ title: 'Produto adicionado!', description: suggestion.descricao });
+    } else if (suggestion.type === 'service' && suggestion.userToolId && suggestion.omie_codigo_servico) {
+      const svc: AIService = {
+        userToolId: suggestion.userToolId,
+        omie_codigo_servico: suggestion.omie_codigo_servico,
+        servico_descricao: suggestion.servico_descricao || suggestion.descricao,
+        quantity: suggestion.quantity || 1,
+      };
+      onItemsIdentified({ products: [], services: [svc] });
+      toast({ title: 'Serviço adicionado!', description: suggestion.descricao });
+    }
+    // Remove from suggestions list
+    setSuggestions(prev => prev.filter(s => s !== suggestion));
   };
 
   const clearSuggestions = () => {
     setAiMessage(null);
     setIdentifiedProducts([]);
     setIdentifiedServices([]);
+    setSuggestions([]);
   };
 
   const isProcessing = isRecording || isTranscribing || isAnalyzing || isLoading;
@@ -431,6 +478,61 @@ export function UnifiedAIAssistant({ products, userTools, onItemsIdentified, isL
               <Check className="w-4 h-4 mr-2" />
               Adicionar {identifiedProducts.length + identifiedServices.length} item(ns) ao Pedido
             </Button>
+          )}
+
+          {/* Suggestions */}
+          {suggestions.length > 0 && (
+            <div className="space-y-2 pt-2 border-t border-border">
+              <p className="text-xs font-medium text-amber-600 flex items-center gap-1.5">
+                <Lightbulb className="w-3.5 h-3.5" /> Sugestões ({suggestions.length})
+              </p>
+              <p className="text-xs text-muted-foreground">
+                Não encontrei correspondência exata, mas esses itens podem ser o que você procura:
+              </p>
+              {suggestions.map((sug, idx) => {
+                const prod = sug.type === 'product' && sug.product_id ? products.find(p => p.id === sug.product_id) : null;
+                const tool = sug.type === 'service' && sug.userToolId ? userTools.find(t => t.id === sug.userToolId) : null;
+                return (
+                  <div key={idx} className="bg-amber-50 dark:bg-amber-950/20 rounded-lg p-3 border border-amber-200 dark:border-amber-800">
+                    <div className="flex justify-between items-start gap-2">
+                      <div className="flex-1 min-w-0">
+                        <div className="flex items-center gap-1.5">
+                          {sug.type === 'product' ? (
+                            <Package className="w-3.5 h-3.5 text-amber-600 flex-shrink-0" />
+                          ) : (
+                            <Wrench className="w-3.5 h-3.5 text-amber-600 flex-shrink-0" />
+                          )}
+                          <p className="font-medium text-sm truncate">
+                            {prod?.descricao || (tool ? getToolName(tool) : sug.descricao)}
+                          </p>
+                        </div>
+                        <p className="text-xs text-amber-700 dark:text-amber-400 mt-1 italic">
+                          💡 {sug.reason}
+                        </p>
+                        {sug.type === 'product' && prod && (
+                          <div className="flex items-center gap-2 mt-1">
+                            <Badge variant="outline" className="text-[10px]">{sug.account === 'colacor' ? 'Colacor' : 'Oben'}</Badge>
+                            <span className="text-[10px] text-muted-foreground">{fmt(prod.valor_unitario)}/un</span>
+                          </div>
+                        )}
+                        {sug.type === 'service' && sug.servico_descricao && (
+                          <p className="text-xs text-muted-foreground mt-0.5">Serviço: {sug.servico_descricao}</p>
+                        )}
+                      </div>
+                      <Button
+                        size="sm"
+                        variant="outline"
+                        className="flex-shrink-0 text-xs border-amber-300 hover:bg-amber-100 dark:hover:bg-amber-900/30"
+                        onClick={() => acceptSuggestion(sug)}
+                      >
+                        <Plus className="w-3 h-3 mr-1" />
+                        Adicionar
+                      </Button>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
           )}
         </div>
       )}

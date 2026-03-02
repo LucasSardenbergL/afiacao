@@ -33,7 +33,7 @@ serve(async (req) => {
       });
     }
 
-    const { text, imageBase64, products, userTools } = await req.json();
+    const { text, imageBase64, products, userTools, customerUserId } = await req.json();
 
     if (!text && !imageBase64) {
       return new Response(JSON.stringify({ error: "Texto ou imagem é obrigatório" }), {
@@ -70,12 +70,70 @@ serve(async (req) => {
         }).join("\n")
       : "Nenhuma ferramenta cadastrada";
 
-    const systemPrompt = `Você é um assistente de pedidos para uma empresa de ferramentas industriais. 
+    // Fetch customer purchase history for context
+    let historicoCompras = "";
+    if (customerUserId) {
+      try {
+        // Get recent sales orders with items for this customer
+        const { data: recentItems } = await supabase
+          .from("order_items")
+          .select("product_id, quantity, unit_price, omie_products(descricao, codigo, account)")
+          .eq("customer_user_id", customerUserId)
+          .order("created_at", { ascending: false })
+          .limit(50);
+
+        // Get recent sharpening orders
+        const { data: recentOrders } = await supabase
+          .from("orders")
+          .select("items, service_type, created_at")
+          .eq("user_id", customerUserId)
+          .order("created_at", { ascending: false })
+          .limit(20);
+
+        if (recentItems && recentItems.length > 0) {
+          // Aggregate by product
+          const productCounts: Record<string, { descricao: string; codigo: string; account: string; totalQty: number; count: number }> = {};
+          for (const item of recentItems) {
+            const prod = item.omie_products as any;
+            if (!prod) continue;
+            const key = item.product_id || prod.codigo;
+            if (!productCounts[key]) {
+              productCounts[key] = { descricao: prod.descricao, codigo: prod.codigo, account: prod.account || 'oben', totalQty: 0, count: 0 };
+            }
+            productCounts[key].totalQty += item.quantity;
+            productCounts[key].count += 1;
+          }
+          const sorted = Object.values(productCounts).sort((a, b) => b.count - a.count).slice(0, 15);
+          historicoCompras = "\n\nHISTÓRICO DE COMPRAS DO CLIENTE (produtos mais comprados):\n" +
+            sorted.map(p => `- ${p.descricao} (${p.codigo}, ${p.account}) — pedido ${p.count}x, total ${p.totalQty} un`).join("\n");
+        }
+
+        if (recentOrders && recentOrders.length > 0) {
+          const serviceTypes = new Set<string>();
+          for (const order of recentOrders) {
+            if (order.service_type) serviceTypes.add(order.service_type);
+            if (order.items && Array.isArray(order.items)) {
+              for (const item of order.items as any[]) {
+                if (item.category) serviceTypes.add(item.category);
+              }
+            }
+          }
+          if (serviceTypes.size > 0) {
+            historicoCompras += "\nServiços já utilizados: " + [...serviceTypes].join(", ");
+          }
+        }
+      } catch (e) {
+        console.error("Error fetching purchase history:", e);
+      }
+    }
+
+    const systemPrompt = `Você é um assistente de pedidos para uma empresa de ferramentas industriais (serras, discos, lâminas, brocas, fresas, lixas, etc.). 
 O vendedor pode pedir PRODUTOS (Oben ou Colacor) e/ou SERVIÇOS DE AFIAÇÃO.
 
 Sua tarefa: analisar o pedido (texto ou imagem) e identificar:
 1. PRODUTOS do catálogo que o cliente quer comprar, com quantidades
 2. FERRAMENTAS DO CLIENTE que precisam de SERVIÇO DE AFIAÇÃO
+3. SUGESTÕES quando não encontrar correspondência exata
 
 CATÁLOGO DE PRODUTOS:
 ${produtosLista || "Nenhum produto disponível"}
@@ -85,15 +143,26 @@ ${ferramentasLista}
 
 SERVIÇOS DE AFIAÇÃO DISPONÍVEIS:
 ${servicosLista || "Nenhum serviço disponível"}
+${historicoCompras}
 
 REGRAS:
 1. Para PRODUTOS: identifique pelo nome, código ou descrição. Use a quantidade mencionada ou 1.
-2. Para AFIAÇÃO: identifique a ferramenta cadastrada e o serviço compatível (a descrição do serviço deve conter a categoria da ferramenta).
+2. Para AFIAÇÃO: identifique a ferramenta cadastrada e o serviço compatível.
 3. Priorize correspondências exatas de nome/código. Seja flexível com sinônimos.
 4. Se o vendedor mencionar "afiar", "afiação", "serrar", "lâmina lascada" etc, trate como serviço.
 5. Se mencionar "comprar", "preciso de", "X unidades de", trate como produto.
 6. Extraia observações como danos, urgência, etc.
 7. Se estiver analisando uma IMAGEM: identifique os produtos/ferramentas visíveis e sugira os itens correspondentes do catálogo.
+
+REGRAS DE SUGESTÃO (MUITO IMPORTANTE):
+8. Se NÃO encontrar correspondência exata no catálogo para algo mencionado ou visível na imagem, NÃO descarte. Em vez disso:
+   a. Sugira os produtos MAIS SIMILARES do catálogo (por nome, categoria, ou uso semelhante)
+   b. Use o histórico de compras do cliente para sugerir produtos que ele costuma comprar e que possam ser relevantes
+   c. Se identificar uma ferramenta na imagem mas ela não está cadastrada, sugira o serviço de afiação mais provável
+9. Sempre preencha o campo "suggestions" com itens sugeridos quando:
+   - Não há correspondência exata
+   - O cliente pode precisar de itens complementares baseados no histórico
+   - A imagem mostra algo que se aproxima de um produto mas sem certeza total
 
 Responda SEMPRE usando a função identify_order_items.`;
 
@@ -127,13 +196,13 @@ Responda SEMPRE usando a função identify_order_items.`;
             type: "function",
             function: {
               name: "identify_order_items",
-              description: "Retorna produtos e serviços identificados no pedido",
+              description: "Retorna produtos e serviços identificados no pedido, e sugestões quando não há correspondência exata",
               parameters: {
                 type: "object",
                 properties: {
                   products: {
                     type: "array",
-                    description: "Produtos do catálogo identificados",
+                    description: "Produtos do catálogo identificados com certeza",
                     items: {
                       type: "object",
                       properties: {
@@ -162,9 +231,29 @@ Responda SEMPRE usando a função identify_order_items.`;
                       required: ["userToolId", "omie_codigo_servico", "servico_descricao", "quantity"],
                     },
                   },
-                  message: { type: "string", description: "Mensagem amigável confirmando o que foi identificado" },
+                  suggestions: {
+                    type: "array",
+                    description: "Sugestões de produtos/serviços quando não há correspondência exata ou baseado no histórico",
+                    items: {
+                      type: "object",
+                      properties: {
+                        type: { type: "string", enum: ["product", "service"], description: "Tipo da sugestão" },
+                        product_id: { type: "string", description: "ID UUID do produto sugerido (se type=product)" },
+                        codigo: { type: "string", description: "Código do produto sugerido" },
+                        descricao: { type: "string", description: "Descrição do item sugerido" },
+                        quantity: { type: "number", description: "Quantidade sugerida" },
+                        account: { type: "string", description: "Conta: oben ou colacor" },
+                        reason: { type: "string", description: "Motivo da sugestão (ex: 'Similar ao que foi identificado na foto', 'Produto que o cliente costuma comprar')" },
+                        userToolId: { type: "string", description: "ID da ferramenta (se type=service)" },
+                        omie_codigo_servico: { type: "number", description: "Código do serviço (se type=service)" },
+                        servico_descricao: { type: "string", description: "Descrição do serviço (se type=service)" },
+                      },
+                      required: ["type", "descricao", "reason"],
+                    },
+                  },
+                  message: { type: "string", description: "Mensagem amigável explicando o que foi identificado e o que foi sugerido" },
                 },
-                required: ["products", "services", "message"],
+                required: ["products", "services", "suggestions", "message"],
               },
             },
           },
@@ -194,7 +283,7 @@ Responda SEMPRE usando a função identify_order_items.`;
 
     if (!toolCall) {
       return new Response(JSON.stringify({
-        products: [], services: [],
+        products: [], services: [], suggestions: [],
         message: "Não consegui identificar itens. Seja mais específico ou selecione manualmente.",
       }), { headers: { ...corsHeaders, "Content-Type": "application/json" } });
     }
@@ -209,9 +298,17 @@ Responda SEMPRE usando a função identify_order_items.`;
     const validToolIds = new Set(tools.map((t: any) => t.id));
     const validServices = (result.services || []).filter((s: any) => validToolIds.has(s.userToolId));
 
+    // Validate suggestions - keep product suggestions with valid IDs, keep all service suggestions
+    const validSuggestions = (result.suggestions || []).filter((s: any) => {
+      if (s.type === 'product') return s.product_id && validProductIds.has(s.product_id);
+      if (s.type === 'service') return s.userToolId && validToolIds.has(s.userToolId);
+      return false;
+    });
+
     return new Response(JSON.stringify({
       products: validProducts,
       services: validServices,
+      suggestions: validSuggestions,
       message: result.message || `Identificado ${validProducts.length} produto(s) e ${validServices.length} serviço(s).`,
     }), { headers: { ...corsHeaders, "Content-Type": "application/json" } });
 
