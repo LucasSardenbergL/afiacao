@@ -746,14 +746,35 @@ Responda SEMPRE usando a função identify_order_items.`;
         };
       } else if (result.customer.nome_fantasia) {
         console.log(`[analyze-unified-order] AI returned non-matched customer: ${result.customer.nome_fantasia}, trying broader name match`);
-        // Broader fuzzy matching
+        // Broader fuzzy matching with edit distance
         const aiName = (result.customer.nome_fantasia || '').toLowerCase();
+        const aiWords = aiName.split(/\s+/).filter((w: string) => w.length > 3);
         const bestMatch = customerCandidates.find((c: any) => {
           const name = (c.nome_fantasia || c.nome || '').toLowerCase();
-          return name && aiName && (
-            name.split(/\s+/).some((w: string) => w.length > 3 && aiName.includes(w)) ||
-            aiName.split(/\s+/).some((w: string) => w.length > 3 && name.includes(w))
-          );
+          if (!name || !aiName) return false;
+          const cWords = name.split(/\s+/).filter((w: string) => w.length > 3);
+          // Direct word inclusion
+          if (cWords.some((w: string) => aiName.includes(w)) || aiWords.some((w: string) => name.includes(w))) return true;
+          // Edit distance check (handles typos like Lorham→Lohan)
+          for (const rw of aiWords) {
+            for (const cw of cWords) {
+              if (Math.abs(rw.length - cw.length) <= 2) {
+                let diffs = 0;
+                let ri = 0, ci = 0;
+                while (ri < rw.length && ci < cw.length) {
+                  if (rw[ri] !== cw[ci]) {
+                    diffs++;
+                    if (rw.length > cw.length) ri++;
+                    else if (cw.length > rw.length) ci++;
+                  }
+                  ri++; ci++;
+                }
+                diffs += Math.abs(rw.length - ri) + Math.abs(cw.length - ci);
+                if (diffs <= 2) return true;
+              }
+            }
+          }
+          return false;
         });
         if (bestMatch) {
           validCustomer = {

@@ -349,16 +349,37 @@ export function UnifiedAIAssistant({ products, userTools, onItemsIdentified, onC
   };
 
   const acceptSuggestion = (suggestion: AISuggestion) => {
-    if (suggestion.type === 'product' && suggestion.product_id) {
+    if (suggestion.type === 'product' && suggestion.product_id && suggestion.product_id !== '') {
       const prod: AIProduct = {
         product_id: suggestion.product_id,
         codigo: suggestion.codigo || '',
         descricao: suggestion.descricao,
         quantity: suggestion.quantity || 1,
         account: (suggestion.account || 'oben') as 'oben' | 'colacor',
+        unit_price: suggestion.unit_price,
       };
       onItemsIdentified({ products: [prod], services: [] });
       toast({ title: 'Produto adicionado!', description: suggestion.descricao });
+    } else if (suggestion.type === 'product' && (!suggestion.product_id || suggestion.product_id === '')) {
+      // Suggestion without exact product_id - try to find it in products list
+      const matchProd = products.find(p => 
+        (suggestion.codigo && p.codigo.toLowerCase().includes(suggestion.codigo.toLowerCase())) ||
+        p.descricao.toLowerCase().includes(suggestion.descricao.toLowerCase())
+      );
+      if (matchProd) {
+        const prod: AIProduct = {
+          product_id: matchProd.id,
+          codigo: matchProd.codigo,
+          descricao: matchProd.descricao,
+          quantity: suggestion.quantity || 1,
+          account: (matchProd.account || suggestion.account || 'oben') as 'oben' | 'colacor',
+          unit_price: suggestion.unit_price,
+        };
+        onItemsIdentified({ products: [prod], services: [] });
+        toast({ title: 'Produto adicionado!', description: matchProd.descricao });
+      } else {
+        toast({ title: 'Produto não encontrado', description: 'Busque manualmente no catálogo.', variant: 'destructive' });
+      }
     } else if (suggestion.type === 'service' && suggestion.userToolId && suggestion.omie_codigo_servico) {
       const svc: AIService = {
         userToolId: suggestion.userToolId,
