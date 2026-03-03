@@ -370,11 +370,13 @@ REGRAS DE BUSCA NO CATÁLOGO:
 REGRAS DE EMBALAGEM → SUFIXO DO CÓDIGO DO PRODUTO (MUITO IMPORTANTE):
 14. Quando o pedido menciona "lata" ou "18 litros" ou "18L", o produto correto tem código terminando em "LT" (ex: "DR.4403LT").
 15. Quando menciona "quartinho" ou "900ml" ou "810ml" ou "900ML", o produto correto tem código terminando em "QT" (ex: "DR.4403QT").
-16. Quando menciona "balde" ou "BH", o produto correto tem código terminando em "BH" (ex: "DR.4403BH").
+16. Quando menciona "balde" ou "20L" ou "20 litros", o produto correto tem código terminando em "BH" (ex: "DR.4403BH").
 17. Quando menciona "galão" ou "3,6L" ou "3.6L" ou "galao", o produto correto tem código terminando em "GL" (ex: "DR.4403GL").
 18. Quando menciona "5L" ou "5 litros" ou "cinco litros", o produto correto tem código terminando em "L5" (ex: "DR.4403L5").
-19. Use estas regras para selecionar a EMBALAGEM CORRETA do catálogo. Ex: "3 latas de catalisador FC6975" → busque por "FC6975" com sufixo "LT" → "FC6975LT".
-20. Ex: "5 baldes de FO56717" → busque por "FO56717" com sufixo "BH" → "FO56717BH".
+19. EXCEÇÃO ESPECIAL para produto 6269: quando menciona "balde" ou "18L" ou "18 litros" com produto 6269, o sufixo correto é "BD" (ex: "6269BD"). Para todos os outros produtos, "balde" e "18L" seguem as regras normais (LT para 18L, BH para balde).
+20. Use estas regras para selecionar a EMBALAGEM CORRETA do catálogo. Ex: "3 latas de catalisador FC6975" → busque por "FC6975" com sufixo "LT" → "FC6975LT".
+21. Ex: "5 baldes de FO56717" → busque por "FO56717" com sufixo "BH" → "FO56717BH".
+22. Ex: "2 baldes de 6269" → busque por "6269" com sufixo "BD" → "6269BD".
 ${searchCustomer ? `
 REGRAS DE IDENTIFICAÇÃO DE CLIENTE (CRÍTICAS):
 21. Você SÓ pode retornar clientes que existam na lista de CLIENTES ENCONTRADOS NA BASE acima.
