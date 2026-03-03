@@ -891,19 +891,23 @@ Responda SEMPRE usando a função identify_order_items.`;
       console.log(`[analyze-unified-order] AI returned customer: "${result.customer.nome_fantasia}", candidates: ${customerCandidates.length}`);
       
       // Helper: check if two names share significant words
+      // IMPORTANT: ignore common business suffixes that would cause false positives
+      const STOP_WORDS = new Set(['ltda', 'eireli', 'epp', 'mei', 'sa', 'ss', 'me', 'comercio', 'industria', 'servicos', 'com', 'ind', 'serv', 'dos', 'das', 'para', 'que', 'the', 'and']);
       const shareWords = (name1: string, name2: string): boolean => {
-        const w1 = stripAccents(name1.toLowerCase()).split(/\s+/).filter((w: string) => w.length >= 3);
-        const w2 = stripAccents(name2.toLowerCase()).split(/\s+/).filter((w: string) => w.length >= 3);
-        // Check direct word inclusion
+        const w1 = stripAccents(name1.toLowerCase()).split(/\s+/).filter((w: string) => w.length >= 3 && !STOP_WORDS.has(w));
+        const w2 = stripAccents(name2.toLowerCase()).split(/\s+/).filter((w: string) => w.length >= 3 && !STOP_WORDS.has(w));
+        if (w1.length === 0 || w2.length === 0) return false;
+        // Check direct word inclusion — require at least one SIGNIFICANT word match
+        let significantMatches = 0;
         for (const w of w1) {
-          if (name2.toLowerCase().includes(w)) return true;
+          if (w.length >= 4 && w2.some((w2w: string) => w2w.includes(w) || w.includes(w2w))) significantMatches++;
         }
-        for (const w of w2) {
-          if (name1.toLowerCase().includes(w)) return true;
-        }
-        // Edit distance for typos (Lorham→Lohan)
+        if (significantMatches >= 1) return true;
+        // Edit distance for typos (Lorham→Lohan) — only for significant words (length >= 4)
         for (const a of w1) {
+          if (a.length < 4) continue;
           for (const b of w2) {
+            if (b.length < 4) continue;
             if (Math.abs(a.length - b.length) > 2) continue;
             let diffs = 0;
             const maxLen = Math.max(a.length, b.length);
