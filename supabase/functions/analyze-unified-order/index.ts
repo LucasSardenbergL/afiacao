@@ -33,9 +33,17 @@ serve(async (req) => {
       });
     }
 
-    const { text, imageBase64, products, userTools, customerUserId } = await req.json();
+    const { text, imageBase64, imagesBase64, products, userTools, customerUserId } = await req.json();
 
-    if (!text && !imageBase64) {
+    // Support single image (imageBase64) or multiple images (imagesBase64)
+    const allImages: string[] = [];
+    if (imagesBase64 && Array.isArray(imagesBase64)) {
+      allImages.push(...imagesBase64.slice(0, 5));
+    } else if (imageBase64) {
+      allImages.push(imageBase64);
+    }
+
+    if (!text && allImages.length === 0) {
       return new Response(JSON.stringify({ error: "Texto ou imagem é obrigatório" }), {
         status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" },
       });
@@ -60,7 +68,7 @@ serve(async (req) => {
     let prodList: any[] = [];
     const prodIds = new Set<string>();
 
-    if (imageBase64 && !text) {
+    if (allImages.length > 0 && !text) {
       // Image-only: fetch all products from DB to maximize matching
       const { data: allProducts } = await supabase
         .from("omie_products")
@@ -255,14 +263,14 @@ Responda SEMPRE usando a função identify_order_items.`;
       { role: "system", content: systemPrompt },
     ];
 
-    if (imageBase64) {
-      messages.push({
-        role: "user",
-        content: [
-          { type: "text", text: text || "Identifique os produtos e ferramentas nesta imagem e sugira os itens para o pedido:" },
-          { type: "image_url", image_url: { url: `data:image/jpeg;base64,${imageBase64}` } },
-        ],
-      });
+    if (allImages.length > 0) {
+      const content: any[] = [
+        { type: "text", text: text || "Identifique os produtos e ferramentas nestas imagens e sugira os itens para o pedido:" },
+      ];
+      for (const img of allImages) {
+        content.push({ type: "image_url", image_url: { url: `data:image/jpeg;base64,${img}` } });
+      }
+      messages.push({ role: "user", content });
     } else {
       messages.push({ role: "user", content: text });
     }
@@ -274,7 +282,7 @@ Responda SEMPRE usando a função identify_order_items.`;
         "Content-Type": "application/json",
       },
       body: JSON.stringify({
-        model: imageBase64 ? "google/gemini-2.5-flash" : "google/gemini-3-flash-preview",
+        model: allImages.length > 0 ? "google/gemini-2.5-flash" : "google/gemini-3-flash-preview",
         messages,
         tools: [
           {

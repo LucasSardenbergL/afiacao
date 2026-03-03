@@ -1,5 +1,5 @@
 import { useState, useRef, useCallback, useEffect } from 'react';
-import { Mic, Send, Loader2, Sparkles, X, Square, Camera, Package, Wrench, Image, Check, Lightbulb, Plus } from 'lucide-react';
+import { Mic, Send, Loader2, Sparkles, X, Square, Camera, Package, Wrench, Image, Check, Lightbulb, Plus, Paperclip, FileAudio } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { cn } from '@/lib/utils';
@@ -60,6 +60,11 @@ interface UserTool {
   tool_categories?: { name: string } | null;
 }
 
+interface ImageAttachment {
+  preview: string;
+  base64: string;
+}
+
 interface UnifiedAIAssistantProps {
   products: Product[];
   userTools: UserTool[];
@@ -81,14 +86,14 @@ export function UnifiedAIAssistant({ products, userTools, onItemsIdentified, cus
   const [identifiedServices, setIdentifiedServices] = useState<AIService[]>([]);
   const [suggestions, setSuggestions] = useState<AISuggestion[]>([]);
   const [recordingDuration, setRecordingDuration] = useState(0);
-  const [imagePreview, setImagePreview] = useState<string | null>(null);
-  const [imageBase64, setImageBase64] = useState<string | null>(null);
+  const [images, setImages] = useState<ImageAttachment[]>([]);
 
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
   const audioChunksRef = useRef<Blob[]>([]);
   const streamRef = useRef<MediaStream | null>(null);
   const timerRef = useRef<number | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const audioInputRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
     return () => {
@@ -154,6 +159,9 @@ export function UnifiedAIAssistant({ products, userTools, onItemsIdentified, cus
       let ext = 'webm';
       if (blob.type.includes('mp4')) ext = 'mp4';
       else if (blob.type.includes('ogg')) ext = 'ogg';
+      else if (blob.type.includes('mpeg') || blob.type.includes('mp3')) ext = 'mp3';
+      else if (blob.type.includes('wav')) ext = 'wav';
+      else if (blob.type.includes('m4a') || blob.type.includes('x-m4a')) ext = 'm4a';
 
       const fd = new FormData();
       fd.append('audio', blob, `recording.${ext}`);
@@ -182,32 +190,63 @@ export function UnifiedAIAssistant({ products, userTools, onItemsIdentified, cus
     }
   };
 
-  // ─── Image ───
-  const handleImageSelect = async (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
-    if (!file) return;
-    if (!file.type.startsWith('image/')) { toast({ title: 'Selecione uma imagem', variant: 'destructive' }); return; }
-    if (file.size > 5 * 1024 * 1024) { toast({ title: 'Imagem muito grande (máx 5MB)', variant: 'destructive' }); return; }
+  // ─── Audio file attachment ───
+  const handleAudioFileSelect = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const files = e.target.files;
+    if (!files || files.length === 0) return;
 
-    setImagePreview(URL.createObjectURL(file));
-    const reader = new FileReader();
-    reader.onload = () => {
-      const b64 = (reader.result as string).split(',')[1];
-      setImageBase64(b64);
-    };
-    reader.readAsDataURL(file);
+    for (let i = 0; i < files.length; i++) {
+      const file = files[i];
+      if (!file.type.startsWith('audio/')) {
+        toast({ title: `"${file.name}" não é um áudio`, variant: 'destructive' });
+        continue;
+      }
+      if (file.size > 10 * 1024 * 1024) {
+        toast({ title: `"${file.name}" muito grande (máx 10MB)`, variant: 'destructive' });
+        continue;
+      }
+      await transcribeAudio(file);
+    }
+
+    if (audioInputRef.current) audioInputRef.current.value = '';
   };
 
-  const clearImage = () => {
-    setImagePreview(null);
-    setImageBase64(null);
+  // ─── Image ───
+  const handleImageSelect = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const files = e.target.files;
+    if (!files) return;
+
+    for (let i = 0; i < files.length; i++) {
+      const file = files[i];
+      if (!file.type.startsWith('image/')) { toast({ title: 'Selecione uma imagem', variant: 'destructive' }); continue; }
+      if (file.size > 5 * 1024 * 1024) { toast({ title: `"${file.name}" muito grande (máx 5MB)`, variant: 'destructive' }); continue; }
+      if (images.length >= 5) { toast({ title: 'Máximo de 5 fotos', variant: 'destructive' }); break; }
+
+      const preview = URL.createObjectURL(file);
+      const b64 = await new Promise<string>((resolve) => {
+        const reader = new FileReader();
+        reader.onload = () => resolve((reader.result as string).split(',')[1]);
+        reader.readAsDataURL(file);
+      });
+      setImages(prev => [...prev, { preview, base64: b64 }]);
+    }
+
+    if (fileInputRef.current) fileInputRef.current.value = '';
+  };
+
+  const removeImage = (idx: number) => {
+    setImages(prev => prev.filter((_, i) => i !== idx));
+  };
+
+  const clearImages = () => {
+    setImages([]);
     if (fileInputRef.current) fileInputRef.current.value = '';
   };
 
   // ─── Analyze ───
   const analyze = async () => {
-    if (!text.trim() && !imageBase64) {
-      toast({ title: 'Digite, grave ou tire uma foto', variant: 'destructive' });
+    if (!text.trim() && images.length === 0) {
+      toast({ title: 'Digite, grave, anexe áudio ou tire uma foto', variant: 'destructive' });
       return;
     }
     if (isRecording) stopRecording();
@@ -230,7 +269,8 @@ export function UnifiedAIAssistant({ products, userTools, onItemsIdentified, cus
         },
         body: JSON.stringify({
           text: text.trim() || undefined,
-          imageBase64: imageBase64 || undefined,
+          imageBase64: images.length === 1 ? images[0].base64 : undefined,
+          imagesBase64: images.length > 1 ? images.map(img => img.base64) : undefined,
           customerUserId: customerUserId || undefined,
           products: products.map(p => ({
             id: p.id, codigo: p.codigo, descricao: p.descricao,
@@ -272,7 +312,7 @@ export function UnifiedAIAssistant({ products, userTools, onItemsIdentified, cus
     setIdentifiedProducts([]);
     setIdentifiedServices([]);
     setSuggestions([]);
-    clearImage();
+    clearImages();
     const total = identifiedProducts.length + identifiedServices.length;
     toast({ title: 'Itens adicionados!', description: `${total} item(ns) adicionado(s) ao pedido.` });
   };
@@ -298,7 +338,6 @@ export function UnifiedAIAssistant({ products, userTools, onItemsIdentified, cus
       onItemsIdentified({ products: [], services: [svc] });
       toast({ title: 'Serviço adicionado!', description: suggestion.descricao });
     }
-    // Remove from suggestions list
     setSuggestions(prev => prev.filter(s => s !== suggestion));
   };
 
@@ -314,7 +353,8 @@ export function UnifiedAIAssistant({ products, userTools, onItemsIdentified, cus
 
   return (
     <div className="bg-card rounded-xl p-4 shadow-soft border border-border space-y-4">
-      <input ref={fileInputRef} type="file" accept="image/*" capture="environment" onChange={handleImageSelect} className="hidden" />
+      <input ref={fileInputRef} type="file" accept="image/*" capture="environment" multiple onChange={handleImageSelect} className="hidden" />
+      <input ref={audioInputRef} type="file" accept="audio/*" multiple onChange={handleAudioFileSelect} className="hidden" />
 
       <div className="flex items-center gap-2 text-primary">
         <Sparkles className="w-5 h-5" />
@@ -322,16 +362,28 @@ export function UnifiedAIAssistant({ products, userTools, onItemsIdentified, cus
       </div>
 
       <p className="text-sm text-muted-foreground">
-        Diga, digite ou tire uma foto — a IA identifica produtos e serviços automaticamente.
+        Diga, digite, tire fotos ou anexe áudios — a IA identifica produtos e serviços automaticamente.
       </p>
 
-      {/* Image preview */}
-      {imagePreview && (
-        <div className="relative rounded-xl overflow-hidden bg-muted">
-          <img src={imagePreview} alt="Preview" className="w-full h-40 object-cover" />
-          <button onClick={clearImage} className="absolute top-2 right-2 w-7 h-7 rounded-full bg-background/80 backdrop-blur flex items-center justify-center hover:bg-background">
-            <X className="w-4 h-4" />
-          </button>
+      {/* Image previews */}
+      {images.length > 0 && (
+        <div className="flex gap-2 flex-wrap">
+          {images.map((img, idx) => (
+            <div key={idx} className="relative rounded-lg overflow-hidden bg-muted w-20 h-20">
+              <img src={img.preview} alt={`Foto ${idx + 1}`} className="w-full h-full object-cover" />
+              <button onClick={() => removeImage(idx)} className="absolute top-0.5 right-0.5 w-5 h-5 rounded-full bg-background/80 backdrop-blur flex items-center justify-center hover:bg-background">
+                <X className="w-3 h-3" />
+              </button>
+            </div>
+          ))}
+          {images.length < 5 && (
+            <button
+              onClick={() => fileInputRef.current?.click()}
+              className="w-20 h-20 rounded-lg border-2 border-dashed border-muted-foreground/30 flex items-center justify-center text-muted-foreground hover:border-primary hover:text-primary transition-colors"
+            >
+              <Plus className="w-5 h-5" />
+            </button>
+          )}
         </div>
       )}
 
@@ -342,19 +394,30 @@ export function UnifiedAIAssistant({ products, userTools, onItemsIdentified, cus
           onChange={e => setText(e.target.value)}
           placeholder="Ex: 10 discos de corte 7 polegadas, afiar as serras circulares..."
           className={cn(
-            "w-full min-h-[80px] p-3 pr-24 rounded-lg border bg-background text-sm resize-none",
+            "w-full min-h-[80px] p-3 pr-28 rounded-lg border bg-background text-sm resize-none",
             "focus:outline-none focus:ring-2 focus:ring-ring",
             isRecording && "border-primary ring-2 ring-primary/20"
           )}
           disabled={isAnalyzing || isLoading || isTranscribing}
         />
         <div className="absolute right-3 top-3 flex gap-1.5">
+          {/* Audio file button */}
+          <button
+            type="button"
+            onClick={() => audioInputRef.current?.click()}
+            disabled={isProcessing}
+            className="p-2 rounded-full bg-muted text-muted-foreground hover:bg-primary/10 hover:text-primary transition-all"
+            title="Anexar áudio"
+          >
+            <Paperclip className="w-4 h-4" />
+          </button>
           {/* Camera button */}
           <button
             type="button"
             onClick={() => fileInputRef.current?.click()}
             disabled={isProcessing}
             className="p-2 rounded-full bg-muted text-muted-foreground hover:bg-primary/10 hover:text-primary transition-all"
+            title="Tirar foto ou anexar imagem"
           >
             <Camera className="w-4 h-4" />
           </button>
@@ -369,6 +432,7 @@ export function UnifiedAIAssistant({ products, userTools, onItemsIdentified, cus
                 ? "bg-destructive text-destructive-foreground animate-pulse"
                 : "bg-muted text-muted-foreground hover:bg-primary/10 hover:text-primary"
             )}
+            title={isRecording ? 'Parar gravação' : 'Gravar áudio'}
           >
             {isRecording ? <Square className="w-4 h-4" /> : <Mic className="w-4 h-4" />}
           </button>
@@ -386,14 +450,14 @@ export function UnifiedAIAssistant({ products, userTools, onItemsIdentified, cus
       {isTranscribing && (
         <div className="flex items-center gap-2 text-primary text-sm">
           <Loader2 className="w-4 h-4 animate-spin" />
-          <span>Transcrevendo...</span>
+          <span>Transcrevendo áudio...</span>
         </div>
       )}
 
       {/* Analyze button */}
       <Button
         onClick={analyze}
-        disabled={(!text.trim() && !imageBase64) || isProcessing}
+        disabled={(!text.trim() && images.length === 0) || isProcessing}
         className="w-full"
       >
         {isAnalyzing ? (
@@ -538,7 +602,7 @@ export function UnifiedAIAssistant({ products, userTools, onItemsIdentified, cus
       )}
 
       <p className="text-xs text-muted-foreground text-center">
-        🎙️ Voz &nbsp;·&nbsp; ⌨️ Texto &nbsp;·&nbsp; 📷 Foto — funciona em todos os navegadores
+        🎙️ Voz &nbsp;·&nbsp; ⌨️ Texto &nbsp;·&nbsp; 📷 Fotos &nbsp;·&nbsp; 📎 Áudio — funciona em todos os navegadores
       </p>
     </div>
   );
