@@ -496,6 +496,10 @@ REGRAS CRÍTICAS DE CORRESPONDÊNCIA DE CÓDIGOS DE PRODUTO:
 11. NUNCA substitua um código por outro diferente. "6975" NÃO é "6902". "6717" NÃO é "1480". Compare dígito por dígito.
 12. Se o código lido da imagem for "FO56717", decomponha: prefixo=FO, número base=6717 (ignore o "5" intermediário que é parte da versão FO5.6717). Busque no catálogo por itens que contenham "FO" E "6717" na descrição.
 
+REGRA CRÍTICA DE CÓDIGO COMPLETO:
+12b. Códigos como "TY.1480.00BB" e "TY.1480.7191BG" são PRODUTOS DIFERENTES! Os dígitos APÓS o ponto decimal importam: ".00" é diferente de ".7191". Quando o vendedor escreve "TY.1480.00", NÃO escolha "TY.1480.7191". Compare o código INTEIRO, não apenas a parte "1480".
+12c. Se houver múltiplos produtos com o mesmo prefixo numérico parcial (ex: vários produtos com "1480"), preste atenção ao RESTANTE do código para desambiguar. "BASE ACQUACOLOR TY.1480.00BB" ≠ "ACQUACOLOR CHAMPAGNHE SIER TY.1480.7191BG".
+
 REGRAS DE SUGESTÃO (MUITO IMPORTANTE - SEMPRE RETORNE SUGESTÕES):
 13. Se NÃO encontrar correspondência exata, sugira os produtos MAIS SIMILARES do catálogo (por nome parcial, categoria, ou uso semelhante)
 14. Use o histórico de compras para sugestões complementares
