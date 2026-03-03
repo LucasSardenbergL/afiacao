@@ -990,50 +990,174 @@ Responda SEMPRE usando a função identify_order_items.`;
     }
 
     // Enrich products and suggestions with customer-specific last practiced prices
-    if (validCustomer?.user_id) {
+    if (validCustomer?.user_id || validCustomer?.codigo_cliente) {
       try {
-        const { data: priceHistory } = await supabase
-          .from("order_items")
-          .select("product_id, unit_price")
-          .eq("customer_user_id", validCustomer.user_id)
-          .order("created_at", { ascending: false })
-          .limit(200);
+        const priceMap: Record<string, number> = {};
 
-        if (priceHistory && priceHistory.length > 0) {
-          const priceMap: Record<string, number> = {};
-          for (const ph of priceHistory) {
-            if (ph.product_id && !priceMap[ph.product_id]) {
-              priceMap[ph.product_id] = ph.unit_price;
+        // 1) Local DB: order_items + sales_price_history
+        if (validCustomer?.user_id) {
+          const [orderItemsRes, salesPricesRes] = await Promise.all([
+            supabase
+              .from("order_items")
+              .select("product_id, unit_price")
+              .eq("customer_user_id", validCustomer.user_id)
+              .order("created_at", { ascending: false })
+              .limit(200),
+            supabase
+              .from("sales_price_history")
+              .select("product_id, unit_price")
+              .eq("customer_user_id", validCustomer.user_id)
+              .order("created_at", { ascending: false })
+              .limit(200),
+          ]);
+
+          if (orderItemsRes.data) {
+            for (const ph of orderItemsRes.data) {
+              if (ph.product_id && !priceMap[ph.product_id]) {
+                priceMap[ph.product_id] = ph.unit_price;
+              }
             }
           }
-
-          // Also check sales_price_history
-          const { data: salesPrices } = await supabase
-            .from("sales_price_history")
-            .select("product_id, unit_price")
-            .eq("customer_user_id", validCustomer.user_id)
-            .order("created_at", { ascending: false })
-            .limit(200);
-          if (salesPrices) {
-            for (const sp of salesPrices) {
+          if (salesPricesRes.data) {
+            for (const sp of salesPricesRes.data) {
               if (!priceMap[sp.product_id]) {
                 priceMap[sp.product_id] = sp.unit_price;
               }
             }
           }
+        }
 
-          // Add prices to products
-          for (const vp of validProducts) {
-            if (priceMap[vp.product_id]) {
-              vp.unit_price = priceMap[vp.product_id];
+        // 2) Omie ERP: fetch last practiced prices from Omie orders (same as manual flow)
+        if (validCustomer?.codigo_cliente && Number(validCustomer.codigo_cliente) > 0) {
+          try {
+            // Collect all product IDs we need prices for
+            const allProductIds = [
+              ...validProducts.map((vp: any) => vp.product_id),
+              ...validSuggestions.filter((vs: any) => vs.product_id).map((vs: any) => vs.product_id),
+            ].filter(Boolean);
+
+            // Get omie_codigo_produto mapping for identified products
+            let omieCodeMap: Record<number, string> = {}; // omie_codigo_produto → product_id
+            if (allProductIds.length > 0) {
+              const { data: productMappings } = await supabase
+                .from("omie_products")
+                .select("id, omie_codigo_produto")
+                .in("id", allProductIds);
+              if (productMappings) {
+                for (const pm of productMappings) {
+                  omieCodeMap[pm.omie_codigo_produto] = pm.id;
+                }
+              }
             }
+
+            // Fetch prices from Omie for both accounts
+            const OMIE_OBEN_KEY = Deno.env.get("OMIE_VENDAS_APP_KEY");
+            const OMIE_OBEN_SECRET = Deno.env.get("OMIE_VENDAS_APP_SECRET");
+            const OMIE_COLACOR_KEY = Deno.env.get("OMIE_COLACOR_VENDAS_APP_KEY");
+            const OMIE_COLACOR_SECRET = Deno.env.get("OMIE_COLACOR_VENDAS_APP_SECRET");
+
+            const fetchOmiePrices = async (appKey: string, appSecret: string, codigoCliente: number): Promise<Record<number, number>> => {
+              try {
+                const omieRes = await fetch("https://app.omie.com.br/api/v1/produtos/pedido/", {
+                  method: "POST",
+                  headers: { "Content-Type": "application/json" },
+                  body: JSON.stringify({
+                    call: "ListarPedidos",
+                    app_key: appKey,
+                    app_secret: appSecret,
+                    param: [{
+                      pagina: 1,
+                      registros_por_pagina: 50,
+                      filtrar_por_cliente: codigoCliente,
+                      filtrar_apenas_inclusao: "N",
+                    }],
+                  }),
+                });
+                const data = await omieRes.json();
+                const precos: Record<number, number> = {};
+                const pedidos = data.pedido_venda_produto || [];
+                for (const pedido of pedidos) {
+                  const itens = pedido.det || [];
+                  for (const item of itens) {
+                    const codigoProduto = item.produto?.codigo_produto;
+                    const valorUnit = item.produto?.valor_unitario;
+                    if (codigoProduto && valorUnit && !precos[codigoProduto]) {
+                      precos[codigoProduto] = valorUnit;
+                    }
+                  }
+                }
+                return precos;
+              } catch (e) {
+                console.error("Error fetching Omie prices:", e);
+                return {};
+              }
+            };
+
+            // Fetch from both accounts in parallel
+            const omiePricePromises: Promise<Record<number, number>>[] = [];
+            if (OMIE_OBEN_KEY && OMIE_OBEN_SECRET) {
+              omiePricePromises.push(fetchOmiePrices(OMIE_OBEN_KEY, OMIE_OBEN_SECRET, validCustomer.codigo_cliente));
+            }
+            if (OMIE_COLACOR_KEY && OMIE_COLACOR_SECRET) {
+              // For colacor, we might need a different codigo_cliente; try the same one
+              omiePricePromises.push(fetchOmiePrices(OMIE_COLACOR_KEY, OMIE_COLACOR_SECRET, validCustomer.codigo_cliente));
+            }
+
+            const omieResults = await Promise.all(omiePricePromises);
+            
+            // Merge Omie prices - Omie takes priority over local
+            for (const omiePrices of omieResults) {
+              for (const [omieCode, price] of Object.entries(omiePrices)) {
+                const productId = omieCodeMap[Number(omieCode)];
+                if (productId && price > 0) {
+                  priceMap[productId] = price; // Omie overrides local
+                }
+              }
+            }
+
+            // Also build a broader omie code map for all products in catalog (for items not yet in omieCodeMap)
+            if (Object.keys(omieResults.reduce((acc, r) => ({ ...acc, ...r }), {})).length > 0) {
+              const allOmieCodes = omieResults.flatMap(r => Object.keys(r).map(Number));
+              const missingCodes = allOmieCodes.filter(c => !omieCodeMap[c]);
+              if (missingCodes.length > 0) {
+                const { data: extraMappings } = await supabase
+                  .from("omie_products")
+                  .select("id, omie_codigo_produto")
+                  .in("omie_codigo_produto", missingCodes);
+                if (extraMappings) {
+                  for (const pm of extraMappings) {
+                    omieCodeMap[pm.omie_codigo_produto] = pm.id;
+                  }
+                  // Re-apply Omie prices with new mappings
+                  for (const omiePrices of omieResults) {
+                    for (const [omieCode, price] of Object.entries(omiePrices)) {
+                      const productId = omieCodeMap[Number(omieCode)];
+                      if (productId && price > 0) {
+                        priceMap[productId] = price;
+                      }
+                    }
+                  }
+                }
+              }
+            }
+
+            console.log(`[analyze-unified-order] Omie price enrichment: found ${Object.keys(priceMap).length} prices`);
+          } catch (omieErr) {
+            console.error("Error fetching Omie prices for AI response:", omieErr);
           }
+        }
 
-          // Add prices to suggestions
-          for (const vs of validSuggestions) {
-            if (vs.product_id && priceMap[vs.product_id]) {
-              vs.unit_price = priceMap[vs.product_id];
-            }
+        // Apply prices to products
+        for (const vp of validProducts) {
+          if (priceMap[vp.product_id]) {
+            vp.unit_price = priceMap[vp.product_id];
+          }
+        }
+
+        // Apply prices to suggestions
+        for (const vs of validSuggestions) {
+          if (vs.product_id && priceMap[vs.product_id]) {
+            vs.unit_price = priceMap[vs.product_id];
           }
         }
       } catch (e) {
