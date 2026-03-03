@@ -518,6 +518,12 @@ REGRAS DE EMBALAGEM → SUFIXO DO CÓDIGO DO PRODUTO (MUITO IMPORTANTE - SIGA RI
 23. "5L" OU "5 litros" → sufixo "L5". Ex: "DR.4403L5".
 24. EXCEÇÃO ÚNICA produto 6269: "balde" OU "18L" com 6269 → sufixo "BD" (ex: "6269BD"). Esta exceção se aplica SOMENTE ao 6269.
 25. RESUMO RÁPIDO: 18L/lata=LT | 900ml=QT | 20L/balde=BH | 3,6L=GL | 5L=L5 | 6269+balde/18L=BD
+
+REGRA CRÍTICA DE EMBALAGEM ÚNICA:
+26. Quando a embalagem está ESPECIFICADA na imagem ou texto (ex: "18L", "lata", "balde", "5L", "galão", "quartinho"), retorne APENAS a variante correspondente àquela embalagem. NÃO retorne múltiplas variantes do mesmo produto com embalagens diferentes.
+   Exemplo: "6673 18L" → retorne APENAS o produto com sufixo LT (18L). NÃO inclua a variante L5 (5L) nem qualquer outra embalagem.
+   Exemplo: "4403 5L" → retorne APENAS o produto com sufixo L5. NÃO inclua LT, QT, BH ou GL.
+27. Se a embalagem NÃO está especificada, retorne a variante mais comum (geralmente LT/18L) como produto principal e as outras como sugestões.
 26. Ex: "3 latas de catalisador FC6975" → busque "CATALISADOR FC.6975LT" no catálogo (18L=LT).
 27. Ex: "5 baldes de FO56717" → busque produtos com "6717" E "BH" na descrição → "VERNIZ PU FOSCO FO5.6717.00BH" ou "FO10.6717.00BH".
 ${searchCustomer ? `
