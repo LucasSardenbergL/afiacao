@@ -366,12 +366,22 @@ REGRAS DE BUSCA NO CATÁLOGO:
 11. Ao buscar um produto, procure o termo EM QUALQUER PARTE da descrição. Ex: "4403" casa com "THINNER DR.4403LT" e "THINNER DR.4403L5".
 12. Números e códigos parciais são válidos. "02 Thiner 4403" → quantidade=2, produto=Thiner 4403.
 13. Se o texto contém quantidade + nome (ex: "02 Thiner 4403"), interprete como: quantidade=2, produto=Thiner 4403.
+
+REGRAS DE EMBALAGEM → SUFIXO DO CÓDIGO DO PRODUTO (MUITO IMPORTANTE):
+14. Quando o pedido menciona "lata" ou "18 litros" ou "18L", o produto correto tem código terminando em "LT" (ex: "DR.4403LT").
+15. Quando menciona "quartinho" ou "900ml" ou "810ml" ou "900ML", o produto correto tem código terminando em "QT" (ex: "DR.4403QT").
+16. Quando menciona "balde" ou "BH", o produto correto tem código terminando em "BH" (ex: "DR.4403BH").
+17. Quando menciona "galão" ou "3,6L" ou "3.6L" ou "galao", o produto correto tem código terminando em "GL" (ex: "DR.4403GL").
+18. Quando menciona "5L" ou "5 litros" ou "cinco litros", o produto correto tem código terminando em "L5" (ex: "DR.4403L5").
+19. Use estas regras para selecionar a EMBALAGEM CORRETA do catálogo. Ex: "3 latas de catalisador FC6975" → busque por "FC6975" com sufixo "LT" → "FC6975LT".
+20. Ex: "5 baldes de FO56717" → busque por "FO56717" com sufixo "BH" → "FO56717BH".
 ${searchCustomer ? `
-REGRAS DE IDENTIFICAÇÃO DE CLIENTE:
-14. Se o vendedor mencionar um nome de empresa, pessoa ou estabelecimento, procure na lista de CLIENTES ENCONTRADOS.
-15. Use a CIDADE mencionada para desambiguar (ex: "Metalúrgica Silva de Curitiba" → procure por "Silva" + cidade "Curitiba").
-16. Retorne o cliente com maior confiança. Se não encontrar, retorne customer como null.
-17. confidence: "high" se nome e cidade batem, "medium" se só nome bate, "low" se parcial.
+REGRAS DE IDENTIFICAÇÃO DE CLIENTE (CRÍTICAS):
+21. Você SÓ pode retornar clientes que existam na lista de CLIENTES ENCONTRADOS NA BASE acima.
+22. NÃO INVENTE clientes. Se nenhum cliente da lista corresponder, retorne customer como null.
+23. Use nome_fantasia ou razao_social para correspondência. Use a CIDADE mencionada para desambiguar.
+24. confidence: "high" se nome e cidade batem, "medium" se só nome bate, "low" se correspondência parcial.
+25. O campo codigo_cliente DEVE ser um código que exista na lista de clientes fornecida.
 ` : ""}
 Responda SEMPRE usando a função identify_order_items.`;
 
@@ -542,10 +552,32 @@ Responda SEMPRE usando a função identify_order_items.`;
       return true;
     });
 
-    // Validate customer
+    // Validate customer - MUST exist in our candidate list
     let validCustomer = null;
     if (searchCustomer && result.customer && result.customer.codigo_cliente) {
-      validCustomer = result.customer;
+      // Check if this customer actually exists in our candidates
+      const customerExists = customerCandidates.some((c: any) => {
+        if (c.codigo_cliente && c.codigo_cliente === result.customer.codigo_cliente) return true;
+        if (c.user_id && result.customer.cnpj_cpf && c.documento === result.customer.cnpj_cpf) return true;
+        return false;
+      });
+      if (customerExists) {
+        validCustomer = result.customer;
+      } else {
+        console.log(`[analyze-unified-order] AI returned non-existent customer codigo_cliente=${result.customer.codigo_cliente}, discarding`);
+        // Try to find closest match from candidates
+        if (customerCandidates.length > 0) {
+          const best = customerCandidates[0];
+          validCustomer = {
+            nome_fantasia: best.nome_fantasia || best.nome || "",
+            razao_social: best.razao_social || best.nome || "",
+            cnpj_cpf: best.cnpj_cpf || best.documento || "",
+            cidade: best.cidade || "",
+            codigo_cliente: best.codigo_cliente,
+            confidence: "low",
+          };
+        }
+      }
     }
 
     return new Response(JSON.stringify({
