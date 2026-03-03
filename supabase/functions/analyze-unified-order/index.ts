@@ -324,11 +324,11 @@ ${customerSection || "\nNenhum cliente encontrado na base para os termos buscado
 ` : "";
 
     const systemPrompt = `Você é um assistente de pedidos para uma empresa que vende produtos industriais (serras, discos, lâminas, brocas, fresas, lixas, thinner, tintas, colas, abrasivos, EPIs, e QUALQUER outro produto do catálogo) e também presta serviços de afiação.
-O vendedor pode pedir PRODUTOS (Oben ou Colacor) e/ou SERVIÇOS DE AFIAÇÃO.
+O vendedor pode pedir PRODUTOS que existem em DUAS empresas: Oben (revendedora) e Colacor (fabricante). SEMPRE considere produtos de AMBAS as contas ao identificar itens.
 ${customerIdentificationBlock}
 Sua tarefa: analisar o pedido (texto ou imagem) e identificar:
 ${searchCustomer ? "0. O CLIENTE mencionado (se houver)" : ""}
-1. PRODUTOS do catálogo que o cliente quer comprar, com quantidades
+1. PRODUTOS do catálogo que o cliente quer comprar, com quantidades — para CADA item, retorne TODAS as variantes encontradas (oben E colacor) se existirem ambas
 2. FERRAMENTAS DO CLIENTE que precisam de SERVIÇO DE AFIAÇÃO
 3. SUGESTÕES quando não encontrar correspondência exata
 
@@ -535,7 +535,52 @@ Responda SEMPRE usando a função identify_order_items.`;
 
     // Validate product IDs
     const validProductIds = new Set(prodList.map((p: any) => p.id));
-    const validProducts = (result.products || []).filter((p: any) => validProductIds.has(p.product_id));
+    let validProducts = (result.products || []).filter((p: any) => validProductIds.has(p.product_id));
+
+    // ─── Multi-account optimization: for each product, find equivalent in both accounts ───
+    // Pick the account with LESS stock (to clear smaller batches first)
+    const prodMap = new Map(prodList.map((p: any) => [p.id, p]));
+    const optimizedProducts: any[] = [];
+    const processedCodes = new Set<string>();
+
+    for (const vp of validProducts) {
+      const prod = prodMap.get(vp.product_id);
+      if (!prod) { optimizedProducts.push(vp); continue; }
+
+      // Extract base code (remove account-specific parts)
+      const baseCode = prod.codigo;
+      const codeKey = `${baseCode}_${vp.quantity}`;
+      if (processedCodes.has(codeKey)) continue; // skip duplicate from AI
+      processedCodes.add(codeKey);
+
+      // Find equivalent product in the other account by matching codigo
+      const otherAccount = prod.account === 'oben' ? 'colacor' : 'oben';
+      const equivalent = prodList.find((p: any) => 
+        p.codigo === baseCode && p.account === otherAccount
+      );
+
+      if (equivalent) {
+        const currentStock = prod.estoque ?? 0;
+        const otherStock = equivalent.estoque ?? 0;
+        
+        // Pick the one with LESS stock (to clear inventory)
+        // If equal, prefer current selection
+        if (otherStock > 0 && otherStock < currentStock) {
+          console.log(`[analyze-unified-order] Switching ${baseCode} from ${prod.account}(est:${currentStock}) to ${otherAccount}(est:${otherStock}) - less stock`);
+          optimizedProducts.push({
+            ...vp,
+            product_id: equivalent.id,
+            account: otherAccount,
+            notes: (vp.notes || '') + ` (Origem otimizada: ${otherAccount}, est: ${otherStock})`,
+          });
+        } else {
+          optimizedProducts.push(vp);
+        }
+      } else {
+        optimizedProducts.push(vp);
+      }
+    }
+    validProducts = optimizedProducts;
 
     // Validate tool IDs
     const validToolIds = new Set(tools.map((t: any) => t.id));
