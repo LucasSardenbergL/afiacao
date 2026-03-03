@@ -1,6 +1,11 @@
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 
+// Strip diacritics/accents for fuzzy comparison
+function stripAccents(str: string): string {
+  return str.normalize("NFD").replace(/[\u0300-\u036f]/g, "");
+}
+
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
   "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type, x-supabase-client-platform, x-supabase-client-platform-version, x-supabase-client-runtime, x-supabase-client-runtime-version",
@@ -254,18 +259,37 @@ serve(async (req) => {
         // Handles cases like "FO56717" matching "FO05.6717"
         try {
           const numericPart = term.replace(/[^0-9]/g, '');
-          if (numericPart.length >= 4) {
+          if (numericPart.length >= 3) {
+            // Search BOTH codigo AND descricao for numeric part
             const { data: fuzzyProducts } = await supabase
               .from("omie_products")
               .select("id, codigo, descricao, account, valor_unitario, estoque")
               .eq("ativo", true)
-              .ilike("codigo", `%${numericPart}%`)
+              .or(`codigo.ilike.%${numericPart}%,descricao.ilike.%${numericPart}%`)
               .limit(30);
             if (fuzzyProducts) {
               for (const p of fuzzyProducts) {
                 if (!prodIds.has(p.id)) {
                   prodList.push(p);
                   prodIds.add(p.id);
+                }
+              }
+            }
+            // Also try with just the last 4 digits if numericPart is longer (e.g., "56717" → "6717")
+            if (numericPart.length >= 5) {
+              const shortNumeric = numericPart.slice(-4);
+              const { data: shortProducts } = await supabase
+                .from("omie_products")
+                .select("id, codigo, descricao, account, valor_unitario, estoque")
+                .eq("ativo", true)
+                .or(`descricao.ilike.%${shortNumeric}%,codigo.ilike.%${shortNumeric}%`)
+                .limit(30);
+              if (shortProducts) {
+                for (const p of shortProducts) {
+                  if (!prodIds.has(p.id)) {
+                    prodList.push(p);
+                    prodIds.add(p.id);
+                  }
                 }
               }
             }
@@ -286,6 +310,28 @@ serve(async (req) => {
               .limit(20);
             if (strippedProducts) {
               for (const p of strippedProducts) {
+                if (!prodIds.has(p.id)) {
+                  prodList.push(p);
+                  prodIds.add(p.id);
+                }
+              }
+            }
+          }
+
+          // Extract alpha prefix + numeric suffix for product code patterns like "FO56717" → search "FO" + "6717"
+          const alphaMatch = term.match(/^([A-Za-z]{1,4})(\d{3,})/);
+          if (alphaMatch) {
+            const prefix = alphaMatch[1];
+            const digits = alphaMatch[2];
+            // Search descricao for prefix + digits (with any separator in between)
+            const { data: prefixProducts } = await supabase
+              .from("omie_products")
+              .select("id, codigo, descricao, account, valor_unitario, estoque")
+              .eq("ativo", true)
+              .ilike("descricao", `%${prefix}%${digits.slice(-4)}%`)
+              .limit(20);
+            if (prefixProducts) {
+              for (const p of prefixProducts) {
                 if (!prodIds.has(p.id)) {
                   prodList.push(p);
                   prodIds.add(p.id);
@@ -699,27 +745,24 @@ Responda SEMPRE usando a função identify_order_items.`;
         // Match by user_id
         if (c.user_id && result.customer.user_id && c.user_id === result.customer.user_id) return true;
         // Match by name (fuzzy - for image-only mode where profiles don't have codigo_cliente)
-        const cName = (c.nome_fantasia || c.nome || '').toLowerCase().trim();
-        const rName = (result.customer.nome_fantasia || '').toLowerCase().trim();
+        const cName = stripAccents((c.nome_fantasia || c.nome || '').toLowerCase().trim());
+        const rName = stripAccents((result.customer.nome_fantasia || '').toLowerCase().trim());
         if (cName && rName && cName.length > 3 && rName.length > 3) {
           if (cName.includes(rName) || rName.includes(cName)) return true;
           // Check if any significant word matches
-          const rWords = rName.split(/\s+/).filter((w: string) => w.length > 3);
-          const cWords = cName.split(/\s+/).filter((w: string) => w.length > 3);
+          const rWords = rName.split(/\s+/).filter((w: string) => w.length > 2);
+          const cWords = cName.split(/\s+/).filter((w: string) => w.length > 2);
           if (rWords.length > 0 && rWords.some((w: string) => cName.includes(w))) return true;
+          if (cWords.length > 0 && cWords.some((w: string) => rName.includes(w))) return true;
           // Fuzzy matching: check edit distance between words (handles typos like Lorham→Lohan)
           for (const rw of rWords) {
             for (const cw of cWords) {
               if (Math.abs(rw.length - cw.length) <= 2) {
                 let diffs = 0;
-                const shorter = Math.min(rw.length, cw.length);
-                const longer = Math.max(rw.length, cw.length);
-                // Simple character comparison with shift tolerance
                 let ri = 0, ci = 0;
                 while (ri < rw.length && ci < cw.length) {
                   if (rw[ri] !== cw[ci]) {
                     diffs++;
-                    // Try skipping one char in the longer string
                     if (rw.length > cw.length) ri++;
                     else if (cw.length > rw.length) ci++;
                   }
@@ -746,13 +789,13 @@ Responda SEMPRE usando a função identify_order_items.`;
         };
       } else if (result.customer.nome_fantasia) {
         console.log(`[analyze-unified-order] AI returned non-matched customer: ${result.customer.nome_fantasia}, trying broader name match`);
-        // Broader fuzzy matching with edit distance
-        const aiName = (result.customer.nome_fantasia || '').toLowerCase();
-        const aiWords = aiName.split(/\s+/).filter((w: string) => w.length > 3);
+        // Broader fuzzy matching with edit distance and accent normalization
+        const aiName = stripAccents((result.customer.nome_fantasia || '').toLowerCase());
+        const aiWords = aiName.split(/\s+/).filter((w: string) => w.length > 2);
         const bestMatch = customerCandidates.find((c: any) => {
-          const name = (c.nome_fantasia || c.nome || '').toLowerCase();
+          const name = stripAccents((c.nome_fantasia || c.nome || '').toLowerCase());
           if (!name || !aiName) return false;
-          const cWords = name.split(/\s+/).filter((w: string) => w.length > 3);
+          const cWords = name.split(/\s+/).filter((w: string) => w.length > 2);
           // Direct word inclusion
           if (cWords.some((w: string) => aiName.includes(w)) || aiWords.some((w: string) => name.includes(w))) return true;
           // Edit distance check (handles typos like Lorham→Lohan)
