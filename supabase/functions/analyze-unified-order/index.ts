@@ -780,12 +780,17 @@ Responda SEMPRE usando a função identify_order_items.`;
                 break;
               }
             }
-            // Fallback: first candidate with numeric match
+            // Fallback: first candidate with numeric match — but ONLY if there's exactly one candidate
+            // If multiple candidates exist (e.g., 6673LT and 6673L5), do NOT auto-pick; move to suggestions
             if (!rescued) {
-              const match = candidates[0];
-              console.log(`[analyze-unified-order] Rescued by numeric: ${ap.codigo}/${ap.descricao} → ${match.descricao}`);
-              validProducts.push({ ...ap, product_id: match.id, codigo: match.codigo, descricao: match.descricao, account: match.account, unit_price: ap.unit_price || match.valor_unitario });
-              rescued = true;
+              if (candidates.length === 1) {
+                const match = candidates[0];
+                console.log(`[analyze-unified-order] Rescued by numeric (single match): ${ap.codigo}/${ap.descricao} → ${match.descricao}`);
+                validProducts.push({ ...ap, product_id: match.id, codigo: match.codigo, descricao: match.descricao, account: match.account, unit_price: ap.unit_price || match.valor_unitario });
+                rescued = true;
+              } else {
+                console.log(`[analyze-unified-order] Multiple candidates for ${nc}, not auto-picking. Moving to suggestions.`);
+              }
               break;
             }
           }
@@ -882,9 +887,12 @@ Responda SEMPRE usando a função identify_order_items.`;
     const validToolIds = new Set(tools.map((t: any) => t.id));
     const validServices = (result.services || []).filter((s: any) => validToolIds.has(s.userToolId));
 
-    // Validate suggestions
+    // Validate suggestions — also DEDUP: remove suggestions that are already in validProducts
+    const validProductIdSet = new Set(validProducts.map((vp: any) => vp.product_id));
     const validSuggestions = (result.suggestions || []).filter((s: any) => {
       if (s.type === 'product') {
+        // Remove if this product is already in the confirmed products list
+        if (s.product_id && s.product_id !== '' && validProductIdSet.has(s.product_id)) return false;
         if (s.product_id && s.product_id !== '') return validProductIds.has(s.product_id);
         return true;
       }

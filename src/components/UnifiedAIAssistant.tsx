@@ -600,9 +600,19 @@ export function UnifiedAIAssistant({ products, userTools, onItemsIdentified, onC
                         </div>
                         {item.notes && <p className="text-xs text-muted-foreground mt-1 italic">Obs: {item.notes}</p>}
                       </div>
-                      <span className="bg-primary/10 text-primary text-xs font-medium px-2 py-1 rounded">
-                        Qtd: {item.quantity}
-                      </span>
+                      <div className="flex items-center gap-1.5">
+                        <span className="bg-primary/10 text-primary text-xs font-medium px-2 py-1 rounded">
+                          Qtd: {item.quantity}
+                        </span>
+                        <Button
+                          size="sm"
+                          variant="ghost"
+                          className="h-6 w-6 p-0 text-muted-foreground hover:text-destructive"
+                          onClick={() => setIdentifiedProducts(prev => prev.filter((_, i) => i !== idx))}
+                        >
+                          <X className="w-3.5 h-3.5" />
+                        </Button>
+                      </div>
                     </div>
                   </div>
                 );
