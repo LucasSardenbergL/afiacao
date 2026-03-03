@@ -780,9 +780,12 @@ const UnifiedOrder = () => {
         ));
       } else {
         const account = (product.account || aiProd.account || 'oben') as ProductAccount;
+        // Use AI-provided customer price if available, otherwise fall back to standard pricing
+        const aiPrice = (aiProd as any).unit_price;
+        const unitPrice = (aiPrice && aiPrice > 0) ? aiPrice : getProductPrice(product as Product);
         newCartItems.push({
           type: 'product', product: product as Product,
-          quantity: aiProd.quantity, unit_price: getProductPrice(product as Product), account,
+          quantity: aiProd.quantity, unit_price: unitPrice, account,
         });
       }
     }

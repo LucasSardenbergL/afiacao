@@ -12,6 +12,7 @@ export interface AIProduct {
   descricao: string;
   quantity: number;
   account: 'oben' | 'colacor';
+  unit_price?: number;
   notes?: string;
 }
 
@@ -30,6 +31,7 @@ export interface AISuggestion {
   descricao: string;
   quantity?: number;
   account?: string;
+  unit_price?: number;
   reason: string;
   userToolId?: string;
   omie_codigo_servico?: number;
@@ -569,7 +571,11 @@ export function UnifiedAIAssistant({ products, userTools, onItemsIdentified, onC
                         <p className="font-medium text-sm truncate">{prod?.descricao || item.descricao || item.codigo}</p>
                         <div className="flex items-center gap-2 mt-0.5">
                           <Badge variant="outline" className="text-[10px]">{item.account === 'colacor' ? 'Colacor' : 'Oben'}</Badge>
-                          {prod && <span className="text-[10px] text-muted-foreground">{fmt(prod.valor_unitario)}/un</span>}
+                          {item.unit_price ? (
+                            <span className="text-[10px] text-muted-foreground">
+                              {fmt(item.unit_price)}/un <Badge variant="secondary" className="text-[9px] ml-1">Preço cliente</Badge>
+                            </span>
+                          ) : prod && <span className="text-[10px] text-muted-foreground">{fmt(prod.valor_unitario)}/un</span>}
                         </div>
                         {item.notes && <p className="text-xs text-muted-foreground mt-1 italic">Obs: {item.notes}</p>}
                       </div>
@@ -657,10 +663,14 @@ export function UnifiedAIAssistant({ products, userTools, onItemsIdentified, onC
                         <p className="text-xs text-amber-700 dark:text-amber-400 mt-1 italic">
                           💡 {sug.reason}
                         </p>
-                        {sug.type === 'product' && prod && (
+                        {sug.type === 'product' && (prod || sug.unit_price) && (
                           <div className="flex items-center gap-2 mt-1">
                             <Badge variant="outline" className="text-[10px]">{sug.account === 'colacor' ? 'Colacor' : 'Oben'}</Badge>
-                            <span className="text-[10px] text-muted-foreground">{fmt(prod.valor_unitario)}/un</span>
+                            {sug.unit_price ? (
+                              <span className="text-[10px] text-muted-foreground">
+                                {fmt(sug.unit_price)}/un <Badge variant="secondary" className="text-[9px] ml-1">Preço cliente</Badge>
+                              </span>
+                            ) : prod && <span className="text-[10px] text-muted-foreground">{fmt(prod.valor_unitario)}/un</span>}
                           </div>
                         )}
                         {sug.type === 'service' && sug.servico_descricao && (
