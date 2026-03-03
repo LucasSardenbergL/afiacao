@@ -722,16 +722,45 @@ const UnifiedOrder = () => {
 
   // ─── AI Customer handler ───
   const handleAICustomerSelect = useCallback(async (customer: AICustomerMatch) => {
-    // Build an OmieCustomer-like object and call selectCustomer
+    // If the AI matched a local user_id (from profiles), try to resolve via omie first
+    let codigoCliente = customer.codigo_cliente;
+    
+    // If no codigo_cliente but we have a user_id from profile match, try to find omie mapping
+    if (!codigoCliente && (customer as any).user_id) {
+      const { data: omieMapping } = await supabase
+        .from('omie_clientes')
+        .select('omie_codigo_cliente')
+        .eq('user_id', (customer as any).user_id)
+        .maybeSingle();
+      if (omieMapping?.omie_codigo_cliente) {
+        codigoCliente = omieMapping.omie_codigo_cliente;
+      }
+    }
+
+    // If still no codigo_cliente, search by document in Omie
+    if (!codigoCliente && customer.cnpj_cpf) {
+      try {
+        const { data: omieResult } = await supabase.functions.invoke('omie-vendas-sync', {
+          body: { action: 'buscar_cliente', document: customer.cnpj_cpf, account: 'oben' },
+        });
+        if (omieResult?.codigo_cliente) {
+          codigoCliente = omieResult.codigo_cliente;
+        }
+      } catch (e) {
+        console.error('Error resolving customer via omie:', e);
+      }
+    }
+
     const omieCustomer: OmieCustomer = {
-      codigo_cliente: customer.codigo_cliente,
+      codigo_cliente: codigoCliente || 0,
       razao_social: customer.razao_social,
       nome_fantasia: customer.nome_fantasia,
       cnpj_cpf: customer.cnpj_cpf,
       codigo_vendedor: null,
+      local_user_id: (customer as any).user_id || undefined,
     };
     await selectCustomer(omieCustomer);
-  }, []);
+  }, [selectCustomer]);
 
   // ─── Unified AI handler ───
   const handleUnifiedAIResult = useCallback((result: AIOrderResult) => {

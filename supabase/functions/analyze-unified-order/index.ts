@@ -95,6 +95,7 @@ serve(async (req) => {
               customerCandidates.push({
                 user_id: p.user_id,
                 nome: p.name,
+                nome_fantasia: p.name,
                 documento: p.document,
                 codigo_cliente: omieMap.get(p.user_id) || null,
               });
@@ -400,16 +401,17 @@ REGRAS DE BUSCA NO CATÁLOGO:
 12. Números e códigos parciais são válidos. "02 Thiner 4403" → quantidade=2, produto=Thiner 4403.
 13. Se o texto contém quantidade + nome (ex: "02 Thiner 4403"), interprete como: quantidade=2, produto=Thiner 4403.
 
-REGRAS DE EMBALAGEM → SUFIXO DO CÓDIGO DO PRODUTO (MUITO IMPORTANTE):
-14. Quando o pedido menciona "lata" ou "18 litros" ou "18L", o produto correto tem código terminando em "LT" (ex: "DR.4403LT").
-15. Quando menciona "quartinho" ou "900ml" ou "810ml" ou "900ML", o produto correto tem código terminando em "QT" (ex: "DR.4403QT").
-16. Quando menciona "balde" ou "20L" ou "20 litros", o produto correto tem código terminando em "BH" (ex: "DR.4403BH").
-17. Quando menciona "galão" ou "3,6L" ou "3.6L" ou "galao", o produto correto tem código terminando em "GL" (ex: "DR.4403GL").
-18. Quando menciona "5L" ou "5 litros" ou "cinco litros", o produto correto tem código terminando em "L5" (ex: "DR.4403L5").
-19. EXCEÇÃO ESPECIAL para produto 6269: quando menciona "balde" ou "18L" ou "18 litros" com produto 6269, o sufixo correto é "BD" (ex: "6269BD"). Para todos os outros produtos, "balde" e "18L" seguem as regras normais (LT para 18L, BH para balde).
-20. Use estas regras para selecionar a EMBALAGEM CORRETA do catálogo. Ex: "3 latas de catalisador FC6975" → busque por "FC6975" com sufixo "LT" → "FC6975LT".
-21. Ex: "5 baldes de FO56717" → busque por "FO56717" com sufixo "BH" → "FO56717BH".
-22. Ex: "2 baldes de 6269" → busque por "6269" com sufixo "BD" → "6269BD".
+REGRAS DE EMBALAGEM → SUFIXO DO CÓDIGO DO PRODUTO (MUITO IMPORTANTE - SIGA RIGOROSAMENTE):
+14. "lata" OU "18 litros" OU "18L" → sufixo "LT". Ex: "FC6975" + "18L" → "FC6975LT". "DR.4403" + "lata" → "DR.4403LT".
+15. "quartinho" OU "900ml" OU "810ml" → sufixo "QT". Ex: "DR.4403QT". ATENÇÃO: "QT" é APENAS para 900ml/810ml, NUNCA para 18L!
+16. "balde" OU "20L" OU "20 litros" → sufixo "BH". Ex: "DR.4403BH", "FO56717BH".
+17. "galão" OU "3,6L" OU "3.6L" → sufixo "GL". Ex: "DR.4403GL".
+18. "5L" OU "5 litros" → sufixo "L5". Ex: "DR.4403L5".
+19. EXCEÇÃO ÚNICA produto 6269: "balde" OU "18L" com 6269 → sufixo "BD" (ex: "6269BD"). Esta exceção se aplica SOMENTE ao 6269.
+20. RESUMO RÁPIDO: 18L/lata=LT | 900ml=QT | 20L/balde=BH | 3,6L=GL | 5L=L5 | 6269+balde/18L=BD
+21. Ex: "3 latas de catalisador FC6975" → "FC6975LT" (18L=LT). NÃO USE QT para 18L!
+22. Ex: "5 baldes de FO56717" → "FO56717BH" (balde=BH).
+23. Ex: "2 baldes de 6269" → "6269BD" (exceção 6269).
 ${searchCustomer ? `
 REGRAS DE IDENTIFICAÇÃO DE CLIENTE (CRÍTICAS):
 21. Você SÓ pode retornar clientes que existam na lista de CLIENTES ENCONTRADOS NA BASE acima.
@@ -503,10 +505,11 @@ Responda SEMPRE usando a função identify_order_items.`;
           razao_social: { type: "string", description: "Razão social do cliente" },
           cnpj_cpf: { type: "string", description: "CNPJ ou CPF do cliente" },
           cidade: { type: "string", description: "Cidade do cliente" },
-          codigo_cliente: { type: "number", description: "Código do cliente no Omie" },
+          codigo_cliente: { type: "number", description: "Código do cliente no Omie (use 0 se não disponível)" },
+          user_id: { type: "string", description: "user_id do cliente no sistema (se disponível na lista de candidatos)" },
           confidence: { type: "string", enum: ["high", "medium", "low"], description: "Nível de confiança na identificação" },
         },
-        required: ["nome_fantasia", "razao_social", "cnpj_cpf", "codigo_cliente", "confidence"],
+        required: ["nome_fantasia", "confidence"],
       };
       requiredFields.push("customer");
     }
@@ -634,27 +637,61 @@ Responda SEMPRE usando a função identify_order_items.`;
 
     // Validate customer - MUST exist in our candidate list
     let validCustomer = null;
-    if (searchCustomer && result.customer && result.customer.codigo_cliente) {
+    if (searchCustomer && result.customer) {
       // Check if this customer actually exists in our candidates
-      const customerExists = customerCandidates.some((c: any) => {
-        if (c.codigo_cliente && c.codigo_cliente === result.customer.codigo_cliente) return true;
-        if (c.user_id && result.customer.cnpj_cpf && c.documento === result.customer.cnpj_cpf) return true;
+      const matchedCandidate = customerCandidates.find((c: any) => {
+        // Match by codigo_cliente
+        if (c.codigo_cliente && result.customer.codigo_cliente && c.codigo_cliente === result.customer.codigo_cliente) return true;
+        // Match by document
+        if (c.documento && result.customer.cnpj_cpf) {
+          const cDoc = (c.documento || '').replace(/\D/g, '');
+          const rDoc = (result.customer.cnpj_cpf || '').replace(/\D/g, '');
+          if (cDoc && rDoc && cDoc === rDoc) return true;
+        }
+        // Match by user_id
+        if (c.user_id && result.customer.user_id && c.user_id === result.customer.user_id) return true;
+        // Match by name (fuzzy - for image-only mode where profiles don't have codigo_cliente)
+        const cName = (c.nome_fantasia || c.nome || '').toLowerCase().trim();
+        const rName = (result.customer.nome_fantasia || '').toLowerCase().trim();
+        if (cName && rName && cName.length > 3 && rName.length > 3) {
+          if (cName.includes(rName) || rName.includes(cName)) return true;
+          // Check if key words match
+          const rWords = rName.split(/\s+/).filter((w: string) => w.length > 3);
+          if (rWords.length > 0 && rWords.every((w: string) => cName.includes(w))) return true;
+        }
         return false;
       });
-      if (customerExists) {
-        validCustomer = result.customer;
-      } else {
-        console.log(`[analyze-unified-order] AI returned non-existent customer codigo_cliente=${result.customer.codigo_cliente}, discarding`);
-        // Try to find closest match from candidates
-        if (customerCandidates.length > 0) {
-          const best = customerCandidates[0];
+
+      if (matchedCandidate) {
+        validCustomer = {
+          nome_fantasia: result.customer.nome_fantasia || matchedCandidate.nome_fantasia || matchedCandidate.nome || "",
+          razao_social: result.customer.razao_social || matchedCandidate.razao_social || matchedCandidate.nome || "",
+          cnpj_cpf: matchedCandidate.cnpj_cpf || matchedCandidate.documento || result.customer.cnpj_cpf || "",
+          cidade: result.customer.cidade || matchedCandidate.cidade || "",
+          codigo_cliente: matchedCandidate.codigo_cliente || result.customer.codigo_cliente || 0,
+          confidence: result.customer.confidence || "medium",
+          user_id: matchedCandidate.user_id || null,
+        };
+      } else if (result.customer.nome_fantasia) {
+        console.log(`[analyze-unified-order] AI returned non-matched customer: ${result.customer.nome_fantasia}, trying broader name match`);
+        // Broader fuzzy matching
+        const aiName = (result.customer.nome_fantasia || '').toLowerCase();
+        const bestMatch = customerCandidates.find((c: any) => {
+          const name = (c.nome_fantasia || c.nome || '').toLowerCase();
+          return name && aiName && (
+            name.split(/\s+/).some((w: string) => w.length > 3 && aiName.includes(w)) ||
+            aiName.split(/\s+/).some((w: string) => w.length > 3 && name.includes(w))
+          );
+        });
+        if (bestMatch) {
           validCustomer = {
-            nome_fantasia: best.nome_fantasia || best.nome || "",
-            razao_social: best.razao_social || best.nome || "",
-            cnpj_cpf: best.cnpj_cpf || best.documento || "",
-            cidade: best.cidade || "",
-            codigo_cliente: best.codigo_cliente,
+            nome_fantasia: bestMatch.nome_fantasia || bestMatch.nome || "",
+            razao_social: bestMatch.razao_social || bestMatch.nome || "",
+            cnpj_cpf: bestMatch.cnpj_cpf || bestMatch.documento || "",
+            cidade: bestMatch.cidade || "",
+            codigo_cliente: bestMatch.codigo_cliente || 0,
             confidence: "low",
+            user_id: bestMatch.user_id || null,
           };
         }
       }
