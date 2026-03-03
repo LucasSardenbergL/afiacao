@@ -37,6 +37,7 @@ serve(async (req) => {
         status: 401, headers: { ...corsHeaders, "Content-Type": "application/json" },
       });
     }
+    const loggedInUserId = (data.claims as any).sub || "";
 
     const { text, imageBase64, imagesBase64, products, userTools, customerUserId, searchCustomer } = await req.json();
 
@@ -81,11 +82,11 @@ serve(async (req) => {
       if (allImages.length > 0 && nameTerms.length === 0) {
         console.log("[analyze-unified-order] Image-only mode: loading all profiles for customer matching");
         try {
+          // Load ALL profiles (including unapproved) — they are valid customers
           const { data: allProfiles } = await supabase
             .from("profiles")
             .select("user_id, name, document, email, phone")
-            .eq("is_approved", true)
-            .limit(500);
+            .limit(1000);
           if (allProfiles) {
             // Batch fetch omie mappings
             const userIds = allProfiles.map(p => p.user_id);
@@ -96,6 +97,8 @@ serve(async (req) => {
             const omieMap = new Map((omieMappings || []).map(m => [m.user_id, m.omie_codigo_cliente]));
 
             for (const p of allProfiles) {
+              // Exclude the logged-in user — they are the seller, not the customer
+              if (p.user_id === loggedInUserId) continue;
               candidateIds.add(p.user_id);
               customerCandidates.push({
                 user_id: p.user_id,
@@ -117,10 +120,10 @@ serve(async (req) => {
               .from("profiles")
               .select("user_id, name, document, email, phone")
               .or(`name.ilike.%${term}%`)
-              .eq("is_approved", true)
-              .limit(10);
+              .limit(20);
             if (profiles) {
               for (const p of profiles) {
+                if (p.user_id === loggedInUserId) continue; // exclude seller
                 if (!candidateIds.has(p.user_id)) {
                   candidateIds.add(p.user_id);
                   const { data: omieMapping } = await supabase
@@ -690,7 +693,29 @@ Responda SEMPRE usando a função identify_order_items.`;
         let rescued = false;
         const apCodigo = (ap.codigo || '').replace(/[.\-\s]/g, '').toLowerCase();
         const apDesc = (ap.descricao || '').toLowerCase();
+        const apDescStripped = apDesc.replace(/[.\-\s]/g, '');
         
+        // Extract ALL numeric sequences (4+ digits) from both codigo and descricao
+        const allNumericCodes = new Set<string>();
+        for (const src of [ap.codigo || '', ap.descricao || '']) {
+          const nums = src.match(/\d{3,}/g);
+          if (nums) nums.forEach((n: string) => allNumericCodes.add(n));
+          // Also extract last 4 digits from longer sequences (e.g., "56717" → "6717")
+          if (nums) {
+            for (const n of nums) {
+              if (n.length >= 5) allNumericCodes.add(n.slice(-4));
+            }
+          }
+        }
+
+        // Extract alpha prefix from codigo (e.g., "FO" from "FO5.6717BH")
+        const prefixFromCodigo = (ap.codigo || '').match(/^([A-Za-z]{2,3})/);
+        const alphaPrefix = prefixFromCodigo ? prefixFromCodigo[1].toUpperCase() : null;
+
+        // Extract suffix for packaging (BH, LT, QT, GL, L5, BD)
+        const suffixMatch = (ap.codigo || '' + ' ' + ap.descricao || '').match(/(BH|LT|QT|GL|L5|BD)\b/i);
+        const packSuffix = suffixMatch ? suffixMatch[1].toUpperCase() : null;
+
         // 1. Exact codigo match (stripped)
         if (apCodigo) {
           const match = prodList.find((p: any) => {
@@ -705,39 +730,83 @@ Responda SEMPRE usando a função identify_order_items.`;
           }
         }
         
-        // 2. Extract numeric codes from descricao and search
-        if (!rescued && apDesc) {
-          const numericCodes = apDesc.match(/\d{4,}/g);
-          if (numericCodes) {
-            for (const nc of numericCodes) {
-              const match = prodList.find((p: any) => p.descricao.toLowerCase().includes(nc));
-              if (match) {
-                // Also check if prefix matches (FC, FO, DR, etc.)
-                const prefixMatch = apDesc.match(/([a-z]{2})\s*\.?\s*\d/i);
-                if (prefixMatch) {
-                  const prefix = prefixMatch[1].toUpperCase();
-                  const betterMatch = prodList.find((p: any) => 
-                    p.descricao.toUpperCase().includes(prefix) && p.descricao.includes(nc)
-                  );
-                  if (betterMatch) {
-                    console.log(`[analyze-unified-order] Rescued by prefix+numeric: ${ap.descricao} → ${betterMatch.descricao} (${betterMatch.id})`);
-                    validProducts.push({ ...ap, product_id: betterMatch.id, codigo: betterMatch.codigo, descricao: betterMatch.descricao, account: betterMatch.account, unit_price: ap.unit_price || betterMatch.valor_unitario });
-                    rescued = true;
-                    break;
-                  }
-                }
-                if (!rescued) {
-                  console.log(`[analyze-unified-order] Rescued by numeric: ${ap.descricao} → ${match.descricao} (${match.id})`);
-                  validProducts.push({ ...ap, product_id: match.id, codigo: match.codigo, descricao: match.descricao, account: match.account, unit_price: ap.unit_price || match.valor_unitario });
-                  rescued = true;
-                  break;
-                }
+        // 2. Search by numeric code + prefix + suffix (most precise)
+        if (!rescued && allNumericCodes.size > 0) {
+          for (const nc of allNumericCodes) {
+            // Find all products containing this numeric code
+            const candidates = prodList.filter((p: any) => p.descricao.includes(nc));
+            if (candidates.length === 0) continue;
+            
+            // If we have prefix and suffix, find best match
+            if (alphaPrefix && packSuffix) {
+              const bestMatch = candidates.find((p: any) => {
+                const desc = p.descricao.toUpperCase();
+                return desc.includes(alphaPrefix) && desc.includes(packSuffix);
+              });
+              if (bestMatch) {
+                console.log(`[analyze-unified-order] Rescued by prefix+numeric+suffix: ${ap.codigo}/${ap.descricao} → ${bestMatch.descricao}`);
+                validProducts.push({ ...ap, product_id: bestMatch.id, codigo: bestMatch.codigo, descricao: bestMatch.descricao, account: bestMatch.account, unit_price: ap.unit_price || bestMatch.valor_unitario });
+                rescued = true;
+                break;
               }
+            }
+            // Try prefix only
+            if (!rescued && alphaPrefix) {
+              const prefixMatch = candidates.find((p: any) => p.descricao.toUpperCase().includes(alphaPrefix));
+              if (prefixMatch) {
+                console.log(`[analyze-unified-order] Rescued by prefix+numeric: ${ap.codigo}/${ap.descricao} → ${prefixMatch.descricao}`);
+                validProducts.push({ ...ap, product_id: prefixMatch.id, codigo: prefixMatch.codigo, descricao: prefixMatch.descricao, account: prefixMatch.account, unit_price: ap.unit_price || prefixMatch.valor_unitario });
+                rescued = true;
+                break;
+              }
+            }
+            // Try suffix only
+            if (!rescued && packSuffix) {
+              const suffMatch = candidates.find((p: any) => p.descricao.toUpperCase().includes(packSuffix));
+              if (suffMatch) {
+                console.log(`[analyze-unified-order] Rescued by numeric+suffix: ${ap.codigo}/${ap.descricao} → ${suffMatch.descricao}`);
+                validProducts.push({ ...ap, product_id: suffMatch.id, codigo: suffMatch.codigo, descricao: suffMatch.descricao, account: suffMatch.account, unit_price: ap.unit_price || suffMatch.valor_unitario });
+                rescued = true;
+                break;
+              }
+            }
+            // Fallback: first candidate with numeric match
+            if (!rescued) {
+              const match = candidates[0];
+              console.log(`[analyze-unified-order] Rescued by numeric: ${ap.codigo}/${ap.descricao} → ${match.descricao}`);
+              validProducts.push({ ...ap, product_id: match.id, codigo: match.codigo, descricao: match.descricao, account: match.account, unit_price: ap.unit_price || match.valor_unitario });
+              rescued = true;
+              break;
             }
           }
         }
         
-        // 3. If still not rescued, move to suggestions
+        // 3. Last resort: query DB directly for numeric codes not in prodList
+        if (!rescued && allNumericCodes.size > 0) {
+          for (const nc of allNumericCodes) {
+            try {
+              let query = supabase
+                .from("omie_products")
+                .select("id, codigo, descricao, account, valor_unitario, estoque")
+                .eq("ativo", true)
+                .ilike("descricao", `%${nc}%`);
+              if (packSuffix) query = query.ilike("descricao", `%${packSuffix}%`);
+              if (alphaPrefix) query = query.ilike("descricao", `%${alphaPrefix}%`);
+              const { data: dbRescue } = await query.limit(5);
+              if (dbRescue && dbRescue.length > 0) {
+                const best = dbRescue[0];
+                console.log(`[analyze-unified-order] Rescued from DB: ${ap.codigo}/${ap.descricao} → ${best.descricao}`);
+                validProducts.push({ ...ap, product_id: best.id, codigo: best.codigo, descricao: best.descricao, account: best.account, unit_price: ap.unit_price || best.valor_unitario });
+                rescued = true;
+                break;
+              }
+            } catch (e) {
+              console.error(`DB rescue error for ${nc}:`, e);
+            }
+          }
+        }
+
+        // 4. If still not rescued, move to suggestions
         if (!rescued) {
           console.log(`[analyze-unified-order] Could not rescue product, moving to suggestions: ${ap.descricao}`);
           result.suggestions = result.suggestions || [];
