@@ -249,54 +249,53 @@ serve(async (req) => {
         } catch (e) {
           console.error(`Error searching products for term "${term}":`, e);
         }
-      }
-      }
 
-      // Fuzzy product code search - strip dots/dashes and search by numeric part
-      // Handles cases like "FO56717" matching "FO05.6717"
-      const numericPart = term.replace(/[^0-9]/g, '');
-      if (numericPart.length >= 4 && !prodIds.has(term)) {
+        // Fuzzy product code search - strip dots/dashes and search by numeric part
+        // Handles cases like "FO56717" matching "FO05.6717"
         try {
-          const { data: dbProducts } = await supabase
-            .from("omie_products")
-            .select("id, codigo, descricao, account, valor_unitario, estoque")
-            .eq("ativo", true)
-            .ilike("codigo", `%${numericPart}%`)
-            .limit(30);
-          if (dbProducts) {
-            for (const p of dbProducts) {
-              if (!prodIds.has(p.id)) {
-                prodList.push(p);
-                prodIds.add(p.id);
+          const numericPart = term.replace(/[^0-9]/g, '');
+          if (numericPart.length >= 4) {
+            const { data: fuzzyProducts } = await supabase
+              .from("omie_products")
+              .select("id, codigo, descricao, account, valor_unitario, estoque")
+              .eq("ativo", true)
+              .ilike("codigo", `%${numericPart}%`)
+              .limit(30);
+            if (fuzzyProducts) {
+              for (const p of fuzzyProducts) {
+                if (!prodIds.has(p.id)) {
+                  prodList.push(p);
+                  prodIds.add(p.id);
+                }
               }
             }
           }
         } catch (e) {
-          console.error(`Error fuzzy code search for "${numericPart}":`, e);
+          console.error(`Error fuzzy code search:`, e);
         }
-      }
 
-      // Also try alphanumeric-stripped version (e.g., "FO56717" → search without dots)
-      const stripped = term.replace(/[.\-\s]/g, '');
-      if (stripped.length >= 4) {
+        // Also try alphanumeric-stripped version (e.g., "FO56717" → search without dots)
         try {
-          // Find products whose code, when stripped of dots/dashes, contains the search
-          const { data: dbProducts } = await supabase
-            .from("omie_products")
-            .select("id, codigo, descricao, account, valor_unitario, estoque")
-            .eq("ativo", true)
-            .or(`descricao.ilike.%${stripped}%,codigo.ilike.%${stripped}%`)
-            .limit(20);
-          if (dbProducts) {
-            for (const p of dbProducts) {
-              if (!prodIds.has(p.id)) {
-                prodList.push(p);
-                prodIds.add(p.id);
+          const stripped = term.replace(/[.\-\s]/g, '');
+          if (stripped.length >= 4) {
+            const { data: strippedProducts } = await supabase
+              .from("omie_products")
+              .select("id, codigo, descricao, account, valor_unitario, estoque")
+              .eq("ativo", true)
+              .or(`descricao.ilike.%${stripped}%,codigo.ilike.%${stripped}%`)
+              .limit(20);
+            if (strippedProducts) {
+              for (const p of strippedProducts) {
+                if (!prodIds.has(p.id)) {
+                  prodList.push(p);
+                  prodIds.add(p.id);
+                }
               }
             }
           }
         } catch (e) {}
       }
+    }
 
     // Broad search for common product categories
     const broadTerms = ["thinner", "thiner", "cola", "lixa", "disco", "serra", "broca", "fresa", "lamina"];
