@@ -1,5 +1,5 @@
 import { useState, useRef, useCallback, useEffect } from 'react';
-import { Mic, Send, Loader2, Sparkles, X, Square, Camera, Package, Wrench, Image, Check, Lightbulb, Plus, Paperclip, FileAudio } from 'lucide-react';
+import { Mic, Send, Loader2, Sparkles, X, Square, Camera, Package, Wrench, Image, Check, Lightbulb, Plus, Paperclip, FileAudio, User, MapPin } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { cn } from '@/lib/utils';
@@ -36,10 +36,20 @@ export interface AISuggestion {
   servico_descricao?: string;
 }
 
+export interface AICustomerMatch {
+  nome_fantasia: string;
+  razao_social: string;
+  cnpj_cpf: string;
+  cidade?: string;
+  codigo_cliente: number;
+  confidence: 'high' | 'medium' | 'low';
+}
+
 export interface AIOrderResult {
   products: AIProduct[];
   services: AIService[];
   suggestions?: AISuggestion[];
+  customer?: AICustomerMatch | null;
 }
 
 interface Product {
@@ -69,13 +79,15 @@ interface UnifiedAIAssistantProps {
   products: Product[];
   userTools: UserTool[];
   onItemsIdentified: (result: AIOrderResult) => void;
+  onCustomerIdentified?: (customer: AICustomerMatch) => void;
   customerUserId?: string | null;
+  hasCustomerSelected?: boolean;
   isLoading?: boolean;
 }
 
 const fmt = (v: number) => v.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' });
 
-export function UnifiedAIAssistant({ products, userTools, onItemsIdentified, customerUserId, isLoading = false }: UnifiedAIAssistantProps) {
+export function UnifiedAIAssistant({ products, userTools, onItemsIdentified, onCustomerIdentified, customerUserId, hasCustomerSelected = false, isLoading = false }: UnifiedAIAssistantProps) {
   const { toast } = useToast();
   const [text, setText] = useState('');
   const [isRecording, setIsRecording] = useState(false);
@@ -85,6 +97,7 @@ export function UnifiedAIAssistant({ products, userTools, onItemsIdentified, cus
   const [identifiedProducts, setIdentifiedProducts] = useState<AIProduct[]>([]);
   const [identifiedServices, setIdentifiedServices] = useState<AIService[]>([]);
   const [suggestions, setSuggestions] = useState<AISuggestion[]>([]);
+  const [identifiedCustomer, setIdentifiedCustomer] = useState<AICustomerMatch | null>(null);
   const [recordingDuration, setRecordingDuration] = useState(0);
   const [images, setImages] = useState<ImageAttachment[]>([]);
 
@@ -256,6 +269,7 @@ export function UnifiedAIAssistant({ products, userTools, onItemsIdentified, cus
     setIdentifiedProducts([]);
     setIdentifiedServices([]);
     setSuggestions([]);
+    setIdentifiedCustomer(null);
 
     try {
       const { data: { session } } = await supabase.auth.getSession();
@@ -272,6 +286,7 @@ export function UnifiedAIAssistant({ products, userTools, onItemsIdentified, cus
           imageBase64: images.length === 1 ? images[0].base64 : undefined,
           imagesBase64: images.length > 1 ? images.map(img => img.base64) : undefined,
           customerUserId: customerUserId || undefined,
+          searchCustomer: !hasCustomerSelected,
           products: products.map(p => ({
             id: p.id, codigo: p.codigo, descricao: p.descricao,
             valor_unitario: p.valor_unitario, estoque: p.estoque, account: p.account || 'oben',
@@ -289,11 +304,13 @@ export function UnifiedAIAssistant({ products, userTools, onItemsIdentified, cus
       const prods = result.products || [];
       const svcs = result.services || [];
       const sugs = result.suggestions || [];
+      const cust = result.customer || null;
 
-      if (prods.length > 0 || svcs.length > 0 || sugs.length > 0) {
+      if (prods.length > 0 || svcs.length > 0 || sugs.length > 0 || cust) {
         setIdentifiedProducts(prods);
         setIdentifiedServices(svcs);
         setSuggestions(sugs);
+        setIdentifiedCustomer(cust);
         setAiMessage(result.message || `Encontrei ${prods.length} produto(s) e ${svcs.length} serviço(s).`);
       } else {
         setAiMessage(result.message || 'Não consegui identificar itens. Tente ser mais específico.');
@@ -312,9 +329,18 @@ export function UnifiedAIAssistant({ products, userTools, onItemsIdentified, cus
     setIdentifiedProducts([]);
     setIdentifiedServices([]);
     setSuggestions([]);
+    setIdentifiedCustomer(null);
     clearImages();
     const total = identifiedProducts.length + identifiedServices.length;
     toast({ title: 'Itens adicionados!', description: `${total} item(ns) adicionado(s) ao pedido.` });
+  };
+
+  const confirmCustomer = () => {
+    if (identifiedCustomer && onCustomerIdentified) {
+      onCustomerIdentified(identifiedCustomer);
+      setIdentifiedCustomer(null);
+      toast({ title: 'Cliente selecionado!', description: identifiedCustomer.nome_fantasia || identifiedCustomer.razao_social });
+    }
   };
 
   const acceptSuggestion = (suggestion: AISuggestion) => {
@@ -346,6 +372,7 @@ export function UnifiedAIAssistant({ products, userTools, onItemsIdentified, cus
     setIdentifiedProducts([]);
     setIdentifiedServices([]);
     setSuggestions([]);
+    setIdentifiedCustomer(null);
   };
 
   const isProcessing = isRecording || isTranscribing || isAnalyzing || isLoading;
@@ -362,7 +389,9 @@ export function UnifiedAIAssistant({ products, userTools, onItemsIdentified, cus
       </div>
 
       <p className="text-sm text-muted-foreground">
-        Diga, digite, tire fotos ou anexe áudios — a IA identifica produtos e serviços automaticamente.
+        {hasCustomerSelected
+          ? 'Diga, digite, tire fotos ou anexe áudios — a IA identifica produtos e serviços automaticamente.'
+          : 'Diga o nome do cliente, produtos e serviços — a IA identifica tudo automaticamente por voz, texto ou foto.'}
       </p>
 
       {/* Image previews */}
@@ -392,7 +421,10 @@ export function UnifiedAIAssistant({ products, userTools, onItemsIdentified, cus
         <textarea
           value={text}
           onChange={e => setText(e.target.value)}
-          placeholder="Ex: 10 discos de corte 7 polegadas, afiar as serras circulares..."
+          placeholder={hasCustomerSelected
+            ? "Ex: 10 discos de corte 7 polegadas, afiar as serras circulares..."
+            : "Ex: Pedido do cliente Metalúrgica São Paulo, de Curitiba. 10 discos de corte 7pol..."
+          }
           className={cn(
             "w-full min-h-[80px] p-3 pr-28 rounded-lg border bg-background text-sm resize-none",
             "focus:outline-none focus:ring-2 focus:ring-ring",
@@ -463,7 +495,7 @@ export function UnifiedAIAssistant({ products, userTools, onItemsIdentified, cus
         {isAnalyzing ? (
           <><Loader2 className="w-4 h-4 mr-2 animate-spin" />Analisando...</>
         ) : (
-          <><Sparkles className="w-4 h-4 mr-2" />Identificar Itens do Pedido</>
+          <><Sparkles className="w-4 h-4 mr-2" />{hasCustomerSelected ? 'Identificar Itens do Pedido' : 'Identificar Cliente e Itens'}</>
         )}
       </Button>
 
@@ -481,6 +513,43 @@ export function UnifiedAIAssistant({ products, userTools, onItemsIdentified, cus
           </div>
 
           <p className="text-sm text-foreground">{aiMessage}</p>
+
+          {/* Customer identified */}
+          {identifiedCustomer && !hasCustomerSelected && (
+            <div className="space-y-1.5">
+              <p className="text-xs font-medium text-muted-foreground flex items-center gap-1.5">
+                <User className="w-3.5 h-3.5" /> Cliente Identificado
+              </p>
+              <div className="bg-background rounded-lg p-3 border border-border">
+                <div className="flex justify-between items-start">
+                  <div className="flex-1 min-w-0">
+                    <p className="font-medium text-sm">{identifiedCustomer.nome_fantasia || identifiedCustomer.razao_social}</p>
+                    {identifiedCustomer.nome_fantasia && identifiedCustomer.razao_social && identifiedCustomer.nome_fantasia !== identifiedCustomer.razao_social && (
+                      <p className="text-xs text-muted-foreground">{identifiedCustomer.razao_social}</p>
+                    )}
+                    <div className="flex items-center gap-2 mt-0.5">
+                      <span className="text-xs text-muted-foreground">{identifiedCustomer.cnpj_cpf}</span>
+                      {identifiedCustomer.cidade && (
+                        <span className="text-xs text-muted-foreground flex items-center gap-0.5">
+                          <MapPin className="w-3 h-3" />{identifiedCustomer.cidade}
+                        </span>
+                      )}
+                    </div>
+                    <Badge
+                      variant={identifiedCustomer.confidence === 'high' ? 'default' : 'outline'}
+                      className="text-[10px] mt-1"
+                    >
+                      {identifiedCustomer.confidence === 'high' ? 'Alta confiança' : identifiedCustomer.confidence === 'medium' ? 'Confiança média' : 'Baixa confiança'}
+                    </Badge>
+                  </div>
+                  <Button size="sm" onClick={confirmCustomer} className="flex-shrink-0">
+                    <Check className="w-3 h-3 mr-1" />
+                    Selecionar
+                  </Button>
+                </div>
+              </div>
+            </div>
+          )}
 
           {/* Products */}
           {identifiedProducts.length > 0 && (
@@ -537,11 +606,17 @@ export function UnifiedAIAssistant({ products, userTools, onItemsIdentified, cus
             </div>
           )}
 
-          {(identifiedProducts.length > 0 || identifiedServices.length > 0) && (
+          {(identifiedProducts.length > 0 || identifiedServices.length > 0) && hasCustomerSelected && (
             <Button onClick={confirmItems} className="w-full" disabled={isLoading}>
               <Check className="w-4 h-4 mr-2" />
               Adicionar {identifiedProducts.length + identifiedServices.length} item(ns) ao Pedido
             </Button>
+          )}
+
+          {(identifiedProducts.length > 0 || identifiedServices.length > 0) && !hasCustomerSelected && (
+            <p className="text-xs text-amber-600 bg-amber-50 dark:bg-amber-950/20 p-2 rounded">
+              ⚠️ Selecione o cliente acima primeiro para adicionar os itens ao pedido.
+            </p>
           )}
 
           {/* Suggestions */}
@@ -583,15 +658,17 @@ export function UnifiedAIAssistant({ products, userTools, onItemsIdentified, cus
                           <p className="text-xs text-muted-foreground mt-0.5">Serviço: {sug.servico_descricao}</p>
                         )}
                       </div>
-                      <Button
-                        size="sm"
-                        variant="outline"
-                        className="flex-shrink-0 text-xs border-amber-300 hover:bg-amber-100 dark:hover:bg-amber-900/30"
-                        onClick={() => acceptSuggestion(sug)}
-                      >
-                        <Plus className="w-3 h-3 mr-1" />
-                        Adicionar
-                      </Button>
+                      {hasCustomerSelected && (
+                        <Button
+                          size="sm"
+                          variant="outline"
+                          className="flex-shrink-0 text-xs border-amber-300 hover:bg-amber-100 dark:hover:bg-amber-900/30"
+                          onClick={() => acceptSuggestion(sug)}
+                        >
+                          <Plus className="w-3 h-3 mr-1" />
+                          Adicionar
+                        </Button>
+                      )}
                     </div>
                   </div>
                 );
@@ -602,7 +679,7 @@ export function UnifiedAIAssistant({ products, userTools, onItemsIdentified, cus
       )}
 
       <p className="text-xs text-muted-foreground text-center">
-        🎙️ Voz &nbsp;·&nbsp; ⌨️ Texto &nbsp;·&nbsp; 📷 Fotos &nbsp;·&nbsp; 📎 Áudio — funciona em todos os navegadores
+        🎙️ Voz &nbsp;·&nbsp; ⌨️ Texto &nbsp;·&nbsp; 📷 Fotos &nbsp;·&nbsp; 📎 Áudio — identifica cliente, produtos e serviços
       </p>
     </div>
   );

@@ -14,7 +14,7 @@ import { AddToolDialog } from '@/components/AddToolDialog';
 import { PhotoUpload } from '@/components/PhotoUpload';
 import { VoiceServiceInput, IdentifiedItem } from '@/components/VoiceServiceInput';
 import { ToolImageIdentifier } from '@/components/ToolImageIdentifier';
-import { UnifiedAIAssistant, AIOrderResult } from '@/components/UnifiedAIAssistant';
+import { UnifiedAIAssistant, AIOrderResult, AICustomerMatch } from '@/components/UnifiedAIAssistant';
 import { supabase } from '@/integrations/supabase/client';
 import { useAuth } from '@/contexts/AuthContext';
 import { useToast } from '@/hooks/use-toast';
@@ -720,6 +720,19 @@ const UnifiedOrder = () => {
     }
   };
 
+  // ─── AI Customer handler ───
+  const handleAICustomerSelect = useCallback(async (customer: AICustomerMatch) => {
+    // Build an OmieCustomer-like object and call selectCustomer
+    const omieCustomer: OmieCustomer = {
+      codigo_cliente: customer.codigo_cliente,
+      razao_social: customer.razao_social,
+      nome_fantasia: customer.nome_fantasia,
+      cnpj_cpf: customer.cnpj_cpf,
+      codigo_vendedor: null,
+    };
+    await selectCustomer(omieCustomer);
+  }, []);
+
   // ─── Unified AI handler ───
   const handleUnifiedAIResult = useCallback((result: AIOrderResult) => {
     const newCartItems: CartItem[] = [];
@@ -1180,6 +1193,17 @@ const UnifiedOrder = () => {
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
         {/* Left: Main flow */}
         <div className="lg:col-span-2 space-y-4">
+          {/* Unified AI Assistant - always visible, before customer selection */}
+          <UnifiedAIAssistant
+            products={[...obenProducts, ...colacorProducts] as any}
+            userTools={userTools}
+            onItemsIdentified={handleUnifiedAIResult}
+            onCustomerIdentified={handleAICustomerSelect}
+            customerUserId={customerUserId}
+            hasCustomerSelected={!!selectedCustomer}
+            isLoading={submitting}
+          />
+
           {/* 1. Customer */}
           <Card>
             <CardHeader className="pb-2">
@@ -1263,16 +1287,8 @@ const UnifiedOrder = () => {
             </CardContent>
           </Card>
 
-          {/* Unified AI Assistant (handles text, voice, and image - products + services) */}
-          {selectedCustomer && (
-            <UnifiedAIAssistant
-              products={[...obenProducts, ...colacorProducts] as any}
-              userTools={userTools}
-              onItemsIdentified={handleUnifiedAIResult}
-              customerUserId={customerUserId}
-              isLoading={submitting}
-            />
-          )}
+
+
 
           {/* 2. Tabbed catalog: Oben / Colacor / Afiação */}
           {selectedCustomer && (

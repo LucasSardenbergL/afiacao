@@ -33,7 +33,7 @@ serve(async (req) => {
       });
     }
 
-    const { text, imageBase64, imagesBase64, products, userTools, customerUserId } = await req.json();
+    const { text, imageBase64, imagesBase64, products, userTools, customerUserId, searchCustomer } = await req.json();
 
     // Support single image (imageBase64) or multiple images (imagesBase64)
     const allImages: string[] = [];
@@ -55,6 +55,111 @@ serve(async (req) => {
     const supabaseKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
     const supabase = createClient(supabaseUrl, supabaseKey);
 
+    // ─── Customer search ───
+    let customerSection = "";
+    let customerCandidates: any[] = [];
+
+    if (searchCustomer && (text || allImages.length > 0)) {
+      // Extract potential customer names/cities from text
+      const searchText = text || "";
+      
+      // Search profiles by name fragments (at least 3 chars)
+      const nameTerms = searchText
+        .split(/[\s,;]+/)
+        .map((t: string) => t.trim())
+        .filter((t: string) => t.length >= 3);
+
+      const candidateIds = new Set<string>();
+
+      // Search in profiles for name matches
+      for (const term of nameTerms.slice(0, 5)) {
+        try {
+          const { data: profiles } = await supabase
+            .from("profiles")
+            .select("user_id, name, document, email, phone")
+            .or(`name.ilike.%${term}%`)
+            .eq("is_approved", true)
+            .limit(10);
+          if (profiles) {
+            for (const p of profiles) {
+              if (!candidateIds.has(p.user_id)) {
+                candidateIds.add(p.user_id);
+                // Fetch omie mapping for this user
+                const { data: omieMapping } = await supabase
+                  .from("omie_clientes")
+                  .select("omie_codigo_cliente")
+                  .eq("user_id", p.user_id)
+                  .limit(1)
+                  .maybeSingle();
+                customerCandidates.push({
+                  user_id: p.user_id,
+                  nome: p.name,
+                  documento: p.document,
+                  codigo_cliente: omieMapping?.omie_codigo_cliente || null,
+                });
+              }
+            }
+          }
+        } catch (e) {
+          console.error(`Error searching profiles for "${term}":`, e);
+        }
+      }
+
+      // Also try Omie API search for broader matching (nome_fantasia/razao_social)
+      // We search Omie directly for terms >= 3 chars
+      const omieSearchTerms = nameTerms.filter((t: string) => t.length >= 3).slice(0, 3);
+      for (const term of omieSearchTerms) {
+        try {
+          const OMIE_APP_KEY = Deno.env.get("OMIE_VENDAS_APP_KEY");
+          const OMIE_APP_SECRET = Deno.env.get("OMIE_VENDAS_APP_SECRET");
+          if (OMIE_APP_KEY && OMIE_APP_SECRET) {
+            const omieRes = await fetch("https://app.omie.com.br/api/v1/geral/clientes/", {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({
+                call: "ListarClientes",
+                app_key: OMIE_APP_KEY,
+                app_secret: OMIE_APP_SECRET,
+                param: [{ pagina: 1, registros_por_pagina: 10, clientesFiltro: { nome_fantasia: term } }],
+              }),
+            });
+            if (omieRes.ok) {
+              const omieData = await omieRes.json();
+              if (omieData.clientes_cadastro) {
+                for (const c of omieData.clientes_cadastro) {
+                  const key = `omie_${c.codigo_cliente_omie}`;
+                  if (!candidateIds.has(key)) {
+                    candidateIds.add(key);
+                    customerCandidates.push({
+                      nome_fantasia: c.nome_fantasia || "",
+                      razao_social: c.razao_social || "",
+                      cnpj_cpf: c.cnpj_cpf || "",
+                      cidade: c.cidade || "",
+                      estado: c.estado || "",
+                      codigo_cliente: c.codigo_cliente_omie,
+                    });
+                  }
+                }
+              }
+            }
+          }
+        } catch (e) {
+          console.error(`Omie customer search error for "${term}":`, e);
+        }
+      }
+
+      if (customerCandidates.length > 0) {
+        customerSection = "\n\nCLIENTES ENCONTRADOS NA BASE (para identificação):\n" +
+          customerCandidates.map((c: any, i: number) => {
+            if (c.nome_fantasia !== undefined) {
+              return `- [${i}] NomeFantasia:${c.nome_fantasia} | RazãoSocial:${c.razao_social} | CNPJ/CPF:${c.cnpj_cpf} | Cidade:${c.cidade || 'N/A'} | Estado:${c.estado || 'N/A'} | CódigoCliente:${c.codigo_cliente}`;
+            }
+            return `- [${i}] Nome:${c.nome} | Documento:${c.documento || 'N/A'} | CódigoCliente:${c.codigo_cliente || 'N/A'}`;
+          }).join("\n");
+      }
+    }
+
+    // ─── Products & Services ───
     // Fetch services
     const { data: servicos } = await supabase
       .from("omie_servicos")
@@ -63,13 +168,11 @@ serve(async (req) => {
 
     const servicosLista = (servicos || []).map(s => `- CódigoServiço:${s.omie_codigo_servico} | ${s.descricao}`).join("\n");
 
-    // Build product list: for image-only requests, fetch ALL active products since we can't pre-filter
-    // For text requests, start with client-provided and augment with server-side search
+    // Build product list
     let prodList: any[] = [];
     const prodIds = new Set<string>();
 
     if (allImages.length > 0 && !text) {
-      // Image-only: fetch all products from DB to maximize matching
       const { data: allProducts } = await supabase
         .from("omie_products")
         .select("id, codigo, descricao, account, valor_unitario, estoque")
@@ -85,14 +188,13 @@ serve(async (req) => {
       for (const p of prodList) prodIds.add(p.id);
     }
 
-    // Extract search terms from text input to find relevant products in DB
+    // Extract search terms from text input
     const searchText = text || "";
     const searchTerms = searchText
       .split(/[\s,;]+/)
       .map((t: string) => t.trim())
       .filter((t: string) => t.length >= 3);
 
-    // Always search DB for products matching any meaningful terms
     if (searchTerms.length > 0) {
       for (const term of searchTerms.slice(0, 5)) {
         try {
@@ -116,7 +218,7 @@ serve(async (req) => {
       }
     }
 
-    // Also do a broad search for common product categories to ensure coverage
+    // Broad search for common product categories
     const broadTerms = ["thinner", "thiner", "cola", "lixa", "disco", "serra", "broca", "fresa", "lamina"];
     const inputLower = searchText.toLowerCase();
     for (const bt of broadTerms) {
@@ -142,7 +244,7 @@ serve(async (req) => {
       }
     }
 
-    console.log(`[analyze-unified-order] Total products in context: ${prodList.length} (searched terms: ${searchTerms.join(', ')})`);
+    console.log(`[analyze-unified-order] Total products: ${prodList.length}, customer candidates: ${customerCandidates.length}, searchCustomer: ${searchCustomer}`);
 
     const produtosLista = prodList.map((p: any) =>
       `- ID:${p.id} | Código:${p.codigo} | ${p.descricao} | Conta:${p.account || 'oben'} | Preço:${p.valor_unitario} | Estoque:${p.estoque ?? 0}`
@@ -157,11 +259,10 @@ serve(async (req) => {
         }).join("\n")
       : "Nenhuma ferramenta cadastrada";
 
-    // Fetch customer purchase history for context
+    // Fetch customer purchase history
     let historicoCompras = "";
     if (customerUserId) {
       try {
-        // Get recent sales orders with items for this customer
         const { data: recentItems } = await supabase
           .from("order_items")
           .select("product_id, quantity, unit_price, omie_products(descricao, codigo, account)")
@@ -169,7 +270,6 @@ serve(async (req) => {
           .order("created_at", { ascending: false })
           .limit(50);
 
-        // Get recent sharpening orders
         const { data: recentOrders } = await supabase
           .from("orders")
           .select("items, service_type, created_at")
@@ -178,7 +278,6 @@ serve(async (req) => {
           .limit(20);
 
         if (recentItems && recentItems.length > 0) {
-          // Aggregate by product
           const productCounts: Record<string, { descricao: string; codigo: string; account: string; totalQty: number; count: number }> = {};
           for (const item of recentItems) {
             const prod = item.omie_products as any;
@@ -214,10 +313,21 @@ serve(async (req) => {
       }
     }
 
+    // ─── Build system prompt ───
+    const customerIdentificationBlock = searchCustomer ? `
+IDENTIFICAÇÃO DE CLIENTE:
+Além de identificar produtos e serviços, você TAMBÉM deve identificar o CLIENTE mencionado no texto/áudio.
+O vendedor pode mencionar o cliente pelo nome fantasia, razão social, ou cidade.
+Use a lista de clientes abaixo para encontrar a melhor correspondência.
+Se a pessoa mencionar a cidade, use isso para desambiguar entre clientes com nomes similares.
+${customerSection || "\nNenhum cliente encontrado na base para os termos buscados."}
+` : "";
+
     const systemPrompt = `Você é um assistente de pedidos para uma empresa que vende produtos industriais (serras, discos, lâminas, brocas, fresas, lixas, thinner, tintas, colas, abrasivos, EPIs, e QUALQUER outro produto do catálogo) e também presta serviços de afiação.
 O vendedor pode pedir PRODUTOS (Oben ou Colacor) e/ou SERVIÇOS DE AFIAÇÃO.
-
+${customerIdentificationBlock}
 Sua tarefa: analisar o pedido (texto ou imagem) e identificar:
+${searchCustomer ? "0. O CLIENTE mencionado (se houver)" : ""}
 1. PRODUTOS do catálogo que o cliente quer comprar, com quantidades
 2. FERRAMENTAS DO CLIENTE que precisam de SERVIÇO DE AFIAÇÃO
 3. SUGESTÕES quando não encontrar correspondência exata
@@ -256,7 +366,13 @@ REGRAS DE BUSCA NO CATÁLOGO:
 11. Ao buscar um produto, procure o termo EM QUALQUER PARTE da descrição. Ex: "4403" casa com "THINNER DR.4403LT" e "THINNER DR.4403L5".
 12. Números e códigos parciais são válidos. "02 Thiner 4403" → quantidade=2, produto=Thiner 4403.
 13. Se o texto contém quantidade + nome (ex: "02 Thiner 4403"), interprete como: quantidade=2, produto=Thiner 4403.
-
+${searchCustomer ? `
+REGRAS DE IDENTIFICAÇÃO DE CLIENTE:
+14. Se o vendedor mencionar um nome de empresa, pessoa ou estabelecimento, procure na lista de CLIENTES ENCONTRADOS.
+15. Use a CIDADE mencionada para desambiguar (ex: "Metalúrgica Silva de Curitiba" → procure por "Silva" + cidade "Curitiba").
+16. Retorne o cliente com maior confiança. Se não encontrar, retorne customer como null.
+17. confidence: "high" se nome e cidade batem, "medium" se só nome bate, "low" se parcial.
+` : ""}
 Responda SEMPRE usando a função identify_order_items.`;
 
     const messages: any[] = [
@@ -265,7 +381,7 @@ Responda SEMPRE usando a função identify_order_items.`;
 
     if (allImages.length > 0) {
       const content: any[] = [
-        { type: "text", text: text || "Identifique os produtos e ferramentas nestas imagens e sugira os itens para o pedido:" },
+        { type: "text", text: text || "Identifique os produtos, ferramentas e cliente nestas imagens e sugira os itens para o pedido:" },
       ];
       for (const img of allImages) {
         content.push({ type: "image_url", image_url: { url: `data:image/jpeg;base64,${img}` } });
@@ -273,6 +389,81 @@ Responda SEMPRE usando a função identify_order_items.`;
       messages.push({ role: "user", content });
     } else {
       messages.push({ role: "user", content: text });
+    }
+
+    // Build tool schema
+    const toolProperties: any = {
+      products: {
+        type: "array",
+        description: "Produtos do catálogo identificados com certeza",
+        items: {
+          type: "object",
+          properties: {
+            product_id: { type: "string", description: "ID UUID do produto" },
+            codigo: { type: "string", description: "Código do produto" },
+            descricao: { type: "string", description: "Descrição do produto" },
+            quantity: { type: "number", description: "Quantidade (padrão 1)" },
+            account: { type: "string", description: "Conta: oben ou colacor" },
+            notes: { type: "string", description: "Observações" },
+          },
+          required: ["product_id", "quantity", "account"],
+        },
+      },
+      services: {
+        type: "array",
+        description: "Serviços de afiação identificados",
+        items: {
+          type: "object",
+          properties: {
+            userToolId: { type: "string", description: "ID da ferramenta cadastrada" },
+            omie_codigo_servico: { type: "number", description: "Código do serviço Omie" },
+            servico_descricao: { type: "string", description: "Descrição do serviço" },
+            quantity: { type: "number", description: "Quantidade" },
+            notes: { type: "string", description: "Observações (danos, urgência, etc)" },
+          },
+          required: ["userToolId", "omie_codigo_servico", "servico_descricao", "quantity"],
+        },
+      },
+      suggestions: {
+        type: "array",
+        description: "Sugestões de produtos/serviços quando não há correspondência exata ou baseado no histórico",
+        items: {
+          type: "object",
+          properties: {
+            type: { type: "string", enum: ["product", "service"], description: "Tipo da sugestão" },
+            product_id: { type: "string", description: "ID UUID do produto sugerido (se type=product)" },
+            codigo: { type: "string", description: "Código do produto sugerido" },
+            descricao: { type: "string", description: "Descrição do item sugerido" },
+            quantity: { type: "number", description: "Quantidade sugerida" },
+            account: { type: "string", description: "Conta: oben ou colacor" },
+            reason: { type: "string", description: "Motivo da sugestão" },
+            userToolId: { type: "string", description: "ID da ferramenta (se type=service)" },
+            omie_codigo_servico: { type: "number", description: "Código do serviço (se type=service)" },
+            servico_descricao: { type: "string", description: "Descrição do serviço (se type=service)" },
+          },
+          required: ["type", "descricao", "reason"],
+        },
+      },
+      message: { type: "string", description: "Mensagem amigável explicando o que foi identificado" },
+    };
+
+    const requiredFields = ["products", "services", "suggestions", "message"];
+
+    if (searchCustomer) {
+      toolProperties.customer = {
+        type: ["object", "null"],
+        description: "Cliente identificado no pedido. null se nenhum cliente foi mencionado.",
+        properties: {
+          nome_fantasia: { type: "string", description: "Nome fantasia do cliente" },
+          razao_social: { type: "string", description: "Razão social do cliente" },
+          cnpj_cpf: { type: "string", description: "CNPJ ou CPF do cliente" },
+          cidade: { type: "string", description: "Cidade do cliente" },
+          codigo_cliente: { type: "number", description: "Código do cliente no Omie" },
+          confidence: { type: "string", enum: ["high", "medium", "low"], description: "Nível de confiança na identificação" },
+        },
+        required: ["nome_fantasia", "razao_social", "cnpj_cpf", "codigo_cliente", "confidence"],
+      };
+      requiredFields.push("customer");
     }
 
     const response = await fetch("https://ai.gateway.lovable.dev/v1/chat/completions", {
@@ -289,64 +480,11 @@ Responda SEMPRE usando a função identify_order_items.`;
             type: "function",
             function: {
               name: "identify_order_items",
-              description: "Retorna produtos e serviços identificados no pedido, e sugestões quando não há correspondência exata",
+              description: "Retorna produtos, serviços e cliente identificados no pedido",
               parameters: {
                 type: "object",
-                properties: {
-                  products: {
-                    type: "array",
-                    description: "Produtos do catálogo identificados com certeza",
-                    items: {
-                      type: "object",
-                      properties: {
-                        product_id: { type: "string", description: "ID UUID do produto" },
-                        codigo: { type: "string", description: "Código do produto" },
-                        descricao: { type: "string", description: "Descrição do produto" },
-                        quantity: { type: "number", description: "Quantidade (padrão 1)" },
-                        account: { type: "string", description: "Conta: oben ou colacor" },
-                        notes: { type: "string", description: "Observações" },
-                      },
-                      required: ["product_id", "quantity", "account"],
-                    },
-                  },
-                  services: {
-                    type: "array",
-                    description: "Serviços de afiação identificados",
-                    items: {
-                      type: "object",
-                      properties: {
-                        userToolId: { type: "string", description: "ID da ferramenta cadastrada" },
-                        omie_codigo_servico: { type: "number", description: "Código do serviço Omie" },
-                        servico_descricao: { type: "string", description: "Descrição do serviço" },
-                        quantity: { type: "number", description: "Quantidade" },
-                        notes: { type: "string", description: "Observações (danos, urgência, etc)" },
-                      },
-                      required: ["userToolId", "omie_codigo_servico", "servico_descricao", "quantity"],
-                    },
-                  },
-                  suggestions: {
-                    type: "array",
-                    description: "Sugestões de produtos/serviços quando não há correspondência exata ou baseado no histórico",
-                    items: {
-                      type: "object",
-                      properties: {
-                        type: { type: "string", enum: ["product", "service"], description: "Tipo da sugestão" },
-                        product_id: { type: "string", description: "ID UUID do produto sugerido (se type=product)" },
-                        codigo: { type: "string", description: "Código do produto sugerido" },
-                        descricao: { type: "string", description: "Descrição do item sugerido" },
-                        quantity: { type: "number", description: "Quantidade sugerida" },
-                        account: { type: "string", description: "Conta: oben ou colacor" },
-                        reason: { type: "string", description: "Motivo da sugestão (ex: 'Similar ao que foi identificado na foto', 'Produto que o cliente costuma comprar')" },
-                        userToolId: { type: "string", description: "ID da ferramenta (se type=service)" },
-                        omie_codigo_servico: { type: "number", description: "Código do serviço (se type=service)" },
-                        servico_descricao: { type: "string", description: "Descrição do serviço (se type=service)" },
-                      },
-                      required: ["type", "descricao", "reason"],
-                    },
-                  },
-                  message: { type: "string", description: "Mensagem amigável explicando o que foi identificado e o que foi sugerido" },
-                },
-                required: ["products", "services", "suggestions", "message"],
+                properties: toolProperties,
+                required: requiredFields,
               },
             },
           },
@@ -376,7 +514,7 @@ Responda SEMPRE usando a função identify_order_items.`;
 
     if (!toolCall) {
       return new Response(JSON.stringify({
-        products: [], services: [], suggestions: [],
+        products: [], services: [], suggestions: [], customer: null,
         message: "Não consegui identificar itens. Seja mais específico ou selecione manualmente.",
       }), { headers: { ...corsHeaders, "Content-Type": "application/json" } });
     }
@@ -391,11 +529,11 @@ Responda SEMPRE usando a função identify_order_items.`;
     const validToolIds = new Set(tools.map((t: any) => t.id));
     const validServices = (result.services || []).filter((s: any) => validToolIds.has(s.userToolId));
 
-    // Validate suggestions - keep those with valid IDs OR text-only suggestions
+    // Validate suggestions
     const validSuggestions = (result.suggestions || []).filter((s: any) => {
       if (s.type === 'product') {
         if (s.product_id && s.product_id !== '') return validProductIds.has(s.product_id);
-        return true; // Allow text-only suggestions (no exact match)
+        return true;
       }
       if (s.type === 'service') {
         if (s.userToolId) return validToolIds.has(s.userToolId);
@@ -404,10 +542,17 @@ Responda SEMPRE usando a função identify_order_items.`;
       return true;
     });
 
+    // Validate customer
+    let validCustomer = null;
+    if (searchCustomer && result.customer && result.customer.codigo_cliente) {
+      validCustomer = result.customer;
+    }
+
     return new Response(JSON.stringify({
       products: validProducts,
       services: validServices,
       suggestions: validSuggestions,
+      customer: validCustomer,
       message: result.message || `Identificado ${validProducts.length} produto(s) e ${validServices.length} serviço(s).`,
     }), { headers: { ...corsHeaders, "Content-Type": "application/json" } });
 
