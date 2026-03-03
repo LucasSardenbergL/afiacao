@@ -71,37 +71,70 @@ serve(async (req) => {
 
       const candidateIds = new Set<string>();
 
-      // Search in profiles for name matches
-      for (const term of nameTerms.slice(0, 5)) {
+      // When we have images but no text, load ALL approved profiles so the AI can match
+      // customer names visible in photos against real database entries
+      if (allImages.length > 0 && nameTerms.length === 0) {
+        console.log("[analyze-unified-order] Image-only mode: loading all profiles for customer matching");
         try {
-          const { data: profiles } = await supabase
+          const { data: allProfiles } = await supabase
             .from("profiles")
             .select("user_id, name, document, email, phone")
-            .or(`name.ilike.%${term}%`)
             .eq("is_approved", true)
-            .limit(10);
-          if (profiles) {
-            for (const p of profiles) {
-              if (!candidateIds.has(p.user_id)) {
-                candidateIds.add(p.user_id);
-                // Fetch omie mapping for this user
-                const { data: omieMapping } = await supabase
-                  .from("omie_clientes")
-                  .select("omie_codigo_cliente")
-                  .eq("user_id", p.user_id)
-                  .limit(1)
-                  .maybeSingle();
-                customerCandidates.push({
-                  user_id: p.user_id,
-                  nome: p.name,
-                  documento: p.document,
-                  codigo_cliente: omieMapping?.omie_codigo_cliente || null,
-                });
-              }
+            .limit(500);
+          if (allProfiles) {
+            // Batch fetch omie mappings
+            const userIds = allProfiles.map(p => p.user_id);
+            const { data: omieMappings } = await supabase
+              .from("omie_clientes")
+              .select("user_id, omie_codigo_cliente")
+              .in("user_id", userIds);
+            const omieMap = new Map((omieMappings || []).map(m => [m.user_id, m.omie_codigo_cliente]));
+
+            for (const p of allProfiles) {
+              candidateIds.add(p.user_id);
+              customerCandidates.push({
+                user_id: p.user_id,
+                nome: p.name,
+                documento: p.document,
+                codigo_cliente: omieMap.get(p.user_id) || null,
+              });
             }
           }
         } catch (e) {
-          console.error(`Error searching profiles for "${term}":`, e);
+          console.error("Error loading all profiles for image mode:", e);
+        }
+      } else {
+        // Search in profiles for name matches (text mode)
+        for (const term of nameTerms.slice(0, 5)) {
+          try {
+            const { data: profiles } = await supabase
+              .from("profiles")
+              .select("user_id, name, document, email, phone")
+              .or(`name.ilike.%${term}%`)
+              .eq("is_approved", true)
+              .limit(10);
+            if (profiles) {
+              for (const p of profiles) {
+                if (!candidateIds.has(p.user_id)) {
+                  candidateIds.add(p.user_id);
+                  const { data: omieMapping } = await supabase
+                    .from("omie_clientes")
+                    .select("omie_codigo_cliente")
+                    .eq("user_id", p.user_id)
+                    .limit(1)
+                    .maybeSingle();
+                  customerCandidates.push({
+                    user_id: p.user_id,
+                    nome: p.name,
+                    documento: p.document,
+                    codigo_cliente: omieMapping?.omie_codigo_cliente || null,
+                  });
+                }
+              }
+            }
+          } catch (e) {
+            console.error(`Error searching profiles for "${term}":`, e);
+          }
         }
       }
 

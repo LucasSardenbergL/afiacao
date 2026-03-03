@@ -340,6 +340,8 @@ export function UnifiedAIAssistant({ products, userTools, onItemsIdentified, onC
       onCustomerIdentified(identifiedCustomer);
       setIdentifiedCustomer(null);
       toast({ title: 'Cliente selecionado!', description: identifiedCustomer.nome_fantasia || identifiedCustomer.razao_social });
+      // Note: we intentionally do NOT clear identifiedProducts/suggestions
+      // so the user can add them after customer is set
     }
   };
 
@@ -613,9 +615,15 @@ export function UnifiedAIAssistant({ products, userTools, onItemsIdentified, onC
             </Button>
           )}
 
-          {(identifiedProducts.length > 0 || identifiedServices.length > 0) && !hasCustomerSelected && (
+          {(identifiedProducts.length > 0 || identifiedServices.length > 0) && !hasCustomerSelected && !identifiedCustomer && (
             <p className="text-xs text-amber-600 bg-amber-50 dark:bg-amber-950/20 p-2 rounded">
-              ⚠️ Selecione o cliente acima primeiro para adicionar os itens ao pedido.
+              ⚠️ Selecione o cliente primeiro para adicionar os itens ao pedido.
+            </p>
+          )}
+
+          {(identifiedProducts.length > 0 || identifiedServices.length > 0) && !hasCustomerSelected && identifiedCustomer && (
+            <p className="text-xs text-amber-600 bg-amber-50 dark:bg-amber-950/20 p-2 rounded">
+              ⚠️ Clique em "Selecionar" no cliente acima para depois adicionar os itens.
             </p>
           )}
 
