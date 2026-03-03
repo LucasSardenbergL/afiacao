@@ -838,6 +838,67 @@ Responda SEMPRE usando a função identify_order_items.`;
       }
     }
 
+    // ─── Variant dedup: if AI returned multiple packaging variants of same base product, keep only best match ───
+    // e.g. if both 6673LT (18L) and 6673L5 (5L) are returned, keep only the one matching context
+    const packingSuffixes = ['LT', 'L5', 'QT', 'GL', 'BH', 'BD'];
+    const inputContext = (text || '').toUpperCase() + ' ' + (result.message || '').toUpperCase();
+    
+    // Group validProducts by their base numeric code (e.g., "6673")
+    const variantGroups = new Map<string, any[]>();
+    for (const vp of validProducts) {
+      const prod = prodList.find((p: any) => p.id === vp.product_id);
+      if (!prod) { continue; }
+      // Extract numeric code from descricao (e.g., "6673" from "FL.6673.00LT")
+      const numMatch = prod.descricao.match(/(\d{4,})/);
+      if (!numMatch) { continue; }
+      const baseNum = numMatch[1];
+      // Check if descricao ends with a packing suffix
+      const hasSuffix = packingSuffixes.some(s => prod.descricao.toUpperCase().includes(s));
+      if (!hasSuffix) { continue; }
+      
+      if (!variantGroups.has(baseNum)) variantGroups.set(baseNum, []);
+      variantGroups.get(baseNum)!.push({ vp, prod });
+    }
+    
+    // For groups with >1 variant, pick the best match
+    const removedProductIds = new Set<string>();
+    for (const [baseNum, group] of variantGroups) {
+      if (group.length <= 1) continue;
+      
+      console.log(`[analyze-unified-order] Variant dedup: ${baseNum} has ${group.length} variants: ${group.map((g: any) => g.prod.descricao).join(', ')}`);
+      
+      // Score each variant by context clues
+      let bestIdx = 0;
+      let bestScore = -1;
+      for (let i = 0; i < group.length; i++) {
+        const desc = group[i].prod.descricao.toUpperCase();
+        let score = 0;
+        // Exact suffix in input context
+        if (desc.includes('LT') && (inputContext.includes('18L') || inputContext.includes('LATA') || inputContext.includes('18 L'))) score += 10;
+        if (desc.includes('L5') && (inputContext.includes('5L') || inputContext.includes('5 L') || inputContext.includes('CINCO'))) score += 10;
+        if (desc.includes('QT') && (inputContext.includes('900') || inputContext.includes('QUARTINHO') || inputContext.includes('810'))) score += 10;
+        if (desc.includes('GL') && (inputContext.includes('GALÃO') || inputContext.includes('GALAO') || inputContext.includes('3,6') || inputContext.includes('3.6'))) score += 10;
+        if (desc.includes('BH') && (inputContext.includes('BALDE') || inputContext.includes('20L') || inputContext.includes('20 L'))) score += 10;
+        if (desc.includes('BD') && (inputContext.includes('BALDE') || inputContext.includes('18L') || inputContext.includes('18 L'))) score += 10;
+        // If LT suffix and no specific size mentioned, prefer LT (most common)
+        if (desc.includes('LT') && !inputContext.match(/\b(5L|5 L|900|QUARTINHO|810|GALÃO|GALAO|3[,.]6|BALDE|20L|20 L)\b/i)) score += 2;
+        // Higher price = larger packaging = more likely if context says "18L"
+        if (score > bestScore) { bestScore = score; bestIdx = i; }
+      }
+      
+      // Remove all except best
+      for (let i = 0; i < group.length; i++) {
+        if (i !== bestIdx) {
+          removedProductIds.add(group[i].vp.product_id);
+          console.log(`[analyze-unified-order] Variant dedup: removing ${group[i].prod.descricao} in favor of ${group[bestIdx].prod.descricao}`);
+        }
+      }
+    }
+    
+    if (removedProductIds.size > 0) {
+      validProducts = validProducts.filter((vp: any) => !removedProductIds.has(vp.product_id));
+    }
+
     // ─── Multi-account optimization: for each product, find equivalent in both accounts ───
     // Pick the account with LESS stock (to clear smaller batches first)
     const prodMap = new Map(prodList.map((p: any) => [p.id, p]));
