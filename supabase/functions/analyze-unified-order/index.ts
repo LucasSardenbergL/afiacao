@@ -470,7 +470,7 @@ ${historicoCompras}
 REGRAS:
 1. Para PRODUTOS: identifique pelo nome, código ou descrição parcial. Use a quantidade mencionada ou 1.
 2. Para AFIAÇÃO: identifique a ferramenta cadastrada e o serviço compatível.
-3. Priorize correspondências exatas de nome/código. Seja MUITO flexível com sinônimos, abreviações, erros de grafia (ex: "thiner" = "thinner", "disco 7" = "disco de corte 7 polegadas", "FO56717" pode ser "FO05.6717" — ignore pontos e zeros intermediários ao comparar códigos). CÓDIGOS PODEM TER PONTOS, ZEROS OU DASHES NO MEIO QUE O VENDEDOR OMITE.
+3. Priorize correspondências exatas de nome/código. Seja MUITO flexível com sinônimos, abreviações, erros de grafia (ex: "thiner" = "thinner", "disco 7" = "disco de corte 7 polegadas"). CÓDIGOS PODEM TER PONTOS, ZEROS OU DASHES NO MEIO QUE O VENDEDOR OMITE.
 4. Se o vendedor mencionar "afiar", "afiação", "serrar", "lâmina lascada" etc, trate como serviço.
 5. Se mencionar "comprar", "preciso de", "X unidades de", trate como produto.
 6. Extraia observações como danos, urgência, etc.
@@ -482,35 +482,47 @@ REGRAS:
    - EXTRAIA TODOS os códigos, números e nomes de produtos que aparecem no texto (ex: "4403", "Thiner 4403")
    - Use esses códigos para buscar no catálogo por correspondência parcial na descrição (ex: "4403" casa com "THINNER DR.4403LT")
 
+REGRAS CRÍTICAS DE CORRESPONDÊNCIA DE CÓDIGOS DE PRODUTO:
+8. Ao ler um código da imagem/texto, REMOVA mentalmente todos os pontos, hifens, zeros intermediários e compare APENAS os dígitos significativos e as letras-prefixo.
+9. EXEMPLOS OBRIGATÓRIOS:
+   - "FO56717" na imagem → procure "6717" no catálogo → corresponde a "FO5.6717" ou "FO05.6717" ou "FO10.6717" ou "FO20.6717" (são variantes do mesmo produto base 6717)
+   - "FC6975" na imagem → procure "6975" no catálogo → corresponde a "FC.6975" (CATALISADOR FC.6975LT, FC.6975QT, FC.6975L5)
+   - "FC6902" NÃO é o mesmo que "FC6975" — são códigos DIFERENTES! NÃO confunda 6902 com 6975!
+   - "4403" → corresponde a "DR.4403" (THINNER DR.4403LT)
+10. O NÚMERO DO CÓDIGO (ex: 6717, 6975, 4403) é a IDENTIDADE do produto. O prefixo (FO, FC, DR) indica a LINHA. O sufixo (LT, QT, BH, GL, L5) indica a EMBALAGEM.
+11. NUNCA substitua um código por outro diferente. "6975" NÃO é "6902". "6717" NÃO é "1480". Compare dígito por dígito.
+12. Se o código lido da imagem for "FO56717", decomponha: prefixo=FO, número base=6717 (ignore o "5" intermediário que é parte da versão FO5.6717). Busque no catálogo por itens que contenham "FO" E "6717" na descrição.
+
 REGRAS DE SUGESTÃO (MUITO IMPORTANTE - SEMPRE RETORNE SUGESTÕES):
-8. Se NÃO encontrar correspondência exata, sugira os produtos MAIS SIMILARES do catálogo (por nome parcial, categoria, ou uso semelhante)
-9. Use o histórico de compras para sugestões complementares
-10. Para sugestões sem product_id exato, use product_id="" e preencha descrição e motivo
+13. Se NÃO encontrar correspondência exata, sugira os produtos MAIS SIMILARES do catálogo (por nome parcial, categoria, ou uso semelhante)
+14. Use o histórico de compras para sugestões complementares
+15. Para sugestões sem product_id exato, use product_id="" e preencha descrição e motivo
 
 REGRAS DE BUSCA NO CATÁLOGO:
-11. Ao buscar um produto, procure o termo EM QUALQUER PARTE da descrição. Ex: "4403" casa com "THINNER DR.4403LT" e "THINNER DR.4403L5".
-12. Números e códigos parciais são válidos. "02 Thiner 4403" → quantidade=2, produto=Thiner 4403.
-13. Se o texto contém quantidade + nome (ex: "02 Thiner 4403"), interprete como: quantidade=2, produto=Thiner 4403.
+16. Ao buscar um produto, procure o termo EM QUALQUER PARTE da descrição. Ex: "4403" casa com "THINNER DR.4403LT" e "THINNER DR.4403L5".
+17. Números e códigos parciais são válidos. "02 Thiner 4403" → quantidade=2, produto=Thiner 4403.
+18. Se o texto contém quantidade + nome (ex: "02 Thiner 4403"), interprete como: quantidade=2, produto=Thiner 4403.
 
 REGRAS DE EMBALAGEM → SUFIXO DO CÓDIGO DO PRODUTO (MUITO IMPORTANTE - SIGA RIGOROSAMENTE):
-14. "lata" OU "18 litros" OU "18L" → sufixo "LT". Ex: "FC6975" + "18L" → "FC6975LT". "DR.4403" + "lata" → "DR.4403LT".
-15. "quartinho" OU "900ml" OU "810ml" → sufixo "QT". Ex: "DR.4403QT". ATENÇÃO: "QT" é APENAS para 900ml/810ml, NUNCA para 18L!
-16. "balde" OU "20L" OU "20 litros" → sufixo "BH". Ex: "DR.4403BH", "FO56717BH".
-17. "galão" OU "3,6L" OU "3.6L" → sufixo "GL". Ex: "DR.4403GL".
-18. "5L" OU "5 litros" → sufixo "L5". Ex: "DR.4403L5".
-19. EXCEÇÃO ÚNICA produto 6269: "balde" OU "18L" com 6269 → sufixo "BD" (ex: "6269BD"). Esta exceção se aplica SOMENTE ao 6269.
-20. RESUMO RÁPIDO: 18L/lata=LT | 900ml=QT | 20L/balde=BH | 3,6L=GL | 5L=L5 | 6269+balde/18L=BD
-21. Ex: "3 latas de catalisador FC6975" → "FC6975LT" (18L=LT). NÃO USE QT para 18L!
-22. Ex: "5 baldes de FO56717" → "FO56717BH" (balde=BH).
-23. Ex: "2 baldes de 6269" → "6269BD" (exceção 6269).
+19. "lata" OU "18 litros" OU "18L" → sufixo "LT". Ex: "FC6975" + "lata" → busque "FC.6975LT". "DR.4403" + "lata" → busque "DR.4403LT".
+20. "quartinho" OU "900ml" OU "810ml" → sufixo "QT". Ex: "DR.4403QT". ATENÇÃO: "QT" é APENAS para 900ml/810ml, NUNCA para 18L!
+21. "balde" OU "20L" OU "20 litros" → sufixo "BH". Ex: "DR.4403BH". "FO56717" + "balde" → busque "FO5.6717.00BH" ou "FO10.6717.00BH" (qualquer variante FO*.6717*BH).
+22. "galão" OU "3,6L" OU "3.6L" → sufixo "GL". Ex: "DR.4403GL".
+23. "5L" OU "5 litros" → sufixo "L5". Ex: "DR.4403L5".
+24. EXCEÇÃO ÚNICA produto 6269: "balde" OU "18L" com 6269 → sufixo "BD" (ex: "6269BD"). Esta exceção se aplica SOMENTE ao 6269.
+25. RESUMO RÁPIDO: 18L/lata=LT | 900ml=QT | 20L/balde=BH | 3,6L=GL | 5L=L5 | 6269+balde/18L=BD
+26. Ex: "3 latas de catalisador FC6975" → busque "CATALISADOR FC.6975LT" no catálogo (18L=LT).
+27. Ex: "5 baldes de FO56717" → busque produtos com "6717" E "BH" na descrição → "VERNIZ PU FOSCO FO5.6717.00BH" ou "FO10.6717.00BH".
 ${searchCustomer ? `
 REGRAS DE IDENTIFICAÇÃO DE CLIENTE (CRÍTICAS):
-21. Você SÓ pode retornar clientes que existam na lista de CLIENTES ENCONTRADOS NA BASE acima.
-22. NÃO INVENTE clientes. Se nenhum cliente da lista corresponder, retorne customer como null.
-23. Use nome_fantasia ou razao_social para correspondência. Use a CIDADE mencionada para desambiguar.
-24. confidence: "high" se nome e cidade batem, "medium" se só nome bate, "low" se correspondência parcial.
-25. O campo codigo_cliente DEVE ser um código que exista na lista de clientes fornecida.
-26. Nomes podem conter ERROS DE GRAFIA. "Lorham" pode ser "Lohan", "Metalurgica" pode ser "Metalúrgica". Compare FONETICAMENTE e procure o nome mais SIMILAR na lista, mesmo que não seja exato.
+28. Você SÓ pode retornar clientes que existam na lista de CLIENTES ENCONTRADOS NA BASE acima.
+29. NÃO INVENTE clientes. Se nenhum cliente da lista corresponder, retorne customer como null.
+30. Use APENAS nome_fantasia ou razao_social para correspondência — NUNCA retorne um cliente só porque aparece primeiro na lista.
+31. Compare o nome do cliente mencionado no pedido com CADA candidato na lista. Escolha o que tem nome MAIS SIMILAR.
+32. confidence: "high" se nome e cidade batem, "medium" se só nome bate, "low" se correspondência parcial.
+33. O campo user_id DEVE ser o user_id exato do candidato correspondente na lista. NÃO use o user_id de outro candidato.
+34. Nomes podem conter ERROS DE GRAFIA. "Lorham" = "Lohan", "Metalurgica" = "Metalúrgica". Compare FONETICAMENTE.
+35. Se o pedido menciona "Lorham Móveis" ou "Loham Moveis", procure na lista um nome como "LOHAN MOVEIS" — são o mesmo cliente com grafia diferente.
 ` : ""}
 Responda SEMPRE usando a função identify_order_items.`;
 
@@ -836,6 +848,7 @@ Responda SEMPRE usando a função identify_order_items.`;
       };
 
       // Check if this customer actually exists in our candidates
+      // IMPORTANT: Do NOT trust AI's user_id — only match by name, document, or codigo_cliente
       const matchedCandidate = customerCandidates.find((c: any) => {
         // Match by codigo_cliente
         if (c.codigo_cliente && result.customer.codigo_cliente && c.codigo_cliente === result.customer.codigo_cliente) return true;
@@ -845,8 +858,7 @@ Responda SEMPRE usando a função identify_order_items.`;
           const rDoc = (result.customer.cnpj_cpf || '').replace(/\D/g, '');
           if (cDoc && rDoc && cDoc === rDoc) return true;
         }
-        // Match by user_id
-        if (c.user_id && result.customer.user_id && c.user_id === result.customer.user_id) return true;
+        // DO NOT match by user_id — AI often returns wrong user_id from the candidate list index
         // Match by name (fuzzy)
         const cName = stripAccents((c.nome_fantasia || c.nome || '').toLowerCase().trim());
         const rName = stripAccents((result.customer.nome_fantasia || '').toLowerCase().trim());
