@@ -250,7 +250,53 @@ serve(async (req) => {
           console.error(`Error searching products for term "${term}":`, e);
         }
       }
-    }
+      }
+
+      // Fuzzy product code search - strip dots/dashes and search by numeric part
+      // Handles cases like "FO56717" matching "FO05.6717"
+      const numericPart = term.replace(/[^0-9]/g, '');
+      if (numericPart.length >= 4 && !prodIds.has(term)) {
+        try {
+          const { data: dbProducts } = await supabase
+            .from("omie_products")
+            .select("id, codigo, descricao, account, valor_unitario, estoque")
+            .eq("ativo", true)
+            .ilike("codigo", `%${numericPart}%`)
+            .limit(30);
+          if (dbProducts) {
+            for (const p of dbProducts) {
+              if (!prodIds.has(p.id)) {
+                prodList.push(p);
+                prodIds.add(p.id);
+              }
+            }
+          }
+        } catch (e) {
+          console.error(`Error fuzzy code search for "${numericPart}":`, e);
+        }
+      }
+
+      // Also try alphanumeric-stripped version (e.g., "FO56717" → search without dots)
+      const stripped = term.replace(/[.\-\s]/g, '');
+      if (stripped.length >= 4) {
+        try {
+          // Find products whose code, when stripped of dots/dashes, contains the search
+          const { data: dbProducts } = await supabase
+            .from("omie_products")
+            .select("id, codigo, descricao, account, valor_unitario, estoque")
+            .eq("ativo", true)
+            .or(`descricao.ilike.%${stripped}%,codigo.ilike.%${stripped}%`)
+            .limit(20);
+          if (dbProducts) {
+            for (const p of dbProducts) {
+              if (!prodIds.has(p.id)) {
+                prodList.push(p);
+                prodIds.add(p.id);
+              }
+            }
+          }
+        } catch (e) {}
+      }
 
     // Broad search for common product categories
     const broadTerms = ["thinner", "thiner", "cola", "lixa", "disco", "serra", "broca", "fresa", "lamina"];
@@ -379,7 +425,7 @@ ${historicoCompras}
 REGRAS:
 1. Para PRODUTOS: identifique pelo nome, código ou descrição parcial. Use a quantidade mencionada ou 1.
 2. Para AFIAÇÃO: identifique a ferramenta cadastrada e o serviço compatível.
-3. Priorize correspondências exatas de nome/código. Seja MUITO flexível com sinônimos, abreviações, erros de grafia (ex: "thiner" = "thinner", "disco 7" = "disco de corte 7 polegadas").
+3. Priorize correspondências exatas de nome/código. Seja MUITO flexível com sinônimos, abreviações, erros de grafia (ex: "thiner" = "thinner", "disco 7" = "disco de corte 7 polegadas", "FO56717" pode ser "FO05.6717" — ignore pontos e zeros intermediários ao comparar códigos). CÓDIGOS PODEM TER PONTOS, ZEROS OU DASHES NO MEIO QUE O VENDEDOR OMITE.
 4. Se o vendedor mencionar "afiar", "afiação", "serrar", "lâmina lascada" etc, trate como serviço.
 5. Se mencionar "comprar", "preciso de", "X unidades de", trate como produto.
 6. Extraia observações como danos, urgência, etc.
@@ -419,6 +465,7 @@ REGRAS DE IDENTIFICAÇÃO DE CLIENTE (CRÍTICAS):
 23. Use nome_fantasia ou razao_social para correspondência. Use a CIDADE mencionada para desambiguar.
 24. confidence: "high" se nome e cidade batem, "medium" se só nome bate, "low" se correspondência parcial.
 25. O campo codigo_cliente DEVE ser um código que exista na lista de clientes fornecida.
+26. Nomes podem conter ERROS DE GRAFIA. "Lorham" pode ser "Lohan", "Metalurgica" pode ser "Metalúrgica". Compare FONETICAMENTE e procure o nome mais SIMILAR na lista, mesmo que não seja exato.
 ` : ""}
 Responda SEMPRE usando a função identify_order_items.`;
 
@@ -451,6 +498,7 @@ Responda SEMPRE usando a função identify_order_items.`;
             descricao: { type: "string", description: "Descrição do produto" },
             quantity: { type: "number", description: "Quantidade (padrão 1)" },
             account: { type: "string", description: "Conta: oben ou colacor" },
+            unit_price: { type: "number", description: "Preço unitário do produto" },
             notes: { type: "string", description: "Observações" },
           },
           required: ["product_id", "quantity", "account"],
@@ -483,6 +531,7 @@ Responda SEMPRE usando a função identify_order_items.`;
             descricao: { type: "string", description: "Descrição do item sugerido" },
             quantity: { type: "number", description: "Quantidade sugerida" },
             account: { type: "string", description: "Conta: oben ou colacor" },
+            unit_price: { type: "number", description: "Último preço praticado para o cliente" },
             reason: { type: "string", description: "Motivo da sugestão" },
             userToolId: { type: "string", description: "ID da ferramenta (se type=service)" },
             omie_codigo_servico: { type: "number", description: "Código do serviço (se type=service)" },
@@ -655,9 +704,33 @@ Responda SEMPRE usando a função identify_order_items.`;
         const rName = (result.customer.nome_fantasia || '').toLowerCase().trim();
         if (cName && rName && cName.length > 3 && rName.length > 3) {
           if (cName.includes(rName) || rName.includes(cName)) return true;
-          // Check if key words match
+          // Check if any significant word matches
           const rWords = rName.split(/\s+/).filter((w: string) => w.length > 3);
-          if (rWords.length > 0 && rWords.every((w: string) => cName.includes(w))) return true;
+          const cWords = cName.split(/\s+/).filter((w: string) => w.length > 3);
+          if (rWords.length > 0 && rWords.some((w: string) => cName.includes(w))) return true;
+          // Fuzzy matching: check edit distance between words (handles typos like Lorham→Lohan)
+          for (const rw of rWords) {
+            for (const cw of cWords) {
+              if (Math.abs(rw.length - cw.length) <= 2) {
+                let diffs = 0;
+                const shorter = Math.min(rw.length, cw.length);
+                const longer = Math.max(rw.length, cw.length);
+                // Simple character comparison with shift tolerance
+                let ri = 0, ci = 0;
+                while (ri < rw.length && ci < cw.length) {
+                  if (rw[ri] !== cw[ci]) {
+                    diffs++;
+                    // Try skipping one char in the longer string
+                    if (rw.length > cw.length) ri++;
+                    else if (cw.length > rw.length) ci++;
+                  }
+                  ri++; ci++;
+                }
+                diffs += Math.abs(rw.length - ri) + Math.abs(cw.length - ci);
+                if (diffs <= 2) return true;
+              }
+            }
+          }
         }
         return false;
       });
@@ -694,6 +767,58 @@ Responda SEMPRE usando a função identify_order_items.`;
             user_id: bestMatch.user_id || null,
           };
         }
+      }
+    }
+
+    // Enrich products and suggestions with customer-specific last practiced prices
+    if (validCustomer?.user_id) {
+      try {
+        const { data: priceHistory } = await supabase
+          .from("order_items")
+          .select("product_id, unit_price")
+          .eq("customer_user_id", validCustomer.user_id)
+          .order("created_at", { ascending: false })
+          .limit(200);
+
+        if (priceHistory && priceHistory.length > 0) {
+          const priceMap: Record<string, number> = {};
+          for (const ph of priceHistory) {
+            if (ph.product_id && !priceMap[ph.product_id]) {
+              priceMap[ph.product_id] = ph.unit_price;
+            }
+          }
+
+          // Also check sales_price_history
+          const { data: salesPrices } = await supabase
+            .from("sales_price_history")
+            .select("product_id, unit_price")
+            .eq("customer_user_id", validCustomer.user_id)
+            .order("created_at", { ascending: false })
+            .limit(200);
+          if (salesPrices) {
+            for (const sp of salesPrices) {
+              if (!priceMap[sp.product_id]) {
+                priceMap[sp.product_id] = sp.unit_price;
+              }
+            }
+          }
+
+          // Add prices to products
+          for (const vp of validProducts) {
+            if (priceMap[vp.product_id]) {
+              vp.unit_price = priceMap[vp.product_id];
+            }
+          }
+
+          // Add prices to suggestions
+          for (const vs of validSuggestions) {
+            if (vs.product_id && priceMap[vs.product_id]) {
+              vs.unit_price = priceMap[vs.product_id];
+            }
+          }
+        }
+      } catch (e) {
+        console.error("Error fetching customer prices for AI response:", e);
       }
     }
 
