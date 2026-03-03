@@ -663,9 +663,84 @@ Responda SEMPRE usando a função identify_order_items.`;
 
     const result = JSON.parse(toolCall.function.arguments);
 
-    // Validate product IDs
+    // Validate product IDs - rescue invalid ones by fuzzy matching
     const validProductIds = new Set(prodList.map((p: any) => p.id));
-    let validProducts = (result.products || []).filter((p: any) => validProductIds.has(p.product_id));
+    const aiProducts = result.products || [];
+    let validProducts: any[] = [];
+    
+    for (const ap of aiProducts) {
+      if (validProductIds.has(ap.product_id)) {
+        validProducts.push(ap);
+      } else {
+        // Try to rescue by matching codigo or descricao against prodList
+        console.log(`[analyze-unified-order] Product ID not valid: ${ap.product_id}, trying rescue by codigo="${ap.codigo}" descricao="${ap.descricao}"`);
+        
+        let rescued = false;
+        const apCodigo = (ap.codigo || '').replace(/[.\-\s]/g, '').toLowerCase();
+        const apDesc = (ap.descricao || '').toLowerCase();
+        
+        // 1. Exact codigo match (stripped)
+        if (apCodigo) {
+          const match = prodList.find((p: any) => {
+            const pDesc = p.descricao.replace(/[.\-\s]/g, '').toLowerCase();
+            const pCodigo = p.codigo.replace(/[.\-\s]/g, '').toLowerCase();
+            return pCodigo === apCodigo || pDesc.includes(apCodigo);
+          });
+          if (match) {
+            console.log(`[analyze-unified-order] Rescued by codigo: ${ap.codigo} → ${match.descricao} (${match.id})`);
+            validProducts.push({ ...ap, product_id: match.id, codigo: match.codigo, descricao: match.descricao, account: match.account, unit_price: ap.unit_price || match.valor_unitario });
+            rescued = true;
+          }
+        }
+        
+        // 2. Extract numeric codes from descricao and search
+        if (!rescued && apDesc) {
+          const numericCodes = apDesc.match(/\d{4,}/g);
+          if (numericCodes) {
+            for (const nc of numericCodes) {
+              const match = prodList.find((p: any) => p.descricao.toLowerCase().includes(nc));
+              if (match) {
+                // Also check if prefix matches (FC, FO, DR, etc.)
+                const prefixMatch = apDesc.match(/([a-z]{2})\s*\.?\s*\d/i);
+                if (prefixMatch) {
+                  const prefix = prefixMatch[1].toUpperCase();
+                  const betterMatch = prodList.find((p: any) => 
+                    p.descricao.toUpperCase().includes(prefix) && p.descricao.includes(nc)
+                  );
+                  if (betterMatch) {
+                    console.log(`[analyze-unified-order] Rescued by prefix+numeric: ${ap.descricao} → ${betterMatch.descricao} (${betterMatch.id})`);
+                    validProducts.push({ ...ap, product_id: betterMatch.id, codigo: betterMatch.codigo, descricao: betterMatch.descricao, account: betterMatch.account, unit_price: ap.unit_price || betterMatch.valor_unitario });
+                    rescued = true;
+                    break;
+                  }
+                }
+                if (!rescued) {
+                  console.log(`[analyze-unified-order] Rescued by numeric: ${ap.descricao} → ${match.descricao} (${match.id})`);
+                  validProducts.push({ ...ap, product_id: match.id, codigo: match.codigo, descricao: match.descricao, account: match.account, unit_price: ap.unit_price || match.valor_unitario });
+                  rescued = true;
+                  break;
+                }
+              }
+            }
+          }
+        }
+        
+        // 3. If still not rescued, move to suggestions
+        if (!rescued) {
+          console.log(`[analyze-unified-order] Could not rescue product, moving to suggestions: ${ap.descricao}`);
+          result.suggestions = result.suggestions || [];
+          result.suggestions.push({
+            type: 'product',
+            product_id: '',
+            codigo: ap.codigo || '',
+            descricao: ap.descricao || 'Produto não identificado',
+            quantity: ap.quantity || 1,
+            account: ap.account || 'oben',
+            reason: `Produto "${ap.descricao || ap.codigo}" mencionado mas não encontrado no catálogo`,
+          });
+        }
+      }
+    }
 
     // ─── Multi-account optimization: for each product, find equivalent in both accounts ───
     // Pick the account with LESS stock (to clear smaller batches first)
@@ -732,6 +807,34 @@ Responda SEMPRE usando a função identify_order_items.`;
     // Validate customer - MUST exist in our candidate list
     let validCustomer = null;
     if (searchCustomer && result.customer) {
+      console.log(`[analyze-unified-order] AI returned customer: "${result.customer.nome_fantasia}", candidates: ${customerCandidates.length}`);
+      
+      // Helper: check if two names share significant words
+      const shareWords = (name1: string, name2: string): boolean => {
+        const w1 = stripAccents(name1.toLowerCase()).split(/\s+/).filter((w: string) => w.length >= 3);
+        const w2 = stripAccents(name2.toLowerCase()).split(/\s+/).filter((w: string) => w.length >= 3);
+        // Check direct word inclusion
+        for (const w of w1) {
+          if (name2.toLowerCase().includes(w)) return true;
+        }
+        for (const w of w2) {
+          if (name1.toLowerCase().includes(w)) return true;
+        }
+        // Edit distance for typos (Lorham→Lohan)
+        for (const a of w1) {
+          for (const b of w2) {
+            if (Math.abs(a.length - b.length) > 2) continue;
+            let diffs = 0;
+            const maxLen = Math.max(a.length, b.length);
+            for (let i = 0; i < maxLen; i++) {
+              if ((a[i] || '') !== (b[i] || '')) diffs++;
+            }
+            if (diffs <= 2) return true;
+          }
+        }
+        return false;
+      };
+
       // Check if this customer actually exists in our candidates
       const matchedCandidate = customerCandidates.find((c: any) => {
         // Match by codigo_cliente
@@ -744,43 +847,21 @@ Responda SEMPRE usando a função identify_order_items.`;
         }
         // Match by user_id
         if (c.user_id && result.customer.user_id && c.user_id === result.customer.user_id) return true;
-        // Match by name (fuzzy - for image-only mode where profiles don't have codigo_cliente)
+        // Match by name (fuzzy)
         const cName = stripAccents((c.nome_fantasia || c.nome || '').toLowerCase().trim());
         const rName = stripAccents((result.customer.nome_fantasia || '').toLowerCase().trim());
-        if (cName && rName && cName.length > 3 && rName.length > 3) {
+        if (cName && rName && cName.length > 2 && rName.length > 2) {
           if (cName.includes(rName) || rName.includes(cName)) return true;
-          // Check if any significant word matches
-          const rWords = rName.split(/\s+/).filter((w: string) => w.length > 2);
-          const cWords = cName.split(/\s+/).filter((w: string) => w.length > 2);
-          if (rWords.length > 0 && rWords.some((w: string) => cName.includes(w))) return true;
-          if (cWords.length > 0 && cWords.some((w: string) => rName.includes(w))) return true;
-          // Fuzzy matching: check edit distance between words (handles typos like Lorham→Lohan)
-          for (const rw of rWords) {
-            for (const cw of cWords) {
-              if (Math.abs(rw.length - cw.length) <= 2) {
-                let diffs = 0;
-                let ri = 0, ci = 0;
-                while (ri < rw.length && ci < cw.length) {
-                  if (rw[ri] !== cw[ci]) {
-                    diffs++;
-                    if (rw.length > cw.length) ri++;
-                    else if (cw.length > rw.length) ci++;
-                  }
-                  ri++; ci++;
-                }
-                diffs += Math.abs(rw.length - ri) + Math.abs(cw.length - ci);
-                if (diffs <= 2) return true;
-              }
-            }
-          }
+          if (shareWords(cName, rName)) return true;
         }
         return false;
       });
 
       if (matchedCandidate) {
+        console.log(`[analyze-unified-order] Customer matched: "${matchedCandidate.nome_fantasia || matchedCandidate.nome}" (user_id: ${matchedCandidate.user_id})`);
         validCustomer = {
-          nome_fantasia: result.customer.nome_fantasia || matchedCandidate.nome_fantasia || matchedCandidate.nome || "",
-          razao_social: result.customer.razao_social || matchedCandidate.razao_social || matchedCandidate.nome || "",
+          nome_fantasia: matchedCandidate.nome_fantasia || matchedCandidate.nome || result.customer.nome_fantasia || "",
+          razao_social: matchedCandidate.razao_social || matchedCandidate.nome || "",
           cnpj_cpf: matchedCandidate.cnpj_cpf || matchedCandidate.documento || result.customer.cnpj_cpf || "",
           cidade: result.customer.cidade || matchedCandidate.cidade || "",
           codigo_cliente: matchedCandidate.codigo_cliente || result.customer.codigo_cliente || 0,
@@ -788,38 +869,22 @@ Responda SEMPRE usando a função identify_order_items.`;
           user_id: matchedCandidate.user_id || null,
         };
       } else if (result.customer.nome_fantasia) {
-        console.log(`[analyze-unified-order] AI returned non-matched customer: ${result.customer.nome_fantasia}, trying broader name match`);
-        // Broader fuzzy matching with edit distance and accent normalization
-        const aiName = stripAccents((result.customer.nome_fantasia || '').toLowerCase());
-        const aiWords = aiName.split(/\s+/).filter((w: string) => w.length > 2);
+        console.log(`[analyze-unified-order] No direct match, trying broader search for: "${result.customer.nome_fantasia}"`);
+        // Log all candidates for debugging
+        for (const c of customerCandidates.slice(0, 10)) {
+          const cn = c.nome_fantasia || c.nome || 'N/A';
+          console.log(`[analyze-unified-order] Candidate: "${cn}"`);
+        }
+        
         const bestMatch = customerCandidates.find((c: any) => {
           const name = stripAccents((c.nome_fantasia || c.nome || '').toLowerCase());
+          const aiName = stripAccents((result.customer.nome_fantasia || '').toLowerCase());
           if (!name || !aiName) return false;
-          const cWords = name.split(/\s+/).filter((w: string) => w.length > 2);
-          // Direct word inclusion
-          if (cWords.some((w: string) => aiName.includes(w)) || aiWords.some((w: string) => name.includes(w))) return true;
-          // Edit distance check (handles typos like Lorham→Lohan)
-          for (const rw of aiWords) {
-            for (const cw of cWords) {
-              if (Math.abs(rw.length - cw.length) <= 2) {
-                let diffs = 0;
-                let ri = 0, ci = 0;
-                while (ri < rw.length && ci < cw.length) {
-                  if (rw[ri] !== cw[ci]) {
-                    diffs++;
-                    if (rw.length > cw.length) ri++;
-                    else if (cw.length > rw.length) ci++;
-                  }
-                  ri++; ci++;
-                }
-                diffs += Math.abs(rw.length - ri) + Math.abs(cw.length - ci);
-                if (diffs <= 2) return true;
-              }
-            }
-          }
-          return false;
+          return shareWords(name, aiName);
         });
+        
         if (bestMatch) {
+          console.log(`[analyze-unified-order] Broader match found: "${bestMatch.nome_fantasia || bestMatch.nome}"`);
           validCustomer = {
             nome_fantasia: bestMatch.nome_fantasia || bestMatch.nome || "",
             razao_social: bestMatch.razao_social || bestMatch.nome || "",
@@ -829,6 +894,8 @@ Responda SEMPRE usando a função identify_order_items.`;
             confidence: "low",
             user_id: bestMatch.user_id || null,
           };
+        } else {
+          console.log(`[analyze-unified-order] No customer match found at all`);
         }
       }
     }
