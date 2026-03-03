@@ -43,6 +43,7 @@ export interface AICustomerMatch {
   cidade?: string;
   codigo_cliente: number;
   confidence: 'high' | 'medium' | 'low';
+  user_id?: string | null;
 }
 
 export interface AIOrderResult {
