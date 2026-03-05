@@ -221,8 +221,9 @@ serve(async (req) => {
         
         if (cabec.cIgnorarItem === "S") continue;
 
-        const qtdeNfe = cabec.nQtdeNFe || 0;
-        const qtdRecebida = Math.round(Number(qtdeNfe));
+        const qtdeNfe = Number(cabec.nQtdeNFe || 0);
+        const fatorConversao = Number(cabec.nFatorConversao || ajustes.nFatorConversao || 1);
+        const qtdRecebida = Math.round(qtdeNfe / fatorConversao);
         const codigoProduto = cabec.cCodigoProduto || `item_${i + 1}`;
         const nSequencia = cabec.nSequencia || (i + 1);
 
@@ -236,7 +237,7 @@ serve(async (req) => {
           },
         });
 
-        itemResults.push(`${codigoProduto}: Qtd ${qtdRecebida}`);
+        itemResults.push(`${codigoProduto}: NF ${qtdeNfe} / FC ${fatorConversao} = ${qtdRecebida}`);
       }
 
       // Find department code
