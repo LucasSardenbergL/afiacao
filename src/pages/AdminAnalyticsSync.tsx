@@ -225,7 +225,7 @@ export default function AdminAnalyticsSync() {
         while (!complete) {
           setOrdersSyncProgress(`${acc.name}: página ${startPage}...`);
           const { data, error } = await supabase.functions.invoke("omie-vendas-sync", {
-            body: { action: "sync_pedidos", account: acc.account, start_page: startPage, max_pages: 5 },
+            body: { action: "sync_pedidos", account: acc.account, start_page: startPage, max_pages: 10 },
           });
           if (error) throw new Error(`${acc.name}: ${error.message}`);
 

@@ -414,11 +414,11 @@ async function buscarUltimaParcela(codigoCliente: number, account: Account = "ob
   }
 }
 
-// Sincronizar pedidos de venda do Omie para o banco local
+// Sincronizar pedidos de venda do Omie para o banco local (OPTIMIZED)
 async function syncPedidos(
   supabase: ReturnType<typeof createClient>,
   startPage = 1,
-  maxPages = 2,
+  maxPages = 10,
   account: Account = "oben"
 ) {
   let pagina = startPage;
@@ -427,9 +427,10 @@ async function syncPedidos(
   let totalItems = 0;
   let pagesProcessed = 0;
   let skippedNoClient = 0;
+  let skippedExisting = 0;
 
-  // Pre-load document -> user_id mapping from profiles
-  const docToUserMap = new Map<string, string>(); // clean document -> user_id
+  // ── Pre-load document -> user_id mapping from profiles ──
+  const docToUserMap = new Map<string, string>();
   let cPage = 0;
   const pgSize = 1000;
   let hasMore = true;
@@ -453,10 +454,30 @@ async function syncPedidos(
   }
   console.log(`[sync_pedidos][${account}] Document map: ${docToUserMap.size} profiles`);
 
-  // Cache for Omie codigo_cliente -> user_id (resolved via document)
+  // ── Pre-load ALL existing hash_payloads for this account (skip duplicates in bulk) ──
+  const existingHashes = new Set<string>();
+  let hPage = 0;
+  hasMore = true;
+  while (hasMore) {
+    const { data: batch } = await supabase
+      .from('sales_orders')
+      .select('hash_payload')
+      .eq('account', account)
+      .not('hash_payload', 'is', null)
+      .range(hPage * pgSize, (hPage + 1) * pgSize - 1);
+    if (!batch || batch.length === 0) { hasMore = false; }
+    else {
+      for (const row of batch) if (row.hash_payload) existingHashes.add(row.hash_payload);
+      if (batch.length < pgSize) hasMore = false;
+      hPage++;
+    }
+  }
+  console.log(`[sync_pedidos][${account}] Existing hashes: ${existingHashes.size}`);
+
+  // Cache for Omie codigo_cliente -> user_id
   const clientCache = new Map<number, string | null>();
 
-  // Pre-load product mapping
+  // ── Pre-load product mapping ──
   const productMap = new Map<number, string>();
   let pPage = 0;
   hasMore = true;
@@ -488,7 +509,6 @@ async function syncPedidos(
   // Helper: resolve codigo_cliente -> user_id via Omie ConsultarCliente + document match
   async function resolveClientUserId(codigoCliente: number): Promise<string | null> {
     if (clientCache.has(codigoCliente)) return clientCache.get(codigoCliente) || null;
-
     try {
       const result = await callOmieVendasApi(
         "geral/clientes/",
@@ -496,7 +516,6 @@ async function syncPedidos(
         { codigo_cliente_omie: codigoCliente },
         account
       ) as any;
-
       const doc = (result.cnpj_cpf || '').replace(/\D/g, '');
       if (doc.length >= 11) {
         const userId = docToUserMap.get(doc) || null;
@@ -514,7 +533,7 @@ async function syncPedidos(
     const result = await callOmieVendasApi(
       "produtos/pedido/",
       "ListarPedidos",
-      { pagina, registros_por_pagina: 20, filtrar_apenas_inclusao: "N" },
+      { pagina, registros_por_pagina: 50, filtrar_apenas_inclusao: "N" },
       account
     ) as any;
 
@@ -526,6 +545,10 @@ async function syncPedidos(
     for (const code of uniqueClientCodes) {
       if (!clientCache.has(code)) await resolveClientUserId(code);
     }
+
+    // ── Prepare batch arrays ──
+    const orderBatch: any[] = [];
+    const orderMeta: Array<{ hashPayload: string; detalhes: any[]; customerUserId: string; createdAt: string }> = [];
 
     for (const pedido of pedidos) {
       const cab = pedido.cabecalho || {};
@@ -539,13 +562,9 @@ async function syncPedidos(
 
       const hashPayload = `omie_${account}_${codigoPedido}`;
 
-      // Skip if already synced
-      const { data: existing } = await supabase
-        .from('sales_orders')
-        .select('id')
-        .eq('hash_payload', hashPayload)
-        .limit(1);
-      if (existing && existing.length > 0) continue;
+      // Skip if already synced (in-memory check, no DB call)
+      if (existingHashes.has(hashPayload)) { skippedExisting++; continue; }
+      existingHashes.add(hashPayload); // prevent duplicates within same run
 
       const detalhes = pedido.det || [];
       const itemsJson: any[] = [];
@@ -579,77 +598,129 @@ async function syncPedidos(
         if (parts.length === 3) createdAt = new Date(`${parts[2]}-${parts[1]}-${parts[0]}`).toISOString();
       }
 
-      const { data: newOrder, error: orderErr } = await supabase
+      orderBatch.push({
+        customer_user_id: customerUserId,
+        created_by: systemUserId,
+        items: itemsJson,
+        subtotal: Math.round(subtotal * 100) / 100,
+        discount: 0,
+        total: Math.round(subtotal * 100) / 100,
+        status,
+        omie_pedido_id: codigoPedido,
+        omie_numero_pedido: String(numeroPedido || codigoPedido),
+        account,
+        hash_payload: hashPayload,
+        created_at: createdAt,
+        notes: cab.observacoes_pedido || null,
+      });
+      orderMeta.push({ hashPayload, detalhes, customerUserId, createdAt });
+    }
+
+    // ── Batch insert orders ──
+    if (orderBatch.length > 0) {
+      const { data: insertedOrders, error: orderErr } = await supabase
         .from('sales_orders')
-        .insert({
-          customer_user_id: customerUserId,
-          created_by: systemUserId,
-          items: itemsJson,
-          subtotal: Math.round(subtotal * 100) / 100,
-          discount: 0,
-          total: Math.round(subtotal * 100) / 100,
-          status,
-          omie_pedido_id: codigoPedido,
-          omie_numero_pedido: String(numeroPedido || codigoPedido),
-          account,
-          hash_payload: hashPayload,
-          created_at: createdAt,
-          notes: cab.observacoes_pedido || null,
-        })
-        .select('id')
-        .single();
+        .insert(orderBatch)
+        .select('id, hash_payload');
 
       if (orderErr) {
-        console.error(`[sync_pedidos][${account}] Erro pedido ${codigoPedido}:`, orderErr.message);
-        continue;
-      }
-      totalSynced++;
+        console.error(`[sync_pedidos][${account}] Batch insert error pág ${pagina}:`, orderErr.message);
+        // Fallback: try one-by-one
+        for (let idx = 0; idx < orderBatch.length; idx++) {
+          const { data: single, error: singleErr } = await supabase
+            .from('sales_orders')
+            .insert(orderBatch[idx])
+            .select('id')
+            .single();
+          if (!singleErr && single) {
+            totalSynced++;
+            // Insert items + prices for this order
+            const meta = orderMeta[idx];
+            const itemRows = meta.detalhes.map((det: any) => {
+              const prod = det.produto || {};
+              return {
+                sales_order_id: single.id,
+                customer_user_id: meta.customerUserId,
+                product_id: productMap.get(prod.codigo_produto) || null,
+                omie_codigo_produto: prod.codigo_produto || null,
+                quantity: prod.quantidade || 1,
+                unit_price: prod.valor_unitario || 0,
+                discount: prod.desconto || 0,
+                hash_payload: `${meta.hashPayload}_${prod.codigo_produto}`,
+              };
+            }).filter((i: any) => i.omie_codigo_produto);
+            if (itemRows.length > 0) {
+              await supabase.from('order_items').insert(itemRows);
+              totalItems += itemRows.length;
+            }
+          }
+        }
+      } else if (insertedOrders) {
+        totalSynced += insertedOrders.length;
 
-      if (newOrder?.id) {
-        const orderItemRows = detalhes.map((det: any) => {
-          const prod = det.produto || {};
-          return {
-            sales_order_id: newOrder.id,
-            customer_user_id: customerUserId,
-            product_id: productMap.get(prod.codigo_produto) || null,
-            omie_codigo_produto: prod.codigo_produto || null,
-            quantity: prod.quantidade || 1,
-            unit_price: prod.valor_unitario || 0,
-            discount: prod.desconto || 0,
-            hash_payload: `${hashPayload}_${prod.codigo_produto}`,
-          };
-        }).filter((i: any) => i.omie_codigo_produto);
+        // Build hash -> id map for inserted orders
+        const hashToId = new Map<string, string>();
+        for (const o of insertedOrders) if (o.hash_payload) hashToId.set(o.hash_payload, o.id);
 
-        if (orderItemRows.length > 0) {
-          const { error: itemsErr } = await supabase.from('order_items').insert(orderItemRows);
-          if (itemsErr) console.error(`[sync_pedidos][${account}] Erro items ${codigoPedido}:`, itemsErr.message);
-          else totalItems += orderItemRows.length;
+        // ── Batch insert order_items ──
+        const allItemRows: any[] = [];
+        const allPriceRows: any[] = [];
+
+        for (const meta of orderMeta) {
+          const orderId = hashToId.get(meta.hashPayload);
+          if (!orderId) continue;
+
+          for (const det of meta.detalhes) {
+            const prod = det.produto || {};
+            if (!prod.codigo_produto) continue;
+
+            allItemRows.push({
+              sales_order_id: orderId,
+              customer_user_id: meta.customerUserId,
+              product_id: productMap.get(prod.codigo_produto) || null,
+              omie_codigo_produto: prod.codigo_produto,
+              quantity: prod.quantidade || 1,
+              unit_price: prod.valor_unitario || 0,
+              discount: prod.desconto || 0,
+              hash_payload: `${meta.hashPayload}_${prod.codigo_produto}`,
+            });
+
+            const productId = productMap.get(prod.codigo_produto);
+            if (productId && prod.valor_unitario > 0) {
+              allPriceRows.push({
+                customer_user_id: meta.customerUserId,
+                product_id: productId,
+                unit_price: prod.valor_unitario,
+                sales_order_id: orderId,
+                created_at: meta.createdAt,
+              });
+            }
+          }
         }
 
-        // Populate sales_price_history
-        for (const det of detalhes) {
-          const prod = det.produto || {};
-          const productId = productMap.get(prod.codigo_produto);
-          if (productId && prod.valor_unitario > 0) {
-            await supabase.from('sales_price_history').insert({
-              customer_user_id: customerUserId,
-              product_id: productId,
-              unit_price: prod.valor_unitario,
-              sales_order_id: newOrder.id,
-              created_at: createdAt,
-            });
-          }
+        // Insert items in batches of 200
+        for (let i = 0; i < allItemRows.length; i += 200) {
+          const batch = allItemRows.slice(i, i + 200);
+          const { error: itemsErr } = await supabase.from('order_items').insert(batch);
+          if (itemsErr) console.error(`[sync_pedidos][${account}] Items batch error:`, itemsErr.message);
+          else totalItems += batch.length;
+        }
+
+        // Insert prices in batches of 200
+        for (let i = 0; i < allPriceRows.length; i += 200) {
+          const batch = allPriceRows.slice(i, i + 200);
+          await supabase.from('sales_price_history').insert(batch);
         }
       }
     }
 
-    console.log(`[sync_pedidos][${account}] Página ${pagina}/${totalPaginas} - ${pedidos.length} pedidos`);
+    console.log(`[sync_pedidos][${account}] Página ${pagina}/${totalPaginas} — ${orderBatch.length} novos, ${skippedExisting} existentes`);
     pagina++;
     pagesProcessed++;
   }
 
   const complete = pagina > totalPaginas;
-  return { totalSynced, totalItems, skippedNoClient, totalPaginas, lastPage: pagina - 1, nextPage: complete ? null : pagina, complete };
+  return { totalSynced, totalItems, skippedNoClient, skippedExisting, totalPaginas, lastPage: pagina - 1, nextPage: complete ? null : pagina, complete };
 }
 
 // Config por empresa para criação de pedido
