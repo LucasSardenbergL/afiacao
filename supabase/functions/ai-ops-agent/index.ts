@@ -170,11 +170,27 @@ serve(async (req) => {
     console.log("[ai-ops-agent] Refreshing customer metrics...");
     await supabase.rpc("refresh_customer_metrics");
 
-    // 2. Get all customer metrics
-    const { data: metrics, error: metricsError } = await supabase.rpc("get_customer_metrics");
-    if (metricsError) throw new Error(`Failed to get metrics: ${metricsError.message}`);
+    // 2. Get all customer metrics with pagination (bypass 1000-row limit)
+    let allMetrics: any[] = [];
+    const PAGE_SIZE = 1000;
+    let offset = 0;
+    let hasMore = true;
+    while (hasMore) {
+      const { data: page, error: pageError } = await supabase
+        .from("customer_metrics_mv")
+        .select("*")
+        .range(offset, offset + PAGE_SIZE - 1);
+      if (pageError) throw new Error(`Failed to get metrics page ${offset}: ${pageError.message}`);
+      if (page && page.length > 0) {
+        allMetrics = allMetrics.concat(page);
+        offset += PAGE_SIZE;
+        hasMore = page.length === PAGE_SIZE;
+      } else {
+        hasMore = false;
+      }
+    }
 
-    console.log(`[ai-ops-agent] Processing ${metrics?.length || 0} customers`);
+    console.log(`[ai-ops-agent] Total customers fetched: ${allMetrics.length}`);
 
     // 3. Get farmer (vendedor) assignments from omie_clientes
     const { data: clientAssignments } = await supabase
@@ -191,9 +207,11 @@ serve(async (req) => {
     const decisions: any[] = [];
     const today = new Date().toISOString().split("T")[0];
 
-    for (const m of (metrics || [])) {
-      // Skip customers with no purchase history and no meaningful data
-      if (m.dias_desde_ultima_compra >= 9999 && m.pedidos_90d === 0) continue;
+    // Only process customers that have at least SOME purchase history
+    const relevantMetrics = allMetrics.filter((m: any) => m.dias_desde_ultima_compra < 9999);
+    console.log(`[ai-ops-agent] Customers with purchase history: ${relevantMetrics.length}`);
+
+    for (const m of relevantMetrics) {
 
       const result = calculateScore(m as CustomerMetric);
 
