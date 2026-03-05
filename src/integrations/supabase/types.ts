@@ -62,6 +62,101 @@ export type Database = {
         }
         Relationships: []
       }
+      ai_decision_audit_log: {
+        Row: {
+          action: string
+          created_at: string
+          data_snapshot: Json | null
+          decision_id: string | null
+          id: string
+          notes: string | null
+          performed_by: string | null
+        }
+        Insert: {
+          action: string
+          created_at?: string
+          data_snapshot?: Json | null
+          decision_id?: string | null
+          id?: string
+          notes?: string | null
+          performed_by?: string | null
+        }
+        Update: {
+          action?: string
+          created_at?: string
+          data_snapshot?: Json | null
+          decision_id?: string | null
+          id?: string
+          notes?: string | null
+          performed_by?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "ai_decision_audit_log_decision_id_fkey"
+            columns: ["decision_id"]
+            isOneToOne: false
+            referencedRelation: "ai_decisions"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      ai_decisions: {
+        Row: {
+          confidence: string
+          confidence_value: number | null
+          created_at: string
+          customer_metrics: Json | null
+          customer_user_id: string
+          decision_type: string
+          evidences: Json | null
+          executed_at: string | null
+          explanation: string | null
+          farmer_id: string | null
+          id: string
+          primary_reason: string | null
+          score_final: number
+          status: string
+          suggested_action: string | null
+          updated_at: string
+        }
+        Insert: {
+          confidence?: string
+          confidence_value?: number | null
+          created_at?: string
+          customer_metrics?: Json | null
+          customer_user_id: string
+          decision_type?: string
+          evidences?: Json | null
+          executed_at?: string | null
+          explanation?: string | null
+          farmer_id?: string | null
+          id?: string
+          primary_reason?: string | null
+          score_final?: number
+          status?: string
+          suggested_action?: string | null
+          updated_at?: string
+        }
+        Update: {
+          confidence?: string
+          confidence_value?: number | null
+          created_at?: string
+          customer_metrics?: Json | null
+          customer_user_id?: string
+          decision_type?: string
+          evidences?: Json | null
+          executed_at?: string | null
+          explanation?: string | null
+          farmer_id?: string | null
+          id?: string
+          primary_reason?: string | null
+          score_final?: number
+          status?: string
+          suggested_action?: string | null
+          updated_at?: string
+        }
+        Relationships: []
+      }
       category_mappings: {
         Row: {
           id: string
@@ -2958,12 +3053,47 @@ export type Database = {
       }
     }
     Views: {
-      [_ in never]: never
+      customer_metrics_mv: {
+        Row: {
+          atraso_relativo: number | null
+          calculated_at: string | null
+          customer_user_id: string | null
+          dias_desde_ultima_compra: number | null
+          document: string | null
+          faturamento_90d: number | null
+          faturamento_prev_90d: number | null
+          intervalo_medio_dias: number | null
+          is_cold_start: boolean | null
+          pedidos_90d: number | null
+          razao_social: string | null
+          ticket_medio_90d: number | null
+          ultima_compra_data: string | null
+        }
+        Relationships: []
+      }
     }
     Functions: {
       get_commercial_role: {
         Args: { _user_id: string }
         Returns: Database["public"]["Enums"]["commercial_role"]
+      }
+      get_customer_metrics: {
+        Args: never
+        Returns: {
+          atraso_relativo: number
+          calculated_at: string
+          customer_user_id: string
+          dias_desde_ultima_compra: number
+          document: string
+          faturamento_90d: number
+          faturamento_prev_90d: number
+          intervalo_medio_dias: number
+          is_cold_start: boolean
+          pedidos_90d: number
+          razao_social: string
+          ticket_medio_90d: number
+          ultima_compra_data: string
+        }[]
       }
       get_user_role: {
         Args: { _user_id: string }
@@ -2977,6 +3107,7 @@ export type Database = {
         Returns: boolean
       }
       is_super_admin: { Args: { _user_id: string }; Returns: boolean }
+      refresh_customer_metrics: { Args: never; Returns: undefined }
     }
     Enums: {
       app_role: "admin" | "employee" | "customer"

@@ -93,6 +93,7 @@ const unifiedNavSections: { title: string; items: NavItem[] }[] = [
     title: 'Inteligência',
     items: [
       { icon: BarChart3, label: 'Dashboard Intel', path: '/intelligence' },
+      { icon: Target, label: 'AI Ops', path: '/ai-ops' },
     ],
   },
   {
