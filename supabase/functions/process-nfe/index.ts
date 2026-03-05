@@ -2,7 +2,7 @@ import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
-  'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
+  'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type, x-supabase-client-platform, x-supabase-client-platform-version, x-supabase-client-runtime, x-supabase-client-runtime-version',
 };
 
 const OMIE_BASE = "https://app.omie.com.br/api/v1/";
@@ -39,6 +39,8 @@ async function callOmie(endpoint: string, call: string, params: Record<string, u
     param: params,
   };
 
+  console.log(`[callOmie] ${call} -> ${endpoint}`);
+
   const res = await fetch(`${OMIE_BASE}${endpoint}`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
@@ -50,11 +52,11 @@ async function callOmie(endpoint: string, call: string, params: Record<string, u
   try {
     data = JSON.parse(text);
   } catch {
-    throw new Error(`Resposta inválida da API Omie: ${text.substring(0, 200)}`);
+    throw new Error(`Resposta inválida da API Omie: ${text.substring(0, 300)}`);
   }
 
   if (data.faultstring) {
-    throw new Error(`Omie API Error: ${data.faultstring}`);
+    throw new Error(`Omie: ${data.faultstring}`);
   }
 
   return data;
@@ -82,62 +84,68 @@ serve(async (req) => {
     }
 
     const steps: StepResult[] = [];
-    let codigoNfe: number | null = null;
+    let nIdReceb: number | null = null;
+    let cChaveNfe: string | null = null;
+    const nfNumberClean = String(Number(nf_number)); // strip leading zeros
 
-    // STEP 1 - Find NF by number
+    console.log(`[process-nfe] Iniciando: NF="${nf_number}", clean="${nfNumberClean}", account="${account}"`);
+
+    // STEP 1 - Find the NF using ListarRecebimentos
     try {
       let found = false;
       let pagina = 1;
-      const registrosPorPagina = 50;
-      // Try with and without leading zeros
-      const nfNumberClean = String(Number(nf_number)); // removes leading zeros
-      const nfNumberOriginal = String(nf_number);
 
-      console.log(`[process-nfe] Buscando NF: original="${nfNumberOriginal}", clean="${nfNumberClean}", account="${account}"`);
-
-      while (!found && pagina <= 20) {
-        console.log(`[process-nfe] Listando página ${pagina}...`);
-        const listResult = await callOmie("estoque/nfe/", "ListarNFe", [{
+      while (!found && pagina <= 30) {
+        console.log(`[process-nfe] ListarRecebimentos página ${pagina}...`);
+        const listResult = await callOmie("produtos/recebimentonfe/", "ListarRecebimentos", [{
           nPagina: pagina,
-          nRegPorPagina: registrosPorPagina,
+          nRegistrosPorPagina: 50,
         }], account);
 
-        console.log(`[process-nfe] Página ${pagina}: ${listResult.nTotalRegistros || 0} total registros, ${(listResult.nfe_cadastro || []).length} nesta página`);
+        const recebimentos = listResult.recebimentos || [];
+        const totalRegistros = listResult.nTotalRegistros || 0;
+        console.log(`[process-nfe] Página ${pagina}: ${recebimentos.length} recebimentos, total=${totalRegistros}`);
 
-        const nfes = listResult.nfe_cadastro || [];
-        
-        // Log first few NF numbers for debugging
-        if (pagina === 1 && nfes.length > 0) {
-          const sampleNumbers = nfes.slice(0, 5).map((n: any) => n.numero_nfe);
-          console.log(`[process-nfe] Amostra de números NF: ${JSON.stringify(sampleNumbers)}`);
+        // Log sample for debugging
+        if (pagina === 1 && recebimentos.length > 0) {
+          const samples = recebimentos.slice(0, 5).map((r: any) => ({
+            nIdReceb: r.cabec?.nIdReceb,
+            cNumeroNFe: r.cabec?.cNumeroNFe,
+            cNome: r.cabec?.cNome,
+          }));
+          console.log(`[process-nfe] Amostras: ${JSON.stringify(samples)}`);
         }
 
-        for (const nfe of nfes) {
-          const nfeNum = String(nfe.numero_nfe);
-          if (nfeNum === nfNumberOriginal || nfeNum === nfNumberClean || 
-              String(Number(nfeNum)) === nfNumberClean) {
-            codigoNfe = nfe.codigo_nfe;
-            const fornecedor = nfe.razao_social || nfe.nome_fantasia || "Fornecedor";
+        for (const receb of recebimentos) {
+          const cabec = receb.cabec || {};
+          const numNfe = String(cabec.cNumeroNFe || "");
+          const numNfeClean = String(Number(numNfe) || numNfe);
+          
+          if (numNfe === String(nf_number) || numNfeClean === nfNumberClean || numNfe === nfNumberClean) {
+            nIdReceb = cabec.nIdReceb;
+            cChaveNfe = cabec.cChaveNfe || null;
+            const fornecedor = cabec.cNome || cabec.cRazaoSocial || "Fornecedor";
             steps.push({
               step: 1,
-              description: `NF encontrada: ${fornecedor} (NF ${nfeNum})`,
+              description: `NF encontrada: ${fornecedor} (NF ${numNfe})`,
               status: "success",
-              detail: `codigo_nfe: ${codigoNfe}`,
+              detail: `nIdReceb: ${nIdReceb}, chave: ${cChaveNfe ? cChaveNfe.substring(0, 20) + "..." : "N/A"}`,
             });
             found = true;
+            console.log(`[process-nfe] NF encontrada! nIdReceb=${nIdReceb}`);
             break;
           }
         }
 
         if (!found) {
-          const totalPages = Math.ceil((listResult.nTotalRegistros || 0) / registrosPorPagina);
-          if (pagina >= totalPages || nfes.length === 0) break;
+          const totalPages = Math.ceil(totalRegistros / 50);
+          if (pagina >= totalPages || recebimentos.length === 0) break;
           pagina++;
         }
       }
 
       if (!found) {
-        throw new Error(`NF ${nf_number} não encontrada no Omie (verificadas ${pagina} páginas)`);
+        throw new Error(`NF ${nf_number} não encontrada no Omie (verificadas ${pagina} páginas, endpoint: produtos/recebimentonfe/)`);
       }
     } catch (e) {
       steps.push({ step: 1, description: `Buscar NF ${nf_number}`, status: "error", detail: e.message });
@@ -147,131 +155,155 @@ serve(async (req) => {
       });
     }
 
-    // STEP 2 - Assign Department
-    try {
-      await callOmie("financas/contacorrente/", "DistribuirDepartamento", [{
-        codigo_nfe: codigoNfe,
-        distribuicao: [{ cCodDepto: "Operações", nPercentual: 100 }],
-      }], account);
-      steps.push({ step: 2, description: "Departamentos configurados (Operações 100%)", status: "success" });
-    } catch (e) {
-      // If it fails with "already distributed", treat as warning
-      if (e.message?.includes("já") || e.message?.includes("already")) {
-        steps.push({ step: 2, description: "Departamento já configurado", status: "warning", detail: e.message });
-      } else {
-        steps.push({ step: 2, description: "Configurar departamento", status: "error", detail: e.message });
-        return new Response(JSON.stringify({ steps, error: e.message }), {
-          status: 200,
-          headers: { ...corsHeaders, "Content-Type": "application/json" },
-        });
-      }
-    }
-
-    // STEP 3 - Check and fix item associations
+    // STEP 2 - Get full details via ConsultarRecebimento
     let itens: any[] = [];
     try {
-      const nfeDetail = await callOmie("estoque/nfe/", "ObterNFe", [{ codigo_nfe: codigoNfe }], account);
-      itens = nfeDetail.itens || nfeDetail.det || [];
+      const consultaParams: Record<string, unknown> = { nIdReceb };
+      if (cChaveNfe) consultaParams.cChaveNfe = cChaveNfe;
+      
+      const detail = await callOmie("produtos/recebimentonfe/", "ConsultarRecebimento", [consultaParams], account);
+      itens = detail.itensRecebimento || [];
+      
+      console.log(`[process-nfe] ConsultarRecebimento: ${itens.length} itens`);
 
+      // Check item associations
       let associationIssues = 0;
       const warnings: string[] = [];
 
       for (let i = 0; i < itens.length; i++) {
         const item = itens[i];
-        const codigoProduto = item.codigo_produto || item.prod?.cProd;
-        const codigoProdutoFornecedor = item.codigo_produto_fornecedor || item.prod?.cProdFornec;
-
-        if (!codigoProduto && codigoProdutoFornecedor) {
-          try {
-            const searchResult = await callOmie("geral/produtos/", "ListarProdutos", [{
-              pagina: 1,
-              registros_por_pagina: 5,
-              filtrar_por_codigo: codigoProdutoFornecedor,
-            }], account);
-            const produtos = searchResult.produto_servico_cadastro || [];
-            if (produtos.length > 0) {
-              warnings.push(`Item ${i + 1}: associado via busca (${codigoProdutoFornecedor})`);
-            } else {
-              associationIssues++;
-              warnings.push(`Item ${i + 1}: sem associação encontrada (${codigoProdutoFornecedor})`);
-            }
-          } catch {
-            associationIssues++;
-            warnings.push(`Item ${i + 1}: erro ao buscar produto`);
-          }
+        const cabec = item.itensCabec || {};
+        const nIdProduto = cabec.nIdProduto;
+        const cIgnorar = cabec.cIgnorarItem;
+        
+        if (cIgnorar === "S") {
+          warnings.push(`Item ${i + 1}: ignorado`);
+          continue;
+        }
+        
+        if (!nIdProduto || nIdProduto === 0) {
+          associationIssues++;
+          warnings.push(`Item ${i + 1} (${cabec.cCodigoProduto || "?"}): sem produto associado`);
         }
       }
 
       if (associationIssues > 0) {
         steps.push({
-          step: 3,
+          step: 2,
           description: `Itens verificados: ${itens.length} itens, ${associationIssues} sem associação`,
           status: "warning",
           detail: warnings.join("; "),
         });
       } else {
         steps.push({
-          step: 3,
+          step: 2,
           description: `Itens verificados: ${itens.length} itens, todos associados`,
           status: "success",
         });
       }
     } catch (e) {
-      steps.push({ step: 3, description: "Verificar itens da NF", status: "error", detail: e.message });
+      steps.push({ step: 2, description: "Consultar detalhes da NF", status: "error", detail: e.message });
       return new Response(JSON.stringify({ steps, error: e.message }), {
         status: 200,
         headers: { ...corsHeaders, "Content-Type": "application/json" },
       });
     }
 
-    // STEP 4 - Update received quantities
+    // STEP 3 - Update received quantities and departments via AlterarRecebimento
     try {
+      const itensEditar: any[] = [];
       const itemResults: string[] = [];
+
       for (let i = 0; i < itens.length; i++) {
         const item = itens[i];
-        const quantidade = item.quantidade || item.prod?.qCom || 0;
-        const qtdRecebida = Math.round(Number(quantidade));
-        const codigoProduto = item.codigo_produto || item.prod?.cProd || `item_${i + 1}`;
-        const nItemNfe = item.nItemNfe || item.nItem || (i + 1);
+        const cabec = item.itensCabec || {};
+        const ajustes = item.itensAjustes || {};
+        
+        if (cabec.cIgnorarItem === "S") continue;
 
-        try {
-          await callOmie("estoque/nfe/", "AlterarItemNFe", [{
-            codigo_nfe: codigoNfe,
-            nItemNfe: nItemNfe,
-            quantidade_recebida: qtdRecebida,
-          }], account);
-          itemResults.push(`Item ${i + 1}/${itens.length}: ${codigoProduto} - Qtd Recebida: ${qtdRecebida}`);
-        } catch (e) {
-          itemResults.push(`Item ${i + 1}/${itens.length}: ${codigoProduto} - ERRO: ${e.message}`);
-        }
+        const qtdeNfe = cabec.nQtdeNFe || 0;
+        const qtdRecebida = Math.round(Number(qtdeNfe));
+        const codigoProduto = cabec.cCodigoProduto || `item_${i + 1}`;
+        const nSequencia = cabec.nSequencia || (i + 1);
+
+        itensEditar.push({
+          itensIde: {
+            nSequencia: nSequencia,
+            cAcao: "ALTERAR",
+          },
+          itensAjustes: {
+            nQtdeRecebida: qtdRecebida,
+          },
+        });
+
+        itemResults.push(`${codigoProduto}: Qtd ${qtdRecebida}`);
       }
 
+      // Find department code
+      let departmentCode = "";
+      try {
+        const deptResult = await callOmie("geral/departamentos/", "ListarDepartamentos", [{
+          pagina: 1,
+          registros_por_pagina: 50,
+        }], account);
+        const deptos = deptResult.departamentos || [];
+        console.log(`[process-nfe] Departamentos: ${deptos.map((d: any) => d.descricao || d.codigo).join(", ")}`);
+        const opsDept = deptos.find((d: any) => 
+          (d.descricao || "").toLowerCase().includes("opera") || 
+          (d.codigo || "").toLowerCase().includes("opera")
+        );
+        if (opsDept) {
+          departmentCode = opsDept.codigo;
+          console.log(`[process-nfe] Departamento Operações encontrado: ${departmentCode}`);
+        }
+      } catch (e) {
+        console.log(`[process-nfe] Erro ao listar departamentos: ${e.message}`);
+      }
+
+      const alterarPayload: Record<string, unknown> = {
+        ide: { nIdReceb },
+        itensRecebimentoEditar: itensEditar,
+      };
+
+      // Add department if found
+      if (departmentCode) {
+        alterarPayload.departamentos = [{
+          cCodDepartamento: departmentCode,
+          pDepartamento: 100,
+          vDepartamento: 0,
+        }];
+      }
+
+      await callOmie("produtos/recebimentonfe/", "AlterarRecebimento", [alterarPayload], account);
+
       steps.push({
-        step: 4,
-        description: `Quantidades recebidas atualizadas (${itens.length} itens)`,
+        step: 3,
+        description: `Quantidades recebidas e departamento atualizados (${itensEditar.length} itens)`,
         status: "success",
-        detail: itemResults.join(" | "),
+        detail: itemResults.join(" | ") + (departmentCode ? ` | Depto: ${departmentCode}` : ""),
       });
     } catch (e) {
-      steps.push({ step: 4, description: "Atualizar quantidades recebidas", status: "error", detail: e.message });
+      // If alter fails, try step by step approach
+      steps.push({ step: 3, description: "Atualizar recebimento", status: "error", detail: e.message });
       return new Response(JSON.stringify({ steps, error: e.message }), {
         status: 200,
         headers: { ...corsHeaders, "Content-Type": "application/json" },
       });
     }
 
-    // STEP 5 - SEFAZ Manifestation
+    // STEP 4 - Move to "Conferência" step (etapa)
     try {
-      await callOmie("estoque/nfe/", "ManifestacaoDestinatario", [{
-        codigo_nfe: codigoNfe,
-        tipo_manifestacao: "CONFIRMADA",
+      await callOmie("produtos/recebimentonfe/", "AlterarEtapaRecebimento", [{
+        nIdReceb,
+        cChaveNfe: cChaveNfe || "",
+        cEtapa: "40", // Conferência / Pronto para concluir
       }], account);
-      steps.push({ step: 5, description: "Manifestação confirmada na SEFAZ", status: "success" });
+      steps.push({ step: 4, description: "Etapa alterada para conferência", status: "success" });
     } catch (e) {
-      if (e.message?.includes("já") || e.message?.includes("already") || e.message?.includes("manifestad")) {
-        steps.push({ step: 5, description: "Manifestação já confirmada anteriormente", status: "warning", detail: e.message });
+      if (e.message?.includes("já") || e.message?.includes("etapa")) {
+        steps.push({ step: 4, description: "Etapa já configurada", status: "warning", detail: e.message });
       } else {
-        steps.push({ step: 5, description: "Manifestação SEFAZ", status: "error", detail: e.message });
+        steps.push({ step: 4, description: "Alterar etapa", status: "error", detail: e.message });
         return new Response(JSON.stringify({ steps, error: e.message }), {
           status: 200,
           headers: { ...corsHeaders, "Content-Type": "application/json" },
@@ -279,14 +311,15 @@ serve(async (req) => {
       }
     }
 
-    // STEP 6 - Conclude receipt
+    // STEP 5 - Conclude receipt
     try {
-      await callOmie("estoque/nfe/", "ConcluirRecebimentoNFe", [{
-        codigo_nfe: codigoNfe,
+      await callOmie("produtos/recebimentonfe/", "ConcluirRecebimento", [{
+        nIdReceb,
+        cChaveNfe: cChaveNfe || "",
       }], account);
-      steps.push({ step: 6, description: "Recebimento concluído", status: "success" });
+      steps.push({ step: 5, description: "Recebimento concluído com sucesso", status: "success" });
     } catch (e) {
-      steps.push({ step: 6, description: "Concluir recebimento", status: "error", detail: e.message });
+      steps.push({ step: 5, description: "Concluir recebimento", status: "error", detail: e.message });
       return new Response(JSON.stringify({ steps, error: e.message }), {
         status: 200,
         headers: { ...corsHeaders, "Content-Type": "application/json" },
