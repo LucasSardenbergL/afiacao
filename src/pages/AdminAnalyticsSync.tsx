@@ -208,46 +208,67 @@ export default function AdminAnalyticsSync() {
   const [editingConfig, setEditingConfig] = useState<Record<string, string>>({});
   const [ordersSyncProgress, setOrdersSyncProgress] = useState<string | null>(null);
 
-  const bulkOrdersSyncMutation = useMutation({
-    mutationFn: async () => {
-      const accounts: Array<{ name: string; account: string }> = [
-        { name: "Oben", account: "oben" },
-        { name: "Colacor", account: "colacor" },
-      ];
-      let grandTotalSynced = 0;
-      let grandTotalItems = 0;
-      let grandTotalSkipped = 0;
+  // Helper to format date as DD/MM/YYYY
+  const formatOmieDate = (date: Date) => {
+    const dd = String(date.getDate()).padStart(2, '0');
+    const mm = String(date.getMonth() + 1).padStart(2, '0');
+    const yyyy = date.getFullYear();
+    return `${dd}/${mm}/${yyyy}`;
+  };
 
-      for (const acc of accounts) {
-        let startPage = 1;
-        let complete = false;
+  const runOrdersSync = async (dateFrom?: string, dateTo?: string) => {
+    const accounts: Array<{ name: string; account: string }> = [
+      { name: "Oben", account: "oben" },
+      { name: "Colacor", account: "colacor" },
+    ];
+    let grandTotalSynced = 0;
+    let grandTotalItems = 0;
+    let grandTotalSkipped = 0;
 
-        while (!complete) {
-          setOrdersSyncProgress(`${acc.name}: página ${startPage}...`);
-          const { data, error } = await supabase.functions.invoke("omie-vendas-sync", {
-            body: { action: "sync_pedidos", account: acc.account, start_page: startPage, max_pages: 10 },
-          });
-          if (error) throw new Error(`${acc.name}: ${error.message}`);
+    for (const acc of accounts) {
+      let startPage = 1;
+      let complete = false;
 
-          grandTotalSynced += data?.totalSynced || 0;
-          grandTotalItems += data?.totalItems || 0;
-          grandTotalSkipped += data?.skippedNoClient || 0;
+      while (!complete) {
+        setOrdersSyncProgress(`${acc.name}: página ${startPage}...`);
+        const { data, error } = await supabase.functions.invoke("omie-vendas-sync", {
+          body: {
+            action: "sync_pedidos",
+            account: acc.account,
+            start_page: startPage,
+            max_pages: 10,
+            ...(dateFrom && { date_from: dateFrom }),
+            ...(dateTo && { date_to: dateTo }),
+          },
+        });
+        if (error) throw new Error(`${acc.name}: ${error.message}`);
 
-          const lastPage = data?.lastPage || startPage;
-          const totalPages = data?.totalPaginas || 1;
-          setOrdersSyncProgress(`${acc.name}: pág ${lastPage}/${totalPages} — ${grandTotalSynced} pedidos importados`);
+        grandTotalSynced += data?.totalSynced || 0;
+        grandTotalItems += data?.totalItems || 0;
+        grandTotalSkipped += data?.skippedNoClient || 0;
 
-          if (data?.complete || !data?.nextPage) {
-            complete = true;
-          } else {
-            startPage = data.nextPage;
-          }
+        const lastPage = data?.lastPage || startPage;
+        const totalPages = data?.totalPaginas || 1;
+        setOrdersSyncProgress(`${acc.name}: pág ${lastPage}/${totalPages} — ${grandTotalSynced} pedidos importados`);
+
+        if (data?.complete || !data?.nextPage) {
+          complete = true;
+        } else {
+          startPage = data.nextPage;
         }
       }
+    }
 
-      setOrdersSyncProgress(null);
-      return { grandTotalSynced, grandTotalItems, grandTotalSkipped };
-    },
+    // Refresh materialized view after import
+    setOrdersSyncProgress("Atualizando métricas de clientes...");
+    await supabase.rpc("refresh_customer_metrics");
+
+    setOrdersSyncProgress(null);
+    return { grandTotalSynced, grandTotalItems, grandTotalSkipped };
+  };
+
+  const bulkOrdersSyncMutation = useMutation({
+    mutationFn: () => runOrdersSync(),
     onSuccess: (data) => {
       toast.success("Importação de pedidos concluída", {
         description: `${data.grandTotalSynced} pedidos, ${data.grandTotalItems} itens, ${data.grandTotalSkipped} sem cliente`,
@@ -261,6 +282,26 @@ export default function AdminAnalyticsSync() {
     },
   });
 
+  const recentOrdersSyncMutation = useMutation({
+    mutationFn: () => {
+      const now = new Date();
+      const from = new Date(now);
+      from.setDate(from.getDate() - 180);
+      return runOrdersSync(formatOmieDate(from), formatOmieDate(now));
+    },
+    onSuccess: (data) => {
+      toast.success("Importação recente concluída", {
+        description: `${data.grandTotalSynced} pedidos, ${data.grandTotalItems} itens`,
+        duration: 10000,
+      });
+      queryClient.invalidateQueries({ queryKey: ["sync-state"] });
+    },
+    onError: (error) => {
+      setOrdersSyncProgress(null);
+      toast.error("Erro na importação recente", { description: String(error) });
+    },
+  });
+
   const getStateFor = (entity: string, account: string) =>
     syncStates?.find((s) => s.entity_type === entity && s.account === account);
 
@@ -269,7 +310,7 @@ export default function AdminAnalyticsSync() {
     return new Date(d).toLocaleString("pt-BR", { dateStyle: "short", timeStyle: "short" });
   };
 
-  const isRunning = syncMutation.isPending || computeCostsMutation.isPending || assocRulesMutation.isPending || bulkClientSyncMutation.isPending || bulkOrdersSyncMutation.isPending;
+  const isRunning = syncMutation.isPending || computeCostsMutation.isPending || assocRulesMutation.isPending || bulkClientSyncMutation.isPending || bulkOrdersSyncMutation.isPending || recentOrdersSyncMutation.isPending;
 
   const handleConfigSave = (id: string) => {
     const val = parseFloat(editingConfig[id]);
@@ -414,25 +455,41 @@ export default function AdminAnalyticsSync() {
               <ShoppingCart className="h-5 w-5 text-muted-foreground" />
               <CardTitle className="text-base">Importar Pedidos (Oben + Colacor)</CardTitle>
             </div>
-            <Button
-              variant="outline"
-              size="sm"
-              disabled={isRunning}
-              onClick={() => bulkOrdersSyncMutation.mutate()}
-            >
-              {bulkOrdersSyncMutation.isPending ? (
-                <Loader2 className="h-3 w-3 mr-2 animate-spin" />
-              ) : (
-                <RefreshCw className="h-3 w-3 mr-2" />
-              )}
-              Importar Todos
-            </Button>
+            <div className="flex gap-2">
+              <Button
+                variant="default"
+                size="sm"
+                disabled={isRunning}
+                onClick={() => recentOrdersSyncMutation.mutate()}
+              >
+                {recentOrdersSyncMutation.isPending ? (
+                  <Loader2 className="h-3 w-3 mr-2 animate-spin" />
+                ) : (
+                  <Sparkles className="h-3 w-3 mr-2" />
+                )}
+                Importar Recentes (180d)
+              </Button>
+              <Button
+                variant="outline"
+                size="sm"
+                disabled={isRunning}
+                onClick={() => bulkOrdersSyncMutation.mutate()}
+              >
+                {bulkOrdersSyncMutation.isPending ? (
+                  <Loader2 className="h-3 w-3 mr-2 animate-spin" />
+                ) : (
+                  <RefreshCw className="h-3 w-3 mr-2" />
+                )}
+                Importar Todos
+              </Button>
+            </div>
           </div>
         </CardHeader>
         <CardContent>
           <p className="text-xs text-muted-foreground">
-            Importa todos os pedidos de venda das contas Oben e Colacor com paginação contínua automática.
-            Cada lote processa 5 páginas (100 pedidos) por chamada, encadeando até completar.
+            <strong>Importar Recentes:</strong> busca apenas pedidos dos últimos 180 dias (rápido, ~2 min).
+            <br />
+            <strong>Importar Todos:</strong> varre todo o histórico (~425 páginas, pode levar 30+ min).
           </p>
           {ordersSyncProgress && (
             <div className="mt-3 flex items-center gap-2 text-xs text-primary font-medium">

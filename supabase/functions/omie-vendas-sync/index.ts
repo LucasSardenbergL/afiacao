@@ -419,7 +419,9 @@ async function syncPedidos(
   supabase: ReturnType<typeof createClient>,
   startPage = 1,
   maxPages = 10,
-  account: Account = "oben"
+  account: Account = "oben",
+  dateFrom?: string, // DD/MM/YYYY
+  dateTo?: string,   // DD/MM/YYYY
 ) {
   let pagina = startPage;
   let totalPaginas = 1;
@@ -548,10 +550,14 @@ async function syncPedidos(
   }
 
   while (pagina <= totalPaginas && pagesProcessed < maxPages) {
+    const listParams: Record<string, unknown> = { pagina, registros_por_pagina: 50, filtrar_apenas_inclusao: "N" };
+    if (dateFrom) listParams.filtrar_por_data_de = dateFrom;
+    if (dateTo) listParams.filtrar_por_data_ate = dateTo;
+
     const result = await callOmieVendasApi(
       "produtos/pedido/",
       "ListarPedidos",
-      { pagina, registros_por_pagina: 50, filtrar_apenas_inclusao: "N" },
+      listParams,
       account
     ) as any;
 
@@ -998,7 +1004,9 @@ serve(async (req) => {
       case "sync_pedidos": {
         const startPagePedidos = params.start_page || 1;
         const maxPagesPedidos = params.max_pages || 10;
-        const syncPedidosResult = await syncPedidos(supabaseAdmin, startPagePedidos, maxPagesPedidos, account);
+        const dateFrom = params.date_from || undefined; // DD/MM/YYYY
+        const dateTo = params.date_to || undefined;     // DD/MM/YYYY
+        const syncPedidosResult = await syncPedidos(supabaseAdmin, startPagePedidos, maxPagesPedidos, account, dateFrom, dateTo);
         result = { success: true, ...syncPedidosResult };
         break;
       }
