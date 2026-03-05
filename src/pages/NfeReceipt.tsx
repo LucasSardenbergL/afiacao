@@ -4,6 +4,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Package, Loader2, CheckCircle2, XCircle, AlertTriangle } from "lucide-react";
 
 interface StepResult {
@@ -15,6 +16,7 @@ interface StepResult {
 
 export default function NfeReceipt() {
   const [nfNumber, setNfNumber] = useState("");
+  const [account, setAccount] = useState("oben");
   const [loading, setLoading] = useState(false);
   const [steps, setSteps] = useState<StepResult[]>([]);
   const [finalStatus, setFinalStatus] = useState<"idle" | "success" | "error">("idle");
@@ -27,7 +29,7 @@ export default function NfeReceipt() {
 
     try {
       const { data, error } = await supabase.functions.invoke("process-nfe", {
-        body: { nf_number: nfNumber.trim() },
+        body: { nf_number: nfNumber.trim(), account },
       });
 
       if (error) {
@@ -71,6 +73,16 @@ export default function NfeReceipt() {
         </CardHeader>
         <CardContent className="space-y-4">
           <div className="flex gap-3">
+            <Select value={account} onValueChange={setAccount}>
+              <SelectTrigger className="w-40">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="oben">Oben</SelectItem>
+                <SelectItem value="colacor">Colacor</SelectItem>
+                <SelectItem value="afiacao">Afiação</SelectItem>
+              </SelectContent>
+            </Select>
             <Input
               type="number"
               placeholder="Número da NF"

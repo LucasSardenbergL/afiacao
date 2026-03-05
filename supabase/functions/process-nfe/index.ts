@@ -7,15 +7,35 @@ const corsHeaders = {
 
 const OMIE_BASE = "https://app.omie.com.br/api/v1/";
 
-async function callOmie(endpoint: string, call: string, params: Record<string, unknown>[]) {
-  const APP_KEY = Deno.env.get("OMIE_APP_KEY");
-  const APP_SECRET = Deno.env.get("OMIE_APP_SECRET");
-  if (!APP_KEY || !APP_SECRET) throw new Error("Credenciais Omie não configuradas");
+function getCredentials(account: string): { key: string; secret: string } {
+  switch (account) {
+    case "oben":
+      return {
+        key: Deno.env.get("OMIE_VENDAS_APP_KEY")!,
+        secret: Deno.env.get("OMIE_VENDAS_APP_SECRET")!,
+      };
+    case "colacor":
+      return {
+        key: Deno.env.get("OMIE_COLACOR_VENDAS_APP_KEY")!,
+        secret: Deno.env.get("OMIE_COLACOR_VENDAS_APP_SECRET")!,
+      };
+    case "afiacao":
+    default:
+      return {
+        key: Deno.env.get("OMIE_APP_KEY")!,
+        secret: Deno.env.get("OMIE_APP_SECRET")!,
+      };
+  }
+}
+
+async function callOmie(endpoint: string, call: string, params: Record<string, unknown>[], account = "oben") {
+  const creds = getCredentials(account);
+  if (!creds.key || !creds.secret) throw new Error(`Credenciais Omie não configuradas para ${account}`);
 
   const body = {
     call,
-    app_key: APP_KEY,
-    app_secret: APP_SECRET,
+    app_key: creds.key,
+    app_secret: creds.secret,
     param: params,
   };
 
@@ -53,7 +73,7 @@ serve(async (req) => {
   }
 
   try {
-    const { nf_number } = await req.json();
+    const { nf_number, account = "oben" } = await req.json();
     if (!nf_number) {
       return new Response(JSON.stringify({ error: "nf_number é obrigatório" }), {
         status: 400,
@@ -76,7 +96,7 @@ serve(async (req) => {
           nRegPorPagina: registrosPorPagina,
           cFiltrarPor: "numero_nfe",
           cConteudoFiltro: String(nf_number),
-        }]);
+        }], account);
 
         const nfes = listResult.nfe_cadastro || [];
         for (const nfe of nfes) {
@@ -117,7 +137,7 @@ serve(async (req) => {
       await callOmie("financas/contacorrente/", "DistribuirDepartamento", [{
         codigo_nfe: codigoNfe,
         distribuicao: [{ cCodDepto: "Operações", nPercentual: 100 }],
-      }]);
+      }], account);
       steps.push({ step: 2, description: "Departamentos configurados (Operações 100%)", status: "success" });
     } catch (e) {
       // If it fails with "already distributed", treat as warning
@@ -135,7 +155,7 @@ serve(async (req) => {
     // STEP 3 - Check and fix item associations
     let itens: any[] = [];
     try {
-      const nfeDetail = await callOmie("estoque/nfe/", "ObterNFe", [{ codigo_nfe: codigoNfe }]);
+      const nfeDetail = await callOmie("estoque/nfe/", "ObterNFe", [{ codigo_nfe: codigoNfe }], account);
       itens = nfeDetail.itens || nfeDetail.det || [];
 
       let associationIssues = 0;
@@ -152,7 +172,7 @@ serve(async (req) => {
               pagina: 1,
               registros_por_pagina: 5,
               filtrar_por_codigo: codigoProdutoFornecedor,
-            }]);
+            }], account);
             const produtos = searchResult.produto_servico_cadastro || [];
             if (produtos.length > 0) {
               warnings.push(`Item ${i + 1}: associado via busca (${codigoProdutoFornecedor})`);
@@ -204,7 +224,7 @@ serve(async (req) => {
             codigo_nfe: codigoNfe,
             nItemNfe: nItemNfe,
             quantidade_recebida: qtdRecebida,
-          }]);
+          }], account);
           itemResults.push(`Item ${i + 1}/${itens.length}: ${codigoProduto} - Qtd Recebida: ${qtdRecebida}`);
         } catch (e) {
           itemResults.push(`Item ${i + 1}/${itens.length}: ${codigoProduto} - ERRO: ${e.message}`);
@@ -230,7 +250,7 @@ serve(async (req) => {
       await callOmie("estoque/nfe/", "ManifestacaoDestinatario", [{
         codigo_nfe: codigoNfe,
         tipo_manifestacao: "CONFIRMADA",
-      }]);
+      }], account);
       steps.push({ step: 5, description: "Manifestação confirmada na SEFAZ", status: "success" });
     } catch (e) {
       if (e.message?.includes("já") || e.message?.includes("already") || e.message?.includes("manifestad")) {
@@ -248,7 +268,7 @@ serve(async (req) => {
     try {
       await callOmie("estoque/nfe/", "ConcluirRecebimentoNFe", [{
         codigo_nfe: codigoNfe,
-      }]);
+      }], account);
       steps.push({ step: 6, description: "Recebimento concluído", status: "success" });
     } catch (e) {
       steps.push({ step: 6, description: "Concluir recebimento", status: "error", detail: e.message });
