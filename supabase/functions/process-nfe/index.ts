@@ -229,7 +229,7 @@ serve(async (req) => {
         itensEditar.push({
           itensIde: {
             nSequencia: nSequencia,
-            cAcao: "ALTERAR",
+            cAcao: "EDITAR",
           },
           itensAjustes: {
             nQtdeRecebida: qtdRecebida,
