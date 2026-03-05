@@ -69,6 +69,7 @@ const GovernanceUsers = lazy(() => import("./pages/GovernanceUsers"));
 const GovernancePermissions = lazy(() => import("./pages/GovernancePermissions"));
 const GovernanceMathParams = lazy(() => import("./pages/GovernanceMathParams"));
 const GovernanceAudit = lazy(() => import("./pages/GovernanceAudit"));
+const AIops = lazy(() => import("./pages/AIops"));
 
 const PageLoader = () => (
   <div className="flex flex-col gap-4 p-6">
@@ -151,6 +152,7 @@ const App = () => (
               <Route path="governance/permissions" element={<GovernancePermissions />} />
               <Route path="governance/math" element={<GovernanceMathParams />} />
               <Route path="governance/audit" element={<GovernanceAudit />} />
+              <Route path="ai-ops" element={<AIops />} />
             </Route>
 
             <Route path="*" element={<NotFound />} />
