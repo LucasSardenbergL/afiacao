@@ -214,6 +214,25 @@ serve(async (req) => {
       const itensEditar: any[] = [];
       const itemResults: string[] = [];
 
+      // Debug: log first item structure to find conversion factor field
+      if (itens.length > 0) {
+        console.log(`[process-nfe] DEBUG item[0] keys: ${JSON.stringify(Object.keys(itens[0]))}`);
+        console.log(`[process-nfe] DEBUG item[0].itensCabec: ${JSON.stringify(itens[0].itensCabec)}`);
+        console.log(`[process-nfe] DEBUG item[0].itensAjustes: ${JSON.stringify(itens[0].itensAjustes)}`);
+        if (itens[0].itensConversao) console.log(`[process-nfe] DEBUG item[0].itensConversao: ${JSON.stringify(itens[0].itensConversao)}`);
+        if (itens[0].itensNfe) console.log(`[process-nfe] DEBUG item[0].itensNfe: ${JSON.stringify(itens[0].itensNfe)}`);
+        // Log all sub-objects
+        for (const key of Object.keys(itens[0])) {
+          const val = itens[0][key];
+          if (typeof val === 'object' && val !== null) {
+            const strVal = JSON.stringify(val);
+            if (strVal.toLowerCase().includes('fator') || strVal.toLowerCase().includes('conver')) {
+              console.log(`[process-nfe] DEBUG FATOR found in item[0].${key}: ${strVal}`);
+            }
+          }
+        }
+      }
+
       for (let i = 0; i < itens.length; i++) {
         const item = itens[i];
         const cabec = item.itensCabec || {};
@@ -222,7 +241,16 @@ serve(async (req) => {
         if (cabec.cIgnorarItem === "S") continue;
 
         const qtdeNfe = Number(cabec.nQtdeNFe || 0);
-        const fatorConversao = Number(cabec.nFatorConversao || ajustes.nFatorConversao || 1);
+        // Search for conversion factor in all possible locations
+        const fatorConversao = Number(
+          cabec.nFatorConversao || 
+          ajustes.nFatorConversao || 
+          (item.itensConversao || {}).nFatorConversao ||
+          (item.itensNfe || {}).nFatorConversao ||
+          cabec.nFatorConv ||
+          ajustes.nFatorConv ||
+          1
+        );
         const qtdRecebida = Math.round(qtdeNfe / fatorConversao);
         const codigoProduto = cabec.cCodigoProduto || `item_${i + 1}`;
         const nSequencia = cabec.nSequencia || (i + 1);
