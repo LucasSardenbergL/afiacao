@@ -260,17 +260,36 @@ serve(async (req) => {
         console.log(`[process-nfe] Erro ao listar departamentos: ${e.message}`);
       }
 
+      // Calculate total NF value for department distribution
+      let totalNfValue = 0;
+      for (const item of itens) {
+        const cabec = item.itensCabec || {};
+        if (cabec.cIgnorarItem === "S") continue;
+        const qtde = cabec.nQtdeNFe || 0;
+        const valor = cabec.nValorUnitario || cabec.nValorTotal || 0;
+        totalNfValue += Number(qtde) * Number(valor);
+      }
+      if (totalNfValue === 0) {
+        // Fallback: sum nValorTotal directly
+        for (const item of itens) {
+          const cabec = item.itensCabec || {};
+          if (cabec.cIgnorarItem === "S") continue;
+          totalNfValue += Number(cabec.nValorTotal || 0);
+        }
+      }
+      console.log(`[process-nfe] Total NF value for department: ${totalNfValue}`);
+
       const alterarPayload: Record<string, unknown> = {
         ide: { nIdReceb },
         itensRecebimentoEditar: itensEditar,
       };
 
-      // Add department if found
-      if (departmentCode) {
+      // Add department if found and value > 0
+      if (departmentCode && totalNfValue > 0) {
         alterarPayload.departamentos = [{
           cCodDepartamento: departmentCode,
           pDepartamento: 100,
-          vDepartamento: 0,
+          vDepartamento: Math.round(totalNfValue * 100) / 100,
         }];
       }
 
