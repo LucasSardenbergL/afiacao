@@ -1,0 +1,1 @@
+DROP INDEX IF EXISTS order_items_sales_order_product_uq;
