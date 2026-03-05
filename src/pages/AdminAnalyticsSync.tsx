@@ -206,6 +206,60 @@ export default function AdminAnalyticsSync() {
   });
 
   const [editingConfig, setEditingConfig] = useState<Record<string, string>>({});
+  const [ordersSyncProgress, setOrdersSyncProgress] = useState<string | null>(null);
+
+  const bulkOrdersSyncMutation = useMutation({
+    mutationFn: async () => {
+      const accounts: Array<{ name: string; account: string }> = [
+        { name: "Oben", account: "oben" },
+        { name: "Colacor", account: "colacor" },
+      ];
+      let grandTotalSynced = 0;
+      let grandTotalItems = 0;
+      let grandTotalSkipped = 0;
+
+      for (const acc of accounts) {
+        let startPage = 1;
+        let complete = false;
+
+        while (!complete) {
+          setOrdersSyncProgress(`${acc.name}: página ${startPage}...`);
+          const { data, error } = await supabase.functions.invoke("omie-vendas-sync", {
+            body: { action: "sync_pedidos", account: acc.account, start_page: startPage, max_pages: 5 },
+          });
+          if (error) throw new Error(`${acc.name}: ${error.message}`);
+
+          grandTotalSynced += data?.totalSynced || 0;
+          grandTotalItems += data?.totalItems || 0;
+          grandTotalSkipped += data?.skippedNoClient || 0;
+
+          const lastPage = data?.lastPage || startPage;
+          const totalPages = data?.totalPaginas || 1;
+          setOrdersSyncProgress(`${acc.name}: pág ${lastPage}/${totalPages} — ${grandTotalSynced} pedidos importados`);
+
+          if (data?.complete || !data?.nextPage) {
+            complete = true;
+          } else {
+            startPage = data.nextPage;
+          }
+        }
+      }
+
+      setOrdersSyncProgress(null);
+      return { grandTotalSynced, grandTotalItems, grandTotalSkipped };
+    },
+    onSuccess: (data) => {
+      toast.success("Importação de pedidos concluída", {
+        description: `${data.grandTotalSynced} pedidos, ${data.grandTotalItems} itens, ${data.grandTotalSkipped} sem cliente`,
+        duration: 10000,
+      });
+      queryClient.invalidateQueries({ queryKey: ["sync-state"] });
+    },
+    onError: (error) => {
+      setOrdersSyncProgress(null);
+      toast.error("Erro na importação de pedidos", { description: String(error) });
+    },
+  });
 
   const getStateFor = (entity: string, account: string) =>
     syncStates?.find((s) => s.entity_type === entity && s.account === account);
@@ -215,7 +269,7 @@ export default function AdminAnalyticsSync() {
     return new Date(d).toLocaleString("pt-BR", { dateStyle: "short", timeStyle: "short" });
   };
 
-  const isRunning = syncMutation.isPending || computeCostsMutation.isPending || assocRulesMutation.isPending || bulkClientSyncMutation.isPending;
+  const isRunning = syncMutation.isPending || computeCostsMutation.isPending || assocRulesMutation.isPending || bulkClientSyncMutation.isPending || bulkOrdersSyncMutation.isPending;
 
   const handleConfigSave = (id: string) => {
     const val = parseFloat(editingConfig[id]);
@@ -352,6 +406,42 @@ export default function AdminAnalyticsSync() {
         </CardContent>
       </Card>
 
+      {/* Bulk Orders Sync */}
+      <Card>
+        <CardHeader>
+          <div className="flex items-center justify-between">
+            <div className="flex items-center gap-2">
+              <ShoppingCart className="h-5 w-5 text-muted-foreground" />
+              <CardTitle className="text-base">Importar Pedidos (Oben + Colacor)</CardTitle>
+            </div>
+            <Button
+              variant="outline"
+              size="sm"
+              disabled={isRunning}
+              onClick={() => bulkOrdersSyncMutation.mutate()}
+            >
+              {bulkOrdersSyncMutation.isPending ? (
+                <Loader2 className="h-3 w-3 mr-2 animate-spin" />
+              ) : (
+                <RefreshCw className="h-3 w-3 mr-2" />
+              )}
+              Importar Todos
+            </Button>
+          </div>
+        </CardHeader>
+        <CardContent>
+          <p className="text-xs text-muted-foreground">
+            Importa todos os pedidos de venda das contas Oben e Colacor com paginação contínua automática.
+            Cada lote processa 5 páginas (100 pedidos) por chamada, encadeando até completar.
+          </p>
+          {ordersSyncProgress && (
+            <div className="mt-3 flex items-center gap-2 text-xs text-primary font-medium">
+              <Loader2 className="h-3 w-3 animate-spin" />
+              {ordersSyncProgress}
+            </div>
+          )}
+        </CardContent>
+      </Card>
       {/* Cost Engine */}
       <Card>
         <CardHeader>
