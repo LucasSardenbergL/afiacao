@@ -906,7 +906,8 @@ serve(async (req) => {
 
       case "sync_pedidos": {
         const startPagePedidos = params.start_page || 1;
-        const syncPedidosResult = await syncPedidos(supabaseAdmin, startPagePedidos, 3, account);
+        const maxPagesPedidos = params.max_pages || 10;
+        const syncPedidosResult = await syncPedidos(supabaseAdmin, startPagePedidos, maxPagesPedidos, account);
         result = { success: true, ...syncPedidosResult };
         break;
       }
