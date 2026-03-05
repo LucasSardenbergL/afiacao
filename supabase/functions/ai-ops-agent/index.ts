@@ -285,7 +285,7 @@ serve(async (req) => {
     return new Response(
       JSON.stringify({
         success: true,
-        total_customers: metrics?.length || 0,
+        total_customers: allMetrics.length,
         decisions_generated: inserted,
         top_5: decisions.slice(0, 5).map((d) => ({
           score: d.score_final,
