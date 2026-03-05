@@ -89,23 +89,38 @@ serve(async (req) => {
       let found = false;
       let pagina = 1;
       const registrosPorPagina = 50;
+      // Try with and without leading zeros
+      const nfNumberClean = String(Number(nf_number)); // removes leading zeros
+      const nfNumberOriginal = String(nf_number);
 
-      while (!found) {
+      console.log(`[process-nfe] Buscando NF: original="${nfNumberOriginal}", clean="${nfNumberClean}", account="${account}"`);
+
+      while (!found && pagina <= 20) {
+        console.log(`[process-nfe] Listando página ${pagina}...`);
         const listResult = await callOmie("estoque/nfe/", "ListarNFe", [{
           nPagina: pagina,
           nRegPorPagina: registrosPorPagina,
-          cFiltrarPor: "numero_nfe",
-          cConteudoFiltro: String(nf_number),
         }], account);
 
+        console.log(`[process-nfe] Página ${pagina}: ${listResult.nTotalRegistros || 0} total registros, ${(listResult.nfe_cadastro || []).length} nesta página`);
+
         const nfes = listResult.nfe_cadastro || [];
+        
+        // Log first few NF numbers for debugging
+        if (pagina === 1 && nfes.length > 0) {
+          const sampleNumbers = nfes.slice(0, 5).map((n: any) => n.numero_nfe);
+          console.log(`[process-nfe] Amostra de números NF: ${JSON.stringify(sampleNumbers)}`);
+        }
+
         for (const nfe of nfes) {
-          if (String(nfe.numero_nfe) === String(nf_number)) {
+          const nfeNum = String(nfe.numero_nfe);
+          if (nfeNum === nfNumberOriginal || nfeNum === nfNumberClean || 
+              String(Number(nfeNum)) === nfNumberClean) {
             codigoNfe = nfe.codigo_nfe;
             const fornecedor = nfe.razao_social || nfe.nome_fantasia || "Fornecedor";
             steps.push({
               step: 1,
-              description: `NF encontrada: ${fornecedor} (NF ${nf_number})`,
+              description: `NF encontrada: ${fornecedor} (NF ${nfeNum})`,
               status: "success",
               detail: `codigo_nfe: ${codigoNfe}`,
             });
@@ -116,13 +131,13 @@ serve(async (req) => {
 
         if (!found) {
           const totalPages = Math.ceil((listResult.nTotalRegistros || 0) / registrosPorPagina);
-          if (pagina >= totalPages) break;
+          if (pagina >= totalPages || nfes.length === 0) break;
           pagina++;
         }
       }
 
       if (!found) {
-        throw new Error(`NF ${nf_number} não encontrada no Omie`);
+        throw new Error(`NF ${nf_number} não encontrada no Omie (verificadas ${pagina} páginas)`);
       }
     } catch (e) {
       steps.push({ step: 1, description: `Buscar NF ${nf_number}`, status: "error", detail: e.message });
