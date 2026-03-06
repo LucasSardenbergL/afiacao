@@ -275,7 +275,7 @@ export async function checkOsExistsInOmie(orderId: string): Promise<{ exists: bo
     });
     if (error) return { exists: true }; // Assume exists on error
     return data;
-  } catch {
+  } catch (error) { console.error('Erro ao verificar OS existente:', error);
     return { exists: true };
   }
 }

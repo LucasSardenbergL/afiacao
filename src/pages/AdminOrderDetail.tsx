@@ -413,7 +413,7 @@ const AdminOrderDetail = () => {
       } else {
         toast({ title: 'Erro ao excluir', description: result.error, variant: 'destructive' });
       }
-    } catch {
+    } catch (error) { console.error('Erro ao excluir pedido:', error);
       toast({ title: 'Erro', description: 'Não foi possível excluir o pedido', variant: 'destructive' });
     } finally {
       setDeleting(false);

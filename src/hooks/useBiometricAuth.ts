@@ -58,7 +58,7 @@ export const useBiometricAuth = (): BiometricAuthHook => {
         try {
           const available = await PublicKeyCredential.isUserVerifyingPlatformAuthenticatorAvailable();
           setIsSupported(available);
-        } catch {
+        } catch (error) { console.error('Erro ao verificar suporte biométrico:', error);
           setIsSupported(false);
         }
       }

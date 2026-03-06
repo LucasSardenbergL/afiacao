@@ -31,7 +31,7 @@ export function useUnreadMessages() {
               const audio = new Audio('data:audio/wav;base64,UklGRnoGAABXQVZFZm10IBAAAAABAAEAQB8AAEAfAAABAAgAZGF0YQoGAACBhYqFbF1fdJivrJBhNjVgodDbsGczHjqIu9jLfVE3OIe90+G7aEAqN3q20NvTf00sJHKlzt3jnmQ+HkWSx93sqnRLGzaGvNjxw4BXNC5jmMTJ3bWQcTQmVYOy3+3i8tiLP0NLZKvL5cqOQT49S3u3m7NlNiMqW5/I3tKdcnw=');
               audio.volume = 0.3;
               audio.play().catch(() => {});
-            } catch {}
+            } catch (error) { console.error('Erro ao tocar notificação sonora:', error); }
           }
         }
       )
