@@ -8,7 +8,7 @@ export const mockUser: User = {
   phone: '(11) 99999-9999',
   cpfCnpj: '123.456.789-00',
   whatsapp: '5511999999999',
-  role: 'client',
+  role: 'customer',
   createdAt: new Date('2024-01-15'),
 };
 
