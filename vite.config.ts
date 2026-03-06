@@ -54,15 +54,26 @@ export default defineConfig(({ mode }) => ({
         maximumFileSizeToCacheInBytes: 5 * 1024 * 1024, // 5MB
         runtimeCaching: [
           {
-            urlPattern: /^https:\/\/.*\.supabase\.co\/.*/i,
+            // Cache only catalog/config endpoints
+            urlPattern: /^https:\/\/.*\.supabase\.co\/rest\/v1\/(tool_categories|default_prices|company_config|category_mappings)/i,
             handler: "NetworkFirst",
             options: {
-              cacheName: "supabase-cache",
+              cacheName: "supabase-catalog-cache",
               expiration: {
-                maxEntries: 50,
-                maxAgeSeconds: 60 * 60 * 24, // 1 day
+                maxEntries: 30,
+                maxAgeSeconds: 60 * 60, // 1 hour
               },
             },
+          },
+          {
+            // No cache for frequently changing data
+            urlPattern: /^https:\/\/.*\.supabase\.co\/rest\/v1\/(orders|profiles|order_messages|user_tools|sales_orders|order_items)/i,
+            handler: "NetworkOnly",
+          },
+          {
+            // No cache for auth and realtime
+            urlPattern: /^https:\/\/.*\.supabase\.co\/(auth|realtime)/i,
+            handler: "NetworkOnly",
           },
         ],
       },
