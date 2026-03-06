@@ -9,7 +9,7 @@ import {
 import { DELIVERY_OPTIONS, TIME_SLOTS } from '@/types';
 import type {
   ProductCartItem, ServiceCartItem, DeliveryOption,
-} from '@/hooks/useUnifiedOrder';
+import type { DeliveryOption } from '@/types';
 import { fmt, getToolName } from '@/hooks/useUnifiedOrder';
 
 interface CartItemListProps {
