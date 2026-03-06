@@ -6,10 +6,8 @@ import { Separator } from '@/components/ui/separator';
 import {
   ShoppingCart, Plus, Minus, Trash2, Building2, Scissors,
 } from 'lucide-react';
-import { DELIVERY_OPTIONS, TIME_SLOTS } from '@/types';
-import type {
-  ProductCartItem, ServiceCartItem, DeliveryOption,
-import type { DeliveryOption } from '@/types';
+import { DELIVERY_OPTIONS, TIME_SLOTS, DeliveryOption } from '@/types';
+import type { ProductCartItem, ServiceCartItem } from '@/hooks/useUnifiedOrder';
 import { fmt, getToolName } from '@/hooks/useUnifiedOrder';
 
 interface CartItemListProps {
