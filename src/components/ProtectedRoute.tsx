@@ -54,7 +54,7 @@ export const ProtectedRoute = ({ children }: ProtectedRouteProps) => {
       } else {
         setApprovalStatus(data?.is_approved ?? false);
       }
-    } catch {
+    } catch (error) { console.error('Erro ao verificar aprovação do usuário:', error);
       setApprovalStatus(false);
       setApprovalError(true);
     } finally {

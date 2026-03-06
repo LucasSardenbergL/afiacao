@@ -79,8 +79,8 @@ const Addresses = () => {
         city: data.localidade || prev.city,
         state: data.uf || prev.state,
       }));
-    } catch {
-      console.error('Erro ao buscar CEP');
+    } catch (error) {
+      console.error('Erro ao buscar CEP:', error);
     } finally {
       setFetchingCep(false);
     }
