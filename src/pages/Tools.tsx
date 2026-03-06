@@ -47,30 +47,10 @@ const Tools = () => {
     queryClient.invalidateQueries({ queryKey: ['user-tools', user?.id] });
   };
 
-  const handleDeleteTool = async (toolId: string) => {
-    try {
-      const { error } = await supabase
-        .from('user_tools')
-        .delete()
-        .eq('id', toolId);
 
-      if (error) throw error;
 
-      toast({
-        title: 'Ferramenta removida',
-      });
 
-      setTools(tools.filter(t => t.id !== toolId));
-    } catch (error) {
-      console.error('Error deleting tool:', error);
-      toast({
-        title: 'Erro ao remover',
-        variant: 'destructive',
-      });
-    }
-  };
-
-  const getToolStatus = (tool: UserTool) => {
+  const getToolStatus = (tool: typeof tools[number]) => {
     if (!tool.next_sharpening_due) {
       return { status: 'unknown', label: 'Sem data', color: 'text-muted-foreground', bg: 'bg-muted' };
     }
@@ -86,7 +66,7 @@ const Tools = () => {
     }
   };
 
-  const getToolDisplayName = (tool: UserTool): string => {
+  const getToolDisplayName = (tool: typeof tools[number]): string => {
     return tool.generated_name || tool.custom_name || tool.tool_categories?.name || 'Ferramenta';
   };
 
@@ -153,7 +133,7 @@ const Tools = () => {
       <AddToolDialog
         open={dialogOpen}
         onOpenChange={setDialogOpen}
-        onToolAdded={loadData}
+        onToolAdded={handleToolAdded}
         categories={categories}
       />
 
