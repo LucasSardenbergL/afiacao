@@ -1,6 +1,7 @@
 import { useParams, useNavigate } from 'react-router-dom';
 import { Phone, MessageCircle, Copy, Check, RefreshCw, Camera, Loader2 } from 'lucide-react';
 import { useState, useEffect } from 'react';
+import { OrderStatus } from '@/types';
 import { Header } from '@/components/Header';
 import { BottomNav } from '@/components/BottomNav';
 import { OrderTimeline } from '@/components/OrderTimeline';
@@ -129,7 +130,7 @@ const OrderDetail = () => {
                 Criado em {format(order.createdAt, "dd 'de' MMMM", { locale: ptBR })}
               </p>
             </div>
-            <StatusBadgeSimple status={order.status} />
+            <StatusBadgeSimple status={order.status as OrderStatus} />
           </div>
 
           {order.estimatedDelivery && order.status !== 'entregue' && (
@@ -305,7 +306,7 @@ const OrderDetail = () => {
           <section className="mb-6">
             <h3 className="font-display font-bold mb-3">Acompanhamento</h3>
             <div className="bg-card rounded-xl p-4 shadow-soft border border-border">
-              <OrderTimeline statusHistory={order.statusHistory} currentStatus={order.status} />
+              <OrderTimeline statusHistory={order.statusHistory as any} currentStatus={order.status as OrderStatus} />
             </div>
           </section>
         )}
