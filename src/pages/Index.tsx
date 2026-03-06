@@ -9,6 +9,7 @@ import { CustomerDashboard } from '@/components/CustomerDashboard';
 import { supabase } from '@/integrations/supabase/client';
 import { useAuth } from '@/contexts/AuthContext';
 import { useUserRole } from '@/hooks/useUserRole';
+import { useCommercialRole } from '@/hooks/useCommercialRole';
 import { format, differenceInDays } from 'date-fns';
 import { ptBR } from 'date-fns/locale';
 import { cn } from '@/lib/utils';
@@ -64,12 +65,13 @@ const EMPLOYEE_ORDER_STATUS: Record<string, { label: string; statusClass: string
   entregue: { label: 'Entregue', statusClass: 'status-success' },
 };
 
-const MASTER_CPF = "01363383647";
+
 
 const Index = () => {
   const navigate = useNavigate();
   const { user } = useAuth();
   const { isStaff, isAdmin, loading: roleLoading } = useUserRole();
+  const { isSuperAdmin } = useCommercialRole();
   const [profile, setProfile] = useState<Profile | null>(null);
   const [pendingOrders, setPendingOrders] = useState<Order[]>([]);
   const [allPendingOrders, setAllPendingOrders] = useState<Order[]>([]);
@@ -78,7 +80,7 @@ const Index = () => {
   const [customerCount, setCustomerCount] = useState(0);
   const [clientSyncProgress, setClientSyncProgress] = useState<string | null>(null);
 
-  const isMaster = profile?.document?.replace(/\D/g, '') === MASTER_CPF;
+  const isMaster = isSuperAdmin;
 
   const bulkClientSyncMutation = useMutation({
     mutationFn: async () => {
