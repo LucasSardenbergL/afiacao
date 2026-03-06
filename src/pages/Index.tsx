@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useState } from 'react';
 import { PlusCircle, ClipboardList, ChevronRight, Wrench, Calendar, User, ArrowRight, TrendingUp, Package, Users, Clock, CheckCircle, Building2, RefreshCw, Loader2, Database } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 import { Button } from '@/components/ui/button';
@@ -16,33 +16,9 @@ import { cn } from '@/lib/utils';
 import { Skeleton } from '@/components/ui/skeleton';
 import { toast } from 'sonner';
 import { useMutation } from '@tanstack/react-query';
-
-interface Profile {
-  name: string;
-  customer_type: string | null;
-  document: string | null;
-}
-
-interface Order {
-  id: string;
-  status: string;
-  created_at: string;
-  service_type: string;
-  user_id?: string;
-  profiles?: {
-    name: string;
-  };
-}
-
-interface UserTool {
-  id: string;
-  tool_category_id: string;
-  next_sharpening_due: string | null;
-  sharpening_interval_days: number | null;
-  tool_categories: {
-    name: string;
-  };
-}
+import { useBasicProfile } from '@/queries/useProfile';
+import { useCustomerPendingOrders, useStaffPendingOrders, useCustomerCount } from '@/queries/useOrders';
+import { useUserToolsSummary } from '@/queries/useUserTools';
 
 const statusConfig: Record<string, { label: string; statusClass: string }> = {
   'pedido_recebido': { label: 'Recebido', statusClass: 'status-progress' },
@@ -72,15 +48,18 @@ const Index = () => {
   const { user } = useAuth();
   const { isStaff, isAdmin, loading: roleLoading } = useUserRole();
   const { isSuperAdmin } = useCommercialRole();
-  const [profile, setProfile] = useState<Profile | null>(null);
-  const [pendingOrders, setPendingOrders] = useState<Order[]>([]);
-  const [allPendingOrders, setAllPendingOrders] = useState<Order[]>([]);
-  const [userTools, setUserTools] = useState<UserTool[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [customerCount, setCustomerCount] = useState(0);
   const [clientSyncProgress, setClientSyncProgress] = useState<string | null>(null);
 
   const isMaster = isSuperAdmin;
+
+  // TanStack Query hooks
+  const { data: profile, isLoading: profileLoading } = useBasicProfile(user?.id);
+  const { data: pendingOrders = [], isLoading: customerOrdersLoading } = useCustomerPendingOrders(!isStaff ? user?.id : undefined);
+  const { data: allPendingOrders = [], isLoading: staffOrdersLoading } = useStaffPendingOrders(isStaff && !roleLoading);
+  const { data: customerCount = 0 } = useCustomerCount(isStaff && !roleLoading);
+  const { data: userTools = [] } = useUserToolsSummary(!isStaff ? user?.id : undefined, !isStaff && !roleLoading);
+
+  const loading = roleLoading || profileLoading || (isStaff ? staffOrdersLoading : customerOrdersLoading);
 
   const bulkClientSyncMutation = useMutation({
     mutationFn: async () => {
