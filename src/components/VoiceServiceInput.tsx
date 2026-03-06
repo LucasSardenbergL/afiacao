@@ -1,4 +1,5 @@
 import { useState, useRef, useEffect, useCallback } from 'react';
+import { supabase } from '@/integrations/supabase/client';
 import { Mic, Send, Loader2, Sparkles, X, Square, Wrench } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { cn } from '@/lib/utils';
@@ -180,12 +181,18 @@ export function VoiceServiceInput({ userTools, onItemsIdentified, isLoading = fa
 
       console.log('Sending audio to transcription service...');
 
+      const { data: { session } } = await supabase.auth.getSession();
+      if (!session?.access_token) {
+        toast({ title: 'Sessão expirada', description: 'Faça login novamente para usar esta funcionalidade.', variant: 'destructive' });
+        return;
+      }
+
       const response = await fetch(
         `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/elevenlabs-transcribe`,
         {
           method: 'POST',
           headers: {
-            Authorization: `Bearer ${import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY}`,
+            Authorization: `Bearer ${session.access_token}`,
           },
           body: formData,
         }
