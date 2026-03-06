@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { Header } from '@/components/Header';
 import { BottomNav } from '@/components/BottomNav';
@@ -12,78 +12,39 @@ import { useToast } from '@/hooks/use-toast';
 import { Loader2, Plus, Wrench, Calendar, Trash2, Hash, Users } from 'lucide-react';
 import { differenceInDays } from 'date-fns';
 import { cn } from '@/lib/utils';
-
-interface ToolCategory {
-  id: string;
-  name: string;
-  description: string | null;
-  icon: string | null;
-  suggested_interval_days: number | null;
-}
-
-interface UserTool {
-  id: string;
-  tool_category_id: string;
-  custom_name: string | null;
-  generated_name: string | null;
-  internal_code: string | null;
-  quantity: number | null;
-  specifications: Record<string, string> | null;
-  sharpening_interval_days: number | null;
-  last_sharpened_at: string | null;
-  next_sharpening_due: string | null;
-  tool_categories: ToolCategory;
-}
+import { useUserTools, useToolCategories } from '@/queries/useUserTools';
+import { useQueryClient } from '@tanstack/react-query';
 
 const Tools = () => {
   const navigate = useNavigate();
   const { user } = useAuth();
   const { isStaff } = useUserRole();
   const { toast } = useToast();
+  const queryClient = useQueryClient();
   
-  const [tools, setTools] = useState<UserTool[]>([]);
-  const [categories, setCategories] = useState<ToolCategory[]>([]);
-  const [loading, setLoading] = useState(true);
+  const { data: tools = [], isLoading: loading } = useUserTools(user?.id);
+  const { data: categories = [] } = useToolCategories();
   const [dialogOpen, setDialogOpen] = useState(false);
 
-  useEffect(() => {
-    if (user) {
-      loadData();
-    }
-  }, [user]);
-
-  const loadData = async () => {
-    if (!user) return;
-    
+  const handleDeleteTool = async (toolId: string) => {
     try {
-      // Load categories
-      const { data: categoriesData } = await supabase
-        .from('tool_categories')
-        .select('*')
-        .order('name');
-      
-      if (categoriesData) {
-        setCategories(categoriesData);
-      }
-
-      // Load user tools
-      const { data: toolsData } = await supabase
+      const { error } = await supabase
         .from('user_tools')
-        .select(`
-          *,
-          tool_categories (*)
-        `)
-        .eq('user_id', user.id)
-        .order('created_at', { ascending: false });
+        .delete()
+        .eq('id', toolId);
 
-      if (toolsData) {
-        setTools(toolsData as unknown as UserTool[]);
-      }
+      if (error) throw error;
+
+      toast({ title: 'Ferramenta removida' });
+      queryClient.invalidateQueries({ queryKey: ['user-tools', user?.id] });
     } catch (error) {
-      console.error('Error loading tools:', error);
-    } finally {
-      setLoading(false);
+      console.error('Error deleting tool:', error);
+      toast({ title: 'Erro ao remover', variant: 'destructive' });
     }
+  };
+
+  const handleToolAdded = () => {
+    queryClient.invalidateQueries({ queryKey: ['user-tools', user?.id] });
   };
 
   const handleDeleteTool = async (toolId: string) => {
