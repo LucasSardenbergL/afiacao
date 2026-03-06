@@ -10,7 +10,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { RefreshCw, Database, Package, ShoppingCart, Warehouse, Calculator, Play, CheckCircle, AlertCircle, Clock, Loader2, Save, GitBranch, Sparkles, FlaskConical, Settings, ShieldCheck, Users } from "lucide-react";
 import { toast } from "sonner";
-import { SyncHealthTab } from "@/components/SyncHealthTab";
+
 
 type SyncEntity = "customers" | "products" | "orders" | "inventory";
 type OmieAccount = "vendas" | "servicos";
@@ -608,12 +608,6 @@ export default function AdminAnalyticsSync() {
         </CardContent>
       </Card>
 
-      {/* Sync Health Tab - restricted to master CPF */}
-      {showSyncHealth && (
-        <div className="border-t pt-6 mt-6">
-          <SyncHealthTab />
-        </div>
-      )}
     </div>
   );
 }

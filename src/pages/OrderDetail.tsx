@@ -39,26 +39,25 @@ const OrderDetail = () => {
         .maybeSingle();
       if (error) throw error;
       if (!data) return null;
-      // Map DB row to the shape used by the UI
       return {
         id: data.id,
         orderNumber: data.id.slice(0, 8).toUpperCase(),
         userId: data.user_id,
         items: (data.items as any[]) || [],
-        status: data.status,
+        status: data.status as string,
         deliveryOption: data.delivery_option,
         timeSlot: data.time_slot,
         subtotal: data.subtotal,
         deliveryFee: data.delivery_fee,
         discount: 0,
         total: data.total,
-        paymentMethod: undefined,
-        paymentStatus: 'pending' as const,
+        paymentMethod: undefined as string | undefined,
+        paymentStatus: 'pending' as string,
         quoteApproved: !['orcamento_enviado'].includes(data.status),
-        estimatedDelivery: undefined,
+        estimatedDelivery: undefined as Date | undefined,
         createdAt: new Date(data.created_at),
         updatedAt: new Date(data.updated_at),
-        statusHistory: [],
+        statusHistory: [] as Array<{ status: string; timestamp: Date; note?: string; operator?: string }>,
         notes: data.notes,
         address: data.address,
       };
