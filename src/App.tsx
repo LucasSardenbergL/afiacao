@@ -134,7 +134,7 @@ const App = () => (
               <Route path="sales" element={<SalesOrders />} />
               <Route path="sales/products" element={<SalesProducts />} />
               <Route path="sales/new" element={<UnifiedOrder />} />
-              <Route path="unified-order" element={<UnifiedOrder />} />
+              <Route path="unified-order" element={<Navigate to="/sales/new" replace />} />
               <Route path="farmer" element={<FarmerDashboard />} />
               <Route path="farmer/calls" element={<FarmerCalls />} />
               <Route path="farmer/governance" element={<FarmerGovernance />} />
