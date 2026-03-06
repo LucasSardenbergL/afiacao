@@ -49,65 +49,17 @@ const Profile = () => {
 
   useEffect(() => {
     if (user) {
-      loadProfileData();
       checkRegistration(user.id);
     }
   }, [user, checkRegistration]);
 
-  const loadProfileData = async () => {
-    if (!user) return;
-    
-    try {
-      const { data: profileData } = await supabase
-        .from('profiles')
-        .select('name, email, phone, document, customer_type, avatar_url, business_hours_open, business_hours_close, lunch_start, lunch_end, preferred_delivery_time')
-        .eq('user_id', user.id)
-        .maybeSingle();
-
-      if (profileData) {
-        setProfile(profileData);
-      } else {
-        setProfile({
-          name: user.email?.split('@')[0] || 'Usuário',
-          email: user.email || null,
-          phone: null,
-          document: null,
-          customer_type: null,
-          avatar_url: null,
-          business_hours_open: null,
-          business_hours_close: null,
-          lunch_start: null,
-          lunch_end: null,
-          preferred_delivery_time: null,
-        });
-      }
-
-      const { count: addrCount } = await supabase
-        .from('addresses')
-        .select('*', { count: 'exact', head: true })
-        .eq('user_id', user.id);
-      
-      setAddressCount(addrCount || 0);
-
-      const { count: ordCount } = await supabase
-        .from('orders')
-        .select('*', { count: 'exact', head: true })
-        .eq('user_id', user.id)
-        .eq('status', 'entregue');
-      
-      setOrderCount(ordCount || 0);
-
-      const { count: tlCount } = await supabase
-        .from('user_tools')
-        .select('*', { count: 'exact', head: true })
-        .eq('user_id', user.id);
-      
-      setToolCount(tlCount || 0);
-    } catch (error) {
-      console.error('Error loading profile:', error);
-    } finally {
-      setLoading(false);
-    }
+  // Fallback profile for display when no DB profile exists
+  const displayProfile = profile ?? {
+    name: user?.email?.split('@')[0] || 'Usuário',
+    email: user?.email || null,
+    phone: null, document: null, customer_type: null, avatar_url: null,
+    business_hours_open: null, business_hours_close: null,
+    lunch_start: null, lunch_end: null, preferred_delivery_time: null,
   };
 
   const handleAvatarClick = () => {
@@ -159,7 +111,7 @@ const Profile = () => {
 
       if (updateError) throw updateError;
 
-      setProfile(prev => prev ? { ...prev, avatar_url: publicUrl } : null);
+      queryClient.invalidateQueries({ queryKey: ['profile', user.id] });
 
       toast({
         title: 'Foto atualizada!',
@@ -255,18 +207,7 @@ const Profile = () => {
 
       if (error) throw error;
 
-      setProfile(prev => prev ? {
-        ...prev,
-        name: editName,
-        email: editEmail || null,
-        phone: editPhone || null,
-        document: editDocument?.replace(/\D/g, '') || null,
-        business_hours_open: editBusinessOpen || null,
-        business_hours_close: editBusinessClose || null,
-        lunch_start: editLunchStart || null,
-        lunch_end: editLunchEnd || null,
-        preferred_delivery_time: editDeliveryTime || null,
-      } : null);
+      queryClient.invalidateQueries({ queryKey: ['profile', user.id] });
 
       setIsEditing(false);
       toast({
