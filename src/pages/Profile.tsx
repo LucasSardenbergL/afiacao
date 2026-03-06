@@ -13,21 +13,9 @@ import { useToast } from '@/hooks/use-toast';
 import { cn } from '@/lib/utils';
 import { useBiometricAuth } from '@/hooks/useBiometricAuth';
 import { useUserRole } from '@/hooks/useUserRole';
+import { useProfile, useProfileStats } from '@/queries/useProfile';
+import { useQueryClient } from '@tanstack/react-query';
 
-
-interface ProfileData {
-  name: string;
-  email: string | null;
-  phone: string | null;
-  document: string | null;
-  customer_type: string | null;
-  avatar_url: string | null;
-  business_hours_open: string | null;
-  business_hours_close: string | null;
-  lunch_start: string | null;
-  lunch_end: string | null;
-  preferred_delivery_time: string | null;
-}
 
 const Profile = () => {
   const navigate = useNavigate();
@@ -35,13 +23,15 @@ const Profile = () => {
   const { toast } = useToast();
   const { isStaff } = useUserRole();
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const queryClient = useQueryClient();
   
-  const [profile, setProfile] = useState<ProfileData | null>(null);
-  const [loading, setLoading] = useState(true);
+  const { data: profile, isLoading: loading } = useProfile(user?.id);
+  const { data: stats } = useProfileStats(user?.id);
+  const addressCount = stats?.addressCount ?? 0;
+  const orderCount = stats?.orderCount ?? 0;
+  const toolCount = stats?.toolCount ?? 0;
+  
   const [uploading, setUploading] = useState(false);
-  const [addressCount, setAddressCount] = useState(0);
-  const [orderCount, setOrderCount] = useState(0);
-  const [toolCount, setToolCount] = useState(0);
   const [isEditing, setIsEditing] = useState(false);
   const [editName, setEditName] = useState('');
   const [editPhone, setEditPhone] = useState('');
@@ -59,65 +49,17 @@ const Profile = () => {
 
   useEffect(() => {
     if (user) {
-      loadProfileData();
       checkRegistration(user.id);
     }
   }, [user, checkRegistration]);
 
-  const loadProfileData = async () => {
-    if (!user) return;
-    
-    try {
-      const { data: profileData } = await supabase
-        .from('profiles')
-        .select('name, email, phone, document, customer_type, avatar_url, business_hours_open, business_hours_close, lunch_start, lunch_end, preferred_delivery_time')
-        .eq('user_id', user.id)
-        .maybeSingle();
-
-      if (profileData) {
-        setProfile(profileData);
-      } else {
-        setProfile({
-          name: user.email?.split('@')[0] || 'Usuário',
-          email: user.email || null,
-          phone: null,
-          document: null,
-          customer_type: null,
-          avatar_url: null,
-          business_hours_open: null,
-          business_hours_close: null,
-          lunch_start: null,
-          lunch_end: null,
-          preferred_delivery_time: null,
-        });
-      }
-
-      const { count: addrCount } = await supabase
-        .from('addresses')
-        .select('*', { count: 'exact', head: true })
-        .eq('user_id', user.id);
-      
-      setAddressCount(addrCount || 0);
-
-      const { count: ordCount } = await supabase
-        .from('orders')
-        .select('*', { count: 'exact', head: true })
-        .eq('user_id', user.id)
-        .eq('status', 'entregue');
-      
-      setOrderCount(ordCount || 0);
-
-      const { count: tlCount } = await supabase
-        .from('user_tools')
-        .select('*', { count: 'exact', head: true })
-        .eq('user_id', user.id);
-      
-      setToolCount(tlCount || 0);
-    } catch (error) {
-      console.error('Error loading profile:', error);
-    } finally {
-      setLoading(false);
-    }
+  // Fallback profile for display when no DB profile exists
+  const displayProfile = profile ?? {
+    name: user?.email?.split('@')[0] || 'Usuário',
+    email: user?.email || null,
+    phone: null, document: null, customer_type: null, avatar_url: null,
+    business_hours_open: null, business_hours_close: null,
+    lunch_start: null, lunch_end: null, preferred_delivery_time: null,
   };
 
   const handleAvatarClick = () => {
@@ -169,7 +111,7 @@ const Profile = () => {
 
       if (updateError) throw updateError;
 
-      setProfile(prev => prev ? { ...prev, avatar_url: publicUrl } : null);
+      queryClient.invalidateQueries({ queryKey: ['profile', user.id] });
 
       toast({
         title: 'Foto atualizada!',
@@ -265,18 +207,7 @@ const Profile = () => {
 
       if (error) throw error;
 
-      setProfile(prev => prev ? {
-        ...prev,
-        name: editName,
-        email: editEmail || null,
-        phone: editPhone || null,
-        document: editDocument?.replace(/\D/g, '') || null,
-        business_hours_open: editBusinessOpen || null,
-        business_hours_close: editBusinessClose || null,
-        lunch_start: editLunchStart || null,
-        lunch_end: editLunchEnd || null,
-        preferred_delivery_time: editDeliveryTime || null,
-      } : null);
+      queryClient.invalidateQueries({ queryKey: ['profile', user.id] });
 
       setIsEditing(false);
       toast({

@@ -1,50 +1,21 @@
-import { useState, useEffect } from 'react';
+import { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { Header } from '@/components/Header';
 import { BottomNav } from '@/components/BottomNav';
 import { OrderCard } from '@/components/OrderCard';
 import { cn } from '@/lib/utils';
-import { supabase } from '@/integrations/supabase/client';
+import { useAuth } from '@/contexts/AuthContext';
 import { Loader2, Package, Plus } from 'lucide-react';
 import { Button } from '@/components/ui/button';
+import { useCustomerOrders } from '@/queries/useOrders';
 
 type FilterTab = 'all' | 'active' | 'completed';
 
-interface Order {
-  id: string;
-  status: string;
-  service_type: string;
-  items: any[];
-  total: number;
-  created_at: string;
-  delivery_option: string;
-}
-
 const Orders = () => {
   const navigate = useNavigate();
+  const { user } = useAuth();
   const [activeTab, setActiveTab] = useState<FilterTab>('all');
-  const [orders, setOrders] = useState<Order[]>([]);
-  const [loading, setLoading] = useState(true);
-
-  useEffect(() => {
-    const loadOrders = async () => {
-      const { data: { user } } = await supabase.auth.getUser();
-      if (!user) return;
-
-      const { data, error } = await supabase
-        .from('orders')
-        .select('*')
-        .eq('user_id', user.id)
-        .order('created_at', { ascending: false });
-
-      if (!error && data) {
-        setOrders(data as Order[]);
-      }
-      setLoading(false);
-    };
-
-    loadOrders();
-  }, []);
+  const { data: orders = [], isLoading: loading } = useCustomerOrders(user?.id);
 
   const filteredOrders = orders.filter((order) => {
     if (activeTab === 'active') return order.status !== 'entregue';
