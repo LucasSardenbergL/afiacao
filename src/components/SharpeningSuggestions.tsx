@@ -2,7 +2,7 @@ import React from 'react';
 import { useNavigate } from 'react-router-dom';
 import { Bell, Calendar, ChevronRight, AlertTriangle, Clock, Wrench } from 'lucide-react';
 import { Button } from '@/components/ui/button';
-import { useSharpeningSuggestions, SharpeningTool } from '@/hooks/useSharpenningSuggestions';
+import { useSharpeningSuggestions, SharpeningTool } from '@/hooks/useSharpeningSuggestions';
 import { format, formatDistanceToNow } from 'date-fns';
 import { ptBR } from 'date-fns/locale';
 import { cn } from '@/lib/utils';
