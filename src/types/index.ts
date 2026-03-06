@@ -6,7 +6,7 @@ export interface User {
   phone: string;
   cpfCnpj?: string;
   whatsapp: string;
-  role: 'client' | 'admin' | 'operator';
+  role: 'admin' | 'employee' | 'customer';
   createdAt: Date;
 }
 
