@@ -13,21 +13,9 @@ import { useToast } from '@/hooks/use-toast';
 import { cn } from '@/lib/utils';
 import { useBiometricAuth } from '@/hooks/useBiometricAuth';
 import { useUserRole } from '@/hooks/useUserRole';
+import { useProfile, useProfileStats } from '@/queries/useProfile';
+import { useQueryClient } from '@tanstack/react-query';
 
-
-interface ProfileData {
-  name: string;
-  email: string | null;
-  phone: string | null;
-  document: string | null;
-  customer_type: string | null;
-  avatar_url: string | null;
-  business_hours_open: string | null;
-  business_hours_close: string | null;
-  lunch_start: string | null;
-  lunch_end: string | null;
-  preferred_delivery_time: string | null;
-}
 
 const Profile = () => {
   const navigate = useNavigate();
@@ -35,13 +23,15 @@ const Profile = () => {
   const { toast } = useToast();
   const { isStaff } = useUserRole();
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const queryClient = useQueryClient();
   
-  const [profile, setProfile] = useState<ProfileData | null>(null);
-  const [loading, setLoading] = useState(true);
+  const { data: profile, isLoading: loading } = useProfile(user?.id);
+  const { data: stats } = useProfileStats(user?.id);
+  const addressCount = stats?.addressCount ?? 0;
+  const orderCount = stats?.orderCount ?? 0;
+  const toolCount = stats?.toolCount ?? 0;
+  
   const [uploading, setUploading] = useState(false);
-  const [addressCount, setAddressCount] = useState(0);
-  const [orderCount, setOrderCount] = useState(0);
-  const [toolCount, setToolCount] = useState(0);
   const [isEditing, setIsEditing] = useState(false);
   const [editName, setEditName] = useState('');
   const [editPhone, setEditPhone] = useState('');
