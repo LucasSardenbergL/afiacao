@@ -1,3 +1,4 @@
+import React from 'react';
 import { cn } from '@/lib/utils';
 import { OrderStatus, ORDER_STATUS } from '@/types';
 
@@ -33,7 +34,7 @@ const sizeClasses = {
   lg: 'text-sm px-3 py-1.5',
 };
 
-export function StatusBadge({ status, size = 'md' }: StatusBadgeProps) {
+export const StatusBadge = React.memo(function StatusBadge({ status, size = 'md' }: StatusBadgeProps) {
   const statusInfo = ORDER_STATUS[status];
   const semantic = semanticMap[statusInfo.color] || 'status-progress';
   const dot = dotMap[statusInfo.color] || 'bg-muted-foreground';
@@ -50,7 +51,7 @@ export function StatusBadge({ status, size = 'md' }: StatusBadgeProps) {
       {statusInfo.label}
     </span>
   );
-}
+});
 
 /** @deprecated Use StatusBadge instead */
 export const StatusBadgeSimple = StatusBadge;

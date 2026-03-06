@@ -1,3 +1,4 @@
+import React from 'react';
 import { ChevronRight, Package } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 import { TOOL_CATEGORIES, ORDER_STATUS, ToolCategory } from '@/types';
@@ -20,7 +21,7 @@ interface OrderCardProps {
   };
 }
 
-export function OrderCard({ order }: OrderCardProps) {
+export const OrderCard = React.memo(function OrderCard({ order }: OrderCardProps) {
   const navigate = useNavigate();
 
   // Parse items if it's a JSON string
@@ -70,4 +71,4 @@ export function OrderCard({ order }: OrderCardProps) {
       </div>
     </button>
   );
-}
+});

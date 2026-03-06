@@ -1,3 +1,4 @@
+import React from 'react';
 import { Card, CardContent } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
@@ -24,7 +25,7 @@ interface RecommendationCardProps {
   compact?: boolean;
 }
 
-export function RecommendationCard({
+export const RecommendationCard = React.memo(function RecommendationCard({
   item,
   onAdd,
   onReject,
@@ -142,4 +143,4 @@ export function RecommendationCard({
       </CardContent>
     </Card>
   );
-}
+});
