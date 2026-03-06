@@ -1,3 +1,4 @@
+import React, { useCallback } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { DragDropContext, Droppable, Draggable, DropResult } from '@hello-pangea/dnd';
 import { Card, CardContent } from '@/components/ui/card';
@@ -107,7 +108,7 @@ function findColumnForOrder(order: OrderWithProfile) {
 export function KanbanBoard({ orders, onStatusChange, updatingOrder }: KanbanBoardProps) {
   const navigate = useNavigate();
 
-  const handleDragEnd = (result: DropResult) => {
+  const handleDragEnd = useCallback((result: DropResult) => {
     const { draggableId, destination, source } = result;
     if (!destination || destination.droppableId === source.droppableId) return;
 
@@ -118,7 +119,7 @@ export function KanbanBoard({ orders, onStatusChange, updatingOrder }: KanbanBoa
     if (updatingOrder) return;
 
     onStatusChange(draggableId, targetColumn.dropTargetStatus);
-  };
+  }, [updatingOrder, onStatusChange]);
 
   return (
     <DragDropContext onDragEnd={handleDragEnd}>
@@ -216,7 +217,7 @@ interface KanbanCardProps {
   isDragging: boolean;
 }
 
-function KanbanCard({ order, column, updatingOrder, onStatusChange, onNavigate, dragHandleProps, isDragging }: KanbanCardProps) {
+const KanbanCard = React.memo(function KanbanCard({ order, column, updatingOrder, onStatusChange, onNavigate, dragHandleProps, isDragging }: KanbanCardProps) {
   const urgency = getUrgencyLevel(order);
   const items = Array.isArray(order.items) ? order.items : [];
   const isCompleted = order.status === 'entregue';
@@ -307,4 +308,4 @@ function KanbanCard({ order, column, updatingOrder, onStatusChange, onNavigate, 
       </CardContent>
     </Card>
   );
-}
+});
