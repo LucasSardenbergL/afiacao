@@ -1,6 +1,7 @@
 import { useParams, useNavigate } from 'react-router-dom';
-import { Phone, MessageCircle, Copy, Check, RefreshCw, Star, Camera } from 'lucide-react';
+import { Phone, MessageCircle, Copy, Check, RefreshCw, Camera, Loader2 } from 'lucide-react';
 import { useState, useEffect } from 'react';
+import { OrderStatus } from '@/types';
 import { Header } from '@/components/Header';
 import { BottomNav } from '@/components/BottomNav';
 import { OrderTimeline } from '@/components/OrderTimeline';
@@ -9,9 +10,9 @@ import { OrderReview } from '@/components/OrderReview';
 import { StatusBadgeSimple } from '@/components/StatusBadge';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
-import { mockOrders } from '@/data/mockData';
 import { TOOL_CATEGORIES, SERVICE_TYPES, DELIVERY_OPTIONS } from '@/types';
 import { supabase } from '@/integrations/supabase/client';
+import { useQuery } from '@tanstack/react-query';
 import { format } from 'date-fns';
 import { ptBR } from 'date-fns/locale';
 
@@ -28,7 +29,42 @@ const OrderDetail = () => {
   const [copied, setCopied] = useState(false);
   const [qualityData, setQualityData] = useState<QualityData[]>([]);
 
-  const order = mockOrders.find((o) => o.id === id);
+  const { data: order, isLoading } = useQuery({
+    queryKey: ['order-detail', id],
+    queryFn: async () => {
+      if (!id) return null;
+      const { data, error } = await supabase
+        .from('orders')
+        .select('*')
+        .eq('id', id)
+        .maybeSingle();
+      if (error) throw error;
+      if (!data) return null;
+      return {
+        id: data.id,
+        orderNumber: data.id.slice(0, 8).toUpperCase(),
+        userId: data.user_id,
+        items: (data.items as any[]) || [],
+        status: data.status as string,
+        deliveryOption: data.delivery_option,
+        timeSlot: data.time_slot,
+        subtotal: data.subtotal,
+        deliveryFee: data.delivery_fee,
+        discount: 0,
+        total: data.total,
+        paymentMethod: undefined as string | undefined,
+        paymentStatus: 'pending' as string,
+        quoteApproved: !['orcamento_enviado'].includes(data.status),
+        estimatedDelivery: undefined as Date | undefined,
+        createdAt: new Date(data.created_at),
+        updatedAt: new Date(data.updated_at),
+        statusHistory: [] as Array<{ status: string; timestamp: Date; note?: string; operator?: string }>,
+        notes: data.notes,
+        address: data.address,
+      };
+    },
+    enabled: !!id,
+  });
 
   useEffect(() => {
     if (id) loadQualityData();
@@ -46,6 +82,14 @@ const OrderDetail = () => {
       console.error('Error loading quality data:', error);
     }
   };
+
+  if (isLoading) {
+    return (
+      <div className="min-h-screen bg-background flex items-center justify-center">
+        <Loader2 className="w-6 h-6 animate-spin text-primary" />
+      </div>
+    );
+  }
 
   if (!order) {
     return (
@@ -86,7 +130,7 @@ const OrderDetail = () => {
                 Criado em {format(order.createdAt, "dd 'de' MMMM", { locale: ptBR })}
               </p>
             </div>
-            <StatusBadgeSimple status={order.status} />
+            <StatusBadgeSimple status={order.status as OrderStatus} />
           </div>
 
           {order.estimatedDelivery && order.status !== 'entregue' && (
@@ -121,14 +165,14 @@ const OrderDetail = () => {
         <section className="mb-6">
           <h3 className="font-display font-bold mb-3">Itens do Pedido</h3>
           <div className="space-y-3">
-            {order.items.map((item) => (
+            {order.items.map((item: any, idx: number) => (
               <div
-                key={item.id}
+                key={item.id || idx}
                 className="bg-card rounded-xl p-4 shadow-soft border border-border"
               >
                 <div className="flex justify-between items-start mb-2">
                   <div>
-                    <h4 className="font-semibold">{TOOL_CATEGORIES[item.category]}</h4>
+                    <h4 className="font-semibold">{TOOL_CATEGORIES[item.category as keyof typeof TOOL_CATEGORIES] || item.category}</h4>
                     {item.brandModel && (
                       <p className="text-sm text-muted-foreground">{item.brandModel}</p>
                     )}
@@ -138,12 +182,16 @@ const OrderDetail = () => {
                   </span>
                 </div>
                 <div className="flex flex-wrap gap-2 text-xs">
-                  <span className="px-2 py-1 bg-muted rounded-full">
-                    {SERVICE_TYPES[item.serviceType].label}
-                  </span>
-                  <span className="px-2 py-1 bg-muted rounded-full">
-                    Desgaste: {item.wearLevel}
-                  </span>
+                  {item.serviceType && SERVICE_TYPES[item.serviceType as keyof typeof SERVICE_TYPES] && (
+                    <span className="px-2 py-1 bg-muted rounded-full">
+                      {SERVICE_TYPES[item.serviceType as keyof typeof SERVICE_TYPES].label}
+                    </span>
+                  )}
+                  {item.wearLevel && (
+                    <span className="px-2 py-1 bg-muted rounded-full">
+                      Desgaste: {item.wearLevel}
+                    </span>
+                  )}
                 </div>
                 {item.notes && (
                   <p className="text-sm text-muted-foreground mt-2 italic">"{item.notes}"</p>
@@ -151,7 +199,7 @@ const OrderDetail = () => {
 
                 {/* Before/After Photos from Quality Checklist */}
                 {(() => {
-                  const qd = qualityData.find(q => q.item_index === parseInt(item.id) - 1);
+                  const qd = qualityData.find(q => q.item_index === idx);
                   if (!qd || (qd.before_photos.length === 0 && qd.after_photos.length === 0)) return null;
                   return (
                     <div className="mt-3 pt-3 border-t border-border">
@@ -168,7 +216,7 @@ const OrderDetail = () => {
                         <div className="mb-2">
                           <p className="text-xs text-muted-foreground mb-1">Antes:</p>
                           <div className="flex gap-2 overflow-x-auto">
-                            {qd.before_photos.map((photo, pi) => (
+                            {qd.before_photos.map((photo: string, pi: number) => (
                               <img key={pi} src={photo} alt="Antes" className="w-14 h-14 object-cover rounded-lg border" />
                             ))}
                           </div>
@@ -178,7 +226,7 @@ const OrderDetail = () => {
                         <div>
                           <p className="text-xs text-muted-foreground mb-1">Depois:</p>
                           <div className="flex gap-2 overflow-x-auto">
-                            {qd.after_photos.map((photo, pi) => (
+                            {qd.after_photos.map((photo: string, pi: number) => (
                               <img key={pi} src={photo} alt="Depois" className="w-14 h-14 object-cover rounded-lg border border-primary/30" />
                             ))}
                           </div>
@@ -196,9 +244,9 @@ const OrderDetail = () => {
         <section className="mb-6">
           <h3 className="font-display font-bold mb-3">Entrega</h3>
           <div className="bg-card rounded-xl p-4 shadow-soft border border-border">
-            <p className="font-medium">{DELIVERY_OPTIONS[order.deliveryOption].label}</p>
+            <p className="font-medium">{DELIVERY_OPTIONS[order.deliveryOption as keyof typeof DELIVERY_OPTIONS]?.label || order.deliveryOption}</p>
             <p className="text-sm text-muted-foreground">
-              {DELIVERY_OPTIONS[order.deliveryOption].description}
+              {DELIVERY_OPTIONS[order.deliveryOption as keyof typeof DELIVERY_OPTIONS]?.description}
             </p>
             {order.timeSlot && (
               <p className="text-sm text-muted-foreground mt-1">
@@ -254,12 +302,14 @@ const OrderDetail = () => {
         </section>
 
         {/* Timeline */}
-        <section className="mb-6">
-          <h3 className="font-display font-bold mb-3">Acompanhamento</h3>
-          <div className="bg-card rounded-xl p-4 shadow-soft border border-border">
-            <OrderTimeline statusHistory={order.statusHistory} currentStatus={order.status} />
-          </div>
-        </section>
+        {order.statusHistory.length > 0 && (
+          <section className="mb-6">
+            <h3 className="font-display font-bold mb-3">Acompanhamento</h3>
+            <div className="bg-card rounded-xl p-4 shadow-soft border border-border">
+              <OrderTimeline statusHistory={order.statusHistory as any} currentStatus={order.status as OrderStatus} />
+            </div>
+          </section>
+        )}
 
         {/* Chat */}
         <section className="mb-6">
