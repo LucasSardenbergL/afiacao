@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback } from 'react';
-import { ArrowLeft, Star, Gift, Trophy, TrendingUp, Loader2 } from 'lucide-react';
+import { ArrowLeft, Star, Gift, Trophy, TrendingUp, Loader2, BookOpen, Target, ChevronRight } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 import { Card, CardContent } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
@@ -180,20 +180,20 @@ export default function Loyalty() {
           <CardContent className="p-5">
             <h2 className="font-display font-bold text-lg text-foreground mb-3 flex items-center gap-2">
               <Star className="w-5 h-5 text-primary" />
-              Como funciona
+              Como ganhar pontos
             </h2>
             <div className="space-y-3 text-sm text-muted-foreground">
               <div className="flex items-start gap-3">
                 <div className="w-8 h-8 rounded-full bg-primary/10 flex items-center justify-center flex-shrink-0">
                   <span className="text-xs font-bold text-primary">1</span>
                 </div>
-                <p>A cada pedido entregue, você ganha pontos equivalentes ao valor do pedido (mínimo 10 pts)</p>
+                <p>A cada pedido entregue, você ganha pontos equivalentes ao valor (mínimo 10 pts). Quanto mais pedidos, mais pontos.</p>
               </div>
               <div className="flex items-start gap-3">
                 <div className="w-8 h-8 rounded-full bg-primary/10 flex items-center justify-center flex-shrink-0">
                   <span className="text-xs font-bold text-primary">2</span>
                 </div>
-                <p>Acumule pontos para subir de nível e desbloquear recompensas exclusivas</p>
+                <p>Acumule pontos para subir de nível (Bronze → Prata → Ouro → Diamante) e desbloquear recompensas exclusivas.</p>
               </div>
               <div className="flex items-start gap-3">
                 <div className="w-8 h-8 rounded-full bg-primary/10 flex items-center justify-center flex-shrink-0">
@@ -274,6 +274,25 @@ export default function Loyalty() {
             </div>
           )}
         </section>
+
+        {/* Cross-link ecosystem */}
+        <Card className="bg-muted/50">
+          <CardContent className="p-4">
+            <p className="text-xs text-muted-foreground text-center mb-3">
+              Pontos de fidelidade vêm dos seus pedidos. Evolua seu desempenho geral com treinamentos e cuidado com ferramentas.
+            </p>
+            <div className="grid grid-cols-2 gap-3">
+              <Button variant="outline" size="sm" className="h-auto py-2 flex-col gap-0.5" onClick={() => navigate('/gamification')}>
+                <Target className="w-4 h-4" />
+                <span className="text-xs">Meu Desempenho</span>
+              </Button>
+              <Button variant="outline" size="sm" className="h-auto py-2 flex-col gap-0.5" onClick={() => navigate('/training')}>
+                <BookOpen className="w-4 h-4" />
+                <span className="text-xs">Treinamentos</span>
+              </Button>
+            </div>
+          </CardContent>
+        </Card>
       </main>
 
       <BottomNav />

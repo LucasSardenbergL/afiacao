@@ -25,11 +25,11 @@ const LEVEL_CONFIG = [
 ];
 
 const PILLAR_CONFIG = [
-  { key: 'consistency_score', label: 'Consistência', icon: Target, weight: '40%', description: 'Ferramentas mantidas dentro da janela ideal' },
-  { key: 'organization_score', label: 'Organização', icon: Shield, weight: '20%', description: 'Qualidade de envio das ferramentas' },
-  { key: 'education_score', label: 'Educação', icon: BookOpen, weight: '15%', description: 'Treinamentos técnicos concluídos' },
-  { key: 'referral_score', label: 'Indicação', icon: Users, weight: '15%', description: 'Indicações convertidas' },
-  { key: 'efficiency_score', label: 'Eficiência', icon: Zap, weight: '10%', description: 'Gestão preventiva vs emergencial' },
+  { key: 'consistency_score', label: 'Consistência', icon: Target, weight: '40%', description: 'Ferramentas mantidas dentro da janela ideal', hint: 'Cadastre e acompanhe suas ferramentas para melhorar', route: '/tools' },
+  { key: 'organization_score', label: 'Organização', icon: Shield, weight: '20%', description: 'Qualidade de envio das ferramentas', hint: 'Envie ferramentas limpas, identificadas e bem embaladas', route: '/orders/new' },
+  { key: 'education_score', label: 'Educação', icon: BookOpen, weight: '15%', description: 'Treinamentos técnicos concluídos', hint: 'Complete treinamentos para ganhar pontos aqui', route: '/training' },
+  { key: 'referral_score', label: 'Indicação', icon: Users, weight: '15%', description: 'Indicações convertidas', hint: 'Indique profissionais e ganhe pontos quando se tornarem clientes', route: '/support' },
+  { key: 'efficiency_score', label: 'Eficiência', icon: Zap, weight: '10%', description: 'Gestão preventiva vs emergencial', hint: 'Planeje manutenções preventivas e evite emergências', route: '/tools' },
 ];
 
 const BENEFITS = [
@@ -233,7 +233,7 @@ const Gamification = () => {
               const value = score ? (score as any)[pillar.key] : 0;
               const Icon = pillar.icon;
               return (
-                <Card key={pillar.key}>
+                <Card key={pillar.key} className="cursor-pointer hover:ring-1 hover:ring-primary/20 transition-all" onClick={() => navigate(pillar.route)}>
                   <CardContent className="p-4">
                     <div className="flex items-center gap-3 mb-2">
                       <Icon className="w-5 h-5 text-primary" />
@@ -248,7 +248,10 @@ const Gamification = () => {
                         <p className="text-xs text-muted-foreground">{pillar.description}</p>
                       </div>
                     </div>
-                    <Progress value={value} className="h-1.5" />
+                    <Progress value={value} className="h-1.5 mb-2" />
+                    <p className="text-[11px] text-muted-foreground/80 flex items-center gap-1">
+                      <ChevronRight className="w-3 h-3" />{pillar.hint}
+                    </p>
                   </CardContent>
                 </Card>
               );
@@ -303,21 +306,30 @@ const Gamification = () => {
           />
         )}
 
-        {/* Quick Actions */}
-        <div className="grid grid-cols-3 gap-3">
-          <Button variant="outline" className="h-auto py-3 flex-col gap-1" onClick={() => navigate('/tools')}>
-            <Target className="w-5 h-5" />
-            <span className="text-xs">Ferramentas</span>
-          </Button>
-          <Button variant="outline" className="h-auto py-3 flex-col gap-1" onClick={() => navigate('/training')}>
-            <BookOpen className="w-5 h-5" />
-            <span className="text-xs">Treinamentos</span>
-          </Button>
-          <Button variant="outline" className="h-auto py-3 flex-col gap-1" onClick={() => navigate('/loyalty')}>
-            <Trophy className="w-5 h-5" />
-            <span className="text-xs">Fidelidade</span>
-          </Button>
-        </div>
+        {/* Cross-link ecosystem */}
+        <Card className="bg-muted/50">
+          <CardContent className="p-4">
+            <p className="text-xs text-muted-foreground text-center mb-3">
+              Seu desempenho evolui com treinamentos, cuidado com ferramentas e pedidos recorrentes. Tudo se conecta.
+            </p>
+            <div className="grid grid-cols-3 gap-3">
+              <Button variant="outline" className="h-auto py-3 flex-col gap-1" onClick={() => navigate('/tools')}>
+                <Target className="w-5 h-5" />
+                <span className="text-xs">Ferramentas</span>
+              </Button>
+              <Button variant="outline" className="h-auto py-3 flex-col gap-1" onClick={() => navigate('/training')}>
+                <BookOpen className="w-5 h-5" />
+                <span className="text-xs">Treinamentos</span>
+                <span className="text-[9px] text-primary font-medium">+Educação</span>
+              </Button>
+              <Button variant="outline" className="h-auto py-3 flex-col gap-1" onClick={() => navigate('/loyalty')}>
+                <Trophy className="w-5 h-5" />
+                <span className="text-xs">Fidelidade</span>
+                <span className="text-[9px] text-primary font-medium">Recompensas</span>
+              </Button>
+            </div>
+          </CardContent>
+        </Card>
       </main>
 
       <BottomNav />
