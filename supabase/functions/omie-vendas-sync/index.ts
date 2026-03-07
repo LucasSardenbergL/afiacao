@@ -302,7 +302,7 @@ async function buscarClienteVendas(document: string, account: Account = "oben") 
     account
   ) as any;
 
-  if (!result.clientes_cadastro?.[0]?.codigo_cliente_omie) {
+  if (!result || !result.clientes_cadastro?.[0]?.codigo_cliente_omie) {
     return null;
   }
 
