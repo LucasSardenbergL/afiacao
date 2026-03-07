@@ -5,7 +5,9 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { supabase } from '@/integrations/supabase/client';
-import { MapPin, Plus, Loader2, Home, Building, Trash2, Cloud, X } from 'lucide-react';
+import { MapPin, Plus, Loader2, Home, Building, Trash2, Cloud, X, Truck, Info } from 'lucide-react';
+import { Badge } from '@/components/ui/badge';
+import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip';
 import { useToast } from '@/hooks/use-toast';
 import {
   Dialog,
