@@ -52,10 +52,14 @@ async function callOmieVendasApi(
     const result = await response.json();
 
     if (result.faultstring) {
-      const isRateLimit = result.faultstring.includes("Já existe uma requisição desse método");
+      const isRateLimit = result.faultstring.includes("Já existe uma requisição desse método")
+        || result.faultstring.includes("Consumo redundante")
+        || result.faultstring.includes("REDUNDANT");
       if (isRateLimit && attempt < maxRetries) {
-        const delay = (attempt + 1) * 2000; // 2s, 4s, 6s
-        console.log(`[Omie Vendas][${account}] Rate limit hit, retrying in ${delay}ms (attempt ${attempt + 1}/${maxRetries})`);
+        // Extract wait time from message if available, otherwise use exponential backoff
+        const waitMatch = result.faultstring.match(/Aguarde (\d+) segundos/);
+        const delay = waitMatch ? (parseInt(waitMatch[1]) + 2) * 1000 : (attempt + 1) * 15000;
+        console.log(`[Omie Vendas][${account}] Rate limit hit (${result.faultstring.substring(0, 60)}), retrying in ${delay}ms (attempt ${attempt + 1}/${maxRetries})`);
         await new Promise(r => setTimeout(r, delay));
         continue;
       }
