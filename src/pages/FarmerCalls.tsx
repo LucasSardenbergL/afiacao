@@ -174,10 +174,17 @@ function formatTimer(secs: number) {
 }
 
 /* ─── Main Page ─── */
+const AGENDA_TYPE_META: Record<string, { label: string; icon: typeof AlertTriangle; color: string }> = {
+  risco: { label: 'Risco', icon: AlertTriangle, color: 'text-destructive bg-destructive/10 border-destructive/20' },
+  expansao: { label: 'Expansão', icon: TrendingUp, color: 'text-primary bg-primary/10 border-primary/20' },
+  follow_up: { label: 'Follow-up', icon: RotateCcw, color: 'text-amber-600 bg-amber-50 border-amber-200' },
+};
+
 const FarmerCalls = () => {
   const navigate = useNavigate();
   const { user, isStaff, loading: authLoading } = useAuth();
   const { toast } = useToast();
+  const { agenda, clientScores, loading: agendaLoading } = useFarmerScoring();
 
   const [isCallActive, setIsCallActive] = useState(false);
   const [isFollowUpActive, setIsFollowUpActive] = useState(false);
