@@ -171,6 +171,12 @@ async function syncEstoque(supabase: ReturnType<typeof createClient>, startPage 
       account
     ) as any;
 
+    // If rate-limited, stop pagination gracefully
+    if (!result) {
+      console.log(`[Omie Vendas][${account}] Estoque sync interrupted by rate limit at page ${pagina}`);
+      break;
+    }
+
     totalPaginas = result.nTotPaginas || 1;
     const produtos = result.produtos || [];
 
