@@ -312,7 +312,24 @@ const FarmerCalls = () => {
         revenue_generated: parseFloat(revenue) || 0, margin_generated: parseFloat(margin) || 0,
       } as any);
       if (error) throw error;
-      toast({ title: 'Ligação registrada!' });
+
+      const rev = parseFloat(revenue) || 0;
+      const noContactResults = ['sem_resposta', 'ocupado', 'caixa_postal', 'numero_errado'];
+
+      if (noContactResults.includes(callResult)) {
+        toast({
+          title: 'Registrado — tente novamente',
+          description: `Tentativa ${attemptNumber} anotada. Reagende para manter o contato ativo.`,
+        });
+      } else if (rev > 0) {
+        toast({
+          title: `🎯 Boa! ${rev.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' })} gerados`,
+          description: 'Receita registrada com sucesso.',
+        });
+      } else {
+        toast({ title: 'Ligação registrada com sucesso' });
+      }
+
       resetForm(); setShowNewCall(false); loadCallLogs();
     } catch (error) {
       toast({ title: 'Erro ao salvar ligação', variant: 'destructive' });
