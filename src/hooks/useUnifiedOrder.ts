@@ -359,7 +359,6 @@ export function useUnifiedOrder() {
       } catch (e) { console.error(`Background stock sync error (${account}):`, e); }
     });
   };
-  };
 
   const loadServicosColacor = async () => {
     try {
