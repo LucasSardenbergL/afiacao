@@ -236,6 +236,7 @@ const Addresses = () => {
   }
 
   return (
+    <TooltipProvider>
     <div className="min-h-screen bg-background pb-24">
       <Header title="Meus Endereços" showBack />
 
@@ -246,7 +247,7 @@ const Addresses = () => {
               <div
                 key={address.id}
                 className={`bg-card rounded-xl p-4 border ${
-                  address.is_default ? 'border-primary' : 'border-border'
+                  address.is_default ? 'border-primary shadow-sm' : 'border-border'
                 }`}
               >
                 <div className="flex items-start gap-3">
@@ -261,18 +262,20 @@ const Addresses = () => {
                       <Building className={`w-5 h-5 ${address.is_default ? 'text-primary' : 'text-muted-foreground'}`} />
                     )}
                   </div>
-                  <div className="flex-1">
+                  <div className="flex-1 min-w-0">
                     <div className="flex items-center gap-2 flex-wrap">
                       <h3 className="font-semibold">{address.label}</h3>
                       {address.is_from_omie && (
-                        <span className="text-xs bg-secondary text-secondary-foreground px-2 py-0.5 rounded-full">
-                          Omie
-                        </span>
+                        <Badge variant="secondary" className="text-[10px] gap-1">
+                          <Cloud className="w-3 h-3" />
+                          Sincronizado
+                        </Badge>
                       )}
                       {address.is_default && (
-                        <span className="text-xs bg-primary/10 text-primary px-2 py-0.5 rounded-full">
+                        <Badge variant="default" className="text-[10px] gap-1">
+                          <Truck className="w-3 h-3" />
                           Padrão
-                        </span>
+                        </Badge>
                       )}
                     </div>
                     <p className="text-sm text-muted-foreground mt-1">
@@ -285,10 +288,16 @@ const Addresses = () => {
                     <p className="text-sm text-muted-foreground">
                       CEP: {address.zip_code.replace(/(\d{5})(\d{3})/, '$1-$2')}
                     </p>
+                    {address.is_default && (
+                      <p className="text-xs text-primary mt-2 flex items-center gap-1">
+                        <Truck className="w-3.5 h-3.5" />
+                        Este endereço será usado como padrão para coletas e entregas
+                      </p>
+                    )}
                   </div>
                 </div>
                 
-                <div className="flex gap-2 mt-3 pt-3 border-t border-border">
+                <div className="flex items-center gap-2 mt-3 pt-3 border-t border-border">
                   {!address.is_default ? (
                     <Button
                       variant="outline"
@@ -296,14 +305,30 @@ const Addresses = () => {
                       className="flex-1"
                       onClick={() => handleSetDefault(address.id)}
                     >
-                      Usar como padrão para coleta/entrega
+                      Definir como padrão
                     </Button>
                   ) : (
-                    <p className="text-xs text-primary flex-1 flex items-center gap-1">
-                      ✓ Endereço padrão para coleta e entrega
-                    </p>
+                    <span className="flex-1" />
                   )}
-                  {!address.is_from_omie && (
+                  {address.is_from_omie ? (
+                    <Tooltip>
+                      <TooltipTrigger asChild>
+                        <span>
+                          <Button
+                            variant="ghost"
+                            size="sm"
+                            disabled
+                            className="text-muted-foreground"
+                          >
+                            <Trash2 className="w-4 h-4" />
+                          </Button>
+                        </span>
+                      </TooltipTrigger>
+                      <TooltipContent>
+                        <p className="text-xs">Endereço sincronizado do cadastro — não pode ser excluído por aqui</p>
+                      </TooltipContent>
+                    </Tooltip>
+                  ) : (
                     <Button
                       variant="ghost"
                       size="sm"
@@ -318,25 +343,27 @@ const Addresses = () => {
             ))}
           </div>
         ) : (
-          <div className="text-center py-12">
+          <div className="text-center py-12 bg-card rounded-2xl border border-border px-6">
             <div className="w-16 h-16 bg-muted rounded-full flex items-center justify-center mx-auto mb-4">
               <MapPin className="w-8 h-8 text-muted-foreground" />
             </div>
-            <h3 className="font-semibold mb-2">Nenhum endereço cadastrado</h3>
-            <p className="text-sm text-muted-foreground mb-4">
-              Adicione um endereço para facilitar suas coletas e entregas
+            <h3 className="font-display font-bold text-lg mb-2">Cadastre seu endereço</h3>
+            <p className="text-sm text-muted-foreground mb-6 max-w-[280px] mx-auto leading-relaxed">
+              Com um endereço cadastrado, nossa equipe pode buscar e devolver suas ferramentas sem complicação.
             </p>
+            <Button onClick={() => setShowAddDialog(true)} className="gap-2">
+              <Plus className="w-4 h-4" />
+              Adicionar primeiro endereço
+            </Button>
           </div>
         )}
 
-        <Button className="w-full" onClick={() => setShowAddDialog(true)}>
-          <Plus className="w-4 h-4 mr-2" />
-          Adicionar Endereço Extra
-        </Button>
-
-        <p className="text-xs text-muted-foreground text-center mt-4">
-          Endereços marcados com "Omie" são sincronizados do seu cadastro e não podem ser alterados aqui.
-        </p>
+        {addresses.length > 0 && (
+          <Button className="w-full" onClick={() => setShowAddDialog(true)}>
+            <Plus className="w-4 h-4 mr-2" />
+            Adicionar Endereço
+          </Button>
+        )}
       </main>
 
       <Dialog open={showAddDialog} onOpenChange={setShowAddDialog}>
