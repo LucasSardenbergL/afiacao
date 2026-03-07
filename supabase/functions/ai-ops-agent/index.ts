@@ -188,6 +188,10 @@ serve(async (req) => {
     const serviceKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
     const supabase = createClient(supabaseUrl, serviceKey);
 
+    // 1. Refresh materialized view
+    console.log("[ai-ops-agent] Refreshing customer metrics...");
+    await supabase.rpc("refresh_customer_metrics");
+
     // 2. Get all customer metrics with pagination (bypass 1000-row limit)
     let allMetrics: any[] = [];
     const PAGE_SIZE = 1000;
