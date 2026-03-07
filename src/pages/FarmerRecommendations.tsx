@@ -19,6 +19,13 @@ import {
 
 const fmt = (v: number) => v.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' });
 
+const StockBadge = ({ estoque }: { estoque: number | null }) => {
+  if (estoque === null || estoque === undefined) return null;
+  if (estoque > 10) return <Badge variant="outline" className="text-[8px] bg-emerald-50 text-emerald-700 border-emerald-200">Em estoque</Badge>;
+  if (estoque > 0) return <Badge variant="outline" className="text-[8px] bg-amber-50 text-amber-700 border-amber-200">Estoque baixo</Badge>;
+  return <Badge variant="outline" className="text-[8px] bg-destructive/10 text-destructive border-destructive/20">Sem estoque</Badge>;
+};
+
 const FarmerRecommendations = () => {
   const navigate = useNavigate();
   const { isStaff, loading: authLoading } = useAuth();
