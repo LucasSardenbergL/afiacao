@@ -199,12 +199,12 @@ export function useUnifiedOrder() {
     });
   }, [formasPagamentoColacor, customerParcelaRankingColacor]);
 
-  const currentStep = !selectedCustomer ? 0 : cart.length === 0 ? 1 : 2;
+  const isCustomerMode = !authLoading && !isStaff;
+  const currentStep = isCustomerMode
+    ? (cart.length === 0 ? 1 : 2)
+    : (!selectedCustomer ? 0 : cart.length === 0 ? 1 : 2);
 
-  useEffect(() => {
-    if (!authLoading && !isStaff) navigate('/', { replace: true });
-  }, [authLoading, isStaff]);
-
+  // Staff: load all catalogs
   useEffect(() => {
     if (isStaff) {
       loadProductsForAccount('oben');
@@ -216,6 +216,39 @@ export function useUnifiedOrder() {
       loadCategories();
     }
   }, [isStaff]);
+
+  // Customer: auto-setup own context (skip customer search)
+  useEffect(() => {
+    if (!isCustomerMode || !user || selectedCustomer) return;
+    // Load services catalog and tools for the logged-in customer
+    loadServicosColacor();
+    loadDefaultPrices();
+    loadCategories();
+    setCustomerUserId(user.id);
+    loadUserTools(user.id);
+    loadAddresses(user.id);
+    loadPriceHistory();
+    // Set a synthetic customer object so the UI considers customer selected
+    (async () => {
+      try {
+        const { data: profile } = await supabase
+          .from('profiles')
+          .select('name, document')
+          .eq('user_id', user.id)
+          .maybeSingle();
+        setSelectedCustomer({
+          codigo_cliente: 0,
+          razao_social: profile?.name || user.email?.split('@')[0] || 'Cliente',
+          nome_fantasia: profile?.name || '',
+          cnpj_cpf: profile?.document || '',
+          codigo_vendedor: null,
+          local_user_id: user.id,
+        });
+      } catch (err) {
+        console.error('Erro ao carregar perfil do cliente:', err);
+      }
+    })();
+  }, [isCustomerMode, user]);
 
   // Customer search
   useEffect(() => {

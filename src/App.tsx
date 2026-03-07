@@ -104,7 +104,7 @@ const App = () => (
               <Route index element={<Index />} />
               <Route path="orders" element={<Orders />} />
               <Route path="orders/:id" element={<OrderDetail />} />
-              <Route path="new-order" element={<NewOrder />} />
+              <Route path="new-order" element={<UnifiedOrder />} />
               <Route path="profile" element={<Profile />} />
               <Route path="addresses" element={<Addresses />} />
               <Route path="tools" element={<Tools />} />
