@@ -96,6 +96,11 @@ async function syncProducts(supabase: ReturnType<typeof createClient>, startPage
       account
     ) as any;
 
+    if (!result) {
+      console.log(`[Omie Vendas][${account}] Products sync interrupted by rate limit at page ${pagina}`);
+      break;
+    }
+
     totalPaginas = result.total_de_paginas || 1;
     const produtos = result.produto_servico_cadastro || [];
 
