@@ -8,7 +8,7 @@ import { Badge } from '@/components/ui/badge';
 import { supabase } from '@/integrations/supabase/client';
 import { useAuth } from '@/contexts/AuthContext';
 import { useToast } from '@/hooks/use-toast';
-import { Loader2, Check, X, UserCheck, Clock } from 'lucide-react';
+import { Loader2, Check, X, UserCheck, Clock, Link2, AlertTriangle } from 'lucide-react';
 
 interface PendingUser {
   id: string;
@@ -29,8 +29,6 @@ const AdminApprovals = () => {
   const [loading, setLoading] = useState(true);
   const [processing, setProcessing] = useState<string | null>(null);
 
-  
-
   useEffect(() => {
     if (!authLoading && !isStaff) {
       navigate('/', { replace: true });
@@ -45,7 +43,6 @@ const AdminApprovals = () => {
 
   const loadPendingUsers = async () => {
     try {
-      // Get employee user_ids to exclude them
       const { data: employeeRoles } = await supabase
         .from('user_roles')
         .select('user_id')
@@ -61,11 +58,9 @@ const AdminApprovals = () => {
 
       if (error) throw error;
 
-      // Filter out employees - they should be auto-approved
       const pendingOnly = (data || []).filter(p => !employeeIds.has(p.user_id));
       setPendingUsers(pendingOnly);
 
-      // Auto-approve any employees that somehow ended up unapproved
       const unapprovedEmployees = (data || []).filter(p => employeeIds.has(p.user_id));
       for (const emp of unapprovedEmployees) {
         await supabase
@@ -80,21 +75,110 @@ const AdminApprovals = () => {
     }
   };
 
-  const handleApprove = async (profileUserId: string) => {
-    setProcessing(profileUserId);
+  const tryLinkOmie = async (profileUserId: string, document: string | null, name: string): Promise<'linked' | 'no_data' | 'already_linked' | 'not_found' | 'error'> => {
+    if (!document) return 'no_data';
+
+    const normalizedDoc = document.replace(/\D/g, '');
+    if (!normalizedDoc) return 'no_data';
+
     try {
+      // Check if already linked
+      const { data: existing } = await supabase
+        .from('omie_clientes')
+        .select('id')
+        .eq('user_id', profileUserId)
+        .limit(1);
+
+      if (existing && existing.length > 0) return 'already_linked';
+
+      // Search Omie by document
+      const { data, error } = await supabase.functions.invoke('omie-cliente', {
+        body: { action: 'buscar_por_documento', documento: normalizedDoc },
+      });
+
+      if (error) {
+        console.error('Error searching Omie by document:', error);
+        return 'error';
+      }
+
+      if (data?.found && data?.codigo_cliente) {
+        // Client exists in Omie — create local link
+        const { error: insertError } = await supabase
+          .from('omie_clientes')
+          .insert({
+            user_id: profileUserId,
+            omie_codigo_cliente: data.codigo_cliente,
+            omie_codigo_cliente_integracao: data.codigo_cliente_integracao || null,
+            omie_codigo_vendedor: data.codigo_vendedor || null,
+          });
+
+        if (insertError) {
+          // Could be duplicate — check unique constraint
+          if (insertError.code === '23505') return 'already_linked';
+          console.error('Error inserting omie_clientes link:', insertError);
+          return 'error';
+        }
+
+        return 'linked';
+      }
+
+      return 'not_found';
+    } catch (err) {
+      console.error('Error in tryLinkOmie:', err);
+      return 'error';
+    }
+  };
+
+  const handleApprove = async (pendingUser: PendingUser) => {
+    setProcessing(pendingUser.user_id);
+    try {
+      // Step 1: Approve user
       const { error } = await supabase
         .from('profiles')
         .update({ is_approved: true })
-        .eq('user_id', profileUserId);
+        .eq('user_id', pendingUser.user_id);
 
       if (error) throw error;
 
-      setPendingUsers(prev => prev.filter(u => u.user_id !== profileUserId));
-      toast({
-        title: 'Usuário aprovado',
-        description: 'O acesso foi liberado com sucesso.',
-      });
+      // Step 2: Try Omie link (non-blocking)
+      const omieResult = await tryLinkOmie(pendingUser.user_id, pendingUser.document, pendingUser.name);
+
+      setPendingUsers(prev => prev.filter(u => u.user_id !== pendingUser.user_id));
+
+      // Step 3: Show feedback
+      switch (omieResult) {
+        case 'linked':
+          toast({
+            title: 'Aprovado e vinculado ao Omie ✓',
+            description: `${pendingUser.name} foi aprovado e vinculado automaticamente.`,
+          });
+          break;
+        case 'already_linked':
+          toast({
+            title: 'Usuário aprovado',
+            description: 'Vínculo com Omie já existia.',
+          });
+          break;
+        case 'not_found':
+          toast({
+            title: 'Aprovado — sem vínculo Omie',
+            description: 'Cliente não encontrado no Omie. Vincule manualmente se necessário.',
+          });
+          break;
+        case 'no_data':
+          toast({
+            title: 'Usuário aprovado',
+            description: 'Sem CPF/CNPJ para busca automática no Omie.',
+          });
+          break;
+        case 'error':
+          toast({
+            title: 'Aprovado — erro no vínculo Omie',
+            description: 'O usuário foi aprovado, mas a vinculação Omie falhou. Tente vincular manualmente.',
+            variant: 'destructive',
+          });
+          break;
+      }
     } catch (error) {
       console.error('Error approving user:', error);
       toast({
@@ -110,7 +194,6 @@ const AdminApprovals = () => {
   const handleReject = async (profileUserId: string) => {
     setProcessing(profileUserId);
     try {
-      // Delete profile (user can't access)
       const { error } = await supabase
         .from('profiles')
         .delete()
@@ -175,6 +258,14 @@ const AdminApprovals = () => {
               <Clock className="w-5 h-5 text-amber-600" />
               <span className="font-medium">{pendingUsers.length} pendente(s)</span>
             </div>
+
+            <div className="flex items-center gap-2 rounded-lg border border-muted bg-muted/30 p-2.5 mb-2">
+              <Link2 className="w-4 h-4 text-muted-foreground shrink-0" />
+              <p className="text-xs text-muted-foreground">
+                Ao aprovar, o sistema tentará vincular automaticamente o cliente ao Omie via CPF/CNPJ.
+              </p>
+            </div>
+
             {pendingUsers.map((pendingUser) => (
               <Card key={pendingUser.id}>
                 <CardContent className="pt-4 pb-4">
@@ -182,9 +273,14 @@ const AdminApprovals = () => {
                     <div className="space-y-1 flex-1 min-w-0">
                       <p className="font-semibold truncate">{pendingUser.name}</p>
                       <p className="text-sm text-muted-foreground truncate">{pendingUser.email || '-'}</p>
-                      <p className="text-sm text-muted-foreground">
-                        CPF/CNPJ: {formatDocument(pendingUser.document)}
-                      </p>
+                      <div className="flex items-center gap-1.5">
+                        <p className="text-sm text-muted-foreground">
+                          CPF/CNPJ: {formatDocument(pendingUser.document)}
+                        </p>
+                        {!pendingUser.document && (
+                          <AlertTriangle className="w-3.5 h-3.5 text-amber-500" title="Sem documento — vínculo Omie não será tentado" />
+                        )}
+                      </div>
                       <p className="text-xs text-muted-foreground">
                         {new Date(pendingUser.created_at).toLocaleDateString('pt-BR')}
                       </p>
@@ -210,7 +306,7 @@ const AdminApprovals = () => {
                       </Button>
                       <Button
                         size="sm"
-                        onClick={() => handleApprove(pendingUser.user_id)}
+                        onClick={() => handleApprove(pendingUser)}
                         disabled={processing === pendingUser.user_id}
                       >
                         {processing === pendingUser.user_id ? (
