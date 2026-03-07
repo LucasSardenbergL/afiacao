@@ -10,7 +10,7 @@ import { Textarea } from '@/components/ui/textarea';
 import { supabase } from '@/integrations/supabase/client';
 import { useAuth } from '@/contexts/AuthContext';
 import { useToast } from '@/hooks/use-toast';
-import { Loader2, Trophy, Search, Plus, Minus, Gift, Users, TrendingUp } from 'lucide-react';
+import { Loader2, Trophy, Search, Plus, Minus, Gift, Users, TrendingUp, DollarSign, BarChart3, Crown } from 'lucide-react';
 import { format } from 'date-fns';
 import { ptBR } from 'date-fns/locale';
 import {
@@ -46,6 +46,15 @@ interface PointRecord {
   order_id: string | null;
 }
 
+interface RedemptionRecord {
+  id: string;
+  user_id: string;
+  reward_name: string;
+  points_spent: number;
+  status: string;
+  created_at: string;
+}
+
 const TIERS = [
   { name: 'Bronze', min: 0, icon: '🥉' },
   { name: 'Prata', min: 200, icon: '🥈' },
@@ -64,6 +73,7 @@ export default function AdminLoyalty() {
 
   const [customers, setCustomers] = useState<CustomerPoints[]>([]);
   const [allPoints, setAllPoints] = useState<PointRecord[]>([]);
+  const [redemptions, setRedemptions] = useState<RedemptionRecord[]>([]);
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState('');
   const [selectedCustomer, setSelectedCustomer] = useState<CustomerPoints | null>(null);
@@ -91,14 +101,17 @@ export default function AdminLoyalty() {
 
   const loadData = async () => {
     try {
-      const [pointsRes, profilesRes] = await Promise.all([
+      const [pointsRes, profilesRes, redemptionsRes] = await Promise.all([
         (supabase as any).from('loyalty_points').select('*').order('created_at', { ascending: false }),
         supabase.from('profiles').select('user_id, name'),
+        supabase.from('loyalty_redemptions').select('*').order('created_at', { ascending: false }),
       ]);
 
       const points = (pointsRes.data || []) as PointRecord[];
       const profiles = profilesRes.data || [];
+      const redData = (redemptionsRes.data || []) as RedemptionRecord[];
       setAllPoints(points);
+      setRedemptions(redData);
 
       // Aggregate by user
       const userMap = new Map<string, CustomerPoints>();
@@ -171,6 +184,22 @@ export default function AdminLoyalty() {
   const totalPointsCirculating = customers.reduce((s, c) => s + c.balance, 0);
   const totalEarned = customers.reduce((s, c) => s + c.total_earned, 0);
   const totalRedeemed = customers.reduce((s, c) => s + c.total_redeemed, 0);
+
+  // Estimated liability: 1 pt ≈ R$0.01 (conservative estimate based on typical reward catalog)
+  const estimatedLiability = totalPointsCirculating * 0.01;
+  const redemptionRate = totalEarned > 0 ? ((totalRedeemed / totalEarned) * 100).toFixed(1) : '0';
+
+  // Top redeemed rewards
+  const rewardCounts = new Map<string, number>();
+  for (const r of redemptions) {
+    rewardCounts.set(r.reward_name, (rewardCounts.get(r.reward_name) || 0) + 1);
+  }
+  const topRewards = Array.from(rewardCounts.entries())
+    .sort((a, b) => b[1] - a[1])
+    .slice(0, 3);
+
+  // Top balance users (already sorted)
+  const topBalanceUsers = customers.slice(0, 5);
 
   const filtered = customers.filter(c =>
     c.name.toLowerCase().includes(search.toLowerCase())
@@ -312,7 +341,65 @@ export default function AdminLoyalty() {
           </Card>
         </div>
 
-        {/* Search */}
+        {/* Economic insights */}
+        <Card>
+          <CardContent className="p-4 space-y-3">
+            <div className="flex items-center gap-2 mb-1">
+              <DollarSign className="w-4 h-4 text-primary" />
+              <h3 className="text-sm font-semibold text-foreground">Visão Econômica</h3>
+            </div>
+            <div className="grid grid-cols-2 gap-3">
+              <div className="rounded-lg bg-muted p-3">
+                <p className="text-[10px] text-muted-foreground uppercase tracking-wide">Passivo estimado</p>
+                <p className="text-lg font-bold text-foreground">
+                  R$ {estimatedLiability.toFixed(2)}
+                </p>
+                <p className="text-[10px] text-muted-foreground">se todos resgatassem</p>
+              </div>
+              <div className="rounded-lg bg-muted p-3">
+                <p className="text-[10px] text-muted-foreground uppercase tracking-wide">Taxa de resgate</p>
+                <p className="text-lg font-bold text-foreground">{redemptionRate}%</p>
+                <p className="text-[10px] text-muted-foreground">resgatados / emitidos</p>
+              </div>
+            </div>
+
+            {topRewards.length > 0 && (
+              <div>
+                <div className="flex items-center gap-1.5 mb-1.5">
+                  <BarChart3 className="w-3.5 h-3.5 text-muted-foreground" />
+                  <p className="text-xs font-medium text-muted-foreground">Recompensas mais resgatadas</p>
+                </div>
+                <div className="space-y-1">
+                  {topRewards.map(([name, count]) => (
+                    <div key={name} className="flex items-center justify-between text-sm">
+                      <span className="text-foreground truncate">{name}</span>
+                      <Badge variant="secondary" className="text-xs">{count}x</Badge>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            {topBalanceUsers.length > 0 && (
+              <div>
+                <div className="flex items-center gap-1.5 mb-1.5">
+                  <Crown className="w-3.5 h-3.5 text-muted-foreground" />
+                  <p className="text-xs font-medium text-muted-foreground">Maiores saldos</p>
+                </div>
+                <div className="space-y-1">
+                  {topBalanceUsers.map(u => (
+                    <div key={u.user_id} className="flex items-center justify-between text-sm">
+                      <span className="text-foreground truncate">{u.name}</span>
+                      <span className="font-medium text-foreground">{u.balance} pts</span>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+          </CardContent>
+        </Card>
+
+
         <div className="relative">
           <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
           <Input
