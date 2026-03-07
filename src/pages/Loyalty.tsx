@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import { ArrowLeft, Star, Gift, Trophy, TrendingUp, Loader2 } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 import { Card, CardContent } from '@/components/ui/card';
@@ -7,6 +7,7 @@ import { Badge } from '@/components/ui/badge';
 import { BottomNav } from '@/components/BottomNav';
 import { supabase } from '@/integrations/supabase/client';
 import { useAuth } from '@/contexts/AuthContext';
+import { useToast } from '@/hooks/use-toast';
 import { format } from 'date-fns';
 import { ptBR } from 'date-fns/locale';
 
@@ -36,38 +37,81 @@ const REWARDS = [
 export default function Loyalty() {
   const navigate = useNavigate();
   const { user } = useAuth();
+  const { toast } = useToast();
   const [history, setHistory] = useState<LoyaltyPoint[]>([]);
   const [loading, setLoading] = useState(true);
+  const [redeemingReward, setRedeemingReward] = useState<string | null>(null);
 
-  useEffect(() => {
+  const loadPoints = useCallback(async () => {
     if (!user) return;
-    loadPoints();
-  }, [user]);
-
-  const loadPoints = async () => {
     try {
       const { data, error } = await supabase
         .from('loyalty_points')
         .select('*')
-        .eq('user_id', user!.id)
+        .eq('user_id', user.id)
         .order('created_at', { ascending: false });
 
       if (error) throw error;
       setHistory(data || []);
     } catch (err) {
-      console.error('Error loading loyalty points:', err);
+      console.error('[Loyalty] Error loading points:', err);
     } finally {
       setLoading(false);
     }
-  };
+  }, [user]);
+
+  useEffect(() => {
+    if (user) loadPoints();
+  }, [user, loadPoints]);
 
   const totalEarned = history.filter(h => h.type === 'earn').reduce((s, h) => s + h.points, 0);
-  const totalRedeemed = history.filter(h => h.type === 'redeem').reduce((s, h) => s + Math.abs(h.points), 0);
+  const totalRedeemed = history.filter(h => h.type === 'redeem' || h.type === 'resgate').reduce((s, h) => s + Math.abs(h.points), 0);
   const balance = totalEarned - totalRedeemed;
 
   const currentTier = [...TIERS].reverse().find(t => balance >= t.min) || TIERS[0];
   const nextTier = TIERS.find(t => t.min > balance);
   const progressToNext = nextTier ? ((balance - currentTier.min) / (nextTier.min - currentTier.min)) * 100 : 100;
+
+  const handleRedeem = async (reward: typeof REWARDS[0]) => {
+    if (!user || redeemingReward) return;
+    if (balance < reward.points) {
+      toast({ title: 'Saldo insuficiente', description: `Você precisa de ${reward.points} pontos. Saldo atual: ${balance}.`, variant: 'destructive' });
+      return;
+    }
+
+    setRedeemingReward(reward.name);
+    try {
+      // 1. Create redemption record
+      const { error: redemptionError } = await supabase
+        .from('loyalty_redemptions' as any)
+        .insert({
+          user_id: user.id,
+          reward_name: reward.name,
+          points_spent: reward.points,
+          status: 'pendente',
+        });
+      if (redemptionError) throw redemptionError;
+
+      // 2. Deduct points via negative entry
+      const { error: pointsError } = await supabase
+        .from('loyalty_points')
+        .insert({
+          user_id: user.id,
+          points: -reward.points,
+          type: 'resgate',
+          description: `Resgate: ${reward.name}`,
+        });
+      if (pointsError) throw pointsError;
+
+      toast({ title: 'Resgate realizado!', description: `${reward.name} resgatado com sucesso. Aguarde processamento.` });
+      await loadPoints();
+    } catch (err: any) {
+      console.error('[Loyalty] Erro ao resgatar:', err);
+      toast({ title: 'Erro no resgate', description: err.message || 'Tente novamente.', variant: 'destructive' });
+    } finally {
+      setRedeemingReward(null);
+    }
+  };
 
   if (loading) {
     return (
@@ -170,6 +214,7 @@ export default function Loyalty() {
           <div className="space-y-3">
             {REWARDS.map((reward) => {
               const canRedeem = balance >= reward.points;
+              const isRedeeming = redeemingReward === reward.name;
               return (
                 <Card key={reward.name} className={canRedeem ? 'ring-1 ring-primary/30' : 'opacity-70'}>
                   <CardContent className="p-4 flex items-center justify-between">
@@ -180,8 +225,15 @@ export default function Loyalty() {
                         <p className="text-xs text-muted-foreground">{reward.points} pontos</p>
                       </div>
                     </div>
-                    <Button size="sm" variant={canRedeem ? 'default' : 'outline'} disabled={!canRedeem}>
-                      {canRedeem ? 'Resgatar' : 'Bloqueado'}
+                    <Button
+                      size="sm"
+                      variant={canRedeem ? 'default' : 'outline'}
+                      disabled={!canRedeem || !!redeemingReward}
+                      onClick={() => handleRedeem(reward)}
+                    >
+                      {isRedeeming ? (
+                        <Loader2 className="w-4 h-4 animate-spin" />
+                      ) : canRedeem ? 'Resgatar' : 'Bloqueado'}
                     </Button>
                   </CardContent>
                 </Card>
@@ -213,8 +265,8 @@ export default function Loyalty() {
                         {format(new Date(item.created_at), "dd/MM/yyyy 'às' HH:mm", { locale: ptBR })}
                       </p>
                     </div>
-                    <Badge variant={item.type === 'earn' ? 'default' : 'destructive'}>
-                      {item.type === 'earn' ? '+' : '-'}{Math.abs(item.points)} pts
+                    <Badge variant={item.points > 0 ? 'default' : 'destructive'}>
+                      {item.points > 0 ? '+' : ''}{item.points} pts
                     </Badge>
                   </CardContent>
                 </Card>
