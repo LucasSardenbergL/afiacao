@@ -250,6 +250,8 @@ export function UnifiedAIAssistant({ products, userTools, onItemsIdentified, onC
   };
 
   // ─── Analyze ───
+  const [aiFallbackActive, setAiFallbackActive] = useState(false);
+
   const analyze = async () => {
     if (!text.trim() && images.length === 0) {
       toast({ title: 'Digite, grave, anexe áudio ou tire uma foto', variant: 'destructive' });
@@ -263,6 +265,7 @@ export function UnifiedAIAssistant({ products, userTools, onItemsIdentified, onC
     setIdentifiedServices([]);
     setSuggestions([]);
     setIdentifiedCustomer(null);
+    setAiFallbackActive(false);
 
     try {
       const result = await invokeFunction<{
@@ -283,9 +286,17 @@ export function UnifiedAIAssistant({ products, userTools, onItemsIdentified, onC
         })),
       });
 
-      const prods = result.products || [];
-      const svcs = result.services || [];
-      const sugs = result.suggestions || [];
+      // Guard against null/undefined/non-object responses
+      if (!result || typeof result !== 'object') {
+        console.error('[UnifiedOrder AI] Resposta inválida da análise:', result);
+        setAiFallbackActive(true);
+        setAiMessage('A análise inteligente está indisponível no momento. Você pode continuar montando o pedido manualmente.');
+        return;
+      }
+
+      const prods = Array.isArray(result.products) ? result.products : [];
+      const svcs = Array.isArray(result.services) ? result.services : [];
+      const sugs = Array.isArray(result.suggestions) ? result.suggestions : [];
       const cust = result.customer || null;
 
       if (prods.length > 0 || svcs.length > 0 || sugs.length > 0 || cust) {
@@ -298,7 +309,13 @@ export function UnifiedAIAssistant({ products, userTools, onItemsIdentified, onC
         setAiMessage(result.message || 'Não consegui identificar itens. Tente ser mais específico.');
       }
     } catch (e: any) {
-      toast({ title: 'Erro na análise', description: e.message, variant: 'destructive' });
+      console.error('[UnifiedOrder AI] Falha ao analisar pedido:', e);
+      setAiFallbackActive(true);
+      setAiMessage('A análise inteligente está indisponível no momento. Você pode continuar montando o pedido manualmente.');
+      toast({
+        title: 'Análise indisponível',
+        description: 'Continue montando o pedido manualmente. Você pode tentar novamente depois.',
+      });
     } finally {
       setIsAnalyzing(false);
     }
@@ -518,6 +535,14 @@ export function UnifiedAIAssistant({ products, userTools, onItemsIdentified, onC
           </div>
 
           <p className="text-sm text-foreground">{aiMessage}</p>
+
+          {/* Retry button when AI fallback is active */}
+          {aiFallbackActive && (
+            <Button variant="outline" size="sm" onClick={analyze} disabled={isAnalyzing} className="gap-2">
+              <Sparkles className="w-3.5 h-3.5" />
+              Tentar novamente
+            </Button>
+          )}
 
           {/* Customer identified */}
           {identifiedCustomer && !hasCustomerSelected && (
