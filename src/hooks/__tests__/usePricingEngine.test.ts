@@ -145,6 +145,30 @@ describe("usePricingEngine – calculatePrice logic", () => {
     expect(result).toBe(43.2);
   });
 
+  it("matches exact specs and returns correct price", () => {
+    const result = calculatePriceFromList(mockPrices, {
+      tool_category_id: CATEGORY_FACA,
+      specifications: { comprimento: "300", espessura: "3" },
+    });
+    expect(result).toBe(45);
+  });
+
+  it("matches different spec combination for same category", () => {
+    const result = calculatePriceFromList(mockPrices, {
+      tool_category_id: CATEGORY_FACA,
+      specifications: { comprimento: "500", espessura: "3" },
+    });
+    expect(result).toBe(65);
+  });
+
+  it("returns null when specs don't match any filter", () => {
+    const result = calculatePriceFromList(mockPrices, {
+      tool_category_id: CATEGORY_FACA,
+      specifications: { comprimento: "400", espessura: "3" },
+    });
+    expect(result).toBeNull();
+  });
+
   it("returns null when no price is registered for the category", () => {
     const result = calculatePriceFromList(mockPrices, {
       tool_category_id: CATEGORY_FRESA,
