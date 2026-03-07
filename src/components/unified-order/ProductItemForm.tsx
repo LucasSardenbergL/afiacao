@@ -1,3 +1,4 @@
+import { useState, useCallback, useRef } from 'react';
 import { Input } from '@/components/ui/input';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
@@ -22,6 +23,31 @@ export function ProductItemForm({
   title, products, prices, loading, productSearch, onSearchChange,
   productItems, onAddProduct,
 }: ProductItemFormProps) {
+  const [colWidth, setColWidth] = useState(200);
+  const dragging = useRef(false);
+  const startX = useRef(0);
+  const startW = useRef(200);
+
+  const onMouseDown = useCallback((e: React.MouseEvent) => {
+    e.preventDefault();
+    dragging.current = true;
+    startX.current = e.clientX;
+    startW.current = colWidth;
+
+    const onMouseMove = (ev: MouseEvent) => {
+      if (!dragging.current) return;
+      const delta = ev.clientX - startX.current;
+      setColWidth(Math.max(120, Math.min(500, startW.current + delta)));
+    };
+    const onMouseUp = () => {
+      dragging.current = false;
+      document.removeEventListener('mousemove', onMouseMove);
+      document.removeEventListener('mouseup', onMouseUp);
+    };
+    document.addEventListener('mousemove', onMouseMove);
+    document.addEventListener('mouseup', onMouseUp);
+  }, [colWidth]);
+
   return (
     <Card>
       <CardHeader className="pb-2">
@@ -38,10 +64,23 @@ export function ProductItemForm({
           <Loader2 className="w-5 h-5 animate-spin mx-auto" />
         ) : (
           <div className="overflow-x-auto max-h-[400px] overflow-y-auto">
-            <table className="w-full text-sm">
-              <thead className="sticky top-0 bg-card">
+            <table className="w-full text-sm" style={{ tableLayout: 'fixed' }}>
+              <colgroup>
+                <col style={{ width: colWidth }} />
+                <col style={{ width: 80 }} />
+                <col style={{ width: 70 }} />
+                <col style={{ width: 40 }} />
+              </colgroup>
+              <thead className="sticky top-0 bg-card z-10">
                 <tr className="border-b bg-muted/30">
-                  <th className="text-left px-3 py-2 font-medium text-muted-foreground">Produto</th>
+                  <th className="text-left px-3 py-2 font-medium text-muted-foreground relative select-none">
+                    Produto
+                    <span
+                      onMouseDown={onMouseDown}
+                      className="absolute right-0 top-0 bottom-0 w-2 cursor-col-resize hover:bg-primary/20 active:bg-primary/30 rounded-r"
+                      title="Arrastar para redimensionar"
+                    />
+                  </th>
                   <th className="text-right px-3 py-2 font-medium text-muted-foreground">Preço</th>
                   <th className="text-center px-3 py-2 font-medium text-muted-foreground">Estoque</th>
                   <th className="w-10"></th>
@@ -55,7 +94,7 @@ export function ProductItemForm({
                     <tr key={product.id} className={cn('border-b last:border-b-0 hover:bg-muted/20 transition-colors', isInCart && 'bg-accent/20')}>
                       <td className="px-3 py-2">
                         <div className="flex items-center gap-1.5 flex-wrap">
-                          <span className="text-xs truncate max-w-[200px]">{product.descricao}</span>
+                          <span className="text-xs truncate" style={{ maxWidth: colWidth - 24 }}>{product.descricao}</span>
                           {!product.ativo && <Badge variant="destructive" className="text-[9px] px-1 py-0">Inativo</Badge>}
                           {customerPrice && customerPrice !== product.valor_unitario && (
                             <Badge variant="secondary" className="text-[9px] px-1 py-0">Preço cliente</Badge>
