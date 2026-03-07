@@ -9,9 +9,8 @@ import { BarChart, Bar, XAxis, YAxis, ResponsiveContainer, Tooltip, CartesianGri
 import { format, subMonths, startOfMonth, endOfMonth } from 'date-fns';
 import { ptBR } from 'date-fns/locale';
 
-// Estimated average cost of a new tool vs sharpening
+// Estimated average cost of buying a new tool (no real data available)
 const AVG_NEW_TOOL_COST = 250; // R$ estimated
-const AVG_SHARPENING_COST = 35; // R$ estimated
 
 interface MonthlyData {
   month: string;
@@ -131,6 +130,9 @@ const SavingsDashboard = () => {
                 Você economizou ~{savingsPercent}% em relação a comprar ferramentas novas
               </p>
             )}
+            <p className="text-xs mt-2 opacity-60">
+              * Estimativa baseada no custo médio de reposição de ferramentas novas (R$ {AVG_NEW_TOOL_COST}). Valores de afiação são reais dos seus pedidos.
+            </p>
           </CardContent>
         </Card>
 
