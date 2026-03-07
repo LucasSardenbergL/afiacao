@@ -1,14 +1,27 @@
-import { useState, useEffect } from 'react';
-import { useParams } from 'react-router-dom';
+import { useState, useEffect, useMemo } from 'react';
+import { useParams, useNavigate } from 'react-router-dom';
 import { Header } from '@/components/Header';
 import { BottomNav } from '@/components/BottomNav';
-import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
+import { Card, CardContent } from '@/components/ui/card';
+import { Button } from '@/components/ui/button';
+import { Badge } from '@/components/ui/badge';
+import { Separator } from '@/components/ui/separator';
 import { supabase } from '@/integrations/supabase/client';
 import { useAuth } from '@/contexts/AuthContext';
-import { Loader2, Wrench, DollarSign, Calendar, TrendingUp, BarChart3, Clock } from 'lucide-react';
-import { format, differenceInDays } from 'date-fns';
+import {
+  Loader2, Wrench, DollarSign, Calendar, TrendingUp,
+  BarChart3, Clock, AlertTriangle, ShieldCheck, HelpCircle,
+  ArrowRight, CheckCircle
+} from 'lucide-react';
+import { format, differenceInDays, formatDistanceToNow } from 'date-fns';
 import { ptBR } from 'date-fns/locale';
-import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, LineChart, Line, PieChart, Pie, Cell } from 'recharts';
+import {
+  BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip,
+  ResponsiveContainer, LineChart, Line
+} from 'recharts';
+import { cn } from '@/lib/utils';
+
+/* ─── Types ─── */
 
 interface ToolData {
   id: string;
@@ -38,11 +51,67 @@ interface PriceRecord {
   created_at: string;
 }
 
-const CHART_COLORS = ['hsl(var(--primary))', 'hsl(var(--destructive))', 'hsl(142, 76%, 36%)', 'hsl(38, 92%, 50%)'];
+/* ─── Criticality (shared with Tools/ToolHistory) ─── */
+
+type Criticality = 'critical' | 'attention' | 'healthy' | 'unscheduled';
+
+const CRIT_CONFIG: Record<Criticality, {
+  label: string; icon: typeof AlertTriangle; badgeClass: string; bgClass: string;
+}> = {
+  critical: { label: 'Crítica', icon: AlertTriangle, badgeClass: 'border-destructive/40 bg-destructive/10 text-destructive', bgClass: 'bg-destructive/10' },
+  attention: { label: 'Atenção', icon: Clock, badgeClass: 'border-status-warning/40 bg-status-warning-bg text-status-warning', bgClass: 'bg-status-warning-bg' },
+  healthy: { label: 'Saudável', icon: ShieldCheck, badgeClass: 'border-emerald-400/40 bg-emerald-50 text-emerald-700 dark:bg-emerald-900/20 dark:text-emerald-300', bgClass: 'bg-emerald-50 dark:bg-emerald-900/20' },
+  unscheduled: { label: 'Não agendada', icon: HelpCircle, badgeClass: 'border-border bg-muted text-muted-foreground', bgClass: 'bg-muted' },
+};
+
+function getCriticality(nextDue: string | null): Criticality {
+  if (!nextDue) return 'unscheduled';
+  const days = differenceInDays(new Date(nextDue), new Date());
+  if (days < 0) return 'critical';
+  if (days <= 7) return 'attention';
+  return 'healthy';
+}
+
+/* ─── Recommendation (shared logic with ToolHistory) ─── */
+
+function computeRecommendation(
+  criticality: Criticality,
+  avgInterval: number | null,
+  recommendedInterval: number | null,
+  anomalyCount: number,
+): { title: string; description: string; icon: typeof CheckCircle; color: string } {
+  if (criticality === 'critical') {
+    return { title: 'Afiação urgente', description: 'Ferramenta exige atenção imediata — agende a afiação o quanto antes.', icon: AlertTriangle, color: 'text-destructive' };
+  }
+  if (criticality === 'attention') {
+    return { title: 'Afiar em breve', description: 'A próxima afiação está se aproximando — agende para evitar desgaste excessivo.', icon: Clock, color: 'text-status-warning' };
+  }
+  if (avgInterval && recommendedInterval && avgInterval < recommendedInterval * 0.7) {
+    return { title: 'Uso intenso detectado', description: 'O intervalo real está abaixo do recomendado. Considere revisar a carga de trabalho ou o intervalo de afiação.', icon: TrendingUp, color: 'text-amber-600' };
+  }
+  if (anomalyCount >= 3) {
+    return { title: 'Revisar condição geral', description: 'Múltiplas anomalias registradas. Avalie se a ferramenta precisa de reparo ou substituição.', icon: AlertTriangle, color: 'text-amber-600' };
+  }
+  return { title: 'Manter rotina atual', description: 'Ferramenta bem cuidada — continue seguindo o intervalo recomendado.', icon: CheckCircle, color: 'text-emerald-600 dark:text-emerald-400' };
+}
+
+/* ─── Stat Row component ─── */
+
+function StatRow({ label, value, muted }: { label: string; value: string; muted?: boolean }) {
+  return (
+    <div className="flex items-center justify-between py-2">
+      <span className="text-sm text-muted-foreground">{label}</span>
+      <span className={cn('text-sm font-medium', muted ? 'text-muted-foreground' : 'text-foreground')}>{value}</span>
+    </div>
+  );
+}
+
+/* ─── Main ─── */
 
 const ToolReports = () => {
   const { toolId } = useParams<{ toolId: string }>();
   const { user } = useAuth();
+  const navigate = useNavigate();
   const [tool, setTool] = useState<ToolData | null>(null);
   const [events, setEvents] = useState<ToolEvent[]>([]);
   const [priceHistory, setPriceHistory] = useState<PriceRecord[]>([]);
@@ -59,7 +128,6 @@ const ToolReports = () => {
         supabase.from('tool_events').select('*').eq('user_tool_id', toolId!).order('created_at', { ascending: true }),
         supabase.from('order_price_history').select('unit_price, created_at').eq('user_tool_id', toolId!).order('created_at', { ascending: true }),
       ]);
-
       if (toolRes.data) setTool(toolRes.data as unknown as ToolData);
       if (eventsRes.data) setEvents(eventsRes.data as ToolEvent[]);
       if (priceRes.data) setPriceHistory(priceRes.data as PriceRecord[]);
@@ -69,6 +137,65 @@ const ToolReports = () => {
       setLoading(false);
     }
   };
+
+  const analysis = useMemo(() => {
+    if (!tool) return null;
+
+    const sharpenings = events.filter(e => e.event_type === 'sharpening');
+    const anomalies = events.filter(e => e.event_type === 'anomaly');
+    const recommendedInterval = tool.sharpening_interval_days || tool.tool_categories?.suggested_interval_days || null;
+
+    // Average interval between sharpenings
+    let avgInterval: number | null = null;
+    if (sharpenings.length > 1) {
+      const totalDays = differenceInDays(
+        new Date(sharpenings[sharpenings.length - 1].created_at),
+        new Date(sharpenings[0].created_at),
+      );
+      avgInterval = Math.round(totalDays / (sharpenings.length - 1));
+    }
+
+    // Days since last sharpening
+    const daysSinceLast = tool.last_sharpened_at
+      ? differenceInDays(new Date(), new Date(tool.last_sharpened_at))
+      : null;
+
+    // Costs
+    const totalCost = priceHistory.reduce((s, p) => s + p.unit_price, 0);
+    const avgCost = priceHistory.length > 0 ? totalCost / priceHistory.length : null;
+
+    // Criticality & recommendation
+    const criticality = getCriticality(tool.next_sharpening_due);
+    const recommendation = computeRecommendation(criticality, avgInterval, recommendedInterval, anomalies.length);
+
+    // Charts
+    const monthlyData: Record<string, number> = {};
+    sharpenings.forEach(e => {
+      const m = format(new Date(e.created_at), 'MMM/yy', { locale: ptBR });
+      monthlyData[m] = (monthlyData[m] || 0) + 1;
+    });
+    const monthlyChart = Object.entries(monthlyData).map(([month, count]) => ({ month, count }));
+
+    let cum = 0;
+    const cumulativeChart = priceHistory.map(p => {
+      cum += p.unit_price;
+      return { date: format(new Date(p.created_at), 'dd/MM/yy'), total: cum };
+    });
+
+    return {
+      sharpeningCount: sharpenings.length,
+      anomalyCount: anomalies.length,
+      avgInterval,
+      daysSinceLast,
+      recommendedInterval,
+      totalCost,
+      avgCost,
+      criticality,
+      recommendation,
+      monthlyChart,
+      cumulativeChart,
+    };
+  }, [tool, events, priceHistory]);
 
   if (loading) {
     return (
@@ -82,7 +209,7 @@ const ToolReports = () => {
     );
   }
 
-  if (!tool) {
+  if (!tool || !analysis) {
     return (
       <div className="min-h-screen bg-background pb-24">
         <Header title="Relatório" showBack />
@@ -96,186 +223,174 @@ const ToolReports = () => {
   }
 
   const displayName = tool.generated_name || tool.custom_name || tool.tool_categories?.name || 'Ferramenta';
-  const sharpeningEvents = events.filter(e => e.event_type === 'sharpening');
-  const anomalyEvents = events.filter(e => e.event_type === 'anomaly');
-  
-  // Age in days
-  const ageDays = differenceInDays(new Date(), new Date(tool.created_at));
-  const avgInterval = sharpeningEvents.length > 1
-    ? Math.round(ageDays / sharpeningEvents.length)
-    : tool.sharpening_interval_days || tool.tool_categories?.suggested_interval_days || 90;
-
-  // Estimated total cost
-  const totalCost = priceHistory.reduce((sum, p) => sum + p.unit_price, 0);
-
-  // Sharpening frequency by month
-  const monthlyData: Record<string, number> = {};
-  sharpeningEvents.forEach(e => {
-    const month = format(new Date(e.created_at), 'MMM/yy', { locale: ptBR });
-    monthlyData[month] = (monthlyData[month] || 0) + 1;
-  });
-  const monthlyChartData = Object.entries(monthlyData).map(([month, count]) => ({ month, count }));
-
-  // Cost over time
-  const costData = priceHistory.map(p => ({
-    date: format(new Date(p.created_at), 'dd/MM/yy'),
-    cost: p.unit_price,
-  }));
-
-  // Cumulative cost
-  let cumCost = 0;
-  const cumulativeCostData = priceHistory.map(p => {
-    cumCost += p.unit_price;
-    return {
-      date: format(new Date(p.created_at), 'dd/MM/yy'),
-      total: cumCost,
-    };
-  });
-
-  // Event type breakdown
-  const eventTypeBreakdown = [
-    { name: 'Afiações', value: sharpeningEvents.length },
-    { name: 'Anomalias', value: anomalyEvents.length },
-    { name: 'Inspeções', value: events.filter(e => e.event_type === 'inspection').length },
-    { name: 'Outros', value: events.filter(e => !['sharpening', 'anomaly', 'inspection'].includes(e.event_type)).length },
-  ].filter(d => d.value > 0);
-
-  // Estimated remaining life (rough estimate based on anomalies)
-  const estimatedLifeMonths = anomalyEvents.length > 2
-    ? Math.max(3, 24 - anomalyEvents.length * 3)
-    : ageDays < 365 ? 24 : 12;
+  const critCfg = CRIT_CONFIG[analysis.criticality];
+  const CritIcon = critCfg.icon;
+  const RecIcon = analysis.recommendation.icon;
 
   return (
     <div className="min-h-screen bg-background pb-24">
-      <Header title={`Relatório — ${tool.internal_code || displayName}`} showBack />
+      <Header title="Relatório" showBack />
 
-      <main className="pt-16 px-4 max-w-lg mx-auto space-y-4">
-        {/* Summary Cards */}
-        <div className="grid grid-cols-2 gap-3">
-          <Card>
-            <CardContent className="p-4 text-center">
-              <BarChart3 className="w-5 h-5 text-primary mx-auto mb-1" />
-              <p className="text-2xl font-bold text-foreground">{sharpeningEvents.length}</p>
-              <p className="text-xs text-muted-foreground">Afiações</p>
-            </CardContent>
-          </Card>
-          <Card>
-            <CardContent className="p-4 text-center">
-              <DollarSign className="w-5 h-5 text-emerald-600 mx-auto mb-1" />
-              <p className="text-2xl font-bold text-foreground">
-                R$ {totalCost.toFixed(2)}
-              </p>
-              <p className="text-xs text-muted-foreground">Custo total</p>
-            </CardContent>
-          </Card>
-          <Card>
-            <CardContent className="p-4 text-center">
-              <Calendar className="w-5 h-5 text-amber-600 mx-auto mb-1" />
-              <p className="text-2xl font-bold text-foreground">{avgInterval}d</p>
-              <p className="text-xs text-muted-foreground">Intervalo médio</p>
-            </CardContent>
-          </Card>
-          <Card>
-            <CardContent className="p-4 text-center">
-              <Clock className="w-5 h-5 text-muted-foreground mx-auto mb-1" />
-              <p className="text-2xl font-bold text-foreground">{Math.round(ageDays / 30)}m</p>
-              <p className="text-xs text-muted-foreground">Idade</p>
-            </CardContent>
-          </Card>
+      <main className="pt-16 px-4 max-w-lg mx-auto space-y-6">
+
+        {/* ═══ HEADER ═══ */}
+        <div className="pt-2">
+          <p className="text-xs text-muted-foreground uppercase tracking-wider">Relatório da Ferramenta</p>
+          <h1 className="font-display font-bold text-xl text-foreground mt-1">
+            {tool.internal_code ? `${tool.internal_code} — ` : ''}{displayName}
+          </h1>
+          <div className="flex items-center gap-2 mt-2">
+            <Badge className={cn('text-[10px] gap-1', critCfg.badgeClass)}>
+              <CritIcon className="w-3 h-3" />
+              {critCfg.label}
+            </Badge>
+            <span className="text-xs text-muted-foreground">
+              {tool.tool_categories?.name}
+            </span>
+          </div>
         </div>
 
-        {/* Health estimate */}
-        <Card>
-          <CardContent className="p-4">
-            <div className="flex items-center gap-3">
-              <div className="w-10 h-10 rounded-xl bg-emerald-100 flex items-center justify-center">
-                <TrendingUp className="w-5 h-5 text-emerald-600" />
-              </div>
-              <div>
-                <h3 className="font-semibold text-sm text-foreground">Vida útil estimada</h3>
-                <p className="text-xs text-muted-foreground">
-                  ~{estimatedLifeMonths} meses restantes (estimativa baseada no histórico)
+        {/* ═══ 1. MANUTENÇÃO ═══ */}
+        <section>
+          <h2 className="font-semibold text-sm text-muted-foreground uppercase tracking-wider mb-3 flex items-center gap-2">
+            <Wrench className="w-4 h-4" />
+            Manutenção
+          </h2>
+          <Card>
+            <CardContent className="p-4 divide-y divide-border">
+              <StatRow label="Serviços realizados" value={String(analysis.sharpeningCount)} />
+              <StatRow
+                label="Última afiação"
+                value={tool.last_sharpened_at
+                  ? format(new Date(tool.last_sharpened_at), "dd/MM/yyyy", { locale: ptBR })
+                  : 'Sem registro'}
+                muted={!tool.last_sharpened_at}
+              />
+              <StatRow
+                label="Próxima recomendada"
+                value={tool.next_sharpening_due
+                  ? format(new Date(tool.next_sharpening_due), "dd/MM/yyyy", { locale: ptBR })
+                  : 'Não agendada'}
+                muted={!tool.next_sharpening_due}
+              />
+              <StatRow
+                label="Intervalo médio"
+                value={analysis.avgInterval ? `${analysis.avgInterval} dias` : 'Dados insuficientes'}
+                muted={!analysis.avgInterval}
+              />
+              {analysis.recommendedInterval && (
+                <StatRow label="Intervalo recomendado" value={`${analysis.recommendedInterval} dias`} />
+              )}
+              {analysis.daysSinceLast !== null && (
+                <StatRow label="Desde a última afiação" value={`${analysis.daysSinceLast} dias`} />
+              )}
+            </CardContent>
+          </Card>
+
+          {/* Frequency chart */}
+          {analysis.monthlyChart.length > 1 && (
+            <Card className="mt-3">
+              <CardContent className="p-4">
+                <p className="text-xs font-medium text-muted-foreground mb-3">Frequência de afiações</p>
+                <div className="h-40">
+                  <ResponsiveContainer width="100%" height="100%">
+                    <BarChart data={analysis.monthlyChart}>
+                      <CartesianGrid strokeDasharray="3 3" className="opacity-30" />
+                      <XAxis dataKey="month" tick={{ fontSize: 10 }} />
+                      <YAxis allowDecimals={false} tick={{ fontSize: 10 }} />
+                      <Tooltip />
+                      <Bar dataKey="count" fill="hsl(var(--primary))" radius={[4, 4, 0, 0]} name="Afiações" />
+                    </BarChart>
+                  </ResponsiveContainer>
+                </div>
+              </CardContent>
+            </Card>
+          )}
+        </section>
+
+        {/* ═══ 2. CUSTOS ═══ */}
+        <section>
+          <h2 className="font-semibold text-sm text-muted-foreground uppercase tracking-wider mb-3 flex items-center gap-2">
+            <DollarSign className="w-4 h-4" />
+            Custos
+          </h2>
+          {priceHistory.length > 0 ? (
+            <>
+              <Card>
+                <CardContent className="p-4 divide-y divide-border">
+                  <StatRow label="Custo acumulado" value={`R$ ${analysis.totalCost.toFixed(2)}`} />
+                  {analysis.avgCost !== null && (
+                    <StatRow label="Custo médio por afiação" value={`R$ ${analysis.avgCost.toFixed(2)}`} />
+                  )}
+                  <StatRow label="Afiações com custo" value={String(priceHistory.length)} />
+                </CardContent>
+              </Card>
+
+              {analysis.cumulativeChart.length > 1 && (
+                <Card className="mt-3">
+                  <CardContent className="p-4">
+                    <p className="text-xs font-medium text-muted-foreground mb-3">Custo acumulado (R$)</p>
+                    <div className="h-40">
+                      <ResponsiveContainer width="100%" height="100%">
+                        <LineChart data={analysis.cumulativeChart}>
+                          <CartesianGrid strokeDasharray="3 3" className="opacity-30" />
+                          <XAxis dataKey="date" tick={{ fontSize: 10 }} />
+                          <YAxis tick={{ fontSize: 10 }} />
+                          <Tooltip formatter={(v: number) => `R$ ${v.toFixed(2)}`} />
+                          <Line type="monotone" dataKey="total" stroke="hsl(var(--primary))" strokeWidth={2} dot={false} name="Total" />
+                        </LineChart>
+                      </ResponsiveContainer>
+                    </div>
+                  </CardContent>
+                </Card>
+              )}
+            </>
+          ) : (
+            <Card>
+              <CardContent className="p-4">
+                <p className="text-sm text-muted-foreground">
+                  Ainda não há registros de custo. Os valores aparecerão conforme pedidos forem concluídos.
                 </p>
-              </div>
-            </div>
-          </CardContent>
-        </Card>
+              </CardContent>
+            </Card>
+          )}
+        </section>
 
-        {/* Sharpening frequency chart */}
-        {monthlyChartData.length > 0 && (
-          <Card>
-            <CardHeader className="pb-2">
-              <CardTitle className="text-sm">Frequência de Afiações por Mês</CardTitle>
-            </CardHeader>
-            <CardContent className="p-4 pt-0">
-              <div className="h-48">
-                <ResponsiveContainer width="100%" height="100%">
-                  <BarChart data={monthlyChartData}>
-                    <CartesianGrid strokeDasharray="3 3" className="opacity-30" />
-                    <XAxis dataKey="month" tick={{ fontSize: 11 }} />
-                    <YAxis allowDecimals={false} tick={{ fontSize: 11 }} />
-                    <Tooltip />
-                    <Bar dataKey="count" fill="hsl(var(--primary))" radius={[4, 4, 0, 0]} name="Afiações" />
-                  </BarChart>
-                </ResponsiveContainer>
+        {/* ═══ 3. RECOMENDAÇÃO ═══ */}
+        <section>
+          <h2 className="font-semibold text-sm text-muted-foreground uppercase tracking-wider mb-3 flex items-center gap-2">
+            <BarChart3 className="w-4 h-4" />
+            Recomendação
+          </h2>
+          <Card className="border-l-4" style={{ borderLeftColor: 'hsl(var(--primary))' }}>
+            <CardContent className="p-4">
+              <div className="flex items-start gap-3">
+                <RecIcon className={cn('w-5 h-5 mt-0.5 flex-shrink-0', analysis.recommendation.color)} />
+                <div>
+                  <p className="font-semibold text-foreground text-sm">{analysis.recommendation.title}</p>
+                  <p className="text-xs text-muted-foreground mt-1 leading-relaxed">
+                    {analysis.recommendation.description}
+                  </p>
+                </div>
               </div>
+              <Button
+                className="w-full mt-4 gap-2"
+                onClick={() => navigate('/new-order')}
+              >
+                Agendar afiação
+                <ArrowRight className="w-4 h-4" />
+              </Button>
             </CardContent>
           </Card>
-        )}
+        </section>
 
-        {/* Cumulative cost chart */}
-        {cumulativeCostData.length > 1 && (
-          <Card>
-            <CardHeader className="pb-2">
-              <CardTitle className="text-sm">Custo Acumulado (R$)</CardTitle>
-            </CardHeader>
-            <CardContent className="p-4 pt-0">
-              <div className="h-48">
-                <ResponsiveContainer width="100%" height="100%">
-                  <LineChart data={cumulativeCostData}>
-                    <CartesianGrid strokeDasharray="3 3" className="opacity-30" />
-                    <XAxis dataKey="date" tick={{ fontSize: 11 }} />
-                    <YAxis tick={{ fontSize: 11 }} />
-                    <Tooltip formatter={(v: number) => `R$ ${v.toFixed(2)}`} />
-                    <Line type="monotone" dataKey="total" stroke="hsl(var(--primary))" strokeWidth={2} dot={false} name="Total" />
-                  </LineChart>
-                </ResponsiveContainer>
-              </div>
-            </CardContent>
-          </Card>
-        )}
-
-        {/* Event type breakdown */}
-        {eventTypeBreakdown.length > 0 && (
-          <Card>
-            <CardHeader className="pb-2">
-              <CardTitle className="text-sm">Tipos de Eventos</CardTitle>
-            </CardHeader>
-            <CardContent className="p-4 pt-0">
-              <div className="h-48 flex items-center justify-center">
-                <ResponsiveContainer width="100%" height="100%">
-                  <PieChart>
-                    <Pie data={eventTypeBreakdown} cx="50%" cy="50%" outerRadius={70} dataKey="value" label={({ name, value }) => `${name}: ${value}`}>
-                      {eventTypeBreakdown.map((_, i) => (
-                        <Cell key={i} fill={CHART_COLORS[i % CHART_COLORS.length]} />
-                      ))}
-                    </Pie>
-                    <Tooltip />
-                  </PieChart>
-                </ResponsiveContainer>
-              </div>
-            </CardContent>
-          </Card>
-        )}
-
-        {/* Empty state */}
-        {events.length === 0 && (
+        {/* Empty overlay when no events at all */}
+        {events.length === 0 && priceHistory.length === 0 && (
           <Card>
             <CardContent className="p-8 text-center">
               <BarChart3 className="w-12 h-12 text-muted-foreground mx-auto mb-3 opacity-30" />
               <p className="text-sm text-muted-foreground">
-                Ainda não há dados suficientes para gerar relatórios.
-                Os gráficos serão preenchidos conforme pedidos forem concluídos.
+                Os dados completos serão preenchidos conforme pedidos forem concluídos.
               </p>
             </CardContent>
           </Card>
