@@ -73,6 +73,7 @@ export default function AdminLoyalty() {
 
   const [customers, setCustomers] = useState<CustomerPoints[]>([]);
   const [allPoints, setAllPoints] = useState<PointRecord[]>([]);
+  const [redemptions, setRedemptions] = useState<RedemptionRecord[]>([]);
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState('');
   const [selectedCustomer, setSelectedCustomer] = useState<CustomerPoints | null>(null);
