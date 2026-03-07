@@ -10,7 +10,7 @@ import { Textarea } from '@/components/ui/textarea';
 import { supabase } from '@/integrations/supabase/client';
 import { useAuth } from '@/contexts/AuthContext';
 import { useToast } from '@/hooks/use-toast';
-import { Loader2, Trophy, Search, Plus, Minus, Gift, Users, TrendingUp } from 'lucide-react';
+import { Loader2, Trophy, Search, Plus, Minus, Gift, Users, TrendingUp, DollarSign, BarChart3, Crown } from 'lucide-react';
 import { format } from 'date-fns';
 import { ptBR } from 'date-fns/locale';
 import {
