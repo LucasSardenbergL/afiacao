@@ -11,7 +11,7 @@ import { useNavigate } from 'react-router-dom';
 import {
   Loader2, RefreshCw, TrendingUp, ShoppingCart, ArrowUpRight,
   DollarSign, Target, Search, ChevronDown, ChevronUp, Filter,
-  Package, Sparkles,
+  Package, Sparkles, Plus,
 } from 'lucide-react';
 import {
   DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger,
