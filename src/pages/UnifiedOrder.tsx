@@ -6,6 +6,7 @@ import { AddToolDialog } from '@/components/AddToolDialog';
 import { UnifiedAIAssistant } from '@/components/UnifiedAIAssistant';
 import { cn } from '@/lib/utils';
 import { useUnifiedOrder } from '@/hooks/useUnifiedOrder';
+import { useOrderDeepLink } from '@/hooks/useOrderDeepLink';
 import { CustomerSearch } from '@/components/unified-order/CustomerSearch';
 import { ProductItemForm } from '@/components/unified-order/ProductItemForm';
 import { ServiceItemForm } from '@/components/unified-order/ServiceItemForm';
@@ -32,6 +33,17 @@ function OrderStepper({ step }: { step: number }) {
 
 const UnifiedOrder = () => {
   const h = useUnifiedOrder();
+
+  useOrderDeepLink({
+    selectedCustomer: h.selectedCustomer,
+    selectCustomer: h.selectCustomer,
+    addProductToCart: h.addProductToCart,
+    obenProducts: h.obenProducts,
+    colacorProducts: h.colacorProducts,
+    loadingObenProducts: h.loadingObenProducts,
+    loadingColacorProducts: h.loadingColacorProducts,
+    loadingCustomer: h.loadingCustomer,
+  });
 
   if (h.authLoading) {
     return <div className="flex items-center justify-center py-32"><Loader2 className="w-6 h-6 animate-spin text-muted-foreground" /></div>;
