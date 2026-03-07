@@ -480,6 +480,7 @@ const Addresses = () => {
 
       <BottomNav />
     </div>
+    </TooltipProvider>
   );
 };
 
