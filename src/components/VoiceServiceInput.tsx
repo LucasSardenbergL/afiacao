@@ -181,14 +181,7 @@ export function VoiceServiceInput({ userTools, onItemsIdentified, isLoading = fa
 
       console.log('Sending audio to transcription service...');
 
-      const { data: { session } } = await supabase.auth.getSession();
-      if (!session?.access_token) {
-        toast({ title: 'Sessão expirada', description: 'Faça login novamente.', variant: 'destructive' });
-        return;
-      }
-
-      const { data: result, error } = await supabase.functions.invoke('elevenlabs-transcribe', { body: formData });
-      if (error) throw error;
+      const result = await invokeFunction<{ text?: string }>('elevenlabs-transcribe', formData as any);
 
       console.log('Transcription result:', result);
 
@@ -259,27 +252,16 @@ export function VoiceServiceInput({ userTools, onItemsIdentified, isLoading = fa
     setIdentifiedItems([]);
 
     try {
-      const { data: { session } } = await supabase.auth.getSession();
-      if (!session?.access_token) {
-        toast({ title: 'Sessão expirada', description: 'Faça login novamente.', variant: 'destructive' });
-        setIsAnalyzing(false);
-        return;
-      }
-
-      const { data: result, error } = await supabase.functions.invoke('analyze-services', {
-        body: {
-          text: text.trim(),
-          userTools: userTools.map(t => ({
-            id: t.id,
-            generated_name: t.generated_name,
-            custom_name: t.custom_name,
-            quantity: t.quantity,
-            tool_categories: t.tool_categories,
-          })),
-        },
+      const result = await invokeFunction<{ items?: any[]; message?: string }>('analyze-services', {
+        text: text.trim(),
+        userTools: userTools.map(t => ({
+          id: t.id,
+          generated_name: t.generated_name,
+          custom_name: t.custom_name,
+          quantity: t.quantity,
+          tool_categories: t.tool_categories,
+        })),
       });
-
-      if (error) throw error;
       
       if (result.items && result.items.length > 0) {
         setIdentifiedItems(result.items);
