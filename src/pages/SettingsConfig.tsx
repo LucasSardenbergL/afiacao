@@ -108,18 +108,30 @@ const SettingsConfig = () => {
 
   return (
     <div className="space-y-4">
+        {/* Prototype Warning */}
+        <div className="flex items-center gap-3 rounded-lg border border-amber-500/30 bg-amber-500/10 p-3">
+          <AlertTriangle className="w-5 h-5 text-amber-600 shrink-0" />
+          <div>
+            <p className="text-sm font-medium text-amber-700 dark:text-amber-400">Tela prototípica — alterações não são salvas</p>
+            <p className="text-xs text-amber-600/80 dark:text-amber-400/70">
+              Os controles abaixo são simulações visuais para validação de UX. Para ajustar parâmetros reais, use{' '}
+              <span className="font-medium">Governança → Parâmetros</span>.
+            </p>
+          </div>
+        </div>
+
         {/* Page Header */}
         <div className="flex items-center justify-between">
           <div>
-            <h1 className="text-xl font-semibold text-foreground">Configurações</h1>
-            <p className="text-sm text-muted-foreground">Regras de recomendação, pesos, permissões e integrações</p>
+            <h1 className="text-xl font-semibold text-foreground">Configurações <Badge variant="outline" className="ml-2 text-2xs text-amber-600 border-amber-500/30">Protótipo</Badge></h1>
+            <p className="text-sm text-muted-foreground">Regras de recomendação, pesos, permissões e integrações (visualização)</p>
           </div>
           {hasChanges && (
             <div className="flex gap-2">
               <Button variant="outline" size="sm" onClick={resetWeights} className="gap-1">
                 <RotateCcw className="w-3 h-3" /> Desfazer
               </Button>
-              <Button size="sm" className="gap-1">
+              <Button size="sm" className="gap-1" disabled title="Tela prototípica — alterações não são persistidas">
                 <Save className="w-3 h-3" /> Salvar alterações
               </Button>
             </div>
