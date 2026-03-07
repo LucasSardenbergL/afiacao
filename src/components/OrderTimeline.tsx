@@ -1,8 +1,16 @@
-import { Check, Clock } from 'lucide-react';
-import { StatusHistoryItem, ORDER_STATUS, OrderStatus } from '@/types';
+import { Check, Clock, AlertTriangle } from 'lucide-react';
+import { ORDER_STATUS, OrderStatus } from '@/types';
 import { format } from 'date-fns';
 import { ptBR } from 'date-fns/locale';
 import { cn } from '@/lib/utils';
+import { Badge } from './ui/badge';
+
+interface StatusHistoryItem {
+  status: string;
+  timestamp: Date;
+  note?: string;
+  operator?: string;
+}
 
 interface OrderTimelineProps {
   statusHistory: StatusHistoryItem[];
@@ -22,6 +30,21 @@ const allStatuses: OrderStatus[] = [
   'entregue',
 ];
 
+const STEP_EXPLANATIONS: Record<string, string> = {
+  pedido_recebido: 'Seu pedido foi registrado no sistema',
+  aguardando_coleta: 'Nossa equipe vai buscar suas ferramentas',
+  em_triagem: 'Estamos analisando suas ferramentas',
+  orcamento_enviado: 'Verifique e aprove o valor do serviço',
+  aprovado: 'Orçamento aprovado, entrando na fila de afiação',
+  em_afiacao: 'Suas ferramentas estão sendo afiadas',
+  controle_qualidade: 'Verificação final de qualidade',
+  pronto_entrega: 'Pronto! Aguardando retirada ou entrega',
+  em_rota: 'Motoboy a caminho do seu endereço',
+  entregue: 'Pedido concluído com sucesso',
+};
+
+const CLIENT_ACTION_STATUSES = new Set(['orcamento_enviado']);
+
 export function OrderTimeline({ statusHistory, currentStatus }: OrderTimelineProps) {
   const completedStatuses = statusHistory.map(h => h.status);
   const currentIndex = allStatuses.indexOf(currentStatus);
@@ -33,6 +56,7 @@ export function OrderTimeline({ statusHistory, currentStatus }: OrderTimelinePro
         const isCompleted = completedStatuses.includes(status);
         const isCurrent = status === currentStatus;
         const isPending = index > currentIndex;
+        const isClientAction = CLIENT_ACTION_STATUSES.has(status) && isCurrent;
 
         return (
           <div key={status} className="flex gap-4 pb-6 last:pb-0">
@@ -42,11 +66,14 @@ export function OrderTimeline({ statusHistory, currentStatus }: OrderTimelinePro
                 className={cn(
                   'w-8 h-8 rounded-full flex items-center justify-center border-2 transition-all',
                   isCompleted && !isCurrent && 'bg-primary border-primary',
-                  isCurrent && 'bg-primary border-primary animate-pulse-glow',
+                  isCurrent && !isClientAction && 'bg-primary border-primary animate-pulse-glow',
+                  isClientAction && 'bg-status-warning border-status-warning animate-pulse-glow',
                   isPending && 'bg-muted border-border'
                 )}
               >
-                {isCompleted && !isCurrent ? (
+                {isClientAction ? (
+                  <AlertTriangle className="w-4 h-4 text-primary-foreground" />
+                ) : isCompleted && !isCurrent ? (
                   <Check className="w-4 h-4 text-primary-foreground" />
                 ) : isCurrent ? (
                   <div className="w-2 h-2 rounded-full bg-primary-foreground" />
@@ -66,16 +93,23 @@ export function OrderTimeline({ statusHistory, currentStatus }: OrderTimelinePro
 
             {/* Content */}
             <div className={cn('flex-1 pb-4', isPending && 'opacity-50')}>
-              <h4
-                className={cn(
-                  'font-semibold',
-                  isCurrent ? 'text-primary' : isCompleted ? 'text-foreground' : 'text-muted-foreground'
+              <div className="flex items-center gap-2">
+                <h4
+                  className={cn(
+                    'font-semibold',
+                    isClientAction ? 'text-status-warning' : isCurrent ? 'text-primary' : isCompleted ? 'text-foreground' : 'text-muted-foreground'
+                  )}
+                >
+                  {ORDER_STATUS[status]?.label || status}
+                </h4>
+                {isClientAction && (
+                  <Badge variant="outline" className="text-[10px] border-status-warning text-status-warning bg-status-warning-bg font-semibold px-1.5 py-0">
+                    Sua ação
+                  </Badge>
                 )}
-              >
-                {ORDER_STATUS[status].label}
-              </h4>
-              <p className="text-sm text-muted-foreground">
-                {ORDER_STATUS[status].description}
+              </div>
+              <p className="text-sm text-muted-foreground mt-0.5">
+                {STEP_EXPLANATIONS[status] || ORDER_STATUS[status]?.description || ''}
               </p>
               {historyItem && (
                 <div className="mt-1 text-xs text-muted-foreground">

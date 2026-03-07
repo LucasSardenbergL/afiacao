@@ -1,5 +1,5 @@
 import { useParams, useNavigate } from 'react-router-dom';
-import { Phone, MessageCircle, Copy, Check, RefreshCw, Camera, Loader2 } from 'lucide-react';
+import { Phone, MessageCircle, Copy, Check, RefreshCw, Camera, Loader2, AlertTriangle, ExternalLink } from 'lucide-react';
 import { useState, useEffect } from 'react';
 import { OrderStatus } from '@/types';
 import { Header } from '@/components/Header';
@@ -10,17 +10,42 @@ import { OrderReview } from '@/components/OrderReview';
 import { StatusBadgeSimple } from '@/components/StatusBadge';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
+import { Card, CardContent } from '@/components/ui/card';
 import { TOOL_CATEGORIES, SERVICE_TYPES, DELIVERY_OPTIONS } from '@/types';
 import { supabase } from '@/integrations/supabase/client';
 import { useQuery } from '@tanstack/react-query';
 import { format } from 'date-fns';
 import { ptBR } from 'date-fns/locale';
+import { cn } from '@/lib/utils';
+
+const WHATSAPP_NUMBER = '553732221035';
+
+const STATUS_LABELS: Record<string, string> = {
+  pedido_recebido: 'Recebido',
+  aguardando_coleta: 'Aguardando Coleta',
+  em_triagem: 'Em Triagem',
+  orcamento_enviado: 'Orçamento Enviado',
+  aprovado: 'Aprovado',
+  em_afiacao: 'Em Afiação',
+  controle_qualidade: 'Controle de Qualidade',
+  pronto_entrega: 'Pronto para Entrega',
+  em_rota: 'Em Rota',
+  entregue: 'Entregue',
+};
 
 interface QualityData {
   item_index: number;
   before_photos: string[];
   after_photos: string[];
   approved: boolean;
+}
+
+function buildWhatsAppUrl(orderNumber: string, status: string) {
+  const statusText = STATUS_LABELS[status] || status;
+  const msg = encodeURIComponent(
+    `Olá! Gostaria de falar sobre meu pedido #${orderNumber}.\nStatus atual: ${statusText}`
+  );
+  return `https://wa.me/${WHATSAPP_NUMBER}?text=${msg}`;
 }
 
 const OrderDetail = () => {
@@ -105,7 +130,14 @@ const OrderDetail = () => {
     setTimeout(() => setCopied(false), 2000);
   };
 
-  const needsApproval = order.status === 'orcamento_enviado' && !order.quoteApproved;
+  const needsApproval = order.status === 'orcamento_enviado';
+  const isDelivered = order.status === 'entregue';
+  const whatsAppUrl = buildWhatsAppUrl(order.orderNumber, order.status);
+
+  // Collect all quality photos for the "Resultado do Serviço" section
+  const allQualityPhotos = qualityData.filter(
+    qd => qd.before_photos.length > 0 || qd.after_photos.length > 0
+  );
 
   return (
     <div className="min-h-screen bg-background pb-24">
@@ -117,7 +149,7 @@ const OrderDetail = () => {
           <div className="flex items-start justify-between mb-3">
             <div>
               <div className="flex items-center gap-2">
-                <h2 className="font-display font-bold text-lg">{order.orderNumber}</h2>
+                <h2 className="font-display font-bold text-lg">#{order.orderNumber}</h2>
                 <button onClick={copyOrderNumber} className="p-1 hover:bg-muted rounded">
                   {copied ? (
                     <Check className="w-4 h-4 text-primary" />
@@ -143,22 +175,41 @@ const OrderDetail = () => {
           )}
         </div>
 
-        {/* Approval needed banner */}
+        {/* ═══ QUOTE APPROVAL CARD ═══ */}
         {needsApproval && (
-          <div className="bg-amber-50 border border-amber-200 rounded-xl p-4 mb-4">
-            <h3 className="font-semibold text-amber-800 mb-2">Orçamento aguardando aprovação</h3>
-            <p className="text-sm text-amber-700 mb-3">
-              Revise os itens e valores abaixo e aprove para iniciar a afiação.
-            </p>
-            <div className="flex gap-2">
-              <Button className="flex-1" size="sm">
-                Aprovar Orçamento
-              </Button>
-              <Button variant="outline" size="sm">
-                Recusar
-              </Button>
-            </div>
-          </div>
+          <Card className="mb-4 border-status-warning/50 ring-1 ring-status-warning/20 overflow-hidden">
+            <CardContent className="p-0">
+              <div className="bg-status-warning-bg/60 px-4 py-3 border-b border-status-warning/20 flex items-center gap-2">
+                <AlertTriangle className="w-5 h-5 text-status-warning" />
+                <h3 className="font-display font-bold text-foreground">Orçamento aguardando aprovação</h3>
+              </div>
+              <div className="p-4 space-y-3">
+                <p className="text-sm text-muted-foreground">
+                  Revise os itens e valores abaixo e aprove para iniciar a afiação das suas ferramentas.
+                </p>
+                <div className="bg-muted rounded-xl p-4 text-center">
+                  <p className="text-xs text-muted-foreground mb-1">Valor total</p>
+                  <p className="text-3xl font-bold text-foreground">
+                    R$ {order.total.toFixed(2).replace('.', ',')}
+                  </p>
+                </div>
+                <div className="flex gap-2">
+                  <Button className="flex-1" size="sm">
+                    Aprovar Orçamento
+                  </Button>
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    className="flex-1"
+                    onClick={() => window.open(whatsAppUrl, '_blank')}
+                  >
+                    <MessageCircle className="w-4 h-4 mr-1.5" />
+                    Falar com suporte
+                  </Button>
+                </div>
+              </div>
+            </CardContent>
+          </Card>
         )}
 
         {/* Items */}
@@ -196,49 +247,72 @@ const OrderDetail = () => {
                 {item.notes && (
                   <p className="text-sm text-muted-foreground mt-2 italic">"{item.notes}"</p>
                 )}
+              </div>
+            ))}
+          </div>
+        </section>
 
-                {/* Before/After Photos from Quality Checklist */}
-                {(() => {
-                  const qd = qualityData.find(q => q.item_index === idx);
-                  if (!qd || (qd.before_photos.length === 0 && qd.after_photos.length === 0)) return null;
-                  return (
-                    <div className="mt-3 pt-3 border-t border-border">
-                      <div className="flex items-center gap-1.5 mb-2">
-                        <Camera className="w-3.5 h-3.5 text-primary" />
-                        <span className="text-xs font-medium text-primary">Fotos do Serviço</span>
-                        {qd.approved && (
-                          <Badge variant="outline" className="text-xs ml-auto border-emerald-300 text-emerald-600">
-                            ✓ Aprovado
-                          </Badge>
-                        )}
-                      </div>
+        {/* ═══ QUALITY PHOTOS — Resultado do Serviço ═══ */}
+        {allQualityPhotos.length > 0 && (
+          <section className="mb-6">
+            <h3 className="font-display font-bold mb-3">Resultado do Serviço</h3>
+            <div className="space-y-3">
+              {allQualityPhotos.map((qd, qi) => (
+                <Card key={qi} className="overflow-hidden">
+                  <CardContent className="p-4">
+                    <div className="flex items-center gap-2 mb-3">
+                      <Camera className="w-4 h-4 text-primary" />
+                      <span className="text-sm font-semibold text-foreground">
+                        {order.items[qd.item_index]
+                          ? TOOL_CATEGORIES[order.items[qd.item_index].category as keyof typeof TOOL_CATEGORIES] || order.items[qd.item_index].category
+                          : `Item ${qd.item_index + 1}`}
+                      </span>
+                      {qd.approved && (
+                        <Badge variant="outline" className="text-[10px] ml-auto border-emerald-400 text-emerald-600 bg-emerald-50 dark:bg-emerald-900/20 dark:text-emerald-300">
+                          ✓ Qualidade aprovada
+                        </Badge>
+                      )}
+                    </div>
+                    <div className="grid grid-cols-2 gap-3">
+                      {/* Before */}
                       {qd.before_photos.length > 0 && (
-                        <div className="mb-2">
-                          <p className="text-xs text-muted-foreground mb-1">Antes:</p>
-                          <div className="flex gap-2 overflow-x-auto">
-                            {qd.before_photos.map((photo: string, pi: number) => (
-                              <img key={pi} src={photo} alt="Antes" className="w-14 h-14 object-cover rounded-lg border" />
+                        <div>
+                          <p className="text-xs font-medium text-muted-foreground mb-1.5">Antes</p>
+                          <div className="grid grid-cols-2 gap-1.5">
+                            {qd.before_photos.map((photo, pi) => (
+                              <img
+                                key={pi}
+                                src={photo}
+                                alt="Antes do serviço"
+                                className="w-full aspect-square object-cover rounded-lg border border-border"
+                              />
                             ))}
                           </div>
                         </div>
                       )}
+                      {/* After */}
                       {qd.after_photos.length > 0 && (
                         <div>
-                          <p className="text-xs text-muted-foreground mb-1">Depois:</p>
-                          <div className="flex gap-2 overflow-x-auto">
-                            {qd.after_photos.map((photo: string, pi: number) => (
-                              <img key={pi} src={photo} alt="Depois" className="w-14 h-14 object-cover rounded-lg border border-primary/30" />
+                          <p className="text-xs font-medium text-primary mb-1.5">Depois</p>
+                          <div className="grid grid-cols-2 gap-1.5">
+                            {qd.after_photos.map((photo, pi) => (
+                              <img
+                                key={pi}
+                                src={photo}
+                                alt="Depois do serviço"
+                                className="w-full aspect-square object-cover rounded-lg border-2 border-primary/30"
+                              />
                             ))}
                           </div>
                         </div>
                       )}
                     </div>
-                  );
-                })()}
-              </div>
-            ))}
-          </div>
-        </section>
+                  </CardContent>
+                </Card>
+              ))}
+            </div>
+          </section>
+        )}
 
         {/* Delivery info */}
         <section className="mb-6">
@@ -286,13 +360,13 @@ const OrderDetail = () => {
                 <div className="flex justify-between text-sm">
                   <span className="text-muted-foreground">Pagamento</span>
                   <span className="capitalize">
-                    {order.paymentMethod === 'pix' ? 'Pix' : 
+                    {order.paymentMethod === 'pix' ? 'Pix' :
                      order.paymentMethod === 'card' ? 'Cartão' : 'Na entrega'}
                   </span>
                 </div>
                 <div className="flex justify-between text-sm">
                   <span className="text-muted-foreground">Status</span>
-                  <span className={order.paymentStatus === 'paid' ? 'text-emerald-600' : 'text-amber-600'}>
+                  <span className={order.paymentStatus === 'paid' ? 'text-emerald-600' : 'text-status-warning'}>
                     {order.paymentStatus === 'paid' ? 'Pago' : 'Pendente'}
                   </span>
                 </div>
@@ -302,14 +376,12 @@ const OrderDetail = () => {
         </section>
 
         {/* Timeline */}
-        {order.statusHistory.length > 0 && (
-          <section className="mb-6">
-            <h3 className="font-display font-bold mb-3">Acompanhamento</h3>
-            <div className="bg-card rounded-xl p-4 shadow-soft border border-border">
-              <OrderTimeline statusHistory={order.statusHistory as any} currentStatus={order.status as OrderStatus} />
-            </div>
-          </section>
-        )}
+        <section className="mb-6">
+          <h3 className="font-display font-bold mb-3">Acompanhamento</h3>
+          <div className="bg-card rounded-xl p-4 shadow-soft border border-border">
+            <OrderTimeline statusHistory={order.statusHistory as any} currentStatus={order.status as OrderStatus} />
+          </div>
+        </section>
 
         {/* Chat */}
         <section className="mb-6">
@@ -321,26 +393,36 @@ const OrderDetail = () => {
 
         {/* Actions */}
         <section className="space-y-3">
-          {order.status === 'entregue' && (
+          {/* Reorder */}
+          {isDelivered && (
             <>
-              <Button className="w-full" variant="outline" onClick={() => navigate('/new-order')}>
-                <RefreshCw className="w-4 h-4 mr-2" />
-                Repetir Pedido
+              <Button className="w-full gap-2" onClick={() => navigate('/new-order')}>
+                <RefreshCw className="w-4 h-4" />
+                Pedir Novamente
               </Button>
               <OrderReview orderId={order.id} />
             </>
           )}
 
-          <div className="flex gap-3">
-            <Button variant="outline" className="flex-1">
-              <Phone className="w-4 h-4 mr-2" />
-              Ligar
-            </Button>
-            <Button variant="secondary" className="flex-1">
-              <MessageCircle className="w-4 h-4 mr-2" />
-              WhatsApp
-            </Button>
-          </div>
+          {/* Contextual WhatsApp support */}
+          <Button
+            variant="secondary"
+            className="w-full gap-2"
+            onClick={() => window.open(whatsAppUrl, '_blank')}
+          >
+            <MessageCircle className="w-4 h-4" />
+            Falar sobre este pedido
+            <ExternalLink className="w-3 h-3 ml-auto opacity-50" />
+          </Button>
+
+          <Button
+            variant="outline"
+            className="w-full gap-2"
+            onClick={() => window.open(`tel:+${WHATSAPP_NUMBER}`, '_self')}
+          >
+            <Phone className="w-4 h-4" />
+            Ligar para suporte
+          </Button>
         </section>
       </main>
 
