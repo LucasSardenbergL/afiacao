@@ -276,7 +276,7 @@ const TechnicalDocs = () => {
             name="2.27 Sugestões de Afiação"
             desc="Motor de sugestões de serviços adicionais baseado em histórico e tipo de ferramenta. Hook useSharpeningSuggestions."
             audience="Staff durante criação de pedidos"
-            deps="Hook useSharpenningSuggestions"
+            deps="Hook useSharpeningSuggestions"
           />
 
           <Module
