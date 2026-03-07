@@ -24,8 +24,6 @@ export interface GovernanceProposal {
   proposer_name?: string;
 }
 
-const GOVERNOR_CPF = '0136383647';
-
 export const useFarmerGovernance = () => {
   const { user } = useAuth();
   const { toast } = useToast();
@@ -42,14 +40,11 @@ export const useFarmerGovernance = () => {
   const checkGovernor = async () => {
     if (!user) return;
     const { data } = await supabase
-      .from('profiles')
-      .select('document')
+      .from('commercial_roles')
+      .select('commercial_role')
       .eq('user_id', user.id)
       .single();
-    if (data) {
-      const cleanDoc = (data.document || '').replace(/\D/g, '');
-      setIsGovernor(cleanDoc === GOVERNOR_CPF);
-    }
+    setIsGovernor(data?.commercial_role === 'super_admin');
   };
 
   const loadData = async () => {
