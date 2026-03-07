@@ -330,29 +330,35 @@ export function useUnifiedOrder() {
     finally { setLoading(false); }
   };
 
-  const syncStockInBackground = async (account: ProductAccount, setProds: React.Dispatch<React.SetStateAction<Product[]>>) => {
-    try {
-      let nextPage: number | null = 1;
-      while (nextPage) {
-        const { data, error } = await supabase.functions.invoke('omie-vendas-sync', {
-          body: { action: 'sync_estoque', start_page: nextPage, account },
-        });
-        if (error) break;
-        nextPage = data?.nextPage || null;
-      }
-      const { data: refreshed } = await supabase
-        .from('omie_products')
-        .select('id, codigo, descricao, unidade, valor_unitario, estoque, ativo, omie_codigo_produto, account')
-        .eq('account', account)
-        .not('familia', 'ilike', '%imobilizado%')
-        .not('familia', 'ilike', '%uso e consumo%')
-        .not('familia', 'ilike', '%matérias primas para conversão de cintas%')
-        .not('familia', 'ilike', '%jumbos de lixa para discos%')
-        .not('familia', 'ilike', 'jumbo%')
-        .not('familia', 'ilike', '%material para tingimix%')
-        .order('descricao');
-      if (refreshed) setProds(refreshed as Product[]);
-    } catch (e) { console.error(`Background stock sync error (${account}):`, e); }
+  // Serialize stock syncs to avoid Omie rate limits
+  const stockSyncQueue = useRef<Promise<void>>(Promise.resolve());
+
+  const syncStockInBackground = (account: ProductAccount, setProds: React.Dispatch<React.SetStateAction<Product[]>>) => {
+    stockSyncQueue.current = stockSyncQueue.current.then(async () => {
+      try {
+        let nextPage: number | null = 1;
+        while (nextPage) {
+          const { data, error } = await supabase.functions.invoke('omie-vendas-sync', {
+            body: { action: 'sync_estoque', start_page: nextPage, account },
+          });
+          if (error) break;
+          nextPage = data?.nextPage || null;
+        }
+        const { data: refreshed } = await supabase
+          .from('omie_products')
+          .select('id, codigo, descricao, unidade, valor_unitario, estoque, ativo, omie_codigo_produto, account')
+          .eq('account', account)
+          .not('familia', 'ilike', '%imobilizado%')
+          .not('familia', 'ilike', '%uso e consumo%')
+          .not('familia', 'ilike', '%matérias primas para conversão de cintas%')
+          .not('familia', 'ilike', '%jumbos de lixa para discos%')
+          .not('familia', 'ilike', 'jumbo%')
+          .not('familia', 'ilike', '%material para tingimix%')
+          .order('descricao');
+        if (refreshed) setProds(refreshed as Product[]);
+      } catch (e) { console.error(`Background stock sync error (${account}):`, e); }
+    });
+  };
   };
 
   const loadServicosColacor = async () => {
