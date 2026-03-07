@@ -2,14 +2,15 @@ import { useState, useEffect } from 'react';
 import { useAuth } from '@/contexts/AuthContext';
 import { supabase } from '@/integrations/supabase/client';
 
-export type AppRole = 'admin' | 'employee' | 'customer';
+export type AppRole = 'admin' | 'employee' | 'customer' | 'master';
 
 interface UseUserRoleReturn {
   role: AppRole | null;
   isAdmin: boolean;
   isEmployee: boolean;
   isCustomer: boolean;
-  isStaff: boolean; // admin OR employee
+  isMaster: boolean;
+  isStaff: boolean; // admin OR employee OR master
   loading: boolean;
   refetch: () => Promise<void>;
 }
@@ -56,7 +57,8 @@ export function useUserRole(): UseUserRoleReturn {
     isAdmin: role === 'admin',
     isEmployee: role === 'employee',
     isCustomer: role === 'customer',
-    isStaff: role === 'admin' || role === 'employee',
+    isMaster: role === 'master',
+    isStaff: role === 'admin' || role === 'employee' || role === 'master',
     loading,
     refetch: fetchRole,
   };

@@ -9,7 +9,7 @@ import { CustomerDashboard } from '@/components/CustomerDashboard';
 import { supabase } from '@/integrations/supabase/client';
 import { useAuth } from '@/contexts/AuthContext';
 import { useUserRole } from '@/hooks/useUserRole';
-import { useCommercialRole } from '@/hooks/useCommercialRole';
+
 import { format, differenceInDays } from 'date-fns';
 import { ptBR } from 'date-fns/locale';
 import { cn } from '@/lib/utils';
@@ -45,12 +45,9 @@ const EMPLOYEE_ORDER_STATUS: Record<string, { label: string; statusClass: string
 
 const Index = () => {
   const navigate = useNavigate();
-  const { user } = useAuth();
+  const { user, isMaster } = useAuth();
   const { isStaff, isAdmin, loading: roleLoading } = useUserRole();
-  const { isSuperAdmin } = useCommercialRole();
   const [clientSyncProgress, setClientSyncProgress] = useState<string | null>(null);
-
-  const isMaster = isSuperAdmin;
 
   // TanStack Query hooks
   const { data: profile, isLoading: profileLoading } = useBasicProfile(user?.id);
