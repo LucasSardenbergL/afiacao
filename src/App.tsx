@@ -16,7 +16,7 @@ import { Skeleton } from "@/components/ui/skeleton";
 const Index = lazy(() => import("./pages/Index"));
 const Orders = lazy(() => import("./pages/Orders"));
 const OrderDetail = lazy(() => import("./pages/OrderDetail"));
-const NewOrder = lazy(() => import("./pages/NewOrder"));
+
 const Profile = lazy(() => import("./pages/Profile"));
 const Addresses = lazy(() => import("./pages/Addresses"));
 const Tools = lazy(() => import("./pages/Tools"));
