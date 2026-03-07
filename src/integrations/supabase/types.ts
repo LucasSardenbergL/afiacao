@@ -1638,6 +1638,33 @@ export type Database = {
           },
         ]
       }
+      loyalty_redemptions: {
+        Row: {
+          created_at: string
+          id: string
+          points_spent: number
+          reward_name: string
+          status: string
+          user_id: string
+        }
+        Insert: {
+          created_at?: string
+          id?: string
+          points_spent: number
+          reward_name: string
+          status?: string
+          user_id: string
+        }
+        Update: {
+          created_at?: string
+          id?: string
+          points_spent?: number
+          reward_name?: string
+          status?: string
+          user_id?: string
+        }
+        Relationships: []
+      }
       margin_audit_log: {
         Row: {
           calculated_at: string
