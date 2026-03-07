@@ -4,7 +4,7 @@ import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { cn } from '@/lib/utils';
 import { useToast } from '@/hooks/use-toast';
-import { supabase } from '@/integrations/supabase/client';
+import { invokeFunction } from '@/lib/invoke-function';
 
 export interface AIProduct {
   product_id: string;
@@ -182,14 +182,7 @@ export function UnifiedAIAssistant({ products, userTools, onItemsIdentified, onC
       const fd = new FormData();
       fd.append('audio', blob, `recording.${ext}`);
 
-      const { data: { session } } = await supabase.auth.getSession();
-      if (!session?.access_token) {
-        toast({ title: 'Sessão expirada', description: 'Faça login novamente.', variant: 'destructive' });
-        return;
-      }
-
-      const { data: result, error } = await supabase.functions.invoke('elevenlabs-transcribe', { body: fd });
-      if (error) throw error;
+      const result = await invokeFunction<{ text?: string }>('elevenlabs-transcribe', fd as any);
       if (result.text) {
         setText(prev => prev + (prev ? ' ' : '') + result.text);
         toast({ title: 'Transcrição concluída' });
@@ -272,32 +265,23 @@ export function UnifiedAIAssistant({ products, userTools, onItemsIdentified, onC
     setIdentifiedCustomer(null);
 
     try {
-      const { data: { session } } = await supabase.auth.getSession();
-      if (!session?.access_token) {
-        toast({ title: 'Sessão expirada', description: 'Faça login novamente.', variant: 'destructive' });
-        setIsAnalyzing(false);
-        return;
-      }
-
-      const { data: result, error } = await supabase.functions.invoke('analyze-unified-order', {
-        body: {
-          text: text.trim() || undefined,
-          imageBase64: images.length === 1 ? images[0].base64 : undefined,
-          imagesBase64: images.length > 1 ? images.map(img => img.base64) : undefined,
-          customerUserId: customerUserId || undefined,
-          searchCustomer: !hasCustomerSelected,
-          products: products.map(p => ({
-            id: p.id, codigo: p.codigo, descricao: p.descricao,
-            valor_unitario: p.valor_unitario, estoque: p.estoque, account: p.account || 'oben',
-          })),
-          userTools: userTools.map(t => ({
-            id: t.id, generated_name: t.generated_name, custom_name: t.custom_name,
-            quantity: t.quantity, tool_categories: t.tool_categories,
-          })),
-        },
+      const result = await invokeFunction<{
+        products?: any[]; services?: any[]; suggestions?: any[]; customer?: any; message?: string;
+      }>('analyze-unified-order', {
+        text: text.trim() || undefined,
+        imageBase64: images.length === 1 ? images[0].base64 : undefined,
+        imagesBase64: images.length > 1 ? images.map(img => img.base64) : undefined,
+        customerUserId: customerUserId || undefined,
+        searchCustomer: !hasCustomerSelected,
+        products: products.map(p => ({
+          id: p.id, codigo: p.codigo, descricao: p.descricao,
+          valor_unitario: p.valor_unitario, estoque: p.estoque, account: p.account || 'oben',
+        })),
+        userTools: userTools.map(t => ({
+          id: t.id, generated_name: t.generated_name, custom_name: t.custom_name,
+          quantity: t.quantity, tool_categories: t.tool_categories,
+        })),
       });
-
-      if (error) throw error;
 
       const prods = result.products || [];
       const svcs = result.services || [];
