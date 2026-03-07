@@ -46,6 +46,15 @@ interface PointRecord {
   order_id: string | null;
 }
 
+interface RedemptionRecord {
+  id: string;
+  user_id: string;
+  reward_name: string;
+  points_spent: number;
+  status: string;
+  created_at: string;
+}
+
 const TIERS = [
   { name: 'Bronze', min: 0, icon: '🥉' },
   { name: 'Prata', min: 200, icon: '🥈' },
