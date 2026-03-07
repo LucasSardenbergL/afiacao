@@ -182,6 +182,45 @@ const Gamification = () => {
           </CardContent>
         </Card>
 
+        {/* Next Best Action */}
+        {score && (() => {
+          const pillars = PILLAR_CONFIG.map(p => ({
+            ...p,
+            value: (score as any)[p.key] as number,
+          }));
+          const weakest = pillars.reduce((min, p) => p.value < min.value ? p : min, pillars[0]);
+          const action = PILLAR_ACTIONS[weakest.key];
+          const WeakIcon = weakest.icon;
+
+          return (
+            <Card className="border-primary/30 bg-primary/5">
+              <CardContent className="p-4">
+                <div className="flex items-start gap-3">
+                  <div className="w-10 h-10 rounded-xl bg-primary/10 flex items-center justify-center flex-shrink-0">
+                    <Lightbulb className="w-5 h-5 text-primary" />
+                  </div>
+                  <div className="flex-1 min-w-0">
+                    <h3 className="font-semibold text-foreground text-sm mb-1">Como subir de nível mais rápido</h3>
+                    <div className="flex items-center gap-1.5 mb-2">
+                      <WeakIcon className="w-3.5 h-3.5 text-primary" />
+                      <span className="text-xs font-medium text-primary">{weakest.label} — {weakest.value}/100</span>
+                    </div>
+                    <p className="text-xs text-muted-foreground leading-relaxed">{action.tip}</p>
+                  </div>
+                </div>
+                <Button
+                  size="sm"
+                  className="w-full mt-3"
+                  onClick={() => navigate(action.route)}
+                >
+                  {action.cta}
+                  <ArrowRight className="w-4 h-4 ml-1" />
+                </Button>
+              </CardContent>
+            </Card>
+          );
+        })()}
+
         {/* Score Pillars */}
         <div>
           <h3 className="font-display font-bold text-lg text-foreground mb-3">Pilares de Pontuação</h3>
