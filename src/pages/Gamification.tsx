@@ -13,7 +13,7 @@ import { useAuth } from '@/contexts/AuthContext';
 import { 
   Trophy, Shield, Target, BookOpen, Users, Zap, 
   Heart, ChevronRight, Star, Award, TrendingUp,
-  Loader2, Lock
+  Loader2, Lock, Lightbulb, ArrowRight
 } from 'lucide-react';
 
 const LEVEL_CONFIG = [
