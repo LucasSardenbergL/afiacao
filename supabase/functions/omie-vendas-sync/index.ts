@@ -56,10 +56,11 @@ async function callOmieVendasApi(
         || result.faultstring.includes("Consumo redundante")
         || result.faultstring.includes("REDUNDANT");
       if (isRateLimit && attempt < maxRetries) {
-        // Extract wait time from message if available, otherwise use exponential backoff
+        // Extract wait time from message, cap at 20s to avoid timeout
         const waitMatch = result.faultstring.match(/Aguarde (\d+) segundos/);
-        const delay = waitMatch ? (parseInt(waitMatch[1]) + 2) * 1000 : (attempt + 1) * 15000;
-        console.log(`[Omie Vendas][${account}] Rate limit hit (${result.faultstring.substring(0, 60)}), retrying in ${delay}ms (attempt ${attempt + 1}/${maxRetries})`);
+        const requestedDelay = waitMatch ? parseInt(waitMatch[1]) : (attempt + 1) * 10;
+        const delay = Math.min(requestedDelay + 2, 20) * 1000;
+        console.log(`[Omie Vendas][${account}] Rate limit hit, retrying in ${delay}ms (attempt ${attempt + 1}/${maxRetries})`);
         await new Promise(r => setTimeout(r, delay));
         continue;
       }
