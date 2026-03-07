@@ -45,7 +45,7 @@ const AdminPriceTable = lazy(() => import("./pages/AdminPriceTable"));
 const Training = lazy(() => import("./pages/Training"));
 const SalesProducts = lazy(() => import("./pages/SalesProducts"));
 const SalesOrders = lazy(() => import("./pages/SalesOrders"));
-const NewSalesOrder = lazy(() => import("./pages/NewSalesOrder"));
+
 const UnifiedOrder = lazy(() => import("./pages/UnifiedOrder"));
 const FarmerDashboard = lazy(() => import("./pages/FarmerDashboard"));
 const FarmerCalls = lazy(() => import("./pages/FarmerCalls"));
