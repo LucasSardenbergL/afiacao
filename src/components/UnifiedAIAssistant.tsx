@@ -184,19 +184,12 @@ export function UnifiedAIAssistant({ products, userTools, onItemsIdentified, onC
 
       const { data: { session } } = await supabase.auth.getSession();
       if (!session?.access_token) {
-        toast({ title: 'Sessão expirada', description: 'Faça login novamente para usar esta funcionalidade.', variant: 'destructive' });
+        toast({ title: 'Sessão expirada', description: 'Faça login novamente.', variant: 'destructive' });
         return;
       }
-      const accessToken = session.access_token;
 
-      const res = await fetch(`${import.meta.env.VITE_SUPABASE_URL}/functions/v1/elevenlabs-transcribe`, {
-        method: 'POST',
-        headers: { Authorization: `Bearer ${accessToken}` },
-        body: fd,
-      });
-
-      if (!res.ok) { const e = await res.json(); throw new Error(e.error || 'Erro'); }
-      const result = await res.json();
+      const { data: result, error } = await supabase.functions.invoke('elevenlabs-transcribe', { body: fd });
+      if (error) throw error;
       if (result.text) {
         setText(prev => prev + (prev ? ' ' : '') + result.text);
         toast({ title: 'Transcrição concluída' });
@@ -280,15 +273,14 @@ export function UnifiedAIAssistant({ products, userTools, onItemsIdentified, onC
 
     try {
       const { data: { session } } = await supabase.auth.getSession();
-      const accessToken = session?.access_token || import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY;
+      if (!session?.access_token) {
+        toast({ title: 'Sessão expirada', description: 'Faça login novamente.', variant: 'destructive' });
+        setIsAnalyzing(false);
+        return;
+      }
 
-      const res = await fetch(`${import.meta.env.VITE_SUPABASE_URL}/functions/v1/analyze-unified-order`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          Authorization: `Bearer ${accessToken}`,
-        },
-        body: JSON.stringify({
+      const { data: result, error } = await supabase.functions.invoke('analyze-unified-order', {
+        body: {
           text: text.trim() || undefined,
           imageBase64: images.length === 1 ? images[0].base64 : undefined,
           imagesBase64: images.length > 1 ? images.map(img => img.base64) : undefined,
@@ -302,11 +294,10 @@ export function UnifiedAIAssistant({ products, userTools, onItemsIdentified, onC
             id: t.id, generated_name: t.generated_name, custom_name: t.custom_name,
             quantity: t.quantity, tool_categories: t.tool_categories,
           })),
-        }),
+        },
       });
 
-      if (!res.ok) { const e = await res.json(); throw new Error(e.error || 'Erro'); }
-      const result = await res.json();
+      if (error) throw error;
 
       const prods = result.products || [];
       const svcs = result.services || [];
