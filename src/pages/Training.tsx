@@ -127,6 +127,17 @@ const Training = () => {
   const passedCount = modules.filter(m => getCompletion(m.id)).length;
   const progressPercent = modules.length > 0 ? Math.round((passedCount / modules.length) * 100) : 0;
 
+  // Sort: incomplete first (by highest reward), then completed
+  const sortedModules = [...modules].sort((a, b) => {
+    const aDone = !!getCompletion(a.id);
+    const bDone = !!getCompletion(b.id);
+    if (aDone !== bDone) return aDone ? 1 : -1;
+    return b.points_reward - a.points_reward;
+  });
+
+  // Next recommended = first incomplete, highest reward
+  const recommendedModule = sortedModules.find(m => !getCompletion(m.id)) || null;
+
   return (
     <div className="min-h-screen bg-background pb-24">
       <Header title="Treinamentos Técnicos" showBack />
@@ -152,20 +163,60 @@ const Training = () => {
           </div>
         </Card>
 
+        {/* Recommended next module */}
+        {recommendedModule && (
+          <Card className="border-primary/30 bg-primary/5">
+            <CardContent className="p-4">
+              <div className="flex items-center gap-2 mb-3">
+                <Sparkles className="w-4 h-4 text-primary" />
+                <span className="text-xs font-semibold text-primary uppercase tracking-wide">Próximo módulo recomendado</span>
+              </div>
+              <h3 className="font-semibold text-foreground mb-1">{recommendedModule.title}</h3>
+              {recommendedModule.description && (
+                <p className="text-xs text-muted-foreground mb-2">{recommendedModule.description}</p>
+              )}
+              <div className="flex gap-2 mb-3">
+                <Badge variant="secondary" className="text-[10px]">
+                  <Award className="w-3 h-3 mr-0.5" />{recommendedModule.points_reward} pts
+                </Badge>
+                <Badge variant="outline" className="text-[10px]">Mínimo {recommendedModule.min_score}%</Badge>
+                <Badge variant="outline" className="text-[10px]">{recommendedModule.quiz_questions.length} perguntas</Badge>
+              </div>
+              {(() => {
+                const best = getBestAttempt(recommendedModule.id);
+                return best !== null ? (
+                  <p className="text-xs text-muted-foreground mb-2">Melhor tentativa anterior: {best}%</p>
+                ) : null;
+              })()}
+              <Button size="sm" className="w-full" onClick={() => startQuiz(recommendedModule)}>
+                Iniciar módulo
+                <ArrowRight className="w-4 h-4 ml-1" />
+              </Button>
+            </CardContent>
+          </Card>
+        )}
+
         {/* Module list */}
-        {modules.map(mod => {
+        {sortedModules.length > 0 && (
+          <h3 className="font-display font-bold text-foreground text-sm pt-2">Todos os módulos</h3>
+        )}
+        {sortedModules.map(mod => {
           const completed = getCompletion(mod.id);
           const bestScore = getBestAttempt(mod.id);
+          const isRecommended = recommendedModule?.id === mod.id;
 
           return (
-            <Card key={mod.id} className={completed ? 'border-emerald-200 bg-emerald-50/30' : ''}>
+            <Card key={mod.id} className={completed ? 'border-emerald-200 bg-emerald-50/30' : isRecommended ? 'ring-1 ring-primary/20' : ''}>
               <CardContent className="p-4">
                 <div className="flex items-start gap-3">
                   <div className={`w-10 h-10 rounded-xl flex items-center justify-center ${completed ? 'bg-emerald-100' : 'bg-primary/10'}`}>
                     {completed ? <CheckCircle2 className="w-5 h-5 text-emerald-600" /> : <BookOpen className="w-5 h-5 text-primary" />}
                   </div>
                   <div className="flex-1">
-                    <h3 className="font-semibold text-sm text-foreground">{mod.title}</h3>
+                    <div className="flex items-center gap-2">
+                      <h3 className="font-semibold text-sm text-foreground">{mod.title}</h3>
+                      {isRecommended && !completed && <Badge className="text-[9px] px-1.5 py-0">Recomendado</Badge>}
+                    </div>
                     {mod.description && <p className="text-xs text-muted-foreground mt-0.5">{mod.description}</p>}
                     <div className="flex gap-2 mt-2">
                       <Badge variant="outline" className="text-[10px]">{mod.quiz_questions.length} perguntas</Badge>
