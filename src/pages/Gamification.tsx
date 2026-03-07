@@ -39,6 +39,34 @@ const BENEFITS = [
   { level: 5, benefits: ['Acesso antecipado a novos serviços', 'Grupo técnico exclusivo', 'Certificação profissional'] },
 ];
 
+const PILLAR_ACTIONS: Record<string, { tip: string; cta: string; route: string }> = {
+  consistency_score: {
+    tip: 'Mantenha suas ferramentas dentro da janela ideal de afiação. Cadastre todas e acompanhe os prazos.',
+    cta: 'Ver ferramentas',
+    route: '/tools',
+  },
+  organization_score: {
+    tip: 'Melhore a qualidade de envio: ferramentas limpas, identificadas, separadas por tipo e bem embaladas.',
+    cta: 'Novo pedido',
+    route: '/orders/new',
+  },
+  education_score: {
+    tip: 'Complete treinamentos técnicos disponíveis para ganhar pontos nesse pilar.',
+    cta: 'Ver treinamentos',
+    route: '/training',
+  },
+  referral_score: {
+    tip: 'Indique outros profissionais. Quando sua indicação se torna cliente ativo, você ganha pontos.',
+    cta: 'Indicar cliente',
+    route: '/support',
+  },
+  efficiency_score: {
+    tip: 'Reduza pedidos emergenciais. Planeje manutenções preventivas para melhorar esse pilar.',
+    cta: 'Ver ferramentas',
+    route: '/tools',
+  },
+};
+
 const Gamification = () => {
   const navigate = useNavigate();
   const { user } = useAuth();
