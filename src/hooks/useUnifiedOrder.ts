@@ -207,6 +207,7 @@ export function useUnifiedOrder() {
   // Staff: load all catalogs
   useEffect(() => {
     if (isStaff) {
+      // Load products in parallel but stock sync will be serialized
       loadProductsForAccount('oben');
       loadProductsForAccount('colacor');
       loadFormasPagamento('oben');
