@@ -6,6 +6,7 @@ import { AddToolDialog } from '@/components/AddToolDialog';
 import { UnifiedAIAssistant } from '@/components/UnifiedAIAssistant';
 import { cn } from '@/lib/utils';
 import { useUnifiedOrder } from '@/hooks/useUnifiedOrder';
+import { useOrderDeepLink } from '@/hooks/useOrderDeepLink';
 import { CustomerSearch } from '@/components/unified-order/CustomerSearch';
 import { ProductItemForm } from '@/components/unified-order/ProductItemForm';
 import { ServiceItemForm } from '@/components/unified-order/ServiceItemForm';
