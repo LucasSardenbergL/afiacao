@@ -1,5 +1,4 @@
 import { useState, useRef, useEffect, useCallback } from 'react';
-import { supabase } from '@/integrations/supabase/client';
 import { invokeFunction } from '@/lib/invoke-function';
 import { Mic, Send, Loader2, Sparkles, X, Square, Wrench } from 'lucide-react';
 import { Button } from '@/components/ui/button';
