@@ -278,7 +278,7 @@ const AdminApprovals = () => {
                           CPF/CNPJ: {formatDocument(pendingUser.document)}
                         </p>
                         {!pendingUser.document && (
-                          <AlertTriangle className="w-3.5 h-3.5 text-amber-500" title="Sem documento — vínculo Omie não será tentado" />
+                          <AlertTriangle className="w-3.5 h-3.5 text-amber-500" />
                         )}
                       </div>
                       <p className="text-xs text-muted-foreground">
