@@ -13,8 +13,10 @@ import { useAuth } from '@/contexts/AuthContext';
 import {
   Phone, TrendingUp, Users, Target, BarChart3, Brain,
   RefreshCw, Zap, Activity, AlertTriangle, CheckCircle,
-  ChevronRight, Shield, Clock, Heart, Loader2
+  ChevronRight, Shield, Clock, Heart, Loader2,
+  Eye, ShoppingCart,
 } from 'lucide-react';
+import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
 
 // ─── Helpers ─────────────────────────────────────────────────────────
 const healthColors: Record<string, { bg: string; text: string; border: string }> = {
