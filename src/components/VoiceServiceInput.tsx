@@ -183,27 +183,13 @@ export function VoiceServiceInput({ userTools, onItemsIdentified, isLoading = fa
 
       const { data: { session } } = await supabase.auth.getSession();
       if (!session?.access_token) {
-        toast({ title: 'Sessão expirada', description: 'Faça login novamente para usar esta funcionalidade.', variant: 'destructive' });
+        toast({ title: 'Sessão expirada', description: 'Faça login novamente.', variant: 'destructive' });
         return;
       }
 
-      const response = await fetch(
-        `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/elevenlabs-transcribe`,
-        {
-          method: 'POST',
-          headers: {
-            Authorization: `Bearer ${session.access_token}`,
-          },
-          body: formData,
-        }
-      );
+      const { data: result, error } = await supabase.functions.invoke('elevenlabs-transcribe', { body: formData });
+      if (error) throw error;
 
-      if (!response.ok) {
-        const error = await response.json();
-        throw new Error(error.error || 'Erro na transcrição');
-      }
-
-      const result = await response.json();
       console.log('Transcription result:', result);
 
       if (result.text) {
@@ -273,33 +259,27 @@ export function VoiceServiceInput({ userTools, onItemsIdentified, isLoading = fa
     setIdentifiedItems([]);
 
     try {
-      const response = await fetch(
-        `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/analyze-services`,
-        {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-            Authorization: `Bearer ${import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY}`,
-          },
-          body: JSON.stringify({ 
-            text: text.trim(),
-            userTools: userTools.map(t => ({
-              id: t.id,
-              generated_name: t.generated_name,
-              custom_name: t.custom_name,
-              quantity: t.quantity,
-              tool_categories: t.tool_categories,
-            })),
-          }),
-        }
-      );
-
-      if (!response.ok) {
-        const error = await response.json();
-        throw new Error(error.error || 'Erro ao analisar');
+      const { data: { session } } = await supabase.auth.getSession();
+      if (!session?.access_token) {
+        toast({ title: 'Sessão expirada', description: 'Faça login novamente.', variant: 'destructive' });
+        setIsAnalyzing(false);
+        return;
       }
 
-      const result = await response.json();
+      const { data: result, error } = await supabase.functions.invoke('analyze-services', {
+        body: {
+          text: text.trim(),
+          userTools: userTools.map(t => ({
+            id: t.id,
+            generated_name: t.generated_name,
+            custom_name: t.custom_name,
+            quantity: t.quantity,
+            tool_categories: t.tool_categories,
+          })),
+        },
+      });
+
+      if (error) throw error;
       
       if (result.items && result.items.length > 0) {
         setIdentifiedItems(result.items);
