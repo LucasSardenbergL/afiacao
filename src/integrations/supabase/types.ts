@@ -3110,7 +3110,7 @@ export type Database = {
       refresh_customer_metrics: { Args: never; Returns: undefined }
     }
     Enums: {
-      app_role: "admin" | "employee" | "customer"
+      app_role: "admin" | "employee" | "customer" | "master"
       commercial_role:
         | "operacional"
         | "gerencial"
@@ -3251,7 +3251,7 @@ export type CompositeTypes<
 export const Constants = {
   public: {
     Enums: {
-      app_role: ["admin", "employee", "customer"],
+      app_role: ["admin", "employee", "customer", "master"],
       commercial_role: [
         "operacional",
         "gerencial",
