@@ -11,13 +11,20 @@ import { useNavigate } from 'react-router-dom';
 import {
   Loader2, RefreshCw, TrendingUp, ShoppingCart, ArrowUpRight,
   DollarSign, Target, Search, ChevronDown, ChevronUp, Filter,
-  Package, Sparkles,
+  Package, Sparkles, Plus,
 } from 'lucide-react';
 import {
   DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu';
 
 const fmt = (v: number) => v.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' });
+
+const StockBadge = ({ estoque }: { estoque: number | null }) => {
+  if (estoque === null || estoque === undefined) return null;
+  if (estoque > 10) return <Badge variant="outline" className="text-[8px] bg-emerald-50 text-emerald-700 border-emerald-200">Em estoque</Badge>;
+  if (estoque > 0) return <Badge variant="outline" className="text-[8px] bg-amber-50 text-amber-700 border-amber-200">Estoque baixo</Badge>;
+  return <Badge variant="outline" className="text-[8px] bg-destructive/10 text-destructive border-destructive/20">Sem estoque</Badge>;
+};
 
 const FarmerRecommendations = () => {
   const navigate = useNavigate();
@@ -175,12 +182,18 @@ const FarmerRecommendations = () => {
                         <ShoppingCart className="w-3.5 h-3.5 text-blue-600" /> Cross-sell ({cr.crossSell.length})
                       </p>
                       <div className="space-y-2">
-                        {cr.crossSell.map(rec => (
+                        {cr.crossSell.map(rec => {
+                          const outOfStock = rec.estoque !== null && rec.estoque === 0;
+                          const canOrder = !!rec.customerId && !!rec.productId && !outOfStock;
+                          return (
                           <Card key={rec.productId} className="border-l-4 border-l-blue-500">
                             <CardContent className="p-3">
                               <div className="flex items-start justify-between gap-2">
                                 <div className="min-w-0 flex-1">
-                                  <p className="text-sm font-medium truncate">{rec.productName}</p>
+                                  <div className="flex items-center gap-1.5 flex-wrap">
+                                    <p className="text-sm font-medium truncate">{rec.productName}</p>
+                                    <StockBadge estoque={rec.estoque} />
+                                  </div>
                                   <p className="text-[10px] text-muted-foreground">Prob: {rec.pij}% · Margem: {fmt(rec.mij)}</p>
                                 </div>
                                 <div className="text-right shrink-0">
@@ -188,9 +201,25 @@ const FarmerRecommendations = () => {
                                   <p className="text-[10px] text-muted-foreground">EIP</p>
                                 </div>
                               </div>
+                              <Button
+                                size="sm"
+                                variant="outline"
+                                className="w-full mt-2 h-7 text-[10px] gap-1"
+                                disabled={!canOrder}
+                                onClick={() => {
+                                  const params = new URLSearchParams();
+                                  if (rec.customerId) params.set('customer', rec.customerId);
+                                  if (rec.productId) params.set('product', rec.productId);
+                                  navigate(`/sales/new?${params.toString()}`);
+                                }}
+                              >
+                                <Plus className="w-3 h-3" />
+                                {outOfStock ? 'Sem estoque' : 'Adicionar ao pedido'}
+                              </Button>
                             </CardContent>
                           </Card>
-                        ))}
+                          );
+                        })}
                       </div>
                     </div>
                   )}
@@ -202,12 +231,18 @@ const FarmerRecommendations = () => {
                         <ArrowUpRight className="w-3.5 h-3.5 text-purple-600" /> Up-sell ({cr.upSell.length})
                       </p>
                       <div className="space-y-2">
-                        {cr.upSell.map(rec => (
+                        {cr.upSell.map(rec => {
+                          const outOfStock = rec.estoque !== null && rec.estoque === 0;
+                          const canOrder = !!rec.customerId && !!rec.productId && !outOfStock;
+                          return (
                           <Card key={rec.productId} className="border-l-4 border-l-purple-500">
                             <CardContent className="p-3">
                               <div className="flex items-start justify-between gap-2">
                                 <div className="min-w-0 flex-1">
-                                  <p className="text-sm font-medium truncate">{rec.productName}</p>
+                                  <div className="flex items-center gap-1.5 flex-wrap">
+                                    <p className="text-sm font-medium truncate">{rec.productName}</p>
+                                    <StockBadge estoque={rec.estoque} />
+                                  </div>
                                   <p className="text-[10px] text-muted-foreground">
                                     De: {rec.currentProductName} · Prob: {rec.pij}%
                                   </p>
@@ -217,9 +252,25 @@ const FarmerRecommendations = () => {
                                   <p className="text-[10px] text-muted-foreground">EIP</p>
                                 </div>
                               </div>
+                              <Button
+                                size="sm"
+                                variant="outline"
+                                className="w-full mt-2 h-7 text-[10px] gap-1"
+                                disabled={!canOrder}
+                                onClick={() => {
+                                  const params = new URLSearchParams();
+                                  if (rec.customerId) params.set('customer', rec.customerId);
+                                  if (rec.productId) params.set('product', rec.productId);
+                                  navigate(`/sales/new?${params.toString()}`);
+                                }}
+                              >
+                                <Plus className="w-3 h-3" />
+                                {outOfStock ? 'Sem estoque' : 'Adicionar ao pedido'}
+                              </Button>
                             </CardContent>
                           </Card>
-                        ))}
+                          );
+                        })}
                       </div>
                     </div>
                   )}

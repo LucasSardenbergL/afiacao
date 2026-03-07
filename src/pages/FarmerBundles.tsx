@@ -1,4 +1,5 @@
 import { useState } from 'react';
+import { useNavigate } from 'react-router-dom';
 import { Header } from '@/components/Header';
 import { BottomNav } from '@/components/BottomNav';
 import { Card, CardContent } from '@/components/ui/card';
@@ -13,7 +14,8 @@ import {
   Loader2, Package, RefreshCw, ChevronDown, ChevronUp,
   BarChart3, Layers, Zap, ArrowRight,
   Phone, Send, FileText, Sparkles, Copy, Check,
-  HelpCircle, ThumbsUp, ThumbsDown, Minus, RotateCcw, Save
+  HelpCircle, ThumbsUp, ThumbsDown, Minus, RotateCcw, Save,
+  ShoppingCart
 } from 'lucide-react';
 import { useToast } from '@/hooks/use-toast';
 
@@ -226,9 +228,10 @@ interface BundleCardFullProps {
 }
 
 const BundleCardFull = ({
-  bundle, rank, bundleKey, argument, isArgGenerating, onGenerateArg,
+  bundle, rank, bundleKey, customerId, argument, isArgGenerating, onGenerateArg,
   questions, isQuestionsGenerating, onGenerateQuestions, onSetResponse, onToggleAlt, onSaveQuestions,
 }: BundleCardFullProps) => {
+  const navigate = useNavigate();
   const [argTab, setArgTab] = useState<'phone' | 'whatsapp' | 'tecnica'>('phone');
   const [activeSection, setActiveSection] = useState<'none' | 'args' | 'questions'>('none');
   const [copied, setCopied] = useState(false);
@@ -303,6 +306,20 @@ const BundleCardFull = ({
           <Sparkles className="w-3 h-3" /> Argumentação
         </Button>
       </div>
+
+      {/* CTA: Create order from bundle */}
+      <Button
+        size="sm"
+        className="w-full h-7 text-[9px] gap-1 mb-2"
+        disabled={!customerId}
+        onClick={() => {
+          const params = new URLSearchParams();
+          if (customerId) params.set('customer', customerId);
+          navigate(`/sales/new?${params.toString()}`);
+        }}
+      >
+        <ShoppingCart className="w-3 h-3" /> Montar pedido com este bundle
+      </Button>
 
       {/* ─── DIAGNOSTIC QUESTIONS ──────────────────────────────── */}
       {activeSection === 'questions' && (

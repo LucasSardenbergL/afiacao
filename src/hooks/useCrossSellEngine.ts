@@ -17,6 +17,7 @@ export interface Recommendation {
   lie: number;          // Expected Incremental Profit
   complexityFactor: number;
   clusterVolume: number;
+  estoque: number | null; // Stock quantity from omie_products
   status: 'pendente' | 'ofertado' | 'aceito' | 'rejeitado' | 'expirado';
 }
 
@@ -73,7 +74,7 @@ export const useCrossSellEngine = () => {
       // 2. Load all products with costs
       const { data: products } = await supabase
         .from('omie_products')
-        .select('id, codigo, descricao, valor_unitario, metadata, ativo, omie_codigo_produto')
+        .select('id, codigo, descricao, valor_unitario, metadata, ativo, omie_codigo_produto, estoque')
         .eq('ativo', true) as any;
 
       const { data: productCosts } = await supabase
@@ -280,6 +281,7 @@ export const useCrossSellEngine = () => {
               lie: Math.round(lie * 100) / 100,
               complexityFactor,
               clusterVolume,
+              estoque: product.estoque ?? null,
               status: 'pendente',
             });
           }
@@ -332,6 +334,7 @@ export const useCrossSellEngine = () => {
                 lie: Math.round(lie * 100) / 100,
                 complexityFactor,
                 clusterVolume: purchaseData.qty,
+                estoque: product.estoque ?? null,
                 status: 'pendente',
               });
             }
