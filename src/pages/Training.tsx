@@ -1,4 +1,5 @@
 import { useState, useEffect } from 'react';
+import { useNavigate } from 'react-router-dom';
 import { Header } from '@/components/Header';
 import { BottomNav } from '@/components/BottomNav';
 import { Card, CardContent } from '@/components/ui/card';
@@ -9,7 +10,7 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/u
 import { supabase } from '@/integrations/supabase/client';
 import { useAuth } from '@/contexts/AuthContext';
 import { useToast } from '@/hooks/use-toast';
-import { Loader2, BookOpen, CheckCircle2, XCircle, PlayCircle, Award, Sparkles, ArrowRight } from 'lucide-react';
+import { Loader2, BookOpen, CheckCircle2, XCircle, PlayCircle, Award, Sparkles, ArrowRight, Trophy, Target } from 'lucide-react';
 
 interface QuizQuestion {
   question: string;
@@ -35,6 +36,7 @@ interface Completion {
 }
 
 const Training = () => {
+  const navigate = useNavigate();
   const { user } = useAuth();
   const { toast } = useToast();
 
@@ -152,7 +154,9 @@ const Training = () => {
               </div>
               <div>
                 <h2 className="font-display font-bold text-lg">Educação Técnica</h2>
-                <p className="text-xs text-secondary-foreground/60">Complete módulos e ganhe pontos no pilar Educação (15%)</p>
+              <p className="text-xs text-secondary-foreground/60">
+                Cada módulo concluído melhora seu pilar de Educação (15% do score) e aproxima você do próximo nível
+              </p>
               </div>
             </div>
             <div className="flex justify-between text-sm mb-1">
@@ -238,6 +242,25 @@ const Training = () => {
             </Card>
           );
         })}
+
+        {/* Cross-link to gamification */}
+        <Card className="bg-muted/50">
+          <CardContent className="p-4">
+            <p className="text-xs text-muted-foreground text-center mb-3">
+              Treinamentos concluídos melhoram seu pilar de Educação e ajudam a subir de nível no seu desempenho geral.
+            </p>
+            <div className="grid grid-cols-2 gap-3">
+              <Button variant="outline" size="sm" className="h-auto py-2 flex-col gap-0.5" onClick={() => navigate('/gamification')}>
+                <Target className="w-4 h-4" />
+                <span className="text-xs">Meu Desempenho</span>
+              </Button>
+              <Button variant="outline" size="sm" className="h-auto py-2 flex-col gap-0.5" onClick={() => navigate('/loyalty')}>
+                <Trophy className="w-4 h-4" />
+                <span className="text-xs">Fidelidade</span>
+              </Button>
+            </div>
+          </CardContent>
+        </Card>
 
         {modules.length === 0 && (
           <div className="text-center py-12 text-muted-foreground">
@@ -330,6 +353,11 @@ const Training = () => {
                       <Badge className="text-sm">
                         <Award className="w-4 h-4 mr-1" /> +{activeModule.points_reward} pontos de educação
                       </Badge>
+                    )}
+                    {passed && (
+                      <p className="text-xs text-muted-foreground">
+                        Seu pilar de Educação foi atualizado. Veja seu desempenho geral na tela de Gamificação.
+                      </p>
                     )}
                     <Button className="w-full mt-2" onClick={() => setActiveModule(null)}>
                       Fechar
