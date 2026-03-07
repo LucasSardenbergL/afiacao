@@ -101,14 +101,17 @@ export default function AdminLoyalty() {
 
   const loadData = async () => {
     try {
-      const [pointsRes, profilesRes] = await Promise.all([
+      const [pointsRes, profilesRes, redemptionsRes] = await Promise.all([
         (supabase as any).from('loyalty_points').select('*').order('created_at', { ascending: false }),
         supabase.from('profiles').select('user_id, name'),
+        supabase.from('loyalty_redemptions').select('*').order('created_at', { ascending: false }),
       ]);
 
       const points = (pointsRes.data || []) as PointRecord[];
       const profiles = profilesRes.data || [];
+      const redData = (redemptionsRes.data || []) as RedemptionRecord[];
       setAllPoints(points);
+      setRedemptions(redData);
 
       // Aggregate by user
       const userMap = new Map<string, CustomerPoints>();
