@@ -5,6 +5,7 @@ import { BottomNav } from '@/components/BottomNav';
 import { Card, CardContent } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
+import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { supabase } from '@/integrations/supabase/client';
 import { useAuth } from '@/contexts/AuthContext';
@@ -17,7 +18,8 @@ import {
   User, 
   Wrench,
   ChevronRight,
-  TrendingUp
+  TrendingUp,
+  ShoppingCart
 } from 'lucide-react';
 import { format, formatDistanceToNow } from 'date-fns';
 import { ptBR } from 'date-fns/locale';
@@ -288,6 +290,7 @@ const AdminDemandForecast = () => {
                   key={customer.userId} 
                   customer={customer}
                   onViewCustomer={() => navigate(`/admin/customers/${customer.userId}`)}
+                  onCreateOrder={() => navigate(`/sales/new?customer=${customer.userId}`)}
                 />
               ))}
               {getFilteredCustomers(tab).length === 0 && (
@@ -310,9 +313,10 @@ const AdminDemandForecast = () => {
 interface CustomerCardProps {
   customer: GroupedByCustomer;
   onViewCustomer: () => void;
+  onCreateOrder: () => void;
 }
 
-const CustomerCard = ({ customer, onViewCustomer }: CustomerCardProps) => {
+const CustomerCard = ({ customer, onViewCustomer, onCreateOrder }: CustomerCardProps) => {
   const getUrgencyStyles = () => {
     switch (customer.urgencyLevel) {
       case 'overdue':
@@ -422,22 +426,35 @@ const CustomerCard = ({ customer, onViewCustomer }: CustomerCardProps) => {
             <Button
               size="sm"
               variant="outline"
-              className="flex-1"
               onClick={handleWhatsApp}
             >
-              <Phone className="w-4 h-4 mr-2" />
-              WhatsApp
+              <Phone className="w-4 h-4" />
             </Button>
           )}
           <Button
             size="sm"
-            variant="default"
+            variant="outline"
             className="flex-1"
-            onClick={onViewCustomer}
+            onClick={(e) => { e.stopPropagation(); onViewCustomer(); }}
           >
             Ver Cliente
-            <ChevronRight className="w-4 h-4 ml-2" />
           </Button>
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <Button
+                size="sm"
+                variant="default"
+                className="flex-1 gap-1.5"
+                onClick={(e) => { e.stopPropagation(); onCreateOrder(); }}
+              >
+                <ShoppingCart className="w-4 h-4" />
+                Criar Pedido
+              </Button>
+            </TooltipTrigger>
+            <TooltipContent>
+              Iniciar pedido para {customer.customerName} com {customer.tools.length} ferramenta{customer.tools.length !== 1 ? 's' : ''}
+            </TooltipContent>
+          </Tooltip>
         </div>
       </CardContent>
     </Card>
