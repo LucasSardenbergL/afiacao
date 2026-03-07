@@ -46,14 +46,14 @@ export default function Loyalty() {
 
   const loadPoints = async () => {
     try {
-      const { data, error } = await (supabase as any)
+      const { data, error } = await supabase
         .from('loyalty_points')
         .select('*')
         .eq('user_id', user!.id)
         .order('created_at', { ascending: false });
 
       if (error) throw error;
-      setHistory((data || []) as LoyaltyPoint[]);
+      setHistory(data || []);
     } catch (err) {
       console.error('Error loading loyalty points:', err);
     } finally {
