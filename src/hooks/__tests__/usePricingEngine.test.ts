@@ -80,6 +80,8 @@ describe("usePricingEngine – calculatePrice logic", () => {
   const CATEGORY_SERRA = "cat-serra-widea";
   const CATEGORY_FRESA = "cat-fresa";
 
+  const CATEGORY_FACA = "cat-faca";
+
   const mockPrices = [
     {
       id: "1",
@@ -97,6 +99,20 @@ describe("usePricingEngine – calculatePrice logic", () => {
       },
       price: 0,
       description: "Serra Circular Widea – R$1,20/dente",
+    },
+    {
+      id: "3",
+      tool_category_id: CATEGORY_FACA,
+      spec_filter: { comprimento: "300", espessura: "3" },
+      price: 45,
+      description: "Faca Estreita 300mm×3mm",
+    },
+    {
+      id: "4",
+      tool_category_id: CATEGORY_FACA,
+      spec_filter: { comprimento: "500", espessura: "3" },
+      price: 65,
+      description: "Faca Estreita 500mm×3mm",
     },
   ];
 
