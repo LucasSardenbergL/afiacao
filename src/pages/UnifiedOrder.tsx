@@ -34,6 +34,17 @@ function OrderStepper({ step }: { step: number }) {
 const UnifiedOrder = () => {
   const h = useUnifiedOrder();
 
+  useOrderDeepLink({
+    selectedCustomer: h.selectedCustomer,
+    selectCustomer: h.selectCustomer,
+    addProductToCart: h.addProductToCart,
+    obenProducts: h.obenProducts,
+    colacorProducts: h.colacorProducts,
+    loadingObenProducts: h.loadingObenProducts,
+    loadingColacorProducts: h.loadingColacorProducts,
+    loadingCustomer: h.loadingCustomer,
+  });
+
   if (h.authLoading) {
     return <div className="flex items-center justify-center py-32"><Loader2 className="w-6 h-6 animate-spin text-muted-foreground" /></div>;
   }
