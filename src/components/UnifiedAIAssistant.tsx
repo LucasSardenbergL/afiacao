@@ -536,6 +536,14 @@ export function UnifiedAIAssistant({ products, userTools, onItemsIdentified, onC
 
           <p className="text-sm text-foreground">{aiMessage}</p>
 
+          {/* Retry button when AI fallback is active */}
+          {aiFallbackActive && (
+            <Button variant="outline" size="sm" onClick={analyze} disabled={isAnalyzing} className="gap-2">
+              <Sparkles className="w-3.5 h-3.5" />
+              Tentar novamente
+            </Button>
+          )}
+
           {/* Customer identified */}
           {identifiedCustomer && !hasCustomerSelected && (
             <div className="space-y-1.5">
