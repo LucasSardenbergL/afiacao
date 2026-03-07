@@ -226,9 +226,10 @@ interface BundleCardFullProps {
 }
 
 const BundleCardFull = ({
-  bundle, rank, bundleKey, argument, isArgGenerating, onGenerateArg,
+  bundle, rank, bundleKey, customerId, argument, isArgGenerating, onGenerateArg,
   questions, isQuestionsGenerating, onGenerateQuestions, onSetResponse, onToggleAlt, onSaveQuestions,
 }: BundleCardFullProps) => {
+  const navigate = useNavigate();
   const [argTab, setArgTab] = useState<'phone' | 'whatsapp' | 'tecnica'>('phone');
   const [activeSection, setActiveSection] = useState<'none' | 'args' | 'questions'>('none');
   const [copied, setCopied] = useState(false);
