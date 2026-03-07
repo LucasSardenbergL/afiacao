@@ -6,19 +6,19 @@ import { Button } from '@/components/ui/button';
 const faqItems = [
   {
     question: 'Quanto tempo demora a afiação?',
-    answer: 'O prazo padrão é de 24 a 72 horas, dependendo do tipo de ferramenta e serviço escolhido.',
+    answer: 'O prazo padrão é de 24 a 72 horas úteis, dependendo do tipo de ferramenta e volume do pedido.',
   },
   {
-    question: 'Vocês afiam qualquer tipo de faca?',
-    answer: 'Sim! Afiamos facas de cozinha, chef, serrilhadas, japonesas, alemãs e outras.',
+    question: 'Vocês afiam qualquer tipo de ferramenta?',
+    answer: 'Afiamos serras circulares (widea e HSS), fresas, facas de plaina, facas de desengrosso, cabeçotes desintegradores e tesouras profissionais para a indústria moveleira.',
   },
   {
     question: 'Como funciona a coleta?',
-    answer: 'Nosso motoboy busca as ferramentas no endereço escolhido, no horário agendado.',
+    answer: 'Nossa equipe busca as ferramentas no endereço cadastrado, no turno agendado (manhã ou tarde).',
   },
   {
     question: 'Posso cancelar meu pedido?',
-    answer: 'Sim, até a fase de triagem. Após isso, consulte nosso suporte.',
+    answer: 'Sim, pedidos podem ser cancelados até a fase de triagem. Após o início da afiação, entre em contato pelo WhatsApp.',
   },
 ];
 
@@ -114,7 +114,10 @@ const Support = () => {
             <p className="text-sm text-muted-foreground mb-4">
               Abra um chamado e nossa equipe responderá em até 24h
             </p>
-            <Button>
+            <Button onClick={() => {
+              const message = encodeURIComponent('Olá, preciso de suporte técnico. Meu problema é: ');
+              window.open(`https://wa.me/5537999991035?text=${message}`, '_blank', 'noopener,noreferrer');
+            }}>
               Abrir Chamado
             </Button>
           </div>
