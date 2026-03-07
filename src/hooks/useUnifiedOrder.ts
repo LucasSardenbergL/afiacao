@@ -999,7 +999,7 @@ export function useUnifiedOrder() {
 
   return {
     // Auth
-    authLoading, user, isStaff,
+    authLoading, user, isStaff, isCustomerMode,
     // Customer
     customerSearch, setCustomerSearch, customers, selectedCustomer, searchingCustomers,
     loadingCustomer, customerUserId, selectCustomer, clearCustomer,
