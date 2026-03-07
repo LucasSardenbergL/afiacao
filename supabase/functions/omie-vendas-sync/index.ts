@@ -41,7 +41,7 @@ async function callOmieVendasApi(
 
   console.log(`[Omie Vendas][${account}] Chamando ${endpoint} - ${call}`);
 
-  const maxRetries = 3;
+  const maxRetries = 5;
   for (let attempt = 0; attempt <= maxRetries; attempt++) {
     const response = await fetch(`${OMIE_API_URL}/${endpoint}`, {
       method: "POST",
@@ -56,13 +56,18 @@ async function callOmieVendasApi(
         || result.faultstring.includes("Consumo redundante")
         || result.faultstring.includes("REDUNDANT");
       if (isRateLimit && attempt < maxRetries) {
-        // Extract wait time from message, cap at 20s to avoid timeout
+        // Wait the time Omie asks for, cap at 45s to stay within 150s function timeout
         const waitMatch = result.faultstring.match(/Aguarde (\d+) segundos/);
         const requestedDelay = waitMatch ? parseInt(waitMatch[1]) : (attempt + 1) * 10;
-        const delay = Math.min(requestedDelay + 2, 20) * 1000;
-        console.log(`[Omie Vendas][${account}] Rate limit hit, retrying in ${delay}ms (attempt ${attempt + 1}/${maxRetries})`);
+        const delay = Math.min(requestedDelay + 2, 45) * 1000;
+        console.log(`[Omie Vendas][${account}] Rate limit hit, waiting ${delay/1000}s (attempt ${attempt + 1}/${maxRetries})`);
         await new Promise(r => setTimeout(r, delay));
         continue;
+      }
+      // On rate limit exhaustion, return null instead of throwing to allow partial progress
+      if (isRateLimit) {
+        console.log(`[Omie Vendas][${account}] Rate limit persists after ${maxRetries} retries, returning null`);
+        return null;
       }
       throw new Error(`Erro Omie Vendas (${account}): ${result.faultstring}`);
     }
