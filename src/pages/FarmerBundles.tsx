@@ -306,6 +306,20 @@ const BundleCardFull = ({
         </Button>
       </div>
 
+      {/* CTA: Create order from bundle */}
+      <Button
+        size="sm"
+        className="w-full h-7 text-[9px] gap-1 mb-2"
+        disabled={!customerId}
+        onClick={() => {
+          const params = new URLSearchParams();
+          if (customerId) params.set('customer', customerId);
+          navigate(`/sales/new?${params.toString()}`);
+        }}
+      >
+        <ShoppingCart className="w-3 h-3" /> Montar pedido com este bundle
+      </Button>
+
       {/* ─── DIAGNOSTIC QUESTIONS ──────────────────────────────── */}
       {activeSection === 'questions' && (
         <div className="space-y-2">
