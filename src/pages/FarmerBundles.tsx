@@ -14,7 +14,8 @@ import {
   Loader2, Package, RefreshCw, ChevronDown, ChevronUp,
   BarChart3, Layers, Zap, ArrowRight,
   Phone, Send, FileText, Sparkles, Copy, Check,
-  HelpCircle, ThumbsUp, ThumbsDown, Minus, RotateCcw, Save
+  HelpCircle, ThumbsUp, ThumbsDown, Minus, RotateCcw, Save,
+  ShoppingCart
 } from 'lucide-react';
 import { useToast } from '@/hooks/use-toast';
 
