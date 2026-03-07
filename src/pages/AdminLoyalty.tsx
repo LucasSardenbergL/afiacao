@@ -185,6 +185,22 @@ export default function AdminLoyalty() {
   const totalEarned = customers.reduce((s, c) => s + c.total_earned, 0);
   const totalRedeemed = customers.reduce((s, c) => s + c.total_redeemed, 0);
 
+  // Estimated liability: 1 pt ≈ R$0.01 (conservative estimate based on typical reward catalog)
+  const estimatedLiability = totalPointsCirculating * 0.01;
+  const redemptionRate = totalEarned > 0 ? ((totalRedeemed / totalEarned) * 100).toFixed(1) : '0';
+
+  // Top redeemed rewards
+  const rewardCounts = new Map<string, number>();
+  for (const r of redemptions) {
+    rewardCounts.set(r.reward_name, (rewardCounts.get(r.reward_name) || 0) + 1);
+  }
+  const topRewards = Array.from(rewardCounts.entries())
+    .sort((a, b) => b[1] - a[1])
+    .slice(0, 3);
+
+  // Top balance users (already sorted)
+  const topBalanceUsers = customers.slice(0, 5);
+
   const filtered = customers.filter(c =>
     c.name.toLowerCase().includes(search.toLowerCase())
   );
