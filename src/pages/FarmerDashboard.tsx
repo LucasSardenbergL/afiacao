@@ -141,14 +141,16 @@ const FarmerDashboard = () => {
               agenda.map((item, i) => {
                 const atc = agendaTypeConfig[item.agendaType];
                 const hc = healthColors[item.healthClass] || healthColors.critico;
+                const score = clientScores.find(c => c.customer_user_id === item.customer_user_id);
+                const phone = score?.customer_phone;
                 return (
                   <Card key={`${item.customer_user_id}-${i}`} className={`border ${hc.border}`}>
                     <CardContent className="p-3">
-                      <div className="flex items-center justify-between">
+                      <div className="flex items-center justify-between gap-2">
                         <div className="flex-1 min-w-0">
                           <div className="flex items-center gap-2">
                             <p className="text-sm font-medium truncate">{item.customer_name}</p>
-                            <span className={`text-[9px] px-1.5 py-0.5 rounded-full ${atc.color}`}>
+                            <span className={`text-[9px] px-1.5 py-0.5 rounded-full shrink-0 ${atc.color}`}>
                               {atc.label}
                             </span>
                           </div>
@@ -156,16 +158,43 @@ const FarmerDashboard = () => {
                             Priority: {item.priorityScore.toFixed(1)} · {healthLabels[item.healthClass]}
                           </p>
                         </div>
-                        <Button
-                          size="sm"
-                          variant="ghost"
-                          className="shrink-0"
-                          onClick={() => {
-                            navigate('/farmer/calls');
-                          }}
-                        >
-                          <Phone className="w-4 h-4" />
-                        </Button>
+                        <div className="flex items-center gap-0.5 shrink-0">
+                          {phone ? (
+                            <Tooltip>
+                              <TooltipTrigger asChild>
+                                <Button size="icon" variant="ghost" className="h-8 w-8 text-primary" asChild>
+                                  <a href={`tel:${phone}`}><Phone className="w-3.5 h-3.5" /></a>
+                                </Button>
+                              </TooltipTrigger>
+                              <TooltipContent><p className="text-xs">Ligar</p></TooltipContent>
+                            </Tooltip>
+                          ) : (
+                            <Tooltip>
+                              <TooltipTrigger asChild>
+                                <span><Button size="icon" variant="ghost" className="h-8 w-8" disabled><Phone className="w-3.5 h-3.5" /></Button></span>
+                              </TooltipTrigger>
+                              <TooltipContent><p className="text-xs">Sem telefone</p></TooltipContent>
+                            </Tooltip>
+                          )}
+                          <Tooltip>
+                            <TooltipTrigger asChild>
+                              <Button size="icon" variant="ghost" className="h-8 w-8"
+                                onClick={() => navigate(`/sales/new?customer=${item.customer_user_id}`)}>
+                                <ShoppingCart className="w-3.5 h-3.5" />
+                              </Button>
+                            </TooltipTrigger>
+                            <TooltipContent><p className="text-xs">Novo pedido</p></TooltipContent>
+                          </Tooltip>
+                          <Tooltip>
+                            <TooltipTrigger asChild>
+                              <Button size="icon" variant="ghost" className="h-8 w-8"
+                                onClick={() => navigate(`/admin/customers/${item.customer_user_id}`)}>
+                                <Eye className="w-3.5 h-3.5" />
+                              </Button>
+                            </TooltipTrigger>
+                            <TooltipContent><p className="text-xs">Ver cliente</p></TooltipContent>
+                          </Tooltip>
+                        </div>
                       </div>
                     </CardContent>
                   </Card>
