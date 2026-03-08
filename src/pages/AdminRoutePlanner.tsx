@@ -411,7 +411,7 @@ const AdminRoutePlanner = () => {
     return geocodedAllStops.filter(s => s.timeSlot === filterPeriod || !s.timeSlot);
   }, [geocodedAllStops, filterPeriod]);
 
-  // Optimize route: priority-weighted nearest-neighbor
+  // Optimize route: priority-grouped nearest-neighbor
   const optimizedRoute = useMemo(() => {
     if (filteredStops.length <= 1) return filteredStops;
 
@@ -419,41 +419,64 @@ const AdminRoutePlanner = () => {
     const withoutCoords = filteredStops.filter(s => !s.lat || !s.lng)
       .sort((a, b) => b.priorityScore - a.priorityScore);
 
-    const morning = withCoords.filter(s => s.timeSlot === 'manha' || !s.timeSlot);
-    const afternoon = withCoords.filter(s => s.timeSlot === 'tarde');
-
-    const optimizeGroup = (group: RouteStop[]): RouteStop[] => {
+    // Nearest-neighbor within a group, optionally starting from a given point
+    const nearestNeighbor = (group: RouteStop[], startFrom?: RouteStop): RouteStop[] => {
       if (group.length <= 1) return group;
-      // Start from the highest-priority stop
-      const sorted = [...group].sort((a, b) => b.priorityScore - a.priorityScore);
-      const result: RouteStop[] = [sorted[0]];
-      const remaining = sorted.slice(1);
+      const result: RouteStop[] = [];
+      const remaining = [...group];
+
+      // Pick starting point: provided anchor or highest-priority stop
+      if (startFrom?.lat && startFrom?.lng) {
+        // Find nearest to anchor
+        let bestIdx = 0, bestDist = Infinity;
+        remaining.forEach((s, i) => {
+          const d = distKm(startFrom, s);
+          if (d < bestDist) { bestDist = d; bestIdx = i; }
+        });
+        result.push(remaining.splice(bestIdx, 1)[0]);
+      } else {
+        remaining.sort((a, b) => b.priorityScore - a.priorityScore);
+        result.push(remaining.splice(0, 1)[0]);
+      }
 
       while (remaining.length > 0) {
         const last = result[result.length - 1];
-        let bestIdx = 0;
-        let bestScore = -Infinity;
-
-        remaining.forEach((stop, idx) => {
-          // Distance in km (approx)
-          const distKm = Math.sqrt(
-            Math.pow((stop.lat! - last.lat!) * 111, 2) +
-            Math.pow((stop.lng! - last.lng!) * 111 * Math.cos(last.lat! * Math.PI / 180), 2)
-          );
-          // Proximity bonus: closer = higher (max ~10 for < 1km)
-          const proximityBonus = Math.max(0, 10 - distKm * 2);
-          // Combined: priority weight (70%) + proximity (30%)
-          const combined = stop.priorityScore * 0.7 + proximityBonus * 3;
-          if (combined > bestScore) { bestScore = combined; bestIdx = idx; }
+        let bestIdx = 0, bestDist = Infinity;
+        remaining.forEach((s, i) => {
+          const d = distKm(last, s);
+          if (d < bestDist) { bestDist = d; bestIdx = i; }
         });
         result.push(remaining.splice(bestIdx, 1)[0]);
       }
       return result;
     };
 
-    const optimized = filterPeriod === 'tarde' ? optimizeGroup(afternoon)
-      : filterPeriod === 'manha' ? optimizeGroup(morning)
-      : [...optimizeGroup(morning), ...optimizeGroup(afternoon)];
+    const distKm = (a: RouteStop, b: RouteStop) => Math.sqrt(
+      Math.pow((b.lat! - a.lat!) * 111, 2) +
+      Math.pow((b.lng! - a.lng!) * 111 * Math.cos(a.lat! * Math.PI / 180), 2)
+    );
+
+    // Group by priority tier, then nearest-neighbor each, chaining end→start
+    const buildPriorityRoute = (stops: RouteStop[]): RouteStop[] => {
+      const alta = stops.filter(s => s.priorityLabel === 'alta');
+      const media = stops.filter(s => s.priorityLabel === 'media');
+      const baixa = stops.filter(s => s.priorityLabel === 'baixa');
+
+      const routeAlta = nearestNeighbor(alta);
+      const lastAlta = routeAlta[routeAlta.length - 1];
+      const routeMedia = nearestNeighbor(media, lastAlta);
+      const lastMedia = routeMedia[routeMedia.length - 1] || lastAlta;
+      const routeBaixa = nearestNeighbor(baixa, lastMedia);
+
+      return [...routeAlta, ...routeMedia, ...routeBaixa];
+    };
+
+    const morning = withCoords.filter(s => s.timeSlot === 'manha' || !s.timeSlot);
+    const afternoon = withCoords.filter(s => s.timeSlot === 'tarde');
+
+    const optimized = filterPeriod === 'tarde' ? buildPriorityRoute(afternoon)
+      : filterPeriod === 'manha' ? buildPriorityRoute(morning)
+      : [...buildPriorityRoute(morning), ...buildPriorityRoute(afternoon)];
 
     return [...optimized, ...withoutCoords];
   }, [filteredStops, filterPeriod]);
