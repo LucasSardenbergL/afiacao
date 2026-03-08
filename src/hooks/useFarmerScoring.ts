@@ -99,7 +99,11 @@ export const useFarmerScoring = (farmerId?: string) => {
 
   // Calculate scores for all clients
   const calculateScores = useCallback(async () => {
-    if (!targetFarmerId) return;
+    if (!targetFarmerId) {
+      setCalculating(false);
+      setLoading(false);
+      return;
+    }
     setCalculating(true);
 
     try {
