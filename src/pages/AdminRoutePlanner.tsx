@@ -736,7 +736,11 @@ const AdminRoutePlanner = () => {
                         <p className="text-xs text-muted-foreground/80 mt-0.5 line-clamp-2">
                           {stop.visitReason}
                         </p>
-                        <div className="flex items-center gap-3 mt-1.5 text-xs text-muted-foreground">
+                        <div className="flex items-center gap-3 mt-1.5 text-xs text-muted-foreground flex-wrap">
+                          <span className="flex items-center gap-1">
+                            <Clock className="w-3 h-3" />
+                            ~{STOP_DURATION_MIN[stop.stopType]}min
+                          </span>
                           {stop.timeSlot && (
                             <span className="flex items-center gap-1">
                               <Clock className="w-3 h-3" />
