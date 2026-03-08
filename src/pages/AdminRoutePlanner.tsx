@@ -296,7 +296,7 @@ const AdminRoutePlanner = () => {
           reasons.push(`${tools.length} ferramenta(s) com afiação vencida`);
         }
 
-        stops.push({
+        stops.push(enrichWithPriority({
           id: `commercial-${cid}`,
           stopType,
           customerUserId: cid,
@@ -312,7 +312,7 @@ const AdminRoutePlanner = () => {
           businessHoursClose: profile?.business_hours_close || null,
           status: stopType === 'hybrid_visit' ? 'hybrid' : 'commercial',
           visitReason: reasons.join(' · ') || 'Visita comercial',
-        });
+        }));
       }
 
       setCommercialStops(stops);
