@@ -163,8 +163,8 @@ const AdminRoutePlanner = () => {
       const { data: orders, error } = await supabase
         .from('orders')
         .select('*')
-        .in('status', ['pedido_recebido', 'em_producao', 'pronto', 'em_transito'])
-        .eq('delivery_option', 'pickup');
+        .in('status', ['pedido_recebido', 'aguardando_coleta', 'pronto_entrega', 'em_rota'])
+        .in('delivery_option', ['coleta_entrega', 'somente_coleta', 'somente_entrega']);
 
       if (error) throw error;
       if (!orders || orders.length === 0) {
@@ -185,7 +185,7 @@ const AdminRoutePlanner = () => {
         const defaultAddr = addresses?.find(a => a.user_id === order.user_id && a.is_default) || addresses?.find(a => a.user_id === order.user_id);
         const addr = orderAddress || defaultAddr;
 
-        const isDelivery = order.status === 'pronto' || order.status === 'em_transito';
+        const isDelivery = order.status === 'pronto_entrega' || order.status === 'em_rota';
 
         return enrichWithPriority({
           id: order.id,
