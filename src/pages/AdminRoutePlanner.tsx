@@ -10,7 +10,7 @@ import { supabase } from '@/integrations/supabase/client';
 import { useAuth } from '@/contexts/AuthContext';
 import { useFarmerScoring } from '@/hooks/useFarmerScoring';
 import { useToast } from '@/hooks/use-toast';
-import { Loader2, MapPin, Clock, Route, Filter, Navigation, ExternalLink, Truck, ShoppingBag, Wrench, Layers, Phone } from 'lucide-react';
+import { Loader2, MapPin, Clock, Route, Filter, Navigation, ExternalLink, Truck, ShoppingBag, Wrench, Layers, Phone, ArrowUp, ArrowRight, ArrowDown } from 'lucide-react';
 import L from 'leaflet';
 import 'leaflet/dist/leaflet.css';
 
