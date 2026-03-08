@@ -404,34 +404,42 @@ const AdminRoutePlanner = () => {
     return geocodedAllStops.filter(s => s.timeSlot === filterPeriod || !s.timeSlot);
   }, [geocodedAllStops, filterPeriod]);
 
-  // Optimize route using nearest-neighbor
+  // Optimize route: priority-weighted nearest-neighbor
   const optimizedRoute = useMemo(() => {
-    const stopsWithCoords = filteredStops.filter(s => s.lat && s.lng);
-    if (stopsWithCoords.length <= 1) return filteredStops; // show all even without coords
+    if (filteredStops.length <= 1) return filteredStops;
 
     const withCoords = filteredStops.filter(s => s.lat && s.lng);
-    const withoutCoords = filteredStops.filter(s => !s.lat || !s.lng);
+    const withoutCoords = filteredStops.filter(s => !s.lat || !s.lng)
+      .sort((a, b) => b.priorityScore - a.priorityScore);
 
     const morning = withCoords.filter(s => s.timeSlot === 'manha' || !s.timeSlot);
     const afternoon = withCoords.filter(s => s.timeSlot === 'tarde');
 
     const optimizeGroup = (group: RouteStop[]): RouteStop[] => {
       if (group.length <= 1) return group;
-      const sorted = [...group].sort((a, b) => (a.businessHoursOpen || '08:00').localeCompare(b.businessHoursOpen || '08:00'));
+      // Start from the highest-priority stop
+      const sorted = [...group].sort((a, b) => b.priorityScore - a.priorityScore);
       const result: RouteStop[] = [sorted[0]];
       const remaining = sorted.slice(1);
 
       while (remaining.length > 0) {
         const last = result[result.length - 1];
-        let nearestIdx = 0, nearestDist = Infinity;
+        let bestIdx = 0;
+        let bestScore = -Infinity;
+
         remaining.forEach((stop, idx) => {
-          const dist = Math.sqrt(
+          // Distance in km (approx)
+          const distKm = Math.sqrt(
             Math.pow((stop.lat! - last.lat!) * 111, 2) +
             Math.pow((stop.lng! - last.lng!) * 111 * Math.cos(last.lat! * Math.PI / 180), 2)
           );
-          if (dist < nearestDist) { nearestDist = dist; nearestIdx = idx; }
+          // Proximity bonus: closer = higher (max ~10 for < 1km)
+          const proximityBonus = Math.max(0, 10 - distKm * 2);
+          // Combined: priority weight (70%) + proximity (30%)
+          const combined = stop.priorityScore * 0.7 + proximityBonus * 3;
+          if (combined > bestScore) { bestScore = combined; bestIdx = idx; }
         });
-        result.push(remaining.splice(nearestIdx, 1)[0]);
+        result.push(remaining.splice(bestIdx, 1)[0]);
       }
       return result;
     };
