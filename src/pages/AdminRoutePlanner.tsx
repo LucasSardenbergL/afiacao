@@ -554,6 +554,33 @@ const AdminRoutePlanner = () => {
     return counts;
   }, [optimizedRoute]);
 
+  // Total estimated duration
+  const totalEstimatedMin = useMemo(() => {
+    // Sum stop durations
+    const stopMin = optimizedRoute.reduce((sum, s) => sum + STOP_DURATION_MIN[s.stopType], 0);
+    // Estimate travel time: ~5 min between consecutive geocoded stops (rough urban avg)
+    const stopsWithCoords = optimizedRoute.filter(s => s.lat && s.lng);
+    let travelMin = 0;
+    for (let i = 1; i < stopsWithCoords.length; i++) {
+      const a = stopsWithCoords[i - 1];
+      const b = stopsWithCoords[i];
+      const distKm = Math.sqrt(
+        Math.pow((b.lat! - a.lat!) * 111, 2) +
+        Math.pow((b.lng! - a.lng!) * 111 * Math.cos(a.lat! * Math.PI / 180), 2)
+      );
+      // ~30 km/h urban avg → distKm / 30 * 60 min
+      travelMin += Math.round((distKm / 30) * 60);
+    }
+    return { stopMin, travelMin, totalMin: stopMin + travelMin };
+  }, [optimizedRoute]);
+
+  const formatDuration = (min: number) => {
+    if (min < 60) return `${min}min`;
+    const h = Math.floor(min / 60);
+    const m = min % h;
+    return m > 0 ? `${h}h${String(m).padStart(2, '0')}` : `${h}h`;
+  };
+
   const isLoading = authLoading || loading || scoringLoading;
 
   if (isLoading) {
