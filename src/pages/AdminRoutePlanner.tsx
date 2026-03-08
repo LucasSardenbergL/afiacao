@@ -99,6 +99,13 @@ function enrichWithPriority(stop: Omit<RouteStop, 'priorityScore' | 'priorityLab
   return { ...stop, ...computeStopPriority(stop) } as RouteStop;
 }
 
+const STOP_DURATION_MIN: Record<StopType, number> = {
+  pickup_tools: 10,
+  deliver_tools: 8,
+  sales_visit: 20,
+  hybrid_visit: 30,
+};
+
 const PRIORITY_CONFIG: Record<RouteStop['priorityLabel'], { label: string; bgClass: string; icon: typeof ArrowUp }> = {
   alta: { label: 'Alta', bgClass: 'bg-red-100 text-red-700 dark:bg-red-900 dark:text-red-300', icon: ArrowUp },
   media: { label: 'Média', bgClass: 'bg-yellow-100 text-yellow-700 dark:bg-yellow-900 dark:text-yellow-300', icon: ArrowRight },
@@ -547,6 +554,33 @@ const AdminRoutePlanner = () => {
     return counts;
   }, [optimizedRoute]);
 
+  // Total estimated duration
+  const totalEstimatedMin = useMemo(() => {
+    // Sum stop durations
+    const stopMin = optimizedRoute.reduce((sum, s) => sum + STOP_DURATION_MIN[s.stopType], 0);
+    // Estimate travel time: ~5 min between consecutive geocoded stops (rough urban avg)
+    const stopsWithCoords = optimizedRoute.filter(s => s.lat && s.lng);
+    let travelMin = 0;
+    for (let i = 1; i < stopsWithCoords.length; i++) {
+      const a = stopsWithCoords[i - 1];
+      const b = stopsWithCoords[i];
+      const distKm = Math.sqrt(
+        Math.pow((b.lat! - a.lat!) * 111, 2) +
+        Math.pow((b.lng! - a.lng!) * 111 * Math.cos(a.lat! * Math.PI / 180), 2)
+      );
+      // ~30 km/h urban avg → distKm / 30 * 60 min
+      travelMin += Math.round((distKm / 30) * 60);
+    }
+    return { stopMin, travelMin, totalMin: stopMin + travelMin };
+  }, [optimizedRoute]);
+
+  const formatDuration = (min: number) => {
+    if (min < 60) return `${min}min`;
+    const h = Math.floor(min / 60);
+    const m = min % h;
+    return m > 0 ? `${h}h${String(m).padStart(2, '0')}` : `${h}h`;
+  };
+
   const isLoading = authLoading || loading || scoringLoading;
 
   if (isLoading) {
@@ -651,7 +685,9 @@ const AdminRoutePlanner = () => {
           <h2 className="text-lg font-semibold text-foreground flex items-center gap-2">
             <Navigation className="w-5 h-5 text-primary" />
             Rota Otimizada
-            <Badge variant="outline" className="ml-auto text-xs">{optimizedRoute.length} paradas</Badge>
+            <Badge variant="outline" className="ml-auto text-xs">
+              {optimizedRoute.length} paradas — ~{formatDuration(totalEstimatedMin.totalMin)}
+            </Badge>
           </h2>
 
           {optimizedRoute.length === 0 ? (
@@ -700,7 +736,11 @@ const AdminRoutePlanner = () => {
                         <p className="text-xs text-muted-foreground/80 mt-0.5 line-clamp-2">
                           {stop.visitReason}
                         </p>
-                        <div className="flex items-center gap-3 mt-1.5 text-xs text-muted-foreground">
+                        <div className="flex items-center gap-3 mt-1.5 text-xs text-muted-foreground flex-wrap">
+                          <span className="flex items-center gap-1">
+                            <Clock className="w-3 h-3" />
+                            ~{STOP_DURATION_MIN[stop.stopType]}min
+                          </span>
                           {stop.timeSlot && (
                             <span className="flex items-center gap-1">
                               <Clock className="w-3 h-3" />
