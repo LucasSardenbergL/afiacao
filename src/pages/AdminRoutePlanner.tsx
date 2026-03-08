@@ -27,7 +27,7 @@ type PlanningMode = 'logistica' | 'comercial' | 'hibrido';
 type FilterPeriod = 'all' | 'manha' | 'tarde';
 
 interface RouteStop {
-  id: string; // orderId or generated id
+  id: string;
   stopType: StopType;
   customerUserId: string;
   customerName: string;
@@ -50,7 +50,60 @@ interface RouteStop {
   lat?: number;
   lng?: number;
   total?: number;
+  priorityScore: number;
+  priorityLabel: 'alta' | 'media' | 'baixa';
+  priorityFactors: string[];
 }
+
+// ─── Priority scoring ────────────────────────────────────────────────
+function computeStopPriority(stop: Omit<RouteStop, 'priorityScore' | 'priorityLabel' | 'priorityFactors'>): Pick<RouteStop, 'priorityScore' | 'priorityLabel' | 'priorityFactors'> {
+  let score = 0;
+  const factors: string[] = [];
+
+  // Logistic urgency
+  if (stop.stopType === 'pickup_tools') {
+    score += 40; factors.push('+40 coleta pendente');
+  } else if (stop.stopType === 'deliver_tools') {
+    score += 35; factors.push('+35 entrega pronta');
+  }
+
+  // Overdue tools
+  if (stop.visitReason.includes('afiação vencida')) {
+    score += 25; factors.push('+25 ferramenta vencida');
+  }
+
+  // Commercial opportunity from agenda
+  if (stop.visitReason.includes('Risco')) {
+    score += 20; factors.push('+20 risco de churn');
+  } else if (stop.visitReason.includes('Expansão')) {
+    score += 15; factors.push('+15 expansão cross-sell');
+  } else if (stop.visitReason.includes('Follow-up')) {
+    score += 10; factors.push('+10 follow-up');
+  }
+
+  // Hybrid gets a bonus (multiple reasons to visit)
+  if (stop.stopType === 'hybrid_visit') {
+    score += 15; factors.push('+15 visita híbrida');
+  }
+
+  // Higher-value orders
+  if (stop.total && stop.total > 200) {
+    score += 10; factors.push('+10 pedido alto valor');
+  }
+
+  const label: RouteStop['priorityLabel'] = score > 50 ? 'alta' : score >= 25 ? 'media' : 'baixa';
+  return { priorityScore: score, priorityLabel: label, priorityFactors: factors };
+}
+
+function enrichWithPriority(stop: Omit<RouteStop, 'priorityScore' | 'priorityLabel' | 'priorityFactors'>): RouteStop {
+  return { ...stop, ...computeStopPriority(stop) } as RouteStop;
+}
+
+const PRIORITY_CONFIG: Record<RouteStop['priorityLabel'], { label: string; bgClass: string; icon: typeof ArrowUp }> = {
+  alta: { label: 'Alta', bgClass: 'bg-red-100 text-red-700 dark:bg-red-900 dark:text-red-300', icon: ArrowUp },
+  media: { label: 'Média', bgClass: 'bg-yellow-100 text-yellow-700 dark:bg-yellow-900 dark:text-yellow-300', icon: ArrowRight },
+  baixa: { label: 'Baixa', bgClass: 'bg-muted text-muted-foreground', icon: ArrowDown },
+};
 
 const STOP_CONFIG: Record<StopType, { label: string; color: string; bgClass: string; textClass: string; markerColor: string }> = {
   pickup_tools: { label: 'Coleta', color: 'hsl(210, 80%, 50%)', bgClass: 'bg-blue-100 text-blue-800 dark:bg-blue-900 dark:text-blue-200', textClass: 'text-blue-600', markerColor: '#3b82f6' },
