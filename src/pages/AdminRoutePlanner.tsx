@@ -329,11 +329,12 @@ const AdminRoutePlanner = () => {
     const upgraded = logisticStops.map(s => {
       if (commercialCustomerIds.has(s.customerUserId)) {
         const commercial = commercialStops.find(c => c.customerUserId === s.customerUserId);
-        return {
+        const merged = {
           ...s,
           stopType: 'hybrid_visit' as StopType,
           visitReason: `${s.visitReason} · ${commercial?.visitReason || ''}`,
         };
+        return enrichWithPriority(merged);
       }
       return s;
     });
