@@ -703,7 +703,62 @@ const AdminRoutePlanner = () => {
           )}
         </Card>
 
-        {/* Ordered stop list */}
+        {/* Route action buttons */}
+        {optimizedRoute.some(s => s.lat && s.lng) && (
+          <div className="flex gap-2">
+            <Button
+              className="flex-1 gap-2"
+              onClick={() => {
+                const stopsWithCoords = optimizedRoute.filter(s => s.lat && s.lng).slice(0, 25);
+                const tooMany = optimizedRoute.filter(s => s.lat && s.lng).length > 25;
+
+                if (tooMany) {
+                  toast({ title: 'Google Maps suporta até 25 paradas', description: 'Mostrando as 25 de maior prioridade.' });
+                }
+
+                const waypoints = stopsWithCoords.map(s => `${s.lat},${s.lng}`);
+
+                // Try to get current location as origin
+                if (navigator.geolocation) {
+                  navigator.geolocation.getCurrentPosition(
+                    (pos) => {
+                      const origin = `${pos.coords.latitude},${pos.coords.longitude}`;
+                      const url = `https://www.google.com/maps/dir/${origin}/${waypoints.join('/')}`;
+                      window.open(url, '_blank');
+                    },
+                    () => {
+                      // Fallback: start from first waypoint
+                      const url = `https://www.google.com/maps/dir/${waypoints.join('/')}`;
+                      window.open(url, '_blank');
+                    },
+                    { timeout: 5000 }
+                  );
+                } else {
+                  const url = `https://www.google.com/maps/dir/${waypoints.join('/')}`;
+                  window.open(url, '_blank');
+                }
+              }}
+            >
+              <Navigation className="w-4 h-4" />
+              Abrir rota no Google Maps
+            </Button>
+            <Button
+              variant="outline"
+              className="gap-2"
+              onClick={() => {
+                const first = optimizedRoute.find(s => s.lat && s.lng);
+                if (first) {
+                  window.open(`https://waze.com/ul?ll=${first.lat},${first.lng}&navigate=yes`, '_blank');
+                }
+              }}
+            >
+              <ExternalLink className="w-4 h-4" />
+              Waze
+            </Button>
+          </div>
+        )}
+
+
         <div className="space-y-2">
           <h2 className="text-lg font-semibold text-foreground flex items-center gap-2">
             <Navigation className="w-5 h-5 text-primary" />
