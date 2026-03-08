@@ -180,7 +180,7 @@ const AdminRoutePlanner = () => {
 
         const isDelivery = order.status === 'pronto' || order.status === 'em_transito';
 
-        return {
+        return enrichWithPriority({
           id: order.id,
           stopType: isDelivery ? 'deliver_tools' as StopType : 'pickup_tools' as StopType,
           customerUserId: order.user_id,
@@ -198,7 +198,7 @@ const AdminRoutePlanner = () => {
           visitReason: isDelivery ? 'Entrega de ferramentas' : 'Coleta de ferramentas',
           orderId: order.id,
           total: order.total,
-        };
+        });
       });
 
       setLogisticStops(stops);
