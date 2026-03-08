@@ -99,6 +99,13 @@ function enrichWithPriority(stop: Omit<RouteStop, 'priorityScore' | 'priorityLab
   return { ...stop, ...computeStopPriority(stop) } as RouteStop;
 }
 
+const STOP_DURATION_MIN: Record<StopType, number> = {
+  pickup_tools: 10,
+  deliver_tools: 8,
+  sales_visit: 20,
+  hybrid_visit: 30,
+};
+
 const PRIORITY_CONFIG: Record<RouteStop['priorityLabel'], { label: string; bgClass: string; icon: typeof ArrowUp }> = {
   alta: { label: 'Alta', bgClass: 'bg-red-100 text-red-700 dark:bg-red-900 dark:text-red-300', icon: ArrowUp },
   media: { label: 'Média', bgClass: 'bg-yellow-100 text-yellow-700 dark:bg-yellow-900 dark:text-yellow-300', icon: ArrowRight },
