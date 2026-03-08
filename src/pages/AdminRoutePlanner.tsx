@@ -685,7 +685,9 @@ const AdminRoutePlanner = () => {
           <h2 className="text-lg font-semibold text-foreground flex items-center gap-2">
             <Navigation className="w-5 h-5 text-primary" />
             Rota Otimizada
-            <Badge variant="outline" className="ml-auto text-xs">{optimizedRoute.length} paradas</Badge>
+            <Badge variant="outline" className="ml-auto text-xs">
+              {optimizedRoute.length} paradas — ~{formatDuration(totalEstimatedMin.totalMin)}
+            </Badge>
           </h2>
 
           {optimizedRoute.length === 0 ? (
