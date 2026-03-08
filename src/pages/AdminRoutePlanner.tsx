@@ -683,6 +683,16 @@ const AdminRoutePlanner = () => {
                             {getStopIcon(stop.stopType)}
                             <span className="ml-1">{cfg.label}</span>
                           </Badge>
+                          {(() => {
+                            const pCfg = PRIORITY_CONFIG[stop.priorityLabel];
+                            const PIcon = pCfg.icon;
+                            return (
+                              <Badge className={`text-[10px] px-1.5 py-0 ${pCfg.bgClass} border-0 gap-0.5`} title={stop.priorityFactors.join(', ')}>
+                                <PIcon className="w-3 h-3" />
+                                {pCfg.label}
+                              </Badge>
+                            );
+                          })()}
                         </div>
                         <p className="text-sm text-muted-foreground truncate">
                           {stop.address.street}, {stop.address.number} - {stop.address.neighborhood}
