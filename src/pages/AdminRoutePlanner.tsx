@@ -10,7 +10,7 @@ import { supabase } from '@/integrations/supabase/client';
 import { useAuth } from '@/contexts/AuthContext';
 import { useFarmerScoring } from '@/hooks/useFarmerScoring';
 import { useToast } from '@/hooks/use-toast';
-import { Loader2, MapPin, Clock, Route, Filter, Navigation, ExternalLink, Truck, ShoppingBag, Wrench, Layers, Phone } from 'lucide-react';
+import { Loader2, MapPin, Clock, Route, Filter, Navigation, ExternalLink, Truck, ShoppingBag, Wrench, Layers, Phone, ArrowUp, ArrowRight, ArrowDown } from 'lucide-react';
 import L from 'leaflet';
 import 'leaflet/dist/leaflet.css';
 
@@ -27,7 +27,7 @@ type PlanningMode = 'logistica' | 'comercial' | 'hibrido';
 type FilterPeriod = 'all' | 'manha' | 'tarde';
 
 interface RouteStop {
-  id: string; // orderId or generated id
+  id: string;
   stopType: StopType;
   customerUserId: string;
   customerName: string;
@@ -50,7 +50,60 @@ interface RouteStop {
   lat?: number;
   lng?: number;
   total?: number;
+  priorityScore: number;
+  priorityLabel: 'alta' | 'media' | 'baixa';
+  priorityFactors: string[];
 }
+
+// ─── Priority scoring ────────────────────────────────────────────────
+function computeStopPriority(stop: Omit<RouteStop, 'priorityScore' | 'priorityLabel' | 'priorityFactors'>): Pick<RouteStop, 'priorityScore' | 'priorityLabel' | 'priorityFactors'> {
+  let score = 0;
+  const factors: string[] = [];
+
+  // Logistic urgency
+  if (stop.stopType === 'pickup_tools') {
+    score += 40; factors.push('+40 coleta pendente');
+  } else if (stop.stopType === 'deliver_tools') {
+    score += 35; factors.push('+35 entrega pronta');
+  }
+
+  // Overdue tools
+  if (stop.visitReason.includes('afiação vencida')) {
+    score += 25; factors.push('+25 ferramenta vencida');
+  }
+
+  // Commercial opportunity from agenda
+  if (stop.visitReason.includes('Risco')) {
+    score += 20; factors.push('+20 risco de churn');
+  } else if (stop.visitReason.includes('Expansão')) {
+    score += 15; factors.push('+15 expansão cross-sell');
+  } else if (stop.visitReason.includes('Follow-up')) {
+    score += 10; factors.push('+10 follow-up');
+  }
+
+  // Hybrid gets a bonus (multiple reasons to visit)
+  if (stop.stopType === 'hybrid_visit') {
+    score += 15; factors.push('+15 visita híbrida');
+  }
+
+  // Higher-value orders
+  if (stop.total && stop.total > 200) {
+    score += 10; factors.push('+10 pedido alto valor');
+  }
+
+  const label: RouteStop['priorityLabel'] = score > 50 ? 'alta' : score >= 25 ? 'media' : 'baixa';
+  return { priorityScore: score, priorityLabel: label, priorityFactors: factors };
+}
+
+function enrichWithPriority(stop: Omit<RouteStop, 'priorityScore' | 'priorityLabel' | 'priorityFactors'>): RouteStop {
+  return { ...stop, ...computeStopPriority(stop) } as RouteStop;
+}
+
+const PRIORITY_CONFIG: Record<RouteStop['priorityLabel'], { label: string; bgClass: string; icon: typeof ArrowUp }> = {
+  alta: { label: 'Alta', bgClass: 'bg-red-100 text-red-700 dark:bg-red-900 dark:text-red-300', icon: ArrowUp },
+  media: { label: 'Média', bgClass: 'bg-yellow-100 text-yellow-700 dark:bg-yellow-900 dark:text-yellow-300', icon: ArrowRight },
+  baixa: { label: 'Baixa', bgClass: 'bg-muted text-muted-foreground', icon: ArrowDown },
+};
 
 const STOP_CONFIG: Record<StopType, { label: string; color: string; bgClass: string; textClass: string; markerColor: string }> = {
   pickup_tools: { label: 'Coleta', color: 'hsl(210, 80%, 50%)', bgClass: 'bg-blue-100 text-blue-800 dark:bg-blue-900 dark:text-blue-200', textClass: 'text-blue-600', markerColor: '#3b82f6' },
@@ -127,7 +180,7 @@ const AdminRoutePlanner = () => {
 
         const isDelivery = order.status === 'pronto' || order.status === 'em_transito';
 
-        return {
+        return enrichWithPriority({
           id: order.id,
           stopType: isDelivery ? 'deliver_tools' as StopType : 'pickup_tools' as StopType,
           customerUserId: order.user_id,
@@ -145,7 +198,7 @@ const AdminRoutePlanner = () => {
           visitReason: isDelivery ? 'Entrega de ferramentas' : 'Coleta de ferramentas',
           orderId: order.id,
           total: order.total,
-        };
+        });
       });
 
       setLogisticStops(stops);
@@ -243,7 +296,7 @@ const AdminRoutePlanner = () => {
           reasons.push(`${tools.length} ferramenta(s) com afiação vencida`);
         }
 
-        stops.push({
+        stops.push(enrichWithPriority({
           id: `commercial-${cid}`,
           stopType,
           customerUserId: cid,
@@ -259,7 +312,7 @@ const AdminRoutePlanner = () => {
           businessHoursClose: profile?.business_hours_close || null,
           status: stopType === 'hybrid_visit' ? 'hybrid' : 'commercial',
           visitReason: reasons.join(' · ') || 'Visita comercial',
-        });
+        }));
       }
 
       setCommercialStops(stops);
@@ -276,11 +329,12 @@ const AdminRoutePlanner = () => {
     const upgraded = logisticStops.map(s => {
       if (commercialCustomerIds.has(s.customerUserId)) {
         const commercial = commercialStops.find(c => c.customerUserId === s.customerUserId);
-        return {
+        const merged = {
           ...s,
           stopType: 'hybrid_visit' as StopType,
           visitReason: `${s.visitReason} · ${commercial?.visitReason || ''}`,
         };
+        return enrichWithPriority(merged);
       }
       return s;
     });
@@ -350,34 +404,42 @@ const AdminRoutePlanner = () => {
     return geocodedAllStops.filter(s => s.timeSlot === filterPeriod || !s.timeSlot);
   }, [geocodedAllStops, filterPeriod]);
 
-  // Optimize route using nearest-neighbor
+  // Optimize route: priority-weighted nearest-neighbor
   const optimizedRoute = useMemo(() => {
-    const stopsWithCoords = filteredStops.filter(s => s.lat && s.lng);
-    if (stopsWithCoords.length <= 1) return filteredStops; // show all even without coords
+    if (filteredStops.length <= 1) return filteredStops;
 
     const withCoords = filteredStops.filter(s => s.lat && s.lng);
-    const withoutCoords = filteredStops.filter(s => !s.lat || !s.lng);
+    const withoutCoords = filteredStops.filter(s => !s.lat || !s.lng)
+      .sort((a, b) => b.priorityScore - a.priorityScore);
 
     const morning = withCoords.filter(s => s.timeSlot === 'manha' || !s.timeSlot);
     const afternoon = withCoords.filter(s => s.timeSlot === 'tarde');
 
     const optimizeGroup = (group: RouteStop[]): RouteStop[] => {
       if (group.length <= 1) return group;
-      const sorted = [...group].sort((a, b) => (a.businessHoursOpen || '08:00').localeCompare(b.businessHoursOpen || '08:00'));
+      // Start from the highest-priority stop
+      const sorted = [...group].sort((a, b) => b.priorityScore - a.priorityScore);
       const result: RouteStop[] = [sorted[0]];
       const remaining = sorted.slice(1);
 
       while (remaining.length > 0) {
         const last = result[result.length - 1];
-        let nearestIdx = 0, nearestDist = Infinity;
+        let bestIdx = 0;
+        let bestScore = -Infinity;
+
         remaining.forEach((stop, idx) => {
-          const dist = Math.sqrt(
+          // Distance in km (approx)
+          const distKm = Math.sqrt(
             Math.pow((stop.lat! - last.lat!) * 111, 2) +
             Math.pow((stop.lng! - last.lng!) * 111 * Math.cos(last.lat! * Math.PI / 180), 2)
           );
-          if (dist < nearestDist) { nearestDist = dist; nearestIdx = idx; }
+          // Proximity bonus: closer = higher (max ~10 for < 1km)
+          const proximityBonus = Math.max(0, 10 - distKm * 2);
+          // Combined: priority weight (70%) + proximity (30%)
+          const combined = stop.priorityScore * 0.7 + proximityBonus * 3;
+          if (combined > bestScore) { bestScore = combined; bestIdx = idx; }
         });
-        result.push(remaining.splice(nearestIdx, 1)[0]);
+        result.push(remaining.splice(bestIdx, 1)[0]);
       }
       return result;
     };
@@ -621,6 +683,16 @@ const AdminRoutePlanner = () => {
                             {getStopIcon(stop.stopType)}
                             <span className="ml-1">{cfg.label}</span>
                           </Badge>
+                          {(() => {
+                            const pCfg = PRIORITY_CONFIG[stop.priorityLabel];
+                            const PIcon = pCfg.icon;
+                            return (
+                              <Badge className={`text-[10px] px-1.5 py-0 ${pCfg.bgClass} border-0 gap-0.5`} title={stop.priorityFactors.join(', ')}>
+                                <PIcon className="w-3 h-3" />
+                                {pCfg.label}
+                              </Badge>
+                            );
+                          })()}
                         </div>
                         <p className="text-sm text-muted-foreground truncate">
                           {stop.address.street}, {stop.address.number} - {stop.address.neighborhood}
