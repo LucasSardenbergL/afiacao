@@ -1014,6 +1014,7 @@ const AdminRoutePlanner = () => {
             { key: 'logistica' as PlanningMode, label: 'Logística', icon: <Truck className="w-3.5 h-3.5" /> },
             { key: 'comercial' as PlanningMode, label: 'Comercial', icon: <ShoppingBag className="w-3.5 h-3.5" /> },
             { key: 'hibrido' as PlanningMode, label: 'Híbrido', icon: <Layers className="w-3.5 h-3.5" /> },
+            { key: 'manual' as PlanningMode, label: 'Manual', icon: <Users className="w-3.5 h-3.5" /> },
           ]).map(mode => (
             <Button
               key={mode.key}
@@ -1027,6 +1028,143 @@ const AdminRoutePlanner = () => {
             </Button>
           ))}
         </div>
+        
+        {/* Manual mode UI */}
+        {planningMode === 'manual' && (
+          <Card>
+            <CardHeader>
+              <CardTitle className="text-base flex items-center justify-between">
+                <span>Selecionar Clientes</span>
+                <Badge variant="outline">
+                  {selectedCustomerIds.size} selecionados · ~{estimatedManualHours}h estimadas
+                </Badge>
+              </CardTitle>
+            </CardHeader>
+            <CardContent className="space-y-3">
+              {/* Filters */}
+              <div className="flex items-center gap-2 flex-wrap">
+                {(['todos', 'nunca_visitados', 'sem_compra_30d'] as ManualFilter[]).map(filter => (
+                  <Button
+                    key={filter}
+                    variant={manualFilter === filter ? 'secondary' : 'ghost'}
+                    size="sm"
+                    onClick={() => setManualFilter(filter)}
+                  >
+                    {filter === 'todos' ? 'Todos' : filter === 'nunca_visitados' ? 'Nunca visitados' : 'Sem compra há 30+ dias'}
+                  </Button>
+                ))}
+              </div>
+              
+              {/* Search */}
+              <div className="relative">
+                <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
+                <Input
+                  placeholder="Buscar por nome, cidade, bairro..."
+                  value={manualSearch}
+                  onChange={(e) => setManualSearch(e.target.value)}
+                  className="pl-9"
+                />
+              </div>
+              
+              {/* Customer list */}
+              {loadingManual ? (
+                <div className="flex items-center justify-center py-8">
+                  <Loader2 className="w-6 h-6 animate-spin text-primary" />
+                </div>
+              ) : (
+                <div className="space-y-2 max-h-96 overflow-y-auto">
+                  {filteredManualCustomers.map(customer => {
+                    const isSelected = selectedCustomerIds.has(customer.user_id);
+                    const visitStatus = visitStatuses.get(customer.user_id);
+                    
+                    return (
+                      <div
+                        key={customer.user_id}
+                        className={`p-3 border rounded-lg hover:bg-muted/50 transition-colors ${isSelected ? 'bg-primary/5 border-primary' : ''}`}
+                      >
+                        <div className="flex items-start gap-3">
+                          <Checkbox
+                            checked={isSelected}
+                            onCheckedChange={() => toggleCustomerSelection(customer.user_id)}
+                            className="mt-0.5"
+                          />
+                          <div className="flex-1 min-w-0">
+                            <div className="flex items-center gap-2 flex-wrap mb-1">
+                              <p className="font-medium text-sm">{customer.name}</p>
+                              {getVisitBadge(customer)}
+                              {getOrderBadge(customer)}
+                              {visitStatus?.isCheckedIn && (
+                                <Badge variant="success" className="text-xs">
+                                  <CheckCircle2 className="w-3 h-3 mr-1" />
+                                  Check-in ativo
+                                </Badge>
+                              )}
+                            </div>
+                            <p className="text-xs text-muted-foreground">
+                              {customer.neighborhood}, {customer.city}
+                            </p>
+                            <p className="text-xs text-muted-foreground">
+                              {customer.address.street}, {customer.address.number}
+                            </p>
+                            
+                            {/* Check-in/Check-out buttons */}
+                            {isSelected && (
+                              <div className="mt-2 flex gap-2">
+                                {!visitStatus?.isCheckedIn ? (
+                                  <Button
+                                    size="sm"
+                                    variant="outline"
+                                    onClick={() => handleCheckIn(customer)}
+                                    className="text-xs h-7"
+                                  >
+                                    <CheckCircle2 className="w-3 h-3 mr-1" />
+                                    Check-in
+                                  </Button>
+                                ) : (
+                                  <Button
+                                    size="sm"
+                                    variant="outline"
+                                    onClick={() => {
+                                      // Open check-out dialog
+                                      const result = window.prompt('Resultado da visita?\n1. Pedido fechado\n2. Ausente\n3. Não teve interesse\n4. Outro');
+                                      if (!result) return;
+                                      
+                                      const resultMap: Record<string, string> = {
+                                        '1': 'pedido_fechado',
+                                        '2': 'ausente',
+                                        '3': 'sem_interesse',
+                                        '4': 'outro',
+                                      };
+                                      
+                                      const notes = window.prompt('Observações (opcional):') || '';
+                                      const revenue = result === '1' ? parseFloat(window.prompt('Valor do pedido:') || '0') : 0;
+                                      
+                                      handleCheckOut(customer, resultMap[result] || 'outro', notes, revenue);
+                                    }}
+                                    className="text-xs h-7"
+                                  >
+                                    <XCircle className="w-3 h-3 mr-1" />
+                                    Check-out
+                                  </Button>
+                                )}
+                              </div>
+                            )}
+                          </div>
+                        </div>
+                      </div>
+                    );
+                  })}
+                  
+                  {filteredManualCustomers.length === 0 && (
+                    <div className="text-center py-8 text-muted-foreground text-sm">
+                      Nenhum cliente encontrado
+                    </div>
+                  )}
+                </div>
+              )}
+            </CardContent>
+          </Card>
+        )}
 
         {/* Period filter */}
         <div className="flex items-center gap-2">
