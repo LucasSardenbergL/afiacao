@@ -162,6 +162,15 @@ export function useUnifiedOrder() {
   const [notes, setNotes] = useState('');
   const [submitting, setSubmitting] = useState(false);
   const [activeTab, setActiveTab] = useState('oben');
+  
+  // Order success dialog
+  const [orderSuccessOpen, setOrderSuccessOpen] = useState(false);
+  const [lastOrderData, setLastOrderData] = useState<{
+    customerName: string;
+    items: Array<{ description: string; quantity: number; unitPrice: number }>;
+    total: number;
+    orderNumbers: string[];
+  } | null>(null);
 
   // Pricing
   const { loadDefaultPrices, calculatePrice } = usePricingEngine();
