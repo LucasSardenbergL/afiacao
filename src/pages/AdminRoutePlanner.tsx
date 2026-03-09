@@ -1410,7 +1410,7 @@ const AdminRoutePlanner = () => {
             optimizedRoute.map((stop, idx) => {
               const cfg = STOP_CONFIG[stop.stopType];
               return (
-                <Card key={stop.id} className="hover:shadow-md transition-shadow">
+                <Card key={stop.id} className={`hover:shadow-md transition-shadow ${visitStatuses.get(stop.customerUserId)?.isCheckedIn ? 'border-green-400 bg-green-50/40 dark:bg-green-950/20' : ''}`}>
                   <CardContent className="py-3 px-4">
                     <div className="flex items-start gap-3">
                       {/* Number circle colored by type */}
