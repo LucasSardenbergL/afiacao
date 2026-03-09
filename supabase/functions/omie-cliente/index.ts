@@ -374,69 +374,6 @@ async function buscarClientePorDocumento(documento: string): Promise<{ cliente: 
   }
 }
 
-// Helper to upsert address from Omie cliente data
-async function upsertAddressFromOmie(
-  adminClient: ReturnType<typeof createClient>,
-  userId: string,
-  cliente: OmieCliente
-): Promise<boolean> {
-  // Check if client has address data
-  if (!cliente.endereco || !cliente.cidade || !cliente.estado) {
-    return false;
-  }
-
-  try {
-    // Check if an Omie address already exists for this user
-    const { data: existingAddr } = await adminClient
-      .from("addresses")
-      .select("id")
-      .eq("user_id", userId)
-      .eq("is_from_omie", true)
-      .maybeSingle();
-
-    const addressData = {
-      user_id: userId,
-      label: "Omie",
-      street: cliente.endereco || "",
-      number: cliente.endereco_numero || "S/N",
-      complement: cliente.complemento || null,
-      neighborhood: cliente.bairro || "",
-      city: cliente.cidade || "",
-      state: cliente.estado || "",
-      zip_code: (cliente.cep || "").replace(/\D/g, ""),
-      is_default: true,
-      is_from_omie: true,
-    };
-
-    if (existingAddr) {
-      // Update existing Omie address
-      await adminClient
-        .from("addresses")
-        .update(addressData)
-        .eq("id", existingAddr.id);
-    } else {
-      // Check if user has ANY address
-      const { data: anyAddr } = await adminClient
-        .from("addresses")
-        .select("id")
-        .eq("user_id", userId)
-        .limit(1)
-        .maybeSingle();
-
-      // If user has other addresses, don't set this one as default
-      if (anyAddr) {
-        addressData.is_default = false;
-      }
-
-      await adminClient.from("addresses").insert(addressData);
-    }
-
-    return true;
-  } catch (error) {
-    console.error(`[upsertAddressFromOmie] Error for user ${userId}:`, error);
-    return false;
-  }
-}
 
 async function pesquisarClientes(query: string, pagina: number = 1): Promise<{ clientes: OmieCliente[]; total: number }> {
   try {
