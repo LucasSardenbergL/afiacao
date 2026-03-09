@@ -870,11 +870,20 @@ serve(async (req) => {
         let totalSkipped = 0;
         let totalErrors = 0;
 
-        // Get ALL user_ids that already have addresses (deduplicate)
-        const { data: existingAddresses } = await adminClient
-          .from("addresses")
-          .select("user_id");
-        const usersWithAddress = new Set((existingAddresses || []).map((a: any) => a.user_id));
+        // Get ALL user_ids that already have addresses (paginate to bypass 1000 row limit)
+        let allAddressUserIds: string[] = [];
+        let addrOffset = 0;
+        while (true) {
+          const { data: addrPage } = await adminClient
+            .from("addresses")
+            .select("user_id")
+            .range(addrOffset, addrOffset + 999);
+          if (!addrPage || addrPage.length === 0) break;
+          allAddressUserIds = allAddressUserIds.concat(addrPage.map((a: any) => a.user_id));
+          if (addrPage.length < 1000) break;
+          addrOffset += 1000;
+        }
+        const usersWithAddress = new Set(allAddressUserIds);
 
         // Get ALL omie_clientes mappings (paginate to bypass 1000 row limit)
         let allMappings: Array<{ user_id: string; omie_codigo_cliente: number }> = [];
