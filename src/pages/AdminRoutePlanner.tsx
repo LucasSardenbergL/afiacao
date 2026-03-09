@@ -778,7 +778,7 @@ const AdminRoutePlanner = () => {
             <Card>
               <CardContent className="py-8 text-center text-muted-foreground">
                 {planningMode === 'logistica' ? 'Nenhum pedido com coleta/entrega pendente.'
-                  : planningMode === 'comercial' ? 'Nenhuma visita comercial sugerida.'
+                  : planningMode === 'comercial' ? 'Nenhuma visita comercial disponível. Configure datas de afiação nas ferramentas dos clientes para ativar visitas preventivas.'
                   : 'Nenhuma parada encontrada.'}
               </CardContent>
             </Card>
