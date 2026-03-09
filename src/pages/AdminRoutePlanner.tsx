@@ -39,6 +39,7 @@ interface ManualCustomer {
   phone: string | null;
   city: string;
   neighborhood: string;
+  hasAddress: boolean;
   address: {
     street: string;
     number: string;
@@ -305,15 +306,15 @@ const AdminRoutePlanner = () => {
   const loadManualCustomers = async () => {
     setLoadingManual(true);
     try {
-      // Load all customers
+      // Load all approved non-employee customers
       const { data: profiles, error: profileError } = await supabase
         .from('profiles')
         .select('user_id, name, phone, customer_type')
         .eq('is_approved', true)
+        .or('is_employee.is.null,is_employee.eq.false')
         .order('name');
       
       if (profileError) throw profileError;
-      console.log('[Manual] Profiles aprovados encontrados:', profiles?.length || 0);
       if (!profiles || profiles.length === 0) {
         setManualCustomers([]);
         return;
@@ -321,14 +322,12 @@ const AdminRoutePlanner = () => {
       
       const userIds = profiles.map(p => p.user_id);
       
-      // Load default addresses
+      // Load addresses (best effort — customers may not have one yet)
       const { data: addresses } = await supabase
         .from('addresses')
         .select('*')
         .in('user_id', userIds)
         .order('is_default', { ascending: false });
-      
-      console.log('[Manual] Endereços encontrados:', addresses?.length || 0);
       
       // Load last visit dates
       const { data: lastVisits } = await supabase
@@ -345,51 +344,47 @@ const AdminRoutePlanner = () => {
         .in('customer_user_id', userIds)
         .order('created_at', { ascending: false });
       
-      // Build customer list with metrics
+      // Build customer list — ALL profiles, address is optional
       const now = new Date();
-      const customers: ManualCustomer[] = profiles
-        .map(profile => {
-          const addr = addresses?.find(a => a.user_id === profile.user_id);
-          if (!addr) return null;
-          
-          const lastVisit = lastVisits?.find(v => v.customer_user_id === profile.user_id);
-          const lastOrder = lastOrders?.find(o => o.customer_user_id === profile.user_id);
-          
-          const lastVisitDate = lastVisit?.check_in_at || null;
-          const lastOrderDate = lastOrder?.created_at || null;
-          
-          const daysSinceLastVisit = lastVisitDate 
-            ? Math.floor((now.getTime() - new Date(lastVisitDate).getTime()) / (1000 * 60 * 60 * 24))
-            : null;
-          
-          const daysSinceLastOrder = lastOrderDate
-            ? Math.floor((now.getTime() - new Date(lastOrderDate).getTime()) / (1000 * 60 * 60 * 24))
-            : null;
-          
-          return {
-            user_id: profile.user_id,
-            name: profile.name,
-            phone: profile.phone,
-            city: addr.city,
-            neighborhood: addr.neighborhood,
-            address: {
-              street: addr.street,
-              number: addr.number,
-              neighborhood: addr.neighborhood,
-              city: addr.city,
-              state: addr.state,
-              zip_code: addr.zip_code,
-              complement: addr.complement || undefined,
-            },
-            lastVisitDate,
-            lastOrderDate,
-            daysSinceLastVisit,
-            daysSinceLastOrder,
-          };
-        })
-        .filter(Boolean) as ManualCustomer[];
-      
-      console.log('[Manual] Clientes com endereço:', customers.length);
+      const customers: ManualCustomer[] = profiles.map(profile => {
+        const addr = addresses?.find(a => a.user_id === profile.user_id);
+        
+        const lastVisit = lastVisits?.find(v => v.customer_user_id === profile.user_id);
+        const lastOrder = lastOrders?.find(o => o.customer_user_id === profile.user_id);
+        
+        const lastVisitDate = lastVisit?.check_in_at || null;
+        const lastOrderDate = lastOrder?.created_at || null;
+        
+        const daysSinceLastVisit = lastVisitDate 
+          ? Math.floor((now.getTime() - new Date(lastVisitDate).getTime()) / (1000 * 60 * 60 * 24))
+          : null;
+        
+        const daysSinceLastOrder = lastOrderDate
+          ? Math.floor((now.getTime() - new Date(lastOrderDate).getTime()) / (1000 * 60 * 60 * 24))
+          : null;
+        
+        return {
+          user_id: profile.user_id,
+          name: profile.name,
+          phone: profile.phone,
+          city: addr?.city || '',
+          neighborhood: addr?.neighborhood || '',
+          hasAddress: !!addr,
+          address: {
+            street: addr?.street || '',
+            number: addr?.number || '',
+            neighborhood: addr?.neighborhood || '',
+            city: addr?.city || '',
+            state: addr?.state || '',
+            zip_code: addr?.zip_code || '',
+            complement: addr?.complement || undefined,
+          },
+          lastVisitDate,
+          lastOrderDate,
+          daysSinceLastVisit,
+          daysSinceLastOrder,
+        };
+      });
       
       // Sort: never visited first, then by days since last visit
       customers.sort((a, b) => {
@@ -1214,6 +1209,12 @@ const AdminRoutePlanner = () => {
                           <div className="flex-1 min-w-0">
                             <div className="flex items-center gap-2 flex-wrap mb-1">
                               <p className="font-medium text-sm">{customer.name}</p>
+                              {!customer.hasAddress && (
+                                <Badge variant="outline" className="text-xs text-muted-foreground">
+                                  <MapPin className="w-3 h-3 mr-1" />
+                                  Sem endereço
+                                </Badge>
+                              )}
                               {getVisitBadge(customer)}
                               {getOrderBadge(customer)}
                               {visitStatus?.isCheckedIn && (
@@ -1223,12 +1224,20 @@ const AdminRoutePlanner = () => {
                                 </Badge>
                               )}
                             </div>
-                            <p className="text-xs text-muted-foreground">
-                              {customer.neighborhood}, {customer.city}
-                            </p>
-                            <p className="text-xs text-muted-foreground">
-                              {customer.address.street}, {customer.address.number}
-                            </p>
+                            {customer.hasAddress ? (
+                              <>
+                                <p className="text-xs text-muted-foreground">
+                                  {customer.neighborhood}, {customer.city}
+                                </p>
+                                <p className="text-xs text-muted-foreground">
+                                  {customer.address.street}, {customer.address.number}
+                                </p>
+                              </>
+                            ) : (
+                              <p className="text-xs text-muted-foreground italic">
+                                Endereço não cadastrado — sincronize via Painel de Sync
+                              </p>
+                            )}
                             
                             {/* Check-in/Check-out buttons */}
                             {isSelected && (
@@ -1248,7 +1257,7 @@ const AdminRoutePlanner = () => {
                                     size="sm"
                                     variant="outline"
                                     onClick={() => openCheckoutDialog(customer.user_id, customer.name)}
-                                    className="text-xs h-7 border-orange-400 text-orange-600 hover:bg-orange-50"
+                                    className="text-xs h-7"
                                   >
                                     <XCircle className="w-3 h-3 mr-1" />
                                     Check-out
