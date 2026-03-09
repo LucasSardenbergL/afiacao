@@ -619,8 +619,31 @@ const AdminRoutePlanner = () => {
       case 'logistica': return upgraded.filter(s => s.stopType === 'pickup_tools' || s.stopType === 'deliver_tools');
       case 'comercial': return [...uniqueCommercial, ...upgraded.filter(s => s.stopType === 'hybrid_visit')];
       case 'hibrido': return [...upgraded, ...uniqueCommercial];
+      case 'manual': {
+        // Build manual stops from selected customers
+        const manualStops: RouteStop[] = Array.from(selectedCustomerIds).map(userId => {
+          const customer = manualCustomers.find(c => c.user_id === userId);
+          if (!customer) return null;
+          
+          return enrichWithPriority({
+            id: `manual-${userId}`,
+            stopType: 'manual_visit' as StopType,
+            customerUserId: userId,
+            customerName: customer.name,
+            phone: customer.phone,
+            address: customer.address,
+            timeSlot: null,
+            businessHoursOpen: null,
+            businessHoursClose: null,
+            status: 'manual',
+            visitReason: 'Visita manual',
+          });
+        }).filter(Boolean) as RouteStop[];
+        
+        return manualStops;
+      }
     }
-  }, [logisticStops, commercialStops, planningMode]);
+  }, [logisticStops, commercialStops, planningMode, selectedCustomerIds, manualCustomers]);
 
   // Initialize map
   useEffect(() => {
