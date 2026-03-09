@@ -488,10 +488,7 @@ const AdminRoutePlanner = () => {
     }
   };
   
-  const handleCheckOut = async (customer: ManualCustomer, result: string, notes: string, revenue: number) => {
-    const status = visitStatuses.get(customer.user_id);
-    if (!status?.visitId) return;
-    
+  const handleCheckOut = async (userId: string, visitId: string, customerName: string, result: string, notes: string, revenue: number) => {
     try {
       const { error } = await supabase
         .from('route_visits')
@@ -502,25 +499,99 @@ const AdminRoutePlanner = () => {
           revenue_generated: revenue,
           order_created: result === 'pedido_fechado',
         })
-        .eq('id', status.visitId);
+        .eq('id', visitId);
       
       if (error) throw error;
       
       setVisitStatuses(prev => {
-        const newMap = new Map(prev);
-        newMap.delete(customer.user_id);
-        return newMap;
+        const m = new Map(prev);
+        m.delete(userId);
+        return m;
       });
       
-      toast({ title: 'Check-out realizado', description: `Visita finalizada em ${customer.name}` });
+      setVisitTimers(prev => {
+        const m = new Map(prev);
+        m.delete(userId);
+        return m;
+      });
+      
+      setCheckoutOpen(false);
+      await loadTodayVisits();
+      toast({ title: 'Check-out realizado!', description: `Visita finalizada: ${customerName}` });
       
       if (result === 'pedido_fechado') {
-        navigate(`/sales/new?customer=${customer.user_id}`);
+        navigate(`/sales/new?customer=${userId}`);
       }
-    } catch (error) {
-      console.error('Check-out error:', error);
+    } catch (err) {
+      console.error('Check-out error:', err);
       toast({ title: 'Erro ao fazer check-out', variant: 'destructive' });
     }
+  };
+  
+  const openCheckoutDialog = (userId: string, name: string) => {
+    setCheckoutTarget({ userId, name });
+    setCheckoutResult('');
+    setCheckoutNotes('');
+    setCheckoutRevenue('');
+    setCheckoutOpen(true);
+  };
+  
+  const confirmCheckout = () => {
+    if (!checkoutTarget || !checkoutResult) return;
+    const status = visitStatuses.get(checkoutTarget.userId);
+    if (!status?.visitId) return;
+    handleCheckOut(checkoutTarget.userId, status.visitId, checkoutTarget.name, checkoutResult, checkoutNotes, parseFloat(checkoutRevenue) || 0);
+  };
+  
+  const handleCheckInStop = async (stop: RouteStop) => {
+    if (!user) return;
+    
+    const doInsert = async (lat?: number, lng?: number) => {
+      try {
+        const vType = stop.stopType === 'pickup_tools' ? 'coleta' : stop.stopType === 'deliver_tools' ? 'entrega' : 'comercial';
+        const { data, error } = await supabase
+          .from('route_visits')
+          .insert({
+            customer_user_id: stop.customerUserId,
+            visited_by: user.id,
+            visit_type: vType,
+            check_in_at: new Date().toISOString(),
+            ...(lat !== undefined && { lat, lng }),
+          })
+          .select()
+          .single();
+        
+        if (error) throw error;
+        
+        setVisitStatuses(prev => new Map(prev).set(stop.customerUserId, {
+          stopId: stop.customerUserId,
+          visitId: data.id,
+          checkInAt: data.check_in_at,
+          isCheckedIn: true,
+        }));
+        
+        await loadTodayVisits();
+        toast({ title: 'Check-in realizado!', description: `Visita iniciada: ${stop.customerName}` });
+      } catch (err) {
+        toast({ title: 'Erro ao fazer check-in', variant: 'destructive' });
+      }
+    };
+    
+    if (navigator.geolocation) {
+      navigator.geolocation.getCurrentPosition(
+        pos => doInsert(pos.coords.latitude, pos.coords.longitude),
+        () => doInsert(),
+        { timeout: 5000 }
+      );
+    } else {
+      doInsert();
+    }
+  };
+  
+  const formatTimer = (seconds: number) => {
+    const m = Math.floor(seconds / 60);
+    const s = seconds % 60;
+    return `${m}:${String(s).padStart(2, '0')}`;
   };
 
   const loadCommercialStops = async () => {
