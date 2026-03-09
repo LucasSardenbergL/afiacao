@@ -866,8 +866,76 @@ const AdminRoutePlanner = () => {
       case 'deliver_tools': return <Truck className="w-3.5 h-3.5" />;
       case 'sales_visit': return <ShoppingBag className="w-3.5 h-3.5" />;
       case 'hybrid_visit': return <Layers className="w-3.5 h-3.5" />;
+      case 'manual_visit': return <Users className="w-3.5 h-3.5" />;
     }
   };
+  
+  const getVisitBadge = (customer: ManualCustomer) => {
+    if (customer.daysSinceLastVisit === null) {
+      return <Badge variant="danger" className="text-xs">Nunca visitado</Badge>;
+    }
+    if (customer.daysSinceLastVisit > 30) {
+      return <Badge variant="warning" className="text-xs">Última visita há {customer.daysSinceLastVisit} dias</Badge>;
+    }
+    return null;
+  };
+  
+  const getOrderBadge = (customer: ManualCustomer) => {
+    if (customer.daysSinceLastOrder === null) {
+      return null;
+    }
+    if (customer.daysSinceLastOrder > 90) {
+      return <Badge variant="danger" className="text-xs">Sem compra há {customer.daysSinceLastOrder} dias</Badge>;
+    }
+    if (customer.daysSinceLastOrder > 30) {
+      return <Badge variant="warning" className="text-xs">Comprou há {customer.daysSinceLastOrder} dias</Badge>;
+    }
+    if (customer.daysSinceLastOrder <= 30) {
+      return <Badge variant="success" className="text-xs">Comprou recentemente</Badge>;
+    }
+    return null;
+  };
+  
+  const filteredManualCustomers = useMemo(() => {
+    let filtered = manualCustomers;
+    
+    // Apply filter
+    if (manualFilter === 'nunca_visitados') {
+      filtered = filtered.filter(c => c.daysSinceLastVisit === null);
+    } else if (manualFilter === 'sem_compra_30d') {
+      filtered = filtered.filter(c => c.daysSinceLastOrder === null || c.daysSinceLastOrder > 30);
+    }
+    
+    // Apply search
+    if (manualSearch.trim()) {
+      const search = manualSearch.toLowerCase();
+      filtered = filtered.filter(c => 
+        c.name.toLowerCase().includes(search) ||
+        c.city.toLowerCase().includes(search) ||
+        c.neighborhood.toLowerCase().includes(search)
+      );
+    }
+    
+    return filtered;
+  }, [manualCustomers, manualFilter, manualSearch]);
+  
+  const toggleCustomerSelection = (userId: string) => {
+    setSelectedCustomerIds(prev => {
+      const newSet = new Set(prev);
+      if (newSet.has(userId)) {
+        newSet.delete(userId);
+      } else {
+        newSet.add(userId);
+      }
+      return newSet;
+    });
+  };
+  
+  const estimatedManualHours = useMemo(() => {
+    const count = selectedCustomerIds.size;
+    const minutes = count * 20; // 20min per visit
+    return (minutes / 60).toFixed(1);
+  }, [selectedCustomerIds]);
 
   const handleStopCTA = (stop: RouteStop) => {
     if (stop.orderId) {
