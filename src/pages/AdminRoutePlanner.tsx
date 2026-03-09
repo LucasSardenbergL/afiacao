@@ -374,42 +374,67 @@ const AdminRoutePlanner = () => {
     return () => { leafletMap.current?.remove(); leafletMap.current = null; };
   }, [loading]);
 
-  // Geocode all stops
-  const geocodedStops = useRef<Map<string, { lat: number; lng: number }>>(new Map());
-  
-  const geocodeNewStops = useCallback(async (stops: RouteStop[]) => {
-    const toGeocode = stops.filter(s => s.address.street && !geocodedStops.current.has(s.id));
-    if (toGeocode.length === 0) return stops;
-
-    setGeocoding(true);
-    const results = await Promise.all(
-      toGeocode.map(async (stop) => {
-        try {
-          const query = `${stop.address.street}, ${stop.address.number}, ${stop.address.city}, ${stop.address.state}, Brazil`;
-          const res = await fetch(`https://nominatim.openstreetmap.org/search?format=json&q=${encodeURIComponent(query)}&limit=1`);
-          const data = await res.json();
-          if (data?.[0]) {
-            const coords = { lat: parseFloat(data[0].lat), lng: parseFloat(data[0].lon) };
-            geocodedStops.current.set(stop.id, coords);
-            return { id: stop.id, ...coords };
-          }
-        } catch (e) { console.warn('Geocode failed for', stop.address.street); }
-        return null;
-      })
-    );
-    setGeocoding(false);
-
-    return stops.map(s => {
-      const cached = geocodedStops.current.get(s.id);
-      return cached ? { ...s, lat: cached.lat, lng: cached.lng } : s;
-    });
-  }, []);
+  // Geocode stops progressively (max 15, 1.1s delay between calls)
+  const geocodedCoords = useRef<Map<string, { lat: number; lng: number }>>(new Map());
+  const geocodingAbort = useRef<AbortController | null>(null);
 
   const [geocodedAllStops, setGeocodedAllStops] = useState<RouteStop[]>([]);
 
+  // Immediately show stops without waiting for geocoding
   useEffect(() => {
-    geocodeNewStops(allStops).then(setGeocodedAllStops);
-  }, [allStops, geocodeNewStops]);
+    const enriched = allStops.map(s => {
+      const cached = geocodedCoords.current.get(s.id);
+      return cached ? { ...s, lat: cached.lat, lng: cached.lng } : s;
+    });
+    setGeocodedAllStops(enriched);
+  }, [allStops]);
+
+  // Background geocoding: max 15 stops, sequential with 1.1s delay
+  useEffect(() => {
+    geocodingAbort.current?.abort();
+    const controller = new AbortController();
+    geocodingAbort.current = controller;
+
+    const toGeocode = allStops
+      .filter(s => s.address.street && !geocodedCoords.current.has(s.id))
+      .slice(0, 15); // Limit to 15
+
+    if (toGeocode.length === 0) return;
+
+    setGeocoding(true);
+
+    (async () => {
+      for (const stop of toGeocode) {
+        if (controller.signal.aborted) break;
+        try {
+          const query = `${stop.address.street}, ${stop.address.number}, ${stop.address.city}, ${stop.address.state}, Brazil`;
+          const res = await fetch(
+            `https://nominatim.openstreetmap.org/search?format=json&q=${encodeURIComponent(query)}&limit=1`,
+            { signal: controller.signal }
+          );
+          const data = await res.json();
+          if (data?.[0]) {
+            const coords = { lat: parseFloat(data[0].lat), lng: parseFloat(data[0].lon) };
+            geocodedCoords.current.set(stop.id, coords);
+            // Update state progressively
+            setGeocodedAllStops(prev => prev.map(s =>
+              s.id === stop.id ? { ...s, lat: coords.lat, lng: coords.lng } : s
+            ));
+          }
+        } catch (e: any) {
+          if (e?.name === 'AbortError') break;
+          console.warn('Geocode failed for', stop.address.street);
+        }
+        // Nominatim rate limit: max 1 req/sec
+        if (!controller.signal.aborted) {
+          await new Promise(r => setTimeout(r, 1100));
+        }
+      }
+      if (!controller.signal.aborted) setGeocoding(false);
+    })();
+
+    return () => controller.abort();
+  }, [allStops]);
 
   // Filter by period
   const filteredStops = useMemo(() => {
