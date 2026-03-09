@@ -205,6 +205,14 @@ const AdminRoutePlanner = () => {
       loadCommercialStops();
     }
   }, [scoringLoading, agenda]);
+  
+  // Load manual mode customers
+  useEffect(() => {
+    if (user && isStaff && planningMode === 'manual') {
+      loadManualCustomers();
+      loadTodayVisits();
+    }
+  }, [user, isStaff, planningMode]);
 
   const loadLogisticStops = async () => {
     try {
