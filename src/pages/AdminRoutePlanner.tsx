@@ -310,7 +310,6 @@ const AdminRoutePlanner = () => {
       const { data: profiles, error: profileError } = await supabase
         .from('profiles')
         .select('user_id, name, phone, customer_type')
-        .eq('is_approved', true)
         .or('is_employee.is.null,is_employee.eq.false')
         .order('name');
       
