@@ -242,6 +242,48 @@ async function validarVendedorMultiOmie(cnpjCpf: string): Promise<{
   return { consistente, vendedores: resultados, divergencias };
 }
 
+async function upsertAddressFromOmie(
+  adminClient: ReturnType<typeof createClient>,
+  userId: string,
+  cliente: OmieCliente
+): Promise<boolean> {
+  try {
+    if (!cliente.endereco || !cliente.cidade) return false;
+
+    // Check if user already has an Omie address
+    const { data: existing } = await adminClient
+      .from("addresses")
+      .select("id")
+      .eq("user_id", userId)
+      .eq("is_from_omie", true)
+      .maybeSingle();
+
+    const addressData = {
+      user_id: userId,
+      label: "Omie",
+      street: cliente.endereco || "",
+      number: cliente.endereco_numero || "S/N",
+      complement: cliente.complemento || null,
+      neighborhood: cliente.bairro || "",
+      city: cliente.cidade || "",
+      state: cliente.estado || "",
+      zip_code: (cliente.cep || "").replace(/\D/g, ""),
+      is_default: true,
+      is_from_omie: true,
+    };
+
+    if (existing) {
+      await adminClient.from("addresses").update(addressData).eq("id", existing.id);
+    } else {
+      await adminClient.from("addresses").insert(addressData);
+    }
+    return true;
+  } catch (err) {
+    console.error(`[upsertAddressFromOmie] Error for user ${userId}:`, err);
+    return false;
+  }
+}
+
 function isIndustrialByCNAE(cnae: string): boolean {
   if (!cnae) return false;
   const cnaeCode = cnae.replace(/\D/g, '');
