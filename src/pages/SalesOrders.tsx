@@ -140,6 +140,24 @@ const SalesOrders = () => {
     }
   };
 
+  const handleShareOrder = (order: SalesOrder, customerName: string) => {
+    const items = (order.items || []).map(item => ({
+      description: item.descricao,
+      quantity: item.quantidade,
+      unitPrice: item.valor_unitario,
+    }));
+
+    const orderNumbers = order.omie_numero_pedido ? [order.omie_numero_pedido] : [];
+
+    shareOrderViaWhatsApp({
+      customerName,
+      items,
+      total: order.total,
+      orderNumbers,
+      date: new Date(order.created_at),
+    });
+  };
+
   const filteredOrders = accountFilter === 'all'
     ? orders
     : accountFilter === 'afiacao'
