@@ -954,8 +954,7 @@ serve(async (req) => {
           }
         }
 
-        const nextOffset = offset + batchSize;
-        const hasMore = nextOffset < totalNeeding;
+        const hasMore = totalNeeding > batch.length;
 
         result = {
           synced: totalSynced,
@@ -963,9 +962,8 @@ serve(async (req) => {
           errors: totalErrors,
           totalNeeding,
           totalClients: totalCount || allMappings.length,
-          processed: Math.min(nextOffset, totalNeeding),
+          processed: batch.length,
           hasMore,
-          nextOffset: hasMore ? nextOffset : null,
         };
         break;
       }
