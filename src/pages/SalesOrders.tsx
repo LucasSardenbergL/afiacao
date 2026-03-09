@@ -9,11 +9,12 @@ import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle, AlertDialogTrigger } from '@/components/ui/alert-dialog';
 import { supabase } from '@/integrations/supabase/client';
 import { useAuth } from '@/contexts/AuthContext';
-import { Loader2, ShoppingCart, Plus, Package, Trash2, Building2, Wrench } from 'lucide-react';
+import { Loader2, ShoppingCart, Plus, Package, Trash2, Building2, Wrench, Share2 } from 'lucide-react';
 import { format } from 'date-fns';
 import { ptBR } from 'date-fns/locale';
 import { toast } from 'sonner';
 import { StatusBadgeSimple } from '@/components/StatusBadge';
+import { shareOrderViaWhatsApp } from '@/utils/whatsappShare';
 
 type Account = 'oben' | 'colacor' | 'afiacao' | 'all';
 
@@ -139,6 +140,24 @@ const SalesOrders = () => {
     }
   };
 
+  const handleShareOrder = (order: SalesOrder, customerName: string) => {
+    const items = (order.items || []).map(item => ({
+      description: item.descricao,
+      quantity: item.quantidade,
+      unitPrice: item.valor_unitario,
+    }));
+
+    const orderNumbers = order.omie_numero_pedido ? [order.omie_numero_pedido] : [];
+
+    shareOrderViaWhatsApp({
+      customerName,
+      items,
+      total: order.total,
+      orderNumbers,
+      date: new Date(order.created_at),
+    });
+  };
+
   const filteredOrders = accountFilter === 'all'
     ? orders
     : accountFilter === 'afiacao'
@@ -235,29 +254,43 @@ const SalesOrders = () => {
                         )}
                         <p className="text-sm font-bold">R$ {order.total.toFixed(2)}</p>
                         <p className="text-xs text-muted-foreground">{totalItems} itens</p>
-                        {!isAfiacao && (
-                          <AlertDialog>
-                            <AlertDialogTrigger asChild>
-                              <Button variant="ghost" size="icon" className="h-7 w-7 text-destructive hover:text-destructive" onClick={(e) => e.stopPropagation()}>
-                                <Trash2 className="w-3.5 h-3.5" />
-                              </Button>
-                            </AlertDialogTrigger>
-                            <AlertDialogContent>
-                              <AlertDialogHeader>
-                                <AlertDialogTitle>Excluir pedido?</AlertDialogTitle>
-                                <AlertDialogDescription>
-                                  Esta ação não pode ser desfeita. O pedido será removido permanentemente do sistema.
-                                </AlertDialogDescription>
-                              </AlertDialogHeader>
-                              <AlertDialogFooter>
-                                <AlertDialogCancel>Cancelar</AlertDialogCancel>
-                                <AlertDialogAction onClick={() => deleteOrder(order)} className="bg-destructive text-destructive-foreground hover:bg-destructive/90">
-                                  Excluir
-                                </AlertDialogAction>
-                              </AlertDialogFooter>
-                            </AlertDialogContent>
-                          </AlertDialog>
-                        )}
+                        <div className="flex gap-1 justify-end">
+                          <Button
+                            variant="ghost"
+                            size="icon"
+                            className="h-7 w-7"
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              handleShareOrder(order, profiles[order.customer_user_id] || 'Cliente');
+                            }}
+                            title="Compartilhar via WhatsApp"
+                          >
+                            <Share2 className="w-3.5 h-3.5" />
+                          </Button>
+                          {!isAfiacao && (
+                            <AlertDialog>
+                              <AlertDialogTrigger asChild>
+                                <Button variant="ghost" size="icon" className="h-7 w-7 text-destructive hover:text-destructive" onClick={(e) => e.stopPropagation()}>
+                                  <Trash2 className="w-3.5 h-3.5" />
+                                </Button>
+                              </AlertDialogTrigger>
+                              <AlertDialogContent>
+                                <AlertDialogHeader>
+                                  <AlertDialogTitle>Excluir pedido?</AlertDialogTitle>
+                                  <AlertDialogDescription>
+                                    Esta ação não pode ser desfeita. O pedido será removido permanentemente do sistema.
+                                  </AlertDialogDescription>
+                                </AlertDialogHeader>
+                                <AlertDialogFooter>
+                                  <AlertDialogCancel>Cancelar</AlertDialogCancel>
+                                  <AlertDialogAction onClick={() => deleteOrder(order)} className="bg-destructive text-destructive-foreground hover:bg-destructive/90">
+                                    Excluir
+                                  </AlertDialogAction>
+                                </AlertDialogFooter>
+                              </AlertDialogContent>
+                            </AlertDialog>
+                          )}
+                        </div>
                       </div>
                     </div>
                   </CardContent>

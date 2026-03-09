@@ -162,6 +162,15 @@ export function useUnifiedOrder() {
   const [notes, setNotes] = useState('');
   const [submitting, setSubmitting] = useState(false);
   const [activeTab, setActiveTab] = useState('oben');
+  
+  // Order success dialog
+  const [orderSuccessOpen, setOrderSuccessOpen] = useState(false);
+  const [lastOrderData, setLastOrderData] = useState<{
+    customerName: string;
+    items: Array<{ description: string; quantity: number; unitPrice: number }>;
+    total: number;
+    orderNumbers: string[];
+  } | null>(null);
 
   // Pricing
   const { loadDefaultPrices, calculatePrice } = usePricingEngine();
@@ -980,8 +989,27 @@ export function useUnifiedOrder() {
         else results.push('OS Afiação (pendente ERP)');
       }
 
-      toast({ title: 'Pedido(s) enviado(s)!', description: results.join(' + ') });
-      navigate('/sales');
+      // Prepare success dialog data
+      const allItems: Array<{ description: string; quantity: number; unitPrice: number }> = [
+        ...obenProductItems.map(c => ({ description: c.product.descricao, quantity: c.quantity, unitPrice: c.unit_price })),
+        ...colacorProductItems.map(c => ({ description: c.product.descricao, quantity: c.quantity, unitPrice: c.unit_price })),
+        ...serviceItems.map(c => ({ 
+          description: c.servico?.descricao || getToolName(c.userTool), 
+          quantity: c.quantity, 
+          unitPrice: getServicePrice(c) || 0 
+        })),
+      ];
+
+      setLastOrderData({
+        customerName: selectedCustomer.nome_fantasia || selectedCustomer.razao_social,
+        items: allItems,
+        total: totalEstimated,
+        orderNumbers: results,
+      });
+      
+      setOrderSuccessOpen(true);
+      setCart([]);
+      setNotes('');
     } catch (error: any) {
       toast({ title: 'Erro ao criar pedido', description: error.message, variant: 'destructive' });
     } finally {
@@ -1045,6 +1073,8 @@ export function useUnifiedOrder() {
     handleAICustomerSelect, handleUnifiedAIResult,
     handleAddRecommendation, handleStaffAddTool,
     submitOrder, loadUserTools,
+    // Order success
+    orderSuccessOpen, setOrderSuccessOpen, lastOrderData,
     // Navigate
     navigate,
   };
