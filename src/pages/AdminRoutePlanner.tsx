@@ -446,41 +446,45 @@ const AdminRoutePlanner = () => {
   const handleCheckIn = async (customer: ManualCustomer) => {
     if (!user) return;
     
-    try {
+    const doInsert = async (lat?: number, lng?: number) => {
+      try {
+        const { data, error } = await supabase
+          .from('route_visits')
+          .insert({
+            customer_user_id: customer.user_id,
+            visited_by: user.id,
+            visit_type: 'comercial',
+            check_in_at: new Date().toISOString(),
+            ...(lat !== undefined && { lat, lng }),
+          })
+          .select()
+          .single();
+        
+        if (error) throw error;
+        
+        setVisitStatuses(prev => new Map(prev).set(customer.user_id, {
+          stopId: customer.user_id,
+          visitId: data.id,
+          checkInAt: data.check_in_at,
+          isCheckedIn: true,
+        }));
+        
+        await loadTodayVisits();
+        toast({ title: 'Check-in realizado!', description: `Visita iniciada: ${customer.name}` });
+      } catch (err) {
+        console.error('Check-in error:', err);
+        toast({ title: 'Erro ao fazer check-in', variant: 'destructive' });
+      }
+    };
+    
+    if (navigator.geolocation) {
       navigator.geolocation.getCurrentPosition(
-        async (position) => {
-          const { data, error } = await supabase
-            .from('route_visits')
-            .insert({
-              customer_user_id: customer.user_id,
-              visited_by: user.id,
-              visit_type: 'comercial',
-              check_in_at: new Date().toISOString(),
-              lat: position.coords.latitude,
-              lng: position.coords.longitude,
-            })
-            .select()
-            .single();
-          
-          if (error) throw error;
-          
-          setVisitStatuses(prev => new Map(prev).set(customer.user_id, {
-            stopId: customer.user_id,
-            visitId: data.id,
-            checkInAt: data.check_in_at,
-            isCheckedIn: true,
-          }));
-          
-          toast({ title: 'Check-in realizado', description: `Visita iniciada em ${customer.name}` });
-        },
-        (error) => {
-          console.error('Geolocation error:', error);
-          toast({ title: 'Erro ao obter localização', variant: 'destructive' });
-        }
+        pos => doInsert(pos.coords.latitude, pos.coords.longitude),
+        () => doInsert(),
+        { timeout: 5000 }
       );
-    } catch (error) {
-      console.error('Check-in error:', error);
-      toast({ title: 'Erro ao fazer check-in', variant: 'destructive' });
+    } else {
+      doInsert();
     }
   };
   
