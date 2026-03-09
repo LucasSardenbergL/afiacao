@@ -841,6 +841,10 @@ serve(async (req) => {
                 });
 
                 existingCodes.add(codigoCliente);
+                
+                // Upsert address from Omie data
+                await upsertAddressFromOmie(adminClient, userId, cliente);
+                
                 accImported++;
               } catch (clientError) {
                 accErrors++;
