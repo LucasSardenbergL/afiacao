@@ -1461,7 +1461,7 @@ const AdminRoutePlanner = () => {
                           {!stop.lat && <span className="text-destructive">Sem coordenadas</span>}
                         </div>
                         {/* CTAs */}
-                        <div className="flex items-center gap-2 mt-2">
+                        <div className="flex items-center gap-2 mt-2 flex-wrap">
                           <Button size="sm" variant="outline" className="h-7 text-xs" onClick={() => handleStopCTA(stop)}>
                             {getCTALabel(stop)}
                           </Button>
@@ -1472,6 +1472,34 @@ const AdminRoutePlanner = () => {
                               </a>
                             </Button>
                           )}
+                          {(() => {
+                            const vs = visitStatuses.get(stop.customerUserId);
+                            if (!vs?.isCheckedIn) {
+                              return (
+                                <Button
+                                  size="sm" variant="outline"
+                                  className="h-7 text-xs gap-1 border-green-500 text-green-600 hover:bg-green-50 dark:hover:bg-green-950"
+                                  onClick={() => handleCheckInStop(stop)}
+                                >
+                                  <CheckCircle2 className="w-3 h-3" /> Check-in
+                                </Button>
+                              );
+                            }
+                            return (
+                              <div className="flex items-center gap-1.5">
+                                <span className="text-xs font-mono text-green-600">
+                                  {formatTimer(visitTimers.get(stop.customerUserId) ?? 0)}
+                                </span>
+                                <Button
+                                  size="sm" variant="outline"
+                                  className="h-7 text-xs gap-1 border-orange-400 text-orange-600 hover:bg-orange-50 dark:hover:bg-orange-950"
+                                  onClick={() => openCheckoutDialog(stop.customerUserId, stop.customerName)}
+                                >
+                                  <XCircle className="w-3 h-3" /> Check-out
+                                </Button>
+                              </div>
+                            );
+                          })()}
                         </div>
                       </div>
                       <DropdownMenu>
