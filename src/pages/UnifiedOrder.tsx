@@ -216,6 +216,29 @@ const UnifiedOrder = () => {
           categories={h.toolCategories} targetUserId={h.customerUserId}
           onToolAdded={() => h.loadUserTools(h.customerUserId!)} />
       )}
+
+      {h.lastOrderData && (
+        <OrderSuccessDialog
+          open={h.orderSuccessOpen}
+          onOpenChange={h.setOrderSuccessOpen}
+          customerName={h.lastOrderData.customerName}
+          items={h.lastOrderData.items}
+          total={h.lastOrderData.total}
+          orderNumbers={h.lastOrderData.orderNumbers}
+          onViewOrder={() => {
+            h.setOrderSuccessOpen(false);
+            h.navigate('/sales');
+          }}
+          onShare={() => {
+            shareOrderViaWhatsApp({
+              customerName: h.lastOrderData!.customerName,
+              items: h.lastOrderData!.items,
+              total: h.lastOrderData!.total,
+              orderNumbers: h.lastOrderData!.orderNumbers,
+            });
+          }}
+        />
+      )}
     </div>
   );
 };

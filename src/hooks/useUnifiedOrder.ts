@@ -1073,6 +1073,8 @@ export function useUnifiedOrder() {
     handleAICustomerSelect, handleUnifiedAIResult,
     handleAddRecommendation, handleStaffAddTool,
     submitOrder, loadUserTools,
+    // Order success
+    orderSuccessOpen, setOrderSuccessOpen, lastOrderData,
     // Navigate
     navigate,
   };
