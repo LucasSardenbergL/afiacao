@@ -313,6 +313,7 @@ const AdminRoutePlanner = () => {
         .order('name');
       
       if (profileError) throw profileError;
+      console.log('[Manual] Profiles aprovados encontrados:', profiles?.length || 0);
       if (!profiles || profiles.length === 0) {
         setManualCustomers([]);
         return;
@@ -326,6 +327,8 @@ const AdminRoutePlanner = () => {
         .select('*')
         .in('user_id', userIds)
         .order('is_default', { ascending: false });
+      
+      console.log('[Manual] Endereços encontrados:', addresses?.length || 0);
       
       // Load last visit dates
       const { data: lastVisits } = await supabase
