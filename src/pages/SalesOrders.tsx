@@ -9,11 +9,12 @@ import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle, AlertDialogTrigger } from '@/components/ui/alert-dialog';
 import { supabase } from '@/integrations/supabase/client';
 import { useAuth } from '@/contexts/AuthContext';
-import { Loader2, ShoppingCart, Plus, Package, Trash2, Building2, Wrench } from 'lucide-react';
+import { Loader2, ShoppingCart, Plus, Package, Trash2, Building2, Wrench, Share2 } from 'lucide-react';
 import { format } from 'date-fns';
 import { ptBR } from 'date-fns/locale';
 import { toast } from 'sonner';
 import { StatusBadgeSimple } from '@/components/StatusBadge';
+import { shareOrderViaWhatsApp } from '@/utils/whatsappShare';
 
 type Account = 'oben' | 'colacor' | 'afiacao' | 'all';
 
