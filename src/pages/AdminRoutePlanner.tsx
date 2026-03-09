@@ -635,7 +635,7 @@ const AdminRoutePlanner = () => {
     return m > 0 ? `${h}h${String(m).padStart(2, '0')}` : `${h}h`;
   };
 
-  const isLoading = authLoading || loading || scoringLoading;
+  const isLoading = authLoading || loading;
 
   if (isLoading) {
     return (
