@@ -182,6 +182,14 @@ const AdminRoutePlanner = () => {
   // Visit tracking state
   const [visitStatuses, setVisitStatuses] = useState<Map<string, VisitStatus>>(new Map());
   const [todayVisits, setTodayVisits] = useState<any[]>([]);
+  // Checkout dialog state
+  const [checkoutOpen, setCheckoutOpen] = useState(false);
+  const [checkoutTarget, setCheckoutTarget] = useState<{ userId: string; name: string } | null>(null);
+  const [checkoutResult, setCheckoutResult] = useState('');
+  const [checkoutNotes, setCheckoutNotes] = useState('');
+  const [checkoutRevenue, setCheckoutRevenue] = useState('');
+  // Visit timers (seconds elapsed per active check-in)
+  const [visitTimers, setVisitTimers] = useState<Map<string, number>>(new Map());
 
   const { agenda, clientScores, loading: scoringLoading } = useFarmerScoring();
 
