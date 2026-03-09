@@ -16,6 +16,8 @@ import { useAuth } from '@/contexts/AuthContext';
 import { useToast } from '@/hooks/use-toast';
 import { useFarmerScoring } from '@/hooks/useFarmerScoring';
 import { cn } from '@/lib/utils';
+import { NvoipDialer } from '@/components/NvoipDialer';
+import { type NvoipCallState } from '@/hooks/useNvoipCall';
 import {
   Phone, PhoneOff, Play, Pause, Clock, User, Search,
   Plus, Timer, CheckCircle, XCircle, Loader2, BarChart3,
