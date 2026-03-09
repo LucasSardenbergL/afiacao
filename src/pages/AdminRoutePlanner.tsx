@@ -766,7 +766,7 @@ const AdminRoutePlanner = () => {
   // Initialize map
   useEffect(() => {
     if (!mapRef.current || leafletMap.current) return;
-    leafletMap.current = L.map(mapRef.current).setView([-23.55, -46.63], 11);
+    leafletMap.current = L.map(mapRef.current).setView([-20.14, -44.88], 13);
     L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
       attribution: '© OpenStreetMap contributors',
     }).addTo(leafletMap.current);
