@@ -39,6 +39,7 @@ interface ManualCustomer {
   phone: string | null;
   city: string;
   neighborhood: string;
+  hasAddress: boolean;
   address: {
     street: string;
     number: string;
