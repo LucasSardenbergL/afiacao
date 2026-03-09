@@ -28,9 +28,33 @@ L.Icon.Default.mergeOptions({
   shadowUrl: 'https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/images/marker-shadow.png',
 });
 
-type StopType = 'pickup_tools' | 'deliver_tools' | 'sales_visit' | 'hybrid_visit';
-type PlanningMode = 'logistica' | 'comercial' | 'hibrido';
+type StopType = 'pickup_tools' | 'deliver_tools' | 'sales_visit' | 'hybrid_visit' | 'manual_visit';
+type PlanningMode = 'logistica' | 'comercial' | 'hibrido' | 'manual';
 type FilterPeriod = 'all' | 'manha' | 'tarde';
+
+interface ManualCustomer {
+  user_id: string;
+  name: string;
+  phone: string | null;
+  city: string;
+  neighborhood: string;
+  address: {
+    street: string;
+    number: string;
+    neighborhood: string;
+    city: string;
+    state: string;
+    zip_code: string;
+    complement?: string;
+  };
+}
+
+interface VisitStatus {
+  stopId: string;
+  visitId: string | null;
+  checkInAt: string | null;
+  isCheckedIn: boolean;
+}
 
 interface RouteStop {
   id: string;
