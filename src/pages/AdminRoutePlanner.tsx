@@ -31,6 +31,7 @@ L.Icon.Default.mergeOptions({
 type StopType = 'pickup_tools' | 'deliver_tools' | 'sales_visit' | 'hybrid_visit' | 'manual_visit';
 type PlanningMode = 'logistica' | 'comercial' | 'hibrido' | 'manual';
 type FilterPeriod = 'all' | 'manha' | 'tarde';
+type ManualFilter = 'todos' | 'nunca_visitados' | 'sem_compra_30d';
 
 interface ManualCustomer {
   user_id: string;
@@ -47,6 +48,10 @@ interface ManualCustomer {
     zip_code: string;
     complement?: string;
   };
+  lastVisitDate: string | null;
+  lastOrderDate: string | null;
+  daysSinceLastVisit: number | null;
+  daysSinceLastOrder: number | null;
 }
 
 interface VisitStatus {
@@ -166,6 +171,17 @@ const AdminRoutePlanner = () => {
   const [geocoding, setGeocoding] = useState(false);
   const [filterPeriod, setFilterPeriod] = useState<FilterPeriod>('all');
   const [planningMode, setPlanningMode] = useState<PlanningMode>('hibrido');
+  
+  // Manual mode state
+  const [manualCustomers, setManualCustomers] = useState<ManualCustomer[]>([]);
+  const [selectedCustomerIds, setSelectedCustomerIds] = useState<Set<string>>(new Set());
+  const [manualFilter, setManualFilter] = useState<ManualFilter>('todos');
+  const [manualSearch, setManualSearch] = useState('');
+  const [loadingManual, setLoadingManual] = useState(false);
+  
+  // Visit tracking state
+  const [visitStatuses, setVisitStatuses] = useState<Map<string, VisitStatus>>(new Map());
+  const [todayVisits, setTodayVisits] = useState<any[]>([]);
 
   const { agenda, clientScores, loading: scoringLoading } = useFarmerScoring();
 
@@ -189,6 +205,14 @@ const AdminRoutePlanner = () => {
       loadCommercialStops();
     }
   }, [scoringLoading, agenda]);
+  
+  // Load manual mode customers
+  useEffect(() => {
+    if (user && isStaff && planningMode === 'manual') {
+      loadManualCustomers();
+      loadTodayVisits();
+    }
+  }, [user, isStaff, planningMode]);
 
   const loadLogisticStops = async () => {
     try {
@@ -246,6 +270,209 @@ const AdminRoutePlanner = () => {
       toast({ title: 'Erro ao carregar pedidos', variant: 'destructive' });
     } finally {
       setLoading(false);
+    }
+  };
+
+  const loadManualCustomers = async () => {
+    setLoadingManual(true);
+    try {
+      // Load all customers
+      const { data: profiles, error: profileError } = await supabase
+        .from('profiles')
+        .select('user_id, name, phone, customer_type')
+        .eq('is_approved', true)
+        .order('name');
+      
+      if (profileError) throw profileError;
+      if (!profiles || profiles.length === 0) {
+        setManualCustomers([]);
+        return;
+      }
+      
+      const userIds = profiles.map(p => p.user_id);
+      
+      // Load default addresses
+      const { data: addresses } = await supabase
+        .from('addresses')
+        .select('*')
+        .in('user_id', userIds)
+        .eq('is_default', true);
+      
+      // Load last visit dates
+      const { data: lastVisits } = await supabase
+        .from('route_visits')
+        .select('customer_user_id, check_in_at')
+        .in('customer_user_id', userIds)
+        .not('check_in_at', 'is', null)
+        .order('check_in_at', { ascending: false });
+      
+      // Load last order dates
+      const { data: lastOrders } = await supabase
+        .from('sales_orders')
+        .select('customer_user_id, created_at')
+        .in('customer_user_id', userIds)
+        .order('created_at', { ascending: false });
+      
+      // Build customer list with metrics
+      const now = new Date();
+      const customers: ManualCustomer[] = profiles
+        .map(profile => {
+          const addr = addresses?.find(a => a.user_id === profile.user_id);
+          if (!addr) return null;
+          
+          const lastVisit = lastVisits?.find(v => v.customer_user_id === profile.user_id);
+          const lastOrder = lastOrders?.find(o => o.customer_user_id === profile.user_id);
+          
+          const lastVisitDate = lastVisit?.check_in_at || null;
+          const lastOrderDate = lastOrder?.created_at || null;
+          
+          const daysSinceLastVisit = lastVisitDate 
+            ? Math.floor((now.getTime() - new Date(lastVisitDate).getTime()) / (1000 * 60 * 60 * 24))
+            : null;
+          
+          const daysSinceLastOrder = lastOrderDate
+            ? Math.floor((now.getTime() - new Date(lastOrderDate).getTime()) / (1000 * 60 * 60 * 24))
+            : null;
+          
+          return {
+            user_id: profile.user_id,
+            name: profile.name,
+            phone: profile.phone,
+            city: addr.city,
+            neighborhood: addr.neighborhood,
+            address: {
+              street: addr.street,
+              number: addr.number,
+              neighborhood: addr.neighborhood,
+              city: addr.city,
+              state: addr.state,
+              zip_code: addr.zip_code,
+              complement: addr.complement || undefined,
+            },
+            lastVisitDate,
+            lastOrderDate,
+            daysSinceLastVisit,
+            daysSinceLastOrder,
+          };
+        })
+        .filter(Boolean) as ManualCustomer[];
+      
+      // Sort: never visited first, then by days since last visit
+      customers.sort((a, b) => {
+        if (a.daysSinceLastVisit === null && b.daysSinceLastVisit === null) return 0;
+        if (a.daysSinceLastVisit === null) return -1;
+        if (b.daysSinceLastVisit === null) return 1;
+        return b.daysSinceLastVisit - a.daysSinceLastVisit;
+      });
+      
+      setManualCustomers(customers);
+    } catch (error) {
+      console.error('Error loading manual customers:', error);
+      toast({ title: 'Erro ao carregar clientes', variant: 'destructive' });
+    } finally {
+      setLoadingManual(false);
+    }
+  };
+  
+  const loadTodayVisits = async () => {
+    if (!user) return;
+    const today = new Date().toISOString().split('T')[0];
+    const { data } = await supabase
+      .from('route_visits')
+      .select('*')
+      .eq('visited_by', user.id)
+      .eq('visit_date', today);
+    
+    if (data) {
+      setTodayVisits(data);
+      const statusMap = new Map<string, VisitStatus>();
+      data.forEach(visit => {
+        if (visit.check_in_at && !visit.check_out_at) {
+          statusMap.set(visit.customer_user_id, {
+            stopId: visit.customer_user_id,
+            visitId: visit.id,
+            checkInAt: visit.check_in_at,
+            isCheckedIn: true,
+          });
+        }
+      });
+      setVisitStatuses(statusMap);
+    }
+  };
+  
+  const handleCheckIn = async (customer: ManualCustomer) => {
+    if (!user) return;
+    
+    try {
+      navigator.geolocation.getCurrentPosition(
+        async (position) => {
+          const { data, error } = await supabase
+            .from('route_visits')
+            .insert({
+              customer_user_id: customer.user_id,
+              visited_by: user.id,
+              visit_type: 'comercial',
+              check_in_at: new Date().toISOString(),
+              lat: position.coords.latitude,
+              lng: position.coords.longitude,
+            })
+            .select()
+            .single();
+          
+          if (error) throw error;
+          
+          setVisitStatuses(prev => new Map(prev).set(customer.user_id, {
+            stopId: customer.user_id,
+            visitId: data.id,
+            checkInAt: data.check_in_at,
+            isCheckedIn: true,
+          }));
+          
+          toast({ title: 'Check-in realizado', description: `Visita iniciada em ${customer.name}` });
+        },
+        (error) => {
+          console.error('Geolocation error:', error);
+          toast({ title: 'Erro ao obter localização', variant: 'destructive' });
+        }
+      );
+    } catch (error) {
+      console.error('Check-in error:', error);
+      toast({ title: 'Erro ao fazer check-in', variant: 'destructive' });
+    }
+  };
+  
+  const handleCheckOut = async (customer: ManualCustomer, result: string, notes: string, revenue: number) => {
+    const status = visitStatuses.get(customer.user_id);
+    if (!status?.visitId) return;
+    
+    try {
+      const { error } = await supabase
+        .from('route_visits')
+        .update({
+          check_out_at: new Date().toISOString(),
+          result,
+          notes,
+          revenue_generated: revenue,
+          order_created: result === 'pedido_fechado',
+        })
+        .eq('id', status.visitId);
+      
+      if (error) throw error;
+      
+      setVisitStatuses(prev => {
+        const newMap = new Map(prev);
+        newMap.delete(customer.user_id);
+        return newMap;
+      });
+      
+      toast({ title: 'Check-out realizado', description: `Visita finalizada em ${customer.name}` });
+      
+      if (result === 'pedido_fechado') {
+        navigate(`/sales/new?customer=${customer.user_id}`);
+      }
+    } catch (error) {
+      console.error('Check-out error:', error);
+      toast({ title: 'Erro ao fazer check-out', variant: 'destructive' });
     }
   };
 
@@ -392,8 +619,31 @@ const AdminRoutePlanner = () => {
       case 'logistica': return upgraded.filter(s => s.stopType === 'pickup_tools' || s.stopType === 'deliver_tools');
       case 'comercial': return [...uniqueCommercial, ...upgraded.filter(s => s.stopType === 'hybrid_visit')];
       case 'hibrido': return [...upgraded, ...uniqueCommercial];
+      case 'manual': {
+        // Build manual stops from selected customers
+        const manualStops: RouteStop[] = Array.from(selectedCustomerIds).map(userId => {
+          const customer = manualCustomers.find(c => c.user_id === userId);
+          if (!customer) return null;
+          
+          return enrichWithPriority({
+            id: `manual-${userId}`,
+            stopType: 'manual_visit' as StopType,
+            customerUserId: userId,
+            customerName: customer.name,
+            phone: customer.phone,
+            address: customer.address,
+            timeSlot: null,
+            businessHoursOpen: null,
+            businessHoursClose: null,
+            status: 'manual',
+            visitReason: 'Visita manual',
+          });
+        }).filter(Boolean) as RouteStop[];
+        
+        return manualStops;
+      }
     }
-  }, [logisticStops, commercialStops, planningMode]);
+  }, [logisticStops, commercialStops, planningMode, selectedCustomerIds, manualCustomers]);
 
   // Initialize map
   useEffect(() => {
@@ -616,8 +866,76 @@ const AdminRoutePlanner = () => {
       case 'deliver_tools': return <Truck className="w-3.5 h-3.5" />;
       case 'sales_visit': return <ShoppingBag className="w-3.5 h-3.5" />;
       case 'hybrid_visit': return <Layers className="w-3.5 h-3.5" />;
+      case 'manual_visit': return <Users className="w-3.5 h-3.5" />;
     }
   };
+  
+  const getVisitBadge = (customer: ManualCustomer) => {
+    if (customer.daysSinceLastVisit === null) {
+      return <Badge variant="danger" className="text-xs">Nunca visitado</Badge>;
+    }
+    if (customer.daysSinceLastVisit > 30) {
+      return <Badge variant="warning" className="text-xs">Última visita há {customer.daysSinceLastVisit} dias</Badge>;
+    }
+    return null;
+  };
+  
+  const getOrderBadge = (customer: ManualCustomer) => {
+    if (customer.daysSinceLastOrder === null) {
+      return null;
+    }
+    if (customer.daysSinceLastOrder > 90) {
+      return <Badge variant="danger" className="text-xs">Sem compra há {customer.daysSinceLastOrder} dias</Badge>;
+    }
+    if (customer.daysSinceLastOrder > 30) {
+      return <Badge variant="warning" className="text-xs">Comprou há {customer.daysSinceLastOrder} dias</Badge>;
+    }
+    if (customer.daysSinceLastOrder <= 30) {
+      return <Badge variant="success" className="text-xs">Comprou recentemente</Badge>;
+    }
+    return null;
+  };
+  
+  const filteredManualCustomers = useMemo(() => {
+    let filtered = manualCustomers;
+    
+    // Apply filter
+    if (manualFilter === 'nunca_visitados') {
+      filtered = filtered.filter(c => c.daysSinceLastVisit === null);
+    } else if (manualFilter === 'sem_compra_30d') {
+      filtered = filtered.filter(c => c.daysSinceLastOrder === null || c.daysSinceLastOrder > 30);
+    }
+    
+    // Apply search
+    if (manualSearch.trim()) {
+      const search = manualSearch.toLowerCase();
+      filtered = filtered.filter(c => 
+        c.name.toLowerCase().includes(search) ||
+        c.city.toLowerCase().includes(search) ||
+        c.neighborhood.toLowerCase().includes(search)
+      );
+    }
+    
+    return filtered;
+  }, [manualCustomers, manualFilter, manualSearch]);
+  
+  const toggleCustomerSelection = (userId: string) => {
+    setSelectedCustomerIds(prev => {
+      const newSet = new Set(prev);
+      if (newSet.has(userId)) {
+        newSet.delete(userId);
+      } else {
+        newSet.add(userId);
+      }
+      return newSet;
+    });
+  };
+  
+  const estimatedManualHours = useMemo(() => {
+    const count = selectedCustomerIds.size;
+    const minutes = count * 20; // 20min per visit
+    return (minutes / 60).toFixed(1);
+  }, [selectedCustomerIds]);
 
   const handleStopCTA = (stop: RouteStop) => {
     if (stop.orderId) {
@@ -696,6 +1014,7 @@ const AdminRoutePlanner = () => {
             { key: 'logistica' as PlanningMode, label: 'Logística', icon: <Truck className="w-3.5 h-3.5" /> },
             { key: 'comercial' as PlanningMode, label: 'Comercial', icon: <ShoppingBag className="w-3.5 h-3.5" /> },
             { key: 'hibrido' as PlanningMode, label: 'Híbrido', icon: <Layers className="w-3.5 h-3.5" /> },
+            { key: 'manual' as PlanningMode, label: 'Manual', icon: <Users className="w-3.5 h-3.5" /> },
           ]).map(mode => (
             <Button
               key={mode.key}
@@ -709,6 +1028,143 @@ const AdminRoutePlanner = () => {
             </Button>
           ))}
         </div>
+        
+        {/* Manual mode UI */}
+        {planningMode === 'manual' && (
+          <Card>
+            <CardHeader>
+              <CardTitle className="text-base flex items-center justify-between">
+                <span>Selecionar Clientes</span>
+                <Badge variant="outline">
+                  {selectedCustomerIds.size} selecionados · ~{estimatedManualHours}h estimadas
+                </Badge>
+              </CardTitle>
+            </CardHeader>
+            <CardContent className="space-y-3">
+              {/* Filters */}
+              <div className="flex items-center gap-2 flex-wrap">
+                {(['todos', 'nunca_visitados', 'sem_compra_30d'] as ManualFilter[]).map(filter => (
+                  <Button
+                    key={filter}
+                    variant={manualFilter === filter ? 'secondary' : 'ghost'}
+                    size="sm"
+                    onClick={() => setManualFilter(filter)}
+                  >
+                    {filter === 'todos' ? 'Todos' : filter === 'nunca_visitados' ? 'Nunca visitados' : 'Sem compra há 30+ dias'}
+                  </Button>
+                ))}
+              </div>
+              
+              {/* Search */}
+              <div className="relative">
+                <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
+                <Input
+                  placeholder="Buscar por nome, cidade, bairro..."
+                  value={manualSearch}
+                  onChange={(e) => setManualSearch(e.target.value)}
+                  className="pl-9"
+                />
+              </div>
+              
+              {/* Customer list */}
+              {loadingManual ? (
+                <div className="flex items-center justify-center py-8">
+                  <Loader2 className="w-6 h-6 animate-spin text-primary" />
+                </div>
+              ) : (
+                <div className="space-y-2 max-h-96 overflow-y-auto">
+                  {filteredManualCustomers.map(customer => {
+                    const isSelected = selectedCustomerIds.has(customer.user_id);
+                    const visitStatus = visitStatuses.get(customer.user_id);
+                    
+                    return (
+                      <div
+                        key={customer.user_id}
+                        className={`p-3 border rounded-lg hover:bg-muted/50 transition-colors ${isSelected ? 'bg-primary/5 border-primary' : ''}`}
+                      >
+                        <div className="flex items-start gap-3">
+                          <Checkbox
+                            checked={isSelected}
+                            onCheckedChange={() => toggleCustomerSelection(customer.user_id)}
+                            className="mt-0.5"
+                          />
+                          <div className="flex-1 min-w-0">
+                            <div className="flex items-center gap-2 flex-wrap mb-1">
+                              <p className="font-medium text-sm">{customer.name}</p>
+                              {getVisitBadge(customer)}
+                              {getOrderBadge(customer)}
+                              {visitStatus?.isCheckedIn && (
+                                <Badge variant="success" className="text-xs">
+                                  <CheckCircle2 className="w-3 h-3 mr-1" />
+                                  Check-in ativo
+                                </Badge>
+                              )}
+                            </div>
+                            <p className="text-xs text-muted-foreground">
+                              {customer.neighborhood}, {customer.city}
+                            </p>
+                            <p className="text-xs text-muted-foreground">
+                              {customer.address.street}, {customer.address.number}
+                            </p>
+                            
+                            {/* Check-in/Check-out buttons */}
+                            {isSelected && (
+                              <div className="mt-2 flex gap-2">
+                                {!visitStatus?.isCheckedIn ? (
+                                  <Button
+                                    size="sm"
+                                    variant="outline"
+                                    onClick={() => handleCheckIn(customer)}
+                                    className="text-xs h-7"
+                                  >
+                                    <CheckCircle2 className="w-3 h-3 mr-1" />
+                                    Check-in
+                                  </Button>
+                                ) : (
+                                  <Button
+                                    size="sm"
+                                    variant="outline"
+                                    onClick={() => {
+                                      // Open check-out dialog
+                                      const result = window.prompt('Resultado da visita?\n1. Pedido fechado\n2. Ausente\n3. Não teve interesse\n4. Outro');
+                                      if (!result) return;
+                                      
+                                      const resultMap: Record<string, string> = {
+                                        '1': 'pedido_fechado',
+                                        '2': 'ausente',
+                                        '3': 'sem_interesse',
+                                        '4': 'outro',
+                                      };
+                                      
+                                      const notes = window.prompt('Observações (opcional):') || '';
+                                      const revenue = result === '1' ? parseFloat(window.prompt('Valor do pedido:') || '0') : 0;
+                                      
+                                      handleCheckOut(customer, resultMap[result] || 'outro', notes, revenue);
+                                    }}
+                                    className="text-xs h-7"
+                                  >
+                                    <XCircle className="w-3 h-3 mr-1" />
+                                    Check-out
+                                  </Button>
+                                )}
+                              </div>
+                            )}
+                          </div>
+                        </div>
+                      </div>
+                    );
+                  })}
+                  
+                  {filteredManualCustomers.length === 0 && (
+                    <div className="text-center py-8 text-muted-foreground text-sm">
+                      Nenhum cliente encontrado
+                    </div>
+                  )}
+                </div>
+              )}
+            </CardContent>
+          </Card>
+        )}
 
         {/* Period filter */}
         <div className="flex items-center gap-2">
