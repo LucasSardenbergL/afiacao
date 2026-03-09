@@ -3,14 +3,20 @@ import { useNavigate } from 'react-router-dom';
 import { Header } from '@/components/Header';
 import { BottomNav } from '@/components/BottomNav';
 import { Button } from '@/components/ui/button';
-import { Card, CardContent } from '@/components/ui/card';
+import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from '@/components/ui/dropdown-menu';
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '@/components/ui/dialog';
+import { Input } from '@/components/ui/input';
+import { Label } from '@/components/ui/label';
+import { Textarea } from '@/components/ui/textarea';
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
+import { Checkbox } from '@/components/ui/checkbox';
 import { supabase } from '@/integrations/supabase/client';
 import { useAuth } from '@/contexts/AuthContext';
 import { useFarmerScoring } from '@/hooks/useFarmerScoring';
 import { useToast } from '@/hooks/use-toast';
-import { Loader2, MapPin, Clock, Route, Filter, Navigation, ExternalLink, Truck, ShoppingBag, Wrench, Layers, Phone, ArrowUp, ArrowRight, ArrowDown } from 'lucide-react';
+import { Loader2, MapPin, Clock, Route, Filter, Navigation, ExternalLink, Truck, ShoppingBag, Wrench, Layers, Phone, ArrowUp, ArrowRight, ArrowDown, Search, CheckCircle2, XCircle, Users } from 'lucide-react';
 import L from 'leaflet';
 import 'leaflet/dist/leaflet.css';
 
@@ -22,9 +28,33 @@ L.Icon.Default.mergeOptions({
   shadowUrl: 'https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/images/marker-shadow.png',
 });
 
-type StopType = 'pickup_tools' | 'deliver_tools' | 'sales_visit' | 'hybrid_visit';
-type PlanningMode = 'logistica' | 'comercial' | 'hibrido';
+type StopType = 'pickup_tools' | 'deliver_tools' | 'sales_visit' | 'hybrid_visit' | 'manual_visit';
+type PlanningMode = 'logistica' | 'comercial' | 'hibrido' | 'manual';
 type FilterPeriod = 'all' | 'manha' | 'tarde';
+
+interface ManualCustomer {
+  user_id: string;
+  name: string;
+  phone: string | null;
+  city: string;
+  neighborhood: string;
+  address: {
+    street: string;
+    number: string;
+    neighborhood: string;
+    city: string;
+    state: string;
+    zip_code: string;
+    complement?: string;
+  };
+}
+
+interface VisitStatus {
+  stopId: string;
+  visitId: string | null;
+  checkInAt: string | null;
+  isCheckedIn: boolean;
+}
 
 interface RouteStop {
   id: string;
@@ -104,6 +134,7 @@ const STOP_DURATION_MIN: Record<StopType, number> = {
   deliver_tools: 8,
   sales_visit: 20,
   hybrid_visit: 30,
+  manual_visit: 15,
 };
 
 const PRIORITY_CONFIG: Record<RouteStop['priorityLabel'], { label: string; bgClass: string; icon: typeof ArrowUp }> = {
@@ -117,6 +148,7 @@ const STOP_CONFIG: Record<StopType, { label: string; color: string; bgClass: str
   deliver_tools: { label: 'Entrega', color: 'hsl(142, 70%, 40%)', bgClass: 'bg-green-100 text-green-800 dark:bg-green-900 dark:text-green-200', textClass: 'text-green-600', markerColor: '#22c55e' },
   sales_visit: { label: 'Comercial', color: 'hsl(30, 90%, 50%)', bgClass: 'bg-orange-100 text-orange-800 dark:bg-orange-900 dark:text-orange-200', textClass: 'text-orange-600', markerColor: '#f97316' },
   hybrid_visit: { label: 'Híbrido', color: 'hsl(270, 70%, 55%)', bgClass: 'bg-purple-100 text-purple-800 dark:bg-purple-900 dark:text-purple-200', textClass: 'text-purple-600', markerColor: '#a855f7' },
+  manual_visit: { label: 'Manual', color: 'hsl(180, 70%, 45%)', bgClass: 'bg-cyan-100 text-cyan-800 dark:bg-cyan-900 dark:text-cyan-200', textClass: 'text-cyan-600', markerColor: '#06b6d4' },
 };
 
 const AdminRoutePlanner = () => {
