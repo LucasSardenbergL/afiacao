@@ -134,6 +134,7 @@ const STOP_DURATION_MIN: Record<StopType, number> = {
   deliver_tools: 8,
   sales_visit: 20,
   hybrid_visit: 30,
+  manual_visit: 15,
 };
 
 const PRIORITY_CONFIG: Record<RouteStop['priorityLabel'], { label: string; bgClass: string; icon: typeof ArrowUp }> = {
