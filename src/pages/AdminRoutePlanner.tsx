@@ -214,13 +214,34 @@ const AdminRoutePlanner = () => {
     }
   }, [scoringLoading, agenda]);
   
+  // Always load today's visits (all modes)
+  useEffect(() => {
+    if (user && isStaff) loadTodayVisits();
+  }, [user, isStaff]);
+  
   // Load manual mode customers
   useEffect(() => {
     if (user && isStaff && planningMode === 'manual') {
       loadManualCustomers();
-      loadTodayVisits();
     }
   }, [user, isStaff, planningMode]);
+  
+  // Timer: tick every second for active check-ins
+  useEffect(() => {
+    if (visitStatuses.size === 0) return;
+    const interval = setInterval(() => {
+      setVisitTimers(() => {
+        const next = new Map<string, number>();
+        visitStatuses.forEach(status => {
+          if (status.isCheckedIn && status.checkInAt) {
+            next.set(status.stopId, Math.floor((Date.now() - new Date(status.checkInAt).getTime()) / 1000));
+          }
+        });
+        return next;
+      });
+    }, 1000);
+    return () => clearInterval(interval);
+  }, [visitStatuses]);
 
   const loadLogisticStops = async () => {
     try {
