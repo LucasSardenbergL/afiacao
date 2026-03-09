@@ -1209,6 +1209,12 @@ const AdminRoutePlanner = () => {
                           <div className="flex-1 min-w-0">
                             <div className="flex items-center gap-2 flex-wrap mb-1">
                               <p className="font-medium text-sm">{customer.name}</p>
+                              {!customer.hasAddress && (
+                                <Badge variant="outline" className="text-xs text-muted-foreground">
+                                  <MapPin className="w-3 h-3 mr-1" />
+                                  Sem endereço
+                                </Badge>
+                              )}
                               {getVisitBadge(customer)}
                               {getOrderBadge(customer)}
                               {visitStatus?.isCheckedIn && (
@@ -1218,12 +1224,20 @@ const AdminRoutePlanner = () => {
                                 </Badge>
                               )}
                             </div>
-                            <p className="text-xs text-muted-foreground">
-                              {customer.neighborhood}, {customer.city}
-                            </p>
-                            <p className="text-xs text-muted-foreground">
-                              {customer.address.street}, {customer.address.number}
-                            </p>
+                            {customer.hasAddress ? (
+                              <>
+                                <p className="text-xs text-muted-foreground">
+                                  {customer.neighborhood}, {customer.city}
+                                </p>
+                                <p className="text-xs text-muted-foreground">
+                                  {customer.address.street}, {customer.address.number}
+                                </p>
+                              </>
+                            ) : (
+                              <p className="text-xs text-muted-foreground italic">
+                                Endereço não cadastrado — sincronize via Painel de Sync
+                              </p>
+                            )}
                             
                             {/* Check-in/Check-out buttons */}
                             {isSelected && (
@@ -1243,7 +1257,7 @@ const AdminRoutePlanner = () => {
                                     size="sm"
                                     variant="outline"
                                     onClick={() => openCheckoutDialog(customer.user_id, customer.name)}
-                                    className="text-xs h-7 border-orange-400 text-orange-600 hover:bg-orange-50"
+                                    className="text-xs h-7"
                                   >
                                     <XCircle className="w-3 h-3 mr-1" />
                                     Check-out
