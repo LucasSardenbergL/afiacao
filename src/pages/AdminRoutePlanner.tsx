@@ -1212,9 +1212,9 @@ const AdminRoutePlanner = () => {
                               {getVisitBadge(customer)}
                               {getOrderBadge(customer)}
                               {visitStatus?.isCheckedIn && (
-                                <Badge variant="success" className="text-xs">
-                                  <CheckCircle2 className="w-3 h-3 mr-1" />
-                                  Check-in ativo
+                                <Badge variant="success" className="text-xs gap-1">
+                                  <CheckCircle2 className="w-3 h-3" />
+                                  Em visita · {formatTimer(visitTimers.get(customer.user_id) ?? 0)}
                                 </Badge>
                               )}
                             </div>
