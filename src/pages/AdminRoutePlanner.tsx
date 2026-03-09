@@ -410,12 +410,24 @@ const AdminRoutePlanner = () => {
       .from('route_visits')
       .select('*')
       .eq('visited_by', user.id)
-      .eq('visit_date', today);
+      .eq('visit_date', today)
+      .order('check_in_at', { ascending: false });
     
-    if (data) {
-      setTodayVisits(data);
+    if (data && data.length > 0) {
+      // Fetch customer names
+      const ids = [...new Set(data.map((v: any) => v.customer_user_id))];
+      const { data: profs } = await supabase
+        .from('profiles')
+        .select('user_id, name')
+        .in('user_id', ids);
+      const nameMap = new Map((profs || []).map((p: any) => [p.user_id, p.name]));
+      const enriched = data.map((v: any) => ({ ...v, customerName: nameMap.get(v.customer_user_id) || 'Cliente' }));
+      
+      setTodayVisits(enriched);
+      
+      // Build active check-in status map
       const statusMap = new Map<string, VisitStatus>();
-      data.forEach(visit => {
+      enriched.forEach((visit: any) => {
         if (visit.check_in_at && !visit.check_out_at) {
           statusMap.set(visit.customer_user_id, {
             stopId: visit.customer_user_id,
@@ -426,6 +438,8 @@ const AdminRoutePlanner = () => {
         }
       });
       setVisitStatuses(statusMap);
+    } else {
+      setTodayVisits([]);
     }
   };
   
