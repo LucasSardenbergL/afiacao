@@ -182,6 +182,14 @@ const AdminRoutePlanner = () => {
   // Visit tracking state
   const [visitStatuses, setVisitStatuses] = useState<Map<string, VisitStatus>>(new Map());
   const [todayVisits, setTodayVisits] = useState<any[]>([]);
+  // Checkout dialog state
+  const [checkoutOpen, setCheckoutOpen] = useState(false);
+  const [checkoutTarget, setCheckoutTarget] = useState<{ userId: string; name: string } | null>(null);
+  const [checkoutResult, setCheckoutResult] = useState('');
+  const [checkoutNotes, setCheckoutNotes] = useState('');
+  const [checkoutRevenue, setCheckoutRevenue] = useState('');
+  // Visit timers (seconds elapsed per active check-in)
+  const [visitTimers, setVisitTimers] = useState<Map<string, number>>(new Map());
 
   const { agenda, clientScores, loading: scoringLoading } = useFarmerScoring();
 
@@ -206,13 +214,34 @@ const AdminRoutePlanner = () => {
     }
   }, [scoringLoading, agenda]);
   
+  // Always load today's visits (all modes)
+  useEffect(() => {
+    if (user && isStaff) loadTodayVisits();
+  }, [user, isStaff]);
+  
   // Load manual mode customers
   useEffect(() => {
     if (user && isStaff && planningMode === 'manual') {
       loadManualCustomers();
-      loadTodayVisits();
     }
   }, [user, isStaff, planningMode]);
+  
+  // Timer: tick every second for active check-ins
+  useEffect(() => {
+    if (visitStatuses.size === 0) return;
+    const interval = setInterval(() => {
+      setVisitTimers(() => {
+        const next = new Map<string, number>();
+        visitStatuses.forEach(status => {
+          if (status.isCheckedIn && status.checkInAt) {
+            next.set(status.stopId, Math.floor((Date.now() - new Date(status.checkInAt).getTime()) / 1000));
+          }
+        });
+        return next;
+      });
+    }, 1000);
+    return () => clearInterval(interval);
+  }, [visitStatuses]);
 
   const loadLogisticStops = async () => {
     try {
@@ -381,12 +410,24 @@ const AdminRoutePlanner = () => {
       .from('route_visits')
       .select('*')
       .eq('visited_by', user.id)
-      .eq('visit_date', today);
+      .eq('visit_date', today)
+      .order('check_in_at', { ascending: false });
     
-    if (data) {
-      setTodayVisits(data);
+    if (data && data.length > 0) {
+      // Fetch customer names
+      const ids = [...new Set(data.map((v: any) => v.customer_user_id))];
+      const { data: profs } = await supabase
+        .from('profiles')
+        .select('user_id, name')
+        .in('user_id', ids);
+      const nameMap = new Map((profs || []).map((p: any) => [p.user_id, p.name]));
+      const enriched = data.map((v: any) => ({ ...v, customerName: nameMap.get(v.customer_user_id) || 'Cliente' }));
+      
+      setTodayVisits(enriched);
+      
+      // Build active check-in status map
       const statusMap = new Map<string, VisitStatus>();
-      data.forEach(visit => {
+      enriched.forEach((visit: any) => {
         if (visit.check_in_at && !visit.check_out_at) {
           statusMap.set(visit.customer_user_id, {
             stopId: visit.customer_user_id,
@@ -397,54 +438,57 @@ const AdminRoutePlanner = () => {
         }
       });
       setVisitStatuses(statusMap);
+    } else {
+      setTodayVisits([]);
     }
   };
   
   const handleCheckIn = async (customer: ManualCustomer) => {
     if (!user) return;
     
-    try {
+    const doInsert = async (lat?: number, lng?: number) => {
+      try {
+        const { data, error } = await supabase
+          .from('route_visits')
+          .insert({
+            customer_user_id: customer.user_id,
+            visited_by: user.id,
+            visit_type: 'comercial',
+            check_in_at: new Date().toISOString(),
+            ...(lat !== undefined && { lat, lng }),
+          })
+          .select()
+          .single();
+        
+        if (error) throw error;
+        
+        setVisitStatuses(prev => new Map(prev).set(customer.user_id, {
+          stopId: customer.user_id,
+          visitId: data.id,
+          checkInAt: data.check_in_at,
+          isCheckedIn: true,
+        }));
+        
+        await loadTodayVisits();
+        toast({ title: 'Check-in realizado!', description: `Visita iniciada: ${customer.name}` });
+      } catch (err) {
+        console.error('Check-in error:', err);
+        toast({ title: 'Erro ao fazer check-in', variant: 'destructive' });
+      }
+    };
+    
+    if (navigator.geolocation) {
       navigator.geolocation.getCurrentPosition(
-        async (position) => {
-          const { data, error } = await supabase
-            .from('route_visits')
-            .insert({
-              customer_user_id: customer.user_id,
-              visited_by: user.id,
-              visit_type: 'comercial',
-              check_in_at: new Date().toISOString(),
-              lat: position.coords.latitude,
-              lng: position.coords.longitude,
-            })
-            .select()
-            .single();
-          
-          if (error) throw error;
-          
-          setVisitStatuses(prev => new Map(prev).set(customer.user_id, {
-            stopId: customer.user_id,
-            visitId: data.id,
-            checkInAt: data.check_in_at,
-            isCheckedIn: true,
-          }));
-          
-          toast({ title: 'Check-in realizado', description: `Visita iniciada em ${customer.name}` });
-        },
-        (error) => {
-          console.error('Geolocation error:', error);
-          toast({ title: 'Erro ao obter localização', variant: 'destructive' });
-        }
+        pos => doInsert(pos.coords.latitude, pos.coords.longitude),
+        () => doInsert(),
+        { timeout: 5000 }
       );
-    } catch (error) {
-      console.error('Check-in error:', error);
-      toast({ title: 'Erro ao fazer check-in', variant: 'destructive' });
+    } else {
+      doInsert();
     }
   };
   
-  const handleCheckOut = async (customer: ManualCustomer, result: string, notes: string, revenue: number) => {
-    const status = visitStatuses.get(customer.user_id);
-    if (!status?.visitId) return;
-    
+  const handleCheckOut = async (userId: string, visitId: string, customerName: string, result: string, notes: string, revenue: number) => {
     try {
       const { error } = await supabase
         .from('route_visits')
@@ -455,25 +499,99 @@ const AdminRoutePlanner = () => {
           revenue_generated: revenue,
           order_created: result === 'pedido_fechado',
         })
-        .eq('id', status.visitId);
+        .eq('id', visitId);
       
       if (error) throw error;
       
       setVisitStatuses(prev => {
-        const newMap = new Map(prev);
-        newMap.delete(customer.user_id);
-        return newMap;
+        const m = new Map(prev);
+        m.delete(userId);
+        return m;
       });
       
-      toast({ title: 'Check-out realizado', description: `Visita finalizada em ${customer.name}` });
+      setVisitTimers(prev => {
+        const m = new Map(prev);
+        m.delete(userId);
+        return m;
+      });
+      
+      setCheckoutOpen(false);
+      await loadTodayVisits();
+      toast({ title: 'Check-out realizado!', description: `Visita finalizada: ${customerName}` });
       
       if (result === 'pedido_fechado') {
-        navigate(`/sales/new?customer=${customer.user_id}`);
+        navigate(`/sales/new?customer=${userId}`);
       }
-    } catch (error) {
-      console.error('Check-out error:', error);
+    } catch (err) {
+      console.error('Check-out error:', err);
       toast({ title: 'Erro ao fazer check-out', variant: 'destructive' });
     }
+  };
+  
+  const openCheckoutDialog = (userId: string, name: string) => {
+    setCheckoutTarget({ userId, name });
+    setCheckoutResult('');
+    setCheckoutNotes('');
+    setCheckoutRevenue('');
+    setCheckoutOpen(true);
+  };
+  
+  const confirmCheckout = () => {
+    if (!checkoutTarget || !checkoutResult) return;
+    const status = visitStatuses.get(checkoutTarget.userId);
+    if (!status?.visitId) return;
+    handleCheckOut(checkoutTarget.userId, status.visitId, checkoutTarget.name, checkoutResult, checkoutNotes, parseFloat(checkoutRevenue) || 0);
+  };
+  
+  const handleCheckInStop = async (stop: RouteStop) => {
+    if (!user) return;
+    
+    const doInsert = async (lat?: number, lng?: number) => {
+      try {
+        const vType = stop.stopType === 'pickup_tools' ? 'coleta' : stop.stopType === 'deliver_tools' ? 'entrega' : 'comercial';
+        const { data, error } = await supabase
+          .from('route_visits')
+          .insert({
+            customer_user_id: stop.customerUserId,
+            visited_by: user.id,
+            visit_type: vType,
+            check_in_at: new Date().toISOString(),
+            ...(lat !== undefined && { lat, lng }),
+          })
+          .select()
+          .single();
+        
+        if (error) throw error;
+        
+        setVisitStatuses(prev => new Map(prev).set(stop.customerUserId, {
+          stopId: stop.customerUserId,
+          visitId: data.id,
+          checkInAt: data.check_in_at,
+          isCheckedIn: true,
+        }));
+        
+        await loadTodayVisits();
+        toast({ title: 'Check-in realizado!', description: `Visita iniciada: ${stop.customerName}` });
+      } catch (err) {
+        toast({ title: 'Erro ao fazer check-in', variant: 'destructive' });
+      }
+    };
+    
+    if (navigator.geolocation) {
+      navigator.geolocation.getCurrentPosition(
+        pos => doInsert(pos.coords.latitude, pos.coords.longitude),
+        () => doInsert(),
+        { timeout: 5000 }
+      );
+    } else {
+      doInsert();
+    }
+  };
+  
+  const formatTimer = (seconds: number) => {
+    const m = Math.floor(seconds / 60);
+    const s = seconds % 60;
+    return `${m}:${String(s).padStart(2, '0')}`;
   };
 
   const loadCommercialStops = async () => {
@@ -1094,9 +1212,9 @@ const AdminRoutePlanner = () => {
                               {getVisitBadge(customer)}
                               {getOrderBadge(customer)}
                               {visitStatus?.isCheckedIn && (
-                                <Badge variant="success" className="text-xs">
-                                  <CheckCircle2 className="w-3 h-3 mr-1" />
-                                  Check-in ativo
+                                <Badge variant="success" className="text-xs gap-1">
+                                  <CheckCircle2 className="w-3 h-3" />
+                                  Em visita · {formatTimer(visitTimers.get(customer.user_id) ?? 0)}
                                 </Badge>
                               )}
                             </div>
@@ -1124,24 +1242,8 @@ const AdminRoutePlanner = () => {
                                   <Button
                                     size="sm"
                                     variant="outline"
-                                    onClick={() => {
-                                      // Open check-out dialog
-                                      const result = window.prompt('Resultado da visita?\n1. Pedido fechado\n2. Ausente\n3. Não teve interesse\n4. Outro');
-                                      if (!result) return;
-                                      
-                                      const resultMap: Record<string, string> = {
-                                        '1': 'pedido_fechado',
-                                        '2': 'ausente',
-                                        '3': 'sem_interesse',
-                                        '4': 'outro',
-                                      };
-                                      
-                                      const notes = window.prompt('Observações (opcional):') || '';
-                                      const revenue = result === '1' ? parseFloat(window.prompt('Valor do pedido:') || '0') : 0;
-                                      
-                                      handleCheckOut(customer, resultMap[result] || 'outro', notes, revenue);
-                                    }}
-                                    className="text-xs h-7"
+                                    onClick={() => openCheckoutDialog(customer.user_id, customer.name)}
+                                    className="text-xs h-7 border-orange-400 text-orange-600 hover:bg-orange-50"
                                   >
                                     <XCircle className="w-3 h-3 mr-1" />
                                     Check-out
@@ -1308,7 +1410,7 @@ const AdminRoutePlanner = () => {
             optimizedRoute.map((stop, idx) => {
               const cfg = STOP_CONFIG[stop.stopType];
               return (
-                <Card key={stop.id} className="hover:shadow-md transition-shadow">
+                <Card key={stop.id} className={`hover:shadow-md transition-shadow ${visitStatuses.get(stop.customerUserId)?.isCheckedIn ? 'border-green-400 bg-green-50/40 dark:bg-green-950/20' : ''}`}>
                   <CardContent className="py-3 px-4">
                     <div className="flex items-start gap-3">
                       {/* Number circle colored by type */}
@@ -1359,7 +1461,7 @@ const AdminRoutePlanner = () => {
                           {!stop.lat && <span className="text-destructive">Sem coordenadas</span>}
                         </div>
                         {/* CTAs */}
-                        <div className="flex items-center gap-2 mt-2">
+                        <div className="flex items-center gap-2 mt-2 flex-wrap">
                           <Button size="sm" variant="outline" className="h-7 text-xs" onClick={() => handleStopCTA(stop)}>
                             {getCTALabel(stop)}
                           </Button>
@@ -1370,6 +1472,34 @@ const AdminRoutePlanner = () => {
                               </a>
                             </Button>
                           )}
+                          {(() => {
+                            const vs = visitStatuses.get(stop.customerUserId);
+                            if (!vs?.isCheckedIn) {
+                              return (
+                                <Button
+                                  size="sm" variant="outline"
+                                  className="h-7 text-xs gap-1 border-green-500 text-green-600 hover:bg-green-50 dark:hover:bg-green-950"
+                                  onClick={() => handleCheckInStop(stop)}
+                                >
+                                  <CheckCircle2 className="w-3 h-3" /> Check-in
+                                </Button>
+                              );
+                            }
+                            return (
+                              <div className="flex items-center gap-1.5">
+                                <span className="text-xs font-mono text-green-600">
+                                  {formatTimer(visitTimers.get(stop.customerUserId) ?? 0)}
+                                </span>
+                                <Button
+                                  size="sm" variant="outline"
+                                  className="h-7 text-xs gap-1 border-orange-400 text-orange-600 hover:bg-orange-50 dark:hover:bg-orange-950"
+                                  onClick={() => openCheckoutDialog(stop.customerUserId, stop.customerName)}
+                                >
+                                  <XCircle className="w-3 h-3" /> Check-out
+                                </Button>
+                              </div>
+                            );
+                          })()}
                         </div>
                       </div>
                       <DropdownMenu>
@@ -1390,7 +1520,125 @@ const AdminRoutePlanner = () => {
             })
           ) : null}
         </div>
+        {/* Visitas Realizadas Hoje */}
+        <div className="space-y-2 pt-4">
+          <h2 className="text-base font-semibold text-foreground flex items-center gap-2">
+            <CheckCircle2 className="w-4 h-4 text-primary" />
+            Visitas Realizadas Hoje
+            <Badge variant="outline" className="ml-auto text-xs">{todayVisits.length}</Badge>
+          </h2>
+          
+          {todayVisits.length === 0 ? (
+            <Card>
+              <CardContent className="py-6 text-center text-muted-foreground text-sm">
+                Nenhuma visita registrada hoje
+              </CardContent>
+            </Card>
+          ) : (
+            [...todayVisits].sort((a: any, b: any) => {
+              if (!a.check_out_at && b.check_out_at) return -1;
+              if (a.check_out_at && !b.check_out_at) return 1;
+              return 0;
+            }).map((visit: any) => {
+              const isActive = !visit.check_out_at;
+              const duration = visit.check_out_at && visit.check_in_at
+                ? Math.floor((new Date(visit.check_out_at).getTime() - new Date(visit.check_in_at).getTime()) / 60000)
+                : null;
+              const checkInTime = visit.check_in_at
+                ? new Date(visit.check_in_at).toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' })
+                : '—';
+              return (
+                <Card key={visit.id} className={isActive ? 'border-green-400' : ''}>
+                  <CardContent className="py-3 px-4">
+                    <div className="flex items-center gap-3">
+                      <div className={`w-2.5 h-2.5 rounded-full flex-shrink-0 ${isActive ? 'bg-green-500 animate-pulse' : 'bg-muted-foreground'}`} />
+                      <div className="flex-1 min-w-0">
+                        <p className="text-sm font-medium">{visit.customerName}</p>
+                        <p className="text-xs text-muted-foreground">
+                          Check-in: {checkInTime}
+                          {duration !== null && ` · ${duration}min`}
+                        </p>
+                      </div>
+                      <div className="flex items-center gap-2 flex-shrink-0">
+                        {isActive ? (
+                          <Badge variant="success" className="text-xs">Em visita</Badge>
+                        ) : visit.result ? (
+                          <Badge variant={visit.result === 'pedido_fechado' ? 'success' : 'outline'} className="text-xs">
+                            {visit.result === 'pedido_fechado' ? 'Pedido fechado'
+                              : visit.result === 'interesse' ? 'Interesse'
+                              : visit.result === 'sem_interesse' ? 'Sem interesse'
+                              : visit.result === 'ausente' ? 'Ausente'
+                              : visit.result === 'reagendar' ? 'Reagendar'
+                              : visit.result}
+                          </Badge>
+                        ) : null}
+                      </div>
+                    </div>
+                  </CardContent>
+                </Card>
+              );
+            })
+          )}
+        </div>
       </main>
+
+      {/* Checkout Dialog */}
+      <Dialog open={checkoutOpen} onOpenChange={setCheckoutOpen}>
+        <DialogContent className="max-w-sm">
+          <DialogHeader>
+            <DialogTitle>Check-out — {checkoutTarget?.name}</DialogTitle>
+          </DialogHeader>
+          <div className="space-y-4 py-2">
+            <div>
+              <Label>Resultado da visita *</Label>
+              <Select value={checkoutResult} onValueChange={setCheckoutResult}>
+                <SelectTrigger className="mt-1.5">
+                  <SelectValue placeholder="Selecione o resultado..." />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="pedido_fechado">✅ Pedido fechado</SelectItem>
+                  <SelectItem value="interesse">🤔 Interesse</SelectItem>
+                  <SelectItem value="sem_interesse">❌ Sem interesse</SelectItem>
+                  <SelectItem value="ausente">🚫 Ausente</SelectItem>
+                  <SelectItem value="reagendar">📅 Reagendar</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+            
+            {checkoutResult === 'pedido_fechado' && (
+              <div>
+                <Label>Receita gerada (R$)</Label>
+                <Input
+                  type="number"
+                  min="0"
+                  step="0.01"
+                  placeholder="0,00"
+                  value={checkoutRevenue}
+                  onChange={e => setCheckoutRevenue(e.target.value)}
+                  className="mt-1.5"
+                />
+              </div>
+            )}
+            
+            <div>
+              <Label>Observações (opcional)</Label>
+              <Textarea
+                placeholder="Notas sobre a visita..."
+                value={checkoutNotes}
+                onChange={e => setCheckoutNotes(e.target.value)}
+                className="mt-1.5 resize-none"
+                rows={3}
+              />
+            </div>
+          </div>
+          <DialogFooter className="gap-2">
+            <Button variant="outline" onClick={() => setCheckoutOpen(false)}>Cancelar</Button>
+            <Button disabled={!checkoutResult} onClick={confirmCheckout}>
+              Confirmar Check-out
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
 
       <BottomNav />
     </div>
