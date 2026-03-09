@@ -1242,24 +1242,8 @@ const AdminRoutePlanner = () => {
                                   <Button
                                     size="sm"
                                     variant="outline"
-                                    onClick={() => {
-                                      // Open check-out dialog
-                                      const result = window.prompt('Resultado da visita?\n1. Pedido fechado\n2. Ausente\n3. Não teve interesse\n4. Outro');
-                                      if (!result) return;
-                                      
-                                      const resultMap: Record<string, string> = {
-                                        '1': 'pedido_fechado',
-                                        '2': 'ausente',
-                                        '3': 'sem_interesse',
-                                        '4': 'outro',
-                                      };
-                                      
-                                      const notes = window.prompt('Observações (opcional):') || '';
-                                      const revenue = result === '1' ? parseFloat(window.prompt('Valor do pedido:') || '0') : 0;
-                                      
-                                      handleCheckOut(customer, resultMap[result] || 'outro', notes, revenue);
-                                    }}
-                                    className="text-xs h-7"
+                                    onClick={() => openCheckoutDialog(customer.user_id, customer.name)}
+                                    className="text-xs h-7 border-orange-400 text-orange-600 hover:bg-orange-50"
                                   >
                                     <XCircle className="w-3 h-3 mr-1" />
                                     Check-out
