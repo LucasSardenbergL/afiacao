@@ -900,7 +900,7 @@ const AdminRoutePlanner = () => {
                 </Card>
               );
             })
-          )}
+          ) : null}
         </div>
       </main>
 
