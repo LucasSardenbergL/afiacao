@@ -470,7 +470,43 @@ export default function AdminAnalyticsSync() {
         </CardContent>
       </Card>
 
-      {/* Bulk Orders Sync */}
+      {/* Address Sync from Omie */}
+      <Card>
+        <CardHeader>
+          <div className="flex items-center justify-between">
+            <div className="flex items-center gap-2">
+              <MapPin className="h-5 w-5 text-muted-foreground" />
+              <CardTitle className="text-base">Sincronizar Endereços do Omie</CardTitle>
+            </div>
+            <Button
+              variant="outline"
+              size="sm"
+              disabled={isRunning}
+              onClick={() => addressSyncMutation.mutate()}
+            >
+              {addressSyncMutation.isPending ? (
+                <Loader2 className="h-3 w-3 mr-2 animate-spin" />
+              ) : (
+                <RefreshCw className="h-3 w-3 mr-2" />
+              )}
+              Sincronizar Endereços
+            </Button>
+          </div>
+        </CardHeader>
+        <CardContent>
+          <p className="text-xs text-muted-foreground">
+            Busca endereços dos clientes no Omie e popula a tabela <code className="font-mono">addresses</code>. 
+            Pré-requisito para o roteirizador e funcionalidades que dependem de localização.
+          </p>
+          {addressSyncProgress && (
+            <div className="mt-3 flex items-center gap-2 text-xs text-primary font-medium">
+              <Loader2 className="h-3 w-3 animate-spin" />
+              {addressSyncProgress}
+            </div>
+          )}
+        </CardContent>
+      </Card>
+
       <Card>
         <CardHeader>
           <div className="flex items-center justify-between">
