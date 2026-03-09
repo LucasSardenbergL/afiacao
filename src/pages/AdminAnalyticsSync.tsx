@@ -207,17 +207,34 @@ export default function AdminAnalyticsSync() {
 
   const addressSyncMutation = useMutation({
     mutationFn: async () => {
-      setAddressSyncProgress("Sincronizando endereços...");
-      const { data, error } = await supabase.functions.invoke("omie-cliente", {
-        body: { action: "sync_addresses" },
-      });
-      if (error) throw error;
+      let offset = 0;
+      let totalSynced = 0;
+      let totalSkipped = 0;
+      let totalErrors = 0;
+      let totalNeeding = 0;
+      let hasMore = true;
+
+      while (hasMore) {
+        setAddressSyncProgress(`Sincronizando endereços... (${offset} processados, ${totalSynced} criados)`);
+        const { data, error } = await supabase.functions.invoke("omie-cliente", {
+          body: { action: "sync_addresses", offset, batch_size: 30 },
+        });
+        if (error) throw error;
+
+        totalSynced += data?.synced || 0;
+        totalSkipped += data?.skipped || 0;
+        totalErrors += data?.errors || 0;
+        totalNeeding = data?.totalNeeding || 0;
+        hasMore = data?.hasMore || false;
+        offset = data?.nextOffset || offset + 30;
+      }
+
       setAddressSyncProgress(null);
-      return data;
+      return { synced: totalSynced, skipped: totalSkipped, errors: totalErrors, totalNeeding };
     },
     onSuccess: (data) => {
       toast.success("Sincronização de endereços concluída", {
-        description: `${data?.synced || 0} endereços criados, ${data?.skipped || 0} ignorados, ${data?.errors || 0} erros`,
+        description: `${data?.synced || 0} endereços criados, ${data?.skipped || 0} ignorados, ${data?.errors || 0} erros (de ${data?.totalNeeding || 0} pendentes)`,
         duration: 10000,
       });
     },

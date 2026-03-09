@@ -242,6 +242,48 @@ async function validarVendedorMultiOmie(cnpjCpf: string): Promise<{
   return { consistente, vendedores: resultados, divergencias };
 }
 
+async function upsertAddressFromOmie(
+  adminClient: ReturnType<typeof createClient>,
+  userId: string,
+  cliente: OmieCliente
+): Promise<boolean> {
+  try {
+    if (!cliente.endereco || !cliente.cidade) return false;
+
+    // Check if user already has an Omie address
+    const { data: existing } = await adminClient
+      .from("addresses")
+      .select("id")
+      .eq("user_id", userId)
+      .eq("is_from_omie", true)
+      .maybeSingle();
+
+    const addressData = {
+      user_id: userId,
+      label: "Omie",
+      street: cliente.endereco || "",
+      number: cliente.endereco_numero || "S/N",
+      complement: cliente.complemento || null,
+      neighborhood: cliente.bairro || "",
+      city: cliente.cidade || "",
+      state: cliente.estado || "",
+      zip_code: (cliente.cep || "").replace(/\D/g, ""),
+      is_default: true,
+      is_from_omie: true,
+    };
+
+    if (existing) {
+      await adminClient.from("addresses").update(addressData).eq("id", existing.id);
+    } else {
+      await adminClient.from("addresses").insert(addressData);
+    }
+    return true;
+  } catch (err) {
+    console.error(`[upsertAddressFromOmie] Error for user ${userId}:`, err);
+    return false;
+  }
+}
+
 function isIndustrialByCNAE(cnae: string): boolean {
   if (!cnae) return false;
   const cnaeCode = cnae.replace(/\D/g, '');
@@ -878,43 +920,45 @@ serve(async (req) => {
       }
 
       case "sync_addresses": {
-        // Bulk sync addresses for existing clients that don't have one
+        // Bulk sync addresses in batches. Supports offset for iterative calls.
         const supabaseUrl = Deno.env.get("SUPABASE_URL")!;
         const supabaseServiceKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
         const adminClient = createClient(supabaseUrl, supabaseServiceKey);
 
         const accounts = getOmieAccounts();
+        const batchSize = body.batch_size || 30; // max per call to avoid timeout
+        const offset = body.offset || 0;
+
         let totalSynced = 0;
         let totalSkipped = 0;
         let totalErrors = 0;
 
-        // Get all omie_clientes mappings
-        const { data: mappings } = await adminClient
-          .from("omie_clientes")
-          .select("user_id, omie_codigo_cliente")
-          .limit(1000);
+        // Get ALL user_ids that already have addresses (deduplicate)
+        const { data: existingAddresses } = await adminClient
+          .from("addresses")
+          .select("user_id");
+        const usersWithAddress = new Set((existingAddresses || []).map((a: any) => a.user_id));
 
-        if (!mappings || mappings.length === 0) {
-          result = { synced: 0, skipped: 0, errors: 0, message: "No client mappings found" };
+        // Get omie_clientes that DON'T have addresses, with pagination
+        const { data: allMappings, count: totalCount } = await adminClient
+          .from("omie_clientes")
+          .select("user_id, omie_codigo_cliente", { count: "exact" });
+
+        if (!allMappings || allMappings.length === 0) {
+          result = { synced: 0, skipped: 0, errors: 0, hasMore: false, message: "No client mappings found" };
           break;
         }
 
-        // Get all user_ids that already have addresses
-        const { data: existingAddresses } = await adminClient
-          .from("addresses")
-          .select("user_id")
-          .in("user_id", mappings.map(m => m.user_id));
-        
-        const usersWithAddress = new Set((existingAddresses || []).map(a => a.user_id));
+        // Filter to those without addresses
+        const clientsNeedingAddress = allMappings.filter((m: any) => !usersWithAddress.has(m.user_id));
+        const totalNeeding = clientsNeedingAddress.length;
 
-        // Filter to clients without addresses
-        const clientsNeedingAddress = mappings.filter(m => !usersWithAddress.has(m.user_id));
-        console.log(`[sync_addresses] ${clientsNeedingAddress.length} clients need addresses out of ${mappings.length} total`);
+        // Take batch from offset
+        const batch = clientsNeedingAddress.slice(offset, offset + batchSize);
+        console.log(`[sync_addresses] Processing batch offset=${offset}, size=${batch.length}, totalNeeding=${totalNeeding}`);
 
-        // Group by omie_codigo_cliente for fetching
-        for (const mapping of clientsNeedingAddress) {
+        for (const mapping of batch) {
           try {
-            // Try to fetch client details from each account
             let clienteData: OmieCliente | null = null;
             
             for (const account of accounts) {
@@ -953,12 +997,18 @@ serve(async (req) => {
           }
         }
 
+        const nextOffset = offset + batchSize;
+        const hasMore = nextOffset < totalNeeding;
+
         result = {
           synced: totalSynced,
           skipped: totalSkipped,
           errors: totalErrors,
-          totalClients: mappings.length,
-          clientsNeededAddress: clientsNeedingAddress.length,
+          totalNeeding,
+          totalClients: totalCount || allMappings.length,
+          processed: Math.min(nextOffset, totalNeeding),
+          hasMore,
+          nextOffset: hasMore ? nextOffset : null,
         };
         break;
       }
