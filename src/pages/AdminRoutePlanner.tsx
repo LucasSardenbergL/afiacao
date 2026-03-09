@@ -389,6 +389,8 @@ const AdminRoutePlanner = () => {
         })
         .filter(Boolean) as ManualCustomer[];
       
+      console.log('[Manual] Clientes com endereço:', customers.length);
+      
       // Sort: never visited first, then by days since last visit
       customers.sort((a, b) => {
         if (a.daysSinceLastVisit === null && b.daysSinceLastVisit === null) return 0;
