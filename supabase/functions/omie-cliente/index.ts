@@ -720,6 +720,9 @@ serve(async (req) => {
           console.error("[criar_perfil_local] Mapping error:", mappingError);
         }
 
+        // Upsert address from Omie data
+        await upsertAddressFromOmie(adminClient, newUserId, cliente);
+
         result = { user_id: newUserId };
         break;
       }
