@@ -273,6 +273,209 @@ const AdminRoutePlanner = () => {
     }
   };
 
+  const loadManualCustomers = async () => {
+    setLoadingManual(true);
+    try {
+      // Load all customers
+      const { data: profiles, error: profileError } = await supabase
+        .from('profiles')
+        .select('user_id, name, phone, customer_type')
+        .eq('is_approved', true)
+        .order('name');
+      
+      if (profileError) throw profileError;
+      if (!profiles || profiles.length === 0) {
+        setManualCustomers([]);
+        return;
+      }
+      
+      const userIds = profiles.map(p => p.user_id);
+      
+      // Load default addresses
+      const { data: addresses } = await supabase
+        .from('addresses')
+        .select('*')
+        .in('user_id', userIds)
+        .eq('is_default', true);
+      
+      // Load last visit dates
+      const { data: lastVisits } = await supabase
+        .from('route_visits')
+        .select('customer_user_id, check_in_at')
+        .in('customer_user_id', userIds)
+        .not('check_in_at', 'is', null)
+        .order('check_in_at', { ascending: false });
+      
+      // Load last order dates
+      const { data: lastOrders } = await supabase
+        .from('sales_orders')
+        .select('customer_user_id, created_at')
+        .in('customer_user_id', userIds)
+        .order('created_at', { ascending: false });
+      
+      // Build customer list with metrics
+      const now = new Date();
+      const customers: ManualCustomer[] = profiles
+        .map(profile => {
+          const addr = addresses?.find(a => a.user_id === profile.user_id);
+          if (!addr) return null;
+          
+          const lastVisit = lastVisits?.find(v => v.customer_user_id === profile.user_id);
+          const lastOrder = lastOrders?.find(o => o.customer_user_id === profile.user_id);
+          
+          const lastVisitDate = lastVisit?.check_in_at || null;
+          const lastOrderDate = lastOrder?.created_at || null;
+          
+          const daysSinceLastVisit = lastVisitDate 
+            ? Math.floor((now.getTime() - new Date(lastVisitDate).getTime()) / (1000 * 60 * 60 * 24))
+            : null;
+          
+          const daysSinceLastOrder = lastOrderDate
+            ? Math.floor((now.getTime() - new Date(lastOrderDate).getTime()) / (1000 * 60 * 60 * 24))
+            : null;
+          
+          return {
+            user_id: profile.user_id,
+            name: profile.name,
+            phone: profile.phone,
+            city: addr.city,
+            neighborhood: addr.neighborhood,
+            address: {
+              street: addr.street,
+              number: addr.number,
+              neighborhood: addr.neighborhood,
+              city: addr.city,
+              state: addr.state,
+              zip_code: addr.zip_code,
+              complement: addr.complement || undefined,
+            },
+            lastVisitDate,
+            lastOrderDate,
+            daysSinceLastVisit,
+            daysSinceLastOrder,
+          };
+        })
+        .filter(Boolean) as ManualCustomer[];
+      
+      // Sort: never visited first, then by days since last visit
+      customers.sort((a, b) => {
+        if (a.daysSinceLastVisit === null && b.daysSinceLastVisit === null) return 0;
+        if (a.daysSinceLastVisit === null) return -1;
+        if (b.daysSinceLastVisit === null) return 1;
+        return b.daysSinceLastVisit - a.daysSinceLastVisit;
+      });
+      
+      setManualCustomers(customers);
+    } catch (error) {
+      console.error('Error loading manual customers:', error);
+      toast({ title: 'Erro ao carregar clientes', variant: 'destructive' });
+    } finally {
+      setLoadingManual(false);
+    }
+  };
+  
+  const loadTodayVisits = async () => {
+    if (!user) return;
+    const today = new Date().toISOString().split('T')[0];
+    const { data } = await supabase
+      .from('route_visits')
+      .select('*')
+      .eq('visited_by', user.id)
+      .eq('visit_date', today);
+    
+    if (data) {
+      setTodayVisits(data);
+      const statusMap = new Map<string, VisitStatus>();
+      data.forEach(visit => {
+        if (visit.check_in_at && !visit.check_out_at) {
+          statusMap.set(visit.customer_user_id, {
+            stopId: visit.customer_user_id,
+            visitId: visit.id,
+            checkInAt: visit.check_in_at,
+            isCheckedIn: true,
+          });
+        }
+      });
+      setVisitStatuses(statusMap);
+    }
+  };
+  
+  const handleCheckIn = async (customer: ManualCustomer) => {
+    if (!user) return;
+    
+    try {
+      navigator.geolocation.getCurrentPosition(
+        async (position) => {
+          const { data, error } = await supabase
+            .from('route_visits')
+            .insert({
+              customer_user_id: customer.user_id,
+              visited_by: user.id,
+              visit_type: 'comercial',
+              check_in_at: new Date().toISOString(),
+              lat: position.coords.latitude,
+              lng: position.coords.longitude,
+            })
+            .select()
+            .single();
+          
+          if (error) throw error;
+          
+          setVisitStatuses(prev => new Map(prev).set(customer.user_id, {
+            stopId: customer.user_id,
+            visitId: data.id,
+            checkInAt: data.check_in_at,
+            isCheckedIn: true,
+          }));
+          
+          toast({ title: 'Check-in realizado', description: `Visita iniciada em ${customer.name}` });
+        },
+        (error) => {
+          console.error('Geolocation error:', error);
+          toast({ title: 'Erro ao obter localização', variant: 'destructive' });
+        }
+      );
+    } catch (error) {
+      console.error('Check-in error:', error);
+      toast({ title: 'Erro ao fazer check-in', variant: 'destructive' });
+    }
+  };
+  
+  const handleCheckOut = async (customer: ManualCustomer, result: string, notes: string, revenue: number) => {
+    const status = visitStatuses.get(customer.user_id);
+    if (!status?.visitId) return;
+    
+    try {
+      const { error } = await supabase
+        .from('route_visits')
+        .update({
+          check_out_at: new Date().toISOString(),
+          result,
+          notes,
+          revenue_generated: revenue,
+          order_created: result === 'pedido_fechado',
+        })
+        .eq('id', status.visitId);
+      
+      if (error) throw error;
+      
+      setVisitStatuses(prev => {
+        const newMap = new Map(prev);
+        newMap.delete(customer.user_id);
+        return newMap;
+      });
+      
+      toast({ title: 'Check-out realizado', description: `Visita finalizada em ${customer.name}` });
+      
+      if (result === 'pedido_fechado') {
+        navigate(`/sales/new?customer=${customer.user_id}`);
+      }
+    } catch (error) {
+      console.error('Check-out error:', error);
+      toast({ title: 'Erro ao fazer check-out', variant: 'destructive' });
+    }
+  };
+
   const loadCommercialStops = async () => {
     try {
       // Gather customer IDs from logistic stops for hybrid detection
