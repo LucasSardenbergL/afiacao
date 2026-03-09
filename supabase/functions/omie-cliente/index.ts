@@ -870,18 +870,38 @@ serve(async (req) => {
         let totalSkipped = 0;
         let totalErrors = 0;
 
-        // Get ALL user_ids that already have addresses (deduplicate)
-        const { data: existingAddresses } = await adminClient
-          .from("addresses")
-          .select("user_id");
-        const usersWithAddress = new Set((existingAddresses || []).map((a: any) => a.user_id));
+        // Get ALL user_ids that already have addresses (paginate to bypass 1000 row limit)
+        let allAddressUserIds: string[] = [];
+        let addrOffset = 0;
+        while (true) {
+          const { data: addrPage } = await adminClient
+            .from("addresses")
+            .select("user_id")
+            .range(addrOffset, addrOffset + 999);
+          if (!addrPage || addrPage.length === 0) break;
+          allAddressUserIds = allAddressUserIds.concat(addrPage.map((a: any) => a.user_id));
+          if (addrPage.length < 1000) break;
+          addrOffset += 1000;
+        }
+        const usersWithAddress = new Set(allAddressUserIds);
 
-        // Get omie_clientes that DON'T have addresses, with pagination
-        const { data: allMappings, count: totalCount } = await adminClient
-          .from("omie_clientes")
-          .select("user_id, omie_codigo_cliente", { count: "exact" });
+        // Get ALL omie_clientes mappings (paginate to bypass 1000 row limit)
+        let allMappings: Array<{ user_id: string; omie_codigo_cliente: number }> = [];
+        let fetchOffset = 0;
+        const fetchPageSize = 1000;
+        while (true) {
+          const { data: page } = await adminClient
+            .from("omie_clientes")
+            .select("user_id, omie_codigo_cliente")
+            .range(fetchOffset, fetchOffset + fetchPageSize - 1);
+          if (!page || page.length === 0) break;
+          allMappings = allMappings.concat(page);
+          if (page.length < fetchPageSize) break;
+          fetchOffset += fetchPageSize;
+        }
+        const totalCount = allMappings.length;
 
-        if (!allMappings || allMappings.length === 0) {
+        if (allMappings.length === 0) {
           result = { synced: 0, skipped: 0, errors: 0, hasMore: false, message: "No client mappings found" };
           break;
         }
