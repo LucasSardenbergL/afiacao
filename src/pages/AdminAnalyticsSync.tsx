@@ -207,17 +207,18 @@ export default function AdminAnalyticsSync() {
 
   const addressSyncMutation = useMutation({
     mutationFn: async () => {
-      let offset = 0;
       let totalSynced = 0;
       let totalSkipped = 0;
       let totalErrors = 0;
       let totalNeeding = 0;
       let hasMore = true;
+      let iteration = 0;
 
       while (hasMore) {
-        setAddressSyncProgress(`Sincronizando endereços... (${offset} processados, ${totalSynced} criados)`);
+        iteration++;
+        setAddressSyncProgress(`Sincronizando endereços... (lote ${iteration}, ${totalSynced} criados)`);
         const { data, error } = await supabase.functions.invoke("omie-cliente", {
-          body: { action: "sync_addresses", offset, batch_size: 30 },
+          body: { action: "sync_addresses", batch_size: 30 },
         });
         if (error) throw error;
 
@@ -226,7 +227,11 @@ export default function AdminAnalyticsSync() {
         totalErrors += data?.errors || 0;
         totalNeeding = data?.totalNeeding || 0;
         hasMore = data?.hasMore || false;
-        offset = data?.nextOffset || offset + 30;
+
+        // Safety: if batch produced 0 synced AND 0 skipped AND 0 errors, stop to avoid infinite loop
+        if ((data?.synced || 0) === 0 && (data?.skipped || 0) === 0 && (data?.errors || 0) === 0) {
+          hasMore = false;
+        }
       }
 
       setAddressSyncProgress(null);
