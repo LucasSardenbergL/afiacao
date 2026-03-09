@@ -876,12 +876,23 @@ serve(async (req) => {
           .select("user_id");
         const usersWithAddress = new Set((existingAddresses || []).map((a: any) => a.user_id));
 
-        // Get omie_clientes that DON'T have addresses, with pagination
-        const { data: allMappings, count: totalCount } = await adminClient
-          .from("omie_clientes")
-          .select("user_id, omie_codigo_cliente", { count: "exact" });
+        // Get ALL omie_clientes mappings (paginate to bypass 1000 row limit)
+        let allMappings: Array<{ user_id: string; omie_codigo_cliente: number }> = [];
+        let fetchOffset = 0;
+        const fetchPageSize = 1000;
+        while (true) {
+          const { data: page } = await adminClient
+            .from("omie_clientes")
+            .select("user_id, omie_codigo_cliente")
+            .range(fetchOffset, fetchOffset + fetchPageSize - 1);
+          if (!page || page.length === 0) break;
+          allMappings = allMappings.concat(page);
+          if (page.length < fetchPageSize) break;
+          fetchOffset += fetchPageSize;
+        }
+        const totalCount = allMappings.length;
 
-        if (!allMappings || allMappings.length === 0) {
+        if (allMappings.length === 0) {
           result = { synced: 0, skipped: 0, errors: 0, hasMore: false, message: "No client mappings found" };
           break;
         }
