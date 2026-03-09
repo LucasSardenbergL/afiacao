@@ -1520,7 +1520,125 @@ const AdminRoutePlanner = () => {
             })
           ) : null}
         </div>
+        {/* Visitas Realizadas Hoje */}
+        <div className="space-y-2 pt-4">
+          <h2 className="text-base font-semibold text-foreground flex items-center gap-2">
+            <CheckCircle2 className="w-4 h-4 text-primary" />
+            Visitas Realizadas Hoje
+            <Badge variant="outline" className="ml-auto text-xs">{todayVisits.length}</Badge>
+          </h2>
+          
+          {todayVisits.length === 0 ? (
+            <Card>
+              <CardContent className="py-6 text-center text-muted-foreground text-sm">
+                Nenhuma visita registrada hoje
+              </CardContent>
+            </Card>
+          ) : (
+            [...todayVisits].sort((a: any, b: any) => {
+              if (!a.check_out_at && b.check_out_at) return -1;
+              if (a.check_out_at && !b.check_out_at) return 1;
+              return 0;
+            }).map((visit: any) => {
+              const isActive = !visit.check_out_at;
+              const duration = visit.check_out_at && visit.check_in_at
+                ? Math.floor((new Date(visit.check_out_at).getTime() - new Date(visit.check_in_at).getTime()) / 60000)
+                : null;
+              const checkInTime = visit.check_in_at
+                ? new Date(visit.check_in_at).toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' })
+                : '—';
+              return (
+                <Card key={visit.id} className={isActive ? 'border-green-400' : ''}>
+                  <CardContent className="py-3 px-4">
+                    <div className="flex items-center gap-3">
+                      <div className={`w-2.5 h-2.5 rounded-full flex-shrink-0 ${isActive ? 'bg-green-500 animate-pulse' : 'bg-muted-foreground'}`} />
+                      <div className="flex-1 min-w-0">
+                        <p className="text-sm font-medium">{visit.customerName}</p>
+                        <p className="text-xs text-muted-foreground">
+                          Check-in: {checkInTime}
+                          {duration !== null && ` · ${duration}min`}
+                        </p>
+                      </div>
+                      <div className="flex items-center gap-2 flex-shrink-0">
+                        {isActive ? (
+                          <Badge variant="success" className="text-xs">Em visita</Badge>
+                        ) : visit.result ? (
+                          <Badge variant={visit.result === 'pedido_fechado' ? 'success' : 'outline'} className="text-xs">
+                            {visit.result === 'pedido_fechado' ? 'Pedido fechado'
+                              : visit.result === 'interesse' ? 'Interesse'
+                              : visit.result === 'sem_interesse' ? 'Sem interesse'
+                              : visit.result === 'ausente' ? 'Ausente'
+                              : visit.result === 'reagendar' ? 'Reagendar'
+                              : visit.result}
+                          </Badge>
+                        ) : null}
+                      </div>
+                    </div>
+                  </CardContent>
+                </Card>
+              );
+            })
+          )}
+        </div>
       </main>
+
+      {/* Checkout Dialog */}
+      <Dialog open={checkoutOpen} onOpenChange={setCheckoutOpen}>
+        <DialogContent className="max-w-sm">
+          <DialogHeader>
+            <DialogTitle>Check-out — {checkoutTarget?.name}</DialogTitle>
+          </DialogHeader>
+          <div className="space-y-4 py-2">
+            <div>
+              <Label>Resultado da visita *</Label>
+              <Select value={checkoutResult} onValueChange={setCheckoutResult}>
+                <SelectTrigger className="mt-1.5">
+                  <SelectValue placeholder="Selecione o resultado..." />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="pedido_fechado">✅ Pedido fechado</SelectItem>
+                  <SelectItem value="interesse">🤔 Interesse</SelectItem>
+                  <SelectItem value="sem_interesse">❌ Sem interesse</SelectItem>
+                  <SelectItem value="ausente">🚫 Ausente</SelectItem>
+                  <SelectItem value="reagendar">📅 Reagendar</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+            
+            {checkoutResult === 'pedido_fechado' && (
+              <div>
+                <Label>Receita gerada (R$)</Label>
+                <Input
+                  type="number"
+                  min="0"
+                  step="0.01"
+                  placeholder="0,00"
+                  value={checkoutRevenue}
+                  onChange={e => setCheckoutRevenue(e.target.value)}
+                  className="mt-1.5"
+                />
+              </div>
+            )}
+            
+            <div>
+              <Label>Observações (opcional)</Label>
+              <Textarea
+                placeholder="Notas sobre a visita..."
+                value={checkoutNotes}
+                onChange={e => setCheckoutNotes(e.target.value)}
+                className="mt-1.5 resize-none"
+                rows={3}
+              />
+            </div>
+          </div>
+          <DialogFooter className="gap-2">
+            <Button variant="outline" onClick={() => setCheckoutOpen(false)}>Cancelar</Button>
+            <Button disabled={!checkoutResult} onClick={confirmCheckout}>
+              Confirmar Check-out
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
 
       <BottomNav />
     </div>
