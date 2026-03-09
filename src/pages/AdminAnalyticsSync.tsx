@@ -206,6 +206,7 @@ export default function AdminAnalyticsSync() {
   });
 
   const [editingConfig, setEditingConfig] = useState<Record<string, string>>({});
+  const [addressSyncProgress, setAddressSyncProgress] = useState<string | null>(null);
   const [ordersSyncProgress, setOrdersSyncProgress] = useState<string | null>(null);
 
   // Helper to format date as DD/MM/YYYY
