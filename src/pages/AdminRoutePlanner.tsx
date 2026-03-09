@@ -31,6 +31,7 @@ L.Icon.Default.mergeOptions({
 type StopType = 'pickup_tools' | 'deliver_tools' | 'sales_visit' | 'hybrid_visit' | 'manual_visit';
 type PlanningMode = 'logistica' | 'comercial' | 'hibrido' | 'manual';
 type FilterPeriod = 'all' | 'manha' | 'tarde';
+type ManualFilter = 'todos' | 'nunca_visitados' | 'sem_compra_30d';
 
 interface ManualCustomer {
   user_id: string;
@@ -47,6 +48,10 @@ interface ManualCustomer {
     zip_code: string;
     complement?: string;
   };
+  lastVisitDate: string | null;
+  lastOrderDate: string | null;
+  daysSinceLastVisit: number | null;
+  daysSinceLastOrder: number | null;
 }
 
 interface VisitStatus {
