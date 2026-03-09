@@ -30,7 +30,7 @@ export function OrderSuccessDialog({
       <DialogContent className="max-w-md">
         <DialogHeader>
           <div className="flex items-center gap-2 mb-2">
-            <CheckCircle className="w-6 h-6 text-green-600" />
+            <CheckCircle className="w-6 h-6 text-primary" />
             <DialogTitle>Pedido criado com sucesso!</DialogTitle>
           </div>
         </DialogHeader>
