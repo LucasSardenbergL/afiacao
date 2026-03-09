@@ -205,6 +205,28 @@ export default function AdminAnalyticsSync() {
     },
   });
 
+  const addressSyncMutation = useMutation({
+    mutationFn: async () => {
+      setAddressSyncProgress("Sincronizando endereços...");
+      const { data, error } = await supabase.functions.invoke("omie-cliente", {
+        body: { action: "sync_addresses" },
+      });
+      if (error) throw error;
+      setAddressSyncProgress(null);
+      return data;
+    },
+    onSuccess: (data) => {
+      toast.success("Sincronização de endereços concluída", {
+        description: `${data?.synced || 0} endereços criados, ${data?.skipped || 0} ignorados, ${data?.errors || 0} erros`,
+        duration: 10000,
+      });
+    },
+    onError: (error) => {
+      setAddressSyncProgress(null);
+      toast.error("Erro na sincronização de endereços", { description: String(error) });
+    },
+  });
+
   const [editingConfig, setEditingConfig] = useState<Record<string, string>>({});
   const [addressSyncProgress, setAddressSyncProgress] = useState<string | null>(null);
   const [ordersSyncProgress, setOrdersSyncProgress] = useState<string | null>(null);
