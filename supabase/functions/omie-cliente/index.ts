@@ -910,9 +910,9 @@ serve(async (req) => {
         const clientsNeedingAddress = allMappings.filter((m: any) => !usersWithAddress.has(m.user_id));
         const totalNeeding = clientsNeedingAddress.length;
 
-        // Take batch from offset
-        const batch = clientsNeedingAddress.slice(offset, offset + batchSize);
-        console.log(`[sync_addresses] Processing batch offset=${offset}, size=${batch.length}, totalNeeding=${totalNeeding}`);
+        // Always take from the beginning since the list shrinks as addresses are created
+        const batch = clientsNeedingAddress.slice(0, batchSize);
+        console.log(`[sync_addresses] Processing batch size=${batch.length}, totalNeeding=${totalNeeding}`);
 
         for (const mapping of batch) {
           try {
