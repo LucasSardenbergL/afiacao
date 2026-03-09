@@ -2500,6 +2500,57 @@ export type Database = {
         }
         Relationships: []
       }
+      route_visits: {
+        Row: {
+          check_in_at: string | null
+          check_out_at: string | null
+          created_at: string
+          customer_user_id: string
+          id: string
+          lat: number | null
+          lng: number | null
+          notes: string | null
+          order_created: boolean | null
+          result: string | null
+          revenue_generated: number | null
+          visit_date: string
+          visit_type: string
+          visited_by: string
+        }
+        Insert: {
+          check_in_at?: string | null
+          check_out_at?: string | null
+          created_at?: string
+          customer_user_id: string
+          id?: string
+          lat?: number | null
+          lng?: number | null
+          notes?: string | null
+          order_created?: boolean | null
+          result?: string | null
+          revenue_generated?: number | null
+          visit_date?: string
+          visit_type?: string
+          visited_by: string
+        }
+        Update: {
+          check_in_at?: string | null
+          check_out_at?: string | null
+          created_at?: string
+          customer_user_id?: string
+          id?: string
+          lat?: number | null
+          lng?: number | null
+          notes?: string | null
+          order_created?: boolean | null
+          result?: string | null
+          revenue_generated?: number | null
+          visit_date?: string
+          visit_type?: string
+          visited_by?: string
+        }
+        Relationships: []
+      }
       sales_orders: {
         Row: {
           account: string
