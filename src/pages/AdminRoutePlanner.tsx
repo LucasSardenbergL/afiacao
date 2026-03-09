@@ -171,6 +171,17 @@ const AdminRoutePlanner = () => {
   const [geocoding, setGeocoding] = useState(false);
   const [filterPeriod, setFilterPeriod] = useState<FilterPeriod>('all');
   const [planningMode, setPlanningMode] = useState<PlanningMode>('hibrido');
+  
+  // Manual mode state
+  const [manualCustomers, setManualCustomers] = useState<ManualCustomer[]>([]);
+  const [selectedCustomerIds, setSelectedCustomerIds] = useState<Set<string>>(new Set());
+  const [manualFilter, setManualFilter] = useState<ManualFilter>('todos');
+  const [manualSearch, setManualSearch] = useState('');
+  const [loadingManual, setLoadingManual] = useState(false);
+  
+  // Visit tracking state
+  const [visitStatuses, setVisitStatuses] = useState<Map<string, VisitStatus>>(new Map());
+  const [todayVisits, setTodayVisits] = useState<any[]>([]);
 
   const { agenda, clientScores, loading: scoringLoading } = useFarmerScoring();
 
