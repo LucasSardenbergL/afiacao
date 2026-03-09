@@ -8,7 +8,7 @@ import { Badge } from "@/components/ui/badge";
 import { Input } from "@/components/ui/input";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { RefreshCw, Database, Package, ShoppingCart, Warehouse, Calculator, Play, CheckCircle, AlertCircle, Clock, Loader2, Save, GitBranch, Sparkles, FlaskConical, Settings, ShieldCheck, Users } from "lucide-react";
+import { RefreshCw, Database, Package, ShoppingCart, Warehouse, Calculator, Play, CheckCircle, AlertCircle, Clock, Loader2, Save, GitBranch, Sparkles, FlaskConical, Settings, ShieldCheck, Users, MapPin } from "lucide-react";
 import { toast } from "sonner";
 
 
@@ -205,7 +205,30 @@ export default function AdminAnalyticsSync() {
     },
   });
 
+  const addressSyncMutation = useMutation({
+    mutationFn: async () => {
+      setAddressSyncProgress("Sincronizando endereços...");
+      const { data, error } = await supabase.functions.invoke("omie-cliente", {
+        body: { action: "sync_addresses" },
+      });
+      if (error) throw error;
+      setAddressSyncProgress(null);
+      return data;
+    },
+    onSuccess: (data) => {
+      toast.success("Sincronização de endereços concluída", {
+        description: `${data?.synced || 0} endereços criados, ${data?.skipped || 0} ignorados, ${data?.errors || 0} erros`,
+        duration: 10000,
+      });
+    },
+    onError: (error) => {
+      setAddressSyncProgress(null);
+      toast.error("Erro na sincronização de endereços", { description: String(error) });
+    },
+  });
+
   const [editingConfig, setEditingConfig] = useState<Record<string, string>>({});
+  const [addressSyncProgress, setAddressSyncProgress] = useState<string | null>(null);
   const [ordersSyncProgress, setOrdersSyncProgress] = useState<string | null>(null);
 
   // Helper to format date as DD/MM/YYYY
@@ -310,7 +333,7 @@ export default function AdminAnalyticsSync() {
     return new Date(d).toLocaleString("pt-BR", { dateStyle: "short", timeStyle: "short" });
   };
 
-  const isRunning = syncMutation.isPending || computeCostsMutation.isPending || assocRulesMutation.isPending || bulkClientSyncMutation.isPending || bulkOrdersSyncMutation.isPending || recentOrdersSyncMutation.isPending;
+  const isRunning = syncMutation.isPending || computeCostsMutation.isPending || assocRulesMutation.isPending || bulkClientSyncMutation.isPending || bulkOrdersSyncMutation.isPending || recentOrdersSyncMutation.isPending || addressSyncMutation.isPending;
 
   const handleConfigSave = (id: string) => {
     const val = parseFloat(editingConfig[id]);
@@ -447,7 +470,43 @@ export default function AdminAnalyticsSync() {
         </CardContent>
       </Card>
 
-      {/* Bulk Orders Sync */}
+      {/* Address Sync from Omie */}
+      <Card>
+        <CardHeader>
+          <div className="flex items-center justify-between">
+            <div className="flex items-center gap-2">
+              <MapPin className="h-5 w-5 text-muted-foreground" />
+              <CardTitle className="text-base">Sincronizar Endereços do Omie</CardTitle>
+            </div>
+            <Button
+              variant="outline"
+              size="sm"
+              disabled={isRunning}
+              onClick={() => addressSyncMutation.mutate()}
+            >
+              {addressSyncMutation.isPending ? (
+                <Loader2 className="h-3 w-3 mr-2 animate-spin" />
+              ) : (
+                <RefreshCw className="h-3 w-3 mr-2" />
+              )}
+              Sincronizar Endereços
+            </Button>
+          </div>
+        </CardHeader>
+        <CardContent>
+          <p className="text-xs text-muted-foreground">
+            Busca endereços dos clientes no Omie e popula a tabela <code className="font-mono">addresses</code>. 
+            Pré-requisito para o roteirizador e funcionalidades que dependem de localização.
+          </p>
+          {addressSyncProgress && (
+            <div className="mt-3 flex items-center gap-2 text-xs text-primary font-medium">
+              <Loader2 className="h-3 w-3 animate-spin" />
+              {addressSyncProgress}
+            </div>
+          )}
+        </CardContent>
+      </Card>
+
       <Card>
         <CardHeader>
           <div className="flex items-center justify-between">

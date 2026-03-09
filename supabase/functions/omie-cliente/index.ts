@@ -332,6 +332,70 @@ async function buscarClientePorDocumento(documento: string): Promise<{ cliente: 
   }
 }
 
+// Helper to upsert address from Omie cliente data
+async function upsertAddressFromOmie(
+  adminClient: ReturnType<typeof createClient>,
+  userId: string,
+  cliente: OmieCliente
+): Promise<boolean> {
+  // Check if client has address data
+  if (!cliente.endereco || !cliente.cidade || !cliente.estado) {
+    return false;
+  }
+
+  try {
+    // Check if an Omie address already exists for this user
+    const { data: existingAddr } = await adminClient
+      .from("addresses")
+      .select("id")
+      .eq("user_id", userId)
+      .eq("is_from_omie", true)
+      .maybeSingle();
+
+    const addressData = {
+      user_id: userId,
+      label: "Omie",
+      street: cliente.endereco || "",
+      number: cliente.endereco_numero || "S/N",
+      complement: cliente.complemento || null,
+      neighborhood: cliente.bairro || "",
+      city: cliente.cidade || "",
+      state: cliente.estado || "",
+      zip_code: (cliente.cep || "").replace(/\D/g, ""),
+      is_default: true,
+      is_from_omie: true,
+    };
+
+    if (existingAddr) {
+      // Update existing Omie address
+      await adminClient
+        .from("addresses")
+        .update(addressData)
+        .eq("id", existingAddr.id);
+    } else {
+      // Check if user has ANY address
+      const { data: anyAddr } = await adminClient
+        .from("addresses")
+        .select("id")
+        .eq("user_id", userId)
+        .limit(1)
+        .maybeSingle();
+
+      // If user has other addresses, don't set this one as default
+      if (anyAddr) {
+        addressData.is_default = false;
+      }
+
+      await adminClient.from("addresses").insert(addressData);
+    }
+
+    return true;
+  } catch (error) {
+    console.error(`[upsertAddressFromOmie] Error for user ${userId}:`, error);
+    return false;
+  }
+}
+
 async function pesquisarClientes(query: string, pagina: number = 1): Promise<{ clientes: OmieCliente[]; total: number }> {
   try {
     // Use ListarClientes (full) instead of ListarClientesResumido to get codigo_vendedor
@@ -656,6 +720,9 @@ serve(async (req) => {
           console.error("[criar_perfil_local] Mapping error:", mappingError);
         }
 
+        // Upsert address from Omie data
+        await upsertAddressFromOmie(adminClient, newUserId, cliente);
+
         result = { user_id: newUserId };
         break;
       }
@@ -774,6 +841,10 @@ serve(async (req) => {
                 });
 
                 existingCodes.add(codigoCliente);
+                
+                // Upsert address from Omie data
+                await upsertAddressFromOmie(adminClient, userId, cliente);
+                
                 accImported++;
               } catch (clientError) {
                 accErrors++;
@@ -802,6 +873,92 @@ serve(async (req) => {
           lastPage: page - 1,
           hasMore: hasMore || nextAccountIndex < accounts.length,
           next: { account_index: nextAccountIndex, start_page: nextPage },
+        };
+        break;
+      }
+
+      case "sync_addresses": {
+        // Bulk sync addresses for existing clients that don't have one
+        const supabaseUrl = Deno.env.get("SUPABASE_URL")!;
+        const supabaseServiceKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
+        const adminClient = createClient(supabaseUrl, supabaseServiceKey);
+
+        const accounts = getOmieAccounts();
+        let totalSynced = 0;
+        let totalSkipped = 0;
+        let totalErrors = 0;
+
+        // Get all omie_clientes mappings
+        const { data: mappings } = await adminClient
+          .from("omie_clientes")
+          .select("user_id, omie_codigo_cliente")
+          .limit(1000);
+
+        if (!mappings || mappings.length === 0) {
+          result = { synced: 0, skipped: 0, errors: 0, message: "No client mappings found" };
+          break;
+        }
+
+        // Get all user_ids that already have addresses
+        const { data: existingAddresses } = await adminClient
+          .from("addresses")
+          .select("user_id")
+          .in("user_id", mappings.map(m => m.user_id));
+        
+        const usersWithAddress = new Set((existingAddresses || []).map(a => a.user_id));
+
+        // Filter to clients without addresses
+        const clientsNeedingAddress = mappings.filter(m => !usersWithAddress.has(m.user_id));
+        console.log(`[sync_addresses] ${clientsNeedingAddress.length} clients need addresses out of ${mappings.length} total`);
+
+        // Group by omie_codigo_cliente for fetching
+        for (const mapping of clientsNeedingAddress) {
+          try {
+            // Try to fetch client details from each account
+            let clienteData: OmieCliente | null = null;
+            
+            for (const account of accounts) {
+              try {
+                const detailResult = await callOmieApiWithCredentials(
+                  "geral/clientes/",
+                  "ConsultarCliente",
+                  { codigo_cliente_omie: mapping.omie_codigo_cliente },
+                  account.appKey,
+                  account.appSecret
+                ) as unknown as OmieCliente;
+
+                if (detailResult && detailResult.endereco && detailResult.cidade) {
+                  clienteData = detailResult;
+                  break;
+                }
+              } catch {
+                // Client not in this account, try next
+              }
+            }
+
+            if (!clienteData || !clienteData.endereco || !clienteData.cidade) {
+              totalSkipped++;
+              continue;
+            }
+
+            const inserted = await upsertAddressFromOmie(adminClient, mapping.user_id, clienteData);
+            if (inserted) {
+              totalSynced++;
+            } else {
+              totalSkipped++;
+            }
+          } catch (err) {
+            console.error(`[sync_addresses] Error for user ${mapping.user_id}:`, err);
+            totalErrors++;
+          }
+        }
+
+        result = {
+          synced: totalSynced,
+          skipped: totalSkipped,
+          errors: totalErrors,
+          totalClients: mappings.length,
+          clientsNeededAddress: clientsNeedingAddress.length,
         };
         break;
       }
