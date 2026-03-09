@@ -877,6 +877,92 @@ serve(async (req) => {
         break;
       }
 
+      case "sync_addresses": {
+        // Bulk sync addresses for existing clients that don't have one
+        const supabaseUrl = Deno.env.get("SUPABASE_URL")!;
+        const supabaseServiceKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
+        const adminClient = createClient(supabaseUrl, supabaseServiceKey);
+
+        const accounts = getOmieAccounts();
+        let totalSynced = 0;
+        let totalSkipped = 0;
+        let totalErrors = 0;
+
+        // Get all omie_clientes mappings
+        const { data: mappings } = await adminClient
+          .from("omie_clientes")
+          .select("user_id, omie_codigo_cliente")
+          .limit(1000);
+
+        if (!mappings || mappings.length === 0) {
+          result = { synced: 0, skipped: 0, errors: 0, message: "No client mappings found" };
+          break;
+        }
+
+        // Get all user_ids that already have addresses
+        const { data: existingAddresses } = await adminClient
+          .from("addresses")
+          .select("user_id")
+          .in("user_id", mappings.map(m => m.user_id));
+        
+        const usersWithAddress = new Set((existingAddresses || []).map(a => a.user_id));
+
+        // Filter to clients without addresses
+        const clientsNeedingAddress = mappings.filter(m => !usersWithAddress.has(m.user_id));
+        console.log(`[sync_addresses] ${clientsNeedingAddress.length} clients need addresses out of ${mappings.length} total`);
+
+        // Group by omie_codigo_cliente for fetching
+        for (const mapping of clientsNeedingAddress) {
+          try {
+            // Try to fetch client details from each account
+            let clienteData: OmieCliente | null = null;
+            
+            for (const account of accounts) {
+              try {
+                const detailResult = await callOmieApiWithCredentials(
+                  "geral/clientes/",
+                  "ConsultarCliente",
+                  { codigo_cliente_omie: mapping.omie_codigo_cliente },
+                  account.appKey,
+                  account.appSecret
+                ) as unknown as OmieCliente;
+
+                if (detailResult && detailResult.endereco && detailResult.cidade) {
+                  clienteData = detailResult;
+                  break;
+                }
+              } catch {
+                // Client not in this account, try next
+              }
+            }
+
+            if (!clienteData || !clienteData.endereco || !clienteData.cidade) {
+              totalSkipped++;
+              continue;
+            }
+
+            const inserted = await upsertAddressFromOmie(adminClient, mapping.user_id, clienteData);
+            if (inserted) {
+              totalSynced++;
+            } else {
+              totalSkipped++;
+            }
+          } catch (err) {
+            console.error(`[sync_addresses] Error for user ${mapping.user_id}:`, err);
+            totalErrors++;
+          }
+        }
+
+        result = {
+          synced: totalSynced,
+          skipped: totalSkipped,
+          errors: totalErrors,
+          totalClients: mappings.length,
+          clientsNeededAddress: clientsNeedingAddress.length,
+        };
+        break;
+      }
+
       case "validar_vendedor": {
         const { cnpj_cpf } = body;
         if (!cnpj_cpf || typeof cnpj_cpf !== "string") {
