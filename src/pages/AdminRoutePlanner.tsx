@@ -255,11 +255,17 @@ const AdminRoutePlanner = () => {
       // Load profiles & addresses for commercial customers
       const [{ data: profiles }, { data: addresses }] = await Promise.all([
         supabase.from('profiles').select('user_id, name, phone, business_hours_open, business_hours_close').in('user_id', allCommercialIds),
-        supabase.from('addresses').select('*').in('user_id', allCommercialIds).eq('is_default', true),
+        supabase.from('addresses').select('*').in('user_id', allCommercialIds).order('is_default', { ascending: false }),
       ]);
 
       const profileMap = new Map((profiles || []).map(p => [p.user_id, p]));
-      const addressMap = new Map((addresses || []).map(a => [a.user_id, a]));
+      // Pick first address per user (default if exists, otherwise any)
+      const addressMap = (addresses || []).reduce((map, addr) => {
+        if (!map.has(addr.user_id)) {
+          map.set(addr.user_id, addr);
+        }
+        return map;
+      }, new Map<string, any>());
 
       // Deduplicate: build one stop per customer
       const seen = new Set<string>();
