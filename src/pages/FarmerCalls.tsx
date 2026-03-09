@@ -16,6 +16,8 @@ import { useAuth } from '@/contexts/AuthContext';
 import { useToast } from '@/hooks/use-toast';
 import { useFarmerScoring } from '@/hooks/useFarmerScoring';
 import { cn } from '@/lib/utils';
+import { NvoipDialer } from '@/components/NvoipDialer';
+import { type NvoipCallState } from '@/hooks/useNvoipCall';
 import {
   Phone, PhoneOff, Play, Pause, Clock, User, Search,
   Plus, Timer, CheckCircle, XCircle, Loader2, BarChart3,
@@ -428,14 +430,29 @@ const FarmerCalls = () => {
                     </div>
                     <div className="flex items-center gap-1.5 shrink-0">
                       {phone ? (
-                        <Tooltip>
-                          <TooltipTrigger asChild>
-                            <Button size="icon" variant="ghost" className="h-8 w-8 text-primary" asChild>
-                              <a href={`tel:${phone}`}><Phone className="w-4 h-4" /></a>
-                            </Button>
-                          </TooltipTrigger>
-                          <TooltipContent><p className="text-xs">Ligar</p></TooltipContent>
-                        </Tooltip>
+                        <NvoipDialer
+                          phoneNumber={phone}
+                          customerName={item.customer_name}
+                          compact
+                          onCallEnd={(data) => {
+                            // Map Nvoip state to call_result
+                            const resultMap: Record<string, string> = {
+                              finished: 'contato_sucesso',
+                              noanswer: 'sem_resposta',
+                              busy: 'ocupado',
+                              failed: 'sem_resposta',
+                            };
+                            // Pre-fill the call form with Nvoip data
+                            const agendaCallType = item.agendaType === 'risco' ? 'reativacao' : item.agendaType === 'expansao' ? 'cross_sell' : 'follow_up';
+                            resetForm();
+                            setSelectedCustomer({ user_id: item.customer_user_id, name: item.customer_name, email: null, phone });
+                            setCallType(agendaCallType);
+                            setCallResult(resultMap[data.state] || 'contato_sucesso');
+                            setCallSeconds(data.duration);
+                            callStartRef.current = new Date(Date.now() - data.duration * 1000);
+                            setShowNewCall(true);
+                          }}
+                        />
                       ) : (
                         <Tooltip>
                           <TooltipTrigger asChild>
