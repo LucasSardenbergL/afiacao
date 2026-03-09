@@ -325,7 +325,7 @@ const AdminRoutePlanner = () => {
         .from('addresses')
         .select('*')
         .in('user_id', userIds)
-        .eq('is_default', true);
+        .order('is_default', { ascending: false });
       
       // Load last visit dates
       const { data: lastVisits } = await supabase
