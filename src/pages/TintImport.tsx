@@ -9,9 +9,10 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import { Progress } from '@/components/ui/progress';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { Skeleton } from '@/components/ui/skeleton';
-import { Upload, RefreshCw, FileText, CheckCircle, AlertTriangle, Loader2, RotateCcw } from 'lucide-react';
+import { Upload, RefreshCw, FileText, CheckCircle, AlertTriangle, Loader2, RotateCcw, Zap, Cloud } from 'lucide-react';
 import { toast } from 'sonner';
 import Papa from 'papaparse';
+import { useDirectTintImport } from '@/hooks/useDirectTintImport';
 
 const ACCOUNT = 'oben';
 const CHUNK_SIZE_DEFAULT = 200;
@@ -112,9 +113,11 @@ export default function TintImport() {
   const [resumingId, setResumingId] = useState<string | null>(null);
   const [chunkProgress, setChunkProgress] = useState({ currentFile: 0, totalFiles: 0, fileName: '', currentChunk: 0, totalChunks: 0 });
   const [results, setResults] = useState<any[]>([]);
+  const [importMode, setImportMode] = useState<'auto' | 'edge' | 'direct'>('auto');
   const queryClient = useQueryClient();
   const { data: history, isLoading: histLoading } = useImportHistory();
   const { data: tintCounts } = useTintProductCounts();
+  const { runDirectImport, running: directRunning, progress: directProgress, cancel: cancelDirect } = useDirectTintImport();
 
   const handleFiles = useCallback(async (e: React.ChangeEvent<HTMLInputElement>) => {
     const selected = e.target.files;
@@ -143,6 +146,46 @@ export default function TintImport() {
     } finally {
       setSyncing(false);
     }
+  };
+
+  const shouldUseDirect = useCallback((fileRawText: string): boolean => {
+    if (importMode === 'direct') return true;
+    if (importMode === 'edge') return false;
+    const lineCount = fileRawText.split(/\r?\n/).filter(l => l.trim()).length - 1;
+    return lineCount >= 500;
+  }, [importMode]);
+
+  const handleImportWithMode = async () => {
+    if (!tipo) { toast.error('Selecione o tipo de importação'); return; }
+    if (files.length === 0) { toast.error('Selecione ao menos um arquivo'); return; }
+    const noneDirect = files.every(f => !shouldUseDirect(f.rawText));
+    if (noneDirect) { await handleImport(); return; }
+    const allResults: any[] = [];
+    for (const f of files) {
+      if (shouldUseDirect(f.rawText)) {
+        try {
+          const result = await runDirectImport(f.rawText, f.name, tipo);
+          allResults.push({ name: f.name, status: result.status, imported: result.imported, updated: result.updated, errors: result.errors });
+        } catch (err: any) {
+          allResults.push({ name: f.name, status: 'erro', error: err.message });
+        }
+      } else {
+        const formData = new FormData();
+        formData.append('file', f.file);
+        formData.append('tipo', tipo);
+        formData.append('account', ACCOUNT);
+        try {
+          const res = await invokeFunction<any>('tint-import', formData);
+          allResults.push({ name: f.name, ...res });
+        } catch (err: any) {
+          allResults.push({ name: f.name, status: 'erro', error: err.message });
+        }
+      }
+    }
+    setResults(allResults);
+    queryClient.invalidateQueries({ queryKey: ['tint'] });
+    queryClient.invalidateQueries({ queryKey: ['tint-import-history'] });
+    toast.success('Importação finalizada');
   };
 
   const finalizeImport = async (importacaoId: string, totalImported: number, totalUpdated: number, totalErrors: number, failedChunks: number) => {
@@ -439,14 +482,32 @@ export default function TintImport() {
           <CardTitle className="text-base">Importar CSV do SAYERSYSTEM</CardTitle>
         </CardHeader>
         <CardContent className="space-y-4">
-          <div className="max-w-sm">
-            <label className="text-sm font-medium mb-1 block">Tipo de importação</label>
-            <Select value={tipo} onValueChange={setTipo}>
-              <SelectTrigger><SelectValue placeholder="Selecione o tipo" /></SelectTrigger>
-              <SelectContent>
-                {TIPO_OPTIONS.map(o => <SelectItem key={o.value} value={o.value}>{o.label}</SelectItem>)}
-              </SelectContent>
-            </Select>
+          <div className="flex gap-4 flex-wrap">
+            <div className="max-w-sm flex-1">
+              <label className="text-sm font-medium mb-1 block">Tipo de importação</label>
+              <Select value={tipo} onValueChange={setTipo}>
+                <SelectTrigger><SelectValue placeholder="Selecione o tipo" /></SelectTrigger>
+                <SelectContent>
+                  {TIPO_OPTIONS.map(o => <SelectItem key={o.value} value={o.value}>{o.label}</SelectItem>)}
+                </SelectContent>
+              </Select>
+            </div>
+            <div className="max-w-xs">
+              <label className="text-sm font-medium mb-1 block">Modo de importação</label>
+              <Select value={importMode} onValueChange={(v) => setImportMode(v as 'auto' | 'edge' | 'direct')}>
+                <SelectTrigger><SelectValue /></SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="auto">Automático (recomendado)</SelectItem>
+                  <SelectItem value="direct">Importação Direta (SQL)</SelectItem>
+                  <SelectItem value="edge">Edge Function (legacy)</SelectItem>
+                </SelectContent>
+              </Select>
+              <p className="text-xs text-muted-foreground mt-1">
+                {importMode === 'auto' && '< 500 linhas: Edge Function | ≥ 500 linhas: Direto'}
+                {importMode === 'direct' && 'Sem edge function. Ideal para arquivos grandes (29k+ linhas)'}
+                {importMode === 'edge' && 'Usa edge function com chunks. Pode dar timeout em arquivos grandes'}
+              </p>
+            </div>
           </div>
 
           <div>
@@ -467,35 +528,45 @@ export default function TintImport() {
           {/* Preview */}
           {files.length > 0 && (
             <div className="space-y-3">
-              {files.map((f, idx) => (
-                <div key={idx} className="border rounded-md p-3">
-                  <div className="flex items-center gap-2 mb-2">
-                    <FileText className="w-4 h-4" />
-                    <span className="text-sm font-medium">{f.name}</span>
-                    <Badge variant="outline">{f.preview.length - 1} linhas preview</Badge>
+              {files.map((f, idx) => {
+                const lineCount = Papa.parse(f.rawText, { delimiter: ';', skipEmptyLines: true }).data.length - 1;
+                const useDirectMode = importMode === 'direct' || (importMode === 'auto' && lineCount >= 500);
+                return (
+                  <div key={idx} className="border rounded-md p-3">
+                    <div className="flex items-center gap-2 mb-2">
+                      <FileText className="w-4 h-4" />
+                      <span className="text-sm font-medium">{f.name}</span>
+                      <Badge variant="outline">{lineCount} linhas</Badge>
+                      {useDirectMode ? (
+                        <Badge variant="secondary" className="gap-1"><Zap className="w-3 h-3" /> Direto</Badge>
+                      ) : (
+                        <Badge variant="outline" className="gap-1"><Cloud className="w-3 h-3" /> Edge Function</Badge>
+                      )}
+                    </div>
+                    <div className="overflow-x-auto">
+                      <table className="text-xs">
+                        <tbody>
+                          {f.preview.map((row, ri) => (
+                            <tr key={ri} className={ri === 0 ? 'font-semibold bg-muted/50' : ''}>
+                              {row.map((cell, ci) => (
+                                <td key={ci} className="px-2 py-0.5 border-b whitespace-nowrap max-w-[200px] truncate">{cell}</td>
+                              ))}
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
                   </div>
-                  <div className="overflow-x-auto">
-                    <table className="text-xs">
-                      <tbody>
-                        {f.preview.map((row, ri) => (
-                          <tr key={ri} className={ri === 0 ? 'font-semibold bg-muted/50' : ''}>
-                            {row.map((cell, ci) => (
-                              <td key={ci} className="px-2 py-0.5 border-b whitespace-nowrap max-w-[200px] truncate">{cell}</td>
-                            ))}
-                          </tr>
-                        ))}
-                      </tbody>
-                    </table>
-                  </div>
-                </div>
-              ))}
+                );
+              })}
             </div>
           )}
 
-          {/* Progress */}
-          {importing && (
+          {/* Progress — Edge Function mode */}
+          {importing && !directRunning && (
             <div className="space-y-2">
               <p className="text-sm">
+                <Cloud className="w-4 h-4 inline mr-1" />
                 Importando <span className="font-medium">{chunkProgress.fileName}</span>
                 {' '}(arquivo {chunkProgress.currentFile}/{chunkProgress.totalFiles})
                 {chunkProgress.totalChunks > 1 && (
@@ -503,6 +574,22 @@ export default function TintImport() {
                 )}
               </p>
               <Progress value={progressPct} />
+            </div>
+          )}
+
+          {/* Progress — Direct mode */}
+          {directRunning && directProgress && (
+            <div className="space-y-2">
+              <p className="text-sm">
+                <Zap className="w-4 h-4 inline mr-1" />
+                {directProgress.phase} — Lote {directProgress.currentBatch}/{directProgress.totalBatches}
+                {' '}({directProgress.recordsProcessed.toLocaleString()} / {directProgress.totalRecords.toLocaleString()} registros)
+              </p>
+              <Progress value={(directProgress.recordsProcessed / directProgress.totalRecords) * 100} />
+              <p className="text-xs text-muted-foreground">
+                {directProgress.imported} importados, {directProgress.updated} atualizados, {directProgress.errors} erros
+              </p>
+              <Button size="sm" variant="outline" onClick={cancelDirect}>Cancelar</Button>
             </div>
           )}
 
@@ -516,7 +603,7 @@ export default function TintImport() {
                   <div className="text-sm">
                     <p className="font-medium">{r.name}</p>
                     <p className="text-muted-foreground">
-                      {r.registros_importados ?? 0} importados, {r.registros_atualizados ?? 0} atualizados, {r.registros_erro ?? 0} erros
+                      {r.registros_importados ?? r.imported ?? 0} importados, {r.registros_atualizados ?? r.updated ?? 0} atualizados, {r.registros_erro ?? r.errors ?? 0} erros
                       {r.failed_chunks > 0 && <span className="text-destructive"> ({r.failed_chunks} chunks falharam)</span>}
                     </p>
                     {r.erros && r.erros.length > 0 && (
@@ -525,15 +612,15 @@ export default function TintImport() {
                       </ul>
                     )}
                     {r.error && <p className="text-xs text-destructive">{r.error}</p>}
-                    {r.status === 'duplicado' && <p className="text-xs text-muted-foreground">{r.message}</p>}
+                    {r.status === 'duplicado' && <p className="text-xs text-muted-foreground">{r.message || 'Arquivo já importado anteriormente'}</p>}
                   </div>
                 </div>
               ))}
             </div>
           )}
 
-          <Button onClick={handleImport} disabled={importing || !tipo || files.length === 0}>
-            {importing ? <Loader2 className="w-4 h-4 mr-2 animate-spin" /> : <Upload className="w-4 h-4 mr-2" />}
+          <Button onClick={handleImportWithMode} disabled={importing || directRunning || !tipo || files.length === 0}>
+            {(importing || directRunning) ? <Loader2 className="w-4 h-4 mr-2 animate-spin" /> : <Upload className="w-4 h-4 mr-2" />}
             Importar
           </Button>
         </CardContent>
