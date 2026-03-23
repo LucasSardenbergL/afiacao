@@ -34,6 +34,11 @@ export interface ProductCartItem {
   quantity: number;
   unit_price: number;
   account: ProductAccount;
+  // Tintometric optional fields
+  tint_cor_id?: string;
+  tint_nome_cor?: string;
+  tint_custo_corantes?: number;
+  tint_formula_id?: string;
 }
 
 export interface UserTool {
