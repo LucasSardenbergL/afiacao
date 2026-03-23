@@ -155,6 +155,12 @@ export default function TintImport() {
             {syncing ? <Loader2 className="w-4 h-4 mr-2 animate-spin" /> : <RefreshCw className="w-4 h-4 mr-2" />}
             Sincronizar Produtos Omie
           </Button>
+          {tintCounts && (tintCounts.bases > 0 || tintCounts.concentrados > 0) && (
+            <p className="text-sm text-muted-foreground mt-3">
+              <span className="font-medium text-foreground">{tintCounts.bases}</span> bases e{' '}
+              <span className="font-medium text-foreground">{tintCounts.concentrados}</span> concentrados encontrados no Omie
+            </p>
+          )}
         </CardContent>
       </Card>
 
