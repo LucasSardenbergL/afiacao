@@ -46,6 +46,7 @@ export function TintColorSelectDialog({ product, open, onClose, onConfirm }: Tin
   // Find SKU id for this omie product
   const { data: skuId, isLoading: loadingSku } = useQuery({
     queryKey: ['tint-sku-for-product', product.id],
+    staleTime: 5 * 60 * 1000,
     enabled: open,
     queryFn: async () => {
       const { data } = await supabase
