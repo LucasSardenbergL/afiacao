@@ -19,6 +19,7 @@ export interface TintPriceBreakdown {
 export function useTintPricing(formulaId: string | null) {
   return useQuery({
     queryKey: ['tint-pricing', formulaId],
+    staleTime: 5 * 60 * 1000,
     enabled: !!formulaId,
     queryFn: async (): Promise<TintPriceBreakdown | null> => {
       if (!formulaId) return null;
