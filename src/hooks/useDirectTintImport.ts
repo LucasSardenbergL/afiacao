@@ -4,6 +4,7 @@ import Papa from 'papaparse';
 
 const ACCOUNT = 'oben';
 const BATCH_SIZE = 200;
+const RPC_BATCH_SIZE = 2000;
 
 function parseBrDecimal(value: string | undefined | null): number {
   if (!value || value.trim() === '') return 0;
