@@ -75,6 +75,7 @@ export default function TintFormulas() {
 
   const { data, isLoading } = useQuery({
     queryKey: ['tint-formulas', search, produtoFilter, baseFilter, onlyPersonalizada, page],
+    staleTime: 5 * 60 * 1000,
     queryFn: async () => {
       let q = supabase
         .from('tint_formulas')

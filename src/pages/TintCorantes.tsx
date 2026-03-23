@@ -9,6 +9,7 @@ const ACCOUNT = 'oben';
 function useCorantes() {
   return useQuery({
     queryKey: ['tint-corantes-page'],
+    staleTime: 5 * 60 * 1000,
     queryFn: async () => {
       const { data } = await supabase
         .from('tint_corantes')

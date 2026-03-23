@@ -63,6 +63,7 @@ export function TintColorSelectDialog({ product, open, onClose, onConfirm }: Tin
   // Search formulas
   const { data: formulas, isLoading: loadingFormulas } = useQuery({
     queryKey: ['tint-formula-search', skuId, debouncedSearch],
+    staleTime: 5 * 60 * 1000,
     enabled: !!skuId && debouncedSearch.length >= 2,
     queryFn: async () => {
       const { data } = await supabase
