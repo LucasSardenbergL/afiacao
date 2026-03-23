@@ -113,7 +113,7 @@ export default function TintImport() {
   const [resumingId, setResumingId] = useState<string | null>(null);
   const [chunkProgress, setChunkProgress] = useState({ currentFile: 0, totalFiles: 0, fileName: '', currentChunk: 0, totalChunks: 0 });
   const [results, setResults] = useState<any[]>([]);
-  const [importMode, setImportMode] = useState<'auto' | 'edge' | 'direct'>('auto');
+  const [importMode, setImportMode] = useState<'auto' | 'edge' | 'direct' | 'rpc'>('auto');
   const queryClient = useQueryClient();
   const { data: history, isLoading: histLoading } = useImportHistory();
   const { data: tintCounts } = useTintProductCounts();
@@ -149,7 +149,7 @@ export default function TintImport() {
   };
 
   const shouldUseDirect = useCallback((fileRawText: string): boolean => {
-    if (importMode === 'direct') return true;
+    if (importMode === 'direct' || importMode === 'rpc') return true;
     if (importMode === 'edge') return false;
     const lineCount = fileRawText.split(/\r?\n/).filter(l => l.trim()).length - 1;
     return lineCount >= 500;
@@ -164,7 +164,8 @@ export default function TintImport() {
     for (const f of files) {
       if (shouldUseDirect(f.rawText)) {
         try {
-          const result = await runDirectImport(f.rawText, f.name, tipo);
+          const useRpc = importMode === 'rpc' || (importMode === 'auto' && (tipo === 'formulas_padrao' || tipo === 'formulas_personalizadas'));
+          const result = await runDirectImport(f.rawText, f.name, tipo, useRpc);
           allResults.push({ name: f.name, status: result.status, imported: result.imported, updated: result.updated, errors: result.errors });
         } catch (err: any) {
           allResults.push({ name: f.name, status: 'erro', error: err.message });
@@ -494,17 +495,19 @@ export default function TintImport() {
             </div>
             <div className="max-w-xs">
               <label className="text-sm font-medium mb-1 block">Modo de importação</label>
-              <Select value={importMode} onValueChange={(v) => setImportMode(v as 'auto' | 'edge' | 'direct')}>
+              <Select value={importMode} onValueChange={(v) => setImportMode(v as 'auto' | 'edge' | 'direct' | 'rpc')}>
                 <SelectTrigger><SelectValue /></SelectTrigger>
                 <SelectContent>
                   <SelectItem value="auto">Automático (recomendado)</SelectItem>
+                  <SelectItem value="rpc">⚡ RPC Postgres (mais rápido)</SelectItem>
                   <SelectItem value="direct">Importação Direta (SQL)</SelectItem>
                   <SelectItem value="edge">Edge Function (legacy)</SelectItem>
                 </SelectContent>
               </Select>
               <p className="text-xs text-muted-foreground mt-1">
-                {importMode === 'auto' && '< 500 linhas: Edge Function | ≥ 500 linhas: Direto'}
-                {importMode === 'direct' && 'Sem edge function. Ideal para arquivos grandes (29k+ linhas)'}
+                {importMode === 'auto' && 'Fórmulas grandes: RPC Postgres | Auxiliares: Direto | < 500 linhas: Edge'}
+                {importMode === 'rpc' && '2.000 linhas por lote, processado nativamente no Postgres (~45s para 29k linhas)'}
+                {importMode === 'direct' && 'Sem edge function. 200 linhas por lote via JS client'}
                 {importMode === 'edge' && 'Usa edge function com chunks. Pode dar timeout em arquivos grandes'}
               </p>
             </div>
@@ -530,7 +533,7 @@ export default function TintImport() {
             <div className="space-y-3">
               {files.map((f, idx) => {
                 const lineCount = Papa.parse(f.rawText, { delimiter: ';', skipEmptyLines: true }).data.length - 1;
-                const useDirectMode = importMode === 'direct' || (importMode === 'auto' && lineCount >= 500);
+                const useDirectMode = importMode === 'direct' || importMode === 'rpc' || (importMode === 'auto' && lineCount >= 500);
                 return (
                   <div key={idx} className="border rounded-md p-3">
                     <div className="flex items-center gap-2 mb-2">
@@ -538,7 +541,9 @@ export default function TintImport() {
                       <span className="text-sm font-medium">{f.name}</span>
                       <Badge variant="outline">{lineCount} linhas</Badge>
                       {useDirectMode ? (
-                        <Badge variant="secondary" className="gap-1"><Zap className="w-3 h-3" /> Direto</Badge>
+                        <Badge variant="secondary" className="gap-1">
+                          <Zap className="w-3 h-3" /> {importMode === 'rpc' || (importMode === 'auto' && (tipo === 'formulas_padrao' || tipo === 'formulas_personalizadas')) ? 'RPC Postgres' : 'Direto'}
+                        </Badge>
                       ) : (
                         <Badge variant="outline" className="gap-1"><Cloud className="w-3 h-3" /> Edge Function</Badge>
                       )}
