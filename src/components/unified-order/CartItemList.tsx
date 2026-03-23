@@ -43,9 +43,18 @@ export function CartItemList({
       {items.map(item => {
         const cartIdx = getCartIndex(item);
         return (
-          <div key={item.product.id} className="space-y-1.5 mb-2">
+          <div key={`${item.product.id}-${item.tint_formula_id || 'base'}`} className="space-y-1.5 mb-2">
             <div className="flex items-start justify-between gap-1.5">
-              <p className="text-xs font-medium flex-1 leading-tight">{item.product.descricao}</p>
+              <div className="flex-1">
+                <p className="text-xs font-medium leading-tight">{item.product.descricao}</p>
+                {item.tint_cor_id && (
+                  <div className="flex items-center gap-1 mt-0.5">
+                    <Badge variant="outline" className="text-[9px] px-1 py-0 border-primary/40 text-primary">
+                      🎨 {item.tint_cor_id} — {item.tint_nome_cor}
+                    </Badge>
+                  </div>
+                )}
+              </div>
               <button onClick={() => onRemoveFromCart(cartIdx)}>
                 <Trash2 className="w-3.5 h-3.5 text-muted-foreground hover:text-destructive" />
               </button>

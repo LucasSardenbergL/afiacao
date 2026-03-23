@@ -24,6 +24,8 @@ export interface Product {
   ativo: boolean;
   omie_codigo_produto: number;
   account?: string;
+  is_tintometric?: boolean;
+  tint_type?: string;
 }
 
 export interface ProductCartItem {
@@ -32,6 +34,11 @@ export interface ProductCartItem {
   quantity: number;
   unit_price: number;
   account: ProductAccount;
+  // Tintometric optional fields
+  tint_cor_id?: string;
+  tint_nome_cor?: string;
+  tint_custo_corantes?: number;
+  tint_formula_id?: string;
 }
 
 export interface UserTool {
@@ -159,6 +166,8 @@ export function useUnifiedOrder() {
 
   // Cart
   const [cart, setCart] = useState<CartItem[]>([]);
+  // Tintometric pending product (opens color dialog)
+  const [tintPendingProduct, setTintPendingProduct] = useState<Product | null>(null);
   const [notes, setNotes] = useState('');
   const [submitting, setSubmitting] = useState(false);
   const [activeTab, setActiveTab] = useState('oben');
@@ -299,7 +308,7 @@ export function useUnifiedOrder() {
     try {
       const { data } = await supabase
         .from('omie_products')
-        .select('id, codigo, descricao, unidade, valor_unitario, estoque, ativo, omie_codigo_produto, account')
+        .select('id, codigo, descricao, unidade, valor_unitario, estoque, ativo, omie_codigo_produto, account, is_tintometric, tint_type')
         .eq('account', account)
         .not('familia', 'ilike', '%imobilizado%')
         .not('familia', 'ilike', '%uso e consumo%')
@@ -320,7 +329,7 @@ export function useUnifiedOrder() {
           }
           const { data: refreshed } = await supabase
             .from('omie_products')
-            .select('id, codigo, descricao, unidade, valor_unitario, estoque, ativo, omie_codigo_produto, account')
+            .select('id, codigo, descricao, unidade, valor_unitario, estoque, ativo, omie_codigo_produto, account, is_tintometric, tint_type')
             .eq('account', account)
             .not('familia', 'ilike', '%imobilizado%')
             .not('familia', 'ilike', '%uso e consumo%')
@@ -355,7 +364,7 @@ export function useUnifiedOrder() {
         }
         const { data: refreshed } = await supabase
           .from('omie_products')
-          .select('id, codigo, descricao, unidade, valor_unitario, estoque, ativo, omie_codigo_produto, account')
+          .select('id, codigo, descricao, unidade, valor_unitario, estoque, ativo, omie_codigo_produto, account, is_tintometric, tint_type')
           .eq('account', account)
           .not('familia', 'ilike', '%imobilizado%')
           .not('familia', 'ilike', '%uso e consumo%')
@@ -600,14 +609,35 @@ export function useUnifiedOrder() {
   }, [customerPricesOben, customerPricesColacor]);
 
   const addProductToCart = (product: Product) => {
+    // If tintometric base, open color dialog instead of adding directly
+    if (product.is_tintometric && product.tint_type === 'base') {
+      setTintPendingProduct(product);
+      return;
+    }
     const account = (product.account || 'oben') as ProductAccount;
-    const existing = cart.find((c): c is ProductCartItem => c.type === 'product' && c.product.id === product.id);
+    const existing = cart.find((c): c is ProductCartItem => c.type === 'product' && c.product.id === product.id && !c.tint_formula_id);
     if (existing) {
-      setCart(cart.map(c => c.type === 'product' && (c as ProductCartItem).product.id === product.id
+      setCart(cart.map(c => c.type === 'product' && (c as ProductCartItem).product.id === product.id && !(c as ProductCartItem).tint_formula_id
         ? { ...c, quantity: c.quantity + 1 } as ProductCartItem : c));
     } else {
       setCart([...cart, { type: 'product', product, quantity: 1, unit_price: getProductPrice(product), account }]);
     }
+  };
+
+  const addTintProductToCart = (product: Product, formulaId: string, corId: string, nomeCor: string, precoFinal: number, custoCorantes: number) => {
+    const account = (product.account || 'oben') as ProductAccount;
+    // Each tint formula selection is a unique cart item
+    const existing = cart.find((c): c is ProductCartItem => c.type === 'product' && c.tint_formula_id === formulaId);
+    if (existing) {
+      setCart(cart.map(c => c.type === 'product' && (c as ProductCartItem).tint_formula_id === formulaId
+        ? { ...c, quantity: c.quantity + 1 } as ProductCartItem : c));
+    } else {
+      setCart([...cart, {
+        type: 'product', product, quantity: 1, unit_price: precoFinal, account,
+        tint_cor_id: corId, tint_nome_cor: nomeCor, tint_custo_corantes: custoCorantes, tint_formula_id: formulaId,
+      }]);
+    }
+    setTintPendingProduct(null);
   };
 
   // Service Cart Actions
@@ -1061,7 +1091,8 @@ export function useUnifiedOrder() {
     cart, notes, setNotes, submitting, activeTab, setActiveTab,
     productItems, obenProductItems, colacorProductItems, serviceItems, cartProductIds,
     availableTools,
-    addProductToCart, addServiceToCart,
+    addProductToCart, addTintProductToCart, addServiceToCart,
+    tintPendingProduct, setTintPendingProduct,
     updateServiceServico, updateServiceNotes, updateServicePhotos,
     updateQuantity, updateProductPrice, removeFromCart,
     getProductPrice, getServicePrice,

@@ -4,6 +4,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { RecommendationsPanel } from '@/components/RecommendationsPanel';
 import { AddToolDialog } from '@/components/AddToolDialog';
 import { UnifiedAIAssistant } from '@/components/UnifiedAIAssistant';
+import { TintColorSelectDialog } from '@/components/TintColorSelectDialog';
 import { OrderSuccessDialog } from '@/components/OrderSuccessDialog';
 import { cn } from '@/lib/utils';
 import { useUnifiedOrder } from '@/hooks/useUnifiedOrder';
@@ -236,6 +237,17 @@ const UnifiedOrder = () => {
               total: h.lastOrderData!.total,
               orderNumbers: h.lastOrderData!.orderNumbers,
             });
+          }}
+        />
+      )}
+
+      {h.tintPendingProduct && (
+        <TintColorSelectDialog
+          product={h.tintPendingProduct}
+          open={!!h.tintPendingProduct}
+          onClose={() => h.setTintPendingProduct(null)}
+          onConfirm={(formulaId, corId, nomeCor, precoFinal, custoCorantes) => {
+            h.addTintProductToCart(h.tintPendingProduct!, formulaId, corId, nomeCor, precoFinal, custoCorantes);
           }}
         />
       )}
