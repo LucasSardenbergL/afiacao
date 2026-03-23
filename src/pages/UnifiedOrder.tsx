@@ -4,6 +4,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { RecommendationsPanel } from '@/components/RecommendationsPanel';
 import { AddToolDialog } from '@/components/AddToolDialog';
 import { UnifiedAIAssistant } from '@/components/UnifiedAIAssistant';
+import { TintColorSelectDialog } from '@/components/TintColorSelectDialog';
 import { OrderSuccessDialog } from '@/components/OrderSuccessDialog';
 import { cn } from '@/lib/utils';
 import { useUnifiedOrder } from '@/hooks/useUnifiedOrder';
