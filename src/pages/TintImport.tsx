@@ -166,6 +166,35 @@ export default function TintImport() {
       let totalErrors = 0;
       let lastError: string | null = null;
 
+      // Step 1: Create import record first (lightweight call, no data processing)
+      try {
+        setChunkProgress({ currentFile: fi + 1, totalFiles: files.length, fileName: f.name, currentChunk: 0, totalChunks });
+        const createRes = await invokeFunction<any>('tint-import', {
+          action: 'create_import',
+          tipo,
+          account: ACCOUNT,
+          arquivo_hash: hash,
+          arquivo_nome: f.name,
+          total_rows: totalRows,
+        });
+
+        if (createRes.status === 'duplicado') {
+          allResults.push({ name: f.name, ...createRes });
+          continue;
+        }
+
+        importacaoId = createRes.importacao_id;
+      } catch (err: any) {
+        allResults.push({ name: f.name, status: 'erro', error: `Falha ao criar importação: ${err.message}` });
+        continue;
+      }
+
+      if (!importacaoId) {
+        allResults.push({ name: f.name, status: 'erro', error: 'Não foi possível obter o ID da importação' });
+        continue;
+      }
+
+      // Step 2: Send data chunks
       for (let ci = 0; ci < totalChunks; ci++) {
         setChunkProgress({ currentFile: fi + 1, totalFiles: files.length, fileName: f.name, currentChunk: ci + 1, totalChunks });
 
@@ -176,28 +205,12 @@ export default function TintImport() {
           total_chunks: totalChunks,
           total_rows: totalRows,
           rows: chunks[ci],
-          arquivo_nome: f.name,
+          importacao_id: importacaoId,
         };
-
-        if (ci === 0) {
-          body.arquivo_hash = hash;
-        }
-        if (importacaoId) {
-          body.importacao_id = importacaoId;
-        }
 
         try {
           const res = await invokeFunction<any>('tint-import', body);
 
-          if (res.status === 'duplicado') {
-            allResults.push({ name: f.name, ...res });
-            importacaoId = null;
-            break;
-          }
-
-          if (res.importacao_id) {
-            importacaoId = res.importacao_id;
-          }
           totalImported += res.registros_importados ?? 0;
           totalUpdated += res.registros_atualizados ?? 0;
           totalErrors += res.registros_erro ?? 0;
