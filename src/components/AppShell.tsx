@@ -97,6 +97,17 @@ const unifiedNavSections: { title: string; items: NavItem[] }[] = [
     ],
   },
   {
+    title: 'Tintométrico',
+    items: [
+      { icon: Palette, label: 'Dashboard', path: '/tintometrico', managerOnly: true },
+      { icon: Beaker, label: 'Fórmulas', path: '/tintometrico/formulas', managerOnly: true },
+      { icon: FileUp, label: 'Importar', path: '/tintometrico/importar', managerOnly: true },
+      { icon: Package, label: 'Mapeamento Omie', path: '/tintometrico/mapeamento', managerOnly: true },
+      { icon: Calculator, label: 'Precificação', path: '/tintometrico/precos', managerOnly: true },
+      { icon: Droplets, label: 'Corantes', path: '/tintometrico/corantes', managerOnly: true },
+    ],
+  },
+  {
     title: 'Gestão',
     items: [
       { icon: Shield, label: 'Admin', path: '/admin', managerOnly: true },

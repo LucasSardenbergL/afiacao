@@ -157,6 +157,12 @@ const App = () => (
               <Route path="governance/audit" element={<GovernanceAudit />} />
               <Route path="ai-ops" element={<AIops />} />
               <Route path="nfe-receipt" element={<NfeReceipt />} />
+              <Route path="tintometrico" element={<TintDashboard />} />
+              <Route path="tintometrico/importar" element={<TintImport />} />
+              <Route path="tintometrico/mapeamento" element={<TintMapping />} />
+              <Route path="tintometrico/precos" element={<TintPricing />} />
+              <Route path="tintometrico/formulas" element={<TintFormulas />} />
+              <Route path="tintometrico/corantes" element={<TintCorantes />} />
             </Route>
 
             <Route path="*" element={<NotFound />} />

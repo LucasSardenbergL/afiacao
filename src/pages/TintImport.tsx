@@ -8,6 +8,7 @@ import { Badge } from '@/components/ui/badge';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Progress } from '@/components/ui/progress';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
+import { Skeleton } from '@/components/ui/skeleton';
 import { Upload, RefreshCw, FileText, CheckCircle, AlertTriangle, Loader2 } from 'lucide-react';
 import { toast } from 'sonner';
 
