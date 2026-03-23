@@ -36,6 +36,23 @@ function useImportHistory() {
   });
 }
 
+function useTintProductCounts() {
+  return useQuery({
+    queryKey: ['tint-product-counts'],
+    queryFn: async () => {
+      const { data } = await supabase
+        .from('omie_products')
+        .select('tint_type')
+        .eq('is_tintometric', true)
+        .eq('account', ACCOUNT);
+      const bases = (data ?? []).filter(p => p.tint_type === 'base').length;
+      const concentrados = (data ?? []).filter(p => p.tint_type === 'concentrado').length;
+      return { bases, concentrados };
+    },
+    staleTime: 5 * 60 * 1000,
+  });
+}
+
 interface FileWithPreview {
   file: File;
   preview: string[][];
