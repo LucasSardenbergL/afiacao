@@ -149,7 +149,7 @@ export default function TintImport() {
   };
 
   const shouldUseDirect = useCallback((fileRawText: string): boolean => {
-    if (importMode === 'direct') return true;
+    if (importMode === 'direct' || importMode === 'rpc') return true;
     if (importMode === 'edge') return false;
     const lineCount = fileRawText.split(/\r?\n/).filter(l => l.trim()).length - 1;
     return lineCount >= 500;
