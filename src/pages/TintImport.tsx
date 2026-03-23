@@ -68,6 +68,7 @@ export default function TintImport() {
   const [results, setResults] = useState<any[]>([]);
   const queryClient = useQueryClient();
   const { data: history, isLoading: histLoading } = useImportHistory();
+  const { data: tintCounts } = useTintProductCounts();
 
   const handleFiles = useCallback(async (e: React.ChangeEvent<HTMLInputElement>) => {
     const selected = e.target.files;
