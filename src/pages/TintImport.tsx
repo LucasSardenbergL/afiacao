@@ -359,21 +359,22 @@ export default function TintImport() {
     let totalErrors = 0;
     let failedChunks = 0;
 
-    for (let ci = startChunkIndex; ci < totalChunks; ci++) {
-      setChunkProgress({ currentFile: 1, totalFiles: 1, fileName: matchingFile.name, currentChunk: ci + 1 - startChunkIndex, totalChunks: totalChunks - startChunkIndex });
+    for (let ci = 0; ci < totalChunks; ci++) {
+      setChunkProgress({ currentFile: 1, totalFiles: 1, fileName: matchingFile.name, currentChunk: ci + 1, totalChunks });
 
+      const absoluteChunkIndex = baseChunkIndex + ci;
       const body: Record<string, unknown> = {
         tipo: imp.tipo,
         account: ACCOUNT,
-        chunk_index: ci,
-        total_chunks: totalChunks,
+        chunk_index: absoluteChunkIndex,
+        total_chunks: baseChunkIndex + totalChunks,
         total_rows: totalRows,
         rows: chunks[ci],
         importacao_id: imp.id,
       };
 
       try {
-        const res = await sendChunkWithRetry(body, ci, totalChunks);
+        const res = await sendChunkWithRetry(body, absoluteChunkIndex, baseChunkIndex + totalChunks);
         totalImported += res.registros_importados ?? 0;
         totalUpdated += res.registros_atualizados ?? 0;
         totalErrors += res.registros_erro ?? 0;
