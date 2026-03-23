@@ -176,7 +176,7 @@ export function useUnifiedOrder() {
   const [orderSuccessOpen, setOrderSuccessOpen] = useState(false);
   const [lastOrderData, setLastOrderData] = useState<{
     customerName: string;
-    items: Array<{ description: string; quantity: number; unitPrice: number }>;
+    items: Array<{ description: string; quantity: number; unitPrice: number; tintCorId?: string; tintNomeCor?: string }>;
     total: number;
     orderNumbers: string[];
   } | null>(null);
