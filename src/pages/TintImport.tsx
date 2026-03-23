@@ -335,10 +335,11 @@ export default function TintImport() {
     const alreadyProcessed = (imp.registros_importados ?? 0) + (imp.registros_atualizados ?? 0) + (imp.registros_erro ?? 0);
 
     // Calculate which chunk to start from
-    const startChunkIndex = Math.floor(alreadyProcessed / CHUNK_SIZE);
+    const resumeChunkSize = getChunkSize(imp.tipo);
+    const startChunkIndex = Math.floor(alreadyProcessed / resumeChunkSize);
     const chunks: string[][][] = [];
-    for (let i = 0; i < totalRows; i += CHUNK_SIZE) {
-      chunks.push(dataRows.slice(i, i + CHUNK_SIZE));
+    for (let i = 0; i < totalRows; i += resumeChunkSize) {
+      chunks.push(dataRows.slice(i, i + resumeChunkSize));
     }
     const totalChunks = chunks.length;
 
