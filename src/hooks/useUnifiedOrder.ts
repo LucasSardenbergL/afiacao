@@ -24,6 +24,8 @@ export interface Product {
   ativo: boolean;
   omie_codigo_produto: number;
   account?: string;
+  is_tintometric?: boolean;
+  tint_type?: string;
 }
 
 export interface ProductCartItem {
