@@ -164,7 +164,8 @@ export default function TintImport() {
     for (const f of files) {
       if (shouldUseDirect(f.rawText)) {
         try {
-          const result = await runDirectImport(f.rawText, f.name, tipo);
+          const useRpc = importMode === 'rpc' || (importMode === 'auto' && (tipo === 'formulas_padrao' || tipo === 'formulas_personalizadas'));
+          const result = await runDirectImport(f.rawText, f.name, tipo, useRpc);
           allResults.push({ name: f.name, status: result.status, imported: result.imported, updated: result.updated, errors: result.errors });
         } catch (err: any) {
           allResults.push({ name: f.name, status: 'erro', error: err.message });
