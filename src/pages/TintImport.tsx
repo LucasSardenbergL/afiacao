@@ -495,17 +495,19 @@ export default function TintImport() {
             </div>
             <div className="max-w-xs">
               <label className="text-sm font-medium mb-1 block">Modo de importação</label>
-              <Select value={importMode} onValueChange={(v) => setImportMode(v as 'auto' | 'edge' | 'direct')}>
+              <Select value={importMode} onValueChange={(v) => setImportMode(v as 'auto' | 'edge' | 'direct' | 'rpc')}>
                 <SelectTrigger><SelectValue /></SelectTrigger>
                 <SelectContent>
                   <SelectItem value="auto">Automático (recomendado)</SelectItem>
+                  <SelectItem value="rpc">⚡ RPC Postgres (mais rápido)</SelectItem>
                   <SelectItem value="direct">Importação Direta (SQL)</SelectItem>
                   <SelectItem value="edge">Edge Function (legacy)</SelectItem>
                 </SelectContent>
               </Select>
               <p className="text-xs text-muted-foreground mt-1">
-                {importMode === 'auto' && '< 500 linhas: Edge Function | ≥ 500 linhas: Direto'}
-                {importMode === 'direct' && 'Sem edge function. Ideal para arquivos grandes (29k+ linhas)'}
+                {importMode === 'auto' && 'Fórmulas grandes: RPC Postgres | Auxiliares: Direto | < 500 linhas: Edge'}
+                {importMode === 'rpc' && '2.000 linhas por lote, processado nativamente no Postgres (~45s para 29k linhas)'}
+                {importMode === 'direct' && 'Sem edge function. 200 linhas por lote via JS client'}
                 {importMode === 'edge' && 'Usa edge function com chunks. Pode dar timeout em arquivos grandes'}
               </p>
             </div>
