@@ -10,7 +10,15 @@ function parseBrDecimal(value: string | undefined | null): number {
   return parseFloat(value.trim().replace(',', '.')) || 0;
 }
 
-interface DirectImportProgress {
+async function sha256(content: string): Promise<string> {
+  const data = new TextEncoder().encode(content);
+  const hash = await crypto.subtle.digest('SHA-256', data);
+  return Array.from(new Uint8Array(hash))
+    .map(b => b.toString(16).padStart(2, '0'))
+    .join('');
+}
+
+export interface DirectImportProgress {
   phase: string;
   currentBatch: number;
   totalBatches: number;
@@ -21,8 +29,8 @@ interface DirectImportProgress {
   errors: number;
 }
 
-interface DirectImportResult {
-  status: 'concluido' | 'parcial' | 'erro';
+export interface DirectImportResult {
+  status: 'concluido' | 'parcial' | 'erro' | 'duplicado';
   imported: number;
   updated: number;
   errors: number;
@@ -34,7 +42,6 @@ export function useDirectTintImport() {
   const [progress, setProgress] = useState<DirectImportProgress | null>(null);
   const cancelledRef = useRef(false);
 
-  // In-memory caches (keyed by sayer ID → UUID)
   const produtoCache = useRef(new Map<string, string>());
   const baseCache = useRef(new Map<string, string>());
   const embalagemCache = useRef(new Map<string, string>());
@@ -69,86 +76,7 @@ export function useDirectTintImport() {
     console.log(`[direct-import] Caches: ${produtoCache.current.size} produtos, ${baseCache.current.size} bases, ${embalagemCache.current.size} embalagens, ${coranteCache.current.size} corantes, ${skuCache.current.size} skus`);
   };
 
-  // Ensure helpers: upsert single record, cache the ID
-  const ensureProduto = async (cod: string, desc: string): Promise<string> => {
-    const cached = produtoCache.current.get(cod);
-    if (cached) return cached;
-    const { data, error } = await supabase.from('tint_produtos').upsert(
-      { account: ACCOUNT, cod_produto: cod, descricao: desc },
-      { onConflict: 'account,cod_produto' }
-    ).select('id').single();
-    if (error) throw error;
-    produtoCache.current.set(cod, data.id);
-    return data.id;
-  };
-
-  const ensureBase = async (idSayer: string, desc: string): Promise<string> => {
-    const cached = baseCache.current.get(idSayer);
-    if (cached) return cached;
-    const { data, error } = await supabase.from('tint_bases').upsert(
-      { account: ACCOUNT, id_base_sayersystem: idSayer, descricao: desc },
-      { onConflict: 'account,id_base_sayersystem' }
-    ).select('id').single();
-    if (error) throw error;
-    baseCache.current.set(idSayer, data.id);
-    return data.id;
-  };
-
-  const ensureEmbalagem = async (idSayer: string, volumeMl: number, desc?: string): Promise<string> => {
-    const cached = embalagemCache.current.get(idSayer);
-    if (cached) return cached;
-    const { data, error } = await supabase.from('tint_embalagens').upsert(
-      { account: ACCOUNT, id_embalagem_sayersystem: idSayer, volume_ml: volumeMl, descricao: desc || null },
-      { onConflict: 'account,id_embalagem_sayersystem' }
-    ).select('id').single();
-    if (error) throw error;
-    embalagemCache.current.set(idSayer, data.id);
-    return data.id;
-  };
-
-  const ensureCorante = async (idSayer: string, desc: string, volumeMl?: number, pesoEsp?: number, codBarras?: string): Promise<string> => {
-    const cached = coranteCache.current.get(idSayer);
-    if (cached) return cached;
-    const row: Record<string, unknown> = {
-      account: ACCOUNT, id_corante_sayersystem: idSayer, descricao: desc,
-      volume_total_ml: volumeMl ?? 1000,
-    };
-    if (pesoEsp != null) row.peso_especifico = pesoEsp;
-    if (codBarras) row.codigo_barras = codBarras;
-    const { data, error } = await supabase.from('tint_corantes').upsert(
-      row, { onConflict: 'account,id_corante_sayersystem' }
-    ).select('id').single();
-    if (error) throw error;
-    coranteCache.current.set(idSayer, data.id);
-    return data.id;
-  };
-
-  const ensureSubcolecao = async (idSub: string, desc: string): Promise<string> => {
-    const cached = subcolecaoCache.current.get(idSub);
-    if (cached) return cached;
-    const { data, error } = await supabase.from('tint_subcolecoes').upsert(
-      { account: ACCOUNT, id_subcolecao_sayersystem: idSub, descricao: desc },
-      { onConflict: 'account,id_subcolecao_sayersystem' }
-    ).select('id').single();
-    if (error) throw error;
-    subcolecaoCache.current.set(idSub, data.id);
-    return data.id;
-  };
-
-  const ensureSku = async (produtoId: string, baseId: string, embalagemId: string): Promise<string> => {
-    const key = `${produtoId}:${baseId}:${embalagemId}`;
-    const cached = skuCache.current.get(key);
-    if (cached) return cached;
-    const { data, error } = await supabase.from('tint_skus').upsert(
-      { account: ACCOUNT, produto_id: produtoId, base_id: baseId, embalagem_id: embalagemId },
-      { onConflict: 'account,produto_id,base_id,embalagem_id' }
-    ).select('id').single();
-    if (error) throw error;
-    skuCache.current.set(key, data.id);
-    return data.id;
-  };
-
-  // ─── Process dados_corantes in batches ───
+  // ─── Process dados_corantes ───
   const processDadosCorantes = async (rows: string[][]): Promise<{ imported: number; updated: number; errors: number }> => {
     let imported = 0, updated = 0, errors = 0;
     const totalBatches = Math.ceil(rows.length / BATCH_SIZE);
@@ -156,7 +84,10 @@ export function useDirectTintImport() {
     for (let b = 0; b < totalBatches; b++) {
       if (cancelledRef.current) break;
       const batch = rows.slice(b * BATCH_SIZE, (b + 1) * BATCH_SIZE);
-      const upsertRows: Record<string, unknown>[] = [];
+      const upsertRows: Array<{
+        account: string; id_corante_sayersystem: string; descricao: string;
+        volume_total_ml: number; peso_especifico: number | null; codigo_barras: string | null;
+      }> = [];
 
       for (const row of batch) {
         const [codigo, descricao, volumeMl, pesoEspecifico, codigoBarras] = row;
@@ -195,7 +126,6 @@ export function useDirectTintImport() {
       if (cancelledRef.current) break;
       const batch = rows.slice(b * BATCH_SIZE, (b + 1) * BATCH_SIZE);
 
-      // Collect unique entities first
       const uniqueProdutos = new Map<string, string>();
       const uniqueBases = new Map<string, string>();
       const uniqueEmbalagens = new Map<string, { desc: string; vol: number }>();
@@ -212,32 +142,35 @@ export function useDirectTintImport() {
       }
 
       // Batch upsert entities
-      const produtoRows = Array.from(uniqueProdutos.entries())
-        .filter(([cod]) => !produtoCache.current.has(cod))
-        .map(([cod, desc]) => ({ account: ACCOUNT, cod_produto: cod, descricao: desc }));
-      if (produtoRows.length > 0) {
-        const { data } = await supabase.from('tint_produtos').upsert(produtoRows, { onConflict: 'account,cod_produto' }).select('id, cod_produto');
+      const newProdutos = Array.from(uniqueProdutos.entries()).filter(([cod]) => !produtoCache.current.has(cod));
+      if (newProdutos.length > 0) {
+        const { data } = await supabase.from('tint_produtos').upsert(
+          newProdutos.map(([cod, desc]) => ({ account: ACCOUNT, cod_produto: cod, descricao: desc })),
+          { onConflict: 'account,cod_produto' }
+        ).select('id, cod_produto');
         for (const r of data ?? []) produtoCache.current.set(r.cod_produto, r.id);
       }
 
-      const baseRows = Array.from(uniqueBases.entries())
-        .filter(([id]) => !baseCache.current.has(id))
-        .map(([id, desc]) => ({ account: ACCOUNT, id_base_sayersystem: id, descricao: desc }));
-      if (baseRows.length > 0) {
-        const { data } = await supabase.from('tint_bases').upsert(baseRows, { onConflict: 'account,id_base_sayersystem' }).select('id, id_base_sayersystem');
+      const newBases = Array.from(uniqueBases.entries()).filter(([id]) => !baseCache.current.has(id));
+      if (newBases.length > 0) {
+        const { data } = await supabase.from('tint_bases').upsert(
+          newBases.map(([id, desc]) => ({ account: ACCOUNT, id_base_sayersystem: id, descricao: desc })),
+          { onConflict: 'account,id_base_sayersystem' }
+        ).select('id, id_base_sayersystem');
         for (const r of data ?? []) baseCache.current.set(r.id_base_sayersystem, r.id);
       }
 
-      const embRows = Array.from(uniqueEmbalagens.entries())
-        .filter(([id]) => !embalagemCache.current.has(id))
-        .map(([id, { desc, vol }]) => ({ account: ACCOUNT, id_embalagem_sayersystem: id, volume_ml: vol, descricao: desc || null }));
-      if (embRows.length > 0) {
-        const { data } = await supabase.from('tint_embalagens').upsert(embRows, { onConflict: 'account,id_embalagem_sayersystem' }).select('id, id_embalagem_sayersystem');
+      const newEmb = Array.from(uniqueEmbalagens.entries()).filter(([id]) => !embalagemCache.current.has(id));
+      if (newEmb.length > 0) {
+        const { data } = await supabase.from('tint_embalagens').upsert(
+          newEmb.map(([id, { desc, vol }]) => ({ account: ACCOUNT, id_embalagem_sayersystem: id, volume_ml: vol, descricao: desc || null })),
+          { onConflict: 'account,id_embalagem_sayersystem' }
+        ).select('id, id_embalagem_sayersystem');
         for (const r of data ?? []) embalagemCache.current.set(r.id_embalagem_sayersystem, r.id);
       }
 
-      // Now create SKUs
-      const skuRows: { account: string; produto_id: string; base_id: string; embalagem_id: string }[] = [];
+      // Create SKUs
+      const skuRows: Array<{ account: string; produto_id: string; base_id: string; embalagem_id: string }> = [];
       for (const row of batch) {
         const [produto, base, embalagem, embalagemConteudoMl] = row;
         if (!produto || !base) { errors++; continue; }
@@ -270,7 +203,7 @@ export function useDirectTintImport() {
     return { imported, updated, errors };
   };
 
-  // ─── Process formulas row by row (need to check existence), batched in groups ───
+  // ─── Process formulas ───
   const processFormulas = async (rows: string[][], personalizada: boolean, importacaoId: string): Promise<{ imported: number; updated: number; errors: number }> => {
     let imported = 0, updated = 0, errors = 0;
     const totalBatches = Math.ceil(rows.length / BATCH_SIZE);
@@ -280,7 +213,7 @@ export function useDirectTintImport() {
       if (cancelledRef.current) break;
       const batch = rows.slice(b * BATCH_SIZE, (b + 1) * BATCH_SIZE);
 
-      // Phase 1: Collect all unique auxiliary entities from this batch
+      // Phase 1: Collect unique auxiliary entities
       const uniqueProdutos = new Map<string, string>();
       const uniqueBases = new Map<string, string>();
       const uniqueEmbalagens = new Map<string, { desc: string; vol: number }>();
@@ -311,71 +244,55 @@ export function useDirectTintImport() {
         }
       }
 
-      // Phase 2: Batch upsert all new auxiliary entities
+      // Phase 2: Batch upsert auxiliary entities (sequential to avoid type issues)
       const newProdutos = Array.from(uniqueProdutos.entries()).filter(([k]) => !produtoCache.current.has(k));
-      const newBases = Array.from(uniqueBases.entries()).filter(([k]) => !baseCache.current.has(k));
-      const newEmbalagens = Array.from(uniqueEmbalagens.entries()).filter(([k]) => !embalagemCache.current.has(k));
-      const newCorantes = Array.from(uniqueCorantes.entries()).filter(([k]) => !coranteCache.current.has(k));
-      const newSubcolecoes = Array.from(uniqueSubcolecoes.entries()).filter(([k]) => !subcolecaoCache.current.has(k));
-
-      const auxPromises: Promise<void>[] = [];
-
       if (newProdutos.length > 0) {
-        auxPromises.push(
-          supabase.from('tint_produtos').upsert(
-            newProdutos.map(([cod, desc]) => ({ account: ACCOUNT, cod_produto: cod, descricao: desc })),
-            { onConflict: 'account,cod_produto' }
-          ).select('id, cod_produto').then(({ data }) => {
-            for (const r of data ?? []) produtoCache.current.set(r.cod_produto, r.id);
-          })
-        );
+        const { data } = await supabase.from('tint_produtos').upsert(
+          newProdutos.map(([cod, desc]) => ({ account: ACCOUNT, cod_produto: cod, descricao: desc })),
+          { onConflict: 'account,cod_produto' }
+        ).select('id, cod_produto');
+        for (const r of data ?? []) produtoCache.current.set(r.cod_produto, r.id);
       }
+
+      const newBases = Array.from(uniqueBases.entries()).filter(([k]) => !baseCache.current.has(k));
       if (newBases.length > 0) {
-        auxPromises.push(
-          supabase.from('tint_bases').upsert(
-            newBases.map(([id, desc]) => ({ account: ACCOUNT, id_base_sayersystem: id, descricao: desc })),
-            { onConflict: 'account,id_base_sayersystem' }
-          ).select('id, id_base_sayersystem').then(({ data }) => {
-            for (const r of data ?? []) baseCache.current.set(r.id_base_sayersystem, r.id);
-          })
-        );
+        const { data } = await supabase.from('tint_bases').upsert(
+          newBases.map(([id, desc]) => ({ account: ACCOUNT, id_base_sayersystem: id, descricao: desc })),
+          { onConflict: 'account,id_base_sayersystem' }
+        ).select('id, id_base_sayersystem');
+        for (const r of data ?? []) baseCache.current.set(r.id_base_sayersystem, r.id);
       }
-      if (newEmbalagens.length > 0) {
-        auxPromises.push(
-          supabase.from('tint_embalagens').upsert(
-            newEmbalagens.map(([id, { desc, vol }]) => ({ account: ACCOUNT, id_embalagem_sayersystem: id, volume_ml: vol, descricao: desc || null })),
-            { onConflict: 'account,id_embalagem_sayersystem' }
-          ).select('id, id_embalagem_sayersystem').then(({ data }) => {
-            for (const r of data ?? []) embalagemCache.current.set(r.id_embalagem_sayersystem, r.id);
-          })
-        );
+
+      const newEmb = Array.from(uniqueEmbalagens.entries()).filter(([k]) => !embalagemCache.current.has(k));
+      if (newEmb.length > 0) {
+        const { data } = await supabase.from('tint_embalagens').upsert(
+          newEmb.map(([id, { desc, vol }]) => ({ account: ACCOUNT, id_embalagem_sayersystem: id, volume_ml: vol, descricao: desc || null })),
+          { onConflict: 'account,id_embalagem_sayersystem' }
+        ).select('id, id_embalagem_sayersystem');
+        for (const r of data ?? []) embalagemCache.current.set(r.id_embalagem_sayersystem, r.id);
       }
+
+      const newCorantes = Array.from(uniqueCorantes.entries()).filter(([k]) => !coranteCache.current.has(k));
       if (newCorantes.length > 0) {
-        auxPromises.push(
-          supabase.from('tint_corantes').upsert(
-            newCorantes.map(([id, desc]) => ({ account: ACCOUNT, id_corante_sayersystem: id, descricao: desc, volume_total_ml: 1000 })),
-            { onConflict: 'account,id_corante_sayersystem' }
-          ).select('id, id_corante_sayersystem').then(({ data }) => {
-            for (const r of data ?? []) coranteCache.current.set(r.id_corante_sayersystem, r.id);
-          })
-        );
-      }
-      if (newSubcolecoes.length > 0) {
-        auxPromises.push(
-          supabase.from('tint_subcolecoes').upsert(
-            newSubcolecoes.map(([id, desc]) => ({ account: ACCOUNT, id_subcolecao_sayersystem: id, descricao: desc })),
-            { onConflict: 'account,id_subcolecao_sayersystem' }
-          ).select('id, id_subcolecao_sayersystem').then(({ data }) => {
-            for (const r of data ?? []) subcolecaoCache.current.set(r.id_subcolecao_sayersystem, r.id);
-          })
-        );
+        const { data } = await supabase.from('tint_corantes').upsert(
+          newCorantes.map(([id, desc]) => ({ account: ACCOUNT, id_corante_sayersystem: id, descricao: desc, volume_total_ml: 1000 })),
+          { onConflict: 'account,id_corante_sayersystem' }
+        ).select('id, id_corante_sayersystem');
+        for (const r of data ?? []) coranteCache.current.set(r.id_corante_sayersystem, r.id);
       }
 
-      await Promise.all(auxPromises);
+      const newSubs = Array.from(uniqueSubcolecoes.entries()).filter(([k]) => !subcolecaoCache.current.has(k));
+      if (newSubs.length > 0) {
+        const { data } = await supabase.from('tint_subcolecoes').upsert(
+          newSubs.map(([id, desc]) => ({ account: ACCOUNT, id_subcolecao_sayersystem: id, descricao: desc })),
+          { onConflict: 'account,id_subcolecao_sayersystem' }
+        ).select('id, id_subcolecao_sayersystem');
+        for (const r of data ?? []) subcolecaoCache.current.set(r.id_subcolecao_sayersystem, r.id);
+      }
 
-      // Phase 3: Build SKUs for this batch
+      // Phase 3: Build SKUs
       const skuSet = new Set<string>();
-      const skuRows: { account: string; produto_id: string; base_id: string; embalagem_id: string }[] = [];
+      const skuRows: Array<{ account: string; produto_id: string; base_id: string; embalagem_id: string }> = [];
       for (const cols of batch) {
         const codProduto = cols[7]; const idBase = cols[3]; const idEmbalagem = cols[5];
         const produtoId = produtoCache.current.get(codProduto);
@@ -394,14 +311,20 @@ export function useDirectTintImport() {
         for (const r of data ?? []) skuCache.current.set(`${r.produto_id}:${r.base_id}:${r.embalagem_id}`, r.id);
       }
 
-      // Phase 4: Insert formulas row by row (no unique constraint, need existence check)
-      // We'll batch the formula inserts: collect new ones, update existing ones
-      const formulaInserts: Record<string, unknown>[] = [];
-      const formulaUpdates: { id: string; row: Record<string, unknown> }[] = [];
-      const formulaItemsMap = new Map<number, Array<{ corante_id: string; qtd_ml: number; ordem: number }>>();
+      // Phase 4: Process formulas row by row (no unique constraint on tint_formulas)
+      type FormulaItem = { corante_id: string; qtd_ml: number; ordem: number };
+      const newFormulas: Array<{
+        row: {
+          account: string; cor_id: string; nome_cor: string; produto_id: string; base_id: string;
+          embalagem_id: string; sku_id: string | null; subcolecao_id: string | null; id_seq: number | null;
+          volume_final_ml: number | null; preco_final_sayersystem: number | null; data_geracao: string | null;
+          personalizada: boolean; importacao_id: string; updated_at: string;
+        };
+        items: FormulaItem[];
+      }> = [];
+      const updFormulas: Array<{ id: string; row: Record<string, unknown>; items: FormulaItem[] }> = [];
 
-      for (let i = 0; i < batch.length; i++) {
-        const cols = batch[i];
+      for (const cols of batch) {
         try {
           const idSeq = parseInt(cols[0]) || null;
           const corId = cols[1]; const nomeCor = cols[2];
@@ -425,7 +348,7 @@ export function useDirectTintImport() {
           }
 
           const coranteStart = 9 + offset;
-          const coranteItems: Array<{ corante_id: string; qtd_ml: number; ordem: number }> = [];
+          const coranteItems: FormulaItem[] = [];
           for (let c = 0; c < 6; c++) {
             const cId = cols[coranteStart + c];
             const qtdStart = coranteStart + 6;
@@ -441,7 +364,7 @@ export function useDirectTintImport() {
           const precoFinal = parseBrDecimal(cols[qtdStart + 7]);
           const dataGeracao = cols[qtdStart + 8] || null;
 
-          const formulaRow: Record<string, unknown> = {
+          const formulaRow = {
             account: ACCOUNT, cor_id: corId, nome_cor: nomeCor,
             produto_id: produtoId, base_id: baseId, embalagem_id: embalagemId,
             sku_id: skuId, subcolecao_id: subcolecaoId, id_seq: idSeq,
@@ -463,13 +386,10 @@ export function useDirectTintImport() {
           const { data: existing } = await query.maybeSingle();
 
           if (existing) {
-            formulaUpdates.push({ id: existing.id, row: formulaRow });
-            formulaItemsMap.set(-(formulaUpdates.length), coranteItems); // negative index for updates
+            updFormulas.push({ id: existing.id, row: formulaRow, items: coranteItems });
             updated++;
           } else {
-            const idx = formulaInserts.length;
-            formulaInserts.push(formulaRow);
-            formulaItemsMap.set(idx, coranteItems);
+            newFormulas.push({ row: formulaRow, items: coranteItems });
             imported++;
           }
         } catch (e: any) {
@@ -479,22 +399,21 @@ export function useDirectTintImport() {
       }
 
       // Execute updates
-      for (const upd of formulaUpdates) {
+      for (const upd of updFormulas) {
         await supabase.from('tint_formulas').update(upd.row).eq('id', upd.id);
-        // Delete old items and reinsert
-        const items = formulaItemsMap.get(-(formulaUpdates.indexOf(upd) + 1)) || [];
         await supabase.from('tint_formula_itens').delete().eq('formula_id', upd.id);
-        if (items.length > 0) {
+        if (upd.items.length > 0) {
           await supabase.from('tint_formula_itens').insert(
-            items.map(it => ({ formula_id: upd.id, ...it }))
+            upd.items.map(it => ({ formula_id: upd.id, ...it }))
           );
         }
       }
 
       // Execute inserts in sub-batches of 50
-      for (let si = 0; si < formulaInserts.length; si += 50) {
-        const subBatch = formulaInserts.slice(si, si + 50);
-        const { data: inserted, error: insErr } = await supabase.from('tint_formulas').insert(subBatch).select('id');
+      for (let si = 0; si < newFormulas.length; si += 50) {
+        const subBatch = newFormulas.slice(si, si + 50);
+        const { data: inserted, error: insErr } = await supabase.from('tint_formulas')
+          .insert(subBatch.map(f => f.row)).select('id');
         if (insErr) {
           console.error('[direct] formula insert error:', insErr);
           errors += subBatch.length;
@@ -502,11 +421,10 @@ export function useDirectTintImport() {
           continue;
         }
         // Insert formula items
-        const allItems: Record<string, unknown>[] = [];
+        const allItems: Array<{ formula_id: string; corante_id: string; qtd_ml: number; ordem: number }> = [];
         for (let j = 0; j < (inserted ?? []).length; j++) {
           const formulaId = inserted![j].id;
-          const items = formulaItemsMap.get(si + j) || [];
-          for (const it of items) {
+          for (const it of subBatch[j].items) {
             allItems.push({ formula_id: formulaId, ...it });
           }
         }
@@ -553,7 +471,7 @@ export function useDirectTintImport() {
     if (existingImport) {
       setRunning(false);
       setProgress(null);
-      return { status: 'concluido', imported: 0, updated: 0, errors: 0, importacaoId: existingImport.id };
+      return { status: 'duplicado', imported: 0, updated: 0, errors: 0, importacaoId: existingImport.id };
     }
 
     const { data: importacao, error: impErr } = await supabase.from('tint_importacoes').insert({
@@ -569,7 +487,6 @@ export function useDirectTintImport() {
 
     const importacaoId = importacao.id;
 
-    // Pre-warm caches
     clearCaches();
     await preWarmCaches();
 
@@ -594,7 +511,6 @@ export function useDirectTintImport() {
         throw new Error(`Tipo inválido: ${tipo}`);
     }
 
-    // Finalize
     const finalStatus = result.errors > 0 && result.imported === 0 && result.updated === 0
       ? 'erro' : result.errors > 0 ? 'parcial' : 'concluido';
 
@@ -622,12 +538,4 @@ export function useDirectTintImport() {
   }, []);
 
   return { runDirectImport, running, progress, cancel };
-}
-
-async function sha256(content: string): Promise<string> {
-  const data = new TextEncoder().encode(content);
-  const hash = await crypto.subtle.digest('SHA-256', data);
-  return Array.from(new Uint8Array(hash))
-    .map(b => b.toString(16).padStart(2, '0'))
-    .join('');
 }
