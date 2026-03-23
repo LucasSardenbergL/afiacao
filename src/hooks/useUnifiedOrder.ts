@@ -166,6 +166,8 @@ export function useUnifiedOrder() {
 
   // Cart
   const [cart, setCart] = useState<CartItem[]>([]);
+  // Tintometric pending product (opens color dialog)
+  const [tintPendingProduct, setTintPendingProduct] = useState<Product | null>(null);
   const [notes, setNotes] = useState('');
   const [submitting, setSubmitting] = useState(false);
   const [activeTab, setActiveTab] = useState('oben');
