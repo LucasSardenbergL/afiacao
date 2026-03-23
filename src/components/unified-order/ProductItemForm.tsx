@@ -96,6 +96,9 @@ export function ProductItemForm({
                         <div className="flex items-center gap-1.5 flex-wrap">
                           <span className="text-xs truncate" style={{ maxWidth: colWidth - 24 }}>{product.descricao}</span>
                           {!product.ativo && <Badge variant="destructive" className="text-[9px] px-1 py-0">Inativo</Badge>}
+                          {(product as any).is_tintometric && (
+                            <Badge variant="outline" className="text-[9px] px-1 py-0 border-primary/40 text-primary">🎨 Tintométrico</Badge>
+                          )}
                           {customerPrice && customerPrice !== product.valor_unitario && (
                             <Badge variant="secondary" className="text-[9px] px-1 py-0">Preço cliente</Badge>
                           )}
