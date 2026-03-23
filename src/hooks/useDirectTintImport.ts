@@ -445,10 +445,91 @@ export function useDirectTintImport() {
     return { imported, updated, errors };
   };
 
+  // ─── Process formulas via RPC (Postgres-native) ───
+  const processFormulasRPC = async (rows: string[][], personalizada: boolean, importacaoId: string): Promise<{ imported: number; updated: number; errors: number }> => {
+    let imported = 0, updated = 0, errors = 0;
+    const offset = personalizada ? 0 : 2;
+    const totalBatches = Math.ceil(rows.length / RPC_BATCH_SIZE);
+
+    for (let b = 0; b < totalBatches; b++) {
+      if (cancelledRef.current) break;
+      const batch = rows.slice(b * RPC_BATCH_SIZE, (b + 1) * RPC_BATCH_SIZE);
+
+      // Map CSV rows to JSON objects for the RPC
+      const jsonRows = batch.map(cols => {
+        const obj: Record<string, string> = {
+          id_seq: cols[0] || '',
+          cor_id: cols[1] || '',
+          nome_cor: cols[2] || '',
+          id_base: cols[3] || '',
+          base: cols[4] || '',
+          id_embalagem: cols[5] || '',
+          embalagem: cols[6] || '',
+          cod_produto: cols[7] || '',
+          produto: cols[8] || '',
+        };
+
+        if (!personalizada) {
+          obj.subcolecao = cols[9] || '';
+          obj.sub_colecao = cols[10] || '';
+        }
+
+        const coranteStart = 9 + offset;
+        for (let c = 1; c <= 6; c++) {
+          obj[`corante${c}`] = cols[coranteStart + (c - 1)] || '';
+        }
+        const qtdStart = coranteStart + 6;
+        for (let c = 1; c <= 6; c++) {
+          const raw = cols[qtdStart + (c - 1)] || '0';
+          obj[`qtd${c}ml`] = raw.replace(',', '.');
+        }
+        obj.volume_finalml = (cols[qtdStart + 6] || '0').replace(',', '.');
+        obj.preco_final = (cols[qtdStart + 7] || '0').replace(',', '.');
+        obj.data_geracao = cols[qtdStart + 8] || '';
+        // Parse embalagem_ml from the volume_finalml or embalagem field
+        obj.embalagem_ml = obj.volume_finalml;
+
+        return obj;
+      });
+
+      setProgress(prev => prev ? {
+        ...prev, phase: `RPC Postgres — Lote ${b + 1} de ${totalBatches}`,
+        currentBatch: b + 1, totalBatches,
+        recordsProcessed: Math.min((b + 1) * RPC_BATCH_SIZE, rows.length),
+        totalRecords: rows.length,
+        imported, updated, errors,
+      } : prev);
+
+      const { data, error } = await supabase.rpc('import_tint_formulas', {
+        p_account: ACCOUNT,
+        p_personalizada: personalizada,
+        p_rows: jsonRows,
+      });
+
+      if (error) {
+        console.error(`[rpc] batch ${b + 1} error:`, error);
+        errors += batch.length;
+      } else if (data) {
+        const res = data as unknown as { imported: number; updated: number; errors: number };
+        imported += res.imported ?? 0;
+        updated += res.updated ?? 0;
+        errors += res.errors ?? 0;
+      }
+
+      setProgress(prev => prev ? {
+        ...prev, imported, updated, errors,
+        recordsProcessed: Math.min((b + 1) * RPC_BATCH_SIZE, rows.length),
+      } : prev);
+    }
+
+    return { imported, updated, errors };
+  };
+
   const runDirectImport = useCallback(async (
     rawText: string,
     fileName: string,
     tipo: string,
+    useRpc: boolean = false,
   ): Promise<DirectImportResult> => {
     cancelledRef.current = false;
     setRunning(true);
