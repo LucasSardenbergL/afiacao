@@ -18,6 +18,7 @@ const PAGE_SIZE = 50;
 function useProdutos() {
   return useQuery({
     queryKey: ['tint-produtos-list'],
+    staleTime: 5 * 60 * 1000,
     queryFn: async () => {
       const { data } = await supabase.from('tint_produtos').select('id, cod_produto, descricao').eq('account', ACCOUNT).order('descricao');
       return data ?? [];
@@ -74,6 +75,7 @@ export default function TintFormulas() {
 
   const { data, isLoading } = useQuery({
     queryKey: ['tint-formulas', search, produtoFilter, baseFilter, onlyPersonalizada, page],
+    staleTime: 5 * 60 * 1000,
     queryFn: async () => {
       let q = supabase
         .from('tint_formulas')

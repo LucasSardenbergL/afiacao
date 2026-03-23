@@ -2,6 +2,8 @@ interface OrderItem {
   description: string;
   quantity: number;
   unitPrice: number;
+  tintCorId?: string;
+  tintNomeCor?: string;
 }
 
 interface ShareOrderParams {
@@ -21,11 +23,13 @@ export function shareOrderViaWhatsApp({
 }: ShareOrderParams) {
   const itemsList = items
     .map(
-      (item) =>
-        `• ${item.quantity}x ${item.description} - ${(item.quantity * item.unitPrice).toLocaleString(
+      (item) => {
+        const tintInfo = item.tintCorId ? ` (Cor: ${item.tintCorId} — ${item.tintNomeCor})` : '';
+        return `• ${item.quantity}x ${item.description}${tintInfo} - ${(item.quantity * item.unitPrice).toLocaleString(
           'pt-BR',
           { style: 'currency', currency: 'BRL' }
-        )}`
+        )}`;
+      }
     )
     .join('\n');
 

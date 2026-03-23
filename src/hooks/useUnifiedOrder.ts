@@ -176,7 +176,7 @@ export function useUnifiedOrder() {
   const [orderSuccessOpen, setOrderSuccessOpen] = useState(false);
   const [lastOrderData, setLastOrderData] = useState<{
     customerName: string;
-    items: Array<{ description: string; quantity: number; unitPrice: number }>;
+    items: Array<{ description: string; quantity: number; unitPrice: number; tintCorId?: string; tintNomeCor?: string }>;
     total: number;
     orderNumbers: string[];
   } | null>(null);
@@ -1020,8 +1020,8 @@ export function useUnifiedOrder() {
       }
 
       // Prepare success dialog data
-      const allItems: Array<{ description: string; quantity: number; unitPrice: number }> = [
-        ...obenProductItems.map(c => ({ description: c.product.descricao, quantity: c.quantity, unitPrice: c.unit_price })),
+      const allItems: Array<{ description: string; quantity: number; unitPrice: number; tintCorId?: string; tintNomeCor?: string }> = [
+        ...obenProductItems.map(c => ({ description: c.product.descricao, quantity: c.quantity, unitPrice: c.unit_price, tintCorId: c.tint_cor_id, tintNomeCor: c.tint_nome_cor })),
         ...colacorProductItems.map(c => ({ description: c.product.descricao, quantity: c.quantity, unitPrice: c.unit_price })),
         ...serviceItems.map(c => ({ 
           description: c.servico?.descricao || getToolName(c.userTool), 
