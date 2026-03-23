@@ -18,6 +18,7 @@ const PAGE_SIZE = 50;
 function useProdutos() {
   return useQuery({
     queryKey: ['tint-produtos-list'],
+    staleTime: 5 * 60 * 1000,
     queryFn: async () => {
       const { data } = await supabase.from('tint_produtos').select('id, cod_produto, descricao').eq('account', ACCOUNT).order('descricao');
       return data ?? [];
