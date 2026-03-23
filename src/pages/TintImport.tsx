@@ -36,6 +36,23 @@ function useImportHistory() {
   });
 }
 
+function useTintProductCounts() {
+  return useQuery({
+    queryKey: ['tint-product-counts'],
+    queryFn: async () => {
+      const { data } = await supabase
+        .from('omie_products')
+        .select('tint_type')
+        .eq('is_tintometric', true)
+        .eq('account', ACCOUNT);
+      const bases = (data ?? []).filter(p => p.tint_type === 'base').length;
+      const concentrados = (data ?? []).filter(p => p.tint_type === 'concentrado').length;
+      return { bases, concentrados };
+    },
+    staleTime: 5 * 60 * 1000,
+  });
+}
+
 interface FileWithPreview {
   file: File;
   preview: string[][];
@@ -51,6 +68,7 @@ export default function TintImport() {
   const [results, setResults] = useState<any[]>([]);
   const queryClient = useQueryClient();
   const { data: history, isLoading: histLoading } = useImportHistory();
+  const { data: tintCounts } = useTintProductCounts();
 
   const handleFiles = useCallback(async (e: React.ChangeEvent<HTMLInputElement>) => {
     const selected = e.target.files;
@@ -70,8 +88,10 @@ export default function TintImport() {
     setSyncing(true);
     try {
       const res = await invokeFunction<any>('tint-omie-sync', { action: 'sync_tint_products' });
-      toast.success(`${res.totalSynced} produtos tintométricos sincronizados`);
+      const total = res.total_sincronizado ?? res.totalSynced ?? 0;
+      toast.success(`${total} produtos tintométricos sincronizados`);
       queryClient.invalidateQueries({ queryKey: ['tint'] });
+      queryClient.invalidateQueries({ queryKey: ['tint-product-counts'] });
     } catch (err: any) {
       toast.error(err.message || 'Erro ao sincronizar');
     } finally {
@@ -135,6 +155,12 @@ export default function TintImport() {
             {syncing ? <Loader2 className="w-4 h-4 mr-2 animate-spin" /> : <RefreshCw className="w-4 h-4 mr-2" />}
             Sincronizar Produtos Omie
           </Button>
+          {tintCounts && (tintCounts.bases > 0 || tintCounts.concentrados > 0) && (
+            <p className="text-sm text-muted-foreground mt-3">
+              <span className="font-medium text-foreground">{tintCounts.bases}</span> bases e{' '}
+              <span className="font-medium text-foreground">{tintCounts.concentrados}</span> concentrados encontrados no Omie
+            </p>
+          )}
         </CardContent>
       </Card>
 
