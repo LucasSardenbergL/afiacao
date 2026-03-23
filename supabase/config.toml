@@ -47,3 +47,9 @@ verify_jwt = false
 
 [functions.nvoip-calls]
 verify_jwt = false
+
+[functions.tint-omie-sync]
+verify_jwt = false
+
+[functions.tint-import]
+verify_jwt = false
