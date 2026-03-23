@@ -334,16 +334,25 @@ export default function TintImport() {
     const totalRows = dataRows.length;
     const alreadyProcessed = (imp.registros_importados ?? 0) + (imp.registros_atualizados ?? 0) + (imp.registros_erro ?? 0);
 
-    // Calculate which chunk to start from
+    // Skip already-processed rows, then chunk the remainder
+    const remainingRows = dataRows.slice(alreadyProcessed);
+    if (remainingRows.length === 0) {
+      toast.info('Todas as linhas deste arquivo já foram processadas.');
+      setImporting(false);
+      setResumingId(null);
+      return;
+    }
+
     const resumeChunkSize = getChunkSize(imp.tipo);
-    const startChunkIndex = Math.floor(alreadyProcessed / resumeChunkSize);
     const chunks: string[][][] = [];
-    for (let i = 0; i < totalRows; i += resumeChunkSize) {
-      chunks.push(dataRows.slice(i, i + resumeChunkSize));
+    for (let i = 0; i < remainingRows.length; i += resumeChunkSize) {
+      chunks.push(remainingRows.slice(i, i + resumeChunkSize));
     }
     const totalChunks = chunks.length;
+    // The absolute chunk index for the edge function (so it knows position in the full file)
+    const baseChunkIndex = Math.floor(alreadyProcessed / resumeChunkSize);
 
-    console.log(`Resuming import ${imp.id}: starting from chunk ${startChunkIndex + 1}/${totalChunks} (${alreadyProcessed} already processed)`);
+    console.log(`Resuming import ${imp.id}: ${alreadyProcessed} already processed, ${remainingRows.length} remaining in ${totalChunks} chunks`);
 
     let totalImported = 0;
     let totalUpdated = 0;
