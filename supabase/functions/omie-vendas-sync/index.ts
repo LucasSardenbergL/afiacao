@@ -803,6 +803,8 @@ async function criarPedidoVenda(
     quantidade: number;
     valor_unitario: number;
     descricao?: string;
+    tint_cor_id?: string;
+    tint_nome_cor?: string;
   }>,
   observacao?: string,
   codigoParcela?: string,
@@ -811,14 +813,23 @@ async function criarPedidoVenda(
   const cCodIntPed = `PV_${salesOrderId.substring(0, 8)}_${Date.now()}`;
   const config = getAccountConfig(account);
 
-  const det = items.map((item, index) => ({
-    ide: { codigo_item_integracao: `${cCodIntPed}_${index + 1}` },
-    produto: {
-      codigo_produto: item.omie_codigo_produto,
-      quantidade: item.quantidade,
-      valor_unitario: item.valor_unitario,
-    },
-  }));
+  const det = items.map((item, index) => {
+    const entry: Record<string, unknown> = {
+      ide: { codigo_item_integracao: `${cCodIntPed}_${index + 1}` },
+      produto: {
+        codigo_produto: item.omie_codigo_produto,
+        quantidade: item.quantidade,
+        valor_unitario: item.valor_unitario,
+      },
+    };
+    // Add tint color info if present
+    if (item.tint_cor_id && item.tint_nome_cor) {
+      (entry as any).inf_adic = {
+        dados_adicionais_item: `Cor: ${item.tint_cor_id} - ${item.tint_nome_cor}`,
+      };
+    }
+    return entry;
+  });
 
   const cabecalho: Record<string, unknown> = {
     codigo_pedido_integracao: cCodIntPed,

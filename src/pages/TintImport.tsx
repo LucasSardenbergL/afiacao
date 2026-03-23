@@ -11,8 +11,10 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@
 import { Skeleton } from '@/components/ui/skeleton';
 import { Upload, RefreshCw, FileText, CheckCircle, AlertTriangle, Loader2 } from 'lucide-react';
 import { toast } from 'sonner';
+import Papa from 'papaparse';
 
 const ACCOUNT = 'oben';
+const CHUNK_SIZE = 200;
 
 const TIPO_OPTIONS = [
   { value: 'dados_corantes', label: 'Dados auxiliares — Corantes' },
@@ -57,6 +59,15 @@ interface FileWithPreview {
   file: File;
   preview: string[][];
   name: string;
+  rawText: string;
+}
+
+async function sha256(content: string): Promise<string> {
+  const data = new TextEncoder().encode(content);
+  const hash = await crypto.subtle.digest('SHA-256', data);
+  return Array.from(new Uint8Array(hash))
+    .map(b => b.toString(16).padStart(2, '0'))
+    .join('');
 }
 
 export default function TintImport() {
@@ -64,7 +75,7 @@ export default function TintImport() {
   const [files, setFiles] = useState<FileWithPreview[]>([]);
   const [syncing, setSyncing] = useState(false);
   const [importing, setImporting] = useState(false);
-  const [progress, setProgress] = useState({ current: 0, total: 0, fileName: '' });
+  const [chunkProgress, setChunkProgress] = useState({ currentFile: 0, totalFiles: 0, fileName: '', currentChunk: 0, totalChunks: 0 });
   const [results, setResults] = useState<any[]>([]);
   const queryClient = useQueryClient();
   const { data: history, isLoading: histLoading } = useImportHistory();
@@ -75,10 +86,10 @@ export default function TintImport() {
     if (!selected) return;
     const parsed: FileWithPreview[] = [];
     for (const file of Array.from(selected)) {
-      const text = await file.text();
-      const lines = text.split(/\r?\n/).filter(l => l.trim());
+      const rawText = await file.text();
+      const lines = rawText.split(/\r?\n/).filter(l => l.trim());
       const preview = lines.slice(0, 6).map(l => l.split(';'));
-      parsed.push({ file, preview, name: file.name });
+      parsed.push({ file, preview, name: file.name, rawText });
     }
     setFiles(parsed);
     setResults([]);
@@ -104,29 +115,117 @@ export default function TintImport() {
     if (files.length === 0) { toast.error('Selecione ao menos um arquivo'); return; }
 
     setImporting(true);
-    setProgress({ current: 0, total: files.length, fileName: '' });
     const allResults: any[] = [];
 
-    for (let i = 0; i < files.length; i++) {
-      const f = files[i];
-      setProgress({ current: i + 1, total: files.length, fileName: f.name });
+    for (let fi = 0; fi < files.length; fi++) {
+      const f = files[fi];
 
-      const formData = new FormData();
-      formData.append('file', f.file);
-      formData.append('tipo', tipo);
-      formData.append('account', ACCOUNT);
+      // Parse CSV in browser with PapaParse
+      const parseResult = Papa.parse<string[]>(f.rawText, {
+        delimiter: ';',
+        skipEmptyLines: true,
+      });
 
-      try {
-        const res = await invokeFunction<any>('tint-import', formData);
-        allResults.push({ name: f.name, ...res });
-      } catch (err: any) {
-        allResults.push({ name: f.name, status: 'erro', error: err.message });
+      const allRows = parseResult.data;
+      if (allRows.length < 2) {
+        allResults.push({ name: f.name, status: 'erro', error: 'CSV vazio ou sem dados' });
+        continue;
+      }
+
+      // Skip header
+      const dataRows = allRows.slice(1);
+      const totalRows = dataRows.length;
+
+      // For small files (≤ CHUNK_SIZE), use legacy multipart mode
+      if (totalRows <= CHUNK_SIZE) {
+        setChunkProgress({ currentFile: fi + 1, totalFiles: files.length, fileName: f.name, currentChunk: 1, totalChunks: 1 });
+        const formData = new FormData();
+        formData.append('file', f.file);
+        formData.append('tipo', tipo);
+        formData.append('account', ACCOUNT);
+        try {
+          const res = await invokeFunction<any>('tint-import', formData);
+          allResults.push({ name: f.name, ...res });
+        } catch (err: any) {
+          allResults.push({ name: f.name, status: 'erro', error: err.message });
+        }
+        continue;
+      }
+
+      // Large file: chunk mode
+      const hash = await sha256(f.rawText);
+      const chunks: string[][][] = [];
+      for (let i = 0; i < totalRows; i += CHUNK_SIZE) {
+        chunks.push(dataRows.slice(i, i + CHUNK_SIZE));
+      }
+      const totalChunks = chunks.length;
+
+      let importacaoId: string | null = null;
+      let totalImported = 0;
+      let totalUpdated = 0;
+      let totalErrors = 0;
+      let lastError: string | null = null;
+
+      for (let ci = 0; ci < totalChunks; ci++) {
+        setChunkProgress({ currentFile: fi + 1, totalFiles: files.length, fileName: f.name, currentChunk: ci + 1, totalChunks });
+
+        const body: Record<string, unknown> = {
+          tipo,
+          account: ACCOUNT,
+          chunk_index: ci,
+          total_chunks: totalChunks,
+          total_rows: totalRows,
+          rows: chunks[ci],
+          arquivo_nome: f.name,
+        };
+
+        if (ci === 0) {
+          body.arquivo_hash = hash;
+        }
+        if (importacaoId) {
+          body.importacao_id = importacaoId;
+        }
+
+        try {
+          const res = await invokeFunction<any>('tint-import', body);
+
+          if (res.status === 'duplicado') {
+            allResults.push({ name: f.name, ...res });
+            importacaoId = null;
+            break;
+          }
+
+          if (res.importacao_id) {
+            importacaoId = res.importacao_id;
+          }
+          totalImported += res.registros_importados ?? 0;
+          totalUpdated += res.registros_atualizados ?? 0;
+          totalErrors += res.registros_erro ?? 0;
+        } catch (err: any) {
+          lastError = err.message;
+          totalErrors++;
+          // Continue with next chunks
+        }
+      }
+
+      if (importacaoId) {
+        allResults.push({
+          name: f.name,
+          status: totalErrors > 0 && totalImported === 0 && totalUpdated === 0 ? 'erro' : totalErrors > 0 ? 'parcial' : 'concluido',
+          importacao_id: importacaoId,
+          total_registros: totalRows,
+          registros_importados: totalImported,
+          registros_atualizados: totalUpdated,
+          registros_erro: totalErrors,
+          error: lastError,
+        });
       }
     }
 
     setResults(allResults);
     setImporting(false);
     queryClient.invalidateQueries({ queryKey: ['tint'] });
+    queryClient.invalidateQueries({ queryKey: ['tint-import-history'] });
     toast.success('Importação finalizada');
   };
 
@@ -137,6 +236,10 @@ export default function TintImport() {
     processando: 'bg-blue-500/10 text-blue-700',
     duplicado: 'bg-gray-500/10 text-gray-700',
   };
+
+  const progressPct = chunkProgress.totalChunks > 0
+    ? ((chunkProgress.currentChunk / chunkProgress.totalChunks) * 100)
+    : 0;
 
   return (
     <div className="space-y-6">
@@ -226,8 +329,14 @@ export default function TintImport() {
           {/* Progress */}
           {importing && (
             <div className="space-y-2">
-              <p className="text-sm">Importando {progress.fileName} ({progress.current}/{progress.total})</p>
-              <Progress value={(progress.current / progress.total) * 100} />
+              <p className="text-sm">
+                Importando <span className="font-medium">{chunkProgress.fileName}</span>
+                {' '}(arquivo {chunkProgress.currentFile}/{chunkProgress.totalFiles})
+                {chunkProgress.totalChunks > 1 && (
+                  <> — chunk {chunkProgress.currentChunk}/{chunkProgress.totalChunks}</>
+                )}
+              </p>
+              <Progress value={progressPct} />
             </div>
           )}
 
