@@ -416,6 +416,9 @@ serve(async (req) => {
       if (body.action === "create_import") {
         return await handleCreateImport(supabase, body);
       }
+      if (body.action === "finalize_import") {
+        return await handleFinalizeImport(supabase, body);
+      }
       return await handleChunkMode(supabase, body);
     }
   } catch (error) {
