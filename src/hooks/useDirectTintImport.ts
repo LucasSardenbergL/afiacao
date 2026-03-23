@@ -551,9 +551,20 @@ export function useDirectTintImport() {
       .select('id, status').eq('account', ACCOUNT).eq('arquivo_hash', hash).maybeSingle();
 
     if (existingImport) {
-      setRunning(false);
-      setProgress(null);
-      return { status: 'duplicado', imported: 0, updated: 0, errors: 0, importacaoId: existingImport.id };
+      // Only block if the previous import was fully successful
+      if (existingImport.status === 'concluido') {
+        setRunning(false);
+        setProgress(null);
+        return { status: 'duplicado', imported: 0, updated: 0, errors: 0, importacaoId: existingImport.id };
+      }
+      // For failed/partial/cancelled imports, clean up old formulas and re-import
+      console.log(`[direct-import] Cleaning up old import ${existingImport.id} (status: ${existingImport.status})`);
+      await supabase.from('tint_formula_itens').delete().in(
+        'formula_id',
+        (await supabase.from('tint_formulas').select('id').eq('importacao_id', existingImport.id)).data?.map(f => f.id) ?? []
+      );
+      await supabase.from('tint_formulas').delete().eq('importacao_id', existingImport.id);
+      await supabase.from('tint_importacoes').delete().eq('id', existingImport.id);
     }
 
     const { data: importacao, error: impErr } = await supabase.from('tint_importacoes').insert({
