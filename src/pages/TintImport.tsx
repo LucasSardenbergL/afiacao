@@ -205,8 +205,8 @@ export default function TintImport() {
       // Large file: chunk mode
       const hash = await sha256(f.rawText);
       const chunks: string[][][] = [];
-      for (let i = 0; i < totalRows; i += CHUNK_SIZE) {
-        chunks.push(dataRows.slice(i, i + CHUNK_SIZE));
+      for (let i = 0; i < totalRows; i += chunkSize) {
+        chunks.push(dataRows.slice(i, i + chunkSize));
       }
       const totalChunks = chunks.length;
 
