@@ -2,6 +2,8 @@ interface OrderItem {
   description: string;
   quantity: number;
   unitPrice: number;
+  tintCorId?: string;
+  tintNomeCor?: string;
 }
 
 interface ShareOrderParams {
