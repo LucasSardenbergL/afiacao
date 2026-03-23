@@ -87,8 +87,10 @@ export default function TintImport() {
     setSyncing(true);
     try {
       const res = await invokeFunction<any>('tint-omie-sync', { action: 'sync_tint_products' });
-      toast.success(`${res.totalSynced} produtos tintométricos sincronizados`);
+      const total = res.total_sincronizado ?? res.totalSynced ?? 0;
+      toast.success(`${total} produtos tintométricos sincronizados`);
       queryClient.invalidateQueries({ queryKey: ['tint'] });
+      queryClient.invalidateQueries({ queryKey: ['tint-product-counts'] });
     } catch (err: any) {
       toast.error(err.message || 'Erro ao sincronizar');
     } finally {
