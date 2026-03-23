@@ -584,10 +584,14 @@ export function useDirectTintImport() {
         result = await processDadosPBE(dataRows);
         break;
       case 'formulas_padrao':
-        result = await processFormulas(dataRows, false, importacaoId);
+        result = useRpc
+          ? await processFormulasRPC(dataRows, false, importacaoId)
+          : await processFormulas(dataRows, false, importacaoId);
         break;
       case 'formulas_personalizadas':
-        result = await processFormulas(dataRows, true, importacaoId);
+        result = useRpc
+          ? await processFormulasRPC(dataRows, true, importacaoId)
+          : await processFormulas(dataRows, true, importacaoId);
         break;
       default:
         throw new Error(`Tipo inválido: ${tipo}`);
