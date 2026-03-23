@@ -413,6 +413,9 @@ serve(async (req) => {
       return await handleFileMode(supabase, req);
     } else {
       const body = await req.json();
+      if (body.action === "create_import") {
+        return await handleCreateImport(supabase, body);
+      }
       return await handleChunkMode(supabase, body);
     }
   } catch (error) {
