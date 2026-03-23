@@ -533,7 +533,7 @@ export default function TintImport() {
             <div className="space-y-3">
               {files.map((f, idx) => {
                 const lineCount = Papa.parse(f.rawText, { delimiter: ';', skipEmptyLines: true }).data.length - 1;
-                const useDirectMode = importMode === 'direct' || (importMode === 'auto' && lineCount >= 500);
+                const useDirectMode = importMode === 'direct' || importMode === 'rpc' || (importMode === 'auto' && lineCount >= 500);
                 return (
                   <div key={idx} className="border rounded-md p-3">
                     <div className="flex items-center gap-2 mb-2">
