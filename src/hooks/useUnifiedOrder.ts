@@ -609,14 +609,35 @@ export function useUnifiedOrder() {
   }, [customerPricesOben, customerPricesColacor]);
 
   const addProductToCart = (product: Product) => {
+    // If tintometric base, open color dialog instead of adding directly
+    if (product.is_tintometric && product.tint_type === 'base') {
+      setTintPendingProduct(product);
+      return;
+    }
     const account = (product.account || 'oben') as ProductAccount;
-    const existing = cart.find((c): c is ProductCartItem => c.type === 'product' && c.product.id === product.id);
+    const existing = cart.find((c): c is ProductCartItem => c.type === 'product' && c.product.id === product.id && !c.tint_formula_id);
     if (existing) {
-      setCart(cart.map(c => c.type === 'product' && (c as ProductCartItem).product.id === product.id
+      setCart(cart.map(c => c.type === 'product' && (c as ProductCartItem).product.id === product.id && !(c as ProductCartItem).tint_formula_id
         ? { ...c, quantity: c.quantity + 1 } as ProductCartItem : c));
     } else {
       setCart([...cart, { type: 'product', product, quantity: 1, unit_price: getProductPrice(product), account }]);
     }
+  };
+
+  const addTintProductToCart = (product: Product, formulaId: string, corId: string, nomeCor: string, precoFinal: number, custoCorantes: number) => {
+    const account = (product.account || 'oben') as ProductAccount;
+    // Each tint formula selection is a unique cart item
+    const existing = cart.find((c): c is ProductCartItem => c.type === 'product' && c.tint_formula_id === formulaId);
+    if (existing) {
+      setCart(cart.map(c => c.type === 'product' && (c as ProductCartItem).tint_formula_id === formulaId
+        ? { ...c, quantity: c.quantity + 1 } as ProductCartItem : c));
+    } else {
+      setCart([...cart, {
+        type: 'product', product, quantity: 1, unit_price: precoFinal, account,
+        tint_cor_id: corId, tint_nome_cor: nomeCor, tint_custo_corantes: custoCorantes, tint_formula_id: formulaId,
+      }]);
+    }
+    setTintPendingProduct(null);
   };
 
   // Service Cart Actions
