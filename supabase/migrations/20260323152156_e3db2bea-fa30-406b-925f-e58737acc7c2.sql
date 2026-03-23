@@ -1,0 +1,1 @@
+DELETE FROM tint_corantes WHERE account = 'oben' AND id_corante_sayersystem !~ '^\d+$'; DELETE FROM tint_importacoes WHERE id = 'c5fa2fb2-1ca3-4ca2-b09b-f28f8da6274d';
