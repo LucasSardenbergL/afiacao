@@ -185,8 +185,9 @@ export default function TintImport() {
       const dataRows = allRows.slice(1);
       const totalRows = dataRows.length;
 
-      // For small files (≤ CHUNK_SIZE), use legacy multipart mode
-      if (totalRows <= CHUNK_SIZE) {
+      const chunkSize = getChunkSize(tipo);
+      // For small files (≤ chunkSize), use legacy multipart mode
+      if (totalRows <= chunkSize) {
         setChunkProgress({ currentFile: fi + 1, totalFiles: files.length, fileName: f.name, currentChunk: 1, totalChunks: 1 });
         const formData = new FormData();
         formData.append('file', f.file);
