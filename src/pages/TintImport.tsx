@@ -113,7 +113,7 @@ export default function TintImport() {
   const [resumingId, setResumingId] = useState<string | null>(null);
   const [chunkProgress, setChunkProgress] = useState({ currentFile: 0, totalFiles: 0, fileName: '', currentChunk: 0, totalChunks: 0 });
   const [results, setResults] = useState<any[]>([]);
-  const [importMode, setImportMode] = useState<'auto' | 'edge' | 'direct'>('auto');
+  const [importMode, setImportMode] = useState<'auto' | 'edge' | 'direct' | 'rpc'>('auto');
   const queryClient = useQueryClient();
   const { data: history, isLoading: histLoading } = useImportHistory();
   const { data: tintCounts } = useTintProductCounts();
