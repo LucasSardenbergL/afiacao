@@ -148,6 +148,46 @@ export default function TintImport() {
     }
   };
 
+  const shouldUseDirect = useCallback((fileRawText: string): boolean => {
+    if (importMode === 'direct') return true;
+    if (importMode === 'edge') return false;
+    const lineCount = fileRawText.split(/\r?\n/).filter(l => l.trim()).length - 1;
+    return lineCount >= 500;
+  }, [importMode]);
+
+  const handleImportWithMode = async () => {
+    if (!tipo) { toast.error('Selecione o tipo de importação'); return; }
+    if (files.length === 0) { toast.error('Selecione ao menos um arquivo'); return; }
+    const noneDirect = files.every(f => !shouldUseDirect(f.rawText));
+    if (noneDirect) { await handleImport(); return; }
+    const allResults: any[] = [];
+    for (const f of files) {
+      if (shouldUseDirect(f.rawText)) {
+        try {
+          const result = await runDirectImport(f.rawText, f.name, tipo);
+          allResults.push({ name: f.name, status: result.status, imported: result.imported, updated: result.updated, errors: result.errors });
+        } catch (err: any) {
+          allResults.push({ name: f.name, status: 'erro', error: err.message });
+        }
+      } else {
+        const formData = new FormData();
+        formData.append('file', f.file);
+        formData.append('tipo', tipo);
+        formData.append('account', ACCOUNT);
+        try {
+          const res = await invokeFunction<any>('tint-import', formData);
+          allResults.push({ name: f.name, ...res });
+        } catch (err: any) {
+          allResults.push({ name: f.name, status: 'erro', error: err.message });
+        }
+      }
+    }
+    setResults(allResults);
+    queryClient.invalidateQueries({ queryKey: ['tint'] });
+    queryClient.invalidateQueries({ queryKey: ['tint-import-history'] });
+    toast.success('Importação finalizada');
+  };
+
   const finalizeImport = async (importacaoId: string, totalImported: number, totalUpdated: number, totalErrors: number, failedChunks: number) => {
     try {
       await invokeFunction('tint-import', {
