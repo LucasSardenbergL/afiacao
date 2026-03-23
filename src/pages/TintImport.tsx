@@ -14,9 +14,15 @@ import { toast } from 'sonner';
 import Papa from 'papaparse';
 
 const ACCOUNT = 'oben';
-const CHUNK_SIZE = 200;
+const CHUNK_SIZE_DEFAULT = 200;
+const CHUNK_SIZE_FORMULAS = 50; // Formulas are heavy (~10 DB ops per row)
 const MAX_RETRIES = 3;
 const RETRY_DELAY_MS = 2000;
+
+function getChunkSize(tipo: string): number {
+  if (tipo === 'formulas_padrao' || tipo === 'formulas_personalizadas') return CHUNK_SIZE_FORMULAS;
+  return CHUNK_SIZE_DEFAULT;
+}
 
 const TIPO_OPTIONS = [
   { value: 'dados_corantes', label: 'Dados auxiliares — Corantes' },
