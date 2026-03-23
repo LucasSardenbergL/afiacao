@@ -296,11 +296,42 @@ async function handleFileMode(supabase: Supabase, req: Request) {
   return new Response(JSON.stringify({ status: finalStatus, importacao_id: importacaoId, total_registros: totalRegistros, registros_importados: result.imported, registros_atualizados: result.updated, registros_erro: result.errors }), { headers: { ...corsHeaders, "Content-Type": "application/json" } });
 }
 
+// ─── Create import record (lightweight, no data processing) ───
+async function handleCreateImport(supabase: Supabase, body: Record<string, unknown>) {
+  const { tipo, account: rawAccount, arquivo_hash, arquivo_nome, total_rows } = body as {
+    tipo: string; account: string; arquivo_hash?: string; arquivo_nome?: string; total_rows?: number;
+  };
+  const account = rawAccount || "oben";
+
+  if (!tipo) {
+    return new Response(JSON.stringify({ error: "Campo 'tipo' obrigatório" }), {
+      status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" },
+    });
+  }
+
+  // Idempotency check
+  if (arquivo_hash) {
+    const { data: existingImport } = await supabase.from("tint_importacoes").select("id, status, created_at")
+      .eq("account", account).eq("arquivo_hash", arquivo_hash).maybeSingle();
+    if (existingImport) {
+      return new Response(JSON.stringify({ status: "duplicado", message: "Este arquivo já foi importado anteriormente", importacao_id: existingImport.id, importado_em: existingImport.created_at }), { headers: { ...corsHeaders, "Content-Type": "application/json" } });
+    }
+  }
+
+  const { data: importacao, error: impError } = await supabase.from("tint_importacoes").insert({
+    account, tipo, arquivo_nome: arquivo_nome || "chunked_import", arquivo_hash: arquivo_hash || `manual-${crypto.randomUUID()}`,
+    status: "processando", total_registros: total_rows || 0,
+  }).select("id").single();
+  if (impError) throw new Error(`Erro ao criar importação: ${impError.message}`);
+
+  return new Response(JSON.stringify({ status: "criado", importacao_id: importacao.id }), { headers: { ...corsHeaders, "Content-Type": "application/json" } });
+}
+
 // ─── Chunk mode handler ───
 async function handleChunkMode(supabase: Supabase, body: Record<string, unknown>) {
-  const { tipo, account: rawAccount, chunk_index, total_chunks, total_rows, rows, importacao_id, arquivo_hash, arquivo_nome } = body as {
+  const { tipo, account: rawAccount, chunk_index, total_chunks, total_rows, rows, importacao_id } = body as {
     tipo: string; account: string; chunk_index: number; total_chunks: number; total_rows: number;
-    rows: string[][]; importacao_id?: string; arquivo_hash?: string; arquivo_nome?: string;
+    rows: string[][]; importacao_id: string;
   };
 
   const account = rawAccount || "oben";
@@ -311,28 +342,13 @@ async function handleChunkMode(supabase: Supabase, body: Record<string, unknown>
     });
   }
 
-  let currentImportacaoId = importacao_id || "";
-
-  // First chunk: create import record
-  if (chunk_index === 0) {
-    // Idempotency check
-    if (arquivo_hash) {
-      const { data: existingImport } = await supabase.from("tint_importacoes").select("id, status, created_at")
-        .eq("account", account).eq("arquivo_hash", arquivo_hash).maybeSingle();
-      if (existingImport) {
-        return new Response(JSON.stringify({ status: "duplicado", message: "Este arquivo já foi importado anteriormente", importacao_id: existingImport.id, importado_em: existingImport.created_at }), { headers: { ...corsHeaders, "Content-Type": "application/json" } });
-      }
-    }
-
-    const { data: importacao, error: impError } = await supabase.from("tint_importacoes").insert({
-      account, tipo, arquivo_nome: arquivo_nome || "chunked_import", arquivo_hash: arquivo_hash || null,
-      status: "processando", total_registros: total_rows || 0,
-    }).select("id").single();
-    if (impError) throw new Error(`Erro ao criar importação: ${impError.message}`);
-    currentImportacaoId = importacao.id;
+  if (!importacao_id) {
+    return new Response(JSON.stringify({ error: "importacao_id é obrigatório" }), {
+      status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" },
+    });
   }
 
-  if (!currentImportacaoId) throw new Error("importacao_id é obrigatório para chunks > 0");
+  const currentImportacaoId = importacao_id;
 
   clearCaches();
 
