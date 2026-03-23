@@ -9,12 +9,14 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import { Progress } from '@/components/ui/progress';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { Skeleton } from '@/components/ui/skeleton';
-import { Upload, RefreshCw, FileText, CheckCircle, AlertTriangle, Loader2 } from 'lucide-react';
+import { Upload, RefreshCw, FileText, CheckCircle, AlertTriangle, Loader2, RotateCcw } from 'lucide-react';
 import { toast } from 'sonner';
 import Papa from 'papaparse';
 
 const ACCOUNT = 'oben';
 const CHUNK_SIZE = 200;
+const MAX_RETRIES = 3;
+const RETRY_DELAY_MS = 2000;
 
 const TIPO_OPTIONS = [
   { value: 'dados_corantes', label: 'Dados auxiliares — Corantes' },
@@ -70,11 +72,38 @@ async function sha256(content: string): Promise<string> {
     .join('');
 }
 
+function sleep(ms: number) {
+  return new Promise(resolve => setTimeout(resolve, ms));
+}
+
+async function sendChunkWithRetry(
+  body: Record<string, unknown>,
+  chunkIndex: number,
+  totalChunks: number,
+): Promise<any> {
+  for (let attempt = 1; attempt <= MAX_RETRIES; attempt++) {
+    try {
+      console.log(`Chunk ${chunkIndex + 1}/${totalChunks}: enviando... (tentativa ${attempt}/${MAX_RETRIES})`);
+      const res = await invokeFunction<any>('tint-import', body);
+      console.log(`Chunk ${chunkIndex + 1}/${totalChunks}: sucesso, ${res.registros_importados ?? 0} importados, ${res.registros_atualizados ?? 0} atualizados`);
+      return res;
+    } catch (err: any) {
+      console.error(`Chunk ${chunkIndex + 1}/${totalChunks}: falhou tentativa ${attempt}/${MAX_RETRIES}`, err);
+      if (attempt < MAX_RETRIES) {
+        await sleep(RETRY_DELAY_MS);
+      } else {
+        throw err;
+      }
+    }
+  }
+}
+
 export default function TintImport() {
   const [tipo, setTipo] = useState('');
   const [files, setFiles] = useState<FileWithPreview[]>([]);
   const [syncing, setSyncing] = useState(false);
   const [importing, setImporting] = useState(false);
+  const [resumingId, setResumingId] = useState<string | null>(null);
   const [chunkProgress, setChunkProgress] = useState({ currentFile: 0, totalFiles: 0, fileName: '', currentChunk: 0, totalChunks: 0 });
   const [results, setResults] = useState<any[]>([]);
   const queryClient = useQueryClient();
@@ -110,6 +139,22 @@ export default function TintImport() {
     }
   };
 
+  const finalizeImport = async (importacaoId: string, totalImported: number, totalUpdated: number, totalErrors: number, failedChunks: number) => {
+    try {
+      await invokeFunction('tint-import', {
+        action: 'finalize_import',
+        importacao_id: importacaoId,
+        registros_importados: totalImported,
+        registros_atualizados: totalUpdated,
+        registros_erro: totalErrors,
+        failed_chunks: failedChunks,
+      });
+      console.log(`Import ${importacaoId} finalized: ${totalImported} imported, ${totalUpdated} updated, ${totalErrors} errors, ${failedChunks} failed chunks`);
+    } catch (err) {
+      console.error('Failed to finalize import:', err);
+    }
+  };
+
   const handleImport = async () => {
     if (!tipo) { toast.error('Selecione o tipo de importação'); return; }
     if (files.length === 0) { toast.error('Selecione ao menos um arquivo'); return; }
@@ -120,7 +165,6 @@ export default function TintImport() {
     for (let fi = 0; fi < files.length; fi++) {
       const f = files[fi];
 
-      // Parse CSV in browser with PapaParse
       const parseResult = Papa.parse<string[]>(f.rawText, {
         delimiter: ';',
         skipEmptyLines: true,
@@ -132,7 +176,6 @@ export default function TintImport() {
         continue;
       }
 
-      // Skip header
       const dataRows = allRows.slice(1);
       const totalRows = dataRows.length;
 
@@ -164,11 +207,13 @@ export default function TintImport() {
       let totalImported = 0;
       let totalUpdated = 0;
       let totalErrors = 0;
+      let failedChunks = 0;
       let lastError: string | null = null;
 
-      // Step 1: Create import record first (lightweight call, no data processing)
+      // Step 1: Create import record
       try {
         setChunkProgress({ currentFile: fi + 1, totalFiles: files.length, fileName: f.name, currentChunk: 0, totalChunks });
+        console.log(`Creating import record for ${f.name} (${totalRows} rows, ${totalChunks} chunks)`);
         const createRes = await invokeFunction<any>('tint-import', {
           action: 'create_import',
           tipo,
@@ -179,11 +224,13 @@ export default function TintImport() {
         });
 
         if (createRes.status === 'duplicado') {
+          console.log(`File ${f.name} already imported, skipping`);
           allResults.push({ name: f.name, ...createRes });
           continue;
         }
 
         importacaoId = createRes.importacao_id;
+        console.log(`Import record created: ${importacaoId}`);
       } catch (err: any) {
         allResults.push({ name: f.name, status: 'erro', error: `Falha ao criar importação: ${err.message}` });
         continue;
@@ -194,7 +241,7 @@ export default function TintImport() {
         continue;
       }
 
-      // Step 2: Send data chunks
+      // Step 2: Send data chunks with retry
       for (let ci = 0; ci < totalChunks; ci++) {
         setChunkProgress({ currentFile: fi + 1, totalFiles: files.length, fileName: f.name, currentChunk: ci + 1, totalChunks });
 
@@ -209,30 +256,37 @@ export default function TintImport() {
         };
 
         try {
-          const res = await invokeFunction<any>('tint-import', body);
-
+          const res = await sendChunkWithRetry(body, ci, totalChunks);
           totalImported += res.registros_importados ?? 0;
           totalUpdated += res.registros_atualizados ?? 0;
           totalErrors += res.registros_erro ?? 0;
         } catch (err: any) {
           lastError = err.message;
-          totalErrors++;
-          // Continue with next chunks
+          failedChunks++;
+          totalErrors += chunks[ci].length;
+          console.error(`Chunk ${ci + 1}/${totalChunks}: ABANDONADO após ${MAX_RETRIES} tentativas`);
+          // Continue with next chunk
         }
       }
 
-      if (importacaoId) {
-        allResults.push({
-          name: f.name,
-          status: totalErrors > 0 && totalImported === 0 && totalUpdated === 0 ? 'erro' : totalErrors > 0 ? 'parcial' : 'concluido',
-          importacao_id: importacaoId,
-          total_registros: totalRows,
-          registros_importados: totalImported,
-          registros_atualizados: totalUpdated,
-          registros_erro: totalErrors,
-          error: lastError,
-        });
-      }
+      // Step 3: Finalize import regardless of failures
+      await finalizeImport(importacaoId, totalImported, totalUpdated, totalErrors, failedChunks);
+
+      const status = totalErrors > 0 && totalImported === 0 && totalUpdated === 0
+        ? 'erro'
+        : failedChunks > 0 ? 'concluido_parcial' : totalErrors > 0 ? 'parcial' : 'concluido';
+
+      allResults.push({
+        name: f.name,
+        status,
+        importacao_id: importacaoId,
+        total_registros: totalRows,
+        registros_importados: totalImported,
+        registros_atualizados: totalUpdated,
+        registros_erro: totalErrors,
+        failed_chunks: failedChunks,
+        error: lastError,
+      });
     }
 
     setResults(allResults);
@@ -242,8 +296,89 @@ export default function TintImport() {
     toast.success('Importação finalizada');
   };
 
+  const handleResume = async (imp: any) => {
+    if (!imp.tipo || !imp.id) return;
+    setResumingId(imp.id);
+
+    // We need the user to re-select the file to get the data rows
+    toast.info('Selecione o mesmo arquivo CSV para retomar a importação, depois clique em "Retomar" novamente.');
+
+    if (files.length === 0) {
+      setResumingId(null);
+      return;
+    }
+
+    // Find matching file by name
+    const matchingFile = files.find(f => f.name === imp.arquivo_nome);
+    if (!matchingFile) {
+      toast.error(`Selecione o arquivo "${imp.arquivo_nome}" para retomar`);
+      setResumingId(null);
+      return;
+    }
+
+    setImporting(true);
+
+    const parseResult = Papa.parse<string[]>(matchingFile.rawText, {
+      delimiter: ';',
+      skipEmptyLines: true,
+    });
+
+    const dataRows = parseResult.data.slice(1);
+    const totalRows = dataRows.length;
+    const alreadyProcessed = (imp.registros_importados ?? 0) + (imp.registros_atualizados ?? 0) + (imp.registros_erro ?? 0);
+
+    // Calculate which chunk to start from
+    const startChunkIndex = Math.floor(alreadyProcessed / CHUNK_SIZE);
+    const chunks: string[][][] = [];
+    for (let i = 0; i < totalRows; i += CHUNK_SIZE) {
+      chunks.push(dataRows.slice(i, i + CHUNK_SIZE));
+    }
+    const totalChunks = chunks.length;
+
+    console.log(`Resuming import ${imp.id}: starting from chunk ${startChunkIndex + 1}/${totalChunks} (${alreadyProcessed} already processed)`);
+
+    let totalImported = 0;
+    let totalUpdated = 0;
+    let totalErrors = 0;
+    let failedChunks = 0;
+
+    for (let ci = startChunkIndex; ci < totalChunks; ci++) {
+      setChunkProgress({ currentFile: 1, totalFiles: 1, fileName: matchingFile.name, currentChunk: ci + 1 - startChunkIndex, totalChunks: totalChunks - startChunkIndex });
+
+      const body: Record<string, unknown> = {
+        tipo: imp.tipo,
+        account: ACCOUNT,
+        chunk_index: ci,
+        total_chunks: totalChunks,
+        total_rows: totalRows,
+        rows: chunks[ci],
+        importacao_id: imp.id,
+      };
+
+      try {
+        const res = await sendChunkWithRetry(body, ci, totalChunks);
+        totalImported += res.registros_importados ?? 0;
+        totalUpdated += res.registros_atualizados ?? 0;
+        totalErrors += res.registros_erro ?? 0;
+      } catch (err: any) {
+        failedChunks++;
+        totalErrors += chunks[ci].length;
+        console.error(`Chunk ${ci + 1}/${totalChunks}: ABANDONADO após ${MAX_RETRIES} tentativas`);
+      }
+    }
+
+    // Finalize
+    await finalizeImport(imp.id, totalImported, totalUpdated, totalErrors, failedChunks);
+
+    setImporting(false);
+    setResumingId(null);
+    queryClient.invalidateQueries({ queryKey: ['tint-import-history'] });
+    toast.success('Retomada finalizada');
+  };
+
   const statusColor: Record<string, string> = {
     concluido: 'bg-green-500/10 text-green-700',
+    concluido_parcial: 'bg-yellow-500/10 text-yellow-700',
     parcial: 'bg-yellow-500/10 text-yellow-700',
     erro: 'bg-red-500/10 text-red-700',
     processando: 'bg-blue-500/10 text-blue-700',
@@ -364,6 +499,7 @@ export default function TintImport() {
                     <p className="font-medium">{r.name}</p>
                     <p className="text-muted-foreground">
                       {r.registros_importados ?? 0} importados, {r.registros_atualizados ?? 0} atualizados, {r.registros_erro ?? 0} erros
+                      {r.failed_chunks > 0 && <span className="text-destructive"> ({r.failed_chunks} chunks falharam)</span>}
                     </p>
                     {r.erros && r.erros.length > 0 && (
                       <ul className="text-xs text-destructive mt-1">
@@ -399,19 +535,33 @@ export default function TintImport() {
                 <TableHead>Arquivo</TableHead>
                 <TableHead>Registros</TableHead>
                 <TableHead>Status</TableHead>
+                <TableHead></TableHead>
               </TableRow>
             </TableHeader>
             <TableBody>
               {histLoading ? (
-                <TableRow><TableCell colSpan={5}><Skeleton className="h-6 w-full" /></TableCell></TableRow>
+                <TableRow><TableCell colSpan={6}><Skeleton className="h-6 w-full" /></TableCell></TableRow>
               ) : (history ?? []).map((imp: any) => (
                 <TableRow key={imp.id}>
                   <TableCell className="text-sm">{new Date(imp.created_at).toLocaleDateString('pt-BR')}</TableCell>
                   <TableCell className="text-sm">{imp.tipo}</TableCell>
                   <TableCell className="text-sm max-w-[200px] truncate">{imp.arquivo_nome}</TableCell>
-                  <TableCell className="text-sm">{imp.registros_importados ?? 0} / {imp.total_registros ?? 0}</TableCell>
+                  <TableCell className="text-sm">{(imp.registros_importados ?? 0) + (imp.registros_atualizados ?? 0)} / {imp.total_registros ?? 0}</TableCell>
                   <TableCell>
                     <Badge variant="outline" className={statusColor[imp.status] || ''}>{imp.status}</Badge>
+                  </TableCell>
+                  <TableCell>
+                    {(imp.status === 'processando' || imp.status === 'concluido_parcial') && (
+                      <Button
+                        size="sm"
+                        variant="outline"
+                        disabled={importing || resumingId === imp.id}
+                        onClick={() => handleResume(imp)}
+                      >
+                        {resumingId === imp.id ? <Loader2 className="w-3 h-3 mr-1 animate-spin" /> : <RotateCcw className="w-3 h-3 mr-1" />}
+                        Retomar
+                      </Button>
+                    )}
                   </TableCell>
                 </TableRow>
               ))}

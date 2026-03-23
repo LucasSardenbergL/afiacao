@@ -1,0 +1,1 @@
+UPDATE tint_importacoes SET status = 'concluido_parcial', arquivo_hash = 'reset-' || gen_random_uuid()::text WHERE account = 'oben' AND status = 'processando';

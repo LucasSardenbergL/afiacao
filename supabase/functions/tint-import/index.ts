@@ -327,6 +327,44 @@ async function handleCreateImport(supabase: Supabase, body: Record<string, unkno
   return new Response(JSON.stringify({ status: "criado", importacao_id: importacao.id }), { headers: { ...corsHeaders, "Content-Type": "application/json" } });
 }
 
+// ─── Finalize import (called by frontend after all chunks) ───
+async function handleFinalizeImport(supabase: Supabase, body: Record<string, unknown>) {
+  const { importacao_id, failed_chunks } = body as {
+    importacao_id: string; registros_importados?: number; registros_atualizados?: number;
+    registros_erro?: number; failed_chunks?: number;
+  };
+
+  if (!importacao_id) {
+    return new Response(JSON.stringify({ error: "importacao_id obrigatório" }), {
+      status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" },
+    });
+  }
+
+  // Read current accumulated counters from DB
+  const { data: rec } = await supabase.from("tint_importacoes")
+    .select("registros_importados, registros_atualizados, registros_erro")
+    .eq("id", importacao_id).single();
+
+  const accImported = rec?.registros_importados || 0;
+  const accUpdated = rec?.registros_atualizados || 0;
+  const accErrors = rec?.registros_erro || 0;
+
+  let status: string;
+  if (accImported === 0 && accUpdated === 0) {
+    status = "erro";
+  } else if ((failed_chunks ?? 0) > 0 || accErrors > 0) {
+    status = "concluido_parcial";
+  } else {
+    status = "concluido";
+  }
+
+  await supabase.from("tint_importacoes").update({ status }).eq("id", importacao_id);
+
+  return new Response(JSON.stringify({ status, importacao_id }), {
+    headers: { ...corsHeaders, "Content-Type": "application/json" },
+  });
+}
+
 // ─── Chunk mode handler ───
 async function handleChunkMode(supabase: Supabase, body: Record<string, unknown>) {
   const { tipo, account: rawAccount, chunk_index, total_chunks, total_rows, rows, importacao_id } = body as {
@@ -362,9 +400,6 @@ async function handleChunkMode(supabase: Supabase, body: Record<string, unknown>
   }
 
   // Accumulate counters on the import record
-  const isLastChunk = chunk_index === total_chunks - 1;
-
-  // Read current counters
   const { data: currentRec } = await supabase.from("tint_importacoes").select("registros_importados, registros_atualizados, registros_erro, erros_detalhe").eq("id", currentImportacaoId).single();
 
   const accImported = (currentRec?.registros_importados || 0) + result.imported;
@@ -373,21 +408,15 @@ async function handleChunkMode(supabase: Supabase, body: Record<string, unknown>
   const existingErros = (currentRec?.erros_detalhe as Array<{ linha: number; motivo: string }>) || [];
   const accErrosDetalhe = [...existingErros, ...result.errosDetalhe].slice(0, 100);
 
-  const updateData: Record<string, unknown> = {
+  await supabase.from("tint_importacoes").update({
     registros_importados: accImported,
     registros_atualizados: accUpdated,
     registros_erro: accErrors,
     erros_detalhe: accErrosDetalhe.length > 0 ? accErrosDetalhe : null,
-  };
-
-  if (isLastChunk) {
-    updateData.status = accErrors > 0 && accImported === 0 && accUpdated === 0 ? "erro" : accErrors > 0 ? "parcial" : "concluido";
-  }
-
-  await supabase.from("tint_importacoes").update(updateData).eq("id", currentImportacaoId);
+  }).eq("id", currentImportacaoId);
 
   return new Response(JSON.stringify({
-    status: isLastChunk ? updateData.status : "processando",
+    status: "processando",
     importacao_id: currentImportacaoId,
     chunk_index,
     registros_importados: result.imported,
@@ -415,6 +444,9 @@ serve(async (req) => {
       const body = await req.json();
       if (body.action === "create_import") {
         return await handleCreateImport(supabase, body);
+      }
+      if (body.action === "finalize_import") {
+        return await handleFinalizeImport(supabase, body);
       }
       return await handleChunkMode(supabase, body);
     }
