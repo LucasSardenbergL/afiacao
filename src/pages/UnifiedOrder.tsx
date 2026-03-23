@@ -240,6 +240,17 @@ const UnifiedOrder = () => {
           }}
         />
       )}
+
+      {h.tintPendingProduct && (
+        <TintColorSelectDialog
+          product={h.tintPendingProduct}
+          open={!!h.tintPendingProduct}
+          onClose={() => h.setTintPendingProduct(null)}
+          onConfirm={(formulaId, corId, nomeCor, precoFinal, custoCorantes) => {
+            h.addTintProductToCart(h.tintPendingProduct!, formulaId, corId, nomeCor, precoFinal, custoCorantes);
+          }}
+        />
+      )}
     </div>
   );
 };
