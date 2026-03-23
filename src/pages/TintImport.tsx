@@ -113,9 +113,11 @@ export default function TintImport() {
   const [resumingId, setResumingId] = useState<string | null>(null);
   const [chunkProgress, setChunkProgress] = useState({ currentFile: 0, totalFiles: 0, fileName: '', currentChunk: 0, totalChunks: 0 });
   const [results, setResults] = useState<any[]>([]);
+  const [importMode, setImportMode] = useState<'auto' | 'edge' | 'direct'>('auto');
   const queryClient = useQueryClient();
   const { data: history, isLoading: histLoading } = useImportHistory();
   const { data: tintCounts } = useTintProductCounts();
+  const { runDirectImport, running: directRunning, progress: directProgress, cancel: cancelDirect } = useDirectTintImport();
 
   const handleFiles = useCallback(async (e: React.ChangeEvent<HTMLInputElement>) => {
     const selected = e.target.files;
