@@ -541,7 +541,9 @@ export default function TintImport() {
                       <span className="text-sm font-medium">{f.name}</span>
                       <Badge variant="outline">{lineCount} linhas</Badge>
                       {useDirectMode ? (
-                        <Badge variant="secondary" className="gap-1"><Zap className="w-3 h-3" /> Direto</Badge>
+                        <Badge variant="secondary" className="gap-1">
+                          <Zap className="w-3 h-3" /> {importMode === 'rpc' || (importMode === 'auto' && (tipo === 'formulas_padrao' || tipo === 'formulas_personalizadas')) ? 'RPC Postgres' : 'Direto'}
+                        </Badge>
                       ) : (
                         <Badge variant="outline" className="gap-1"><Cloud className="w-3 h-3" /> Edge Function</Badge>
                       )}
