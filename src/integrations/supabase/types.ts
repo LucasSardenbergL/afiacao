@@ -3729,6 +3729,10 @@ export type Database = {
         }
         Returns: boolean
       }
+      import_tint_formulas: {
+        Args: { p_account: string; p_personalizada: boolean; p_rows: Json }
+        Returns: Json
+      }
       is_super_admin: { Args: { _user_id: string }; Returns: boolean }
       refresh_customer_metrics: { Args: never; Returns: undefined }
       show_limit: { Args: never; Returns: number }
