@@ -9,9 +9,10 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import { Progress } from '@/components/ui/progress';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { Skeleton } from '@/components/ui/skeleton';
-import { Upload, RefreshCw, FileText, CheckCircle, AlertTriangle, Loader2, RotateCcw } from 'lucide-react';
+import { Upload, RefreshCw, FileText, CheckCircle, AlertTriangle, Loader2, RotateCcw, Zap, Cloud } from 'lucide-react';
 import { toast } from 'sonner';
 import Papa from 'papaparse';
+import { useDirectTintImport } from '@/hooks/useDirectTintImport';
 
 const ACCOUNT = 'oben';
 const CHUNK_SIZE_DEFAULT = 200;
