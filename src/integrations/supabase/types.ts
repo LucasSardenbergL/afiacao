@@ -1787,11 +1787,13 @@ export type Database = {
           familia: string | null
           id: string
           imagem_url: string | null
+          is_tintometric: boolean | null
           metadata: Json | null
           ncm: string | null
           omie_codigo_produto: number
           omie_codigo_produto_integracao: string | null
           subfamilia: string | null
+          tint_type: string | null
           unidade: string
           updated_at: string
           valor_unitario: number
@@ -1806,11 +1808,13 @@ export type Database = {
           familia?: string | null
           id?: string
           imagem_url?: string | null
+          is_tintometric?: boolean | null
           metadata?: Json | null
           ncm?: string | null
           omie_codigo_produto: number
           omie_codigo_produto_integracao?: string | null
           subfamilia?: string | null
+          tint_type?: string | null
           unidade?: string
           updated_at?: string
           valor_unitario?: number
@@ -1825,11 +1829,13 @@ export type Database = {
           familia?: string | null
           id?: string
           imagem_url?: string | null
+          is_tintometric?: boolean | null
           metadata?: Json | null
           ncm?: string | null
           omie_codigo_produto?: number
           omie_codigo_produto_integracao?: string | null
           subfamilia?: string | null
+          tint_type?: string | null
           unidade?: string
           updated_at?: string
           valor_unitario?: number
@@ -2823,6 +2829,545 @@ export type Database = {
         }
         Relationships: []
       }
+      tint_bases: {
+        Row: {
+          account: string
+          created_at: string | null
+          descricao: string
+          id: string
+          id_base_sayersystem: string
+        }
+        Insert: {
+          account?: string
+          created_at?: string | null
+          descricao: string
+          id?: string
+          id_base_sayersystem: string
+        }
+        Update: {
+          account?: string
+          created_at?: string | null
+          descricao?: string
+          id?: string
+          id_base_sayersystem?: string
+        }
+        Relationships: []
+      }
+      tint_colecoes: {
+        Row: {
+          account: string
+          created_at: string | null
+          descricao: string
+          id: string
+          id_colecao_sayersystem: string | null
+        }
+        Insert: {
+          account?: string
+          created_at?: string | null
+          descricao: string
+          id?: string
+          id_colecao_sayersystem?: string | null
+        }
+        Update: {
+          account?: string
+          created_at?: string | null
+          descricao?: string
+          id?: string
+          id_colecao_sayersystem?: string | null
+        }
+        Relationships: []
+      }
+      tint_corantes: {
+        Row: {
+          account: string
+          ativo: boolean | null
+          codigo_barras: string | null
+          created_at: string | null
+          descricao: string
+          id: string
+          id_corante_sayersystem: string
+          omie_product_id: string | null
+          peso_especifico: number | null
+          volume_total_ml: number
+        }
+        Insert: {
+          account?: string
+          ativo?: boolean | null
+          codigo_barras?: string | null
+          created_at?: string | null
+          descricao: string
+          id?: string
+          id_corante_sayersystem: string
+          omie_product_id?: string | null
+          peso_especifico?: number | null
+          volume_total_ml: number
+        }
+        Update: {
+          account?: string
+          ativo?: boolean | null
+          codigo_barras?: string | null
+          created_at?: string | null
+          descricao?: string
+          id?: string
+          id_corante_sayersystem?: string
+          omie_product_id?: string | null
+          peso_especifico?: number | null
+          volume_total_ml?: number
+        }
+        Relationships: [
+          {
+            foreignKeyName: "tint_corantes_omie_product_id_fkey"
+            columns: ["omie_product_id"]
+            isOneToOne: false
+            referencedRelation: "omie_products"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      tint_embalagens: {
+        Row: {
+          account: string
+          created_at: string | null
+          descricao: string | null
+          id: string
+          id_embalagem_sayersystem: string
+          volume_ml: number
+        }
+        Insert: {
+          account?: string
+          created_at?: string | null
+          descricao?: string | null
+          id?: string
+          id_embalagem_sayersystem: string
+          volume_ml: number
+        }
+        Update: {
+          account?: string
+          created_at?: string | null
+          descricao?: string | null
+          id?: string
+          id_embalagem_sayersystem?: string
+          volume_ml?: number
+        }
+        Relationships: []
+      }
+      tint_formula_itens: {
+        Row: {
+          corante_id: string
+          created_at: string | null
+          formula_id: string
+          id: string
+          ordem: number
+          qtd_ml: number
+        }
+        Insert: {
+          corante_id: string
+          created_at?: string | null
+          formula_id: string
+          id?: string
+          ordem: number
+          qtd_ml: number
+        }
+        Update: {
+          corante_id?: string
+          created_at?: string | null
+          formula_id?: string
+          id?: string
+          ordem?: number
+          qtd_ml?: number
+        }
+        Relationships: [
+          {
+            foreignKeyName: "tint_formula_itens_corante_id_fkey"
+            columns: ["corante_id"]
+            isOneToOne: false
+            referencedRelation: "tint_corantes"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "tint_formula_itens_formula_id_fkey"
+            columns: ["formula_id"]
+            isOneToOne: false
+            referencedRelation: "tint_formulas"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      tint_formulas: {
+        Row: {
+          account: string
+          base_id: string
+          cor_id: string
+          created_at: string | null
+          data_geracao: string | null
+          embalagem_id: string
+          id: string
+          id_seq: number | null
+          importacao_id: string | null
+          nome_cor: string
+          personalizada: boolean | null
+          preco_final_sayersystem: number | null
+          produto_id: string
+          sku_id: string | null
+          subcolecao_id: string | null
+          updated_at: string | null
+          volume_final_ml: number | null
+        }
+        Insert: {
+          account?: string
+          base_id: string
+          cor_id: string
+          created_at?: string | null
+          data_geracao?: string | null
+          embalagem_id: string
+          id?: string
+          id_seq?: number | null
+          importacao_id?: string | null
+          nome_cor: string
+          personalizada?: boolean | null
+          preco_final_sayersystem?: number | null
+          produto_id: string
+          sku_id?: string | null
+          subcolecao_id?: string | null
+          updated_at?: string | null
+          volume_final_ml?: number | null
+        }
+        Update: {
+          account?: string
+          base_id?: string
+          cor_id?: string
+          created_at?: string | null
+          data_geracao?: string | null
+          embalagem_id?: string
+          id?: string
+          id_seq?: number | null
+          importacao_id?: string | null
+          nome_cor?: string
+          personalizada?: boolean | null
+          preco_final_sayersystem?: number | null
+          produto_id?: string
+          sku_id?: string | null
+          subcolecao_id?: string | null
+          updated_at?: string | null
+          volume_final_ml?: number | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "tint_formulas_base_id_fkey"
+            columns: ["base_id"]
+            isOneToOne: false
+            referencedRelation: "tint_bases"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "tint_formulas_embalagem_id_fkey"
+            columns: ["embalagem_id"]
+            isOneToOne: false
+            referencedRelation: "tint_embalagens"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "tint_formulas_importacao_id_fkey"
+            columns: ["importacao_id"]
+            isOneToOne: false
+            referencedRelation: "tint_importacoes"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "tint_formulas_produto_id_fkey"
+            columns: ["produto_id"]
+            isOneToOne: false
+            referencedRelation: "tint_produtos"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "tint_formulas_sku_id_fkey"
+            columns: ["sku_id"]
+            isOneToOne: false
+            referencedRelation: "tint_skus"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "tint_formulas_subcolecao_id_fkey"
+            columns: ["subcolecao_id"]
+            isOneToOne: false
+            referencedRelation: "tint_subcolecoes"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      tint_importacoes: {
+        Row: {
+          account: string
+          arquivo_hash: string
+          arquivo_nome: string
+          created_at: string | null
+          erros_detalhe: Json | null
+          id: string
+          importado_por: string | null
+          registros_atualizados: number | null
+          registros_erro: number | null
+          registros_importados: number | null
+          status: string | null
+          tipo: string
+          total_registros: number | null
+        }
+        Insert: {
+          account?: string
+          arquivo_hash: string
+          arquivo_nome: string
+          created_at?: string | null
+          erros_detalhe?: Json | null
+          id?: string
+          importado_por?: string | null
+          registros_atualizados?: number | null
+          registros_erro?: number | null
+          registros_importados?: number | null
+          status?: string | null
+          tipo: string
+          total_registros?: number | null
+        }
+        Update: {
+          account?: string
+          arquivo_hash?: string
+          arquivo_nome?: string
+          created_at?: string | null
+          erros_detalhe?: Json | null
+          id?: string
+          importado_por?: string | null
+          registros_atualizados?: number | null
+          registros_erro?: number | null
+          registros_importados?: number | null
+          status?: string | null
+          tipo?: string
+          total_registros?: number | null
+        }
+        Relationships: []
+      }
+      tint_produtos: {
+        Row: {
+          account: string
+          cod_produto: string
+          created_at: string | null
+          descricao: string
+          id: string
+        }
+        Insert: {
+          account?: string
+          cod_produto: string
+          created_at?: string | null
+          descricao: string
+          id?: string
+        }
+        Update: {
+          account?: string
+          cod_produto?: string
+          created_at?: string | null
+          descricao?: string
+          id?: string
+        }
+        Relationships: []
+      }
+      tint_skus: {
+        Row: {
+          account: string
+          ativo: boolean | null
+          base_id: string
+          codigo_etiqueta: string | null
+          created_at: string | null
+          embalagem_id: string
+          id: string
+          imposto_pct: number | null
+          margem_pct: number | null
+          omie_product_id: string | null
+          produto_id: string
+          updated_at: string | null
+        }
+        Insert: {
+          account?: string
+          ativo?: boolean | null
+          base_id: string
+          codigo_etiqueta?: string | null
+          created_at?: string | null
+          embalagem_id: string
+          id?: string
+          imposto_pct?: number | null
+          margem_pct?: number | null
+          omie_product_id?: string | null
+          produto_id: string
+          updated_at?: string | null
+        }
+        Update: {
+          account?: string
+          ativo?: boolean | null
+          base_id?: string
+          codigo_etiqueta?: string | null
+          created_at?: string | null
+          embalagem_id?: string
+          id?: string
+          imposto_pct?: number | null
+          margem_pct?: number | null
+          omie_product_id?: string | null
+          produto_id?: string
+          updated_at?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "tint_skus_base_id_fkey"
+            columns: ["base_id"]
+            isOneToOne: false
+            referencedRelation: "tint_bases"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "tint_skus_embalagem_id_fkey"
+            columns: ["embalagem_id"]
+            isOneToOne: false
+            referencedRelation: "tint_embalagens"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "tint_skus_omie_product_id_fkey"
+            columns: ["omie_product_id"]
+            isOneToOne: false
+            referencedRelation: "omie_products"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "tint_skus_produto_id_fkey"
+            columns: ["produto_id"]
+            isOneToOne: false
+            referencedRelation: "tint_produtos"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      tint_subcolecoes: {
+        Row: {
+          account: string
+          colecao_id: string | null
+          created_at: string | null
+          descricao: string
+          id: string
+          id_subcolecao_sayersystem: string | null
+        }
+        Insert: {
+          account?: string
+          colecao_id?: string | null
+          created_at?: string | null
+          descricao: string
+          id?: string
+          id_subcolecao_sayersystem?: string | null
+        }
+        Update: {
+          account?: string
+          colecao_id?: string | null
+          created_at?: string | null
+          descricao?: string
+          id?: string
+          id_subcolecao_sayersystem?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "tint_subcolecoes_colecao_id_fkey"
+            columns: ["colecao_id"]
+            isOneToOne: false
+            referencedRelation: "tint_colecoes"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      tint_vendas: {
+        Row: {
+          account: string
+          created_at: string | null
+          data_venda: string
+          id: string
+          id_venda_sayersystem: string | null
+          operador: string | null
+          origem: string | null
+        }
+        Insert: {
+          account?: string
+          created_at?: string | null
+          data_venda: string
+          id?: string
+          id_venda_sayersystem?: string | null
+          operador?: string | null
+          origem?: string | null
+        }
+        Update: {
+          account?: string
+          created_at?: string | null
+          data_venda?: string
+          id?: string
+          id_venda_sayersystem?: string | null
+          operador?: string | null
+          origem?: string | null
+        }
+        Relationships: []
+      }
+      tint_vendas_itens: {
+        Row: {
+          cor_id: string | null
+          created_at: string | null
+          formula_id: string | null
+          id: string
+          nome_cor: string | null
+          personalizada: boolean | null
+          preco_praticado: number | null
+          sku_id: string | null
+          venda_id: string
+          volume_dosado_ml: number | null
+        }
+        Insert: {
+          cor_id?: string | null
+          created_at?: string | null
+          formula_id?: string | null
+          id?: string
+          nome_cor?: string | null
+          personalizada?: boolean | null
+          preco_praticado?: number | null
+          sku_id?: string | null
+          venda_id: string
+          volume_dosado_ml?: number | null
+        }
+        Update: {
+          cor_id?: string | null
+          created_at?: string | null
+          formula_id?: string | null
+          id?: string
+          nome_cor?: string | null
+          personalizada?: boolean | null
+          preco_praticado?: number | null
+          sku_id?: string | null
+          venda_id?: string
+          volume_dosado_ml?: number | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "tint_vendas_itens_formula_id_fkey"
+            columns: ["formula_id"]
+            isOneToOne: false
+            referencedRelation: "tint_formulas"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "tint_vendas_itens_sku_id_fkey"
+            columns: ["sku_id"]
+            isOneToOne: false
+            referencedRelation: "tint_skus"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "tint_vendas_itens_venda_id_fkey"
+            columns: ["venda_id"]
+            isOneToOne: false
+            referencedRelation: "tint_vendas"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       tool_categories: {
         Row: {
           created_at: string
@@ -3186,6 +3731,8 @@ export type Database = {
       }
       is_super_admin: { Args: { _user_id: string }; Returns: boolean }
       refresh_customer_metrics: { Args: never; Returns: undefined }
+      show_limit: { Args: never; Returns: number }
+      show_trgm: { Args: { "": string }; Returns: string[] }
     }
     Enums: {
       app_role: "admin" | "employee" | "customer" | "master"
