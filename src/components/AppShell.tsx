@@ -1,37 +1,6 @@
 import React, { useState } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
-import { BookOpen, Lock, Calculator, FileText, Palette, Beaker, FileUp, Droplets } from 'lucide-react';
-import { cn } from '@/lib/utils';
-import { useAuth } from '@/contexts/AuthContext';
-import { useUserRole } from '@/hooks/useUserRole';
-import { AppShellProvider } from '@/contexts/AppShellContext';
-import {
-  LayoutDashboard,
-  Users,
-  ShoppingCart,
-  Phone,
-  GraduationCap,
-  BarChart3,
-  Settings,
-  ChevronLeft,
-  ChevronRight,
-  Search,
-  Bell,
-  User,
-  LogOut,
-  Package,
-  TrendingUp,
-  Headphones,
-  Target,
-  Menu,
-  X,
-  ClipboardList,
-  PlusCircle,
-  Shield,
-  Wrench,
-  Award,
-  Scissors,
-} from 'lucide-react';
+import { BookOpen, Lock, Calculator, FileText, Palette, Beaker, FileUp, Droplets, LayoutDashboard, Users, ShoppingCart, Phone, GraduationCap, BarChart3, Settings, ChevronLeft, ChevronRight, Search, Bell, User, LogOut, Package, TrendingUp, Headphones, Target, Menu, X, ClipboardList, PlusCircle, Shield, Wrench, Award, Scissors } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import {
   DropdownMenu,
