@@ -27,7 +27,7 @@ function parseCsv(content: string): string[][] {
 
 type Supabase = ReturnType<typeof createClient>;
 
-// ─── Caches for lookups within a single import ───
+// ─── Caches for lookups within a single chunk ───
 const produtoCache = new Map<string, string>();
 const baseCache = new Map<string, string>();
 const embalagemCache = new Map<string, string>();
@@ -44,11 +44,33 @@ function clearCaches() {
   skuCache.clear();
 }
 
+// ─── Pre-warm all caches with a single query per table ───
+async function preWarmCaches(supabase: Supabase, account: string) {
+  console.log("[tint-import] Pre-warming caches...");
+  const t0 = Date.now();
+
+  const [produtos, bases, embalagens, corantes, subcolecoes, skus] = await Promise.all([
+    supabase.from("tint_produtos").select("id, cod_produto").eq("account", account).limit(5000),
+    supabase.from("tint_bases").select("id, id_base_sayersystem").eq("account", account).limit(5000),
+    supabase.from("tint_embalagens").select("id, id_embalagem_sayersystem").eq("account", account).limit(5000),
+    supabase.from("tint_corantes").select("id, id_corante_sayersystem").eq("account", account).limit(5000),
+    supabase.from("tint_subcolecoes").select("id, id_subcolecao_sayersystem").eq("account", account).limit(5000),
+    supabase.from("tint_skus").select("id, produto_id, base_id, embalagem_id").eq("account", account).limit(10000),
+  ]);
+
+  for (const r of produtos.data ?? []) produtoCache.set(`${account}:${r.cod_produto}`, r.id);
+  for (const r of bases.data ?? []) baseCache.set(`${account}:${r.id_base_sayersystem}`, r.id);
+  for (const r of embalagens.data ?? []) embalagemCache.set(`${account}:${r.id_embalagem_sayersystem}`, r.id);
+  for (const r of corantes.data ?? []) coranteCache.set(`${account}:${r.id_corante_sayersystem}`, r.id);
+  for (const r of subcolecoes.data ?? []) subcolecaoCache.set(`${account}:${r.id_subcolecao_sayersystem}`, r.id);
+  for (const r of skus.data ?? []) skuCache.set(`${account}:${r.produto_id}:${r.base_id}:${r.embalagem_id}`, r.id);
+
+  console.log(`[tint-import] Caches warmed in ${Date.now() - t0}ms: ${produtoCache.size} produtos, ${baseCache.size} bases, ${embalagemCache.size} embalagens, ${coranteCache.size} corantes, ${subcolecaoCache.size} subcolecoes, ${skuCache.size} skus`);
+}
+
 async function ensureProduto(supabase: Supabase, account: string, codProduto: string, descricao: string): Promise<string> {
   const key = `${account}:${codProduto}`;
   if (produtoCache.has(key)) return produtoCache.get(key)!;
-  const { data: existing } = await supabase.from("tint_produtos").select("id").eq("account", account).eq("cod_produto", codProduto).maybeSingle();
-  if (existing) { produtoCache.set(key, existing.id); return existing.id; }
   const { data: inserted, error } = await supabase.from("tint_produtos").upsert({ account, cod_produto: codProduto, descricao }, { onConflict: "account,cod_produto" }).select("id").single();
   if (error) throw new Error(`Erro upsert tint_produtos: ${error.message}`);
   produtoCache.set(key, inserted.id);
@@ -58,8 +80,6 @@ async function ensureProduto(supabase: Supabase, account: string, codProduto: st
 async function ensureBase(supabase: Supabase, account: string, idBaseSayer: string, descricao: string): Promise<string> {
   const key = `${account}:${idBaseSayer}`;
   if (baseCache.has(key)) return baseCache.get(key)!;
-  const { data: existing } = await supabase.from("tint_bases").select("id").eq("account", account).eq("id_base_sayersystem", idBaseSayer).maybeSingle();
-  if (existing) { baseCache.set(key, existing.id); return existing.id; }
   const { data: inserted, error } = await supabase.from("tint_bases").upsert({ account, id_base_sayersystem: idBaseSayer, descricao }, { onConflict: "account,id_base_sayersystem" }).select("id").single();
   if (error) throw new Error(`Erro upsert tint_bases: ${error.message}`);
   baseCache.set(key, inserted.id);
@@ -69,8 +89,6 @@ async function ensureBase(supabase: Supabase, account: string, idBaseSayer: stri
 async function ensureEmbalagem(supabase: Supabase, account: string, idEmbSayer: string, volumeMl: number, descricao?: string): Promise<string> {
   const key = `${account}:${idEmbSayer}`;
   if (embalagemCache.has(key)) return embalagemCache.get(key)!;
-  const { data: existing } = await supabase.from("tint_embalagens").select("id").eq("account", account).eq("id_embalagem_sayersystem", idEmbSayer).maybeSingle();
-  if (existing) { embalagemCache.set(key, existing.id); return existing.id; }
   const { data: inserted, error } = await supabase.from("tint_embalagens").upsert({ account, id_embalagem_sayersystem: idEmbSayer, volume_ml: volumeMl, descricao: descricao || null }, { onConflict: "account,id_embalagem_sayersystem" }).select("id").single();
   if (error) throw new Error(`Erro upsert tint_embalagens: ${error.message}`);
   embalagemCache.set(key, inserted.id);
@@ -80,8 +98,6 @@ async function ensureEmbalagem(supabase: Supabase, account: string, idEmbSayer: 
 async function ensureCorante(supabase: Supabase, account: string, idCoranteSayer: string, descricao: string, volumeMl?: number, pesoEsp?: number, codBarras?: string): Promise<string> {
   const key = `${account}:${idCoranteSayer}`;
   if (coranteCache.has(key)) return coranteCache.get(key)!;
-  const { data: existing } = await supabase.from("tint_corantes").select("id").eq("account", account).eq("id_corante_sayersystem", idCoranteSayer).maybeSingle();
-  if (existing) { coranteCache.set(key, existing.id); return existing.id; }
   const row: Record<string, unknown> = { account, id_corante_sayersystem: idCoranteSayer, descricao, volume_total_ml: volumeMl ?? 1000 };
   if (pesoEsp != null) row.peso_especifico = pesoEsp;
   if (codBarras) row.codigo_barras = codBarras;
@@ -94,8 +110,6 @@ async function ensureCorante(supabase: Supabase, account: string, idCoranteSayer
 async function ensureSubcolecao(supabase: Supabase, account: string, idSub: string, descricao: string): Promise<string> {
   const key = `${account}:${idSub}`;
   if (subcolecaoCache.has(key)) return subcolecaoCache.get(key)!;
-  const { data: existing } = await supabase.from("tint_subcolecoes").select("id").eq("account", account).eq("id_subcolecao_sayersystem", idSub).maybeSingle();
-  if (existing) { subcolecaoCache.set(key, existing.id); return existing.id; }
   const { data: inserted, error } = await supabase.from("tint_subcolecoes").upsert({ account, id_subcolecao_sayersystem: idSub, descricao }, { onConflict: "account,id_subcolecao_sayersystem" }).select("id").single();
   if (error) throw new Error(`Erro upsert tint_subcolecoes: ${error.message}`);
   subcolecaoCache.set(key, inserted.id);
@@ -105,8 +119,6 @@ async function ensureSubcolecao(supabase: Supabase, account: string, idSub: stri
 async function ensureSku(supabase: Supabase, account: string, produtoId: string, baseId: string, embalagemId: string): Promise<string> {
   const key = `${account}:${produtoId}:${baseId}:${embalagemId}`;
   if (skuCache.has(key)) return skuCache.get(key)!;
-  const { data: existing } = await supabase.from("tint_skus").select("id").eq("account", account).eq("produto_id", produtoId).eq("base_id", baseId).eq("embalagem_id", embalagemId).maybeSingle();
-  if (existing) { skuCache.set(key, existing.id); return existing.id; }
   const { data: inserted, error } = await supabase.from("tint_skus").upsert({ account, produto_id: produtoId, base_id: baseId, embalagem_id: embalagemId }, { onConflict: "account,produto_id,base_id,embalagem_id" }).select("id").single();
   if (error) throw new Error(`Erro upsert tint_skus: ${error.message}`);
   skuCache.set(key, inserted.id);
@@ -122,7 +134,7 @@ async function processDadosCorantes(supabase: Supabase, rows: string[][], accoun
     try {
       const [codigo, descricao, volumeMl, pesoEspecifico, codigoBarras] = rows[i];
       if (!codigo || !descricao) { errors++; errosDetalhe.push({ linha: i + 2, motivo: "codigo ou descricao vazio" }); continue; }
-      const { data: existing } = await supabase.from("tint_corantes").select("id").eq("account", account).eq("id_corante_sayersystem", codigo).maybeSingle();
+      const existing = coranteCache.has(`${account}:${codigo}`);
       const row: Record<string, unknown> = { account, id_corante_sayersystem: codigo, descricao, volume_total_ml: parseBrDecimal(volumeMl) || 1000, peso_especifico: parseBrDecimal(pesoEspecifico) || null, codigo_barras: codigoBarras || null };
       const { error } = await supabase.from("tint_corantes").upsert(row, { onConflict: "account,id_corante_sayersystem" });
       if (error) { errors++; errosDetalhe.push({ linha: i + 2, motivo: error.message }); }
@@ -194,6 +206,7 @@ async function processFormulas(supabase: Supabase, rows: string[][], account: st
       const precoFinal = parseBrDecimal(cols[qtdStart + 7]);
       const dataGeracao = cols[qtdStart + 8] || null;
 
+      // These will be cache hits after pre-warming
       const produtoId = await ensureProduto(supabase, account, codProduto, produtoDesc);
       const baseId = await ensureBase(supabase, account, idBase, baseDesc);
       const embalagemId = await ensureEmbalagem(supabase, account, idEmbalagem, volumeFinalMl, embalagemDesc);
@@ -280,6 +293,7 @@ async function handleFileMode(supabase: Supabase, req: Request) {
   const dataRows = allRows.slice(1);
   const totalRegistros = dataRows.length;
   clearCaches();
+  await preWarmCaches(supabase, account);
 
   let result: { imported: number; updated: number; errors: number; errosDetalhe: Array<{ linha: number; motivo: string }> };
   switch (tipo) {
@@ -309,7 +323,6 @@ async function handleCreateImport(supabase: Supabase, body: Record<string, unkno
     });
   }
 
-  // Idempotency check
   if (arquivo_hash) {
     const { data: existingImport } = await supabase.from("tint_importacoes").select("id, status, created_at")
       .eq("account", account).eq("arquivo_hash", arquivo_hash).maybeSingle();
@@ -340,7 +353,6 @@ async function handleFinalizeImport(supabase: Supabase, body: Record<string, unk
     });
   }
 
-  // Read current accumulated counters from DB
   const { data: rec } = await supabase.from("tint_importacoes")
     .select("registros_importados, registros_atualizados, registros_erro")
     .eq("id", importacao_id).single();
@@ -386,21 +398,24 @@ async function handleChunkMode(supabase: Supabase, body: Record<string, unknown>
     });
   }
 
-  const currentImportacaoId = importacao_id;
+  console.log(`[tint-import] Processing chunk ${chunk_index + 1}/${total_chunks} (${rows.length} rows) for import ${importacao_id}`);
 
   clearCaches();
+  await preWarmCaches(supabase, account);
 
   let result: { imported: number; updated: number; errors: number; errosDetalhe: Array<{ linha: number; motivo: string }> };
   switch (tipo) {
     case "dados_corantes": result = await processDadosCorantes(supabase, rows, account); break;
     case "dados_produto_base_embalagem": result = await processDadosProdutoBaseEmbalagem(supabase, rows, account); break;
-    case "formulas_padrao": result = await processFormulas(supabase, rows, account, false, currentImportacaoId); break;
-    case "formulas_personalizadas": result = await processFormulas(supabase, rows, account, true, currentImportacaoId); break;
+    case "formulas_padrao": result = await processFormulas(supabase, rows, account, false, importacao_id); break;
+    case "formulas_personalizadas": result = await processFormulas(supabase, rows, account, true, importacao_id); break;
     default: throw new Error(`Tipo inválido: ${tipo}`);
   }
 
+  console.log(`[tint-import] Chunk ${chunk_index + 1}/${total_chunks} done: ${result.imported} imported, ${result.updated} updated, ${result.errors} errors`);
+
   // Accumulate counters on the import record
-  const { data: currentRec } = await supabase.from("tint_importacoes").select("registros_importados, registros_atualizados, registros_erro, erros_detalhe").eq("id", currentImportacaoId).single();
+  const { data: currentRec } = await supabase.from("tint_importacoes").select("registros_importados, registros_atualizados, registros_erro, erros_detalhe").eq("id", importacao_id).single();
 
   const accImported = (currentRec?.registros_importados || 0) + result.imported;
   const accUpdated = (currentRec?.registros_atualizados || 0) + result.updated;
@@ -413,11 +428,11 @@ async function handleChunkMode(supabase: Supabase, body: Record<string, unknown>
     registros_atualizados: accUpdated,
     registros_erro: accErrors,
     erros_detalhe: accErrosDetalhe.length > 0 ? accErrosDetalhe : null,
-  }).eq("id", currentImportacaoId);
+  }).eq("id", importacao_id);
 
   return new Response(JSON.stringify({
     status: "processando",
-    importacao_id: currentImportacaoId,
+    importacao_id,
     chunk_index,
     registros_importados: result.imported,
     registros_atualizados: result.updated,
@@ -437,7 +452,6 @@ serve(async (req) => {
 
     const contentType = req.headers.get("content-type") || "";
 
-    // Detect mode: multipart = file mode, json = chunk mode
     if (contentType.includes("multipart/form-data")) {
       return await handleFileMode(supabase, req);
     } else {

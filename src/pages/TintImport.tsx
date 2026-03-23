@@ -14,9 +14,15 @@ import { toast } from 'sonner';
 import Papa from 'papaparse';
 
 const ACCOUNT = 'oben';
-const CHUNK_SIZE = 200;
+const CHUNK_SIZE_DEFAULT = 200;
+const CHUNK_SIZE_FORMULAS = 50; // Formulas are heavy (~10 DB ops per row)
 const MAX_RETRIES = 3;
 const RETRY_DELAY_MS = 2000;
+
+function getChunkSize(tipo: string): number {
+  if (tipo === 'formulas_padrao' || tipo === 'formulas_personalizadas') return CHUNK_SIZE_FORMULAS;
+  return CHUNK_SIZE_DEFAULT;
+}
 
 const TIPO_OPTIONS = [
   { value: 'dados_corantes', label: 'Dados auxiliares — Corantes' },
@@ -179,8 +185,9 @@ export default function TintImport() {
       const dataRows = allRows.slice(1);
       const totalRows = dataRows.length;
 
-      // For small files (≤ CHUNK_SIZE), use legacy multipart mode
-      if (totalRows <= CHUNK_SIZE) {
+      const chunkSize = getChunkSize(tipo);
+      // For small files (≤ chunkSize), use legacy multipart mode
+      if (totalRows <= chunkSize) {
         setChunkProgress({ currentFile: fi + 1, totalFiles: files.length, fileName: f.name, currentChunk: 1, totalChunks: 1 });
         const formData = new FormData();
         formData.append('file', f.file);
@@ -198,8 +205,8 @@ export default function TintImport() {
       // Large file: chunk mode
       const hash = await sha256(f.rawText);
       const chunks: string[][][] = [];
-      for (let i = 0; i < totalRows; i += CHUNK_SIZE) {
-        chunks.push(dataRows.slice(i, i + CHUNK_SIZE));
+      for (let i = 0; i < totalRows; i += chunkSize) {
+        chunks.push(dataRows.slice(i, i + chunkSize));
       }
       const totalChunks = chunks.length;
 
@@ -328,10 +335,11 @@ export default function TintImport() {
     const alreadyProcessed = (imp.registros_importados ?? 0) + (imp.registros_atualizados ?? 0) + (imp.registros_erro ?? 0);
 
     // Calculate which chunk to start from
-    const startChunkIndex = Math.floor(alreadyProcessed / CHUNK_SIZE);
+    const resumeChunkSize = getChunkSize(imp.tipo);
+    const startChunkIndex = Math.floor(alreadyProcessed / resumeChunkSize);
     const chunks: string[][][] = [];
-    for (let i = 0; i < totalRows; i += CHUNK_SIZE) {
-      chunks.push(dataRows.slice(i, i + CHUNK_SIZE));
+    for (let i = 0; i < totalRows; i += resumeChunkSize) {
+      chunks.push(dataRows.slice(i, i + resumeChunkSize));
     }
     const totalChunks = chunks.length;
 
