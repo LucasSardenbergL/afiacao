@@ -72,6 +72,12 @@ const GovernanceMathParams = lazy(() => import("./pages/GovernanceMathParams"));
 const GovernanceAudit = lazy(() => import("./pages/GovernanceAudit"));
 const AIops = lazy(() => import("./pages/AIops"));
 const NfeReceipt = lazy(() => import("./pages/NfeReceipt"));
+const TintDashboard = lazy(() => import("./pages/TintDashboard"));
+const TintImport = lazy(() => import("./pages/TintImport"));
+const TintMapping = lazy(() => import("./pages/TintMapping"));
+const TintPricing = lazy(() => import("./pages/TintPricing"));
+const TintFormulas = lazy(() => import("./pages/TintFormulas"));
+const TintCorantes = lazy(() => import("./pages/TintCorantes"));
 
 const PageLoader = () => (
   <div className="flex flex-col gap-4 p-6">
@@ -157,6 +163,12 @@ const App = () => (
               <Route path="governance/audit" element={<GovernanceAudit />} />
               <Route path="ai-ops" element={<AIops />} />
               <Route path="nfe-receipt" element={<NfeReceipt />} />
+              <Route path="tintometrico" element={<TintDashboard />} />
+              <Route path="tintometrico/importar" element={<TintImport />} />
+              <Route path="tintometrico/mapeamento" element={<TintMapping />} />
+              <Route path="tintometrico/precos" element={<TintPricing />} />
+              <Route path="tintometrico/formulas" element={<TintFormulas />} />
+              <Route path="tintometrico/corantes" element={<TintCorantes />} />
             </Route>
 
             <Route path="*" element={<NotFound />} />

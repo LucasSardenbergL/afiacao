@@ -1,37 +1,10 @@
 import React, { useState } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
-import { BookOpen, Lock, Calculator, FileText } from 'lucide-react';
+import { BookOpen, Lock, Calculator, FileText, Palette, Beaker, FileUp, Droplets, LayoutDashboard, Users, ShoppingCart, Phone, GraduationCap, BarChart3, Settings, ChevronLeft, ChevronRight, Search, Bell, User, LogOut, Package, TrendingUp, Headphones, Target, Menu, X, ClipboardList, PlusCircle, Shield, Wrench, Award, Scissors } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { useAuth } from '@/contexts/AuthContext';
 import { useUserRole } from '@/hooks/useUserRole';
 import { AppShellProvider } from '@/contexts/AppShellContext';
-import {
-  LayoutDashboard,
-  Users,
-  ShoppingCart,
-  Phone,
-  GraduationCap,
-  BarChart3,
-  Settings,
-  ChevronLeft,
-  ChevronRight,
-  Search,
-  Bell,
-  User,
-  LogOut,
-  Package,
-  TrendingUp,
-  Headphones,
-  Target,
-  Menu,
-  X,
-  ClipboardList,
-  PlusCircle,
-  Shield,
-  Wrench,
-  Award,
-  Scissors,
-} from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import {
   DropdownMenu,
@@ -94,6 +67,17 @@ const unifiedNavSections: { title: string; items: NavItem[] }[] = [
     items: [
       { icon: BarChart3, label: 'Dashboard Intel', path: '/intelligence' },
       { icon: Target, label: 'AI Ops', path: '/ai-ops' },
+    ],
+  },
+  {
+    title: 'Tintométrico',
+    items: [
+      { icon: Palette, label: 'Dashboard', path: '/tintometrico', managerOnly: true },
+      { icon: Beaker, label: 'Fórmulas', path: '/tintometrico/formulas', managerOnly: true },
+      { icon: FileUp, label: 'Importar', path: '/tintometrico/importar', managerOnly: true },
+      { icon: Package, label: 'Mapeamento Omie', path: '/tintometrico/mapeamento', managerOnly: true },
+      { icon: Calculator, label: 'Precificação', path: '/tintometrico/precos', managerOnly: true },
+      { icon: Droplets, label: 'Corantes', path: '/tintometrico/corantes', managerOnly: true },
     ],
   },
   {
