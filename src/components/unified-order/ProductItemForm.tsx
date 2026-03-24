@@ -23,7 +23,7 @@ export function ProductItemForm({
   title, products, prices, loading, productSearch, onSearchChange,
   productItems, onAddProduct,
 }: ProductItemFormProps) {
-  const [colWidth, setColWidth] = useState(200);
+  const [colWidth, setColWidth] = useState(320);
   const dragging = useRef(false);
   const startX = useRef(0);
   const startW = useRef(200);
