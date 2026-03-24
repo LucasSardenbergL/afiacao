@@ -168,7 +168,6 @@ function SkuTab() {
               <TableHead>Custo</TableHead>
               <TableHead>Estoque</TableHead>
               <TableHead>Status</TableHead>
-              <TableHead className="w-[80px]">Ação</TableHead>
             </TableRow>
           </TableHeader>
           <TableBody>
