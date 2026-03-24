@@ -112,9 +112,6 @@ function SkuTab() {
       if (context?.previous) queryClient.setQueryData(['tint-skus-mapping'], context.previous);
       toast.error(e.message);
     },
-    onSettled: () => {
-      queryClient.invalidateQueries({ queryKey: ['tint-skus-mapping'] });
-    },
   });
 
   const filtered = (skus ?? []).filter((s: any) => {
