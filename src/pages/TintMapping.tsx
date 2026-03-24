@@ -70,6 +70,8 @@ function SkuTab() {
   const { data: skus, isLoading } = useSkus();
   const { data: omieProducts } = useOmieProducts('base');
   const [search, setSearch] = useState('');
+  const [showInactive, setShowInactive] = useState(false);
+  const [filterStatus, setFilterStatus] = useState<'all' | 'mapped' | 'pending'>('all');
   const queryClient = useQueryClient();
 
   const mutation = useMutation({
@@ -88,7 +90,25 @@ function SkuTab() {
     onError: (e: any) => toast.error(e.message),
   });
 
+  const toggleAtivoMutation = useMutation({
+    mutationFn: async ({ skuId, ativo }: { skuId: string; ativo: boolean }) => {
+      const { error } = await supabase
+        .from('tint_skus')
+        .update({ ativo, updated_at: new Date().toISOString() })
+        .eq('id', skuId);
+      if (error) throw error;
+    },
+    onSuccess: (_, vars) => {
+      queryClient.invalidateQueries({ queryKey: ['tint-skus-mapping'] });
+      toast.success(vars.ativo ? 'SKU reativado' : 'SKU ocultado');
+    },
+    onError: (e: any) => toast.error(e.message),
+  });
+
   const filtered = (skus ?? []).filter((s: any) => {
+    if (!showInactive && s.ativo === false) return false;
+    if (filterStatus === 'mapped' && !s.omie_product_id) return false;
+    if (filterStatus === 'pending' && s.omie_product_id) return false;
     if (!search) return true;
     const q = search.toLowerCase();
     return (
@@ -100,14 +120,42 @@ function SkuTab() {
 
   const omieMap = new Map((omieProducts ?? []).map(p => [p.id, p]));
 
+  const totalSkus = skus?.length ?? 0;
+  const activeSkus = (skus ?? []).filter((s: any) => s.ativo !== false).length;
+  const inactiveSkus = totalSkus - activeSkus;
+
   if (isLoading) return <Skeleton className="h-40 w-full" />;
 
   return (
     <div className="space-y-4">
-      <div className="relative max-w-sm">
-        <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
-        <Input placeholder="Buscar produto ou base..." value={search} onChange={e => setSearch(e.target.value)} className="pl-9" />
+      <div className="flex flex-wrap items-center gap-4">
+        <div className="relative max-w-sm flex-1">
+          <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
+          <Input placeholder="Buscar produto ou base..." value={search} onChange={e => setSearch(e.target.value)} className="pl-9" />
+        </div>
+
+        <Select value={filterStatus} onValueChange={(v: any) => setFilterStatus(v)}>
+          <SelectTrigger className="w-[160px] h-9 text-sm">
+            <SelectValue />
+          </SelectTrigger>
+          <SelectContent>
+            <SelectItem value="all">Todos</SelectItem>
+            <SelectItem value="mapped">Mapeados</SelectItem>
+            <SelectItem value="pending">Pendentes</SelectItem>
+          </SelectContent>
+        </Select>
+
+        <div className="flex items-center gap-2">
+          <Switch id="show-inactive" checked={showInactive} onCheckedChange={setShowInactive} />
+          <Label htmlFor="show-inactive" className="text-sm cursor-pointer">
+            Mostrar ocultos ({inactiveSkus})
+          </Label>
+        </div>
       </div>
+
+      <p className="text-sm text-muted-foreground">
+        Exibindo {filtered.length} de {totalSkus} SKUs
+      </p>
 
       <div className="border rounded-md overflow-x-auto">
         <Table>
@@ -120,13 +168,15 @@ function SkuTab() {
               <TableHead>Custo</TableHead>
               <TableHead>Estoque</TableHead>
               <TableHead>Status</TableHead>
+              <TableHead className="w-[80px]">Ação</TableHead>
             </TableRow>
           </TableHeader>
           <TableBody>
             {filtered.map((sku: any) => {
               const linked = sku.omie_product_id ? omieMap.get(sku.omie_product_id) : null;
+              const isInactive = sku.ativo === false;
               return (
-                <TableRow key={sku.id}>
+                <TableRow key={sku.id} className={isInactive ? 'opacity-50' : ''}>
                   <TableCell className="text-sm">{sku.tint_produtos?.descricao}</TableCell>
                   <TableCell className="text-sm max-w-[200px] truncate">{sku.tint_bases?.descricao}</TableCell>
                   <TableCell className="text-sm">{sku.tint_embalagens?.descricao} ({sku.tint_embalagens?.volume_ml}ml)</TableCell>
@@ -150,9 +200,24 @@ function SkuTab() {
                   <TableCell className="text-sm">{linked ? `R$ ${linked.valor_unitario.toFixed(2)}` : '—'}</TableCell>
                   <TableCell className="text-sm">{linked?.estoque ?? '—'}</TableCell>
                   <TableCell>
-                    <Badge variant="outline" className={sku.omie_product_id ? 'bg-green-500/10 text-green-700' : 'bg-yellow-500/10 text-yellow-700'}>
-                      {sku.omie_product_id ? 'Mapeado' : 'Pendente'}
-                    </Badge>
+                    {isInactive ? (
+                      <Badge variant="outline" className="bg-muted text-muted-foreground">Oculto</Badge>
+                    ) : (
+                      <Badge variant="outline" className={sku.omie_product_id ? 'bg-green-500/10 text-green-700' : 'bg-yellow-500/10 text-yellow-700'}>
+                        {sku.omie_product_id ? 'Mapeado' : 'Pendente'}
+                      </Badge>
+                    )}
+                  </TableCell>
+                  <TableCell>
+                    <Button
+                      variant="ghost"
+                      size="icon"
+                      className="h-7 w-7"
+                      title={isInactive ? 'Reativar SKU' : 'Ocultar SKU'}
+                      onClick={() => toggleAtivoMutation.mutate({ skuId: sku.id, ativo: !isInactive })}
+                    >
+                      {isInactive ? <Eye className="h-4 w-4" /> : <EyeOff className="h-4 w-4 text-muted-foreground" />}
+                    </Button>
                   </TableCell>
                 </TableRow>
               );
