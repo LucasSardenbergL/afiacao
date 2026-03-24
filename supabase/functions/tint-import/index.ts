@@ -27,6 +27,9 @@ function parseCsv(content: string): string[][] {
 
 type Supabase = ReturnType<typeof createClient>;
 
+const isFormulaImportType = (tipo: string) =>
+  tipo === "formulas_padrao" || tipo === "formulas_personalizadas";
+
 // ─── Caches for lookups within a single chunk ───
 const produtoCache = new Map<string, string>();
 const baseCache = new Map<string, string>();

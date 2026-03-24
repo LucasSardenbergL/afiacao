@@ -6,6 +6,9 @@ const ACCOUNT = 'oben';
 const BATCH_SIZE = 200;
 const RPC_BATCH_SIZE = 2000;
 
+const isFormulaImportType = (tipo: string) =>
+  tipo === 'formulas_padrao' || tipo === 'formulas_personalizadas';
+
 function parseBrDecimal(value: string | undefined | null): number {
   if (!value || value.trim() === '') return 0;
   return parseFloat(value.trim().replace(',', '.')) || 0;
