@@ -1,0 +1,1 @@
+UPDATE public.omie_products SET is_tintometric = true, tint_type = 'concentrado' WHERE id = '592890d8-e789-4f13-aabb-52fa2aeae350';
