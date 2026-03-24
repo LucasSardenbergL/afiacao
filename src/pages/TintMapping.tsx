@@ -225,7 +225,7 @@ function SkuTab() {
                         size="sm"
                         className="h-8 shrink-0 gap-1"
                         title={isInactive ? 'Reativar SKU' : 'Ocultar SKU'}
-                        onClick={() => toggleAtivoMutation.mutate({ skuId: sku.id, ativo: !isInactive })}
+                        onClick={() => toggleAtivoMutation.mutate({ skuId: sku.id, ativo: isInactive })}
                       >
                         {isInactive ? <Eye className="h-4 w-4" /> : <EyeOff className="h-4 w-4" />}
                         {isInactive ? 'Reativar' : 'Ocultar'}
