@@ -199,24 +199,24 @@ function SkuTab() {
                   <TableCell className="text-sm">{linked ? `R$ ${linked.valor_unitario.toFixed(2)}` : '—'}</TableCell>
                   <TableCell className="text-sm">{linked?.estoque ?? '—'}</TableCell>
                   <TableCell>
-                    {isInactive ? (
-                      <Badge variant="outline" className="bg-muted text-muted-foreground">Oculto</Badge>
-                    ) : (
-                      <Badge variant="outline" className={sku.omie_product_id ? 'bg-green-500/10 text-green-700' : 'bg-yellow-500/10 text-yellow-700'}>
-                        {sku.omie_product_id ? 'Mapeado' : 'Pendente'}
-                      </Badge>
-                    )}
-                  </TableCell>
-                  <TableCell>
-                    <Button
-                      variant="ghost"
-                      size="icon"
-                      className="h-7 w-7"
-                      title={isInactive ? 'Reativar SKU' : 'Ocultar SKU'}
-                      onClick={() => toggleAtivoMutation.mutate({ skuId: sku.id, ativo: !isInactive })}
-                    >
-                      {isInactive ? <Eye className="h-4 w-4" /> : <EyeOff className="h-4 w-4 text-muted-foreground" />}
-                    </Button>
+                    <div className="flex items-center gap-2">
+                      {isInactive ? (
+                        <Badge variant="outline" className="bg-muted text-muted-foreground">Oculto</Badge>
+                      ) : (
+                        <Badge variant="outline" className={sku.omie_product_id ? 'bg-green-500/10 text-green-700' : 'bg-yellow-500/10 text-yellow-700'}>
+                          {sku.omie_product_id ? 'Mapeado' : 'Pendente'}
+                        </Badge>
+                      )}
+                      <Button
+                        variant="ghost"
+                        size="icon"
+                        className="h-7 w-7 shrink-0"
+                        title={isInactive ? 'Reativar SKU' : 'Ocultar SKU'}
+                        onClick={() => toggleAtivoMutation.mutate({ skuId: sku.id, ativo: !isInactive })}
+                      >
+                        {isInactive ? <Eye className="h-4 w-4" /> : <EyeOff className="h-4 w-4 text-muted-foreground" />}
+                      </Button>
+                    </div>
                   </TableCell>
                 </TableRow>
               );
