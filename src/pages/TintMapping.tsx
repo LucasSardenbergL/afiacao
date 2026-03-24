@@ -212,7 +212,7 @@ function SkuTab() {
                   <TableCell className="text-sm">{linked ? `R$ ${linked.valor_unitario.toFixed(2)}` : '—'}</TableCell>
                   <TableCell className="text-sm">{linked?.estoque ?? '—'}</TableCell>
                   <TableCell>
-                    <div className="flex items-center gap-2">
+                    <div className="flex items-center justify-between gap-2 min-w-[210px]">
                       {isInactive ? (
                         <Badge variant="outline" className="bg-muted text-muted-foreground">Oculto</Badge>
                       ) : (
@@ -221,13 +221,14 @@ function SkuTab() {
                         </Badge>
                       )}
                       <Button
-                        variant="ghost"
-                        size="icon"
-                        className="h-7 w-7 shrink-0"
+                        variant="outline"
+                        size="sm"
+                        className="h-8 shrink-0 gap-1"
                         title={isInactive ? 'Reativar SKU' : 'Ocultar SKU'}
                         onClick={() => toggleAtivoMutation.mutate({ skuId: sku.id, ativo: !isInactive })}
                       >
-                        {isInactive ? <Eye className="h-4 w-4" /> : <EyeOff className="h-4 w-4 text-muted-foreground" />}
+                        {isInactive ? <Eye className="h-4 w-4" /> : <EyeOff className="h-4 w-4" />}
+                        {isInactive ? 'Reativar' : 'Ocultar'}
                       </Button>
                     </div>
                   </TableCell>
