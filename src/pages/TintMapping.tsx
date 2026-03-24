@@ -98,11 +98,24 @@ function SkuTab() {
         .eq('id', skuId);
       if (error) throw error;
     },
+    onMutate: async ({ skuId, ativo }) => {
+      await queryClient.cancelQueries({ queryKey: ['tint-skus-mapping'] });
+      const previous = queryClient.getQueryData(['tint-skus-mapping']);
+      queryClient.setQueryData(['tint-skus-mapping'], (old: any) =>
+        old?.map((s: any) => s.id === skuId ? { ...s, ativo } : s)
+      );
+      return { previous };
+    },
     onSuccess: (_, vars) => {
-      queryClient.invalidateQueries({ queryKey: ['tint-skus-mapping'] });
       toast.success(vars.ativo ? 'SKU reativado' : 'SKU ocultado');
     },
-    onError: (e: any) => toast.error(e.message),
+    onError: (e: any, _, context) => {
+      if (context?.previous) queryClient.setQueryData(['tint-skus-mapping'], context.previous);
+      toast.error(e.message);
+    },
+    onSettled: () => {
+      queryClient.invalidateQueries({ queryKey: ['tint-skus-mapping'] });
+    },
   });
 
   const filtered = (skus ?? []).filter((s: any) => {
