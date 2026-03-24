@@ -27,6 +27,9 @@ function parseCsv(content: string): string[][] {
 
 type Supabase = ReturnType<typeof createClient>;
 
+const isFormulaImportType = (tipo: string) =>
+  tipo === "formulas_padrao" || tipo === "formulas_personalizadas";
+
 // ─── Caches for lookups within a single chunk ───
 const produtoCache = new Map<string, string>();
 const baseCache = new Map<string, string>();
@@ -276,13 +279,28 @@ async function handleFileMode(supabase: Supabase, req: Request) {
   const { data: existingImport } = await supabase.from("tint_importacoes").select("id, status, created_at")
     .eq("account", account).eq("arquivo_hash", hash).maybeSingle();
 
-  if (existingImport) {
-    return new Response(JSON.stringify({ status: "duplicado", message: "Este arquivo já foi importado anteriormente", importacao_id: existingImport.id, importado_em: existingImport.created_at }), { headers: { ...corsHeaders, "Content-Type": "application/json" } });
-  }
+  let importacaoId: string;
 
-  const { data: importacao, error: impError } = await supabase.from("tint_importacoes").insert({ account, tipo, arquivo_nome: file.name, arquivo_hash: hash, status: "processando" }).select("id").single();
-  if (impError) throw new Error(`Erro ao criar importação: ${impError.message}`);
-  const importacaoId = importacao.id;
+  if (existingImport) {
+    if (isFormulaImportType(tipo)) {
+      const { error: resetError } = await supabase.from("tint_importacoes").update({
+        status: "processando",
+        total_registros: 0,
+        registros_importados: 0,
+        registros_atualizados: 0,
+        registros_erro: 0,
+        erros_detalhe: null,
+      }).eq("id", existingImport.id);
+      if (resetError) throw new Error(`Erro ao reprocessar importação: ${resetError.message}`);
+      importacaoId = existingImport.id;
+    } else {
+      return new Response(JSON.stringify({ status: "duplicado", message: "Este arquivo já foi importado anteriormente", importacao_id: existingImport.id, importado_em: existingImport.created_at }), { headers: { ...corsHeaders, "Content-Type": "application/json" } });
+    }
+  } else {
+    const { data: importacao, error: impError } = await supabase.from("tint_importacoes").insert({ account, tipo, arquivo_nome: file.name, arquivo_hash: hash, status: "processando" }).select("id").single();
+    if (impError) throw new Error(`Erro ao criar importação: ${impError.message}`);
+    importacaoId = importacao.id;
+  }
 
   const allRows = parseCsv(content);
   if (allRows.length < 2) {
@@ -327,6 +345,19 @@ async function handleCreateImport(supabase: Supabase, body: Record<string, unkno
     const { data: existingImport } = await supabase.from("tint_importacoes").select("id, status, created_at")
       .eq("account", account).eq("arquivo_hash", arquivo_hash).maybeSingle();
     if (existingImport) {
+      if (isFormulaImportType(tipo)) {
+        const { error: resetError } = await supabase.from("tint_importacoes").update({
+          status: "processando",
+          total_registros: total_rows || 0,
+          registros_importados: 0,
+          registros_atualizados: 0,
+          registros_erro: 0,
+          erros_detalhe: null,
+        }).eq("id", existingImport.id);
+        if (resetError) throw new Error(`Erro ao reprocessar importação: ${resetError.message}`);
+        return new Response(JSON.stringify({ status: "reprocessando", importacao_id: existingImport.id }), { headers: { ...corsHeaders, "Content-Type": "application/json" } });
+      }
+
       return new Response(JSON.stringify({ status: "duplicado", message: "Este arquivo já foi importado anteriormente", importacao_id: existingImport.id, importado_em: existingImport.created_at }), { headers: { ...corsHeaders, "Content-Type": "application/json" } });
     }
   }
