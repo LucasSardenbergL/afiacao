@@ -345,6 +345,19 @@ async function handleCreateImport(supabase: Supabase, body: Record<string, unkno
     const { data: existingImport } = await supabase.from("tint_importacoes").select("id, status, created_at")
       .eq("account", account).eq("arquivo_hash", arquivo_hash).maybeSingle();
     if (existingImport) {
+      if (isFormulaImportType(tipo)) {
+        const { error: resetError } = await supabase.from("tint_importacoes").update({
+          status: "processando",
+          total_registros: total_rows || 0,
+          registros_importados: 0,
+          registros_atualizados: 0,
+          registros_erro: 0,
+          erros_detalhe: null,
+        }).eq("id", existingImport.id);
+        if (resetError) throw new Error(`Erro ao reprocessar importação: ${resetError.message}`);
+        return new Response(JSON.stringify({ status: "reprocessando", importacao_id: existingImport.id }), { headers: { ...corsHeaders, "Content-Type": "application/json" } });
+      }
+
       return new Response(JSON.stringify({ status: "duplicado", message: "Este arquivo já foi importado anteriormente", importacao_id: existingImport.id, importado_em: existingImport.created_at }), { headers: { ...corsHeaders, "Content-Type": "application/json" } });
     }
   }

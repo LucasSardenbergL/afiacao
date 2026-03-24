@@ -548,40 +548,74 @@ export function useDirectTintImport() {
       imported: 0, updated: 0, errors: 0,
     });
 
-    // Create import record
+    // Create or reuse import record
     const hash = await sha256(rawText);
+    const isFormulaImport = isFormulaImportType(tipo);
     const { data: existingImport } = await supabase.from('tint_importacoes')
       .select('id, status').eq('account', ACCOUNT).eq('arquivo_hash', hash).maybeSingle();
 
+    let importacaoId: string;
+
     if (existingImport) {
-      // Only block if the previous import was fully successful
-      if (existingImport.status === 'concluido') {
+      if (isFormulaImport) {
+        const { error: resetError } = await supabase.from('tint_importacoes').update({
+          status: 'processando',
+          total_registros: totalRows,
+          registros_importados: 0,
+          registros_atualizados: 0,
+          registros_erro: 0,
+          erros_detalhe: null,
+        }).eq('id', existingImport.id);
+
+        if (resetError) {
+          setRunning(false);
+          setProgress(null);
+          throw new Error(`Erro ao reprocessar importação: ${resetError.message}`);
+        }
+
+        importacaoId = existingImport.id;
+      } else {
+        if (existingImport.status === 'concluido') {
+          setRunning(false);
+          setProgress(null);
+          return { status: 'duplicado', imported: 0, updated: 0, errors: 0, importacaoId: existingImport.id };
+        }
+
+        console.log(`[direct-import] Cleaning up old import ${existingImport.id} (status: ${existingImport.status})`);
+        await supabase.from('tint_formula_itens').delete().in(
+          'formula_id',
+          (await supabase.from('tint_formulas').select('id').eq('importacao_id', existingImport.id)).data?.map(f => f.id) ?? []
+        );
+        await supabase.from('tint_formulas').delete().eq('importacao_id', existingImport.id);
+        await supabase.from('tint_importacoes').delete().eq('id', existingImport.id);
+
+        const { data: importacao, error: impErr } = await supabase.from('tint_importacoes').insert({
+          account: ACCOUNT, tipo, arquivo_nome: fileName, arquivo_hash: hash,
+          status: 'processando', total_registros: totalRows,
+        }).select('id').single();
+
+        if (impErr) {
+          setRunning(false);
+          setProgress(null);
+          throw new Error(`Erro ao criar importação: ${impErr.message}`);
+        }
+
+        importacaoId = importacao.id;
+      }
+    } else {
+      const { data: importacao, error: impErr } = await supabase.from('tint_importacoes').insert({
+        account: ACCOUNT, tipo, arquivo_nome: fileName, arquivo_hash: hash,
+        status: 'processando', total_registros: totalRows,
+      }).select('id').single();
+
+      if (impErr) {
         setRunning(false);
         setProgress(null);
-        return { status: 'duplicado', imported: 0, updated: 0, errors: 0, importacaoId: existingImport.id };
+        throw new Error(`Erro ao criar importação: ${impErr.message}`);
       }
-      // For failed/partial/cancelled imports, clean up old formulas and re-import
-      console.log(`[direct-import] Cleaning up old import ${existingImport.id} (status: ${existingImport.status})`);
-      await supabase.from('tint_formula_itens').delete().in(
-        'formula_id',
-        (await supabase.from('tint_formulas').select('id').eq('importacao_id', existingImport.id)).data?.map(f => f.id) ?? []
-      );
-      await supabase.from('tint_formulas').delete().eq('importacao_id', existingImport.id);
-      await supabase.from('tint_importacoes').delete().eq('id', existingImport.id);
+
+      importacaoId = importacao.id;
     }
-
-    const { data: importacao, error: impErr } = await supabase.from('tint_importacoes').insert({
-      account: ACCOUNT, tipo, arquivo_nome: fileName, arquivo_hash: hash,
-      status: 'processando', total_registros: totalRows,
-    }).select('id').single();
-
-    if (impErr) {
-      setRunning(false);
-      setProgress(null);
-      throw new Error(`Erro ao criar importação: ${impErr.message}`);
-    }
-
-    const importacaoId = importacao.id;
 
     clearCaches();
     await preWarmCaches();
