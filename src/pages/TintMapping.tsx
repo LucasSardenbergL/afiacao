@@ -188,7 +188,7 @@ function SkuTab() {
               const linked = sku.omie_product_id ? omieMap.get(sku.omie_product_id) : null;
               const isInactive = sku.ativo === false;
               return (
-                <TableRow key={sku.id} className={isInactive ? 'opacity-50' : ''}>
+                <TableRow key={sku.id} className={isInactive ? 'opacity-40 bg-muted/50 line-through decoration-muted-foreground/30' : ''}>
                   <TableCell className="text-sm">{sku.tint_produtos?.descricao}</TableCell>
                   <TableCell className="text-sm max-w-[200px] truncate">{sku.tint_bases?.descricao}</TableCell>
                   <TableCell className="text-sm">{sku.tint_embalagens?.descricao} ({sku.tint_embalagens?.volume_ml}ml)</TableCell>
