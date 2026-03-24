@@ -99,7 +99,6 @@ function SkuTab() {
       if (error) throw error;
     },
     onMutate: async ({ skuId, ativo }) => {
-      await queryClient.cancelQueries({ queryKey: ['tint-skus-mapping'] });
       const previous = queryClient.getQueryData(['tint-skus-mapping']);
       queryClient.setQueryData(['tint-skus-mapping'], (old: any) =>
         old?.map((s: any) => s.id === skuId ? { ...s, ativo } : s)
