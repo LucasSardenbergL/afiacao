@@ -1,0 +1,1 @@
+UPDATE public.omie_products SET is_tintometric = true, tint_type = 'base' WHERE id IN ('8a6c0fea-6e98-4b1d-a416-7628f58a51a4', '22f8e5b6-84db-496a-bd71-3555c2cc8a9d');
