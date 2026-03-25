@@ -140,14 +140,15 @@ async function syncCustomers(db: ReturnType<typeof createClient>, account: OmieA
 
 // ======== SYNC PRODUCTS ========
 
-async function syncProducts(db: ReturnType<typeof createClient>, account: OmieAccount) {
+async function syncProducts(db: ReturnType<typeof createClient>, account: OmieAccount, startPage = 1, maxPages = 10) {
   await updateSyncState(db, "products", account, { status: "running", error_message: null });
-  let pagina = 1;
-  let totalPaginas = 1;
+  let pagina = startPage;
+  let totalPaginas = startPage;
   let totalSynced = 0;
+  let pagesProcessed = 0;
 
   try {
-    while (pagina <= totalPaginas) {
+    while (pagina <= totalPaginas && pagesProcessed < maxPages) {
       const result = await callOmie(account, "geral/produtos/", "ListarProdutos", {
         pagina,
         registros_por_pagina: 100,
@@ -187,7 +188,7 @@ async function syncProducts(db: ReturnType<typeof createClient>, account: OmieAc
           }));
 
         if (rows.length > 0) {
-          const { error } = await db.from("omie_products").upsert(rows, { onConflict: "omie_codigo_produto" });
+          const { error } = await db.from("omie_products").upsert(rows, { onConflict: "omie_codigo_produto,account" });
           if (error) console.error(`[Sync] Erro upsert produtos p${pagina}:`, error);
           else totalSynced += rows.length;
         }
@@ -195,6 +196,7 @@ async function syncProducts(db: ReturnType<typeof createClient>, account: OmieAc
 
       console.log(`[Sync ${account}] Produtos página ${pagina}/${totalPaginas}`);
       pagina++;
+      pagesProcessed++;
     }
 
     await updateSyncState(db, "products", account, {
@@ -203,7 +205,14 @@ async function syncProducts(db: ReturnType<typeof createClient>, account: OmieAc
       last_sync_at: new Date().toISOString(),
       last_page: totalPaginas,
     });
-    return { totalSynced };
+    const complete = pagina > totalPaginas;
+    await updateSyncState(db, "products", account, {
+      status: complete ? "complete" : "partial",
+      total_synced: totalSynced,
+      last_sync_at: new Date().toISOString(),
+      last_page: pagina - 1,
+    });
+    return { totalSynced, totalPages: totalPaginas, lastPage: pagina - 1, complete, nextPage: complete ? null : pagina };
   } catch (error) {
     await updateSyncState(db, "products", account, { status: "error", error_message: String(error) });
     throw error;
@@ -701,7 +710,7 @@ serve(async (req) => {
       });
     }
 
-    const { action, account = "vendas" } = await req.json();
+    const { action, account = "vendas", start_page, max_pages } = await req.json();
     let result: unknown;
 
     switch (action) {
@@ -709,7 +718,7 @@ serve(async (req) => {
         result = await syncCustomers(supabaseAdmin, account);
         break;
       case "sync_products":
-        result = await syncProducts(supabaseAdmin, account);
+        result = await syncProducts(supabaseAdmin, account, start_page || 1, max_pages || 10);
         break;
       case "sync_orders":
         result = await syncOrdersIncremental(supabaseAdmin, account);
