@@ -203,7 +203,7 @@ async function syncProducts(db: ReturnType<typeof createClient>, account: OmieAc
       last_sync_at: new Date().toISOString(),
       last_page: totalPaginas,
     });
-    return { totalSynced };
+    return { totalSynced, totalPages: totalPaginas, lastPage: pagina - 1 };
   } catch (error) {
     await updateSyncState(db, "products", account, { status: "error", error_message: String(error) });
     throw error;
