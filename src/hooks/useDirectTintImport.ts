@@ -544,6 +544,7 @@ export function useDirectTintImport() {
         ...prev, imported, updated, errors,
         recordsProcessed: Math.min((b + 1) * RPC_BATCH_SIZE, rows.length),
       } : prev);
+    }
 
     return { imported, updated, errors };
   };
