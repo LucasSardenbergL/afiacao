@@ -6,7 +6,7 @@ import { Input } from '@/components/ui/input';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { Card, CardContent } from '@/components/ui/card';
-import { Search, Palette, Loader2, AlertTriangle } from 'lucide-react';
+import { Search, Palette, Loader2, AlertTriangle, History } from 'lucide-react';
 import { useTintPricing } from '@/hooks/useTintPricing';
 import type { Product } from '@/hooks/useUnifiedOrder';
 import { fmt } from '@/hooks/useUnifiedOrder';
@@ -16,6 +16,7 @@ interface TintColorSelectDialogProps {
   open: boolean;
   onClose: () => void;
   onConfirm: (formulaId: string, corId: string, nomeCor: string, precoFinal: number, custoCorantes: number) => void;
+  customerUserId?: string | null;
 }
 
 interface FormulaResult {
@@ -25,7 +26,7 @@ interface FormulaResult {
   preco_final_sayersystem: number | null;
 }
 
-export function TintColorSelectDialog({ product, open, onClose, onConfirm }: TintColorSelectDialogProps) {
+export function TintColorSelectDialog({ product, open, onClose, onConfirm, customerUserId }: TintColorSelectDialogProps) {
   const [search, setSearch] = useState('');
   const [debouncedSearch, setDebouncedSearch] = useState('');
   const [selectedFormula, setSelectedFormula] = useState<FormulaResult | null>(null);
@@ -77,12 +78,61 @@ export function TintColorSelectDialog({ product, open, onClose, onConfirm }: Tin
     },
   });
 
-  // Pricing breakdown for selected formula
+  // Pricing breakdown for selected formula (for informational display)
   const { data: pricing, isLoading: loadingPricing } = useTintPricing(selectedFormula?.id || null);
 
-  const precoBase = product.valor_unitario;
+  // Last practiced price for this color+base for the customer
+  const { data: lastPracticedPrice, isLoading: loadingLastPrice } = useQuery({
+    queryKey: ['tint-last-price', customerUserId, product.id, selectedFormula?.cor_id],
+    staleTime: 30 * 1000,
+    enabled: !!customerUserId && !!selectedFormula?.cor_id && !!product.id,
+    queryFn: async () => {
+      if (!customerUserId || !selectedFormula?.cor_id || !product.id) return null;
+
+      // Search in sales_orders items JSON for this product + cor_id
+      const { data: orders } = await supabase
+        .from('sales_orders')
+        .select('items, created_at')
+        .eq('customer_user_id', customerUserId)
+        .eq('account', 'oben')
+        .order('created_at', { ascending: false })
+        .limit(50);
+
+      if (!orders) return null;
+
+      for (const order of orders) {
+        const items = order.items as any[];
+        if (!Array.isArray(items)) continue;
+        for (const item of items) {
+          if (
+            item.product_id === product.id &&
+            item.tint_cor_id === selectedFormula.cor_id
+          ) {
+            return {
+              price: item.valor_unitario as number,
+              date: order.created_at as string,
+            };
+          }
+        }
+      }
+      return null;
+    },
+  });
+
+  // Use CSV price as the main price
+  const precoCsv = selectedFormula?.preco_final_sayersystem ?? 0;
   const custoCorantes = pricing?.custoCorantes || 0;
-  const precoFinal = precoBase + custoCorantes;
+
+  // Price priority: last practiced > CSV > calculated fallback
+  const precoBase = product.valor_unitario;
+  const precoCalculado = precoBase + custoCorantes;
+  const precoFinal = lastPracticedPrice?.price ?? (precoCsv > 0 ? precoCsv : precoCalculado);
+
+  const priceSource = lastPracticedPrice
+    ? 'cliente'
+    : precoCsv > 0
+      ? 'csv'
+      : 'calculado';
 
   return (
     <Dialog open={open} onOpenChange={(o) => !o && onClose()}>
@@ -144,51 +194,63 @@ export function TintColorSelectDialog({ product, open, onClose, onConfirm }: Tin
                     <span className="text-sm font-medium">{selectedFormula.nome_cor}</span>
                   </div>
 
+                  {/* Last practiced price for this customer */}
+                  {loadingLastPrice ? (
+                    <Loader2 className="w-3 h-3 animate-spin" />
+                  ) : lastPracticedPrice ? (
+                    <div className="flex items-center gap-2 p-2 rounded-md bg-primary/5 border border-primary/20">
+                      <History className="w-3.5 h-3.5 text-primary shrink-0" />
+                      <div className="text-xs">
+                        <span className="font-medium text-primary">Último preço cliente: {fmt(lastPracticedPrice.price)}</span>
+                        <span className="text-muted-foreground ml-1">
+                          ({new Date(lastPracticedPrice.date).toLocaleDateString('pt-BR')})
+                        </span>
+                      </div>
+                    </div>
+                  ) : null}
+
                   {/* Price breakdown */}
                   <div className="space-y-2">
+                    {/* Main price */}
+                    <div className="flex justify-between text-sm font-bold border-b pb-2">
+                      <span className="flex items-center gap-1.5">
+                        Preço Final
+                        <Badge variant="secondary" className="text-[9px] px-1.5 py-0">
+                          {priceSource === 'cliente' ? 'Preço cliente' : priceSource === 'csv' ? 'Tabela CSV' : 'Calculado'}
+                        </Badge>
+                      </span>
+                      <span className="text-primary">{fmt(precoFinal)}</span>
+                    </div>
+
+                    {/* Reference prices */}
+                    <div className="text-[10px] uppercase font-semibold text-muted-foreground tracking-wider">Referências</div>
+
+                    {precoCsv > 0 && priceSource !== 'csv' && (
+                      <div className="flex justify-between text-xs">
+                        <span className="text-muted-foreground">Preço tabela CSV</span>
+                        <span>{fmt(precoCsv)}</span>
+                      </div>
+                    )}
+
                     <div className="flex justify-between text-xs">
-                      <span className="text-muted-foreground">Preço da base</span>
-                      <span className="font-medium">{fmt(precoBase)}</span>
+                      <span className="text-muted-foreground">Preço base (Omie)</span>
+                      <span>{fmt(precoBase)}</span>
                     </div>
 
                     {loadingPricing ? (
                       <Loader2 className="w-4 h-4 animate-spin mx-auto" />
                     ) : pricing && pricing.itensCorantes.length > 0 ? (
                       <>
-                        <div className="text-[10px] uppercase font-semibold text-muted-foreground tracking-wider">Corantes</div>
-                        <div className="space-y-1">
-                          {pricing.itensCorantes.map((item, i) => (
-                            <div key={i} className="flex justify-between text-xs">
-                              <span className="text-muted-foreground truncate max-w-[60%]">
-                                {item.coranteDescricao.split(' - ').pop() || item.coranteDescricao}
-                                <span className="ml-1 text-[10px]">({item.qtdMl.toFixed(2)} ml)</span>
-                              </span>
-                              {item.custoDisponivel ? (
-                                <span>{fmt(item.custoItem)}</span>
-                              ) : (
-                                <span className="text-muted-foreground italic">N/D</span>
-                              )}
-                            </div>
-                          ))}
+                        <div className="flex justify-between text-xs">
+                          <span className="text-muted-foreground">Custo corantes</span>
+                          <span>{fmt(custoCorantes)}</span>
                         </div>
-                        <div className="flex justify-between text-xs border-t pt-1">
-                          <span className="text-muted-foreground">Total corantes</span>
-                          <span className="font-medium">{fmt(custoCorantes)}</span>
+                        <div className="flex justify-between text-xs">
+                          <span className="text-muted-foreground">Calculado (base + corantes)</span>
+                          <span>{fmt(precoCalculado)}</span>
                         </div>
                       </>
                     ) : null}
-
-                    <div className="flex justify-between text-sm font-bold border-t pt-2">
-                      <span>Preço Final</span>
-                      <span className="text-primary">{fmt(precoFinal)}</span>
-                    </div>
-
-                    {selectedFormula.preco_final_sayersystem != null && selectedFormula.preco_final_sayersystem > 0 && (
-                      <div className="flex justify-between text-[10px] text-muted-foreground">
-                        <span>Preço CSV (referência)</span>
-                        <span>{fmt(selectedFormula.preco_final_sayersystem)}</span>
-                      </div>
-                    )}
                   </div>
 
                   <Button
@@ -203,7 +265,7 @@ export function TintColorSelectDialog({ product, open, onClose, onConfirm }: Tin
                     )}
                   >
                     <Palette className="w-3.5 h-3.5 mr-1.5" />
-                    Adicionar ao Pedido
+                    Adicionar ao Pedido — {fmt(precoFinal)}
                   </Button>
                 </CardContent>
               </Card>

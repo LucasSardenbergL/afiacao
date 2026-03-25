@@ -917,6 +917,7 @@ export function useUnifiedOrder() {
           product_id: c.product.id, omie_codigo_produto: c.product.omie_codigo_produto,
           codigo: c.product.codigo, descricao: c.product.descricao, unidade: c.product.unidade,
           quantidade: c.quantity, valor_unitario: c.unit_price, valor_total: c.quantity * c.unit_price,
+          ...(c.tint_cor_id ? { tint_cor_id: c.tint_cor_id, tint_nome_cor: c.tint_nome_cor, tint_formula_id: c.tint_formula_id } : {}),
         }));
         const { data: salesOrder, error: insertError } = await supabase
           .from('sales_orders').insert({
