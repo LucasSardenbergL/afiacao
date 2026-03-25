@@ -1,0 +1,1 @@
+CREATE UNIQUE INDEX IF NOT EXISTS omie_products_omie_codigo_produto_account_key ON omie_products (omie_codigo_produto, account);
