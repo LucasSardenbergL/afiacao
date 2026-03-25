@@ -241,7 +241,7 @@ async function listarClientesVendas(searchTerm: string, account: Account = "oben
           razao_social: c.razao_social || "",
           nome_fantasia: c.nome_fantasia || "",
           cnpj_cpf: c.cnpj_cpf || "",
-          codigo_vendedor: c.codigo_vendedor || null,
+          codigo_vendedor: c.recomendacoes?.codigo_vendedor || c.codigo_vendedor || null,
         });
       }
     }
@@ -274,7 +274,7 @@ async function listarClientesVendas(searchTerm: string, account: Account = "oben
               razao_social: c.razao_social || "",
               nome_fantasia: c.nome_fantasia || "",
               cnpj_cpf: c.cnpj_cpf || "",
-              codigo_vendedor: c.codigo_vendedor || null,
+              codigo_vendedor: c.recomendacoes?.codigo_vendedor || c.codigo_vendedor || null,
             });
           }
         }
