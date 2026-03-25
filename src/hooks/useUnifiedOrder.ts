@@ -884,6 +884,7 @@ export function useUnifiedOrder() {
             razao_social: selectedCustomer.razao_social,
             nome_fantasia: selectedCustomer.nome_fantasia,
             cnpj_cpf: selectedCustomer.cnpj_cpf,
+            codigo_vendedor: selectedCustomer.codigo_vendedor,
           },
         },
       });
