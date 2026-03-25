@@ -532,17 +532,18 @@ export function useDirectTintImport() {
         } else {
           batchSuccess = true;
           if (data) {
-        const res = data as unknown as { imported: number; updated: number; errors: number };
-        imported += res.imported ?? 0;
-        updated += res.updated ?? 0;
-        errors += res.errors ?? 0;
+            const res = data as unknown as { imported: number; updated: number; errors: number };
+            imported += res.imported ?? 0;
+            updated += res.updated ?? 0;
+            errors += res.errors ?? 0;
+          }
+        }
       }
 
       setProgress(prev => prev ? {
         ...prev, imported, updated, errors,
         recordsProcessed: Math.min((b + 1) * RPC_BATCH_SIZE, rows.length),
       } : prev);
-    }
 
     return { imported, updated, errors };
   };
