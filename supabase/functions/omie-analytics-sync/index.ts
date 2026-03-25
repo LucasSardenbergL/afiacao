@@ -142,8 +142,8 @@ async function syncCustomers(db: ReturnType<typeof createClient>, account: OmieA
 
 async function syncProducts(db: ReturnType<typeof createClient>, account: OmieAccount, startPage = 1) {
   await updateSyncState(db, "products", account, { status: "running", error_message: null });
-  let pagina = 1;
-  let totalPaginas = 1;
+  let pagina = startPage;
+  let totalPaginas = startPage;
   let totalSynced = 0;
 
   try {
@@ -701,7 +701,7 @@ serve(async (req) => {
       });
     }
 
-    const { action, account = "vendas" } = await req.json();
+    const { action, account = "vendas", start_page } = await req.json();
     let result: unknown;
 
     switch (action) {
@@ -709,7 +709,7 @@ serve(async (req) => {
         result = await syncCustomers(supabaseAdmin, account);
         break;
       case "sync_products":
-        result = await syncProducts(supabaseAdmin, account);
+        result = await syncProducts(supabaseAdmin, account, start_page || 1);
         break;
       case "sync_orders":
         result = await syncOrdersIncremental(supabaseAdmin, account);
