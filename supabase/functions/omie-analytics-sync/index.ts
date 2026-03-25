@@ -140,14 +140,15 @@ async function syncCustomers(db: ReturnType<typeof createClient>, account: OmieA
 
 // ======== SYNC PRODUCTS ========
 
-async function syncProducts(db: ReturnType<typeof createClient>, account: OmieAccount, startPage = 1) {
+async function syncProducts(db: ReturnType<typeof createClient>, account: OmieAccount, startPage = 1, maxPages = 10) {
   await updateSyncState(db, "products", account, { status: "running", error_message: null });
   let pagina = startPage;
   let totalPaginas = startPage;
   let totalSynced = 0;
+  let pagesProcessed = 0;
 
   try {
-    while (pagina <= totalPaginas) {
+    while (pagina <= totalPaginas && pagesProcessed < maxPages) {
       const result = await callOmie(account, "geral/produtos/", "ListarProdutos", {
         pagina,
         registros_por_pagina: 100,
