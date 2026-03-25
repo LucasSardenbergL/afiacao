@@ -6,7 +6,7 @@ import { Input } from '@/components/ui/input';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { Card, CardContent } from '@/components/ui/card';
-import { Search, Palette, Loader2, AlertTriangle, History } from 'lucide-react';
+import { Search, Palette, Loader2, AlertTriangle, History, Package } from 'lucide-react';
 import { useTintPricing } from '@/hooks/useTintPricing';
 import type { Product } from '@/hooks/useUnifiedOrder';
 import { fmt } from '@/hooks/useUnifiedOrder';
@@ -15,7 +15,7 @@ interface TintColorSelectDialogProps {
   product: Product;
   open: boolean;
   onClose: () => void;
-  onConfirm: (formulaId: string, corId: string, nomeCor: string, precoFinal: number, custoCorantes: number) => void;
+  onConfirm: (formulaId: string, corId: string, nomeCor: string, precoFinal: number, custoCorantes: number, alternativeProduct?: Product) => void;
   customerUserId?: string | null;
 }
 
@@ -24,6 +24,16 @@ interface FormulaResult {
   cor_id: string;
   nome_cor: string;
   preco_final_sayersystem: number | null;
+}
+
+interface AlternativePackaging {
+  formulaId: string;
+  skuId: string;
+  omieProductId: string;
+  productDescricao: string;
+  productCodigo: string;
+  precoFinalCsv: number | null;
+  product: Product;
 }
 
 export function TintColorSelectDialog({ product, open, onClose, onConfirm, customerUserId }: TintColorSelectDialogProps) {
@@ -89,7 +99,6 @@ export function TintColorSelectDialog({ product, open, onClose, onConfirm, custo
     queryFn: async () => {
       if (!customerUserId || !selectedFormula?.cor_id || !product.id) return null;
 
-      // Search in sales_orders items JSON for this product + cor_id
       const { data: orders } = await supabase
         .from('sales_orders')
         .select('items, created_at')
@@ -116,6 +125,65 @@ export function TintColorSelectDialog({ product, open, onClose, onConfirm, custo
         }
       }
       return null;
+    },
+  });
+
+  // Alternative packagings: same color, different SKUs
+  const { data: alternatives, isLoading: loadingAlternatives } = useQuery({
+    queryKey: ['tint-alternatives', selectedFormula?.cor_id, skuId],
+    staleTime: 5 * 60 * 1000,
+    enabled: !!selectedFormula?.cor_id && !!skuId,
+    queryFn: async (): Promise<AlternativePackaging[]> => {
+      if (!selectedFormula?.cor_id || !skuId) return [];
+
+      // Get all formulas with the same cor_id but different sku_id
+      const { data: altFormulas } = await supabase
+        .from('tint_formulas')
+        .select('id, sku_id, preco_final_sayersystem')
+        .eq('account', 'oben')
+        .eq('cor_id', selectedFormula.cor_id)
+        .neq('sku_id', skuId)
+        .not('sku_id', 'is', null);
+
+      if (!altFormulas || altFormulas.length === 0) return [];
+
+      // Get SKU details with omie_product_id
+      const skuIds = [...new Set(altFormulas.map(f => f.sku_id!))];
+      const { data: skus } = await supabase
+        .from('tint_skus')
+        .select('id, omie_product_id')
+        .in('id', skuIds)
+        .not('omie_product_id', 'is', null);
+
+      if (!skus || skus.length === 0) return [];
+
+      // Get product details
+      const productIds = skus.map(s => s.omie_product_id!).filter(Boolean);
+      const { data: products } = await supabase
+        .from('omie_products')
+        .select('id, codigo, descricao, unidade, valor_unitario, estoque, ativo, omie_codigo_produto, account, is_tintometric, tint_type')
+        .in('id', productIds);
+
+      if (!products) return [];
+
+      const result: AlternativePackaging[] = [];
+      for (const af of altFormulas) {
+        const sku = skus.find(s => s.id === af.sku_id);
+        if (!sku?.omie_product_id) continue;
+        const prod = products.find(p => p.id === sku.omie_product_id);
+        if (!prod) continue;
+
+        result.push({
+          formulaId: af.id,
+          skuId: af.sku_id!,
+          omieProductId: sku.omie_product_id,
+          productDescricao: prod.descricao,
+          productCodigo: prod.codigo,
+          precoFinalCsv: af.preco_final_sayersystem,
+          product: prod as Product,
+        });
+      }
+      return result;
     },
   });
 
@@ -267,6 +335,57 @@ export function TintColorSelectDialog({ product, open, onClose, onConfirm, custo
                     <Palette className="w-3.5 h-3.5 mr-1.5" />
                     Adicionar ao Pedido — {fmt(precoFinal)}
                   </Button>
+
+                  {/* Alternative packagings */}
+                  {loadingAlternatives ? (
+                    <div className="flex items-center gap-2 text-xs text-muted-foreground pt-1">
+                      <Loader2 className="w-3 h-3 animate-spin" />
+                      Buscando outras embalagens...
+                    </div>
+                  ) : alternatives && alternatives.length > 0 ? (
+                    <div className="space-y-2 pt-1">
+                      <div className="flex items-center gap-1.5 text-[10px] uppercase font-semibold text-muted-foreground tracking-wider">
+                        <Package className="w-3 h-3" />
+                        Mesma cor em outras embalagens
+                      </div>
+                      <div className="space-y-1.5">
+                        {alternatives.map(alt => {
+                          const altPrice = alt.precoFinalCsv && alt.precoFinalCsv > 0
+                            ? alt.precoFinalCsv
+                            : alt.product.valor_unitario + custoCorantes;
+                          return (
+                            <button
+                              key={alt.formulaId}
+                              onClick={() => onConfirm(
+                                alt.formulaId,
+                                selectedFormula.cor_id,
+                                selectedFormula.nome_cor,
+                                altPrice,
+                                custoCorantes,
+                                alt.product,
+                              )}
+                              className="w-full flex items-center justify-between gap-2 p-2 rounded-md border border-border hover:border-primary/50 hover:bg-primary/5 transition-all text-xs group"
+                            >
+                              <div className="flex-1 text-left min-w-0">
+                                <p className="font-medium truncate group-hover:text-primary transition-colors">
+                                  {alt.productDescricao}
+                                </p>
+                                <p className="text-[10px] text-muted-foreground font-mono">{alt.productCodigo}</p>
+                              </div>
+                              <div className="text-right shrink-0">
+                                <span className="font-bold text-primary">{fmt(altPrice)}</span>
+                                {alt.precoFinalCsv && alt.precoFinalCsv > 0 ? (
+                                  <Badge variant="secondary" className="text-[8px] px-1 py-0 ml-1">CSV</Badge>
+                                ) : (
+                                  <Badge variant="outline" className="text-[8px] px-1 py-0 ml-1">Calc.</Badge>
+                                )}
+                              </div>
+                            </button>
+                          );
+                        })}
+                      </div>
+                    </div>
+                  ) : null}
                 </CardContent>
               </Card>
             )}

@@ -247,8 +247,8 @@ const UnifiedOrder = () => {
           open={!!h.tintPendingProduct}
           onClose={() => h.setTintPendingProduct(null)}
           customerUserId={h.customerUserId}
-          onConfirm={(formulaId, corId, nomeCor, precoFinal, custoCorantes) => {
-            h.addTintProductToCart(h.tintPendingProduct!, formulaId, corId, nomeCor, precoFinal, custoCorantes);
+          onConfirm={(formulaId, corId, nomeCor, precoFinal, custoCorantes, alternativeProduct) => {
+            h.addTintProductToCart(alternativeProduct || h.tintPendingProduct!, formulaId, corId, nomeCor, precoFinal, custoCorantes);
           }}
         />
       )}
