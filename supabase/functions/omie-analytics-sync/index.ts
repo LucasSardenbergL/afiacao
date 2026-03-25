@@ -188,7 +188,7 @@ async function syncProducts(db: ReturnType<typeof createClient>, account: OmieAc
           }));
 
         if (rows.length > 0) {
-          const { error } = await db.from("omie_products").upsert(rows, { onConflict: "omie_codigo_produto" });
+          const { error } = await db.from("omie_products").upsert(rows, { onConflict: "omie_codigo_produto,account" });
           if (error) console.error(`[Sync] Erro upsert produtos p${pagina}:`, error);
           else totalSynced += rows.length;
         }
