@@ -503,20 +503,41 @@ export function useDirectTintImport() {
         imported, updated, errors,
       } : prev);
 
-      const { data, error } = await supabase.rpc('import_tint_formulas', {
-        p_account: ACCOUNT,
-        p_personalizada: personalizada,
-        p_rows: jsonRows,
-      });
+      const MAX_RETRIES = 3;
+      let attempt = 0;
+      let batchSuccess = false;
 
-      if (error) {
-        console.error(`[rpc] batch ${b + 1} error:`, error);
-        errors += batch.length;
-      } else if (data) {
-        const res = data as unknown as { imported: number; updated: number; errors: number };
-        imported += res.imported ?? 0;
-        updated += res.updated ?? 0;
-        errors += res.errors ?? 0;
+      while (attempt < MAX_RETRIES && !batchSuccess) {
+        attempt++;
+        if (attempt > 1) {
+          const delay = Math.min(2000 * Math.pow(2, attempt - 2), 10000);
+          console.warn(`[rpc] batch ${b + 1} retry ${attempt}/${MAX_RETRIES} after ${delay}ms`);
+          setProgress(prev => prev ? {
+            ...prev, phase: `RPC Postgres — Lote ${b + 1} de ${totalBatches} (tentativa ${attempt}/${MAX_RETRIES})`,
+          } : prev);
+          await new Promise(resolve => setTimeout(resolve, delay));
+        }
+
+        const { data, error } = await supabase.rpc('import_tint_formulas', {
+          p_account: ACCOUNT,
+          p_personalizada: personalizada,
+          p_rows: jsonRows,
+        });
+
+        if (error) {
+          console.error(`[rpc] batch ${b + 1} attempt ${attempt} error:`, error);
+          if (attempt >= MAX_RETRIES) {
+            errors += batch.length;
+          }
+        } else {
+          batchSuccess = true;
+          if (data) {
+            const res = data as unknown as { imported: number; updated: number; errors: number };
+            imported += res.imported ?? 0;
+            updated += res.updated ?? 0;
+            errors += res.errors ?? 0;
+          }
+        }
       }
 
       setProgress(prev => prev ? {
