@@ -710,7 +710,7 @@ serve(async (req) => {
       });
     }
 
-    const { action, account = "vendas", start_page } = await req.json();
+    const { action, account = "vendas", start_page, max_pages } = await req.json();
     let result: unknown;
 
     switch (action) {
@@ -718,7 +718,7 @@ serve(async (req) => {
         result = await syncCustomers(supabaseAdmin, account);
         break;
       case "sync_products":
-        result = await syncProducts(supabaseAdmin, account, start_page || 1);
+        result = await syncProducts(supabaseAdmin, account, start_page || 1, max_pages || 10);
         break;
       case "sync_orders":
         result = await syncOrdersIncremental(supabaseAdmin, account);
