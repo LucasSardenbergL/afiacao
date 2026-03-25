@@ -1088,7 +1088,7 @@ export function useUnifiedOrder() {
     deliveryOption, setDeliveryOption, addresses, selectedAddress, setSelectedAddress,
     selectedTimeSlot, setSelectedTimeSlot, showAddressOptions, setShowAddressOptions,
     // Cart
-    cart, notes, setNotes, submitting, activeTab, setActiveTab, customerUserId,
+    cart, notes, setNotes, submitting, activeTab, setActiveTab,
     productItems, obenProductItems, colacorProductItems, serviceItems, cartProductIds,
     availableTools,
     addProductToCart, addTintProductToCart, addServiceToCart,
