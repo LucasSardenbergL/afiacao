@@ -196,6 +196,7 @@ async function syncProducts(db: ReturnType<typeof createClient>, account: OmieAc
 
       console.log(`[Sync ${account}] Produtos página ${pagina}/${totalPaginas}`);
       pagina++;
+      pagesProcessed++;
     }
 
     await updateSyncState(db, "products", account, {
@@ -204,7 +205,14 @@ async function syncProducts(db: ReturnType<typeof createClient>, account: OmieAc
       last_sync_at: new Date().toISOString(),
       last_page: totalPaginas,
     });
-    return { totalSynced, totalPages: totalPaginas, lastPage: pagina - 1 };
+    const complete = pagina > totalPaginas;
+    await updateSyncState(db, "products", account, {
+      status: complete ? "complete" : "partial",
+      total_synced: totalSynced,
+      last_sync_at: new Date().toISOString(),
+      last_page: pagina - 1,
+    });
+    return { totalSynced, totalPages: totalPaginas, lastPage: pagina - 1, complete, nextPage: complete ? null : pagina };
   } catch (error) {
     await updateSyncState(db, "products", account, { status: "error", error_message: String(error) });
     throw error;
