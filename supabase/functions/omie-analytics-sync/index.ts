@@ -140,7 +140,7 @@ async function syncCustomers(db: ReturnType<typeof createClient>, account: OmieA
 
 // ======== SYNC PRODUCTS ========
 
-async function syncProducts(db: ReturnType<typeof createClient>, account: OmieAccount) {
+async function syncProducts(db: ReturnType<typeof createClient>, account: OmieAccount, startPage = 1) {
   await updateSyncState(db, "products", account, { status: "running", error_message: null });
   let pagina = 1;
   let totalPaginas = 1;
