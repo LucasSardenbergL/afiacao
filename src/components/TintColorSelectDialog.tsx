@@ -187,8 +187,9 @@ export function TintColorSelectDialog({ product, open, onClose, onConfirm, custo
     },
   });
 
-  // Use CSV price as the main price
-  const precoCsv = selectedFormula?.preco_final_sayersystem ?? 0;
+  // Use CSV price rounded up to the nearest R$0.10
+  const rawCsv = selectedFormula?.preco_final_sayersystem ?? 0;
+  const precoCsv = rawCsv > 0 ? Math.ceil(rawCsv * 10) / 10 : 0;
   const custoCorantes = pricing?.custoCorantes || 0;
 
   // Price priority: last practiced > CSV > calculated fallback
