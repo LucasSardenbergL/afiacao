@@ -70,6 +70,7 @@ const unifiedNavSections: { title: string; items: NavItem[] }[] = [
   {
     title: 'Financeiro',
     items: [
+      { icon: Shield, label: 'Cockpit CFO', path: '/financeiro/cockpit', managerOnly: true },
       { icon: DollarSign, label: 'Painel Financeiro', path: '/financeiro', managerOnly: true },
       { icon: TrendingUp, label: 'Capital de Giro', path: '/financeiro/capital-giro', managerOnly: true },
       { icon: ClipboardList, label: 'Fechamento Mensal', path: '/financeiro/fechamento', managerOnly: true },
