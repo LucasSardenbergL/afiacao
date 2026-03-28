@@ -291,35 +291,6 @@ export function TintColorSelectDialog({ product, open, onClose, onConfirm, custo
                       <span className="text-primary">{fmt(precoFinal)}</span>
                     </div>
 
-                    {/* Reference prices */}
-                    <div className="text-[10px] uppercase font-semibold text-muted-foreground tracking-wider">Referências</div>
-
-                    {precoCsv > 0 && priceSource !== 'csv' && (
-                      <div className="flex justify-between text-xs">
-                        <span className="text-muted-foreground">Preço tabela CSV</span>
-                        <span>{fmt(precoCsv)}</span>
-                      </div>
-                    )}
-
-                    <div className="flex justify-between text-xs">
-                      <span className="text-muted-foreground">Preço base (Omie)</span>
-                      <span>{fmt(precoBase)}</span>
-                    </div>
-
-                    {loadingPricing ? (
-                      <Loader2 className="w-4 h-4 animate-spin mx-auto" />
-                    ) : pricing && pricing.itensCorantes.length > 0 ? (
-                      <>
-                        <div className="flex justify-between text-xs">
-                          <span className="text-muted-foreground">Custo corantes</span>
-                          <span>{fmt(custoCorantes)}</span>
-                        </div>
-                        <div className="flex justify-between text-xs">
-                          <span className="text-muted-foreground">Calculado (base + corantes)</span>
-                          <span>{fmt(precoCalculado)}</span>
-                        </div>
-                      </>
-                    ) : null}
                   </div>
 
                   <Button
