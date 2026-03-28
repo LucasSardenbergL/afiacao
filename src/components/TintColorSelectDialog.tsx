@@ -339,7 +339,7 @@ export function TintColorSelectDialog({ product, open, onClose, onConfirm, custo
                               className="w-full flex items-center justify-between gap-2 p-2 rounded-md border border-border hover:border-primary/50 hover:bg-primary/5 transition-all text-xs group"
                             >
                               <div className="flex-1 text-left min-w-0">
-                                <p className="font-medium truncate group-hover:text-primary transition-colors">
+                                <p className="font-medium group-hover:text-primary transition-colors break-words whitespace-normal">
                                   {alt.productDescricao}
                                 </p>
                                 <p className="text-[10px] text-muted-foreground font-mono">{alt.productCodigo}</p>
