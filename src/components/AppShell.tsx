@@ -116,7 +116,7 @@ const docNavSection: { title: string; items: NavItem[] } = {
 function AppSidebar({ collapsed, onToggle }: { collapsed: boolean; onToggle: () => void }) {
   const location = useLocation();
   const navigate = useNavigate();
-  const { isAdmin } = useUserRole();
+  const { isStaff } = useUserRole();
 
   const isActive = (path: string) => {
     if (path === '/') return location.pathname === '/';
@@ -158,7 +158,7 @@ function AppSidebar({ collapsed, onToggle }: { collapsed: boolean; onToggle: () 
       {/* Navigation */}
       <nav className="flex-1 overflow-y-auto py-2 no-scrollbar">
         {[...unifiedNavSections, docNavSection].map((section) => {
-          const visibleItems = section.items.filter(item => !item.managerOnly || isAdmin);
+          const visibleItems = section.items.filter(item => !item.managerOnly || isStaff);
           if (visibleItems.length === 0) return null;
 
           return (
@@ -295,7 +295,7 @@ function AppTopbar({ sidebarCollapsed, onMobileMenuToggle }: { sidebarCollapsed:
 function MobileNav({ open, onClose }: { open: boolean; onClose: () => void }) {
   const location = useLocation();
   const navigate = useNavigate();
-  const { isAdmin } = useUserRole();
+  const { isStaff } = useUserRole();
 
   if (!open) return null;
 
@@ -314,7 +314,7 @@ function MobileNav({ open, onClose }: { open: boolean; onClose: () => void }) {
         </div>
         <nav className="py-2 overflow-y-auto">
           {[...unifiedNavSections, docNavSection].map((section) => {
-            const visibleItems = section.items.filter(item => !item.managerOnly || isAdmin);
+            const visibleItems = section.items.filter(item => !item.managerOnly || isStaff);
             if (visibleItems.length === 0) return null;
             return (
               <div key={section.title} className="mb-1">
