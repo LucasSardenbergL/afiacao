@@ -9,6 +9,10 @@ const corsHeaders = {
 
 const OMIE_API_URL = "https://app.omie.com.br/api/v1";
 
+// Observability counters (reset per invocation)
+let apiCallCount = 0;
+let rateLimitHits = 0;
+
 type Company = "oben" | "colacor" | "colacor_sc";
 
 function getCredentials(company: Company) {
@@ -55,6 +59,7 @@ async function callOmie(
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(body),
     });
+    apiCallCount++;
     const result = await res.json();
 
     if (result.faultstring) {
@@ -65,6 +70,7 @@ async function callOmie(
         fs.includes("REDUNDANT") ||
         fs.includes("consumo redundante");
       if (isRateLimit && attempt < maxRetries) {
+        rateLimitHits++;
         const waitMatch = fs.match(/Aguarde (\d+) segundos/);
         const requestedDelay = waitMatch ? parseInt(waitMatch[1]) : (attempt + 1) * 5;
         const delay = Math.min(requestedDelay + 2, 15) * 1000;
@@ -805,6 +811,7 @@ async function validateCaller(
 }
 
 // ═══════════════ SYNC LOG ═══════════════
+
 async function logSync(
   db: ReturnType<typeof createClient>,
   action: string,
@@ -829,7 +836,8 @@ async function completeSync(
   db: ReturnType<typeof createClient>,
   logId: string,
   results: any,
-  errorMsg?: string
+  errorMsg?: string,
+  startTime?: number
 ) {
   if (!logId) return;
   await db
@@ -839,6 +847,10 @@ async function completeSync(
       results: results || {},
       error_message: errorMsg || null,
       completed_at: new Date().toISOString(),
+      duracao_ms: startTime ? Date.now() - startTime : null,
+      api_calls: apiCallCount,
+      rate_limits_hit: rateLimitHits,
+      entidades_por_empresa: results || {},
     })
     .eq("id", logId);
 }
@@ -870,6 +882,9 @@ serve(async (req) => {
     const targetCompanies: Company[] = companies || (company ? [company] : ["oben", "colacor", "colacor_sc"]);
 
     // Log inicio (Ponto 11)
+    const startTime = Date.now();
+    apiCallCount = 0;
+    rateLimitHits = 0;
     const logId = await logSync(supabase, action, targetCompanies, auth.userId || "unknown");
 
     let result: any = {};
@@ -991,7 +1006,7 @@ serve(async (req) => {
       }
 
       default:
-        await completeSync(supabase, logId, null, `Ação desconhecida: ${action}`);
+        await completeSync(supabase, logId, null, `Ação desconhecida: ${action}`, startTime);
         return new Response(
           JSON.stringify({
             error: `Ação desconhecida: ${action}`,
@@ -1006,7 +1021,7 @@ serve(async (req) => {
     }
 
     // Log sucesso (Ponto 11)
-    await completeSync(supabase, logId, result);
+    await completeSync(supabase, logId, result, undefined, startTime);
 
     return new Response(JSON.stringify({ success: true, action, ...result }), {
       headers: { ...corsHeaders, "Content-Type": "application/json" },

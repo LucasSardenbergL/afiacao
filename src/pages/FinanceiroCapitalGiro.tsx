@@ -373,6 +373,17 @@ const FinanceiroCapitalGiro = () => {
               </CardContent>
             </Card>
           )}
+
+          {/* Stress Test */}
+          {active && (
+            <StressTest
+              saldoCC={active.saldo_cc}
+              entradas30={active.entradas_30d}
+              saidas30={active.saidas_30d}
+              totalCR={active.total_cr_aberto}
+              pmr={active.pmr}
+            />
+          )}
         </>
       )}
     </div>
@@ -419,6 +430,78 @@ function WaterfallBar({ label, value, max, color }: {
       <span className="text-[10px] text-muted-foreground text-center">{label}</span>
       <span className="text-xs font-bold">{fmtCompact(value)}</span>
     </div>
+  );
+}
+
+function StressTest({ saldoCC, entradas30, saidas30, totalCR, pmr }: {
+  saldoCC: number; entradas30: number; saidas30: number; totalCR: number; pmr: number;
+}) {
+  const scenarios = [
+    { label: 'Base', delayDays: 0, defaultPct: 0, desc: 'Cenário atual sem alterações' },
+    { label: 'Atraso 15d', delayDays: 15, defaultPct: 0, desc: 'Clientes atrasam 15 dias em média' },
+    { label: 'Atraso 30d', delayDays: 30, defaultPct: 0, desc: 'Clientes atrasam 30 dias em média' },
+    { label: '10% inadimplência', delayDays: 0, defaultPct: 10, desc: '10% dos recebíveis viram perda' },
+    { label: '25% inadimplência', delayDays: 0, defaultPct: 25, desc: '25% dos recebíveis viram perda' },
+    { label: 'Combinado severo', delayDays: 30, defaultPct: 15, desc: 'Atraso 30d + 15% inadimplência' },
+  ];
+
+  return (
+    <Card>
+      <CardHeader className="pb-3">
+        <CardTitle className="text-base flex items-center gap-2">
+          <AlertTriangle className="w-4 h-4" />
+          Teste de Estresse — Sensibilidade do Caixa
+        </CardTitle>
+      </CardHeader>
+      <CardContent>
+        <Table>
+          <TableHeader>
+            <TableRow>
+              <TableHead className="min-w-[150px]">Cenário</TableHead>
+              <TableHead className="text-right">Entradas Ajust.</TableHead>
+              <TableHead className="text-right">Saldo 30d</TableHead>
+              <TableHead className="text-right">Impacto</TableHead>
+              <TableHead className="w-20">Risco</TableHead>
+            </TableRow>
+          </TableHeader>
+          <TableBody>
+            {scenarios.map(s => {
+              // Se delay > 0, parte das entradas dos próx 30d escorrega pra fora
+              const pctDelayed = s.delayDays > 0
+                ? Math.min(s.delayDays / Math.max(pmr + s.delayDays, 1), 0.8)
+                : 0;
+              const entradasAjust = entradas30 * (1 - pctDelayed) * (1 - s.defaultPct / 100);
+              const saldo = saldoCC + entradasAjust - saidas30;
+              const impacto = saldo - (saldoCC + entradas30 - saidas30);
+              const risco = saldo < 0 ? 'Crítico' : saldo < saldoCC * 0.3 ? 'Alto' : saldo < saldoCC * 0.6 ? 'Médio' : 'Baixo';
+              const riskColor = risco === 'Crítico' ? 'text-red-700 bg-red-100'
+                : risco === 'Alto' ? 'text-red-600 bg-red-50'
+                : risco === 'Médio' ? 'text-amber-600 bg-amber-50'
+                : 'text-emerald-600 bg-emerald-50';
+
+              return (
+                <TableRow key={s.label} className={saldo < 0 ? 'bg-red-50/50' : ''}>
+                  <TableCell>
+                    <p className="text-sm font-medium">{s.label}</p>
+                    <p className="text-[10px] text-muted-foreground">{s.desc}</p>
+                  </TableCell>
+                  <TableCell className="text-right text-sm">{fmtCompact(entradasAjust)}</TableCell>
+                  <TableCell className={`text-right text-sm font-bold ${saldo >= 0 ? 'text-emerald-600' : 'text-red-600'}`}>
+                    {fmtCompact(saldo)}
+                  </TableCell>
+                  <TableCell className={`text-right text-sm ${impacto < 0 ? 'text-red-600' : ''}`}>
+                    {fmtCompact(impacto)}
+                  </TableCell>
+                  <TableCell>
+                    <Badge className={`text-[10px] ${riskColor}`}>{risco}</Badge>
+                  </TableCell>
+                </TableRow>
+              );
+            })}
+          </TableBody>
+        </Table>
+      </CardContent>
+    </Card>
   );
 }
 
