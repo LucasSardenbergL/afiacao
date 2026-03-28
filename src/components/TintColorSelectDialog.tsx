@@ -196,7 +196,8 @@ export function TintColorSelectDialog({ product, open, onClose, onConfirm, custo
   // Price priority: last practiced > CSV > calculated fallback
   const precoBase = product.valor_unitario;
   const precoCalculado = precoBase + custoCorantes;
-  const precoFinal = lastPracticedPrice?.price ?? (precoCsv > 0 ? precoCsv : precoCalculado);
+  const precoSemDesconto = lastPracticedPrice?.price ?? (precoCsv > 0 ? precoCsv : precoCalculado);
+  const precoFinal = discountPct > 0 ? Math.round(precoSemDesconto * (1 - discountPct / 100) * 100) / 100 : precoSemDesconto;
 
   const priceSource = lastPracticedPrice
     ? 'cliente'
