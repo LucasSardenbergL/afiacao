@@ -82,6 +82,8 @@ const FinanceiroDashboard = lazy(() => import("./pages/FinanceiroDashboard"));
 const FinanceiroSync = lazy(() => import("./pages/FinanceiroSync"));
 const FinanceiroMapping = lazy(() => import("./pages/FinanceiroMapping"));
 const FinanceiroCapitalGiro = lazy(() => import("./pages/FinanceiroCapitalGiro"));
+const FinanceiroFechamento = lazy(() => import("./pages/FinanceiroFechamento"));
+const FinanceiroAnalytics = lazy(() => import("./pages/FinanceiroAnalytics"));
 
 const PageLoader = () => (
   <div className="flex flex-col gap-4 p-6">
@@ -177,6 +179,8 @@ const App = () => (
               <Route path="financeiro/sync" element={<FinanceiroSync />} />
               <Route path="financeiro/mapping" element={<FinanceiroMapping />} />
               <Route path="financeiro/capital-giro" element={<FinanceiroCapitalGiro />} />
+              <Route path="financeiro/fechamento" element={<FinanceiroFechamento />} />
+              <Route path="financeiro/analytics" element={<FinanceiroAnalytics />} />
             </Route>
 
             <Route path="*" element={<NotFound />} />

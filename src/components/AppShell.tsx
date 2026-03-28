@@ -72,8 +72,10 @@ const unifiedNavSections: { title: string; items: NavItem[] }[] = [
     items: [
       { icon: DollarSign, label: 'Painel Financeiro', path: '/financeiro', managerOnly: true },
       { icon: TrendingUp, label: 'Capital de Giro', path: '/financeiro/capital-giro', managerOnly: true },
-      { icon: BarChart3, label: 'Sincronização', path: '/financeiro/sync', managerOnly: true },
+      { icon: ClipboardList, label: 'Fechamento Mensal', path: '/financeiro/fechamento', managerOnly: true },
+      { icon: BarChart3, label: 'Exploração Analítica', path: '/financeiro/analytics', managerOnly: true },
       { icon: Layers, label: 'Mapeamento DRE', path: '/financeiro/mapping', managerOnly: true },
+      { icon: Settings, label: 'Sincronização', path: '/financeiro/sync', managerOnly: true },
     ],
   },
   {
