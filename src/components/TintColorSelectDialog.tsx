@@ -341,37 +341,54 @@ export function TintColorSelectDialog({ product, open, onClose, onConfirm, custo
                       </div>
                       <div className="space-y-1.5">
                         {alternatives.map(alt => {
-                          const altPrice = alt.precoFinalCsv && alt.precoFinalCsv > 0
+                          const altBasePrice = alt.precoFinalCsv && alt.precoFinalCsv > 0
                             ? alt.precoFinalCsv
                             : alt.product.valor_unitario + custoCorantes;
+                          const altDisc = altDiscounts[alt.formulaId] || 0;
+                          const altPrice = altDisc > 0 ? Math.round(altBasePrice * (1 - altDisc / 100) * 100) / 100 : altBasePrice;
                           return (
-                            <button
-                              key={alt.formulaId}
-                              onClick={() => onConfirm(
-                                alt.formulaId,
-                                selectedFormula.cor_id,
-                                selectedFormula.nome_cor,
-                                altPrice,
-                                custoCorantes,
-                                alt.product,
-                              )}
-                              className="w-full flex items-center justify-between gap-2 p-2 rounded-md border border-border hover:border-primary/50 hover:bg-primary/5 transition-all text-xs group"
-                            >
-                              <div className="flex-1 text-left min-w-0">
-                                <p className="font-medium group-hover:text-primary transition-colors break-words whitespace-normal">
-                                  {alt.productDescricao}
-                                </p>
-                                <p className="text-[10px] text-muted-foreground font-mono">{alt.productCodigo}</p>
-                              </div>
-                              <div className="text-right shrink-0">
-                                <span className="font-bold text-primary">{fmt(altPrice)}</span>
-                                {alt.precoFinalCsv && alt.precoFinalCsv > 0 ? (
-                                  <Badge variant="secondary" className="text-[8px] px-1 py-0 ml-1">CSV</Badge>
-                                ) : (
-                                  <Badge variant="outline" className="text-[8px] px-1 py-0 ml-1">Calc.</Badge>
+                            <div key={alt.formulaId} className="rounded-md border border-border hover:border-primary/50 transition-all text-xs group">
+                              <button
+                                onClick={() => onConfirm(
+                                  alt.formulaId,
+                                  selectedFormula.cor_id,
+                                  selectedFormula.nome_cor,
+                                  altPrice,
+                                  custoCorantes,
+                                  alt.product,
                                 )}
+                                className="w-full flex items-center justify-between gap-2 p-2 hover:bg-primary/5"
+                              >
+                                <div className="flex-1 text-left min-w-0">
+                                  <p className="font-medium group-hover:text-primary transition-colors break-words whitespace-normal">
+                                    {alt.productDescricao}
+                                  </p>
+                                  <p className="text-[10px] text-muted-foreground font-mono">{alt.productCodigo}</p>
+                                </div>
+                                <div className="text-right shrink-0">
+                                  <span className="font-bold text-primary">{fmt(altPrice)}</span>
+                                  {altDisc > 0 && <span className="text-[10px] text-muted-foreground line-through ml-1">{fmt(altBasePrice)}</span>}
+                                  {alt.precoFinalCsv && alt.precoFinalCsv > 0 ? (
+                                    <Badge variant="secondary" className="text-[8px] px-1 py-0 ml-1">CSV</Badge>
+                                  ) : (
+                                    <Badge variant="outline" className="text-[8px] px-1 py-0 ml-1">Calc.</Badge>
+                                  )}
+                                </div>
+                              </button>
+                              <div className="flex items-center gap-2 px-2 pb-2" onClick={(e) => e.stopPropagation()}>
+                                <label className="text-[10px] text-muted-foreground whitespace-nowrap">Desconto %</label>
+                                <Input
+                                  type="number"
+                                  min={0}
+                                  max={100}
+                                  step={1}
+                                  value={altDisc || ''}
+                                  onChange={(e) => setAltDiscounts(prev => ({ ...prev, [alt.formulaId]: Math.min(100, Math.max(0, Number(e.target.value) || 0)) }))}
+                                  className="h-6 w-16 text-[10px] text-right"
+                                  placeholder="0"
+                                />
                               </div>
-                            </button>
+                            </div>
                           );
                         })}
                       </div>
