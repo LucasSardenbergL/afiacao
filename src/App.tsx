@@ -78,6 +78,10 @@ const TintMapping = lazy(() => import("./pages/TintMapping"));
 const TintPricing = lazy(() => import("./pages/TintPricing"));
 const TintFormulas = lazy(() => import("./pages/TintFormulas"));
 const TintCorantes = lazy(() => import("./pages/TintCorantes"));
+const FinanceiroDashboard = lazy(() => import("./pages/FinanceiroDashboard"));
+const FinanceiroSync = lazy(() => import("./pages/FinanceiroSync"));
+const FinanceiroMapping = lazy(() => import("./pages/FinanceiroMapping"));
+const FinanceiroCapitalGiro = lazy(() => import("./pages/FinanceiroCapitalGiro"));
 
 const PageLoader = () => (
   <div className="flex flex-col gap-4 p-6">
@@ -169,6 +173,10 @@ const App = () => (
               <Route path="tintometrico/precos" element={<TintPricing />} />
               <Route path="tintometrico/formulas" element={<TintFormulas />} />
               <Route path="tintometrico/corantes" element={<TintCorantes />} />
+              <Route path="financeiro" element={<FinanceiroDashboard />} />
+              <Route path="financeiro/sync" element={<FinanceiroSync />} />
+              <Route path="financeiro/mapping" element={<FinanceiroMapping />} />
+              <Route path="financeiro/capital-giro" element={<FinanceiroCapitalGiro />} />
             </Route>
 
             <Route path="*" element={<NotFound />} />

@@ -1,0 +1,878 @@
+import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
+import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
+
+const corsHeaders = {
+  "Access-Control-Allow-Origin": "*",
+  "Access-Control-Allow-Headers":
+    "authorization, x-client-info, apikey, content-type, x-supabase-client-platform, x-supabase-client-platform-version, x-supabase-client-runtime, x-supabase-client-runtime-version",
+};
+
+const OMIE_API_URL = "https://app.omie.com.br/api/v1";
+
+type Company = "oben" | "colacor" | "colacor_sc";
+
+function getCredentials(company: Company) {
+  switch (company) {
+    case "oben":
+      return {
+        key: Deno.env.get("OMIE_VENDAS_APP_KEY"),
+        secret: Deno.env.get("OMIE_VENDAS_APP_SECRET"),
+      };
+    case "colacor":
+      return {
+        key: Deno.env.get("OMIE_COLACOR_VENDAS_APP_KEY"),
+        secret: Deno.env.get("OMIE_COLACOR_VENDAS_APP_SECRET"),
+      };
+    case "colacor_sc":
+      return {
+        key: Deno.env.get("OMIE_COLACOR_SC_APP_KEY"),
+        secret: Deno.env.get("OMIE_COLACOR_SC_APP_SECRET"),
+      };
+  }
+}
+
+async function callOmie(
+  company: Company,
+  endpoint: string,
+  call: string,
+  params: Record<string, unknown>
+) {
+  const creds = getCredentials(company);
+  if (!creds.key || !creds.secret)
+    throw new Error(`Credenciais Omie (${company}) não configuradas`);
+
+  const body = {
+    call,
+    app_key: creds.key,
+    app_secret: creds.secret,
+    param: [params],
+  };
+
+  const maxRetries = 3;
+  for (let attempt = 0; attempt <= maxRetries; attempt++) {
+    const res = await fetch(`${OMIE_API_URL}/${endpoint}`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    });
+    const result = await res.json();
+
+    if (result.faultstring) {
+      const fs = String(result.faultstring);
+      const isRateLimit =
+        fs.includes("Já existe uma requisição desse método") ||
+        fs.includes("Consumo redundante") ||
+        fs.includes("REDUNDANT") ||
+        fs.includes("consumo redundante");
+      if (isRateLimit && attempt < maxRetries) {
+        const waitMatch = fs.match(/Aguarde (\d+) segundos/);
+        const requestedDelay = waitMatch ? parseInt(waitMatch[1]) : (attempt + 1) * 5;
+        const delay = Math.min(requestedDelay + 2, 15) * 1000;
+        console.log(`[Fin][${company}] Rate limit, waiting ${delay / 1000}s`);
+        await new Promise((r) => setTimeout(r, delay));
+        continue;
+      }
+      throw new Error(`Omie (${company}): ${fs}`);
+    }
+    return result;
+  }
+  return null;
+}
+
+// ═══════════════ SYNC CATEGORIAS ═══════════════
+async function syncCategorias(
+  db: ReturnType<typeof createClient>,
+  company: Company
+) {
+  let pagina = 1;
+  let totalPaginas = 1;
+  let totalSynced = 0;
+
+  while (pagina <= totalPaginas) {
+    const result = (await callOmie(
+      company,
+      "geral/categorias/",
+      "ListarCategorias",
+      { pagina, registros_por_pagina: 500 }
+    )) as any;
+    if (!result) break;
+
+    totalPaginas = result.total_de_paginas || 1;
+    const categorias = result.categoria_cadastro || [];
+
+    const rows = categorias.map((c: any) => ({
+      company,
+      omie_codigo: c.codigo,
+      descricao: c.descricao,
+      tipo: c.tipo_categoria === "R" ? "R" : c.tipo_categoria === "D" ? "D" : "T",
+      conta_pai: c.codigo_conta_pai || null,
+      nivel: c.nivel || 1,
+      totalizadora: c.conta_totalizadora === "S",
+      ativo: c.conta_inativa !== "S",
+      updated_at: new Date().toISOString(),
+    }));
+
+    if (rows.length > 0) {
+      const { error } = await db
+        .from("fin_categorias")
+        .upsert(rows, { onConflict: "company,omie_codigo" });
+      if (error) console.error(`[Fin][${company}] Erro categorias:`, error.message);
+      else totalSynced += rows.length;
+    }
+
+    console.log(`[Fin][${company}] Categorias p${pagina}/${totalPaginas}`);
+    pagina++;
+  }
+  return { totalSynced };
+}
+
+// ═══════════════ SYNC CONTAS CORRENTES ═══════════════
+async function syncContasCorrentes(
+  db: ReturnType<typeof createClient>,
+  company: Company
+) {
+  let pagina = 1;
+  let totalPaginas = 1;
+  let totalSynced = 0;
+
+  while (pagina <= totalPaginas) {
+    const result = (await callOmie(
+      company,
+      "financas/contacorrente/",
+      "ListarContasCorrentes",
+      { pagina, registros_por_pagina: 50 }
+    )) as any;
+    if (!result) break;
+
+    totalPaginas = result.nTotPaginas || 1;
+    const contas = result.ListarContasCorrentes || result.conta_corrente_lista || [];
+
+    const rows = contas.map((c: any) => ({
+      company,
+      omie_ncodcc: c.nCodCC,
+      descricao: c.cDescricao || c.descricao,
+      banco: c.cNomeBanco || c.banco,
+      agencia: c.cAgencia || c.agencia,
+      numero_conta: c.cNumeroConta || c.numero_conta,
+      tipo: c.cTipo || c.tipo || "CC",
+      ativo: c.cInativa !== "S",
+      updated_at: new Date().toISOString(),
+    }));
+
+    if (rows.length > 0) {
+      const { error } = await db
+        .from("fin_contas_correntes")
+        .upsert(rows, { onConflict: "company,omie_ncodcc" });
+      if (error)
+        console.error(`[Fin][${company}] Erro contas correntes:`, error.message);
+      else totalSynced += rows.length;
+    }
+
+    pagina++;
+  }
+  return { totalSynced };
+}
+
+// ═══════════════ SYNC CONTAS A PAGAR ═══════════════
+async function syncContasPagar(
+  db: ReturnType<typeof createClient>,
+  company: Company,
+  filtroDataDe?: string,
+  filtroDataAte?: string,
+  maxPages = 50
+) {
+  let pagina = 1;
+  let totalPaginas = 1;
+  let totalSynced = 0;
+  let pagesProcessed = 0;
+
+  while (pagina <= totalPaginas && pagesProcessed < maxPages) {
+    const params: Record<string, unknown> = {
+      pagina,
+      registros_por_pagina: 100,
+    };
+    if (filtroDataDe) params.dDtEmissaoDe = filtroDataDe;
+    if (filtroDataAte) params.dDtEmissaoAte = filtroDataAte;
+
+    const result = (await callOmie(
+      company,
+      "financas/contapagar/",
+      "ListarContasPagar",
+      params
+    )) as any;
+    if (!result) break;
+
+    totalPaginas = result.total_de_paginas || 1;
+    const titulos =
+      result.conta_pagar_cadastro || result.titulosEncontrados || [];
+
+    const rows = titulos.map((t: any) => {
+      const statusMap: Record<string, string> = {
+        LIQUIDADO: "PAGO",
+        CANCELADO: "CANCELADO",
+        RECEBIDO: "PAGO",
+      };
+
+      let status = t.status_titulo || "ABERTO";
+      if (statusMap[status]) status = statusMap[status];
+
+      // Verifica vencido
+      if (
+        status === "ABERTO" &&
+        t.data_vencimento &&
+        new Date(t.data_vencimento.split("/").reverse().join("-")) <
+          new Date()
+      ) {
+        status = "VENCIDO";
+      }
+
+      return {
+        company,
+        omie_codigo_lancamento:
+          t.codigo_lancamento_omie || t.nCodTitulo || t.codigo_lancamento,
+        omie_codigo_cliente_fornecedor:
+          t.codigo_cliente_fornecedor_integracao
+            ? null
+            : t.codigo_cliente_fornecedor || null,
+        nome_fornecedor: t.nome_cliente_fornecedor || t.nome_fornecedor || "",
+        cnpj_cpf: (t.cnpj_cpf || "").replace(/\D/g, ""),
+        numero_documento: t.numero_documento || t.cNumDocumento || "",
+        numero_documento_fiscal: t.numero_documento_fiscal || null,
+        data_emissao: parseOmieDate(t.data_emissao || t.dDtEmissao),
+        data_vencimento: parseOmieDate(t.data_vencimento || t.dDtVenc),
+        data_pagamento: parseOmieDate(t.data_pagamento || t.dDtPagamento),
+        data_previsao: parseOmieDate(t.data_previsao || t.dDtPreworst),
+        valor_documento: t.valor_documento || t.nValorTitulo || 0,
+        valor_pago: t.valor_pago || t.nValorPago || 0,
+        valor_desconto: t.valor_desconto || 0,
+        valor_juros: t.valor_juros || 0,
+        valor_multa: t.valor_multa || 0,
+        status_titulo: status,
+        categoria_codigo: t.codigo_categoria || t.cCodCateg || "",
+        categoria_descricao: t.descricao_categoria || "",
+        departamento: t.departamento || null,
+        centro_custo: t.centro_custo || null,
+        observacao: t.observacao || null,
+        omie_ncodcc: t.nCodCC || null,
+        codigo_barras: t.codigo_barras || null,
+        tipo_documento: t.tipo_documento || null,
+        id_origem: t.id_origem || null,
+        metadata: {
+          codigo_cliente_fornecedor_integracao:
+            t.codigo_cliente_fornecedor_integracao,
+          parcela: t.parcela,
+          total_parcelas: t.total_parcelas,
+          baixa_obs: t.baixa_obs,
+        },
+        updated_at: new Date().toISOString(),
+      };
+    });
+
+    if (rows.length > 0) {
+      const { error } = await db
+        .from("fin_contas_pagar")
+        .upsert(rows, { onConflict: "company,omie_codigo_lancamento" });
+      if (error)
+        console.error(
+          `[Fin][${company}] Erro CP p${pagina}:`,
+          error.message
+        );
+      else totalSynced += rows.length;
+    }
+
+    console.log(`[Fin][${company}] CP p${pagina}/${totalPaginas} (+${rows.length})`);
+    pagina++;
+    pagesProcessed++;
+  }
+
+  return {
+    totalSynced,
+    complete: pagina > totalPaginas,
+    nextPage: pagina > totalPaginas ? null : pagina,
+  };
+}
+
+// ═══════════════ SYNC CONTAS A RECEBER ═══════════════
+async function syncContasReceber(
+  db: ReturnType<typeof createClient>,
+  company: Company,
+  filtroDataDe?: string,
+  filtroDataAte?: string,
+  maxPages = 50
+) {
+  let pagina = 1;
+  let totalPaginas = 1;
+  let totalSynced = 0;
+  let pagesProcessed = 0;
+
+  while (pagina <= totalPaginas && pagesProcessed < maxPages) {
+    const params: Record<string, unknown> = {
+      pagina,
+      registros_por_pagina: 100,
+    };
+    if (filtroDataDe) params.dDtEmissaoDe = filtroDataDe;
+    if (filtroDataAte) params.dDtEmissaoAte = filtroDataAte;
+
+    const result = (await callOmie(
+      company,
+      "financas/contareceber/",
+      "ListarContasReceber",
+      params
+    )) as any;
+    if (!result) break;
+
+    totalPaginas = result.total_de_paginas || 1;
+    const titulos =
+      result.conta_receber_cadastro || result.titulosEncontrados || [];
+
+    const rows = titulos.map((t: any) => {
+      let status = t.status_titulo || "ABERTO";
+      if (status === "LIQUIDADO") status = "RECEBIDO";
+      if (
+        status === "ABERTO" &&
+        t.data_vencimento &&
+        new Date(t.data_vencimento.split("/").reverse().join("-")) <
+          new Date()
+      ) {
+        status = "VENCIDO";
+      }
+
+      return {
+        company,
+        omie_codigo_lancamento:
+          t.codigo_lancamento_omie || t.nCodTitulo || t.codigo_lancamento,
+        omie_codigo_cliente: t.codigo_cliente_fornecedor || null,
+        nome_cliente: t.nome_cliente_fornecedor || t.nome_cliente || "",
+        cnpj_cpf: (t.cnpj_cpf || "").replace(/\D/g, ""),
+        numero_documento: t.numero_documento || "",
+        numero_documento_fiscal: t.numero_documento_fiscal || null,
+        numero_pedido: t.numero_pedido || null,
+        data_emissao: parseOmieDate(t.data_emissao || t.dDtEmissao),
+        data_vencimento: parseOmieDate(t.data_vencimento || t.dDtVenc),
+        data_recebimento: parseOmieDate(t.data_recebimento || t.dDtPagamento),
+        data_previsao: parseOmieDate(t.data_previsao),
+        valor_documento: t.valor_documento || t.nValorTitulo || 0,
+        valor_recebido: t.valor_recebido || t.nValorPago || 0,
+        valor_desconto: t.valor_desconto || 0,
+        valor_juros: t.valor_juros || 0,
+        valor_multa: t.valor_multa || 0,
+        status_titulo: status,
+        categoria_codigo: t.codigo_categoria || t.cCodCateg || "",
+        categoria_descricao: t.descricao_categoria || "",
+        departamento: t.departamento || null,
+        centro_custo: t.centro_custo || null,
+        observacao: t.observacao || null,
+        omie_ncodcc: t.nCodCC || null,
+        vendedor_id: t.nCodVend || null,
+        tipo_documento: t.tipo_documento || null,
+        id_origem: t.id_origem || null,
+        metadata: {
+          codigo_cliente_fornecedor_integracao:
+            t.codigo_cliente_fornecedor_integracao,
+          parcela: t.parcela,
+          total_parcelas: t.total_parcelas,
+        },
+        updated_at: new Date().toISOString(),
+      };
+    });
+
+    if (rows.length > 0) {
+      const { error } = await db
+        .from("fin_contas_receber")
+        .upsert(rows, { onConflict: "company,omie_codigo_lancamento" });
+      if (error)
+        console.error(
+          `[Fin][${company}] Erro CR p${pagina}:`,
+          error.message
+        );
+      else totalSynced += rows.length;
+    }
+
+    console.log(`[Fin][${company}] CR p${pagina}/${totalPaginas} (+${rows.length})`);
+    pagina++;
+    pagesProcessed++;
+  }
+
+  return {
+    totalSynced,
+    complete: pagina > totalPaginas,
+    nextPage: pagina > totalPaginas ? null : pagina,
+  };
+}
+
+// ═══════════════ SYNC MOVIMENTAÇÕES FINANCEIRAS ═══════════════
+async function syncMovimentacoes(
+  db: ReturnType<typeof createClient>,
+  company: Company,
+  filtroDataDe?: string,
+  filtroDataAte?: string,
+  maxPages = 50
+) {
+  let pagina = 1;
+  let totalPaginas = 1;
+  let totalSynced = 0;
+  let pagesProcessed = 0;
+
+  while (pagina <= totalPaginas && pagesProcessed < maxPages) {
+    const params: Record<string, unknown> = {
+      nPagina: pagina,
+      nRegPorPagina: 100,
+    };
+    if (filtroDataDe) params.dDtMovDe = filtroDataDe;
+    if (filtroDataAte) params.dDtMovAte = filtroDataAte;
+
+    const result = (await callOmie(
+      company,
+      "financas/mf/",
+      "ListarMovimentos",
+      params
+    )) as any;
+    if (!result) break;
+
+    totalPaginas = result.nTotPaginas || 1;
+    const movs = result.movimentos || [];
+
+    const rows = movs.map((m: any) => ({
+      company,
+      omie_ncodmov: m.nCodMov || m.codigo_movimento,
+      omie_ncodcc: m.nCodCC || m.conta_corrente,
+      data_movimento: parseOmieDate(m.dDtMov || m.data_movimento),
+      tipo: (m.cNatureza || m.natureza || "").toUpperCase().startsWith("E")
+        ? "E"
+        : "S",
+      valor: Math.abs(m.nValMov || m.valor || 0),
+      descricao: m.cDescMov || m.descricao || "",
+      categoria_codigo: m.cCodCateg || m.categoria || "",
+      categoria_descricao: m.cDescCateg || "",
+      conciliado: m.cConciliado === "S" || m.conciliado === true,
+      omie_codigo_lancamento: m.nCodTitulo || null,
+      natureza: m.cOrigem || null,
+      metadata: {
+        observacao: m.cObs,
+        lote: m.nCodLote,
+        tipo_lancamento: m.cTipoLanc,
+      },
+      updated_at: new Date().toISOString(),
+    }));
+
+    if (rows.length > 0) {
+      const { error } = await db
+        .from("fin_movimentacoes")
+        .upsert(rows, { onConflict: "company,omie_ncodmov" });
+      if (error)
+        console.error(
+          `[Fin][${company}] Erro mov p${pagina}:`,
+          error.message
+        );
+      else totalSynced += rows.length;
+    }
+
+    console.log(`[Fin][${company}] Mov p${pagina}/${totalPaginas} (+${rows.length})`);
+    pagina++;
+    pagesProcessed++;
+  }
+
+  return { totalSynced, complete: pagina > totalPaginas };
+}
+
+// ═══════════════ CALCULAR DRE SNAPSHOT ═══════════════
+async function calcularDRE(
+  db: ReturnType<typeof createClient>,
+  company: Company,
+  ano: number,
+  mes: number
+) {
+  const inicioMes = `${ano}-${String(mes).padStart(2, "0")}-01`;
+  const fimMes =
+    mes === 12
+      ? `${ano + 1}-01-01`
+      : `${ano}-${String(mes + 1).padStart(2, "0")}-01`;
+
+  // Receitas (contas a receber pagas no período)
+  const { data: receitas } = await db
+    .from("fin_contas_receber")
+    .select("valor_recebido, categoria_codigo, categoria_descricao")
+    .eq("company", company)
+    .gte("data_recebimento", inicioMes)
+    .lt("data_recebimento", fimMes)
+    .in("status_titulo", ["RECEBIDO", "PARCIAL", "LIQUIDADO"]);
+
+  // Despesas (contas a pagar pagas no período)
+  const { data: despesas } = await db
+    .from("fin_contas_pagar")
+    .select("valor_pago, categoria_codigo, categoria_descricao")
+    .eq("company", company)
+    .gte("data_pagamento", inicioMes)
+    .lt("data_pagamento", fimMes)
+    .in("status_titulo", ["PAGO", "PARCIAL", "LIQUIDADO"]);
+
+  // Buscar mapeamento configurável: empresa-específico tem prioridade sobre _default
+  const { data: mappings } = await db
+    .from("fin_categoria_dre_mapping")
+    .select("omie_codigo, dre_linha, company")
+    .in("company", [company, "_default"]);
+
+  // Montar mapa de categorias → linha DRE (empresa-específico ganha)
+  const catToDre = new Map<string, string>();
+  for (const m of (mappings || []).sort((a: any, b: any) =>
+    a.company === "_default" ? -1 : 1
+  )) {
+    catToDre.set(m.omie_codigo, m.dre_linha);
+  }
+
+  // Função de lookup que tenta match exato, depois prefix match
+  function resolveCategoria(cod: string, desc: string, isReceita: boolean): string {
+    // 1. Match exato
+    if (catToDre.has(cod)) return catToDre.get(cod)!;
+    // 2. Prefix match (ex: "1.01.02.003" → tenta "1.01.02", depois "1.01")
+    const parts = cod.split(".");
+    for (let i = parts.length - 1; i >= 2; i--) {
+      const prefix = parts.slice(0, i).join(".");
+      if (catToDre.has(prefix)) return catToDre.get(prefix)!;
+    }
+    // 3. Heurística por descrição (fallback)
+    const upper = (desc + cod).toUpperCase();
+    if (isReceita) {
+      if (upper.includes("DEVOL") || upper.includes("CANCEL")) return "deducoes";
+      if (upper.includes("FINANC") || upper.includes("REND") || upper.includes("JUROS REC")) return "receitas_financeiras";
+      return "receita_bruta";
+    } else {
+      if (upper.includes("CMV") || upper.includes("CUSTO MERC") || upper.includes("CUSTO PROD") || upper.includes("MATÉRIA") || upper.includes("MATERIA")) return "cmv";
+      if (upper.includes("DAS") || upper.includes("SIMPLES") || upper.includes("IRPJ") || upper.includes("CSLL") || upper.includes("PIS") || upper.includes("COFINS") || upper.includes("ISS") || upper.includes("ICMS") || upper.includes("IPI") || upper.includes("IMPOST") || upper.includes("TRIBUT")) return "impostos";
+      if (upper.includes("JUROS") || upper.includes("IOF") || upper.includes("TARIFA BANC") || upper.includes("DESC CONCED")) return "despesas_financeiras";
+      if (upper.includes("COMISS") || upper.includes("FRETE VEND") || upper.includes("MARKET") || upper.includes("PUBLICID") || upper.includes("PROPAGANDA") || upper.includes("VIAGEM") || upper.includes("REPRESENT")) return "despesas_comerciais";
+      if (upper.includes("ALUGUE") || upper.includes("CONDOM") || upper.includes("SALÁR") || upper.includes("FOLHA") || upper.includes("ENCARGO") || upper.includes("FGTS") || upper.includes("INSS PATR") || upper.includes("CONTAB") || upper.includes("CONSULTORI") || upper.includes("SOFTWARE") || upper.includes("TELEFO") || upper.includes("INTERNET") || upper.includes("ENERGIA") || upper.includes("ÁGUA")) return "despesas_administrativas";
+      return "despesas_operacionais";
+    }
+  }
+
+  // Classificar receitas
+  let receitaBruta = 0;
+  let deducoes = 0;
+  let receitasFinanceiras = 0;
+  let outrasReceitas = 0;
+  const detalheReceitas: Record<string, number> = {};
+  const categoriasNaoMapeadas: string[] = [];
+
+  for (const r of receitas || []) {
+    const val = r.valor_recebido || 0;
+    const cod = r.categoria_codigo || "";
+    const desc = r.categoria_descricao || cod || "Sem categoria";
+    detalheReceitas[desc] = (detalheReceitas[desc] || 0) + val;
+
+    const linha = resolveCategoria(cod, desc, true);
+    if (!catToDre.has(cod) && cod) categoriasNaoMapeadas.push(cod);
+
+    switch (linha) {
+      case "receita_bruta": receitaBruta += val; break;
+      case "deducoes": deducoes += val; break;
+      case "receitas_financeiras": receitasFinanceiras += val; break;
+      case "outras_receitas": outrasReceitas += val; break;
+      default: receitaBruta += val;
+    }
+  }
+
+  // Classificar despesas
+  let cmv = 0;
+  let despesasOperacionais = 0;
+  let despesasAdministrativas = 0;
+  let despesasComerciais = 0;
+  let despesasFinanceiras = 0;
+  let impostos = 0;
+  let outrasDespesas = 0;
+  const detalheDespesas: Record<string, number> = {};
+
+  for (const d of despesas || []) {
+    const val = d.valor_pago || 0;
+    const cod = d.categoria_codigo || "";
+    const desc = d.categoria_descricao || cod || "Sem categoria";
+    detalheDespesas[desc] = (detalheDespesas[desc] || 0) + val;
+
+    const linha = resolveCategoria(cod, desc, false);
+    if (!catToDre.has(cod) && cod) categoriasNaoMapeadas.push(cod);
+
+    switch (linha) {
+      case "cmv": cmv += val; break;
+      case "despesas_administrativas": despesasAdministrativas += val; break;
+      case "despesas_comerciais": despesasComerciais += val; break;
+      case "despesas_financeiras": despesasFinanceiras += val; break;
+      case "receitas_financeiras": receitasFinanceiras += val; break;
+      case "impostos": impostos += val; break;
+      case "outras_despesas": outrasDespesas += val; break;
+      default: despesasOperacionais += val;
+    }
+  }
+
+  const receitaLiquida = receitaBruta - deducoes;
+  const lucroBruto = receitaLiquida - cmv;
+  const totalDespesasOp =
+    despesasOperacionais +
+    despesasAdministrativas +
+    despesasComerciais;
+  const resultadoOperacional =
+    lucroBruto - totalDespesasOp + receitasFinanceiras - despesasFinanceiras;
+  const resultadoAntesImpostos =
+    resultadoOperacional + outrasReceitas - outrasDespesas;
+  const resultadoLiquido = resultadoAntesImpostos - impostos;
+
+  // Log categorias não mapeadas para facilitar configuração
+  const unique = [...new Set(categoriasNaoMapeadas)];
+  if (unique.length > 0) {
+    console.log(`[Fin][${company}] DRE ${mes}/${ano}: ${unique.length} categorias sem mapeamento explícito (heurística usada): ${unique.slice(0, 10).join(", ")}`);
+  }
+
+  const snapshot = {
+    company,
+    ano,
+    mes,
+    receita_bruta: receitaBruta,
+    deducoes,
+    receita_liquida: receitaLiquida,
+    cmv,
+    lucro_bruto: lucroBruto,
+    despesas_operacionais: despesasOperacionais,
+    despesas_administrativas: despesasAdministrativas,
+    despesas_comerciais: despesasComerciais,
+    despesas_financeiras: despesasFinanceiras,
+    receitas_financeiras: receitasFinanceiras,
+    resultado_operacional: resultadoOperacional,
+    outras_receitas: outrasReceitas,
+    outras_despesas: outrasDespesas,
+    resultado_antes_impostos: resultadoAntesImpostos,
+    impostos,
+    resultado_liquido: resultadoLiquido,
+    detalhamento: {
+      receitas: detalheReceitas,
+      despesas: detalheDespesas,
+      categorias_nao_mapeadas: unique,
+    },
+    calculated_at: new Date().toISOString(),
+  };
+
+  const { error } = await db
+    .from("fin_dre_snapshots")
+    .upsert(snapshot, { onConflict: "company,ano,mes" });
+  if (error) console.error(`[Fin][${company}] Erro DRE:`, error.message);
+
+  return snapshot;
+}
+
+// ═══════════════ RESUMO RÁPIDO (sem sync, direto do DB) ═══════════════
+async function getResumoFinanceiro(
+  db: ReturnType<typeof createClient>,
+  companies: Company[]
+) {
+  const resumo: Record<string, any> = {};
+
+  for (const company of companies) {
+    // Saldo total de contas correntes
+    const { data: contas } = await db
+      .from("fin_contas_correntes")
+      .select("descricao, saldo_atual, banco")
+      .eq("company", company)
+      .eq("ativo", true);
+
+    // Totais a receber em aberto
+    const { data: crAberto } = await db
+      .from("fin_contas_receber")
+      .select("saldo")
+      .eq("company", company)
+      .in("status_titulo", ["ABERTO", "VENCIDO", "PARCIAL"]);
+
+    // Totais a pagar em aberto
+    const { data: cpAberto } = await db
+      .from("fin_contas_pagar")
+      .select("saldo")
+      .eq("company", company)
+      .in("status_titulo", ["ABERTO", "VENCIDO", "PARCIAL"]);
+
+    // Vencidos a receber
+    const { data: crVencido } = await db
+      .from("fin_contas_receber")
+      .select("saldo")
+      .eq("company", company)
+      .eq("status_titulo", "VENCIDO");
+
+    // Vencidos a pagar
+    const { data: cpVencido } = await db
+      .from("fin_contas_pagar")
+      .select("saldo")
+      .eq("company", company)
+      .eq("status_titulo", "VENCIDO");
+
+    const sum = (arr: any[] | null) =>
+      (arr || []).reduce((s: number, r: any) => s + (r.saldo || 0), 0);
+
+    resumo[company] = {
+      contas_correntes: contas || [],
+      saldo_total_cc: (contas || []).reduce(
+        (s: number, c: any) => s + (c.saldo_atual || 0),
+        0
+      ),
+      total_a_receber: sum(crAberto),
+      total_a_pagar: sum(cpAberto),
+      total_vencido_receber: sum(crVencido),
+      total_vencido_pagar: sum(cpVencido),
+      posicao_liquida: sum(crAberto) - sum(cpAberto),
+    };
+  }
+
+  return resumo;
+}
+
+// ═══════════════ HELPERS ═══════════════
+function parseOmieDate(dateStr: string | null | undefined): string | null {
+  if (!dateStr) return null;
+  // Handle DD/MM/YYYY
+  if (dateStr.includes("/")) {
+    const [d, m, y] = dateStr.split("/");
+    if (d && m && y) return `${y}-${m.padStart(2, "0")}-${d.padStart(2, "0")}`;
+  }
+  // Handle YYYY-MM-DD
+  if (dateStr.match(/^\d{4}-\d{2}-\d{2}/)) return dateStr.substring(0, 10);
+  return null;
+}
+
+function formatOmieDate(d: Date): string {
+  return `${String(d.getDate()).padStart(2, "0")}/${String(
+    d.getMonth() + 1
+  ).padStart(2, "0")}/${d.getFullYear()}`;
+}
+
+// ═══════════════ HANDLER PRINCIPAL ═══════════════
+serve(async (req) => {
+  if (req.method === "OPTIONS") {
+    return new Response("ok", { headers: corsHeaders });
+  }
+
+  try {
+    const { action, company, companies, filtro_data_de, filtro_data_ate, ano, mes, maxPages } =
+      await req.json();
+
+    const supabase = createClient(
+      Deno.env.get("SUPABASE_URL")!,
+      Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!
+    );
+
+    const targetCompanies: Company[] = companies || (company ? [company] : ["oben", "colacor"]);
+
+    let result: any = {};
+
+    switch (action) {
+      case "sync_all": {
+        // Sync completo: categorias + CC + CP + CR
+        for (const co of targetCompanies) {
+          console.log(`[Fin] Sync completo ${co}...`);
+          const cats = await syncCategorias(supabase, co);
+          const ccs = await syncContasCorrentes(supabase, co);
+          
+          // Default: últimos 6 meses
+          const dataInicio =
+            filtro_data_de ||
+            formatOmieDate(
+              new Date(new Date().setMonth(new Date().getMonth() - 6))
+            );
+          const dataFim = filtro_data_ate || formatOmieDate(new Date());
+          
+          const cp = await syncContasPagar(supabase, co, dataInicio, dataFim, maxPages || 50);
+          const cr = await syncContasReceber(supabase, co, dataInicio, dataFim, maxPages || 50);
+
+          result[co] = { categorias: cats, contas_correntes: ccs, contas_pagar: cp, contas_receber: cr };
+        }
+        break;
+      }
+
+      case "sync_categorias": {
+        for (const co of targetCompanies) {
+          result[co] = await syncCategorias(supabase, co);
+        }
+        break;
+      }
+
+      case "sync_contas_correntes": {
+        for (const co of targetCompanies) {
+          result[co] = await syncContasCorrentes(supabase, co);
+        }
+        break;
+      }
+
+      case "sync_contas_pagar": {
+        const dataInicio =
+          filtro_data_de ||
+          formatOmieDate(new Date(new Date().setMonth(new Date().getMonth() - 6)));
+        const dataFim = filtro_data_ate || formatOmieDate(new Date());
+        for (const co of targetCompanies) {
+          result[co] = await syncContasPagar(supabase, co, dataInicio, dataFim, maxPages);
+        }
+        break;
+      }
+
+      case "sync_contas_receber": {
+        const dataInicio =
+          filtro_data_de ||
+          formatOmieDate(new Date(new Date().setMonth(new Date().getMonth() - 6)));
+        const dataFim = filtro_data_ate || formatOmieDate(new Date());
+        for (const co of targetCompanies) {
+          result[co] = await syncContasReceber(supabase, co, dataInicio, dataFim, maxPages);
+        }
+        break;
+      }
+
+      case "sync_movimentacoes": {
+        const dataInicio =
+          filtro_data_de ||
+          formatOmieDate(new Date(new Date().setMonth(new Date().getMonth() - 3)));
+        const dataFim = filtro_data_ate || formatOmieDate(new Date());
+        for (const co of targetCompanies) {
+          result[co] = await syncMovimentacoes(supabase, co, dataInicio, dataFim, maxPages);
+        }
+        break;
+      }
+
+      case "calcular_dre": {
+        const targetAno = ano || new Date().getFullYear();
+        const targetMes = mes || new Date().getMonth() + 1;
+        for (const co of targetCompanies) {
+          result[co] = await calcularDRE(supabase, co, targetAno, targetMes);
+        }
+        break;
+      }
+
+      case "resumo": {
+        result = await getResumoFinanceiro(supabase, targetCompanies);
+        break;
+      }
+
+      default:
+        return new Response(
+          JSON.stringify({
+            error: `Ação desconhecida: ${action}`,
+            acoes_disponiveis: [
+              "sync_all",
+              "sync_categorias",
+              "sync_contas_correntes",
+              "sync_contas_pagar",
+              "sync_contas_receber",
+              "sync_movimentacoes",
+              "calcular_dre",
+              "resumo",
+            ],
+          }),
+          { status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+        );
+    }
+
+    return new Response(JSON.stringify({ success: true, action, ...result }), {
+      headers: { ...corsHeaders, "Content-Type": "application/json" },
+    });
+  } catch (error) {
+    console.error("[Fin] Erro:", error);
+    return new Response(
+      JSON.stringify({ success: false, error: String(error) }),
+      {
+        status: 500,
+        headers: { ...corsHeaders, "Content-Type": "application/json" },
+      }
+    );
+  }
+});

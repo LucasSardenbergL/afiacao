@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
-import { BookOpen, Lock, Calculator, FileText, Palette, Beaker, FileUp, Droplets, LayoutDashboard, Users, ShoppingCart, Phone, GraduationCap, BarChart3, Settings, ChevronLeft, ChevronRight, Search, Bell, User, LogOut, Package, TrendingUp, Headphones, Target, Menu, X, ClipboardList, PlusCircle, Shield, Wrench, Award, Scissors } from 'lucide-react';
+import { BookOpen, Lock, Calculator, FileText, Palette, Beaker, FileUp, Droplets, LayoutDashboard, Users, ShoppingCart, Phone, GraduationCap, BarChart3, Settings, ChevronLeft, ChevronRight, Search, Bell, User, LogOut, Package, TrendingUp, Headphones, Target, Menu, X, ClipboardList, PlusCircle, Shield, Wrench, Award, Scissors, DollarSign, Layers } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { useAuth } from '@/contexts/AuthContext';
 import { useUserRole } from '@/hooks/useUserRole';
@@ -67,6 +67,15 @@ const unifiedNavSections: { title: string; items: NavItem[] }[] = [
     items: [
       { icon: BarChart3, label: 'Dashboard Intel', path: '/intelligence' },
       { icon: Target, label: 'AI Ops', path: '/ai-ops' },
+    ],
+  },
+  {
+    title: 'Financeiro',
+    items: [
+      { icon: DollarSign, label: 'Painel Financeiro', path: '/financeiro', managerOnly: true },
+      { icon: TrendingUp, label: 'Capital de Giro', path: '/financeiro/capital-giro', managerOnly: true },
+      { icon: BarChart3, label: 'Sincronização', path: '/financeiro/sync', managerOnly: true },
+      { icon: Layers, label: 'Mapeamento DRE', path: '/financeiro/mapping', managerOnly: true },
     ],
   },
   {
