@@ -156,7 +156,7 @@ function AppSidebar({ collapsed, onToggle }: { collapsed: boolean; onToggle: () 
       </div>
 
       {/* Navigation */}
-      <nav className="flex-1 overflow-y-auto py-2 no-scrollbar">
+      <nav className="flex-1 overflow-y-auto py-2 scrollbar-thin scrollbar-thumb-sidebar-border scrollbar-track-transparent">
         {[...unifiedNavSections, docNavSection].map((section) => {
           const visibleItems = section.items.filter(item => !item.managerOnly || isStaff);
           if (visibleItems.length === 0) return null;
