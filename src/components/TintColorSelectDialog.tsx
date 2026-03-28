@@ -179,7 +179,7 @@ export function TintColorSelectDialog({ product, open, onClose, onConfirm, custo
           omieProductId: sku.omie_product_id,
           productDescricao: prod.descricao,
           productCodigo: prod.codigo,
-          precoFinalCsv: af.preco_final_sayersystem,
+          precoFinalCsv: af.preco_final_sayersystem ? Math.ceil(af.preco_final_sayersystem * 10) / 10 : af.preco_final_sayersystem,
           product: prod as Product,
         });
       }
