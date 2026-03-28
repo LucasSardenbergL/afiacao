@@ -39,7 +39,6 @@ const unifiedNavSections: { title: string; items: NavItem[] }[] = [
   {
     title: 'Afiação',
     items: [
-      
       { icon: Wrench, label: 'Ferramentas', path: '/tools' },
       { icon: Award, label: 'Gamificação', path: '/gamification' },
     ],
@@ -49,7 +48,6 @@ const unifiedNavSections: { title: string; items: NavItem[] }[] = [
     items: [
       { icon: ShoppingCart, label: 'Pedidos', path: '/sales' },
       { icon: PlusCircle, label: 'Novo Pedido', path: '/sales/new' },
-      
       { icon: TrendingUp, label: 'Recomendações', path: '/farmer/recommendations' },
       { icon: Target, label: 'Bundles', path: '/farmer/bundles' },
     ],
@@ -126,7 +124,7 @@ function AppSidebar({ collapsed, onToggle }: { collapsed: boolean; onToggle: () 
   return (
     <aside
       className={cn(
-        'fixed left-0 top-0 bottom-0 z-40 flex flex-col bg-sidebar border-r border-sidebar-border transition-all duration-200',
+        'fixed left-0 top-0 bottom-0 z-40 flex flex-col overflow-hidden bg-sidebar border-r border-sidebar-border transition-all duration-200',
         collapsed ? 'w-sidebar-collapsed' : 'w-sidebar'
       )}
     >
@@ -156,7 +154,7 @@ function AppSidebar({ collapsed, onToggle }: { collapsed: boolean; onToggle: () 
       </div>
 
       {/* Navigation */}
-      <nav className="flex-1 overflow-y-auto py-2 scrollbar-thin scrollbar-thumb-sidebar-border scrollbar-track-transparent">
+      <nav className="flex-1 min-h-0 overflow-y-auto py-2">
         {[...unifiedNavSections, docNavSection].map((section) => {
           const visibleItems = section.items.filter(item => !item.managerOnly || isStaff);
           if (visibleItems.length === 0) return null;
@@ -302,7 +300,7 @@ function MobileNav({ open, onClose }: { open: boolean; onClose: () => void }) {
   return (
     <>
       <div className="fixed inset-0 z-50 bg-black/50 lg:hidden" onClick={onClose} />
-      <div className="fixed left-0 top-0 bottom-0 z-50 w-64 bg-sidebar border-r border-sidebar-border lg:hidden animate-slide-in-right">
+      <div className="fixed left-0 top-0 bottom-0 z-50 flex w-64 flex-col overflow-hidden bg-sidebar border-r border-sidebar-border lg:hidden animate-slide-in-right">
         <div className="flex items-center justify-between h-topbar border-b border-sidebar-border px-3">
           <div className="flex items-center gap-2">
             <Scissors className="w-5 h-5 text-primary" />
@@ -312,7 +310,7 @@ function MobileNav({ open, onClose }: { open: boolean; onClose: () => void }) {
             <X className="w-4 h-4" />
           </button>
         </div>
-        <nav className="py-2 overflow-y-auto">
+        <nav className="flex-1 min-h-0 overflow-y-auto py-2">
           {[...unifiedNavSections, docNavSection].map((section) => {
             const visibleItems = section.items.filter(item => !item.managerOnly || isStaff);
             if (visibleItems.length === 0) return null;
