@@ -314,7 +314,7 @@ function MobileNav({ open, onClose }: { open: boolean; onClose: () => void }) {
         </div>
         <nav className="py-2 overflow-y-auto">
           {[...unifiedNavSections, docNavSection].map((section) => {
-            const visibleItems = section.items.filter(item => !item.managerOnly || isAdmin);
+            const visibleItems = section.items.filter(item => !item.managerOnly || isStaff);
             if (visibleItems.length === 0) return null;
             return (
               <div key={section.title} className="mb-1">
