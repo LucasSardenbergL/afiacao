@@ -40,6 +40,7 @@ export function TintColorSelectDialog({ product, open, onClose, onConfirm, custo
   const [search, setSearch] = useState('');
   const [debouncedSearch, setDebouncedSearch] = useState('');
   const [selectedFormula, setSelectedFormula] = useState<FormulaResult | null>(null);
+  const [discountPct, setDiscountPct] = useState<number>(0);
 
   useEffect(() => {
     if (!open) {
