@@ -147,25 +147,45 @@ async function syncContasCorrentes(
     totalPaginas = result.nTotPaginas || 1;
     const contas = result.ListarContasCorrentes || result.conta_corrente_lista || [];
 
-    const rows = contas.map((c: any) => ({
-      company,
-      omie_ncodcc: c.nCodCC,
-      descricao: c.cDescricao || c.descricao,
-      banco: c.cNomeBanco || c.banco,
-      agencia: c.cAgencia || c.agencia,
-      numero_conta: c.cNumeroConta || c.numero_conta,
-      tipo: c.cTipo || c.tipo || "CC",
-      ativo: c.cInativa !== "S",
-      updated_at: new Date().toISOString(),
-    }));
+    for (const c of contas) {
+      // Buscar saldo real via ResumirContaCorrente
+      let saldoAtual = 0;
+      let saldoData: string | null = null;
+      try {
+        const saldoResult = (await callOmie(
+          company,
+          "financas/contacorrente/",
+          "ResumirContaCorrente",
+          { nCodCC: c.nCodCC }
+        )) as any;
+        if (saldoResult) {
+          saldoAtual = saldoResult.nSaldo ?? saldoResult.nSaldoAtual ?? 0;
+          saldoData = new Date().toISOString().split("T")[0];
+        }
+      } catch (e) {
+        console.log(`[Fin][${company}] Saldo CC ${c.nCodCC} falhou, usando 0: ${e}`);
+      }
 
-    if (rows.length > 0) {
+      const row = {
+        company,
+        omie_ncodcc: c.nCodCC,
+        descricao: c.cDescricao || c.descricao,
+        banco: c.cNomeBanco || c.banco,
+        agencia: c.cAgencia || c.agencia,
+        numero_conta: c.cNumeroConta || c.numero_conta,
+        tipo: c.cTipo || c.tipo || "CC",
+        saldo_atual: saldoAtual,
+        saldo_data: saldoData,
+        ativo: c.cInativa !== "S",
+        updated_at: new Date().toISOString(),
+      };
+
       const { error } = await db
         .from("fin_contas_correntes")
-        .upsert(rows, { onConflict: "company,omie_ncodcc" });
+        .upsert(row, { onConflict: "company,omie_ncodcc" });
       if (error)
-        console.error(`[Fin][${company}] Erro contas correntes:`, error.message);
-      else totalSynced += rows.length;
+        console.error(`[Fin][${company}] Erro CC ${c.nCodCC}:`, error.message);
+      else totalSynced++;
     }
 
     pagina++;
@@ -625,6 +645,7 @@ async function calcularDRE(
     company,
     ano,
     mes,
+    regime: "caixa", // Ponto 4: qualificar explicitamente
     receita_bruta: receitaBruta,
     deducoes,
     receita_liquida: receitaLiquida,
@@ -641,6 +662,7 @@ async function calcularDRE(
     resultado_antes_impostos: resultadoAntesImpostos,
     impostos,
     resultado_liquido: resultadoLiquido,
+    qtd_categorias_sem_mapeamento: unique.length, // Ponto 5
     detalhamento: {
       receitas: detalheReceitas,
       despesas: detalheDespesas,
@@ -739,45 +761,148 @@ function formatOmieDate(d: Date): string {
   ).padStart(2, "0")}/${d.getFullYear()}`;
 }
 
+// ═══════════════ AUTH HELPER ═══════════════
+async function validateCaller(
+  req: Request,
+  db: ReturnType<typeof createClient>
+): Promise<{ authorized: boolean; userId?: string; error?: string }> {
+  const authHeader = req.headers.get("authorization");
+  if (!authHeader?.startsWith("Bearer ")) {
+    return { authorized: false, error: "Token ausente" };
+  }
+  const token = authHeader.replace("Bearer ", "");
+
+  // Accept service_role key (for cron calls)
+  const serviceKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY");
+  if (token === serviceKey) {
+    return { authorized: true, userId: "service_role" };
+  }
+
+  // Validate JWT and check role
+  const anonClient = createClient(
+    Deno.env.get("SUPABASE_URL")!,
+    Deno.env.get("SUPABASE_ANON_KEY")!,
+    { global: { headers: { Authorization: `Bearer ${token}` } } }
+  );
+  const { data: { user }, error } = await anonClient.auth.getUser();
+  if (error || !user) {
+    return { authorized: false, error: "Token inválido" };
+  }
+
+  // Check admin/manager role
+  const { data: roles } = await db
+    .from("user_roles")
+    .select("role")
+    .eq("user_id", user.id)
+    .in("role", ["admin", "manager"])
+    .limit(1);
+
+  if (!roles || roles.length === 0) {
+    return { authorized: false, error: "Permissão negada: requer admin ou manager" };
+  }
+
+  return { authorized: true, userId: user.id };
+}
+
+// ═══════════════ SYNC LOG ═══════════════
+async function logSync(
+  db: ReturnType<typeof createClient>,
+  action: string,
+  companies: string[],
+  triggeredBy: string
+): Promise<string> {
+  const { data } = await db
+    .from("fin_sync_log")
+    .insert({
+      action,
+      companies,
+      status: "running",
+      triggered_by: triggeredBy,
+      started_at: new Date().toISOString(),
+    })
+    .select("id")
+    .single();
+  return data?.id || "";
+}
+
+async function completeSync(
+  db: ReturnType<typeof createClient>,
+  logId: string,
+  results: any,
+  errorMsg?: string
+) {
+  if (!logId) return;
+  await db
+    .from("fin_sync_log")
+    .update({
+      status: errorMsg ? "error" : "complete",
+      results: results || {},
+      error_message: errorMsg || null,
+      completed_at: new Date().toISOString(),
+    })
+    .eq("id", logId);
+}
+
 // ═══════════════ HANDLER PRINCIPAL ═══════════════
 serve(async (req) => {
   if (req.method === "OPTIONS") {
     return new Response("ok", { headers: corsHeaders });
   }
 
+  const supabase = createClient(
+    Deno.env.get("SUPABASE_URL")!,
+    Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!
+  );
+
   try {
-    const { action, company, companies, filtro_data_de, filtro_data_ate, ano, mes, maxPages } =
+    // Auth check (Ponto 6)
+    const auth = await validateCaller(req, supabase);
+    if (!auth.authorized) {
+      return new Response(
+        JSON.stringify({ success: false, error: auth.error }),
+        { status: 403, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+      );
+    }
+
+    const { action, company, companies, filtro_data_de, filtro_data_ate, ano, mes, meses, maxPages } =
       await req.json();
 
-    const supabase = createClient(
-      Deno.env.get("SUPABASE_URL")!,
-      Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!
-    );
+    const targetCompanies: Company[] = companies || (company ? [company] : ["oben", "colacor", "colacor_sc"]);
 
-    const targetCompanies: Company[] = companies || (company ? [company] : ["oben", "colacor"]);
+    // Log inicio (Ponto 11)
+    const logId = await logSync(supabase, action, targetCompanies, auth.userId || "unknown");
 
     let result: any = {};
 
     switch (action) {
       case "sync_all": {
-        // Sync completo: categorias + CC + CP + CR
+        // Ponto 2: inclui TODAS as entidades, incluindo movimentações
         for (const co of targetCompanies) {
           console.log(`[Fin] Sync completo ${co}...`);
           const cats = await syncCategorias(supabase, co);
           const ccs = await syncContasCorrentes(supabase, co);
           
-          // Default: últimos 6 meses
           const dataInicio =
             filtro_data_de ||
-            formatOmieDate(
-              new Date(new Date().setMonth(new Date().getMonth() - 6))
-            );
+            formatOmieDate(new Date(new Date().setMonth(new Date().getMonth() - 6)));
           const dataFim = filtro_data_ate || formatOmieDate(new Date());
           
           const cp = await syncContasPagar(supabase, co, dataInicio, dataFim, maxPages || 50);
           const cr = await syncContasReceber(supabase, co, dataInicio, dataFim, maxPages || 50);
 
-          result[co] = { categorias: cats, contas_correntes: ccs, contas_pagar: cp, contas_receber: cr };
+          // Movimentações: últimos 3 meses (mais recente, volume menor)
+          const dataInicioMov =
+            filtro_data_de ||
+            formatOmieDate(new Date(new Date().setMonth(new Date().getMonth() - 3)));
+          const mov = await syncMovimentacoes(supabase, co, dataInicioMov, dataFim, maxPages || 50);
+
+          result[co] = {
+            categorias: cats,
+            contas_correntes: ccs,
+            contas_pagar: cp,
+            contas_receber: cr,
+            movimentacoes: mov,
+          };
         }
         break;
       }
@@ -829,11 +954,33 @@ serve(async (req) => {
         break;
       }
 
+      // Ponto 8: contrato unificado — aceita `mes` (number) ou `meses` (number[])
       case "calcular_dre": {
         const targetAno = ano || new Date().getFullYear();
-        const targetMes = mes || new Date().getMonth() + 1;
+        const targetMeses: number[] = meses
+          ? meses
+          : mes
+            ? [mes]
+            : [new Date().getMonth() + 1];
+
         for (const co of targetCompanies) {
-          result[co] = await calcularDRE(supabase, co, targetAno, targetMes);
+          result[co] = {};
+          for (const m of targetMeses) {
+            result[co][`${m}`] = await calcularDRE(supabase, co, targetAno, m);
+          }
+        }
+        break;
+      }
+
+      // Ponto 8: calcular_dre_year = todos os meses até o mês atual
+      case "calcular_dre_year": {
+        const targetAno = ano || new Date().getFullYear();
+        const currentMonth = new Date().getFullYear() === targetAno ? new Date().getMonth() + 1 : 12;
+        for (const co of targetCompanies) {
+          result[co] = {};
+          for (let m = 1; m <= currentMonth; m++) {
+            result[co][`${m}`] = await calcularDRE(supabase, co, targetAno, m);
+          }
         }
         break;
       }
@@ -844,23 +991,22 @@ serve(async (req) => {
       }
 
       default:
+        await completeSync(supabase, logId, null, `Ação desconhecida: ${action}`);
         return new Response(
           JSON.stringify({
             error: `Ação desconhecida: ${action}`,
             acoes_disponiveis: [
-              "sync_all",
-              "sync_categorias",
-              "sync_contas_correntes",
-              "sync_contas_pagar",
-              "sync_contas_receber",
-              "sync_movimentacoes",
-              "calcular_dre",
-              "resumo",
+              "sync_all", "sync_categorias", "sync_contas_correntes",
+              "sync_contas_pagar", "sync_contas_receber", "sync_movimentacoes",
+              "calcular_dre", "calcular_dre_year", "resumo",
             ],
           }),
           { status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" } }
         );
     }
+
+    // Log sucesso (Ponto 11)
+    await completeSync(supabase, logId, result);
 
     return new Response(JSON.stringify({ success: true, action, ...result }), {
       headers: { ...corsHeaders, "Content-Type": "application/json" },

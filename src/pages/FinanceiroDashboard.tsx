@@ -993,26 +993,15 @@ function DRETab({ data, view, ano }: { data: any[]; view: FinanceiroView; ano: n
     );
   }
 
-  // Se consolidado, agrupar por mês somando empresas
-  const consolidated = new Map<number, any>();
-  for (const row of data) {
-    if (!consolidated.has(row.mes)) {
-      consolidated.set(row.mes, { ...row });
-    } else {
-      const c = consolidated.get(row.mes)!;
-      const numFields = [
-        'receita_bruta', 'deducoes', 'receita_liquida', 'cmv', 'lucro_bruto',
-        'despesas_operacionais', 'despesas_administrativas', 'despesas_comerciais',
-        'despesas_financeiras', 'receitas_financeiras', 'resultado_operacional',
-        'outras_receitas', 'outras_despesas', 'resultado_antes_impostos',
-        'impostos', 'resultado_liquido'
-      ];
-      for (const f of numFields) {
-        c[f] = (c[f] || 0) + (row[f] || 0);
-      }
-    }
-  }
-  const rows = Array.from(consolidated.values()).sort((a: any, b: any) => a.mes - b.mes);
+  // Data already comes consolidated from hook (dreConsolidado) — no re-consolidation needed
+  const rows = [...data].sort((a: any, b: any) => a.mes - b.mes);
+
+  // Ponto 5: check for unmapped categories
+  const totalUnmapped = rows.reduce((s: number, r: any) => s + (r.qtd_categorias_sem_mapeamento || 0), 0);
+  const unmappedCats = rows.flatMap((r: any) =>
+    r.detalhamento?.categorias_nao_mapeadas || []
+  );
+  const uniqueUnmapped = [...new Set(unmappedCats)];
 
   const meses = ['Jan', 'Fev', 'Mar', 'Abr', 'Mai', 'Jun', 'Jul', 'Ago', 'Set', 'Out', 'Nov', 'Dez'];
 
@@ -1033,13 +1022,34 @@ function DRETab({ data, view, ano }: { data: any[]; view: FinanceiroView; ano: n
   ];
 
   return (
-    <Card>
-      <CardHeader className="pb-3">
-        <CardTitle className="text-base">
-          DRE Gerencial — {ano}
-          {view === 'all' && <Badge variant="secondary" className="ml-2">Consolidado</Badge>}
-        </CardTitle>
-      </CardHeader>
+    <div className="space-y-3">
+      {/* Ponto 5: unmapped warning */}
+      {uniqueUnmapped.length > 0 && (
+        <div className="flex items-start gap-2 p-3 rounded-lg bg-amber-50 border border-amber-200">
+          <AlertTriangle className="w-4 h-4 text-amber-600 mt-0.5 shrink-0" />
+          <div>
+            <p className="text-sm font-medium text-amber-800">
+              {uniqueUnmapped.length} categoria(s) classificadas por heurística
+            </p>
+            <p className="text-xs text-amber-700 mt-1">
+              Estas categorias não têm mapeamento explícito — os valores podem estar em linhas incorretas.
+              Configure em <span className="font-medium">Mapeamento DRE</span>.
+            </p>
+            <p className="text-xs text-amber-600 mt-1 font-mono">
+              {uniqueUnmapped.slice(0, 8).join(', ')}{uniqueUnmapped.length > 8 ? ` (+${uniqueUnmapped.length - 8})` : ''}
+            </p>
+          </div>
+        </div>
+      )}
+
+      <Card>
+        <CardHeader className="pb-3">
+          <CardTitle className="text-base">
+            DRE Regime de Caixa — {ano}
+            {view === 'all' && <Badge variant="secondary" className="ml-2">Consolidado</Badge>}
+            <Badge variant="outline" className="ml-2 text-[10px]">Regime de Caixa</Badge>
+          </CardTitle>
+        </CardHeader>
       <CardContent className="p-0">
         <div className="overflow-x-auto">
           <Table>
@@ -1105,6 +1115,7 @@ function DRETab({ data, view, ano }: { data: any[]; view: FinanceiroView; ano: n
         </div>
       </CardContent>
     </Card>
+    </div>
   );
 }
 
