@@ -293,9 +293,24 @@ export function TintColorSelectDialog({ product, open, onClose, onConfirm, custo
                       <span className="text-primary">{fmt(precoFinal)}</span>
                     </div>
 
+                    {/* Discount field */}
+                    <div className="flex items-center gap-2 pt-1">
+                      <label className="text-xs text-muted-foreground whitespace-nowrap">Desconto %</label>
+                      <Input
+                        type="number"
+                        min={0}
+                        max={100}
+                        step={1}
+                        value={discountPct || ''}
+                        onChange={(e) => setDiscountPct(Math.min(100, Math.max(0, Number(e.target.value) || 0)))}
+                        className="h-7 w-20 text-xs text-right"
+                        placeholder="0"
+                      />
+                      {discountPct > 0 && (
+                        <span className="text-[10px] text-muted-foreground line-through">{fmt(precoSemDesconto)}</span>
+                      )}
+                    </div>
                   </div>
-
-                  <Button
                     className="w-full"
                     size="sm"
                     onClick={() => onConfirm(
