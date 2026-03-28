@@ -310,6 +310,7 @@ export function TintColorSelectDialog({ product, open, onClose, onConfirm, custo
                         <span className="text-[10px] text-muted-foreground line-through">{fmt(precoSemDesconto)}</span>
                       )}
                     </div>
+                  </div>
 
                   <Button
                     size="sm"
