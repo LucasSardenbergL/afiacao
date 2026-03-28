@@ -40,6 +40,7 @@ export function TintColorSelectDialog({ product, open, onClose, onConfirm, custo
   const [search, setSearch] = useState('');
   const [debouncedSearch, setDebouncedSearch] = useState('');
   const [selectedFormula, setSelectedFormula] = useState<FormulaResult | null>(null);
+  const [discountPct, setDiscountPct] = useState<number>(0);
 
   useEffect(() => {
     if (!open) {
@@ -195,7 +196,8 @@ export function TintColorSelectDialog({ product, open, onClose, onConfirm, custo
   // Price priority: last practiced > CSV > calculated fallback
   const precoBase = product.valor_unitario;
   const precoCalculado = precoBase + custoCorantes;
-  const precoFinal = lastPracticedPrice?.price ?? (precoCsv > 0 ? precoCsv : precoCalculado);
+  const precoSemDesconto = lastPracticedPrice?.price ?? (precoCsv > 0 ? precoCsv : precoCalculado);
+  const precoFinal = discountPct > 0 ? Math.round(precoSemDesconto * (1 - discountPct / 100) * 100) / 100 : precoSemDesconto;
 
   const priceSource = lastPracticedPrice
     ? 'cliente'
@@ -291,10 +293,26 @@ export function TintColorSelectDialog({ product, open, onClose, onConfirm, custo
                       <span className="text-primary">{fmt(precoFinal)}</span>
                     </div>
 
+                    {/* Discount field */}
+                    <div className="flex items-center gap-2 pt-1">
+                      <label className="text-xs text-muted-foreground whitespace-nowrap">Desconto %</label>
+                      <Input
+                        type="number"
+                        min={0}
+                        max={100}
+                        step={1}
+                        value={discountPct || ''}
+                        onChange={(e) => setDiscountPct(Math.min(100, Math.max(0, Number(e.target.value) || 0)))}
+                        className="h-7 w-20 text-xs text-right"
+                        placeholder="0"
+                      />
+                      {discountPct > 0 && (
+                        <span className="text-[10px] text-muted-foreground line-through">{fmt(precoSemDesconto)}</span>
+                      )}
+                    </div>
                   </div>
 
                   <Button
-                    className="w-full"
                     size="sm"
                     onClick={() => onConfirm(
                       selectedFormula.id,
