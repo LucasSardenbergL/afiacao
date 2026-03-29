@@ -5820,6 +5820,10 @@ export type Database = {
       refresh_customer_metrics: { Args: never; Returns: undefined }
       show_limit: { Args: never; Returns: number }
       show_trgm: { Args: { "": string }; Returns: string[] }
+      tint_run_reconciliation: {
+        Args: { p_sync_run_id: string }
+        Returns: Json
+      }
     }
     Enums: {
       app_role: "admin" | "employee" | "customer" | "master" | "manager"
