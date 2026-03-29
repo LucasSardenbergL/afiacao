@@ -1,0 +1,2 @@
+ALTER TABLE public.fin_contas_pagar DROP CONSTRAINT fin_contas_pagar_status_titulo_check;
+ALTER TABLE public.fin_contas_receber DROP CONSTRAINT fin_contas_receber_status_titulo_check;
