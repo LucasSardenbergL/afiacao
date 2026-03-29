@@ -150,7 +150,7 @@ async function syncContasCorrentes(
   while (pagina <= totalPaginas) {
     const result = (await callOmie(
       company,
-      "financas/contacorrente/",
+      "geral/contacorrente/",
       "ListarContasCorrentes",
       { pagina, registros_por_pagina: 50 }
     )) as any;
@@ -166,7 +166,7 @@ async function syncContasCorrentes(
       try {
         const saldoResult = (await callOmie(
           company,
-          "financas/contacorrente/",
+          "geral/contacorrente/",
           "ResumirContaCorrente",
           { nCodCC: c.nCodCC }
         )) as any;
@@ -181,14 +181,14 @@ async function syncContasCorrentes(
       const row = {
         company,
         omie_ncodcc: c.nCodCC,
-        descricao: c.cDescricao || c.descricao,
-        banco: c.cNomeBanco || c.banco,
-        agencia: c.cAgencia || c.agencia,
-        numero_conta: c.cNumeroConta || c.numero_conta,
-        tipo: c.cTipo || c.tipo || "CC",
+        descricao: c.descricao || c.cDescricao,
+        banco: c.codigo_banco || c.cNomeBanco || c.banco,
+        agencia: c.codigo_agencia || c.cAgencia || c.agencia,
+        numero_conta: c.numero_conta_corrente || c.cNumeroConta || c.numero_conta,
+        tipo: c.tipo_conta_corrente || c.tipo || c.cTipo || "CC",
         saldo_atual: saldoAtual,
         saldo_data: saldoData,
-        ativo: c.cInativa !== "S",
+        ativo: c.inativo !== "S" && c.cInativa !== "S",
         updated_at: new Date().toISOString(),
       };
 
@@ -1175,11 +1175,11 @@ serve(async (req) => {
       case "debug_raw": {
         const endpoints: Record<string, { endpoint: string; call: string; params: any }> = {
           categorias: { endpoint: "geral/categorias/", call: "ListarCategorias", params: { pagina: 1, registros_por_pagina: 2 } },
-          contas_correntes: { endpoint: "financas/contacorrente/", call: "ListarContasCorrentes", params: { pagina: 1, registros_por_pagina: 2 } },
+          contas_correntes: { endpoint: "geral/contacorrente/", call: "ListarContasCorrentes", params: { pagina: 1, registros_por_pagina: 2 } },
           contas_pagar: { endpoint: "financas/contapagar/", call: "ListarContasPagar", params: { pagina: 1, registros_por_pagina: 2 } },
           contas_receber: { endpoint: "financas/contareceber/", call: "ListarContasReceber", params: { pagina: 1, registros_por_pagina: 2 } },
           movimentacoes: { endpoint: "financas/mf/", call: "ListarMovimentos", params: { nPagina: 1, nRegPorPagina: 2 } },
-          resumir_cc: { endpoint: "financas/contacorrente/", call: "ResumirContaCorrente", params: { nCodCC: Number(ncodcc) || 0 } },
+          resumir_cc: { endpoint: "geral/contacorrente/", call: "ResumirContaCorrente", params: { nCodCC: Number(ncodcc) || 0 } },
         };
         const ep = endpoints[entidade || "contas_pagar"];
         if (!ep) {
