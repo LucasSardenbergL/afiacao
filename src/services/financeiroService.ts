@@ -369,7 +369,7 @@ export async function getFluxoCaixa(
   for (const cr of crData || []) {
     if (cr.data_vencimento) {
       const day = ensureDay(cr.data_vencimento);
-      if (['ABERTO', 'VENCIDO', 'PARCIAL'].includes(cr.status_titulo)) {
+      if (['A VENCER', 'ATRASADO', 'VENCE HOJE'].includes(cr.status_titulo)) {
         day.entradas_previstas += cr.valor_documento || 0;
       }
     }
@@ -382,7 +382,7 @@ export async function getFluxoCaixa(
   for (const cp of cpData || []) {
     if (cp.data_vencimento) {
       const day = ensureDay(cp.data_vencimento);
-      if (['ABERTO', 'VENCIDO', 'PARCIAL'].includes(cp.status_titulo)) {
+      if (['A VENCER', 'ATRASADO', 'VENCE HOJE'].includes(cp.status_titulo)) {
         day.saidas_previstas += cp.valor_documento || 0;
       }
     }
@@ -485,16 +485,16 @@ export async function getCapitalDeGiro(company: Company | 'all'): Promise<Capita
     // CR aberto
     const { data: crAberto } = await supabase
       .from("fin_contas_receber")
-      .select("saldo, data_emissao, data_vencimento, nome_cliente")
+      .select("valor_documento, valor_recebido, data_emissao, data_vencimento, nome_cliente")
       .eq("company", co)
-      .in("status_titulo", ["ABERTO", "VENCIDO", "PARCIAL"]) as any;
+      .in("status_titulo", ["A VENCER", "ATRASADO", "VENCE HOJE"]) as any;
 
     // CP aberto
     const { data: cpAberto } = await supabase
       .from("fin_contas_pagar")
-      .select("saldo, data_emissao, data_vencimento, nome_fornecedor")
+      .select("valor_documento, valor_pago, data_emissao, data_vencimento, nome_fornecedor")
       .eq("company", co)
-      .in("status_titulo", ["ABERTO", "VENCIDO", "PARCIAL"]) as any;
+      .in("status_titulo", ["A VENCER", "ATRASADO", "VENCE HOJE"]) as any;
 
     // Saldo CC
     const { data: ccs } = await supabase
