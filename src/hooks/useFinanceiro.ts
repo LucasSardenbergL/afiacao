@@ -225,6 +225,22 @@ export function useFinanceiro(defaultCompany: FinanceiroView = 'all') {
       const companies: Company[] = view === 'all'
         ? ['oben', 'colacor', 'colacor_sc']
         : [view as Company];
+
+      // Heavy sync actions: call one company at a time to avoid 150s timeout
+      const heavyActions = ['sync_contas_pagar', 'sync_contas_receber', 'sync_movimentacoes', 'sync_all'];
+      if (heavyActions.includes(action)) {
+        const allResults: Record<string, any> = {};
+        for (const co of companies) {
+          const result = await triggerFinanceiroSync(action, [co], options);
+          if (result?.results) {
+            Object.assign(allResults, result.results);
+          } else {
+            allResults[co] = result?.[co] || result;
+          }
+        }
+        return { results: allResults };
+      }
+
       const result = await triggerFinanceiroSync(action, companies, options);
       return result;
     } catch (e: any) {
