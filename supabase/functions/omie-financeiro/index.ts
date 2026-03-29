@@ -211,6 +211,7 @@ async function syncContasPagar(
   let totalPaginas = 1;
   let totalSynced = 0;
   let pagesProcessed = 0;
+  let consecutiveEmpty = 0;
 
   while (pagina <= totalPaginas && pagesProcessed < maxPages) {
     const params: Record<string, unknown> = {
@@ -310,7 +311,9 @@ async function syncContasPagar(
       else totalSynced += validRows.length;
     }
 
+    if (validRows.length === 0) { consecutiveEmpty++; } else { consecutiveEmpty = 0; }
     console.log(`[Fin][${company}] CP p${pagina}/${totalPaginas} (+${validRows.length})`);
+    if (consecutiveEmpty >= 10) { console.log(`[Fin][${company}] CP early exit: 10 empty pages`); break; }
     pagina++;
     pagesProcessed++;
   }
@@ -334,6 +337,7 @@ async function syncContasReceber(
   let totalPaginas = 1;
   let totalSynced = 0;
   let pagesProcessed = 0;
+  let consecutiveEmpty = 0;
 
   while (pagina <= totalPaginas && pagesProcessed < maxPages) {
     const params: Record<string, unknown> = {
@@ -421,7 +425,9 @@ async function syncContasReceber(
       else totalSynced += validRows.length;
     }
 
+    if (validRows.length === 0) { consecutiveEmpty++; } else { consecutiveEmpty = 0; }
     console.log(`[Fin][${company}] CR p${pagina}/${totalPaginas} (+${validRows.length})`);
+    if (consecutiveEmpty >= 10) { console.log(`[Fin][${company}] CR early exit: 10 empty pages`); break; }
     pagina++;
     pagesProcessed++;
   }
@@ -445,6 +451,7 @@ async function syncMovimentacoes(
   let totalPaginas = 1;
   let totalSynced = 0;
   let pagesProcessed = 0;
+  let consecutiveEmpty = 0;
 
   while (pagina <= totalPaginas && pagesProcessed < maxPages) {
     const params: Record<string, unknown> = {
@@ -501,7 +508,9 @@ async function syncMovimentacoes(
       else totalSynced += rows.length;
     }
 
+    if (rows.length === 0) { consecutiveEmpty++; } else { consecutiveEmpty = 0; }
     console.log(`[Fin][${company}] Mov p${pagina}/${totalPaginas} (+${rows.length})`);
+    if (consecutiveEmpty >= 10) { console.log(`[Fin][${company}] Mov early exit: 10 empty pages`); break; }
     pagina++;
     pagesProcessed++;
   }
