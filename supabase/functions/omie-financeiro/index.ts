@@ -1179,7 +1179,7 @@ serve(async (req) => {
           contas_pagar: { endpoint: "financas/contapagar/", call: "ListarContasPagar", params: { pagina: 1, registros_por_pagina: 2 } },
           contas_receber: { endpoint: "financas/contareceber/", call: "ListarContasReceber", params: { pagina: 1, registros_por_pagina: 2 } },
           movimentacoes: { endpoint: "financas/mf/", call: "ListarMovimentos", params: { nPagina: 1, nRegPorPagina: 2 } },
-          resumir_cc: { endpoint: "financas/contacorrente/", call: "ResumirContaCorrente", params: { nCodCC: Number(ncodcc) || 0 } },
+          resumir_cc: { endpoint: "geral/contacorrente/", call: "ResumirContaCorrente", params: { nCodCC: Number(ncodcc) || 0 } },
         };
         const ep = endpoints[entidade || "contas_pagar"];
         if (!ep) {
