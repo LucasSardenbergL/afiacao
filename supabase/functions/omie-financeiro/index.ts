@@ -804,16 +804,16 @@ async function validateCaller(
     return { authorized: false, error: "Token inválido" };
   }
 
-  // Check admin/manager role
+  // Check staff role (admin, manager, employee, master)
   const { data: roles } = await db
     .from("user_roles")
     .select("role")
     .eq("user_id", user.id)
-    .in("role", ["admin", "manager"])
+    .in("role", ["admin", "manager", "employee", "master"])
     .limit(1);
 
   if (!roles || roles.length === 0) {
-    return { authorized: false, error: "Permissão negada: requer admin ou manager" };
+    return { authorized: false, error: "Permissão negada: requer perfil de funcionário" };
   }
 
   return { authorized: true, userId: user.id };
