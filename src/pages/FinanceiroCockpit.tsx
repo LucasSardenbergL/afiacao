@@ -14,6 +14,7 @@ import {
   ShieldCheck, Shield, BarChart3, Target, Clock, Eye, Lock,
   CheckCircle2, Info, XCircle
 } from 'lucide-react';
+import { CockpitDrillDown, type DrillDownType } from '@/components/financeiro/CockpitDrillDown';
 
 const fmt = (v: number) => v.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' });
 const fmtCompact = (v: number) => {
@@ -74,6 +75,7 @@ const FinanceiroCockpit = () => {
   const [inadimplentes, setInadimplentes] = useState<any[]>([]);
   const [projecao13, setProjecao13] = useState<any[]>([]);
   const [confiabilidade, setConfiabilidade] = useState<any[]>([]);
+  const [drillDown, setDrillDown] = useState<DrillDownType>(null);
 
   const ano = new Date().getFullYear();
   const mes = new Date().getMonth() + 1;
@@ -203,6 +205,7 @@ const FinanceiroCockpit = () => {
           detail={`Risco de liquidez: ${riscoLabel} (${(riscoLiquidez * 100).toFixed(0)}%)`}
           detailColor={riscoColor}
           badge="Saldo bancário real"
+          onClick={() => setDrillDown('caixa')}
         />
         <CockpitCard
           title="Caixa Projetado 30d"
@@ -211,6 +214,7 @@ const FinanceiroCockpit = () => {
           icon={Target}
           detail={`+ ${fmtCompact(totalCR)} entradas / - ${fmtCompact(totalCP)} saídas`}
           badge="CR+CC-CP abertos"
+          onClick={() => setDrillDown('cr_aberto')}
         />
         <CockpitCard
           title="Necessidade de CG"
@@ -220,6 +224,7 @@ const FinanceiroCockpit = () => {
           detail={ncg >= 0 ? 'CR cobre CP — posição confortável' : 'CP excede CR — atenção ao caixa'}
           detailColor={ncg >= 0 ? 'text-emerald-600' : 'text-red-600'}
           badge="CR - CP"
+          onClick={() => setDrillDown('cr_aberto')}
         />
       </div>
 
@@ -231,10 +236,12 @@ const FinanceiroCockpit = () => {
           color={margemOp >= 10 ? 'text-emerald-600' : margemOp >= 0 ? 'text-amber-600' : 'text-red-600'} />
         <MiniCard label="Inadimplência" value={`${pctInadimplencia.toFixed(1)}%`}
           color={pctInadimplencia <= 10 ? 'text-emerald-600' : pctInadimplencia <= 25 ? 'text-amber-600' : 'text-red-600'}
-          subtitle={fmtCompact(totalVencidoCR)} />
+          subtitle={fmtCompact(totalVencidoCR)}
+          onClick={() => setDrillDown('inadimplencia')} />
         <MiniCard label="Aging Crítico (+60d)" value={`${pctCritico.toFixed(1)}%`}
           color={pctCritico <= 5 ? 'text-emerald-600' : pctCritico <= 15 ? 'text-amber-600' : 'text-red-600'}
-          subtitle={fmtCompact((aging?.vencido_61_90_valor || 0) + (aging?.vencido_90_plus_valor || 0))} />
+          subtitle={fmtCompact((aging?.vencido_61_90_valor || 0) + (aging?.vencido_90_plus_valor || 0))}
+          onClick={() => setDrillDown('aging_critico')} />
       </div>
 
       {/* Row 3: Resultado por empresa */}
@@ -379,18 +386,20 @@ const FinanceiroCockpit = () => {
         <p>Saldo bancário: consulta direta Omie (ResumirContaCorrente). CR/CP: títulos sincronizados (últimos 6 meses). DRE: regime de caixa (pagamento/recebimento efetivo). Projeção 13 semanas: baseada em vencimentos de títulos abertos.</p>
         <p>Para números de controller, verifique: % mapeado ≥ 80%, conciliação ≥ 70%, mês fechado.</p>
       </div>
+
+      <CockpitDrillDown type={drillDown} onClose={() => setDrillDown(null)} />
     </div>
   );
 };
 
 // ═══════════════ SUB-COMPONENTS ═══════════════
 
-function CockpitCard({ title, value, positive, icon: Icon, detail, detailColor, badge }: {
+function CockpitCard({ title, value, positive, icon: Icon, detail, detailColor, badge, onClick }: {
   title: string; value: string; positive: boolean; icon: any;
-  detail?: string; detailColor?: string; badge?: string;
+  detail?: string; detailColor?: string; badge?: string; onClick?: () => void;
 }) {
   return (
-    <Card>
+    <Card className={onClick ? 'cursor-pointer hover:shadow-md transition-shadow' : ''} onClick={onClick}>
       <CardContent className="p-5">
         <div className="flex items-start justify-between">
           <div>
@@ -412,11 +421,11 @@ function CockpitCard({ title, value, positive, icon: Icon, detail, detailColor, 
   );
 }
 
-function MiniCard({ label, value, color, subtitle }: {
-  label: string; value: string; color: string; subtitle?: string;
+function MiniCard({ label, value, color, subtitle, onClick }: {
+  label: string; value: string; color: string; subtitle?: string; onClick?: () => void;
 }) {
   return (
-    <div className="p-3 rounded-lg border bg-card text-center">
+    <div className={`p-3 rounded-lg border bg-card text-center ${onClick ? 'cursor-pointer hover:shadow-md transition-shadow' : ''}`} onClick={onClick}>
       <p className="text-[10px] text-muted-foreground font-medium uppercase">{label}</p>
       <p className={`text-xl font-bold mt-1 ${color}`}>{value}</p>
       {subtitle && <p className="text-xs text-muted-foreground mt-0.5">{subtitle}</p>}
