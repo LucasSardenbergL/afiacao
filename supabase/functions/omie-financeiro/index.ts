@@ -166,7 +166,7 @@ async function syncContasCorrentes(
       try {
         const saldoResult = (await callOmie(
           company,
-          "financas/contacorrente/",
+          "geral/contacorrente/",
           "ResumirContaCorrente",
           { nCodCC: c.nCodCC }
         )) as any;
@@ -1175,7 +1175,7 @@ serve(async (req) => {
       case "debug_raw": {
         const endpoints: Record<string, { endpoint: string; call: string; params: any }> = {
           categorias: { endpoint: "geral/categorias/", call: "ListarCategorias", params: { pagina: 1, registros_por_pagina: 2 } },
-          contas_correntes: { endpoint: "financas/contacorrente/", call: "ListarContasCorrentes", params: { pagina: 1, registros_por_pagina: 2 } },
+          contas_correntes: { endpoint: "geral/contacorrente/", call: "ListarContasCorrentes", params: { pagina: 1, registros_por_pagina: 2 } },
           contas_pagar: { endpoint: "financas/contapagar/", call: "ListarContasPagar", params: { pagina: 1, registros_por_pagina: 2 } },
           contas_receber: { endpoint: "financas/contareceber/", call: "ListarContasReceber", params: { pagina: 1, registros_por_pagina: 2 } },
           movimentacoes: { endpoint: "financas/mf/", call: "ListarMovimentos", params: { nPagina: 1, nRegPorPagina: 2 } },
