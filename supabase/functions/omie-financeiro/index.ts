@@ -664,22 +664,23 @@ async function calcularDRE(
       ? `${ano + 1}-01-01`
       : `${ano}-${String(mes + 1).padStart(2, "0")}-01`;
 
-  // Receitas (contas a receber pagas no período)
+  // Regime de competência: usa data_vencimento pois Omie não retorna data_pagamento/data_recebimento
+  // Receitas (contas a receber com vencimento no período e status pago/recebido)
   const { data: receitas } = await db
     .from("fin_contas_receber")
-    .select("valor_recebido, categoria_codigo, categoria_descricao")
+    .select("valor_documento, valor_recebido, categoria_codigo, categoria_descricao")
     .eq("company", company)
-    .gte("data_recebimento", inicioMes)
-    .lt("data_recebimento", fimMes)
+    .gte("data_vencimento", inicioMes)
+    .lt("data_vencimento", fimMes)
     .in("status_titulo", ["RECEBIDO", "PARCIAL", "LIQUIDADO"]);
 
-  // Despesas (contas a pagar pagas no período)
+  // Despesas (contas a pagar com vencimento no período e status pago)
   const { data: despesas } = await db
     .from("fin_contas_pagar")
-    .select("valor_pago, categoria_codigo, categoria_descricao")
+    .select("valor_documento, valor_pago, categoria_codigo, categoria_descricao")
     .eq("company", company)
-    .gte("data_pagamento", inicioMes)
-    .lt("data_pagamento", fimMes)
+    .gte("data_vencimento", inicioMes)
+    .lt("data_vencimento", fimMes)
     .in("status_titulo", ["PAGO", "PARCIAL", "LIQUIDADO"]);
 
   // Buscar mapeamento configurável: empresa-específico tem prioridade sobre _default
