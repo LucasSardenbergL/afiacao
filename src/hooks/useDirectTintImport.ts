@@ -4,7 +4,7 @@ import Papa from 'papaparse';
 
 const ACCOUNT = 'oben';
 const BATCH_SIZE = 200;
-const RPC_BATCH_SIZE = 2000;
+const RPC_BATCH_SIZE = 500;
 
 const isFormulaImportType = (tipo: string) =>
   tipo === 'formulas_padrao' || tipo === 'formulas_personalizadas';
