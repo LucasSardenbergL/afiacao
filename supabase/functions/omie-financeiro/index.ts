@@ -630,9 +630,9 @@ async function syncMovimentacoes(
       `[Fin][${company}] Mov p${pagina}/${totalPaginas} (+${uniqueRows.length}) empty_streak=${consecutiveEmptyPages}`
     );
 
-    // Only early exit after 50 consecutive empty pages (not 10) to handle sparse data
-    if (consecutiveEmptyPages >= 50) {
-      console.log(`[Fin][${company}] Mov early exit: 50 páginas vazias consecutivas`);
+    // Early exit after 30 consecutive empty pages
+    if (consecutiveEmptyPages >= 30) {
+      console.log(`[Fin][${company}] Mov early exit: 30 páginas vazias consecutivas`);
       break;
     }
 
