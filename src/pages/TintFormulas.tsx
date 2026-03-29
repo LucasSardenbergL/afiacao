@@ -133,7 +133,7 @@ export default function TintFormulas() {
               <Select value={produtoFilter} onValueChange={v => { setProdutoFilter(v); setBaseFilter(''); setPage(0); }}>
                 <SelectTrigger className="h-9 text-sm"><SelectValue placeholder="Produto" /></SelectTrigger>
                 <SelectContent>
-                  <SelectItem value="">Todos</SelectItem>
+                  <SelectItem value="__all__">Todos</SelectItem>
                   {(produtos ?? []).map(p => <SelectItem key={p.id} value={p.id}>{p.descricao}</SelectItem>)}
                 </SelectContent>
               </Select>
@@ -143,7 +143,7 @@ export default function TintFormulas() {
                 <Select value={baseFilter} onValueChange={v => { setBaseFilter(v); setPage(0); }}>
                   <SelectTrigger className="h-9 text-sm"><SelectValue placeholder="Base" /></SelectTrigger>
                   <SelectContent>
-                    <SelectItem value="">Todas</SelectItem>
+                    <SelectItem value="__all__">Todas</SelectItem>
                     {(bases ?? []).map((b: any) => <SelectItem key={b.id} value={b.id}>{b.descricao}</SelectItem>)}
                   </SelectContent>
                 </Select>
