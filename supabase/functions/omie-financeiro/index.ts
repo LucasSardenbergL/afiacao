@@ -452,6 +452,80 @@ async function syncContasReceber(
 }
 
 // ═══════════════ SYNC MOVIMENTAÇÕES FINANCEIRAS ═══════════════
+function buildSyntheticMovementId(company: Company, detalhes: Record<string, any>, resumo: Record<string, any>) {
+  const source = [
+    company,
+    detalhes.nCodTitulo ?? "",
+    detalhes.nCodCC ?? "",
+    detalhes.cGrupo ?? "",
+    detalhes.cNatureza ?? "",
+    detalhes.cOrigem ?? "",
+    detalhes.cStatus ?? "",
+    detalhes.cNumDocFiscal ?? "",
+    detalhes.cNumTitulo ?? "",
+    detalhes.cNumOS ?? "",
+    detalhes.cNumParcela ?? "",
+    detalhes.dDtPagamento ?? "",
+    detalhes.dDtRegistro ?? "",
+    detalhes.dDtPrevisao ?? "",
+    detalhes.dDtVenc ?? "",
+    detalhes.dDtEmissao ?? "",
+    detalhes.nValorTitulo ?? "",
+    resumo.nValPago ?? "",
+    resumo.nValLiquido ?? "",
+    resumo.nDesconto ?? "",
+    resumo.nJuros ?? "",
+    resumo.nMulta ?? "",
+  ].join("|");
+
+  let hash = 1469598103934665603n;
+  const prime = 1099511628211n;
+  const mask = (1n << 63n) - 1n;
+
+  for (const char of source) {
+    hash ^= BigInt(char.codePointAt(0) ?? 0);
+    hash = (hash * prime) & mask;
+  }
+
+  return hash.toString();
+}
+
+function resolveMovementDate(detalhes: Record<string, any>) {
+  return parseOmieDate(
+    detalhes.dDtPagamento ||
+      detalhes.dDtRegistro ||
+      detalhes.dDtPrevisao ||
+      detalhes.dDtVenc ||
+      detalhes.dDtEmissao
+  );
+}
+
+function resolveMovementType(detalhes: Record<string, any>) {
+  const natureza = String(detalhes.cNatureza || "").toUpperCase();
+  const grupo = String(detalhes.cGrupo || "").toUpperCase();
+
+  if (
+    natureza.startsWith("R") ||
+    natureza.startsWith("E") ||
+    grupo.includes("_REC") ||
+    grupo.includes("RECEBER")
+  ) {
+    return "E";
+  }
+
+  return "S";
+}
+
+function resolveMovementDescription(detalhes: Record<string, any>) {
+  const parts = [
+    detalhes.cGrupo,
+    detalhes.cNumDocFiscal || detalhes.cNumTitulo || detalhes.cNumOS,
+    detalhes.cStatus,
+  ].filter(Boolean);
+
+  return parts.join(" · ") || "Movimentação financeira";
+}
+
 async function syncMovimentacoes(
   db: ReturnType<typeof createClient>,
   company: Company,
@@ -459,77 +533,132 @@ async function syncMovimentacoes(
   filtroDataAte?: string,
   maxPages = 500
 ) {
+  const dataInicioIso = parseOmieDate(filtroDataDe) || null;
+  const dataFimIso = parseOmieDate(filtroDataAte) || null;
+
   let pagina = 1;
   let totalPaginas = 1;
   let totalSynced = 0;
   let pagesProcessed = 0;
-  let consecutiveEmpty = 0;
+  let consecutiveOldPages = 0;
 
-  while (pagina <= totalPaginas && pagesProcessed < maxPages && !isTimeBudgetExhausted()) {
-    const params: Record<string, unknown> = {
-      nPagina: pagina,
-      nRegPorPagina: 100,
-    };
-    // Omie mfListarRequest não aceita filtros de data
+  const firstPage = (await callOmie(
+    company,
+    "financas/mf/",
+    "ListarMovimentos",
+    { nPagina: 1, nRegPorPagina: 100 }
+  )) as any;
 
+  if (!firstPage) {
+    return { totalSynced: 0, complete: true, nextPage: null, timedOut: false };
+  }
+
+  totalPaginas = firstPage.nTotPaginas || 1;
+  pagina = totalPaginas;
+
+  while (pagina >= 1 && pagesProcessed < maxPages && !isTimeBudgetExhausted()) {
     const result = (await callOmie(
       company,
       "financas/mf/",
       "ListarMovimentos",
-      params
+      { nPagina: pagina, nRegPorPagina: 100 }
     )) as any;
     if (!result) break;
 
-    totalPaginas = result.nTotPaginas || 1;
     const movs = result.movimentos || [];
 
     const rows = movs
-      .filter((m: any) => m.nCodMov || m.codigo_movimento) // skip records without movement code
-      .map((m: any) => ({
-      company,
-      omie_ncodmov: m.nCodMov || m.codigo_movimento,
-      omie_ncodcc: m.nCodCC || m.conta_corrente,
-      data_movimento: parseOmieDate(m.dDtMov || m.data_movimento),
-      tipo: (m.cNatureza || m.natureza || "").toUpperCase().startsWith("E")
-        ? "E"
-        : "S",
-      valor: Math.abs(m.nValMov || m.valor || 0),
-      descricao: m.cDescMov || m.descricao || "",
-      categoria_codigo: m.cCodCateg || m.categoria || "",
-      categoria_descricao: m.cDescCateg || "",
-      conciliado: m.cConciliado === "S" || m.conciliado === true,
-      omie_codigo_lancamento: m.nCodTitulo || null,
-      natureza: m.cOrigem || null,
-      metadata: {
-        observacao: m.cObs,
-        lote: m.nCodLote,
-        tipo_lancamento: m.cTipoLanc,
-      },
-      updated_at: new Date().toISOString(),
-    }));
+      .map((mov: any) => {
+        const detalhes = mov?.detalhes || {};
+        const resumo = mov?.resumo || {};
+        const dataMovimento = resolveMovementDate(detalhes);
 
-    if (rows.length > 0) {
+        if (!dataMovimento) return null;
+
+        const valorBase =
+          resumo.nValPago ?? resumo.nValLiquido ?? detalhes.nValorTitulo ?? 0;
+        const codigoLancamento = Number(detalhes.nCodTitulo || 0);
+
+        return {
+          company,
+          omie_ncodmov: buildSyntheticMovementId(company, detalhes, resumo),
+          omie_ncodcc: detalhes.nCodCC || null,
+          data_movimento: dataMovimento,
+          tipo: resolveMovementType(detalhes),
+          valor: Math.abs(Number(valorBase) || 0),
+          descricao: resolveMovementDescription(detalhes),
+          categoria_codigo: detalhes.cCodCateg || "",
+          categoria_descricao: detalhes.cGrupo || "",
+          conciliado: false,
+          omie_codigo_lancamento: codigoLancamento > 0 ? codigoLancamento : null,
+          natureza: detalhes.cOrigem || null,
+          metadata: {
+            detalhes,
+            resumo,
+          },
+          updated_at: new Date().toISOString(),
+        };
+      })
+      .filter(Boolean) as Array<Record<string, any>>;
+
+    const filteredRows = rows.filter((row) => {
+      if (dataInicioIso && row.data_movimento < dataInicioIso) return false;
+      if (dataFimIso && row.data_movimento > dataFimIso) return false;
+      return true;
+    });
+
+    const uniqueRows = Array.from(
+      new Map(filteredRows.map((row) => [String(row.omie_ncodmov), row])).values()
+    );
+
+    if (uniqueRows.length > 0) {
       const { error } = await db
         .from("fin_movimentacoes")
-        .upsert(rows, { onConflict: "company,omie_ncodmov" });
-      if (error)
-        console.error(
-          `[Fin][${company}] Erro mov p${pagina}:`,
-          error.message
-        );
-      else totalSynced += rows.length;
+        .upsert(uniqueRows, { onConflict: "company,omie_ncodmov" });
+      if (error) {
+        console.error(`[Fin][${company}] Erro mov p${pagina}:`, error.message);
+      } else {
+        totalSynced += uniqueRows.length;
+      }
     }
 
-    if (rows.length === 0) { consecutiveEmpty++; } else { consecutiveEmpty = 0; }
-    console.log(`[Fin][${company}] Mov p${pagina}/${totalPaginas} (+${rows.length})`);
-    if (consecutiveEmpty >= 10) { console.log(`[Fin][${company}] Mov early exit: 10 empty pages`); break; }
-    pagina++;
+    const pageDates = rows
+      .map((row) => row.data_movimento)
+      .filter(Boolean)
+      .sort();
+    const pageMinDate = pageDates[0] || null;
+    const pageMaxDate = pageDates[pageDates.length - 1] || null;
+
+    if (uniqueRows.length > 0) {
+      consecutiveOldPages = 0;
+    } else if (dataInicioIso && pageMaxDate && pageMaxDate < dataInicioIso) {
+      consecutiveOldPages++;
+    } else {
+      consecutiveOldPages = 0;
+    }
+
+    console.log(
+      `[Fin][${company}] Mov p${pagina}/${totalPaginas} (+${uniqueRows.length}) range=${pageMinDate || "?"}..${pageMaxDate || "?"}`
+    );
+
+    if (consecutiveOldPages >= 10) {
+      console.log(`[Fin][${company}] Mov early exit: 10 páginas antigas consecutivas`);
+      break;
+    }
+
+    pagina--;
     pagesProcessed++;
   }
 
   const timedOut = isTimeBudgetExhausted();
   if (timedOut) console.log(`[Fin][${company}] Mov stopped: time budget exhausted`);
-  return { totalSynced, complete: pagina > totalPaginas, timedOut };
+
+  return {
+    totalSynced,
+    complete: pagina < 1,
+    nextPage: pagina < 1 ? null : pagina,
+    timedOut,
+  };
 }
 
 // ═══════════════ CALCULAR DRE SNAPSHOT ═══════════════
