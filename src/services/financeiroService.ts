@@ -162,17 +162,19 @@ export async function getResumoFinanceiro(companies: Company[]): Promise<Record<
       .eq("company", company)
       .eq("status_titulo", "ATRASADO") as any;
 
-    const sum = (arr: any[] | null) =>
-      (arr || []).reduce((s: number, r: any) => s + (r.saldo || 0), 0);
+    const sumCR = (arr: any[] | null) =>
+      (arr || []).reduce((s: number, r: any) => s + ((r.valor_documento || 0) - (r.valor_recebido || 0)), 0);
+    const sumCP = (arr: any[] | null) =>
+      (arr || []).reduce((s: number, r: any) => s + ((r.valor_documento || 0) - (r.valor_pago || 0)), 0);
 
     resumo[company] = {
       contas_correntes: contas || [],
       saldo_total_cc: (contas || []).reduce((s: number, c: any) => s + (c.saldo_atual || 0), 0),
-      total_a_receber: sum(crAberto),
-      total_a_pagar: sum(cpAberto),
-      total_vencido_receber: sum(crVencido),
-      total_vencido_pagar: sum(cpVencido),
-      posicao_liquida: sum(crAberto) - sum(cpAberto),
+      total_a_receber: sumCR(crAberto),
+      total_a_pagar: sumCP(cpAberto),
+      total_vencido_receber: sumCR(crVencido),
+      total_vencido_pagar: sumCP(cpVencido),
+      posicao_liquida: sumCR(crAberto) - sumCP(cpAberto),
     };
   }
 
