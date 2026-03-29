@@ -135,32 +135,32 @@ export async function getResumoFinanceiro(companies: Company[]): Promise<Record<
       .eq("company", company)
       .eq("ativo", true) as any;
 
-    // Totais a receber aberto
+    // Totais a receber aberto (Omie uses: A VENCER, ATRASADO, VENCE HOJE)
     const { data: crAberto } = await supabase
       .from("fin_contas_receber")
-      .select("saldo")
+      .select("valor_documento, valor_recebido")
       .eq("company", company)
-      .in("status_titulo", ["ABERTO", "VENCIDO", "PARCIAL"]) as any;
+      .in("status_titulo", ["A VENCER", "ATRASADO", "VENCE HOJE"]) as any;
 
     // Totais a pagar aberto
     const { data: cpAberto } = await supabase
       .from("fin_contas_pagar")
-      .select("saldo")
+      .select("valor_documento, valor_pago")
       .eq("company", company)
-      .in("status_titulo", ["ABERTO", "VENCIDO", "PARCIAL"]) as any;
+      .in("status_titulo", ["A VENCER", "ATRASADO", "VENCE HOJE"]) as any;
 
-    // Vencidos
+    // Vencidos (ATRASADO in Omie)
     const { data: crVencido } = await supabase
       .from("fin_contas_receber")
-      .select("saldo")
+      .select("valor_documento, valor_recebido")
       .eq("company", company)
-      .eq("status_titulo", "VENCIDO") as any;
+      .eq("status_titulo", "ATRASADO") as any;
 
     const { data: cpVencido } = await supabase
       .from("fin_contas_pagar")
-      .select("saldo")
+      .select("valor_documento, valor_pago")
       .eq("company", company)
-      .eq("status_titulo", "VENCIDO") as any;
+      .eq("status_titulo", "ATRASADO") as any;
 
     const sum = (arr: any[] | null) =>
       (arr || []).reduce((s: number, r: any) => s + (r.saldo || 0), 0);
