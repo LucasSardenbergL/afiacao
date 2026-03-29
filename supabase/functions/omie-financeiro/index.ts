@@ -464,7 +464,9 @@ async function syncMovimentacoes(
     totalPaginas = result.nTotPaginas || 1;
     const movs = result.movimentos || [];
 
-    const rows = movs.map((m: any) => ({
+    const rows = movs
+      .filter((m: any) => m.nCodMov || m.codigo_movimento) // skip records without movement code
+      .map((m: any) => ({
       company,
       omie_ncodmov: m.nCodMov || m.codigo_movimento,
       omie_ncodcc: m.nCodCC || m.conta_corrente,
