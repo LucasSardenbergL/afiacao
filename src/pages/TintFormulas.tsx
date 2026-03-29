@@ -130,7 +130,7 @@ export default function TintFormulas() {
               <Input placeholder="Código ou nome da cor..." value={search} onChange={e => { setSearch(e.target.value); setPage(0); }} className="pl-9" />
             </div>
             <div className="w-48">
-              <Select value={produtoFilter} onValueChange={v => { setProdutoFilter(v); setBaseFilter(''); setPage(0); }}>
+              <Select value={produtoFilter || '__all__'} onValueChange={v => { setProdutoFilter(v === '__all__' ? '' : v); setBaseFilter(''); setPage(0); }}>
                 <SelectTrigger className="h-9 text-sm"><SelectValue placeholder="Produto" /></SelectTrigger>
                 <SelectContent>
                   <SelectItem value="__all__">Todos</SelectItem>
@@ -140,7 +140,7 @@ export default function TintFormulas() {
             </div>
             {produtoFilter && (
               <div className="w-56">
-                <Select value={baseFilter} onValueChange={v => { setBaseFilter(v); setPage(0); }}>
+                <Select value={baseFilter || '__all__'} onValueChange={v => { setBaseFilter(v === '__all__' ? '' : v); setPage(0); }}>
                   <SelectTrigger className="h-9 text-sm"><SelectValue placeholder="Base" /></SelectTrigger>
                   <SelectContent>
                     <SelectItem value="__all__">Todas</SelectItem>
