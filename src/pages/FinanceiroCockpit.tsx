@@ -394,12 +394,12 @@ const FinanceiroCockpit = () => {
 
 // ═══════════════ SUB-COMPONENTS ═══════════════
 
-function CockpitCard({ title, value, positive, icon: Icon, detail, detailColor, badge }: {
+function CockpitCard({ title, value, positive, icon: Icon, detail, detailColor, badge, onClick }: {
   title: string; value: string; positive: boolean; icon: any;
-  detail?: string; detailColor?: string; badge?: string;
+  detail?: string; detailColor?: string; badge?: string; onClick?: () => void;
 }) {
   return (
-    <Card>
+    <Card className={onClick ? 'cursor-pointer hover:shadow-md transition-shadow' : ''} onClick={onClick}>
       <CardContent className="p-5">
         <div className="flex items-start justify-between">
           <div>
@@ -421,11 +421,11 @@ function CockpitCard({ title, value, positive, icon: Icon, detail, detailColor, 
   );
 }
 
-function MiniCard({ label, value, color, subtitle }: {
-  label: string; value: string; color: string; subtitle?: string;
+function MiniCard({ label, value, color, subtitle, onClick }: {
+  label: string; value: string; color: string; subtitle?: string; onClick?: () => void;
 }) {
   return (
-    <div className="p-3 rounded-lg border bg-card text-center">
+    <div className={`p-3 rounded-lg border bg-card text-center ${onClick ? 'cursor-pointer hover:shadow-md transition-shadow' : ''}`} onClick={onClick}>
       <p className="text-[10px] text-muted-foreground font-medium uppercase">{label}</p>
       <p className={`text-xl font-bold mt-1 ${color}`}>{value}</p>
       {subtitle && <p className="text-xs text-muted-foreground mt-0.5">{subtitle}</p>}
