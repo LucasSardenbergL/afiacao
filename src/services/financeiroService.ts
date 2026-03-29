@@ -521,9 +521,10 @@ export async function getCapitalDeGiro(company: Company | 'all'): Promise<Capita
       .in("status_titulo", ["PAGO", "LIQUIDADO"])
       .gte("data_pagamento", d90ago.toISOString().slice(0, 10)) as any;
 
-    const sumSaldo = (arr: any[]) => (arr || []).reduce((s, r) => s + (r.saldo || 0), 0);
-    const totalCR = sumSaldo(crAberto);
-    const totalCP = sumSaldo(cpAberto);
+    const calcSaldoCR = (arr: any[]) => (arr || []).reduce((s: number, r: any) => s + ((r.valor_documento || 0) - (r.valor_recebido || 0)), 0);
+    const calcSaldoCP = (arr: any[]) => (arr || []).reduce((s: number, r: any) => s + ((r.valor_documento || 0) - (r.valor_pago || 0)), 0);
+    const totalCR = calcSaldoCR(crAberto);
+    const totalCP = calcSaldoCP(cpAberto);
     const totalCC = (ccs || []).reduce((s: number, c: any) => s + (c.saldo_atual || 0), 0);
 
     // PMR: média ponderada de dias entre emissão e recebimento
