@@ -453,8 +453,7 @@ async function syncMovimentacoes(
       nPagina: pagina,
       nRegPorPagina: 100,
     };
-    if (filtroDataDe) params.dDtMovDe = filtroDataDe;
-    // Note: Omie mfListarRequest does not support dDtMovAte filter
+    // Omie mfListarRequest não aceita filtros de data
 
     const result = (await callOmie(
       company,
