@@ -55,7 +55,7 @@ const FinanceiroSync = () => {
               entity: action,
               company: co,
               status: data.error ? 'error' : 'done',
-              total: data.total,
+              total: data.totalSynced ?? data.total,
               error: data.error,
             },
           ]);

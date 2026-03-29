@@ -12,6 +12,12 @@ const OMIE_API_URL = "https://app.omie.com.br/api/v1";
 // Observability counters (reset per invocation)
 let apiCallCount = 0;
 let rateLimitHits = 0;
+let globalStartTime = Date.now();
+const TIME_BUDGET_MS = 130_000; // stop before 150s edge function timeout
+
+function isTimeBudgetExhausted(): boolean {
+  return Date.now() - globalStartTime >= TIME_BUDGET_MS;
+}
 
 type Company = "oben" | "colacor" | "colacor_sc";
 
@@ -213,7 +219,7 @@ async function syncContasPagar(
   let pagesProcessed = 0;
   let consecutiveEmpty = 0;
 
-  while (pagina <= totalPaginas && pagesProcessed < maxPages) {
+  while (pagina <= totalPaginas && pagesProcessed < maxPages && !isTimeBudgetExhausted()) {
     const params: Record<string, unknown> = {
       pagina,
       registros_por_pagina: 100,
@@ -318,10 +324,13 @@ async function syncContasPagar(
     pagesProcessed++;
   }
 
+  const timedOut = isTimeBudgetExhausted();
+  if (timedOut) console.log(`[Fin][${company}] CP stopped: time budget exhausted`);
   return {
     totalSynced,
     complete: pagina > totalPaginas,
     nextPage: pagina > totalPaginas ? null : pagina,
+    timedOut,
   };
 }
 
@@ -339,7 +348,7 @@ async function syncContasReceber(
   let pagesProcessed = 0;
   let consecutiveEmpty = 0;
 
-  while (pagina <= totalPaginas && pagesProcessed < maxPages) {
+  while (pagina <= totalPaginas && pagesProcessed < maxPages && !isTimeBudgetExhausted()) {
     const params: Record<string, unknown> = {
       pagina,
       registros_por_pagina: 100,
@@ -432,10 +441,13 @@ async function syncContasReceber(
     pagesProcessed++;
   }
 
+  const timedOut = isTimeBudgetExhausted();
+  if (timedOut) console.log(`[Fin][${company}] CR stopped: time budget exhausted`);
   return {
     totalSynced,
     complete: pagina > totalPaginas,
     nextPage: pagina > totalPaginas ? null : pagina,
+    timedOut,
   };
 }
 
@@ -453,7 +465,7 @@ async function syncMovimentacoes(
   let pagesProcessed = 0;
   let consecutiveEmpty = 0;
 
-  while (pagina <= totalPaginas && pagesProcessed < maxPages) {
+  while (pagina <= totalPaginas && pagesProcessed < maxPages && !isTimeBudgetExhausted()) {
     const params: Record<string, unknown> = {
       nPagina: pagina,
       nRegPorPagina: 100,
@@ -515,7 +527,9 @@ async function syncMovimentacoes(
     pagesProcessed++;
   }
 
-  return { totalSynced, complete: pagina > totalPaginas };
+  const timedOut = isTimeBudgetExhausted();
+  if (timedOut) console.log(`[Fin][${company}] Mov stopped: time budget exhausted`);
+  return { totalSynced, complete: pagina > totalPaginas, timedOut };
 }
 
 // ═══════════════ CALCULAR DRE SNAPSHOT ═══════════════
@@ -913,8 +927,9 @@ serve(async (req) => {
 
     const targetCompanies: Company[] = companies || (company ? [company] : ["oben", "colacor", "colacor_sc"]);
 
-    // Log inicio (Ponto 11)
-    const startTime = Date.now();
+    // Reset global counters per invocation
+    globalStartTime = Date.now();
+    const startTime = globalStartTime;
     apiCallCount = 0;
     rateLimitHits = 0;
     const logId = await logSync(supabase, action, targetCompanies, auth.userId || "unknown");
