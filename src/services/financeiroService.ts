@@ -553,7 +553,7 @@ export async function getCapitalDeGiro(company: Company | 'all'): Promise<Capita
     const crByClient = new Map<string, number>();
     for (const r of crAberto || []) {
       const key = r.nome_cliente || 'Outros';
-      crByClient.set(key, (crByClient.get(key) || 0) + (r.saldo || 0));
+      crByClient.set(key, (crByClient.get(key) || 0) + ((r.valor_documento || 0) - (r.valor_recebido || 0)));
     }
     const top5CR = Array.from(crByClient.values()).sort((a, b) => b - a).slice(0, 5);
     const top5CRSum = top5CR.reduce((s, v) => s + v, 0);
@@ -561,7 +561,7 @@ export async function getCapitalDeGiro(company: Company | 'all'): Promise<Capita
     const cpByFornecedor = new Map<string, number>();
     for (const p of cpAberto || []) {
       const key = p.nome_fornecedor || 'Outros';
-      cpByFornecedor.set(key, (cpByFornecedor.get(key) || 0) + (p.saldo || 0));
+      cpByFornecedor.set(key, (cpByFornecedor.get(key) || 0) + ((p.valor_documento || 0) - (p.valor_pago || 0)));
     }
     const top5CP = Array.from(cpByFornecedor.values()).sort((a, b) => b - a).slice(0, 5);
     const top5CPSum = top5CP.reduce((s, v) => s + v, 0);
@@ -569,10 +569,10 @@ export async function getCapitalDeGiro(company: Company | 'all'): Promise<Capita
     // Projeção 30 dias: CR vencendo nos próx 30d + CP vencendo nos próx 30d
     const entradas30 = (crAberto || [])
       .filter((r: any) => r.data_vencimento >= today && r.data_vencimento <= in30)
-      .reduce((s: number, r: any) => s + (r.saldo || 0), 0);
+      .reduce((s: number, r: any) => s + ((r.valor_documento || 0) - (r.valor_recebido || 0)), 0);
     const saidas30 = (cpAberto || [])
       .filter((p: any) => p.data_vencimento >= today && p.data_vencimento <= in30)
-      .reduce((s: number, p: any) => s + (p.saldo || 0), 0);
+      .reduce((s: number, p: any) => s + ((p.valor_documento || 0) - (p.valor_pago || 0)), 0);
 
     results.push({
       company: co,
