@@ -95,6 +95,7 @@ const unifiedNavSections: { title: string; items: NavItem[] }[] = [
       { icon: Settings, label: 'Integrações', path: '/tintometrico/integracoes', managerOnly: true },
       { icon: ClipboardList, label: 'Reconciliação', path: '/tintometrico/reconciliacao', managerOnly: true },
       { icon: BarChart3, label: 'Sync Runs', path: '/tintometrico/sync-runs', managerOnly: true },
+      { icon: BookOpen, label: 'API Contract', path: '/tintometrico/api-contract', managerOnly: true },
     ],
   },
   {

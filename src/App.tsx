@@ -81,6 +81,7 @@ const TintCorantes = lazy(() => import("./pages/TintCorantes"));
 const TintIntegrations = lazy(() => import("./pages/TintIntegrations"));
 const TintReconciliation = lazy(() => import("./pages/TintReconciliation"));
 const TintSyncRuns = lazy(() => import("./pages/TintSyncRuns"));
+const TintApiContract = lazy(() => import("./pages/TintApiContract"));
 const FinanceiroDashboard = lazy(() => import("./pages/FinanceiroDashboard"));
 const FinanceiroSync = lazy(() => import("./pages/FinanceiroSync"));
 const FinanceiroMapping = lazy(() => import("./pages/FinanceiroMapping"));
@@ -186,6 +187,7 @@ const App = () => (
               <Route path="tintometrico/integracoes" element={<TintIntegrations />} />
               <Route path="tintometrico/reconciliacao" element={<TintReconciliation />} />
               <Route path="tintometrico/sync-runs" element={<TintSyncRuns />} />
+              <Route path="tintometrico/api-contract" element={<TintApiContract />} />
               <Route path="financeiro" element={<FinanceiroDashboard />} />
               <Route path="financeiro/sync" element={<FinanceiroSync />} />
               <Route path="financeiro/mapping" element={<FinanceiroMapping />} />
