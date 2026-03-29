@@ -1005,6 +1005,43 @@ serve(async (req) => {
         break;
       }
 
+      // Debug: retorna JSON raw do Omie sem transformação (para validação Onda 1)
+      case "debug_raw": {
+        const endpoints: Record<string, { endpoint: string; call: string; params: any }> = {
+          categorias: { endpoint: "geral/categorias/", call: "ListarCategorias", params: { pagina: 1, registros_por_pagina: 2 } },
+          contas_correntes: { endpoint: "financas/contacorrente/", call: "ListarContasCorrentes", params: { pagina: 1, registros_por_pagina: 2 } },
+          contas_pagar: { endpoint: "financas/contapagar/", call: "ListarContasPagar", params: { pagina: 1, registros_por_pagina: 2 } },
+          contas_receber: { endpoint: "financas/contareceber/", call: "ListarContasReceber", params: { pagina: 1, registros_por_pagina: 2 } },
+          movimentacoes: { endpoint: "financas/mf/", call: "ListarMovimentos", params: { nPagina: 1, nRegPorPagina: 2 } },
+          resumir_cc: { endpoint: "financas/contacorrente/", call: "ResumirContaCorrente", params: { nCodCC: Number(meses) || 0 } },
+        };
+        const entidade = (ano as any) || "contas_pagar"; // reuse 'ano' param as entidade selector
+        const ep = endpoints[String(entidade)];
+        if (!ep) {
+          result = { error: "Entidade inválida", disponiveis: Object.keys(endpoints) };
+        } else {
+          for (const co of targetCompanies) {
+            try {
+              const raw = await callOmie(co, ep.endpoint, ep.call, ep.params);
+              result[co] = { raw_response_keys: raw ? Object.keys(raw) : null, first_record_sample: null, total_paginas: null };
+              if (raw) {
+                result[co].total_paginas = raw.total_de_paginas || raw.nTotPaginas || null;
+                // Find the array of records
+                for (const key of Object.keys(raw)) {
+                  if (Array.isArray(raw[key]) && raw[key].length > 0) {
+                    result[co].first_record_sample = raw[key][0];
+                    result[co].array_key = key;
+                    result[co].record_count = raw[key].length;
+                    break;
+                  }
+                }
+              }
+            } catch (e) { result[co] = { error: String(e) }; }
+          }
+        }
+        break;
+      }
+
       default:
         await completeSync(supabase, logId, null, `Ação desconhecida: ${action}`, startTime);
         return new Response(
@@ -1013,7 +1050,7 @@ serve(async (req) => {
             acoes_disponiveis: [
               "sync_all", "sync_categorias", "sync_contas_correntes",
               "sync_contas_pagar", "sync_contas_receber", "sync_movimentacoes",
-              "calcular_dre", "calcular_dre_year", "resumo",
+              "calcular_dre", "calcular_dre_year", "resumo", "debug_raw",
             ],
           }),
           { status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" } }
