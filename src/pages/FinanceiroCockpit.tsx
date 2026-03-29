@@ -14,6 +14,7 @@ import {
   ShieldCheck, Shield, BarChart3, Target, Clock, Eye, Lock,
   CheckCircle2, Info, XCircle
 } from 'lucide-react';
+import { CockpitDrillDown, type DrillDownType } from '@/components/financeiro/CockpitDrillDown';
 
 const fmt = (v: number) => v.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' });
 const fmtCompact = (v: number) => {
