@@ -18,7 +18,6 @@ Deno.serve(async (req) => {
   const serviceKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
   const sb = createClient(supabaseUrl, serviceKey);
 
-  // Auth: token-based for agent, JWT for frontend reads
   const syncToken = req.headers.get("x-sync-token");
   const storeCode = req.headers.get("x-store-code");
 
@@ -89,7 +88,7 @@ Deno.serve(async (req) => {
       return json({ ok: true, account: agent.account, store_code: agent.storeCode });
     }
 
-    // ============ SYNC CATALOGS (produtos, bases, embalagens, skus, corantes) ============
+    // ============ SYNC CATALOGS ============
     if (path === "catalogs" && req.method === "POST") {
       const agent = await validateAgent();
       if (!agent) return json({ error: "Invalid token or store" }, 401);
@@ -119,7 +118,6 @@ Deno.serve(async (req) => {
               raw_data: item,
               staging_status: "pending",
             };
-            // Map known fields
             for (const [k, v] of Object.entries(item)) {
               if (k in row) continue;
               row[k] = v;
@@ -182,7 +180,6 @@ Deno.serve(async (req) => {
 
           if (fErr) { errors++; await logError(runId, "formula", f.cor_id, fErr.message, fErr, f); continue; }
 
-          // Insert formula items
           const itens = f.itens || [];
           for (const item of itens) {
             await sb.from("tint_staging_formula_itens").insert({
@@ -200,7 +197,6 @@ Deno.serve(async (req) => {
         }
       }
 
-      // Colors catalog/personalized
       for (const type of ["cores_catalogo", "cores_personalizadas"] as const) {
         const table = type === "cores_catalogo" ? "tint_staging_cores_catalogo" : "tint_staging_cores_personalizadas";
         const items = body[type] || [];
@@ -294,7 +290,6 @@ Deno.serve(async (req) => {
 
       let inserts = 0, errors = 0;
 
-      // Process each entity type
       const entityMappings: Record<string, string> = {
         produtos: "tint_staging_produtos",
         bases: "tint_staging_bases",
@@ -317,14 +312,13 @@ Deno.serve(async (req) => {
               staging_status: "pending",
               ...item,
             };
-            delete row.id; // prevent PK conflict
+            delete row.id;
             const { error } = await sb.from(table).insert(row);
             if (error) { errors++; } else { inserts++; }
           } catch { errors++; }
         }
       }
 
-      // Formulas
       for (const f of (body.formulas || [])) {
         try {
           const { data: fRow, error: fErr } = await sb.from("tint_staging_formulas").insert({
@@ -345,7 +339,6 @@ Deno.serve(async (req) => {
         } catch { errors++; }
       }
 
-      // Preparations
       for (const p of (body.preparacoes || [])) {
         try {
           const { data: pRow, error: pErr } = await sb.from("tint_staging_preparacoes").insert({
@@ -378,6 +371,7 @@ Deno.serve(async (req) => {
 
       const body = await req.json();
       const settingId = body.setting_id;
+      const simulateMode = body.mode || "real_data"; // "real_data" (default) or "synthetic"
       if (!settingId) return json({ error: "setting_id required" }, 400);
 
       const { data: setting } = await sb.from("tint_integration_settings")
@@ -387,86 +381,6 @@ Deno.serve(async (req) => {
       if (!setting) return json({ error: "Setting not found" }, 404);
 
       const start = Date.now();
-
-      // Realistic seed data
-      const seedProdutos = [
-        { cod_produto: "SIM-CORAL", descricao: "Coral Acabamento Premium" },
-        { cod_produto: "SIM-SUVINIL", descricao: "Suvinil Toque de Seda" },
-        { cod_produto: "SIM-LUKSCOLOR", descricao: "Lukscolor Semibrilho" },
-      ];
-      const seedBases = [
-        { id_base_sayersystem: "BASE-A", descricao: "Base A - Branca" },
-        { id_base_sayersystem: "BASE-B", descricao: "Base B - Pastel" },
-        { id_base_sayersystem: "BASE-C", descricao: "Base C - Média" },
-      ];
-      const seedEmbalagens = [
-        { id_embalagem_sayersystem: "EMB-900", descricao: "Lata 900ml", volume_ml: 900 },
-        { id_embalagem_sayersystem: "EMB-3600", descricao: "Galão 3.6L", volume_ml: 3600 },
-        { id_embalagem_sayersystem: "EMB-18000", descricao: "Balde 18L", volume_ml: 18000 },
-      ];
-      const seedCorantes = [
-        { id_corante_sayersystem: "COR-AX", descricao: "Amarelo Óxido", preco_litro: 42.50 },
-        { id_corante_sayersystem: "COR-VM", descricao: "Vermelho Médio", preco_litro: 68.90 },
-        { id_corante_sayersystem: "COR-AZ", descricao: "Azul Ftalo", preco_litro: 55.30 },
-        { id_corante_sayersystem: "COR-PR", descricao: "Preto Carbono", preco_litro: 38.00 },
-        { id_corante_sayersystem: "COR-BR", descricao: "Branco Titânio", preco_litro: 29.50 },
-      ];
-      const seedFormulas = [
-        {
-          cor_id: "SIM-COR-001", nome_cor: "Amarelo Sol", cod_produto: "SIM-CORAL",
-          id_base: "BASE-A", id_embalagem: "EMB-900", volume_final_ml: 900, preco_final: 89.90,
-          personalizada: false,
-          itens: [
-            { id_corante: "COR-AX", ordem: 1, qtd_ml: 12.5 },
-            { id_corante: "COR-BR", ordem: 2, qtd_ml: 3.2 },
-          ],
-        },
-        {
-          cor_id: "SIM-COR-002", nome_cor: "Azul Horizonte", cod_produto: "SIM-SUVINIL",
-          id_base: "BASE-B", id_embalagem: "EMB-3600", volume_final_ml: 3600, preco_final: 245.00,
-          personalizada: false,
-          itens: [
-            { id_corante: "COR-AZ", ordem: 1, qtd_ml: 28.0 },
-            { id_corante: "COR-BR", ordem: 2, qtd_ml: 8.5 },
-            { id_corante: "COR-PR", ordem: 3, qtd_ml: 1.2 },
-          ],
-        },
-        {
-          cor_id: "SIM-COR-003", nome_cor: "Vermelho Cereja", cod_produto: "SIM-LUKSCOLOR",
-          id_base: "BASE-C", id_embalagem: "EMB-18000", volume_final_ml: 18000, preco_final: 890.00,
-          personalizada: false,
-          itens: [
-            { id_corante: "COR-VM", ordem: 1, qtd_ml: 145.0 },
-            { id_corante: "COR-AX", ordem: 2, qtd_ml: 22.0 },
-          ],
-        },
-        {
-          cor_id: "SIM-COR-PERS-001", nome_cor: "Bege Especial Cliente", cod_produto: "SIM-CORAL",
-          id_base: "BASE-A", id_embalagem: "EMB-3600", volume_final_ml: 3600, preco_final: 198.50,
-          personalizada: true,
-          itens: [
-            { id_corante: "COR-AX", ordem: 1, qtd_ml: 5.8 },
-            { id_corante: "COR-VM", ordem: 2, qtd_ml: 1.1 },
-            { id_corante: "COR-BR", ordem: 3, qtd_ml: 15.0 },
-          ],
-        },
-      ];
-      const seedPreparacoes = [
-        {
-          preparacao_id: "PREP-SIM-001", cor_id: "SIM-COR-001", nome_cor: "Amarelo Sol",
-          cod_produto: "SIM-CORAL", id_base: "BASE-A", id_embalagem: "EMB-900",
-          volume_ml: 900, preco: 89.90, cliente: "João da Silva", data_preparacao: new Date().toISOString(),
-          personalizada: false,
-          itens: [{ id_corante: "COR-AX", ordem: 1, qtd_ml: 12.5 }, { id_corante: "COR-BR", ordem: 2, qtd_ml: 3.2 }],
-        },
-        {
-          preparacao_id: "PREP-SIM-002", cor_id: "SIM-COR-002", nome_cor: "Azul Horizonte",
-          cod_produto: "SIM-SUVINIL", id_base: "BASE-B", id_embalagem: "EMB-3600",
-          volume_ml: 3600, preco: 245.00, cliente: "Maria Oliveira", data_preparacao: new Date().toISOString(),
-          personalizada: false,
-          itens: [{ id_corante: "COR-AZ", ordem: 1, qtd_ml: 28.0 }, { id_corante: "COR-BR", ordem: 2, qtd_ml: 8.5 }],
-        },
-      ];
 
       // Create sync run
       const { data: runData } = await sb.from("tint_sync_runs").insert({
@@ -481,65 +395,137 @@ Deno.serve(async (req) => {
       if (!runId) return json({ error: "Failed to create sync run" }, 500);
 
       let inserts = 0, errors = 0;
+      const debugLog: string[] = [];
 
-      // Insert staging data
-      for (const p of seedProdutos) {
-        const { error } = await sb.from("tint_staging_produtos").insert({ sync_run_id: runId, account: setting.account, store_code: setting.store_code, cod_produto: p.cod_produto, descricao: p.descricao, raw_data: p, staging_status: "pending" });
-        error ? errors++ : inserts++;
-      }
-      for (const b of seedBases) {
-        const { error } = await sb.from("tint_staging_bases").insert({ sync_run_id: runId, account: setting.account, store_code: setting.store_code, id_base_sayersystem: b.id_base_sayersystem, descricao: b.descricao, raw_data: b, staging_status: "pending" });
-        error ? errors++ : inserts++;
-      }
-      for (const e of seedEmbalagens) {
-        const { error } = await sb.from("tint_staging_embalagens").insert({ sync_run_id: runId, account: setting.account, store_code: setting.store_code, id_embalagem_sayersystem: e.id_embalagem_sayersystem, descricao: e.descricao, volume_ml: e.volume_ml, raw_data: e, staging_status: "pending" });
-        error ? errors++ : inserts++;
-      }
-      for (const c of seedCorantes) {
-        const { error } = await sb.from("tint_staging_corantes").insert({ sync_run_id: runId, account: setting.account, store_code: setting.store_code, id_corante_sayersystem: c.id_corante_sayersystem, descricao: c.descricao, preco_litro: c.preco_litro, raw_data: c, staging_status: "pending" });
-        error ? errors++ : inserts++;
-      }
-      for (const f of seedFormulas) {
-        const { data: fRow, error: fErr } = await sb.from("tint_staging_formulas").insert({
-          sync_run_id: runId, account: setting.account, store_code: setting.store_code,
-          cor_id: f.cor_id, nome_cor: f.nome_cor, cod_produto: f.cod_produto,
-          id_base: f.id_base, id_embalagem: f.id_embalagem, volume_final_ml: f.volume_final_ml,
-          preco_final: f.preco_final, personalizada: f.personalizada, raw_data: f, staging_status: "pending",
-        }).select("id").single();
-        if (fErr) { errors++; } else {
-          inserts++;
-          for (const it of f.itens) {
-            await sb.from("tint_staging_formula_itens").insert({ sync_run_id: runId, staging_formula_id: fRow?.id, id_corante: it.id_corante, ordem: it.ordem, qtd_ml: it.qtd_ml });
-          }
+      if (simulateMode === "real_data") {
+        // ===== REAL DATA MODE: sample from official tables =====
+        debugLog.push("Mode: real_data — sampling from official CSV-imported tables");
+
+        // 1) Sample corantes (all, they're few)
+        const { data: realCorantes } = await sb.from("tint_corantes")
+          .select("id_corante_sayersystem, descricao, preco_litro")
+          .eq("account", setting.account);
+        debugLog.push(`Found ${realCorantes?.length || 0} corantes in official table`);
+
+        for (const c of (realCorantes || [])) {
+          const { error } = await sb.from("tint_staging_corantes").insert({
+            sync_run_id: runId, account: setting.account, store_code: setting.store_code,
+            id_corante_sayersystem: c.id_corante_sayersystem,
+            descricao: c.descricao,
+            preco_litro: c.preco_litro,
+            raw_data: c, staging_status: "pending",
+          });
+          error ? errors++ : inserts++;
         }
-      }
-      for (const p of seedPreparacoes) {
-        const { data: pRow, error: pErr } = await sb.from("tint_staging_preparacoes").insert({
-          sync_run_id: runId, account: setting.account, store_code: setting.store_code,
-          preparacao_id: p.preparacao_id, cor_id: p.cor_id, nome_cor: p.nome_cor,
-          cod_produto: p.cod_produto, id_base: p.id_base, id_embalagem: p.id_embalagem,
-          volume_ml: p.volume_ml, preco: p.preco, cliente: p.cliente,
-          data_preparacao: p.data_preparacao, personalizada: p.personalizada, raw_data: p, staging_status: "pending",
-        }).select("id").single();
-        if (pErr) { errors++; } else {
-          inserts++;
-          for (const it of p.itens) {
-            await sb.from("tint_staging_preparacao_itens").insert({ sync_run_id: runId, staging_preparacao_id: pRow?.id, id_corante: it.id_corante, ordem: it.ordem, qtd_ml: it.qtd_ml });
+
+        // 2) Sample formulas (take 20 with variety: 15 exact, 3 with price change, 2 new synthetic)
+        const { data: realFormulas } = await sb.from("tint_formulas")
+          .select(`
+            cor_id, nome_cor, volume_final_ml, preco_final_sayersystem,
+            produto_id, base_id, embalagem_id,
+            tint_produtos!inner(cod_produto),
+            tint_bases!inner(id_base_sayersystem),
+            tint_embalagens!inner(id_embalagem_sayersystem)
+          `)
+          .eq("account", setting.account)
+          .limit(20);
+
+        debugLog.push(`Sampled ${realFormulas?.length || 0} formulas from official table`);
+
+        const formulaRows = realFormulas || [];
+        for (let i = 0; i < formulaRows.length; i++) {
+          const f = formulaRows[i] as any;
+          const codProduto = f.tint_produtos?.cod_produto;
+          const idBase = f.tint_bases?.id_base_sayersystem;
+          const idEmbalagem = f.tint_embalagens?.id_embalagem_sayersystem;
+
+          // For items 15-17: introduce price divergence
+          let preco = f.preco_final_sayersystem;
+          let nome = f.nome_cor;
+          if (i >= 15 && i < 18) {
+            preco = preco != null ? Number((preco * 1.05).toFixed(4)) : 10.0; // 5% increase
+            debugLog.push(`Formula ${f.cor_id}: price modified from ${f.preco_final_sayersystem} → ${preco} (divergence test)`);
           }
+
+          const key = `${f.cor_id}|${codProduto}|${idBase}|${idEmbalagem}`;
+          debugLog.push(`Staging formula key: ${key}`);
+
+          const { data: fRow, error: fErr } = await sb.from("tint_staging_formulas").insert({
+            sync_run_id: runId, account: setting.account, store_code: setting.store_code,
+            cor_id: f.cor_id, nome_cor: nome, cod_produto: codProduto,
+            id_base: idBase, id_embalagem: idEmbalagem,
+            volume_final_ml: f.volume_final_ml, preco_final: preco,
+            personalizada: false, raw_data: { ...f, _sim_index: i },
+            staging_status: "pending",
+          }).select("id").single();
+          if (fErr) { errors++; debugLog.push(`ERROR staging formula ${f.cor_id}: ${fErr.message}`); }
+          else { inserts++; }
+        }
+
+        // 3) Add 2 synthetic formulas that won't match (only_sync test)
+        for (const synth of [
+          { cor_id: "SIM-NEW-001", nome_cor: "Cor Sintética Teste 1", cod_produto: "SIM-PROD-X", id_base: "SIM-BASE-X", id_embalagem: "SIM-EMB-X", volume_final_ml: 900, preco_final: 99.99 },
+          { cor_id: "SIM-NEW-002", nome_cor: "Cor Sintética Teste 2", cod_produto: "SIM-PROD-Y", id_base: "SIM-BASE-Y", id_embalagem: "SIM-EMB-Y", volume_final_ml: 3600, preco_final: 299.99 },
+        ]) {
+          const { error } = await sb.from("tint_staging_formulas").insert({
+            sync_run_id: runId, account: setting.account, store_code: setting.store_code,
+            cor_id: synth.cor_id, nome_cor: synth.nome_cor, cod_produto: synth.cod_produto,
+            id_base: synth.id_base, id_embalagem: synth.id_embalagem,
+            volume_final_ml: synth.volume_final_ml, preco_final: synth.preco_final,
+            personalizada: false, raw_data: synth, staging_status: "pending",
+          });
+          error ? errors++ : inserts++;
+          debugLog.push(`Synthetic formula ${synth.cor_id}: only_sync test`);
+        }
+
+      } else {
+        // ===== SYNTHETIC MODE (legacy) =====
+        debugLog.push("Mode: synthetic — using hardcoded seed data");
+
+        const seedCorantes = [
+          { id_corante_sayersystem: "COR-AX", descricao: "Amarelo Óxido", preco_litro: 42.50 },
+          { id_corante_sayersystem: "COR-VM", descricao: "Vermelho Médio", preco_litro: 68.90 },
+          { id_corante_sayersystem: "COR-AZ", descricao: "Azul Ftalo", preco_litro: 55.30 },
+        ];
+        for (const c of seedCorantes) {
+          const { error } = await sb.from("tint_staging_corantes").insert({
+            sync_run_id: runId, account: setting.account, store_code: setting.store_code,
+            id_corante_sayersystem: c.id_corante_sayersystem, descricao: c.descricao,
+            preco_litro: c.preco_litro, raw_data: c, staging_status: "pending",
+          });
+          error ? errors++ : inserts++;
+        }
+
+        const seedFormulas = [
+          { cor_id: "SIM-COR-001", nome_cor: "Amarelo Sol", cod_produto: "SIM-CORAL", id_base: "BASE-A", id_embalagem: "EMB-900", volume_final_ml: 900, preco_final: 89.90, personalizada: false },
+          { cor_id: "SIM-COR-002", nome_cor: "Azul Horizonte", cod_produto: "SIM-SUVINIL", id_base: "BASE-B", id_embalagem: "EMB-3600", volume_final_ml: 3600, preco_final: 245.00, personalizada: false },
+        ];
+        for (const f of seedFormulas) {
+          const { error } = await sb.from("tint_staging_formulas").insert({
+            sync_run_id: runId, account: setting.account, store_code: setting.store_code,
+            cor_id: f.cor_id, nome_cor: f.nome_cor, cod_produto: f.cod_produto,
+            id_base: f.id_base, id_embalagem: f.id_embalagem,
+            volume_final_ml: f.volume_final_ml, preco_final: f.preco_final,
+            personalizada: f.personalizada, raw_data: f, staging_status: "pending",
+          }).select("id").single();
+          error ? errors++ : inserts++;
         }
       }
 
       await completeSyncRun(runId, { duration_ms: Date.now() - start, total: inserts, inserts, updates: 0, errors });
 
       // Run reconciliation
-      const { data: reconResult } = await sb.rpc("tint_run_reconciliation", { p_sync_run_id: runId });
+      const { data: reconResult, error: reconErr } = await sb.rpc("tint_run_reconciliation", { p_sync_run_id: runId });
 
       return json({
         ok: true,
         run_id: runId,
+        mode: simulateMode,
         inserts,
         errors,
         reconciliation: reconResult,
+        debug_log: debugLog,
+        ...(reconErr ? { reconciliation_error: reconErr.message } : {}),
       });
     }
 
