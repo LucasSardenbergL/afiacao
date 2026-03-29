@@ -294,19 +294,24 @@ async function syncContasPagar(
       };
     });
 
-    if (rows.length > 0) {
+    // Filter out rows with null primary key (prevents upsert failure)
+    const validRows = rows.filter((r: any) => r.omie_codigo_lancamento != null);
+    const skipped = rows.length - validRows.length;
+    if (skipped > 0) console.log(`[Fin][${company}] CP p${pagina}: ${skipped} títulos sem código, ignorados`);
+
+    if (validRows.length > 0) {
       const { error } = await db
         .from("fin_contas_pagar")
-        .upsert(rows, { onConflict: "company,omie_codigo_lancamento" });
+        .upsert(validRows, { onConflict: "company,omie_codigo_lancamento" });
       if (error)
         console.error(
           `[Fin][${company}] Erro CP p${pagina}:`,
           error.message
         );
-      else totalSynced += rows.length;
+      else totalSynced += validRows.length;
     }
 
-    console.log(`[Fin][${company}] CP p${pagina}/${totalPaginas} (+${rows.length})`);
+    console.log(`[Fin][${company}] CP p${pagina}/${totalPaginas} (+${validRows.length})`);
     pagina++;
     pagesProcessed++;
   }
@@ -402,19 +407,23 @@ async function syncContasReceber(
       };
     });
 
-    if (rows.length > 0) {
+    const validRows = rows.filter((r: any) => r.omie_codigo_lancamento != null);
+    const skipped = rows.length - validRows.length;
+    if (skipped > 0) console.log(`[Fin][${company}] CR p${pagina}: ${skipped} títulos sem código, ignorados`);
+
+    if (validRows.length > 0) {
       const { error } = await db
         .from("fin_contas_receber")
-        .upsert(rows, { onConflict: "company,omie_codigo_lancamento" });
+        .upsert(validRows, { onConflict: "company,omie_codigo_lancamento" });
       if (error)
         console.error(
           `[Fin][${company}] Erro CR p${pagina}:`,
           error.message
         );
-      else totalSynced += rows.length;
+      else totalSynced += validRows.length;
     }
 
-    console.log(`[Fin][${company}] CR p${pagina}/${totalPaginas} (+${rows.length})`);
+    console.log(`[Fin][${company}] CR p${pagina}/${totalPaginas} (+${validRows.length})`);
     pagina++;
     pagesProcessed++;
   }
@@ -840,7 +849,8 @@ async function completeSync(
   startTime?: number
 ) {
   if (!logId) return;
-  await db
+  // Try with observability columns first (migration 200500)
+  const { error } = await db
     .from("fin_sync_log")
     .update({
       status: errorMsg ? "error" : "complete",
@@ -853,6 +863,20 @@ async function completeSync(
       entidades_por_empresa: results || {},
     })
     .eq("id", logId);
+
+  // Fallback: if columns don't exist yet (200500 not applied), retry with base columns only
+  if (error) {
+    console.log(`[Fin] completeSync fallback (extra columns may not exist): ${error.message}`);
+    await db
+      .from("fin_sync_log")
+      .update({
+        status: errorMsg ? "error" : "complete",
+        results: results || {},
+        error_message: errorMsg || null,
+        completed_at: new Date().toISOString(),
+      })
+      .eq("id", logId);
+  }
 }
 
 // ═══════════════ HANDLER PRINCIPAL ═══════════════
@@ -876,7 +900,7 @@ serve(async (req) => {
       );
     }
 
-    const { action, company, companies, filtro_data_de, filtro_data_ate, ano, mes, meses, maxPages } =
+    const { action, company, companies, filtro_data_de, filtro_data_ate, ano, mes, meses, maxPages, entidade, ncodcc } =
       await req.json();
 
     const targetCompanies: Company[] = companies || (company ? [company] : ["oben", "colacor", "colacor_sc"]);
@@ -1013,12 +1037,11 @@ serve(async (req) => {
           contas_pagar: { endpoint: "financas/contapagar/", call: "ListarContasPagar", params: { pagina: 1, registros_por_pagina: 2 } },
           contas_receber: { endpoint: "financas/contareceber/", call: "ListarContasReceber", params: { pagina: 1, registros_por_pagina: 2 } },
           movimentacoes: { endpoint: "financas/mf/", call: "ListarMovimentos", params: { nPagina: 1, nRegPorPagina: 2 } },
-          resumir_cc: { endpoint: "financas/contacorrente/", call: "ResumirContaCorrente", params: { nCodCC: Number(meses) || 0 } },
+          resumir_cc: { endpoint: "financas/contacorrente/", call: "ResumirContaCorrente", params: { nCodCC: Number(ncodcc) || 0 } },
         };
-        const entidade = (ano as any) || "contas_pagar"; // reuse 'ano' param as entidade selector
-        const ep = endpoints[String(entidade)];
+        const ep = endpoints[entidade || "contas_pagar"];
         if (!ep) {
-          result = { error: "Entidade inválida", disponiveis: Object.keys(endpoints) };
+          result = { error: "Entidade inválida. Use o campo 'entidade'.", disponiveis: Object.keys(endpoints) };
         } else {
           for (const co of targetCompanies) {
             try {
