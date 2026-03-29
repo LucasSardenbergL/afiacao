@@ -12,6 +12,12 @@ const OMIE_API_URL = "https://app.omie.com.br/api/v1";
 // Observability counters (reset per invocation)
 let apiCallCount = 0;
 let rateLimitHits = 0;
+let globalStartTime = Date.now();
+const TIME_BUDGET_MS = 130_000; // stop before 150s edge function timeout
+
+function isTimeBudgetExhausted(): boolean {
+  return Date.now() - globalStartTime >= TIME_BUDGET_MS;
+}
 
 type Company = "oben" | "colacor" | "colacor_sc";
 
