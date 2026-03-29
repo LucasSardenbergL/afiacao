@@ -231,11 +231,14 @@ export function useFinanceiro(defaultCompany: FinanceiroView = 'all') {
       if (heavyActions.includes(action)) {
         const allResults: Record<string, any> = {};
         for (const co of companies) {
-          const result = await triggerFinanceiroSync(action, [co], options);
-          if (result?.results) {
-            Object.assign(allResults, result.results);
-          } else {
-            allResults[co] = result?.[co] || result;
+          try {
+            const result = await triggerFinanceiroSync(action, [co], options);
+            // Edge function returns { success, action, oben: {...} } — extract company key
+            if (result?.[co]) {
+              allResults[co] = result[co];
+            }
+          } catch (e: any) {
+            allResults[co] = { error: e.message };
           }
         }
         return { results: allResults };
