@@ -1,0 +1,1 @@
+ALTER TABLE public.tint_corantes ADD COLUMN IF NOT EXISTS preco_litro numeric;
