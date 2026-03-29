@@ -135,44 +135,46 @@ export async function getResumoFinanceiro(companies: Company[]): Promise<Record<
       .eq("company", company)
       .eq("ativo", true) as any;
 
-    // Totais a receber aberto
+    // Totais a receber aberto (Omie uses: A VENCER, ATRASADO, VENCE HOJE)
     const { data: crAberto } = await supabase
       .from("fin_contas_receber")
-      .select("saldo")
+      .select("valor_documento, valor_recebido")
       .eq("company", company)
-      .in("status_titulo", ["ABERTO", "VENCIDO", "PARCIAL"]) as any;
+      .in("status_titulo", ["A VENCER", "ATRASADO", "VENCE HOJE"]) as any;
 
     // Totais a pagar aberto
     const { data: cpAberto } = await supabase
       .from("fin_contas_pagar")
-      .select("saldo")
+      .select("valor_documento, valor_pago")
       .eq("company", company)
-      .in("status_titulo", ["ABERTO", "VENCIDO", "PARCIAL"]) as any;
+      .in("status_titulo", ["A VENCER", "ATRASADO", "VENCE HOJE"]) as any;
 
-    // Vencidos
+    // Vencidos (ATRASADO in Omie)
     const { data: crVencido } = await supabase
       .from("fin_contas_receber")
-      .select("saldo")
+      .select("valor_documento, valor_recebido")
       .eq("company", company)
-      .eq("status_titulo", "VENCIDO") as any;
+      .eq("status_titulo", "ATRASADO") as any;
 
     const { data: cpVencido } = await supabase
       .from("fin_contas_pagar")
-      .select("saldo")
+      .select("valor_documento, valor_pago")
       .eq("company", company)
-      .eq("status_titulo", "VENCIDO") as any;
+      .eq("status_titulo", "ATRASADO") as any;
 
-    const sum = (arr: any[] | null) =>
-      (arr || []).reduce((s: number, r: any) => s + (r.saldo || 0), 0);
+    const sumCR = (arr: any[] | null) =>
+      (arr || []).reduce((s: number, r: any) => s + ((r.valor_documento || 0) - (r.valor_recebido || 0)), 0);
+    const sumCP = (arr: any[] | null) =>
+      (arr || []).reduce((s: number, r: any) => s + ((r.valor_documento || 0) - (r.valor_pago || 0)), 0);
 
     resumo[company] = {
       contas_correntes: contas || [],
       saldo_total_cc: (contas || []).reduce((s: number, c: any) => s + (c.saldo_atual || 0), 0),
-      total_a_receber: sum(crAberto),
-      total_a_pagar: sum(cpAberto),
-      total_vencido_receber: sum(crVencido),
-      total_vencido_pagar: sum(cpVencido),
-      posicao_liquida: sum(crAberto) - sum(cpAberto),
+      total_a_receber: sumCR(crAberto),
+      total_a_pagar: sumCP(cpAberto),
+      total_vencido_receber: sumCR(crVencido),
+      total_vencido_pagar: sumCP(cpVencido),
+      posicao_liquida: sumCR(crAberto) - sumCP(cpAberto),
     };
   }
 
@@ -367,7 +369,7 @@ export async function getFluxoCaixa(
   for (const cr of crData || []) {
     if (cr.data_vencimento) {
       const day = ensureDay(cr.data_vencimento);
-      if (['ABERTO', 'VENCIDO', 'PARCIAL'].includes(cr.status_titulo)) {
+      if (['A VENCER', 'ATRASADO', 'VENCE HOJE'].includes(cr.status_titulo)) {
         day.entradas_previstas += cr.valor_documento || 0;
       }
     }
@@ -380,7 +382,7 @@ export async function getFluxoCaixa(
   for (const cp of cpData || []) {
     if (cp.data_vencimento) {
       const day = ensureDay(cp.data_vencimento);
-      if (['ABERTO', 'VENCIDO', 'PARCIAL'].includes(cp.status_titulo)) {
+      if (['A VENCER', 'ATRASADO', 'VENCE HOJE'].includes(cp.status_titulo)) {
         day.saidas_previstas += cp.valor_documento || 0;
       }
     }
@@ -415,8 +417,8 @@ export async function getTopInadimplentes(
 ): Promise<{ nome: string; cnpj: string; total_vencido: number; qtd_titulos: number }[]> {
   let query = supabase
     .from("fin_contas_receber")
-    .select("nome_cliente, cnpj_cpf, saldo")
-    .eq("status_titulo", "VENCIDO") as any;
+    .select("nome_cliente, cnpj_cpf, valor_documento, valor_recebido")
+    .eq("status_titulo", "ATRASADO") as any;
 
   if (company !== 'all') query = query.eq("company", company);
 
@@ -427,8 +429,9 @@ export async function getTopInadimplentes(
   const map = new Map<string, { nome: string; cnpj: string; total: number; qtd: number }>();
   for (const r of data || []) {
     const key = r.cnpj_cpf || r.nome_cliente || 'Desconhecido';
+    const saldo = (r.valor_documento || 0) - (r.valor_recebido || 0);
     const existing = map.get(key) || { nome: r.nome_cliente, cnpj: r.cnpj_cpf, total: 0, qtd: 0 };
-    existing.total += r.saldo || 0;
+    existing.total += saldo;
     existing.qtd += 1;
     map.set(key, existing);
   }
@@ -482,16 +485,16 @@ export async function getCapitalDeGiro(company: Company | 'all'): Promise<Capita
     // CR aberto
     const { data: crAberto } = await supabase
       .from("fin_contas_receber")
-      .select("saldo, data_emissao, data_vencimento, nome_cliente")
+      .select("valor_documento, valor_recebido, data_emissao, data_vencimento, nome_cliente")
       .eq("company", co)
-      .in("status_titulo", ["ABERTO", "VENCIDO", "PARCIAL"]) as any;
+      .in("status_titulo", ["A VENCER", "ATRASADO", "VENCE HOJE"]) as any;
 
     // CP aberto
     const { data: cpAberto } = await supabase
       .from("fin_contas_pagar")
-      .select("saldo, data_emissao, data_vencimento, nome_fornecedor")
+      .select("valor_documento, valor_pago, data_emissao, data_vencimento, nome_fornecedor")
       .eq("company", co)
-      .in("status_titulo", ["ABERTO", "VENCIDO", "PARCIAL"]) as any;
+      .in("status_titulo", ["A VENCER", "ATRASADO", "VENCE HOJE"]) as any;
 
     // Saldo CC
     const { data: ccs } = await supabase
@@ -518,9 +521,10 @@ export async function getCapitalDeGiro(company: Company | 'all'): Promise<Capita
       .in("status_titulo", ["PAGO", "LIQUIDADO"])
       .gte("data_pagamento", d90ago.toISOString().slice(0, 10)) as any;
 
-    const sumSaldo = (arr: any[]) => (arr || []).reduce((s, r) => s + (r.saldo || 0), 0);
-    const totalCR = sumSaldo(crAberto);
-    const totalCP = sumSaldo(cpAberto);
+    const calcSaldoCR = (arr: any[]) => (arr || []).reduce((s: number, r: any) => s + ((r.valor_documento || 0) - (r.valor_recebido || 0)), 0);
+    const calcSaldoCP = (arr: any[]) => (arr || []).reduce((s: number, r: any) => s + ((r.valor_documento || 0) - (r.valor_pago || 0)), 0);
+    const totalCR = calcSaldoCR(crAberto);
+    const totalCP = calcSaldoCP(cpAberto);
     const totalCC = (ccs || []).reduce((s: number, c: any) => s + (c.saldo_atual || 0), 0);
 
     // PMR: média ponderada de dias entre emissão e recebimento
@@ -549,7 +553,7 @@ export async function getCapitalDeGiro(company: Company | 'all'): Promise<Capita
     const crByClient = new Map<string, number>();
     for (const r of crAberto || []) {
       const key = r.nome_cliente || 'Outros';
-      crByClient.set(key, (crByClient.get(key) || 0) + (r.saldo || 0));
+      crByClient.set(key, (crByClient.get(key) || 0) + ((r.valor_documento || 0) - (r.valor_recebido || 0)));
     }
     const top5CR = Array.from(crByClient.values()).sort((a, b) => b - a).slice(0, 5);
     const top5CRSum = top5CR.reduce((s, v) => s + v, 0);
@@ -557,7 +561,7 @@ export async function getCapitalDeGiro(company: Company | 'all'): Promise<Capita
     const cpByFornecedor = new Map<string, number>();
     for (const p of cpAberto || []) {
       const key = p.nome_fornecedor || 'Outros';
-      cpByFornecedor.set(key, (cpByFornecedor.get(key) || 0) + (p.saldo || 0));
+      cpByFornecedor.set(key, (cpByFornecedor.get(key) || 0) + ((p.valor_documento || 0) - (p.valor_pago || 0)));
     }
     const top5CP = Array.from(cpByFornecedor.values()).sort((a, b) => b - a).slice(0, 5);
     const top5CPSum = top5CP.reduce((s, v) => s + v, 0);
@@ -565,10 +569,10 @@ export async function getCapitalDeGiro(company: Company | 'all'): Promise<Capita
     // Projeção 30 dias: CR vencendo nos próx 30d + CP vencendo nos próx 30d
     const entradas30 = (crAberto || [])
       .filter((r: any) => r.data_vencimento >= today && r.data_vencimento <= in30)
-      .reduce((s: number, r: any) => s + (r.saldo || 0), 0);
+      .reduce((s: number, r: any) => s + ((r.valor_documento || 0) - (r.valor_recebido || 0)), 0);
     const saidas30 = (cpAberto || [])
       .filter((p: any) => p.data_vencimento >= today && p.data_vencimento <= in30)
-      .reduce((s: number, p: any) => s + (p.saldo || 0), 0);
+      .reduce((s: number, p: any) => s + ((p.valor_documento || 0) - (p.valor_pago || 0)), 0);
 
     results.push({
       company: co,
