@@ -150,7 +150,7 @@ async function syncContasCorrentes(
   while (pagina <= totalPaginas) {
     const result = (await callOmie(
       company,
-      "financas/contacorrente/",
+      "geral/contacorrente/",
       "ListarContasCorrentes",
       { pagina, registros_por_pagina: 50 }
     )) as any;
