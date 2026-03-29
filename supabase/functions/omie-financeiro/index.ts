@@ -181,14 +181,14 @@ async function syncContasCorrentes(
       const row = {
         company,
         omie_ncodcc: c.nCodCC,
-        descricao: c.cDescricao || c.descricao,
-        banco: c.cNomeBanco || c.banco,
-        agencia: c.cAgencia || c.agencia,
-        numero_conta: c.cNumeroConta || c.numero_conta,
-        tipo: c.cTipo || c.tipo || "CC",
+        descricao: c.descricao || c.cDescricao,
+        banco: c.codigo_banco || c.cNomeBanco || c.banco,
+        agencia: c.codigo_agencia || c.cAgencia || c.agencia,
+        numero_conta: c.numero_conta_corrente || c.cNumeroConta || c.numero_conta,
+        tipo: c.tipo_conta_corrente || c.tipo || c.cTipo || "CC",
         saldo_atual: saldoAtual,
         saldo_data: saldoData,
-        ativo: c.cInativa !== "S",
+        ativo: c.inativo !== "S" && c.cInativa !== "S",
         updated_at: new Date().toISOString(),
       };
 
