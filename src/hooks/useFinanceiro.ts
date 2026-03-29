@@ -227,7 +227,7 @@ export function useFinanceiro(defaultCompany: FinanceiroView = 'all') {
         : [view as Company];
 
       // Heavy sync actions: call one company at a time to avoid 150s timeout
-      const heavyActions = ['sync_contas_pagar', 'sync_contas_receber', 'sync_movimentacoes', 'sync_all'];
+      const heavyActions = ['sync_contas_pagar', 'sync_contas_receber', 'sync_movimentacoes', 'sync_all', 'calcular_dre', 'calcular_dre_year'];
       if (heavyActions.includes(action)) {
         const allResults: Record<string, any> = {};
         for (const co of companies) {
