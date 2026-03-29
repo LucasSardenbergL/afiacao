@@ -1,11 +1,12 @@
 import { useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Input } from "@/components/ui/input";
+import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { GitCompare, AlertTriangle, CheckCircle, MinusCircle } from "lucide-react";
 
 const diffTypeLabels: Record<string, { label: string; color: string; icon: typeof AlertTriangle }> = {
@@ -15,11 +16,25 @@ const diffTypeLabels: Record<string, { label: string; color: string; icon: typeo
   only_sync: { label: "Só Sync", color: "bg-purple-100 text-purple-800", icon: MinusCircle },
 };
 
+function ValueDisplay({ label, value }: { label: string; value: unknown }) {
+  if (!value) return null;
+  const obj = typeof value === "string" ? JSON.parse(value) : value;
+  return (
+    <div className="text-xs space-y-0.5">
+      <span className="font-semibold text-muted-foreground">{label}:</span>
+      {Object.entries(obj).map(([k, v]) => (
+        <div key={k} className="ml-2"><span className="text-muted-foreground">{k}:</span> <span className="font-mono">{String(v ?? "—")}</span></div>
+      ))}
+    </div>
+  );
+}
+
 export default function TintReconciliation() {
   const [selectedRun, setSelectedRun] = useState<string | null>(null);
   const [entityFilter, setEntityFilter] = useState<string>("all");
   const [diffFilter, setDiffFilter] = useState<string>("all");
   const [search, setSearch] = useState("");
+  const [detailItem, setDetailItem] = useState<any>(null);
 
   const { data: runs = [] } = useQuery({
     queryKey: ["tint-reconciliation-runs"],
@@ -41,7 +56,7 @@ export default function TintReconciliation() {
         .from("tint_reconciliation_items")
         .select("*")
         .eq("reconciliation_run_id", selectedRun!)
-        .order("created_at", { ascending: false })
+        .order("diff_type", { ascending: true })
         .limit(500);
       return data || [];
     },
@@ -55,6 +70,10 @@ export default function TintReconciliation() {
   });
 
   const entityTypes = [...new Set(items.map((i: any) => i.entity_type))];
+  const counts = items.reduce((acc: Record<string, number>, i: any) => {
+    acc[i.diff_type] = (acc[i.diff_type] || 0) + 1;
+    return acc;
+  }, {} as Record<string, number>);
 
   return (
     <div className="space-y-6">
@@ -67,19 +86,15 @@ export default function TintReconciliation() {
       </div>
 
       {/* Summary cards */}
-      {selectedRun && runs.length > 0 && (() => {
-        const run = runs.find((r: any) => r.id === selectedRun);
-        if (!run) return null;
-        return (
-          <div className="grid grid-cols-2 md:grid-cols-5 gap-3">
-            <Card><CardContent className="p-4 text-center"><p className="text-2xl font-bold">{run.total_compared}</p><p className="text-xs text-muted-foreground">Comparados</p></CardContent></Card>
-            <Card><CardContent className="p-4 text-center"><p className="text-2xl font-bold text-green-600">{run.matches}</p><p className="text-xs text-muted-foreground">Iguais</p></CardContent></Card>
-            <Card><CardContent className="p-4 text-center"><p className="text-2xl font-bold text-yellow-600">{run.divergences}</p><p className="text-xs text-muted-foreground">Divergências</p></CardContent></Card>
-            <Card><CardContent className="p-4 text-center"><p className="text-2xl font-bold text-blue-600">{run.only_csv}</p><p className="text-xs text-muted-foreground">Só CSV</p></CardContent></Card>
-            <Card><CardContent className="p-4 text-center"><p className="text-2xl font-bold text-purple-600">{run.only_sync}</p><p className="text-xs text-muted-foreground">Só Sync</p></CardContent></Card>
-          </div>
-        );
-      })()}
+      {selectedRun && (
+        <div className="grid grid-cols-2 md:grid-cols-5 gap-3">
+          <Card><CardContent className="p-4 text-center"><p className="text-2xl font-bold">{items.length}</p><p className="text-xs text-muted-foreground">Comparados</p></CardContent></Card>
+          <Card><CardContent className="p-4 text-center"><p className="text-2xl font-bold text-green-600">{counts.match || 0}</p><p className="text-xs text-muted-foreground">Iguais</p></CardContent></Card>
+          <Card><CardContent className="p-4 text-center"><p className="text-2xl font-bold text-yellow-600">{counts.divergence || 0}</p><p className="text-xs text-muted-foreground">Divergências</p></CardContent></Card>
+          <Card><CardContent className="p-4 text-center"><p className="text-2xl font-bold text-blue-600">{counts.only_csv || 0}</p><p className="text-xs text-muted-foreground">Só CSV</p></CardContent></Card>
+          <Card><CardContent className="p-4 text-center"><p className="text-2xl font-bold text-purple-600">{counts.only_sync || 0}</p><p className="text-xs text-muted-foreground">Só Sync</p></CardContent></Card>
+        </div>
+      )}
 
       {/* Filters */}
       <div className="flex flex-wrap gap-3">
@@ -125,24 +140,32 @@ export default function TintReconciliation() {
               <TableHeader>
                 <TableRow>
                   <TableHead>Tipo</TableHead>
-                  <TableHead>Chave</TableHead>
+                  <TableHead>Chave Lógica</TableHead>
                   <TableHead>Status</TableHead>
                   <TableHead>Campos divergentes</TableHead>
-                  <TableHead>Resolvido</TableHead>
+                  <TableHead>Valor CSV</TableHead>
+                  <TableHead>Valor Sync</TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>
                 {filtered.length === 0 ? (
-                  <TableRow><TableCell colSpan={5} className="text-center text-muted-foreground py-8">Nenhum item encontrado</TableCell></TableRow>
+                  <TableRow><TableCell colSpan={6} className="text-center text-muted-foreground py-8">Nenhum item encontrado</TableCell></TableRow>
                 ) : filtered.map((item: any) => {
                   const dt = diffTypeLabels[item.diff_type] || diffTypeLabels.divergence;
+                  const csvVal = item.csv_value ? (typeof item.csv_value === "string" ? JSON.parse(item.csv_value) : item.csv_value) : null;
+                  const syncVal = item.sync_value ? (typeof item.sync_value === "string" ? JSON.parse(item.sync_value) : item.sync_value) : null;
                   return (
-                    <TableRow key={item.id}>
+                    <TableRow key={item.id} className="cursor-pointer hover:bg-muted/50" onClick={() => setDetailItem(item)}>
                       <TableCell><Badge variant="outline">{item.entity_type}</Badge></TableCell>
-                      <TableCell className="font-mono text-xs">{item.entity_key}</TableCell>
+                      <TableCell className="font-mono text-xs max-w-[200px] truncate" title={item.entity_key}>{item.entity_key}</TableCell>
                       <TableCell><Badge className={dt.color}>{dt.label}</Badge></TableCell>
                       <TableCell className="text-xs">{item.diff_fields?.join(", ") || "—"}</TableCell>
-                      <TableCell>{item.resolved ? <CheckCircle className="h-4 w-4 text-green-500" /> : "—"}</TableCell>
+                      <TableCell className="text-xs max-w-[150px]">
+                        {csvVal ? Object.entries(csvVal).map(([k, v]) => <div key={k}><span className="text-muted-foreground">{k}:</span> {String(v ?? "—")}</div>) : "—"}
+                      </TableCell>
+                      <TableCell className="text-xs max-w-[150px]">
+                        {syncVal ? Object.entries(syncVal).map(([k, v]) => <div key={k}><span className="text-muted-foreground">{k}:</span> {String(v ?? "—")}</div>) : "—"}
+                      </TableCell>
                     </TableRow>
                   );
                 })}
@@ -151,6 +174,68 @@ export default function TintReconciliation() {
           </CardContent>
         </Card>
       )}
+
+      {/* Detail dialog */}
+      <Dialog open={!!detailItem} onOpenChange={() => setDetailItem(null)}>
+        <DialogContent className="max-w-lg">
+          <DialogHeader>
+            <DialogTitle>Detalhe da Reconciliação</DialogTitle>
+          </DialogHeader>
+          {detailItem && (() => {
+            const dt = diffTypeLabels[detailItem.diff_type] || diffTypeLabels.divergence;
+            const csvVal = detailItem.csv_value ? (typeof detailItem.csv_value === "string" ? JSON.parse(detailItem.csv_value) : detailItem.csv_value) : null;
+            const syncVal = detailItem.sync_value ? (typeof detailItem.sync_value === "string" ? JSON.parse(detailItem.sync_value) : detailItem.sync_value) : null;
+            
+            let reason = "";
+            if (detailItem.diff_type === "match") reason = "Todos os campos comparados são idênticos entre CSV e Sync.";
+            else if (detailItem.diff_type === "divergence") reason = `Os campos [${detailItem.diff_fields?.join(", ") || "?"}] possuem valores diferentes entre CSV e Sync.`;
+            else if (detailItem.diff_type === "only_sync") reason = "Este registro existe no staging (sync) mas NÃO foi encontrado na tabela oficial (CSV). A chave lógica não teve correspondência.";
+            else if (detailItem.diff_type === "only_csv") reason = "Este registro existe na tabela oficial (CSV) mas NÃO apareceu no staging (sync).";
+
+            return (
+              <div className="space-y-4">
+                <div className="flex items-center gap-2">
+                  <Badge className={dt.color}>{dt.label}</Badge>
+                  <Badge variant="outline">{detailItem.entity_type}</Badge>
+                </div>
+
+                <div>
+                  <p className="text-xs text-muted-foreground mb-1">Chave Lógica</p>
+                  <p className="font-mono text-sm bg-muted p-2 rounded">{detailItem.entity_key}</p>
+                  <p className="text-xs text-muted-foreground mt-1">
+                    {detailItem.entity_type === "formula" 
+                      ? "Formato: cor_id | cod_produto | id_base | id_embalagem"
+                      : "Formato: id_corante_sayersystem"}
+                  </p>
+                </div>
+
+                <div>
+                  <p className="text-xs text-muted-foreground mb-1 font-semibold">Por que este status?</p>
+                  <p className="text-sm">{reason}</p>
+                </div>
+
+                {csvVal && <ValueDisplay label="Tabela oficial (CSV)" value={csvVal} />}
+                {syncVal && <ValueDisplay label="Staging (Sync)" value={syncVal} />}
+
+                {detailItem.diff_fields?.length > 0 && (
+                  <div>
+                    <p className="text-xs text-muted-foreground mb-1 font-semibold">Campos divergentes</p>
+                    <div className="space-y-1">
+                      {detailItem.diff_fields.map((field: string) => (
+                        <div key={field} className="text-sm bg-yellow-50 dark:bg-yellow-900/20 p-2 rounded">
+                          <span className="font-semibold">{field}:</span>
+                          <span className="ml-2 text-blue-600">CSV: {csvVal?.[field] ?? "—"}</span>
+                          <span className="ml-2 text-purple-600">Sync: {syncVal?.[field] ?? "—"}</span>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
+              </div>
+            );
+          })()}
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }
