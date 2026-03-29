@@ -732,7 +732,8 @@ async function calcularDRE(
   const categoriasNaoMapeadas: string[] = [];
 
   for (const r of receitas || []) {
-    const val = r.valor_recebido || 0;
+    // Omie não retorna valor_recebido; usar valor_documento para títulos liquidados
+    const val = r.valor_recebido || r.valor_documento || 0;
     const cod = r.categoria_codigo || "";
     const desc = r.categoria_descricao || cod || "Sem categoria";
     detalheReceitas[desc] = (detalheReceitas[desc] || 0) + val;
@@ -760,7 +761,8 @@ async function calcularDRE(
   const detalheDespesas: Record<string, number> = {};
 
   for (const d of despesas || []) {
-    const val = d.valor_pago || 0;
+    // Omie não retorna valor_pago; usar valor_documento para títulos liquidados
+    const val = d.valor_pago || d.valor_documento || 0;
     const cod = d.categoria_codigo || "";
     const desc = d.categoria_descricao || cod || "Sem categoria";
     detalheDespesas[desc] = (detalheDespesas[desc] || 0) + val;
