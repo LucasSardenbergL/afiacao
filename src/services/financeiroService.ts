@@ -417,8 +417,8 @@ export async function getTopInadimplentes(
 ): Promise<{ nome: string; cnpj: string; total_vencido: number; qtd_titulos: number }[]> {
   let query = supabase
     .from("fin_contas_receber")
-    .select("nome_cliente, cnpj_cpf, saldo")
-    .eq("status_titulo", "VENCIDO") as any;
+    .select("nome_cliente, cnpj_cpf, valor_documento, valor_recebido")
+    .eq("status_titulo", "ATRASADO") as any;
 
   if (company !== 'all') query = query.eq("company", company);
 
