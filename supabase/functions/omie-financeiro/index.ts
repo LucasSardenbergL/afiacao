@@ -540,7 +540,7 @@ async function syncMovimentacoes(
   let totalPaginas = 1;
   let totalSynced = 0;
   let pagesProcessed = 0;
-  let consecutiveOldPages = 0;
+  let consecutiveEmptyPages = 0;
 
   const firstPage = (await callOmie(
     company,
@@ -554,6 +554,7 @@ async function syncMovimentacoes(
   }
 
   totalPaginas = firstPage.nTotPaginas || 1;
+  // Start from the last page (most recent data) and go backwards
   pagina = totalPaginas;
 
   while (pagina >= 1 && pagesProcessed < maxPages && !isTimeBudgetExhausted()) {
@@ -620,29 +621,18 @@ async function syncMovimentacoes(
       } else {
         totalSynced += uniqueRows.length;
       }
-    }
-
-    const pageDates = rows
-      .map((row) => row.data_movimento)
-      .filter(Boolean)
-      .sort();
-    const pageMinDate = pageDates[0] || null;
-    const pageMaxDate = pageDates[pageDates.length - 1] || null;
-
-    if (uniqueRows.length > 0) {
-      consecutiveOldPages = 0;
-    } else if (dataInicioIso && pageMaxDate && pageMaxDate < dataInicioIso) {
-      consecutiveOldPages++;
+      consecutiveEmptyPages = 0;
     } else {
-      consecutiveOldPages = 0;
+      consecutiveEmptyPages++;
     }
 
     console.log(
-      `[Fin][${company}] Mov p${pagina}/${totalPaginas} (+${uniqueRows.length}) range=${pageMinDate || "?"}..${pageMaxDate || "?"}`
+      `[Fin][${company}] Mov p${pagina}/${totalPaginas} (+${uniqueRows.length}) empty_streak=${consecutiveEmptyPages}`
     );
 
-    if (consecutiveOldPages >= 10) {
-      console.log(`[Fin][${company}] Mov early exit: 10 páginas antigas consecutivas`);
+    // Early exit after 30 consecutive empty pages
+    if (consecutiveEmptyPages >= 30) {
+      console.log(`[Fin][${company}] Mov early exit: 30 páginas vazias consecutivas`);
       break;
     }
 
