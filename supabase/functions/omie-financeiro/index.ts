@@ -205,7 +205,7 @@ async function syncContasPagar(
   company: Company,
   filtroDataDe?: string,
   filtroDataAte?: string,
-  maxPages = 50
+  maxPages = 500
 ) {
   let pagina = 1;
   let totalPaginas = 1;
@@ -328,7 +328,7 @@ async function syncContasReceber(
   company: Company,
   filtroDataDe?: string,
   filtroDataAte?: string,
-  maxPages = 50
+  maxPages = 500
 ) {
   let pagina = 1;
   let totalPaginas = 1;
@@ -439,7 +439,7 @@ async function syncMovimentacoes(
   company: Company,
   filtroDataDe?: string,
   filtroDataAte?: string,
-  maxPages = 50
+  maxPages = 500
 ) {
   let pagina = 1;
   let totalPaginas = 1;
@@ -925,14 +925,14 @@ serve(async (req) => {
             formatOmieDate(new Date(new Date().setMonth(new Date().getMonth() - 6)));
           const dataFim = filtro_data_ate || formatOmieDate(new Date());
           
-          const cp = await syncContasPagar(supabase, co, dataInicio, dataFim, maxPages || 50);
-          const cr = await syncContasReceber(supabase, co, dataInicio, dataFim, maxPages || 50);
+          const cp = await syncContasPagar(supabase, co, dataInicio, dataFim, maxPages || 500);
+          const cr = await syncContasReceber(supabase, co, dataInicio, dataFim, maxPages || 500);
 
           // Movimentações: últimos 3 meses (mais recente, volume menor)
           const dataInicioMov =
             filtro_data_de ||
             formatOmieDate(new Date(new Date().setMonth(new Date().getMonth() - 3)));
-          const mov = await syncMovimentacoes(supabase, co, dataInicioMov, dataFim, maxPages || 50);
+          const mov = await syncMovimentacoes(supabase, co, dataInicioMov, dataFim, maxPages || 500);
 
           result[co] = {
             categorias: cats,
