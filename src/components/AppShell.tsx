@@ -92,6 +92,9 @@ const unifiedNavSections: { title: string; items: NavItem[] }[] = [
       { icon: Package, label: 'Mapeamento Omie', path: '/tintometrico/mapeamento', managerOnly: true },
       { icon: Calculator, label: 'Precificação', path: '/tintometrico/precos', managerOnly: true },
       { icon: Droplets, label: 'Corantes', path: '/tintometrico/corantes', managerOnly: true },
+      { icon: Settings, label: 'Integrações', path: '/tintometrico/integracoes', managerOnly: true },
+      { icon: ClipboardList, label: 'Reconciliação', path: '/tintometrico/reconciliacao', managerOnly: true },
+      { icon: BarChart3, label: 'Sync Runs', path: '/tintometrico/sync-runs', managerOnly: true },
     ],
   },
   {
