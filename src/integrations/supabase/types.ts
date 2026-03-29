@@ -4265,6 +4265,51 @@ export type Database = {
         }
         Relationships: []
       }
+      tint_integration_settings: {
+        Row: {
+          account: string
+          agent_hostname: string | null
+          agent_version: string | null
+          created_at: string
+          id: string
+          integration_mode: Database["public"]["Enums"]["tint_integration_mode"]
+          last_heartbeat_at: string | null
+          store_code: string
+          store_name: string | null
+          sync_enabled: boolean
+          sync_token: string
+          updated_at: string
+        }
+        Insert: {
+          account: string
+          agent_hostname?: string | null
+          agent_version?: string | null
+          created_at?: string
+          id?: string
+          integration_mode?: Database["public"]["Enums"]["tint_integration_mode"]
+          last_heartbeat_at?: string | null
+          store_code: string
+          store_name?: string | null
+          sync_enabled?: boolean
+          sync_token?: string
+          updated_at?: string
+        }
+        Update: {
+          account?: string
+          agent_hostname?: string | null
+          agent_version?: string | null
+          created_at?: string
+          id?: string
+          integration_mode?: Database["public"]["Enums"]["tint_integration_mode"]
+          last_heartbeat_at?: string | null
+          store_code?: string
+          store_name?: string | null
+          sync_enabled?: boolean
+          sync_token?: string
+          updated_at?: string
+        }
+        Relationships: []
+      }
       tint_produtos: {
         Row: {
           account: string
@@ -4288,6 +4333,118 @@ export type Database = {
           id?: string
         }
         Relationships: []
+      }
+      tint_reconciliation_items: {
+        Row: {
+          created_at: string
+          csv_value: Json | null
+          diff_details: Json | null
+          diff_fields: string[] | null
+          diff_type: string
+          entity_key: string
+          entity_type: string
+          id: string
+          reconciliation_run_id: string
+          resolved: boolean | null
+          resolved_at: string | null
+          resolved_by: string | null
+          sync_value: Json | null
+        }
+        Insert: {
+          created_at?: string
+          csv_value?: Json | null
+          diff_details?: Json | null
+          diff_fields?: string[] | null
+          diff_type: string
+          entity_key: string
+          entity_type: string
+          id?: string
+          reconciliation_run_id: string
+          resolved?: boolean | null
+          resolved_at?: string | null
+          resolved_by?: string | null
+          sync_value?: Json | null
+        }
+        Update: {
+          created_at?: string
+          csv_value?: Json | null
+          diff_details?: Json | null
+          diff_fields?: string[] | null
+          diff_type?: string
+          entity_key?: string
+          entity_type?: string
+          id?: string
+          reconciliation_run_id?: string
+          resolved?: boolean | null
+          resolved_at?: string | null
+          resolved_by?: string | null
+          sync_value?: Json | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "tint_reconciliation_items_reconciliation_run_id_fkey"
+            columns: ["reconciliation_run_id"]
+            isOneToOne: false
+            referencedRelation: "tint_reconciliation_runs"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      tint_reconciliation_runs: {
+        Row: {
+          account: string
+          completed_at: string | null
+          created_at: string
+          divergences: number | null
+          id: string
+          matches: number | null
+          only_csv: number | null
+          only_sync: number | null
+          started_at: string
+          status: string
+          store_code: string
+          sync_run_id: string | null
+          total_compared: number | null
+        }
+        Insert: {
+          account: string
+          completed_at?: string | null
+          created_at?: string
+          divergences?: number | null
+          id?: string
+          matches?: number | null
+          only_csv?: number | null
+          only_sync?: number | null
+          started_at?: string
+          status?: string
+          store_code: string
+          sync_run_id?: string | null
+          total_compared?: number | null
+        }
+        Update: {
+          account?: string
+          completed_at?: string | null
+          created_at?: string
+          divergences?: number | null
+          id?: string
+          matches?: number | null
+          only_csv?: number | null
+          only_sync?: number | null
+          started_at?: string
+          status?: string
+          store_code?: string
+          sync_run_id?: string | null
+          total_compared?: number | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "tint_reconciliation_runs_sync_run_id_fkey"
+            columns: ["sync_run_id"]
+            isOneToOne: false
+            referencedRelation: "tint_sync_runs"
+            referencedColumns: ["id"]
+          },
+        ]
       }
       tint_skus: {
         Row: {
@@ -4363,6 +4520,576 @@ export type Database = {
           },
         ]
       }
+      tint_staging_bases: {
+        Row: {
+          account: string
+          created_at: string
+          descricao: string | null
+          id: string
+          id_base_sayersystem: string
+          matched_id: string | null
+          raw_data: Json | null
+          staging_status: string
+          store_code: string
+          sync_run_id: string
+        }
+        Insert: {
+          account: string
+          created_at?: string
+          descricao?: string | null
+          id?: string
+          id_base_sayersystem: string
+          matched_id?: string | null
+          raw_data?: Json | null
+          staging_status?: string
+          store_code: string
+          sync_run_id: string
+        }
+        Update: {
+          account?: string
+          created_at?: string
+          descricao?: string | null
+          id?: string
+          id_base_sayersystem?: string
+          matched_id?: string | null
+          raw_data?: Json | null
+          staging_status?: string
+          store_code?: string
+          sync_run_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "tint_staging_bases_sync_run_id_fkey"
+            columns: ["sync_run_id"]
+            isOneToOne: false
+            referencedRelation: "tint_sync_runs"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      tint_staging_corantes: {
+        Row: {
+          account: string
+          created_at: string
+          descricao: string | null
+          id: string
+          id_corante_sayersystem: string
+          matched_id: string | null
+          preco_litro: number | null
+          raw_data: Json | null
+          staging_status: string
+          store_code: string
+          sync_run_id: string
+        }
+        Insert: {
+          account: string
+          created_at?: string
+          descricao?: string | null
+          id?: string
+          id_corante_sayersystem: string
+          matched_id?: string | null
+          preco_litro?: number | null
+          raw_data?: Json | null
+          staging_status?: string
+          store_code: string
+          sync_run_id: string
+        }
+        Update: {
+          account?: string
+          created_at?: string
+          descricao?: string | null
+          id?: string
+          id_corante_sayersystem?: string
+          matched_id?: string | null
+          preco_litro?: number | null
+          raw_data?: Json | null
+          staging_status?: string
+          store_code?: string
+          sync_run_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "tint_staging_corantes_sync_run_id_fkey"
+            columns: ["sync_run_id"]
+            isOneToOne: false
+            referencedRelation: "tint_sync_runs"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      tint_staging_cores_catalogo: {
+        Row: {
+          account: string
+          colecao: string | null
+          cor_id: string
+          created_at: string
+          id: string
+          nome_cor: string | null
+          raw_data: Json | null
+          staging_status: string
+          store_code: string
+          subcolecao: string | null
+          sync_run_id: string
+        }
+        Insert: {
+          account: string
+          colecao?: string | null
+          cor_id: string
+          created_at?: string
+          id?: string
+          nome_cor?: string | null
+          raw_data?: Json | null
+          staging_status?: string
+          store_code: string
+          subcolecao?: string | null
+          sync_run_id: string
+        }
+        Update: {
+          account?: string
+          colecao?: string | null
+          cor_id?: string
+          created_at?: string
+          id?: string
+          nome_cor?: string | null
+          raw_data?: Json | null
+          staging_status?: string
+          store_code?: string
+          subcolecao?: string | null
+          sync_run_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "tint_staging_cores_catalogo_sync_run_id_fkey"
+            columns: ["sync_run_id"]
+            isOneToOne: false
+            referencedRelation: "tint_sync_runs"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      tint_staging_cores_personalizadas: {
+        Row: {
+          account: string
+          cliente: string | null
+          cor_id: string
+          created_at: string
+          id: string
+          nome_cor: string | null
+          raw_data: Json | null
+          staging_status: string
+          store_code: string
+          sync_run_id: string
+        }
+        Insert: {
+          account: string
+          cliente?: string | null
+          cor_id: string
+          created_at?: string
+          id?: string
+          nome_cor?: string | null
+          raw_data?: Json | null
+          staging_status?: string
+          store_code: string
+          sync_run_id: string
+        }
+        Update: {
+          account?: string
+          cliente?: string | null
+          cor_id?: string
+          created_at?: string
+          id?: string
+          nome_cor?: string | null
+          raw_data?: Json | null
+          staging_status?: string
+          store_code?: string
+          sync_run_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "tint_staging_cores_personalizadas_sync_run_id_fkey"
+            columns: ["sync_run_id"]
+            isOneToOne: false
+            referencedRelation: "tint_sync_runs"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      tint_staging_embalagens: {
+        Row: {
+          account: string
+          created_at: string
+          descricao: string | null
+          id: string
+          id_embalagem_sayersystem: string
+          matched_id: string | null
+          raw_data: Json | null
+          staging_status: string
+          store_code: string
+          sync_run_id: string
+          volume_ml: number | null
+        }
+        Insert: {
+          account: string
+          created_at?: string
+          descricao?: string | null
+          id?: string
+          id_embalagem_sayersystem: string
+          matched_id?: string | null
+          raw_data?: Json | null
+          staging_status?: string
+          store_code: string
+          sync_run_id: string
+          volume_ml?: number | null
+        }
+        Update: {
+          account?: string
+          created_at?: string
+          descricao?: string | null
+          id?: string
+          id_embalagem_sayersystem?: string
+          matched_id?: string | null
+          raw_data?: Json | null
+          staging_status?: string
+          store_code?: string
+          sync_run_id?: string
+          volume_ml?: number | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "tint_staging_embalagens_sync_run_id_fkey"
+            columns: ["sync_run_id"]
+            isOneToOne: false
+            referencedRelation: "tint_sync_runs"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      tint_staging_formula_itens: {
+        Row: {
+          created_at: string
+          id: string
+          id_corante: string
+          ordem: number | null
+          qtd_ml: number | null
+          staging_formula_id: string | null
+          sync_run_id: string
+        }
+        Insert: {
+          created_at?: string
+          id?: string
+          id_corante: string
+          ordem?: number | null
+          qtd_ml?: number | null
+          staging_formula_id?: string | null
+          sync_run_id: string
+        }
+        Update: {
+          created_at?: string
+          id?: string
+          id_corante?: string
+          ordem?: number | null
+          qtd_ml?: number | null
+          staging_formula_id?: string | null
+          sync_run_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "tint_staging_formula_itens_staging_formula_id_fkey"
+            columns: ["staging_formula_id"]
+            isOneToOne: false
+            referencedRelation: "tint_staging_formulas"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "tint_staging_formula_itens_sync_run_id_fkey"
+            columns: ["sync_run_id"]
+            isOneToOne: false
+            referencedRelation: "tint_sync_runs"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      tint_staging_formulas: {
+        Row: {
+          account: string
+          cod_produto: string | null
+          cor_id: string
+          created_at: string
+          id: string
+          id_base: string | null
+          id_embalagem: string | null
+          matched_id: string | null
+          nome_cor: string | null
+          personalizada: boolean | null
+          preco_final: number | null
+          raw_data: Json | null
+          staging_status: string
+          store_code: string
+          subcolecao: string | null
+          sync_run_id: string
+          volume_final_ml: number | null
+        }
+        Insert: {
+          account: string
+          cod_produto?: string | null
+          cor_id: string
+          created_at?: string
+          id?: string
+          id_base?: string | null
+          id_embalagem?: string | null
+          matched_id?: string | null
+          nome_cor?: string | null
+          personalizada?: boolean | null
+          preco_final?: number | null
+          raw_data?: Json | null
+          staging_status?: string
+          store_code: string
+          subcolecao?: string | null
+          sync_run_id: string
+          volume_final_ml?: number | null
+        }
+        Update: {
+          account?: string
+          cod_produto?: string | null
+          cor_id?: string
+          created_at?: string
+          id?: string
+          id_base?: string | null
+          id_embalagem?: string | null
+          matched_id?: string | null
+          nome_cor?: string | null
+          personalizada?: boolean | null
+          preco_final?: number | null
+          raw_data?: Json | null
+          staging_status?: string
+          store_code?: string
+          subcolecao?: string | null
+          sync_run_id?: string
+          volume_final_ml?: number | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "tint_staging_formulas_sync_run_id_fkey"
+            columns: ["sync_run_id"]
+            isOneToOne: false
+            referencedRelation: "tint_sync_runs"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      tint_staging_preparacao_itens: {
+        Row: {
+          created_at: string
+          id: string
+          id_corante: string
+          ordem: number | null
+          qtd_ml: number | null
+          staging_preparacao_id: string | null
+          sync_run_id: string
+        }
+        Insert: {
+          created_at?: string
+          id?: string
+          id_corante: string
+          ordem?: number | null
+          qtd_ml?: number | null
+          staging_preparacao_id?: string | null
+          sync_run_id: string
+        }
+        Update: {
+          created_at?: string
+          id?: string
+          id_corante?: string
+          ordem?: number | null
+          qtd_ml?: number | null
+          staging_preparacao_id?: string | null
+          sync_run_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "tint_staging_preparacao_itens_staging_preparacao_id_fkey"
+            columns: ["staging_preparacao_id"]
+            isOneToOne: false
+            referencedRelation: "tint_staging_preparacoes"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "tint_staging_preparacao_itens_sync_run_id_fkey"
+            columns: ["sync_run_id"]
+            isOneToOne: false
+            referencedRelation: "tint_sync_runs"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      tint_staging_preparacoes: {
+        Row: {
+          account: string
+          cliente: string | null
+          cod_produto: string | null
+          cor_id: string | null
+          created_at: string
+          data_preparacao: string | null
+          id: string
+          id_base: string | null
+          id_embalagem: string | null
+          nome_cor: string | null
+          personalizada: boolean | null
+          preco: number | null
+          preparacao_id: string
+          raw_data: Json | null
+          staging_status: string
+          store_code: string
+          sync_run_id: string
+          volume_ml: number | null
+        }
+        Insert: {
+          account: string
+          cliente?: string | null
+          cod_produto?: string | null
+          cor_id?: string | null
+          created_at?: string
+          data_preparacao?: string | null
+          id?: string
+          id_base?: string | null
+          id_embalagem?: string | null
+          nome_cor?: string | null
+          personalizada?: boolean | null
+          preco?: number | null
+          preparacao_id: string
+          raw_data?: Json | null
+          staging_status?: string
+          store_code: string
+          sync_run_id: string
+          volume_ml?: number | null
+        }
+        Update: {
+          account?: string
+          cliente?: string | null
+          cod_produto?: string | null
+          cor_id?: string | null
+          created_at?: string
+          data_preparacao?: string | null
+          id?: string
+          id_base?: string | null
+          id_embalagem?: string | null
+          nome_cor?: string | null
+          personalizada?: boolean | null
+          preco?: number | null
+          preparacao_id?: string
+          raw_data?: Json | null
+          staging_status?: string
+          store_code?: string
+          sync_run_id?: string
+          volume_ml?: number | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "tint_staging_preparacoes_sync_run_id_fkey"
+            columns: ["sync_run_id"]
+            isOneToOne: false
+            referencedRelation: "tint_sync_runs"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      tint_staging_produtos: {
+        Row: {
+          account: string
+          cod_produto: string
+          created_at: string
+          descricao: string | null
+          id: string
+          matched_id: string | null
+          raw_data: Json | null
+          staging_status: string
+          store_code: string
+          sync_run_id: string
+        }
+        Insert: {
+          account: string
+          cod_produto: string
+          created_at?: string
+          descricao?: string | null
+          id?: string
+          matched_id?: string | null
+          raw_data?: Json | null
+          staging_status?: string
+          store_code: string
+          sync_run_id: string
+        }
+        Update: {
+          account?: string
+          cod_produto?: string
+          created_at?: string
+          descricao?: string | null
+          id?: string
+          matched_id?: string | null
+          raw_data?: Json | null
+          staging_status?: string
+          store_code?: string
+          sync_run_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "tint_staging_produtos_sync_run_id_fkey"
+            columns: ["sync_run_id"]
+            isOneToOne: false
+            referencedRelation: "tint_sync_runs"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      tint_staging_skus: {
+        Row: {
+          account: string
+          cod_produto: string
+          created_at: string
+          id: string
+          id_base: string
+          id_embalagem: string
+          matched_id: string | null
+          raw_data: Json | null
+          staging_status: string
+          store_code: string
+          sync_run_id: string
+        }
+        Insert: {
+          account: string
+          cod_produto: string
+          created_at?: string
+          id?: string
+          id_base: string
+          id_embalagem: string
+          matched_id?: string | null
+          raw_data?: Json | null
+          staging_status?: string
+          store_code: string
+          sync_run_id: string
+        }
+        Update: {
+          account?: string
+          cod_produto?: string
+          created_at?: string
+          id?: string
+          id_base?: string
+          id_embalagem?: string
+          matched_id?: string | null
+          raw_data?: Json | null
+          staging_status?: string
+          store_code?: string
+          sync_run_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "tint_staging_skus_sync_run_id_fkey"
+            columns: ["sync_run_id"]
+            isOneToOne: false
+            referencedRelation: "tint_sync_runs"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       tint_subcolecoes: {
         Row: {
           account: string
@@ -4394,6 +5121,115 @@ export type Database = {
             columns: ["colecao_id"]
             isOneToOne: false
             referencedRelation: "tint_colecoes"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      tint_sync_errors: {
+        Row: {
+          created_at: string
+          entity_id: string | null
+          entity_type: string
+          error_details: Json | null
+          error_message: string
+          id: string
+          raw_data: Json | null
+          sync_run_id: string
+        }
+        Insert: {
+          created_at?: string
+          entity_id?: string | null
+          entity_type: string
+          error_details?: Json | null
+          error_message: string
+          id?: string
+          raw_data?: Json | null
+          sync_run_id: string
+        }
+        Update: {
+          created_at?: string
+          entity_id?: string | null
+          entity_type?: string
+          error_details?: Json | null
+          error_message?: string
+          id?: string
+          raw_data?: Json | null
+          sync_run_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "tint_sync_errors_sync_run_id_fkey"
+            columns: ["sync_run_id"]
+            isOneToOne: false
+            referencedRelation: "tint_sync_runs"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      tint_sync_runs: {
+        Row: {
+          account: string
+          completed_at: string | null
+          created_at: string
+          deletes: number | null
+          duration_ms: number | null
+          errors: number | null
+          id: string
+          inserts: number | null
+          metadata: Json | null
+          setting_id: string
+          source: string
+          started_at: string
+          status: string
+          store_code: string
+          sync_type: string
+          total_records: number | null
+          updates: number | null
+        }
+        Insert: {
+          account: string
+          completed_at?: string | null
+          created_at?: string
+          deletes?: number | null
+          duration_ms?: number | null
+          errors?: number | null
+          id?: string
+          inserts?: number | null
+          metadata?: Json | null
+          setting_id: string
+          source?: string
+          started_at?: string
+          status?: string
+          store_code: string
+          sync_type?: string
+          total_records?: number | null
+          updates?: number | null
+        }
+        Update: {
+          account?: string
+          completed_at?: string | null
+          created_at?: string
+          deletes?: number | null
+          duration_ms?: number | null
+          errors?: number | null
+          id?: string
+          inserts?: number | null
+          metadata?: Json | null
+          setting_id?: string
+          source?: string
+          started_at?: string
+          status?: string
+          store_code?: string
+          sync_type?: string
+          total_records?: number | null
+          updates?: number | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "tint_sync_runs_setting_id_fkey"
+            columns: ["setting_id"]
+            isOneToOne: false
+            referencedRelation: "tint_integration_settings"
             referencedColumns: ["id"]
           },
         ]
@@ -5000,6 +5836,7 @@ export type Database = {
         | "numero_invalido"
         | "reagendado"
       farmer_call_type: "reativacao" | "cross_sell" | "up_sell" | "follow_up"
+      tint_integration_mode: "csv_only" | "shadow_mode" | "automatic_primary"
     }
     CompositeTypes: {
       [_ in never]: never
@@ -5143,6 +5980,7 @@ export const Constants = {
         "reagendado",
       ],
       farmer_call_type: ["reativacao", "cross_sell", "up_sell", "follow_up"],
+      tint_integration_mode: ["csv_only", "shadow_mode", "automatic_primary"],
     },
   },
 } as const
