@@ -217,8 +217,8 @@ async function syncContasPagar(
       pagina,
       registros_por_pagina: 100,
     };
-    if (filtroDataDe) params.dDtEmissaoDe = filtroDataDe;
-    if (filtroDataAte) params.dDtEmissaoAte = filtroDataAte;
+    if (filtroDataDe) params.dDtVencDe = filtroDataDe;
+    if (filtroDataAte) params.dDtVencAte = filtroDataAte;
 
     const result = (await callOmie(
       company,
@@ -341,8 +341,8 @@ async function syncContasReceber(
       pagina,
       registros_por_pagina: 100,
     };
-    if (filtroDataDe) params.dDtEmissaoDe = filtroDataDe;
-    if (filtroDataAte) params.dDtEmissaoAte = filtroDataAte;
+    if (filtroDataDe) params.dDtVencDe = filtroDataDe;
+    if (filtroDataAte) params.dDtVencAte = filtroDataAte;
 
     const result = (await callOmie(
       company,
@@ -454,7 +454,7 @@ async function syncMovimentacoes(
       nRegPorPagina: 100,
     };
     if (filtroDataDe) params.dDtMovDe = filtroDataDe;
-    if (filtroDataAte) params.dDtMovAte = filtroDataAte;
+    // Note: Omie mfListarRequest does not support dDtMovAte filter
 
     const result = (await callOmie(
       company,
