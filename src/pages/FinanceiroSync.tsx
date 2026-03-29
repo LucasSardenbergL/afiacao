@@ -59,7 +59,6 @@ const FinanceiroSync = () => {
               error: data.error,
             },
           ]);
-          ]);
         }
       }
     } catch (e: any) {
