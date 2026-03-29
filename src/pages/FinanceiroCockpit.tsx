@@ -75,6 +75,7 @@ const FinanceiroCockpit = () => {
   const [inadimplentes, setInadimplentes] = useState<any[]>([]);
   const [projecao13, setProjecao13] = useState<any[]>([]);
   const [confiabilidade, setConfiabilidade] = useState<any[]>([]);
+  const [drillDown, setDrillDown] = useState<DrillDownType>(null);
 
   const ano = new Date().getFullYear();
   const mes = new Date().getMonth() + 1;
