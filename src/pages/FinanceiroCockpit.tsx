@@ -386,6 +386,8 @@ const FinanceiroCockpit = () => {
         <p>Saldo bancário: consulta direta Omie (ResumirContaCorrente). CR/CP: títulos sincronizados (últimos 6 meses). DRE: regime de caixa (pagamento/recebimento efetivo). Projeção 13 semanas: baseada em vencimentos de títulos abertos.</p>
         <p>Para números de controller, verifique: % mapeado ≥ 80%, conciliação ≥ 70%, mês fechado.</p>
       </div>
+
+      <CockpitDrillDown type={drillDown} onClose={() => setDrillDown(null)} />
     </div>
   );
 };
