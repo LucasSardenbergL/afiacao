@@ -205,6 +205,7 @@ const FinanceiroCockpit = () => {
           detail={`Risco de liquidez: ${riscoLabel} (${(riscoLiquidez * 100).toFixed(0)}%)`}
           detailColor={riscoColor}
           badge="Saldo bancário real"
+          onClick={() => setDrillDown('caixa')}
         />
         <CockpitCard
           title="Caixa Projetado 30d"
@@ -213,6 +214,7 @@ const FinanceiroCockpit = () => {
           icon={Target}
           detail={`+ ${fmtCompact(totalCR)} entradas / - ${fmtCompact(totalCP)} saídas`}
           badge="CR+CC-CP abertos"
+          onClick={() => setDrillDown('cr_aberto')}
         />
         <CockpitCard
           title="Necessidade de CG"
@@ -222,6 +224,7 @@ const FinanceiroCockpit = () => {
           detail={ncg >= 0 ? 'CR cobre CP — posição confortável' : 'CP excede CR — atenção ao caixa'}
           detailColor={ncg >= 0 ? 'text-emerald-600' : 'text-red-600'}
           badge="CR - CP"
+          onClick={() => setDrillDown('cr_aberto')}
         />
       </div>
 
@@ -233,10 +236,12 @@ const FinanceiroCockpit = () => {
           color={margemOp >= 10 ? 'text-emerald-600' : margemOp >= 0 ? 'text-amber-600' : 'text-red-600'} />
         <MiniCard label="Inadimplência" value={`${pctInadimplencia.toFixed(1)}%`}
           color={pctInadimplencia <= 10 ? 'text-emerald-600' : pctInadimplencia <= 25 ? 'text-amber-600' : 'text-red-600'}
-          subtitle={fmtCompact(totalVencidoCR)} />
+          subtitle={fmtCompact(totalVencidoCR)}
+          onClick={() => setDrillDown('inadimplencia')} />
         <MiniCard label="Aging Crítico (+60d)" value={`${pctCritico.toFixed(1)}%`}
           color={pctCritico <= 5 ? 'text-emerald-600' : pctCritico <= 15 ? 'text-amber-600' : 'text-red-600'}
-          subtitle={fmtCompact((aging?.vencido_61_90_valor || 0) + (aging?.vencido_90_plus_valor || 0))} />
+          subtitle={fmtCompact((aging?.vencido_61_90_valor || 0) + (aging?.vencido_90_plus_valor || 0))}
+          onClick={() => setDrillDown('aging_critico')} />
       </div>
 
       {/* Row 3: Resultado por empresa */}
