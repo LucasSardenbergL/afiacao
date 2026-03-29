@@ -218,7 +218,7 @@ async function syncContasPagar(
       registros_por_pagina: 100,
     };
     if (filtroDataDe) params.dDtVencDe = filtroDataDe;
-    if (filtroDataAte) params.dDtVencAte = filtroDataAte;
+    // Omie lcpListarRequest não aceita dDtVencAte
 
     const result = (await callOmie(
       company,
@@ -342,7 +342,7 @@ async function syncContasReceber(
       registros_por_pagina: 100,
     };
     if (filtroDataDe) params.dDtVencDe = filtroDataDe;
-    if (filtroDataAte) params.dDtVencAte = filtroDataAte;
+    // Omie lcrListarRequest não aceita dDtVencAte
 
     const result = (await callOmie(
       company,
