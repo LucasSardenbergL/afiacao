@@ -5178,6 +5178,8 @@ export type Database = {
           duration_ms: number | null
           errors: number | null
           id: string
+          idempotency_key: string | null
+          idempotency_response: Json | null
           inserts: number | null
           metadata: Json | null
           setting_id: string
@@ -5197,6 +5199,8 @@ export type Database = {
           duration_ms?: number | null
           errors?: number | null
           id?: string
+          idempotency_key?: string | null
+          idempotency_response?: Json | null
           inserts?: number | null
           metadata?: Json | null
           setting_id: string
@@ -5216,6 +5220,8 @@ export type Database = {
           duration_ms?: number | null
           errors?: number | null
           id?: string
+          idempotency_key?: string | null
+          idempotency_response?: Json | null
           inserts?: number | null
           metadata?: Json | null
           setting_id?: string
