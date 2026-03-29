@@ -9,8 +9,8 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
 import { Label } from "@/components/ui/label";
 import { toast } from "sonner";
-import { Plus, Copy, RefreshCw, Wifi, WifiOff, Eye, EyeOff, Settings2 } from "lucide-react";
-import { format, formatDistanceToNow } from "date-fns";
+import { Plus, Copy, Wifi, WifiOff, Eye, EyeOff, FlaskConical, GitCompare, Loader2 } from "lucide-react";
+import { formatDistanceToNow } from "date-fns";
 import { ptBR } from "date-fns/locale";
 
 type IntegrationMode = "csv_only" | "shadow_mode" | "automatic_primary";
@@ -102,6 +102,38 @@ export default function TintIntegrations() {
     },
   });
 
+  const simulateMutation = useMutation({
+    mutationFn: async (settingId: string) => {
+      const { data, error } = await supabase.functions.invoke("tint-sync-agent/simulate", {
+        body: { setting_id: settingId },
+      });
+      if (error) throw error;
+      return data;
+    },
+    onSuccess: (data) => {
+      toast.success(`Simulação completa: ${data.inserts} registros, ${data.errors} erros`);
+      qc.invalidateQueries({ queryKey: ["tint-sync-runs-recent"] });
+      qc.invalidateQueries({ queryKey: ["tint-sync-runs-all"] });
+      qc.invalidateQueries({ queryKey: ["tint-reconciliation-runs"] });
+    },
+    onError: (e: Error) => toast.error(`Erro na simulação: ${e.message}`),
+  });
+
+  const reconcileMutation = useMutation({
+    mutationFn: async (syncRunId: string) => {
+      const { data, error } = await supabase.functions.invoke("tint-sync-agent/reconcile", {
+        body: { sync_run_id: syncRunId },
+      });
+      if (error) throw error;
+      return data;
+    },
+    onSuccess: (data) => {
+      toast.success(`Reconciliação: ${data.matches} iguais, ${data.divergences} divergências, ${data.only_sync} só sync`);
+      qc.invalidateQueries({ queryKey: ["tint-reconciliation-runs"] });
+    },
+    onError: (e: Error) => toast.error(`Erro na reconciliação: ${e.message}`),
+  });
+
   function getStoreRuns(storeCode: string) {
     return recentRuns.filter((r: any) => r.store_code === storeCode);
   }
@@ -156,6 +188,7 @@ export default function TintIntegrations() {
             const runs = getStoreRuns(s.store_code);
             const lastSuccess = runs.find((r: any) => r.status === "complete");
             const lastError = runs.find((r: any) => r.status === "error");
+            const lastRun = runs[0];
 
             return (
               <Card key={s.id}>
@@ -218,6 +251,48 @@ export default function TintIntegrations() {
                       {s.sync_enabled ? "Desabilitar" : "Habilitar"} Sync
                     </Button>
                   </div>
+
+                  {/* Simulation & Reconciliation */}
+                  <div className="flex gap-2 flex-wrap border-t pt-3">
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      onClick={() => simulateMutation.mutate(s.id)}
+                      disabled={simulateMutation.isPending}
+                    >
+                      {simulateMutation.isPending ? (
+                        <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                      ) : (
+                        <FlaskConical className="h-4 w-4 mr-2" />
+                      )}
+                      Simular Sync
+                    </Button>
+                    {lastRun && (
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        onClick={() => reconcileMutation.mutate(lastRun.id)}
+                        disabled={reconcileMutation.isPending}
+                      >
+                        {reconcileMutation.isPending ? (
+                          <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                        ) : (
+                          <GitCompare className="h-4 w-4 mr-2" />
+                        )}
+                        Reconciliar
+                      </Button>
+                    )}
+                  </div>
+
+                  {/* Last simulation result */}
+                  {lastRun?.source === "simulation" && (
+                    <div className="text-xs bg-muted/50 rounded p-2 space-y-1">
+                      <p className="font-medium">Última simulação:</p>
+                      <p>Status: <Badge variant={lastRun.status === "complete" ? "default" : "destructive"} className="text-xs">{lastRun.status}</Badge></p>
+                      <p>Inserts: {lastRun.inserts} · Updates: {lastRun.updates} · Erros: {lastRun.errors}</p>
+                      {lastRun.duration_ms && <p>Duração: {(lastRun.duration_ms / 1000).toFixed(1)}s</p>}
+                    </div>
+                  )}
                 </CardContent>
               </Card>
             );
