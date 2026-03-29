@@ -219,7 +219,7 @@ async function syncContasPagar(
   let pagesProcessed = 0;
   let consecutiveEmpty = 0;
 
-  while (pagina <= totalPaginas && pagesProcessed < maxPages) {
+  while (pagina <= totalPaginas && pagesProcessed < maxPages && !isTimeBudgetExhausted()) {
     const params: Record<string, unknown> = {
       pagina,
       registros_por_pagina: 100,
@@ -324,10 +324,13 @@ async function syncContasPagar(
     pagesProcessed++;
   }
 
+  const timedOut = isTimeBudgetExhausted();
+  if (timedOut) console.log(`[Fin][${company}] CP stopped: time budget exhausted`);
   return {
     totalSynced,
     complete: pagina > totalPaginas,
     nextPage: pagina > totalPaginas ? null : pagina,
+    timedOut,
   };
 }
 
@@ -345,7 +348,7 @@ async function syncContasReceber(
   let pagesProcessed = 0;
   let consecutiveEmpty = 0;
 
-  while (pagina <= totalPaginas && pagesProcessed < maxPages) {
+  while (pagina <= totalPaginas && pagesProcessed < maxPages && !isTimeBudgetExhausted()) {
     const params: Record<string, unknown> = {
       pagina,
       registros_por_pagina: 100,
@@ -438,10 +441,13 @@ async function syncContasReceber(
     pagesProcessed++;
   }
 
+  const timedOut = isTimeBudgetExhausted();
+  if (timedOut) console.log(`[Fin][${company}] CR stopped: time budget exhausted`);
   return {
     totalSynced,
     complete: pagina > totalPaginas,
     nextPage: pagina > totalPaginas ? null : pagina,
+    timedOut,
   };
 }
 
@@ -459,7 +465,7 @@ async function syncMovimentacoes(
   let pagesProcessed = 0;
   let consecutiveEmpty = 0;
 
-  while (pagina <= totalPaginas && pagesProcessed < maxPages) {
+  while (pagina <= totalPaginas && pagesProcessed < maxPages && !isTimeBudgetExhausted()) {
     const params: Record<string, unknown> = {
       nPagina: pagina,
       nRegPorPagina: 100,
@@ -521,7 +527,9 @@ async function syncMovimentacoes(
     pagesProcessed++;
   }
 
-  return { totalSynced, complete: pagina > totalPaginas };
+  const timedOut = isTimeBudgetExhausted();
+  if (timedOut) console.log(`[Fin][${company}] Mov stopped: time budget exhausted`);
+  return { totalSynced, complete: pagina > totalPaginas, timedOut };
 }
 
 // ═══════════════ CALCULAR DRE SNAPSHOT ═══════════════
