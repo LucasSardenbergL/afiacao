@@ -53,3 +53,6 @@ verify_jwt = false
 
 [functions.tint-import]
 verify_jwt = false
+
+[functions.tint-sync-agent]
+verify_jwt = false
