@@ -927,8 +927,9 @@ serve(async (req) => {
 
     const targetCompanies: Company[] = companies || (company ? [company] : ["oben", "colacor", "colacor_sc"]);
 
-    // Log inicio (Ponto 11)
-    const startTime = Date.now();
+    // Reset global counters per invocation
+    globalStartTime = Date.now();
+    const startTime = globalStartTime;
     apiCallCount = 0;
     rateLimitHits = 0;
     const logId = await logSync(supabase, action, targetCompanies, auth.userId || "unknown");
