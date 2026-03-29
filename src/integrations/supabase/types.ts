@@ -1460,6 +1460,1127 @@ export type Database = {
           },
         ]
       }
+      fin_categoria_dre_mapping: {
+        Row: {
+          company: string
+          created_at: string | null
+          dre_linha: string
+          id: string
+          notas: string | null
+          omie_codigo: string
+          updated_at: string | null
+        }
+        Insert: {
+          company: string
+          created_at?: string | null
+          dre_linha: string
+          id?: string
+          notas?: string | null
+          omie_codigo: string
+          updated_at?: string | null
+        }
+        Update: {
+          company?: string
+          created_at?: string | null
+          dre_linha?: string
+          id?: string
+          notas?: string | null
+          omie_codigo?: string
+          updated_at?: string | null
+        }
+        Relationships: []
+      }
+      fin_categorias: {
+        Row: {
+          ativo: boolean | null
+          company: string
+          conta_pai: string | null
+          created_at: string | null
+          descricao: string
+          id: string
+          nivel: number | null
+          omie_codigo: string
+          tipo: string | null
+          totalizadora: boolean | null
+          updated_at: string | null
+        }
+        Insert: {
+          ativo?: boolean | null
+          company: string
+          conta_pai?: string | null
+          created_at?: string | null
+          descricao: string
+          id?: string
+          nivel?: number | null
+          omie_codigo: string
+          tipo?: string | null
+          totalizadora?: boolean | null
+          updated_at?: string | null
+        }
+        Update: {
+          ativo?: boolean | null
+          company?: string
+          conta_pai?: string | null
+          created_at?: string | null
+          descricao?: string
+          id?: string
+          nivel?: number | null
+          omie_codigo?: string
+          tipo?: string | null
+          totalizadora?: boolean | null
+          updated_at?: string | null
+        }
+        Relationships: []
+      }
+      fin_conciliacao: {
+        Row: {
+          company: string
+          created_at: string | null
+          diferenca: number | null
+          id: string
+          mov_data: string | null
+          mov_descricao: string | null
+          mov_id: string | null
+          mov_valor: number | null
+          observacao: string | null
+          omie_ncodcc: number
+          resolvido_em: string | null
+          resolvido_por: string | null
+          status: string
+          tipo_match: string | null
+          tipo_titulo: string | null
+          titulo_id: string | null
+          titulo_valor: number | null
+          updated_at: string | null
+        }
+        Insert: {
+          company: string
+          created_at?: string | null
+          diferenca?: number | null
+          id?: string
+          mov_data?: string | null
+          mov_descricao?: string | null
+          mov_id?: string | null
+          mov_valor?: number | null
+          observacao?: string | null
+          omie_ncodcc: number
+          resolvido_em?: string | null
+          resolvido_por?: string | null
+          status?: string
+          tipo_match?: string | null
+          tipo_titulo?: string | null
+          titulo_id?: string | null
+          titulo_valor?: number | null
+          updated_at?: string | null
+        }
+        Update: {
+          company?: string
+          created_at?: string | null
+          diferenca?: number | null
+          id?: string
+          mov_data?: string | null
+          mov_descricao?: string | null
+          mov_id?: string | null
+          mov_valor?: number | null
+          observacao?: string | null
+          omie_ncodcc?: number
+          resolvido_em?: string | null
+          resolvido_por?: string | null
+          status?: string
+          tipo_match?: string | null
+          tipo_titulo?: string | null
+          titulo_id?: string | null
+          titulo_valor?: number | null
+          updated_at?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "fin_conciliacao_mov_id_fkey"
+            columns: ["mov_id"]
+            isOneToOne: false
+            referencedRelation: "fin_movimentacoes"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      fin_confiabilidade: {
+        Row: {
+          ano: number
+          calculated_at: string | null
+          company: string
+          cp_sem_categoria: number | null
+          cr_sem_categoria: number | null
+          dre_categorias_heuristica: number | null
+          dre_categorias_mapeadas: number | null
+          dre_categorias_total: number | null
+          dre_regime: string | null
+          fechamento_status: string | null
+          fechamento_versao: number | null
+          id: string
+          mes: number
+          mov_sem_titulo: number | null
+          pct_mov_conciliado: number | null
+          pct_valor_mapeado: number | null
+          sync_status: string | null
+          titulo_sem_mov: number | null
+          total_cp: number | null
+          total_cr: number | null
+          total_mov: number | null
+          ultimo_sync: string | null
+        }
+        Insert: {
+          ano: number
+          calculated_at?: string | null
+          company: string
+          cp_sem_categoria?: number | null
+          cr_sem_categoria?: number | null
+          dre_categorias_heuristica?: number | null
+          dre_categorias_mapeadas?: number | null
+          dre_categorias_total?: number | null
+          dre_regime?: string | null
+          fechamento_status?: string | null
+          fechamento_versao?: number | null
+          id?: string
+          mes: number
+          mov_sem_titulo?: number | null
+          pct_mov_conciliado?: number | null
+          pct_valor_mapeado?: number | null
+          sync_status?: string | null
+          titulo_sem_mov?: number | null
+          total_cp?: number | null
+          total_cr?: number | null
+          total_mov?: number | null
+          ultimo_sync?: string | null
+        }
+        Update: {
+          ano?: number
+          calculated_at?: string | null
+          company?: string
+          cp_sem_categoria?: number | null
+          cr_sem_categoria?: number | null
+          dre_categorias_heuristica?: number | null
+          dre_categorias_mapeadas?: number | null
+          dre_categorias_total?: number | null
+          dre_regime?: string | null
+          fechamento_status?: string | null
+          fechamento_versao?: number | null
+          id?: string
+          mes?: number
+          mov_sem_titulo?: number | null
+          pct_mov_conciliado?: number | null
+          pct_valor_mapeado?: number | null
+          sync_status?: string | null
+          titulo_sem_mov?: number | null
+          total_cp?: number | null
+          total_cr?: number | null
+          total_mov?: number | null
+          ultimo_sync?: string | null
+        }
+        Relationships: []
+      }
+      fin_contas_correntes: {
+        Row: {
+          agencia: string | null
+          ativo: boolean | null
+          banco: string | null
+          company: string
+          created_at: string | null
+          descricao: string | null
+          id: string
+          numero_conta: string | null
+          omie_ncodcc: number
+          saldo_atual: number | null
+          saldo_data: string | null
+          tipo: string | null
+          updated_at: string | null
+        }
+        Insert: {
+          agencia?: string | null
+          ativo?: boolean | null
+          banco?: string | null
+          company: string
+          created_at?: string | null
+          descricao?: string | null
+          id?: string
+          numero_conta?: string | null
+          omie_ncodcc: number
+          saldo_atual?: number | null
+          saldo_data?: string | null
+          tipo?: string | null
+          updated_at?: string | null
+        }
+        Update: {
+          agencia?: string | null
+          ativo?: boolean | null
+          banco?: string | null
+          company?: string
+          created_at?: string | null
+          descricao?: string | null
+          id?: string
+          numero_conta?: string | null
+          omie_ncodcc?: number
+          saldo_atual?: number | null
+          saldo_data?: string | null
+          tipo?: string | null
+          updated_at?: string | null
+        }
+        Relationships: []
+      }
+      fin_contas_pagar: {
+        Row: {
+          categoria_codigo: string | null
+          categoria_descricao: string | null
+          centro_custo: string | null
+          cnpj_cpf: string | null
+          codigo_barras: string | null
+          company: string
+          created_at: string | null
+          data_emissao: string | null
+          data_pagamento: string | null
+          data_previsao: string | null
+          data_vencimento: string | null
+          departamento: string | null
+          id: string
+          id_origem: string | null
+          metadata: Json | null
+          nome_fornecedor: string | null
+          numero_documento: string | null
+          numero_documento_fiscal: string | null
+          observacao: string | null
+          omie_codigo_cliente_fornecedor: number | null
+          omie_codigo_lancamento: number
+          omie_ncodcc: number | null
+          saldo: number | null
+          status_titulo: string | null
+          tipo_documento: string | null
+          updated_at: string | null
+          valor_desconto: number | null
+          valor_documento: number
+          valor_juros: number | null
+          valor_multa: number | null
+          valor_pago: number | null
+        }
+        Insert: {
+          categoria_codigo?: string | null
+          categoria_descricao?: string | null
+          centro_custo?: string | null
+          cnpj_cpf?: string | null
+          codigo_barras?: string | null
+          company: string
+          created_at?: string | null
+          data_emissao?: string | null
+          data_pagamento?: string | null
+          data_previsao?: string | null
+          data_vencimento?: string | null
+          departamento?: string | null
+          id?: string
+          id_origem?: string | null
+          metadata?: Json | null
+          nome_fornecedor?: string | null
+          numero_documento?: string | null
+          numero_documento_fiscal?: string | null
+          observacao?: string | null
+          omie_codigo_cliente_fornecedor?: number | null
+          omie_codigo_lancamento: number
+          omie_ncodcc?: number | null
+          saldo?: number | null
+          status_titulo?: string | null
+          tipo_documento?: string | null
+          updated_at?: string | null
+          valor_desconto?: number | null
+          valor_documento?: number
+          valor_juros?: number | null
+          valor_multa?: number | null
+          valor_pago?: number | null
+        }
+        Update: {
+          categoria_codigo?: string | null
+          categoria_descricao?: string | null
+          centro_custo?: string | null
+          cnpj_cpf?: string | null
+          codigo_barras?: string | null
+          company?: string
+          created_at?: string | null
+          data_emissao?: string | null
+          data_pagamento?: string | null
+          data_previsao?: string | null
+          data_vencimento?: string | null
+          departamento?: string | null
+          id?: string
+          id_origem?: string | null
+          metadata?: Json | null
+          nome_fornecedor?: string | null
+          numero_documento?: string | null
+          numero_documento_fiscal?: string | null
+          observacao?: string | null
+          omie_codigo_cliente_fornecedor?: number | null
+          omie_codigo_lancamento?: number
+          omie_ncodcc?: number | null
+          saldo?: number | null
+          status_titulo?: string | null
+          tipo_documento?: string | null
+          updated_at?: string | null
+          valor_desconto?: number | null
+          valor_documento?: number
+          valor_juros?: number | null
+          valor_multa?: number | null
+          valor_pago?: number | null
+        }
+        Relationships: []
+      }
+      fin_contas_receber: {
+        Row: {
+          categoria_codigo: string | null
+          categoria_descricao: string | null
+          centro_custo: string | null
+          cnpj_cpf: string | null
+          company: string
+          created_at: string | null
+          data_emissao: string | null
+          data_previsao: string | null
+          data_recebimento: string | null
+          data_vencimento: string | null
+          departamento: string | null
+          id: string
+          id_origem: string | null
+          metadata: Json | null
+          nome_cliente: string | null
+          numero_documento: string | null
+          numero_documento_fiscal: string | null
+          numero_pedido: string | null
+          observacao: string | null
+          omie_codigo_cliente: number | null
+          omie_codigo_lancamento: number
+          omie_ncodcc: number | null
+          saldo: number | null
+          status_titulo: string | null
+          tipo_documento: string | null
+          updated_at: string | null
+          valor_desconto: number | null
+          valor_documento: number
+          valor_juros: number | null
+          valor_multa: number | null
+          valor_recebido: number | null
+          vendedor_id: number | null
+        }
+        Insert: {
+          categoria_codigo?: string | null
+          categoria_descricao?: string | null
+          centro_custo?: string | null
+          cnpj_cpf?: string | null
+          company: string
+          created_at?: string | null
+          data_emissao?: string | null
+          data_previsao?: string | null
+          data_recebimento?: string | null
+          data_vencimento?: string | null
+          departamento?: string | null
+          id?: string
+          id_origem?: string | null
+          metadata?: Json | null
+          nome_cliente?: string | null
+          numero_documento?: string | null
+          numero_documento_fiscal?: string | null
+          numero_pedido?: string | null
+          observacao?: string | null
+          omie_codigo_cliente?: number | null
+          omie_codigo_lancamento: number
+          omie_ncodcc?: number | null
+          saldo?: number | null
+          status_titulo?: string | null
+          tipo_documento?: string | null
+          updated_at?: string | null
+          valor_desconto?: number | null
+          valor_documento?: number
+          valor_juros?: number | null
+          valor_multa?: number | null
+          valor_recebido?: number | null
+          vendedor_id?: number | null
+        }
+        Update: {
+          categoria_codigo?: string | null
+          categoria_descricao?: string | null
+          centro_custo?: string | null
+          cnpj_cpf?: string | null
+          company?: string
+          created_at?: string | null
+          data_emissao?: string | null
+          data_previsao?: string | null
+          data_recebimento?: string | null
+          data_vencimento?: string | null
+          departamento?: string | null
+          id?: string
+          id_origem?: string | null
+          metadata?: Json | null
+          nome_cliente?: string | null
+          numero_documento?: string | null
+          numero_documento_fiscal?: string | null
+          numero_pedido?: string | null
+          observacao?: string | null
+          omie_codigo_cliente?: number | null
+          omie_codigo_lancamento?: number
+          omie_ncodcc?: number | null
+          saldo?: number | null
+          status_titulo?: string | null
+          tipo_documento?: string | null
+          updated_at?: string | null
+          valor_desconto?: number | null
+          valor_documento?: number
+          valor_juros?: number | null
+          valor_multa?: number | null
+          valor_recebido?: number | null
+          vendedor_id?: number | null
+        }
+        Relationships: []
+      }
+      fin_dre_snapshots: {
+        Row: {
+          ano: number
+          calculated_at: string | null
+          cmv: number | null
+          company: string
+          deducoes: number | null
+          despesas_administrativas: number | null
+          despesas_comerciais: number | null
+          despesas_financeiras: number | null
+          despesas_operacionais: number | null
+          detalhamento: Json | null
+          id: string
+          impostos: number | null
+          lucro_bruto: number | null
+          mes: number
+          outras_despesas: number | null
+          outras_receitas: number | null
+          qtd_categorias_sem_mapeamento: number | null
+          receita_bruta: number | null
+          receita_liquida: number | null
+          receitas_financeiras: number | null
+          regime: string | null
+          resultado_antes_impostos: number | null
+          resultado_liquido: number | null
+          resultado_operacional: number | null
+        }
+        Insert: {
+          ano: number
+          calculated_at?: string | null
+          cmv?: number | null
+          company: string
+          deducoes?: number | null
+          despesas_administrativas?: number | null
+          despesas_comerciais?: number | null
+          despesas_financeiras?: number | null
+          despesas_operacionais?: number | null
+          detalhamento?: Json | null
+          id?: string
+          impostos?: number | null
+          lucro_bruto?: number | null
+          mes: number
+          outras_despesas?: number | null
+          outras_receitas?: number | null
+          qtd_categorias_sem_mapeamento?: number | null
+          receita_bruta?: number | null
+          receita_liquida?: number | null
+          receitas_financeiras?: number | null
+          regime?: string | null
+          resultado_antes_impostos?: number | null
+          resultado_liquido?: number | null
+          resultado_operacional?: number | null
+        }
+        Update: {
+          ano?: number
+          calculated_at?: string | null
+          cmv?: number | null
+          company?: string
+          deducoes?: number | null
+          despesas_administrativas?: number | null
+          despesas_comerciais?: number | null
+          despesas_financeiras?: number | null
+          despesas_operacionais?: number | null
+          detalhamento?: Json | null
+          id?: string
+          impostos?: number | null
+          lucro_bruto?: number | null
+          mes?: number
+          outras_despesas?: number | null
+          outras_receitas?: number | null
+          qtd_categorias_sem_mapeamento?: number | null
+          receita_bruta?: number | null
+          receita_liquida?: number | null
+          receitas_financeiras?: number | null
+          regime?: string | null
+          resultado_antes_impostos?: number | null
+          resultado_liquido?: number | null
+          resultado_operacional?: number | null
+        }
+        Relationships: []
+      }
+      fin_eliminacoes_intercompany: {
+        Row: {
+          ativo: boolean | null
+          categoria_destino: string | null
+          categoria_origem: string | null
+          cnpj_destino: string | null
+          cnpj_origem: string | null
+          created_at: string | null
+          descricao: string
+          empresa_destino: string
+          empresa_origem: string
+          id: string
+          match_por: string
+          tipo: string
+          updated_at: string | null
+        }
+        Insert: {
+          ativo?: boolean | null
+          categoria_destino?: string | null
+          categoria_origem?: string | null
+          cnpj_destino?: string | null
+          cnpj_origem?: string | null
+          created_at?: string | null
+          descricao: string
+          empresa_destino: string
+          empresa_origem: string
+          id?: string
+          match_por?: string
+          tipo: string
+          updated_at?: string | null
+        }
+        Update: {
+          ativo?: boolean | null
+          categoria_destino?: string | null
+          categoria_origem?: string | null
+          cnpj_destino?: string | null
+          cnpj_origem?: string | null
+          created_at?: string | null
+          descricao?: string
+          empresa_destino?: string
+          empresa_origem?: string
+          id?: string
+          match_por?: string
+          tipo?: string
+          updated_at?: string | null
+        }
+        Relationships: []
+      }
+      fin_eliminacoes_log: {
+        Row: {
+          ano: number
+          created_at: string | null
+          detalhes: Json | null
+          id: string
+          mes: number
+          qtd_titulos: number | null
+          regra_id: string | null
+          valor_eliminado: number
+        }
+        Insert: {
+          ano: number
+          created_at?: string | null
+          detalhes?: Json | null
+          id?: string
+          mes: number
+          qtd_titulos?: number | null
+          regra_id?: string | null
+          valor_eliminado: number
+        }
+        Update: {
+          ano?: number
+          created_at?: string | null
+          detalhes?: Json | null
+          id?: string
+          mes?: number
+          qtd_titulos?: number | null
+          regra_id?: string | null
+          valor_eliminado?: number
+        }
+        Relationships: [
+          {
+            foreignKeyName: "fin_eliminacoes_log_regra_id_fkey"
+            columns: ["regra_id"]
+            isOneToOne: false
+            referencedRelation: "fin_eliminacoes_intercompany"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      fin_fechamento_log: {
+        Row: {
+          acao: string
+          created_at: string | null
+          detalhes: Json | null
+          fechamento_id: string
+          id: string
+          usuario_id: string | null
+          usuario_nome: string | null
+        }
+        Insert: {
+          acao: string
+          created_at?: string | null
+          detalhes?: Json | null
+          fechamento_id: string
+          id?: string
+          usuario_id?: string | null
+          usuario_nome?: string | null
+        }
+        Update: {
+          acao?: string
+          created_at?: string | null
+          detalhes?: Json | null
+          fechamento_id?: string
+          id?: string
+          usuario_id?: string | null
+          usuario_nome?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "fin_fechamento_log_fechamento_id_fkey"
+            columns: ["fechamento_id"]
+            isOneToOne: false
+            referencedRelation: "fin_fechamentos"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      fin_fechamentos: {
+        Row: {
+          ano: number
+          aprovado_em: string | null
+          aprovado_por: string | null
+          company: string
+          created_at: string | null
+          fechado_em: string | null
+          fechado_por: string | null
+          id: string
+          mes: number
+          motivo_reabertura: string | null
+          notas: string | null
+          reaberto_em: string | null
+          reaberto_por: string | null
+          snapshot_data: Json | null
+          snapshot_dre_id: string | null
+          status: string
+          updated_at: string | null
+          versao: number
+        }
+        Insert: {
+          ano: number
+          aprovado_em?: string | null
+          aprovado_por?: string | null
+          company: string
+          created_at?: string | null
+          fechado_em?: string | null
+          fechado_por?: string | null
+          id?: string
+          mes: number
+          motivo_reabertura?: string | null
+          notas?: string | null
+          reaberto_em?: string | null
+          reaberto_por?: string | null
+          snapshot_data?: Json | null
+          snapshot_dre_id?: string | null
+          status?: string
+          updated_at?: string | null
+          versao?: number
+        }
+        Update: {
+          ano?: number
+          aprovado_em?: string | null
+          aprovado_por?: string | null
+          company?: string
+          created_at?: string | null
+          fechado_em?: string | null
+          fechado_por?: string | null
+          id?: string
+          mes?: number
+          motivo_reabertura?: string | null
+          notas?: string | null
+          reaberto_em?: string | null
+          reaberto_por?: string | null
+          snapshot_data?: Json | null
+          snapshot_dre_id?: string | null
+          status?: string
+          updated_at?: string | null
+          versao?: number
+        }
+        Relationships: [
+          {
+            foreignKeyName: "fin_fechamentos_snapshot_dre_id_fkey"
+            columns: ["snapshot_dre_id"]
+            isOneToOne: false
+            referencedRelation: "fin_dre_snapshots"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      fin_forecast: {
+        Row: {
+          ano: number
+          base_meses: number | null
+          company: string
+          confianca: number | null
+          dre_linha: string | null
+          id: string
+          mes: number
+          metodo: string | null
+          tipo: string
+          updated_at: string | null
+          valor_forecast: number
+        }
+        Insert: {
+          ano: number
+          base_meses?: number | null
+          company: string
+          confianca?: number | null
+          dre_linha?: string | null
+          id?: string
+          mes: number
+          metodo?: string | null
+          tipo: string
+          updated_at?: string | null
+          valor_forecast?: number
+        }
+        Update: {
+          ano?: number
+          base_meses?: number | null
+          company?: string
+          confianca?: number | null
+          dre_linha?: string | null
+          id?: string
+          mes?: number
+          metodo?: string | null
+          tipo?: string
+          updated_at?: string | null
+          valor_forecast?: number
+        }
+        Relationships: []
+      }
+      fin_kpi_tributario: {
+        Row: {
+          aliquota_efetiva: number | null
+          ano: number
+          base_presuncao_comercio: number | null
+          base_presuncao_servico: number | null
+          calculated_at: string | null
+          carga_tributaria_total: number | null
+          cofins: number | null
+          company: string
+          csll: number | null
+          detalhamento: Json | null
+          faixa_sn: string | null
+          fator_r: number | null
+          icms: number | null
+          id: string
+          irpj: number | null
+          iss: number | null
+          mes: number
+          pis: number | null
+          receita_bruta_acumulada: number | null
+          regime: string
+        }
+        Insert: {
+          aliquota_efetiva?: number | null
+          ano: number
+          base_presuncao_comercio?: number | null
+          base_presuncao_servico?: number | null
+          calculated_at?: string | null
+          carga_tributaria_total?: number | null
+          cofins?: number | null
+          company: string
+          csll?: number | null
+          detalhamento?: Json | null
+          faixa_sn?: string | null
+          fator_r?: number | null
+          icms?: number | null
+          id?: string
+          irpj?: number | null
+          iss?: number | null
+          mes: number
+          pis?: number | null
+          receita_bruta_acumulada?: number | null
+          regime: string
+        }
+        Update: {
+          aliquota_efetiva?: number | null
+          ano?: number
+          base_presuncao_comercio?: number | null
+          base_presuncao_servico?: number | null
+          calculated_at?: string | null
+          carga_tributaria_total?: number | null
+          cofins?: number | null
+          company?: string
+          csll?: number | null
+          detalhamento?: Json | null
+          faixa_sn?: string | null
+          fator_r?: number | null
+          icms?: number | null
+          id?: string
+          irpj?: number | null
+          iss?: number | null
+          mes?: number
+          pis?: number | null
+          receita_bruta_acumulada?: number | null
+          regime?: string
+        }
+        Relationships: []
+      }
+      fin_movimentacoes: {
+        Row: {
+          categoria_codigo: string | null
+          categoria_descricao: string | null
+          company: string
+          conciliado: boolean | null
+          created_at: string | null
+          data_movimento: string
+          descricao: string | null
+          id: string
+          metadata: Json | null
+          natureza: string | null
+          omie_codigo_lancamento: number | null
+          omie_ncodcc: number | null
+          omie_ncodmov: number
+          tipo: string | null
+          updated_at: string | null
+          valor: number
+        }
+        Insert: {
+          categoria_codigo?: string | null
+          categoria_descricao?: string | null
+          company: string
+          conciliado?: boolean | null
+          created_at?: string | null
+          data_movimento: string
+          descricao?: string | null
+          id?: string
+          metadata?: Json | null
+          natureza?: string | null
+          omie_codigo_lancamento?: number | null
+          omie_ncodcc?: number | null
+          omie_ncodmov: number
+          tipo?: string | null
+          updated_at?: string | null
+          valor: number
+        }
+        Update: {
+          categoria_codigo?: string | null
+          categoria_descricao?: string | null
+          company?: string
+          conciliado?: boolean | null
+          created_at?: string | null
+          data_movimento?: string
+          descricao?: string | null
+          id?: string
+          metadata?: Json | null
+          natureza?: string | null
+          omie_codigo_lancamento?: number | null
+          omie_ncodcc?: number | null
+          omie_ncodmov?: number
+          tipo?: string | null
+          updated_at?: string | null
+          valor?: number
+        }
+        Relationships: []
+      }
+      fin_orcamento: {
+        Row: {
+          ano: number
+          company: string
+          criado_por: string | null
+          dre_linha: string
+          id: string
+          mes: number
+          notas: string | null
+          updated_at: string | null
+          valor_orcado: number
+        }
+        Insert: {
+          ano: number
+          company: string
+          criado_por?: string | null
+          dre_linha: string
+          id?: string
+          mes: number
+          notas?: string | null
+          updated_at?: string | null
+          valor_orcado?: number
+        }
+        Update: {
+          ano?: number
+          company?: string
+          criado_por?: string | null
+          dre_linha?: string
+          id?: string
+          mes?: number
+          notas?: string | null
+          updated_at?: string | null
+          valor_orcado?: number
+        }
+        Relationships: []
+      }
+      fin_permissoes: {
+        Row: {
+          concedido_por: string | null
+          created_at: string | null
+          empresas: string[]
+          id: string
+          perfil: string
+          pode_aprovar_fechamento: boolean | null
+          pode_conciliar: boolean | null
+          pode_editar_mapping: boolean | null
+          pode_editar_orcamento: boolean | null
+          pode_eliminar_intercompany: boolean | null
+          pode_exportar: boolean | null
+          pode_fechar_mes: boolean | null
+          pode_reabrir_fechamento: boolean | null
+          pode_sync: boolean | null
+          pode_ver_dre: boolean | null
+          pode_ver_todas_empresas: boolean | null
+          updated_at: string | null
+          user_id: string
+        }
+        Insert: {
+          concedido_por?: string | null
+          created_at?: string | null
+          empresas?: string[]
+          id?: string
+          perfil: string
+          pode_aprovar_fechamento?: boolean | null
+          pode_conciliar?: boolean | null
+          pode_editar_mapping?: boolean | null
+          pode_editar_orcamento?: boolean | null
+          pode_eliminar_intercompany?: boolean | null
+          pode_exportar?: boolean | null
+          pode_fechar_mes?: boolean | null
+          pode_reabrir_fechamento?: boolean | null
+          pode_sync?: boolean | null
+          pode_ver_dre?: boolean | null
+          pode_ver_todas_empresas?: boolean | null
+          updated_at?: string | null
+          user_id: string
+        }
+        Update: {
+          concedido_por?: string | null
+          created_at?: string | null
+          empresas?: string[]
+          id?: string
+          perfil?: string
+          pode_aprovar_fechamento?: boolean | null
+          pode_conciliar?: boolean | null
+          pode_editar_mapping?: boolean | null
+          pode_editar_orcamento?: boolean | null
+          pode_eliminar_intercompany?: boolean | null
+          pode_exportar?: boolean | null
+          pode_fechar_mes?: boolean | null
+          pode_reabrir_fechamento?: boolean | null
+          pode_sync?: boolean | null
+          pode_ver_dre?: boolean | null
+          pode_ver_todas_empresas?: boolean | null
+          updated_at?: string | null
+          user_id?: string
+        }
+        Relationships: []
+      }
+      fin_sync_checkpoint: {
+        Row: {
+          company: string
+          completed_at: string | null
+          entidade: string
+          filtro_data_ate: string | null
+          filtro_data_de: string | null
+          id: string
+          last_error: string | null
+          lock_expires_at: string | null
+          lock_id: string | null
+          started_at: string | null
+          status: string | null
+          total_paginas: number | null
+          total_synced: number | null
+          ultima_pagina: number | null
+          updated_at: string | null
+        }
+        Insert: {
+          company: string
+          completed_at?: string | null
+          entidade: string
+          filtro_data_ate?: string | null
+          filtro_data_de?: string | null
+          id?: string
+          last_error?: string | null
+          lock_expires_at?: string | null
+          lock_id?: string | null
+          started_at?: string | null
+          status?: string | null
+          total_paginas?: number | null
+          total_synced?: number | null
+          ultima_pagina?: number | null
+          updated_at?: string | null
+        }
+        Update: {
+          company?: string
+          completed_at?: string | null
+          entidade?: string
+          filtro_data_ate?: string | null
+          filtro_data_de?: string | null
+          id?: string
+          last_error?: string | null
+          lock_expires_at?: string | null
+          lock_id?: string | null
+          started_at?: string | null
+          status?: string | null
+          total_paginas?: number | null
+          total_synced?: number | null
+          ultima_pagina?: number | null
+          updated_at?: string | null
+        }
+        Relationships: []
+      }
+      fin_sync_log: {
+        Row: {
+          action: string
+          api_calls: number | null
+          companies: string[] | null
+          completed_at: string | null
+          duracao_ms: number | null
+          entidades_por_empresa: Json | null
+          error_message: string | null
+          id: string
+          rate_limits_hit: number | null
+          results: Json | null
+          started_at: string | null
+          status: string | null
+          triggered_by: string | null
+        }
+        Insert: {
+          action: string
+          api_calls?: number | null
+          companies?: string[] | null
+          completed_at?: string | null
+          duracao_ms?: number | null
+          entidades_por_empresa?: Json | null
+          error_message?: string | null
+          id?: string
+          rate_limits_hit?: number | null
+          results?: Json | null
+          started_at?: string | null
+          status?: string | null
+          triggered_by?: string | null
+        }
+        Update: {
+          action?: string
+          api_calls?: number | null
+          companies?: string[] | null
+          completed_at?: string | null
+          duracao_ms?: number | null
+          entidades_por_empresa?: Json | null
+          error_message?: string | null
+          id?: string
+          rate_limits_hit?: number | null
+          results?: Json | null
+          started_at?: string | null
+          status?: string | null
+          triggered_by?: string | null
+        }
+        Relationships: []
+      }
       gamification_scores: {
         Row: {
           consistency_score: number
@@ -3694,8 +4815,134 @@ export type Database = {
         }
         Relationships: []
       }
+      fin_aging_pagar: {
+        Row: {
+          a_vencer_qtd: number | null
+          a_vencer_valor: number | null
+          company: string | null
+          vencido_1_30_qtd: number | null
+          vencido_1_30_valor: number | null
+          vencido_31_60_qtd: number | null
+          vencido_31_60_valor: number | null
+          vencido_61_90_qtd: number | null
+          vencido_61_90_valor: number | null
+          vencido_90_plus_qtd: number | null
+          vencido_90_plus_valor: number | null
+        }
+        Relationships: []
+      }
+      fin_aging_receber: {
+        Row: {
+          a_vencer_qtd: number | null
+          a_vencer_valor: number | null
+          company: string | null
+          vencido_1_30_qtd: number | null
+          vencido_1_30_valor: number | null
+          vencido_31_60_qtd: number | null
+          vencido_31_60_valor: number | null
+          vencido_61_90_qtd: number | null
+          vencido_61_90_valor: number | null
+          vencido_90_plus_qtd: number | null
+          vencido_90_plus_valor: number | null
+        }
+        Relationships: []
+      }
+      fin_analise_cp_dimensoes: {
+        Row: {
+          ano: number | null
+          categoria_codigo: string | null
+          categoria_descricao: string | null
+          centro_custo: string | null
+          cnpj_cpf: string | null
+          company: string | null
+          departamento: string | null
+          mes: number | null
+          nome_fornecedor: string | null
+          qtd_titulos: number | null
+          status_titulo: string | null
+          tipo_documento: string | null
+          total_documento: number | null
+          total_pago: number | null
+          total_saldo: number | null
+        }
+        Relationships: []
+      }
+      fin_analise_cr_dimensoes: {
+        Row: {
+          ano: number | null
+          categoria_codigo: string | null
+          categoria_descricao: string | null
+          centro_custo: string | null
+          cnpj_cpf: string | null
+          company: string | null
+          departamento: string | null
+          mes: number | null
+          nome_cliente: string | null
+          qtd_titulos: number | null
+          status_titulo: string | null
+          total_documento: number | null
+          total_recebido: number | null
+          total_saldo: number | null
+          vendedor_id: number | null
+        }
+        Relationships: []
+      }
+      fin_dre_competencia_base: {
+        Row: {
+          ano: number | null
+          categoria_codigo: string | null
+          categoria_descricao: string | null
+          company: string | null
+          mes: number | null
+          origem: string | null
+          qtd: number | null
+          valor_total: number | null
+        }
+        Relationships: []
+      }
+      fin_fluxo_caixa_diario: {
+        Row: {
+          company: string | null
+          data: string | null
+          entradas_previstas: number | null
+          entradas_realizadas: number | null
+          saidas_previstas: number | null
+          saidas_realizadas: number | null
+        }
+        Relationships: []
+      }
     }
     Functions: {
+      fin_calcular_confiabilidade: {
+        Args: { p_ano: number; p_company: string; p_mes: number }
+        Returns: Json
+      }
+      fin_consolidado_intercompany: {
+        Args: { p_ano: number; p_mes: number }
+        Returns: {
+          dre_linha: string
+          eliminacoes: number
+          valor_bruto: number
+          valor_liquido: number
+        }[]
+      }
+      fin_projecao_13_semanas: {
+        Args: { p_company?: string; p_saldo_inicial?: number }
+        Returns: {
+          entradas_previstas: number
+          fluxo_liquido: number
+          saidas_previstas: number
+          saldo_projetado: number
+          semana_fim: string
+          semana_inicio: string
+          semana_label: string
+        }[]
+      }
+      fin_refresh_analise_dimensoes: { Args: never; Returns: undefined }
+      fin_user_can_access: {
+        Args: { check_company?: string }
+        Returns: boolean
+      }
       get_commercial_role: {
         Args: { _user_id: string }
         Returns: Database["public"]["Enums"]["commercial_role"]
@@ -3739,7 +4986,7 @@ export type Database = {
       show_trgm: { Args: { "": string }; Returns: string[] }
     }
     Enums: {
-      app_role: "admin" | "employee" | "customer" | "master"
+      app_role: "admin" | "employee" | "customer" | "master" | "manager"
       commercial_role:
         | "operacional"
         | "gerencial"
@@ -3880,7 +5127,7 @@ export type CompositeTypes<
 export const Constants = {
   public: {
     Enums: {
-      app_role: ["admin", "employee", "customer", "master"],
+      app_role: ["admin", "employee", "customer", "master", "manager"],
       commercial_role: [
         "operacional",
         "gerencial",
