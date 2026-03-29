@@ -429,8 +429,9 @@ export async function getTopInadimplentes(
   const map = new Map<string, { nome: string; cnpj: string; total: number; qtd: number }>();
   for (const r of data || []) {
     const key = r.cnpj_cpf || r.nome_cliente || 'Desconhecido';
+    const saldo = (r.valor_documento || 0) - (r.valor_recebido || 0);
     const existing = map.get(key) || { nome: r.nome_cliente, cnpj: r.cnpj_cpf, total: 0, qtd: 0 };
-    existing.total += r.saldo || 0;
+    existing.total += saldo;
     existing.qtd += 1;
     map.set(key, existing);
   }
