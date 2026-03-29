@@ -4009,6 +4009,7 @@ export type Database = {
           id_corante_sayersystem: string
           omie_product_id: string | null
           peso_especifico: number | null
+          preco_litro: number | null
           volume_total_ml: number
         }
         Insert: {
@@ -4021,6 +4022,7 @@ export type Database = {
           id_corante_sayersystem: string
           omie_product_id?: string | null
           peso_especifico?: number | null
+          preco_litro?: number | null
           volume_total_ml: number
         }
         Update: {
@@ -4033,6 +4035,7 @@ export type Database = {
           id_corante_sayersystem?: string
           omie_product_id?: string | null
           peso_especifico?: number | null
+          preco_litro?: number | null
           volume_total_ml?: number
         }
         Relationships: [
