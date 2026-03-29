@@ -804,7 +804,7 @@ async function calcularDRE(
     company,
     ano,
     mes,
-    regime: "caixa", // Ponto 4: qualificar explicitamente
+    regime: "competencia", // Usa data_vencimento pois Omie não retorna data_pagamento
     receita_bruta: receitaBruta,
     deducoes,
     receita_liquida: receitaLiquida,
