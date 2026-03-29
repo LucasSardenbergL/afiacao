@@ -245,6 +245,16 @@ export function useFinanceiro(defaultCompany: FinanceiroView = 'all') {
       }
 
       const result = await triggerFinanceiroSync(action, companies, options);
+      // Normalize: wrap company-keyed response into { results: {...} }
+      const allResults: Record<string, any> = {};
+      for (const co of companies) {
+        if (result?.[co]) {
+          allResults[co] = result[co];
+        }
+      }
+      if (Object.keys(allResults).length > 0) {
+        return { results: allResults };
+      }
       return result;
     } catch (e: any) {
       setError(e.message);
