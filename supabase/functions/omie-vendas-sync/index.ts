@@ -1019,7 +1019,7 @@ serve(async (req) => {
             await callOmieVendasApi(
               "produtos/pedido/",
               "CancelarPedido",
-              { nCodPed: Number(pedidoId) },
+              { codigo_pedido: Number(pedidoId) },
               orderAccount
             );
             console.log(`[Omie Vendas][${orderAccount}] Pedido ${pedidoId} cancelado no Omie`);
