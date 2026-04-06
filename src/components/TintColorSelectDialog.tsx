@@ -435,7 +435,7 @@ export function TintColorSelectDialog({ product, open, onClose, onConfirm, custo
                                   <span className="font-bold text-primary">{fmt(altPrice)}</span>
                                   {altDisc > 0 && <span className="text-[10px] text-muted-foreground line-through ml-1">{fmt(altBasePrice)}</span>}
                                   {alt.precoFinalCsv && alt.precoFinalCsv > 0 ? (
-                                    <Badge variant="secondary" className="text-[8px] px-1 py-0 ml-1">CSV</Badge>
+                                    <Badge variant="secondary" className="text-[8px] px-1 py-0 ml-1">Tabela</Badge>
                                   ) : (
                                     <Badge variant="outline" className="text-[8px] px-1 py-0 ml-1">Calc.</Badge>
                                   )}
