@@ -965,7 +965,7 @@ export function useUnifiedOrder() {
             items: colacorProductItems.map(c => ({
               omie_codigo_produto: c.product.omie_codigo_produto, quantidade: c.quantity, valor_unitario: c.unit_price,
             })),
-            observacao: notes, codigo_parcela: selectedParcelaColacor,
+            observacao: notes, codigo_parcela: selectedParcelaColacor, quantidade_volumes: volumesColacor || undefined,
           },
         });
         if (!omieError) results.push(`PV Colacor ${omieResult?.omie_numero_pedido || ''}`);
