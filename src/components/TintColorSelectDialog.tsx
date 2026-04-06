@@ -363,7 +363,15 @@ export function TintColorSelectDialog({ product, open, onClose, onConfirm, custo
                           const altDisc = altDiscounts[alt.formulaId] || 0;
                           const altPrice = altDisc > 0 ? Math.round(altBasePrice * (1 - altDisc / 100) * 100) / 100 : altBasePrice;
                           return (
-                            <div key={alt.formulaId} className="rounded-md border border-border hover:border-primary/50 transition-all text-xs group">
+                            <>
+                              {showDivider && (
+                                <div className="flex items-center gap-2 pt-1 pb-0.5">
+                                  <div className="flex-1 border-t border-border" />
+                                  <span className="text-[9px] text-muted-foreground uppercase tracking-wider">Outros acabamentos</span>
+                                  <div className="flex-1 border-t border-border" />
+                                </div>
+                              )}
+                              <div className={`rounded-md border transition-all text-xs group ${alt.sameAcabamento ? 'border-primary/30 bg-primary/5' : 'border-border hover:border-primary/50'}`}>
                               <button
                                 onClick={() => onConfirm(
                                   alt.formulaId,
