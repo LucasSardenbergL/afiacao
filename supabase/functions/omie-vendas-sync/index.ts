@@ -859,7 +859,7 @@ async function criarPedidoVenda(
 
   const frete: Record<string, unknown> = {
     modalidade: "0",
-    especie: "VOL",
+    especie_volumes: "VOL",
   };
   if (quantidadeVolumes && quantidadeVolumes > 0) {
     frete.volumes = quantidadeVolumes;
