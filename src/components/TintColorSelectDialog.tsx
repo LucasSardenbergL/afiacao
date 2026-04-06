@@ -253,7 +253,7 @@ export function TintColorSelectDialog({ product, open, onClose, onConfirm, custo
               <Input
                 placeholder="Buscar por código ou nome da cor..."
                 value={search}
-                onChange={e => { setSearch(e.target.value); setSelectedFormula(null); }}
+                onChange={e => { setSearch(e.target.value); setSelectedFormula(null); setPriceSourceOverride(null); }}
                 className="pl-9 h-9"
                 autoFocus
               />
