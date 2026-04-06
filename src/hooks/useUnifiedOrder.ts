@@ -155,6 +155,7 @@ export function useUnifiedOrder() {
   const [loadingFormas, setLoadingFormas] = useState(false);
   const [volumesOben, setVolumesOben] = useState<number>(0);
   const [volumesColacor, setVolumesColacor] = useState<number>(0);
+  const [ordemCompra, setOrdemCompra] = useState<string>('');
   const [customerParcelaRankingOben, setCustomerParcelaRankingOben] = useState<string[]>([]);
   const [customerParcelaRankingColacor, setCustomerParcelaRankingColacor] = useState<string[]>([]);
   const [afiacaoPaymentMethod, setAfiacaoPaymentMethod] = useState<string>('a_vista');
