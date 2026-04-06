@@ -927,10 +927,19 @@ async function criarPedidoVenda(
     informacoes_adicionais.codVend = codigoVendedor;
   }
 
+  // Buscar transportadora: primeiro do cadastro do cliente, senão usa a padrão da empresa
+  let codigoTransportadora: number | null = await buscarTransportadoraCliente(codigoCliente, account);
+  if (!codigoTransportadora) {
+    codigoTransportadora = await getTransportadoraPadrao(account);
+  }
+
   const frete: Record<string, unknown> = {
     modalidade: "0",
     especie_volumes: "VOL",
   };
+  if (codigoTransportadora && codigoTransportadora > 0) {
+    frete.codigo_transportadora = codigoTransportadora;
+  }
   if (quantidadeVolumes && quantidadeVolumes > 0) {
     frete.quantidade_volumes = quantidadeVolumes;
   }
