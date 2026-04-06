@@ -830,14 +830,15 @@ async function criarPedidoVenda(
         dados_adicionais_item: ordemCompra,
         numero_pedido_compra: ordemCompra,
       };
+      (entry as any).observacao = { obs_item: ordemCompra };
     } else if (item.tint_cor_id && item.tint_nome_cor) {
       const corInfo = `Cor: ${item.tint_cor_id} - ${item.tint_nome_cor} - Qty: ${item.quantidade}`;
-      // numero_pedido_compra has 15 char limit in Omie, use truncated cor_id
       const corShort = item.tint_cor_id.substring(0, 15);
       (entry as any).inf_adic = {
         dados_adicionais_item: corInfo,
         numero_pedido_compra: corShort,
       };
+      (entry as any).observacao = { obs_item: corInfo };
     }
     return entry;
   });
