@@ -298,6 +298,11 @@ export function TintColorSelectDialog({ product, open, onClose, onConfirm, custo
                       <History className="w-3.5 h-3.5 text-primary shrink-0" />
                       <div className="text-xs">
                         <span className="font-medium text-primary">Último preço cliente: {fmt(lastPracticedPrice.price)}</span>
+                        {precoCsv > 0 && lastPracticedPrice.price < precoCsv && (
+                          <Badge variant="secondary" className="ml-1.5 text-[9px] px-1.5 py-0 text-orange-600 bg-orange-50 border-orange-200">
+                            -{Math.round((1 - lastPracticedPrice.price / precoCsv) * 100)}% s/ tabela
+                          </Badge>
+                        )}
                         <span className="text-muted-foreground ml-1">
                           ({new Date(lastPracticedPrice.date).toLocaleDateString('pt-BR')})
                         </span>
