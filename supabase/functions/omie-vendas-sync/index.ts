@@ -823,10 +823,17 @@ async function criarPedidoVenda(
         valor_unitario: item.valor_unitario,
       },
     };
-    // Add tint color info if present
-    if (item.tint_cor_id && item.tint_nome_cor) {
+    // Add tint color info or ordem de compra to item observations + NF-e
+    if (ordemCompra) {
       (entry as any).inf_adic = {
-        dados_adicionais_item: `Cor: ${item.tint_cor_id} - ${item.tint_nome_cor}`,
+        dados_adicionais_item: ordemCompra,
+        numero_pedido_compra: ordemCompra,
+      };
+    } else if (item.tint_cor_id && item.tint_nome_cor) {
+      const corInfo = `Cor: ${item.tint_cor_id} - ${item.tint_nome_cor} - Qty: ${item.quantidade}`;
+      (entry as any).inf_adic = {
+        dados_adicionais_item: corInfo,
+        numero_pedido_compra: corInfo,
       };
     }
     return entry;
