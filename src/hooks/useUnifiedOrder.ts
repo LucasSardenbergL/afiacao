@@ -1095,6 +1095,8 @@ export function useUnifiedOrder() {
     loadingFormas, customerParcelaRankingOben, customerParcelaRankingColacor,
     afiacaoPaymentMethod, setAfiacaoPaymentMethod,
     volumesOben, setVolumesOben, volumesColacor, setVolumesColacor,
+    ordemCompra, setOrdemCompra,
+    isOrdemCompraCustomer: selectedCustomer?.cnpj_cpf?.replace(/\D/g, '') === '64422892000100',
     // Delivery
     deliveryOption, setDeliveryOption, addresses, selectedAddress, setSelectedAddress,
     selectedTimeSlot, setSelectedTimeSlot, showAddressOptions, setShowAddressOptions,
