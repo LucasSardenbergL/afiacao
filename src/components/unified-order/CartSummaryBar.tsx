@@ -98,6 +98,18 @@ export function CartSummaryBar({
               )}
             </div>
           )}
+          {obenProductItems.length > 0 && (
+            <div>
+              <Label className="text-xs font-medium">Qtd. Volumes Oben</Label>
+              <Input type="number" min={0} value={volumesOben} onChange={e => setVolumesOben(Number(e.target.value) || 0)} className="text-sm h-9 mt-1" placeholder="0" />
+            </div>
+          )}
+          {colacorProductItems.length > 0 && (
+            <div>
+              <Label className="text-xs font-medium">Qtd. Volumes Colacor</Label>
+              <Input type="number" min={0} value={volumesColacor} onChange={e => setVolumesColacor(Number(e.target.value) || 0)} className="text-sm h-9 mt-1" placeholder="0" />
+            </div>
+          )}
           <div>
             <Label className="text-xs font-medium">Observações gerais</Label>
             <Textarea placeholder="Observações do pedido..." value={notes} onChange={e => setNotes(e.target.value)} rows={2} className="text-sm mt-1" />
