@@ -939,6 +939,7 @@ export function useUnifiedOrder() {
               omie_codigo_produto: c.product.omie_codigo_produto, quantidade: c.quantity, valor_unitario: c.unit_price,
             })),
             observacao: notes, codigo_parcela: selectedParcelaOben, quantidade_volumes: volumesOben || undefined,
+            ordem_compra: ordemCompra || undefined,
           },
         });
         if (!omieError) results.push(`PV Oben ${omieResult?.omie_numero_pedido || ''}`);
