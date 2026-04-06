@@ -354,7 +354,9 @@ export function TintColorSelectDialog({ product, open, onClose, onConfirm, custo
                         Mesma cor em outras embalagens
                       </div>
                       <div className="space-y-1.5">
-                        {alternatives.map(alt => {
+                        {alternatives.map((alt, idx) => {
+                          const prevAlt = idx > 0 ? alternatives[idx - 1] : null;
+                          const showDivider = prevAlt && prevAlt.sameAcabamento && !alt.sameAcabamento;
                           const altBasePrice = alt.precoFinalCsv && alt.precoFinalCsv > 0
                             ? alt.precoFinalCsv
                             : alt.product.valor_unitario + custoCorantes;
