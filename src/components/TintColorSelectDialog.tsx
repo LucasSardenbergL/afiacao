@@ -34,6 +34,7 @@ interface AlternativePackaging {
   productCodigo: string;
   precoFinalCsv: number | null;
   product: Product;
+  sameAcabamento: boolean;
 }
 
 export function TintColorSelectDialog({ product, open, onClose, onConfirm, customerUserId }: TintColorSelectDialogProps) {
@@ -56,22 +57,23 @@ export function TintColorSelectDialog({ product, open, onClose, onConfirm, custo
     return () => clearTimeout(t);
   }, [search]);
 
-  // Find SKU id for this omie product
-  const { data: skuId, isLoading: loadingSku } = useQuery({
+  // Find SKU id + produto_id + base_id for this omie product
+  const { data: skuInfo, isLoading: loadingSku } = useQuery({
     queryKey: ['tint-sku-for-product', product.id],
     staleTime: 5 * 60 * 1000,
     enabled: open,
     queryFn: async () => {
       const { data } = await supabase
         .from('tint_skus')
-        .select('id')
+        .select('id, produto_id, base_id')
         .eq('omie_product_id', product.id)
         .eq('account', 'oben')
         .limit(1)
         .maybeSingle();
-      return data?.id || null;
+      return data || null;
     },
   });
+  const skuId = skuInfo?.id || null;
 
   // Search formulas
   const { data: formulas, isLoading: loadingFormulas } = useQuery({
@@ -149,11 +151,11 @@ export function TintColorSelectDialog({ product, open, onClose, onConfirm, custo
 
       if (!altFormulas || altFormulas.length === 0) return [];
 
-      // Get SKU details with omie_product_id
+      // Get SKU details with omie_product_id, produto_id, base_id
       const skuIds = [...new Set(altFormulas.map(f => f.sku_id!))];
       const { data: skus } = await supabase
         .from('tint_skus')
-        .select('id, omie_product_id')
+        .select('id, omie_product_id, produto_id, base_id')
         .in('id', skuIds)
         .not('omie_product_id', 'is', null);
 
@@ -167,6 +169,9 @@ export function TintColorSelectDialog({ product, open, onClose, onConfirm, custo
         .in('id', productIds);
 
       if (!products) return [];
+
+      const currentProdutoId = skuInfo?.produto_id;
+      const currentBaseId = skuInfo?.base_id;
 
       const result: AlternativePackaging[] = [];
       for (const af of altFormulas) {
@@ -183,8 +188,17 @@ export function TintColorSelectDialog({ product, open, onClose, onConfirm, custo
           productCodigo: prod.codigo,
           precoFinalCsv: af.preco_final_sayersystem ? Math.ceil(af.preco_final_sayersystem * 10) / 10 : af.preco_final_sayersystem,
           product: prod as Product,
+          sameAcabamento: sku.produto_id === currentProdutoId && sku.base_id === currentBaseId,
         });
       }
+
+      // Sort: same acabamento first, then by description
+      result.sort((a, b) => {
+        if (a.sameAcabamento && !b.sameAcabamento) return -1;
+        if (!a.sameAcabamento && b.sameAcabamento) return 1;
+        return a.productDescricao.localeCompare(b.productDescricao);
+      });
+
       return result;
     },
   });
@@ -340,14 +354,24 @@ export function TintColorSelectDialog({ product, open, onClose, onConfirm, custo
                         Mesma cor em outras embalagens
                       </div>
                       <div className="space-y-1.5">
-                        {alternatives.map(alt => {
+                        {alternatives.map((alt, idx) => {
+                          const prevAlt = idx > 0 ? alternatives[idx - 1] : null;
+                          const showDivider = prevAlt && prevAlt.sameAcabamento && !alt.sameAcabamento;
                           const altBasePrice = alt.precoFinalCsv && alt.precoFinalCsv > 0
                             ? alt.precoFinalCsv
                             : alt.product.valor_unitario + custoCorantes;
                           const altDisc = altDiscounts[alt.formulaId] || 0;
                           const altPrice = altDisc > 0 ? Math.round(altBasePrice * (1 - altDisc / 100) * 100) / 100 : altBasePrice;
                           return (
-                            <div key={alt.formulaId} className="rounded-md border border-border hover:border-primary/50 transition-all text-xs group">
+                            <>
+                              {showDivider && (
+                                <div className="flex items-center gap-2 pt-1 pb-0.5">
+                                  <div className="flex-1 border-t border-border" />
+                                  <span className="text-[9px] text-muted-foreground uppercase tracking-wider">Outros acabamentos</span>
+                                  <div className="flex-1 border-t border-border" />
+                                </div>
+                              )}
+                              <div className={`rounded-md border transition-all text-xs group ${alt.sameAcabamento ? 'border-primary/30 bg-primary/5' : 'border-border hover:border-primary/50'}`}>
                               <button
                                 onClick={() => onConfirm(
                                   alt.formulaId,
@@ -389,6 +413,7 @@ export function TintColorSelectDialog({ product, open, onClose, onConfirm, custo
                                 />
                               </div>
                             </div>
+                            </>
                           );
                         })}
                       </div>
