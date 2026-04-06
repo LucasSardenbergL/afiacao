@@ -987,7 +987,7 @@ serve(async (req) => {
       }
 
       case "criar_pedido": {
-        const { sales_order_id, codigo_cliente, codigo_vendedor, items, observacao, codigo_parcela, quantidade_volumes } = params;
+        const { sales_order_id, codigo_cliente, codigo_vendedor, items, observacao, codigo_parcela, quantidade_volumes, ordem_compra } = params;
         if (!sales_order_id || !codigo_cliente || !items?.length) {
           throw new Error("Dados insuficientes para criar pedido de venda");
         }
@@ -1000,7 +1000,8 @@ serve(async (req) => {
           observacao,
           codigo_parcela,
           account,
-          quantidade_volumes
+          quantidade_volumes,
+          ordem_compra
         );
         result = { success: true, ...pedido };
         break;
