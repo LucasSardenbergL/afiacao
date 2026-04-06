@@ -151,11 +151,11 @@ export function TintColorSelectDialog({ product, open, onClose, onConfirm, custo
 
       if (!altFormulas || altFormulas.length === 0) return [];
 
-      // Get SKU details with omie_product_id
+      // Get SKU details with omie_product_id, produto_id, base_id
       const skuIds = [...new Set(altFormulas.map(f => f.sku_id!))];
       const { data: skus } = await supabase
         .from('tint_skus')
-        .select('id, omie_product_id')
+        .select('id, omie_product_id, produto_id, base_id')
         .in('id', skuIds)
         .not('omie_product_id', 'is', null);
 
@@ -169,6 +169,9 @@ export function TintColorSelectDialog({ product, open, onClose, onConfirm, custo
         .in('id', productIds);
 
       if (!products) return [];
+
+      const currentProdutoId = skuInfo?.produto_id;
+      const currentBaseId = skuInfo?.base_id;
 
       const result: AlternativePackaging[] = [];
       for (const af of altFormulas) {
@@ -185,8 +188,17 @@ export function TintColorSelectDialog({ product, open, onClose, onConfirm, custo
           productCodigo: prod.codigo,
           precoFinalCsv: af.preco_final_sayersystem ? Math.ceil(af.preco_final_sayersystem * 10) / 10 : af.preco_final_sayersystem,
           product: prod as Product,
+          sameAcabamento: sku.produto_id === currentProdutoId && sku.base_id === currentBaseId,
         });
       }
+
+      // Sort: same acabamento first, then by description
+      result.sort((a, b) => {
+        if (a.sameAcabamento && !b.sameAcabamento) return -1;
+        if (!a.sameAcabamento && b.sameAcabamento) return 1;
+        return a.productDescricao.localeCompare(b.productDescricao);
+      });
+
       return result;
     },
   });
