@@ -44,7 +44,7 @@ export function TintColorSelectDialog({ product, open, onClose, onConfirm, custo
   const [selectedFormula, setSelectedFormula] = useState<FormulaResult | null>(null);
   const [discountPct, setDiscountPct] = useState<number>(0);
   const [altDiscounts, setAltDiscounts] = useState<Record<string, number>>({});
-
+  const [syncDiscount, setSyncDiscount] = useState(false);
   useEffect(() => {
     if (!open) {
       setSearch('');
