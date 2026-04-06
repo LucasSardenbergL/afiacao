@@ -334,7 +334,7 @@ export function TintColorSelectDialog({ product, open, onClose, onConfirm, custo
                       <span className="flex items-center gap-1.5">
                         Preço Final
                         <Badge variant="secondary" className="text-[9px] px-1.5 py-0">
-                          {priceSource === 'cliente' ? 'Preço cliente' : priceSource === 'tabela' ? 'Tabela' : 'Calculado'}
+                          {priceSource === 'cliente' ? 'Preço cliente' : 'Tabela'}
                         </Badge>
                       </span>
                       <span className="text-primary">{fmt(precoFinal)}</span>
