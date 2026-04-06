@@ -1061,6 +1061,8 @@ export function useUnifiedOrder() {
     setSelectedParcelaOben('999');
     setSelectedParcelaColacor('999');
     setVendedorDivergencias([]);
+    setVolumesOben(0);
+    setVolumesColacor(0);
     setAddresses([]);
     setSelectedAddress('');
   };
