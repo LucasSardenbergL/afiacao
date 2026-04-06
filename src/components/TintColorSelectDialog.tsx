@@ -49,6 +49,7 @@ export function TintColorSelectDialog({ product, open, onClose, onConfirm, custo
       setSearch('');
       setDebouncedSearch('');
       setSelectedFormula(null);
+      setPriceSourceOverride(null);
     }
   }, [open]);
 
@@ -208,17 +209,26 @@ export function TintColorSelectDialog({ product, open, onClose, onConfirm, custo
   const precoCsv = rawCsv > 0 ? Math.ceil(rawCsv * 10) / 10 : 0;
   const custoCorantes = pricing?.custoCorantes || 0;
 
-  // Price priority: last practiced > CSV > calculated fallback
+  // Price source selection: user can choose between historical, CSV, or calculated
+  const [priceSourceOverride, setPriceSourceOverride] = useState<'cliente' | 'tabela' | 'calculado' | null>(null);
+
   const precoBase = product.valor_unitario;
   const precoCalculado = precoBase + custoCorantes;
-  const precoSemDesconto = lastPracticedPrice?.price ?? (precoCsv > 0 ? precoCsv : precoCalculado);
-  const precoFinal = discountPct > 0 ? Math.round(precoSemDesconto * (1 - discountPct / 100) * 100) / 100 : precoSemDesconto;
 
-  const priceSource = lastPracticedPrice
+  // Auto-detect best price source
+  const autoSource = lastPracticedPrice
     ? 'cliente'
     : precoCsv > 0
-      ? 'csv'
+      ? 'tabela'
       : 'calculado';
+  const priceSource = priceSourceOverride || autoSource;
+
+  const precoSemDesconto = priceSource === 'cliente' && lastPracticedPrice
+    ? lastPracticedPrice.price
+    : priceSource === 'tabela' && precoCsv > 0
+      ? precoCsv
+      : precoCalculado;
+  const precoFinal = discountPct > 0 ? Math.round(precoSemDesconto * (1 - discountPct / 100) * 100) / 100 : precoSemDesconto;
 
   return (
     <Dialog open={open} onOpenChange={(o) => !o && onClose()}>
@@ -243,7 +253,7 @@ export function TintColorSelectDialog({ product, open, onClose, onConfirm, custo
               <Input
                 placeholder="Buscar por código ou nome da cor..."
                 value={search}
-                onChange={e => { setSearch(e.target.value); setSelectedFormula(null); }}
+                onChange={e => { setSearch(e.target.value); setSelectedFormula(null); setPriceSourceOverride(null); }}
                 className="pl-9 h-9"
                 autoFocus
               />
@@ -295,6 +305,38 @@ export function TintColorSelectDialog({ product, open, onClose, onConfirm, custo
                     </div>
                   ) : null}
 
+                  {/* Price source selection when multiple options available */}
+                  {(lastPracticedPrice && precoCsv > 0) || (lastPracticedPrice && precoCalculado > 0) || (precoCsv > 0) ? (
+                    <div className="space-y-1.5">
+                      <p className="text-[10px] uppercase font-semibold text-muted-foreground tracking-wider">Selecionar preço</p>
+                      <div className="flex flex-wrap gap-1.5">
+                        {lastPracticedPrice && (
+                          <button
+                            onClick={() => setPriceSourceOverride('cliente')}
+                            className={`flex items-center gap-1 px-2 py-1 rounded-md border text-xs transition-all ${priceSource === 'cliente' ? 'border-primary bg-primary/10 text-primary font-semibold' : 'border-border hover:border-primary/50'}`}
+                          >
+                            <History className="w-3 h-3" />
+                            Cliente {fmt(lastPracticedPrice.price)}
+                          </button>
+                        )}
+                        {precoCsv > 0 && (
+                          <button
+                            onClick={() => setPriceSourceOverride('tabela')}
+                            className={`flex items-center gap-1 px-2 py-1 rounded-md border text-xs transition-all ${priceSource === 'tabela' ? 'border-primary bg-primary/10 text-primary font-semibold' : 'border-border hover:border-primary/50'}`}
+                          >
+                            Tabela {fmt(precoCsv)}
+                          </button>
+                        )}
+                        <button
+                          onClick={() => setPriceSourceOverride('calculado')}
+                          className={`flex items-center gap-1 px-2 py-1 rounded-md border text-xs transition-all ${priceSource === 'calculado' ? 'border-primary bg-primary/10 text-primary font-semibold' : 'border-border hover:border-primary/50'}`}
+                        >
+                          Calculado {fmt(precoCalculado)}
+                        </button>
+                      </div>
+                    </div>
+                  ) : null}
+
                   {/* Price breakdown */}
                   <div className="space-y-2">
                     {/* Main price */}
@@ -302,7 +344,7 @@ export function TintColorSelectDialog({ product, open, onClose, onConfirm, custo
                       <span className="flex items-center gap-1.5">
                         Preço Final
                         <Badge variant="secondary" className="text-[9px] px-1.5 py-0">
-                          {priceSource === 'cliente' ? 'Preço cliente' : priceSource === 'csv' ? 'Tabela CSV' : 'Calculado'}
+                          {priceSource === 'cliente' ? 'Preço cliente' : priceSource === 'tabela' ? 'Tabela' : 'Calculado'}
                         </Badge>
                       </span>
                       <span className="text-primary">{fmt(precoFinal)}</span>
@@ -393,7 +435,7 @@ export function TintColorSelectDialog({ product, open, onClose, onConfirm, custo
                                   <span className="font-bold text-primary">{fmt(altPrice)}</span>
                                   {altDisc > 0 && <span className="text-[10px] text-muted-foreground line-through ml-1">{fmt(altBasePrice)}</span>}
                                   {alt.precoFinalCsv && alt.precoFinalCsv > 0 ? (
-                                    <Badge variant="secondary" className="text-[8px] px-1 py-0 ml-1">CSV</Badge>
+                                    <Badge variant="secondary" className="text-[8px] px-1 py-0 ml-1">Tabela</Badge>
                                   ) : (
                                     <Badge variant="outline" className="text-[8px] px-1 py-0 ml-1">Calc.</Badge>
                                   )}
