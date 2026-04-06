@@ -49,7 +49,9 @@ export function CartSummaryBar({
   selectedParcelaOben, setSelectedParcelaOben,
   selectedParcelaColacor, setSelectedParcelaColacor,
   loadingFormas, customerParcelaRankingOben, customerParcelaRankingColacor,
-  notes, setNotes, onSubmit,
+  notes, setNotes,
+  volumesOben, setVolumesOben, volumesColacor, setVolumesColacor,
+  onSubmit,
 }: CartSummaryBarProps) {
   const disableSubmit = submitting || serviceItems.some(s => !s.servico) || vendedorDivergencias.length > 0;
 
