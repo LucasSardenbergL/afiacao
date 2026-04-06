@@ -38,6 +38,10 @@ interface CartSummaryBarProps {
   setVolumesOben: (v: number) => void;
   volumesColacor: number;
   setVolumesColacor: (v: number) => void;
+  // Ordem de compra (exceção CNPJ específico)
+  ordemCompra?: string;
+  setOrdemCompra?: (v: string) => void;
+  isOrdemCompraCustomer?: boolean;
   // Actions
   onSubmit: () => void;
 }
@@ -51,6 +55,7 @@ export function CartSummaryBar({
   loadingFormas, customerParcelaRankingOben, customerParcelaRankingColacor,
   notes, setNotes,
   volumesOben, setVolumesOben, volumesColacor, setVolumesColacor,
+  ordemCompra, setOrdemCompra, isOrdemCompraCustomer,
   onSubmit,
 }: CartSummaryBarProps) {
   const disableSubmit = submitting || serviceItems.some(s => !s.servico) || vendedorDivergencias.length > 0;
