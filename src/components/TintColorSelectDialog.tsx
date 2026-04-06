@@ -305,6 +305,38 @@ export function TintColorSelectDialog({ product, open, onClose, onConfirm, custo
                     </div>
                   ) : null}
 
+                  {/* Price source selection when multiple options available */}
+                  {(lastPracticedPrice && precoCsv > 0) || (lastPracticedPrice && precoCalculado > 0) || (precoCsv > 0) ? (
+                    <div className="space-y-1.5">
+                      <p className="text-[10px] uppercase font-semibold text-muted-foreground tracking-wider">Selecionar preço</p>
+                      <div className="flex flex-wrap gap-1.5">
+                        {lastPracticedPrice && (
+                          <button
+                            onClick={() => setPriceSourceOverride('cliente')}
+                            className={`flex items-center gap-1 px-2 py-1 rounded-md border text-xs transition-all ${priceSource === 'cliente' ? 'border-primary bg-primary/10 text-primary font-semibold' : 'border-border hover:border-primary/50'}`}
+                          >
+                            <History className="w-3 h-3" />
+                            Cliente {fmt(lastPracticedPrice.price)}
+                          </button>
+                        )}
+                        {precoCsv > 0 && (
+                          <button
+                            onClick={() => setPriceSourceOverride('tabela')}
+                            className={`flex items-center gap-1 px-2 py-1 rounded-md border text-xs transition-all ${priceSource === 'tabela' ? 'border-primary bg-primary/10 text-primary font-semibold' : 'border-border hover:border-primary/50'}`}
+                          >
+                            Tabela {fmt(precoCsv)}
+                          </button>
+                        )}
+                        <button
+                          onClick={() => setPriceSourceOverride('calculado')}
+                          className={`flex items-center gap-1 px-2 py-1 rounded-md border text-xs transition-all ${priceSource === 'calculado' ? 'border-primary bg-primary/10 text-primary font-semibold' : 'border-border hover:border-primary/50'}`}
+                        >
+                          Calculado {fmt(precoCalculado)}
+                        </button>
+                      </div>
+                    </div>
+                  ) : null}
+
                   {/* Price breakdown */}
                   <div className="space-y-2">
                     {/* Main price */}
@@ -312,7 +344,7 @@ export function TintColorSelectDialog({ product, open, onClose, onConfirm, custo
                       <span className="flex items-center gap-1.5">
                         Preço Final
                         <Badge variant="secondary" className="text-[9px] px-1.5 py-0">
-                          {priceSource === 'cliente' ? 'Preço cliente' : priceSource === 'csv' ? 'Tabela CSV' : 'Calculado'}
+                          {priceSource === 'cliente' ? 'Preço cliente' : priceSource === 'tabela' ? 'Tabela' : 'Calculado'}
                         </Badge>
                       </span>
                       <span className="text-primary">{fmt(precoFinal)}</span>
