@@ -70,6 +70,11 @@ async function callOmieVendasApi(
         console.log(`[Omie Vendas][${account}] Rate limit persists after ${maxRetries} retries, returning null`);
         return null;
       }
+      // "No records" is not an error – return empty/null
+      if (fs.includes("Não existem registros para a página")) {
+        console.log(`[Omie Vendas][${account}] Nenhum registro encontrado, retornando null`);
+        return null;
+      }
       throw new Error(`Erro Omie Vendas (${account}): ${fs}`);
     }
 
