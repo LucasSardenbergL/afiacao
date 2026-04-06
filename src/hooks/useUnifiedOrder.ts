@@ -1066,6 +1066,7 @@ export function useUnifiedOrder() {
     setVendedorDivergencias([]);
     setVolumesOben(0);
     setVolumesColacor(0);
+    setOrdemCompra('');
     setAddresses([]);
     setSelectedAddress('');
   };
