@@ -830,7 +830,7 @@ async function criarPedidoVenda(
         dados_adicionais_item: ordemCompra,
         numero_pedido_compra: ordemCompra,
       };
-      (entry as any).observacao = { obs_item: ordemCompra };
+      (entry as any).obs_item = ordemCompra;
     } else if (item.tint_cor_id && item.tint_nome_cor) {
       const corInfo = `Cor: ${item.tint_nome_cor} - Qtd: ${item.quantidade}`;
       const corShort = item.tint_cor_id.substring(0, 15);
@@ -838,7 +838,7 @@ async function criarPedidoVenda(
         dados_adicionais_item: corInfo,
         numero_pedido_compra: corShort,
       };
-      (entry as any).observacao = { obs_item: corInfo };
+      (entry as any).obs_item = corInfo;
     }
     return entry;
   });
