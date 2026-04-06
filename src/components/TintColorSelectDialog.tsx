@@ -376,6 +376,7 @@ export function TintColorSelectDialog({ product, open, onClose, onConfirm, custo
                         </label>
                       </div>
                     )}
+                  </div>
 
                   <Button
                     size="sm"
