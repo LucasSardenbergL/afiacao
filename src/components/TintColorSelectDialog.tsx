@@ -56,22 +56,23 @@ export function TintColorSelectDialog({ product, open, onClose, onConfirm, custo
     return () => clearTimeout(t);
   }, [search]);
 
-  // Find SKU id for this omie product
-  const { data: skuId, isLoading: loadingSku } = useQuery({
+  // Find SKU id + produto_id + base_id for this omie product
+  const { data: skuInfo, isLoading: loadingSku } = useQuery({
     queryKey: ['tint-sku-for-product', product.id],
     staleTime: 5 * 60 * 1000,
     enabled: open,
     queryFn: async () => {
       const { data } = await supabase
         .from('tint_skus')
-        .select('id')
+        .select('id, produto_id, base_id')
         .eq('omie_product_id', product.id)
         .eq('account', 'oben')
         .limit(1)
         .maybeSingle();
-      return data?.id || null;
+      return data || null;
     },
   });
+  const skuId = skuInfo?.id || null;
 
   // Search formulas
   const { data: formulas, isLoading: loadingFormulas } = useQuery({
