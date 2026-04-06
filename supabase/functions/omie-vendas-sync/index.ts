@@ -836,14 +836,16 @@ async function criarPedidoVenda(
         numero_pedido_compra: ordemCompra,
       };
     } else if (item.tint_cor_id && item.tint_nome_cor) {
-      // Always include cor_id in the description; avoid duplication if nome_cor already contains it
+      // Include cor_id in the label; avoid duplication if nome_cor already contains it
       const nomeJaTemCodigo = item.tint_nome_cor.toUpperCase().includes(item.tint_cor_id.toUpperCase());
       const corLabel = nomeJaTemCodigo ? item.tint_nome_cor : `${item.tint_nome_cor} ${item.tint_cor_id}`;
-      const corInfo = `Cor: ${corLabel} - Qtd: ${item.quantidade}`;
-      const corShort = item.tint_cor_id.substring(0, 15);
+      // Include base (product description) alongside the color
+      const baseLabel = item.descricao || '';
+      const corInfo = baseLabel
+        ? `Cor: ${corLabel} - Base: ${baseLabel} - Qtd: ${item.quantidade}`
+        : `Cor: ${corLabel} - Qtd: ${item.quantidade}`;
       (entry as any).inf_adic = {
         dados_adicionais_item: corInfo,
-        numero_pedido_compra: corShort,
       };
     }
     return entry;
