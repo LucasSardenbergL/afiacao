@@ -31,9 +31,13 @@ interface CartSummaryBarProps {
   loadingFormas: boolean;
   customerParcelaRankingOben: string[];
   customerParcelaRankingColacor: string[];
-  // Notes
   notes: string;
   setNotes: (v: string) => void;
+  // Volumes
+  volumesOben: number;
+  setVolumesOben: (v: number) => void;
+  volumesColacor: number;
+  setVolumesColacor: (v: number) => void;
   // Actions
   onSubmit: () => void;
 }
