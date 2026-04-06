@@ -968,6 +968,7 @@ export function useUnifiedOrder() {
               omie_codigo_produto: c.product.omie_codigo_produto, quantidade: c.quantity, valor_unitario: c.unit_price,
             })),
             observacao: notes, codigo_parcela: selectedParcelaColacor, quantidade_volumes: volumesColacor || undefined,
+            ordem_compra: ordemCompra || undefined,
           },
         });
         if (!omieError) results.push(`PV Colacor ${omieResult?.omie_numero_pedido || ''}`);
