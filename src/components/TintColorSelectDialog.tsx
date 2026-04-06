@@ -411,7 +411,7 @@ export function TintColorSelectDialog({ product, open, onClose, onConfirm, custo
                           const altBasePrice = alt.precoFinalCsv && alt.precoFinalCsv > 0
                             ? alt.precoFinalCsv
                             : alt.product.valor_unitario + custoCorantes;
-                          const altDisc = altDiscounts[alt.formulaId] || 0;
+                          const altDisc = syncDiscount ? discountPct : (altDiscounts[alt.formulaId] || 0);
                           const altPrice = altDisc > 0 ? Math.round(altBasePrice * (1 - altDisc / 100) * 100) / 100 : altBasePrice;
                           return (
                             <>
