@@ -300,7 +300,7 @@ export function TintColorSelectDialog({ product, open, onClose, onConfirm, custo
                         <span className="font-medium text-primary">Último preço cliente: {fmt(lastPracticedPrice.price)}</span>
                         {precoCsv > 0 && lastPracticedPrice.price < precoCsv && (
                           <Badge variant="secondary" className="ml-1.5 text-[9px] px-1.5 py-0 text-orange-600 bg-orange-50 border-orange-200">
-                            -{Math.round((1 - lastPracticedPrice.price / precoCsv) * 100)}% s/ tabela
+                            -{Math.round((1 - lastPracticedPrice.price / precoCsv) * 100)}% da tabela
                           </Badge>
                         )}
                         <span className="text-muted-foreground ml-1">
