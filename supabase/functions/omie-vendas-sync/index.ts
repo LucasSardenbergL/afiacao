@@ -808,7 +808,8 @@ async function criarPedidoVenda(
   }>,
   observacao?: string,
   codigoParcela?: string,
-  account: Account = "oben"
+  account: Account = "oben",
+  quantidadeVolumes?: number
 ) {
   const cCodIntPed = `PV_${salesOrderId.substring(0, 8)}_${Date.now()}`;
   const config = getAccountConfig(account);
@@ -848,8 +849,17 @@ async function criarPedidoVenda(
     informacoes_adicionais.codVend = codigoVendedor;
   }
 
+  const frete: Record<string, unknown> = {
+    modalidade_frete: "0",
+    especie_volumes: "VOL",
+  };
+  if (quantidadeVolumes && quantidadeVolumes > 0) {
+    frete.quantidade_volumes = quantidadeVolumes;
+  }
+
   const payload = {
     cabecalho,
+    frete,
     det,
     observacoes: {
       obs_venda: observacao || config.obs_prefix,
@@ -969,7 +979,7 @@ serve(async (req) => {
       }
 
       case "criar_pedido": {
-        const { sales_order_id, codigo_cliente, codigo_vendedor, items, observacao, codigo_parcela } = params;
+        const { sales_order_id, codigo_cliente, codigo_vendedor, items, observacao, codigo_parcela, quantidade_volumes } = params;
         if (!sales_order_id || !codigo_cliente || !items?.length) {
           throw new Error("Dados insuficientes para criar pedido de venda");
         }
@@ -981,7 +991,8 @@ serve(async (req) => {
           items,
           observacao,
           codigo_parcela,
-          account
+          account,
+          quantidade_volumes
         );
         result = { success: true, ...pedido };
         break;

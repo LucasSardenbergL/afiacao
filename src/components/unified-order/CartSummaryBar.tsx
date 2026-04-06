@@ -1,6 +1,7 @@
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { Label } from '@/components/ui/label';
+import { Input } from '@/components/ui/input';
 import { Textarea } from '@/components/ui/textarea';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Card, CardContent } from '@/components/ui/card';
@@ -30,9 +31,13 @@ interface CartSummaryBarProps {
   loadingFormas: boolean;
   customerParcelaRankingOben: string[];
   customerParcelaRankingColacor: string[];
-  // Notes
   notes: string;
   setNotes: (v: string) => void;
+  // Volumes
+  volumesOben: number;
+  setVolumesOben: (v: number) => void;
+  volumesColacor: number;
+  setVolumesColacor: (v: number) => void;
   // Actions
   onSubmit: () => void;
 }
@@ -44,7 +49,9 @@ export function CartSummaryBar({
   selectedParcelaOben, setSelectedParcelaOben,
   selectedParcelaColacor, setSelectedParcelaColacor,
   loadingFormas, customerParcelaRankingOben, customerParcelaRankingColacor,
-  notes, setNotes, onSubmit,
+  notes, setNotes,
+  volumesOben, setVolumesOben, volumesColacor, setVolumesColacor,
+  onSubmit,
 }: CartSummaryBarProps) {
   const disableSubmit = submitting || serviceItems.some(s => !s.servico) || vendedorDivergencias.length > 0;
 
@@ -89,6 +96,18 @@ export function CartSummaryBar({
                   </SelectContent>
                 </Select>
               )}
+            </div>
+          )}
+          {obenProductItems.length > 0 && (
+            <div>
+              <Label className="text-xs font-medium">Qtd. Volumes Oben</Label>
+              <Input type="number" min={0} value={volumesOben} onChange={e => setVolumesOben(Number(e.target.value) || 0)} className="text-sm h-9 mt-1" placeholder="0" />
+            </div>
+          )}
+          {colacorProductItems.length > 0 && (
+            <div>
+              <Label className="text-xs font-medium">Qtd. Volumes Colacor</Label>
+              <Input type="number" min={0} value={volumesColacor} onChange={e => setVolumesColacor(Number(e.target.value) || 0)} className="text-sm h-9 mt-1" placeholder="0" />
             </div>
           )}
           <div>

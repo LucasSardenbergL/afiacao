@@ -153,6 +153,8 @@ export function useUnifiedOrder() {
   const [selectedParcelaOben, setSelectedParcelaOben] = useState<string>('999');
   const [selectedParcelaColacor, setSelectedParcelaColacor] = useState<string>('999');
   const [loadingFormas, setLoadingFormas] = useState(false);
+  const [volumesOben, setVolumesOben] = useState<number>(0);
+  const [volumesColacor, setVolumesColacor] = useState<number>(0);
   const [customerParcelaRankingOben, setCustomerParcelaRankingOben] = useState<string[]>([]);
   const [customerParcelaRankingColacor, setCustomerParcelaRankingColacor] = useState<string[]>([]);
   const [afiacaoPaymentMethod, setAfiacaoPaymentMethod] = useState<string>('a_vista');
@@ -935,7 +937,7 @@ export function useUnifiedOrder() {
             items: obenProductItems.map(c => ({
               omie_codigo_produto: c.product.omie_codigo_produto, quantidade: c.quantity, valor_unitario: c.unit_price,
             })),
-            observacao: notes, codigo_parcela: selectedParcelaOben,
+            observacao: notes, codigo_parcela: selectedParcelaOben, quantidade_volumes: volumesOben || undefined,
           },
         });
         if (!omieError) results.push(`PV Oben ${omieResult?.omie_numero_pedido || ''}`);
@@ -963,7 +965,7 @@ export function useUnifiedOrder() {
             items: colacorProductItems.map(c => ({
               omie_codigo_produto: c.product.omie_codigo_produto, quantidade: c.quantity, valor_unitario: c.unit_price,
             })),
-            observacao: notes, codigo_parcela: selectedParcelaColacor,
+            observacao: notes, codigo_parcela: selectedParcelaColacor, quantidade_volumes: volumesColacor || undefined,
           },
         });
         if (!omieError) results.push(`PV Colacor ${omieResult?.omie_numero_pedido || ''}`);
@@ -1059,6 +1061,8 @@ export function useUnifiedOrder() {
     setSelectedParcelaOben('999');
     setSelectedParcelaColacor('999');
     setVendedorDivergencias([]);
+    setVolumesOben(0);
+    setVolumesColacor(0);
     setAddresses([]);
     setSelectedAddress('');
   };
@@ -1086,6 +1090,7 @@ export function useUnifiedOrder() {
     selectedParcelaColacor, setSelectedParcelaColacor,
     loadingFormas, customerParcelaRankingOben, customerParcelaRankingColacor,
     afiacaoPaymentMethod, setAfiacaoPaymentMethod,
+    volumesOben, setVolumesOben, volumesColacor, setVolumesColacor,
     // Delivery
     deliveryOption, setDeliveryOption, addresses, selectedAddress, setSelectedAddress,
     selectedTimeSlot, setSelectedTimeSlot, showAddressOptions, setShowAddressOptions,

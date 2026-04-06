@@ -206,7 +206,10 @@ const UnifiedOrder = () => {
               selectedParcelaColacor={h.selectedParcelaColacor} setSelectedParcelaColacor={h.setSelectedParcelaColacor}
               loadingFormas={h.loadingFormas} customerParcelaRankingOben={h.customerParcelaRankingOben}
               customerParcelaRankingColacor={h.customerParcelaRankingColacor}
-              notes={h.notes} setNotes={h.setNotes} onSubmit={h.submitOrder}
+              notes={h.notes} setNotes={h.setNotes}
+              volumesOben={h.volumesOben} setVolumesOben={h.setVolumesOben}
+              volumesColacor={h.volumesColacor} setVolumesColacor={h.setVolumesColacor}
+              onSubmit={h.submitOrder}
             />
           )}
         </div>
