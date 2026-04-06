@@ -849,8 +849,17 @@ async function criarPedidoVenda(
     informacoes_adicionais.codVend = codigoVendedor;
   }
 
+  const frete: Record<string, unknown> = {
+    modalidade_frete: "0",
+    especie_volumes: "VOL",
+  };
+  if (quantidadeVolumes && quantidadeVolumes > 0) {
+    frete.quantidade_volumes = quantidadeVolumes;
+  }
+
   const payload = {
     cabecalho,
+    frete,
     det,
     observacoes: {
       obs_venda: observacao || config.obs_prefix,
