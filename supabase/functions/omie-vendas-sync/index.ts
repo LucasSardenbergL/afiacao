@@ -862,7 +862,7 @@ async function criarPedidoVenda(
     especie_volumes: "VOL",
   };
   if (quantidadeVolumes && quantidadeVolumes > 0) {
-    frete.volumes = quantidadeVolumes;
+    frete.quantidade_volumes = quantidadeVolumes;
   }
 
   const payload = {
