@@ -7,6 +7,7 @@ import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { Card, CardContent } from '@/components/ui/card';
 import { Search, Palette, Loader2, AlertTriangle, History, Package } from 'lucide-react';
+import { Checkbox } from '@/components/ui/checkbox';
 import { useTintPricing } from '@/hooks/useTintPricing';
 import type { Product } from '@/hooks/useUnifiedOrder';
 import { fmt } from '@/hooks/useUnifiedOrder';
