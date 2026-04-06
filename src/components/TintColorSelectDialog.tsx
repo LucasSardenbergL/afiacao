@@ -208,17 +208,26 @@ export function TintColorSelectDialog({ product, open, onClose, onConfirm, custo
   const precoCsv = rawCsv > 0 ? Math.ceil(rawCsv * 10) / 10 : 0;
   const custoCorantes = pricing?.custoCorantes || 0;
 
-  // Price priority: last practiced > CSV > calculated fallback
+  // Price source selection: user can choose between historical, CSV, or calculated
+  const [priceSourceOverride, setPriceSourceOverride] = useState<'cliente' | 'tabela' | 'calculado' | null>(null);
+
   const precoBase = product.valor_unitario;
   const precoCalculado = precoBase + custoCorantes;
-  const precoSemDesconto = lastPracticedPrice?.price ?? (precoCsv > 0 ? precoCsv : precoCalculado);
-  const precoFinal = discountPct > 0 ? Math.round(precoSemDesconto * (1 - discountPct / 100) * 100) / 100 : precoSemDesconto;
 
-  const priceSource = lastPracticedPrice
+  // Auto-detect best price source
+  const autoSource = lastPracticedPrice
     ? 'cliente'
     : precoCsv > 0
-      ? 'csv'
+      ? 'tabela'
       : 'calculado';
+  const priceSource = priceSourceOverride || autoSource;
+
+  const precoSemDesconto = priceSource === 'cliente' && lastPracticedPrice
+    ? lastPracticedPrice.price
+    : priceSource === 'tabela' && precoCsv > 0
+      ? precoCsv
+      : precoCalculado;
+  const precoFinal = discountPct > 0 ? Math.round(precoSemDesconto * (1 - discountPct / 100) * 100) / 100 : precoSemDesconto;
 
   return (
     <Dialog open={open} onOpenChange={(o) => !o && onClose()}>
