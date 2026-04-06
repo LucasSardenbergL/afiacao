@@ -832,7 +832,7 @@ async function criarPedidoVenda(
       };
       (entry as any).observacao = { obs_item: ordemCompra };
     } else if (item.tint_cor_id && item.tint_nome_cor) {
-      const corInfo = `Cor: ${item.tint_cor_id} - ${item.tint_nome_cor} - Qtd: ${item.quantidade}`;
+      const corInfo = `Cor: ${item.tint_nome_cor} - Qtd: ${item.quantidade}`;
       const corShort = item.tint_cor_id.substring(0, 15);
       (entry as any).inf_adic = {
         dados_adicionais_item: corInfo,
