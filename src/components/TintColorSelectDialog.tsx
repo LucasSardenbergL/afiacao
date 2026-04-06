@@ -413,6 +413,7 @@ export function TintColorSelectDialog({ product, open, onClose, onConfirm, custo
                                 />
                               </div>
                             </div>
+                            </>
                           );
                         })}
                       </div>
