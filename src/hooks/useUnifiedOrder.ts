@@ -937,6 +937,7 @@ export function useUnifiedOrder() {
             codigo_vendedor: selectedCustomer.codigo_vendedor,
             items: obenProductItems.map(c => ({
               omie_codigo_produto: c.product.omie_codigo_produto, quantidade: c.quantity, valor_unitario: c.unit_price,
+              ...(c.tint_cor_id ? { tint_cor_id: c.tint_cor_id, tint_nome_cor: c.tint_nome_cor } : {}),
             })),
             observacao: notes, codigo_parcela: selectedParcelaOben, quantidade_volumes: volumesOben || undefined,
             ordem_compra: ordemCompra || undefined,
