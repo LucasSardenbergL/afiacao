@@ -830,7 +830,6 @@ async function criarPedidoVenda(
         dados_adicionais_item: ordemCompra,
         numero_pedido_compra: ordemCompra,
       };
-      (entry as any).obs_item = ordemCompra;
     } else if (item.tint_cor_id && item.tint_nome_cor) {
       const corInfo = `Cor: ${item.tint_nome_cor} - Qtd: ${item.quantidade}`;
       const corShort = item.tint_cor_id.substring(0, 15);
@@ -838,7 +837,6 @@ async function criarPedidoVenda(
         dados_adicionais_item: corInfo,
         numero_pedido_compra: corShort,
       };
-      (entry as any).obs_item = corInfo;
     }
     return entry;
   });
@@ -873,7 +871,15 @@ async function criarPedidoVenda(
     frete,
     det,
     observacoes: {
-      obs_venda: observacao || config.obs_prefix,
+      obs_venda: (() => {
+        let obs = observacao || config.obs_prefix;
+        const tintItems = items.filter(i => i.tint_cor_id && i.tint_nome_cor);
+        if (tintItems.length > 0) {
+          const tintLines = tintItems.map(i => `Cor: ${i.tint_nome_cor} - Qtd: ${i.quantidade}`).join('\n');
+          obs = obs ? `${obs}\n${tintLines}` : tintLines;
+        }
+        return obs;
+      })(),
     },
     informacoes_adicionais,
   };
