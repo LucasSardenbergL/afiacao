@@ -103,6 +103,12 @@ export function CartSummaryBar({
               )}
             </div>
           )}
+          {isOrdemCompraCustomer && setOrdemCompra && (
+            <div>
+              <Label className="text-xs font-medium">Nº Ordem de Compra do Cliente</Label>
+              <Input value={ordemCompra || ''} onChange={e => setOrdemCompra(e.target.value)} className="text-sm h-9 mt-1" placeholder="Ex: OC-12345" />
+            </div>
+          )}
           {obenProductItems.length > 0 && (
             <div>
               <Label className="text-xs font-medium">Qtd. Volumes Oben</Label>
