@@ -809,7 +809,8 @@ async function criarPedidoVenda(
   observacao?: string,
   codigoParcela?: string,
   account: Account = "oben",
-  quantidadeVolumes?: number
+  quantidadeVolumes?: number,
+  ordemCompra?: string
 ) {
   const cCodIntPed = `PV_${salesOrderId.substring(0, 8)}_${Date.now()}`;
   const config = getAccountConfig(account);
