@@ -781,6 +781,62 @@ async function syncPedidos(
   return { totalSynced, totalItems, skippedNoClient, skippedExisting, totalPaginas, lastPage: pagina - 1, nextPage: complete ? null : pagina, complete };
 }
 
+// Buscar transportadora pelo nome (razão social) no Omie
+async function buscarTransportadoraPorNome(nomeTransportadora: string, account: Account): Promise<number | null> {
+  try {
+    const result = await callOmieVendasApi(
+      "geral/clientes/",
+      "ListarClientes",
+      {
+        pagina: 1,
+        registros_por_pagina: 5,
+        clientesFiltro: { razao_social: nomeTransportadora },
+      },
+      account
+    ) as any;
+    const clientes = result?.clientes_cadastro || [];
+    if (clientes.length > 0) {
+      const codigo = clientes[0].codigo_cliente_omie;
+      console.log(`[Omie Vendas][${account}] Transportadora '${nomeTransportadora}' encontrada: ${codigo}`);
+      return codigo;
+    }
+  } catch (e) {
+    console.warn(`[Omie Vendas][${account}] Erro ao buscar transportadora '${nomeTransportadora}':`, (e as Error).message);
+  }
+  return null;
+}
+
+// Buscar transportadora do cadastro do cliente
+async function buscarTransportadoraCliente(codigoCliente: number, account: Account): Promise<number | null> {
+  try {
+    const result = await callOmieVendasApi(
+      "geral/clientes/",
+      "ConsultarCliente",
+      { codigo_cliente_omie: codigoCliente },
+      account
+    ) as any;
+    const codTransp = result?.codigo_transportadora;
+    if (codTransp && Number(codTransp) > 0) {
+      console.log(`[Omie Vendas][${account}] Cliente ${codigoCliente} tem transportadora: ${codTransp}`);
+      return Number(codTransp);
+    }
+  } catch (e) {
+    console.warn(`[Omie Vendas][${account}] Erro ao consultar transportadora do cliente ${codigoCliente}:`, (e as Error).message);
+  }
+  return null;
+}
+
+// Cache de transportadora padrão por empresa (evitar busca repetida)
+const transportadoraCache: Record<string, number | null> = {};
+
+async function getTransportadoraPadrao(account: Account): Promise<number | null> {
+  if (account in transportadoraCache) return transportadoraCache[account];
+  const nome = account === "oben" ? "Oben Comercio LTDA" : "Colacor Comercial LTDA";
+  const codigo = await buscarTransportadoraPorNome(nome, account);
+  transportadoraCache[account] = codigo;
+  return codigo;
+}
+
 // Config por empresa para criação de pedido
 function getAccountConfig(account: Account) {
   if (account === "colacor") {
