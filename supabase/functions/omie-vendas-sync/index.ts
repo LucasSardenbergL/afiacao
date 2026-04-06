@@ -836,7 +836,10 @@ async function criarPedidoVenda(
         numero_pedido_compra: ordemCompra,
       };
     } else if (item.tint_cor_id && item.tint_nome_cor) {
-      const corInfo = `Cor: ${item.tint_nome_cor} - Qtd: ${item.quantidade}`;
+      // Always include cor_id in the description; avoid duplication if nome_cor already contains it
+      const nomeJaTemCodigo = item.tint_nome_cor.toUpperCase().includes(item.tint_cor_id.toUpperCase());
+      const corLabel = nomeJaTemCodigo ? item.tint_nome_cor : `${item.tint_nome_cor} ${item.tint_cor_id}`;
+      const corInfo = `Cor: ${corLabel} - Qtd: ${item.quantidade}`;
       const corShort = item.tint_cor_id.substring(0, 15);
       (entry as any).inf_adic = {
         dados_adicionais_item: corInfo,
@@ -880,7 +883,11 @@ async function criarPedidoVenda(
         let obs = observacao || config.obs_prefix;
         const tintItems = items.filter(i => i.tint_cor_id && i.tint_nome_cor);
         if (tintItems.length > 0) {
-          const tintLines = tintItems.map(i => `Cor: ${i.tint_nome_cor} - Qtd: ${i.quantidade}`).join('\n');
+          const tintLines = tintItems.map(i => {
+            const nomeJaTemCodigo = i.tint_nome_cor!.toUpperCase().includes(i.tint_cor_id!.toUpperCase());
+            const corLabel = nomeJaTemCodigo ? i.tint_nome_cor! : `${i.tint_nome_cor} ${i.tint_cor_id}`;
+            return `Cor: ${corLabel} - Qtd: ${i.quantidade}`;
+          }).join('\n');
           obs = obs ? `${obs}\n${tintLines}` : tintLines;
         }
         return obs;
