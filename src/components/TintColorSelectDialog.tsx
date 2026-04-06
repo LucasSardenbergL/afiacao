@@ -363,7 +363,19 @@ export function TintColorSelectDialog({ product, open, onClose, onConfirm, custo
                         <span className="text-[10px] text-muted-foreground line-through">{fmt(precoSemDesconto)}</span>
                       )}
                     </div>
-                  </div>
+                    {alternatives && alternatives.length > 0 && (
+                      <div className="flex items-center gap-2 pt-1">
+                        <Checkbox
+                          id="sync-discount"
+                          checked={syncDiscount}
+                          onCheckedChange={(v) => setSyncDiscount(!!v)}
+                          className="h-3.5 w-3.5"
+                        />
+                        <label htmlFor="sync-discount" className="text-[10px] text-muted-foreground cursor-pointer">
+                          Aplicar mesmo desconto nas outras embalagens
+                        </label>
+                      </div>
+                    )}
 
                   <Button
                     size="sm"
