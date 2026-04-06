@@ -49,6 +49,7 @@ export function TintColorSelectDialog({ product, open, onClose, onConfirm, custo
       setSearch('');
       setDebouncedSearch('');
       setSelectedFormula(null);
+      setPriceSourceOverride(null);
     }
   }, [open]);
 
