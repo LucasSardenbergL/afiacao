@@ -7,6 +7,7 @@ import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { Card, CardContent } from '@/components/ui/card';
 import { Search, Palette, Loader2, AlertTriangle, History, Package } from 'lucide-react';
+import { Checkbox } from '@/components/ui/checkbox';
 import { useTintPricing } from '@/hooks/useTintPricing';
 import type { Product } from '@/hooks/useUnifiedOrder';
 import { fmt } from '@/hooks/useUnifiedOrder';
@@ -43,7 +44,7 @@ export function TintColorSelectDialog({ product, open, onClose, onConfirm, custo
   const [selectedFormula, setSelectedFormula] = useState<FormulaResult | null>(null);
   const [discountPct, setDiscountPct] = useState<number>(0);
   const [altDiscounts, setAltDiscounts] = useState<Record<string, number>>({});
-
+  const [syncDiscount, setSyncDiscount] = useState(false);
   useEffect(() => {
     if (!open) {
       setSearch('');
@@ -362,6 +363,19 @@ export function TintColorSelectDialog({ product, open, onClose, onConfirm, custo
                         <span className="text-[10px] text-muted-foreground line-through">{fmt(precoSemDesconto)}</span>
                       )}
                     </div>
+                    {alternatives && alternatives.length > 0 && (
+                      <div className="flex items-center gap-2 pt-1">
+                        <Checkbox
+                          id="sync-discount"
+                          checked={syncDiscount}
+                          onCheckedChange={(v) => setSyncDiscount(!!v)}
+                          className="h-3.5 w-3.5"
+                        />
+                        <label htmlFor="sync-discount" className="text-[10px] text-muted-foreground cursor-pointer">
+                          Aplicar mesmo desconto nas outras embalagens
+                        </label>
+                      </div>
+                    )}
                   </div>
 
                   <Button
@@ -397,7 +411,7 @@ export function TintColorSelectDialog({ product, open, onClose, onConfirm, custo
                           const altBasePrice = alt.precoFinalCsv && alt.precoFinalCsv > 0
                             ? alt.precoFinalCsv
                             : alt.product.valor_unitario + custoCorantes;
-                          const altDisc = altDiscounts[alt.formulaId] || 0;
+                          const altDisc = syncDiscount ? discountPct : (altDiscounts[alt.formulaId] || 0);
                           const altPrice = altDisc > 0 ? Math.round(altBasePrice * (1 - altDisc / 100) * 100) / 100 : altBasePrice;
                           return (
                             <>
