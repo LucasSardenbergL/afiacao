@@ -1090,6 +1090,7 @@ export function useUnifiedOrder() {
     selectedParcelaColacor, setSelectedParcelaColacor,
     loadingFormas, customerParcelaRankingOben, customerParcelaRankingColacor,
     afiacaoPaymentMethod, setAfiacaoPaymentMethod,
+    volumesOben, setVolumesOben, volumesColacor, setVolumesColacor,
     // Delivery
     deliveryOption, setDeliveryOption, addresses, selectedAddress, setSelectedAddress,
     selectedTimeSlot, setSelectedTimeSlot, showAddressOptions, setShowAddressOptions,
