@@ -209,6 +209,8 @@ const UnifiedOrder = () => {
               notes={h.notes} setNotes={h.setNotes}
               volumesOben={h.volumesOben} setVolumesOben={h.setVolumesOben}
               volumesColacor={h.volumesColacor} setVolumesColacor={h.setVolumesColacor}
+              ordemCompra={h.ordemCompra} setOrdemCompra={h.setOrdemCompra}
+              isOrdemCompraCustomer={h.isOrdemCompraCustomer}
               onSubmit={h.submitOrder}
             />
           )}

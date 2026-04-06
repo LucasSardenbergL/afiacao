@@ -155,6 +155,7 @@ export function useUnifiedOrder() {
   const [loadingFormas, setLoadingFormas] = useState(false);
   const [volumesOben, setVolumesOben] = useState<number>(0);
   const [volumesColacor, setVolumesColacor] = useState<number>(0);
+  const [ordemCompra, setOrdemCompra] = useState<string>('');
   const [customerParcelaRankingOben, setCustomerParcelaRankingOben] = useState<string[]>([]);
   const [customerParcelaRankingColacor, setCustomerParcelaRankingColacor] = useState<string[]>([]);
   const [afiacaoPaymentMethod, setAfiacaoPaymentMethod] = useState<string>('a_vista');
@@ -938,6 +939,7 @@ export function useUnifiedOrder() {
               omie_codigo_produto: c.product.omie_codigo_produto, quantidade: c.quantity, valor_unitario: c.unit_price,
             })),
             observacao: notes, codigo_parcela: selectedParcelaOben, quantidade_volumes: volumesOben || undefined,
+            ordem_compra: ordemCompra || undefined,
           },
         });
         if (!omieError) results.push(`PV Oben ${omieResult?.omie_numero_pedido || ''}`);
@@ -966,6 +968,7 @@ export function useUnifiedOrder() {
               omie_codigo_produto: c.product.omie_codigo_produto, quantidade: c.quantity, valor_unitario: c.unit_price,
             })),
             observacao: notes, codigo_parcela: selectedParcelaColacor, quantidade_volumes: volumesColacor || undefined,
+            ordem_compra: ordemCompra || undefined,
           },
         });
         if (!omieError) results.push(`PV Colacor ${omieResult?.omie_numero_pedido || ''}`);
@@ -1063,6 +1066,7 @@ export function useUnifiedOrder() {
     setVendedorDivergencias([]);
     setVolumesOben(0);
     setVolumesColacor(0);
+    setOrdemCompra('');
     setAddresses([]);
     setSelectedAddress('');
   };
@@ -1091,6 +1095,8 @@ export function useUnifiedOrder() {
     loadingFormas, customerParcelaRankingOben, customerParcelaRankingColacor,
     afiacaoPaymentMethod, setAfiacaoPaymentMethod,
     volumesOben, setVolumesOben, volumesColacor, setVolumesColacor,
+    ordemCompra, setOrdemCompra,
+    isOrdemCompraCustomer: selectedCustomer?.cnpj_cpf?.replace(/\D/g, '') === '64422892000100',
     // Delivery
     deliveryOption, setDeliveryOption, addresses, selectedAddress, setSelectedAddress,
     selectedTimeSlot, setSelectedTimeSlot, showAddressOptions, setShowAddressOptions,

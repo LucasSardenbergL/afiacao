@@ -809,7 +809,8 @@ async function criarPedidoVenda(
   observacao?: string,
   codigoParcela?: string,
   account: Account = "oben",
-  quantidadeVolumes?: number
+  quantidadeVolumes?: number,
+  ordemCompra?: string
 ) {
   const cCodIntPed = `PV_${salesOrderId.substring(0, 8)}_${Date.now()}`;
   const config = getAccountConfig(account);
@@ -823,10 +824,17 @@ async function criarPedidoVenda(
         valor_unitario: item.valor_unitario,
       },
     };
-    // Add tint color info if present
-    if (item.tint_cor_id && item.tint_nome_cor) {
+    // Add tint color info or ordem de compra to item observations + NF-e
+    if (ordemCompra) {
       (entry as any).inf_adic = {
-        dados_adicionais_item: `Cor: ${item.tint_cor_id} - ${item.tint_nome_cor}`,
+        dados_adicionais_item: ordemCompra,
+        numero_pedido_compra: ordemCompra,
+      };
+    } else if (item.tint_cor_id && item.tint_nome_cor) {
+      const corInfo = `Cor: ${item.tint_cor_id} - ${item.tint_nome_cor} - Qty: ${item.quantidade}`;
+      (entry as any).inf_adic = {
+        dados_adicionais_item: corInfo,
+        numero_pedido_compra: corInfo,
       };
     }
     return entry;
@@ -979,7 +987,7 @@ serve(async (req) => {
       }
 
       case "criar_pedido": {
-        const { sales_order_id, codigo_cliente, codigo_vendedor, items, observacao, codigo_parcela, quantidade_volumes } = params;
+        const { sales_order_id, codigo_cliente, codigo_vendedor, items, observacao, codigo_parcela, quantidade_volumes, ordem_compra } = params;
         if (!sales_order_id || !codigo_cliente || !items?.length) {
           throw new Error("Dados insuficientes para criar pedido de venda");
         }
@@ -992,7 +1000,8 @@ serve(async (req) => {
           observacao,
           codigo_parcela,
           account,
-          quantidade_volumes
+          quantidade_volumes,
+          ordem_compra
         );
         result = { success: true, ...pedido };
         break;
