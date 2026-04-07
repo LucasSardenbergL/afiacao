@@ -179,9 +179,11 @@ export function useUnifiedOrder() {
   const [orderSuccessOpen, setOrderSuccessOpen] = useState(false);
   const [lastOrderData, setLastOrderData] = useState<{
     customerName: string;
-    items: Array<{ description: string; quantity: number; unitPrice: number; tintCorId?: string; tintNomeCor?: string }>;
+    customerDocument: string;
+    items: Array<{ description: string; quantity: number; unitPrice: number; codigo?: string; unidade?: string; tintCorId?: string; tintNomeCor?: string }>;
     total: number;
     orderNumbers: string[];
+    printDataList: Array<import('@/components/OrderPrintLayout').PrintOrderData>;
   } | null>(null);
 
   // Pricing
