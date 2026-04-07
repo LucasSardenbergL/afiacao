@@ -941,7 +941,17 @@ async function criarPedidoVenda(
     frete.quantidade_volumes = quantidadeVolumes;
   }
 
-  const payload = {
+  // Se a parcela NÃO for "A Vista" (000), definir boleto como tipo de documento e meio de pagamento
+  const listaParcelas: Record<string, unknown>[] = [];
+  if (codigoParcela && codigoParcela !== "000") {
+    listaParcelas.push({
+      parcela: 1,
+      tipo_documento: "BOL",     // Boleto
+      meio_pagamento: "15",      // Boleto Bancário (código MEP 15 no Omie)
+    });
+  }
+
+  const payload: Record<string, unknown> = {
     cabecalho,
     frete,
     det,
