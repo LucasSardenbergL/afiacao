@@ -1109,6 +1109,37 @@ export function useUnifiedOrder() {
         });
       }
 
+      if (serviceItems.length > 0) {
+        const afiacaoOrderNum = results.find(r => r.startsWith('OS'))?.replace('OS ', '') || '';
+        printDataList.push({
+          companyName: 'COLACOR COMERCIAL LTDA - AFIAÇÃO',
+          companyCnpj: '00.000.000/0001-00',
+          companyPhone: '(31) 0000-0000',
+          companyAddress: 'Endereço Colacor Afiação',
+          orderNumber: afiacaoOrderNum,
+          date: dateShort,
+          customerName: selectedCustomer.razao_social,
+          customerDocument: selectedCustomer.cnpj_cpf || '',
+          condPagamento: afiacaoPaymentMethod === 'a_vista' ? 'À Vista' : afiacaoPaymentMethod,
+          items: serviceItems.map(c => {
+            const price = getServicePrice(c) || 0;
+            return {
+              codigo: c.servico?.omie_codigo_servico?.toString() || '-',
+              descricao: c.servico?.descricao || getToolName(c.userTool),
+              quantidade: c.quantity,
+              unidade: 'SV',
+              valorUnitario: price,
+              valorTotal: price * c.quantity,
+            };
+          }),
+          subtotal: serviceSubtotal,
+          desconto: 0,
+          frete: DELIVERY_FEES[deliveryOption],
+          total: serviceSubtotal + DELIVERY_FEES[deliveryOption],
+          isOben: false,
+        });
+      }
+
       setLastOrderData({
         customerName: selectedCustomer.nome_fantasia || selectedCustomer.razao_social,
         customerDocument: selectedCustomer.cnpj_cpf || '',
