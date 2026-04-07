@@ -1042,8 +1042,7 @@ export function useUnifiedOrder() {
       ];
 
       // Build print data for each company
-      const now = format(new Date(), "dd/MM/yyyy 'às' HH:mm", { locale: ptBR });
-      const dateShort = format(new Date(), 'dd/MM/yyyy');
+      const dateShort = new Date().toLocaleDateString('pt-BR');
       const printDataList: import('@/components/OrderPrintLayout').PrintOrderData[] = [];
 
       const findParcelaDesc = (codigo: string, formas: FormaPagamento[]) => {
