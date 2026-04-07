@@ -57,17 +57,21 @@ async function callOmieVendasApi(
         || fs.includes("Consumo redundante")
         || fs.includes("REDUNDANT")
         || fs.includes("consumo redundante");
-      if (isRateLimit) {
+      const isTransient = fs.includes("SOAP-ERROR")
+        || fs.includes("Broken response")
+        || fs.includes("Application Server")
+        || fs.includes("timeout")
+        || fs.includes("Timeout");
+      if (isRateLimit || isTransient) {
         if (attempt < maxRetries) {
-          // Cap delay at 15s to stay well within 150s function timeout (3 retries × 15s = 45s max)
           const waitMatch = fs.match(/Aguarde (\d+) segundos/);
           const requestedDelay = waitMatch ? parseInt(waitMatch[1]) : (attempt + 1) * 5;
           const delay = Math.min(requestedDelay + 2, 15) * 1000;
-          console.log(`[Omie Vendas][${account}] Rate limit, waiting ${delay/1000}s (attempt ${attempt + 1}/${maxRetries})`);
+          console.log(`[Omie Vendas][${account}] ${isRateLimit ? 'Rate limit' : 'Transient error'}, waiting ${delay/1000}s (attempt ${attempt + 1}/${maxRetries})`);
           await new Promise(r => setTimeout(r, delay));
           continue;
         }
-        console.log(`[Omie Vendas][${account}] Rate limit persists after ${maxRetries} retries, returning null`);
+        console.log(`[Omie Vendas][${account}] ${isRateLimit ? 'Rate limit' : 'Transient error'} persists after ${maxRetries} retries, returning null`);
         return null;
       }
       // "No records" is not an error – return empty/null
