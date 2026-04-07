@@ -945,6 +945,7 @@ async function criarPedidoVenda(
   const listaParcelas: Record<string, unknown>[] = [];
   if (codigoParcela && codigoParcela !== "000") {
     listaParcelas.push({
+      numero_parcela: 1,
       parcela: 1,
       tipo_documento: "BOL",     // Boleto
       meio_pagamento: "15",      // Boleto Bancário (código MEP 15 no Omie)
