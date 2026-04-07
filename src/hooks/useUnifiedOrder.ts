@@ -1031,9 +1031,9 @@ export function useUnifiedOrder() {
       }
 
       // Prepare success dialog data
-      const allItems: Array<{ description: string; quantity: number; unitPrice: number; tintCorId?: string; tintNomeCor?: string }> = [
-        ...obenProductItems.map(c => ({ description: c.product.descricao, quantity: c.quantity, unitPrice: c.unit_price, tintCorId: c.tint_cor_id, tintNomeCor: c.tint_nome_cor })),
-        ...colacorProductItems.map(c => ({ description: c.product.descricao, quantity: c.quantity, unitPrice: c.unit_price })),
+      const allItems: Array<{ description: string; quantity: number; unitPrice: number; codigo?: string; unidade?: string; tintCorId?: string; tintNomeCor?: string }> = [
+        ...obenProductItems.map(c => ({ description: c.product.descricao, quantity: c.quantity, unitPrice: c.unit_price, codigo: c.product.codigo, unidade: c.product.unidade, tintCorId: c.tint_cor_id, tintNomeCor: c.tint_nome_cor })),
+        ...colacorProductItems.map(c => ({ description: c.product.descricao, quantity: c.quantity, unitPrice: c.unit_price, codigo: c.product.codigo, unidade: c.product.unidade })),
         ...serviceItems.map(c => ({ 
           description: c.servico?.descricao || getToolName(c.userTool), 
           quantity: c.quantity, 
@@ -1041,11 +1041,82 @@ export function useUnifiedOrder() {
         })),
       ];
 
+      // Build print data for each company
+      const now = format(new Date(), "dd/MM/yyyy 'às' HH:mm", { locale: ptBR });
+      const dateShort = format(new Date(), 'dd/MM/yyyy');
+      const printDataList: import('@/components/OrderPrintLayout').PrintOrderData[] = [];
+
+      const findParcelaDesc = (codigo: string, formas: FormaPagamento[]) => {
+        const found = formas.find(f => f.codigo === codigo);
+        return found?.descricao || codigo;
+      };
+
+      if (obenProductItems.length > 0) {
+        const obenOrderNum = results.find(r => r.startsWith('PV Oben'))?.replace('PV Oben ', '') || '';
+        printDataList.push({
+          companyName: 'OBEN COMÉRCIO LTDA',
+          companyCnpj: '12.345.678/0001-99',
+          companyPhone: '(31) 3333-4444',
+          companyAddress: 'Rua Exemplo, 123 - Bairro Industrial - Belo Horizonte/MG',
+          orderNumber: obenOrderNum,
+          date: dateShort,
+          customerName: selectedCustomer.razao_social,
+          customerDocument: selectedCustomer.cnpj_cpf || '',
+          condPagamento: findParcelaDesc(selectedParcelaOben, formasPagamentoOben),
+          items: obenProductItems.map(c => ({
+            codigo: c.product.codigo,
+            descricao: c.product.descricao,
+            quantidade: c.quantity,
+            unidade: c.product.unidade,
+            valorUnitario: c.unit_price,
+            valorTotal: c.quantity * c.unit_price,
+            tintCorId: c.tint_cor_id,
+            tintNomeCor: c.tint_nome_cor,
+          })),
+          subtotal: obenSubtotal,
+          desconto: 0,
+          frete: 0,
+          total: obenSubtotal,
+          observacoes: notes || undefined,
+          isOben: true,
+        });
+      }
+
+      if (colacorProductItems.length > 0) {
+        const colacorOrderNum = results.find(r => r.startsWith('PV Colacor'))?.replace('PV Colacor ', '') || '';
+        printDataList.push({
+          companyName: 'COLACOR COMERCIAL LTDA',
+          companyCnpj: '00.000.000/0001-00',
+          companyPhone: '(31) 0000-0000',
+          companyAddress: 'Endereço Colacor',
+          orderNumber: colacorOrderNum,
+          date: dateShort,
+          customerName: selectedCustomer.razao_social,
+          customerDocument: selectedCustomer.cnpj_cpf || '',
+          condPagamento: findParcelaDesc(selectedParcelaColacor, formasPagamentoColacor),
+          items: colacorProductItems.map(c => ({
+            codigo: c.product.codigo,
+            descricao: c.product.descricao,
+            quantidade: c.quantity,
+            unidade: c.product.unidade,
+            valorUnitario: c.unit_price,
+            valorTotal: c.quantity * c.unit_price,
+          })),
+          subtotal: colacorProdSubtotal,
+          desconto: 0,
+          frete: 0,
+          total: colacorProdSubtotal,
+          isOben: false,
+        });
+      }
+
       setLastOrderData({
         customerName: selectedCustomer.nome_fantasia || selectedCustomer.razao_social,
+        customerDocument: selectedCustomer.cnpj_cpf || '',
         items: allItems,
         total: totalEstimated,
         orderNumbers: results,
+        printDataList,
       });
       
       setOrderSuccessOpen(true);
