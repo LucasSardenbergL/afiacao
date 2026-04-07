@@ -1,8 +1,9 @@
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '@/components/ui/dialog';
 import { Button } from '@/components/ui/button';
-import { CheckCircle, Share2, Eye } from 'lucide-react';
+import { CheckCircle, Share2, Eye, Printer } from 'lucide-react';
 import { format } from 'date-fns';
 import { ptBR } from 'date-fns/locale';
+import { openPrintOrder, type PrintOrderData } from '@/components/OrderPrintLayout';
 
 interface OrderSuccessDialogProps {
   open: boolean;
@@ -13,6 +14,7 @@ interface OrderSuccessDialogProps {
   orderNumbers: string[];
   onViewOrder: () => void;
   onShare: () => void;
+  printDataList?: PrintOrderData[];
 }
 
 export function OrderSuccessDialog({
@@ -24,7 +26,16 @@ export function OrderSuccessDialog({
   orderNumbers,
   onViewOrder,
   onShare,
+  printDataList,
 }: OrderSuccessDialogProps) {
+  const handlePrint = () => {
+    if (!printDataList || printDataList.length === 0) return;
+    // Open one print tab per company
+    printDataList.forEach((data, i) => {
+      setTimeout(() => openPrintOrder(data), i * 500);
+    });
+  };
+
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className="max-w-md">
@@ -81,10 +92,16 @@ export function OrderSuccessDialog({
           </div>
         </div>
 
-        <DialogFooter className="gap-2 sm:gap-2">
+        <DialogFooter className="gap-2 sm:gap-2 flex-wrap">
           <Button variant="outline" onClick={() => onOpenChange(false)} className="flex-1">
             Fechar
           </Button>
+          {printDataList && printDataList.length > 0 && (
+            <Button variant="secondary" onClick={handlePrint} className="flex-1 gap-2">
+              <Printer className="w-4 h-4" />
+              Imprimir ({printDataList.length})
+            </Button>
+          )}
           <Button variant="secondary" onClick={onViewOrder} className="flex-1 gap-2">
             <Eye className="w-4 h-4" />
             Ver pedido
