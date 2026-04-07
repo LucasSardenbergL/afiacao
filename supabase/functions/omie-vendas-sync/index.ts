@@ -973,6 +973,11 @@ async function criarPedidoVenda(
     informacoes_adicionais,
   };
 
+  // Adicionar lista_parcelas ao payload se houver parcelas com boleto
+  if (listaParcelas.length > 0) {
+    payload.lista_parcelas = { parcela: listaParcelas };
+  }
+
   console.log(`[Omie Vendas][${account}] Payload PedidoVenda:`, JSON.stringify(payload, null, 2));
 
   const result = await callOmieVendasApi(
