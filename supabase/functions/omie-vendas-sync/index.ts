@@ -892,13 +892,10 @@ async function criarPedidoVenda(
         numero_pedido_compra: ordemCompra,
       };
     } else if (item.tint_cor_id && item.tint_nome_cor) {
-      // Always build label with cor_id visible
+      // Always build label with cor_id visible, without base info
       const nomeJaTemCodigo = item.tint_nome_cor.toUpperCase().includes(item.tint_cor_id.toUpperCase());
       const corLabel = nomeJaTemCodigo ? item.tint_nome_cor : `${item.tint_cor_id} - ${item.tint_nome_cor}`;
-      const baseLabel = item.descricao || '';
-      const corInfo = baseLabel
-        ? `Cor: ${corLabel} - Base: ${baseLabel} - Qtd: ${item.quantidade}`
-        : `Cor: ${corLabel} - Qtd: ${item.quantidade}`;
+      const corInfo = `Cor: ${corLabel} - Qtd: ${item.quantidade}`;
       (entry as any).inf_adic = {
         dados_adicionais_item: corInfo,
       };
