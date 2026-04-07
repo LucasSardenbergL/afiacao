@@ -231,6 +231,7 @@ const UnifiedOrder = () => {
           items={h.lastOrderData.items}
           total={h.lastOrderData.total}
           orderNumbers={h.lastOrderData.orderNumbers}
+          printDataList={h.lastOrderData.printDataList}
           onViewOrder={() => {
             h.setOrderSuccessOpen(false);
             h.navigate('/sales');
