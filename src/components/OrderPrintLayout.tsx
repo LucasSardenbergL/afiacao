@@ -33,18 +33,7 @@ export interface PrintOrderData {
 }
 
 function buildObsText(data: PrintOrderData): string {
-  // Build tint color lines
-  const tintLines = data.items
-    .filter(i => i.tintCorId && i.tintNomeCor)
-    .map(i => {
-      const corParts = i.tintNomeCor!.split(' - ');
-      // Remove base info (last parts after the color name)
-      const simplified = corParts.length > 2 ? corParts.slice(0, -1).join(' - ') : i.tintNomeCor!;
-      return `Cor: ${i.tintCorId} - ${simplified} - Qtd: ${i.quantidade}`;
-    });
-
   const parts: string[] = [];
-  if (tintLines.length > 0) parts.push(tintLines.join('\n'));
 
   if (data.isOben) {
     parts.push(
