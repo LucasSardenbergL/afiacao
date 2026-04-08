@@ -1138,14 +1138,15 @@ export function useUnifiedOrder() {
       if (serviceItems.length > 0) {
         const afiacaoOrderNum = results.find(r => r.startsWith('OS'))?.replace('OS ', '') || '';
         printDataList.push({
-          companyName: 'COLACOR COMERCIAL LTDA - AFIAÇÃO',
-          companyCnpj: '00.000.000/0001-00',
-          companyPhone: '(31) 0000-0000',
-          companyAddress: 'Endereço Colacor Afiação',
+          companyName: 'AFIAÇÃO COLACOR LTDA',
+          companyCnpj: '24.521.946/0001-61',
+          companyPhone: '(41) 3356-0042',
+          companyAddress: 'Rua Dep. Heitor Alencar Furtado, 3341 – Mossunguê, Curitiba/PR – CEP: 81200-070',
           orderNumber: afiacaoOrderNum,
           date: dateShort,
           customerName: selectedCustomer.razao_social,
           customerDocument: selectedCustomer.cnpj_cpf || '',
+          customerAddress: fullCustomerAddress,
           condPagamento: afiacaoPaymentMethod === 'a_vista' ? 'À Vista' : afiacaoPaymentMethod,
           items: serviceItems.map(c => {
             const price = getServicePrice(c) || 0;
