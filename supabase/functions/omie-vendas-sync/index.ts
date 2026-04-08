@@ -949,11 +949,13 @@ async function criarPedidoVenda(
   const listaParcelas: Record<string, unknown>[] = [];
   if (codigoParcela && codigoParcela !== "000") {
     const totalPedido = Math.round(items.reduce((sum, item) => sum + (item.valor_unitario * item.quantidade), 0) * 100) / 100;
+    const dataVencimento = new Date().toISOString().split("T")[0].split("-").reverse().join("/");
     listaParcelas.push({
       numero_parcela: 1,
       parcela: 1,
       valor: totalPedido,
       percentual: 100,
+      data_vencimento: dataVencimento,
       tipo_documento: "BOL",     // Boleto
       meio_pagamento: "15",      // Boleto Bancário (código MEP 15 no Omie)
     });
