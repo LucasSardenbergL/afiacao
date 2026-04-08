@@ -35,6 +35,7 @@ interface CartSummaryBarProps {
   customerParcelaRankingOben: string[];
   customerParcelaRankingColacor: string[];
   notes: string;
+  setNotes: (v: string) => void;
   // Volumes (auto-calculated)
   volumesOben: number;
   volumesColacor: number;
