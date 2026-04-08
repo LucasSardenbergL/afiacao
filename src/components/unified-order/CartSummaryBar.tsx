@@ -35,12 +35,9 @@ interface CartSummaryBarProps {
   customerParcelaRankingOben: string[];
   customerParcelaRankingColacor: string[];
   notes: string;
-  setNotes: (v: string) => void;
-  // Volumes
+  // Volumes (auto-calculated)
   volumesOben: number;
-  setVolumesOben: (v: number) => void;
   volumesColacor: number;
-  setVolumesColacor: (v: number) => void;
   // Ordem de compra (exceção CNPJ específico)
   ordemCompra?: string;
   setOrdemCompra?: (v: string) => void;
