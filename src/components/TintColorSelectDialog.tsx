@@ -341,9 +341,75 @@ export function TintColorSelectDialog({ product, open, onClose, onConfirm, custo
               </div>
             )}
 
-            {debouncedSearch.length >= 2 && formulas && formulas.length === 0 && !loadingFormulas && (
-              <p className="text-xs text-muted-foreground text-center py-4">Nenhuma cor encontrada.</p>
+            {colorNotFoundInBase && !loadingGlobalColors && (
+              <>
+                {globalColorMatches && globalColorMatches.length > 0 ? (
+                  <div className="space-y-3">
+                    <div className="flex items-start gap-2 p-3 rounded-md bg-amber-50 dark:bg-amber-950/30 border border-amber-200 dark:border-amber-800">
+                      <AlertTriangle className="w-5 h-5 text-amber-600 shrink-0 mt-0.5" />
+                      <div>
+                        <p className="text-sm font-semibold text-amber-800 dark:text-amber-300">
+                          Esta cor não pode ser feita nesta base
+                        </p>
+                        <p className="text-xs text-amber-700 dark:text-amber-400 mt-1">
+                          A cor pesquisada não está disponível em <strong>{product.descricao}</strong>. Veja abaixo as embalagens onde ela pode ser produzida:
+                        </p>
+                      </div>
+                    </div>
+
+                    <div className="space-y-1.5">
+                      <div className="flex items-center gap-1.5 text-[10px] uppercase font-semibold text-muted-foreground tracking-wider">
+                        <Package className="w-3 h-3" />
+                        Bases disponíveis para esta cor
+                      </div>
+                      <div className="max-h-60 overflow-y-auto space-y-1.5">
+                        {globalColorMatches.map((alt) => {
+                          const altBasePrice = alt.precoFinalCsv && alt.precoFinalCsv > 0
+                            ? alt.precoFinalCsv
+                            : alt.product.valor_unitario;
+                          // Extract cor_id and nome_cor from the first match
+                          const matchInfo = globalColorMatches[0];
+                          return (
+                            <div key={alt.formulaId} className="rounded-md border border-border hover:border-primary/50 transition-all text-xs">
+                              <button
+                                onClick={() => onConfirm(
+                                  alt.formulaId,
+                                  // Find cor info from global formulas query
+                                  alt.formulaId, // cor_id will be set from the formula
+                                  '',
+                                  altBasePrice,
+                                  0,
+                                  alt.product,
+                                )}
+                                className="w-full flex items-center justify-between gap-2 p-2.5 hover:bg-primary/5"
+                              >
+                                <div className="flex-1 text-left min-w-0">
+                                  <p className="font-medium break-words whitespace-normal">
+                                    {alt.productDescricao}
+                                  </p>
+                                  <p className="text-[10px] text-muted-foreground font-mono">{alt.productCodigo}</p>
+                                </div>
+                                <div className="text-right shrink-0">
+                                  <span className="font-bold text-primary">{fmt(altBasePrice)}</span>
+                                  {alt.precoFinalCsv && alt.precoFinalCsv > 0 ? (
+                                    <Badge variant="secondary" className="text-[8px] px-1 py-0 ml-1">Tabela</Badge>
+                                  ) : (
+                                    <Badge variant="outline" className="text-[8px] px-1 py-0 ml-1">Base</Badge>
+                                  )}
+                                </div>
+                              </button>
+                            </div>
+                          );
+                        })}
+                      </div>
+                    </div>
+                  </div>
+                ) : (
+                  <p className="text-xs text-muted-foreground text-center py-4">Nenhuma cor encontrada em nenhuma base.</p>
+                )}
+              </>
             )}
+            {loadingGlobalColors && <Loader2 className="w-4 h-4 animate-spin mx-auto my-4" />}
 
             {selectedFormula && (
               <Card className="border-primary/30">
