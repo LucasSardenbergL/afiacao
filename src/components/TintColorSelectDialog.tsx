@@ -339,10 +339,12 @@ export function TintColorSelectDialog({ product, open, onClose, onConfirm, custo
       : 'calculado';
   const priceSource = priceSourceOverride || autoSource;
 
+  // Se o preço CSV for menor que o preço da base, usar o calculado (base + corantes) como piso
+  const precoCsvValido = precoCsv > 0 && precoCsv >= precoBase ? precoCsv : 0;
   const precoSemDesconto = priceSource === 'cliente' && lastPracticedPrice
     ? lastPracticedPrice.price
-    : priceSource === 'tabela' && precoCsv > 0
-      ? precoCsv
+    : priceSource === 'tabela' && precoCsvValido > 0
+      ? precoCsvValido
       : precoCalculado;
   const precoFinal = discountPct > 0 ? Math.round(precoSemDesconto * (1 - discountPct / 100) * 100) / 100 : precoSemDesconto;
 
