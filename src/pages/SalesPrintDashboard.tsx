@@ -65,19 +65,19 @@ function buildPrintData(order: SalesOrderRow, company: CompanyFilter): PrintOrde
       name: 'OBEN COMÉRCIO LTDA',
       cnpj: '07.311.465/0001-02',
       phone: '(41) 3356-0042',
-      address: 'Rua Dep. Heitor Alencar Furtado, 3341 – Curitiba/PR',
+      address: 'Rua Dep. Heitor Alencar Furtado, 3341 – Mossunguê, Curitiba/PR – CEP: 81200-070',
     },
     colacor: {
       name: 'COLACOR COMERCIAL LTDA',
       cnpj: '03.422.099/0001-08',
       phone: '(41) 3356-0042',
-      address: 'Rua Dep. Heitor Alencar Furtado, 3341 – Curitiba/PR',
+      address: 'Rua Dep. Heitor Alencar Furtado, 3341 – Mossunguê, Curitiba/PR – CEP: 81200-070',
     },
     afiacao: {
       name: 'AFIAÇÃO COLACOR LTDA',
       cnpj: '24.521.946/0001-61',
       phone: '(41) 3356-0042',
-      address: 'Rua Dep. Heitor Alencar Furtado, 3341 – Curitiba/PR',
+      address: 'Rua Dep. Heitor Alencar Furtado, 3341 – Mossunguê, Curitiba/PR – CEP: 81200-070',
     },
   };
 

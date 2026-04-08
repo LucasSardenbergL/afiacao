@@ -1067,18 +1067,25 @@ export function useUnifiedOrder() {
         return found?.descricao || codigo;
       };
 
+      const selectedAddr = addresses.find(a => a.id === selectedAddress);
+      const fullCustomerAddress = selectedAddr
+        ? `${selectedAddr.street}, ${selectedAddr.number}${selectedAddr.complement ? ' - ' + selectedAddr.complement : ''} – ${selectedAddr.neighborhood}, ${selectedAddr.city}/${selectedAddr.state} – CEP: ${selectedAddr.zipCode}`
+        : undefined;
+
       if (obenProductItems.length > 0) {
         const obenOrderNum = results.find(r => r.startsWith('PV Oben'))?.replace('PV Oben ', '') || '';
         printDataList.push({
           companyName: 'OBEN COMÉRCIO LTDA',
-          companyCnpj: '12.345.678/0001-99',
-          companyPhone: '(31) 3333-4444',
-          companyAddress: 'Rua Exemplo, 123 - Bairro Industrial - Belo Horizonte/MG',
+          companyCnpj: '07.311.465/0001-02',
+          companyPhone: '(41) 3356-0042',
+          companyAddress: 'Rua Dep. Heitor Alencar Furtado, 3341 – Mossunguê, Curitiba/PR – CEP: 81200-070',
           orderNumber: obenOrderNum,
           date: dateShort,
           customerName: selectedCustomer.razao_social,
           customerDocument: selectedCustomer.cnpj_cpf || '',
+          customerAddress: fullCustomerAddress,
           condPagamento: findParcelaDesc(selectedParcelaOben, formasPagamentoOben),
+          parcelaCode: selectedParcelaOben,
           items: obenProductItems.map(c => ({
             codigo: c.product.codigo,
             descricao: c.product.descricao,
@@ -1102,14 +1109,16 @@ export function useUnifiedOrder() {
         const colacorOrderNum = results.find(r => r.startsWith('PV Colacor'))?.replace('PV Colacor ', '') || '';
         printDataList.push({
           companyName: 'COLACOR COMERCIAL LTDA',
-          companyCnpj: '00.000.000/0001-00',
-          companyPhone: '(31) 0000-0000',
-          companyAddress: 'Endereço Colacor',
+          companyCnpj: '03.422.099/0001-08',
+          companyPhone: '(41) 3356-0042',
+          companyAddress: 'Rua Dep. Heitor Alencar Furtado, 3341 – Mossunguê, Curitiba/PR – CEP: 81200-070',
           orderNumber: colacorOrderNum,
           date: dateShort,
           customerName: selectedCustomer.razao_social,
           customerDocument: selectedCustomer.cnpj_cpf || '',
+          customerAddress: fullCustomerAddress,
           condPagamento: findParcelaDesc(selectedParcelaColacor, formasPagamentoColacor),
+          parcelaCode: selectedParcelaColacor,
           items: colacorProductItems.map(c => ({
             codigo: c.product.codigo,
             descricao: c.product.descricao,
@@ -1129,14 +1138,15 @@ export function useUnifiedOrder() {
       if (serviceItems.length > 0) {
         const afiacaoOrderNum = results.find(r => r.startsWith('OS'))?.replace('OS ', '') || '';
         printDataList.push({
-          companyName: 'COLACOR COMERCIAL LTDA - AFIAÇÃO',
-          companyCnpj: '00.000.000/0001-00',
-          companyPhone: '(31) 0000-0000',
-          companyAddress: 'Endereço Colacor Afiação',
+          companyName: 'AFIAÇÃO COLACOR LTDA',
+          companyCnpj: '24.521.946/0001-61',
+          companyPhone: '(41) 3356-0042',
+          companyAddress: 'Rua Dep. Heitor Alencar Furtado, 3341 – Mossunguê, Curitiba/PR – CEP: 81200-070',
           orderNumber: afiacaoOrderNum,
           date: dateShort,
           customerName: selectedCustomer.razao_social,
           customerDocument: selectedCustomer.cnpj_cpf || '',
+          customerAddress: fullCustomerAddress,
           condPagamento: afiacaoPaymentMethod === 'a_vista' ? 'À Vista' : afiacaoPaymentMethod,
           items: serviceItems.map(c => {
             const price = getServicePrice(c) || 0;
