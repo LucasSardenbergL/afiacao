@@ -190,6 +190,10 @@ const SalesOrders = () => {
             <Package className="w-4 h-4" />
             Catálogo
           </Button>
+          <Button variant="outline" onClick={() => navigate('/sales/print')} className="gap-2">
+            <Printer className="w-4 h-4" />
+            Imprimir
+          </Button>
         </div>
 
         {/* Account Filter */}
