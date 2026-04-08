@@ -181,18 +181,6 @@ export function CartSummaryBar({
               <Input value={ordemCompra || ''} onChange={e => setOrdemCompra(e.target.value)} className="text-sm h-9 mt-1" placeholder="Ex: OC-12345" />
             </div>
           )}
-          {obenProductItems.length > 0 && volumesOben > 0 && (
-            <div className="flex items-center gap-2">
-              <Label className="text-xs font-medium">Volumes Oben:</Label>
-              <span className="text-xs font-semibold">{volumesOben}</span>
-            </div>
-          )}
-          {colacorProductItems.length > 0 && volumesColacor > 0 && (
-            <div className="flex items-center gap-2">
-              <Label className="text-xs font-medium">Volumes Colacor:</Label>
-              <span className="text-xs font-semibold">{volumesColacor}</span>
-            </div>
-          )}
           <div>
             <Label className="text-xs font-medium">Observações gerais</Label>
             <Textarea placeholder="Observações do pedido..." value={notes} onChange={e => setNotes(e.target.value)} rows={2} className="text-sm mt-1" />
