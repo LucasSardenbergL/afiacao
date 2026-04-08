@@ -36,6 +36,8 @@ interface AlternativePackaging {
   precoFinalCsv: number | null;
   product: Product;
   sameAcabamento: boolean;
+  corId?: string;
+  nomeCor?: string;
 }
 
 export function TintColorSelectDialog({ product, open, onClose, onConfirm, customerUserId }: TintColorSelectDialogProps) {
@@ -77,7 +79,7 @@ export function TintColorSelectDialog({ product, open, onClose, onConfirm, custo
   });
   const skuId = skuInfo?.id || null;
 
-  // Search formulas
+  // Search formulas in current SKU
   const { data: formulas, isLoading: loadingFormulas } = useQuery({
     queryKey: ['tint-formula-search', skuId, debouncedSearch],
     staleTime: 5 * 60 * 1000,
@@ -91,6 +93,70 @@ export function TintColorSelectDialog({ product, open, onClose, onConfirm, custo
         .or(`cor_id.ilike.%${debouncedSearch}%,nome_cor.ilike.%${debouncedSearch}%`)
         .limit(20);
       return (data || []) as FormulaResult[];
+    },
+  });
+
+  // When color not found in current base, search ALL bases for it
+  const colorNotFoundInBase = debouncedSearch.length >= 2 && !loadingFormulas && formulas && formulas.length === 0;
+
+  const { data: globalColorMatches, isLoading: loadingGlobalColors } = useQuery({
+    queryKey: ['tint-global-color-search', debouncedSearch],
+    staleTime: 5 * 60 * 1000,
+    enabled: !!colorNotFoundInBase,
+    queryFn: async (): Promise<AlternativePackaging[]> => {
+      // Search formulas across all SKUs
+      const { data: globalFormulas } = await supabase
+        .from('tint_formulas')
+        .select('id, cor_id, nome_cor, sku_id, preco_final_sayersystem')
+        .eq('account', 'oben')
+        .or(`cor_id.ilike.%${debouncedSearch}%,nome_cor.ilike.%${debouncedSearch}%`)
+        .not('sku_id', 'is', null)
+        .limit(50);
+
+      if (!globalFormulas || globalFormulas.length === 0) return [];
+
+      // Get SKU details
+      const skuIds = [...new Set(globalFormulas.map(f => f.sku_id!))];
+      const { data: skus } = await supabase
+        .from('tint_skus')
+        .select('id, omie_product_id, produto_id, base_id')
+        .in('id', skuIds)
+        .not('omie_product_id', 'is', null);
+
+      if (!skus || skus.length === 0) return [];
+
+      // Get product details
+      const productIds = skus.map(s => s.omie_product_id!).filter(Boolean);
+      const { data: products } = await supabase
+        .from('omie_products')
+        .select('id, codigo, descricao, unidade, valor_unitario, estoque, ativo, omie_codigo_produto, account, is_tintometric, tint_type')
+        .in('id', productIds);
+
+      if (!products) return [];
+
+      const result: AlternativePackaging[] = [];
+      for (const gf of globalFormulas) {
+        const sku = skus.find(s => s.id === gf.sku_id);
+        if (!sku?.omie_product_id) continue;
+        const prod = products.find(p => p.id === sku.omie_product_id);
+        if (!prod) continue;
+
+        result.push({
+          formulaId: gf.id,
+          skuId: gf.sku_id!,
+          omieProductId: sku.omie_product_id,
+          productDescricao: prod.descricao,
+          productCodigo: prod.codigo,
+          precoFinalCsv: gf.preco_final_sayersystem ? Math.ceil(gf.preco_final_sayersystem * 10) / 10 : gf.preco_final_sayersystem,
+          product: prod as Product,
+          sameAcabamento: false,
+          corId: gf.cor_id,
+          nomeCor: gf.nome_cor,
+        });
+      }
+
+      result.sort((a, b) => a.productDescricao.localeCompare(b.productDescricao));
+      return result;
     },
   });
 
@@ -279,9 +345,77 @@ export function TintColorSelectDialog({ product, open, onClose, onConfirm, custo
               </div>
             )}
 
-            {debouncedSearch.length >= 2 && formulas && formulas.length === 0 && !loadingFormulas && (
-              <p className="text-xs text-muted-foreground text-center py-4">Nenhuma cor encontrada.</p>
+            {colorNotFoundInBase && !loadingGlobalColors && (
+              <>
+                {globalColorMatches && globalColorMatches.length > 0 ? (
+                  <div className="space-y-3">
+                    <div className="flex items-start gap-2 p-3 rounded-md bg-amber-50 dark:bg-amber-950/30 border border-amber-200 dark:border-amber-800">
+                      <AlertTriangle className="w-5 h-5 text-amber-600 shrink-0 mt-0.5" />
+                      <div>
+                        <p className="text-sm font-semibold text-amber-800 dark:text-amber-300">
+                          Esta cor não pode ser feita nesta base
+                        </p>
+                        <p className="text-xs text-amber-700 dark:text-amber-400 mt-1">
+                          A cor pesquisada não está disponível em <strong>{product.descricao}</strong>. Veja abaixo as embalagens onde ela pode ser produzida:
+                        </p>
+                      </div>
+                    </div>
+
+                    <div className="space-y-1.5">
+                      <div className="flex items-center gap-1.5 text-[10px] uppercase font-semibold text-muted-foreground tracking-wider">
+                        <Package className="w-3 h-3" />
+                        Bases disponíveis para esta cor
+                      </div>
+                      <div className="max-h-60 overflow-y-auto space-y-1.5">
+                        {globalColorMatches.map((alt) => {
+                          const altBasePrice = alt.precoFinalCsv && alt.precoFinalCsv > 0
+                            ? alt.precoFinalCsv
+                            : alt.product.valor_unitario;
+                          return (
+                            <div key={alt.formulaId} className="rounded-md border border-border hover:border-primary/50 transition-all text-xs">
+                              <button
+                                onClick={() => onConfirm(
+                                  alt.formulaId,
+                                  alt.corId || '',
+                                  alt.nomeCor || '',
+                                  altBasePrice,
+                                  0,
+                                  alt.product,
+                                )}
+                                className="w-full flex items-center justify-between gap-2 p-2.5 hover:bg-primary/5"
+                              >
+                                <div className="flex-1 text-left min-w-0">
+                                  <p className="font-medium break-words whitespace-normal">
+                                    {alt.productDescricao}
+                                  </p>
+                                  <div className="flex items-center gap-1.5 mt-0.5">
+                                    <span className="text-[10px] text-muted-foreground font-mono">{alt.productCodigo}</span>
+                                    {alt.corId && (
+                                      <Badge variant="outline" className="text-[8px] px-1 py-0">{alt.corId}</Badge>
+                                    )}
+                                  </div>
+                                </div>
+                                <div className="text-right shrink-0">
+                                  <span className="font-bold text-primary">{fmt(altBasePrice)}</span>
+                                  {alt.precoFinalCsv && alt.precoFinalCsv > 0 ? (
+                                    <Badge variant="secondary" className="text-[8px] px-1 py-0 ml-1">Tabela</Badge>
+                                  ) : (
+                                    <Badge variant="outline" className="text-[8px] px-1 py-0 ml-1">Base</Badge>
+                                  )}
+                                </div>
+                              </button>
+                            </div>
+                          );
+                        })}
+                      </div>
+                    </div>
+                  </div>
+                ) : (
+                  <p className="text-xs text-muted-foreground text-center py-4">Nenhuma cor encontrada em nenhuma base.</p>
+                )}
+              </>
             )}
+            {loadingGlobalColors && <Loader2 className="w-4 h-4 animate-spin mx-auto my-4" />}
 
             {selectedFormula && (
               <Card className="border-primary/30">
