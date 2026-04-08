@@ -982,7 +982,13 @@ async function criarPedidoVenda(
           const tintLines = tintItems.map(i => {
             const nomeJaTemCodigo = i.tint_nome_cor!.toUpperCase().includes(i.tint_cor_id!.toUpperCase());
             const corLabel = nomeJaTemCodigo ? i.tint_nome_cor! : `${i.tint_cor_id} - ${i.tint_nome_cor}`;
-            return `Cor: ${corLabel} - Qtd: ${i.quantidade}`;
+            const dUpper = (i.descricao || '').toUpperCase();
+            let eTag = '';
+            if (dUpper.includes(' QT') || dUpper.endsWith('QT')) eTag = 'QT';
+            else if (dUpper.includes(' GL') || dUpper.endsWith('GL')) eTag = 'GL';
+            else if (dUpper.includes(' LT') || dUpper.endsWith('LT')) eTag = 'LT';
+            else { const m = dUpper.match(/(\d+(?:[.,]\d+)?)\s*ML\b/); if (m) eTag = m[1].replace(',','.') + 'ML'; }
+            return `Cor: ${corLabel}${eTag ? ` - ${eTag}` : ''}`;
           }).join('\n');
           obs = obs ? `${obs}\n${tintLines}` : tintLines;
         }
