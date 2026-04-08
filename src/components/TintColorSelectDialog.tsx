@@ -122,9 +122,9 @@ export function TintColorSelectDialog({ product, open, onClose, onConfirm, custo
   const colorNotFoundInBase = debouncedSearch.length >= 2 && !loadingFormulas && formulas && formulas.length === 0;
 
   const { data: globalColorMatches, isLoading: loadingGlobalColors } = useQuery({
-    queryKey: ['tint-global-color-search', debouncedSearch],
+    queryKey: ['tint-global-color-search', debouncedSearch, currentBaseSuffix],
     staleTime: 5 * 60 * 1000,
-    enabled: !!colorNotFoundInBase,
+    enabled: !!colorNotFoundInBase && !!currentBaseSuffix,
     queryFn: async (): Promise<AlternativePackaging[]> => {
       // Search formulas across all SKUs
       const { data: globalFormulas } = await supabase
