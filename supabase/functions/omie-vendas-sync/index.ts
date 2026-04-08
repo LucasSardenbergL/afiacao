@@ -948,9 +948,11 @@ async function criarPedidoVenda(
   // Se a parcela NÃO for "A Vista" (000), definir boleto como tipo de documento e meio de pagamento
   const listaParcelas: Record<string, unknown>[] = [];
   if (codigoParcela && codigoParcela !== "000") {
+    const totalPedido = items.reduce((sum, item) => sum + (item.valor_unitario * item.quantidade), 0);
     listaParcelas.push({
       numero_parcela: 1,
       parcela: 1,
+      valor: Math.round(totalPedido * 100) / 100,
       tipo_documento: "BOL",     // Boleto
       meio_pagamento: "15",      // Boleto Bancário (código MEP 15 no Omie)
     });
