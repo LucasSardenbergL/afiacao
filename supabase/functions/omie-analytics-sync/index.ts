@@ -9,13 +9,19 @@ const corsHeaders = {
 
 const OMIE_API_URL = "https://app.omie.com.br/api/v1";
 
-type OmieAccount = "vendas" | "servicos";
+type OmieAccount = "vendas" | "servicos" | "colacor_vendas";
 
 function getCredentials(account: OmieAccount) {
   if (account === "vendas") {
     return {
       key: Deno.env.get("OMIE_VENDAS_APP_KEY"),
       secret: Deno.env.get("OMIE_VENDAS_APP_SECRET"),
+    };
+  }
+  if (account === "colacor_vendas") {
+    return {
+      key: Deno.env.get("OMIE_COLACOR_VENDAS_APP_KEY"),
+      secret: Deno.env.get("OMIE_COLACOR_VENDAS_APP_SECRET"),
     };
   }
   return {
