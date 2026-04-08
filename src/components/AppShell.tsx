@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
-import { BookOpen, Lock, Calculator, FileText, Palette, Beaker, FileUp, Droplets, LayoutDashboard, Users, ShoppingCart, Phone, GraduationCap, BarChart3, Settings, ChevronLeft, ChevronRight, Search, Bell, User, LogOut, Package, TrendingUp, Headphones, Target, Menu, X, ClipboardList, PlusCircle, Shield, Wrench, Award, Scissors, DollarSign, Layers } from 'lucide-react';
+import { BookOpen, Lock, Calculator, FileText, Palette, Beaker, FileUp, Droplets, LayoutDashboard, Users, ShoppingCart, Phone, GraduationCap, BarChart3, Settings, ChevronLeft, ChevronRight, Search, Bell, User, LogOut, Package, TrendingUp, Headphones, Target, Menu, X, ClipboardList, PlusCircle, Shield, Wrench, Award, Scissors, DollarSign, Layers, Printer } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { useAuth } from '@/contexts/AuthContext';
 import { useUserRole } from '@/hooks/useUserRole';
@@ -48,6 +48,7 @@ const unifiedNavSections: { title: string; items: NavItem[] }[] = [
     items: [
       { icon: ShoppingCart, label: 'Pedidos', path: '/sales' },
       { icon: PlusCircle, label: 'Novo Pedido', path: '/sales/new' },
+      { icon: Printer, label: 'Impressão', path: '/sales/print' },
       { icon: TrendingUp, label: 'Recomendações', path: '/farmer/recommendations' },
       { icon: Target, label: 'Bundles', path: '/farmer/bundles' },
     ],
