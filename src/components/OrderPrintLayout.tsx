@@ -88,6 +88,9 @@ export function openPrintOrder(data: PrintOrderData) {
     `;
   }).join('');
 
+  const cnpjsComDesconto = ['03.422.099/0001-08', '07.311.465/0001-02', '24.521.946/0001-61'];
+  const showDesconto = data.desconto > 0 && cnpjsComDesconto.includes(data.customerDocument || '');
+
   const html = `<!DOCTYPE html>
 <html><head><meta charset="utf-8"><title>Pedido ${data.orderNumber}</title>
 <style>
@@ -154,7 +157,7 @@ export function openPrintOrder(data: PrintOrderData) {
 
 <div class="totals">
   <div class="row"><span>Subtotal:</span><span>${fmt(data.subtotal)}</span></div>
-  <div class="row"><span>Desconto:</span><span>- ${fmt(data.desconto)}</span></div>
+  ${showDesconto ? `<div class="row"><span>Desconto:</span><span>- ${fmt(data.desconto)}</span></div>` : ''}
   <div class="row"><span>Frete:</span><span>${fmt(data.frete)}</span></div>
   <div class="row total-row"><span>TOTAL:</span><span>${fmt(data.total)}</span></div>
 </div>
