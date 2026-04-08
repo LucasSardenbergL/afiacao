@@ -62,7 +62,10 @@ export function openPrintOrder(data: PrintOrderData) {
     if (item.tintCorId && item.tintNomeCor) {
       const corParts = item.tintNomeCor.split(' - ');
       const simplified = corParts.length > 2 ? corParts.slice(0, -1).join(' - ') : item.tintNomeCor;
-      descLines.push(`Cor: ${item.tintCorId} - ${simplified} - Qtd: ${item.quantidade}`);
+      // Extract package type (QT, GL, LT, BD, BH, 5L) from item description
+      const embMatch = item.descricao.match(/\b(QT|GL|LT|BD|BH|5L)\b/i);
+      const embalagem = embMatch ? embMatch[1].toUpperCase() : '';
+      descLines.push(`Cor: ${item.tintCorId} - ${simplified}${embalagem ? ' - ' + embalagem : ''}`);
     }
     return `
       <tr style="background:${i % 2 === 1 ? '#f5f5f5' : '#fff'}">
