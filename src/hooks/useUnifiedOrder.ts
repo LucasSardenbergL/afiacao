@@ -1186,8 +1186,6 @@ export function useUnifiedOrder() {
     setSelectedParcelaOben('999');
     setSelectedParcelaColacor('999');
     setVendedorDivergencias([]);
-    setVolumesOben(0);
-    setVolumesColacor(0);
     setOrdemCompra('');
     setAddresses([]);
     setSelectedAddress('');
@@ -1216,7 +1214,7 @@ export function useUnifiedOrder() {
     selectedParcelaColacor, setSelectedParcelaColacor,
     loadingFormas, customerParcelaRankingOben, customerParcelaRankingColacor,
     afiacaoPaymentMethod, setAfiacaoPaymentMethod,
-    volumesOben, setVolumesOben, volumesColacor, setVolumesColacor,
+    volumesOben, volumesColacor,
     ordemCompra, setOrdemCompra,
     isOrdemCompraCustomer: selectedCustomer?.cnpj_cpf?.replace(/\D/g, '') === '64422892000100',
     // Delivery
