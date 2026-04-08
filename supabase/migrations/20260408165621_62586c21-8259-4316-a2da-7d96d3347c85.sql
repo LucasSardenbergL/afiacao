@@ -1,0 +1,1 @@
+UPDATE omie_products SET is_tintometric = true, tint_type = 'base' WHERE account = 'oben' AND codigo IN ('PRD03084', 'PRD03085', 'PRD02806') AND is_tintometric = false;
