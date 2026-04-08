@@ -954,22 +954,6 @@ async function criarPedidoVenda(
     frete.quantidade_volumes = quantidadeVolumes;
   }
 
-  // Se a parcela NÃO for "A Vista" (000), definir boleto como tipo de documento e meio de pagamento
-  const listaParcelas: Record<string, unknown>[] = [];
-  if (codigoParcela && codigoParcela !== "000") {
-    const totalPedido = Math.round(items.reduce((sum, item) => sum + (item.valor_unitario * item.quantidade), 0) * 100) / 100;
-    const dataVencimento = new Date().toISOString().split("T")[0].split("-").reverse().join("/");
-    listaParcelas.push({
-      numero_parcela: 1,
-      parcela: 1,
-      valor: totalPedido,
-      percentual: 100,
-      data_vencimento: dataVencimento,
-      tipo_documento: "BOL",     // Boleto
-      meio_pagamento: "15",      // Boleto Bancário (código MEP 15 no Omie)
-    });
-  }
-
   const payload: Record<string, unknown> = {
     cabecalho,
     frete,
@@ -997,11 +981,6 @@ async function criarPedidoVenda(
     },
     informacoes_adicionais,
   };
-
-  // Adicionar lista_parcelas ao payload se houver parcelas com boleto
-  if (listaParcelas.length > 0) {
-    payload.lista_parcelas = { parcela: listaParcelas };
-  }
 
   console.log(`[Omie Vendas][${account}] Payload PedidoVenda:`, JSON.stringify(payload, null, 2));
 
