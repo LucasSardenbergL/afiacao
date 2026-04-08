@@ -147,6 +147,33 @@ export function TintColorSelectDialog({ product, open, onClose, onConfirm, custo
 
       if (!skus || skus.length === 0) return [];
 
+      // Filter SKUs to only those with the same base suffix (e.g. ".7666")
+      if (currentBaseSuffix) {
+        const baseIds = [...new Set(skus.map(s => s.base_id))];
+        const { data: bases } = await supabase
+          .from('tint_bases')
+          .select('id, descricao')
+          .in('id', baseIds);
+        
+        const validBaseIds = new Set(
+          (bases || [])
+            .filter(b => {
+              const match = b.descricao?.match(/\.(\d+)/);
+              return match && match[1] === currentBaseSuffix;
+            })
+            .map(b => b.id)
+        );
+        
+        // Remove SKUs with non-matching bases
+        const filteredSkuIds = new Set(skus.filter(s => validBaseIds.has(s.base_id)).map(s => s.id));
+        // Also filter the skus array in-place for later use
+        const filteredSkus = skus.filter(s => validBaseIds.has(s.base_id));
+        if (filteredSkus.length === 0) return [];
+        // Replace skus reference
+        skus.length = 0;
+        skus.push(...filteredSkus);
+      }
+
       // Get product details
       const productIds = skus.map(s => s.omie_product_id!).filter(Boolean);
       const { data: products } = await supabase
