@@ -79,6 +79,28 @@ export function TintColorSelectDialog({ product, open, onClose, onConfirm, custo
   });
   const skuId = skuInfo?.id || null;
 
+  // Get base description to extract the numeric suffix (e.g. ".7666" from "WFOB.7666 BASE BRANCA...")
+  const { data: currentBaseInfo } = useQuery({
+    queryKey: ['tint-base-info', skuInfo?.base_id],
+    staleTime: 10 * 60 * 1000,
+    enabled: !!skuInfo?.base_id,
+    queryFn: async () => {
+      const { data } = await supabase
+        .from('tint_bases')
+        .select('id, descricao, id_base_sayersystem')
+        .eq('id', skuInfo!.base_id)
+        .maybeSingle();
+      return data || null;
+    },
+  });
+
+  // Extract numeric suffix like "6736" from "WFOB.6736 BASE BRANCA..."
+  const currentBaseSuffix = useMemo(() => {
+    if (!currentBaseInfo?.descricao) return null;
+    const match = currentBaseInfo.descricao.match(/\.(\d+)/);
+    return match ? match[1] : null;
+  }, [currentBaseInfo?.descricao]);
+
   // Search formulas in current SKU
   const { data: formulas, isLoading: loadingFormulas } = useQuery({
     queryKey: ['tint-formula-search', skuId, debouncedSearch],
