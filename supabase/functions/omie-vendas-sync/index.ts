@@ -853,7 +853,7 @@ function getAccountConfig(account: Account) {
   return {
     codigo_categoria: "1.01.01",
     codigo_conta_corrente: 8693825504,
-    obs_prefix: "Pedido de venda via App Oben",
+    obs_prefix: `Pedido de venda via App Oben\n\nRECIBO DE ENTREGA DE VENDA NÃO PRESENCIAL\nE-PTA-RE Nº: 45.000035717-51 / OBEN COMÉRCIO LTDA.\nTRANSPORTADORA: Transporte próprio: Oben Comercio\nDeclaro que recebi as mercadorias constantes dessa Nota Fiscal, e que as mercadorias se destinam a uso e consumo, e que estão em perfeito estado e conferem com pedido feito no âmbito do comércio de telemarketing ou eletrônico e que foram recebidas no local por mim no local indicado acima.\nCPF/CNPJ:___________________________________\nDATA DA ENTREGA:___/__/____\nNome/ASSINATURA:_________________________________________________`,
   };
 }
 
