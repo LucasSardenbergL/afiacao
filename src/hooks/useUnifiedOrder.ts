@@ -153,8 +153,7 @@ export function useUnifiedOrder() {
   const [selectedParcelaOben, setSelectedParcelaOben] = useState<string>('999');
   const [selectedParcelaColacor, setSelectedParcelaColacor] = useState<string>('999');
   const [loadingFormas, setLoadingFormas] = useState(false);
-  const [volumesOben, setVolumesOben] = useState<number>(0);
-  const [volumesColacor, setVolumesColacor] = useState<number>(0);
+  // Auto-calculated volumes (no manual input needed)
   const [ordemCompra, setOrdemCompra] = useState<string>('');
   const [customerParcelaRankingOben, setCustomerParcelaRankingOben] = useState<string[]>([]);
   const [customerParcelaRankingColacor, setCustomerParcelaRankingColacor] = useState<string[]>([]);
@@ -195,6 +194,24 @@ export function useUnifiedOrder() {
   const colacorProductItems = useMemo(() => productItems.filter(c => c.account === 'colacor'), [productItems]);
   const serviceItems = useMemo(() => cart.filter((c): c is ServiceCartItem => c.type === 'service'), [cart]);
   const cartProductIds = useMemo(() => productItems.map(c => c.product.id), [productItems]);
+
+  // Auto-calculate volumes: packaging units (5L, GL, LT, BD, BH) count their qty; all others = 1 volume total
+  const VOLUME_UNITS = ['5L', 'GL', 'LT', 'BD', 'BH'];
+  const calcVolumes = (items: ProductCartItem[]) => {
+    let volumeQty = 0;
+    let hasNonVolume = false;
+    for (const item of items) {
+      const un = (item.product.unidade || '').toUpperCase().trim();
+      if (VOLUME_UNITS.includes(un)) {
+        volumeQty += item.quantity;
+      } else {
+        hasNonVolume = true;
+      }
+    }
+    return volumeQty + (hasNonVolume ? 1 : 0);
+  };
+  const volumesOben = useMemo(() => calcVolumes(obenProductItems), [obenProductItems]);
+  const volumesColacor = useMemo(() => calcVolumes(colacorProductItems), [colacorProductItems]);
 
   const sortedFormasPagamentoOben = useMemo(() => {
     if (customerParcelaRankingOben.length === 0) return formasPagamentoOben;
@@ -1169,8 +1186,6 @@ export function useUnifiedOrder() {
     setSelectedParcelaOben('999');
     setSelectedParcelaColacor('999');
     setVendedorDivergencias([]);
-    setVolumesOben(0);
-    setVolumesColacor(0);
     setOrdemCompra('');
     setAddresses([]);
     setSelectedAddress('');
@@ -1199,7 +1214,7 @@ export function useUnifiedOrder() {
     selectedParcelaColacor, setSelectedParcelaColacor,
     loadingFormas, customerParcelaRankingOben, customerParcelaRankingColacor,
     afiacaoPaymentMethod, setAfiacaoPaymentMethod,
-    volumesOben, setVolumesOben, volumesColacor, setVolumesColacor,
+    volumesOben, volumesColacor,
     ordemCompra, setOrdemCompra,
     isOrdemCompraCustomer: selectedCustomer?.cnpj_cpf?.replace(/\D/g, '') === '64422892000100',
     // Delivery

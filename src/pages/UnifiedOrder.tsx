@@ -207,8 +207,8 @@ const UnifiedOrder = () => {
               loadingFormas={h.loadingFormas} customerParcelaRankingOben={h.customerParcelaRankingOben}
               customerParcelaRankingColacor={h.customerParcelaRankingColacor}
               notes={h.notes} setNotes={h.setNotes}
-              volumesOben={h.volumesOben} setVolumesOben={h.setVolumesOben}
-              volumesColacor={h.volumesColacor} setVolumesColacor={h.setVolumesColacor}
+               volumesOben={h.volumesOben}
+               volumesColacor={h.volumesColacor}
               ordemCompra={h.ordemCompra} setOrdemCompra={h.setOrdemCompra}
               isOrdemCompraCustomer={h.isOrdemCompraCustomer}
               onSubmit={h.submitOrder}

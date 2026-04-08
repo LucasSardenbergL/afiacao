@@ -36,11 +36,9 @@ interface CartSummaryBarProps {
   customerParcelaRankingColacor: string[];
   notes: string;
   setNotes: (v: string) => void;
-  // Volumes
+  // Volumes (auto-calculated)
   volumesOben: number;
-  setVolumesOben: (v: number) => void;
   volumesColacor: number;
-  setVolumesColacor: (v: number) => void;
   // Ordem de compra (exceção CNPJ específico)
   ordemCompra?: string;
   setOrdemCompra?: (v: string) => void;
@@ -147,7 +145,7 @@ export function CartSummaryBar({
   selectedParcelaColacor, setSelectedParcelaColacor,
   loadingFormas, customerParcelaRankingOben, customerParcelaRankingColacor,
   notes, setNotes,
-  volumesOben, setVolumesOben, volumesColacor, setVolumesColacor,
+  volumesOben, volumesColacor,
   ordemCompra, setOrdemCompra, isOrdemCompraCustomer,
   onSubmit,
 }: CartSummaryBarProps) {
@@ -183,16 +181,16 @@ export function CartSummaryBar({
               <Input value={ordemCompra || ''} onChange={e => setOrdemCompra(e.target.value)} className="text-sm h-9 mt-1" placeholder="Ex: OC-12345" />
             </div>
           )}
-          {obenProductItems.length > 0 && (
-            <div>
-              <Label className="text-xs font-medium">Qtd. Volumes Oben</Label>
-              <Input type="number" min={0} value={volumesOben} onChange={e => setVolumesOben(Number(e.target.value) || 0)} className="text-sm h-9 mt-1" placeholder="0" />
+          {obenProductItems.length > 0 && volumesOben > 0 && (
+            <div className="flex items-center gap-2">
+              <Label className="text-xs font-medium">Volumes Oben:</Label>
+              <span className="text-xs font-semibold">{volumesOben}</span>
             </div>
           )}
-          {colacorProductItems.length > 0 && (
-            <div>
-              <Label className="text-xs font-medium">Qtd. Volumes Colacor</Label>
-              <Input type="number" min={0} value={volumesColacor} onChange={e => setVolumesColacor(Number(e.target.value) || 0)} className="text-sm h-9 mt-1" placeholder="0" />
+          {colacorProductItems.length > 0 && volumesColacor > 0 && (
+            <div className="flex items-center gap-2">
+              <Label className="text-xs font-medium">Volumes Colacor:</Label>
+              <span className="text-xs font-semibold">{volumesColacor}</span>
             </div>
           )}
           <div>
