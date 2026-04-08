@@ -1,8 +1,8 @@
-import { format } from 'date-fns';
+import { format, addDays } from 'date-fns';
 import { ptBR } from 'date-fns/locale';
 
 export interface PrintOrderData {
-  companyName: string; // "OBEN COMÉRCIO LTDA" or "COLACOR COMERCIAL LTDA"
+  companyName: string;
   companyCnpj: string;
   companyPhone: string;
   companyAddress: string;
@@ -14,6 +14,7 @@ export interface PrintOrderData {
   customerAddress?: string;
   vendedorName?: string;
   condPagamento?: string;
+  parcelaCode?: string; // e.g. "028", "028/042", "000"
   items: Array<{
     codigo: string;
     descricao: string;
@@ -30,6 +31,26 @@ export interface PrintOrderData {
   total: number;
   observacoes?: string;
   isOben?: boolean;
+}
+
+/** Parse parcela code like "028/042" into array of day offsets [28, 42] */
+function parseParcelaDays(code?: string): number[] {
+  if (!code || code === '000' || code === '999') return [];
+  return code.split('/').map(s => parseInt(s, 10)).filter(n => !isNaN(n) && n > 0);
+}
+
+function buildInstallmentDates(parcelaCode?: string, total?: number): string {
+  const days = parseParcelaDays(parcelaCode);
+  if (days.length === 0) return '';
+  const today = new Date();
+  const parcValue = total && days.length > 0 ? total / days.length : 0;
+  const lines = days.map((d, i) => {
+    const dueDate = addDays(today, d);
+    const dateStr = format(dueDate, 'dd/MM/yyyy', { locale: ptBR });
+    const valStr = parcValue > 0 ? ` – ${fmt(parcValue)}` : '';
+    return `${i + 1}ª parcela: ${dateStr}${valStr}`;
+  });
+  return lines.join(' | ');
 }
 
 function buildObsText(data: PrintOrderData): string {
@@ -57,12 +78,12 @@ const fmt = (v: number) => v.toLocaleString('pt-BR', { style: 'currency', curren
 
 export function openPrintOrder(data: PrintOrderData) {
   const obs = buildObsText(data);
+  const installmentText = buildInstallmentDates(data.parcelaCode, data.total);
   const itemsRows = data.items.map((item, i) => {
     const descLines = [item.descricao];
     if (item.tintCorId && item.tintNomeCor) {
       const corParts = item.tintNomeCor.split(' - ');
       const simplified = corParts.length > 2 ? corParts.slice(0, -1).join(' - ') : item.tintNomeCor;
-      // Extract package type (QT, GL, LT, BD, BH, 5L) from item description
       const embMatch = item.descricao.match(/\b(QT|GL|LT|BD|BH|5L)\b/i);
       const embalagem = embMatch ? embMatch[1].toUpperCase() : '';
       descLines.push(`Cor: ${item.tintCorId} - ${simplified}${embalagem ? ' - ' + embalagem : ''}`);
@@ -106,6 +127,7 @@ export function openPrintOrder(data: PrintOrderData) {
   .totals .total-row { border-top: 2px solid #2d2d2d; font-size: 15px; font-weight: bold; padding-top: 6px; margin-top: 4px; }
   .obs-box { background: #fafafa; border: 1px solid #ccc; border-radius: 2px; padding: 10px; font-size: 10px; white-space: pre-wrap; line-height: 1.5; }
   .footer { text-align: center; font-size: 8px; color: #999; margin-top: 30px; }
+  .installments { font-size: 10px; color: #333; margin-top: 4px; background: #f8f8f8; padding: 6px 10px; border-radius: 2px; border-left: 3px solid #e91e63; }
 </style></head><body>
 <div class="header">
   <div>
@@ -125,11 +147,12 @@ export function openPrintOrder(data: PrintOrderData) {
   <div>
     <div class="customer-name">${data.customerName}</div>
     <div class="customer-info">CPF/CNPJ: ${data.customerDocument || 'N/A'}${data.customerPhone ? ' • Tel: ' + data.customerPhone : ''}</div>
-    ${data.customerAddress ? `<div class="customer-info">${data.customerAddress}</div>` : ''}
+    ${data.customerAddress ? `<div class="customer-info" style="margin-top:4px"><strong>Endereço:</strong> ${data.customerAddress}</div>` : ''}
   </div>
   <div class="right-info">
     ${data.vendedorName ? `Vendedor: ${data.vendedorName}<br/>` : ''}
     ${data.condPagamento ? `Cond. Pgto: ${data.condPagamento}` : ''}
+    ${installmentText ? `<div class="installments" style="margin-top:6px;text-align:left"><strong>Vencimentos:</strong><br/>${installmentText}</div>` : ''}
   </div>
 </div>
 
