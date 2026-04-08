@@ -165,7 +165,7 @@ async function syncProducts(db: ReturnType<typeof createClient>, account: OmieAc
       totalPaginas = result.total_de_paginas || 1;
       const produtos = result.produto_servico_cadastro || [];
 
-      if (account === "vendas") {
+      if (account === "vendas" || account === "colacor_vendas") {
         // Upsert to omie_products (existing table)
         const rows = produtos
           .filter((p: any) => p.inativo !== "S")
@@ -179,6 +179,7 @@ async function syncProducts(db: ReturnType<typeof createClient>, account: OmieAc
             valor_unitario: p.valor_unitario || 0,
             estoque: p.quantidade_estoque || 0,
             ativo: true,
+            account,
             imagem_url: p.imagens?.[0]?.url_imagem || null,
             familia: p.descricao_familia || null,
             subfamilia: p.descricao_subfamilia || null,
