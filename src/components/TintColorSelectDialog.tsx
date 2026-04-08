@@ -36,6 +36,8 @@ interface AlternativePackaging {
   precoFinalCsv: number | null;
   product: Product;
   sameAcabamento: boolean;
+  corId?: string;
+  nomeCor?: string;
 }
 
 export function TintColorSelectDialog({ product, open, onClose, onConfirm, customerUserId }: TintColorSelectDialogProps) {
