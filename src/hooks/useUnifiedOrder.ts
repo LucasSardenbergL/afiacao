@@ -1067,18 +1067,25 @@ export function useUnifiedOrder() {
         return found?.descricao || codigo;
       };
 
+      const selectedAddr = addresses.find(a => a.id === selectedAddress);
+      const fullCustomerAddress = selectedAddr
+        ? `${selectedAddr.street}, ${selectedAddr.number}${selectedAddr.complement ? ' - ' + selectedAddr.complement : ''} – ${selectedAddr.neighborhood}, ${selectedAddr.city}/${selectedAddr.state} – CEP: ${selectedAddr.zipCode}`
+        : undefined;
+
       if (obenProductItems.length > 0) {
         const obenOrderNum = results.find(r => r.startsWith('PV Oben'))?.replace('PV Oben ', '') || '';
         printDataList.push({
           companyName: 'OBEN COMÉRCIO LTDA',
-          companyCnpj: '12.345.678/0001-99',
-          companyPhone: '(31) 3333-4444',
-          companyAddress: 'Rua Exemplo, 123 - Bairro Industrial - Belo Horizonte/MG',
+          companyCnpj: '07.311.465/0001-02',
+          companyPhone: '(41) 3356-0042',
+          companyAddress: 'Rua Dep. Heitor Alencar Furtado, 3341 – Mossunguê, Curitiba/PR – CEP: 81200-070',
           orderNumber: obenOrderNum,
           date: dateShort,
           customerName: selectedCustomer.razao_social,
           customerDocument: selectedCustomer.cnpj_cpf || '',
+          customerAddress: fullCustomerAddress,
           condPagamento: findParcelaDesc(selectedParcelaOben, formasPagamentoOben),
+          parcelaCode: selectedParcelaOben,
           items: obenProductItems.map(c => ({
             codigo: c.product.codigo,
             descricao: c.product.descricao,
