@@ -371,16 +371,13 @@ export function TintColorSelectDialog({ product, open, onClose, onConfirm, custo
                           const altBasePrice = alt.precoFinalCsv && alt.precoFinalCsv > 0
                             ? alt.precoFinalCsv
                             : alt.product.valor_unitario;
-                          // Extract cor_id and nome_cor from the first match
-                          const matchInfo = globalColorMatches[0];
                           return (
                             <div key={alt.formulaId} className="rounded-md border border-border hover:border-primary/50 transition-all text-xs">
                               <button
                                 onClick={() => onConfirm(
                                   alt.formulaId,
-                                  // Find cor info from global formulas query
-                                  alt.formulaId, // cor_id will be set from the formula
-                                  '',
+                                  alt.corId || '',
+                                  alt.nomeCor || '',
                                   altBasePrice,
                                   0,
                                   alt.product,
@@ -391,7 +388,12 @@ export function TintColorSelectDialog({ product, open, onClose, onConfirm, custo
                                   <p className="font-medium break-words whitespace-normal">
                                     {alt.productDescricao}
                                   </p>
-                                  <p className="text-[10px] text-muted-foreground font-mono">{alt.productCodigo}</p>
+                                  <div className="flex items-center gap-1.5 mt-0.5">
+                                    <span className="text-[10px] text-muted-foreground font-mono">{alt.productCodigo}</span>
+                                    {alt.corId && (
+                                      <Badge variant="outline" className="text-[8px] px-1 py-0">{alt.corId}</Badge>
+                                    )}
+                                  </div>
                                 </div>
                                 <div className="text-right shrink-0">
                                   <span className="font-bold text-primary">{fmt(altBasePrice)}</span>
