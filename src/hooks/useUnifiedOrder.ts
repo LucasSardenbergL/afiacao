@@ -195,6 +195,24 @@ export function useUnifiedOrder() {
   const serviceItems = useMemo(() => cart.filter((c): c is ServiceCartItem => c.type === 'service'), [cart]);
   const cartProductIds = useMemo(() => productItems.map(c => c.product.id), [productItems]);
 
+  // Auto-calculate volumes: packaging units (5L, GL, LT, BD, BH) count their qty; all others = 1 volume total
+  const VOLUME_UNITS = ['5L', 'GL', 'LT', 'BD', 'BH'];
+  const calcVolumes = (items: ProductCartItem[]) => {
+    let volumeQty = 0;
+    let hasNonVolume = false;
+    for (const item of items) {
+      const un = (item.product.unidade || '').toUpperCase().trim();
+      if (VOLUME_UNITS.includes(un)) {
+        volumeQty += item.quantity;
+      } else {
+        hasNonVolume = true;
+      }
+    }
+    return volumeQty + (hasNonVolume ? 1 : 0);
+  };
+  const volumesOben = useMemo(() => calcVolumes(obenProductItems), [obenProductItems]);
+  const volumesColacor = useMemo(() => calcVolumes(colacorProductItems), [colacorProductItems]);
+
   const sortedFormasPagamentoOben = useMemo(() => {
     if (customerParcelaRankingOben.length === 0) return formasPagamentoOben;
     const rankSet = new Set(customerParcelaRankingOben);
