@@ -79,6 +79,28 @@ export function TintColorSelectDialog({ product, open, onClose, onConfirm, custo
   });
   const skuId = skuInfo?.id || null;
 
+  // Get base description to extract the numeric suffix (e.g. ".7666" from "WFOB.7666 BASE BRANCA...")
+  const { data: currentBaseInfo } = useQuery({
+    queryKey: ['tint-base-info', skuInfo?.base_id],
+    staleTime: 10 * 60 * 1000,
+    enabled: !!skuInfo?.base_id,
+    queryFn: async () => {
+      const { data } = await supabase
+        .from('tint_bases')
+        .select('id, descricao, id_base_sayersystem')
+        .eq('id', skuInfo!.base_id)
+        .maybeSingle();
+      return data || null;
+    },
+  });
+
+  // Extract numeric suffix like "6736" from "WFOB.6736 BASE BRANCA..."
+  const currentBaseSuffix = useMemo(() => {
+    if (!currentBaseInfo?.descricao) return null;
+    const match = currentBaseInfo.descricao.match(/\.(\d+)/);
+    return match ? match[1] : null;
+  }, [currentBaseInfo?.descricao]);
+
   // Search formulas in current SKU
   const { data: formulas, isLoading: loadingFormulas } = useQuery({
     queryKey: ['tint-formula-search', skuId, debouncedSearch],
@@ -100,9 +122,9 @@ export function TintColorSelectDialog({ product, open, onClose, onConfirm, custo
   const colorNotFoundInBase = debouncedSearch.length >= 2 && !loadingFormulas && formulas && formulas.length === 0;
 
   const { data: globalColorMatches, isLoading: loadingGlobalColors } = useQuery({
-    queryKey: ['tint-global-color-search', debouncedSearch],
+    queryKey: ['tint-global-color-search', debouncedSearch, currentBaseSuffix],
     staleTime: 5 * 60 * 1000,
-    enabled: !!colorNotFoundInBase,
+    enabled: !!colorNotFoundInBase && !!currentBaseSuffix,
     queryFn: async (): Promise<AlternativePackaging[]> => {
       // Search formulas across all SKUs
       const { data: globalFormulas } = await supabase
@@ -124,6 +146,33 @@ export function TintColorSelectDialog({ product, open, onClose, onConfirm, custo
         .not('omie_product_id', 'is', null);
 
       if (!skus || skus.length === 0) return [];
+
+      // Filter SKUs to only those with the same base suffix (e.g. ".7666")
+      if (currentBaseSuffix) {
+        const baseIds = [...new Set(skus.map(s => s.base_id))];
+        const { data: bases } = await supabase
+          .from('tint_bases')
+          .select('id, descricao')
+          .in('id', baseIds);
+        
+        const validBaseIds = new Set(
+          (bases || [])
+            .filter(b => {
+              const match = b.descricao?.match(/\.(\d+)/);
+              return match && match[1] === currentBaseSuffix;
+            })
+            .map(b => b.id)
+        );
+        
+        // Remove SKUs with non-matching bases
+        const filteredSkuIds = new Set(skus.filter(s => validBaseIds.has(s.base_id)).map(s => s.id));
+        // Also filter the skus array in-place for later use
+        const filteredSkus = skus.filter(s => validBaseIds.has(s.base_id));
+        if (filteredSkus.length === 0) return [];
+        // Replace skus reference
+        skus.length = 0;
+        skus.push(...filteredSkus);
+      }
 
       // Get product details
       const productIds = skus.map(s => s.omie_product_id!).filter(Boolean);
