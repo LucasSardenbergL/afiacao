@@ -153,8 +153,7 @@ export function useUnifiedOrder() {
   const [selectedParcelaOben, setSelectedParcelaOben] = useState<string>('999');
   const [selectedParcelaColacor, setSelectedParcelaColacor] = useState<string>('999');
   const [loadingFormas, setLoadingFormas] = useState(false);
-  const [volumesOben, setVolumesOben] = useState<number>(0);
-  const [volumesColacor, setVolumesColacor] = useState<number>(0);
+  // Auto-calculated volumes (no manual input needed)
   const [ordemCompra, setOrdemCompra] = useState<string>('');
   const [customerParcelaRankingOben, setCustomerParcelaRankingOben] = useState<string[]>([]);
   const [customerParcelaRankingColacor, setCustomerParcelaRankingColacor] = useState<string[]>([]);
