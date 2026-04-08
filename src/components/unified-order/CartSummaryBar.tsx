@@ -1,13 +1,16 @@
+import { useState } from 'react';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { Label } from '@/components/ui/label';
 import { Input } from '@/components/ui/input';
 import { Textarea } from '@/components/ui/textarea';
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Card, CardContent } from '@/components/ui/card';
+import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
+import { Command, CommandEmpty, CommandGroup, CommandInput, CommandItem, CommandList } from '@/components/ui/command';
 import {
-  ShoppingCart, Send, Loader2, Building2, Scissors, AlertCircle,
+  ShoppingCart, Send, Loader2, Building2, Scissors, AlertCircle, Check, ChevronsUpDown,
 } from 'lucide-react';
+import { cn } from '@/lib/utils';
 import type {
   ProductCartItem, ServiceCartItem, FormaPagamento,
 } from '@/hooks/useUnifiedOrder';
@@ -46,6 +49,96 @@ interface CartSummaryBarProps {
   onSubmit: () => void;
 }
 
+function PaymentCombobox({
+  label,
+  formas,
+  selected,
+  onSelect,
+  customerRanking,
+  loading,
+}: {
+  label: string;
+  formas: FormaPagamento[];
+  selected: string;
+  onSelect: (v: string) => void;
+  customerRanking: string[];
+  loading: boolean;
+}) {
+  const [open, setOpen] = useState(false);
+  const selectedLabel = formas.find(f => f.codigo === selected)?.descricao || '';
+
+  if (loading) {
+    return (
+      <div>
+        <Label className="text-xs font-medium">{label}</Label>
+        <Loader2 className="w-4 h-4 animate-spin mt-1" />
+      </div>
+    );
+  }
+
+  return (
+    <div>
+      <Label className="text-xs font-medium">{label}</Label>
+      <Popover open={open} onOpenChange={setOpen}>
+        <PopoverTrigger asChild>
+          <Button
+            variant="outline"
+            role="combobox"
+            aria-expanded={open}
+            className="w-full justify-between text-sm h-9 mt-1 font-normal"
+          >
+            <span className="truncate">
+              {selected ? (
+                <>
+                  {customerRanking.includes(selected) ? '⭐ ' : ''}
+                  {selectedLabel}
+                </>
+              ) : 'Selecione...'}
+            </span>
+            <ChevronsUpDown className="ml-2 h-3.5 w-3.5 shrink-0 opacity-50" />
+          </Button>
+        </PopoverTrigger>
+        <PopoverContent className="w-[--radix-popover-trigger-width] p-0" align="start">
+          <Command>
+            <CommandInput placeholder="Buscar prazo... ex: 30, 60, vista" className="h-8 text-sm" />
+            <CommandList>
+              <CommandEmpty className="py-2 text-center text-xs text-muted-foreground">Nenhuma condição encontrada.</CommandEmpty>
+              {customerRanking.length > 0 && (
+                <CommandGroup heading="Condições do cliente">
+                  {formas.filter(f => customerRanking.includes(f.codigo)).map(f => (
+                    <CommandItem
+                      key={f.codigo}
+                      value={f.descricao}
+                      onSelect={() => { onSelect(f.codigo); setOpen(false); }}
+                      className="text-sm"
+                    >
+                      <Check className={cn('mr-2 h-3.5 w-3.5', selected === f.codigo ? 'opacity-100' : 'opacity-0')} />
+                      ⭐ {f.descricao}
+                    </CommandItem>
+                  ))}
+                </CommandGroup>
+              )}
+              <CommandGroup heading={customerRanking.length > 0 ? 'Outras condições' : 'Condições de pagamento'}>
+                {formas.filter(f => !customerRanking.includes(f.codigo)).map(f => (
+                  <CommandItem
+                    key={f.codigo}
+                    value={f.descricao}
+                    onSelect={() => { onSelect(f.codigo); setOpen(false); }}
+                    className="text-sm"
+                  >
+                    <Check className={cn('mr-2 h-3.5 w-3.5', selected === f.codigo ? 'opacity-100' : 'opacity-0')} />
+                    {f.descricao}
+                  </CommandItem>
+                ))}
+              </CommandGroup>
+            </CommandList>
+          </Command>
+        </PopoverContent>
+      </Popover>
+    </div>
+  );
+}
+
 export function CartSummaryBar({
   cart, obenProductItems, colacorProductItems, serviceItems, totalEstimated,
   submitting, vendedorDivergencias,
@@ -62,46 +155,27 @@ export function CartSummaryBar({
 
   return (
     <>
-      {/* Payment + Submit sidebar card */}
       <Card>
         <CardContent className="pt-4 space-y-3">
           {obenProductItems.length > 0 && (
-            <div>
-              <Label className="text-xs font-medium">Pagamento Oben</Label>
-              {loadingFormas ? (
-                <Loader2 className="w-4 h-4 animate-spin mt-1" />
-              ) : (
-                <Select value={selectedParcelaOben} onValueChange={setSelectedParcelaOben}>
-                  <SelectTrigger className="text-sm h-9 mt-1"><SelectValue placeholder="Selecione..." /></SelectTrigger>
-                  <SelectContent>
-                    {sortedFormasPagamentoOben.map(f => (
-                      <SelectItem key={f.codigo} value={f.codigo}>
-                        {customerParcelaRankingOben.includes(f.codigo) ? '⭐ ' : ''}{f.descricao}
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-              )}
-            </div>
+            <PaymentCombobox
+              label="Pagamento Oben"
+              formas={sortedFormasPagamentoOben}
+              selected={selectedParcelaOben}
+              onSelect={setSelectedParcelaOben}
+              customerRanking={customerParcelaRankingOben}
+              loading={loadingFormas}
+            />
           )}
           {colacorProductItems.length > 0 && (
-            <div>
-              <Label className="text-xs font-medium">Pagamento Colacor</Label>
-              {loadingFormas ? (
-                <Loader2 className="w-4 h-4 animate-spin mt-1" />
-              ) : (
-                <Select value={selectedParcelaColacor} onValueChange={setSelectedParcelaColacor}>
-                  <SelectTrigger className="text-sm h-9 mt-1"><SelectValue placeholder="Selecione..." /></SelectTrigger>
-                  <SelectContent>
-                    {sortedFormasPagamentoColacor.map(f => (
-                      <SelectItem key={f.codigo} value={f.codigo}>
-                        {customerParcelaRankingColacor.includes(f.codigo) ? '⭐ ' : ''}{f.descricao}
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-              )}
-            </div>
+            <PaymentCombobox
+              label="Pagamento Colacor"
+              formas={sortedFormasPagamentoColacor}
+              selected={selectedParcelaColacor}
+              onSelect={setSelectedParcelaColacor}
+              customerRanking={customerParcelaRankingColacor}
+              loading={loadingFormas}
+            />
           )}
           {isOrdemCompraCustomer && setOrdemCompra && (
             <div>
@@ -142,7 +216,6 @@ export function CartSummaryBar({
         </CardContent>
       </Card>
 
-      {/* Fixed bottom bar */}
       <div className="fixed bottom-0 left-0 right-0 z-50 bg-background border-t shadow-lg px-4 py-2.5 safe-bottom">
         <div className="max-w-screen-xl mx-auto flex items-center justify-between gap-3">
           <div className="flex items-center gap-3 min-w-0">
