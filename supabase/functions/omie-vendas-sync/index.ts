@@ -899,11 +899,20 @@ async function criarPedidoVenda(
       // Always build label with cor_id visible, without base info
       const nomeJaTemCodigo = item.tint_nome_cor.toUpperCase().includes(item.tint_cor_id.toUpperCase());
       const corLabel = nomeJaTemCodigo ? item.tint_nome_cor : `${item.tint_cor_id} - ${item.tint_nome_cor}`;
-      const corInfo = `Cor: ${corLabel} - Qtd: ${item.quantidade}`;
+      // Extract embalagem from description (e.g. "...QT", "...GL", "...405ML")
+      const descUpper = (item.descricao || '').toUpperCase();
+      let embTag = '';
+      if (descUpper.includes(' QT') || descUpper.endsWith('QT')) embTag = 'QT';
+      else if (descUpper.includes(' GL') || descUpper.endsWith('GL')) embTag = 'GL';
+      else if (descUpper.includes(' LT') || descUpper.endsWith('LT')) embTag = 'LT';
+      else {
+        const embMatch = descUpper.match(/(\d+(?:[.,]\d+)?)\s*ML\b/);
+        if (embMatch) embTag = embMatch[1].replace(',', '.') + 'ML';
+      }
+      const corInfo = `Cor: ${corLabel}${embTag ? ` - ${embTag}` : ''}`;
       (entry as any).inf_adic = {
         dados_adicionais_item: corInfo,
       };
-      // Write color info in the item's "Observações" tab
       (entry as any).observacao = {
         obs_item: corInfo,
       };
