@@ -899,11 +899,20 @@ async function criarPedidoVenda(
       // Always build label with cor_id visible, without base info
       const nomeJaTemCodigo = item.tint_nome_cor.toUpperCase().includes(item.tint_cor_id.toUpperCase());
       const corLabel = nomeJaTemCodigo ? item.tint_nome_cor : `${item.tint_cor_id} - ${item.tint_nome_cor}`;
-      const corInfo = `Cor: ${corLabel} - Qtd: ${item.quantidade}`;
+      // Extract embalagem from description (e.g. "...QT", "...GL", "...405ML")
+      const descUpper = (item.descricao || '').toUpperCase();
+      let embTag = '';
+      if (descUpper.includes(' QT') || descUpper.endsWith('QT')) embTag = 'QT';
+      else if (descUpper.includes(' GL') || descUpper.endsWith('GL')) embTag = 'GL';
+      else if (descUpper.includes(' LT') || descUpper.endsWith('LT')) embTag = 'LT';
+      else {
+        const embMatch = descUpper.match(/(\d+(?:[.,]\d+)?)\s*ML\b/);
+        if (embMatch) embTag = embMatch[1].replace(',', '.') + 'ML';
+      }
+      const corInfo = `Cor: ${corLabel}${embTag ? ` - ${embTag}` : ''}`;
       (entry as any).inf_adic = {
         dados_adicionais_item: corInfo,
       };
-      // Write color info in the item's "Observações" tab
       (entry as any).observacao = {
         obs_item: corInfo,
       };
@@ -973,7 +982,13 @@ async function criarPedidoVenda(
           const tintLines = tintItems.map(i => {
             const nomeJaTemCodigo = i.tint_nome_cor!.toUpperCase().includes(i.tint_cor_id!.toUpperCase());
             const corLabel = nomeJaTemCodigo ? i.tint_nome_cor! : `${i.tint_cor_id} - ${i.tint_nome_cor}`;
-            return `Cor: ${corLabel} - Qtd: ${i.quantidade}`;
+            const dUpper = (i.descricao || '').toUpperCase();
+            let eTag = '';
+            if (dUpper.includes(' QT') || dUpper.endsWith('QT')) eTag = 'QT';
+            else if (dUpper.includes(' GL') || dUpper.endsWith('GL')) eTag = 'GL';
+            else if (dUpper.includes(' LT') || dUpper.endsWith('LT')) eTag = 'LT';
+            else { const m = dUpper.match(/(\d+(?:[.,]\d+)?)\s*ML\b/); if (m) eTag = m[1].replace(',','.') + 'ML'; }
+            return `Cor: ${corLabel}${eTag ? ` - ${eTag}` : ''}`;
           }).join('\n');
           obs = obs ? `${obs}\n${tintLines}` : tintLines;
         }
