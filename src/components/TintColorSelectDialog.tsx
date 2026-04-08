@@ -332,9 +332,10 @@ export function TintColorSelectDialog({ product, open, onClose, onConfirm, custo
   const precoCalculado = precoBase + custoCorantes;
 
   // Auto-detect best price source
+  const precoCsvValido = precoCsv > 0 && precoCsv >= precoBase ? precoCsv : 0;
   const autoSource = lastPracticedPrice
     ? 'cliente'
-    : precoCsv > 0
+    : precoCsvValido > 0
       ? 'tabela'
       : 'calculado';
   const priceSource = priceSourceOverride || autoSource;
