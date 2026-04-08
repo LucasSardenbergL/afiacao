@@ -77,7 +77,7 @@ export function TintColorSelectDialog({ product, open, onClose, onConfirm, custo
   });
   const skuId = skuInfo?.id || null;
 
-  // Search formulas
+  // Search formulas in current SKU
   const { data: formulas, isLoading: loadingFormulas } = useQuery({
     queryKey: ['tint-formula-search', skuId, debouncedSearch],
     staleTime: 5 * 60 * 1000,
@@ -91,6 +91,68 @@ export function TintColorSelectDialog({ product, open, onClose, onConfirm, custo
         .or(`cor_id.ilike.%${debouncedSearch}%,nome_cor.ilike.%${debouncedSearch}%`)
         .limit(20);
       return (data || []) as FormulaResult[];
+    },
+  });
+
+  // When color not found in current base, search ALL bases for it
+  const colorNotFoundInBase = debouncedSearch.length >= 2 && !loadingFormulas && formulas && formulas.length === 0;
+
+  const { data: globalColorMatches, isLoading: loadingGlobalColors } = useQuery({
+    queryKey: ['tint-global-color-search', debouncedSearch],
+    staleTime: 5 * 60 * 1000,
+    enabled: !!colorNotFoundInBase,
+    queryFn: async (): Promise<AlternativePackaging[]> => {
+      // Search formulas across all SKUs
+      const { data: globalFormulas } = await supabase
+        .from('tint_formulas')
+        .select('id, cor_id, nome_cor, sku_id, preco_final_sayersystem')
+        .eq('account', 'oben')
+        .or(`cor_id.ilike.%${debouncedSearch}%,nome_cor.ilike.%${debouncedSearch}%`)
+        .not('sku_id', 'is', null)
+        .limit(50);
+
+      if (!globalFormulas || globalFormulas.length === 0) return [];
+
+      // Get SKU details
+      const skuIds = [...new Set(globalFormulas.map(f => f.sku_id!))];
+      const { data: skus } = await supabase
+        .from('tint_skus')
+        .select('id, omie_product_id, produto_id, base_id')
+        .in('id', skuIds)
+        .not('omie_product_id', 'is', null);
+
+      if (!skus || skus.length === 0) return [];
+
+      // Get product details
+      const productIds = skus.map(s => s.omie_product_id!).filter(Boolean);
+      const { data: products } = await supabase
+        .from('omie_products')
+        .select('id, codigo, descricao, unidade, valor_unitario, estoque, ativo, omie_codigo_produto, account, is_tintometric, tint_type')
+        .in('id', productIds);
+
+      if (!products) return [];
+
+      const result: AlternativePackaging[] = [];
+      for (const gf of globalFormulas) {
+        const sku = skus.find(s => s.id === gf.sku_id);
+        if (!sku?.omie_product_id) continue;
+        const prod = products.find(p => p.id === sku.omie_product_id);
+        if (!prod) continue;
+
+        result.push({
+          formulaId: gf.id,
+          skuId: gf.sku_id!,
+          omieProductId: sku.omie_product_id,
+          productDescricao: prod.descricao,
+          productCodigo: prod.codigo,
+          precoFinalCsv: gf.preco_final_sayersystem ? Math.ceil(gf.preco_final_sayersystem * 10) / 10 : gf.preco_final_sayersystem,
+          product: prod as Product,
+          sameAcabamento: false,
+        });
+      }
+
+      result.sort((a, b) => a.productDescricao.localeCompare(b.productDescricao));
+      return result;
     },
   });
 
