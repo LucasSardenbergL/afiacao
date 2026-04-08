@@ -9,13 +9,19 @@ const corsHeaders = {
 
 const OMIE_API_URL = "https://app.omie.com.br/api/v1";
 
-type OmieAccount = "vendas" | "servicos";
+type OmieAccount = "vendas" | "servicos" | "colacor_vendas";
 
 function getCredentials(account: OmieAccount) {
   if (account === "vendas") {
     return {
       key: Deno.env.get("OMIE_VENDAS_APP_KEY"),
       secret: Deno.env.get("OMIE_VENDAS_APP_SECRET"),
+    };
+  }
+  if (account === "colacor_vendas") {
+    return {
+      key: Deno.env.get("OMIE_COLACOR_VENDAS_APP_KEY"),
+      secret: Deno.env.get("OMIE_COLACOR_VENDAS_APP_SECRET"),
     };
   }
   return {
@@ -159,7 +165,7 @@ async function syncProducts(db: ReturnType<typeof createClient>, account: OmieAc
       totalPaginas = result.total_de_paginas || 1;
       const produtos = result.produto_servico_cadastro || [];
 
-      if (account === "vendas") {
+      if (account === "vendas" || account === "colacor_vendas") {
         // Upsert to omie_products (existing table)
         const rows = produtos
           .filter((p: any) => p.inativo !== "S")
@@ -173,6 +179,7 @@ async function syncProducts(db: ReturnType<typeof createClient>, account: OmieAc
             valor_unitario: p.valor_unitario || 0,
             estoque: p.quantidade_estoque || 0,
             ativo: true,
+            account,
             imagem_url: p.imagens?.[0]?.url_imagem || null,
             familia: p.descricao_familia || null,
             subfamilia: p.descricao_subfamilia || null,
