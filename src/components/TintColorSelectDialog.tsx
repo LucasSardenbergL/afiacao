@@ -150,6 +150,8 @@ export function TintColorSelectDialog({ product, open, onClose, onConfirm, custo
           precoFinalCsv: gf.preco_final_sayersystem ? Math.ceil(gf.preco_final_sayersystem * 10) / 10 : gf.preco_final_sayersystem,
           product: prod as Product,
           sameAcabamento: false,
+          corId: gf.cor_id,
+          nomeCor: gf.nome_cor,
         });
       }
 
