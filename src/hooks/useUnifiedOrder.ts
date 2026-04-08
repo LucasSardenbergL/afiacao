@@ -1109,14 +1109,16 @@ export function useUnifiedOrder() {
         const colacorOrderNum = results.find(r => r.startsWith('PV Colacor'))?.replace('PV Colacor ', '') || '';
         printDataList.push({
           companyName: 'COLACOR COMERCIAL LTDA',
-          companyCnpj: '00.000.000/0001-00',
-          companyPhone: '(31) 0000-0000',
-          companyAddress: 'Endereço Colacor',
+          companyCnpj: '03.422.099/0001-08',
+          companyPhone: '(41) 3356-0042',
+          companyAddress: 'Rua Dep. Heitor Alencar Furtado, 3341 – Mossunguê, Curitiba/PR – CEP: 81200-070',
           orderNumber: colacorOrderNum,
           date: dateShort,
           customerName: selectedCustomer.razao_social,
           customerDocument: selectedCustomer.cnpj_cpf || '',
+          customerAddress: fullCustomerAddress,
           condPagamento: findParcelaDesc(selectedParcelaColacor, formasPagamentoColacor),
+          parcelaCode: selectedParcelaColacor,
           items: colacorProductItems.map(c => ({
             codigo: c.product.codigo,
             descricao: c.product.descricao,
