@@ -639,6 +639,7 @@ export function useUnifiedOrder() {
         });
       }
 
+      const localPricesByProduct: Record<string, number> = {};
       if (localPriceResult.data && localPriceResult.data.length > 0) {
         for (const row of localPriceResult.data) {
           if (!localPricesByProduct[row.product_id]) {
