@@ -264,6 +264,8 @@ async function listarClientesVendas(searchTerm: string, account: Account = "oben
     cep: string;
     telefone: string;
     contato: string;
+    tags: string[];
+    atividade: string;
   }> = [];
 
   // Try searching by name first
@@ -283,22 +285,24 @@ async function listarClientesVendas(searchTerm: string, account: Account = "oben
 
     if (result.clientes_cadastro) {
       for (const c of result.clientes_cadastro) {
-        results.push({
-          codigo_cliente: c.codigo_cliente_omie,
-          razao_social: c.razao_social || "",
-          nome_fantasia: c.nome_fantasia || "",
-          cnpj_cpf: c.cnpj_cpf || "",
-          codigo_vendedor: c.recomendacoes?.codigo_vendedor || c.codigo_vendedor || null,
-          endereco: c.endereco || "",
-          endereco_numero: c.endereco_numero || "",
-          complemento: c.complemento || "",
-          bairro: c.bairro || "",
-          cidade: c.cidade || "",
-          estado: c.estado || "",
-          cep: c.cep || "",
-          telefone: c.telefone1_ddd && c.telefone1_numero ? `(${c.telefone1_ddd}) ${c.telefone1_numero}` : "",
-          contato: c.contato || "",
-        });
+            results.push({
+              codigo_cliente: c.codigo_cliente_omie,
+              razao_social: c.razao_social || "",
+              nome_fantasia: c.nome_fantasia || "",
+              cnpj_cpf: c.cnpj_cpf || "",
+              codigo_vendedor: c.recomendacoes?.codigo_vendedor || c.codigo_vendedor || null,
+              endereco: c.endereco || "",
+              endereco_numero: c.endereco_numero || "",
+              complemento: c.complemento || "",
+              bairro: c.bairro || "",
+              cidade: c.cidade || "",
+              estado: c.estado || "",
+              cep: c.cep || "",
+              telefone: c.telefone1_ddd && c.telefone1_numero ? `(${c.telefone1_ddd}) ${c.telefone1_numero}` : "",
+              contato: c.contato || "",
+              tags: (c.tags || []).map((t: any) => t.tag || t),
+              atividade: c.atividade || "",
+            });
       }
     }
   } catch (e) {
@@ -340,6 +344,8 @@ async function listarClientesVendas(searchTerm: string, account: Account = "oben
               cep: c.cep || "",
               telefone: c.telefone1_ddd && c.telefone1_numero ? `(${c.telefone1_ddd}) ${c.telefone1_numero}` : "",
               contato: c.contato || "",
+              tags: (c.tags || []).map((t: any) => t.tag || t),
+              atividade: c.atividade || "",
             });
           }
         }
@@ -1549,7 +1555,79 @@ serve(async (req) => {
         } catch (e) {
           console.log("[Omie Vendas] Erro ao buscar histórico de pedidos:", e);
         }
+        // Also save preferred items to DB
+        if (Object.keys(productHistory).length > 0) {
+          try {
+            // Get product details from omie_products
+            const omieCodes = Object.keys(productHistory).map(Number);
+            const { data: prods } = await supabaseAdmin
+              .from('omie_products')
+              .select('omie_codigo_produto, codigo, descricao, familia')
+              .in('omie_codigo_produto', omieCodes)
+              .eq('account', account);
+            
+            const prodMap = new Map((prods || []).map(p => [p.omie_codigo_produto, p]));
+            
+            for (const [omieCod, dateStr] of Object.entries(productHistory)) {
+              const prod = prodMap.get(Number(omieCod));
+              const parts = dateStr.split('/');
+              const isoDate = parts.length === 3 ? `${parts[2]}-${parts[1]}-${parts[0]}` : dateStr;
+              
+              await supabaseAdmin.from('customer_preferred_items').upsert({
+                omie_codigo_cliente: codCliHist,
+                omie_codigo_produto: Number(omieCod),
+                product_codigo: prod?.codigo || null,
+                product_descricao: prod?.descricao || null,
+                familia: prod?.familia || null,
+                account,
+                last_ordered_at: isoDate,
+                added_manually: false,
+              }, { onConflict: 'omie_codigo_cliente,omie_codigo_produto,account' });
+            }
+          } catch (saveErr) {
+            console.log("[Omie Vendas] Erro ao salvar itens preferidos:", saveErr);
+          }
+        }
+        
         result = { success: true, history: productHistory };
+        break;
+      }
+
+      case "salvar_segmento_cliente": {
+        const { codigo_cliente: codCliSeg, tags: clientTags, atividade: clientAtividade, segment: clientSegment } = params;
+        if (!codCliSeg) throw new Error("Código do cliente é obrigatório");
+        
+        await supabaseAdmin.from('customer_segments').upsert({
+          omie_codigo_cliente: codCliSeg,
+          account,
+          segment: clientSegment || null,
+          tags: clientTags || [],
+          atividade: clientAtividade || null,
+        }, { onConflict: 'omie_codigo_cliente,account' });
+        
+        result = { success: true };
+        break;
+      }
+
+      case "buscar_itens_preferidos": {
+        const { codigo_cliente: codCliPref } = params;
+        if (!codCliPref) throw new Error("Código do cliente é obrigatório");
+        
+        const { data: items } = await supabaseAdmin
+          .from('customer_preferred_items')
+          .select('*')
+          .eq('omie_codigo_cliente', codCliPref)
+          .eq('account', account)
+          .order('last_ordered_at', { ascending: false });
+        
+        const { data: seg } = await supabaseAdmin
+          .from('customer_segments')
+          .select('*')
+          .eq('omie_codigo_cliente', codCliPref)
+          .eq('account', account)
+          .maybeSingle();
+        
+        result = { success: true, items: items || [], segment: seg };
         break;
       }
 
