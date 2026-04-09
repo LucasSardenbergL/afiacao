@@ -1,0 +1,1 @@
+UPDATE omie_products SET ativo = false WHERE lower(descricao) LIKE '%810ml%' OR lower(descricao) LIKE '%810 ml%';
