@@ -599,11 +599,12 @@ function buildSingleOrderHtml(data: PrintOrderData): string {
   <div>
     <div class="customer-name">${data.customerName}</div>
     <div class="customer-info">CPF/CNPJ: ${data.customerDocument || 'N/A'}${data.customerPhone ? ' • Tel: ' + data.customerPhone : ''}</div>
-    ${data.customerAddress ? `<div class="customer-info">${data.customerAddress}</div>` : ''}
+    ${data.customerAddress ? `<div class="customer-info" style="margin-top:4px"><strong>Endereço:</strong> ${data.customerAddress}</div>` : ''}
   </div>
   <div class="right-info">
     ${data.vendedorName ? `Vendedor: ${data.vendedorName}<br/>` : ''}
     ${data.condPagamento ? `Cond. Pgto: ${data.condPagamento}` : ''}
+    ${installmentText ? `<div style="font-size:10px;color:#333;margin-top:6px;text-align:left;background:#f8f8f8;padding:6px 10px;border-radius:2px;border-left:3px solid #e91e63"><strong>Vencimentos:</strong><br/>${installmentText}</div>` : ''}
   </div>
 </div>
 <div class="section-title">ITENS DO PEDIDO</div>
