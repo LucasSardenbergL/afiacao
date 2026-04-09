@@ -83,6 +83,10 @@ export interface OmieCustomer {
   cep?: string;
   telefone?: string;
   contato?: string;
+  // Segment/tags from Omie
+  tags?: string[];
+  atividade?: string;
+  segment?: string;
 }
 
 export interface FormaPagamento {
