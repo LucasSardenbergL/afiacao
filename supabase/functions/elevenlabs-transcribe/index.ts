@@ -67,8 +67,9 @@ serve(async (req) => {
       );
     }
 
-    // Validate audio type
-    if (audioFile.type && !ALLOWED_AUDIO_TYPES.includes(audioFile.type)) {
+    // Validate audio type (strip codec suffix like ";codecs=opus")
+    const baseType = (audioFile.type || '').split(';')[0].trim();
+    if (baseType && !ALLOWED_AUDIO_TYPES.includes(baseType)) {
       return new Response(
         JSON.stringify({ error: 'Formato de áudio não suportado' }),
         { status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
