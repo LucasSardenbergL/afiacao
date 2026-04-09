@@ -1214,6 +1214,7 @@ serve(async (req) => {
           return entry;
         });
 
+        const origPayload = existingOrder.omie_payload as any;
         const origCodIntPed = origPayload?.cabecalho?.codigo_pedido_integracao || editCodIntPed;
         const editCabecalho: Record<string, unknown> = {
           codigo_pedido: Number(existingOrder.omie_pedido_id),
@@ -1229,7 +1230,6 @@ serve(async (req) => {
         };
 
         // Get vendedor from original payload
-        const origPayload = existingOrder.omie_payload as any;
         if (origPayload?.informacoes_adicionais?.codVend) {
           editInfoAdic.codVend = origPayload.informacoes_adicionais.codVend;
         }
