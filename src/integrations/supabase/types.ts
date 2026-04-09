@@ -234,6 +234,84 @@ export type Database = {
         }
         Relationships: []
       }
+      customer_preferred_items: {
+        Row: {
+          account: string
+          added_manually: boolean | null
+          created_at: string
+          familia: string | null
+          id: string
+          last_ordered_at: string | null
+          omie_codigo_cliente: number
+          omie_codigo_produto: number
+          order_count: number | null
+          product_codigo: string | null
+          product_descricao: string | null
+          updated_at: string
+        }
+        Insert: {
+          account?: string
+          added_manually?: boolean | null
+          created_at?: string
+          familia?: string | null
+          id?: string
+          last_ordered_at?: string | null
+          omie_codigo_cliente: number
+          omie_codigo_produto: number
+          order_count?: number | null
+          product_codigo?: string | null
+          product_descricao?: string | null
+          updated_at?: string
+        }
+        Update: {
+          account?: string
+          added_manually?: boolean | null
+          created_at?: string
+          familia?: string | null
+          id?: string
+          last_ordered_at?: string | null
+          omie_codigo_cliente?: number
+          omie_codigo_produto?: number
+          order_count?: number | null
+          product_codigo?: string | null
+          product_descricao?: string | null
+          updated_at?: string
+        }
+        Relationships: []
+      }
+      customer_segments: {
+        Row: {
+          account: string
+          atividade: string | null
+          created_at: string
+          id: string
+          omie_codigo_cliente: number
+          segment: string | null
+          tags: string[] | null
+          updated_at: string
+        }
+        Insert: {
+          account?: string
+          atividade?: string | null
+          created_at?: string
+          id?: string
+          omie_codigo_cliente: number
+          segment?: string | null
+          tags?: string[] | null
+          updated_at?: string
+        }
+        Update: {
+          account?: string
+          atividade?: string | null
+          created_at?: string
+          id?: string
+          omie_codigo_cliente?: number
+          segment?: string | null
+          tags?: string[] | null
+          updated_at?: string
+        }
+        Relationships: []
+      }
       default_prices: {
         Row: {
           created_at: string
