@@ -707,6 +707,13 @@ async function syncPedidos(
       for (const code of unknownCodes) await resolveClientUserId(code);
     }
 
+    // Pre-fetch address/phone for all clients on this page that aren't cached yet
+    const codesNeedingAddress = uniqueClientCodes.filter(c => !clientAddressCache.has(c) && clientCache.has(c) && clientCache.get(c));
+    if (codesNeedingAddress.length > 0) {
+      console.log(`[sync_pedidos][${account}] Fetching address/phone for ${codesNeedingAddress.length} clients`);
+      for (const code of codesNeedingAddress) await getClientAddressPhone(code);
+    }
+
     // ── Prepare batch arrays ──
     const orderBatch: any[] = [];
     const orderMeta: Array<{ hashPayload: string; detalhes: any[]; customerUserId: string; createdAt: string }> = [];
