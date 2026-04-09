@@ -1345,6 +1345,7 @@ export function useUnifiedOrder() {
     setOrdemCompra('');
     setAddresses([]);
     setSelectedAddress('');
+    setCustomerPurchaseHistory({});
   };
 
   return {
@@ -1358,6 +1359,7 @@ export function useUnifiedOrder() {
     loadingObenProducts, loadingColacorProducts,
     customerPricesOben, customerPricesColacor,
     filteredObenProducts, filteredColacorProducts,
+    customerPurchaseHistory,
     // Services
     userTools, loadingTools, servicos, loadingServicos,
     addToolDialogOpen, setAddToolDialogOpen, creatingLocalProfile,
