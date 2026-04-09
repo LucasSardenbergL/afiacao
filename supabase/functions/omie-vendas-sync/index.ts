@@ -1220,6 +1220,7 @@ serve(async (req) => {
           data_previsao: new Date().toISOString().split("T")[0].split("-").reverse().join("/"),
           etapa: "10",
           codigo_parcela: editParcela || "999",
+          acao_items: "E",
         };
 
         const editInfoAdic: Record<string, unknown> = {
