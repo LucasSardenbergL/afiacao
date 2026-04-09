@@ -890,18 +890,29 @@ export function useUnifiedOrder() {
   }, [serviceItems, getServicePrice]);
   const totalEstimated = obenSubtotal + colacorProdSubtotal + serviceSubtotal;
 
+  // A product is "previously purchased" if it has a customer-specific price from Omie OR exists in local purchase history
+  const isProductPreviouslyPurchased = useCallback((product: Product, account: ProductAccount): boolean => {
+    const prices = account === 'oben' ? customerPricesOben : customerPricesColacor;
+    if (prices[product.omie_codigo_produto]) return true;
+    if (customerPurchaseHistory[product.codigo]) return true;
+    if (customerPurchaseHistory[`pid:${product.id}`]) return true;
+    return false;
+  }, [customerPricesOben, customerPricesColacor, customerPurchaseHistory]);
+
   const getProductLastOrderDate = useCallback((product: Product): string | null => {
     return customerPurchaseHistory[product.codigo] || customerPurchaseHistory[`pid:${product.id}`] || null;
   }, [customerPurchaseHistory]);
 
   const filteredObenProducts = useMemo(() => {
+    const hasCustomerPrices = Object.keys(customerPricesOben).length > 0;
     const hasPurchaseHistory = Object.keys(customerPurchaseHistory).length > 0;
+    const shouldPrioritize = hasCustomerPrices || hasPurchaseHistory;
     const sorted = [...obenProducts].sort((a, b) => {
-      if (hasPurchaseHistory) {
-        const aHist = !!getProductLastOrderDate(a);
-        const bHist = !!getProductLastOrderDate(b);
-        if (aHist && !bHist) return -1;
-        if (!aHist && bHist) return 1;
+      if (shouldPrioritize) {
+        const aPrev = isProductPreviouslyPurchased(a, 'oben');
+        const bPrev = isProductPreviouslyPurchased(b, 'oben');
+        if (aPrev && !bPrev) return -1;
+        if (!aPrev && bPrev) return 1;
       }
       if (a.ativo && !b.ativo) return -1;
       if (!a.ativo && b.ativo) return 1;
@@ -912,16 +923,18 @@ export function useUnifiedOrder() {
       p.descricao.toLowerCase().includes(productSearch.toLowerCase()) ||
       p.codigo.toLowerCase().includes(productSearch.toLowerCase())
     ).slice(0, 50);
-  }, [obenProducts, productSearch, customerPurchaseHistory, getProductLastOrderDate]);
+  }, [obenProducts, productSearch, customerPricesOben, customerPurchaseHistory, isProductPreviouslyPurchased]);
 
   const filteredColacorProducts = useMemo(() => {
+    const hasCustomerPrices = Object.keys(customerPricesColacor).length > 0;
     const hasPurchaseHistory = Object.keys(customerPurchaseHistory).length > 0;
+    const shouldPrioritize = hasCustomerPrices || hasPurchaseHistory;
     const sorted = [...colacorProducts].sort((a, b) => {
-      if (hasPurchaseHistory) {
-        const aHist = !!getProductLastOrderDate(a);
-        const bHist = !!getProductLastOrderDate(b);
-        if (aHist && !bHist) return -1;
-        if (!aHist && bHist) return 1;
+      if (shouldPrioritize) {
+        const aPrev = isProductPreviouslyPurchased(a, 'colacor');
+        const bPrev = isProductPreviouslyPurchased(b, 'colacor');
+        if (aPrev && !bPrev) return -1;
+        if (!aPrev && bPrev) return 1;
       }
       if (a.ativo && !b.ativo) return -1;
       if (!a.ativo && b.ativo) return 1;
@@ -932,7 +945,7 @@ export function useUnifiedOrder() {
       p.descricao.toLowerCase().includes(productSearch.toLowerCase()) ||
       p.codigo.toLowerCase().includes(productSearch.toLowerCase())
     ).slice(0, 50);
-  }, [colacorProducts, productSearch, customerPurchaseHistory, getProductLastOrderDate]);
+  }, [colacorProducts, productSearch, customerPricesColacor, customerPurchaseHistory, isProductPreviouslyPurchased]);
 
   const availableTools = useMemo(() =>
     userTools.filter(t => !cart.some(c => c.type === 'service' && (c as ServiceCartItem).userTool.id === t.id)),
