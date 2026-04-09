@@ -1182,6 +1182,32 @@ serve(async (req) => {
         const updatedSubtotal = updatedItemsPayload.reduce((s: number, i: any) => s + i.valor_total, 0);
 
         // Build Omie payload
+        // Step 1: First, delete all existing items from the order
+        const origPayload = existingOrder.omie_payload as any;
+        const origDet = origPayload?.det || [];
+        if (origDet.length > 0) {
+          for (const origItem of origDet) {
+            const codItemInt = origItem?.ide?.codigo_item_integracao;
+            if (codItemInt) {
+              try {
+                await callOmieVendasApi(
+                  "produtos/pedido/",
+                  "ExcluirItemPedidoVenda",
+                  {
+                    codigo_pedido: Number(existingOrder.omie_pedido_id),
+                    codigo_item_integracao: codItemInt,
+                  },
+                  editAccount
+                );
+                console.log(`[Omie Vendas][${editAccount}] Item ${codItemInt} excluído`);
+              } catch (delErr: any) {
+                console.warn(`[Omie Vendas][${editAccount}] Erro ao excluir item ${codItemInt}: ${delErr.message}`);
+              }
+            }
+          }
+        }
+
+        // Step 2: Now add all items with the updated list
         const editTs = Date.now().toString(36);
         const editCodIntPed = `PE${editSoId.substring(0, 8)}_${editTs}`;
         const editDet = editItems.map((item: any, index: number) => {
@@ -1214,13 +1240,11 @@ serve(async (req) => {
           return entry;
         });
 
-        const origPayload = existingOrder.omie_payload as any;
         const editCabecalho: Record<string, unknown> = {
           codigo_pedido: Number(existingOrder.omie_pedido_id),
           data_previsao: new Date().toISOString().split("T")[0].split("-").reverse().join("/"),
           etapa: "10",
           codigo_parcela: editParcela || "999",
-          acao_items: "E",
         };
 
         const editInfoAdic: Record<string, unknown> = {
