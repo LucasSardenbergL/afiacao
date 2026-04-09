@@ -870,7 +870,15 @@ export function useUnifiedOrder() {
   const totalEstimated = obenSubtotal + colacorProdSubtotal + serviceSubtotal;
 
   const filteredObenProducts = useMemo(() => {
+    const hasPurchaseHistory = Object.keys(customerPurchaseHistory).length > 0;
     const sorted = [...obenProducts].sort((a, b) => {
+      // Previously purchased items first
+      if (hasPurchaseHistory) {
+        const aHist = !!customerPurchaseHistory[a.codigo];
+        const bHist = !!customerPurchaseHistory[b.codigo];
+        if (aHist && !bHist) return -1;
+        if (!aHist && bHist) return 1;
+      }
       if (a.ativo && !b.ativo) return -1;
       if (!a.ativo && b.ativo) return 1;
       return a.descricao.localeCompare(b.descricao);
@@ -880,10 +888,17 @@ export function useUnifiedOrder() {
       p.descricao.toLowerCase().includes(productSearch.toLowerCase()) ||
       p.codigo.toLowerCase().includes(productSearch.toLowerCase())
     ).slice(0, 50);
-  }, [obenProducts, productSearch]);
+  }, [obenProducts, productSearch, customerPurchaseHistory]);
 
   const filteredColacorProducts = useMemo(() => {
+    const hasPurchaseHistory = Object.keys(customerPurchaseHistory).length > 0;
     const sorted = [...colacorProducts].sort((a, b) => {
+      if (hasPurchaseHistory) {
+        const aHist = !!customerPurchaseHistory[a.codigo];
+        const bHist = !!customerPurchaseHistory[b.codigo];
+        if (aHist && !bHist) return -1;
+        if (!aHist && bHist) return 1;
+      }
       if (a.ativo && !b.ativo) return -1;
       if (!a.ativo && b.ativo) return 1;
       return a.descricao.localeCompare(b.descricao);
@@ -893,7 +908,7 @@ export function useUnifiedOrder() {
       p.descricao.toLowerCase().includes(productSearch.toLowerCase()) ||
       p.codigo.toLowerCase().includes(productSearch.toLowerCase())
     ).slice(0, 50);
-  }, [colacorProducts, productSearch]);
+  }, [colacorProducts, productSearch, customerPurchaseHistory]);
 
   const availableTools = useMemo(() =>
     userTools.filter(t => !cart.some(c => c.type === 'service' && (c as ServiceCartItem).userTool.id === t.id)),
