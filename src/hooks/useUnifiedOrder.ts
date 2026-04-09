@@ -1092,6 +1092,7 @@ export function useUnifiedOrder() {
           customerName: selectedCustomer.razao_social,
           customerDocument: selectedCustomer.cnpj_cpf || '',
           customerAddress: fullCustomerAddress,
+          customerPhone,
           condPagamento: findParcelaDesc(selectedParcelaOben, formasPagamentoOben),
           parcelaCode: selectedParcelaOben,
           items: obenProductItems.map(c => ({
