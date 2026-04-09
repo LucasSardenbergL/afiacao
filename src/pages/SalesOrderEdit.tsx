@@ -107,6 +107,7 @@ const SalesOrderEdit = () => {
         .eq('user_id', o.customer_user_id)
         .single();
       if (profile) setCustomerName(profile.name || '');
+      setCustomerUserId(o.customer_user_id);
 
       const account = o.account === 'colacor' ? 'colacor' : 'oben';
       
@@ -116,7 +117,7 @@ const SalesOrderEdit = () => {
           body: { action: 'listar_formas_pagamento', account },
         }),
         supabase.from('omie_products')
-          .select('id, omie_codigo_produto, codigo, descricao, unidade, valor_unitario')
+          .select('id, omie_codigo_produto, codigo, descricao, unidade, valor_unitario, estoque, ativo, account, is_tintometric, tint_type')
           .eq('account', account === 'colacor' ? 'colacor_vendas' : 'oben')
           .eq('ativo', true)
           .order('descricao')
