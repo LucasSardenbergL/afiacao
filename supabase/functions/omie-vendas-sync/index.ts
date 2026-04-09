@@ -285,22 +285,24 @@ async function listarClientesVendas(searchTerm: string, account: Account = "oben
 
     if (result.clientes_cadastro) {
       for (const c of result.clientes_cadastro) {
-        results.push({
-          codigo_cliente: c.codigo_cliente_omie,
-          razao_social: c.razao_social || "",
-          nome_fantasia: c.nome_fantasia || "",
-          cnpj_cpf: c.cnpj_cpf || "",
-          codigo_vendedor: c.recomendacoes?.codigo_vendedor || c.codigo_vendedor || null,
-          endereco: c.endereco || "",
-          endereco_numero: c.endereco_numero || "",
-          complemento: c.complemento || "",
-          bairro: c.bairro || "",
-          cidade: c.cidade || "",
-          estado: c.estado || "",
-          cep: c.cep || "",
-          telefone: c.telefone1_ddd && c.telefone1_numero ? `(${c.telefone1_ddd}) ${c.telefone1_numero}` : "",
-          contato: c.contato || "",
-        });
+            results.push({
+              codigo_cliente: c.codigo_cliente_omie,
+              razao_social: c.razao_social || "",
+              nome_fantasia: c.nome_fantasia || "",
+              cnpj_cpf: c.cnpj_cpf || "",
+              codigo_vendedor: c.recomendacoes?.codigo_vendedor || c.codigo_vendedor || null,
+              endereco: c.endereco || "",
+              endereco_numero: c.endereco_numero || "",
+              complemento: c.complemento || "",
+              bairro: c.bairro || "",
+              cidade: c.cidade || "",
+              estado: c.estado || "",
+              cep: c.cep || "",
+              telefone: c.telefone1_ddd && c.telefone1_numero ? `(${c.telefone1_ddd}) ${c.telefone1_numero}` : "",
+              contato: c.contato || "",
+              tags: (c.tags || []).map((t: any) => t.tag || t),
+              atividade: c.atividade || "",
+            });
       }
     }
   } catch (e) {
