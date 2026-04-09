@@ -968,6 +968,44 @@ serve(async (req) => {
         break;
       }
 
+      case "buscar_logos_empresas": {
+        const logos: Record<string, string | null> = {};
+        const accounts = getOmieAccounts();
+        const accountLabels: Record<string, string> = {
+          "Colacor (Afiação)": "afiacao",
+          "Oben (Vendas)": "oben",
+          "Colacor (Vendas)": "colacor",
+        };
+        for (const account of accounts) {
+          const label = accountLabels[account.name] || account.name;
+          try {
+            const empresaResult = await callOmieApiWithCredentials(
+              "geral/empresas/",
+              "ListarEmpresas",
+              { pagina: 1, registros_por_pagina: 1 },
+              account.appKey,
+              account.appSecret
+            ) as unknown as Record<string, unknown>;
+            console.log(`[buscar_logos] ${account.name} response keys:`, JSON.stringify(Object.keys(empresaResult)));
+            const empresas = (empresaResult?.empresas_cadastro || empresaResult?.empresa_cadastro) as Array<Record<string, unknown>> | undefined;
+            if (empresas && empresas.length > 0) {
+              const empresa = empresas[0];
+              console.log(`[buscar_logos] ${account.name} empresa keys:`, JSON.stringify(Object.keys(empresa)));
+              // Try multiple possible field names
+              logos[label] = (empresa.cUrlLogoEmpresa || empresa.logo || empresa.cLogoBase64 || empresa.url_logo || null) as string | null;
+            } else {
+              console.log(`[buscar_logos] ${account.name} no empresas found in response`);
+              logos[label] = null;
+            }
+          } catch (e) {
+            console.error(`[buscar_logos] Erro em ${account.name}:`, e);
+            logos[label] = null;
+          }
+        }
+        result = { logos };
+        break;
+      }
+
       case "validar_vendedor": {
         const { cnpj_cpf } = body;
         if (!cnpj_cpf || typeof cnpj_cpf !== "string") {

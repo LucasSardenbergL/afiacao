@@ -59,7 +59,7 @@ function getPeriod(dateStr: string): 'manha' | 'tarde' {
   return h < 12 ? 'manha' : 'tarde';
 }
 
-function buildPrintData(order: SalesOrderRow, company: CompanyFilter): PrintOrderData {
+function buildPrintData(order: SalesOrderRow, company: CompanyFilter, logoUrls?: Record<string, string | null>): PrintOrderData {
   const isOben = company === 'oben';
   const companyMap: Record<CompanyFilter, { name: string; cnpj: string; phone: string; address: string }> = {
     oben: {
@@ -93,6 +93,7 @@ function buildPrintData(order: SalesOrderRow, company: CompanyFilter): PrintOrde
     companyCnpj: c.cnpj,
     companyPhone: c.phone,
     companyAddress: c.address,
+    companyLogoUrl: logoUrls?.[company] || undefined,
     orderNumber: order.omie_numero_pedido || order.id.slice(0, 8).toUpperCase(),
     date: format(new Date(order.created_at), "dd/MM/yyyy HH:mm", { locale: ptBR }),
     customerName: order.customer_name || 'Cliente',
@@ -131,6 +132,20 @@ const SalesPrintDashboard = () => {
 
   const dayStart = startOfDay(selectedDate).toISOString();
   const dayEnd = endOfDay(selectedDate).toISOString();
+
+  // Fetch company logos from Omie
+  const { data: companyLogos = {} } = useQuery({
+    queryKey: ['sales-print-company-logos'],
+    queryFn: async () => {
+      try {
+        const { data } = await supabase.functions.invoke('omie-cliente', {
+          body: { action: 'buscar_logos_empresas' },
+        });
+        return (data?.logos || {}) as Record<string, string | null>;
+      } catch (_) { return {}; }
+    },
+    staleTime: 1000 * 60 * 60 * 24, // cache 24h
+  });
 
   // Fetch sales_orders for the selected date
   // Fetch payment terms map (code -> description)
@@ -428,16 +443,22 @@ const SalesPrintDashboard = () => {
 
     // Build combined HTML for all selected orders
     const allPages = toPrint.map(o => {
-      const printData = buildPrintData(o, o._company);
+      const printData = buildPrintData(o, o._company, companyLogos);
       return buildSingleOrderHtml(printData);
     });
 
     const html = `<!DOCTYPE html>
 <html><head><meta charset="utf-8"><title>Impressão de Pedidos - ${format(selectedDate, 'dd/MM/yyyy')}</title>
 <style>
-  @media print { @page { margin: 1.5cm; } body { -webkit-print-color-adjust: exact; print-color-adjust: exact; } .page-break { page-break-after: always; } }
+  @media print {
+    @page { margin: 0; size: A4; }
+    body { -webkit-print-color-adjust: exact; print-color-adjust: exact; padding: 1.5cm; }
+    .page-break { page-break-after: always; }
+  }
   body { font-family: Helvetica, Arial, sans-serif; color: #1a1a1a; margin: 0; padding: 20px; }
   .header { display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 16px; border-bottom: 1px solid #ccc; padding-bottom: 12px; }
+  .header-left { display: flex; align-items: center; gap: 12px; }
+  .company-logo { max-height: 50px; max-width: 120px; object-fit: contain; }
   .company-name { font-size: 22px; font-weight: bold; }
   .company-info { font-size: 10px; color: #666; margin-top: 2px; }
   .order-box { background: #e91e63; color: white; border-radius: 4px; padding: 8px 20px; text-align: center; }
@@ -468,7 +489,7 @@ ${allPages.join('\n<div class="page-break"></div>\n')}
   };
 
   const printSingle = (order: typeof filteredOrders[0]) => {
-    openPrintOrder(buildPrintData(order, order._company));
+    openPrintOrder(buildPrintData(order, order._company, companyLogos));
   };
 
   const isLoading = loadingSales || loadingAfiacao;
@@ -702,10 +723,13 @@ function buildSingleOrderHtml(data: PrintOrderData): string {
 
   return `<div>
 <div class="header">
-  <div>
-    <div class="company-name">${data.companyName}</div>
-    <div class="company-info">CNPJ: ${data.companyCnpj} • Tel: ${data.companyPhone}</div>
-    <div class="company-info">${data.companyAddress}</div>
+  <div class="header-left">
+    ${data.companyLogoUrl ? `<img src="${data.companyLogoUrl}" class="company-logo" crossorigin="anonymous" />` : ''}
+    <div>
+      <div class="company-name">${data.companyName}</div>
+      <div class="company-info">CNPJ: ${data.companyCnpj} • Tel: ${data.companyPhone}</div>
+      <div class="company-info">${data.companyAddress}</div>
+    </div>
   </div>
   <div class="order-box">
     <div class="label">PEDIDO DE VENDA</div>
