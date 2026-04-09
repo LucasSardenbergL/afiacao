@@ -82,6 +82,7 @@ export interface OmieCustomer {
   estado?: string;
   cep?: string;
   telefone?: string;
+  contato?: string;
 }
 
 export interface FormaPagamento {
@@ -526,29 +527,49 @@ export function useUnifiedOrder() {
         loadAddresses(localUserId);
         loadPriceHistory();
         // Fetch purchase history for this customer
-        supabase.from('sales_orders')
-          .select('items, created_at')
-          .eq('customer_user_id', localUserId)
-          .neq('status', 'orcamento')
-          .order('created_at', { ascending: false })
-          .limit(100)
-          .then(({ data: orders }) => {
-            if (orders && orders.length > 0) {
-              const history: Record<string, string> = {};
-              for (const order of orders) {
-                const items = order.items as any[];
-                if (Array.isArray(items)) {
-                  for (const item of items) {
-                    const code = item.codigo || item.product_code || '';
-                    if (code && !history[code]) {
-                      history[code] = order.created_at;
-                    }
+        // Fetch purchase history from sales_orders AND sales_price_history
+        Promise.all([
+          supabase.from('sales_orders')
+            .select('items, created_at')
+            .eq('customer_user_id', localUserId)
+            .neq('status', 'orcamento')
+            .order('created_at', { ascending: false })
+            .limit(100),
+          supabase.from('sales_price_history')
+            .select('product_id, created_at')
+            .eq('customer_user_id', localUserId)
+            .order('created_at', { ascending: false }),
+        ]).then(([ordersRes, priceHistRes]) => {
+          const history: Record<string, string> = {};
+          // From sales_orders items (by codigo)
+          if (ordersRes.data) {
+            for (const order of ordersRes.data) {
+              const items = order.items as any[];
+              if (Array.isArray(items)) {
+                for (const item of items) {
+                  const code = item.codigo || item.product_code || '';
+                  if (code && !history[code]) {
+                    history[code] = order.created_at;
+                  }
+                  // Also store by product_id for cross-reference
+                  const pid = item.product_id || '';
+                  if (pid && !history[`pid:${pid}`]) {
+                    history[`pid:${pid}`] = order.created_at;
                   }
                 }
               }
-              setCustomerPurchaseHistory(history);
             }
-          });
+          }
+          // From sales_price_history (by product_id)
+          if (priceHistRes.data) {
+            for (const row of priceHistRes.data) {
+              if (!history[`pid:${row.product_id}`]) {
+                history[`pid:${row.product_id}`] = row.created_at;
+              }
+            }
+          }
+          setCustomerPurchaseHistory(history);
+        });
       }
 
       const [
@@ -869,13 +890,16 @@ export function useUnifiedOrder() {
   }, [serviceItems, getServicePrice]);
   const totalEstimated = obenSubtotal + colacorProdSubtotal + serviceSubtotal;
 
+  const getProductLastOrderDate = useCallback((product: Product): string | null => {
+    return customerPurchaseHistory[product.codigo] || customerPurchaseHistory[`pid:${product.id}`] || null;
+  }, [customerPurchaseHistory]);
+
   const filteredObenProducts = useMemo(() => {
     const hasPurchaseHistory = Object.keys(customerPurchaseHistory).length > 0;
     const sorted = [...obenProducts].sort((a, b) => {
-      // Previously purchased items first
       if (hasPurchaseHistory) {
-        const aHist = !!customerPurchaseHistory[a.codigo];
-        const bHist = !!customerPurchaseHistory[b.codigo];
+        const aHist = !!getProductLastOrderDate(a);
+        const bHist = !!getProductLastOrderDate(b);
         if (aHist && !bHist) return -1;
         if (!aHist && bHist) return 1;
       }
@@ -888,14 +912,14 @@ export function useUnifiedOrder() {
       p.descricao.toLowerCase().includes(productSearch.toLowerCase()) ||
       p.codigo.toLowerCase().includes(productSearch.toLowerCase())
     ).slice(0, 50);
-  }, [obenProducts, productSearch, customerPurchaseHistory]);
+  }, [obenProducts, productSearch, customerPurchaseHistory, getProductLastOrderDate]);
 
   const filteredColacorProducts = useMemo(() => {
     const hasPurchaseHistory = Object.keys(customerPurchaseHistory).length > 0;
     const sorted = [...colacorProducts].sort((a, b) => {
       if (hasPurchaseHistory) {
-        const aHist = !!customerPurchaseHistory[a.codigo];
-        const bHist = !!customerPurchaseHistory[b.codigo];
+        const aHist = !!getProductLastOrderDate(a);
+        const bHist = !!getProductLastOrderDate(b);
         if (aHist && !bHist) return -1;
         if (!aHist && bHist) return 1;
       }
@@ -908,7 +932,7 @@ export function useUnifiedOrder() {
       p.descricao.toLowerCase().includes(productSearch.toLowerCase()) ||
       p.codigo.toLowerCase().includes(productSearch.toLowerCase())
     ).slice(0, 50);
-  }, [colacorProducts, productSearch, customerPurchaseHistory]);
+  }, [colacorProducts, productSearch, customerPurchaseHistory, getProductLastOrderDate]);
 
   const availableTools = useMemo(() =>
     userTools.filter(t => !cart.some(c => c.type === 'service' && (c as ServiceCartItem).userTool.id === t.id)),

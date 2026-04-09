@@ -263,6 +263,7 @@ async function listarClientesVendas(searchTerm: string, account: Account = "oben
     estado: string;
     cep: string;
     telefone: string;
+    contato: string;
   }> = [];
 
   // Try searching by name first
@@ -296,6 +297,7 @@ async function listarClientesVendas(searchTerm: string, account: Account = "oben
           estado: c.estado || "",
           cep: c.cep || "",
           telefone: c.telefone1_ddd && c.telefone1_numero ? `(${c.telefone1_ddd}) ${c.telefone1_numero}` : "",
+          contato: c.contato || "",
         });
       }
     }
@@ -337,6 +339,7 @@ async function listarClientesVendas(searchTerm: string, account: Account = "oben
               estado: c.estado || "",
               cep: c.cep || "",
               telefone: c.telefone1_ddd && c.telefone1_numero ? `(${c.telefone1_ddd}) ${c.telefone1_numero}` : "",
+              contato: c.contato || "",
             });
           }
         }
