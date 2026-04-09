@@ -325,7 +325,7 @@ const SalesOrderEdit = () => {
                         className="w-full text-left px-2 py-1.5 rounded hover:bg-accent text-sm flex items-center justify-between gap-2"
                       >
                         <div className="min-w-0 flex-1">
-                          <p className="truncate font-medium">{p.descricao}</p>
+                          <p className="font-medium text-wrap break-words">{p.descricao}</p>
                           <p className="text-xs text-muted-foreground">{p.codigo} • {p.unidade}</p>
                         </div>
                         <span className="text-xs font-medium shrink-0">
