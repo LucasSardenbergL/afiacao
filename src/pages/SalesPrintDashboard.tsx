@@ -340,10 +340,12 @@ const SalesPrintDashboard = () => {
         const addr = addressMap.get(custId);
         const fullAddress = (o as any).customer_address || addr || '';
 
-        // Extract cond_pagamento from omie_payload if not set directly
+        // Extract cond_pagamento description from formas map
         const payload = (o as any).omie_payload;
+        const parcelaCode = payload?.cabecalho?.codigo_parcela;
         const condPagamento = (o as any).cond_pagamento
-          || payload?.cabecalho?.codigo_parcela
+          || (parcelaCode && formasMap[parcelaCode])
+          || parcelaCode
           || undefined;
 
         return {
