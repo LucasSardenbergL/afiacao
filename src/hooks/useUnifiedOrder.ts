@@ -73,6 +73,15 @@ export interface OmieCustomer {
   codigo_vendedor_colacor?: number | null;
   codigo_cliente_afiacao?: number | null;
   codigo_vendedor_afiacao?: number | null;
+  // Address fields from Omie
+  endereco?: string;
+  endereco_numero?: string;
+  complemento?: string;
+  bairro?: string;
+  cidade?: string;
+  estado?: string;
+  cep?: string;
+  telefone?: string;
 }
 
 export interface FormaPagamento {
@@ -1070,10 +1079,12 @@ export function useUnifiedOrder() {
       const selectedAddr = addresses.find(a => a.id === selectedAddress);
       const fullCustomerAddress = selectedAddr
         ? `${selectedAddr.street}, ${selectedAddr.number}${selectedAddr.complement ? ' - ' + selectedAddr.complement : ''} – ${selectedAddr.neighborhood}, ${selectedAddr.city}/${selectedAddr.state} – CEP: ${selectedAddr.zipCode}`
-        : undefined;
+        : selectedCustomer.endereco
+          ? `${selectedCustomer.endereco}, ${selectedCustomer.endereco_numero || 'S/N'}${selectedCustomer.complemento ? ' - ' + selectedCustomer.complemento : ''} – ${selectedCustomer.bairro || ''}, ${selectedCustomer.cidade || ''}/${selectedCustomer.estado || ''} – CEP: ${selectedCustomer.cep || ''}`
+          : undefined;
 
-      // Fetch customer phone from profile
-      let customerPhone = '';
+      // Fetch customer phone from profile, fallback to Omie data
+      let customerPhone = selectedCustomer.telefone || '';
       const custUserId = customerUserId || user?.id;
       if (custUserId) {
         const { data: custProfile } = await supabase.from('profiles').select('phone').eq('user_id', custUserId).maybeSingle();
