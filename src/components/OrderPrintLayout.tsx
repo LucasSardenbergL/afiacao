@@ -159,9 +159,7 @@ export function openPrintOrder(data: PrintOrderData) {
     ${data.customerAddress ? `<div class="customer-info" style="margin-top:4px"><strong>Endereço:</strong> ${data.customerAddress}</div>` : ''}
   </div>
   <div class="right-info">
-    ${data.vendedorName ? `Vendedor: ${data.vendedorName}<br/>` : ''}
-    ${data.condPagamento ? `Cond. Pgto: ${data.condPagamento}` : ''}
-    ${installmentText ? `<div class="installments" style="margin-top:6px;text-align:left"><strong>Vencimentos:</strong><br/>${installmentText}</div>` : ''}
+    ${data.vendedorName ? `Vendedor: ${data.vendedorName}` : ''}
   </div>
 </div>
 
@@ -185,6 +183,12 @@ export function openPrintOrder(data: PrintOrderData) {
   
   <div class="row total-row"><span>TOTAL:</span><span>${fmt(data.total)}</span></div>
 </div>
+
+${data.condPagamento || installmentText ? `
+<div class="section-title">CONDIÇÃO DE PAGAMENTO</div>
+<div style="font-size:11px;margin-bottom:4px">${data.condPagamento ? `<strong>Prazo:</strong> ${data.condPagamento}` : ''}</div>
+${installmentText ? `<div class="installments"><strong>Vencimentos:</strong><br/>${installmentText}</div>` : ''}
+` : ''}
 
 ${obs ? `
 <div class="section-title">OBSERVAÇÕES</div>

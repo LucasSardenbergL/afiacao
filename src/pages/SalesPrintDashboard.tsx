@@ -721,9 +721,7 @@ function buildSingleOrderHtml(data: PrintOrderData): string {
     ${data.customerAddress ? `<div class="customer-info" style="margin-top:4px"><strong>Endereço:</strong> ${data.customerAddress}</div>` : ''}
   </div>
   <div class="right-info">
-    ${data.vendedorName ? `Vendedor: ${data.vendedorName}<br/>` : ''}
-    ${data.condPagamento ? `Cond. Pgto: ${data.condPagamento}` : ''}
-    ${installmentText ? `<div style="font-size:10px;color:#333;margin-top:6px;text-align:left;background:#f8f8f8;padding:6px 10px;border-radius:2px;border-left:3px solid #e91e63"><strong>Vencimentos:</strong><br/>${installmentText}</div>` : ''}
+    ${data.vendedorName ? `Vendedor: ${data.vendedorName}` : ''}
   </div>
 </div>
 <div class="section-title">ITENS DO PEDIDO</div>
@@ -742,6 +740,11 @@ function buildSingleOrderHtml(data: PrintOrderData): string {
   
   <div class="row total-row"><span>TOTAL:</span><span>${fmt(data.total)}</span></div>
 </div>
+${data.condPagamento || installmentText ? `
+<div class="section-title">CONDIÇÃO DE PAGAMENTO</div>
+<div style="font-size:11px;margin-bottom:4px">${data.condPagamento ? `<strong>Prazo:</strong> ${data.condPagamento}` : ''}</div>
+${installmentText ? `<div style="font-size:10px;color:#333;background:#f8f8f8;padding:6px 10px;border-radius:2px;border-left:3px solid #e91e63"><strong>Vencimentos:</strong><br/>${installmentText}</div>` : ''}
+` : ''}
 ${obs ? `<div class="section-title">OBSERVAÇÕES</div><div class="obs-box">${obs.replace(/\n/g, '<br/>')}</div>` : ''}
 <div class="footer">Documento gerado automaticamente pelo sistema • ${data.date}</div>
 </div>`;
