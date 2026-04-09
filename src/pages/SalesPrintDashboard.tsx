@@ -1,4 +1,5 @@
 import { useState, useMemo } from 'react';
+import { addDays } from 'date-fns';
 import { useNavigate } from 'react-router-dom';
 import { Header } from '@/components/Header';
 import { BottomNav } from '@/components/BottomNav';
@@ -83,6 +84,10 @@ function buildPrintData(order: SalesOrderRow, company: CompanyFilter): PrintOrde
 
   const c = companyMap[company];
 
+  // Extract parcelaCode from omie_payload
+  const payload = (order as any).omie_payload;
+  const parcelaCode = payload?.cabecalho?.codigo_parcela || undefined;
+
   return {
     companyName: c.name,
     companyCnpj: c.cnpj,
@@ -96,6 +101,7 @@ function buildPrintData(order: SalesOrderRow, company: CompanyFilter): PrintOrde
     customerAddress: order.customer_address,
     vendedorName: order.vendedor_name,
     condPagamento: order.cond_pagamento,
+    parcelaCode,
     items: (order.items || []).map((it: any) => ({
       codigo: it.codigo || it.omie_codigo || '-',
       descricao: it.descricao || it.nome || '',
@@ -243,12 +249,20 @@ const SalesPrintDashboard = () => {
         const fullAddress = (o as any).customer_address || (addr
           ? `${addr.street}, ${addr.number}${addr.complement ? ' - ' + addr.complement : ''} – ${addr.neighborhood}, ${addr.city}/${addr.state} – CEP: ${addr.zip_code}`
           : '');
+
+        // Extract cond_pagamento from omie_payload if not set directly
+        const payload = (o as any).omie_payload;
+        const condPagamento = (o as any).cond_pagamento
+          || payload?.cabecalho?.codigo_parcela
+          || undefined;
+
         return {
           ...o,
           customer_name: (o as any).customer_name || profile?.name || 'Cliente',
           customer_document: (o as any).customer_document || profile?.document || '',
           customer_phone: (o as any).customer_phone || profile?.phone || '',
           customer_address: fullAddress,
+          cond_pagamento: condPagamento,
         };
       });
   }, [allOrdersRaw, selectedCompanies, selectedPeriod, profileMap, addressMap]);
@@ -516,6 +530,30 @@ ${allPages.join('\n<div class="page-break"></div>\n')}
 function buildSingleOrderHtml(data: PrintOrderData): string {
   const fmt = (v: number) => v.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' });
 
+  // Build installment dates
+  const parseParcelaDays = (codeOrDesc?: string): number[] => {
+    if (!codeOrDesc) return [];
+    const clean = codeOrDesc.trim();
+    if (clean === '000' || clean === '999' || /vista/i.test(clean)) return [];
+    const matches = clean.match(/\b(\d{1,3})\b/g);
+    if (!matches) return [];
+    return matches.map(s => parseInt(s, 10)).filter(n => n > 0 && n <= 365);
+  };
+
+  let days = parseParcelaDays(data.condPagamento);
+  if (days.length === 0) days = parseParcelaDays(data.parcelaCode);
+  let installmentText = '';
+  if (days.length > 0) {
+    const today = new Date();
+    const parcValue = data.total && days.length > 0 ? data.total / days.length : 0;
+    installmentText = days.map((d, i) => {
+      const dueDate = addDays(today, d);
+      const dateStr = `${String(dueDate.getDate()).padStart(2, '0')}/${String(dueDate.getMonth() + 1).padStart(2, '0')}/${dueDate.getFullYear()}`;
+      const valStr = parcValue > 0 ? ` – ${fmt(parcValue)}` : '';
+      return `${i + 1}ª parcela: ${dateStr}${valStr}`;
+    }).join(' | ');
+  }
+
   const itemsRows = data.items.map((item, i) => {
     const descLines = [item.descricao];
     if (item.tintCorId && item.tintNomeCor) {
@@ -561,11 +599,12 @@ function buildSingleOrderHtml(data: PrintOrderData): string {
   <div>
     <div class="customer-name">${data.customerName}</div>
     <div class="customer-info">CPF/CNPJ: ${data.customerDocument || 'N/A'}${data.customerPhone ? ' • Tel: ' + data.customerPhone : ''}</div>
-    ${data.customerAddress ? `<div class="customer-info">${data.customerAddress}</div>` : ''}
+    ${data.customerAddress ? `<div class="customer-info" style="margin-top:4px"><strong>Endereço:</strong> ${data.customerAddress}</div>` : ''}
   </div>
   <div class="right-info">
     ${data.vendedorName ? `Vendedor: ${data.vendedorName}<br/>` : ''}
     ${data.condPagamento ? `Cond. Pgto: ${data.condPagamento}` : ''}
+    ${installmentText ? `<div style="font-size:10px;color:#333;margin-top:6px;text-align:left;background:#f8f8f8;padding:6px 10px;border-radius:2px;border-left:3px solid #e91e63"><strong>Vencimentos:</strong><br/>${installmentText}</div>` : ''}
   </div>
 </div>
 <div class="section-title">ITENS DO PEDIDO</div>
