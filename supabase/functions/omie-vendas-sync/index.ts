@@ -1182,10 +1182,12 @@ serve(async (req) => {
         const updatedSubtotal = updatedItemsPayload.reduce((s: number, i: any) => s + i.valor_total, 0);
 
         // Build Omie payload
-        const editCodIntPed = `PV_EDIT_${editSoId.substring(0, 8)}_${Date.now()}`;
+        const editTs = Date.now().toString(36);
+        const editCodIntPed = `PE${editSoId.substring(0, 8)}_${editTs}`;
         const editDet = editItems.map((item: any, index: number) => {
+          const itemCode = `${editCodIntPed}_${index + 1}`;
           const entry: Record<string, unknown> = {
-            ide: { codigo_item_integracao: `${editCodIntPed}_${index + 1}` },
+            ide: { codigo_item_integracao: itemCode.substring(0, 30) },
             produto: {
               codigo_produto: item.omie_codigo_produto,
               quantidade: item.quantidade,
