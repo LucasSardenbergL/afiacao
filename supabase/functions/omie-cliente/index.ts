@@ -968,6 +968,35 @@ serve(async (req) => {
         break;
       }
 
+      case "buscar_logos_empresas": {
+        const logos: Record<string, string | null> = {};
+        const accounts = getOmieAccounts();
+        const accountLabels: Record<string, string> = {
+          "Colacor (Afiação)": "afiacao",
+          "Oben (Vendas)": "oben",
+          "Colacor (Vendas)": "colacor",
+        };
+        for (const account of accounts) {
+          const label = accountLabels[account.name] || account.name;
+          try {
+            const empresaResult = await callOmieApiWithCredentials(
+              "geral/empresas/",
+              "ListarEmpresas",
+              { pagina: 1, registros_por_pagina: 1 },
+              account.appKey,
+              account.appSecret
+            ) as unknown as { empresas_cadastro?: Array<{ logo?: string; cUrlLogoEmpresa?: string }> };
+            const empresa = empresaResult?.empresas_cadastro?.[0];
+            logos[label] = empresa?.cUrlLogoEmpresa || empresa?.logo || null;
+          } catch (e) {
+            console.error(`[buscar_logos] Erro em ${account.name}:`, e);
+            logos[label] = null;
+          }
+        }
+        result = { logos };
+        break;
+      }
+
       case "validar_vendedor": {
         const { cnpj_cpf } = body;
         if (!cnpj_cpf || typeof cnpj_cpf !== "string") {
