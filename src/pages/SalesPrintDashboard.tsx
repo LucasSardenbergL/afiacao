@@ -296,17 +296,16 @@ const SalesPrintDashboard = () => {
       for (const userId of customersMissingAddress) {
         let codigoCliente = omieClienteMap.get(userId);
         
-        // If still no codigo_cliente, try to get it by consulting the order in Omie
+        // If no codigo_cliente, try searching by document (CNPJ/CPF)
         if (!codigoCliente) {
-          const order = allOrdersRaw.find(o => (o.customer_user_id || (o as any).user_id) === userId);
-          const omieId = (order as any)?.omie_pedido_id;
-          const account = (order as any)?.account || 'oben';
-          if (omieId) {
+          const profile = profileMap.get(userId);
+          const doc = profile?.document;
+          if (doc) {
             try {
-              const { data } = await supabase.functions.invoke('omie-vendas-sync', {
-                body: { action: 'consultar_pedido', account, codigo_pedido: omieId },
+              const { data } = await supabase.functions.invoke('omie-cliente', {
+                body: { action: 'buscar_por_documento', documento: doc },
               });
-              const cc = data?.pedido?.cabecalho?.codigo_cliente;
+              const cc = data?.cliente?.codigo_cliente_omie;
               if (cc) codigoCliente = cc;
             } catch (_) { /* ignore */ }
           }
