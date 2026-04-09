@@ -133,6 +133,26 @@ const SalesPrintDashboard = () => {
   const dayEnd = endOfDay(selectedDate).toISOString();
 
   // Fetch sales_orders for the selected date
+  // Fetch payment terms map (code -> description)
+  const { data: formasMap = {} } = useQuery({
+    queryKey: ['sales-print-formas-pagamento'],
+    queryFn: async () => {
+      const result: Record<string, string> = {};
+      for (const acc of ['oben', 'colacor'] as const) {
+        try {
+          const { data } = await supabase.functions.invoke('omie-vendas-sync', {
+            body: { action: 'listar_formas_pagamento', account: acc },
+          });
+          if (data?.formas) {
+            data.formas.forEach((f: any) => { result[f.codigo] = f.descricao; });
+          }
+        } catch (_) { /* ignore */ }
+      }
+      return result;
+    },
+    staleTime: 1000 * 60 * 30, // cache 30 min
+  });
+
   const { data: salesOrders = [], isLoading: loadingSales } = useQuery({
     queryKey: ['sales-print', 'sales', dayStart],
     queryFn: async () => {
