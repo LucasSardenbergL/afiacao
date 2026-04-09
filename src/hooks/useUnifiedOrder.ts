@@ -919,6 +919,7 @@ export function useUnifiedOrder() {
     if (prices[product.omie_codigo_produto]) return true;
     if (customerPurchaseHistory[product.codigo]) return true;
     if (customerPurchaseHistory[`pid:${product.id}`]) return true;
+    if (customerPurchaseHistory[`omie:${product.omie_codigo_produto}`]) return true;
     return false;
   }, [customerPricesOben, customerPricesColacor, customerPurchaseHistory]);
 
