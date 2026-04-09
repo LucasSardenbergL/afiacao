@@ -83,6 +83,10 @@ function buildPrintData(order: SalesOrderRow, company: CompanyFilter): PrintOrde
 
   const c = companyMap[company];
 
+  // Extract parcelaCode from omie_payload
+  const payload = (order as any).omie_payload;
+  const parcelaCode = payload?.cabecalho?.codigo_parcela || undefined;
+
   return {
     companyName: c.name,
     companyCnpj: c.cnpj,
@@ -96,6 +100,7 @@ function buildPrintData(order: SalesOrderRow, company: CompanyFilter): PrintOrde
     customerAddress: order.customer_address,
     vendedorName: order.vendedor_name,
     condPagamento: order.cond_pagamento,
+    parcelaCode,
     items: (order.items || []).map((it: any) => ({
       codigo: it.codigo || it.omie_codigo || '-',
       descricao: it.descricao || it.nome || '',
