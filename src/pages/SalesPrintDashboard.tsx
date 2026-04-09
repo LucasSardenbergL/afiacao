@@ -318,9 +318,7 @@ const SalesPrintDashboard = () => {
         const custId = o.customer_user_id || (o as any).user_id;
         const profile = profileMap.get(custId);
         const addr = addressMap.get(custId);
-        const fullAddress = (o as any).customer_address || (addr
-          ? `${addr.street}, ${addr.number}${addr.complement ? ' - ' + addr.complement : ''} – ${addr.neighborhood}, ${addr.city}/${addr.state} – CEP: ${addr.zip_code}`
-          : '');
+        const fullAddress = (o as any).customer_address || addr || '';
 
         // Extract cond_pagamento from omie_payload if not set directly
         const payload = (o as any).omie_payload;
