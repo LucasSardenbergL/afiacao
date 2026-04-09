@@ -263,6 +263,7 @@ async function listarClientesVendas(searchTerm: string, account: Account = "oben
     estado: string;
     cep: string;
     telefone: string;
+    contato: string;
   }> = [];
 
   // Try searching by name first
