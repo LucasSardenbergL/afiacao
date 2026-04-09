@@ -608,7 +608,20 @@ export function useUnifiedOrder() {
       }
       setSelectedCustomer({ ...cust });
 
-      // Fetch Omie order history (runs in background, merges into purchase history)
+      // Save customer segment/tags to DB in background
+      if (cust.codigo_cliente && (cust.tags?.length || cust.atividade)) {
+        supabase.functions.invoke('omie-vendas-sync', {
+          body: {
+            action: 'salvar_segmento_cliente',
+            codigo_cliente: cust.codigo_cliente,
+            account: 'oben',
+            tags: cust.tags || [],
+            atividade: cust.atividade || '',
+          },
+        }).catch(() => {});
+      }
+
+      // Fetch Omie order history (runs in background, merges into purchase history + saves preferred items)
       const omieHistoryPromises: Promise<any>[] = [];
       if (cust.codigo_cliente) {
         omieHistoryPromises.push(
