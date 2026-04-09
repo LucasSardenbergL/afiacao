@@ -50,6 +50,11 @@ interface OmieProduct {
   descricao: string;
   unidade: string;
   valor_unitario: number;
+  estoque: number;
+  ativo: boolean;
+  account?: string;
+  is_tintometric?: boolean;
+  tint_type?: string;
 }
 
 const BLOCKED_STATUSES = ['cancelado', 'entregue', 'faturado'];
