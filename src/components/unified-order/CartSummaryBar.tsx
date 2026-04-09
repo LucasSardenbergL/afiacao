@@ -148,8 +148,9 @@ export function CartSummaryBar({
   notes, setNotes,
   volumesOben, volumesColacor,
   ordemCompra, setOrdemCompra, isOrdemCompraCustomer,
-  onSubmit,
+  onSubmit, onSubmitQuote,
 }: CartSummaryBarProps) {
+  const hasOnlyProducts = (obenProductItems.length > 0 || colacorProductItems.length > 0) && serviceItems.length === 0;
   const disableSubmit = submitting || serviceItems.some(s => !s.servico) || vendedorDivergencias.length > 0;
 
   return (
