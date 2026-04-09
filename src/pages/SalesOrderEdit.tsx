@@ -1,6 +1,8 @@
 import { useState, useEffect, useMemo } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { Header } from '@/components/Header';
+import { TintColorSelectDialog } from '@/components/TintColorSelectDialog';
+import type { Product } from '@/hooks/useUnifiedOrder';
 import { BottomNav } from '@/components/BottomNav';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
@@ -48,6 +50,11 @@ interface OmieProduct {
   descricao: string;
   unidade: string;
   valor_unitario: number;
+  estoque: number;
+  ativo: boolean;
+  account?: string;
+  is_tintometric?: boolean;
+  tint_type?: string;
 }
 
 const BLOCKED_STATUSES = ['cancelado', 'entregue', 'faturado'];
@@ -71,6 +78,9 @@ const SalesOrderEdit = () => {
   const [productSearch, setProductSearch] = useState('');
   const [catalogProducts, setCatalogProducts] = useState<OmieProduct[]>([]);
   const [loadingProducts, setLoadingProducts] = useState(false);
+  // Tint color dialog
+  const [tintPendingProduct, setTintPendingProduct] = useState<OmieProduct | null>(null);
+  const [customerUserId, setCustomerUserId] = useState<string | null>(null);
 
   useEffect(() => {
     if (id) loadOrder();
@@ -97,6 +107,7 @@ const SalesOrderEdit = () => {
         .eq('user_id', o.customer_user_id)
         .single();
       if (profile) setCustomerName(profile.name || '');
+      setCustomerUserId(o.customer_user_id);
 
       const account = o.account === 'colacor' ? 'colacor' : 'oben';
       
@@ -106,7 +117,7 @@ const SalesOrderEdit = () => {
           body: { action: 'listar_formas_pagamento', account },
         }),
         supabase.from('omie_products')
-          .select('id, omie_codigo_produto, codigo, descricao, unidade, valor_unitario')
+          .select('id, omie_codigo_produto, codigo, descricao, unidade, valor_unitario, estoque, ativo, account, is_tintometric, tint_type')
           .eq('account', account === 'colacor' ? 'colacor_vendas' : 'oben')
           .eq('ativo', true)
           .order('descricao')
@@ -141,8 +152,14 @@ const SalesOrderEdit = () => {
   };
 
   const addProduct = (product: OmieProduct) => {
-    // Check if already in items
-    const exists = items.some(i => i.omie_codigo_produto === product.omie_codigo_produto);
+    // If tintometric base, open color dialog
+    if (product.is_tintometric && product.tint_type === 'base') {
+      setTintPendingProduct(product);
+      setShowAddProduct(false);
+      setProductSearch('');
+      return;
+    }
+    const exists = items.some(i => i.omie_codigo_produto === product.omie_codigo_produto && !i.tint_cor_id);
     if (exists) {
       toast.error('Este produto já está no pedido');
       return;
@@ -162,6 +179,44 @@ const SalesOrderEdit = () => {
     setProductSearch('');
     toast.success(`"${product.descricao}" adicionado`);
   };
+
+  const handleTintConfirm = (formulaId: string, corId: string, nomeCor: string, precoFinal: number, custoCorantes: number, alternativeProduct?: Product) => {
+    const product = alternativeProduct
+      ? catalogProducts.find(p => p.id === alternativeProduct.id) || tintPendingProduct!
+      : tintPendingProduct!;
+    const newItem: OrderItem = {
+      product_id: product.id,
+      omie_codigo_produto: product.omie_codigo_produto,
+      codigo: product.codigo,
+      descricao: product.descricao,
+      unidade: product.unidade || 'UN',
+      quantidade: 1,
+      valor_unitario: precoFinal,
+      valor_total: precoFinal,
+      tint_cor_id: corId,
+      tint_nome_cor: nomeCor,
+    };
+    setItems(prev => [...prev, newItem]);
+    setTintPendingProduct(null);
+    toast.success(`"${product.descricao}" com cor ${corId} adicionado`);
+  };
+
+  const tintProductAsProduct = useMemo((): Product | null => {
+    if (!tintPendingProduct) return null;
+    return {
+      id: tintPendingProduct.id,
+      codigo: tintPendingProduct.codigo,
+      descricao: tintPendingProduct.descricao,
+      unidade: tintPendingProduct.unidade,
+      valor_unitario: tintPendingProduct.valor_unitario,
+      estoque: tintPendingProduct.estoque ?? 0,
+      ativo: tintPendingProduct.ativo ?? true,
+      omie_codigo_produto: tintPendingProduct.omie_codigo_produto,
+      account: tintPendingProduct.account,
+      is_tintometric: tintPendingProduct.is_tintometric,
+      tint_type: tintPendingProduct.tint_type,
+    };
+  }, [tintPendingProduct]);
 
   const filteredProducts = useMemo(() => {
     if (!productSearch || productSearch.length < 2) return [];
@@ -468,6 +523,17 @@ const SalesOrderEdit = () => {
       </main>
 
       <BottomNav />
+
+      {/* Tint Color Dialog */}
+      {tintProductAsProduct && (
+        <TintColorSelectDialog
+          product={tintProductAsProduct}
+          open={!!tintPendingProduct}
+          onClose={() => setTintPendingProduct(null)}
+          onConfirm={handleTintConfirm}
+          customerUserId={customerUserId}
+        />
+      )}
     </div>
   );
 };
