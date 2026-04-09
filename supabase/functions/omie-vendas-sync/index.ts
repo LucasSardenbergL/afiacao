@@ -1215,10 +1215,8 @@ serve(async (req) => {
         });
 
         const origPayload = existingOrder.omie_payload as any;
-        const origCodIntPed = origPayload?.cabecalho?.codigo_pedido_integracao || editCodIntPed;
         const editCabecalho: Record<string, unknown> = {
           codigo_pedido: Number(existingOrder.omie_pedido_id),
-          codigo_pedido_integracao: origCodIntPed,
           data_previsao: new Date().toISOString().split("T")[0].split("-").reverse().join("/"),
           etapa: "10",
           codigo_parcela: editParcela || "999",
