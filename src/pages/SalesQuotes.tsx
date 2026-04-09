@@ -38,7 +38,7 @@ const SalesQuotes = () => {
     enabled: !!user,
   });
 
-  // Fetch customer names
+  // Fetch customer names from profiles
   const customerIds = [...new Set((quotes || []).map(q => q.customer_user_id))];
   const { data: profiles } = useQuery({
     queryKey: ['quote-profiles', customerIds],
@@ -49,19 +49,8 @@ const SalesQuotes = () => {
     },
     enabled: customerIds.length > 0,
   });
-  const { data: omieClientes } = useQuery({
-    queryKey: ['quote-omie-clientes', customerIds],
-    queryFn: async () => {
-      if (customerIds.length === 0) return [];
-      const { data } = await supabase.from('omie_clientes').select('user_id, razao_social').in('user_id', customerIds);
-      return data || [];
-    },
-    enabled: customerIds.length > 0,
-  });
 
   const getCustomerName = (userId: string) => {
-    const omie = omieClientes?.find(c => c.user_id === userId);
-    if (omie?.razao_social) return omie.razao_social;
     const profile = profiles?.find(p => p.user_id === userId);
     return profile?.name || userId.slice(0, 8);
   };
@@ -81,36 +70,29 @@ const SalesQuotes = () => {
   const convertToOrder = async (quote: any) => {
     setConverting(quote.id);
     try {
-      // Determine customer info from omie_clientes
+      // Get omie_clientes mapping
       const { data: omieClient } = await supabase
         .from('omie_clientes')
-        .select('codigo_cliente, codigo_vendedor, codigo_cliente_colacor, codigo_vendedor_colacor')
+        .select('omie_codigo_cliente, omie_codigo_vendedor')
         .eq('user_id', quote.customer_user_id)
         .maybeSingle();
 
-      const account = quote.account || 'oben';
-      const isColacor = account === 'colacor';
-      const codigoCliente = isColacor
-        ? (omieClient?.codigo_cliente_colacor || omieClient?.codigo_cliente)
-        : omieClient?.codigo_cliente;
-      const codigoVendedor = isColacor
-        ? (omieClient?.codigo_vendedor_colacor ?? omieClient?.codigo_vendedor)
-        : omieClient?.codigo_vendedor;
-
-      if (!codigoCliente) {
+      if (!omieClient?.omie_codigo_cliente) {
         toast.error('Cliente não encontrado no Omie. Verifique o cadastro.');
         return;
       }
 
+      const account = quote.account || 'oben';
+
       // Update status to rascunho
       const { error: updateError } = await supabase
         .from('sales_orders')
-        .update({ status: 'rascunho' } as any)
+        .update({ status: 'rascunho' })
         .eq('id', quote.id);
       if (updateError) throw updateError;
 
       // Send to Omie in background
-      const items = (quote.items as any[]).map(i => ({
+      const items = ((quote.items as any[]) || []).map((i: any) => ({
         omie_codigo_produto: i.omie_codigo_produto,
         quantidade: i.quantidade,
         valor_unitario: i.valor_unitario,
@@ -125,8 +107,8 @@ const SalesQuotes = () => {
           action: 'criar_pedido',
           account,
           sales_order_id: quote.id,
-          codigo_cliente: codigoCliente,
-          codigo_vendedor: codigoVendedor,
+          codigo_cliente: omieClient.omie_codigo_cliente,
+          codigo_vendedor: omieClient.omie_codigo_vendedor,
           items,
           observacao: quote.notes,
         },
@@ -187,7 +169,7 @@ const SalesQuotes = () => {
                       <div className="flex items-center gap-2 mb-1">
                         <span className="font-medium text-sm truncate">{getCustomerName(q.customer_user_id)}</span>
                         <Badge variant="outline" className="text-[10px] shrink-0">
-                          {(q as any).account === 'colacor' ? 'Colacor' : 'Oben'}
+                          {q.account === 'colacor' ? 'Colacor' : 'Oben'}
                         </Badge>
                       </div>
                       <p className="text-xs text-muted-foreground">
