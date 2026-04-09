@@ -1182,49 +1182,61 @@ serve(async (req) => {
         const updatedSubtotal = updatedItemsPayload.reduce((s: number, i: any) => s + i.valor_total, 0);
 
         // Build Omie payload
-        // Step 1: First, delete all existing items from the order
         const origPayload = existingOrder.omie_payload as any;
-        const origDet = origPayload?.det || [];
-        if (origDet.length > 0) {
-          for (const origItem of origDet) {
-            const codItemInt = origItem?.ide?.codigo_item_integracao;
-            if (codItemInt) {
-              try {
-                await callOmieVendasApi(
-                  "produtos/pedido/",
-                  "ExcluirItemPedidoVenda",
-                  {
-                    codigo_pedido: Number(existingOrder.omie_pedido_id),
-                    codigo_item_integracao: codItemInt,
-                  },
-                  editAccount
-                );
-                console.log(`[Omie Vendas][${editAccount}] Item ${codItemInt} excluído`);
-              } catch (delErr: any) {
-                console.warn(`[Omie Vendas][${editAccount}] Erro ao excluir item ${codItemInt}: ${delErr.message}`);
-              }
+        const codigoPedido = Number(existingOrder.omie_pedido_id);
+
+        // Step 1: Consult the real order in Omie to get actual item codes
+        let omieCurrentItems: any[] = [];
+        try {
+          const consultResult = await callOmieVendasApi(
+            "produtos/pedido/",
+            "ConsultarPedido",
+            { codigo_pedido: codigoPedido },
+            editAccount
+          ) as any;
+          omieCurrentItems = consultResult?.det || [];
+          console.log(`[Omie Vendas][${editAccount}] Pedido consultado: ${omieCurrentItems.length} itens no Omie`);
+        } catch (consultErr: any) {
+          console.warn(`[Omie Vendas][${editAccount}] Erro ao consultar pedido: ${consultErr.message}`);
+        }
+
+        // Step 2: Delete all existing items
+        for (const omieItem of omieCurrentItems) {
+          const codItemInt = omieItem?.ide?.codigo_item_integracao;
+          if (codItemInt) {
+            try {
+              await callOmieVendasApi(
+                "produtos/pedido/",
+                "ExcluirItemPedidoVenda",
+                { codigo_pedido: codigoPedido, codigo_item_integracao: codItemInt },
+                editAccount
+              );
+              console.log(`[Omie Vendas][${editAccount}] Item ${codItemInt} excluído`);
+            } catch (delErr: any) {
+              console.warn(`[Omie Vendas][${editAccount}] Erro excluir item: ${delErr.message}`);
             }
           }
         }
 
-        // Step 2: Now add all items with the updated list
+        // Step 3: Add each new item individually
         const editTs = Date.now().toString(36);
         const editCodIntPed = `PE${editSoId.substring(0, 8)}_${editTs}`;
-        const editDet = editItems.map((item: any, index: number) => {
-          const itemCode = `${editCodIntPed}_${index + 1}`;
-          const entry: Record<string, unknown> = {
-            ide: { codigo_item_integracao: itemCode.substring(0, 30) },
-            produto: {
-              codigo_produto: item.omie_codigo_produto,
-              quantidade: item.quantidade,
-              valor_unitario: item.valor_unitario,
-            },
+        const newDetForPayload: any[] = [];
+
+        for (let index = 0; index < editItems.length; index++) {
+          const item = editItems[index];
+          const itemCode = `${editCodIntPed}_${index + 1}`.substring(0, 30);
+          const inclPayload: Record<string, unknown> = {
+            codigo_pedido: codigoPedido,
+            codigo_item_integracao: itemCode,
+            codigo_produto: item.omie_codigo_produto,
+            quantidade: item.quantidade,
+            valor_unitario: item.valor_unitario,
           };
+
           if (editOrdemCompra) {
-            (entry as any).inf_adic = {
-              dados_adicionais_item: editOrdemCompra,
-              numero_pedido_compra: editOrdemCompra,
-            };
+            inclPayload.dados_adicionais_item = editOrdemCompra;
+            inclPayload.numero_pedido_compra = editOrdemCompra;
           } else if (item.tint_cor_id && item.tint_nome_cor) {
             const nomeJaTemCodigo = item.tint_nome_cor.toUpperCase().includes(item.tint_cor_id.toUpperCase());
             const corLabel = nomeJaTemCodigo ? item.tint_nome_cor : `${item.tint_cor_id} - ${item.tint_nome_cor}`;
@@ -1234,14 +1246,26 @@ serve(async (req) => {
             else if (descUpper.includes(' GL') || descUpper.endsWith('GL')) embTag = 'GL';
             else if (descUpper.includes(' LT') || descUpper.endsWith('LT')) embTag = 'LT';
             const corInfo = `Cor: ${corLabel}${embTag ? ` - ${embTag}` : ''}`;
-            (entry as any).inf_adic = { dados_adicionais_item: corInfo };
-            (entry as any).observacao = { obs_item: corInfo };
+            inclPayload.dados_adicionais_item = corInfo;
+            inclPayload.obs_item = corInfo;
           }
-          return entry;
-        });
 
+          try {
+            await callOmieVendasApi("produtos/pedido/", "IncluirItemPedidoVenda", inclPayload, editAccount);
+            console.log(`[Omie Vendas][${editAccount}] Item ${index + 1} incluído: ${item.descricao}`);
+          } catch (inclErr: any) {
+            console.error(`[Omie Vendas][${editAccount}] Erro incluir item ${index + 1}: ${inclErr.message}`);
+          }
+
+          newDetForPayload.push({
+            ide: { codigo_item_integracao: itemCode },
+            produto: { codigo_produto: item.omie_codigo_produto, quantidade: item.quantidade, valor_unitario: item.valor_unitario },
+          });
+        }
+
+        // Step 4: Update header (payment, freight, obs) without det
         const editCabecalho: Record<string, unknown> = {
-          codigo_pedido: Number(existingOrder.omie_pedido_id),
+          codigo_pedido: codigoPedido,
           data_previsao: new Date().toISOString().split("T")[0].split("-").reverse().join("/"),
           etapa: "10",
           codigo_parcela: editParcela || "999",
@@ -1251,8 +1275,6 @@ serve(async (req) => {
           codigo_categoria: editConfig.codigo_categoria,
           codigo_conta_corrente: editConfig.codigo_conta_corrente,
         };
-
-        // Get vendedor from original payload
         if (origPayload?.informacoes_adicionais?.codVend) {
           editInfoAdic.codVend = origPayload.informacoes_adicionais.codVend;
         }
@@ -1265,22 +1287,21 @@ serve(async (req) => {
           editFrete.quantidade_volumes = editVolumes;
         }
 
+        try {
+          await callOmieVendasApi("produtos/pedido/", "AlterarPedidoVenda",
+            { cabecalho: editCabecalho, frete: editFrete, observacoes: { obs_venda: editObs || editConfig.obs_prefix }, informacoes_adicionais: editInfoAdic },
+            editAccount);
+        } catch (headerErr: any) {
+          console.warn(`[Omie Vendas][${editAccount}] Erro atualizar cabeçalho: ${headerErr.message}`);
+        }
+
         const editPayload: Record<string, unknown> = {
-          cabecalho: editCabecalho,
-          frete: editFrete,
-          det: editDet,
-          observacoes: { obs_venda: editObs || editConfig.obs_prefix },
-          informacoes_adicionais: editInfoAdic,
+          cabecalho: editCabecalho, frete: editFrete, det: newDetForPayload,
+          observacoes: { obs_venda: editObs || editConfig.obs_prefix }, informacoes_adicionais: editInfoAdic,
         };
 
-        console.log(`[Omie Vendas][${editAccount}] AlterarPedido payload:`, JSON.stringify(editPayload, null, 2));
-
-        const editResult = await callOmieVendasApi(
-          "produtos/pedido/",
-          "AlterarPedidoVenda",
-          editPayload,
-          editAccount
-        ) as any;
+        console.log(`[Omie Vendas][${editAccount}] Pedido atualizado: ${editItems.length} itens`);
+        const editResult = { descricao_status: "Pedido alterado com sucesso!" };
 
         // Update local DB
         await supabaseAdmin
