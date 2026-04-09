@@ -526,7 +526,7 @@ export function useUnifiedOrder() {
         loadUserTools(localUserId);
         loadAddresses(localUserId);
         loadPriceHistory();
-        // Fetch purchase history from local DB + Omie
+        // Fetch local purchase history
         Promise.all([
           supabase.from('sales_orders')
             .select('items, created_at')
@@ -538,60 +538,27 @@ export function useUnifiedOrder() {
             .select('product_id, created_at')
             .eq('customer_user_id', localUserId)
             .order('created_at', { ascending: false }),
-          // Fetch from Omie (oben)
-          cust.codigo_cliente
-            ? supabase.functions.invoke('omie-vendas-sync', {
-                body: { action: 'historico_produtos_cliente', codigo_cliente: cust.codigo_cliente, account: 'oben' },
-              })
-            : Promise.resolve({ data: null }),
-          // Fetch from Omie (colacor)
-          cust.codigo_cliente_colacor
-            ? supabase.functions.invoke('omie-vendas-sync', {
-                body: { action: 'historico_produtos_cliente', codigo_cliente: cust.codigo_cliente_colacor, account: 'colacor' },
-              })
-            : Promise.resolve({ data: null }),
-        ]).then(([ordersRes, priceHistRes, omieObenRes, omieColacorRes]) => {
+        ]).then(([ordersRes, priceHistRes]) => {
           const history: Record<string, string> = {};
-          // From sales_orders items (by codigo)
           if (ordersRes.data) {
             for (const order of ordersRes.data) {
               const items = order.items as any[];
               if (Array.isArray(items)) {
                 for (const item of items) {
                   const code = item.codigo || item.product_code || '';
-                  if (code && !history[code]) {
-                    history[code] = order.created_at;
-                  }
+                  if (code && !history[code]) history[code] = order.created_at;
                   const pid = item.product_id || '';
-                  if (pid && !history[`pid:${pid}`]) {
-                    history[`pid:${pid}`] = order.created_at;
-                  }
+                  if (pid && !history[`pid:${pid}`]) history[`pid:${pid}`] = order.created_at;
                 }
               }
             }
           }
-          // From sales_price_history (by product_id)
           if (priceHistRes.data) {
             for (const row of priceHistRes.data) {
-              if (!history[`pid:${row.product_id}`]) {
-                history[`pid:${row.product_id}`] = row.created_at;
-              }
+              if (!history[`pid:${row.product_id}`]) history[`pid:${row.product_id}`] = row.created_at;
             }
           }
-          // From Omie history (by omie_codigo_produto)
-          const mergeOmieHistory = (res: any) => {
-            if (res?.data?.history) {
-              const h = res.data.history as Record<string, string>;
-              for (const [omieCod, dateStr] of Object.entries(h)) {
-                if (!history[`omie:${omieCod}`]) {
-                  history[`omie:${omieCod}`] = dateStr;
-                }
-              }
-            }
-          };
-          mergeOmieHistory(omieObenRes);
-          mergeOmieHistory(omieColacorRes);
-          setCustomerPurchaseHistory(history);
+          setCustomerPurchaseHistory(prev => ({ ...prev, ...history }));
         });
       }
 
