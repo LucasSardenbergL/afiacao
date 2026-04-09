@@ -59,7 +59,7 @@ function getPeriod(dateStr: string): 'manha' | 'tarde' {
   return h < 12 ? 'manha' : 'tarde';
 }
 
-function buildPrintData(order: SalesOrderRow, company: CompanyFilter): PrintOrderData {
+function buildPrintData(order: SalesOrderRow, company: CompanyFilter, logoUrls?: Record<string, string | null>): PrintOrderData {
   const isOben = company === 'oben';
   const companyMap: Record<CompanyFilter, { name: string; cnpj: string; phone: string; address: string }> = {
     oben: {
@@ -93,6 +93,7 @@ function buildPrintData(order: SalesOrderRow, company: CompanyFilter): PrintOrde
     companyCnpj: c.cnpj,
     companyPhone: c.phone,
     companyAddress: c.address,
+    companyLogoUrl: logoUrls?.[company] || undefined,
     orderNumber: order.omie_numero_pedido || order.id.slice(0, 8).toUpperCase(),
     date: format(new Date(order.created_at), "dd/MM/yyyy HH:mm", { locale: ptBR }),
     customerName: order.customer_name || 'Cliente',
