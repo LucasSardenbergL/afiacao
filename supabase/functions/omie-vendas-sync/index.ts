@@ -1110,6 +1110,136 @@ serve(async (req) => {
         break;
       }
 
+      case "alterar_pedido": {
+        const {
+          sales_order_id: editSoId,
+          items: editItems,
+          observacao: editObs,
+          codigo_parcela: editParcela,
+          quantidade_volumes: editVolumes,
+          ordem_compra: editOrdemCompra,
+        } = params;
+        if (!editSoId || !editItems?.length) throw new Error("Dados insuficientes para alterar pedido");
+
+        // Load existing order
+        const { data: existingOrder } = await supabaseAdmin
+          .from("sales_orders")
+          .select("*")
+          .eq("id", editSoId)
+          .single();
+        if (!existingOrder) throw new Error("Pedido não encontrado");
+        if (!existingOrder.omie_pedido_id) throw new Error("Pedido não possui ID no Omie para alteração");
+
+        const editAccount: Account = (existingOrder.account === "colacor") ? "colacor" : "oben";
+        const editConfig = getAccountConfig(editAccount);
+
+        // Build updated items payload for local DB
+        const updatedItemsPayload = editItems.map((item: any) => ({
+          product_id: item.product_id,
+          omie_codigo_produto: item.omie_codigo_produto,
+          codigo: item.codigo,
+          descricao: item.descricao,
+          unidade: item.unidade,
+          quantidade: item.quantidade,
+          valor_unitario: item.valor_unitario,
+          valor_total: item.quantidade * item.valor_unitario,
+          ...(item.tint_cor_id ? { tint_cor_id: item.tint_cor_id, tint_nome_cor: item.tint_nome_cor } : {}),
+        }));
+        const updatedSubtotal = updatedItemsPayload.reduce((s: number, i: any) => s + i.valor_total, 0);
+
+        // Build Omie payload
+        const editCodIntPed = `PV_EDIT_${editSoId.substring(0, 8)}_${Date.now()}`;
+        const editDet = editItems.map((item: any, index: number) => {
+          const entry: Record<string, unknown> = {
+            ide: { codigo_item_integracao: `${editCodIntPed}_${index + 1}` },
+            produto: {
+              codigo_produto: item.omie_codigo_produto,
+              quantidade: item.quantidade,
+              valor_unitario: item.valor_unitario,
+            },
+          };
+          if (editOrdemCompra) {
+            (entry as any).inf_adic = {
+              dados_adicionais_item: editOrdemCompra,
+              numero_pedido_compra: editOrdemCompra,
+            };
+          } else if (item.tint_cor_id && item.tint_nome_cor) {
+            const nomeJaTemCodigo = item.tint_nome_cor.toUpperCase().includes(item.tint_cor_id.toUpperCase());
+            const corLabel = nomeJaTemCodigo ? item.tint_nome_cor : `${item.tint_cor_id} - ${item.tint_nome_cor}`;
+            const descUpper = (item.descricao || '').toUpperCase();
+            let embTag = '';
+            if (descUpper.includes(' QT') || descUpper.endsWith('QT')) embTag = 'QT';
+            else if (descUpper.includes(' GL') || descUpper.endsWith('GL')) embTag = 'GL';
+            else if (descUpper.includes(' LT') || descUpper.endsWith('LT')) embTag = 'LT';
+            const corInfo = `Cor: ${corLabel}${embTag ? ` - ${embTag}` : ''}`;
+            (entry as any).inf_adic = { dados_adicionais_item: corInfo };
+            (entry as any).observacao = { obs_item: corInfo };
+          }
+          return entry;
+        });
+
+        const editCabecalho: Record<string, unknown> = {
+          codigo_pedido: Number(existingOrder.omie_pedido_id),
+          codigo_pedido_integracao: editCodIntPed,
+          data_previsao: new Date().toISOString().split("T")[0].split("-").reverse().join("/"),
+          etapa: "10",
+          codigo_parcela: editParcela || "999",
+        };
+
+        const editInfoAdic: Record<string, unknown> = {
+          codigo_categoria: editConfig.codigo_categoria,
+          codigo_conta_corrente: editConfig.codigo_conta_corrente,
+        };
+
+        // Get vendedor from original payload
+        const origPayload = existingOrder.omie_payload as any;
+        if (origPayload?.informacoes_adicionais?.codVend) {
+          editInfoAdic.codVend = origPayload.informacoes_adicionais.codVend;
+        }
+
+        const editFrete: Record<string, unknown> = { modalidade: "0", especie_volumes: "VOL" };
+        if (origPayload?.frete?.codigo_transportadora) {
+          editFrete.codigo_transportadora = origPayload.frete.codigo_transportadora;
+        }
+        if (editVolumes && editVolumes > 0) {
+          editFrete.quantidade_volumes = editVolumes;
+        }
+
+        const editPayload: Record<string, unknown> = {
+          cabecalho: editCabecalho,
+          frete: editFrete,
+          det: editDet,
+          observacoes: { obs_venda: editObs || editConfig.obs_prefix },
+          informacoes_adicionais: editInfoAdic,
+        };
+
+        console.log(`[Omie Vendas][${editAccount}] AlterarPedido payload:`, JSON.stringify(editPayload, null, 2));
+
+        const editResult = await callOmieVendasApi(
+          "produtos/pedido/",
+          "AlterarPedidoVendaProduto",
+          editPayload,
+          editAccount
+        ) as any;
+
+        // Update local DB
+        await supabaseAdmin
+          .from("sales_orders")
+          .update({
+            items: updatedItemsPayload,
+            subtotal: updatedSubtotal,
+            total: updatedSubtotal,
+            notes: editObs || existingOrder.notes,
+            omie_payload: editPayload,
+            omie_response: editResult,
+            updated_at: new Date().toISOString(),
+          })
+          .eq("id", editSoId);
+
+        result = { success: true, omie_response: editResult };
+        break;
+      }
+
       case "excluir_pedido": {
         const { omie_pedido_id: pedidoId, sales_order_id: soId } = params;
         if (!soId) throw new Error("ID do pedido é obrigatório");
