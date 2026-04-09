@@ -240,14 +240,14 @@ const SalesPrintDashboard = () => {
         const custId = o.customer_user_id || (o as any).user_id;
         const profile = profileMap.get(custId);
         const addr = addressMap.get(custId);
-        const fullAddress = addr
+        const fullAddress = (o as any).customer_address || (addr
           ? `${addr.street}, ${addr.number}${addr.complement ? ' - ' + addr.complement : ''} – ${addr.neighborhood}, ${addr.city}/${addr.state} – CEP: ${addr.zip_code}`
-          : '';
+          : '');
         return {
           ...o,
           customer_name: (o as any).customer_name || profile?.name || 'Cliente',
           customer_document: (o as any).customer_document || profile?.document || '',
-          customer_phone: profile?.phone || '',
+          customer_phone: (o as any).customer_phone || profile?.phone || '',
           customer_address: fullAddress,
         };
       });
