@@ -943,6 +943,20 @@ export function useUnifiedOrder() {
     const hasServices = serviceItems.length > 0;
     const results: string[] = [];
 
+    // Pre-compute customer address/phone for storage
+    const selectedAddr = addresses.find(a => a.id === selectedAddress);
+    const storedCustomerAddress = selectedAddr
+      ? `${selectedAddr.street}, ${selectedAddr.number}${selectedAddr.complement ? ' - ' + selectedAddr.complement : ''} – ${selectedAddr.neighborhood}, ${selectedAddr.city}/${selectedAddr.state} – CEP: ${selectedAddr.zipCode}`
+      : selectedCustomer.endereco
+        ? `${selectedCustomer.endereco}, ${selectedCustomer.endereco_numero || 'S/N'}${selectedCustomer.complemento ? ' - ' + selectedCustomer.complemento : ''} – ${selectedCustomer.bairro || ''}, ${selectedCustomer.cidade || ''}/${selectedCustomer.estado || ''} – CEP: ${selectedCustomer.cep || ''}`
+        : null;
+    let storedCustomerPhone = selectedCustomer.telefone || null;
+    const custUserId2 = customerUserId || user?.id;
+    if (custUserId2) {
+      const { data: cp } = await supabase.from('profiles').select('phone').eq('user_id', custUserId2).maybeSingle();
+      if (cp?.phone) storedCustomerPhone = cp.phone;
+    }
+
     try {
       if (hasObenProducts) {
         const itemsPayload = obenProductItems.map(c => ({
