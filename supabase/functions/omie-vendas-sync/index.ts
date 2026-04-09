@@ -101,6 +101,18 @@ async function callOmieVendasApi(
   }
 }
 
+function getOmieItemIntegrationCode(index: number): number {
+  const code = index + 1;
+
+  if (!Number.isInteger(code) || code < 1 || code > 999) {
+    throw new Error(
+      `Código de integração do item inválido (${code}). O Omie aceita apenas valores inteiros entre 1 e 999.`,
+    );
+  }
+
+  return code;
+}
+
 // Sincronizar todos os produtos da empresa de vendas
 async function syncProducts(supabase: ReturnType<typeof createClient>, startPage = 1, maxPages = 12, account: Account = "oben") {
   let pagina = startPage;
@@ -930,8 +942,9 @@ async function criarPedidoVenda(
   const config = getAccountConfig(account);
 
   const det = items.map((item, index) => {
+    const itemIntegrationCode = getOmieItemIntegrationCode(index);
     const entry: Record<string, unknown> = {
-      ide: { codigo_item_integracao: `${cCodIntPed}_${index + 1}` },
+      ide: { codigo_item_integracao: itemIntegrationCode },
       produto: {
         codigo_produto: item.omie_codigo_produto,
         quantidade: item.quantidade,
@@ -1253,13 +1266,11 @@ serve(async (req) => {
         }
 
         // Step 3: Add each new item individually
-        const editTs = Date.now().toString(36);
-        const editCodIntPed = `PE${editSoId.substring(0, 8)}_${editTs}`;
         const newDetForPayload: any[] = [];
 
         for (let index = 0; index < editItems.length; index++) {
           const item = editItems[index];
-          const itemCode = `${editCodIntPed}_${index + 1}`.substring(0, 30);
+          const itemCode = getOmieItemIntegrationCode(index);
           const inclPayload: Record<string, unknown> = {
             codigo_pedido: codigoPedido,
             codigo_item_integracao: itemCode,
