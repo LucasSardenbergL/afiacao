@@ -239,7 +239,24 @@ const SalesOrderEdit = () => {
       const account = order.account === 'colacor' ? 'colacor' : 'oben';
 
       if (order.omie_pedido_id) {
-        const { data: result, error } = await supabase.functions.invoke('omie-vendas-sync', {
+        // Save locally first
+        const { error: localErr } = await supabase
+          .from('sales_orders')
+          .update({
+            items: items as any,
+            subtotal,
+            total: subtotal,
+            notes: notes || null,
+          } as any)
+          .eq('id', order.id);
+        if (localErr) throw localErr;
+
+        // Navigate immediately and sync in background
+        toast.info('Pedido salvo! Sincronizando com o Omie em segundo plano...');
+        navigate('/sales');
+
+        // Fire-and-forget sync
+        supabase.functions.invoke('omie-vendas-sync', {
           body: {
             action: 'alterar_pedido',
             account,
@@ -257,9 +274,15 @@ const SalesOrderEdit = () => {
             observacao: notes,
             codigo_parcela: selectedParcela || undefined,
           },
+        }).then(({ error }) => {
+          if (error) {
+            toast.error('Erro ao sincronizar com Omie: ' + (error.message || 'Erro desconhecido'));
+          } else {
+            toast.success('Pedido sincronizado com o Omie com sucesso!');
+          }
+        }).catch((err) => {
+          toast.error('Erro ao sincronizar com Omie: ' + (err.message || 'Erro desconhecido'));
         });
-        if (error) throw error;
-        toast.success('Pedido alterado no Omie com sucesso!');
       } else {
         const { error } = await supabase
           .from('sales_orders')
@@ -272,13 +295,11 @@ const SalesOrderEdit = () => {
           .eq('id', order.id);
         if (error) throw error;
         toast.success('Pedido atualizado localmente');
+        navigate('/sales');
       }
-
-      navigate('/sales');
     } catch (e: any) {
       console.error(e);
       toast.error(e.message || 'Erro ao salvar pedido');
-    } finally {
       setSaving(false);
     }
   };
