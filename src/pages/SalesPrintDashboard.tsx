@@ -443,7 +443,7 @@ const SalesPrintDashboard = () => {
 
     // Build combined HTML for all selected orders
     const allPages = toPrint.map(o => {
-      const printData = buildPrintData(o, o._company);
+      const printData = buildPrintData(o, o._company, companyLogos);
       return buildSingleOrderHtml(printData);
     });
 
