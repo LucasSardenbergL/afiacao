@@ -212,6 +212,7 @@ const UnifiedOrder = () => {
               ordemCompra={h.ordemCompra} setOrdemCompra={h.setOrdemCompra}
               isOrdemCompraCustomer={h.isOrdemCompraCustomer}
               onSubmit={h.submitOrder}
+              onSubmitQuote={h.submitQuote}
             />
           )}
         </div>
