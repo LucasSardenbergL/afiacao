@@ -48,6 +48,7 @@ const unifiedNavSections: { title: string; items: NavItem[] }[] = [
     items: [
       { icon: ShoppingCart, label: 'Pedidos', path: '/sales' },
       { icon: PlusCircle, label: 'Novo Pedido', path: '/sales/new' },
+      { icon: FileText, label: 'Orçamentos', path: '/sales/quotes' },
       { icon: Printer, label: 'Impressão', path: '/sales/print' },
       { icon: TrendingUp, label: 'Recomendações', path: '/farmer/recommendations' },
       { icon: Target, label: 'Bundles', path: '/farmer/bundles' },

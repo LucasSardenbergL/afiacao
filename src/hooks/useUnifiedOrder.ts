@@ -935,6 +935,72 @@ export function useUnifiedOrder() {
   };
 
   // Submit
+  // Save as quote (orçamento) – no Omie sync
+  const submitQuote = async () => {
+    if (!selectedCustomer || cart.length === 0 || !user) return;
+    setSubmitting(true);
+    const hasObenProducts = obenProductItems.length > 0;
+    const hasColacorProducts = colacorProductItems.length > 0;
+
+    const selectedAddr = addresses.find(a => a.id === selectedAddress);
+    const storedCustomerAddress = selectedAddr
+      ? `${selectedAddr.street}, ${selectedAddr.number}${selectedAddr.complement ? ' - ' + selectedAddr.complement : ''} – ${selectedAddr.neighborhood}, ${selectedAddr.city}/${selectedAddr.state} – CEP: ${selectedAddr.zipCode}`
+      : selectedCustomer.endereco
+        ? `${selectedCustomer.endereco}, ${selectedCustomer.endereco_numero || 'S/N'}${selectedCustomer.complemento ? ' - ' + selectedCustomer.complemento : ''} – ${selectedCustomer.bairro || ''}, ${selectedCustomer.cidade || ''}/${selectedCustomer.estado || ''} – CEP: ${selectedCustomer.cep || ''}`
+        : null;
+    let storedCustomerPhone = selectedCustomer.telefone || null;
+    const custUserId = customerUserId || user?.id;
+    if (custUserId) {
+      const { data: cp } = await supabase.from('profiles').select('phone').eq('user_id', custUserId).maybeSingle();
+      if (cp?.phone) storedCustomerPhone = cp.phone;
+    }
+
+    try {
+      const results: string[] = [];
+      if (hasObenProducts) {
+        const itemsPayload = obenProductItems.map(c => ({
+          product_id: c.product.id, omie_codigo_produto: c.product.omie_codigo_produto,
+          codigo: c.product.codigo, descricao: c.product.descricao, unidade: c.product.unidade,
+          quantidade: c.quantity, valor_unitario: c.unit_price, valor_total: c.quantity * c.unit_price,
+          ...(c.tint_cor_id ? { tint_cor_id: c.tint_cor_id, tint_nome_cor: c.tint_nome_cor, tint_formula_id: c.tint_formula_id } : {}),
+        }));
+        const { error: insertError } = await supabase
+          .from('sales_orders').insert({
+            customer_user_id: customerUserId || user.id, created_by: user.id,
+            items: itemsPayload, subtotal: obenSubtotal, total: obenSubtotal,
+            status: 'orcamento', notes: notes || null, account: 'oben',
+            customer_address: storedCustomerAddress, customer_phone: storedCustomerPhone,
+          } as any);
+        if (insertError) throw insertError;
+        results.push('Orçamento Oben salvo');
+      }
+      if (hasColacorProducts) {
+        const itemsPayload = colacorProductItems.map(c => ({
+          product_id: c.product.id, omie_codigo_produto: c.product.omie_codigo_produto,
+          codigo: c.product.codigo, descricao: c.product.descricao, unidade: c.product.unidade,
+          quantidade: c.quantity, valor_unitario: c.unit_price, valor_total: c.quantity * c.unit_price,
+        }));
+        const { error: insertError } = await supabase
+          .from('sales_orders').insert({
+            customer_user_id: customerUserId || user.id, created_by: user.id,
+            items: itemsPayload, subtotal: colacorProdSubtotal, total: colacorProdSubtotal,
+            status: 'orcamento', notes: notes || null, account: 'colacor',
+            customer_address: storedCustomerAddress, customer_phone: storedCustomerPhone,
+          } as any);
+        if (insertError) throw insertError;
+        results.push('Orçamento Colacor salvo');
+      }
+      toast({ title: 'Orçamento salvo', description: results.join(' | ') });
+      setCart([]);
+      setNotes('');
+      navigate('/sales/quotes');
+    } catch (error: any) {
+      toast({ title: 'Erro ao salvar orçamento', description: error.message, variant: 'destructive' });
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
   const submitOrder = async () => {
     if (!selectedCustomer || cart.length === 0 || !user) return;
     setSubmitting(true);
@@ -1284,7 +1350,7 @@ export function useUnifiedOrder() {
     handleVoiceItemsIdentified, handleImageCategoryIdentified,
     handleAICustomerSelect, handleUnifiedAIResult,
     handleAddRecommendation, handleStaffAddTool,
-    submitOrder, loadUserTools,
+    submitOrder, submitQuote, loadUserTools,
     // Order success
     orderSuccessOpen, setOrderSuccessOpen, lastOrderData,
     // Navigate

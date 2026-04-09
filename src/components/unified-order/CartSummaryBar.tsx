@@ -8,7 +8,7 @@ import { Card, CardContent } from '@/components/ui/card';
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
 import { Command, CommandEmpty, CommandGroup, CommandInput, CommandItem, CommandList } from '@/components/ui/command';
 import {
-  ShoppingCart, Send, Loader2, Building2, Scissors, AlertCircle, Check, ChevronsUpDown,
+  ShoppingCart, Send, Loader2, Building2, Scissors, AlertCircle, Check, ChevronsUpDown, FileText,
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import type {
@@ -45,6 +45,7 @@ interface CartSummaryBarProps {
   isOrdemCompraCustomer?: boolean;
   // Actions
   onSubmit: () => void;
+  onSubmitQuote?: () => void;
 }
 
 function PaymentCombobox({
@@ -147,8 +148,9 @@ export function CartSummaryBar({
   notes, setNotes,
   volumesOben, volumesColacor,
   ordemCompra, setOrdemCompra, isOrdemCompraCustomer,
-  onSubmit,
+  onSubmit, onSubmitQuote,
 }: CartSummaryBarProps) {
+  const hasOnlyProducts = (obenProductItems.length > 0 || colacorProductItems.length > 0) && serviceItems.length === 0;
   const disableSubmit = submitting || serviceItems.some(s => !s.servico) || vendedorDivergencias.length > 0;
 
   return (
@@ -199,6 +201,12 @@ export function CartSummaryBar({
               return count > 1 ? <span className="text-[10px] opacity-70">({count} pedidos)</span> : null;
             })()}
           </Button>
+          {hasOnlyProducts && onSubmitQuote && (
+            <Button variant="outline" className="w-full gap-2" onClick={onSubmitQuote} disabled={submitting}>
+              {submitting ? <Loader2 className="w-4 h-4 animate-spin" /> : <FileText className="w-4 h-4" />}
+              Salvar como Orçamento
+            </Button>
+          )}
         </CardContent>
       </Card>
 
