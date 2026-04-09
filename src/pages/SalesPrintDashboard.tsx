@@ -489,7 +489,7 @@ ${allPages.join('\n<div class="page-break"></div>\n')}
   };
 
   const printSingle = (order: typeof filteredOrders[0]) => {
-    openPrintOrder(buildPrintData(order, order._company));
+    openPrintOrder(buildPrintData(order, order._company, companyLogos));
   };
 
   const isLoading = loadingSales || loadingAfiacao;
