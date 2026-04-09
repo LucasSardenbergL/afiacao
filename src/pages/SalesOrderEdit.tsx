@@ -523,6 +523,17 @@ const SalesOrderEdit = () => {
       </main>
 
       <BottomNav />
+
+      {/* Tint Color Dialog */}
+      {tintProductAsProduct && (
+        <TintColorSelectDialog
+          product={tintProductAsProduct}
+          open={!!tintPendingProduct}
+          onClose={() => setTintPendingProduct(null)}
+          onConfirm={handleTintConfirm}
+          customerUserId={customerUserId}
+        />
+      )}
     </div>
   );
 };
