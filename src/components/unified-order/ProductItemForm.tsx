@@ -7,6 +7,7 @@ import { Search, Plus, Loader2, Package } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import type { Product, ProductCartItem } from '@/hooks/useUnifiedOrder';
 import { fmt } from '@/hooks/useUnifiedOrder';
+import { format } from 'date-fns';
 
 interface ProductItemFormProps {
   title: string;
@@ -17,11 +18,12 @@ interface ProductItemFormProps {
   onSearchChange: (v: string) => void;
   productItems: ProductCartItem[];
   onAddProduct: (p: Product) => void;
+  customerPurchaseHistory?: Record<string, string>;
 }
 
 export function ProductItemForm({
   title, products, prices, loading, productSearch, onSearchChange,
-  productItems, onAddProduct,
+  productItems, onAddProduct, customerPurchaseHistory = {},
 }: ProductItemFormProps) {
   const [colWidth, setColWidth] = useState(450);
   const dragging = useRef(false);
@@ -47,6 +49,14 @@ export function ProductItemForm({
     document.addEventListener('mousemove', onMouseMove);
     document.addEventListener('mouseup', onMouseUp);
   }, [colWidth]);
+
+  const formatDate = (dateStr: string) => {
+    try {
+      return format(new Date(dateStr), 'dd/MM/yyyy');
+    } catch {
+      return '';
+    }
+  };
 
   return (
     <Card>
@@ -90,6 +100,7 @@ export function ProductItemForm({
                 {products.map(product => {
                   const isInCart = productItems.some(c => c.product.id === product.id);
                   const customerPrice = prices[product.omie_codigo_produto];
+                  const lastOrderDate = customerPurchaseHistory[product.codigo];
                   return (
                     <tr key={product.id} className={cn('border-b last:border-b-0 hover:bg-muted/20 transition-colors', isInCart && 'bg-accent/20')}>
                       <td className="px-3 py-2">
@@ -101,6 +112,11 @@ export function ProductItemForm({
                           )}
                           {customerPrice && customerPrice !== product.valor_unitario && (
                             <Badge variant="secondary" className="text-[9px] px-1 py-0">Preço cliente</Badge>
+                          )}
+                          {lastOrderDate && (
+                            <Badge variant="outline" className="text-[9px] px-1 py-0 border-green-500/40 text-green-700 dark:text-green-400">
+                              Últ: {formatDate(lastOrderDate)}
+                            </Badge>
                           )}
                         </div>
                         <span className="text-[10px] text-muted-foreground font-mono">{product.codigo}</span>

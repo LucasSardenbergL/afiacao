@@ -60,7 +60,7 @@ const UnifiedOrder = () => {
   const customerReady = !!h.selectedCustomer;
 
   return (
-    <div className="max-w-5xl mx-auto space-y-4 pb-20">
+    <div className="max-w-5xl mx-auto space-y-4 pb-6">
       <div className="flex items-center gap-3">
         <button onClick={() => h.navigate(-1)} className="flex items-center gap-1 text-sm text-muted-foreground hover:text-foreground">
           <ChevronLeft className="w-4 h-4" />
@@ -129,12 +129,14 @@ const UnifiedOrder = () => {
                   <TabsContent value="oben">
                     <ProductItemForm title="Produtos Oben" products={h.filteredObenProducts} prices={h.customerPricesOben}
                       loading={h.loadingObenProducts} productSearch={h.productSearch} onSearchChange={h.setProductSearch}
-                      productItems={h.productItems} onAddProduct={h.addProductToCart} />
+                      productItems={h.productItems} onAddProduct={h.addProductToCart}
+                      customerPurchaseHistory={h.customerPurchaseHistory} />
                   </TabsContent>
                   <TabsContent value="colacor">
                     <ProductItemForm title="Produtos Colacor" products={h.filteredColacorProducts} prices={h.customerPricesColacor}
                       loading={h.loadingColacorProducts} productSearch={h.productSearch} onSearchChange={h.setProductSearch}
-                      productItems={h.productItems} onAddProduct={h.addProductToCart} />
+                      productItems={h.productItems} onAddProduct={h.addProductToCart}
+                      customerPurchaseHistory={h.customerPurchaseHistory} />
                   </TabsContent>
                   <TabsContent value="services">
                     <ServiceItemForm
