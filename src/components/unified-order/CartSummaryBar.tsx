@@ -3,12 +3,12 @@ import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { Label } from '@/components/ui/label';
 import { Input } from '@/components/ui/input';
-import { Textarea } from '@/components/ui/textarea';
+
 import { Card, CardContent } from '@/components/ui/card';
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
 import { Command, CommandEmpty, CommandGroup, CommandInput, CommandItem, CommandList } from '@/components/ui/command';
 import {
-  ShoppingCart, Send, Loader2, Building2, Scissors, AlertCircle, Check, ChevronsUpDown, FileText,
+  Send, Loader2, AlertCircle, Check, ChevronsUpDown, FileText,
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import type {
