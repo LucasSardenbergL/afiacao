@@ -381,7 +381,7 @@ const SalesOrderEdit = () => {
                       >
                         <div className="min-w-0 flex-1">
                           <p className="font-medium text-wrap break-words">{p.descricao}</p>
-                          <p className="text-xs text-muted-foreground">{p.codigo} • {p.unidade}</p>
+                          <p className="text-xs text-muted-foreground">{p.codigo} • {p.unidade} • Estoque: <span className={p.estoque > 0 ? 'text-green-600 font-medium' : 'text-red-500 font-medium'}>{p.estoque ?? 0}</span></p>
                         </div>
                         <span className="text-xs font-medium shrink-0">
                           R$ {(p.valor_unitario || 0).toFixed(2)}
