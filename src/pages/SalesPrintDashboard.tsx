@@ -133,6 +133,26 @@ const SalesPrintDashboard = () => {
   const dayEnd = endOfDay(selectedDate).toISOString();
 
   // Fetch sales_orders for the selected date
+  // Fetch payment terms map (code -> description)
+  const { data: formasMap = {} } = useQuery({
+    queryKey: ['sales-print-formas-pagamento'],
+    queryFn: async () => {
+      const result: Record<string, string> = {};
+      for (const acc of ['oben', 'colacor'] as const) {
+        try {
+          const { data } = await supabase.functions.invoke('omie-vendas-sync', {
+            body: { action: 'listar_formas_pagamento', account: acc },
+          });
+          if (data?.formas) {
+            data.formas.forEach((f: any) => { result[f.codigo] = f.descricao; });
+          }
+        } catch (_) { /* ignore */ }
+      }
+      return result;
+    },
+    staleTime: 1000 * 60 * 30, // cache 30 min
+  });
+
   const { data: salesOrders = [], isLoading: loadingSales } = useQuery({
     queryKey: ['sales-print', 'sales', dayStart],
     queryFn: async () => {
@@ -320,10 +340,12 @@ const SalesPrintDashboard = () => {
         const addr = addressMap.get(custId);
         const fullAddress = (o as any).customer_address || addr || '';
 
-        // Extract cond_pagamento from omie_payload if not set directly
+        // Extract cond_pagamento description from formas map
         const payload = (o as any).omie_payload;
+        const parcelaCode = payload?.cabecalho?.codigo_parcela;
         const condPagamento = (o as any).cond_pagamento
-          || payload?.cabecalho?.codigo_parcela
+          || (parcelaCode && formasMap[parcelaCode])
+          || parcelaCode
           || undefined;
 
         return {
@@ -335,7 +357,7 @@ const SalesPrintDashboard = () => {
           cond_pagamento: condPagamento,
         };
       });
-  }, [allOrdersRaw, selectedCompanies, selectedPeriod, profileMap, addressMap]);
+  }, [allOrdersRaw, selectedCompanies, selectedPeriod, profileMap, addressMap, formasMap]);
 
   // Group by company then period
   const grouped = useMemo(() => {
