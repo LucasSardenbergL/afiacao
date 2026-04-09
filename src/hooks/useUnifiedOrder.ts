@@ -73,6 +73,15 @@ export interface OmieCustomer {
   codigo_vendedor_colacor?: number | null;
   codigo_cliente_afiacao?: number | null;
   codigo_vendedor_afiacao?: number | null;
+  // Address fields from Omie
+  endereco?: string;
+  endereco_numero?: string;
+  complemento?: string;
+  bairro?: string;
+  cidade?: string;
+  estado?: string;
+  cep?: string;
+  telefone?: string;
 }
 
 export interface FormaPagamento {
@@ -934,6 +943,20 @@ export function useUnifiedOrder() {
     const hasServices = serviceItems.length > 0;
     const results: string[] = [];
 
+    // Pre-compute customer address/phone for storage
+    const selectedAddr = addresses.find(a => a.id === selectedAddress);
+    const storedCustomerAddress = selectedAddr
+      ? `${selectedAddr.street}, ${selectedAddr.number}${selectedAddr.complement ? ' - ' + selectedAddr.complement : ''} – ${selectedAddr.neighborhood}, ${selectedAddr.city}/${selectedAddr.state} – CEP: ${selectedAddr.zipCode}`
+      : selectedCustomer.endereco
+        ? `${selectedCustomer.endereco}, ${selectedCustomer.endereco_numero || 'S/N'}${selectedCustomer.complemento ? ' - ' + selectedCustomer.complemento : ''} – ${selectedCustomer.bairro || ''}, ${selectedCustomer.cidade || ''}/${selectedCustomer.estado || ''} – CEP: ${selectedCustomer.cep || ''}`
+        : null;
+    let storedCustomerPhone = selectedCustomer.telefone || null;
+    const custUserId2 = customerUserId || user?.id;
+    if (custUserId2) {
+      const { data: cp } = await supabase.from('profiles').select('phone').eq('user_id', custUserId2).maybeSingle();
+      if (cp?.phone) storedCustomerPhone = cp.phone;
+    }
+
     try {
       if (hasObenProducts) {
         const itemsPayload = obenProductItems.map(c => ({
@@ -947,6 +970,7 @@ export function useUnifiedOrder() {
             customer_user_id: customerUserId || user.id, created_by: user.id,
             items: itemsPayload, subtotal: obenSubtotal, total: obenSubtotal,
             status: 'rascunho', notes: notes || null, account: 'oben',
+            customer_address: storedCustomerAddress, customer_phone: storedCustomerPhone,
           } as any).select('id').single();
         if (insertError) throw insertError;
         const { data: omieResult, error: omieError } = await supabase.functions.invoke('omie-vendas-sync', {
@@ -978,6 +1002,7 @@ export function useUnifiedOrder() {
             customer_user_id: customerUserId || user.id, created_by: user.id,
             items: itemsPayload, subtotal: colacorProdSubtotal, total: colacorProdSubtotal,
             status: 'rascunho', notes: notes || null, account: 'colacor',
+            customer_address: storedCustomerAddress, customer_phone: storedCustomerPhone,
           } as any).select('id').single();
         if (insertError) throw insertError;
         const { data: omieResult, error: omieError } = await supabase.functions.invoke('omie-vendas-sync', {
@@ -1070,10 +1095,12 @@ export function useUnifiedOrder() {
       const selectedAddr = addresses.find(a => a.id === selectedAddress);
       const fullCustomerAddress = selectedAddr
         ? `${selectedAddr.street}, ${selectedAddr.number}${selectedAddr.complement ? ' - ' + selectedAddr.complement : ''} – ${selectedAddr.neighborhood}, ${selectedAddr.city}/${selectedAddr.state} – CEP: ${selectedAddr.zipCode}`
-        : undefined;
+        : selectedCustomer.endereco
+          ? `${selectedCustomer.endereco}, ${selectedCustomer.endereco_numero || 'S/N'}${selectedCustomer.complemento ? ' - ' + selectedCustomer.complemento : ''} – ${selectedCustomer.bairro || ''}, ${selectedCustomer.cidade || ''}/${selectedCustomer.estado || ''} – CEP: ${selectedCustomer.cep || ''}`
+          : undefined;
 
-      // Fetch customer phone from profile
-      let customerPhone = '';
+      // Fetch customer phone from profile, fallback to Omie data
+      let customerPhone = selectedCustomer.telefone || '';
       const custUserId = customerUserId || user?.id;
       if (custUserId) {
         const { data: custProfile } = await supabase.from('profiles').select('phone').eq('user_id', custUserId).maybeSingle();

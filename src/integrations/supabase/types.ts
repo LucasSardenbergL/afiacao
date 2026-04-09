@@ -3683,6 +3683,8 @@ export type Database = {
           account: string
           created_at: string
           created_by: string
+          customer_address: string | null
+          customer_phone: string | null
           customer_user_id: string
           discount: number
           hash_payload: string | null
@@ -3702,6 +3704,8 @@ export type Database = {
           account?: string
           created_at?: string
           created_by: string
+          customer_address?: string | null
+          customer_phone?: string | null
           customer_user_id: string
           discount?: number
           hash_payload?: string | null
@@ -3721,6 +3725,8 @@ export type Database = {
           account?: string
           created_at?: string
           created_by?: string
+          customer_address?: string | null
+          customer_phone?: string | null
           customer_user_id?: string
           discount?: number
           hash_payload?: string | null

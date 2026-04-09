@@ -226,6 +226,14 @@ async function listarClientesVendas(searchTerm: string, account: Account = "oben
     nome_fantasia: string;
     cnpj_cpf: string;
     codigo_vendedor: number | null;
+    endereco: string;
+    endereco_numero: string;
+    complemento: string;
+    bairro: string;
+    cidade: string;
+    estado: string;
+    cep: string;
+    telefone: string;
   }> = [];
 
   // Try searching by name first
@@ -251,6 +259,14 @@ async function listarClientesVendas(searchTerm: string, account: Account = "oben
           nome_fantasia: c.nome_fantasia || "",
           cnpj_cpf: c.cnpj_cpf || "",
           codigo_vendedor: c.recomendacoes?.codigo_vendedor || c.codigo_vendedor || null,
+          endereco: c.endereco || "",
+          endereco_numero: c.endereco_numero || "",
+          complemento: c.complemento || "",
+          bairro: c.bairro || "",
+          cidade: c.cidade || "",
+          estado: c.estado || "",
+          cep: c.cep || "",
+          telefone: c.telefone1_ddd && c.telefone1_numero ? `(${c.telefone1_ddd}) ${c.telefone1_numero}` : "",
         });
       }
     }
@@ -284,6 +300,14 @@ async function listarClientesVendas(searchTerm: string, account: Account = "oben
               nome_fantasia: c.nome_fantasia || "",
               cnpj_cpf: c.cnpj_cpf || "",
               codigo_vendedor: c.recomendacoes?.codigo_vendedor || c.codigo_vendedor || null,
+              endereco: c.endereco || "",
+              endereco_numero: c.endereco_numero || "",
+              complemento: c.complemento || "",
+              bairro: c.bairro || "",
+              cidade: c.cidade || "",
+              estado: c.estado || "",
+              cep: c.cep || "",
+              telefone: c.telefone1_ddd && c.telefone1_numero ? `(${c.telefone1_ddd}) ${c.telefone1_numero}` : "",
             });
           }
         }

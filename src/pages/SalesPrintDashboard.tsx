@@ -240,14 +240,14 @@ const SalesPrintDashboard = () => {
         const custId = o.customer_user_id || (o as any).user_id;
         const profile = profileMap.get(custId);
         const addr = addressMap.get(custId);
-        const fullAddress = addr
+        const fullAddress = (o as any).customer_address || (addr
           ? `${addr.street}, ${addr.number}${addr.complement ? ' - ' + addr.complement : ''} – ${addr.neighborhood}, ${addr.city}/${addr.state} – CEP: ${addr.zip_code}`
-          : '';
+          : '');
         return {
           ...o,
           customer_name: (o as any).customer_name || profile?.name || 'Cliente',
           customer_document: (o as any).customer_document || profile?.document || '',
-          customer_phone: profile?.phone || '',
+          customer_phone: (o as any).customer_phone || profile?.phone || '',
           customer_address: fullAddress,
         };
       });
@@ -581,7 +581,7 @@ function buildSingleOrderHtml(data: PrintOrderData): string {
 <div class="totals">
   <div class="row"><span>Subtotal:</span><span>${fmt(data.subtotal)}</span></div>
   ${showDesconto ? `<div class="row"><span>Desconto:</span><span>- ${fmt(data.desconto)}</span></div>` : ''}
-  <div class="row"><span>Frete:</span><span>${fmt(data.frete)}</span></div>
+  
   <div class="row total-row"><span>TOTAL:</span><span>${fmt(data.total)}</span></div>
 </div>
 ${obs ? `<div class="section-title">OBSERVAÇÕES</div><div class="obs-box">${obs.replace(/\n/g, '<br/>')}</div>` : ''}
