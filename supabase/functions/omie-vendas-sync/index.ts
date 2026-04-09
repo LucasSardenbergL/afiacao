@@ -1194,7 +1194,10 @@ serve(async (req) => {
             { codigo_pedido: codigoPedido },
             editAccount
           ) as any;
-          omieCurrentItems = consultResult?.det || [];
+          // Omie returns items under pedido_venda_produto.det
+          omieCurrentItems = consultResult?.pedido_venda_produto?.det
+            || consultResult?.det
+            || [];
           console.log(`[Omie Vendas][${editAccount}] Pedido consultado: ${omieCurrentItems.length} itens no Omie`);
         } catch (consultErr: any) {
           console.warn(`[Omie Vendas][${editAccount}] Erro ao consultar pedido: ${consultErr.message}`);
