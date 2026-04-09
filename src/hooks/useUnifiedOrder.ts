@@ -1350,7 +1350,7 @@ export function useUnifiedOrder() {
     handleVoiceItemsIdentified, handleImageCategoryIdentified,
     handleAICustomerSelect, handleUnifiedAIResult,
     handleAddRecommendation, handleStaffAddTool,
-    submitOrder, loadUserTools,
+    submitOrder, submitQuote, loadUserTools,
     // Order success
     orderSuccessOpen, setOrderSuccessOpen, lastOrderData,
     // Navigate

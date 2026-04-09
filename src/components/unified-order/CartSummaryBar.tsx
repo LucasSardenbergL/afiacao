@@ -45,6 +45,7 @@ interface CartSummaryBarProps {
   isOrdemCompraCustomer?: boolean;
   // Actions
   onSubmit: () => void;
+  onSubmitQuote?: () => void;
 }
 
 function PaymentCombobox({
