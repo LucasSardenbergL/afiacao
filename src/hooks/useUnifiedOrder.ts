@@ -526,8 +526,7 @@ export function useUnifiedOrder() {
         loadUserTools(localUserId);
         loadAddresses(localUserId);
         loadPriceHistory();
-        // Fetch purchase history for this customer
-        // Fetch purchase history from sales_orders AND sales_price_history
+        // Fetch local purchase history
         Promise.all([
           supabase.from('sales_orders')
             .select('items, created_at')
@@ -541,34 +540,25 @@ export function useUnifiedOrder() {
             .order('created_at', { ascending: false }),
         ]).then(([ordersRes, priceHistRes]) => {
           const history: Record<string, string> = {};
-          // From sales_orders items (by codigo)
           if (ordersRes.data) {
             for (const order of ordersRes.data) {
               const items = order.items as any[];
               if (Array.isArray(items)) {
                 for (const item of items) {
                   const code = item.codigo || item.product_code || '';
-                  if (code && !history[code]) {
-                    history[code] = order.created_at;
-                  }
-                  // Also store by product_id for cross-reference
+                  if (code && !history[code]) history[code] = order.created_at;
                   const pid = item.product_id || '';
-                  if (pid && !history[`pid:${pid}`]) {
-                    history[`pid:${pid}`] = order.created_at;
-                  }
+                  if (pid && !history[`pid:${pid}`]) history[`pid:${pid}`] = order.created_at;
                 }
               }
             }
           }
-          // From sales_price_history (by product_id)
           if (priceHistRes.data) {
             for (const row of priceHistRes.data) {
-              if (!history[`pid:${row.product_id}`]) {
-                history[`pid:${row.product_id}`] = row.created_at;
-              }
+              if (!history[`pid:${row.product_id}`]) history[`pid:${row.product_id}`] = row.created_at;
             }
           }
-          setCustomerPurchaseHistory(history);
+          setCustomerPurchaseHistory(prev => ({ ...prev, ...history }));
         });
       }
 
@@ -613,6 +603,41 @@ export function useUnifiedOrder() {
         cust.codigo_vendedor_afiacao = afiacaoClientResult.data.codigo_vendedor || null;
       }
       setSelectedCustomer({ ...cust });
+
+      // Fetch Omie order history (runs in background, merges into purchase history)
+      const omieHistoryPromises: Promise<any>[] = [];
+      if (cust.codigo_cliente) {
+        omieHistoryPromises.push(
+          supabase.functions.invoke('omie-vendas-sync', {
+            body: { action: 'historico_produtos_cliente', codigo_cliente: cust.codigo_cliente, account: 'oben' },
+          })
+        );
+      }
+      if (cust.codigo_cliente_colacor) {
+        omieHistoryPromises.push(
+          supabase.functions.invoke('omie-vendas-sync', {
+            body: { action: 'historico_produtos_cliente', codigo_cliente: cust.codigo_cliente_colacor, account: 'colacor' },
+          })
+        );
+      }
+      if (omieHistoryPromises.length > 0) {
+        Promise.all(omieHistoryPromises).then((results) => {
+          const omieHistory: Record<string, string> = {};
+          for (const res of results) {
+            if (res?.data?.history) {
+              const h = res.data.history as Record<string, string>;
+              for (const [omieCod, dateStr] of Object.entries(h)) {
+                if (!omieHistory[`omie:${omieCod}`]) {
+                  omieHistory[`omie:${omieCod}`] = dateStr;
+                }
+              }
+            }
+          }
+          if (Object.keys(omieHistory).length > 0) {
+            setCustomerPurchaseHistory(prev => ({ ...prev, ...omieHistory }));
+          }
+        });
+      }
 
       const localPricesByProduct: Record<string, number> = {};
       if (localPriceResult.data && localPriceResult.data.length > 0) {
@@ -896,11 +921,25 @@ export function useUnifiedOrder() {
     if (prices[product.omie_codigo_produto]) return true;
     if (customerPurchaseHistory[product.codigo]) return true;
     if (customerPurchaseHistory[`pid:${product.id}`]) return true;
+    if (customerPurchaseHistory[`omie:${product.omie_codigo_produto}`]) return true;
     return false;
   }, [customerPricesOben, customerPricesColacor, customerPurchaseHistory]);
 
   const getProductLastOrderDate = useCallback((product: Product): string | null => {
-    return customerPurchaseHistory[product.codigo] || customerPurchaseHistory[`pid:${product.id}`] || null;
+    // Check local history first
+    const local = customerPurchaseHistory[product.codigo] || customerPurchaseHistory[`pid:${product.id}`];
+    if (local) return local;
+    // Check Omie history by omie_codigo_produto
+    const omieDate = customerPurchaseHistory[`omie:${product.omie_codigo_produto}`];
+    if (omieDate) {
+      // Omie dates are DD/MM/YYYY, convert to ISO for consistency
+      const parts = omieDate.split('/');
+      if (parts.length === 3) {
+        return `${parts[2]}-${parts[1]}-${parts[0]}T00:00:00`;
+      }
+      return omieDate;
+    }
+    return null;
   }, [customerPurchaseHistory]);
 
   const filteredObenProducts = useMemo(() => {

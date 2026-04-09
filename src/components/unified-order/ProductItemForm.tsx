@@ -52,6 +52,8 @@ export function ProductItemForm({
 
   const formatDate = (dateStr: string) => {
     try {
+      // If already DD/MM/YYYY (from Omie), return as-is
+      if (/^\d{2}\/\d{2}\/\d{4}$/.test(dateStr)) return dateStr;
       return format(new Date(dateStr), 'dd/MM/yyyy');
     } catch {
       return '';
@@ -100,7 +102,7 @@ export function ProductItemForm({
                 {products.map(product => {
                   const isInCart = productItems.some(c => c.product.id === product.id);
                   const customerPrice = prices[product.omie_codigo_produto];
-                  const lastOrderDate = customerPurchaseHistory[product.codigo] || customerPurchaseHistory[`pid:${product.id}`];
+                  const lastOrderDate = customerPurchaseHistory[product.codigo] || customerPurchaseHistory[`pid:${product.id}`] || customerPurchaseHistory[`omie:${product.omie_codigo_produto}`] || '';
                   const hasBoughtBefore = !!lastOrderDate || !!customerPrice;
                   return (
                     <tr key={product.id} className={cn('border-b last:border-b-0 hover:bg-muted/20 transition-colors', isInCart && 'bg-accent/20')}>
