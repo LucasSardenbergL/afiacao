@@ -527,29 +527,49 @@ export function useUnifiedOrder() {
         loadAddresses(localUserId);
         loadPriceHistory();
         // Fetch purchase history for this customer
-        supabase.from('sales_orders')
-          .select('items, created_at')
-          .eq('customer_user_id', localUserId)
-          .neq('status', 'orcamento')
-          .order('created_at', { ascending: false })
-          .limit(100)
-          .then(({ data: orders }) => {
-            if (orders && orders.length > 0) {
-              const history: Record<string, string> = {};
-              for (const order of orders) {
-                const items = order.items as any[];
-                if (Array.isArray(items)) {
-                  for (const item of items) {
-                    const code = item.codigo || item.product_code || '';
-                    if (code && !history[code]) {
-                      history[code] = order.created_at;
-                    }
+        // Fetch purchase history from sales_orders AND sales_price_history
+        Promise.all([
+          supabase.from('sales_orders')
+            .select('items, created_at')
+            .eq('customer_user_id', localUserId)
+            .neq('status', 'orcamento')
+            .order('created_at', { ascending: false })
+            .limit(100),
+          supabase.from('sales_price_history')
+            .select('product_id, created_at')
+            .eq('customer_user_id', localUserId)
+            .order('created_at', { ascending: false }),
+        ]).then(([ordersRes, priceHistRes]) => {
+          const history: Record<string, string> = {};
+          // From sales_orders items (by codigo)
+          if (ordersRes.data) {
+            for (const order of ordersRes.data) {
+              const items = order.items as any[];
+              if (Array.isArray(items)) {
+                for (const item of items) {
+                  const code = item.codigo || item.product_code || '';
+                  if (code && !history[code]) {
+                    history[code] = order.created_at;
+                  }
+                  // Also store by product_id for cross-reference
+                  const pid = item.product_id || '';
+                  if (pid && !history[`pid:${pid}`]) {
+                    history[`pid:${pid}`] = order.created_at;
                   }
                 }
               }
-              setCustomerPurchaseHistory(history);
             }
-          });
+          }
+          // From sales_price_history (by product_id)
+          if (priceHistRes.data) {
+            for (const row of priceHistRes.data) {
+              if (!history[`pid:${row.product_id}`]) {
+                history[`pid:${row.product_id}`] = row.created_at;
+              }
+            }
+          }
+          setCustomerPurchaseHistory(history);
+        });
       }
 
       const [
