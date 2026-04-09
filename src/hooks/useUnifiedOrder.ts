@@ -1126,6 +1126,7 @@ export function useUnifiedOrder() {
           customerName: selectedCustomer.razao_social,
           customerDocument: selectedCustomer.cnpj_cpf || '',
           customerAddress: fullCustomerAddress,
+          customerPhone,
           condPagamento: findParcelaDesc(selectedParcelaColacor, formasPagamentoColacor),
           parcelaCode: selectedParcelaColacor,
           items: colacorProductItems.map(c => ({
@@ -1156,6 +1157,7 @@ export function useUnifiedOrder() {
           customerName: selectedCustomer.razao_social,
           customerDocument: selectedCustomer.cnpj_cpf || '',
           customerAddress: fullCustomerAddress,
+          customerPhone,
           condPagamento: afiacaoPaymentMethod === 'a_vista' ? 'À Vista' : afiacaoPaymentMethod,
           items: serviceItems.map(c => {
             const price = getServicePrice(c) || 0;
