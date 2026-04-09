@@ -78,6 +78,9 @@ const SalesOrderEdit = () => {
   const [productSearch, setProductSearch] = useState('');
   const [catalogProducts, setCatalogProducts] = useState<OmieProduct[]>([]);
   const [loadingProducts, setLoadingProducts] = useState(false);
+  // Tint color dialog
+  const [tintPendingProduct, setTintPendingProduct] = useState<OmieProduct | null>(null);
+  const [customerUserId, setCustomerUserId] = useState<string | null>(null);
 
   useEffect(() => {
     if (id) loadOrder();
