@@ -1194,7 +1194,16 @@ serve(async (req) => {
             { codigo_pedido: codigoPedido },
             editAccount
           ) as any;
-          omieCurrentItems = consultResult?.det || [];
+          console.log(`[Omie Vendas][${editAccount}] ConsultarPedido keys:`, JSON.stringify(Object.keys(consultResult || {})));
+          // Try multiple possible paths for items
+          omieCurrentItems = consultResult?.det 
+            || consultResult?.pedido_venda_produto?.det
+            || consultResult?.pedido?.det
+            || [];
+          // If still empty, log first 2000 chars of response
+          if (omieCurrentItems.length === 0) {
+            console.log(`[Omie Vendas][${editAccount}] ConsultarPedido response (truncated):`, JSON.stringify(consultResult).substring(0, 2000));
+          }
           console.log(`[Omie Vendas][${editAccount}] Pedido consultado: ${omieCurrentItems.length} itens no Omie`);
         } catch (consultErr: any) {
           console.warn(`[Omie Vendas][${editAccount}] Erro ao consultar pedido: ${consultErr.message}`);
