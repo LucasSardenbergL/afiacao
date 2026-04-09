@@ -198,11 +198,35 @@ const SalesPrintDashboard = () => {
     enabled: customerIds.length > 0,
   });
 
+  // Fetch customer addresses
+  const { data: customerAddresses = [] } = useQuery({
+    queryKey: ['sales-print-addresses', customerIds],
+    queryFn: async () => {
+      if (customerIds.length === 0) return [];
+      const { data } = await supabase
+        .from('addresses')
+        .select('user_id, street, number, complement, neighborhood, city, state, zip_code, is_default')
+        .in('user_id', customerIds)
+        .order('is_default', { ascending: false });
+      return data || [];
+    },
+    enabled: customerIds.length > 0,
+  });
+
   const profileMap = useMemo(() => {
     const m = new Map<string, any>();
     profiles.forEach(p => m.set(p.user_id, p));
     return m;
   }, [profiles]);
+
+  const addressMap = useMemo(() => {
+    const m = new Map<string, any>();
+    customerAddresses.forEach(a => {
+      // Keep the first (default or first found) per user
+      if (!m.has(a.user_id)) m.set(a.user_id, a);
+    });
+    return m;
+  }, [customerAddresses]);
 
   // Enriched and filtered orders
   const filteredOrders = useMemo(() => {
@@ -215,14 +239,19 @@ const SalesPrintDashboard = () => {
       .map(o => {
         const custId = o.customer_user_id || (o as any).user_id;
         const profile = profileMap.get(custId);
+        const addr = addressMap.get(custId);
+        const fullAddress = addr
+          ? `${addr.street}, ${addr.number}${addr.complement ? ' - ' + addr.complement : ''} – ${addr.neighborhood}, ${addr.city}/${addr.state} – CEP: ${addr.zip_code}`
+          : '';
         return {
           ...o,
           customer_name: (o as any).customer_name || profile?.name || 'Cliente',
           customer_document: (o as any).customer_document || profile?.document || '',
           customer_phone: profile?.phone || '',
+          customer_address: fullAddress,
         };
       });
-  }, [allOrdersRaw, selectedCompanies, selectedPeriod, profileMap]);
+  }, [allOrdersRaw, selectedCompanies, selectedPeriod, profileMap, addressMap]);
 
   // Group by company then period
   const grouped = useMemo(() => {
