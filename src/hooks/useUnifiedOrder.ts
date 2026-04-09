@@ -496,6 +496,7 @@ export function useUnifiedOrder() {
     setVendedorDivergencias([]);
     setAddresses([]);
     setSelectedAddress('');
+    setCustomerPurchaseHistory({});
     try {
       setSelectedCustomer(cust);
       let localUserId = cust.local_user_id || null;
