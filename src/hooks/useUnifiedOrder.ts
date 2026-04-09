@@ -970,6 +970,7 @@ export function useUnifiedOrder() {
             customer_user_id: customerUserId || user.id, created_by: user.id,
             items: itemsPayload, subtotal: obenSubtotal, total: obenSubtotal,
             status: 'rascunho', notes: notes || null, account: 'oben',
+            customer_address: storedCustomerAddress, customer_phone: storedCustomerPhone,
           } as any).select('id').single();
         if (insertError) throw insertError;
         const { data: omieResult, error: omieError } = await supabase.functions.invoke('omie-vendas-sync', {
