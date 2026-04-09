@@ -604,7 +604,41 @@ export function useUnifiedOrder() {
       }
       setSelectedCustomer({ ...cust });
 
-      const localPricesByProduct: Record<string, number> = {};
+      // Fetch Omie order history (runs in background, merges into purchase history)
+      const omieHistoryPromises: Promise<any>[] = [];
+      if (cust.codigo_cliente) {
+        omieHistoryPromises.push(
+          supabase.functions.invoke('omie-vendas-sync', {
+            body: { action: 'historico_produtos_cliente', codigo_cliente: cust.codigo_cliente, account: 'oben' },
+          })
+        );
+      }
+      if (cust.codigo_cliente_colacor) {
+        omieHistoryPromises.push(
+          supabase.functions.invoke('omie-vendas-sync', {
+            body: { action: 'historico_produtos_cliente', codigo_cliente: cust.codigo_cliente_colacor, account: 'colacor' },
+          })
+        );
+      }
+      if (omieHistoryPromises.length > 0) {
+        Promise.all(omieHistoryPromises).then((results) => {
+          const omieHistory: Record<string, string> = {};
+          for (const res of results) {
+            if (res?.data?.history) {
+              const h = res.data.history as Record<string, string>;
+              for (const [omieCod, dateStr] of Object.entries(h)) {
+                if (!omieHistory[`omie:${omieCod}`]) {
+                  omieHistory[`omie:${omieCod}`] = dateStr;
+                }
+              }
+            }
+          }
+          if (Object.keys(omieHistory).length > 0) {
+            setCustomerPurchaseHistory(prev => ({ ...prev, ...omieHistory }));
+          }
+        });
+      }
+
       if (localPriceResult.data && localPriceResult.data.length > 0) {
         for (const row of localPriceResult.data) {
           if (!localPricesByProduct[row.product_id]) {
