@@ -90,7 +90,12 @@ export function CustomerSearch({
                 {customers.map(c => (
                   <button key={c.codigo_cliente} className="w-full text-left px-3 py-2 hover:bg-muted/50 transition-colors" onClick={() => onSelectCustomer(c)} disabled={loadingCustomer}>
                     <p className="text-sm font-medium">{c.nome_fantasia || c.razao_social}</p>
-                    <p className="text-xs text-muted-foreground">{c.cnpj_cpf || 'Sem documento'}{c.contato ? ` • ${c.contato}` : ''}</p>
+                    <div className="flex items-center gap-1 flex-wrap">
+                      <span className="text-xs text-muted-foreground">{c.cnpj_cpf || 'Sem documento'}{c.contato ? ` • ${c.contato}` : ''}</span>
+                      {c.tags && c.tags.length > 0 && c.tags.map((tag, i) => (
+                        <Badge key={i} variant="outline" className="text-[8px] px-1 py-0">{tag}</Badge>
+                      ))}
+                    </div>
                   </button>
                 ))}
               </div>
