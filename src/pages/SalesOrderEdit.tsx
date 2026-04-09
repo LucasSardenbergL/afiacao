@@ -152,8 +152,14 @@ const SalesOrderEdit = () => {
   };
 
   const addProduct = (product: OmieProduct) => {
-    // Check if already in items
-    const exists = items.some(i => i.omie_codigo_produto === product.omie_codigo_produto);
+    // If tintometric base, open color dialog
+    if (product.is_tintometric && product.tint_type === 'base') {
+      setTintPendingProduct(product);
+      setShowAddProduct(false);
+      setProductSearch('');
+      return;
+    }
+    const exists = items.some(i => i.omie_codigo_produto === product.omie_codigo_produto && !i.tint_cor_id);
     if (exists) {
       toast.error('Este produto já está no pedido');
       return;
@@ -173,6 +179,44 @@ const SalesOrderEdit = () => {
     setProductSearch('');
     toast.success(`"${product.descricao}" adicionado`);
   };
+
+  const handleTintConfirm = (formulaId: string, corId: string, nomeCor: string, precoFinal: number, custoCorantes: number, alternativeProduct?: Product) => {
+    const product = alternativeProduct
+      ? catalogProducts.find(p => p.id === alternativeProduct.id) || tintPendingProduct!
+      : tintPendingProduct!;
+    const newItem: OrderItem = {
+      product_id: product.id,
+      omie_codigo_produto: product.omie_codigo_produto,
+      codigo: product.codigo,
+      descricao: product.descricao,
+      unidade: product.unidade || 'UN',
+      quantidade: 1,
+      valor_unitario: precoFinal,
+      valor_total: precoFinal,
+      tint_cor_id: corId,
+      tint_nome_cor: nomeCor,
+    };
+    setItems(prev => [...prev, newItem]);
+    setTintPendingProduct(null);
+    toast.success(`"${product.descricao}" com cor ${corId} adicionado`);
+  };
+
+  const tintProductAsProduct = useMemo((): Product | null => {
+    if (!tintPendingProduct) return null;
+    return {
+      id: tintPendingProduct.id,
+      codigo: tintPendingProduct.codigo,
+      descricao: tintPendingProduct.descricao,
+      unidade: tintPendingProduct.unidade,
+      valor_unitario: tintPendingProduct.valor_unitario,
+      estoque: tintPendingProduct.estoque ?? 0,
+      ativo: tintPendingProduct.ativo ?? true,
+      omie_codigo_produto: tintPendingProduct.omie_codigo_produto,
+      account: tintPendingProduct.account,
+      is_tintometric: tintPendingProduct.is_tintometric,
+      tint_type: tintPendingProduct.tint_type,
+    };
+  }, [tintPendingProduct]);
 
   const filteredProducts = useMemo(() => {
     if (!productSearch || productSearch.length < 2) return [];
