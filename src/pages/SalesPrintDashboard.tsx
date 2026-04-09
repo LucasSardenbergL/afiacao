@@ -272,19 +272,45 @@ const SalesPrintDashboard = () => {
     return customerIds.filter(id => !localAddressMap.has(id));
   }, [customerIds, localAddressMap]);
 
+  // Build omie codigo_cliente map from omie_clientes table + order payloads as fallback
   const omieClienteMap = useMemo(() => {
     const m = new Map<string, number>();
     omieClientes.forEach(oc => m.set(oc.user_id, oc.omie_codigo_cliente));
+    // Fallback: extract codigo_cliente from order payloads for customers not in omie_clientes
+    allOrdersRaw.forEach(o => {
+      const custId = o.customer_user_id || (o as any).user_id;
+      if (custId && !m.has(custId)) {
+        const payload = (o as any).omie_payload;
+        const cc = payload?.cabecalho?.codigo_cliente;
+        if (cc) m.set(custId, cc);
+      }
+    });
     return m;
-  }, [omieClientes]);
+  }, [omieClientes, allOrdersRaw]);
 
+  // Fetch addresses from Omie for ALL customers missing local address
   const { data: omieAddresses = {} } = useQuery({
-    queryKey: ['sales-print-omie-addresses', customersMissingAddress],
+    queryKey: ['sales-print-omie-addresses', customersMissingAddress, Array.from(omieClienteMap.entries())],
     queryFn: async () => {
       const result: Record<string, string> = {};
-      // Fetch address from Omie for each customer missing a local address
       for (const userId of customersMissingAddress) {
-        const codigoCliente = omieClienteMap.get(userId);
+        let codigoCliente = omieClienteMap.get(userId);
+        
+        // If no codigo_cliente, try searching by document (CNPJ/CPF)
+        if (!codigoCliente) {
+          const profile = profileMap.get(userId);
+          const doc = profile?.document;
+          if (doc) {
+            try {
+              const { data } = await supabase.functions.invoke('omie-cliente', {
+                body: { action: 'buscar_por_documento', documento: doc },
+              });
+              const cc = data?.cliente?.codigo_cliente_omie;
+              if (cc) codigoCliente = cc;
+            } catch (_) { /* ignore */ }
+          }
+        }
+
         if (!codigoCliente) continue;
         try {
           const { data } = await supabase.functions.invoke('omie-cliente', {
@@ -308,7 +334,7 @@ const SalesPrintDashboard = () => {
       }
       return result;
     },
-    enabled: customersMissingAddress.length > 0 && omieClientes.length > 0,
+    enabled: customersMissingAddress.length > 0,
   });
 
   const addressMap = useMemo(() => {
