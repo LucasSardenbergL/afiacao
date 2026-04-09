@@ -1076,9 +1076,9 @@ export function useUnifiedOrder() {
         const obenOrderNum = results.find(r => r.startsWith('PV Oben'))?.replace('PV Oben ', '') || '';
         printDataList.push({
           companyName: 'OBEN COMÉRCIO LTDA',
-          companyCnpj: '07.311.465/0001-02',
-          companyPhone: '(41) 3356-0042',
-          companyAddress: 'Rua Dep. Heitor Alencar Furtado, 3341 – Mossunguê, Curitiba/PR – CEP: 81200-070',
+          companyCnpj: '51.027.034/0001-00',
+          companyPhone: '(37) 9987-8190',
+          companyAddress: 'Av. Primeiro de Junho, 70 – Centro, Divinópolis/MG – CEP: 35.500-002',
           orderNumber: obenOrderNum,
           date: dateShort,
           customerName: selectedCustomer.razao_social,
@@ -1109,9 +1109,9 @@ export function useUnifiedOrder() {
         const colacorOrderNum = results.find(r => r.startsWith('PV Colacor'))?.replace('PV Colacor ', '') || '';
         printDataList.push({
           companyName: 'COLACOR COMERCIAL LTDA',
-          companyCnpj: '03.422.099/0001-08',
-          companyPhone: '(41) 3356-0042',
-          companyAddress: 'Rua Dep. Heitor Alencar Furtado, 3341 – Mossunguê, Curitiba/PR – CEP: 81200-070',
+          companyCnpj: '15.422.799/0001-81',
+          companyPhone: '(37) 3222-1035',
+          companyAddress: 'Av. Primeiro de Junho, 48 – Centro, Divinópolis/MG – CEP: 35.500-002',
           orderNumber: colacorOrderNum,
           date: dateShort,
           customerName: selectedCustomer.razao_social,
@@ -1138,10 +1138,10 @@ export function useUnifiedOrder() {
       if (serviceItems.length > 0) {
         const afiacaoOrderNum = results.find(r => r.startsWith('OS'))?.replace('OS ', '') || '';
         printDataList.push({
-          companyName: 'AFIAÇÃO COLACOR LTDA',
-          companyCnpj: '24.521.946/0001-61',
-          companyPhone: '(41) 3356-0042',
-          companyAddress: 'Rua Dep. Heitor Alencar Furtado, 3341 – Mossunguê, Curitiba/PR – CEP: 81200-070',
+          companyName: 'COLACOR S.C LTDA',
+          companyCnpj: '55.555.305/0001-51',
+          companyPhone: '(37) 9987-8190',
+          companyAddress: 'Av. Primeiro de Junho, 50 – Centro, Divinópolis/MG – CEP: 35.500-002',
           orderNumber: afiacaoOrderNum,
           date: dateShort,
           customerName: selectedCustomer.razao_social,

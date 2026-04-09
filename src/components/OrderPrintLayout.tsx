@@ -110,7 +110,7 @@ export function openPrintOrder(data: PrintOrderData) {
     `;
   }).join('');
 
-  const cnpjsComDesconto = ['03.422.099/0001-08', '07.311.465/0001-02', '24.521.946/0001-61'];
+  const cnpjsComDesconto = ['15.422.799/0001-81', '51.027.034/0001-00', '55.555.305/0001-51'];
   const showDesconto = data.desconto > 0 && cnpjsComDesconto.includes(data.customerDocument || '');
 
   const html = `<!DOCTYPE html>
