@@ -133,6 +133,20 @@ const SalesPrintDashboard = () => {
   const dayStart = startOfDay(selectedDate).toISOString();
   const dayEnd = endOfDay(selectedDate).toISOString();
 
+  // Fetch company logos from Omie
+  const { data: companyLogos = {} } = useQuery({
+    queryKey: ['sales-print-company-logos'],
+    queryFn: async () => {
+      try {
+        const { data } = await supabase.functions.invoke('omie-cliente', {
+          body: { action: 'buscar_logos_empresas' },
+        });
+        return (data?.logos || {}) as Record<string, string | null>;
+      } catch (_) { return {}; }
+    },
+    staleTime: 1000 * 60 * 60 * 24, // cache 24h
+  });
+
   // Fetch sales_orders for the selected date
   // Fetch payment terms map (code -> description)
   const { data: formasMap = {} } = useQuery({
