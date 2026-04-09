@@ -201,6 +201,12 @@ export function CartSummaryBar({
               return count > 1 ? <span className="text-[10px] opacity-70">({count} pedidos)</span> : null;
             })()}
           </Button>
+          {hasOnlyProducts && onSubmitQuote && (
+            <Button variant="outline" className="w-full gap-2" onClick={onSubmitQuote} disabled={submitting}>
+              {submitting ? <Loader2 className="w-4 h-4 animate-spin" /> : <FileText className="w-4 h-4" />}
+              Salvar como Orçamento
+            </Button>
+          )}
         </CardContent>
       </Card>
 
