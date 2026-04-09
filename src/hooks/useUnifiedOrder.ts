@@ -526,8 +526,7 @@ export function useUnifiedOrder() {
         loadUserTools(localUserId);
         loadAddresses(localUserId);
         loadPriceHistory();
-        // Fetch purchase history for this customer
-        // Fetch purchase history from sales_orders AND sales_price_history
+        // Fetch purchase history from local DB + Omie
         Promise.all([
           supabase.from('sales_orders')
             .select('items, created_at')
@@ -539,7 +538,19 @@ export function useUnifiedOrder() {
             .select('product_id, created_at')
             .eq('customer_user_id', localUserId)
             .order('created_at', { ascending: false }),
-        ]).then(([ordersRes, priceHistRes]) => {
+          // Fetch from Omie (oben)
+          cust.codigo_cliente
+            ? supabase.functions.invoke('omie-vendas-sync', {
+                body: { action: 'historico_produtos_cliente', codigo_cliente: cust.codigo_cliente, account: 'oben' },
+              })
+            : Promise.resolve({ data: null }),
+          // Fetch from Omie (colacor)
+          cust.codigo_cliente_colacor
+            ? supabase.functions.invoke('omie-vendas-sync', {
+                body: { action: 'historico_produtos_cliente', codigo_cliente: cust.codigo_cliente_colacor, account: 'colacor' },
+              })
+            : Promise.resolve({ data: null }),
+        ]).then(([ordersRes, priceHistRes, omieObenRes, omieColacorRes]) => {
           const history: Record<string, string> = {};
           // From sales_orders items (by codigo)
           if (ordersRes.data) {
@@ -551,7 +562,6 @@ export function useUnifiedOrder() {
                   if (code && !history[code]) {
                     history[code] = order.created_at;
                   }
-                  // Also store by product_id for cross-reference
                   const pid = item.product_id || '';
                   if (pid && !history[`pid:${pid}`]) {
                     history[`pid:${pid}`] = order.created_at;
@@ -568,6 +578,19 @@ export function useUnifiedOrder() {
               }
             }
           }
+          // From Omie history (by omie_codigo_produto)
+          const mergeOmieHistory = (res: any) => {
+            if (res?.data?.history) {
+              const h = res.data.history as Record<string, string>;
+              for (const [omieCod, dateStr] of Object.entries(h)) {
+                if (!history[`omie:${omieCod}`]) {
+                  history[`omie:${omieCod}`] = dateStr;
+                }
+              }
+            }
+          };
+          mergeOmieHistory(omieObenRes);
+          mergeOmieHistory(omieColacorRes);
           setCustomerPurchaseHistory(history);
         });
       }
