@@ -146,7 +146,7 @@ export function openPrintOrder(data: PrintOrderData) {
   </div>
   <div class="order-box">
     <div class="label">PEDIDO DE VENDA</div>
-    <div class="number">Nº ${data.orderNumber}</div>
+    <div class="number">Nº ${data.orderNumber.replace(/^0+/, '') || '0'}</div>
     <div class="date">${data.date}</div>
   </div>
 </div>
