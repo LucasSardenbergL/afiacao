@@ -766,6 +766,9 @@ async function syncPedidos(
         if (parts.length === 3) createdAt = new Date(`${parts[2]}-${parts[1]}-${parts[0]}`).toISOString();
       }
 
+      // Get cached address/phone for this client
+      const clientInfo = clientAddressCache.get(codigoCliente) || { address: '', phone: '' };
+
       orderBatch.push({
         customer_user_id: customerUserId,
         created_by: systemUserId,
@@ -780,6 +783,8 @@ async function syncPedidos(
         hash_payload: hashPayload,
         created_at: createdAt,
         notes: cab.observacoes_pedido || null,
+        customer_address: clientInfo.address || null,
+        customer_phone: clientInfo.phone || null,
       });
       orderMeta.push({ hashPayload, detalhes, customerUserId, createdAt });
     }
