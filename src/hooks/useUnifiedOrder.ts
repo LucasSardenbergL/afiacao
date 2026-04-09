@@ -923,7 +923,20 @@ export function useUnifiedOrder() {
   }, [customerPricesOben, customerPricesColacor, customerPurchaseHistory]);
 
   const getProductLastOrderDate = useCallback((product: Product): string | null => {
-    return customerPurchaseHistory[product.codigo] || customerPurchaseHistory[`pid:${product.id}`] || null;
+    // Check local history first
+    const local = customerPurchaseHistory[product.codigo] || customerPurchaseHistory[`pid:${product.id}`];
+    if (local) return local;
+    // Check Omie history by omie_codigo_produto
+    const omieDate = customerPurchaseHistory[`omie:${product.omie_codigo_produto}`];
+    if (omieDate) {
+      // Omie dates are DD/MM/YYYY, convert to ISO for consistency
+      const parts = omieDate.split('/');
+      if (parts.length === 3) {
+        return `${parts[2]}-${parts[1]}-${parts[0]}T00:00:00`;
+      }
+      return omieDate;
+    }
+    return null;
   }, [customerPurchaseHistory]);
 
   const filteredObenProducts = useMemo(() => {
