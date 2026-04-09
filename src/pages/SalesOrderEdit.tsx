@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useMemo } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { Header } from '@/components/Header';
 import { BottomNav } from '@/components/BottomNav';
@@ -9,7 +9,7 @@ import { Textarea } from '@/components/ui/textarea';
 import { Badge } from '@/components/ui/badge';
 import { supabase } from '@/integrations/supabase/client';
 import { useAuth } from '@/contexts/AuthContext';
-import { Loader2, Save, Trash2, Plus, AlertCircle } from 'lucide-react';
+import { Loader2, Save, Trash2, Plus, AlertCircle, Search, X } from 'lucide-react';
 import { toast } from 'sonner';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 
@@ -41,6 +41,15 @@ interface SalesOrder {
   created_at: string;
 }
 
+interface OmieProduct {
+  id: string;
+  omie_codigo_produto: number;
+  codigo: string;
+  descricao: string;
+  unidade: string;
+  valor_unitario: number;
+}
+
 const BLOCKED_STATUSES = ['cancelado', 'entregue', 'faturado'];
 
 const SalesOrderEdit = () => {
@@ -56,6 +65,12 @@ const SalesOrderEdit = () => {
   const [saving, setSaving] = useState(false);
   const [formas, setFormas] = useState<Array<{ codigo: string; descricao: string }>>([]);
   const [selectedParcela, setSelectedParcela] = useState('');
+
+  // Add product state
+  const [showAddProduct, setShowAddProduct] = useState(false);
+  const [productSearch, setProductSearch] = useState('');
+  const [catalogProducts, setCatalogProducts] = useState<OmieProduct[]>([]);
+  const [loadingProducts, setLoadingProducts] = useState(false);
 
   useEffect(() => {
     if (id) loadOrder();
@@ -73,11 +88,9 @@ const SalesOrderEdit = () => {
       setOrder(o);
       setItems(o.items || []);
       setNotes(o.notes || '');
-      // Extract parcela from payload
       const parcela = o.omie_payload?.cabecalho?.codigo_parcela;
       if (parcela) setSelectedParcela(parcela);
 
-      // Load customer name
       const { data: profile } = await supabase
         .from('profiles')
         .select('name')
@@ -85,12 +98,23 @@ const SalesOrderEdit = () => {
         .single();
       if (profile) setCustomerName(profile.name || '');
 
-      // Load formas de pagamento
       const account = o.account === 'colacor' ? 'colacor' : 'oben';
-      const { data: formasResult } = await supabase.functions.invoke('omie-vendas-sync', {
-        body: { action: 'listar_formas_pagamento', account },
-      });
-      if (formasResult?.formas) setFormas(formasResult.formas);
+      
+      // Load formas + products in parallel
+      const [formasRes, productsRes] = await Promise.all([
+        supabase.functions.invoke('omie-vendas-sync', {
+          body: { action: 'listar_formas_pagamento', account },
+        }),
+        supabase.from('omie_products')
+          .select('id, omie_codigo_produto, codigo, descricao, unidade, valor_unitario')
+          .eq('account', account === 'colacor' ? 'colacor_vendas' : 'oben')
+          .eq('ativo', true)
+          .order('descricao')
+          .limit(1000),
+      ]);
+
+      if (formasRes.data?.formas) setFormas(formasRes.data.formas);
+      if (productsRes.data) setCatalogProducts(productsRes.data as OmieProduct[]);
     } catch (e) {
       console.error(e);
       toast.error('Erro ao carregar pedido');
@@ -116,6 +140,37 @@ const SalesOrderEdit = () => {
     setItems(prev => prev.filter((_, i) => i !== index));
   };
 
+  const addProduct = (product: OmieProduct) => {
+    // Check if already in items
+    const exists = items.some(i => i.omie_codigo_produto === product.omie_codigo_produto);
+    if (exists) {
+      toast.error('Este produto já está no pedido');
+      return;
+    }
+    const newItem: OrderItem = {
+      product_id: product.id,
+      omie_codigo_produto: product.omie_codigo_produto,
+      codigo: product.codigo,
+      descricao: product.descricao,
+      unidade: product.unidade || 'UN',
+      quantidade: 1,
+      valor_unitario: product.valor_unitario || 0,
+      valor_total: product.valor_unitario || 0,
+    };
+    setItems(prev => [...prev, newItem]);
+    setShowAddProduct(false);
+    setProductSearch('');
+    toast.success(`"${product.descricao}" adicionado`);
+  };
+
+  const filteredProducts = useMemo(() => {
+    if (!productSearch || productSearch.length < 2) return [];
+    const q = productSearch.toLowerCase();
+    return catalogProducts.filter(p =>
+      p.descricao?.toLowerCase().includes(q) || p.codigo?.toLowerCase().includes(q)
+    ).slice(0, 20);
+  }, [productSearch, catalogProducts]);
+
   const subtotal = items.reduce((s, i) => s + i.valor_total, 0);
 
   const handleSave = async () => {
@@ -129,7 +184,6 @@ const SalesOrderEdit = () => {
       const account = order.account === 'colacor' ? 'colacor' : 'oben';
 
       if (order.omie_pedido_id) {
-        // Alterar no Omie
         const { data: result, error } = await supabase.functions.invoke('omie-vendas-sync', {
           body: {
             action: 'alterar_pedido',
@@ -152,7 +206,6 @@ const SalesOrderEdit = () => {
         if (error) throw error;
         toast.success('Pedido alterado no Omie com sucesso!');
       } else {
-        // Only update locally (draft not synced yet)
         const { error } = await supabase
           .from('sales_orders')
           .update({
@@ -234,9 +287,63 @@ const SalesOrderEdit = () => {
         {/* Items */}
         <Card>
           <CardHeader className="pb-2">
-            <CardTitle className="text-base">Itens do Pedido</CardTitle>
+            <CardTitle className="text-base flex items-center justify-between">
+              <span>Itens do Pedido</span>
+              {!isBlocked && (
+                <Button
+                  variant="outline"
+                  size="sm"
+                  className="h-7 gap-1 text-xs"
+                  onClick={() => setShowAddProduct(!showAddProduct)}
+                >
+                  {showAddProduct ? <X className="w-3.5 h-3.5" /> : <Plus className="w-3.5 h-3.5" />}
+                  {showAddProduct ? 'Fechar' : 'Adicionar'}
+                </Button>
+              )}
+            </CardTitle>
           </CardHeader>
           <CardContent className="space-y-3">
+            {/* Add product search */}
+            {showAddProduct && !isBlocked && (
+              <div className="border rounded-lg p-3 bg-muted/30 space-y-2">
+                <div className="relative">
+                  <Search className="absolute left-2.5 top-2 w-4 h-4 text-muted-foreground" />
+                  <Input
+                    placeholder="Buscar produto por nome ou código..."
+                    value={productSearch}
+                    onChange={(e) => setProductSearch(e.target.value)}
+                    className="pl-8 h-8 text-sm"
+                    autoFocus
+                  />
+                </div>
+                {filteredProducts.length > 0 && (
+                  <div className="max-h-48 overflow-y-auto space-y-1">
+                    {filteredProducts.map((p) => (
+                      <button
+                        key={p.id}
+                        onClick={() => addProduct(p)}
+                        className="w-full text-left px-2 py-1.5 rounded hover:bg-accent text-sm flex items-center justify-between gap-2"
+                      >
+                        <div className="min-w-0 flex-1">
+                          <p className="truncate font-medium">{p.descricao}</p>
+                          <p className="text-xs text-muted-foreground">{p.codigo} • {p.unidade}</p>
+                        </div>
+                        <span className="text-xs font-medium shrink-0">
+                          R$ {(p.valor_unitario || 0).toFixed(2)}
+                        </span>
+                      </button>
+                    ))}
+                  </div>
+                )}
+                {productSearch.length >= 2 && filteredProducts.length === 0 && (
+                  <p className="text-xs text-muted-foreground text-center py-2">Nenhum produto encontrado</p>
+                )}
+                {productSearch.length < 2 && (
+                  <p className="text-xs text-muted-foreground text-center py-1">Digite pelo menos 2 caracteres</p>
+                )}
+              </div>
+            )}
+
             {items.map((item, index) => (
               <div key={index} className="border rounded-lg p-3 space-y-2">
                 <div className="flex items-start justify-between gap-2">
