@@ -1251,7 +1251,7 @@ serve(async (req) => {
 
         const editResult = await callOmieVendasApi(
           "produtos/pedido/",
-          "AlterarPedidoVendaProduto",
+          "AlterarPedidoVenda",
           editPayload,
           editAccount
         ) as any;
