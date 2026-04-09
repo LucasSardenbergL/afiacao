@@ -52,6 +52,8 @@ export function ProductItemForm({
 
   const formatDate = (dateStr: string) => {
     try {
+      // If already DD/MM/YYYY (from Omie), return as-is
+      if (/^\d{2}\/\d{2}\/\d{4}$/.test(dateStr)) return dateStr;
       return format(new Date(dateStr), 'dd/MM/yyyy');
     } catch {
       return '';
