@@ -435,9 +435,15 @@ const SalesPrintDashboard = () => {
     const html = `<!DOCTYPE html>
 <html><head><meta charset="utf-8"><title>Impressão de Pedidos - ${format(selectedDate, 'dd/MM/yyyy')}</title>
 <style>
-  @media print { @page { margin: 1.5cm; } body { -webkit-print-color-adjust: exact; print-color-adjust: exact; } .page-break { page-break-after: always; } }
+  @media print {
+    @page { margin: 0; size: A4; }
+    body { -webkit-print-color-adjust: exact; print-color-adjust: exact; padding: 1.5cm; }
+    .page-break { page-break-after: always; }
+  }
   body { font-family: Helvetica, Arial, sans-serif; color: #1a1a1a; margin: 0; padding: 20px; }
   .header { display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 16px; border-bottom: 1px solid #ccc; padding-bottom: 12px; }
+  .header-left { display: flex; align-items: center; gap: 12px; }
+  .company-logo { max-height: 50px; max-width: 120px; object-fit: contain; }
   .company-name { font-size: 22px; font-weight: bold; }
   .company-info { font-size: 10px; color: #666; margin-top: 2px; }
   .order-box { background: #e91e63; color: white; border-radius: 4px; padding: 8px 20px; text-align: center; }
