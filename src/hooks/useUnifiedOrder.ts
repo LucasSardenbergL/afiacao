@@ -167,6 +167,8 @@ export function useUnifiedOrder() {
   const [customerParcelaRankingOben, setCustomerParcelaRankingOben] = useState<string[]>([]);
   const [customerParcelaRankingColacor, setCustomerParcelaRankingColacor] = useState<string[]>([]);
   const [afiacaoPaymentMethod, setAfiacaoPaymentMethod] = useState<string>('a_vista');
+  // Customer purchase history: product codigo -> last order date
+  const [customerPurchaseHistory, setCustomerPurchaseHistory] = useState<Record<string, string>>({});
 
   // Delivery
   const [deliveryOption, setDeliveryOption] = useState<DeliveryOption>('coleta_entrega');
