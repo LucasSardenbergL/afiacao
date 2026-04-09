@@ -314,6 +314,8 @@ async function reprocessProducts(
         if (prod.tipo && prod.tipo.toUpperCase() === "K") continue;
         const familia = (prod.descricao_familia || '').toLowerCase().trim();
         if (EXCLUDED_FAMILIES.some(ex => familia.includes(ex)) || familia.startsWith('jumbo')) continue;
+        const descLower = (prod.descricao || '').toLowerCase();
+        if (descLower.includes('810ml') || descLower.includes('810 ml')) continue;
 
         const newHash = hashObject({
           codigo: prod.codigo,
