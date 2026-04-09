@@ -87,7 +87,7 @@ const fmt = (v: number) => v.toLocaleString('pt-BR', { style: 'currency', curren
 
 export function openPrintOrder(data: PrintOrderData) {
   const obs = buildObsText(data);
-  const installmentText = buildInstallmentDates(data.parcelaCode, data.total);
+  const installmentText = buildInstallmentDates(data.parcelaCode, data.condPagamento, data.total);
   const itemsRows = data.items.map((item, i) => {
     const descLines = [item.descricao];
     if (item.tintCorId && item.tintNomeCor) {
