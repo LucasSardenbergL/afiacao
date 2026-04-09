@@ -101,6 +101,7 @@ export function ProductItemForm({
                   const isInCart = productItems.some(c => c.product.id === product.id);
                   const customerPrice = prices[product.omie_codigo_produto];
                   const lastOrderDate = customerPurchaseHistory[product.codigo] || customerPurchaseHistory[`pid:${product.id}`];
+                  const hasBoughtBefore = !!lastOrderDate || !!customerPrice;
                   return (
                     <tr key={product.id} className={cn('border-b last:border-b-0 hover:bg-muted/20 transition-colors', isInCart && 'bg-accent/20')}>
                       <td className="px-3 py-2">
@@ -113,9 +114,9 @@ export function ProductItemForm({
                           {customerPrice && customerPrice !== product.valor_unitario && (
                             <Badge variant="secondary" className="text-[9px] px-1 py-0">Preço cliente</Badge>
                           )}
-                          {lastOrderDate && (
+                          {hasBoughtBefore && (
                             <Badge variant="outline" className="text-[9px] px-1 py-0 border-green-500/40 text-green-700 dark:text-green-400">
-                              Últ: {formatDate(lastOrderDate)}
+                              {lastOrderDate ? `Últ: ${formatDate(lastOrderDate)}` : '✓ Já comprou'}
                             </Badge>
                           )}
                         </div>
