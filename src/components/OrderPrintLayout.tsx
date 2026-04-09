@@ -33,14 +33,23 @@ export interface PrintOrderData {
   isOben?: boolean;
 }
 
-/** Parse parcela code like "028/042" into array of day offsets [28, 42] */
-function parseParcelaDays(code?: string): number[] {
-  if (!code || code === '000' || code === '999') return [];
-  return code.split('/').map(s => parseInt(s, 10)).filter(n => !isNaN(n) && n > 0);
+/** Extract day offsets from parcela code or description.
+ *  Handles codes like "028/042", "A28", "S37" and descriptions like "28/42 DDL", "30/60/90 dias".
+ */
+function parseParcelaDays(codeOrDesc?: string): number[] {
+  if (!codeOrDesc) return [];
+  const clean = codeOrDesc.trim();
+  if (clean === '000' || clean === '999' || /vista/i.test(clean)) return [];
+  // Extract all numeric groups (2-3 digits) separated by / or spaces
+  const matches = clean.match(/\b(\d{1,3})\b/g);
+  if (!matches) return [];
+  return matches.map(s => parseInt(s, 10)).filter(n => n > 0 && n <= 365);
 }
 
-function buildInstallmentDates(parcelaCode?: string, total?: number): string {
-  const days = parseParcelaDays(parcelaCode);
+function buildInstallmentDates(parcelaCode?: string, condPagamento?: string, total?: number): string {
+  // Try description first (more reliable), then code
+  let days = parseParcelaDays(condPagamento);
+  if (days.length === 0) days = parseParcelaDays(parcelaCode);
   if (days.length === 0) return '';
   const today = new Date();
   const parcValue = total && days.length > 0 ? total / days.length : 0;
@@ -78,7 +87,7 @@ const fmt = (v: number) => v.toLocaleString('pt-BR', { style: 'currency', curren
 
 export function openPrintOrder(data: PrintOrderData) {
   const obs = buildObsText(data);
-  const installmentText = buildInstallmentDates(data.parcelaCode, data.total);
+  const installmentText = buildInstallmentDates(data.parcelaCode, data.condPagamento, data.total);
   const itemsRows = data.items.map((item, i) => {
     const descLines = [item.descricao];
     if (item.tintCorId && item.tintNomeCor) {
