@@ -1072,6 +1072,14 @@ export function useUnifiedOrder() {
         ? `${selectedAddr.street}, ${selectedAddr.number}${selectedAddr.complement ? ' - ' + selectedAddr.complement : ''} – ${selectedAddr.neighborhood}, ${selectedAddr.city}/${selectedAddr.state} – CEP: ${selectedAddr.zipCode}`
         : undefined;
 
+      // Fetch customer phone from profile
+      let customerPhone = '';
+      const custUserId = customerUserId || user?.id;
+      if (custUserId) {
+        const { data: custProfile } = await supabase.from('profiles').select('phone').eq('user_id', custUserId).maybeSingle();
+        if (custProfile?.phone) customerPhone = custProfile.phone;
+      }
+
       if (obenProductItems.length > 0) {
         const obenOrderNum = results.find(r => r.startsWith('PV Oben'))?.replace('PV Oben ', '') || '';
         printDataList.push({
