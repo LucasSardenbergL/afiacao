@@ -357,7 +357,7 @@ const SalesPrintDashboard = () => {
           cond_pagamento: condPagamento,
         };
       });
-  }, [allOrdersRaw, selectedCompanies, selectedPeriod, profileMap, addressMap]);
+  }, [allOrdersRaw, selectedCompanies, selectedPeriod, profileMap, addressMap, formasMap]);
 
   // Group by company then period
   const grouped = useMemo(() => {
