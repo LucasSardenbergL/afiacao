@@ -708,10 +708,13 @@ function buildSingleOrderHtml(data: PrintOrderData): string {
 
   return `<div>
 <div class="header">
-  <div>
-    <div class="company-name">${data.companyName}</div>
-    <div class="company-info">CNPJ: ${data.companyCnpj} • Tel: ${data.companyPhone}</div>
-    <div class="company-info">${data.companyAddress}</div>
+  <div class="header-left">
+    ${data.companyLogoUrl ? `<img src="${data.companyLogoUrl}" class="company-logo" crossorigin="anonymous" />` : ''}
+    <div>
+      <div class="company-name">${data.companyName}</div>
+      <div class="company-info">CNPJ: ${data.companyCnpj} • Tel: ${data.companyPhone}</div>
+      <div class="company-info">${data.companyAddress}</div>
+    </div>
   </div>
   <div class="order-box">
     <div class="label">PEDIDO DE VENDA</div>
