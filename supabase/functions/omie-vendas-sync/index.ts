@@ -82,6 +82,21 @@ async function callOmieVendasApi(
       throw new Error(`Erro Omie Vendas (${account}): ${fs}`);
     }
 
+    if (!response.ok) {
+      const httpMessage = result?.descricao_status || `HTTP ${response.status}`;
+      throw new Error(`Erro Omie Vendas (${account}): ${httpMessage}`);
+    }
+
+    if (
+      result?.codigo_status !== undefined
+      && result?.codigo_status !== null
+      && String(result.codigo_status) !== "0"
+    ) {
+      throw new Error(
+        `Erro Omie Vendas (${account}): ${result?.descricao_status || `status ${result.codigo_status}`}`,
+      );
+    }
+
     return result;
   }
 }
@@ -1184,6 +1199,17 @@ serve(async (req) => {
         // Build Omie payload
         const origPayload = existingOrder.omie_payload as any;
         const codigoPedido = Number(existingOrder.omie_pedido_id);
+        const buildExpectedSignature = (items: any[]) => items
+          .map((item) => `${Number(item.omie_codigo_produto)}:${Number(item.quantidade)}:${Number(item.valor_unitario).toFixed(4)}`)
+          .sort()
+          .join("|");
+        const buildOmieSignature = (items: any[]) => items
+          .map((item) => {
+            const prod = item?.produto || {};
+            return `${Number(prod.codigo_produto)}:${Number(prod.quantidade)}:${Number(prod.valor_unitario).toFixed(4)}`;
+          })
+          .sort()
+          .join("|");
 
         // Step 1: Consult the real order in Omie to get actual item codes
         let omieCurrentItems: any[] = [];
@@ -1205,18 +1231,23 @@ serve(async (req) => {
 
         // Step 2: Delete all existing items
         for (const omieItem of omieCurrentItems) {
+          const codItem = omieItem?.ide?.codigo_item;
           const codItemInt = omieItem?.ide?.codigo_item_integracao;
-          if (codItemInt) {
+          if (codItem || codItemInt) {
             try {
               await callOmieVendasApi(
-                "produtos/pedido/",
-                "ExcluirItemPedidoVenda",
-                { codigo_pedido: codigoPedido, codigo_item_integracao: codItemInt },
+                "produtos/pedidovenda/",
+                "ExcluirItemPedido",
+                {
+                  codigo_pedido: codigoPedido,
+                  ...(codItem ? { codigo_item: Number(codItem) } : {}),
+                  ...(codItemInt ? { codigo_item_integracao: codItemInt } : {}),
+                },
                 editAccount
               );
-              console.log(`[Omie Vendas][${editAccount}] Item ${codItemInt} excluído`);
+              console.log(`[Omie Vendas][${editAccount}] Item ${codItemInt || codItem} excluído`);
             } catch (delErr: any) {
-              console.warn(`[Omie Vendas][${editAccount}] Erro excluir item: ${delErr.message}`);
+              throw new Error(`Falha ao excluir item existente do pedido no Omie: ${delErr.message}`);
             }
           }
         }
@@ -1254,10 +1285,10 @@ serve(async (req) => {
           }
 
           try {
-            await callOmieVendasApi("produtos/pedido/", "IncluirItemPedidoVenda", inclPayload, editAccount);
+            await callOmieVendasApi("produtos/pedidovenda/", "IncluirItemPedido", inclPayload, editAccount);
             console.log(`[Omie Vendas][${editAccount}] Item ${index + 1} incluído: ${item.descricao}`);
           } catch (inclErr: any) {
-            console.error(`[Omie Vendas][${editAccount}] Erro incluir item ${index + 1}: ${inclErr.message}`);
+            throw new Error(`Falha ao incluir item ${index + 1} no Omie: ${inclErr.message}`);
           }
 
           newDetForPayload.push({
@@ -1295,7 +1326,39 @@ serve(async (req) => {
             { cabecalho: editCabecalho, frete: editFrete, observacoes: { obs_venda: editObs || editConfig.obs_prefix }, informacoes_adicionais: editInfoAdic },
             editAccount);
         } catch (headerErr: any) {
-          console.warn(`[Omie Vendas][${editAccount}] Erro atualizar cabeçalho: ${headerErr.message}`);
+          throw new Error(`Falha ao atualizar cabeçalho do pedido no Omie: ${headerErr.message}`);
+        }
+
+        await callOmieVendasApi(
+          "produtos/pedidovenda/",
+          "TotalizarPedido",
+          { codigo_pedido: codigoPedido },
+          editAccount,
+        );
+
+        const finalConsultResult = await callOmieVendasApi(
+          "produtos/pedido/",
+          "ConsultarPedido",
+          { codigo_pedido: codigoPedido },
+          editAccount,
+        ) as any;
+        const finalOmieItems = finalConsultResult?.pedido_venda_produto?.det
+          || finalConsultResult?.det
+          || [];
+        const expectedSignature = buildExpectedSignature(editItems);
+        const omieSignature = buildOmieSignature(finalOmieItems);
+
+        console.log(
+          `[Omie Vendas][${editAccount}] Validação final do pedido ${codigoPedido}: esperado=${editItems.length}, omie=${finalOmieItems.length}`,
+        );
+
+        if (finalOmieItems.length !== editItems.length || expectedSignature !== omieSignature) {
+          console.error(
+            `[Omie Vendas][${editAccount}] Divergência após alteração. esperado=${expectedSignature} omie=${omieSignature}`,
+          );
+          throw new Error(
+            `Omie não confirmou a substituição completa dos itens do pedido (esperado ${editItems.length} itens e recebeu ${finalOmieItems.length}).`,
+          );
         }
 
         const editPayload: Record<string, unknown> = {
@@ -1304,7 +1367,11 @@ serve(async (req) => {
         };
 
         console.log(`[Omie Vendas][${editAccount}] Pedido atualizado: ${editItems.length} itens`);
-        const editResult = { descricao_status: "Pedido alterado com sucesso!" };
+        const editResult = {
+          descricao_status: "Pedido alterado com sucesso!",
+          validated: true,
+          validated_items: finalOmieItems.length,
+        };
 
         // Update local DB
         await supabaseAdmin
