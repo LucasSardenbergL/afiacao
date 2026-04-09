@@ -243,12 +243,20 @@ const SalesPrintDashboard = () => {
         const fullAddress = (o as any).customer_address || (addr
           ? `${addr.street}, ${addr.number}${addr.complement ? ' - ' + addr.complement : ''} – ${addr.neighborhood}, ${addr.city}/${addr.state} – CEP: ${addr.zip_code}`
           : '');
+
+        // Extract cond_pagamento from omie_payload if not set directly
+        const payload = (o as any).omie_payload;
+        const condPagamento = (o as any).cond_pagamento
+          || payload?.cabecalho?.codigo_parcela
+          || undefined;
+
         return {
           ...o,
           customer_name: (o as any).customer_name || profile?.name || 'Cliente',
           customer_document: (o as any).customer_document || profile?.document || '',
           customer_phone: (o as any).customer_phone || profile?.phone || '',
           customer_address: fullAddress,
+          cond_pagamento: condPagamento,
         };
       });
   }, [allOrdersRaw, selectedCompanies, selectedPeriod, profileMap, addressMap]);
