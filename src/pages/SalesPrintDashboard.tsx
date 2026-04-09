@@ -204,7 +204,7 @@ const SalesPrintDashboard = () => {
     enabled: customerIds.length > 0,
   });
 
-  // Fetch customer addresses
+  // Fetch customer addresses from local table
   const { data: customerAddresses = [] } = useQuery({
     queryKey: ['sales-print-addresses', customerIds],
     queryFn: async () => {
@@ -219,20 +219,92 @@ const SalesPrintDashboard = () => {
     enabled: customerIds.length > 0,
   });
 
+  // Fetch omie_clientes mappings to get omie_codigo_cliente for address lookup
+  const { data: omieClientes = [] } = useQuery({
+    queryKey: ['sales-print-omie-clientes', customerIds],
+    queryFn: async () => {
+      if (customerIds.length === 0) return [];
+      const { data } = await supabase
+        .from('omie_clientes')
+        .select('user_id, omie_codigo_cliente')
+        .in('user_id', customerIds);
+      return data || [];
+    },
+    enabled: customerIds.length > 0,
+  });
+
   const profileMap = useMemo(() => {
     const m = new Map<string, any>();
     profiles.forEach(p => m.set(p.user_id, p));
     return m;
   }, [profiles]);
 
-  const addressMap = useMemo(() => {
+  const localAddressMap = useMemo(() => {
     const m = new Map<string, any>();
     customerAddresses.forEach(a => {
-      // Keep the first (default or first found) per user
       if (!m.has(a.user_id)) m.set(a.user_id, a);
     });
     return m;
   }, [customerAddresses]);
+
+  // For customers without local addresses, fetch from Omie
+  const customersMissingAddress = useMemo(() => {
+    return customerIds.filter(id => !localAddressMap.has(id));
+  }, [customerIds, localAddressMap]);
+
+  const omieClienteMap = useMemo(() => {
+    const m = new Map<string, number>();
+    omieClientes.forEach(oc => m.set(oc.user_id, oc.omie_codigo_cliente));
+    return m;
+  }, [omieClientes]);
+
+  const { data: omieAddresses = {} } = useQuery({
+    queryKey: ['sales-print-omie-addresses', customersMissingAddress],
+    queryFn: async () => {
+      const result: Record<string, string> = {};
+      // Fetch address from Omie for each customer missing a local address
+      for (const userId of customersMissingAddress) {
+        const codigoCliente = omieClienteMap.get(userId);
+        if (!codigoCliente) continue;
+        try {
+          const { data } = await supabase.functions.invoke('omie-cliente', {
+            body: { action: 'consultar_cliente', codigo_cliente: codigoCliente },
+          });
+          if (data?.cliente) {
+            const c = data.cliente;
+            const parts = [
+              c.endereco,
+              c.endereco_numero ? `nº ${c.endereco_numero}` : '',
+              c.complemento,
+              c.bairro ? `– ${c.bairro}` : '',
+              c.cidade && c.estado ? `${c.cidade}/${c.estado}` : '',
+              c.cep ? `CEP: ${c.cep}` : '',
+            ].filter(Boolean);
+            result[userId] = parts.join(', ');
+          }
+        } catch (e) {
+          console.warn('Failed to fetch Omie address for', userId, e);
+        }
+      }
+      return result;
+    },
+    enabled: customersMissingAddress.length > 0 && omieClientes.length > 0,
+  });
+
+  const addressMap = useMemo(() => {
+    const m = new Map<string, string>();
+    // First, local addresses
+    customerAddresses.forEach(a => {
+      if (!m.has(a.user_id)) {
+        m.set(a.user_id, `${a.street}, ${a.number}${a.complement ? ' - ' + a.complement : ''} – ${a.neighborhood}, ${a.city}/${a.state} – CEP: ${a.zip_code}`);
+      }
+    });
+    // Then, Omie addresses for those missing locally
+    for (const [userId, addr] of Object.entries(omieAddresses)) {
+      if (!m.has(userId) && addr) m.set(userId, addr);
+    }
+    return m;
+  }, [customerAddresses, omieAddresses]);
 
   // Enriched and filtered orders
   const filteredOrders = useMemo(() => {
@@ -246,9 +318,7 @@ const SalesPrintDashboard = () => {
         const custId = o.customer_user_id || (o as any).user_id;
         const profile = profileMap.get(custId);
         const addr = addressMap.get(custId);
-        const fullAddress = (o as any).customer_address || (addr
-          ? `${addr.street}, ${addr.number}${addr.complement ? ' - ' + addr.complement : ''} – ${addr.neighborhood}, ${addr.city}/${addr.state} – CEP: ${addr.zip_code}`
-          : '');
+        const fullAddress = (o as any).customer_address || addr || '';
 
         // Extract cond_pagamento from omie_payload if not set directly
         const payload = (o as any).omie_payload;
@@ -535,7 +605,8 @@ function buildSingleOrderHtml(data: PrintOrderData): string {
     if (!codeOrDesc) return [];
     const clean = codeOrDesc.trim();
     if (clean === '000' || clean === '999' || /vista/i.test(clean)) return [];
-    const matches = clean.match(/\b(\d{1,3})\b/g);
+    // Extract all numeric groups — handles codes like "S37", "A28", "028/042", "28/42 DDL"
+    const matches = clean.match(/(\d{1,3})/g);
     if (!matches) return [];
     return matches.map(s => parseInt(s, 10)).filter(n => n > 0 && n <= 365);
   };
