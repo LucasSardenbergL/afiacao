@@ -403,19 +403,27 @@ async function listarFormasPagamento(account: Account = "oben") {
   ];
 
   try {
-    // Try Omie API for parcelas
-    const result = await callOmieVendasApi(
-      "geral/parcelas/",
-      "ListarParcelas",
-      { pagina: 1, registros_por_pagina: 100 },
-      account
-    ) as any;
+    const allParcelas: any[] = [];
+    let pagina = 1;
+    let totalPaginas = 1;
 
-    const parcelas = result.cadastros || result.parcela_cadastro || result.lista_parcelas || [];
-    console.log(`[Omie Vendas][${account}] ListarParcelas retornou ${parcelas.length} parcelas. Keys: ${JSON.stringify(Object.keys(result))}`);
+    do {
+      const result = await callOmieVendasApi(
+        "geral/parcelas/",
+        "ListarParcelas",
+        { pagina, registros_por_pagina: 500 },
+        account
+      ) as any;
 
-    if (parcelas.length > 0) {
-      return parcelas
+      const parcelas = result.cadastros || result.parcela_cadastro || result.lista_parcelas || [];
+      totalPaginas = result.total_de_paginas || 1;
+      console.log(`[Omie Vendas][${account}] ListarParcelas página ${pagina}/${totalPaginas} retornou ${parcelas.length} parcelas.`);
+      allParcelas.push(...parcelas);
+      pagina++;
+    } while (pagina <= totalPaginas);
+
+    if (allParcelas.length > 0) {
+      return allParcelas
         .filter((f: any) => f.cInativo !== "S")
         .map((f: any) => ({
           codigo: f.cCodigo || f.nCodigo?.toString() || '',
