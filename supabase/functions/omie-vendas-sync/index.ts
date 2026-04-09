@@ -1268,6 +1268,16 @@ serve(async (req) => {
         // Step 3: Add each new item individually
         const newDetForPayload: any[] = [];
 
+        // Extract default CFOP from existing items (before deletion)
+        const defaultCfop = (() => {
+          for (const oi of omieCurrentItems) {
+            const cfop = oi?.produto?.cfop || oi?.imposto?.cfop;
+            if (cfop) return String(cfop);
+          }
+          return "5102"; // Venda de mercadoria adquirida (padrão)
+        })();
+        console.log(`[Omie Vendas][${editAccount}] CFOP padrão extraído: ${defaultCfop}`);
+
         for (let index = 0; index < editItems.length; index++) {
           const item = editItems[index];
           const itemCode = getOmieItemIntegrationCode(index);
@@ -1277,6 +1287,7 @@ serve(async (req) => {
             codigo_produto: item.omie_codigo_produto,
             quantidade: item.quantidade,
             valor_unitario: item.valor_unitario,
+            cfop: defaultCfop,
           };
 
           if (editOrdemCompra) {
