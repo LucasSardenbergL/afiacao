@@ -525,6 +525,30 @@ export function useUnifiedOrder() {
         loadUserTools(localUserId);
         loadAddresses(localUserId);
         loadPriceHistory();
+        // Fetch purchase history for this customer
+        supabase.from('sales_orders')
+          .select('items, created_at')
+          .eq('customer_user_id', localUserId)
+          .neq('status', 'orcamento')
+          .order('created_at', { ascending: false })
+          .limit(100)
+          .then(({ data: orders }) => {
+            if (orders && orders.length > 0) {
+              const history: Record<string, string> = {};
+              for (const order of orders) {
+                const items = order.items as any[];
+                if (Array.isArray(items)) {
+                  for (const item of items) {
+                    const code = item.codigo || item.product_code || '';
+                    if (code && !history[code]) {
+                      history[code] = order.created_at;
+                    }
+                  }
+                }
+              }
+              setCustomerPurchaseHistory(history);
+            }
+          });
       }
 
       const [
