@@ -985,9 +985,18 @@ serve(async (req) => {
               { pagina: 1, registros_por_pagina: 1 },
               account.appKey,
               account.appSecret
-            ) as unknown as { empresas_cadastro?: Array<{ logo?: string; cUrlLogoEmpresa?: string }> };
-            const empresa = empresaResult?.empresas_cadastro?.[0];
-            logos[label] = empresa?.cUrlLogoEmpresa || empresa?.logo || null;
+            ) as unknown as Record<string, unknown>;
+            console.log(`[buscar_logos] ${account.name} response keys:`, JSON.stringify(Object.keys(empresaResult)));
+            const empresas = (empresaResult?.empresas_cadastro || empresaResult?.empresa_cadastro) as Array<Record<string, unknown>> | undefined;
+            if (empresas && empresas.length > 0) {
+              const empresa = empresas[0];
+              console.log(`[buscar_logos] ${account.name} empresa keys:`, JSON.stringify(Object.keys(empresa)));
+              // Try multiple possible field names
+              logos[label] = (empresa.cUrlLogoEmpresa || empresa.logo || empresa.cLogoBase64 || empresa.url_logo || null) as string | null;
+            } else {
+              console.log(`[buscar_logos] ${account.name} no empresas found in response`);
+              logos[label] = null;
+            }
           } catch (e) {
             console.error(`[buscar_logos] Erro em ${account.name}:`, e);
             logos[label] = null;
