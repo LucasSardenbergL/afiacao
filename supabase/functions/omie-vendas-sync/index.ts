@@ -617,6 +617,9 @@ async function syncPedidos(
   const systemUserId = adminProfile?.user_id;
   if (!systemUserId) throw new Error('Nenhum funcionário encontrado para created_by');
 
+  // Cache for client address/phone (populated during ConsultarCliente calls)
+  const clientAddressCache = new Map<number, { address: string; phone: string }>();
+
   // Helper: resolve codigo_cliente -> user_id (cache-first, API fallback only for unknown)
   async function resolveClientUserId(codigoCliente: number): Promise<string | null> {
     if (clientCache.has(codigoCliente)) return clientCache.get(codigoCliente) || null;
@@ -629,6 +632,11 @@ async function syncPedidos(
         account
       ) as any;
       const doc = (result.cnpj_cpf || '').replace(/\D/g, '');
+      // Cache address/phone from ConsultarCliente result
+      const addrParts = [result.endereco, result.endereco_numero, result.complemento, result.bairro, result.cidade, result.estado, result.cep].filter(Boolean);
+      const phone = result.telefone1_ddd && result.telefone1_numero ? `(${result.telefone1_ddd}) ${result.telefone1_numero}` : '';
+      clientAddressCache.set(codigoCliente, { address: addrParts.join(', '), phone });
+
       if (doc.length >= 11) {
         const userId = docToUserMap.get(doc) || null;
         clientCache.set(codigoCliente, userId);
@@ -639,6 +647,36 @@ async function syncPedidos(
     }
     clientCache.set(codigoCliente, null);
     return null;
+  }
+
+  // Helper: get address/phone for a client code (from cache or fetch)
+  async function getClientAddressPhone(codigoCliente: number): Promise<{ address: string; phone: string }> {
+    if (clientAddressCache.has(codigoCliente)) return clientAddressCache.get(codigoCliente)!;
+    try {
+      const result = await callOmieVendasApi(
+        "geral/clientes/",
+        "ConsultarCliente",
+        { codigo_cliente_omie: codigoCliente },
+        account
+      ) as any;
+      if (result) {
+        const addrParts = [
+          result.endereco,
+          result.endereco_numero ? `nº ${result.endereco_numero}` : '',
+          result.complemento,
+          result.bairro ? `– ${result.bairro}` : '',
+          result.cidade && result.estado ? `${result.cidade}/${result.estado}` : '',
+          result.cep ? `CEP: ${result.cep}` : '',
+        ].filter(Boolean);
+        const phone = result.telefone1_ddd && result.telefone1_numero ? `(${result.telefone1_ddd}) ${result.telefone1_numero}` : (result.contato || '');
+        const entry = { address: addrParts.join(', '), phone };
+        clientAddressCache.set(codigoCliente, entry);
+        return entry;
+      }
+    } catch (e) {
+      console.warn(`[sync_pedidos][${account}] getClientAddressPhone ${codigoCliente} falhou:`, (e as Error).message);
+    }
+    return { address: '', phone: '' };
   }
 
   while (pagina <= totalPaginas && pagesProcessed < maxPages) {
