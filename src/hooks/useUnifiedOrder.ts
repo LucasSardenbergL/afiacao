@@ -890,13 +890,16 @@ export function useUnifiedOrder() {
   }, [serviceItems, getServicePrice]);
   const totalEstimated = obenSubtotal + colacorProdSubtotal + serviceSubtotal;
 
+  const getProductLastOrderDate = useCallback((product: Product): string | null => {
+    return customerPurchaseHistory[product.codigo] || customerPurchaseHistory[`pid:${product.id}`] || null;
+  }, [customerPurchaseHistory]);
+
   const filteredObenProducts = useMemo(() => {
     const hasPurchaseHistory = Object.keys(customerPurchaseHistory).length > 0;
     const sorted = [...obenProducts].sort((a, b) => {
-      // Previously purchased items first
       if (hasPurchaseHistory) {
-        const aHist = !!customerPurchaseHistory[a.codigo];
-        const bHist = !!customerPurchaseHistory[b.codigo];
+        const aHist = !!getProductLastOrderDate(a);
+        const bHist = !!getProductLastOrderDate(b);
         if (aHist && !bHist) return -1;
         if (!aHist && bHist) return 1;
       }
@@ -909,14 +912,14 @@ export function useUnifiedOrder() {
       p.descricao.toLowerCase().includes(productSearch.toLowerCase()) ||
       p.codigo.toLowerCase().includes(productSearch.toLowerCase())
     ).slice(0, 50);
-  }, [obenProducts, productSearch, customerPurchaseHistory]);
+  }, [obenProducts, productSearch, customerPurchaseHistory, getProductLastOrderDate]);
 
   const filteredColacorProducts = useMemo(() => {
     const hasPurchaseHistory = Object.keys(customerPurchaseHistory).length > 0;
     const sorted = [...colacorProducts].sort((a, b) => {
       if (hasPurchaseHistory) {
-        const aHist = !!customerPurchaseHistory[a.codigo];
-        const bHist = !!customerPurchaseHistory[b.codigo];
+        const aHist = !!getProductLastOrderDate(a);
+        const bHist = !!getProductLastOrderDate(b);
         if (aHist && !bHist) return -1;
         if (!aHist && bHist) return 1;
       }
@@ -929,7 +932,7 @@ export function useUnifiedOrder() {
       p.descricao.toLowerCase().includes(productSearch.toLowerCase()) ||
       p.codigo.toLowerCase().includes(productSearch.toLowerCase())
     ).slice(0, 50);
-  }, [colacorProducts, productSearch, customerPurchaseHistory]);
+  }, [colacorProducts, productSearch, customerPurchaseHistory, getProductLastOrderDate]);
 
   const availableTools = useMemo(() =>
     userTools.filter(t => !cart.some(c => c.type === 'service' && (c as ServiceCartItem).userTool.id === t.id)),
