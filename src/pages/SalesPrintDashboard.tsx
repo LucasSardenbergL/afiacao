@@ -63,21 +63,21 @@ function buildPrintData(order: SalesOrderRow, company: CompanyFilter): PrintOrde
   const companyMap: Record<CompanyFilter, { name: string; cnpj: string; phone: string; address: string }> = {
     oben: {
       name: 'OBEN COMÉRCIO LTDA',
-      cnpj: '07.311.465/0001-02',
-      phone: '(41) 3356-0042',
-      address: 'Rua Dep. Heitor Alencar Furtado, 3341 – Mossunguê, Curitiba/PR – CEP: 81200-070',
+      cnpj: '51.027.034/0001-00',
+      phone: '(37) 9987-8190',
+      address: 'Av. Primeiro de Junho, 70 – Centro, Divinópolis/MG – CEP: 35.500-002',
     },
     colacor: {
       name: 'COLACOR COMERCIAL LTDA',
-      cnpj: '03.422.099/0001-08',
-      phone: '(41) 3356-0042',
-      address: 'Rua Dep. Heitor Alencar Furtado, 3341 – Mossunguê, Curitiba/PR – CEP: 81200-070',
+      cnpj: '15.422.799/0001-81',
+      phone: '(37) 3222-1035',
+      address: 'Av. Primeiro de Junho, 48 – Centro, Divinópolis/MG – CEP: 35.500-002',
     },
     afiacao: {
-      name: 'AFIAÇÃO COLACOR LTDA',
-      cnpj: '24.521.946/0001-61',
-      phone: '(41) 3356-0042',
-      address: 'Rua Dep. Heitor Alencar Furtado, 3341 – Mossunguê, Curitiba/PR – CEP: 81200-070',
+      name: 'COLACOR S.C LTDA',
+      cnpj: '55.555.305/0001-51',
+      phone: '(37) 9987-8190',
+      address: 'Av. Primeiro de Junho, 50 – Centro, Divinópolis/MG – CEP: 35.500-002',
     },
   };
 
