@@ -1514,6 +1514,45 @@ serve(async (req) => {
         break;
       }
 
+      case "historico_produtos_cliente": {
+        const { codigo_cliente: codCliHist } = params;
+        if (!codCliHist) throw new Error("Código do cliente é obrigatório");
+        // Fetch last 5 pages of orders for this client from Omie
+        const productHistory: Record<string, string> = {}; // omie_codigo_produto -> last date
+        try {
+          for (let page = 1; page <= 5; page++) {
+            const pedidos = await callOmieVendasApi(
+              "produtos/pedido/",
+              "ListarPedidos",
+              {
+                pagina: page,
+                registros_por_pagina: 50,
+                filtrar_por_cliente: codCliHist,
+                ordenar_por: "DATA_INCLUSAO",
+              },
+              account
+            );
+            const lista = pedidos?.pedido_venda_produto || [];
+            for (const pedido of lista) {
+              const dataPedido = pedido?.cabecalho?.data_previsao || pedido?.infoCadastro?.dInc || '';
+              const itens = pedido?.det || [];
+              for (const item of itens) {
+                const codProd = item?.produto?.codigo_produto || 0;
+                if (codProd && !productHistory[String(codProd)]) {
+                  productHistory[String(codProd)] = dataPedido;
+                }
+              }
+            }
+            const totalPages = pedidos?.total_de_paginas || 1;
+            if (page >= totalPages) break;
+          }
+        } catch (e) {
+          console.log("[Omie Vendas] Erro ao buscar histórico de pedidos:", e);
+        }
+        result = { success: true, history: productHistory };
+        break;
+      }
+
       default:
         throw new Error(`Ação desconhecida: ${action}`);
     }
