@@ -82,6 +82,7 @@ export interface OmieCustomer {
   estado?: string;
   cep?: string;
   telefone?: string;
+  contato?: string;
 }
 
 export interface FormaPagamento {

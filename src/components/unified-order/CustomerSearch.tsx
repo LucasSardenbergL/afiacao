@@ -36,7 +36,7 @@ export function CustomerSearch({
             <div className="flex items-center justify-between">
               <div>
                 <p className="font-medium text-sm">{selectedCustomer.nome_fantasia || selectedCustomer.razao_social}</p>
-                <p className="text-xs text-muted-foreground">{selectedCustomer.cnpj_cpf}{selectedCustomer.telefone ? ` • ${selectedCustomer.telefone}` : ''}</p>
+                <p className="text-xs text-muted-foreground">{selectedCustomer.cnpj_cpf}{selectedCustomer.contato ? ` • ${selectedCustomer.contato}` : ''}</p>
                 {!customerUserId && <p className="text-xs text-amber-600 mt-0.5">Sem cadastro no app</p>}
               </div>
               <Button variant="ghost" size="sm" onClick={onClearCustomer}>Trocar</Button>
@@ -80,7 +80,7 @@ export function CustomerSearch({
                 {customers.map(c => (
                   <button key={c.codigo_cliente} className="w-full text-left px-3 py-2 hover:bg-muted/50 transition-colors" onClick={() => onSelectCustomer(c)} disabled={loadingCustomer}>
                     <p className="text-sm font-medium">{c.nome_fantasia || c.razao_social}</p>
-                    <p className="text-xs text-muted-foreground">{c.cnpj_cpf || 'Sem documento'}{c.telefone ? ` • ${c.telefone}` : ''}</p>
+                    <p className="text-xs text-muted-foreground">{c.cnpj_cpf || 'Sem documento'}{c.contato ? ` • ${c.contato}` : ''}</p>
                   </button>
                 ))}
               </div>
