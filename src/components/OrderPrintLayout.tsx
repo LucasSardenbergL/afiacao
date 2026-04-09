@@ -40,8 +40,8 @@ function parseParcelaDays(codeOrDesc?: string): number[] {
   if (!codeOrDesc) return [];
   const clean = codeOrDesc.trim();
   if (clean === '000' || clean === '999' || /vista/i.test(clean)) return [];
-  // Extract all numeric groups (2-3 digits) separated by / or spaces
-  const matches = clean.match(/\b(\d{1,3})\b/g);
+  // Extract all numeric groups (1-3 digits) — handles codes like "S37", "A28", "028/042", "28/42 DDL"
+  const matches = clean.match(/(\d{1,3})/g);
   if (!matches) return [];
   return matches.map(s => parseInt(s, 10)).filter(n => n > 0 && n <= 365);
 }
