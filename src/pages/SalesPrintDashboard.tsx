@@ -530,6 +530,30 @@ ${allPages.join('\n<div class="page-break"></div>\n')}
 function buildSingleOrderHtml(data: PrintOrderData): string {
   const fmt = (v: number) => v.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' });
 
+  // Build installment dates
+  const parseParcelaDays = (codeOrDesc?: string): number[] => {
+    if (!codeOrDesc) return [];
+    const clean = codeOrDesc.trim();
+    if (clean === '000' || clean === '999' || /vista/i.test(clean)) return [];
+    const matches = clean.match(/\b(\d{1,3})\b/g);
+    if (!matches) return [];
+    return matches.map(s => parseInt(s, 10)).filter(n => n > 0 && n <= 365);
+  };
+
+  let days = parseParcelaDays(data.condPagamento);
+  if (days.length === 0) days = parseParcelaDays(data.parcelaCode);
+  let installmentText = '';
+  if (days.length > 0) {
+    const today = new Date();
+    const parcValue = data.total && days.length > 0 ? data.total / days.length : 0;
+    installmentText = days.map((d, i) => {
+      const dueDate = addDays(today, d);
+      const dateStr = `${String(dueDate.getDate()).padStart(2, '0')}/${String(dueDate.getMonth() + 1).padStart(2, '0')}/${dueDate.getFullYear()}`;
+      const valStr = parcValue > 0 ? ` – ${fmt(parcValue)}` : '';
+      return `${i + 1}ª parcela: ${dateStr}${valStr}`;
+    }).join(' | ');
+  }
+
   const itemsRows = data.items.map((item, i) => {
     const descLines = [item.descricao];
     if (item.tintCorId && item.tintNomeCor) {
