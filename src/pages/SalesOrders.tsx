@@ -235,6 +235,16 @@ const SalesOrders = () => {
           </TabsList>
         </Tabs>
 
+        <div className="relative mb-4">
+          <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
+          <Input
+            placeholder="Buscar por cliente, nº pedido ou item..."
+            value={search}
+            onChange={(e) => setSearch(e.target.value)}
+            className="pl-9"
+          />
+        </div>
+
         {filteredOrders.length === 0 ? (
           <div className="text-center py-12">
             <ShoppingCart className="w-12 h-12 mx-auto text-muted-foreground/50 mb-3" />
