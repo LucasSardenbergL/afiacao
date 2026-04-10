@@ -606,6 +606,56 @@ export function useUnifiedOrder() {
         cust.codigo_cliente_afiacao = afiacaoClientResult.data.codigo_cliente;
         cust.codigo_vendedor_afiacao = afiacaoClientResult.data.codigo_vendedor || null;
       }
+
+      // Auto-create customer in accounts where they don't exist yet
+      const customerPayload = {
+        document: cust.cnpj_cpf,
+        razao_social: cust.razao_social,
+        nome_fantasia: cust.nome_fantasia,
+        endereco: cust.endereco,
+        endereco_numero: cust.endereco_numero,
+        bairro: cust.bairro,
+        cidade: cust.cidade,
+        estado: cust.estado,
+        cep: cust.cep,
+        telefone: cust.telefone,
+        contato: cust.contato,
+      };
+
+      const autoCreatePromises: Promise<any>[] = [];
+
+      if (!cust.codigo_cliente_colacor && cust.cnpj_cpf) {
+        autoCreatePromises.push(
+          supabase.functions.invoke('omie-vendas-sync', {
+            body: { action: 'criar_cliente', account: 'colacor', ...customerPayload },
+          }).then(res => {
+            if (res.data?.codigo_cliente) {
+              cust.codigo_cliente_colacor = res.data.codigo_cliente;
+              cust.codigo_vendedor_colacor = res.data.codigo_vendedor || null;
+              console.log(`[AutoCreate] Cliente criado na Colacor Vendas: ${res.data.codigo_cliente}`);
+            }
+          }).catch(e => console.warn('[AutoCreate] Erro ao criar na Colacor Vendas:', e))
+        );
+      }
+
+      if (!cust.codigo_cliente_afiacao && cust.cnpj_cpf) {
+        autoCreatePromises.push(
+          supabase.functions.invoke('omie-sync', {
+            body: { action: 'criar_cliente_afiacao', ...customerPayload },
+          }).then(res => {
+            if (res.data?.codigo_cliente) {
+              cust.codigo_cliente_afiacao = res.data.codigo_cliente;
+              cust.codigo_vendedor_afiacao = res.data.codigo_vendedor || null;
+              console.log(`[AutoCreate] Cliente criado na Colacor Afiação: ${res.data.codigo_cliente}`);
+            }
+          }).catch(e => console.warn('[AutoCreate] Erro ao criar na Colacor Afiação:', e))
+        );
+      }
+
+      if (autoCreatePromises.length > 0) {
+        await Promise.all(autoCreatePromises);
+      }
+
       setSelectedCustomer({ ...cust });
 
       // Save customer segment/tags to DB in background
