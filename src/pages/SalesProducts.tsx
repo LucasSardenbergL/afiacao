@@ -1,7 +1,5 @@
 import { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Header } from '@/components/Header';
-import { BottomNav } from '@/components/BottomNav';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
@@ -10,7 +8,7 @@ import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { supabase } from '@/integrations/supabase/client';
 import { useAuth } from '@/contexts/AuthContext';
 import { useToast } from '@/hooks/use-toast';
-import { Loader2, Search, RefreshCw, Package, ShoppingCart, BarChart3, Building2 } from 'lucide-react';
+import { Loader2, Search, RefreshCw, Package, ShoppingCart, BarChart3, Building2, ChevronLeft } from 'lucide-react';
 
 type Account = 'oben' | 'colacor';
 
@@ -39,11 +37,12 @@ const SalesProducts = () => {
   const [syncingStock, setSyncingStock] = useState(false);
   const [search, setSearch] = useState('');
 
+  const { role } = useAuth();
   useEffect(() => {
-    if (!authLoading && !isStaff) {
+    if (!authLoading && role !== null && !isStaff) {
       navigate('/', { replace: true });
     }
-  }, [authLoading, isStaff, navigate]);
+  }, [authLoading, role, isStaff, navigate]);
 
   useEffect(() => {
     if (isStaff) loadProducts();
@@ -144,143 +143,140 @@ const SalesProducts = () => {
 
   if (authLoading || loading) {
     return (
-      <div className="min-h-screen bg-background pb-24">
-        <Header title="Catálogo de Produtos" showBack />
-        <div className="flex items-center justify-center pt-32">
-          <Loader2 className="w-8 h-8 animate-spin text-primary" />
-        </div>
-        <BottomNav />
+      <div className="flex items-center justify-center pt-32">
+        <Loader2 className="w-8 h-8 animate-spin text-primary" />
       </div>
     );
   }
 
   return (
-    <div className="min-h-screen bg-background pb-24">
-      <Header
-        title="Catálogo"
-        showBack
-        rightElement={
-          <div className="flex gap-1">
-            <Button
-              size="sm"
-              variant="ghost"
-              onClick={syncStock}
-              disabled={syncingStock}
-              title="Atualizar estoque"
-            >
-              <BarChart3 className={`w-4 h-4 ${syncingStock ? 'animate-pulse' : ''}`} />
-            </Button>
-            <Button
-              size="sm"
-              variant="ghost"
-              onClick={syncProducts}
-              disabled={syncing}
-              title="Sincronizar produtos"
-            >
-              <RefreshCw className={`w-4 h-4 ${syncing ? 'animate-spin' : ''}`} />
-            </Button>
+    <div className="max-w-4xl mx-auto space-y-4 pb-6">
+      <div className="flex items-center justify-between">
+        <div className="flex items-center gap-3">
+          <button onClick={() => navigate(-1)} className="flex items-center gap-1 text-sm text-muted-foreground hover:text-foreground">
+            <ChevronLeft className="w-4 h-4" />
+          </button>
+          <div>
+            <h1 className="text-lg font-semibold">Catálogo</h1>
+            <p className="text-xs text-muted-foreground">Produtos disponíveis para venda</p>
           </div>
-        }
-      />
-
-      <main className="pt-16 px-4 max-w-4xl mx-auto">
-        {/* Account Tabs */}
-        <Tabs value={account} onValueChange={(v) => setAccount(v as Account)} className="mb-4">
-          <TabsList className="w-full grid grid-cols-2">
-            <TabsTrigger value="oben" className="gap-1.5">
-              <Building2 className="w-3.5 h-3.5" />
-              Oben
-            </TabsTrigger>
-            <TabsTrigger value="colacor" className="gap-1.5">
-              <Building2 className="w-3.5 h-3.5" />
-              Colacor
-            </TabsTrigger>
-          </TabsList>
-        </Tabs>
-
-        {/* Search + New Order */}
-        <div className="flex gap-2 mb-4">
-          <div className="relative flex-1">
-            <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
-            <Input
-              placeholder="Buscar produto..."
-              value={search}
-              onChange={(e) => setSearch(e.target.value)}
-              className="pl-9"
-            />
-          </div>
-          <Button onClick={() => navigate('/sales/new')} className="gap-2">
-            <ShoppingCart className="w-4 h-4" />
-            Vender
+        </div>
+        <div className="flex gap-1">
+          <Button
+            size="sm"
+            variant="ghost"
+            onClick={syncStock}
+            disabled={syncingStock}
+            title="Atualizar estoque"
+          >
+            <BarChart3 className={`w-4 h-4 ${syncingStock ? 'animate-pulse' : ''}`} />
+          </Button>
+          <Button
+            size="sm"
+            variant="ghost"
+            onClick={syncProducts}
+            disabled={syncing}
+            title="Sincronizar produtos"
+          >
+            <RefreshCw className={`w-4 h-4 ${syncing ? 'animate-spin' : ''}`} />
           </Button>
         </div>
+      </div>
 
-        {/* Stats */}
-        <div className="flex gap-3 mb-4">
-          <Badge variant="secondary" className="gap-1">
-            <Package className="w-3 h-3" />
-            {products.length} produtos
-          </Badge>
-          <Badge variant="outline" className="gap-1 text-[10px]">
-            <Building2 className="w-3 h-3" />
-            {account === 'oben' ? 'Oben' : 'Colacor'}
-          </Badge>
+      {/* Account Tabs */}
+      <Tabs value={account} onValueChange={(v) => setAccount(v as Account)}>
+        <TabsList className="w-full grid grid-cols-2">
+          <TabsTrigger value="oben" className="gap-1.5">
+            <Building2 className="w-3.5 h-3.5" />
+            Oben
+          </TabsTrigger>
+          <TabsTrigger value="colacor" className="gap-1.5">
+            <Building2 className="w-3.5 h-3.5" />
+            Colacor
+          </TabsTrigger>
+        </TabsList>
+      </Tabs>
+
+      {/* Search + New Order */}
+      <div className="flex gap-2">
+        <div className="relative flex-1">
+          <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
+          <Input
+            placeholder="Buscar produto..."
+            value={search}
+            onChange={(e) => setSearch(e.target.value)}
+            className="pl-9"
+          />
         </div>
+        <Button onClick={() => navigate('/sales/new')} className="gap-2">
+          <ShoppingCart className="w-4 h-4" />
+          Vender
+        </Button>
+      </div>
 
-        {/* Products list */}
-        {filteredProducts.length === 0 ? (
-          <div className="text-center py-12">
-            <Package className="w-12 h-12 mx-auto text-muted-foreground/50 mb-3" />
-            <p className="text-muted-foreground">
-              {products.length === 0
-                ? 'Nenhum produto sincronizado. Clique no botão de atualização.'
-                : 'Nenhum produto encontrado para a busca.'}
-            </p>
-          </div>
-        ) : (
-          <div className="space-y-2">
-            {filteredProducts.map((product) => (
-              <Card key={product.id} className="overflow-hidden">
-                <CardContent className="p-3">
-                  <div className="flex items-start justify-between gap-3">
-                    <div className="flex-1 min-w-0">
-                      <p className="font-medium text-sm text-foreground truncate">
-                        {product.descricao}
-                      </p>
-                      {!product.ativo && (
-                        <Badge variant="destructive" className="text-[10px] mt-0.5">
-                          Inativo
-                        </Badge>
-                      )}
-                      <p className="text-xs text-muted-foreground mt-0.5">
-                        Cód: {product.codigo} · {product.unidade}
-                      </p>
-                      {product.metadata?.marca && (
-                        <p className="text-xs text-muted-foreground">
-                          Marca: {String(product.metadata.marca)}
-                        </p>
-                      )}
-                    </div>
-                    <div className="text-right shrink-0">
-                      <p className="font-bold text-sm text-foreground">
-                        R$ {product.valor_unitario.toFixed(2)}
-                      </p>
-                      <Badge 
-                        variant={product.estoque > 10 ? 'secondary' : product.estoque > 0 ? 'outline' : 'destructive'}
-                        className="text-[10px] mt-1"
-                      >
-                        Est: {product.estoque}
+      {/* Stats */}
+      <div className="flex gap-3">
+        <Badge variant="secondary" className="gap-1">
+          <Package className="w-3 h-3" />
+          {products.length} produtos
+        </Badge>
+        <Badge variant="outline" className="gap-1 text-[10px]">
+          <Building2 className="w-3 h-3" />
+          {account === 'oben' ? 'Oben' : 'Colacor'}
+        </Badge>
+      </div>
+
+      {/* Products list */}
+      {filteredProducts.length === 0 ? (
+        <div className="text-center py-12">
+          <Package className="w-12 h-12 mx-auto text-muted-foreground/50 mb-3" />
+          <p className="text-muted-foreground">
+            {products.length === 0
+              ? 'Nenhum produto sincronizado. Clique no botão de atualização.'
+              : 'Nenhum produto encontrado para a busca.'}
+          </p>
+        </div>
+      ) : (
+        <div className="space-y-2">
+          {filteredProducts.map((product) => (
+            <Card key={product.id} className="overflow-hidden">
+              <CardContent className="p-3">
+                <div className="flex items-start justify-between gap-3">
+                  <div className="flex-1 min-w-0">
+                    <p className="font-medium text-sm text-foreground truncate">
+                      {product.descricao}
+                    </p>
+                    {!product.ativo && (
+                      <Badge variant="destructive" className="text-[10px] mt-0.5">
+                        Inativo
                       </Badge>
-                    </div>
+                    )}
+                    <p className="text-xs text-muted-foreground mt-0.5">
+                      Cód: {product.codigo} · {product.unidade}
+                    </p>
+                    {product.metadata?.marca && (
+                      <p className="text-xs text-muted-foreground">
+                        Marca: {String(product.metadata.marca)}
+                      </p>
+                    )}
                   </div>
-                </CardContent>
-              </Card>
-            ))}
-          </div>
-        )}
-      </main>
-
-      <BottomNav />
+                  <div className="text-right shrink-0">
+                    <p className="font-bold text-sm text-foreground">
+                      R$ {product.valor_unitario.toFixed(2)}
+                    </p>
+                    <Badge 
+                      variant={product.estoque > 10 ? 'secondary' : product.estoque > 0 ? 'outline' : 'destructive'}
+                      className="text-[10px] mt-1"
+                    >
+                      Est: {product.estoque}
+                    </Badge>
+                  </div>
+                </div>
+              </CardContent>
+            </Card>
+          ))}
+        </div>
+      )}
     </div>
   );
 };
