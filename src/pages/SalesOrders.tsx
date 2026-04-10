@@ -53,7 +53,7 @@ const SalesOrders = () => {
   const [profiles, setProfiles] = useState<Record<string, string>>({});
   const [loading, setLoading] = useState(true);
   const [accountFilter, setAccountFilter] = useState<Account>('all');
-
+  const [search, setSearch] = useState('');
   useEffect(() => {
     if (!authLoading && !isStaff) navigate('/', { replace: true });
   }, [authLoading, isStaff, navigate]);
