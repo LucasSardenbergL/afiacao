@@ -5,8 +5,9 @@ import { BottomNav } from '@/components/BottomNav';
 import { OrderCard } from '@/components/OrderCard';
 import { cn } from '@/lib/utils';
 import { useAuth } from '@/contexts/AuthContext';
-import { Loader2, Package, Plus, AlertCircle } from 'lucide-react';
+import { Loader2, Package, Plus, AlertCircle, Search } from 'lucide-react';
 import { Button } from '@/components/ui/button';
+import { Input } from '@/components/ui/input';
 import { supabase } from '@/integrations/supabase/client';
 import { useQueryClient } from '@tanstack/react-query';
 
@@ -30,6 +31,24 @@ const FILTER_CONFIG: Record<FilterTab, { label: string; emptyTitle: string; empt
   all: { label: 'Todos', emptyTitle: 'Nenhum pedido encontrado', emptyDesc: 'Seus pedidos aparecerão aqui.' },
 };
 
+const getOrderSearchContent = (order: OrderRow) => {
+  const itemsText = Array.isArray(order.items)
+    ? order.items
+        .map((item: any) => [
+          item?.name,
+          item?.category,
+          item?.description,
+          item?.service_type,
+          item?.serviceType,
+        ].filter(Boolean).join(' '))
+        .join(' ')
+    : '';
+
+  return [order.id, order.status, order.service_type, itemsText, order.total.toFixed(2)]
+    .join(' ')
+    .toLowerCase();
+};
+
 const Orders = () => {
   const navigate = useNavigate();
   const { user } = useAuth();
@@ -39,6 +58,7 @@ const Orders = () => {
   const [loading, setLoading] = useState(true);
   const [loadingMore, setLoadingMore] = useState(false);
   const [hasMore, setHasMore] = useState(true);
+  const [search, setSearch] = useState('');
 
   // Initial fetch
   const fetchOrders = useCallback(async (offset = 0, append = false) => {
@@ -104,17 +124,25 @@ const Orders = () => {
   }), [allOrders]);
 
   const filteredOrders = useMemo(() => {
-    switch (activeTab) {
-      case 'pending': return allOrders.filter(o => o.status === 'orcamento_enviado');
-      case 'active': return allOrders.filter(o => o.status !== 'entregue' && o.status !== 'orcamento_enviado');
-      case 'completed': return allOrders.filter(o => o.status === 'entregue');
-      default: return allOrders;
-    }
-  }, [allOrders, activeTab]);
+    const ordersByTab = (() => {
+      switch (activeTab) {
+        case 'pending': return allOrders.filter(o => o.status === 'orcamento_enviado');
+        case 'active': return allOrders.filter(o => o.status !== 'entregue' && o.status !== 'orcamento_enviado');
+        case 'completed': return allOrders.filter(o => o.status === 'entregue');
+        default: return allOrders;
+      }
+    })();
+
+    const query = search.trim().toLowerCase();
+    if (!query) return ordersByTab;
+
+    return ordersByTab.filter((order) => getOrderSearchContent(order).includes(query));
+  }, [allOrders, activeTab, search]);
 
   const handleLoadMore = () => fetchOrders(allOrders.length, true);
 
   const tabConfig = FILTER_CONFIG[activeTab];
+  const isSearching = search.trim().length > 0;
 
   if (loading) {
     return (
@@ -153,7 +181,7 @@ const Orders = () => {
         )}
 
         {/* Tabs */}
-        <div className="flex gap-2 mb-6 overflow-x-auto no-scrollbar py-1">
+        <div className="flex gap-2 mb-4 overflow-x-auto no-scrollbar py-1">
           {(Object.entries(FILTER_CONFIG) as [FilterTab, typeof tabConfig][]).map(([id, cfg]) => (
             <button
               key={id}
@@ -171,6 +199,16 @@ const Orders = () => {
               <span className="ml-1.5 text-xs opacity-70">({counts[id]})</span>
             </button>
           ))}
+        </div>
+
+        <div className="relative mb-6">
+          <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
+          <Input
+            value={search}
+            onChange={(event) => setSearch(event.target.value)}
+            placeholder="Buscar por item, serviço ou status..."
+            className="pl-9"
+          />
         </div>
 
         {/* Orders list */}
@@ -197,8 +235,12 @@ const Orders = () => {
               <div className="w-16 h-16 bg-muted rounded-full flex items-center justify-center mx-auto mb-4">
                 <Package className="w-8 h-8 text-muted-foreground" />
               </div>
-              <p className="font-semibold text-foreground mb-1">{totalEmpty ? 'Nenhum pedido ainda' : tabConfig.emptyTitle}</p>
-              <p className="text-sm text-muted-foreground mb-4">{totalEmpty ? 'Crie seu primeiro pedido de afiação!' : tabConfig.emptyDesc}</p>
+              <p className="font-semibold text-foreground mb-1">
+                {totalEmpty ? 'Nenhum pedido ainda' : isSearching ? 'Nenhum resultado encontrado' : tabConfig.emptyTitle}
+              </p>
+              <p className="text-sm text-muted-foreground mb-4">
+                {totalEmpty ? 'Crie seu primeiro pedido de afiação!' : isSearching ? 'Tente buscar por outro item, serviço ou status.' : tabConfig.emptyDesc}
+              </p>
               {totalEmpty && (
                 <Button onClick={() => navigate('/new-order')} className="gap-2">
                   <Plus className="w-4 h-4" />
