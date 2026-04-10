@@ -729,7 +729,7 @@ export function useUnifiedOrder() {
     return (omiePrice && omiePrice > 0) ? omiePrice : product.valor_unitario;
   }, [customerPricesOben, customerPricesColacor]);
 
-  const addProductToCart = (product: Product) => {
+  const addProductToCart = (product: Product, qty: number = 1) => {
     // If tintometric base, open color dialog instead of adding directly
     if (product.is_tintometric && product.tint_type === 'base') {
       setTintPendingProduct(product);
@@ -739,9 +739,9 @@ export function useUnifiedOrder() {
     const existing = cart.find((c): c is ProductCartItem => c.type === 'product' && c.product.id === product.id && !c.tint_formula_id);
     if (existing) {
       setCart(cart.map(c => c.type === 'product' && (c as ProductCartItem).product.id === product.id && !(c as ProductCartItem).tint_formula_id
-        ? { ...c, quantity: c.quantity + 1 } as ProductCartItem : c));
+        ? { ...c, quantity: c.quantity + qty } as ProductCartItem : c));
     } else {
-      setCart([...cart, { type: 'product', product, quantity: 1, unit_price: getProductPrice(product), account }]);
+      setCart([...cart, { type: 'product', product, quantity: qty, unit_price: getProductPrice(product), account }]);
     }
   };
 
