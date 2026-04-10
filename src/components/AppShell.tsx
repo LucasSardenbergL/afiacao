@@ -305,17 +305,6 @@ function AppTopbar({ sidebarCollapsed, onMobileMenuToggle }: { sidebarCollapsed:
         <Menu className="w-5 h-5" />
       </button>
 
-      {/* Search hint */}
-      <button
-        className="hidden md:flex items-center gap-2 px-3 py-1.5 rounded-md border border-border bg-muted/50 text-muted-foreground text-sm hover:bg-muted transition-colors max-w-xs"
-        onClick={() => {/* TODO: command palette */}}
-      >
-        <Search className="w-3.5 h-3.5" />
-        <span>Buscar...</span>
-        <kbd className="hidden lg:inline text-2xs bg-background border border-border rounded px-1.5 py-0.5 ml-auto font-mono">
-          ⌘K
-        </kbd>
-      </button>
 
       <div className="flex items-center gap-1">
         <Button variant="ghost" size="icon" className="h-8 w-8 text-muted-foreground">
