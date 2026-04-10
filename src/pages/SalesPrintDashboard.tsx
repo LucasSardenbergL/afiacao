@@ -1,8 +1,6 @@
 import { useState, useMemo } from 'react';
 import { addDays } from 'date-fns';
 import { useNavigate } from 'react-router-dom';
-import { Header } from '@/components/Header';
-import { BottomNav } from '@/components/BottomNav';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
@@ -546,9 +544,8 @@ ${allPages.join('\n<div class="page-break"></div>\n')}
   };
 
   return (
-    <div className="min-h-screen bg-background pb-20">
-      <Header />
-      <main className="container max-w-4xl mx-auto px-4 py-6 space-y-6">
+    <div className="max-w-4xl mx-auto space-y-6 pb-6">
+      <main className="space-y-6">
         {/* Header */}
         <div className="flex items-center gap-3">
           <Button variant="ghost" size="icon" onClick={() => navigate('/sales')}>
@@ -660,7 +657,6 @@ ${allPages.join('\n<div class="page-break"></div>\n')}
           })
         )}
       </main>
-      <BottomNav />
     </div>
   );
 };
