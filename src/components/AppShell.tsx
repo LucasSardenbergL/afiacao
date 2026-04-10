@@ -347,6 +347,7 @@ function MobileNav({ open, onClose }: { open: boolean; onClose: () => void }) {
   const location = useLocation();
   const navigate = useNavigate();
   const { isStaff } = useUserRole();
+  const isSalesOnly = useSalesOnlyRestriction();
 
   if (!open) return null;
 
@@ -365,6 +366,7 @@ function MobileNav({ open, onClose }: { open: boolean; onClose: () => void }) {
         </div>
         <nav className="flex-1 min-h-0 overflow-y-auto py-2">
           {[...unifiedNavSections, docNavSection].map((section) => {
+            if (isSalesOnly && section.title !== 'Vendas') return null;
             const visibleItems = section.items.filter(item => !item.managerOnly || isStaff);
             if (visibleItems.length === 0) return null;
             return (
