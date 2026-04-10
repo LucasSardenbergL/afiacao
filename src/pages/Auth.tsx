@@ -86,12 +86,12 @@ const Auth = () => {
       if (signUpData.user) {
         const shouldAutoApprove = opts.isEmployee || !!opts.omieCliente;
 
-        await supabase.from('profiles').insert({
+        await supabase.from('profiles').upsert({
           user_id: signUpData.user.id, name: formData.name, email: formData.email,
           phone: formData.phone.replace(/\D/g, ''), document: formData.document.replace(/\D/g, ''),
           customer_type: opts.isIndustrial ? 'industrial' : 'domestic',
           cnae: opts.cnae, is_employee: opts.isEmployee, is_approved: shouldAutoApprove,
-        });
+        }, { onConflict: 'user_id' });
 
         await supabase.from('addresses').insert({
           user_id: signUpData.user.id, label: 'Principal', street: formData.street,

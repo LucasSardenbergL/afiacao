@@ -132,11 +132,15 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
     try {
       const { data: existingProfile } = await supabase
         .from('profiles')
-        .select('id')
+        .select('id, document')
         .eq('user_id', userId)
         .maybeSingle();
 
+      // If profile already has document, it was created by the signup flow — skip
+      if (existingProfile?.document) return;
+
       if (!existingProfile) {
+        // Create minimal profile — the signup flow will upsert full data
         await supabase.from('profiles').insert({
           user_id: userId,
           name: email?.split('@')[0] || 'Usuário',
