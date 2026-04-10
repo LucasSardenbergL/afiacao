@@ -206,6 +206,9 @@ function AppSidebar({ collapsed, onToggle }: { collapsed: boolean; onToggle: () 
       {/* Navigation */}
       <nav className="flex-1 min-h-0 overflow-y-auto py-2">
         {[...unifiedNavSections, docNavSection].map((section) => {
+          // Sales-only restriction: only show "Vendas" section
+          if (isSalesOnly && section.title !== 'Vendas') return null;
+
           const visibleItems = section.items.filter(item => !item.managerOnly || isStaff);
           if (visibleItems.length === 0) return null;
 
