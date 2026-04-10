@@ -125,11 +125,46 @@ const docNavSection: { title: string; items: NavItem[] } = {
   ],
 };
 
+function useSalesOnlyRestriction() {
+  const { user } = useAuth();
+
+  const { data: salesOnlyCpfs } = useQuery({
+    queryKey: ['config', 'sales_only_cpfs'],
+    queryFn: async () => {
+      const { data } = await supabase
+        .from('company_config')
+        .select('value')
+        .eq('key', 'sales_only_cpfs')
+        .maybeSingle();
+      return data?.value ? JSON.parse(data.value) as string[] : [];
+    },
+    staleTime: 5 * 60 * 1000,
+  });
+
+  const { data: userDoc } = useQuery({
+    queryKey: ['profile', 'document', user?.id],
+    queryFn: async () => {
+      const { data } = await supabase
+        .from('profiles')
+        .select('document')
+        .eq('user_id', user!.id)
+        .maybeSingle();
+      return data?.document?.replace(/\D/g, '') || null;
+    },
+    enabled: !!user?.id,
+    staleTime: 5 * 60 * 1000,
+  });
+
+  if (!salesOnlyCpfs || !userDoc) return false;
+  return salesOnlyCpfs.includes(userDoc);
+}
+
 /* ─── Sidebar ─── */
 function AppSidebar({ collapsed, onToggle }: { collapsed: boolean; onToggle: () => void }) {
   const location = useLocation();
   const navigate = useNavigate();
   const { isStaff } = useUserRole();
+  const isSalesOnly = useSalesOnlyRestriction();
 
   const isActive = (path: string) => {
     if (path === '/') return location.pathname === '/';
