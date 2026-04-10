@@ -159,11 +159,30 @@ const SalesOrders = () => {
     });
   };
 
-  const filteredOrders = accountFilter === 'all'
-    ? orders
-    : accountFilter === 'afiacao'
-      ? orders.filter(o => o._source === 'afiacao')
-      : orders.filter(o => o._source === 'sales' && (o.account || 'oben') === accountFilter);
+  const filteredOrders = useMemo(() => {
+    let result = accountFilter === 'all'
+      ? orders
+      : accountFilter === 'afiacao'
+        ? orders.filter(o => o._source === 'afiacao')
+        : orders.filter(o => o._source === 'sales' && (o.account || 'oben') === accountFilter);
+
+    if (search.trim()) {
+      const q = search.trim().toLowerCase();
+      result = result.filter(o => {
+        const customerName = profiles[o.customer_user_id] || '';
+        const pvNumber = o.omie_numero_pedido || '';
+        const itemDescs = (o.items || []).map(i => i.descricao).join(' ');
+        return (
+          customerName.toLowerCase().includes(q) ||
+          pvNumber.toLowerCase().includes(q) ||
+          itemDescs.toLowerCase().includes(q) ||
+          o.total.toFixed(2).includes(q)
+        );
+      });
+    }
+
+    return result;
+  }, [orders, accountFilter, search, profiles]);
 
   if (authLoading || loading) {
     return (
