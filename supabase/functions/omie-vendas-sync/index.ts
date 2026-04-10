@@ -1188,6 +1188,44 @@ serve(async (req) => {
         break;
       }
 
+      case "criar_cliente": {
+        const { document: docCriar, razao_social, nome_fantasia, endereco, endereco_numero, bairro, cidade, estado, cep, telefone, contato } = params;
+        if (!docCriar || !razao_social) throw new Error("Documento e razão social são obrigatórios");
+        const docClean = String(docCriar).replace(/\D/g, "");
+        // First check if already exists
+        const existingCliente = await buscarClienteVendas(docCriar, account);
+        if (existingCliente) {
+          result = { success: true, ...existingCliente, created: false };
+          break;
+        }
+        // Create the client
+        const clienteParams: Record<string, unknown> = {
+          codigo_cliente_integracao: `APP_${docClean}_${Date.now()}`,
+          razao_social,
+          nome_fantasia: nome_fantasia || razao_social,
+          cnpj_cpf: docClean,
+          pessoa_fisica: docClean.length <= 11 ? "S" : "N",
+        };
+        if (endereco) clienteParams.endereco = endereco;
+        if (endereco_numero) clienteParams.endereco_numero = endereco_numero;
+        if (bairro) clienteParams.bairro = bairro;
+        if (cidade) clienteParams.cidade = cidade;
+        if (estado) clienteParams.estado = estado;
+        if (cep) clienteParams.cep = String(cep).replace(/\D/g, "");
+        if (telefone) clienteParams.telefone1_numero = telefone;
+        if (contato) clienteParams.contato = contato;
+        console.log(`[Omie Vendas][${account}] Criando cliente: ${razao_social} (${docClean})`);
+        const createRes = await callOmieVendasApi("geral/clientes/", "IncluirCliente", clienteParams, account) as any;
+        result = {
+          success: true,
+          codigo_cliente: createRes.codigo_cliente_omie || createRes.nCodCli,
+          razao_social,
+          codigo_vendedor: null,
+          created: true,
+        };
+        break;
+      }
+
       case "buscar_precos_cliente": {
         const { codigo_cliente } = params;
         if (!codigo_cliente) throw new Error("Código do cliente é obrigatório");
