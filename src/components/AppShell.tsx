@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
-import { BookOpen, Lock, Calculator, FileText, Palette, Beaker, FileUp, Droplets, LayoutDashboard, Users, ShoppingCart, Phone, GraduationCap, BarChart3, Settings, ChevronLeft, ChevronRight, Search, Bell, User, LogOut, Package, TrendingUp, Headphones, Target, Menu, X, ClipboardList, PlusCircle, Shield, Wrench, Award, Scissors, DollarSign, Layers, Printer } from 'lucide-react';
+import { BookOpen, Lock, Calculator, FileText, Palette, Beaker, FileUp, Droplets, LayoutDashboard, Users, ShoppingCart, Phone, GraduationCap, BarChart3, Settings, ChevronLeft, ChevronRight, Search, Bell, User, LogOut, Package, TrendingUp, Headphones, Target, Menu, X, ClipboardList, PlusCircle, Shield, Wrench, Award, Scissors, DollarSign, Layers, Printer, UserCheck } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { useAuth } from '@/contexts/AuthContext';
 import { useUserRole } from '@/hooks/useUserRole';
@@ -105,6 +105,7 @@ const unifiedNavSections: { title: string; items: NavItem[] }[] = [
   {
     title: 'Gestão',
     items: [
+      { icon: UserCheck, label: 'Liberar Acessos', path: '/admin/approvals', managerOnly: true },
       { icon: Shield, label: 'Admin', path: '/admin', managerOnly: true },
       { icon: BarChart3, label: 'Relatórios', path: '/admin/monthly-reports', managerOnly: true },
       { icon: TrendingUp, label: 'Analytics & Sync', path: '/admin/analytics-sync', managerOnly: true },
