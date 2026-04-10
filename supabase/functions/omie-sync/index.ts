@@ -725,6 +725,69 @@ serve(async (req) => {
         break;
       }
 
+      case "criar_cliente_afiacao": {
+        // Auto-create a client in the afiação Omie account using data from another account
+        const { document: docCriar, razao_social, nome_fantasia, endereco, endereco_numero, bairro, cidade, estado, cep, telefone, contato } = body;
+        if (!docCriar || !razao_social) {
+          return new Response(
+            JSON.stringify({ error: "Documento e razão social são obrigatórios" }),
+            { status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+          );
+        }
+        const docClean = docCriar.replace(/\D/g, "");
+        try {
+          // First check if already exists
+          const searchRes = await callOmieApi(
+            "geral/clientes/",
+            "ListarClientes",
+            { pagina: 1, registros_por_pagina: 1, clientesFiltro: { cnpj_cpf: docClean } }
+          ) as any;
+          const existing = searchRes.clientes_cadastro?.[0];
+          if (existing) {
+            result = {
+              success: true,
+              codigo_cliente: existing.codigo_cliente_omie,
+              codigo_vendedor: existing.recomendacoes?.codigo_vendedor || existing.codigo_vendedor || null,
+              created: false,
+            };
+          } else {
+            // Create the client
+            const clienteParams: Record<string, unknown> = {
+              codigo_cliente_integracao: `APP_${docClean}_${Date.now()}`,
+              razao_social,
+              nome_fantasia: nome_fantasia || razao_social,
+              cnpj_cpf: docClean,
+              pessoa_fisica: docClean.length <= 11 ? "S" : "N",
+            };
+            if (endereco) clienteParams.endereco = endereco;
+            if (endereco_numero) clienteParams.endereco_numero = endereco_numero;
+            if (bairro) clienteParams.bairro = bairro;
+            if (cidade) clienteParams.cidade = cidade;
+            if (estado) clienteParams.estado = estado;
+            if (cep) clienteParams.cep = cep.replace(/\D/g, "");
+            if (telefone) clienteParams.telefone1_numero = telefone;
+            if (contato) clienteParams.contato = contato;
+
+            console.log(`[Omie] Criando cliente na conta afiação: ${razao_social} (${docClean})`);
+            const createResult = await callOmieApi(
+              "geral/clientes/",
+              "IncluirCliente",
+              clienteParams
+            ) as any;
+            result = {
+              success: true,
+              codigo_cliente: createResult.codigo_cliente_omie || createResult.nCodCli,
+              codigo_vendedor: null,
+              created: true,
+            };
+          }
+        } catch (e: any) {
+          console.error("[Omie] Erro ao criar cliente na afiação:", e);
+          result = { success: false, error: e.message || "Erro ao criar cliente" };
+        }
+        break;
+      }
+
       case "check_client": {
         const { data: mapping } = await supabaseAdmin
           .from("omie_clientes")
