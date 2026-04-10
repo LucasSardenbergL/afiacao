@@ -1,15 +1,16 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useMemo } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { Header } from '@/components/Header';
 import { BottomNav } from '@/components/BottomNav';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
+import { Input } from '@/components/ui/input';
 import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle, AlertDialogTrigger } from '@/components/ui/alert-dialog';
 import { supabase } from '@/integrations/supabase/client';
 import { useAuth } from '@/contexts/AuthContext';
-import { Loader2, ShoppingCart, Plus, Package, Trash2, Building2, Wrench, Share2, Printer, Pencil } from 'lucide-react';
+import { Loader2, ShoppingCart, Plus, Package, Trash2, Building2, Wrench, Share2, Printer, Pencil, Search } from 'lucide-react';
 import { format } from 'date-fns';
 import { ptBR } from 'date-fns/locale';
 import { toast } from 'sonner';
@@ -52,7 +53,7 @@ const SalesOrders = () => {
   const [profiles, setProfiles] = useState<Record<string, string>>({});
   const [loading, setLoading] = useState(true);
   const [accountFilter, setAccountFilter] = useState<Account>('all');
-
+  const [search, setSearch] = useState('');
   useEffect(() => {
     if (!authLoading && !isStaff) navigate('/', { replace: true });
   }, [authLoading, isStaff, navigate]);
@@ -158,11 +159,30 @@ const SalesOrders = () => {
     });
   };
 
-  const filteredOrders = accountFilter === 'all'
-    ? orders
-    : accountFilter === 'afiacao'
-      ? orders.filter(o => o._source === 'afiacao')
-      : orders.filter(o => o._source === 'sales' && (o.account || 'oben') === accountFilter);
+  const filteredOrders = useMemo(() => {
+    let result = accountFilter === 'all'
+      ? orders
+      : accountFilter === 'afiacao'
+        ? orders.filter(o => o._source === 'afiacao')
+        : orders.filter(o => o._source === 'sales' && (o.account || 'oben') === accountFilter);
+
+    if (search.trim()) {
+      const q = search.trim().toLowerCase();
+      result = result.filter(o => {
+        const customerName = profiles[o.customer_user_id] || '';
+        const pvNumber = o.omie_numero_pedido || '';
+        const itemDescs = (o.items || []).map(i => i.descricao).join(' ');
+        return (
+          customerName.toLowerCase().includes(q) ||
+          pvNumber.toLowerCase().includes(q) ||
+          itemDescs.toLowerCase().includes(q) ||
+          o.total.toFixed(2).includes(q)
+        );
+      });
+    }
+
+    return result;
+  }, [orders, accountFilter, search, profiles]);
 
   if (authLoading || loading) {
     return (
@@ -214,6 +234,16 @@ const SalesOrders = () => {
             </TabsTrigger>
           </TabsList>
         </Tabs>
+
+        <div className="relative mb-4">
+          <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
+          <Input
+            placeholder="Buscar por cliente, nº pedido ou item..."
+            value={search}
+            onChange={(e) => setSearch(e.target.value)}
+            className="pl-9"
+          />
+        </div>
 
         {filteredOrders.length === 0 ? (
           <div className="text-center py-12">
