@@ -101,6 +101,7 @@ export function ProductItemForm({
                         type="number"
                         min={1}
                         value={qty}
+                        onFocus={e => e.target.select()}
                         onChange={e => setQty(product.id, parseInt(e.target.value) || 1)}
                         className="h-7 w-16 text-xs text-center"
                       />
