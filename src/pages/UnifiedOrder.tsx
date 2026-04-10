@@ -181,6 +181,12 @@ const UnifiedOrder = () => {
         </div>
 
         <div className="space-y-4">
+          {/* Cross-sell — staff only */}
+          {!isCustomerMode && h.customerUserId && h.productItems.length > 0 && (
+            <RecommendationsPanel customerId={h.customerUserId} basketProductIds={h.cartProductIds}
+              onAddToCart={h.handleAddRecommendation} title="Combine com" compact maxItems={5} />
+          )}
+
           <CartItemList
             cart={h.cart} obenProductItems={h.obenProductItems} colacorProductItems={h.colacorProductItems}
             serviceItems={h.serviceItems} obenSubtotal={h.obenSubtotal} colacorProdSubtotal={h.colacorProdSubtotal}
@@ -190,12 +196,6 @@ const UnifiedOrder = () => {
             onRemoveFromCart={h.removeFromCart} getServicePrice={h.getServicePrice}
             getCartIndex={(item) => h.cart.indexOf(item)}
           />
-
-          {/* Cross-sell — staff only */}
-          {!isCustomerMode && h.customerUserId && h.productItems.length > 0 && (
-            <RecommendationsPanel customerId={h.customerUserId} basketProductIds={h.cartProductIds}
-              onAddToCart={h.handleAddRecommendation} title="Combine com" compact maxItems={5} />
-          )}
 
           {h.cart.length > 0 && h.selectedCustomer && (
             <CartSummaryBar
