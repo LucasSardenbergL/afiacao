@@ -5,6 +5,8 @@ import { cn } from '@/lib/utils';
 import { useAuth } from '@/contexts/AuthContext';
 import { useUserRole } from '@/hooks/useUserRole';
 import { AppShellProvider } from '@/contexts/AppShellContext';
+import { useQuery } from '@tanstack/react-query';
+import { supabase } from '@/integrations/supabase/client';
 import { Button } from '@/components/ui/button';
 import {
   DropdownMenu,
@@ -123,11 +125,46 @@ const docNavSection: { title: string; items: NavItem[] } = {
   ],
 };
 
+function useSalesOnlyRestriction() {
+  const { user } = useAuth();
+
+  const { data: salesOnlyCpfs } = useQuery({
+    queryKey: ['config', 'sales_only_cpfs'],
+    queryFn: async () => {
+      const { data } = await supabase
+        .from('company_config')
+        .select('value')
+        .eq('key', 'sales_only_cpfs')
+        .maybeSingle();
+      return data?.value ? JSON.parse(data.value) as string[] : [];
+    },
+    staleTime: 5 * 60 * 1000,
+  });
+
+  const { data: userDoc } = useQuery({
+    queryKey: ['profile', 'document', user?.id],
+    queryFn: async () => {
+      const { data } = await supabase
+        .from('profiles')
+        .select('document')
+        .eq('user_id', user!.id)
+        .maybeSingle();
+      return data?.document?.replace(/\D/g, '') || null;
+    },
+    enabled: !!user?.id,
+    staleTime: 5 * 60 * 1000,
+  });
+
+  if (!salesOnlyCpfs || !userDoc) return false;
+  return salesOnlyCpfs.includes(userDoc);
+}
+
 /* ─── Sidebar ─── */
 function AppSidebar({ collapsed, onToggle }: { collapsed: boolean; onToggle: () => void }) {
   const location = useLocation();
   const navigate = useNavigate();
   const { isStaff } = useUserRole();
+  const isSalesOnly = useSalesOnlyRestriction();
 
   const isActive = (path: string) => {
     if (path === '/') return location.pathname === '/';
@@ -169,6 +206,9 @@ function AppSidebar({ collapsed, onToggle }: { collapsed: boolean; onToggle: () 
       {/* Navigation */}
       <nav className="flex-1 min-h-0 overflow-y-auto py-2">
         {[...unifiedNavSections, docNavSection].map((section) => {
+          // Sales-only restriction: only show "Vendas" section
+          if (isSalesOnly && section.title !== 'Vendas') return null;
+
           const visibleItems = section.items.filter(item => !item.managerOnly || isStaff);
           if (visibleItems.length === 0) return null;
 
@@ -307,6 +347,7 @@ function MobileNav({ open, onClose }: { open: boolean; onClose: () => void }) {
   const location = useLocation();
   const navigate = useNavigate();
   const { isStaff } = useUserRole();
+  const isSalesOnly = useSalesOnlyRestriction();
 
   if (!open) return null;
 
@@ -325,6 +366,7 @@ function MobileNav({ open, onClose }: { open: boolean; onClose: () => void }) {
         </div>
         <nav className="flex-1 min-h-0 overflow-y-auto py-2">
           {[...unifiedNavSections, docNavSection].map((section) => {
+            if (isSalesOnly && section.title !== 'Vendas') return null;
             const visibleItems = section.items.filter(item => !item.managerOnly || isStaff);
             if (visibleItems.length === 0) return null;
             return (
