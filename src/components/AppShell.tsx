@@ -105,6 +105,7 @@ const unifiedNavSections: { title: string; items: NavItem[] }[] = [
   {
     title: 'Gestão',
     items: [
+      { icon: UserCheck, label: 'Liberar Acessos', path: '/admin/approvals', managerOnly: true },
       { icon: Shield, label: 'Admin', path: '/admin', managerOnly: true },
       { icon: BarChart3, label: 'Relatórios', path: '/admin/monthly-reports', managerOnly: true },
       { icon: TrendingUp, label: 'Analytics & Sync', path: '/admin/analytics-sync', managerOnly: true },
