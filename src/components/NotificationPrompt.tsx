@@ -2,6 +2,7 @@ import { useState, useEffect, Component, type ReactNode } from 'react';
 import { Bell, X } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { usePushNotifications } from '@/hooks/usePushNotifications';
+import { useAuth } from '@/contexts/AuthContext';
 import { cn } from '@/lib/utils';
 
 class NotificationErrorBoundary extends Component<{ children: ReactNode }, { hasError: boolean }> {
