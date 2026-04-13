@@ -32,7 +32,6 @@ Deno.serve(async (req) => {
     console.log("[omie-nfe-webhook] Payload recebido:", JSON.stringify(payload).slice(0, 500));
 
     // ── Extract NF-e fields from Omie payload ──
-    // Omie sends different structures depending on the event; be flexible.
     const chaveAcesso: string | undefined =
       payload.chave_acesso ?? payload.chNFe ?? payload.nfe?.chave_acesso ?? payload.nfe?.chNFe;
 
