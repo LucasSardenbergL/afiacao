@@ -106,10 +106,7 @@ Deno.serve(async (req) => {
           cred.appSecret,
           "produtos/recebimentonfe/",
           "ListarRecebimentos",
-          {
-            pagina: page,
-            registros_por_pagina: 50,
-          },
+          {},
         );
 
         const recebimentos = listResult.recebimentos ?? listResult.cadastros ?? [];
