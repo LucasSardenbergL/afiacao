@@ -157,6 +157,30 @@ export type Database = {
         }
         Relationships: []
       }
+      cache_lotes: {
+        Row: {
+          cache_key: string
+          created_at: string
+          data: Json
+          expires_at: string
+          id: string
+        }
+        Insert: {
+          cache_key: string
+          created_at?: string
+          data: Json
+          expires_at: string
+          id?: string
+        }
+        Update: {
+          cache_key?: string
+          created_at?: string
+          data?: Json
+          expires_at?: string
+          id?: string
+        }
+        Relationships: []
+      }
       category_mappings: {
         Row: {
           id: string
@@ -3621,6 +3645,172 @@ export type Database = {
           user_id?: string
         }
         Relationships: []
+      }
+      picking_events: {
+        Row: {
+          created_at: string
+          event_type: string
+          id: string
+          justificativa: string | null
+          lote_esperado: string | null
+          lote_informado: string | null
+          metadata: Json | null
+          picking_task_id: string
+          picking_task_item_id: string | null
+          user_id: string | null
+        }
+        Insert: {
+          created_at?: string
+          event_type: string
+          id?: string
+          justificativa?: string | null
+          lote_esperado?: string | null
+          lote_informado?: string | null
+          metadata?: Json | null
+          picking_task_id: string
+          picking_task_item_id?: string | null
+          user_id?: string | null
+        }
+        Update: {
+          created_at?: string
+          event_type?: string
+          id?: string
+          justificativa?: string | null
+          lote_esperado?: string | null
+          lote_informado?: string | null
+          metadata?: Json | null
+          picking_task_id?: string
+          picking_task_item_id?: string | null
+          user_id?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "picking_events_picking_task_id_fkey"
+            columns: ["picking_task_id"]
+            isOneToOne: false
+            referencedRelation: "picking_tasks"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "picking_events_picking_task_item_id_fkey"
+            columns: ["picking_task_item_id"]
+            isOneToOne: false
+            referencedRelation: "picking_task_items"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      picking_task_items: {
+        Row: {
+          created_at: string
+          id: string
+          justificativa_substituicao: string | null
+          localizacao: string | null
+          lote_fefo: string | null
+          lote_separado: string | null
+          omie_codigo_produto: number | null
+          picking_task_id: string
+          product_codigo: string | null
+          product_descricao: string | null
+          quantidade: number
+          quantidade_separada: number
+          separado_at: string | null
+          status: string
+          updated_at: string
+          validade_fefo: string | null
+        }
+        Insert: {
+          created_at?: string
+          id?: string
+          justificativa_substituicao?: string | null
+          localizacao?: string | null
+          lote_fefo?: string | null
+          lote_separado?: string | null
+          omie_codigo_produto?: number | null
+          picking_task_id: string
+          product_codigo?: string | null
+          product_descricao?: string | null
+          quantidade?: number
+          quantidade_separada?: number
+          separado_at?: string | null
+          status?: string
+          updated_at?: string
+          validade_fefo?: string | null
+        }
+        Update: {
+          created_at?: string
+          id?: string
+          justificativa_substituicao?: string | null
+          localizacao?: string | null
+          lote_fefo?: string | null
+          lote_separado?: string | null
+          omie_codigo_produto?: number | null
+          picking_task_id?: string
+          product_codigo?: string | null
+          product_descricao?: string | null
+          quantidade?: number
+          quantidade_separada?: number
+          separado_at?: string | null
+          status?: string
+          updated_at?: string
+          validade_fefo?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "picking_task_items_picking_task_id_fkey"
+            columns: ["picking_task_id"]
+            isOneToOne: false
+            referencedRelation: "picking_tasks"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      picking_tasks: {
+        Row: {
+          account: string
+          assigned_to: string | null
+          completed_at: string | null
+          created_at: string
+          id: string
+          notes: string | null
+          sales_order_id: string | null
+          started_at: string | null
+          status: string
+          updated_at: string
+        }
+        Insert: {
+          account?: string
+          assigned_to?: string | null
+          completed_at?: string | null
+          created_at?: string
+          id?: string
+          notes?: string | null
+          sales_order_id?: string | null
+          started_at?: string | null
+          status?: string
+          updated_at?: string
+        }
+        Update: {
+          account?: string
+          assigned_to?: string | null
+          completed_at?: string | null
+          created_at?: string
+          id?: string
+          notes?: string | null
+          sales_order_id?: string | null
+          started_at?: string | null
+          status?: string
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "picking_tasks_sales_order_id_fkey"
+            columns: ["sales_order_id"]
+            isOneToOne: false
+            referencedRelation: "sales_orders"
+            referencedColumns: ["id"]
+          },
+        ]
       }
       priority_score_log: {
         Row: {
