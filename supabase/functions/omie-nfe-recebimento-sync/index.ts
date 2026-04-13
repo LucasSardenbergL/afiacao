@@ -149,14 +149,10 @@ Deno.serve(async (req) => {
         }
       }
       
-      console.log(`[sync] ${allRecebimentos.length} registros nas últimas páginas (total: ${totalPages} páginas)`);
-
-      console.log(`[sync] ${allRecebimentos.length} registros nas últimas páginas`);
+      console.log(`[sync] ${allRecebimentos.length} registros recentes (total: ${totalPages} páginas)`);
 
       let detailCalls = 0;
       const MAX_DETAIL_CALLS = 10;
-
-      for (const rec of allRecebimentos) {
 
       for (const rec of allRecebimentos) {
         if (detailCalls >= MAX_DETAIL_CALLS) break;
