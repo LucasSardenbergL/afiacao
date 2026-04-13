@@ -104,15 +104,17 @@ Deno.serve(async (req) => {
 
       // List recebimentos - only 1 page of recent ones to stay within timeout
       let listResult: any;
+      // First get total pages, then fetch the LAST page (most recent records)
+      let firstResult: any;
       try {
-        listResult = await omieCall(
+        firstResult = await omieCall(
           cred.appKey,
           cred.appSecret,
           "produtos/recebimentonfe/",
           "ListarRecebimentos",
           {
             nPagina: 1,
-            nRegistrosPorPagina: 50,
+            nRegistrosPorPagina: 10,
             cOrdenarPor: "CODIGO",
           },
         );
@@ -121,6 +123,33 @@ Deno.serve(async (req) => {
         errors.push(`${cred.warehouseCode}: ${listErr.message}`);
         continue;
       }
+
+      const totalPages = firstResult.nTotalPaginas ?? 1;
+      
+      // Fetch the last 2 pages (most recent) 
+      const pagesToFetch = [totalPages, Math.max(1, totalPages - 1)];
+      const allRecebimentos: any[] = [];
+      
+      for (const pg of [...new Set(pagesToFetch)]) {
+        try {
+          const pageResult = await omieCall(
+            cred.appKey,
+            cred.appSecret,
+            "produtos/recebimentonfe/",
+            "ListarRecebimentos",
+            {
+              nPagina: pg,
+              nRegistrosPorPagina: 50,
+              cOrdenarPor: "CODIGO",
+            },
+          );
+          allRecebimentos.push(...(pageResult.recebimentos ?? []));
+        } catch (pgErr: any) {
+          console.warn(`[sync] Erro na página ${pg}: ${pgErr.message}`);
+        }
+      }
+      
+      console.log(`[sync] ${allRecebimentos.length} registros nas últimas páginas (total: ${totalPages} páginas)`);
 
       const recebimentos = listResult.recebimentos ?? [];
       const totalPages = listResult.nTotalPaginas ?? 1;
