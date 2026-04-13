@@ -46,6 +46,7 @@ export default function Recebimento() {
   const [chaveAcesso, setChaveAcesso] = useState('');
   const [importing, setImporting] = useState(false);
   const [efetivando, setEfetivando] = useState<string | null>(null);
+  const [syncing, setSyncing] = useState(false);
 
   // Fetch warehouses
   const { data: warehouses } = useQuery({
@@ -179,6 +180,28 @@ export default function Recebimento() {
           <FileCheck className="h-6 w-6 text-primary" />
           <h1 className="text-xl font-bold text-foreground">Recebimento de NF-e</h1>
         </div>
+        <Button
+          variant="outline"
+          size="sm"
+          disabled={syncing}
+          onClick={async () => {
+            setSyncing(true);
+            try {
+              const { error } = await supabase.functions.invoke('omie-nfe-recebimento-sync', { body: {} });
+              if (error) throw error;
+              toast.success('Sincronização concluída!');
+              queryClient.invalidateQueries({ queryKey: ['nfe_recebimentos'] });
+              queryClient.invalidateQueries({ queryKey: ['nfe_pending_counts'] });
+            } catch (err: any) {
+              toast.error('Erro na sincronização: ' + (err.message || 'Tente novamente'));
+            } finally {
+              setSyncing(false);
+            }
+          }}
+        >
+          <RefreshCw className={cn('h-4 w-4 mr-1', syncing && 'animate-spin')} />
+          Sincronizar Omie
+        </Button>
       </div>
 
       {/* Warehouse selector */}
