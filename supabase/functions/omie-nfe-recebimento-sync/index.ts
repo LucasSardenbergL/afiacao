@@ -189,6 +189,19 @@ Deno.serve(async (req) => {
           continue;
         }
 
+        const detCabec = detail.cabec ?? {};
+        // Log first detail to understand structure
+        if (detailCalls <= 2) {
+          console.log(`[sync] Detail cabec keys for ${nIdReceb}: ${JSON.stringify(Object.keys(detCabec))}`);
+          console.log(`[sync] Detail cabec sample: ${JSON.stringify(detCabec).slice(0, 500)}`);
+        }
+
+        const chaveAcesso = detCabec.cChaveNfe ?? null;
+        if (!chaveAcesso) {
+          console.warn(`[sync] Erro ao consultar recebimento ${nIdReceb}: ${detErr.message}`);
+          continue;
+        }
+
         const detCabec = detail.cabec ?? detail;
         const chaveAcesso = detCabec.cChaveNfe ?? null;
         if (!chaveAcesso) {
