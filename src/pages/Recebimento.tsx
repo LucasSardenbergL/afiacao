@@ -2,7 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { supabase } from '@/integrations/supabase/client';
-import { FileCheck, Truck, Plus, Loader2, PackageCheck } from 'lucide-react';
+import { FileCheck, Truck, Plus, Loader2, PackageCheck, RefreshCw } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { Card, CardContent } from '@/components/ui/card';
@@ -46,6 +46,30 @@ export default function Recebimento() {
   const [chaveAcesso, setChaveAcesso] = useState('');
   const [importing, setImporting] = useState(false);
   const [efetivando, setEfetivando] = useState<string | null>(null);
+  const [syncing, setSyncing] = useState(false);
+
+  const handleSync = async () => {
+    setSyncing(true);
+    try {
+      const { data, error } = await supabase.functions.invoke('omie-nfe-recebimento-sync', {
+        body: {},
+      });
+      if (error) throw error;
+      const imported = data?.imported ?? 0;
+      const skipped = data?.skipped ?? 0;
+      if (imported > 0) {
+        toast.success(`${imported} NF-e(s) importada(s) do Omie!`);
+      } else {
+        toast.info(`Nenhuma NF-e nova encontrada (${skipped} já existentes)`);
+      }
+      queryClient.invalidateQueries({ queryKey: ['nfe_recebimentos'] });
+      queryClient.invalidateQueries({ queryKey: ['nfe_pending_counts'] });
+    } catch (err: any) {
+      toast.error('Erro ao sincronizar: ' + (err.message || 'Tente novamente'));
+    } finally {
+      setSyncing(false);
+    }
+  };
 
   // Fetch warehouses
   const { data: warehouses } = useQuery({
@@ -179,6 +203,10 @@ export default function Recebimento() {
           <FileCheck className="h-6 w-6 text-primary" />
           <h1 className="text-xl font-bold text-foreground">Recebimento de NF-e</h1>
         </div>
+        <Button variant="outline" size="sm" onClick={handleSync} disabled={syncing}>
+          <RefreshCw className={`w-4 h-4 mr-1 ${syncing ? 'animate-spin' : ''}`} />
+          {syncing ? 'Sincronizando...' : 'Sincronizar Omie'}
+        </Button>
       </div>
 
       {/* Warehouse selector */}

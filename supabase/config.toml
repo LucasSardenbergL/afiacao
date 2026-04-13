@@ -59,3 +59,6 @@ verify_jwt = false
 
 [functions.omie-consultar-lotes]
 verify_jwt = false
+
+[functions.omie-nfe-recebimento-sync]
+verify_jwt = false
