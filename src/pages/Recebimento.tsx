@@ -46,6 +46,30 @@ export default function Recebimento() {
   const [chaveAcesso, setChaveAcesso] = useState('');
   const [importing, setImporting] = useState(false);
   const [efetivando, setEfetivando] = useState<string | null>(null);
+  const [syncing, setSyncing] = useState(false);
+
+  const handleSync = async () => {
+    setSyncing(true);
+    try {
+      const { data, error } = await supabase.functions.invoke('omie-nfe-recebimento-sync', {
+        body: {},
+      });
+      if (error) throw error;
+      const imported = data?.imported ?? 0;
+      const skipped = data?.skipped ?? 0;
+      if (imported > 0) {
+        toast.success(`${imported} NF-e(s) importada(s) do Omie!`);
+      } else {
+        toast.info(`Nenhuma NF-e nova encontrada (${skipped} já existentes)`);
+      }
+      queryClient.invalidateQueries({ queryKey: ['nfe_recebimentos'] });
+      queryClient.invalidateQueries({ queryKey: ['nfe_pending_counts'] });
+    } catch (err: any) {
+      toast.error('Erro ao sincronizar: ' + (err.message || 'Tente novamente'));
+    } finally {
+      setSyncing(false);
+    }
+  };
 
   // Fetch warehouses
   const { data: warehouses } = useQuery({
