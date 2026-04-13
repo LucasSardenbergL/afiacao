@@ -158,11 +158,7 @@ Deno.serve(async (req) => {
 
       for (const rec of allRecebimentos) {
 
-      // For each recebimento not in our DB, fetch details individually
-      let detailCalls = 0;
-      const MAX_DETAIL_CALLS = 15; // Limit to avoid timeout
-
-      for (const rec of recebimentos) {
+      for (const rec of allRecebimentos) {
         if (detailCalls >= MAX_DETAIL_CALLS) break;
 
         const cabec = rec.cabec ?? rec;
