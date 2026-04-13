@@ -7,7 +7,6 @@ const SERVICE_ROLE_KEY = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
 interface AccountConfig {
   appKey: string;
   appSecret: string;
-  cnpj: string;
   warehouseCode: string;
 }
 
@@ -16,45 +15,40 @@ function getAccounts(): AccountConfig[] {
 
   const obenKey = Deno.env.get("OMIE_VENDAS_APP_KEY");
   const obenSecret = Deno.env.get("OMIE_VENDAS_APP_SECRET");
-  const cnpjOben = Deno.env.get("CNPJ_OBEN") || "";
   if (obenKey && obenSecret) {
-    accounts.push({ appKey: obenKey, appSecret: obenSecret, cnpj: cnpjOben.replace(/\D/g, ""), warehouseCode: "OB" });
+    accounts.push({ appKey: obenKey, appSecret: obenSecret, warehouseCode: "OB" });
   }
 
   const colKey = Deno.env.get("OMIE_APP_KEY");
   const colSecret = Deno.env.get("OMIE_APP_SECRET");
-  const cnpjCol = Deno.env.get("CNPJ_COLACOR") || "";
   if (colKey && colSecret) {
-    accounts.push({ appKey: colKey, appSecret: colSecret, cnpj: cnpjCol.replace(/\D/g, ""), warehouseCode: "CC" });
+    accounts.push({ appKey: colKey, appSecret: colSecret, warehouseCode: "CC" });
   }
 
   return accounts;
 }
 
-async function fetchOmieNfes(appKey: string, appSecret: string, page = 1): Promise<any> {
-  // Use ListarNFe without cOperacao filter, then filter client-side for incoming (entrada)
+async function fetchOmieRecebimentos(appKey: string, appSecret: string, page = 1): Promise<any> {
   const body = {
-    call: "ListarNFe",
+    call: "ListarRecebimentos",
     app_key: appKey,
     app_secret: appSecret,
     param: [{
       nPagina: page,
-      nRegPorPagina: 50,
+      nRegistrosPorPagina: 50,
     }],
   };
-  console.log(`[sync] Chamando Omie ListarNFe, page ${page}`);
-  const resp = await fetch("https://app.omie.com.br/api/v1/produtos/nfe/", {
+  console.log(`[sync] Chamando Omie ListarRecebimentos, page ${page}`);
+  const resp = await fetch("https://app.omie.com.br/api/v1/produtos/recebimentonfe/", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(body),
   });
 
   const txt = await resp.text();
-  console.log(`[sync] Omie response (${resp.status}): ${txt.slice(0, 800)}`);
+  console.log(`[sync] Omie response (${resp.status}): ${txt.slice(0, 1000)}`);
 
-  if (!resp.ok) {
-    return null;
-  }
+  if (!resp.ok) return null;
 
   try {
     return JSON.parse(txt);
@@ -63,21 +57,21 @@ async function fetchOmieNfes(appKey: string, appSecret: string, page = 1): Promi
   }
 }
 
-async function fetchNfeDetail(appKey: string, appSecret: string, nIdNfe: number): Promise<any> {
-  const resp = await fetch("https://app.omie.com.br/api/v1/produtos/nfe/", {
+async function fetchRecebimentoDetail(appKey: string, appSecret: string, nIdReceb: number): Promise<any> {
+  const resp = await fetch("https://app.omie.com.br/api/v1/produtos/recebimentonfe/", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({
-      call: "ConsultarNFe",
+      call: "ConsultarRecebimento",
       app_key: appKey,
       app_secret: appSecret,
-      param: [{ nIdNfe }],
+      param: [{ nIdReceb }],
     }),
   });
 
   if (!resp.ok) {
     const txt = await resp.text();
-    console.log(`[sync] ConsultarNFe error: ${txt.slice(0, 300)}`);
+    console.log(`[sync] ConsultarRecebimento error (${resp.status}): ${txt.slice(0, 300)}`);
     return null;
   }
   return await resp.json();
@@ -94,7 +88,7 @@ Deno.serve(async (req) => {
     let body: any = {};
     try { body = await req.json(); } catch { /* empty body ok */ }
 
-    const filterWarehouse = body.warehouse_code || null; // optional filter
+    const filterWarehouse = body.warehouse_code || null;
     const accounts = getAccounts();
 
     if (accounts.length === 0) {
@@ -112,7 +106,7 @@ Deno.serve(async (req) => {
     for (const acc of accounts) {
       if (filterWarehouse && acc.warehouseCode !== filterWarehouse) continue;
 
-      console.log(`[sync] Buscando NF-es de entrada para ${acc.warehouseCode}...`);
+      console.log(`[sync] Buscando recebimentos para ${acc.warehouseCode}...`);
 
       // Get warehouse ID
       const { data: wh } = await supabase
@@ -129,32 +123,34 @@ Deno.serve(async (req) => {
 
       // Fetch pages (max 3 to respect timeout)
       for (let page = 1; page <= 3; page++) {
-        const result = await fetchOmieNfes(acc.appKey, acc.appSecret, page);
+        const result = await fetchOmieRecebimentos(acc.appKey, acc.appSecret, page);
         if (!result) { totalErrors++; break; }
 
-        // Handle Omie error responses
         if (result.faultstring) {
-          console.log(`[sync] Omie: ${result.faultstring}`);
+          console.log(`[sync] Omie fault: ${result.faultstring}`);
+          totalErrors++;
           break;
         }
 
-        const nfes = result.recebimentos || result.nfeListar || result.nfeCadastro || [];
-        if (nfes.length === 0) {
-          console.log(`[sync] Nenhuma NF-e encontrada na página ${page}`);
+        // Response: recebimentos array, each with cabec and itensRecebimento
+        const recebimentos = result.recebimentos || result.listagemRecebimentos || [];
+        if (recebimentos.length === 0) {
+          console.log(`[sync] Nenhum recebimento na página ${page}. Keys: ${Object.keys(result).join(', ')}`);
           break;
         }
 
-        console.log(`[sync] Página ${page}: ${nfes.length} NF-es encontradas`);
+        console.log(`[sync] Página ${page}: ${recebimentos.length} recebimentos`);
 
-        for (const nfe of nfes) {
-          const chaveAcesso = nfe.chNFe || nfe.chave_nfe || nfe.cChaveNFe || "";
+        for (const rec of recebimentos) {
+          const cabec = rec.cabec || rec;
+          const chaveAcesso = cabec.cChaveNfe || cabec.chNFe || "";
           if (!chaveAcesso) {
-            console.log(`[sync] NF-e sem chave de acesso, pulando:`, JSON.stringify(nfe).slice(0, 200));
+            console.log(`[sync] Recebimento sem chave, pulando. nIdReceb=${cabec.nIdReceb}`);
             totalSkipped++;
             continue;
           }
 
-          // Check if already exists
+          // Check duplicate
           const { data: existing } = await supabase
             .from("nfe_recebimentos")
             .select("id")
@@ -163,26 +159,29 @@ Deno.serve(async (req) => {
 
           if (existing) { totalSkipped++; continue; }
 
-          // Get detail for items
-          const nIdReceb = nfe.nIdReceb || nfe.nIdNfe;
-          let detailNfe = nfe;
+          // Get detail if needed (for items)
+          let detailRec = rec;
+          const nIdReceb = cabec.nIdReceb;
           if (nIdReceb) {
-            const detail = await fetchNfeDetail(acc.appKey, acc.appSecret, nIdReceb);
+            const detail = await fetchRecebimentoDetail(acc.appKey, acc.appSecret, nIdReceb);
             if (detail && !detail.faultstring) {
-              detailNfe = { ...nfe, ...detail };
+              detailRec = detail;
             }
+            // Rate limit delay
+            await new Promise(r => setTimeout(r, 300));
           }
 
-          const numeroNfe = String(detailNfe.nNF || detailNfe.numero_nfe || nfe.nNF || "");
-          const serieNfe = detailNfe.cSerie || detailNfe.serie || null;
-          const cnpjEmitente = (detailNfe.cnpjEmitente || detailNfe.emit?.cnpj || "").replace(/\D/g, "");
-          const razaoSocial = detailNfe.razaoSocialEmitente || detailNfe.emit?.razao_social || detailNfe.xNome || null;
-          const dataEmissao = detailNfe.dEmi || detailNfe.data_emissao || null;
-          const valorTotal = detailNfe.vNF || detailNfe.valor_total || null;
-          const xmlCompleto = detailNfe.xml || null;
+          const detailCabec = detailRec.cabec || cabec;
+          const numeroNfe = String(detailCabec.cNumeroNFe || detailCabec.nNF || cabec.cNumeroNFe || "");
+          const serieNfe = detailCabec.cSerieNFe || detailCabec.serie || null;
+          const cnpjEmitente = (detailCabec.cCNPJ_CPF || detailCabec.cnpjEmitente || "").replace(/\D/g, "");
+          const razaoSocial = detailCabec.cRazaoSocial || detailCabec.cNome || null;
+          const dataEmissao = detailCabec.dEmissaoNFe || detailCabec.dEmi || null;
+          const valorTotal = detailCabec.nValorNFe || detailCabec.vNF || null;
+          const etapa = detailCabec.cEtapa || "";
 
           // Insert NF-e
-          const { data: rec, error: insErr } = await supabase
+          const { data: nfeRec, error: insErr } = await supabase
             .from("nfe_recebimentos")
             .insert({
               warehouse_id: wh.id,
@@ -192,11 +191,10 @@ Deno.serve(async (req) => {
               cnpj_emitente: cnpjEmitente,
               razao_social_emitente: razaoSocial,
               data_emissao: dataEmissao,
-              valor_total: valorTotal ? parseFloat(valorTotal) : null,
-              xml_completo: xmlCompleto,
+              valor_total: valorTotal ? parseFloat(String(valorTotal)) : null,
               status: "pendente",
-              omie_nfe_id: detailNfe.nIdNfe ? parseInt(detailNfe.nIdNfe) : null,
-              omie_id_receb: detailNfe.nIdReceb ? parseInt(detailNfe.nIdReceb) : null,
+              omie_nfe_id: null,
+              omie_id_receb: nIdReceb ? parseInt(String(nIdReceb)) : null,
             })
             .select("id")
             .single();
@@ -207,46 +205,49 @@ Deno.serve(async (req) => {
             continue;
           }
 
-          // Parse and insert items
-          const rawItems = detailNfe.det || detailNfe.itens || detailNfe.produtos || [];
-          if (rawItems.length > 0 && rec) {
+          // Parse items from detail
+          const rawItems = detailRec.itensRecebimento || detailRec.itens || [];
+          if (rawItems.length > 0 && nfeRec) {
             const itens = rawItems.map((item: any, idx: number) => {
-              const quantidadeNfe = parseFloat(item.qCom || item.quantidade || item.quantidade_nfe || 0);
+              const itemCabec = item.itensCabec || item;
+              const quantidadeNfe = parseFloat(itemCabec.nQtdeNFe || itemCabec.qCom || itemCabec.quantidade || 0);
               const rounded = Math.round(quantidadeNfe);
               const quantidadeEsperada = Math.abs(quantidadeNfe - rounded) < 0.05 ? rounded : Math.ceil(quantidadeNfe);
 
               return {
-                nfe_recebimento_id: rec.id,
-                sequencia: item.nItem || idx + 1,
-                codigo_produto: item.cProd || item.codigo_produto || null,
-                descricao: item.xProd || item.descricao || "Item sem descrição",
-                ncm: item.NCM || item.ncm || null,
-                ean: item.cEAN || item.ean || null,
-                unidade_nfe: item.uCom || item.unidade || "UN",
+                nfe_recebimento_id: nfeRec.id,
+                sequencia: itemCabec.nSequencia || itemCabec.nItem || idx + 1,
+                codigo_produto: itemCabec.cCodigoProduto || itemCabec.cProd || null,
+                descricao: itemCabec.cDescricaoProduto || itemCabec.xProd || "Item sem descrição",
+                ncm: itemCabec.cNCM || itemCabec.ncm || null,
+                ean: itemCabec.cEAN || itemCabec.ean || null,
+                unidade_nfe: itemCabec.cUnidadeNfe || itemCabec.uCom || "UN",
                 quantidade_nfe: quantidadeNfe,
-                valor_unitario: item.vUnCom ? parseFloat(item.vUnCom) : null,
-                valor_total: item.vProd ? parseFloat(item.vProd) : null,
+                valor_unitario: itemCabec.nPrecoUnit ? parseFloat(String(itemCabec.nPrecoUnit)) : null,
+                valor_total: itemCabec.vTotalItem ? parseFloat(String(itemCabec.vTotalItem)) : null,
                 unidade_estoque: null,
                 quantidade_convertida: null,
                 quantidade_conferida: 0,
                 quantidade_esperada: quantidadeEsperada,
                 status_item: "pendente",
-                produto_omie_id: item.nCodProd ? parseInt(item.nCodProd) : null,
+                produto_omie_id: itemCabec.nIdProduto ? parseInt(String(itemCabec.nIdProduto)) : null,
               };
             });
 
-            await supabase.from("nfe_recebimento_itens").insert(itens);
+            const { error: itensErr } = await supabase.from("nfe_recebimento_itens").insert(itens);
+            if (itensErr) {
+              console.error(`[sync] Erro ao inserir itens da NF-e ${numeroNfe}:`, itensErr.message);
+            }
           }
 
           totalImported++;
-          details.push({ numero_nfe: numeroNfe, chave: chaveAcesso.slice(-8), warehouse: acc.warehouseCode });
-          console.log(`[sync] NF-e ${numeroNfe} importada (${acc.warehouseCode})`);
+          details.push({ numero_nfe: numeroNfe, fornecedor: razaoSocial, etapa, warehouse: acc.warehouseCode });
+          console.log(`[sync] NF-e ${numeroNfe} importada (${acc.warehouseCode}), etapa: ${etapa}`);
         }
 
         const totalPages = result.nTotPaginas || 1;
         if (page >= totalPages) break;
 
-        // Small delay between pages
         await new Promise(r => setTimeout(r, 500));
       }
     }
