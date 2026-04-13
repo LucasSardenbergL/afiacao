@@ -203,6 +203,10 @@ export default function Recebimento() {
           <FileCheck className="h-6 w-6 text-primary" />
           <h1 className="text-xl font-bold text-foreground">Recebimento de NF-e</h1>
         </div>
+        <Button variant="outline" size="sm" onClick={handleSync} disabled={syncing}>
+          <RefreshCw className={`w-4 h-4 mr-1 ${syncing ? 'animate-spin' : ''}`} />
+          {syncing ? 'Sincronizando...' : 'Sincronizar Omie'}
+        </Button>
       </div>
 
       {/* Warehouse selector */}
