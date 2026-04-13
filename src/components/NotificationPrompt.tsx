@@ -48,7 +48,7 @@ function NotificationPromptInner() {
     }
   };
 
-  if (dismissed || !visible || permission !== 'default') {
+  if (!user || dismissed || !visible || permission !== 'default') {
     return null;
   }
 
