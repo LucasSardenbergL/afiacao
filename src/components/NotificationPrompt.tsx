@@ -12,6 +12,7 @@ class NotificationErrorBoundary extends Component<{ children: ReactNode }, { has
 }
 
 function NotificationPromptInner() {
+  const { user } = useAuth();
   const { isSupported, permission, requestPermission } = usePushNotifications();
   const [dismissed, setDismissed] = useState(false);
   const [visible, setVisible] = useState(false);
