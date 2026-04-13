@@ -13,6 +13,12 @@ function jsonResponse(body: Record<string, unknown>, status = 200) {
   });
 }
 
+/** Smart rounding: if qty is within 5% of nearest integer, round it */
+function smartRound(qty: number): number {
+  const rounded = Math.round(qty);
+  return Math.abs(qty - rounded) < 0.05 ? rounded : Math.ceil(qty);
+}
+
 Deno.serve(async (req) => {
   if (req.method === "OPTIONS") {
     return new Response("ok", { headers: corsHeaders });
@@ -31,7 +37,6 @@ Deno.serve(async (req) => {
     const payload = await req.json();
     console.log("[omie-nfe-webhook] Payload recebido:", JSON.stringify(payload).slice(0, 500));
 
-    // ── Extract NF-e fields from Omie payload ──
     const chaveAcesso: string | undefined =
       payload.chave_acesso ?? payload.chNFe ?? payload.nfe?.chave_acesso ?? payload.nfe?.chNFe;
 
@@ -40,7 +45,7 @@ Deno.serve(async (req) => {
       return jsonResponse({ error: "chave_acesso ausente no payload" }, 400);
     }
 
-    // ── Duplicate check ──
+    // Duplicate check
     const { data: existing } = await supabase
       .from("nfe_recebimentos")
       .select("id")
@@ -52,7 +57,7 @@ Deno.serve(async (req) => {
       return jsonResponse({ message: "já importada", id: existing.id });
     }
 
-    // ── Parse header fields ──
+    // Parse header fields
     const nfe = payload.nfe ?? payload;
     const numeroNfe = String(nfe.numero_nfe ?? nfe.nNF ?? nfe.numero ?? "");
     const serieNfe = nfe.serie_nfe ?? nfe.serie ?? nfe.cSerie ?? null;
@@ -64,16 +69,15 @@ Deno.serve(async (req) => {
     const omieNfeId = nfe.omie_nfe_id ?? nfe.nIdNfe ?? null;
     const omieIdReceb = nfe.omie_id_receb ?? nfe.nIdReceb ?? null;
 
-    // CNPJ destinatário (para determinar o warehouse)
     const cnpjDestinatario: string =
       nfe.cnpj_destinatario ?? nfe.cnpjDestinatario ?? nfe.dest?.cnpj ?? "";
 
-    // ── Determine warehouse ──
+    // Determine warehouse
     const cnpjOben = (Deno.env.get("CNPJ_OBEN") ?? "").replace(/\D/g, "");
     const cnpjColacor = (Deno.env.get("CNPJ_COLACOR") ?? "").replace(/\D/g, "");
     const cnpjDestClean = cnpjDestinatario.replace(/\D/g, "");
 
-    let warehouseCode = "OB"; // default
+    let warehouseCode = "OB";
     if (cnpjDestClean && cnpjDestClean === cnpjColacor) {
       warehouseCode = "CC";
     } else if (cnpjDestClean && cnpjDestClean === cnpjOben) {
@@ -91,22 +95,11 @@ Deno.serve(async (req) => {
       return jsonResponse({ error: "Warehouse não encontrado" }, 500);
     }
 
-    // ── Parse items ──
+    // Parse items — NO conversion table, smart rounding only
     const rawItems: any[] =
       nfe.itens ?? nfe.items ?? nfe.det ?? nfe.produtos ?? [];
 
-    // Fetch conversions for this supplier in one query
     const cnpjEmClean = cnpjEmitente.replace(/\D/g, "");
-    const { data: conversoes } = await supabase
-      .from("conversao_unidades")
-      .select("*")
-      .eq("cnpj_fornecedor", cnpjEmClean)
-      .eq("is_active", true);
-
-    const convMap = new Map<string, any>();
-    (conversoes ?? []).forEach((c: any) => {
-      convMap.set(c.codigo_produto_fornecedor, c);
-    });
 
     const itensToInsert = rawItems.map((item: any, idx: number) => {
       const codigoProduto = item.codigo_produto ?? item.cProd ?? item.codigo ?? null;
@@ -119,19 +112,7 @@ Deno.serve(async (req) => {
       const valorTotalItem = item.valor_total ?? item.vProd ?? null;
       const produtoOmieId = item.produto_omie_id ?? item.nCodProd ?? null;
 
-      // Conversion logic
-      const conv = codigoProduto ? convMap.get(codigoProduto) : null;
-      let unidadeEstoque: string | null = null;
-      let quantidadeConvertida: number | null = null;
-      let quantidadeEsperada: number;
-
-      if (conv && conv.fator_conversao > 0) {
-        unidadeEstoque = conv.unidade_destino;
-        quantidadeConvertida = Math.round(quantidadeNfe / conv.fator_conversao);
-        quantidadeEsperada = Math.round(quantidadeConvertida);
-      } else {
-        quantidadeEsperada = Math.round(quantidadeNfe);
-      }
+      const quantidadeEsperada = smartRound(quantidadeNfe);
 
       return {
         sequencia: item.sequencia ?? item.nItem ?? idx + 1,
@@ -143,8 +124,8 @@ Deno.serve(async (req) => {
         quantidade_nfe: quantidadeNfe,
         valor_unitario: valorUnitario ? parseFloat(valorUnitario) : null,
         valor_total: valorTotalItem ? parseFloat(valorTotalItem) : null,
-        unidade_estoque: unidadeEstoque,
-        quantidade_convertida: quantidadeConvertida,
+        unidade_estoque: null,
+        quantidade_convertida: null,
         quantidade_conferida: 0,
         quantidade_esperada: quantidadeEsperada,
         status_item: "pendente",
@@ -152,7 +133,7 @@ Deno.serve(async (req) => {
       };
     });
 
-    // ── Insert NF-e header ──
+    // Insert NF-e header
     const { data: recebimento, error: insErr } = await supabase
       .from("nfe_recebimentos")
       .insert({
@@ -177,7 +158,7 @@ Deno.serve(async (req) => {
       return jsonResponse({ error: "Erro ao inserir NF-e", details: insErr?.message }, 500);
     }
 
-    // ── Insert items ──
+    // Insert items
     if (itensToInsert.length > 0) {
       const itensComNfeId = itensToInsert.map((item) => ({
         ...item,
