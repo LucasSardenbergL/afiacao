@@ -60,7 +60,6 @@ const unifiedNavSections: { title: string; items: NavItem[] }[] = [
     title: 'Estoque',
     items: [
       { icon: FileCheck, label: 'Recebimento', path: '/recebimento' },
-      { icon: ArrowLeftRight, label: 'Conversões', path: '/recebimento/conversoes' },
     ],
   },
   {

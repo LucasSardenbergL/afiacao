@@ -426,7 +426,7 @@ export default function RecebimentoConferencia() {
               const status = (item.status_item ?? 'pendente') as ItemStatus;
               const itemLotes = lotesPerItem.get(item.id);
               const isExpanded = expandedItems.has(item.id);
-              const hasConversao = item.quantidade_convertida != null && item.quantidade_convertida !== item.quantidade_nfe;
+              const wasRounded = item.quantidade_nfe != null && item.quantidade_nfe !== esperada;
               const isClickable = status !== 'conferido';
 
               return (
@@ -444,11 +444,11 @@ export default function RecebimentoConferencia() {
                       </div>
                       <div className="text-right shrink-0">
                         <p className="text-lg font-bold text-foreground">
-                          {esperada} {item.unidade_estoque ?? 'UN'}
+                          {esperada} {item.unidade_nfe ?? 'UN'}
                         </p>
-                        {hasConversao && (
+                        {wasRounded && (
                           <p className="text-[10px] text-muted-foreground leading-tight">
-                            NF-e: {item.quantidade_nfe} {item.unidade_nfe} ÷ {(item.quantidade_nfe / item.quantidade_convertida).toFixed(3)}
+                            Qtd NF-e: {item.quantidade_nfe} → arredondado para {esperada}
                           </p>
                         )}
                       </div>
