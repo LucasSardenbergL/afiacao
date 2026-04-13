@@ -216,7 +216,7 @@ Deno.serve(async (req) => {
         const serieNfe = detCabec.cSerieNFe ?? null;
         const cnpjEmitente = (detCabec.cCNPJ_CPF ?? "").replace(/\D/g, "");
         const razaoSocial = detCabec.cRazaoSocial ?? detCabec.cNome ?? null;
-        const dataEmissao = detCabec.dEmissaoNFe ?? null;
+        const dataEmissao = parseOmieDate(detCabec.dEmissaoNFe);
         const valorTotal = detCabec.nValorNFe ?? null;
 
         const { data: newNfe, error: insErr } = await supabase
