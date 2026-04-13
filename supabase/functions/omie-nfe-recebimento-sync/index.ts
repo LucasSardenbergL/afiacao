@@ -198,13 +198,6 @@ Deno.serve(async (req) => {
 
         const chaveAcesso = detCabec.cChaveNfe ?? null;
         if (!chaveAcesso) {
-          console.warn(`[sync] Erro ao consultar recebimento ${nIdReceb}: ${detErr.message}`);
-          continue;
-        }
-
-        const detCabec = detail.cabec ?? detail;
-        const chaveAcesso = detCabec.cChaveNfe ?? null;
-        if (!chaveAcesso) {
           console.log(`[sync] Recebimento ${nIdReceb} sem chave de acesso no detalhe, pulando`);
           continue;
         }
