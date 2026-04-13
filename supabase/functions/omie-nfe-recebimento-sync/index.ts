@@ -32,29 +32,35 @@ function getAccounts(): AccountConfig[] {
 }
 
 async function fetchOmieNfes(appKey: string, appSecret: string, page = 1): Promise<any> {
+  const body = {
+    call: "ListarNFe",
+    app_key: appKey,
+    app_secret: appSecret,
+    param: [{
+      nPagina: page,
+      nRegPorPagina: 50,
+      cOperacao: "E",
+    }],
+  };
+  console.log(`[sync] Chamando Omie ListarNFe, page ${page}`);
   const resp = await fetch("https://app.omie.com.br/api/v1/produtos/nfe/", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({
-      call: "ListarNFe",
-      app_key: appKey,
-      app_secret: appSecret,
-      param: [{
-        nPagina: page,
-        nRegPorPagina: 50,
-        cOperacao: "E", // Entrada (recebimento)
-        cStatus: "10",   // NF-es pendentes / aguardando recebimento
-      }],
-    }),
+    body: JSON.stringify(body),
   });
 
+  const txt = await resp.text();
+  console.log(`[sync] Omie ListarNFe response (${resp.status}): ${txt.slice(0, 500)}`);
+
   if (!resp.ok) {
-    const txt = await resp.text();
-    console.error(`Omie ListarNFe error ${resp.status}: ${txt}`);
     return null;
   }
 
-  return await resp.json();
+  try {
+    return JSON.parse(txt);
+  } catch {
+    return null;
+  }
 }
 
 async function fetchNfeDetail(appKey: string, appSecret: string, nIdNfe: number): Promise<any> {
