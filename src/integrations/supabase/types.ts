@@ -234,6 +234,95 @@ export type Database = {
         }
         Relationships: []
       }
+      conversao_unidades: {
+        Row: {
+          cnpj_fornecedor: string
+          codigo_produto_fornecedor: string
+          created_at: string
+          descricao_produto: string | null
+          fator_conversao: number
+          id: string
+          is_active: boolean
+          unidade_destino: string
+          unidade_origem: string
+          updated_at: string
+        }
+        Insert: {
+          cnpj_fornecedor: string
+          codigo_produto_fornecedor: string
+          created_at?: string
+          descricao_produto?: string | null
+          fator_conversao: number
+          id?: string
+          is_active?: boolean
+          unidade_destino: string
+          unidade_origem: string
+          updated_at?: string
+        }
+        Update: {
+          cnpj_fornecedor?: string
+          codigo_produto_fornecedor?: string
+          created_at?: string
+          descricao_produto?: string | null
+          fator_conversao?: number
+          id?: string
+          is_active?: boolean
+          unidade_destino?: string
+          unidade_origem?: string
+          updated_at?: string
+        }
+        Relationships: []
+      }
+      cte_associados: {
+        Row: {
+          chave_acesso_cte: string
+          cnpj_transportadora: string | null
+          created_at: string
+          id: string
+          nfe_recebimento_id: string
+          numero_cte: string | null
+          omie_cte_id: number | null
+          razao_social_transportadora: string | null
+          status: string
+          valor_frete: number | null
+          xml_cte: string | null
+        }
+        Insert: {
+          chave_acesso_cte: string
+          cnpj_transportadora?: string | null
+          created_at?: string
+          id?: string
+          nfe_recebimento_id: string
+          numero_cte?: string | null
+          omie_cte_id?: number | null
+          razao_social_transportadora?: string | null
+          status?: string
+          valor_frete?: number | null
+          xml_cte?: string | null
+        }
+        Update: {
+          chave_acesso_cte?: string
+          cnpj_transportadora?: string | null
+          created_at?: string
+          id?: string
+          nfe_recebimento_id?: string
+          numero_cte?: string | null
+          omie_cte_id?: number | null
+          razao_social_transportadora?: string | null
+          status?: string
+          valor_frete?: number | null
+          xml_cte?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "cte_associados_nfe_recebimento_id_fkey"
+            columns: ["nfe_recebimento_id"]
+            isOneToOne: false
+            referencedRelation: "nfe_recebimentos"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       customer_preferred_items: {
         Row: {
           account: string
@@ -2908,6 +2997,195 @@ export type Database = {
           top_gap_products?: Json | null
         }
         Relationships: []
+      }
+      nfe_lotes_escaneados: {
+        Row: {
+          data_fabricacao: string | null
+          data_validade: string | null
+          escaneado_at: string
+          escaneado_por: string | null
+          id: string
+          metodo_leitura: string
+          nfe_recebimento_item_id: string
+          numero_lote: string
+        }
+        Insert: {
+          data_fabricacao?: string | null
+          data_validade?: string | null
+          escaneado_at?: string
+          escaneado_por?: string | null
+          id?: string
+          metodo_leitura?: string
+          nfe_recebimento_item_id: string
+          numero_lote: string
+        }
+        Update: {
+          data_fabricacao?: string | null
+          data_validade?: string | null
+          escaneado_at?: string
+          escaneado_por?: string | null
+          id?: string
+          metodo_leitura?: string
+          nfe_recebimento_item_id?: string
+          numero_lote?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "nfe_lotes_escaneados_nfe_recebimento_item_id_fkey"
+            columns: ["nfe_recebimento_item_id"]
+            isOneToOne: false
+            referencedRelation: "nfe_recebimento_itens"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      nfe_recebimento_itens: {
+        Row: {
+          codigo_produto: string | null
+          created_at: string
+          descricao: string
+          ean: string | null
+          id: string
+          ncm: string | null
+          nfe_recebimento_id: string
+          observacao_divergencia: string | null
+          produto_omie_id: number | null
+          quantidade_conferida: number
+          quantidade_convertida: number | null
+          quantidade_esperada: number
+          quantidade_nfe: number
+          sequencia: number
+          status_item: string
+          unidade_estoque: string | null
+          unidade_nfe: string
+          valor_total: number | null
+          valor_unitario: number | null
+        }
+        Insert: {
+          codigo_produto?: string | null
+          created_at?: string
+          descricao: string
+          ean?: string | null
+          id?: string
+          ncm?: string | null
+          nfe_recebimento_id: string
+          observacao_divergencia?: string | null
+          produto_omie_id?: number | null
+          quantidade_conferida?: number
+          quantidade_convertida?: number | null
+          quantidade_esperada: number
+          quantidade_nfe: number
+          sequencia: number
+          status_item?: string
+          unidade_estoque?: string | null
+          unidade_nfe: string
+          valor_total?: number | null
+          valor_unitario?: number | null
+        }
+        Update: {
+          codigo_produto?: string | null
+          created_at?: string
+          descricao?: string
+          ean?: string | null
+          id?: string
+          ncm?: string | null
+          nfe_recebimento_id?: string
+          observacao_divergencia?: string | null
+          produto_omie_id?: number | null
+          quantidade_conferida?: number
+          quantidade_convertida?: number | null
+          quantidade_esperada?: number
+          quantidade_nfe?: number
+          sequencia?: number
+          status_item?: string
+          unidade_estoque?: string | null
+          unidade_nfe?: string
+          valor_total?: number | null
+          valor_unitario?: number | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "nfe_recebimento_itens_nfe_recebimento_id_fkey"
+            columns: ["nfe_recebimento_id"]
+            isOneToOne: false
+            referencedRelation: "nfe_recebimentos"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      nfe_recebimentos: {
+        Row: {
+          chave_acesso: string
+          cnpj_emitente: string
+          conferente_id: string | null
+          conferido_at: string | null
+          created_at: string
+          data_emissao: string | null
+          efetivado_at: string | null
+          id: string
+          numero_nfe: string
+          observacoes: string | null
+          omie_id_receb: number | null
+          omie_nfe_id: number | null
+          razao_social_emitente: string | null
+          serie_nfe: string | null
+          status: string
+          updated_at: string
+          valor_total: number | null
+          warehouse_id: string
+          xml_completo: string | null
+        }
+        Insert: {
+          chave_acesso: string
+          cnpj_emitente: string
+          conferente_id?: string | null
+          conferido_at?: string | null
+          created_at?: string
+          data_emissao?: string | null
+          efetivado_at?: string | null
+          id?: string
+          numero_nfe: string
+          observacoes?: string | null
+          omie_id_receb?: number | null
+          omie_nfe_id?: number | null
+          razao_social_emitente?: string | null
+          serie_nfe?: string | null
+          status?: string
+          updated_at?: string
+          valor_total?: number | null
+          warehouse_id: string
+          xml_completo?: string | null
+        }
+        Update: {
+          chave_acesso?: string
+          cnpj_emitente?: string
+          conferente_id?: string | null
+          conferido_at?: string | null
+          created_at?: string
+          data_emissao?: string | null
+          efetivado_at?: string | null
+          id?: string
+          numero_nfe?: string
+          observacoes?: string | null
+          omie_id_receb?: number | null
+          omie_nfe_id?: number | null
+          razao_social_emitente?: string | null
+          serie_nfe?: string | null
+          status?: string
+          updated_at?: string
+          valor_total?: number | null
+          warehouse_id?: string
+          xml_completo?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "nfe_recebimentos_warehouse_id_fkey"
+            columns: ["warehouse_id"]
+            isOneToOne: false
+            referencedRelation: "warehouses"
+            referencedColumns: ["id"]
+          },
+        ]
       }
       omie_clientes: {
         Row: {
@@ -5690,6 +5968,36 @@ export type Database = {
             referencedColumns: ["id"]
           },
         ]
+      }
+      warehouses: {
+        Row: {
+          cnpj: string | null
+          code: string
+          created_at: string
+          id: string
+          is_active: boolean
+          name: string
+          updated_at: string
+        }
+        Insert: {
+          cnpj?: string | null
+          code: string
+          created_at?: string
+          id?: string
+          is_active?: boolean
+          name: string
+          updated_at?: string
+        }
+        Update: {
+          cnpj?: string | null
+          code?: string
+          created_at?: string
+          id?: string
+          is_active?: boolean
+          name?: string
+          updated_at?: string
+        }
+        Relationships: []
       }
       webauthn_credentials: {
         Row: {
