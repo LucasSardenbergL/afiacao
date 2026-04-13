@@ -95,19 +95,6 @@ Deno.serve(async (req) => {
     const rawItems: any[] =
       nfe.itens ?? nfe.items ?? nfe.det ?? nfe.produtos ?? [];
 
-    // Fetch conversions for this supplier in one query
-    const cnpjEmClean = cnpjEmitente.replace(/\D/g, "");
-    const { data: conversoes } = await supabase
-      .from("conversao_unidades")
-      .select("*")
-      .eq("cnpj_fornecedor", cnpjEmClean)
-      .eq("is_active", true);
-
-    const convMap = new Map<string, any>();
-    (conversoes ?? []).forEach((c: any) => {
-      convMap.set(c.codigo_produto_fornecedor, c);
-    });
-
     const itensToInsert = rawItems.map((item: any, idx: number) => {
       const codigoProduto = item.codigo_produto ?? item.cProd ?? item.codigo ?? null;
       const descricao = item.descricao ?? item.xProd ?? item.desc ?? "Item sem descrição";
@@ -119,19 +106,11 @@ Deno.serve(async (req) => {
       const valorTotalItem = item.valor_total ?? item.vProd ?? null;
       const produtoOmieId = item.produto_omie_id ?? item.nCodProd ?? null;
 
-      // Conversion logic
-      const conv = codigoProduto ? convMap.get(codigoProduto) : null;
-      let unidadeEstoque: string | null = null;
-      let quantidadeConvertida: number | null = null;
-      let quantidadeEsperada: number;
-
-      if (conv && conv.fator_conversao > 0) {
-        unidadeEstoque = conv.unidade_destino;
-        quantidadeConvertida = Math.round(quantidadeNfe / conv.fator_conversao);
-        quantidadeEsperada = Math.round(quantidadeConvertida);
-      } else {
-        quantidadeEsperada = Math.round(quantidadeNfe);
-      }
+      // Smart rounding: fix floating-point noise from Omie/XML parsing
+      const rounded = Math.round(quantidadeNfe);
+      const quantidadeEsperada = Math.abs(quantidadeNfe - rounded) < 0.05
+        ? rounded
+        : Math.ceil(quantidadeNfe);
 
       return {
         sequencia: item.sequencia ?? item.nItem ?? idx + 1,
@@ -143,8 +122,8 @@ Deno.serve(async (req) => {
         quantidade_nfe: quantidadeNfe,
         valor_unitario: valorUnitario ? parseFloat(valorUnitario) : null,
         valor_total: valorTotalItem ? parseFloat(valorTotalItem) : null,
-        unidade_estoque: unidadeEstoque,
-        quantidade_convertida: quantidadeConvertida,
+        unidade_estoque: null,
+        quantidade_convertida: null,
         quantidade_conferida: 0,
         quantidade_esperada: quantidadeEsperada,
         status_item: "pendente",

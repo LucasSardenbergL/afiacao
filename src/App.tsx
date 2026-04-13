@@ -98,7 +98,6 @@ const FinanceiroIntercompany = lazy(() => import("./pages/FinanceiroIntercompany
 const FinanceiroTributario = lazy(() => import("./pages/FinanceiroTributario"));
 const Recebimento = lazy(() => import("./pages/Recebimento"));
 const RecebimentoConferencia = lazy(() => import("./pages/RecebimentoConferencia"));
-const RecebimentoConversoes = lazy(() => import("./pages/RecebimentoConversoes"));
 
 const PageLoader = () => (
   <div className="flex flex-col gap-4 p-6">
@@ -210,7 +209,6 @@ const App = () => (
               <Route path="financeiro/tributario" element={<FinanceiroTributario />} />
               <Route path="recebimento" element={<Recebimento />} />
               <Route path="recebimento/:id" element={<RecebimentoConferencia />} />
-              <Route path="recebimento/conversoes" element={<RecebimentoConversoes />} />
             </Route>
 
             <Route path="*" element={<NotFound />} />

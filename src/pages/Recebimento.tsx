@@ -2,7 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { supabase } from '@/integrations/supabase/client';
-import { FileCheck, Truck, Plus, Loader2, PackageCheck, Settings } from 'lucide-react';
+import { FileCheck, Truck, Plus, Loader2, PackageCheck } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { Card, CardContent } from '@/components/ui/card';
@@ -179,9 +179,6 @@ export default function Recebimento() {
           <FileCheck className="h-6 w-6 text-primary" />
           <h1 className="text-xl font-bold text-foreground">Recebimento de NF-e</h1>
         </div>
-        <Button variant="ghost" size="icon" onClick={() => navigate('/recebimento/conversoes')} title="Conversões de Unidade">
-          <Settings className="h-5 w-5" />
-        </Button>
       </div>
 
       {/* Warehouse selector */}
