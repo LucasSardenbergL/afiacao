@@ -106,40 +106,38 @@ Deno.serve(async (req) => {
           cred.appSecret,
           "produtos/recebimentonfe/",
           "ListarRecebimentos",
-          {},
+          {
+            nPagina: page,
+            nRegistrosPorPagina: 50,
+            cExibirDetalhes: "S",
+          },
         );
 
-        const recebimentos = listResult.recebimentos ?? listResult.cadastros ?? [];
-        const totalPages = listResult.nTotPaginas ?? 1;
+        const recebimentos = listResult.recebimentos ?? [];
+        const totalPages = listResult.nTotalPaginas ?? 1;
         console.log(`[sync] Página ${page}/${totalPages}, ${recebimentos.length} registros`);
 
         for (const rec of recebimentos) {
           try {
-            const nIdReceb = rec.nIdReceb ?? rec.nId;
+            // With cExibirDetalhes=S, the list response includes cabec with details
+            const cabec = rec.cabec ?? rec;
+            const nIdReceb = cabec.nIdReceb;
             if (!nIdReceb) continue;
 
-            // Fetch detail to get chave_acesso and items
-            let detail: any;
-            try {
-              detail = await omieCall(
-                cred.appKey,
-                cred.appSecret,
-                "produtos/recebimentonfe/",
-                "ConsultarRecebimento",
-                { nIdReceb },
-              );
-            } catch (detErr: any) {
-              console.warn(`[sync] Erro ao consultar recebimento ${nIdReceb}: ${detErr.message}`);
-              continue;
-            }
-
-            const chaveAcesso = detail.cChaveNfe ?? detail.chave_acesso ?? detail.cChNFe ?? null;
+            const chaveAcesso = cabec.cChaveNfe ?? null;
             if (!chaveAcesso) {
               console.log(`[sync] Recebimento ${nIdReceb} sem chave de acesso, pulando`);
               continue;
             }
 
-            // Check if already exists
+            // Skip already concluded/faturado
+            const infoCad = rec.infoCadastro ?? {};
+            if (infoCad.cFaturado === "S" || infoCad.cCancelada === "S") {
+              totalSkipped++;
+              continue;
+            }
+
+            // Check if already exists locally
             const { data: existing } = await supabase
               .from("nfe_recebimentos")
               .select("id")
@@ -151,14 +149,14 @@ Deno.serve(async (req) => {
               continue;
             }
 
-            // Parse NF-e data from detail
-            const numeroNfe = String(detail.cNumeroNfe ?? detail.nNF ?? detail.numero_nfe ?? "");
-            const serieNfe = detail.cSerieNfe ?? detail.serie ?? null;
-            const cnpjEmitente = (detail.cCnpjEmitente ?? detail.cnpj_emitente ?? "").replace(/\D/g, "");
-            const razaoSocial = detail.cRazaoSocialEmitente ?? detail.razao_social ?? null;
-            const dataEmissao = detail.dDataEmissao ?? detail.data_emissao ?? null;
-            const valorTotal = detail.nValorTotal ?? detail.valor_total ?? null;
-            const omieNfeId = detail.nIdNfe ?? null;
+            // Parse NF-e data from cabec
+            const numeroNfe = String(cabec.cNumeroNFe ?? cabec.cNumeroNfe ?? "");
+            const serieNfe = cabec.cSerieNFe ?? cabec.cSerieNfe ?? null;
+            const cnpjEmitente = (cabec.cCNPJ_CPF ?? "").replace(/\D/g, "");
+            const razaoSocial = cabec.cRazaoSocial ?? cabec.cNome ?? null;
+            const dataEmissao = cabec.dEmissaoNFe ?? null;
+            const valorTotal = cabec.nValorNFe ?? null;
+            const omieNfeId = cabec.nIdNfe ?? null;
 
             // Insert NF-e header
             const { data: newNfe, error: insErr } = await supabase
