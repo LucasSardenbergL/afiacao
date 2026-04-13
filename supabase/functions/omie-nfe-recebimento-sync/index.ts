@@ -151,9 +151,12 @@ Deno.serve(async (req) => {
       
       console.log(`[sync] ${allRecebimentos.length} registros nas últimas páginas (total: ${totalPages} páginas)`);
 
-      const recebimentos = listResult.recebimentos ?? [];
-      const totalPages = listResult.nTotalPaginas ?? 1;
-      console.log(`[sync] ${recebimentos.length} registros na página 1/${totalPages}`);
+      console.log(`[sync] ${allRecebimentos.length} registros nas últimas páginas`);
+
+      let detailCalls = 0;
+      const MAX_DETAIL_CALLS = 10;
+
+      for (const rec of allRecebimentos) {
 
       // For each recebimento not in our DB, fetch details individually
       let detailCalls = 0;
