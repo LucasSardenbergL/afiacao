@@ -183,27 +183,29 @@ Deno.serve(async (req) => {
               continue;
             }
 
-            // Parse and insert items
-            const rawItems = detail.itens ?? detail.produtos ?? detail.det ?? [];
+            // Parse and insert items from itensRecebimento (API docs structure)
+            const rawItems = rec.itensRecebimento ?? [];
             if (rawItems.length > 0) {
               const itens = rawItems.map((item: any, idx: number) => {
-                const quantidadeNfe = parseFloat(item.nQuantidade ?? item.qCom ?? item.quantidade ?? 0);
+                const iCabec = item.itensCabec ?? item;
+                const quantidadeNfe = parseFloat(iCabec.nQtdeNFe ?? iCabec.nQuantidade ?? 0);
                 return {
                   nfe_recebimento_id: newNfe.id,
-                  sequencia: item.nSequencia ?? item.nItem ?? idx + 1,
-                  codigo_produto: item.cCodigo ?? item.cProd ?? null,
-                  descricao: item.cDescricao ?? item.xProd ?? "Item",
-                  ncm: item.cNCM ?? item.ncm ?? null,
-                  unidade_nfe: item.cUnidade ?? item.uCom ?? "UN",
+                  sequencia: iCabec.nSequencia ?? idx + 1,
+                  codigo_produto: iCabec.cCodigoProduto ?? null,
+                  descricao: iCabec.cDescricaoProduto ?? "Item",
+                  ncm: iCabec.cNCM ?? null,
+                  ean: iCabec.cEAN ?? null,
+                  unidade_nfe: iCabec.cUnidadeNfe ?? "UN",
                   quantidade_nfe: quantidadeNfe,
-                  valor_unitario: item.nValorUnitario ? parseFloat(item.nValorUnitario) : null,
-                  valor_total: item.nValorTotal ? parseFloat(item.nValorTotal) : null,
+                  valor_unitario: iCabec.nPrecoUnit ? parseFloat(iCabec.nPrecoUnit) : null,
+                  valor_total: iCabec.vTotalItem ? parseFloat(iCabec.vTotalItem) : null,
                   unidade_estoque: null,
                   quantidade_convertida: null,
                   quantidade_conferida: 0,
                   quantidade_esperada: smartRound(quantidadeNfe),
                   status_item: "pendente",
-                  produto_omie_id: item.nCodProduto ? parseInt(item.nCodProduto) : null,
+                  produto_omie_id: iCabec.nIdProduto ? parseInt(iCabec.nIdProduto) : null,
                 };
               });
 
