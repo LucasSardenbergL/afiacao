@@ -184,8 +184,8 @@ Deno.serve(async (req) => {
           console.log(`[sync] Detail cabec sample: ${JSON.stringify(detCabec).slice(0, 500)}`);
         }
 
-        const chaveAcesso = detCabec.cChaveNfe ?? null;
-        if (!chaveAcesso) {
+        const chaveAcesso = detCabec.cChaveNfe || null;
+        if (!chaveAcesso || chaveAcesso.length < 44) {
           console.log(`[sync] Recebimento ${nIdReceb} sem chave de acesso no detalhe, pulando`);
           continue;
         }
