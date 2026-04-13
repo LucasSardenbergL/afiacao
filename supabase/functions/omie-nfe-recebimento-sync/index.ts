@@ -18,6 +18,16 @@ function smartRound(qty: number): number {
   return Math.abs(qty - rounded) < 0.05 ? rounded : Math.ceil(qty);
 }
 
+/** Convert "DD/MM/YYYY" to "YYYY-MM-DD" for Postgres */
+function parseOmieDate(d: string | null | undefined): string | null {
+  if (!d) return null;
+  const parts = d.split("/");
+  if (parts.length === 3) {
+    return `${parts[2]}-${parts[1]}-${parts[0]}`;
+  }
+  return d;
+}
+
 interface OmieCredentials {
   appKey: string;
   appSecret: string;
@@ -206,7 +216,7 @@ Deno.serve(async (req) => {
         const serieNfe = detCabec.cSerieNFe ?? null;
         const cnpjEmitente = (detCabec.cCNPJ_CPF ?? "").replace(/\D/g, "");
         const razaoSocial = detCabec.cRazaoSocial ?? detCabec.cNome ?? null;
-        const dataEmissao = detCabec.dEmissaoNFe ?? null;
+        const dataEmissao = parseOmieDate(detCabec.dEmissaoNFe);
         const valorTotal = detCabec.nValorNFe ?? null;
 
         const { data: newNfe, error: insErr } = await supabase
