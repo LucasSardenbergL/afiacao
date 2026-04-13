@@ -1,80 +1,60 @@
 import { createClient } from "npm:@supabase/supabase-js@2";
-import { corsHeaders } from "npm:@supabase/supabase-js@2/cors";
 
-const SUPABASE_URL = Deno.env.get("SUPABASE_URL")!;
-const SERVICE_ROLE_KEY = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
+const corsHeaders = {
+  "Access-Control-Allow-Origin": "*",
+  "Access-Control-Allow-Headers":
+    "authorization, x-client-info, apikey, content-type",
+};
 
-interface AccountConfig {
+function jsonResponse(body: Record<string, unknown>, status = 200) {
+  return new Response(JSON.stringify(body), {
+    status,
+    headers: { ...corsHeaders, "Content-Type": "application/json" },
+  });
+}
+
+function smartRound(qty: number): number {
+  const rounded = Math.round(qty);
+  return Math.abs(qty - rounded) < 0.05 ? rounded : Math.ceil(qty);
+}
+
+interface OmieCredentials {
   appKey: string;
   appSecret: string;
   warehouseCode: string;
 }
 
-function getAccounts(): AccountConfig[] {
-  const accounts: AccountConfig[] = [];
-
+function getCredentials(): OmieCredentials[] {
+  const creds: OmieCredentials[] = [];
   const obenKey = Deno.env.get("OMIE_VENDAS_APP_KEY");
   const obenSecret = Deno.env.get("OMIE_VENDAS_APP_SECRET");
   if (obenKey && obenSecret) {
-    accounts.push({ appKey: obenKey, appSecret: obenSecret, warehouseCode: "OB" });
+    creds.push({ appKey: obenKey, appSecret: obenSecret, warehouseCode: "OB" });
   }
-
-  const colKey = Deno.env.get("OMIE_APP_KEY");
-  const colSecret = Deno.env.get("OMIE_APP_SECRET");
-  if (colKey && colSecret) {
-    accounts.push({ appKey: colKey, appSecret: colSecret, warehouseCode: "CC" });
+  const colacorKey = Deno.env.get("OMIE_APP_KEY");
+  const colacorSecret = Deno.env.get("OMIE_APP_SECRET");
+  if (colacorKey && colacorSecret) {
+    creds.push({ appKey: colacorKey, appSecret: colacorSecret, warehouseCode: "CC" });
   }
-
-  return accounts;
+  return creds;
 }
 
-async function fetchOmieRecebimentos(appKey: string, appSecret: string, page = 1): Promise<any> {
-  const body = {
-    call: "ListarRecebimentos",
-    app_key: appKey,
-    app_secret: appSecret,
-    param: [{
-      nPagina: page,
-      nRegistrosPorPagina: 50,
-    }],
-  };
-  console.log(`[sync] Chamando Omie ListarRecebimentos, page ${page}`);
-  const resp = await fetch("https://app.omie.com.br/api/v1/produtos/recebimentonfe/", {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(body),
-  });
-
-  const txt = await resp.text();
-  console.log(`[sync] Omie response (${resp.status}): ${txt.slice(0, 1000)}`);
-
-  if (!resp.ok) return null;
-
-  try {
-    return JSON.parse(txt);
-  } catch {
-    return null;
-  }
-}
-
-async function fetchRecebimentoDetail(appKey: string, appSecret: string, nIdReceb: number): Promise<any> {
-  const resp = await fetch("https://app.omie.com.br/api/v1/produtos/recebimentonfe/", {
+async function omieCall(appKey: string, appSecret: string, endpoint: string, method: string, params: any) {
+  const res = await fetch(`https://app.omie.com.br/api/v1/${endpoint}`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({
-      call: "ConsultarRecebimento",
+      call: method,
       app_key: appKey,
       app_secret: appSecret,
-      param: [{ nIdReceb }],
+      param: [params],
     }),
   });
-
-  if (!resp.ok) {
-    const txt = await resp.text();
-    console.log(`[sync] ConsultarRecebimento error (${resp.status}): ${txt.slice(0, 300)}`);
-    return null;
+  if (!res.ok) {
+    const txt = await res.text();
+    throw new Error(`Omie ${method} HTTP ${res.status}: ${txt.slice(0, 300)}`);
   }
-  return await resp.json();
+  return await res.json();
 }
 
 Deno.serve(async (req) => {
@@ -82,187 +62,231 @@ Deno.serve(async (req) => {
     return new Response("ok", { headers: corsHeaders });
   }
 
-  const supabase = createClient(SUPABASE_URL, SERVICE_ROLE_KEY);
+  const supabase = createClient(
+    Deno.env.get("SUPABASE_URL")!,
+    Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!,
+  );
 
-  try {
-    let body: any = {};
-    try { body = await req.json(); } catch { /* empty body ok */ }
+  const allCreds = getCredentials();
+  if (allCreds.length === 0) {
+    return jsonResponse({ error: "Nenhuma credencial Omie configurada" }, 500);
+  }
 
-    const filterWarehouse = body.warehouse_code || null;
-    const accounts = getAccounts();
+  let totalImported = 0;
+  let totalSkipped = 0;
+  const errors: string[] = [];
 
-    if (accounts.length === 0) {
-      return new Response(
-        JSON.stringify({ error: "Nenhuma credencial Omie configurada" }),
-        { status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" } }
-      );
-    }
+  for (const cred of allCreds) {
+    try {
+      console.log(`[sync] Buscando recebimentos no Omie para warehouse ${cred.warehouseCode}...`);
 
-    let totalImported = 0;
-    let totalSkipped = 0;
-    let totalErrors = 0;
-    const details: any[] = [];
-
-    for (const acc of accounts) {
-      if (filterWarehouse && acc.warehouseCode !== filterWarehouse) continue;
-
-      console.log(`[sync] Buscando recebimentos para ${acc.warehouseCode}...`);
-
-      // Get warehouse ID
-      const { data: wh } = await supabase
+      const { data: warehouse } = await supabase
         .from("warehouses")
         .select("id")
-        .eq("code", acc.warehouseCode)
-        .single();
+        .eq("code", cred.warehouseCode)
+        .maybeSingle();
 
-      if (!wh) {
-        console.error(`[sync] Warehouse ${acc.warehouseCode} não encontrado`);
-        totalErrors++;
+      if (!warehouse) {
+        console.log(`[sync] Warehouse ${cred.warehouseCode} não encontrado, pulando`);
         continue;
       }
 
-      // Fetch pages (max 3 to respect timeout)
-      for (let page = 1; page <= 3; page++) {
-        const result = await fetchOmieRecebimentos(acc.appKey, acc.appSecret, page);
-        if (!result) { totalErrors++; break; }
+      // Get existing omie_id_recebs to skip quickly
+      const { data: existingRecebimentos } = await supabase
+        .from("nfe_recebimentos")
+        .select("omie_id_receb")
+        .eq("warehouse_id", warehouse.id)
+        .not("omie_id_receb", "is", null);
 
-        if (result.faultstring) {
-          console.log(`[sync] Omie fault: ${result.faultstring}`);
-          totalErrors++;
+      const existingIds = new Set(
+        (existingRecebimentos ?? []).map((r: any) => r.omie_id_receb)
+      );
+
+      // Filter last 30 days to get recent NF-es with cChaveNfe
+      const now = new Date();
+      const thirtyDaysAgo = new Date(now.getTime() - 30 * 24 * 60 * 60 * 1000);
+      const dtDe = `${String(thirtyDaysAgo.getDate()).padStart(2,'0')}/${String(thirtyDaysAgo.getMonth()+1).padStart(2,'0')}/${thirtyDaysAgo.getFullYear()}`;
+
+      const allRecebimentos: any[] = [];
+      let page = 1;
+      const maxPages = 3;
+      let hasMore = true;
+
+      while (hasMore && page <= maxPages) {
+        try {
+          const pageResult = await omieCall(
+            cred.appKey,
+            cred.appSecret,
+            "produtos/recebimentonfe/",
+            "ListarRecebimentos",
+            {
+              nPagina: page,
+              nRegistrosPorPagina: 50,
+              dtEmissaoDe: dtDe,
+            },
+          );
+          const recs = pageResult.recebimentos ?? [];
+          allRecebimentos.push(...recs);
+          const totalPages = pageResult.nTotalPaginas ?? 1;
+          console.log(`[sync] Página ${page}/${totalPages}, ${recs.length} registros`);
+          hasMore = page < totalPages;
+          page++;
+        } catch (pgErr: any) {
+          console.warn(`[sync] Erro na página ${page}: ${pgErr.message}`);
           break;
         }
-
-        // Response: recebimentos array, each with cabec and itensRecebimento
-        const recebimentos = result.recebimentos || result.listagemRecebimentos || [];
-        if (recebimentos.length === 0) {
-          console.log(`[sync] Nenhum recebimento na página ${page}. Keys: ${Object.keys(result).join(', ')}`);
-          break;
-        }
-
-        console.log(`[sync] Página ${page}: ${recebimentos.length} recebimentos`);
-
-        for (const rec of recebimentos) {
-          const cabec = rec.cabec || rec;
-          const chaveAcesso = cabec.cChaveNfe || cabec.chNFe || "";
-          if (!chaveAcesso) {
-            console.log(`[sync] Recebimento sem chave, pulando. nIdReceb=${cabec.nIdReceb}`);
-            totalSkipped++;
-            continue;
-          }
-
-          // Check duplicate
-          const { data: existing } = await supabase
-            .from("nfe_recebimentos")
-            .select("id")
-            .eq("chave_acesso", chaveAcesso)
-            .maybeSingle();
-
-          if (existing) { totalSkipped++; continue; }
-
-          // Get detail if needed (for items)
-          let detailRec = rec;
-          const nIdReceb = cabec.nIdReceb;
-          if (nIdReceb) {
-            const detail = await fetchRecebimentoDetail(acc.appKey, acc.appSecret, nIdReceb);
-            if (detail && !detail.faultstring) {
-              detailRec = detail;
-            }
-            // Rate limit delay
-            await new Promise(r => setTimeout(r, 300));
-          }
-
-          const detailCabec = detailRec.cabec || cabec;
-          const numeroNfe = String(detailCabec.cNumeroNFe || detailCabec.nNF || cabec.cNumeroNFe || "");
-          const serieNfe = detailCabec.cSerieNFe || detailCabec.serie || null;
-          const cnpjEmitente = (detailCabec.cCNPJ_CPF || detailCabec.cnpjEmitente || "").replace(/\D/g, "");
-          const razaoSocial = detailCabec.cRazaoSocial || detailCabec.cNome || null;
-          const dataEmissao = detailCabec.dEmissaoNFe || detailCabec.dEmi || null;
-          const valorTotal = detailCabec.nValorNFe || detailCabec.vNF || null;
-          const etapa = detailCabec.cEtapa || "";
-
-          // Insert NF-e
-          const { data: nfeRec, error: insErr } = await supabase
-            .from("nfe_recebimentos")
-            .insert({
-              warehouse_id: wh.id,
-              numero_nfe: numeroNfe,
-              serie_nfe: serieNfe,
-              chave_acesso: chaveAcesso,
-              cnpj_emitente: cnpjEmitente,
-              razao_social_emitente: razaoSocial,
-              data_emissao: dataEmissao,
-              valor_total: valorTotal ? parseFloat(String(valorTotal)) : null,
-              status: "pendente",
-              omie_nfe_id: null,
-              omie_id_receb: nIdReceb ? parseInt(String(nIdReceb)) : null,
-            })
-            .select("id")
-            .single();
-
-          if (insErr) {
-            console.error(`[sync] Erro ao inserir NF-e ${chaveAcesso}:`, insErr.message);
-            totalErrors++;
-            continue;
-          }
-
-          // Parse items from detail
-          const rawItems = detailRec.itensRecebimento || detailRec.itens || [];
-          if (rawItems.length > 0 && nfeRec) {
-            const itens = rawItems.map((item: any, idx: number) => {
-              const itemCabec = item.itensCabec || item;
-              const quantidadeNfe = parseFloat(itemCabec.nQtdeNFe || itemCabec.qCom || itemCabec.quantidade || 0);
-              const rounded = Math.round(quantidadeNfe);
-              const quantidadeEsperada = Math.abs(quantidadeNfe - rounded) < 0.05 ? rounded : Math.ceil(quantidadeNfe);
-
-              return {
-                nfe_recebimento_id: nfeRec.id,
-                sequencia: itemCabec.nSequencia || itemCabec.nItem || idx + 1,
-                codigo_produto: itemCabec.cCodigoProduto || itemCabec.cProd || null,
-                descricao: itemCabec.cDescricaoProduto || itemCabec.xProd || "Item sem descrição",
-                ncm: itemCabec.cNCM || itemCabec.ncm || null,
-                ean: itemCabec.cEAN || itemCabec.ean || null,
-                unidade_nfe: itemCabec.cUnidadeNfe || itemCabec.uCom || "UN",
-                quantidade_nfe: quantidadeNfe,
-                valor_unitario: itemCabec.nPrecoUnit ? parseFloat(String(itemCabec.nPrecoUnit)) : null,
-                valor_total: itemCabec.vTotalItem ? parseFloat(String(itemCabec.vTotalItem)) : null,
-                unidade_estoque: null,
-                quantidade_convertida: null,
-                quantidade_conferida: 0,
-                quantidade_esperada: quantidadeEsperada,
-                status_item: "pendente",
-                produto_omie_id: itemCabec.nIdProduto ? parseInt(String(itemCabec.nIdProduto)) : null,
-              };
-            });
-
-            const { error: itensErr } = await supabase.from("nfe_recebimento_itens").insert(itens);
-            if (itensErr) {
-              console.error(`[sync] Erro ao inserir itens da NF-e ${numeroNfe}:`, itensErr.message);
-            }
-          }
-
-          totalImported++;
-          details.push({ numero_nfe: numeroNfe, fornecedor: razaoSocial, etapa, warehouse: acc.warehouseCode });
-          console.log(`[sync] NF-e ${numeroNfe} importada (${acc.warehouseCode}), etapa: ${etapa}`);
-        }
-
-        const totalPages = result.nTotPaginas || 1;
-        if (page >= totalPages) break;
-
-        await new Promise(r => setTimeout(r, 500));
       }
+
+      console.log(`[sync] ${allRecebimentos.length} registros recentes (últimos 30 dias)`);
+
+      let detailCalls = 0;
+      const MAX_DETAIL_CALLS = 10;
+
+      for (const rec of allRecebimentos) {
+        if (detailCalls >= MAX_DETAIL_CALLS) break;
+
+        const cabec = rec.cabec ?? rec;
+        const nIdReceb = cabec.nIdReceb;
+        if (!nIdReceb) continue;
+
+        // Quick skip if already imported
+        if (existingIds.has(nIdReceb)) {
+          totalSkipped++;
+          continue;
+        }
+
+        // Skip cancelled/faturado
+        const infoCad = rec.infoCadastro ?? {};
+        if (infoCad.cCancelada === "S") {
+          continue;
+        }
+
+        // Need to fetch detail for chave_acesso and items
+        detailCalls++;
+        let detail: any;
+        try {
+          detail = await omieCall(
+            cred.appKey,
+            cred.appSecret,
+            "produtos/recebimentonfe/",
+            "ConsultarRecebimento",
+            { nIdReceb },
+          );
+        } catch (detErr: any) {
+          console.warn(`[sync] Erro ao consultar recebimento ${nIdReceb}: ${detErr.message}`);
+          continue;
+        }
+
+        const detCabec = detail.cabec ?? {};
+        // Log first detail to understand structure
+        if (detailCalls <= 2) {
+          console.log(`[sync] Detail cabec keys for ${nIdReceb}: ${JSON.stringify(Object.keys(detCabec))}`);
+          console.log(`[sync] Detail cabec sample: ${JSON.stringify(detCabec).slice(0, 500)}`);
+        }
+
+        const chaveAcesso = detCabec.cChaveNFe || detCabec.cChaveNfe || null;
+        if (!chaveAcesso || chaveAcesso.length < 44) {
+          console.log(`[sync] Recebimento ${nIdReceb} sem chave de acesso no detalhe, pulando`);
+          continue;
+        }
+
+        // Double check by chave_acesso
+        const { data: existByChave } = await supabase
+          .from("nfe_recebimentos")
+          .select("id")
+          .eq("chave_acesso", chaveAcesso)
+          .maybeSingle();
+
+        if (existByChave) {
+          totalSkipped++;
+          continue;
+        }
+
+        const numeroNfe = String(detCabec.cNumeroNFe ?? "");
+        const serieNfe = detCabec.cSerieNFe ?? null;
+        const cnpjEmitente = (detCabec.cCNPJ_CPF ?? "").replace(/\D/g, "");
+        const razaoSocial = detCabec.cRazaoSocial ?? detCabec.cNome ?? null;
+        const dataEmissao = detCabec.dEmissaoNFe ?? null;
+        const valorTotal = detCabec.nValorNFe ?? null;
+
+        const { data: newNfe, error: insErr } = await supabase
+          .from("nfe_recebimentos")
+          .insert({
+            warehouse_id: warehouse.id,
+            numero_nfe: numeroNfe,
+            serie_nfe: serieNfe,
+            chave_acesso: chaveAcesso,
+            cnpj_emitente: cnpjEmitente,
+            razao_social_emitente: razaoSocial,
+            data_emissao: dataEmissao,
+            valor_total: valorTotal ? parseFloat(String(valorTotal)) : null,
+            status: "pendente",
+            omie_nfe_id: detCabec.nIdNfe ? parseInt(String(detCabec.nIdNfe)) : null,
+            omie_id_receb: parseInt(String(nIdReceb)),
+          })
+          .select("id")
+          .single();
+
+        if (insErr || !newNfe) {
+          console.error(`[sync] Erro ao inserir NF-e ${chaveAcesso}:`, insErr);
+          errors.push(`NF-e ${numeroNfe}: ${insErr?.message}`);
+          continue;
+        }
+
+        // Parse items from itensRecebimento
+        const rawItems = detail.itensRecebimento ?? [];
+        if (rawItems.length > 0) {
+          const itens = rawItems.map((item: any, idx: number) => {
+            const iCabec = item.itensCabec ?? item;
+            const quantidadeNfe = parseFloat(String(iCabec.nQtdeNFe ?? 0));
+            return {
+              nfe_recebimento_id: newNfe.id,
+              sequencia: iCabec.nSequencia ?? idx + 1,
+              codigo_produto: iCabec.cCodigoProduto ?? null,
+              descricao: iCabec.cDescricaoProduto ?? "Item",
+              ncm: iCabec.cNCM ?? null,
+              ean: iCabec.cEAN ?? null,
+              unidade_nfe: iCabec.cUnidadeNfe ?? "UN",
+              quantidade_nfe: quantidadeNfe,
+              valor_unitario: iCabec.nPrecoUnit ? parseFloat(String(iCabec.nPrecoUnit)) : null,
+              valor_total: iCabec.vTotalItem ? parseFloat(String(iCabec.vTotalItem)) : null,
+              unidade_estoque: null,
+              quantidade_convertida: null,
+              quantidade_conferida: 0,
+              quantidade_esperada: smartRound(quantidadeNfe),
+              status_item: "pendente",
+              produto_omie_id: iCabec.nIdProduto ? parseInt(String(iCabec.nIdProduto)) : null,
+            };
+          });
+
+          const { error: itensErr } = await supabase
+            .from("nfe_recebimento_itens")
+            .insert(itens);
+
+          if (itensErr) {
+            console.error(`[sync] Erro ao inserir itens da NF-e ${numeroNfe}:`, itensErr);
+          }
+        }
+
+        totalImported++;
+        console.log(`[sync] NF-e ${numeroNfe} importada (${rawItems.length} itens)`);
+      }
+
+      if (detailCalls >= MAX_DETAIL_CALLS) {
+        console.log(`[sync] Limite de ${MAX_DETAIL_CALLS} consultas de detalhe atingido para ${cred.warehouseCode}. Execute novamente para mais.`);
+      }
+    } catch (credErr: any) {
+      console.error(`[sync] Erro na conta ${cred.warehouseCode}:`, credErr);
+      errors.push(`${cred.warehouseCode}: ${credErr.message}`);
     }
-
-    console.log(`[sync] Resumo: ${totalImported} importadas, ${totalSkipped} já existentes, ${totalErrors} erros`);
-
-    return new Response(
-      JSON.stringify({ imported: totalImported, skipped: totalSkipped, errors: totalErrors, details }),
-      { headers: { ...corsHeaders, "Content-Type": "application/json" } }
-    );
-  } catch (err: any) {
-    console.error("[sync] Erro:", err);
-    return new Response(
-      JSON.stringify({ error: err.message || "Erro interno" }),
-      { status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" } }
-    );
   }
+
+  console.log(`[sync] Concluído: ${totalImported} importadas, ${totalSkipped} já existentes, ${errors.length} erros`);
+
+  return jsonResponse({
+    success: true,
+    imported: totalImported,
+    skipped: totalSkipped,
+    errors: errors.length > 0 ? errors : undefined,
+  });
 });

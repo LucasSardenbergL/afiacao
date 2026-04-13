@@ -34,6 +34,7 @@ async function omieCall(
         data = { raw: text };
       }
       if (!res.ok) {
+        // Omie returns 500 for many transient errors
         if (attempt < maxRetries && res.status >= 500) {
           const delay = Math.pow(2, attempt) * 500;
           console.warn(`[omie-nfe-recebimento] Omie ${res.status}, retry ${attempt}/${maxRetries} in ${delay}ms`);
@@ -62,6 +63,7 @@ function formatDateBR(isoDate: string | null): string | null {
   return `${String(d.getDate()).padStart(2, "0")}/${String(d.getMonth() + 1).padStart(2, "0")}/${d.getFullYear()}`;
 }
 
+// ── Credential mapping by warehouse code ──
 function getOmieCredentials(warehouseCode: string): { appKey: string; appSecret: string } {
   if (warehouseCode === "CC") {
     return {
@@ -69,6 +71,7 @@ function getOmieCredentials(warehouseCode: string): { appKey: string; appSecret:
       appSecret: Deno.env.get("OMIE_APP_SECRET") ?? "",
     };
   }
+  // OB (Oben) - default
   return {
     appKey: Deno.env.get("OMIE_VENDAS_APP_KEY") ?? "",
     appSecret: Deno.env.get("OMIE_VENDAS_APP_SECRET") ?? "",
@@ -83,6 +86,7 @@ Deno.serve(async (req) => {
     return jsonRes({ error: "Method not allowed" }, 405);
   }
 
+  // ── Auth check ──
   const authHeader = req.headers.get("Authorization");
   if (!authHeader?.startsWith("Bearer ")) {
     return jsonRes({ error: "Unauthorized" }, 401);
@@ -171,6 +175,7 @@ Deno.serve(async (req) => {
       }
       const entry = itemLotes.get(l.numero_lote)!;
       entry.count++;
+      // Keep most recent dates if they differ
       if (l.data_fabricacao) entry.fab = l.data_fabricacao;
       if (l.data_validade) entry.val = l.data_validade;
     }
@@ -188,7 +193,18 @@ Deno.serve(async (req) => {
 
     const results: any[] = [];
 
-    // ── 3. AlterarRecebimento — efetivar NF-e no Omie ──
+    // ── 3. Check if supplier has unit conversions (Sayerlack case) ──
+    const cnpjEmClean = (nfe.cnpj_emitente ?? "").replace(/\D/g, "");
+    const { data: conversoes } = await supabase
+      .from("conversao_unidades")
+      .select("codigo_produto_fornecedor")
+      .eq("cnpj_fornecedor", cnpjEmClean)
+      .eq("is_active", true)
+      .limit(1);
+
+    const hasConversion = (conversoes ?? []).length > 0;
+
+    // ── 4. AlterarRecebimento — efetivar NF-e no Omie ──
     const recebItens = (itens ?? []).map((item: any) => ({
       nItem: item.sequencia,
       nCodProd: item.produto_omie_id,
@@ -217,11 +233,48 @@ Deno.serve(async (req) => {
 
     if (alterarRes.error) {
       console.error("[omie-nfe-recebimento] Erro no AlterarRecebimento:", alterarRes.data);
+      // Continue anyway to try stock adjustments if needed
     } else {
       console.log("[omie-nfe-recebimento] AlterarRecebimento OK");
     }
 
-    // ── 4. Import associated CT-es ──
+    // ── 5. Stock adjustments for converted items (Sayerlack) ──
+    if (hasConversion) {
+      console.log("[omie-nfe-recebimento] Fornecedor com conversão — ajustando estoque...");
+      for (const item of (itens ?? [])) {
+        if (item.quantidade_convertida && item.produto_omie_id) {
+          const loteVal = buildLoteValidade(item.id);
+          const ajustePayload = {
+            call: "IncluirAjusteEstoque",
+            app_key: creds.appKey,
+            app_secret: creds.appSecret,
+            param: [
+              {
+                id_prod: item.produto_omie_id,
+                codigo: "",
+                qtde: item.quantidade_convertida,
+                tipo: "ENT",
+                obs: `Entrada NF-e ${nfe.numero_nfe} - conversão de ${item.quantidade_nfe} ${item.unidade_nfe} para ${item.quantidade_convertida} ${item.unidade_estoque}`,
+                lote_validade: loteVal,
+              },
+            ],
+          };
+
+          console.log(`[omie-nfe-recebimento] Ajuste estoque item ${item.sequencia}, prod ${item.produto_omie_id}, qtd ${item.quantidade_convertida}`);
+          const ajusteRes = await omieCall(
+            "https://app.omie.com.br/api/v1/estoque/ajuste/",
+            ajustePayload,
+          );
+          results.push({ step: `AjusteEstoque_item_${item.sequencia}`, ...ajusteRes });
+
+          if (ajusteRes.error) {
+            console.error(`[omie-nfe-recebimento] Erro ajuste estoque item ${item.sequencia}:`, ajusteRes.data);
+          }
+        }
+      }
+    }
+
+    // ── 6. Import associated CT-es ──
     const { data: ctes } = await supabase
       .from("cte_associados")
       .select("*")
@@ -258,7 +311,7 @@ Deno.serve(async (req) => {
       }
     }
 
-    // ── 5. Update status ──
+    // ── 7. Update status ──
     await supabase
       .from("nfe_recebimentos")
       .update({ status: "efetivado", efetivado_at: new Date().toISOString() })
@@ -271,6 +324,7 @@ Deno.serve(async (req) => {
       nfe_recebimento_id: nfeRecebimentoId,
       numero_nfe: nfe.numero_nfe,
       warehouse: warehouseCode,
+      has_conversion: hasConversion,
       ctes_processed: (ctes ?? []).length,
       operations: results,
     });
