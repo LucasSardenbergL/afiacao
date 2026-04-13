@@ -513,8 +513,8 @@ export default function RecebimentoConferencia() {
             className={cn(
               'w-full h-14 text-base font-semibold',
               hasDivergencia
-                ? 'bg-amber-500 hover:bg-amber-600 text-white'
-                : 'bg-green-600 hover:bg-green-700 text-white'
+                ? 'bg-destructive/80 hover:bg-destructive text-destructive-foreground'
+                : 'bg-primary hover:bg-primary/90 text-primary-foreground'
             )}
             onClick={handleFinalize}
             disabled={finalizing}
