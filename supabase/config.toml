@@ -56,3 +56,6 @@ verify_jwt = false
 
 [functions.tint-sync-agent]
 verify_jwt = false
+
+[functions.omie-consultar-lotes]
+verify_jwt = false
