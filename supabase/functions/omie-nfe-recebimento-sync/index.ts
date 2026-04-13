@@ -107,8 +107,8 @@ Deno.serve(async (req) => {
           "produtos/recebimentonfe/",
           "ListarRecebimentos",
           {
-            nPagina: page,
-            nRegPorPagina: 50,
+            pagina: page,
+            registros_por_pagina: 50,
           },
         );
 
