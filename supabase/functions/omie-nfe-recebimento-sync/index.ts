@@ -109,7 +109,6 @@ Deno.serve(async (req) => {
           {
             nPagina: page,
             nRegPorPagina: 50,
-            cStatus: "010", // Pendentes
           },
         );
 
