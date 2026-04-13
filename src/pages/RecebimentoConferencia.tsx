@@ -96,10 +96,10 @@ export default function RecebimentoConferencia() {
   const { data: lotes } = useQuery({
     queryKey: ['nfe_lotes', id],
     queryFn: async () => {
-      const { data, error } = await supabase
-        .from('nfe_lotes_escaneados')
+      const { data, error } = await (supabase
+        .from('nfe_lotes_escaneados' as any)
         .select('*')
-        .eq('nfe_recebimento_id', id!);
+        .eq('nfe_recebimento_id', id!) as any);
       if (error) throw error;
       return data ?? [];
     },
