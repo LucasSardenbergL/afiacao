@@ -64,18 +64,22 @@ async function fetchOmieNfes(appKey: string, appSecret: string, page = 1): Promi
 }
 
 async function fetchNfeDetail(appKey: string, appSecret: string, nIdNfe: number): Promise<any> {
-  const resp = await fetch("https://app.omie.com.br/api/v1/produtos/nfe/", {
+  const resp = await fetch("https://app.omie.com.br/api/v1/produtos/recebimento/", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({
-      call: "ConsultarNFe",
+      call: "ConsultarRecebimento",
       app_key: appKey,
       app_secret: appSecret,
-      param: [{ nIdNfe }],
+      param: [{ nIdReceb: nIdNfe }],
     }),
   });
 
-  if (!resp.ok) return null;
+  if (!resp.ok) {
+    const txt = await resp.text();
+    console.log(`[sync] ConsultarRecebimento error: ${txt.slice(0, 300)}`);
+    return null;
+  }
   return await resp.json();
 }
 
@@ -134,8 +138,11 @@ Deno.serve(async (req) => {
           break;
         }
 
-        const nfes = result.nfeListar || result.nfeCadastro || [];
-        if (nfes.length === 0) break;
+        const nfes = result.recebimentos || result.nfeListar || result.nfeCadastro || [];
+        if (nfes.length === 0) {
+          console.log(`[sync] Nenhuma NF-e encontrada na página ${page}`);
+          break;
+        }
 
         console.log(`[sync] Página ${page}: ${nfes.length} NF-es encontradas`);
 
