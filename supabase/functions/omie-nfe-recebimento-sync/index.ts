@@ -102,35 +102,17 @@ Deno.serve(async (req) => {
         (existingRecebimentos ?? []).map((r: any) => r.omie_id_receb)
       );
 
-      // List recebimentos - only 1 page of recent ones to stay within timeout
-      let listResult: any;
-      // First get total pages, then fetch the LAST page (most recent records)
-      let firstResult: any;
-      try {
-        firstResult = await omieCall(
-          cred.appKey,
-          cred.appSecret,
-          "produtos/recebimentonfe/",
-          "ListarRecebimentos",
-          {
-            nPagina: 1,
-            nRegistrosPorPagina: 10,
-            cOrdenarPor: "CODIGO",
-          },
-        );
-      } catch (listErr: any) {
-        console.error(`[sync] Erro ao listar recebimentos ${cred.warehouseCode}:`, listErr.message);
-        errors.push(`${cred.warehouseCode}: ${listErr.message}`);
-        continue;
-      }
+      // Filter last 30 days to get recent NF-es with cChaveNfe
+      const now = new Date();
+      const thirtyDaysAgo = new Date(now.getTime() - 30 * 24 * 60 * 60 * 1000);
+      const dtDe = `${String(thirtyDaysAgo.getDate()).padStart(2,'0')}/${String(thirtyDaysAgo.getMonth()+1).padStart(2,'0')}/${thirtyDaysAgo.getFullYear()}`;
 
-      const totalPages = firstResult.nTotalPaginas ?? 1;
-      
-      // Fetch the last 2 pages (most recent) 
-      const pagesToFetch = [totalPages, Math.max(1, totalPages - 1)];
       const allRecebimentos: any[] = [];
-      
-      for (const pg of [...new Set(pagesToFetch)]) {
+      let page = 1;
+      const maxPages = 3;
+      let hasMore = true;
+
+      while (hasMore && page <= maxPages) {
         try {
           const pageResult = await omieCall(
             cred.appKey,
@@ -138,18 +120,24 @@ Deno.serve(async (req) => {
             "produtos/recebimentonfe/",
             "ListarRecebimentos",
             {
-              nPagina: pg,
+              nPagina: page,
               nRegistrosPorPagina: 50,
-              cOrdenarPor: "CODIGO",
+              dtEmissaoDe: dtDe,
             },
           );
-          allRecebimentos.push(...(pageResult.recebimentos ?? []));
+          const recs = pageResult.recebimentos ?? [];
+          allRecebimentos.push(...recs);
+          const totalPages = pageResult.nTotalPaginas ?? 1;
+          console.log(`[sync] Página ${page}/${totalPages}, ${recs.length} registros`);
+          hasMore = page < totalPages;
+          page++;
         } catch (pgErr: any) {
-          console.warn(`[sync] Erro na página ${pg}: ${pgErr.message}`);
+          console.warn(`[sync] Erro na página ${page}: ${pgErr.message}`);
+          break;
         }
       }
-      
-      console.log(`[sync] ${allRecebimentos.length} registros recentes (total: ${totalPages} páginas)`);
+
+      console.log(`[sync] ${allRecebimentos.length} registros recentes (últimos 30 dias)`);
 
       let detailCalls = 0;
       const MAX_DETAIL_CALLS = 10;
