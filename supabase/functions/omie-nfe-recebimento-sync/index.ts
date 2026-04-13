@@ -147,8 +147,12 @@ Deno.serve(async (req) => {
         console.log(`[sync] Página ${page}: ${nfes.length} NF-es encontradas`);
 
         for (const nfe of nfes) {
-          const chaveAcesso = nfe.chNFe || nfe.chave_nfe || "";
-          if (!chaveAcesso) { totalSkipped++; continue; }
+          const chaveAcesso = nfe.chNFe || nfe.chave_nfe || nfe.cChaveNFe || "";
+          if (!chaveAcesso) {
+            console.log(`[sync] NF-e sem chave de acesso, pulando:`, JSON.stringify(nfe).slice(0, 200));
+            totalSkipped++;
+            continue;
+          }
 
           // Check if already exists
           const { data: existing } = await supabase
@@ -160,12 +164,12 @@ Deno.serve(async (req) => {
           if (existing) { totalSkipped++; continue; }
 
           // Get detail for items
-          const nIdNfe = nfe.nIdNfe || nfe.nIdReceb;
+          const nIdReceb = nfe.nIdReceb || nfe.nIdNfe;
           let detailNfe = nfe;
-          if (nIdNfe) {
-            const detail = await fetchNfeDetail(acc.appKey, acc.appSecret, nIdNfe);
+          if (nIdReceb) {
+            const detail = await fetchNfeDetail(acc.appKey, acc.appSecret, nIdReceb);
             if (detail && !detail.faultstring) {
-              detailNfe = detail;
+              detailNfe = { ...nfe, ...detail };
             }
           }
 
