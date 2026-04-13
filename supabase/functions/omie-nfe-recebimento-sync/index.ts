@@ -32,9 +32,9 @@ function getAccounts(): AccountConfig[] {
 }
 
 async function fetchOmieNfes(appKey: string, appSecret: string, page = 1): Promise<any> {
-  // Use ListarRecebimento endpoint for incoming NF-es
+  // Use ListarNFe without cOperacao filter, then filter client-side for incoming (entrada)
   const body = {
-    call: "ListarRecebimento",
+    call: "ListarNFe",
     app_key: appKey,
     app_secret: appSecret,
     param: [{
@@ -42,8 +42,8 @@ async function fetchOmieNfes(appKey: string, appSecret: string, page = 1): Promi
       nRegPorPagina: 50,
     }],
   };
-  console.log(`[sync] Chamando Omie ListarRecebimento, page ${page}`);
-  const resp = await fetch("https://app.omie.com.br/api/v1/produtos/recebimento/", {
+  console.log(`[sync] Chamando Omie ListarNFe, page ${page}`);
+  const resp = await fetch("https://app.omie.com.br/api/v1/produtos/nfe/", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(body),
@@ -64,20 +64,20 @@ async function fetchOmieNfes(appKey: string, appSecret: string, page = 1): Promi
 }
 
 async function fetchNfeDetail(appKey: string, appSecret: string, nIdNfe: number): Promise<any> {
-  const resp = await fetch("https://app.omie.com.br/api/v1/produtos/recebimento/", {
+  const resp = await fetch("https://app.omie.com.br/api/v1/produtos/nfe/", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({
-      call: "ConsultarRecebimento",
+      call: "ConsultarNFe",
       app_key: appKey,
       app_secret: appSecret,
-      param: [{ nIdReceb: nIdNfe }],
+      param: [{ nIdNfe }],
     }),
   });
 
   if (!resp.ok) {
     const txt = await resp.text();
-    console.log(`[sync] ConsultarRecebimento error: ${txt.slice(0, 300)}`);
+    console.log(`[sync] ConsultarNFe error: ${txt.slice(0, 300)}`);
     return null;
   }
   return await resp.json();
