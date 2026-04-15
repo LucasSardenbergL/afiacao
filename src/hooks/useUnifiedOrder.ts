@@ -347,7 +347,7 @@ export function useUnifiedOrder() {
     try {
       const { data } = await supabase
         .from('omie_products')
-        .select('id, codigo, descricao, unidade, valor_unitario, estoque, ativo, omie_codigo_produto, account, is_tintometric, tint_type')
+        .select('id, codigo, descricao, unidade, valor_unitario, estoque, ativo, omie_codigo_produto, account, is_tintometric, tint_type, metadata')
         .eq('account', account)
         .not('familia', 'ilike', '%imobilizado%')
         .not('familia', 'ilike', '%uso e consumo%')
@@ -368,7 +368,7 @@ export function useUnifiedOrder() {
           }
           const { data: refreshed } = await supabase
             .from('omie_products')
-            .select('id, codigo, descricao, unidade, valor_unitario, estoque, ativo, omie_codigo_produto, account, is_tintometric, tint_type')
+            .select('id, codigo, descricao, unidade, valor_unitario, estoque, ativo, omie_codigo_produto, account, is_tintometric, tint_type, metadata')
             .eq('account', account)
             .not('familia', 'ilike', '%imobilizado%')
             .not('familia', 'ilike', '%uso e consumo%')
@@ -403,7 +403,7 @@ export function useUnifiedOrder() {
         }
         const { data: refreshed } = await supabase
           .from('omie_products')
-          .select('id, codigo, descricao, unidade, valor_unitario, estoque, ativo, omie_codigo_produto, account, is_tintometric, tint_type')
+          .select('id, codigo, descricao, unidade, valor_unitario, estoque, ativo, omie_codigo_produto, account, is_tintometric, tint_type, metadata')
           .eq('account', account)
           .not('familia', 'ilike', '%imobilizado%')
           .not('familia', 'ilike', '%uso e consumo%')
