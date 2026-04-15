@@ -240,6 +240,13 @@ const SalesOrderEdit = () => {
 
       if (order.omie_pedido_id) {
         // Save locally first
+        const updatedPayload = {
+          ...(order.omie_payload || {}),
+          cabecalho: {
+            ...(order.omie_payload?.cabecalho || {}),
+            ...(selectedParcela ? { codigo_parcela: selectedParcela } : {}),
+          },
+        };
         const { error: localErr } = await supabase
           .from('sales_orders')
           .update({
@@ -247,6 +254,7 @@ const SalesOrderEdit = () => {
             subtotal,
             total: subtotal,
             notes: notes || null,
+            omie_payload: updatedPayload,
           } as any)
           .eq('id', order.id);
         if (localErr) throw localErr;
@@ -284,6 +292,13 @@ const SalesOrderEdit = () => {
           toast.error('Erro ao sincronizar com Omie: ' + (err.message || 'Erro desconhecido'));
         });
       } else {
+        const updatedPayloadLocal = {
+          ...(order.omie_payload || {}),
+          cabecalho: {
+            ...(order.omie_payload?.cabecalho || {}),
+            ...(selectedParcela ? { codigo_parcela: selectedParcela } : {}),
+          },
+        };
         const { error } = await supabase
           .from('sales_orders')
           .update({
@@ -291,6 +306,7 @@ const SalesOrderEdit = () => {
             subtotal,
             total: subtotal,
             notes: notes || null,
+            omie_payload: updatedPayloadLocal,
           } as any)
           .eq('id', order.id);
         if (error) throw error;
