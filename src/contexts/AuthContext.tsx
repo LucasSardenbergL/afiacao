@@ -40,7 +40,7 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
   const fetchUserRoleAndApproval = async (userId: string) => {
     try {
       // Fetch role and approval in parallel
-      const [roleResult, profileResult] = await Promise.all([
+      const [roleResult, profileResult, commercialResult] = await Promise.all([
         supabase
           .from('user_roles')
           .select('role')
@@ -49,6 +49,11 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
         supabase
           .from('profiles')
           .select('is_approved')
+          .eq('user_id', userId)
+          .maybeSingle(),
+        supabase
+          .from('commercial_roles')
+          .select('commercial_role')
           .eq('user_id', userId)
           .maybeSingle(),
       ]);
@@ -64,9 +69,10 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
       const fetchedRole = (roleResult.data?.role as AppRole) || 'customer';
       setRole(fetchedRole);
 
-      // Staff (admin/employee/master) are auto-approved
+      // Staff (admin/employee/master) or users with commercial roles are auto-approved
+      const hasCommercialRole = !!commercialResult.data?.commercial_role;
       const isStaffRole = fetchedRole === 'admin' || fetchedRole === 'employee' || fetchedRole === 'master';
-      if (isStaffRole) {
+      if (isStaffRole || hasCommercialRole) {
         setIsApproved(true);
         // Auto-approve staff profile if not yet approved
         if (profileResult.data && !profileResult.data.is_approved) {
