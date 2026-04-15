@@ -213,6 +213,7 @@ const UnifiedOrder = () => {
                volumesColacor={h.volumesColacor}
               ordemCompra={h.ordemCompra} setOrdemCompra={h.setOrdemCompra}
               isOrdemCompraCustomer={h.isOrdemCompraCustomer}
+              readyByDate={h.readyByDate} setReadyByDate={h.setReadyByDate}
               onSubmit={h.submitOrder}
               onSubmitQuote={h.submitQuote}
             />
