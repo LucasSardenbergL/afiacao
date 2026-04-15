@@ -2,7 +2,7 @@ import { useState, useRef, useCallback, useEffect } from 'react';
 import { Mic, Send, Loader2, Sparkles, X, Square, Camera, Package, Wrench, Image, Check, Lightbulb, Plus, Paperclip, FileAudio, User, MapPin } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
-import { cn } from '@/lib/utils';
+import { cn, decodeHtmlEntities } from '@/lib/utils';
 import { useToast } from '@/hooks/use-toast';
 import { invokeFunction } from '@/lib/invoke-function';
 
@@ -338,7 +338,7 @@ export function UnifiedAIAssistant({ products, userTools, onItemsIdentified, onC
     if (identifiedCustomer && onCustomerIdentified) {
       onCustomerIdentified(identifiedCustomer);
       setIdentifiedCustomer(null);
-      toast({ title: 'Cliente selecionado!', description: identifiedCustomer.nome_fantasia || identifiedCustomer.razao_social });
+      toast({ title: 'Cliente selecionado!', description: decodeHtmlEntities(identifiedCustomer.nome_fantasia || identifiedCustomer.razao_social) });
       // Note: we intentionally do NOT clear identifiedProducts/suggestions
       // so the user can add them after customer is set
     }
@@ -553,9 +553,9 @@ export function UnifiedAIAssistant({ products, userTools, onItemsIdentified, onC
               <div className="bg-background rounded-lg p-3 border border-border">
                 <div className="flex justify-between items-start">
                   <div className="flex-1 min-w-0">
-                    <p className="font-medium text-sm">{identifiedCustomer.nome_fantasia || identifiedCustomer.razao_social}</p>
+                    <p className="font-medium text-sm">{decodeHtmlEntities(identifiedCustomer.nome_fantasia || identifiedCustomer.razao_social)}</p>
                     {identifiedCustomer.nome_fantasia && identifiedCustomer.razao_social && identifiedCustomer.nome_fantasia !== identifiedCustomer.razao_social && (
-                      <p className="text-xs text-muted-foreground">{identifiedCustomer.razao_social}</p>
+                      <p className="text-xs text-muted-foreground">{decodeHtmlEntities(identifiedCustomer.razao_social)}</p>
                     )}
                     <div className="flex items-center gap-2 mt-0.5">
                       <span className="text-xs text-muted-foreground">{identifiedCustomer.cnpj_cpf}</span>
