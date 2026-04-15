@@ -147,7 +147,7 @@ const SalesOrders = () => {
       unitPrice: item.valor_unitario,
     }));
 
-    const orderNumbers = order.omie_numero_pedido ? [order.omie_numero_pedido] : [];
+    const orderNumbers = order.omie_numero_pedido ? [order.omie_numero_pedido.replace(/^0+/, '') || '0'] : [];
 
     shareOrderViaWhatsApp({
       customerName,
@@ -278,7 +278,7 @@ const SalesOrders = () => {
                       </p>
                       {order.omie_numero_pedido && (
                         <p className="text-xs text-muted-foreground">
-                          PV: {order.omie_numero_pedido}
+                          PV: {order.omie_numero_pedido.replace(/^0+/, '') || '0'}
                         </p>
                       )}
                     </div>
