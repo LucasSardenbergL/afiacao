@@ -1,4 +1,5 @@
 import React, { useState, useEffect } from 'react';
+import { decodeHtmlEntities } from '@/lib/utils';
 import { useNavigate } from 'react-router-dom';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { supabase } from '@/integrations/supabase/client';
@@ -288,7 +289,7 @@ export default function Recebimento() {
 
                       {/* Row 2: Supplier */}
                       <p className="text-sm text-muted-foreground truncate">
-                        {nfe.razao_social_emitente || 'Fornecedor não identificado'}
+                        {decodeHtmlEntities(nfe.razao_social_emitente) || 'Fornecedor não identificado'}
                       </p>
 
                       {/* Row 3: Details */}
