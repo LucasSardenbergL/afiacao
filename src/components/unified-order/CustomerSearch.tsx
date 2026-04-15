@@ -3,6 +3,7 @@ import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Search, User, Loader2, AlertTriangle } from 'lucide-react';
+import { decodeHtmlEntities } from '@/lib/utils';
 import type { OmieCustomer } from '@/hooks/useUnifiedOrder';
 
 interface CustomerSearchProps {
@@ -35,7 +36,7 @@ export function CustomerSearch({
           <div className="space-y-3">
             <div className="flex items-center justify-between">
               <div>
-                <p className="font-medium text-sm">{selectedCustomer.nome_fantasia || selectedCustomer.razao_social}</p>
+                <p className="font-medium text-sm">{decodeHtmlEntities(selectedCustomer.nome_fantasia || selectedCustomer.razao_social)}</p>
                 <p className="text-xs text-muted-foreground">{selectedCustomer.cnpj_cpf}{selectedCustomer.contato ? ` • ${selectedCustomer.contato}` : ''}</p>
                 {selectedCustomer.tags && selectedCustomer.tags.length > 0 && (
                   <div className="flex gap-1 mt-0.5 flex-wrap">
@@ -89,7 +90,7 @@ export function CustomerSearch({
               <div className="border rounded-lg divide-y max-h-48 overflow-y-auto">
                 {customers.map(c => (
                   <button key={c.codigo_cliente} className="w-full text-left px-3 py-2 hover:bg-muted/50 transition-colors" onClick={() => onSelectCustomer(c)} disabled={loadingCustomer}>
-                    <p className="text-sm font-medium">{c.nome_fantasia || c.razao_social}</p>
+                    <p className="text-sm font-medium">{decodeHtmlEntities(c.nome_fantasia || c.razao_social)}</p>
                     <div className="flex items-center gap-1 flex-wrap">
                       <span className="text-xs text-muted-foreground">{c.cnpj_cpf || 'Sem documento'}{c.contato ? ` • ${c.contato}` : ''}</span>
                       {c.tags && c.tags.length > 0 && c.tags.map((tag, i) => (

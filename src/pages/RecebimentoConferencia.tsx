@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useMemo } from 'react';
+import { decodeHtmlEntities } from '@/lib/utils';
 import { useParams, useNavigate } from 'react-router-dom';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { supabase } from '@/integrations/supabase/client';
@@ -366,7 +367,7 @@ export default function RecebimentoConferencia() {
               NF-e {(nfe as any).numero_nfe}
             </h1>
             <p className="text-xs text-muted-foreground truncate">
-              {(nfe as any).razao_social_emitente} · {formatDate((nfe as any).data_emissao)} · {formatCurrency((nfe as any).valor_total)}
+              {decodeHtmlEntities((nfe as any).razao_social_emitente)} · {formatDate((nfe as any).data_emissao)} · {formatCurrency((nfe as any).valor_total)}
             </p>
           </div>
         </div>
@@ -396,7 +397,7 @@ export default function RecebimentoConferencia() {
                         CT-e {cte.numero_cte || cte.chave_acesso_cte?.slice(-8)}
                       </p>
                       <p className="text-xs text-muted-foreground truncate">
-                        {cte.razao_social_transportadora || 'Transportadora'} · {formatCurrency(cte.valor_frete)}
+                        {decodeHtmlEntities(cte.razao_social_transportadora) || 'Transportadora'} · {formatCurrency(cte.valor_frete)}
                       </p>
                     </div>
                     <Badge className={cn('text-xs', cte.status === 'efetivado' ? 'bg-muted text-muted-foreground' : 'bg-amber-100 text-amber-800')}>
