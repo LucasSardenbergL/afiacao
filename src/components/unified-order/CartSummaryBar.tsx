@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, useMemo } from 'react';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { Label } from '@/components/ui/label';
@@ -8,9 +8,11 @@ import { Card, CardContent } from '@/components/ui/card';
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
 import { Command, CommandEmpty, CommandGroup, CommandInput, CommandItem, CommandList } from '@/components/ui/command';
 import {
-  Send, Loader2, AlertCircle, Check, ChevronsUpDown, FileText,
+  Send, Loader2, AlertCircle, Check, ChevronsUpDown, FileText, Calendar,
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
+import { format, addDays, startOfWeek, isWeekend } from 'date-fns';
+import { ptBR } from 'date-fns/locale';
 import type {
   ProductCartItem, ServiceCartItem, FormaPagamento,
 } from '@/hooks/useUnifiedOrder';
@@ -43,6 +45,9 @@ interface CartSummaryBarProps {
   ordemCompra?: string;
   setOrdemCompra?: (v: string) => void;
   isOrdemCompraCustomer?: boolean;
+  // Ready by date
+  readyByDate?: string;
+  setReadyByDate?: (v: string) => void;
   // Actions
   onSubmit: () => void;
   onSubmitQuote?: () => void;
