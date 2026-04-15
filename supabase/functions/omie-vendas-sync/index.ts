@@ -197,7 +197,7 @@ async function syncProducts(supabase: ReturnType<typeof createClient>, startPage
 }
 
 // Sincronizar estoque real dos produtos via ListarPosEstoque (paginado)
-async function syncEstoque(supabase: ReturnType<typeof createClient>, startPage = 1, maxPages = 10, account: Account = "oben") {
+async function syncEstoque(supabase: ReturnType<typeof createClient>, startPage = 1, maxPages = 3, account: Account = "oben") {
   let pagina = startPage;
   let totalPaginas = 1;
   let totalUpdated = 0;
@@ -215,26 +215,68 @@ async function syncEstoque(supabase: ReturnType<typeof createClient>, startPage 
       account
     ) as any;
 
-    // If rate-limited, stop pagination gracefully
     if (!result) {
       console.log(`[Omie Vendas][${account}] Estoque sync interrupted by rate limit at page ${pagina}`);
       break;
     }
 
     totalPaginas = result.nTotPaginas || 1;
-    const produtos = result.produtos || [];
+    const produtos = Array.isArray(result.produtos) ? result.produtos : [];
+    const updatedAt = new Date().toISOString();
 
-    for (const prod of produtos) {
-      const codProd = prod.nCodProd;
-      const saldo = prod.nSaldo ?? 0;
+    const productCodes = produtos
+      .map((prod: any) => Number(prod.nCodProd))
+      .filter((code: number) => Number.isFinite(code));
 
-      if (codProd) {
-        const { error } = await supabase
-          .from("omie_products")
-          .update({ estoque: saldo, updated_at: new Date().toISOString() })
-          .eq("omie_codigo_produto", codProd)
-          .eq("account", account);
-        if (!error) totalUpdated++;
+    if (productCodes.length > 0) {
+      const { data: existingProducts, error: existingError } = await supabase
+        .from("omie_products")
+        .select("id, omie_codigo_produto")
+        .eq("account", account)
+        .in("omie_codigo_produto", productCodes);
+
+      if (existingError) {
+        console.error(`[Omie Vendas][${account}] Erro buscando produtos para atualizar estoque na página ${pagina}:`, existingError);
+      } else {
+        const existingMap = new Map(
+          (existingProducts ?? []).map((product) => [Number(product.omie_codigo_produto), product.id])
+        );
+
+        const stockRows = produtos.reduce<Array<{ id: string; omie_codigo_produto: number; account: Account; estoque: number; updated_at: string }>>((rows, prod: any) => {
+          const omieCodigoProduto = Number(prod.nCodProd);
+          const existingId = existingMap.get(omieCodigoProduto);
+
+          if (!Number.isFinite(omieCodigoProduto) || !existingId) {
+            return rows;
+          }
+
+          rows.push({
+            id: existingId,
+            omie_codigo_produto: omieCodigoProduto,
+            account,
+            estoque: Number(prod.nSaldo ?? 0),
+            updated_at: updatedAt,
+          });
+
+          return rows;
+        }, []);
+
+        if (stockRows.length > 0) {
+          const { error: upsertError } = await supabase
+            .from("omie_products")
+            .upsert(stockRows, { onConflict: "omie_codigo_produto,account" });
+
+          if (upsertError) {
+            console.error(`[Omie Vendas][${account}] Erro batch upsert estoque página ${pagina}:`, upsertError);
+          } else {
+            totalUpdated += stockRows.length;
+          }
+        }
+
+        const skippedProducts = productCodes.length - stockRows.length;
+        if (skippedProducts > 0) {
+          console.log(`[Omie Vendas][${account}] ${skippedProducts} produtos da página ${pagina} foram ignorados por não existirem localmente`);
+        }
       }
     }
 
