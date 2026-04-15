@@ -65,7 +65,9 @@ export function CartItemList({
                   <Minus className="w-3 h-3" />
                 </Button>
                 <Input
-                  type="number"
+                  type="text"
+                  inputMode="numeric"
+                  pattern="[0-9]*"
                   min={1}
                   value={item.quantity}
                   onFocus={e => e.target.select()}
@@ -82,7 +84,7 @@ export function CartItemList({
               </div>
               <div className="flex items-center gap-0.5 flex-1">
                 <span className="text-[10px] text-muted-foreground">R$</span>
-                <Input type="number" step="0.01" value={item.unit_price} onFocus={e => e.target.select()} onChange={e => onUpdateProductPrice(cartIdx, parseFloat(e.target.value) || 0)} className="h-6 text-xs" />
+                <Input type="text" inputMode="decimal" pattern="[0-9]*\.?[0-9]*" value={item.unit_price} onFocus={e => e.target.select()} onChange={e => onUpdateProductPrice(cartIdx, parseFloat(e.target.value) || 0)} className="h-6 text-xs" />
               </div>
               <span className="text-xs font-semibold shrink-0">{fmt(item.quantity * item.unit_price)}</span>
             </div>

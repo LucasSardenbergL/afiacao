@@ -448,9 +448,12 @@ const SalesOrderEdit = () => {
                   <div>
                     <label className="text-xs text-muted-foreground">Qtd</label>
                     <Input
-                      type="number"
+                      type="text"
+                      inputMode="numeric"
+                      pattern="[0-9]*"
                       min={1}
                       value={item.quantidade}
+                      onFocus={(e) => e.target.select()}
                       onChange={(e) => updateItem(index, 'quantidade', Number(e.target.value) || 1)}
                       disabled={isBlocked}
                       className="h-8 text-sm"
@@ -459,10 +462,13 @@ const SalesOrderEdit = () => {
                   <div>
                     <label className="text-xs text-muted-foreground">Valor Unit.</label>
                     <Input
-                      type="number"
+                      type="text"
+                      inputMode="decimal"
+                      pattern="[0-9]*\.?[0-9]*"
                       step="0.01"
                       min={0}
                       value={item.valor_unitario}
+                      onFocus={(e) => e.target.select()}
                       onChange={(e) => updateItem(index, 'valor_unitario', Number(e.target.value) || 0)}
                       disabled={isBlocked}
                       className="h-8 text-sm"
