@@ -69,8 +69,10 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
       const fetchedRole = (roleResult.data?.role as AppRole) || 'customer';
       setRole(fetchedRole);
 
-      // Staff (admin/employee/master) are auto-approved
+      // Staff (admin/employee/master) or users with commercial roles are auto-approved
+      const hasCommercialRole = !!commercialResult.data?.commercial_role;
       const isStaffRole = fetchedRole === 'admin' || fetchedRole === 'employee' || fetchedRole === 'master';
+      if (isStaffRole || hasCommercialRole) {
       if (isStaffRole) {
         setIsApproved(true);
         // Auto-approve staff profile if not yet approved
