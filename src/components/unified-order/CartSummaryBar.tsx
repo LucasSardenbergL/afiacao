@@ -205,6 +205,32 @@ export function CartSummaryBar({
               <Input value={ordemCompra || ''} onChange={e => setOrdemCompra(e.target.value)} className="text-sm h-9 mt-1" placeholder="Ex: OC-12345" />
             </div>
           )}
+          {/* Delivery day picker */}
+          {setReadyByDate && (
+            <div>
+              <Label className="text-xs font-medium flex items-center gap-1">
+                <Calendar className="h-3 w-3" />
+                Dia de entrega (semana atual)
+              </Label>
+              <div className="flex flex-wrap gap-1.5 mt-1.5">
+                {weekDays.map(d => (
+                  <button
+                    key={d.value}
+                    type="button"
+                    onClick={() => setReadyByDate(readyByDate === d.value ? '' : d.value)}
+                    className={cn(
+                      "text-xs px-2.5 py-1.5 rounded-md border transition-colors capitalize",
+                      readyByDate === d.value
+                        ? "bg-primary text-primary-foreground border-primary"
+                        : "bg-background border-border hover:bg-accent hover:text-accent-foreground"
+                    )}
+                  >
+                    {d.label}
+                  </button>
+                ))}
+              </div>
+            </div>
+          )}
           {serviceItems.some(s => !s.servico) && (
             <p className="text-xs text-amber-600">
               <AlertCircle className="w-3 h-3 inline mr-1" />
