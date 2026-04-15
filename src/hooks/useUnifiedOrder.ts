@@ -190,6 +190,7 @@ export function useUnifiedOrder() {
   const [notes, setNotes] = useState('');
   const [submitting, setSubmitting] = useState(false);
   const [activeTab, setActiveTab] = useState('oben');
+  const [readyByDate, setReadyByDate] = useState<string>('');
   
   // Order success dialog
   const [orderSuccessOpen, setOrderSuccessOpen] = useState(false);
@@ -1554,6 +1555,7 @@ export function useUnifiedOrder() {
     selectedTimeSlot, setSelectedTimeSlot, showAddressOptions, setShowAddressOptions,
     // Cart
     cart, notes, setNotes, submitting, activeTab, setActiveTab,
+    readyByDate, setReadyByDate,
     productItems, obenProductItems, colacorProductItems, serviceItems, cartProductIds,
     availableTools,
     addProductToCart, addTintProductToCart, addServiceToCart,
