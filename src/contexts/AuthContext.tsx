@@ -40,7 +40,7 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
   const fetchUserRoleAndApproval = async (userId: string) => {
     try {
       // Fetch role and approval in parallel
-      const [roleResult, profileResult] = await Promise.all([
+      const [roleResult, profileResult, commercialResult] = await Promise.all([
         supabase
           .from('user_roles')
           .select('role')
@@ -49,6 +49,11 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
         supabase
           .from('profiles')
           .select('is_approved')
+          .eq('user_id', userId)
+          .maybeSingle(),
+        supabase
+          .from('commercial_roles')
+          .select('commercial_role')
           .eq('user_id', userId)
           .maybeSingle(),
       ]);
