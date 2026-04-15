@@ -1167,7 +1167,7 @@ serve(async (req) => {
 
       case "sync_estoque": {
         const startPageEstoque = params.start_page || 1;
-        const estoqueResult = await syncEstoque(supabaseAdmin, startPageEstoque, 10, account);
+        const estoqueResult = await syncEstoque(supabaseAdmin, startPageEstoque, 3, account);
         result = { success: true, ...estoqueResult };
         break;
       }
