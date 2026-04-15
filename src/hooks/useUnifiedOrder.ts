@@ -1224,6 +1224,7 @@ export function useUnifiedOrder() {
             items: itemsPayload, subtotal: obenSubtotal, total: obenSubtotal,
             status: 'rascunho', notes: notes || null, account: 'oben',
             customer_address: storedCustomerAddress, customer_phone: storedCustomerPhone,
+            ready_by_date: readyByDate || null,
           } as any).select('id').single();
         if (insertError) throw insertError;
         const { data: omieResult, error: omieError } = await supabase.functions.invoke('omie-vendas-sync', {
@@ -1256,6 +1257,7 @@ export function useUnifiedOrder() {
             items: itemsPayload, subtotal: colacorProdSubtotal, total: colacorProdSubtotal,
             status: 'rascunho', notes: notes || null, account: 'colacor',
             customer_address: storedCustomerAddress, customer_phone: storedCustomerPhone,
+            ready_by_date: readyByDate || null,
           } as any).select('id').single();
         if (insertError) throw insertError;
         const { data: omieResult, error: omieError } = await supabase.functions.invoke('omie-vendas-sync', {
