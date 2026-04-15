@@ -64,7 +64,18 @@ export function CartItemList({
                 <Button size="sm" variant="outline" className="h-6 w-6 p-0" onClick={() => onUpdateQuantity(cartIdx, -1)}>
                   <Minus className="w-3 h-3" />
                 </Button>
-                <span className="text-xs w-6 text-center font-medium">{item.quantity}</span>
+                <Input
+                  type="number"
+                  min={1}
+                  value={item.quantity}
+                  onFocus={e => e.target.select()}
+                  onChange={e => {
+                    const newQty = parseInt(e.target.value) || 1;
+                    const delta = newQty - item.quantity;
+                    if (delta !== 0) onUpdateQuantity(cartIdx, delta);
+                  }}
+                  className="h-6 w-12 text-xs text-center p-0"
+                />
                 <Button size="sm" variant="outline" className="h-6 w-6 p-0" onClick={() => onUpdateQuantity(cartIdx, 1)}>
                   <Plus className="w-3 h-3" />
                 </Button>
