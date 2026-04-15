@@ -1711,6 +1711,101 @@ serve(async (req) => {
         break;
       }
 
+      case "criar_ordem_producao": {
+        const { sales_order_id: opSalesId, items: opItems } = params;
+        if (!opSalesId || !opItems?.length) throw new Error("Dados insuficientes para criar ordem de produção");
+
+        const createdOPs: any[] = [];
+        for (const opItem of opItems) {
+          // Create production order in Omie
+          const opPayload = {
+            cCodIntOP: `OP_${opSalesId.substring(0, 8)}_${opItem.omie_codigo_produto}_${Date.now()}`,
+            nCodProd: opItem.omie_codigo_produto,
+            nQtde: opItem.quantidade,
+            dDtPrevisao: new Date().toISOString().split("T")[0].split("-").reverse().join("/"),
+            cObservacao: `Gerado automaticamente via App - Pedido ${opSalesId.substring(0, 8)}`,
+          };
+
+          let omieOrdemId: number | null = null;
+          let omieOrdemNumero: string | null = null;
+          try {
+            const opResult = await callOmieVendasApi(
+              "manufatura/ordemproducao/",
+              "IncluirOrdemProducao",
+              opPayload,
+              account
+            ) as any;
+            omieOrdemId = opResult?.nCodOP || null;
+            omieOrdemNumero = opResult?.cNumOP || String(omieOrdemId);
+            console.log(`[Omie Vendas][${account}] OP criada: ${omieOrdemNumero}`);
+          } catch (opErr: any) {
+            console.error(`[Omie Vendas][${account}] Erro ao criar OP:`, opErr.message);
+          }
+
+          // Save to local DB
+          const { data: insertedOP } = await supabaseAdmin.from("production_orders").insert({
+            sales_order_id: opSalesId,
+            product_id: opItem.product_id || null,
+            product_codigo: opItem.codigo || null,
+            product_descricao: opItem.descricao || null,
+            quantidade: opItem.quantidade,
+            unidade: opItem.unidade || 'UN',
+            status: 'pending',
+            omie_ordem_producao_id: omieOrdemId,
+            omie_ordem_numero: omieOrdemNumero,
+            assigned_to: opItem.assigned_to || null,
+            ready_by_date: opItem.ready_by_date || null,
+            account,
+            created_by: userId,
+          } as any).select('id').single();
+
+          createdOPs.push({ id: insertedOP?.id, omie_ordem_id: omieOrdemId, omie_ordem_numero: omieOrdemNumero, descricao: opItem.descricao });
+        }
+
+        result = { success: true, production_orders: createdOPs };
+        break;
+      }
+
+      case "finalizar_ordem_producao": {
+        const { production_order_id } = params;
+        if (!production_order_id) throw new Error("ID da ordem de produção é obrigatório");
+
+        const { data: po } = await supabaseAdmin
+          .from("production_orders")
+          .select("*")
+          .eq("id", production_order_id)
+          .single();
+        if (!po) throw new Error("Ordem de produção não encontrada");
+
+        const poAccount: Account = (po as any).account === "colacor" ? "colacor" : "oben";
+
+        // Finalize in Omie if it has an Omie ID
+        if ((po as any).omie_ordem_producao_id) {
+          try {
+            await callOmieVendasApi(
+              "manufatura/ordemproducao/",
+              "AlterarOrdemProducao",
+              {
+                nCodOP: (po as any).omie_ordem_producao_id,
+                cEtapa: "50", // Encerrada
+              },
+              poAccount
+            );
+            console.log(`[Omie Vendas][${poAccount}] OP ${(po as any).omie_ordem_numero} finalizada no Omie`);
+          } catch (omieErr: any) {
+            console.warn(`[Omie Vendas][${poAccount}] Erro ao finalizar OP no Omie:`, omieErr.message);
+          }
+        }
+
+        await supabaseAdmin
+          .from("production_orders")
+          .update({ status: "completed", completed_at: new Date().toISOString() } as any)
+          .eq("id", production_order_id);
+
+        result = { success: true };
+        break;
+      }
+
       default:
         throw new Error(`Ação desconhecida: ${action}`);
     }
