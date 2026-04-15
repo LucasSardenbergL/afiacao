@@ -153,10 +153,27 @@ export function CartSummaryBar({
   notes, setNotes,
   volumesOben, volumesColacor,
   ordemCompra, setOrdemCompra, isOrdemCompraCustomer,
+  readyByDate, setReadyByDate,
   onSubmit, onSubmitQuote,
 }: CartSummaryBarProps) {
   const hasOnlyProducts = (obenProductItems.length > 0 || colacorProductItems.length > 0) && serviceItems.length === 0;
   const disableSubmit = submitting || serviceItems.some(s => !s.servico) || vendedorDivergencias.length > 0;
+
+  // Generate weekdays (Mon-Fri) for current week
+  const weekDays = useMemo(() => {
+    const today = new Date();
+    const monday = startOfWeek(today, { weekStartsOn: 1 });
+    const days: { date: Date; label: string; value: string }[] = [];
+    for (let i = 0; i < 5; i++) {
+      const d = addDays(monday, i);
+      days.push({
+        date: d,
+        label: format(d, "EEEE dd/MM", { locale: ptBR }),
+        value: format(d, 'yyyy-MM-dd'),
+      });
+    }
+    return days;
+  }, []);
 
   return (
     <>
