@@ -3898,6 +3898,90 @@ export type Database = {
           },
         ]
       }
+      production_orders: {
+        Row: {
+          account: string
+          assigned_to: string | null
+          completed_at: string | null
+          created_at: string
+          created_by: string | null
+          customer_name: string | null
+          id: string
+          notes: string | null
+          omie_ordem_numero: string | null
+          omie_ordem_producao_id: number | null
+          product_codigo: string | null
+          product_descricao: string | null
+          product_id: string | null
+          quantidade: number
+          ready_by_date: string | null
+          sales_order_id: string | null
+          sales_order_number: string | null
+          status: string
+          unidade: string | null
+          updated_at: string
+        }
+        Insert: {
+          account?: string
+          assigned_to?: string | null
+          completed_at?: string | null
+          created_at?: string
+          created_by?: string | null
+          customer_name?: string | null
+          id?: string
+          notes?: string | null
+          omie_ordem_numero?: string | null
+          omie_ordem_producao_id?: number | null
+          product_codigo?: string | null
+          product_descricao?: string | null
+          product_id?: string | null
+          quantidade?: number
+          ready_by_date?: string | null
+          sales_order_id?: string | null
+          sales_order_number?: string | null
+          status?: string
+          unidade?: string | null
+          updated_at?: string
+        }
+        Update: {
+          account?: string
+          assigned_to?: string | null
+          completed_at?: string | null
+          created_at?: string
+          created_by?: string | null
+          customer_name?: string | null
+          id?: string
+          notes?: string | null
+          omie_ordem_numero?: string | null
+          omie_ordem_producao_id?: number | null
+          product_codigo?: string | null
+          product_descricao?: string | null
+          product_id?: string | null
+          quantidade?: number
+          ready_by_date?: string | null
+          sales_order_id?: string | null
+          sales_order_number?: string | null
+          status?: string
+          unidade?: string | null
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "production_orders_product_id_fkey"
+            columns: ["product_id"]
+            isOneToOne: false
+            referencedRelation: "omie_products"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "production_orders_sales_order_id_fkey"
+            columns: ["sales_order_id"]
+            isOneToOne: false
+            referencedRelation: "sales_orders"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       profiles: {
         Row: {
           avatar_url: string | null
@@ -4241,6 +4325,7 @@ export type Database = {
           omie_payload: Json | null
           omie_pedido_id: number | null
           omie_response: Json | null
+          ready_by_date: string | null
           status: string
           subtotal: number
           total: number
@@ -4262,6 +4347,7 @@ export type Database = {
           omie_payload?: Json | null
           omie_pedido_id?: number | null
           omie_response?: Json | null
+          ready_by_date?: string | null
           status?: string
           subtotal?: number
           total?: number
@@ -4283,6 +4369,7 @@ export type Database = {
           omie_payload?: Json | null
           omie_pedido_id?: number | null
           omie_response?: Json | null
+          ready_by_date?: string | null
           status?: string
           subtotal?: number
           total?: number
