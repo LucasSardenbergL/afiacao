@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, useMemo } from 'react';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { Label } from '@/components/ui/label';
@@ -8,9 +8,11 @@ import { Card, CardContent } from '@/components/ui/card';
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
 import { Command, CommandEmpty, CommandGroup, CommandInput, CommandItem, CommandList } from '@/components/ui/command';
 import {
-  Send, Loader2, AlertCircle, Check, ChevronsUpDown, FileText,
+  Send, Loader2, AlertCircle, Check, ChevronsUpDown, FileText, Calendar,
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
+import { format, addDays, startOfWeek, isWeekend } from 'date-fns';
+import { ptBR } from 'date-fns/locale';
 import type {
   ProductCartItem, ServiceCartItem, FormaPagamento,
 } from '@/hooks/useUnifiedOrder';
@@ -43,6 +45,9 @@ interface CartSummaryBarProps {
   ordemCompra?: string;
   setOrdemCompra?: (v: string) => void;
   isOrdemCompraCustomer?: boolean;
+  // Ready by date
+  readyByDate?: string;
+  setReadyByDate?: (v: string) => void;
   // Actions
   onSubmit: () => void;
   onSubmitQuote?: () => void;
@@ -148,10 +153,27 @@ export function CartSummaryBar({
   notes, setNotes,
   volumesOben, volumesColacor,
   ordemCompra, setOrdemCompra, isOrdemCompraCustomer,
+  readyByDate, setReadyByDate,
   onSubmit, onSubmitQuote,
 }: CartSummaryBarProps) {
   const hasOnlyProducts = (obenProductItems.length > 0 || colacorProductItems.length > 0) && serviceItems.length === 0;
   const disableSubmit = submitting || serviceItems.some(s => !s.servico) || vendedorDivergencias.length > 0;
+
+  // Generate weekdays (Mon-Fri) for current week
+  const weekDays = useMemo(() => {
+    const today = new Date();
+    const monday = startOfWeek(today, { weekStartsOn: 1 });
+    const days: { date: Date; label: string; value: string }[] = [];
+    for (let i = 0; i < 5; i++) {
+      const d = addDays(monday, i);
+      days.push({
+        date: d,
+        label: format(d, "EEEE dd/MM", { locale: ptBR }),
+        value: format(d, 'yyyy-MM-dd'),
+      });
+    }
+    return days;
+  }, []);
 
   return (
     <>
@@ -181,6 +203,32 @@ export function CartSummaryBar({
             <div>
               <Label className="text-xs font-medium">Nº Ordem de Compra do Cliente</Label>
               <Input value={ordemCompra || ''} onChange={e => setOrdemCompra(e.target.value)} className="text-sm h-9 mt-1" placeholder="Ex: OC-12345" />
+            </div>
+          )}
+          {/* Delivery day picker */}
+          {setReadyByDate && (
+            <div>
+              <Label className="text-xs font-medium flex items-center gap-1">
+                <Calendar className="h-3 w-3" />
+                Dia de entrega (semana atual)
+              </Label>
+              <div className="flex flex-wrap gap-1.5 mt-1.5">
+                {weekDays.map(d => (
+                  <button
+                    key={d.value}
+                    type="button"
+                    onClick={() => setReadyByDate(readyByDate === d.value ? '' : d.value)}
+                    className={cn(
+                      "text-xs px-2.5 py-1.5 rounded-md border transition-colors capitalize",
+                      readyByDate === d.value
+                        ? "bg-primary text-primary-foreground border-primary"
+                        : "bg-background border-border hover:bg-accent hover:text-accent-foreground"
+                    )}
+                  >
+                    {d.label}
+                  </button>
+                ))}
+              </div>
             </div>
           )}
           {serviceItems.some(s => !s.servico) && (

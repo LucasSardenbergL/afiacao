@@ -26,6 +26,7 @@ export interface Product {
   account?: string;
   is_tintometric?: boolean;
   tint_type?: string;
+  metadata?: Record<string, any> | null;
 }
 
 export interface ProductCartItem {
@@ -189,6 +190,7 @@ export function useUnifiedOrder() {
   const [notes, setNotes] = useState('');
   const [submitting, setSubmitting] = useState(false);
   const [activeTab, setActiveTab] = useState('oben');
+  const [readyByDate, setReadyByDate] = useState<string>('');
   
   // Order success dialog
   const [orderSuccessOpen, setOrderSuccessOpen] = useState(false);
@@ -346,7 +348,7 @@ export function useUnifiedOrder() {
     try {
       const { data } = await supabase
         .from('omie_products')
-        .select('id, codigo, descricao, unidade, valor_unitario, estoque, ativo, omie_codigo_produto, account, is_tintometric, tint_type')
+        .select('id, codigo, descricao, unidade, valor_unitario, estoque, ativo, omie_codigo_produto, account, is_tintometric, tint_type, metadata')
         .eq('account', account)
         .not('familia', 'ilike', '%imobilizado%')
         .not('familia', 'ilike', '%uso e consumo%')
@@ -367,7 +369,7 @@ export function useUnifiedOrder() {
           }
           const { data: refreshed } = await supabase
             .from('omie_products')
-            .select('id, codigo, descricao, unidade, valor_unitario, estoque, ativo, omie_codigo_produto, account, is_tintometric, tint_type')
+            .select('id, codigo, descricao, unidade, valor_unitario, estoque, ativo, omie_codigo_produto, account, is_tintometric, tint_type, metadata')
             .eq('account', account)
             .not('familia', 'ilike', '%imobilizado%')
             .not('familia', 'ilike', '%uso e consumo%')
@@ -402,7 +404,7 @@ export function useUnifiedOrder() {
         }
         const { data: refreshed } = await supabase
           .from('omie_products')
-          .select('id, codigo, descricao, unidade, valor_unitario, estoque, ativo, omie_codigo_produto, account, is_tintometric, tint_type')
+          .select('id, codigo, descricao, unidade, valor_unitario, estoque, ativo, omie_codigo_produto, account, is_tintometric, tint_type, metadata')
           .eq('account', account)
           .not('familia', 'ilike', '%imobilizado%')
           .not('familia', 'ilike', '%uso e consumo%')
@@ -1222,6 +1224,7 @@ export function useUnifiedOrder() {
             items: itemsPayload, subtotal: obenSubtotal, total: obenSubtotal,
             status: 'rascunho', notes: notes || null, account: 'oben',
             customer_address: storedCustomerAddress, customer_phone: storedCustomerPhone,
+            ready_by_date: readyByDate || null,
           } as any).select('id').single();
         if (insertError) throw insertError;
         const { data: omieResult, error: omieError } = await supabase.functions.invoke('omie-vendas-sync', {
@@ -1254,6 +1257,7 @@ export function useUnifiedOrder() {
             items: itemsPayload, subtotal: colacorProdSubtotal, total: colacorProdSubtotal,
             status: 'rascunho', notes: notes || null, account: 'colacor',
             customer_address: storedCustomerAddress, customer_phone: storedCustomerPhone,
+            ready_by_date: readyByDate || null,
           } as any).select('id').single();
         if (insertError) throw insertError;
         const { data: omieResult, error: omieError } = await supabase.functions.invoke('omie-vendas-sync', {
@@ -1268,8 +1272,38 @@ export function useUnifiedOrder() {
             ordem_compra: ordemCompra || undefined,
           },
         });
-        if (!omieError) results.push(`PV Colacor ${omieResult?.omie_numero_pedido || ''}`);
-        else results.push('PV Colacor (pendente ERP)');
+        if (!omieError) {
+          results.push(`PV Colacor ${omieResult?.omie_numero_pedido || ''}`);
+          // Auto-create production orders for "produto acabado" items (tipo_produto = "04" or 4)
+          const produtoAcabadoItems = colacorProductItems.filter(c => {
+            const tp = c.product.metadata?.tipo_produto;
+            return tp === '04' || tp === 4 || tp === '4';
+          });
+          if (produtoAcabadoItems.length > 0) {
+            try {
+              await supabase.functions.invoke('omie-vendas-sync', {
+                body: {
+                  action: 'criar_ordem_producao', account: 'colacor',
+                  sales_order_id: salesOrder.id,
+                  items: produtoAcabadoItems.map(c => ({
+                    product_id: c.product.id,
+                    omie_codigo_produto: c.product.omie_codigo_produto,
+                    codigo: c.product.codigo,
+                    descricao: c.product.descricao,
+                    quantidade: c.quantity,
+                    unidade: c.product.unidade,
+                    assigned_to: '1da51fb2-9218-408c-9f2a-75d6873ab6f9', // Matheus
+                  })),
+                },
+              });
+              console.log('[UnifiedOrder] Production orders created for', produtoAcabadoItems.length, 'items');
+            } catch (opErr) {
+              console.warn('[UnifiedOrder] Failed to create production orders:', opErr);
+            }
+          }
+        } else {
+          results.push('PV Colacor (pendente ERP)');
+        }
       }
 
       if (hasServices) {
@@ -1523,6 +1557,7 @@ export function useUnifiedOrder() {
     selectedTimeSlot, setSelectedTimeSlot, showAddressOptions, setShowAddressOptions,
     // Cart
     cart, notes, setNotes, submitting, activeTab, setActiveTab,
+    readyByDate, setReadyByDate,
     productItems, obenProductItems, colacorProductItems, serviceItems, cartProductIds,
     availableTools,
     addProductToCart, addTintProductToCart, addServiceToCart,
