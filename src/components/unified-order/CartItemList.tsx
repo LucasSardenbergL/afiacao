@@ -65,7 +65,9 @@ export function CartItemList({
                   <Minus className="w-3 h-3" />
                 </Button>
                 <Input
-                  type="number"
+                  type="text"
+                  inputMode="numeric"
+                  pattern="[0-9]*"
                   min={1}
                   value={item.quantity}
                   onFocus={e => e.target.select()}

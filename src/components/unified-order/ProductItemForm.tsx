@@ -98,7 +98,9 @@ export function ProductItemForm({
                     <div className="flex items-center gap-1">
                       <span className="text-[10px] text-muted-foreground">Qtd:</span>
                       <Input
-                        type="number"
+                        type="text"
+                        inputMode="numeric"
+                        pattern="[0-9]*"
                         min={1}
                         value={qty}
                         onFocus={e => e.target.select()}
