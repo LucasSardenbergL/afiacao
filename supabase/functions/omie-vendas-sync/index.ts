@@ -145,7 +145,6 @@ async function syncProducts(supabase: ReturnType<typeof createClient>, startPage
 
     const rows = produtos
       .filter((prod: any) => {
-        if (prod.inativo === "S") return false;
         // Excluir produtos do tipo Kit (apenas Simples)
         if (prod.tipo && prod.tipo.toUpperCase() === "K") return false;
         const familia = (prod.descricao_familia || '').toLowerCase().trim();
@@ -163,7 +162,7 @@ async function syncProducts(supabase: ReturnType<typeof createClient>, startPage
         ncm: prod.ncm || null,
         valor_unitario: prod.valor_unitario || 0,
         estoque: prod.quantidade_estoque || 0,
-        ativo: true,
+        ativo: prod.inativo !== "S",
         familia: prod.descricao_familia || null,
         imagem_url: prod.imagens?.[0]?.url_imagem || null,
         metadata: {

@@ -1,0 +1,1 @@
+UPDATE omie_products SET ativo = false WHERE omie_codigo_produto = 8690031947 AND account = 'oben';
