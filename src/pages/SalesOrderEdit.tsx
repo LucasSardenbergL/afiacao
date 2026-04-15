@@ -344,7 +344,7 @@ const SalesOrderEdit = () => {
             </CardTitle>
           </CardHeader>
           <CardContent className="text-sm text-muted-foreground space-y-1">
-            {order.omie_numero_pedido && <p>PV: {order.omie_numero_pedido}</p>}
+            {order.omie_numero_pedido && <p>PV: {order.omie_numero_pedido.replace(/^0+/, '') || '0'}</p>}
             <p>Status: {order.status}</p>
           </CardContent>
         </Card>

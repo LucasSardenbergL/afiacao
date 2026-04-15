@@ -92,7 +92,7 @@ function buildPrintData(order: SalesOrderRow, company: CompanyFilter, logoUrls?:
     companyPhone: c.phone,
     companyAddress: c.address,
     companyLogoUrl: logoUrls?.[company] || undefined,
-    orderNumber: order.omie_numero_pedido || order.id.slice(0, 8).toUpperCase(),
+    orderNumber: order.omie_numero_pedido?.replace(/^0+/, '') || order.id.slice(0, 8).toUpperCase(),
     date: format(new Date(order.created_at), "dd/MM/yyyy HH:mm", { locale: ptBR }),
     customerName: order.customer_name || 'Cliente',
     customerDocument: order.customer_document || '',
@@ -519,7 +519,7 @@ ${allPages.join('\n<div class="page-break"></div>\n')}
               <div className="flex-1 min-w-0">
                 <div className="flex items-center gap-2">
                   <span className="font-mono text-sm font-medium">
-                    {order.omie_numero_pedido ? `#${order.omie_numero_pedido}` : order.id.slice(0, 8).toUpperCase()}
+                    {order.omie_numero_pedido ? `#${order.omie_numero_pedido.replace(/^0+/, '')}` : order.id.slice(0, 8).toUpperCase()}
                   </span>
                   <span className="text-xs text-muted-foreground">
                     {format(new Date(order.created_at), 'HH:mm')}
