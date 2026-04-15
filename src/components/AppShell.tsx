@@ -64,6 +64,12 @@ const unifiedNavSections: { title: string; items: NavItem[] }[] = [
     ],
   },
   {
+    title: 'Produção',
+    items: [
+      { icon: Wrench, label: 'Ordens de Produção', path: '/producao' },
+    ],
+  },
+  {
     title: 'Performance',
     items: [
       { icon: Phone, label: 'Ligações', path: '/farmer/calls' },
