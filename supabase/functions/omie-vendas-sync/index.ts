@@ -172,6 +172,7 @@ async function syncProducts(supabase: ReturnType<typeof createClient>, startPage
           peso_liq: prod.peso_liq,
           descricao_familia: prod.descricao_familia,
           cfop: prod.cfop,
+          tipo_produto: prod.recomendacoes_fiscais?.tipo_produto ?? null,
         },
         account,
         updated_at: new Date().toISOString(),
