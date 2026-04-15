@@ -11,9 +11,11 @@ import { Textarea } from '@/components/ui/textarea';
 import { Badge } from '@/components/ui/badge';
 import { supabase } from '@/integrations/supabase/client';
 import { useAuth } from '@/contexts/AuthContext';
-import { Loader2, Save, Trash2, Plus, AlertCircle, Search, X } from 'lucide-react';
+import { Loader2, Save, Trash2, Plus, AlertCircle, Search, X, ChevronsUpDown, Check } from 'lucide-react';
 import { toast } from 'sonner';
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
+import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
+import { Command, CommandEmpty, CommandGroup, CommandInput, CommandItem, CommandList } from '@/components/ui/command';
+import { cn } from '@/lib/utils';
 
 interface OrderItem {
   product_id?: string;
@@ -509,18 +511,12 @@ const SalesOrderEdit = () => {
               <CardTitle className="text-base">Forma de Pagamento</CardTitle>
             </CardHeader>
             <CardContent>
-              <Select value={selectedParcela} onValueChange={setSelectedParcela} disabled={isBlocked}>
-                <SelectTrigger>
-                  <SelectValue placeholder="Selecionar parcela" />
-                </SelectTrigger>
-                <SelectContent>
-                  {formas.map((f) => (
-                    <SelectItem key={f.codigo} value={f.codigo}>
-                      {f.descricao}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
+              <PaymentComboboxEdit
+                formas={formas}
+                selected={selectedParcela}
+                onSelect={setSelectedParcela}
+                disabled={isBlocked}
+              />
             </CardContent>
           </Card>
         )}
