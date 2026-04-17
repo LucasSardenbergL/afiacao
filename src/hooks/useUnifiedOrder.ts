@@ -191,6 +191,22 @@ export function useUnifiedOrder() {
   const [submitting, setSubmitting] = useState(false);
   const [activeTab, setActiveTab] = useState('oben');
   const [readyByDate, setReadyByDate] = useState<string>('');
+  const [defaultProductionAssigneeId, setDefaultProductionAssigneeId] = useState<string | null>(null);
+
+  // Load default production assignee (configured via Governance > Settings).
+  // Used to attribute auto-created Colacor production orders.
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      const { data } = await supabase
+        .from('company_config')
+        .select('value')
+        .eq('key', 'default_production_assignee_id')
+        .maybeSingle();
+      if (!cancelled) setDefaultProductionAssigneeId(data?.value || null);
+    })();
+    return () => { cancelled = true; };
+  }, []);
   
   // Order success dialog
   const [orderSuccessOpen, setOrderSuccessOpen] = useState(false);
@@ -1280,6 +1296,14 @@ export function useUnifiedOrder() {
             return tp === '04' || tp === 4 || tp === '4';
           });
           if (produtoAcabadoItems.length > 0) {
+            if (!defaultProductionAssigneeId) {
+              toast({
+                title: 'Ordem de Produção não criada',
+                description: 'Responsável padrão de produção não configurado. Configure em Governance > Settings.',
+                variant: 'destructive',
+              });
+              console.warn('[UnifiedOrder] Skipping production order auto-creation: default_production_assignee_id is not set');
+            } else {
             try {
               await supabase.functions.invoke('omie-vendas-sync', {
                 body: {
@@ -1292,13 +1316,14 @@ export function useUnifiedOrder() {
                     descricao: c.product.descricao,
                     quantidade: c.quantity,
                     unidade: c.product.unidade,
-                    assigned_to: '1da51fb2-9218-408c-9f2a-75d6873ab6f9', // Matheus
+                    assigned_to: defaultProductionAssigneeId,
                   })),
                 },
               });
               console.log('[UnifiedOrder] Production orders created for', produtoAcabadoItems.length, 'items');
             } catch (opErr) {
               console.warn('[UnifiedOrder] Failed to create production orders:', opErr);
+            }
             }
           }
         } else {
