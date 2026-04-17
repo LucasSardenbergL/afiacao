@@ -68,7 +68,85 @@ export function useCustomerSelection({
     }
   }, [addresses, selectedAddress]);
 
-  const [customerPurchaseHistory, setCustomerPurchaseHistory] = useState<Record<string, string>>({});
+  /* ─── Purchase history (react-query, 2min stale) ─────────────────────────
+     Faz merge de 3 fontes em paralelo (allSettled tolera falhas individuais):
+       a) sales_orders local (últimas 100 ordens) → códigos de produto
+       b) sales_price_history local → product_id (formato `pid:<uuid>`)
+       c) Omie histórico de produtos (oben + colacor) → códigos Omie (`omie:<cod>`)
+     A key inclui os 3 códigos relevantes do cliente para reagir a auto-create. */
+  const codigoOben = selectedCustomer?.codigo_cliente ?? null;
+  const codigoColacor = selectedCustomer?.codigo_cliente_colacor ?? null;
+  const { data: customerPurchaseHistory = {} } = useQuery<Record<string, string>>({
+    queryKey: ['customer-purchase-history', customerUserId, codigoOben, codigoColacor],
+    enabled: !!customerUserId || !!codigoOben || !!codigoColacor,
+    staleTime: 2 * 60 * 1000,
+    queryFn: async () => {
+      const localOrdersPromise = customerUserId
+        ? supabase.from('sales_orders')
+            .select('items, created_at')
+            .eq('customer_user_id', customerUserId)
+            .neq('status', 'orcamento')
+            .order('created_at', { ascending: false })
+            .limit(100)
+        : Promise.resolve({ data: null });
+      const localPricePromise = customerUserId
+        ? supabase.from('sales_price_history')
+            .select('product_id, created_at')
+            .eq('customer_user_id', customerUserId)
+            .order('created_at', { ascending: false })
+        : Promise.resolve({ data: null });
+      const omiePromises: Promise<any>[] = [];
+      if (codigoOben) {
+        omiePromises.push(supabase.functions.invoke('omie-vendas-sync', {
+          body: { action: 'historico_produtos_cliente', codigo_cliente: codigoOben, account: 'oben' },
+        }));
+      }
+      if (codigoColacor) {
+        omiePromises.push(supabase.functions.invoke('omie-vendas-sync', {
+          body: { action: 'historico_produtos_cliente', codigo_cliente: codigoColacor, account: 'colacor' },
+        }));
+      }
+
+      const [ordersSettled, priceSettled, ...omieSettled] = await Promise.allSettled([
+        localOrdersPromise,
+        localPricePromise,
+        ...omiePromises,
+      ]);
+
+      const history: Record<string, string> = {};
+
+      if (ordersSettled.status === 'fulfilled' && ordersSettled.value?.data) {
+        for (const order of ordersSettled.value.data as any[]) {
+          const items = order.items as any[];
+          if (Array.isArray(items)) {
+            for (const item of items) {
+              const code = item.codigo || item.product_code || '';
+              if (code && !history[code]) history[code] = order.created_at;
+              const pid = item.product_id || '';
+              if (pid && !history[`pid:${pid}`]) history[`pid:${pid}`] = order.created_at;
+            }
+          }
+        }
+      }
+
+      if (priceSettled.status === 'fulfilled' && priceSettled.value?.data) {
+        for (const row of priceSettled.value.data as any[]) {
+          if (!history[`pid:${row.product_id}`]) history[`pid:${row.product_id}`] = row.created_at;
+        }
+      }
+
+      for (const res of omieSettled) {
+        if (res.status === 'fulfilled' && res.value?.data?.history) {
+          const h = res.value.data.history as Record<string, string>;
+          for (const [omieCod, dateStr] of Object.entries(h)) {
+            if (!history[`omie:${omieCod}`]) history[`omie:${omieCod}`] = dateStr;
+          }
+        }
+      }
+
+      return history;
+    },
+  });
 
   const [vendedorDivergencias, setVendedorDivergencias] = useState<string[]>([]);
   const [validatingVendedor, setValidatingVendedor] = useState(false);
