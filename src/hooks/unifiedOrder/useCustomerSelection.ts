@@ -297,76 +297,8 @@ export function useCustomerSelection({
     return result;
   }, []);
 
-  /** Load local purchase history (sales_orders + sales_price_history) in background */
-  const loadLocalPurchaseHistory = useCallback((localUserId: string) => {
-    Promise.all([
-      supabase.from('sales_orders')
-        .select('items, created_at')
-        .eq('customer_user_id', localUserId)
-        .neq('status', 'orcamento')
-        .order('created_at', { ascending: false })
-        .limit(100),
-      supabase.from('sales_price_history')
-        .select('product_id, created_at')
-        .eq('customer_user_id', localUserId)
-        .order('created_at', { ascending: false }),
-    ]).then(([ordersRes, priceHistRes]) => {
-      const history: Record<string, string> = {};
-      if (ordersRes.data) {
-        for (const order of ordersRes.data) {
-          const items = order.items as any[];
-          if (Array.isArray(items)) {
-            for (const item of items) {
-              const code = item.codigo || item.product_code || '';
-              if (code && !history[code]) history[code] = order.created_at;
-              const pid = item.product_id || '';
-              if (pid && !history[`pid:${pid}`]) history[`pid:${pid}`] = order.created_at;
-            }
-          }
-        }
-      }
-      if (priceHistRes.data) {
-        for (const row of priceHistRes.data) {
-          if (!history[`pid:${row.product_id}`]) history[`pid:${row.product_id}`] = row.created_at;
-        }
-      }
-      setCustomerPurchaseHistory(prev => ({ ...prev, ...history }));
-    });
-  }, []);
-
-  /** Load Omie purchase history in background and merge into purchase history */
-  const loadOmiePurchaseHistory = useCallback((cust: OmieCustomer) => {
-    const omieHistoryPromises: Promise<any>[] = [];
-    if (cust.codigo_cliente) {
-      omieHistoryPromises.push(
-        supabase.functions.invoke('omie-vendas-sync', {
-          body: { action: 'historico_produtos_cliente', codigo_cliente: cust.codigo_cliente, account: 'oben' },
-        })
-      );
-    }
-    if (cust.codigo_cliente_colacor) {
-      omieHistoryPromises.push(
-        supabase.functions.invoke('omie-vendas-sync', {
-          body: { action: 'historico_produtos_cliente', codigo_cliente: cust.codigo_cliente_colacor, account: 'colacor' },
-        })
-      );
-    }
-    if (omieHistoryPromises.length === 0) return;
-    Promise.all(omieHistoryPromises).then((results) => {
-      const omieHistory: Record<string, string> = {};
-      for (const res of results) {
-        if (res?.data?.history) {
-          const h = res.data.history as Record<string, string>;
-          for (const [omieCod, dateStr] of Object.entries(h)) {
-            if (!omieHistory[`omie:${omieCod}`]) omieHistory[`omie:${omieCod}`] = dateStr;
-          }
-        }
-      }
-      if (Object.keys(omieHistory).length > 0) {
-        setCustomerPurchaseHistory(prev => ({ ...prev, ...omieHistory }));
-      }
-    });
-  }, []);
+  // Purchase history (local + Omie) agora vem do useQuery acima
+  // (key: ['customer-purchase-history', customerUserId, codigoOben, codigoColacor])
 
   /* ─── Public actions ─── */
 
