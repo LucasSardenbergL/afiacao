@@ -482,11 +482,11 @@ export function useCustomerSelection({
     setCustomerParcelaRankingColacor([]);
     setVendedorDivergencias([]);
     setSelectedAddress('');
-    setCustomerPurchaseHistory({});
     setRequiresPo(false);
-    // Limpa o cache de endereços e ferramentas do cliente anterior
+    // Limpa o cache de endereços, ferramentas e histórico do cliente anterior
     queryClient.removeQueries({ queryKey: ['customer-addresses'] });
     queryClient.removeQueries({ queryKey: ['user-tools'] });
+    queryClient.removeQueries({ queryKey: ['customer-purchase-history'] });
   }, [queryClient]);
 
   return {
