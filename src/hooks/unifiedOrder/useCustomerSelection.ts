@@ -20,6 +20,7 @@ export function useCustomerSelection({
   reloadPriceHistory,
 }: UseCustomerSelectionArgs = {}) {
   const { toast } = useToast();
+  const queryClient = useQueryClient();
 
   /* ─── State ─── */
   const [customerSearch, setCustomerSearch] = useState('');
@@ -39,8 +40,33 @@ export function useCustomerSelection({
   const [customerParcelaRankingOben, setCustomerParcelaRankingOben] = useState<string[]>([]);
   const [customerParcelaRankingColacor, setCustomerParcelaRankingColacor] = useState<string[]>([]);
 
-  const [addresses, setAddresses] = useState<AddressData[]>([]);
+  /* ─── Addresses (react-query, 5min stale) ─── */
+  const { data: addresses = [] } = useQuery<AddressData[]>({
+    queryKey: ['customer-addresses', customerUserId],
+    enabled: !!customerUserId,
+    staleTime: 5 * 60 * 1000,
+    queryFn: async () => {
+      const { data, error } = await supabase
+        .from('addresses')
+        .select('*')
+        .eq('user_id', customerUserId!)
+        .order('is_default', { ascending: false });
+      if (error) throw error;
+      return (data || []).map((addr) => ({
+        id: addr.id, label: addr.label, street: addr.street, number: addr.number,
+        complement: addr.complement, neighborhood: addr.neighborhood, city: addr.city,
+        state: addr.state, zipCode: addr.zip_code,
+      }));
+    },
+  });
   const [selectedAddress, setSelectedAddress] = useState<string>('');
+
+  // Auto-select first address when list loads and none is selected
+  useEffect(() => {
+    if (addresses.length > 0 && !selectedAddress) {
+      setSelectedAddress(addresses[0].id);
+    }
+  }, [addresses, selectedAddress]);
 
   const [customerPurchaseHistory, setCustomerPurchaseHistory] = useState<Record<string, string>>({});
 
