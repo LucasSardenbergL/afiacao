@@ -4,6 +4,34 @@ import type { OmieServico } from '@/services/omieService';
 
 export type ProductAccount = 'oben' | 'colacor';
 
+/**
+ * Famílias de produtos excluídas do catálogo de vendas (Oben + Colacor).
+ * Centralizado aqui para evitar duplicação entre loadProductsForAccount,
+ * o reload pós-sync e o syncStockInBackground.
+ */
+export const EXCLUDED_FAMILIA_PATTERNS = [
+  '%imobilizado%',
+  '%uso e consumo%',
+  '%matérias primas para conversão de cintas%',
+  '%jumbos de lixa para discos%',
+  'jumbo%',
+  '%material para tingimix%',
+] as const;
+
+/**
+ * Aplica os filtros de exclusão de família a uma query do Supabase.
+ * Use sempre que listar de `omie_products` no contexto de venda.
+ */
+export function buildExclusionQuery<T extends { not: (col: string, op: string, val: string) => T }>(
+  query: T,
+): T {
+  let q = query;
+  for (const pattern of EXCLUDED_FAMILIA_PATTERNS) {
+    q = q.not('familia', 'ilike', pattern);
+  }
+  return q;
+}
+
 export interface Product {
   id: string;
   codigo: string;
