@@ -6,10 +6,14 @@ import { useToast } from '@/hooks/use-toast';
 import { syncOrderToOmie, OmieServico } from '@/services/omieService';
 import { usePricingEngine } from '@/hooks/usePricingEngine';
 import { usePriceHistory } from '@/hooks/usePriceHistory';
+import { useCart, VOLUME_UNITS } from '@/hooks/unifiedOrder/useCart';
 import type { RecommendationItem } from '@/hooks/useRecommendationEngine';
 import { DELIVERY_FEES, DeliveryOption } from '@/types';
 import type { AIOrderResult, AICustomerMatch } from '@/components/UnifiedAIAssistant';
 import type { IdentifiedItem } from '@/components/VoiceServiceInput';
+
+// Re-export for backwards compatibility
+export { VOLUME_UNITS };
 
 /* ─── Types ─── */
 export type ProductAccount = 'oben' | 'colacor';
