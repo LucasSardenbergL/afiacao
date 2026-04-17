@@ -61,14 +61,7 @@ export function useUnifiedOrder() {
   const { user, isStaff, loading: authLoading } = useAuth();
   const { toast } = useToast();
 
-  // Customer
-  const [customerSearch, setCustomerSearch] = useState('');
-  const [customers, setCustomers] = useState<OmieCustomer[]>([]);
-  const [selectedCustomer, setSelectedCustomer] = useState<OmieCustomer | null>(null);
-  const [searchingCustomers, setSearchingCustomers] = useState(false);
-  const [loadingCustomer, setLoadingCustomer] = useState(false);
-  const [customerUserId, setCustomerUserId] = useState<string | null>(null);
-  const [requiresPo, setRequiresPo] = useState<boolean>(false);
+  // Company profiles (printing)
   const [companyProfiles, setCompanyProfiles] = useState<Record<string, CompanyProfile>>({});
 
   // Products by account
@@ -77,8 +70,6 @@ export function useUnifiedOrder() {
   const [productSearch, setProductSearch] = useState('');
   const [loadingObenProducts, setLoadingObenProducts] = useState(true);
   const [loadingColacorProducts, setLoadingColacorProducts] = useState(true);
-  const [customerPricesOben, setCustomerPricesOben] = useState<Record<number, number>>({});
-  const [customerPricesColacor, setCustomerPricesColacor] = useState<Record<number, number>>({});
 
   // Afiação
   const [userTools, setUserTools] = useState<UserTool[]>([]);
@@ -89,28 +80,15 @@ export function useUnifiedOrder() {
   const [creatingLocalProfile, setCreatingLocalProfile] = useState(false);
   const [toolCategories, setToolCategories] = useState<ToolCategory[]>([]);
 
-  // Vendedor validation
-  const [vendedorDivergencias, setVendedorDivergencias] = useState<string[]>([]);
-  const [validatingVendedor, setValidatingVendedor] = useState(false);
-
-  // Payment
+  // Payment (forms list & method — customer parcelas live in useCustomerSelection)
   const [formasPagamentoOben, setFormasPagamentoOben] = useState<FormaPagamento[]>([]);
   const [formasPagamentoColacor, setFormasPagamentoColacor] = useState<FormaPagamento[]>([]);
-  const [selectedParcelaOben, setSelectedParcelaOben] = useState<string>('999');
-  const [selectedParcelaColacor, setSelectedParcelaColacor] = useState<string>('999');
   const [loadingFormas, setLoadingFormas] = useState(false);
-  // Auto-calculated volumes (no manual input needed)
   const [ordemCompra, setOrdemCompra] = useState<string>('');
-  const [customerParcelaRankingOben, setCustomerParcelaRankingOben] = useState<string[]>([]);
-  const [customerParcelaRankingColacor, setCustomerParcelaRankingColacor] = useState<string[]>([]);
   const [afiacaoPaymentMethod, setAfiacaoPaymentMethod] = useState<string>('a_vista');
-  // Customer purchase history: product codigo -> last order date
-  const [customerPurchaseHistory, setCustomerPurchaseHistory] = useState<Record<string, string>>({});
 
   // Delivery
   const [deliveryOption, setDeliveryOption] = useState<DeliveryOption>('coleta_entrega');
-  const [addresses, setAddresses] = useState<AddressData[]>([]);
-  const [selectedAddress, setSelectedAddress] = useState<string>('');
   const [selectedTimeSlot, setSelectedTimeSlot] = useState<string>('');
   const [showAddressOptions, setShowAddressOptions] = useState(false);
 
