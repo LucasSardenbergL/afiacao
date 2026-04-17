@@ -124,22 +124,25 @@ export function useUnifiedOrder() {
   });
 
   // Payment (forms list & method) — react-query por conta, 10min stale, só staff
-  const formasPagamentoQuery = (account: ProductAccount) =>
-    useQuery<FormaPagamento[]>({
-      queryKey: ['formas-pagamento', account],
-      enabled: isStaff,
-      staleTime: 10 * 60 * 1000,
-      queryFn: async () => {
-        const { data, error } = await supabase.functions.invoke('omie-vendas-sync', {
-          body: { action: 'listar_formas_pagamento', account },
-        });
-        if (error) throw error;
-        return (data?.formas || []) as FormaPagamento[];
-      },
+  const formasQueryFn = (account: ProductAccount) => async (): Promise<FormaPagamento[]> => {
+    const { data, error } = await supabase.functions.invoke('omie-vendas-sync', {
+      body: { action: 'listar_formas_pagamento', account },
     });
-
-  const obenFormasQuery = formasPagamentoQuery('oben');
-  const colacorFormasQuery = formasPagamentoQuery('colacor');
+    if (error) throw error;
+    return (data?.formas || []) as FormaPagamento[];
+  };
+  const obenFormasQuery = useQuery<FormaPagamento[]>({
+    queryKey: ['formas-pagamento', 'oben'],
+    enabled: isStaff,
+    staleTime: 10 * 60 * 1000,
+    queryFn: formasQueryFn('oben'),
+  });
+  const colacorFormasQuery = useQuery<FormaPagamento[]>({
+    queryKey: ['formas-pagamento', 'colacor'],
+    enabled: isStaff,
+    staleTime: 10 * 60 * 1000,
+    queryFn: formasQueryFn('colacor'),
+  });
   const formasPagamentoOben = obenFormasQuery.data || [];
   const formasPagamentoColacor = colacorFormasQuery.data || [];
   const loadingFormas = obenFormasQuery.isLoading || colacorFormasQuery.isLoading;
