@@ -9,6 +9,7 @@ import {
 import { cn } from '@/lib/utils';
 import { useNvoipCall, type NvoipCallState } from '@/hooks/useNvoipCall';
 import { motion, AnimatePresence } from 'framer-motion';
+import { formatBrPhone, normalizeBrPhone } from '@/lib/phone';
 
 interface NvoipDialerProps {
   phoneNumber: string;
@@ -57,6 +58,8 @@ export function NvoipDialer({ phoneNumber, customerName, onCallEnd, compact = fa
   } = useNvoipCall();
 
   const [dismissed, setDismissed] = useState(false);
+  const displayPhone = formatBrPhone(phoneNumber);
+  const hasValidPhone = normalizeBrPhone(phoneNumber).length >= 10;
 
   // Notify parent when call ends
   useEffect(() => {
@@ -75,6 +78,8 @@ export function NvoipDialer({ phoneNumber, customerName, onCallEnd, compact = fa
         variant="ghost"
         className="h-8 w-8 text-emerald-600 hover:text-emerald-700 hover:bg-emerald-50"
         onClick={() => makeCall(phoneNumber)}
+        disabled={!hasValidPhone}
+        title={hasValidPhone ? `Ligar para ${displayPhone}` : 'Telefone sem DDD válido'}
       >
         <Phone className="w-4 h-4" />
       </Button>
@@ -115,7 +120,7 @@ export function NvoipDialer({ phoneNumber, customerName, onCallEnd, compact = fa
                   )}
                   <div>
                     <p className="text-sm font-medium">{customerName}</p>
-                    <p className="text-xs text-muted-foreground">{phoneNumber}</p>
+                    <p className="text-xs text-muted-foreground">{displayPhone}</p>
                   </div>
                 </div>
                 {(isFinished || callState === 'error') && (
@@ -178,8 +183,9 @@ export function NvoipDialer({ phoneNumber, customerName, onCallEnd, compact = fa
       variant="outline"
       className="gap-1.5 text-xs h-8 text-emerald-700 border-emerald-200 hover:bg-emerald-50"
       onClick={() => makeCall(phoneNumber)}
+      disabled={!hasValidPhone}
     >
-      <Phone className="w-3.5 h-3.5" /> Ligar via Nvoip
+      <Phone className="w-3.5 h-3.5" /> Ligar {hasValidPhone ? displayPhone : 'via Nvoip'}
     </Button>
   );
 }
@@ -195,6 +201,7 @@ export function NvoipFloatingDialer({
     makeCall, endCall, isActive, isConnecting, isRinging, isEstablished, isFinished,
     error,
   } = useNvoipCall();
+  const displayPhone = formatBrPhone(phoneNumber);
 
   // Auto-start call on mount
   useEffect(() => {
@@ -242,7 +249,7 @@ export function NvoipFloatingDialer({
                 </div>
                 <div className="flex-1">
                   <p className="text-sm font-semibold">{customerName}</p>
-                  <p className="text-xs text-muted-foreground">{phoneNumber}</p>
+                  <p className="text-xs text-muted-foreground">{displayPhone}</p>
                 </div>
                 {(isEstablished || isFinished) && (
                   <span className="text-2xl font-mono font-bold tabular-nums">
