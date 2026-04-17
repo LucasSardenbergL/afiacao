@@ -91,6 +91,9 @@ export interface OmieCustomer {
 }
 
 export interface FormaPagamento {
+  codigo: string;
+  descricao: string;
+}
 
 export interface CompanyProfile {
   account: string;
@@ -98,11 +101,6 @@ export interface CompanyProfile {
   cnpj: string;
   phone: string | null;
   address: string | null;
-}
-
-interface _FormaPagamentoMarker {
-  codigo: string;
-  descricao: string;
 }
 
 export interface AddressData {
