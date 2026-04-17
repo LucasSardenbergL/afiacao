@@ -1,0 +1,1 @@
+DELETE FROM public.company_config WHERE key IN ('nvoip_access_token','nvoip_refresh_token','nvoip_token_expires_at');
