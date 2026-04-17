@@ -4001,6 +4001,7 @@ export type Database = {
           name: string
           phone: string | null
           preferred_delivery_time: string | null
+          requires_po: boolean
           updated_at: string
           user_id: string
         }
@@ -4022,6 +4023,7 @@ export type Database = {
           name: string
           phone?: string | null
           preferred_delivery_time?: string | null
+          requires_po?: boolean
           updated_at?: string
           user_id: string
         }
@@ -4043,6 +4045,7 @@ export type Database = {
           name?: string
           phone?: string | null
           preferred_delivery_time?: string | null
+          requires_po?: boolean
           updated_at?: string
           user_id?: string
         }
