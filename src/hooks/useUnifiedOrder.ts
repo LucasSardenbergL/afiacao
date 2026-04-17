@@ -980,39 +980,10 @@ export function useUnifiedOrder() {
     if (newCartItems.length > 0) setCart(prev => [...prev, ...newCartItems]);
   }, [obenProducts, colacorProducts, userTools, servicos, cart, getProductPrice]);
 
-  // Generic Cart
-  const updateQuantity = (index: number, delta: number) => {
-    setCart(cart.map((c, i) => {
-      if (i !== index) return c;
-      const newQty = c.quantity + delta;
-      if (c.type === 'service') {
-        const maxQty = (c as ServiceCartItem).userTool.quantity || 1;
-        if (newQty > maxQty) {
-          toast({ title: 'Quantidade máxima', description: `Máximo: ${maxQty} unidades.` });
-          return c;
-        }
-      }
-      return newQty > 0 ? { ...c, quantity: newQty } : c;
-    }));
-  };
+  // Generic cart actions and subtotals (updateQuantity, updateProductPrice,
+  // removeFromCart, obenSubtotal, colacorProdSubtotal, serviceSubtotal,
+  // totalEstimated) are provided by the useCart hook above.
 
-  const updateProductPrice = (index: number, price: number) => {
-    setCart(cart.map((c, i) => i === index && c.type === 'product' ? { ...c, unit_price: price } as ProductCartItem : c));
-  };
-
-  const removeFromCart = (index: number) => {
-    setCart(cart.filter((_, i) => i !== index));
-  };
-
-  const obenSubtotal = useMemo(() => obenProductItems.reduce((s, c) => s + c.quantity * c.unit_price, 0), [obenProductItems]);
-  const colacorProdSubtotal = useMemo(() => colacorProductItems.reduce((s, c) => s + c.quantity * c.unit_price, 0), [colacorProductItems]);
-  const serviceSubtotal = useMemo(() => {
-    return serviceItems.reduce((s, c) => {
-      const price = getServicePrice(c);
-      return s + (price !== null ? price * c.quantity : 0);
-    }, 0);
-  }, [serviceItems, getServicePrice]);
-  const totalEstimated = obenSubtotal + colacorProdSubtotal + serviceSubtotal;
 
   // A product is "previously purchased" if it has a customer-specific price from Omie OR exists in local purchase history
   const isProductPreviouslyPurchased = useCallback((product: Product, account: ProductAccount): boolean => {
