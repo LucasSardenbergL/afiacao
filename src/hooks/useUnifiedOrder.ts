@@ -6,10 +6,14 @@ import { useToast } from '@/hooks/use-toast';
 import { syncOrderToOmie, OmieServico } from '@/services/omieService';
 import { usePricingEngine } from '@/hooks/usePricingEngine';
 import { usePriceHistory } from '@/hooks/usePriceHistory';
+import { useCart, VOLUME_UNITS } from '@/hooks/unifiedOrder/useCart';
 import type { RecommendationItem } from '@/hooks/useRecommendationEngine';
 import { DELIVERY_FEES, DeliveryOption } from '@/types';
 import type { AIOrderResult, AICustomerMatch } from '@/components/UnifiedAIAssistant';
 import type { IdentifiedItem } from '@/components/VoiceServiceInput';
+
+// Re-export for backwards compatibility
+export { VOLUME_UNITS };
 
 /* ─── Types ─── */
 export type ProductAccount = 'oben' | 'colacor';
@@ -193,13 +197,10 @@ export function useUnifiedOrder() {
   const [selectedTimeSlot, setSelectedTimeSlot] = useState<string>('');
   const [showAddressOptions, setShowAddressOptions] = useState(false);
 
-  // Cart
-  const [cart, setCart] = useState<CartItem[]>([]);
-  // Tintometric pending product (opens color dialog)
-  const [tintPendingProduct, setTintPendingProduct] = useState<Product | null>(null);
+  // Cart state lives in useCart hook (declared after pricing helpers below)
   const [notes, setNotes] = useState('');
   const [submitting, setSubmitting] = useState(false);
-  const [activeTab, setActiveTab] = useState('oben');
+  // activeTab moved into useCart hook below
   const [readyByDate, setReadyByDate] = useState<string>('');
   const [defaultProductionAssigneeId, setDefaultProductionAssigneeId] = useState<string | null>(null);
 
@@ -233,29 +234,36 @@ export function useUnifiedOrder() {
   const { loadDefaultPrices, calculatePrice } = usePricingEngine();
   const { loadPriceHistory, getLastPrice } = usePriceHistory(customerUserId || undefined);
 
-  const productItems = useMemo(() => cart.filter((c): c is ProductCartItem => c.type === 'product'), [cart]);
-  const obenProductItems = useMemo(() => productItems.filter(c => c.account === 'oben'), [productItems]);
-  const colacorProductItems = useMemo(() => productItems.filter(c => c.account === 'colacor'), [productItems]);
-  const serviceItems = useMemo(() => cart.filter((c): c is ServiceCartItem => c.type === 'service'), [cart]);
-  const cartProductIds = useMemo(() => productItems.map(c => c.product.id), [productItems]);
+  // Pricing helpers (defined here so useCart can depend on them)
+  const getProductPrice = useCallback((product: Product): number => {
+    const account = (product.account || 'oben') as ProductAccount;
+    const prices = account === 'oben' ? customerPricesOben : customerPricesColacor;
+    const omiePrice = prices[product.omie_codigo_produto];
+    return (omiePrice && omiePrice > 0) ? omiePrice : product.valor_unitario;
+  }, [customerPricesOben, customerPricesColacor]);
 
-  // Auto-calculate volumes: packaging units (5L, GL, LT, BD, BH) count their qty; all others = 1 volume total
-  const VOLUME_UNITS = ['5L', 'GL', 'LT', 'BD', 'BH'];
-  const calcVolumes = (items: ProductCartItem[]) => {
-    let volumeQty = 0;
-    let hasNonVolume = false;
-    for (const item of items) {
-      const un = (item.product.unidade || '').toUpperCase().trim();
-      if (VOLUME_UNITS.includes(un)) {
-        volumeQty += item.quantity;
-      } else {
-        hasNonVolume = true;
-      }
-    }
-    return volumeQty + (hasNonVolume ? 1 : 0);
-  };
-  const volumesOben = useMemo(() => calcVolumes(obenProductItems), [obenProductItems]);
-  const volumesColacor = useMemo(() => calcVolumes(colacorProductItems), [colacorProductItems]);
+  const getServicePrice = useCallback((item: ServiceCartItem): number | null => {
+    const serviceType = item.servico?.descricao || '';
+    const lastPrice = getLastPrice(item.userTool.id, serviceType);
+    if (lastPrice !== null) return lastPrice;
+    const specs = item.userTool.specifications as Record<string, string> | null;
+    return calculatePrice({ tool_category_id: item.userTool.tool_category_id, specifications: specs });
+  }, [getLastPrice, calculatePrice]);
+
+  // Cart hook — encapsulates cart state, derived items, totals, and actions
+  const cartHook = useCart({ getProductPrice, getServicePrice, servicos });
+  const {
+    cart, setCart,
+    tintPendingProduct, setTintPendingProduct,
+    activeTab, setActiveTab,
+    productItems, obenProductItems, colacorProductItems, serviceItems, cartProductIds,
+    volumesOben, volumesColacor,
+    obenSubtotal, colacorProdSubtotal, serviceSubtotal, totalEstimated,
+    addProductToCart, addTintProductToCart, addServiceToCart,
+    updateServiceServico, updateServiceNotes, updateServicePhotos,
+    updateQuantity, updateProductPrice, removeFromCart, clearCart,
+  } = cartHook;
+
 
   const sortedFormasPagamentoOben = useMemo(() => {
     if (customerParcelaRankingOben.length === 0) return formasPagamentoOben;
@@ -862,78 +870,11 @@ export function useUnifiedOrder() {
     }
   };
 
-  // Product Cart Actions
-  const getProductPrice = useCallback((product: Product): number => {
-    const account = (product.account || 'oben') as ProductAccount;
-    const prices = account === 'oben' ? customerPricesOben : customerPricesColacor;
-    const omiePrice = prices[product.omie_codigo_produto];
-    return (omiePrice && omiePrice > 0) ? omiePrice : product.valor_unitario;
-  }, [customerPricesOben, customerPricesColacor]);
+  // Cart actions and pricing helpers (getProductPrice, getServicePrice,
+  // addProductToCart, addTintProductToCart, addServiceToCart, updateServiceServico,
+  // updateServiceNotes, updateServicePhotos) are now provided by the useCart hook
+  // and the pricing-helpers block defined earlier in this hook.
 
-  const addProductToCart = (product: Product, qty: number = 1) => {
-    // If tintometric base, open color dialog instead of adding directly
-    if (product.is_tintometric && product.tint_type === 'base') {
-      setTintPendingProduct(product);
-      return;
-    }
-    const account = (product.account || 'oben') as ProductAccount;
-    const existing = cart.find((c): c is ProductCartItem => c.type === 'product' && c.product.id === product.id && !c.tint_formula_id);
-    if (existing) {
-      setCart(cart.map(c => c.type === 'product' && (c as ProductCartItem).product.id === product.id && !(c as ProductCartItem).tint_formula_id
-        ? { ...c, quantity: c.quantity + qty } as ProductCartItem : c));
-    } else {
-      setCart([...cart, { type: 'product', product, quantity: qty, unit_price: getProductPrice(product), account }]);
-    }
-  };
-
-  const addTintProductToCart = (product: Product, formulaId: string, corId: string, nomeCor: string, precoFinal: number, custoCorantes: number) => {
-    const account = (product.account || 'oben') as ProductAccount;
-    // Each tint formula selection is a unique cart item
-    const existing = cart.find((c): c is ProductCartItem => c.type === 'product' && c.tint_formula_id === formulaId);
-    if (existing) {
-      setCart(cart.map(c => c.type === 'product' && (c as ProductCartItem).tint_formula_id === formulaId
-        ? { ...c, quantity: c.quantity + 1 } as ProductCartItem : c));
-    } else {
-      setCart([...cart, {
-        type: 'product', product, quantity: 1, unit_price: precoFinal, account,
-        tint_cor_id: corId, tint_nome_cor: nomeCor, tint_custo_corantes: custoCorantes, tint_formula_id: formulaId,
-      }]);
-    }
-    setTintPendingProduct(null);
-  };
-
-  // Service Cart Actions
-  const addServiceToCart = (tool: UserTool) => {
-    if (cart.some(c => c.type === 'service' && (c as ServiceCartItem).userTool.id === tool.id)) {
-      toast({ title: 'Já adicionada', description: 'Esta ferramenta já está no carrinho.' });
-      return;
-    }
-    setCart([...cart, { type: 'service', userTool: tool, servico: null, quantity: 1, photos: [] }]);
-  };
-
-  const updateServiceServico = (toolId: string, codigoServico: number) => {
-    const servico = servicos.find(s => s.omie_codigo_servico === codigoServico) || null;
-    setCart(cart.map(c => c.type === 'service' && (c as ServiceCartItem).userTool.id === toolId
-      ? { ...c, servico } as ServiceCartItem : c));
-  };
-
-  const updateServiceNotes = (toolId: string, newNotes: string) => {
-    setCart(cart.map(c => c.type === 'service' && (c as ServiceCartItem).userTool.id === toolId
-      ? { ...c, notes: newNotes } as ServiceCartItem : c));
-  };
-
-  const updateServicePhotos = (toolId: string, photos: string[]) => {
-    setCart(cart.map(c => c.type === 'service' && (c as ServiceCartItem).userTool.id === toolId
-      ? { ...c, photos } as ServiceCartItem : c));
-  };
-
-  const getServicePrice = useCallback((item: ServiceCartItem): number | null => {
-    const serviceType = item.servico?.descricao || '';
-    const lastPrice = getLastPrice(item.userTool.id, serviceType);
-    if (lastPrice !== null) return lastPrice;
-    const specs = item.userTool.specifications as Record<string, string> | null;
-    return calculatePrice({ tool_category_id: item.userTool.tool_category_id, specifications: specs });
-  }, [getLastPrice, calculatePrice]);
 
   const getFilteredServicos = (tool: UserTool): OmieServico[] => {
     const categoryName = tool.tool_categories?.name?.toLowerCase().trim();
@@ -1039,39 +980,10 @@ export function useUnifiedOrder() {
     if (newCartItems.length > 0) setCart(prev => [...prev, ...newCartItems]);
   }, [obenProducts, colacorProducts, userTools, servicos, cart, getProductPrice]);
 
-  // Generic Cart
-  const updateQuantity = (index: number, delta: number) => {
-    setCart(cart.map((c, i) => {
-      if (i !== index) return c;
-      const newQty = c.quantity + delta;
-      if (c.type === 'service') {
-        const maxQty = (c as ServiceCartItem).userTool.quantity || 1;
-        if (newQty > maxQty) {
-          toast({ title: 'Quantidade máxima', description: `Máximo: ${maxQty} unidades.` });
-          return c;
-        }
-      }
-      return newQty > 0 ? { ...c, quantity: newQty } : c;
-    }));
-  };
+  // Generic cart actions and subtotals (updateQuantity, updateProductPrice,
+  // removeFromCart, obenSubtotal, colacorProdSubtotal, serviceSubtotal,
+  // totalEstimated) are provided by the useCart hook above.
 
-  const updateProductPrice = (index: number, price: number) => {
-    setCart(cart.map((c, i) => i === index && c.type === 'product' ? { ...c, unit_price: price } as ProductCartItem : c));
-  };
-
-  const removeFromCart = (index: number) => {
-    setCart(cart.filter((_, i) => i !== index));
-  };
-
-  const obenSubtotal = useMemo(() => obenProductItems.reduce((s, c) => s + c.quantity * c.unit_price, 0), [obenProductItems]);
-  const colacorProdSubtotal = useMemo(() => colacorProductItems.reduce((s, c) => s + c.quantity * c.unit_price, 0), [colacorProductItems]);
-  const serviceSubtotal = useMemo(() => {
-    return serviceItems.reduce((s, c) => {
-      const price = getServicePrice(c);
-      return s + (price !== null ? price * c.quantity : 0);
-    }, 0);
-  }, [serviceItems, getServicePrice]);
-  const totalEstimated = obenSubtotal + colacorProdSubtotal + serviceSubtotal;
 
   // A product is "previously purchased" if it has a customer-specific price from Omie OR exists in local purchase history
   const isProductPreviouslyPurchased = useCallback((product: Product, account: ProductAccount): boolean => {
