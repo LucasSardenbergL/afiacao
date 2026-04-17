@@ -258,6 +258,39 @@ export type Database = {
         }
         Relationships: []
       }
+      company_profiles: {
+        Row: {
+          account: string
+          address: string | null
+          cnpj: string
+          created_at: string
+          id: string
+          legal_name: string
+          phone: string | null
+          updated_at: string
+        }
+        Insert: {
+          account: string
+          address?: string | null
+          cnpj: string
+          created_at?: string
+          id?: string
+          legal_name: string
+          phone?: string | null
+          updated_at?: string
+        }
+        Update: {
+          account?: string
+          address?: string | null
+          cnpj?: string
+          created_at?: string
+          id?: string
+          legal_name?: string
+          phone?: string | null
+          updated_at?: string
+        }
+        Relationships: []
+      }
       conversao_unidades: {
         Row: {
           cnpj_fornecedor: string
