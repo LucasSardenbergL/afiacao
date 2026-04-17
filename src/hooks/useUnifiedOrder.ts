@@ -187,10 +187,12 @@ export function useUnifiedOrder() {
     updateQuantity, updateProductPrice, removeFromCart, clearCart,
   } = cartHook;
 
-  // Wrap clearCustomer to also clear cart-level state in this hook
+  // Wrap clearCustomer to also clear cart + ordem de compra
   const clearCustomer = useCallback(() => {
     clearCustomerInternal();
     setCart([]);
+    setOrdemCompra('');
+    setUserTools([]);
   }, [clearCustomerInternal, setCart]);
 
 
