@@ -101,37 +101,59 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
   };
 
   useEffect(() => {
+    let isMounted = true;
+
     // Set up auth state listener FIRST
     const { data: { subscription } } = supabase.auth.onAuthStateChange(
       (event, session) => {
+        if (!isMounted) return;
         setSession(session);
         setUser(session?.user ?? null);
-        setLoading(false);
 
-        // Defer profile creation to avoid deadlock
-        if (event === 'SIGNED_IN' && session?.user) {
-          setTimeout(() => {
-            createProfileIfNotExists(session.user.id, session.user.email);
-            fetchUserRoleAndApproval(session.user.id);
-          }, 0);
-        } else if (event === 'SIGNED_OUT') {
+        if (event === 'SIGNED_OUT') {
           setRole(null);
           setIsApproved(false);
+          setLoading(false);
+          return;
+        }
+
+        // Load role/approval for any session-bearing event (SIGNED_IN, INITIAL_SESSION, TOKEN_REFRESHED, USER_UPDATED)
+        if (session?.user) {
+          // Defer to avoid deadlock with Supabase auth client
+          setTimeout(async () => {
+            if (!isMounted) return;
+            if (event === 'SIGNED_IN') {
+              createProfileIfNotExists(session.user.id, session.user.email);
+            }
+            await fetchUserRoleAndApproval(session.user.id);
+            if (isMounted) setLoading(false);
+          }, 0);
+        } else {
+          // No session — safe to stop loading immediately
+          setLoading(false);
         }
       }
     );
 
-    // THEN check for existing session
-    supabase.auth.getSession().then(async ({ data: { session } }) => {
-      setSession(session);
-      setUser(session?.user ?? null);
-      if (session?.user) {
-        await fetchUserRoleAndApproval(session.user.id);
+    // THEN check for existing session (covers cold start before any event fires)
+    supabase.auth.getSession().then(async ({ data: { session }, error }) => {
+      if (!isMounted) return;
+      if (error) {
+        console.error('Error fetching session:', error);
+        setLoading(false);
+        return;
       }
-      setLoading(false);
+      // If there's no session, stop loading. If there IS a session, the
+      // INITIAL_SESSION event from onAuthStateChange will handle role loading.
+      if (!session) {
+        setLoading(false);
+      }
     });
 
-    return () => subscription.unsubscribe();
+    return () => {
+      isMounted = false;
+      subscription.unsubscribe();
+    };
   }, []);
 
   const createProfileIfNotExists = async (userId: string, email?: string) => {
