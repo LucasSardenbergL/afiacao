@@ -74,6 +74,7 @@ const GovernancePermissions = lazy(() => import("./pages/GovernancePermissions")
 const GovernanceMathParams = lazy(() => import("./pages/GovernanceMathParams"));
 const GovernanceAudit = lazy(() => import("./pages/GovernanceAudit"));
 const GovernanceSettings = lazy(() => import("./pages/GovernanceSettings"));
+const GovernanceCompanies = lazy(() => import("./pages/GovernanceCompanies"));
 const AIops = lazy(() => import("./pages/AIops"));
 const NfeReceipt = lazy(() => import("./pages/NfeReceipt"));
 const TintDashboard = lazy(() => import("./pages/TintDashboard"));
@@ -187,6 +188,7 @@ const App = () => (
               <Route path="governance/math" element={<GovernanceMathParams />} />
               <Route path="governance/audit" element={<GovernanceAudit />} />
               <Route path="governance/settings" element={<GovernanceSettings />} />
+              <Route path="governance/companies" element={<GovernanceCompanies />} />
               <Route path="ai-ops" element={<AIops />} />
               <Route path="nfe-receipt" element={<NfeReceipt />} />
               <Route path="tintometrico" element={<TintDashboard />} />
