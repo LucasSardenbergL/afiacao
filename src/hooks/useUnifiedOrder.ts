@@ -82,9 +82,9 @@ export function useUnifiedOrder() {
 
   // Product catalog state lives in useProductCatalog hook (declared after customer selection below)
 
-  // Afiação
-  const [userTools, setUserTools] = useState<UserTool[]>([]);
-  const [loadingTools, setLoadingTools] = useState(false);
+  const queryClient = useQueryClient();
+
+  // Afiação (userTools/loadingTools agora vêm do useQuery declarado após customerSel)
   const [addToolDialogOpen, setAddToolDialogOpen] = useState(false);
   const [creatingLocalProfile, setCreatingLocalProfile] = useState(false);
 
