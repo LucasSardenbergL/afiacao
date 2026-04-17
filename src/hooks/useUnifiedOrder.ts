@@ -1079,12 +1079,8 @@ export function useUnifiedOrder() {
     }
   };
 
-  // clearCustomer is defined earlier (wraps useCustomerSelection.clearCustomer + clears cart)
-  // Extra reset for fields owned by this hook
-  const resetExtraOnClear = useCallback(() => {
-    setOrdemCompra('');
-  }, []);
-  // We monkey-patch by re-wrapping clearCustomer below in return
+  // clearCustomer defined earlier (wraps useCustomerSelection.clearCustomer + clears cart/ordemCompra/userTools)
+
 
 
   return {
