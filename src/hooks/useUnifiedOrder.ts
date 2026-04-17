@@ -114,14 +114,7 @@ export function useUnifiedOrder() {
   
   // Order success dialog
   const [orderSuccessOpen, setOrderSuccessOpen] = useState(false);
-  const [lastOrderData, setLastOrderData] = useState<{
-    customerName: string;
-    customerDocument: string;
-    items: Array<{ description: string; quantity: number; unitPrice: number; codigo?: string; unidade?: string; tintCorId?: string; tintNomeCor?: string }>;
-    total: number;
-    orderNumbers: string[];
-    printDataList: Array<import('@/components/OrderPrintLayout').PrintOrderData>;
-  } | null>(null);
+  const [lastOrderData, setLastOrderData] = useState<LastOrderDataShape | null>(null);
 
   // Pricing engine (calc-only, no customer dependency)
   const { loadDefaultPrices, calculatePrice } = usePricingEngine();
