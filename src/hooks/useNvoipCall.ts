@@ -1,6 +1,7 @@
 import { useState, useRef, useCallback, useEffect } from 'react';
 import { invokeFunction } from '@/lib/invoke-function';
 import { useToast } from '@/hooks/use-toast';
+import { normalizeBrPhone, formatBrPhone } from '@/lib/phone';
 
 export type NvoipCallState =
   | 'idle'
@@ -108,9 +109,14 @@ export function useNvoipCall(): UseNvoipCallReturn {
       setAudioLink(null);
 
       try {
+        const normalized = normalizeBrPhone(phoneNumber);
+        if (normalized.length < 10) {
+          throw new Error('Telefone inválido. É necessário DDD + número (ex: 37999999999).');
+        }
+
         const data = await invokeFunction<{ success: boolean; callId: string; state: string }>(
           'nvoip-calls',
-          { action: 'make_call', called: phoneNumber }
+          { action: 'make_call', called: normalized }
         );
 
         if (!data.success || !data.callId) {
@@ -125,7 +131,7 @@ export function useNvoipCall(): UseNvoipCallReturn {
           pollCallStatus(data.callId);
         }, 2000);
 
-        toast({ title: '📞 Chamada iniciada', description: `Ligando para ${phoneNumber}...` });
+        toast({ title: '📞 Chamada iniciada', description: `Ligando para ${formatBrPhone(normalized)}...` });
       } catch (err: any) {
         setCallState('error');
         setError(err.message || 'Erro ao realizar chamada');
