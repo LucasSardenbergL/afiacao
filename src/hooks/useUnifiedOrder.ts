@@ -197,10 +197,7 @@ export function useUnifiedOrder() {
   const [selectedTimeSlot, setSelectedTimeSlot] = useState<string>('');
   const [showAddressOptions, setShowAddressOptions] = useState(false);
 
-  // Cart
-  const [cart, setCart] = useState<CartItem[]>([]);
-  // Tintometric pending product (opens color dialog)
-  const [tintPendingProduct, setTintPendingProduct] = useState<Product | null>(null);
+  // Cart state lives in useCart hook (declared after pricing helpers below)
   const [notes, setNotes] = useState('');
   const [submitting, setSubmitting] = useState(false);
   const [activeTab, setActiveTab] = useState('oben');
