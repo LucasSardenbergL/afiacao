@@ -417,8 +417,10 @@ export function useCustomerSelection({
         }).catch(() => {});
       }
 
-      // Background: Omie history → purchase history
-      loadOmiePurchaseHistory(cust);
+      // Purchase history (local + Omie) é carregado pelo useQuery acima.
+      // Ao atualizar selectedCustomer com codigo_cliente_colacor preenchido pelo
+      // autoCreateInMissingAccounts, a query refaz o fetch automaticamente.
+
 
       // Merge local "last-practiced" prices into Omie pricing maps
       const localPricesByOmie = await resolveLocalPricesByOmieCode(localPriceResult.data || null);
