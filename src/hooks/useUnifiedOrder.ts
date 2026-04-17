@@ -183,6 +183,21 @@ export function useUnifiedOrder() {
     updateQuantity, updateProductPrice, removeFromCart, clearCart,
   } = cartHook;
 
+  // Product catalog (Oben + Colacor) — só carrega para staff
+  const catalog = useProductCatalog({
+    enabled: isStaff,
+    customerPricesOben,
+    customerPricesColacor,
+    customerPurchaseHistory,
+  });
+  const {
+    obenProducts, colacorProducts,
+    loadingObenProducts, loadingColacorProducts,
+    productSearch, setProductSearch,
+    filteredObenProducts, filteredColacorProducts,
+    isProductPreviouslyPurchased, getProductLastOrderDate,
+  } = catalog;
+
   // Wrap clearCustomer to also clear cart + ordem de compra
   const clearCustomer = useCallback(() => {
     clearCustomerInternal();
@@ -223,12 +238,9 @@ export function useUnifiedOrder() {
     ? (cart.length === 0 ? 1 : 2)
     : (!selectedCustomer ? 0 : cart.length === 0 ? 1 : 2);
 
-  // Staff: load all catalogs
+  // Staff: load all catalogs (products are loaded inside useProductCatalog when isStaff=true)
   useEffect(() => {
     if (isStaff) {
-      // Load products in parallel but stock sync will be serialized
-      loadProductsForAccount('oben');
-      loadProductsForAccount('colacor');
       loadFormasPagamento('oben');
       loadFormasPagamento('colacor');
       loadServicosColacor();
@@ -273,82 +285,7 @@ export function useUnifiedOrder() {
 
   // Customer search & selection now live in useCustomerSelection hook
 
-  const loadProductsForAccount = async (account: ProductAccount) => {
-    const setLoading = account === 'oben' ? setLoadingObenProducts : setLoadingColacorProducts;
-    const setProds = account === 'oben' ? setObenProducts : setColacorProducts;
-    setLoading(true);
-    try {
-      const { data } = await supabase
-        .from('omie_products')
-        .select('id, codigo, descricao, unidade, valor_unitario, estoque, ativo, omie_codigo_produto, account, is_tintometric, tint_type, metadata')
-        .eq('account', account)
-        .not('familia', 'ilike', '%imobilizado%')
-        .not('familia', 'ilike', '%uso e consumo%')
-        .not('familia', 'ilike', '%matérias primas para conversão de cintas%')
-        .not('familia', 'ilike', '%jumbos de lixa para discos%')
-        .not('familia', 'ilike', 'jumbo%')
-        .not('familia', 'ilike', '%material para tingimix%')
-        .order('descricao');
-      if (!data || data.length === 0) {
-        try {
-          let nextPage: number | null = 1;
-          while (nextPage) {
-            const { data: syncResult, error: syncError } = await supabase.functions.invoke('omie-vendas-sync', {
-              body: { action: 'sync_products', start_page: nextPage, account },
-            });
-            if (syncError) throw syncError;
-            nextPage = syncResult.nextPage || null;
-          }
-          const { data: refreshed } = await supabase
-            .from('omie_products')
-            .select('id, codigo, descricao, unidade, valor_unitario, estoque, ativo, omie_codigo_produto, account, is_tintometric, tint_type, metadata')
-            .eq('account', account)
-            .not('familia', 'ilike', '%imobilizado%')
-            .not('familia', 'ilike', '%uso e consumo%')
-            .not('familia', 'ilike', '%matérias primas para conversão de cintas%')
-            .not('familia', 'ilike', '%jumbos de lixa para discos%')
-            .not('familia', 'ilike', 'jumbo%')
-            .not('familia', 'ilike', '%material para tingimix%')
-            .order('descricao');
-          setProds((refreshed || []) as Product[]);
-        } catch (syncErr) { console.error('Sync error:', syncErr); }
-      } else {
-        setProds(data as Product[]);
-      }
-      syncStockInBackground(account, setProds);
-    } catch (e) { console.error(e); }
-    finally { setLoading(false); }
-  };
-
-  // Serialize stock syncs to avoid Omie rate limits
-  const stockSyncQueue = useRef<Promise<void>>(Promise.resolve());
-
-  const syncStockInBackground = (account: ProductAccount, setProds: React.Dispatch<React.SetStateAction<Product[]>>) => {
-    stockSyncQueue.current = stockSyncQueue.current.then(async () => {
-      try {
-        let nextPage: number | null = 1;
-        while (nextPage) {
-          const { data, error } = await supabase.functions.invoke('omie-vendas-sync', {
-            body: { action: 'sync_estoque', start_page: nextPage, account },
-          });
-          if (error) break;
-          nextPage = data?.nextPage || null;
-        }
-        const { data: refreshed } = await supabase
-          .from('omie_products')
-          .select('id, codigo, descricao, unidade, valor_unitario, estoque, ativo, omie_codigo_produto, account, is_tintometric, tint_type, metadata')
-          .eq('account', account)
-          .not('familia', 'ilike', '%imobilizado%')
-          .not('familia', 'ilike', '%uso e consumo%')
-          .not('familia', 'ilike', '%matérias primas para conversão de cintas%')
-          .not('familia', 'ilike', '%jumbos de lixa para discos%')
-          .not('familia', 'ilike', 'jumbo%')
-          .not('familia', 'ilike', '%material para tingimix%')
-          .order('descricao');
-        if (refreshed) setProds(refreshed as Product[]);
-      } catch (e) { console.error(`Background stock sync error (${account}):`, e); }
-    });
-  };
+  // loadProductsForAccount + syncStockInBackground now live in useProductCatalog hook
 
   const loadServicosColacor = async () => {
     try {
@@ -538,76 +475,9 @@ export function useUnifiedOrder() {
   // totalEstimated) are provided by the useCart hook above.
 
 
-  // A product is "previously purchased" if it has a customer-specific price from Omie OR exists in local purchase history
-  const isProductPreviouslyPurchased = useCallback((product: Product, account: ProductAccount): boolean => {
-    const prices = account === 'oben' ? customerPricesOben : customerPricesColacor;
-    if (prices[product.omie_codigo_produto]) return true;
-    if (customerPurchaseHistory[product.codigo]) return true;
-    if (customerPurchaseHistory[`pid:${product.id}`]) return true;
-    if (customerPurchaseHistory[`omie:${product.omie_codigo_produto}`]) return true;
-    return false;
-  }, [customerPricesOben, customerPricesColacor, customerPurchaseHistory]);
+  // isProductPreviouslyPurchased, getProductLastOrderDate, filteredObenProducts,
+  // filteredColacorProducts now live in useProductCatalog hook (destructured above).
 
-  const getProductLastOrderDate = useCallback((product: Product): string | null => {
-    // Check local history first
-    const local = customerPurchaseHistory[product.codigo] || customerPurchaseHistory[`pid:${product.id}`];
-    if (local) return local;
-    // Check Omie history by omie_codigo_produto
-    const omieDate = customerPurchaseHistory[`omie:${product.omie_codigo_produto}`];
-    if (omieDate) {
-      // Omie dates are DD/MM/YYYY, convert to ISO for consistency
-      const parts = omieDate.split('/');
-      if (parts.length === 3) {
-        return `${parts[2]}-${parts[1]}-${parts[0]}T00:00:00`;
-      }
-      return omieDate;
-    }
-    return null;
-  }, [customerPurchaseHistory]);
-
-  const filteredObenProducts = useMemo(() => {
-    const hasCustomerPrices = Object.keys(customerPricesOben).length > 0;
-    const hasPurchaseHistory = Object.keys(customerPurchaseHistory).length > 0;
-    const shouldPrioritize = hasCustomerPrices || hasPurchaseHistory;
-    const sorted = [...obenProducts].sort((a, b) => {
-      if (shouldPrioritize) {
-        const aPrev = isProductPreviouslyPurchased(a, 'oben');
-        const bPrev = isProductPreviouslyPurchased(b, 'oben');
-        if (aPrev && !bPrev) return -1;
-        if (!aPrev && bPrev) return 1;
-      }
-      if (a.ativo && !b.ativo) return -1;
-      if (!a.ativo && b.ativo) return 1;
-      return a.descricao.localeCompare(b.descricao);
-    });
-    if (!productSearch) return sorted.slice(0, 50);
-    return sorted.filter(p =>
-      p.descricao.toLowerCase().includes(productSearch.toLowerCase()) ||
-      p.codigo.toLowerCase().includes(productSearch.toLowerCase())
-    ).slice(0, 50);
-  }, [obenProducts, productSearch, customerPricesOben, customerPurchaseHistory, isProductPreviouslyPurchased]);
-
-  const filteredColacorProducts = useMemo(() => {
-    const hasCustomerPrices = Object.keys(customerPricesColacor).length > 0;
-    const hasPurchaseHistory = Object.keys(customerPurchaseHistory).length > 0;
-    const shouldPrioritize = hasCustomerPrices || hasPurchaseHistory;
-    const sorted = [...colacorProducts].sort((a, b) => {
-      if (shouldPrioritize) {
-        const aPrev = isProductPreviouslyPurchased(a, 'colacor');
-        const bPrev = isProductPreviouslyPurchased(b, 'colacor');
-        if (aPrev && !bPrev) return -1;
-        if (!aPrev && bPrev) return 1;
-      }
-      if (a.ativo && !b.ativo) return -1;
-      if (!a.ativo && b.ativo) return 1;
-      return a.descricao.localeCompare(b.descricao);
-    });
-    if (!productSearch) return sorted.slice(0, 50);
-    return sorted.filter(p =>
-      p.descricao.toLowerCase().includes(productSearch.toLowerCase()) ||
-      p.codigo.toLowerCase().includes(productSearch.toLowerCase())
-    ).slice(0, 50);
-  }, [colacorProducts, productSearch, customerPricesColacor, customerPurchaseHistory, isProductPreviouslyPurchased]);
 
   const availableTools = useMemo(() =>
     userTools.filter(t => !cart.some(c => c.type === 'service' && (c as ServiceCartItem).userTool.id === t.id)),
