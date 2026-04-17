@@ -204,7 +204,7 @@ export function useUnifiedOrder() {
     customerParcelaRankingColacor,
     addresses,
     selectedAddress, setSelectedAddress,
-    customerPurchaseHistory, setCustomerPurchaseHistory,
+    customerPurchaseHistory,
     vendedorDivergencias, validatingVendedor,
     selectCustomer, clearCustomer: clearCustomerInternal,
   } = customerSel;
