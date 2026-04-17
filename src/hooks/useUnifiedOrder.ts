@@ -3,14 +3,16 @@ import { useNavigate } from 'react-router-dom';
 import { supabase } from '@/integrations/supabase/client';
 import { useAuth } from '@/contexts/AuthContext';
 import { useToast } from '@/hooks/use-toast';
-import { syncOrderToOmie, OmieServico } from '@/services/omieService';
+import { OmieServico } from '@/services/omieService';
 import { usePricingEngine } from '@/hooks/usePricingEngine';
 import { usePriceHistory } from '@/hooks/usePriceHistory';
 import { useCart, VOLUME_UNITS } from '@/hooks/unifiedOrder/useCart';
 import { useCustomerSelection } from '@/hooks/unifiedOrder/useCustomerSelection';
 import { useProductCatalog } from '@/hooks/unifiedOrder/useProductCatalog';
+import { submitOrder as submitOrderService, submitQuote as submitQuoteService } from '@/services/orderSubmission';
+import type { LastOrderDataShape } from '@/services/orderSubmission';
 import type { RecommendationItem } from '@/hooks/useRecommendationEngine';
-import { DELIVERY_FEES, DeliveryOption } from '@/types';
+import { DeliveryOption } from '@/types';
 import type { AIOrderResult, AICustomerMatch } from '@/components/UnifiedAIAssistant';
 import type { IdentifiedItem } from '@/components/VoiceServiceInput';
 
@@ -112,14 +114,7 @@ export function useUnifiedOrder() {
   
   // Order success dialog
   const [orderSuccessOpen, setOrderSuccessOpen] = useState(false);
-  const [lastOrderData, setLastOrderData] = useState<{
-    customerName: string;
-    customerDocument: string;
-    items: Array<{ description: string; quantity: number; unitPrice: number; codigo?: string; unidade?: string; tintCorId?: string; tintNomeCor?: string }>;
-    total: number;
-    orderNumbers: string[];
-    printDataList: Array<import('@/components/OrderPrintLayout').PrintOrderData>;
-  } | null>(null);
+  const [lastOrderData, setLastOrderData] = useState<LastOrderDataShape | null>(null);
 
   // Pricing engine (calc-only, no customer dependency)
   const { loadDefaultPrices, calculatePrice } = usePricingEngine();
@@ -545,405 +540,109 @@ export function useUnifiedOrder() {
     }
   };
 
-  // Submit
-  // Save as quote (orçamento) – no Omie sync
-  const submitQuote = async () => {
+  // Submit — orchestrates state around the pure submit functions in services/orderSubmission
+  const submitQuote = useCallback(async () => {
     if (!selectedCustomer || cart.length === 0 || !user) return;
     setSubmitting(true);
-    const hasObenProducts = obenProductItems.length > 0;
-    const hasColacorProducts = colacorProductItems.length > 0;
-
-    const selectedAddr = addresses.find(a => a.id === selectedAddress);
-    const storedCustomerAddress = selectedAddr
-      ? `${selectedAddr.street}, ${selectedAddr.number}${selectedAddr.complement ? ' - ' + selectedAddr.complement : ''} – ${selectedAddr.neighborhood}, ${selectedAddr.city}/${selectedAddr.state} – CEP: ${selectedAddr.zipCode}`
-      : selectedCustomer.endereco
-        ? `${selectedCustomer.endereco}, ${selectedCustomer.endereco_numero || 'S/N'}${selectedCustomer.complemento ? ' - ' + selectedCustomer.complemento : ''} – ${selectedCustomer.bairro || ''}, ${selectedCustomer.cidade || ''}/${selectedCustomer.estado || ''} – CEP: ${selectedCustomer.cep || ''}`
-        : null;
-    let storedCustomerPhone = selectedCustomer.telefone || null;
-    const custUserId = customerUserId || user?.id;
-    if (custUserId) {
-      const { data: cp } = await supabase.from('profiles').select('phone').eq('user_id', custUserId).maybeSingle();
-      if (cp?.phone) storedCustomerPhone = cp.phone;
-    }
-
     try {
-      const results: string[] = [];
-      if (hasObenProducts) {
-        const itemsPayload = obenProductItems.map(c => ({
-          product_id: c.product.id, omie_codigo_produto: c.product.omie_codigo_produto,
-          codigo: c.product.codigo, descricao: c.product.descricao, unidade: c.product.unidade,
-          quantidade: c.quantity, valor_unitario: c.unit_price, valor_total: c.quantity * c.unit_price,
-          ...(c.tint_cor_id ? { tint_cor_id: c.tint_cor_id, tint_nome_cor: c.tint_nome_cor, tint_formula_id: c.tint_formula_id } : {}),
-        }));
-        const { error: insertError } = await supabase
-          .from('sales_orders').insert({
-            customer_user_id: customerUserId || user.id, created_by: user.id,
-            items: itemsPayload, subtotal: obenSubtotal, total: obenSubtotal,
-            status: 'orcamento', notes: notes || null, account: 'oben',
-            customer_address: storedCustomerAddress, customer_phone: storedCustomerPhone,
-          } as any);
-        if (insertError) throw insertError;
-        results.push('Orçamento Oben salvo');
+      const result = await submitQuoteService({
+        customer: selectedCustomer,
+        customerUserId,
+        user,
+        cart: { obenProductItems, colacorProductItems },
+        subtotals: { oben: obenSubtotal, colacor: colacorProdSubtotal },
+        delivery: {
+          option: deliveryOption,
+          selectedAddress: addresses.find(a => a.id === selectedAddress),
+        },
+        meta: { notes },
+        supabase,
+      });
+      if (result.success) {
+        toast({ title: 'Orçamento salvo', description: result.results.join(' | ') });
+        clearCart();
+        setNotes('');
+        navigate('/sales/quotes');
+      } else {
+        toast({
+          title: 'Erro ao salvar orçamento',
+          description: result.errors[0]?.message || 'Falha desconhecida',
+          variant: 'destructive',
+        });
       }
-      if (hasColacorProducts) {
-        const itemsPayload = colacorProductItems.map(c => ({
-          product_id: c.product.id, omie_codigo_produto: c.product.omie_codigo_produto,
-          codigo: c.product.codigo, descricao: c.product.descricao, unidade: c.product.unidade,
-          quantidade: c.quantity, valor_unitario: c.unit_price, valor_total: c.quantity * c.unit_price,
-        }));
-        const { error: insertError } = await supabase
-          .from('sales_orders').insert({
-            customer_user_id: customerUserId || user.id, created_by: user.id,
-            items: itemsPayload, subtotal: colacorProdSubtotal, total: colacorProdSubtotal,
-            status: 'orcamento', notes: notes || null, account: 'colacor',
-            customer_address: storedCustomerAddress, customer_phone: storedCustomerPhone,
-          } as any);
-        if (insertError) throw insertError;
-        results.push('Orçamento Colacor salvo');
-      }
-      toast({ title: 'Orçamento salvo', description: results.join(' | ') });
-      setCart([]);
-      setNotes('');
-      navigate('/sales/quotes');
-    } catch (error: any) {
-      toast({ title: 'Erro ao salvar orçamento', description: error.message, variant: 'destructive' });
     } finally {
       setSubmitting(false);
     }
-  };
+  }, [
+    selectedCustomer, cart.length, user, customerUserId,
+    obenProductItems, colacorProductItems, obenSubtotal, colacorProdSubtotal,
+    deliveryOption, addresses, selectedAddress, notes,
+    clearCart, toast, navigate,
+  ]);
 
-  const submitOrder = async () => {
+  const submitOrder = useCallback(async () => {
     if (!selectedCustomer || cart.length === 0 || !user) return;
     setSubmitting(true);
-    const hasObenProducts = obenProductItems.length > 0;
-    const hasColacorProducts = colacorProductItems.length > 0;
-    const hasServices = serviceItems.length > 0;
-    const results: string[] = [];
-
-    // Pre-compute customer address/phone for storage
-    const selectedAddr = addresses.find(a => a.id === selectedAddress);
-    const storedCustomerAddress = selectedAddr
-      ? `${selectedAddr.street}, ${selectedAddr.number}${selectedAddr.complement ? ' - ' + selectedAddr.complement : ''} – ${selectedAddr.neighborhood}, ${selectedAddr.city}/${selectedAddr.state} – CEP: ${selectedAddr.zipCode}`
-      : selectedCustomer.endereco
-        ? `${selectedCustomer.endereco}, ${selectedCustomer.endereco_numero || 'S/N'}${selectedCustomer.complemento ? ' - ' + selectedCustomer.complemento : ''} – ${selectedCustomer.bairro || ''}, ${selectedCustomer.cidade || ''}/${selectedCustomer.estado || ''} – CEP: ${selectedCustomer.cep || ''}`
-        : null;
-    let storedCustomerPhone = selectedCustomer.telefone || null;
-    const custUserId2 = customerUserId || user?.id;
-    if (custUserId2) {
-      const { data: cp } = await supabase.from('profiles').select('phone').eq('user_id', custUserId2).maybeSingle();
-      if (cp?.phone) storedCustomerPhone = cp.phone;
-    }
-
     try {
-      if (hasObenProducts) {
-        const itemsPayload = obenProductItems.map(c => ({
-          product_id: c.product.id, omie_codigo_produto: c.product.omie_codigo_produto,
-          codigo: c.product.codigo, descricao: c.product.descricao, unidade: c.product.unidade,
-          quantidade: c.quantity, valor_unitario: c.unit_price, valor_total: c.quantity * c.unit_price,
-          ...(c.tint_cor_id ? { tint_cor_id: c.tint_cor_id, tint_nome_cor: c.tint_nome_cor, tint_formula_id: c.tint_formula_id } : {}),
-        }));
-        const { data: salesOrder, error: insertError } = await supabase
-          .from('sales_orders').insert({
-            customer_user_id: customerUserId || user.id, created_by: user.id,
-            items: itemsPayload, subtotal: obenSubtotal, total: obenSubtotal,
-            status: 'rascunho', notes: notes || null, account: 'oben',
-            customer_address: storedCustomerAddress, customer_phone: storedCustomerPhone,
-            ready_by_date: readyByDate || null,
-          } as any).select('id').single();
-        if (insertError) throw insertError;
-        const { data: omieResult, error: omieError } = await supabase.functions.invoke('omie-vendas-sync', {
-          body: {
-            action: 'criar_pedido', account: 'oben', sales_order_id: salesOrder.id,
-            codigo_cliente: selectedCustomer.codigo_cliente,
-            codigo_vendedor: selectedCustomer.codigo_vendedor,
-             items: obenProductItems.map(c => ({
-               omie_codigo_produto: c.product.omie_codigo_produto, quantidade: c.quantity, valor_unitario: c.unit_price,
-               descricao: c.product.descricao,
-               ...(c.tint_cor_id ? { tint_cor_id: c.tint_cor_id, tint_nome_cor: c.tint_nome_cor } : {}),
-             })),
-            observacao: notes, codigo_parcela: selectedParcelaOben, quantidade_volumes: volumesOben || undefined,
-            ordem_compra: ordemCompra || undefined,
-          },
-        });
-        if (!omieError) results.push(`PV Oben ${omieResult?.omie_numero_pedido || ''}`);
-        else results.push('PV Oben (pendente ERP)');
-      }
-
-      if (hasColacorProducts) {
-        const itemsPayload = colacorProductItems.map(c => ({
-          product_id: c.product.id, omie_codigo_produto: c.product.omie_codigo_produto,
-          codigo: c.product.codigo, descricao: c.product.descricao, unidade: c.product.unidade,
-          quantidade: c.quantity, valor_unitario: c.unit_price, valor_total: c.quantity * c.unit_price,
-        }));
-        const { data: salesOrder, error: insertError } = await supabase
-          .from('sales_orders').insert({
-            customer_user_id: customerUserId || user.id, created_by: user.id,
-            items: itemsPayload, subtotal: colacorProdSubtotal, total: colacorProdSubtotal,
-            status: 'rascunho', notes: notes || null, account: 'colacor',
-            customer_address: storedCustomerAddress, customer_phone: storedCustomerPhone,
-            ready_by_date: readyByDate || null,
-          } as any).select('id').single();
-        if (insertError) throw insertError;
-        const { data: omieResult, error: omieError } = await supabase.functions.invoke('omie-vendas-sync', {
-          body: {
-            action: 'criar_pedido', account: 'colacor', sales_order_id: salesOrder.id,
-            codigo_cliente: selectedCustomer.codigo_cliente_colacor || selectedCustomer.codigo_cliente,
-            codigo_vendedor: selectedCustomer.codigo_vendedor_colacor ?? selectedCustomer.codigo_vendedor,
-            items: colacorProductItems.map(c => ({
-              omie_codigo_produto: c.product.omie_codigo_produto, quantidade: c.quantity, valor_unitario: c.unit_price,
-            })),
-            observacao: notes, codigo_parcela: selectedParcelaColacor, quantidade_volumes: volumesColacor || undefined,
-            ordem_compra: ordemCompra || undefined,
-          },
-        });
-        if (!omieError) {
-          results.push(`PV Colacor ${omieResult?.omie_numero_pedido || ''}`);
-          // Auto-create production orders for "produto acabado" items (tipo_produto = "04" or 4)
-          const produtoAcabadoItems = colacorProductItems.filter(c => {
-            const tp = c.product.metadata?.tipo_produto;
-            return tp === '04' || tp === 4 || tp === '4';
-          });
-          if (produtoAcabadoItems.length > 0) {
-            if (!defaultProductionAssigneeId) {
-              toast({
-                title: 'Ordem de Produção não criada',
-                description: 'Responsável padrão de produção não configurado. Configure em Governance > Settings.',
-                variant: 'destructive',
-              });
-              console.warn('[UnifiedOrder] Skipping production order auto-creation: default_production_assignee_id is not set');
-            } else {
-            try {
-              await supabase.functions.invoke('omie-vendas-sync', {
-                body: {
-                  action: 'criar_ordem_producao', account: 'colacor',
-                  sales_order_id: salesOrder.id,
-                  items: produtoAcabadoItems.map(c => ({
-                    product_id: c.product.id,
-                    omie_codigo_produto: c.product.omie_codigo_produto,
-                    codigo: c.product.codigo,
-                    descricao: c.product.descricao,
-                    quantidade: c.quantity,
-                    unidade: c.product.unidade,
-                    assigned_to: defaultProductionAssigneeId,
-                  })),
-                },
-              });
-              console.log('[UnifiedOrder] Production orders created for', produtoAcabadoItems.length, 'items');
-            } catch (opErr) {
-              console.warn('[UnifiedOrder] Failed to create production orders:', opErr);
-            }
-            }
-          }
-        } else {
-          results.push('PV Colacor (pendente ERP)');
-        }
-      }
-
-      if (hasServices) {
-        const orderId = crypto.randomUUID();
-        const buildToolInfo = (c: ServiceCartItem): string => {
-          const parts: string[] = [];
-          parts.push(getToolName(c.userTool));
-          const specs = c.userTool.specifications;
-          if (specs && typeof specs === 'object') {
-            const specEntries = Object.entries(specs).filter(([, v]) => v);
-            if (specEntries.length > 0) parts.push(specEntries.map(([k, v]) => `${k}: ${v}`).join(', '));
-          }
-          if (c.notes) parts.push(c.notes);
-          return parts.join(' | ');
-        };
-        const orderItems = serviceItems.map(c => {
-          const price = getServicePrice(c);
-          return {
-            category: c.servico?.descricao || '', quantity: c.quantity,
-            omie_codigo_servico: c.servico?.omie_codigo_servico, userToolId: c.userTool.id,
-            toolName: getToolName(c.userTool), notes: c.notes, photos: c.photos || [],
-            unitPrice: price || 0, toolCategoryId: c.userTool.tool_category_id,
-            toolSpecs: c.userTool.specifications || {},
-          };
-        });
-        const selectedAddressData = addresses.find(a => a.id === selectedAddress);
-        const addressPayload = selectedAddressData ? {
-          street: selectedAddressData.street, number: selectedAddressData.number,
-          complement: selectedAddressData.complement || undefined,
-          neighborhood: selectedAddressData.neighborhood, city: selectedAddressData.city,
-          state: selectedAddressData.state, zip_code: selectedAddressData.zipCode,
-        } : undefined;
-        const orderData = {
-          items: orderItems, service_type: 'padrao', subtotal: serviceSubtotal,
-          delivery_fee: DELIVERY_FEES[deliveryOption],
-          total: serviceSubtotal + DELIVERY_FEES[deliveryOption],
-          notes: serviceItems.map(buildToolInfo).filter(Boolean).join(' || '),
-          payment_method: afiacaoPaymentMethod,
-        };
-        const profileData = {
-          name: selectedCustomer.nome_fantasia || selectedCustomer.razao_social,
-          document: selectedCustomer.cnpj_cpf || undefined,
-        };
-        const staffContext = {
-          customerOmieCode: selectedCustomer.codigo_cliente_afiacao || selectedCustomer.codigo_cliente,
-          customerUserId: customerUserId || null,
-          customerCodigoVendedor: selectedCustomer.codigo_vendedor_afiacao ?? selectedCustomer.codigo_vendedor ?? null,
-        };
-        const result = await syncOrderToOmie(orderId, orderData, profileData, addressPayload, staffContext);
-        if (result.success) results.push(`OS ${result.omie_os?.cNumOS || ''}`);
-        else results.push('OS Afiação (pendente ERP)');
-      }
-
-      // Prepare success dialog data
-      const allItems: Array<{ description: string; quantity: number; unitPrice: number; codigo?: string; unidade?: string; tintCorId?: string; tintNomeCor?: string }> = [
-        ...obenProductItems.map(c => ({ description: c.product.descricao, quantity: c.quantity, unitPrice: c.unit_price, codigo: c.product.codigo, unidade: c.product.unidade, tintCorId: c.tint_cor_id, tintNomeCor: c.tint_nome_cor })),
-        ...colacorProductItems.map(c => ({ description: c.product.descricao, quantity: c.quantity, unitPrice: c.unit_price, codigo: c.product.codigo, unidade: c.product.unidade })),
-        ...serviceItems.map(c => ({ 
-          description: c.servico?.descricao || getToolName(c.userTool), 
-          quantity: c.quantity, 
-          unitPrice: getServicePrice(c) || 0 
-        })),
-      ];
-
-      // Build print data for each company
-      const dateShort = new Date().toLocaleDateString('pt-BR');
-      const printDataList: import('@/components/OrderPrintLayout').PrintOrderData[] = [];
-
-      const findParcelaDesc = (codigo: string, formas: FormaPagamento[]) => {
-        const found = formas.find(f => f.codigo === codigo);
-        return found?.descricao || codigo;
-      };
-
-      const selectedAddr = addresses.find(a => a.id === selectedAddress);
-      const fullCustomerAddress = selectedAddr
-        ? `${selectedAddr.street}, ${selectedAddr.number}${selectedAddr.complement ? ' - ' + selectedAddr.complement : ''} – ${selectedAddr.neighborhood}, ${selectedAddr.city}/${selectedAddr.state} – CEP: ${selectedAddr.zipCode}`
-        : selectedCustomer.endereco
-          ? `${selectedCustomer.endereco}, ${selectedCustomer.endereco_numero || 'S/N'}${selectedCustomer.complemento ? ' - ' + selectedCustomer.complemento : ''} – ${selectedCustomer.bairro || ''}, ${selectedCustomer.cidade || ''}/${selectedCustomer.estado || ''} – CEP: ${selectedCustomer.cep || ''}`
-          : undefined;
-
-      // Fetch customer phone from profile, fallback to Omie data
-      let customerPhone = selectedCustomer.telefone || '';
-      const custUserId = customerUserId || user?.id;
-      if (custUserId) {
-        const { data: custProfile } = await supabase.from('profiles').select('phone').eq('user_id', custUserId).maybeSingle();
-        if (custProfile?.phone) customerPhone = custProfile.phone;
-      }
-
-      if (obenProductItems.length > 0) {
-        const obenOrderNum = results.find(r => r.startsWith('PV Oben'))?.replace('PV Oben ', '') || '';
-        const obenProfile = companyProfiles.oben;
-        printDataList.push({
-          companyName: obenProfile?.legal_name || 'OBEN COMÉRCIO LTDA',
-          companyCnpj: obenProfile?.cnpj || '51.027.034/0001-00',
-          companyPhone: obenProfile?.phone || '(37) 9987-8190',
-          companyAddress: obenProfile?.address || 'Av. Primeiro de Junho, 70 – Centro, Divinópolis/MG – CEP: 35.500-002',
-          orderNumber: obenOrderNum,
-          date: dateShort,
-          customerName: selectedCustomer.razao_social,
-          customerDocument: selectedCustomer.cnpj_cpf || '',
-          customerAddress: fullCustomerAddress,
-          customerPhone,
-          condPagamento: findParcelaDesc(selectedParcelaOben, formasPagamentoOben),
-          parcelaCode: selectedParcelaOben,
-          items: obenProductItems.map(c => ({
-            codigo: c.product.codigo,
-            descricao: c.product.descricao,
-            quantidade: c.quantity,
-            unidade: c.product.unidade,
-            valorUnitario: c.unit_price,
-            valorTotal: c.quantity * c.unit_price,
-            tintCorId: c.tint_cor_id,
-            tintNomeCor: c.tint_nome_cor,
-          })),
-          subtotal: obenSubtotal,
-          desconto: 0,
-          frete: 0,
-          total: obenSubtotal,
-          observacoes: notes || undefined,
-          isOben: true,
-        });
-      }
-
-      if (colacorProductItems.length > 0) {
-        const colacorOrderNum = results.find(r => r.startsWith('PV Colacor'))?.replace('PV Colacor ', '') || '';
-        const colacorProfile = companyProfiles.colacor;
-        printDataList.push({
-          companyName: colacorProfile?.legal_name || 'COLACOR COMERCIAL LTDA',
-          companyCnpj: colacorProfile?.cnpj || '15.422.799/0001-81',
-          companyPhone: colacorProfile?.phone || '(37) 3222-1035',
-          companyAddress: colacorProfile?.address || 'Av. Primeiro de Junho, 48 – Centro, Divinópolis/MG – CEP: 35.500-002',
-          orderNumber: colacorOrderNum,
-          date: dateShort,
-          customerName: selectedCustomer.razao_social,
-          customerDocument: selectedCustomer.cnpj_cpf || '',
-          customerAddress: fullCustomerAddress,
-          customerPhone,
-          condPagamento: findParcelaDesc(selectedParcelaColacor, formasPagamentoColacor),
-          parcelaCode: selectedParcelaColacor,
-          items: colacorProductItems.map(c => ({
-            codigo: c.product.codigo,
-            descricao: c.product.descricao,
-            quantidade: c.quantity,
-            unidade: c.product.unidade,
-            valorUnitario: c.unit_price,
-            valorTotal: c.quantity * c.unit_price,
-          })),
-          subtotal: colacorProdSubtotal,
-          desconto: 0,
-          frete: 0,
-          total: colacorProdSubtotal,
-          isOben: false,
-        });
-      }
-
-      if (serviceItems.length > 0) {
-        const afiacaoOrderNum = results.find(r => r.startsWith('OS'))?.replace('OS ', '') || '';
-        const afiacaoProfile = companyProfiles.afiacao;
-        printDataList.push({
-          companyName: afiacaoProfile?.legal_name || 'COLACOR S.C LTDA',
-          companyCnpj: afiacaoProfile?.cnpj || '55.555.305/0001-51',
-          companyPhone: afiacaoProfile?.phone || '(37) 9987-8190',
-          companyAddress: afiacaoProfile?.address || 'Av. Primeiro de Junho, 50 – Centro, Divinópolis/MG – CEP: 35.500-002',
-          orderNumber: afiacaoOrderNum,
-          date: dateShort,
-          customerName: selectedCustomer.razao_social,
-          customerDocument: selectedCustomer.cnpj_cpf || '',
-          customerAddress: fullCustomerAddress,
-          customerPhone,
-          condPagamento: afiacaoPaymentMethod === 'a_vista' ? 'À Vista' : afiacaoPaymentMethod,
-          items: serviceItems.map(c => {
-            const price = getServicePrice(c) || 0;
-            return {
-              codigo: c.servico?.omie_codigo_servico?.toString() || '-',
-              descricao: c.servico?.descricao || getToolName(c.userTool),
-              quantidade: c.quantity,
-              unidade: 'SV',
-              valorUnitario: price,
-              valorTotal: price * c.quantity,
-            };
-          }),
-          subtotal: serviceSubtotal,
-          desconto: 0,
-          frete: DELIVERY_FEES[deliveryOption],
-          total: serviceSubtotal + DELIVERY_FEES[deliveryOption],
-          isOben: false,
-        });
-      }
-
-      setLastOrderData({
-        customerName: selectedCustomer.nome_fantasia || selectedCustomer.razao_social,
-        customerDocument: selectedCustomer.cnpj_cpf || '',
-        items: allItems,
-        total: totalEstimated,
-        orderNumbers: results,
-        printDataList,
+      const result = await submitOrderService({
+        customer: selectedCustomer,
+        customerUserId,
+        user,
+        cart: { obenProductItems, colacorProductItems, serviceItems },
+        subtotals: { oben: obenSubtotal, colacor: colacorProdSubtotal, service: serviceSubtotal },
+        volumes: { oben: volumesOben, colacor: volumesColacor },
+        payment: {
+          parcelaOben: selectedParcelaOben,
+          parcelaColacor: selectedParcelaColacor,
+          afiacaoMethod: afiacaoPaymentMethod,
+          formasPagamentoOben,
+          formasPagamentoColacor,
+        },
+        delivery: {
+          option: deliveryOption,
+          selectedAddress: addresses.find(a => a.id === selectedAddress),
+        },
+        meta: { notes, readyByDate, ordemCompra },
+        companyProfiles,
+        defaultProductionAssigneeId,
+        getServicePrice,
+        supabase,
       });
-      
-      setOrderSuccessOpen(true);
-      setCart([]);
-      setNotes('');
+      if (result.success && result.lastOrderData) {
+        setLastOrderData(result.lastOrderData);
+        setOrderSuccessOpen(true);
+        clearCart();
+        setNotes('');
+        if (result.errors.length > 0) {
+          toast({
+            title: 'Pedido criado com avisos',
+            description: result.errors.map(e => e.message).join(' | '),
+          });
+        }
+      } else {
+        toast({
+          title: 'Erro ao criar pedido',
+          description: result.errors[0]?.message || 'Falha desconhecida',
+          variant: 'destructive',
+        });
+      }
     } catch (error: any) {
       toast({ title: 'Erro ao criar pedido', description: error.message, variant: 'destructive' });
     } finally {
       setSubmitting(false);
     }
-  };
+  }, [
+    selectedCustomer, cart.length, user, customerUserId,
+    obenProductItems, colacorProductItems, serviceItems,
+    obenSubtotal, colacorProdSubtotal, serviceSubtotal,
+    volumesOben, volumesColacor,
+    selectedParcelaOben, selectedParcelaColacor, afiacaoPaymentMethod,
+    formasPagamentoOben, formasPagamentoColacor,
+    deliveryOption, addresses, selectedAddress,
+    notes, readyByDate, ordemCompra,
+    companyProfiles, defaultProductionAssigneeId,
+    getServicePrice, clearCart, toast,
+  ]);
 
   // clearCustomer defined earlier (wraps useCustomerSelection.clearCustomer + clears cart/ordemCompra/userTools)
 
