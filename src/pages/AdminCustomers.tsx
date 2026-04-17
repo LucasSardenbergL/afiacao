@@ -6,6 +6,7 @@ import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Input } from '@/components/ui/input';
+import { Checkbox } from '@/components/ui/checkbox';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { AddToolDialog } from '@/components/AddToolDialog';
 import { supabase } from '@/integrations/supabase/client';
@@ -377,6 +378,7 @@ function Customer360View({
                 <span className="font-mono text-xs">{formatDocument(customer.document)}</span>
               </div>
             )}
+            <RequiresPoToggle customer={customer} />
           </CardContent>
         </Card>
 
