@@ -15,9 +15,10 @@ export const VOLUME_UNITS = ['5L', 'GL', 'LT', 'BD', 'BH'];
 interface UseCartArgs {
   getProductPrice: (product: Product) => number;
   getServicePrice: (item: ServiceCartItem) => number | null;
+  servicos: OmieServico[];
 }
 
-export function useCart({ getProductPrice, getServicePrice }: UseCartArgs) {
+export function useCart({ getProductPrice, getServicePrice, servicos }: UseCartArgs) {
   const { toast } = useToast();
 
   const [cart, setCart] = useState<CartItem[]>([]);
