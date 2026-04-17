@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback, useMemo } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { useQuery } from '@tanstack/react-query';
+import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { supabase } from '@/integrations/supabase/client';
 import { useAuth } from '@/contexts/AuthContext';
 import { useToast } from '@/hooks/use-toast';
@@ -186,7 +186,7 @@ export function useUnifiedOrder() {
 
   // Customer selection (search, selection, prices, parcelas, addresses, history, vendedor validation)
   const customerSel = useCustomerSelection({
-    onLocalUserResolved: (uid) => { loadUserTools(uid); },
+    onLocalUserResolved: () => { /* user-tools is auto-loaded via useQuery */ },
     reloadPriceHistory: () => { loadPriceHistory(); },
   });
   const {
@@ -202,13 +202,33 @@ export function useUnifiedOrder() {
     selectedParcelaColacor, setSelectedParcelaColacor,
     customerParcelaRankingOben,
     customerParcelaRankingColacor,
-    addresses, setAddresses,
+    addresses,
     selectedAddress, setSelectedAddress,
     customerPurchaseHistory, setCustomerPurchaseHistory,
     vendedorDivergencias, validatingVendedor,
     selectCustomer, clearCustomer: clearCustomerInternal,
-    loadAddresses,
   } = customerSel;
+
+  // User tools (afiação) — react-query, 2min stale; auto-loads quando customerUserId muda
+  const { data: userTools = [], isLoading: loadingTools } = useQuery<UserTool[]>({
+    queryKey: ['user-tools', customerUserId],
+    enabled: !!customerUserId,
+    staleTime: 2 * 60 * 1000,
+    queryFn: async () => {
+      const { data, error } = await supabase
+        .from('user_tools')
+        .select('id, tool_category_id, generated_name, custom_name, quantity, specifications, tool_categories(name)')
+        .eq('user_id', customerUserId!)
+        .order('created_at', { ascending: false });
+      if (error) throw error;
+      return (data || []) as UserTool[];
+    },
+  });
+
+  // Backward-compat: forces a refresh of the user-tools query (used by AddToolDialog onToolAdded)
+  const loadUserTools = useCallback((_userId?: string) => {
+    queryClient.invalidateQueries({ queryKey: ['user-tools'] });
+  }, [queryClient]);
 
   // Pricing history (depends on customerUserId from above)
   const { loadPriceHistory, getLastPrice } = usePriceHistory(customerUserId || undefined);
