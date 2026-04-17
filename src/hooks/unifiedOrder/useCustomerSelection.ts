@@ -308,7 +308,6 @@ export function useCustomerSelection({
     setCustomers([]);
     setVendedorDivergencias([]);
     setSelectedAddress('');
-    setCustomerPurchaseHistory({});
     setRequiresPo(false);
     try {
       setSelectedCustomer(cust);
@@ -317,10 +316,9 @@ export function useCustomerSelection({
 
       if (localUserId) {
         setCustomerUserId(localUserId);
-        // addresses + user-tools são carregados automaticamente via useQuery quando customerUserId muda
+        // addresses + user-tools + purchase-history são carregados automaticamente via useQuery
         reloadPriceHistory?.();
         onLocalUserResolved?.(localUserId);
-        loadLocalPurchaseHistory(localUserId);
       }
 
       const settledResults = await Promise.allSettled([
