@@ -260,6 +260,39 @@ function CustomerListView({
 }
 
 /* ─── Customer 360 Profile View ─── */
+function RequiresPoToggle({ customer }: { customer: Customer }) {
+  const { toast } = useToast();
+  const [checked, setChecked] = useState<boolean>(!!customer.requires_po);
+  const [saving, setSaving] = useState(false);
+
+  const handleChange = async (next: boolean) => {
+    setSaving(true);
+    const prev = checked;
+    setChecked(next);
+    try {
+      const { error } = await supabase
+        .from('profiles')
+        .update({ requires_po: next })
+        .eq('user_id', customer.user_id);
+      if (error) throw error;
+      customer.requires_po = next;
+      toast({ title: next ? 'Cliente exige ordem de compra' : 'Ordem de compra desativada' });
+    } catch (e: any) {
+      setChecked(prev);
+      toast({ title: 'Erro ao salvar', description: e?.message, variant: 'destructive' });
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  return (
+    <label className="flex items-center gap-2 text-sm pt-2 border-t border-border cursor-pointer">
+      <Checkbox checked={checked} disabled={saving} onCheckedChange={(v) => handleChange(!!v)} />
+      <span>Exige ordem de compra</span>
+    </label>
+  );
+}
+
 function Customer360View({
   customer,
   score,
