@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback, useMemo, useRef } from 'react';
+import { useState, useEffect, useCallback, useMemo } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { supabase } from '@/integrations/supabase/client';
 import { useAuth } from '@/contexts/AuthContext';
@@ -8,6 +8,7 @@ import { usePricingEngine } from '@/hooks/usePricingEngine';
 import { usePriceHistory } from '@/hooks/usePriceHistory';
 import { useCart, VOLUME_UNITS } from '@/hooks/unifiedOrder/useCart';
 import { useCustomerSelection } from '@/hooks/unifiedOrder/useCustomerSelection';
+import { useProductCatalog } from '@/hooks/unifiedOrder/useProductCatalog';
 import type { RecommendationItem } from '@/hooks/useRecommendationEngine';
 import { DELIVERY_FEES, DeliveryOption } from '@/types';
 import type { AIOrderResult, AICustomerMatch } from '@/components/UnifiedAIAssistant';
