@@ -299,6 +299,7 @@ export function useUnifiedOrder() {
       loadServicosColacor();
       loadDefaultPrices();
       loadCategories();
+      loadCompanyProfiles();
     }
   }, [isStaff]);
 
@@ -463,6 +464,19 @@ export function useUnifiedOrder() {
       }
     } catch (e) { console.error(e); }
     finally { setLoadingServicos(false); }
+  };
+
+  const loadCompanyProfiles = async () => {
+    try {
+      const { data } = await supabase
+        .from('company_profiles')
+        .select('account, legal_name, cnpj, phone, address');
+      if (data) {
+        const map: Record<string, CompanyProfile> = {};
+        for (const row of data) map[row.account] = row as CompanyProfile;
+        setCompanyProfiles(map);
+      }
+    } catch (e) { console.error('Error loading company profiles', e); }
   };
 
   const loadFormasPagamento = async (account: ProductAccount) => {
@@ -1440,11 +1454,12 @@ export function useUnifiedOrder() {
 
       if (obenProductItems.length > 0) {
         const obenOrderNum = results.find(r => r.startsWith('PV Oben'))?.replace('PV Oben ', '') || '';
+        const obenProfile = companyProfiles.oben;
         printDataList.push({
-          companyName: 'OBEN COMÉRCIO LTDA',
-          companyCnpj: '51.027.034/0001-00',
-          companyPhone: '(37) 9987-8190',
-          companyAddress: 'Av. Primeiro de Junho, 70 – Centro, Divinópolis/MG – CEP: 35.500-002',
+          companyName: obenProfile?.legal_name || 'OBEN COMÉRCIO LTDA',
+          companyCnpj: obenProfile?.cnpj || '51.027.034/0001-00',
+          companyPhone: obenProfile?.phone || '(37) 9987-8190',
+          companyAddress: obenProfile?.address || 'Av. Primeiro de Junho, 70 – Centro, Divinópolis/MG – CEP: 35.500-002',
           orderNumber: obenOrderNum,
           date: dateShort,
           customerName: selectedCustomer.razao_social,
@@ -1474,11 +1489,12 @@ export function useUnifiedOrder() {
 
       if (colacorProductItems.length > 0) {
         const colacorOrderNum = results.find(r => r.startsWith('PV Colacor'))?.replace('PV Colacor ', '') || '';
+        const colacorProfile = companyProfiles.colacor;
         printDataList.push({
-          companyName: 'COLACOR COMERCIAL LTDA',
-          companyCnpj: '15.422.799/0001-81',
-          companyPhone: '(37) 3222-1035',
-          companyAddress: 'Av. Primeiro de Junho, 48 – Centro, Divinópolis/MG – CEP: 35.500-002',
+          companyName: colacorProfile?.legal_name || 'COLACOR COMERCIAL LTDA',
+          companyCnpj: colacorProfile?.cnpj || '15.422.799/0001-81',
+          companyPhone: colacorProfile?.phone || '(37) 3222-1035',
+          companyAddress: colacorProfile?.address || 'Av. Primeiro de Junho, 48 – Centro, Divinópolis/MG – CEP: 35.500-002',
           orderNumber: colacorOrderNum,
           date: dateShort,
           customerName: selectedCustomer.razao_social,
@@ -1505,11 +1521,12 @@ export function useUnifiedOrder() {
 
       if (serviceItems.length > 0) {
         const afiacaoOrderNum = results.find(r => r.startsWith('OS'))?.replace('OS ', '') || '';
+        const afiacaoProfile = companyProfiles.afiacao;
         printDataList.push({
-          companyName: 'COLACOR S.C LTDA',
-          companyCnpj: '55.555.305/0001-51',
-          companyPhone: '(37) 9987-8190',
-          companyAddress: 'Av. Primeiro de Junho, 50 – Centro, Divinópolis/MG – CEP: 35.500-002',
+          companyName: afiacaoProfile?.legal_name || 'COLACOR S.C LTDA',
+          companyCnpj: afiacaoProfile?.cnpj || '55.555.305/0001-51',
+          companyPhone: afiacaoProfile?.phone || '(37) 9987-8190',
+          companyAddress: afiacaoProfile?.address || 'Av. Primeiro de Junho, 50 – Centro, Divinópolis/MG – CEP: 35.500-002',
           orderNumber: afiacaoOrderNum,
           date: dateShort,
           customerName: selectedCustomer.razao_social,
