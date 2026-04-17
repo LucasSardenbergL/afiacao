@@ -125,8 +125,36 @@ export function useUnifiedOrder() {
     printDataList: Array<import('@/components/OrderPrintLayout').PrintOrderData>;
   } | null>(null);
 
-  // Pricing
+  // Pricing engine (calc-only, no customer dependency)
   const { loadDefaultPrices, calculatePrice } = usePricingEngine();
+
+  // Customer selection (search, selection, prices, parcelas, addresses, history, vendedor validation)
+  const customerSel = useCustomerSelection({
+    onLocalUserResolved: (uid) => { loadUserTools(uid); },
+    reloadPriceHistory: () => { loadPriceHistory(); },
+  });
+  const {
+    customerSearch, setCustomerSearch,
+    customers, searchingCustomers,
+    selectedCustomer, setSelectedCustomer,
+    loadingCustomer,
+    customerUserId, setCustomerUserId,
+    requiresPo,
+    customerPricesOben, setCustomerPricesOben,
+    customerPricesColacor, setCustomerPricesColacor,
+    selectedParcelaOben, setSelectedParcelaOben,
+    selectedParcelaColacor, setSelectedParcelaColacor,
+    customerParcelaRankingOben,
+    customerParcelaRankingColacor,
+    addresses, setAddresses,
+    selectedAddress, setSelectedAddress,
+    customerPurchaseHistory, setCustomerPurchaseHistory,
+    vendedorDivergencias, validatingVendedor,
+    selectCustomer, clearCustomer: clearCustomerInternal,
+    loadAddresses,
+  } = customerSel;
+
+  // Pricing history (depends on customerUserId from above)
   const { loadPriceHistory, getLastPrice } = usePriceHistory(customerUserId || undefined);
 
   // Pricing helpers (defined here so useCart can depend on them)
@@ -158,6 +186,12 @@ export function useUnifiedOrder() {
     updateServiceServico, updateServiceNotes, updateServicePhotos,
     updateQuantity, updateProductPrice, removeFromCart, clearCart,
   } = cartHook;
+
+  // Wrap clearCustomer to also clear cart-level state in this hook
+  const clearCustomer = useCallback(() => {
+    clearCustomerInternal();
+    setCart([]);
+  }, [clearCustomerInternal, setCart]);
 
 
   const sortedFormasPagamentoOben = useMemo(() => {
