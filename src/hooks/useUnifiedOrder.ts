@@ -200,7 +200,7 @@ export function useUnifiedOrder() {
   // Cart state lives in useCart hook (declared after pricing helpers below)
   const [notes, setNotes] = useState('');
   const [submitting, setSubmitting] = useState(false);
-  const [activeTab, setActiveTab] = useState('oben');
+  // activeTab moved into useCart hook below
   const [readyByDate, setReadyByDate] = useState<string>('');
   const [defaultProductionAssigneeId, setDefaultProductionAssigneeId] = useState<string | null>(null);
 
@@ -870,78 +870,11 @@ export function useUnifiedOrder() {
     }
   };
 
-  // Product Cart Actions
-  const getProductPrice = useCallback((product: Product): number => {
-    const account = (product.account || 'oben') as ProductAccount;
-    const prices = account === 'oben' ? customerPricesOben : customerPricesColacor;
-    const omiePrice = prices[product.omie_codigo_produto];
-    return (omiePrice && omiePrice > 0) ? omiePrice : product.valor_unitario;
-  }, [customerPricesOben, customerPricesColacor]);
+  // Cart actions and pricing helpers (getProductPrice, getServicePrice,
+  // addProductToCart, addTintProductToCart, addServiceToCart, updateServiceServico,
+  // updateServiceNotes, updateServicePhotos) are now provided by the useCart hook
+  // and the pricing-helpers block defined earlier in this hook.
 
-  const addProductToCart = (product: Product, qty: number = 1) => {
-    // If tintometric base, open color dialog instead of adding directly
-    if (product.is_tintometric && product.tint_type === 'base') {
-      setTintPendingProduct(product);
-      return;
-    }
-    const account = (product.account || 'oben') as ProductAccount;
-    const existing = cart.find((c): c is ProductCartItem => c.type === 'product' && c.product.id === product.id && !c.tint_formula_id);
-    if (existing) {
-      setCart(cart.map(c => c.type === 'product' && (c as ProductCartItem).product.id === product.id && !(c as ProductCartItem).tint_formula_id
-        ? { ...c, quantity: c.quantity + qty } as ProductCartItem : c));
-    } else {
-      setCart([...cart, { type: 'product', product, quantity: qty, unit_price: getProductPrice(product), account }]);
-    }
-  };
-
-  const addTintProductToCart = (product: Product, formulaId: string, corId: string, nomeCor: string, precoFinal: number, custoCorantes: number) => {
-    const account = (product.account || 'oben') as ProductAccount;
-    // Each tint formula selection is a unique cart item
-    const existing = cart.find((c): c is ProductCartItem => c.type === 'product' && c.tint_formula_id === formulaId);
-    if (existing) {
-      setCart(cart.map(c => c.type === 'product' && (c as ProductCartItem).tint_formula_id === formulaId
-        ? { ...c, quantity: c.quantity + 1 } as ProductCartItem : c));
-    } else {
-      setCart([...cart, {
-        type: 'product', product, quantity: 1, unit_price: precoFinal, account,
-        tint_cor_id: corId, tint_nome_cor: nomeCor, tint_custo_corantes: custoCorantes, tint_formula_id: formulaId,
-      }]);
-    }
-    setTintPendingProduct(null);
-  };
-
-  // Service Cart Actions
-  const addServiceToCart = (tool: UserTool) => {
-    if (cart.some(c => c.type === 'service' && (c as ServiceCartItem).userTool.id === tool.id)) {
-      toast({ title: 'Já adicionada', description: 'Esta ferramenta já está no carrinho.' });
-      return;
-    }
-    setCart([...cart, { type: 'service', userTool: tool, servico: null, quantity: 1, photos: [] }]);
-  };
-
-  const updateServiceServico = (toolId: string, codigoServico: number) => {
-    const servico = servicos.find(s => s.omie_codigo_servico === codigoServico) || null;
-    setCart(cart.map(c => c.type === 'service' && (c as ServiceCartItem).userTool.id === toolId
-      ? { ...c, servico } as ServiceCartItem : c));
-  };
-
-  const updateServiceNotes = (toolId: string, newNotes: string) => {
-    setCart(cart.map(c => c.type === 'service' && (c as ServiceCartItem).userTool.id === toolId
-      ? { ...c, notes: newNotes } as ServiceCartItem : c));
-  };
-
-  const updateServicePhotos = (toolId: string, photos: string[]) => {
-    setCart(cart.map(c => c.type === 'service' && (c as ServiceCartItem).userTool.id === toolId
-      ? { ...c, photos } as ServiceCartItem : c));
-  };
-
-  const getServicePrice = useCallback((item: ServiceCartItem): number | null => {
-    const serviceType = item.servico?.descricao || '';
-    const lastPrice = getLastPrice(item.userTool.id, serviceType);
-    if (lastPrice !== null) return lastPrice;
-    const specs = item.userTool.specifications as Record<string, string> | null;
-    return calculatePrice({ tool_category_id: item.userTool.tool_category_id, specifications: specs });
-  }, [getLastPrice, calculatePrice]);
 
   const getFilteredServicos = (tool: UserTool): OmieServico[] => {
     const categoryName = tool.tool_categories?.name?.toLowerCase().trim();
