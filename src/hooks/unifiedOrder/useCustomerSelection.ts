@@ -68,7 +68,85 @@ export function useCustomerSelection({
     }
   }, [addresses, selectedAddress]);
 
-  const [customerPurchaseHistory, setCustomerPurchaseHistory] = useState<Record<string, string>>({});
+  /* ─── Purchase history (react-query, 2min stale) ─────────────────────────
+     Faz merge de 3 fontes em paralelo (allSettled tolera falhas individuais):
+       a) sales_orders local (últimas 100 ordens) → códigos de produto
+       b) sales_price_history local → product_id (formato `pid:<uuid>`)
+       c) Omie histórico de produtos (oben + colacor) → códigos Omie (`omie:<cod>`)
+     A key inclui os 3 códigos relevantes do cliente para reagir a auto-create. */
+  const codigoOben = selectedCustomer?.codigo_cliente ?? null;
+  const codigoColacor = selectedCustomer?.codigo_cliente_colacor ?? null;
+  const { data: customerPurchaseHistory = {} } = useQuery<Record<string, string>>({
+    queryKey: ['customer-purchase-history', customerUserId, codigoOben, codigoColacor],
+    enabled: !!customerUserId || !!codigoOben || !!codigoColacor,
+    staleTime: 2 * 60 * 1000,
+    queryFn: async () => {
+      const localOrdersPromise = customerUserId
+        ? supabase.from('sales_orders')
+            .select('items, created_at')
+            .eq('customer_user_id', customerUserId)
+            .neq('status', 'orcamento')
+            .order('created_at', { ascending: false })
+            .limit(100)
+        : Promise.resolve({ data: null });
+      const localPricePromise = customerUserId
+        ? supabase.from('sales_price_history')
+            .select('product_id, created_at')
+            .eq('customer_user_id', customerUserId)
+            .order('created_at', { ascending: false })
+        : Promise.resolve({ data: null });
+      const omiePromises: Promise<any>[] = [];
+      if (codigoOben) {
+        omiePromises.push(supabase.functions.invoke('omie-vendas-sync', {
+          body: { action: 'historico_produtos_cliente', codigo_cliente: codigoOben, account: 'oben' },
+        }));
+      }
+      if (codigoColacor) {
+        omiePromises.push(supabase.functions.invoke('omie-vendas-sync', {
+          body: { action: 'historico_produtos_cliente', codigo_cliente: codigoColacor, account: 'colacor' },
+        }));
+      }
+
+      const [ordersSettled, priceSettled, ...omieSettled] = await Promise.allSettled([
+        localOrdersPromise,
+        localPricePromise,
+        ...omiePromises,
+      ]);
+
+      const history: Record<string, string> = {};
+
+      if (ordersSettled.status === 'fulfilled' && ordersSettled.value?.data) {
+        for (const order of ordersSettled.value.data as any[]) {
+          const items = order.items as any[];
+          if (Array.isArray(items)) {
+            for (const item of items) {
+              const code = item.codigo || item.product_code || '';
+              if (code && !history[code]) history[code] = order.created_at;
+              const pid = item.product_id || '';
+              if (pid && !history[`pid:${pid}`]) history[`pid:${pid}`] = order.created_at;
+            }
+          }
+        }
+      }
+
+      if (priceSettled.status === 'fulfilled' && priceSettled.value?.data) {
+        for (const row of priceSettled.value.data as any[]) {
+          if (!history[`pid:${row.product_id}`]) history[`pid:${row.product_id}`] = row.created_at;
+        }
+      }
+
+      for (const res of omieSettled) {
+        if (res.status === 'fulfilled' && res.value?.data?.history) {
+          const h = res.value.data.history as Record<string, string>;
+          for (const [omieCod, dateStr] of Object.entries(h)) {
+            if (!history[`omie:${omieCod}`]) history[`omie:${omieCod}`] = dateStr;
+          }
+        }
+      }
+
+      return history;
+    },
+  });
 
   const [vendedorDivergencias, setVendedorDivergencias] = useState<string[]>([]);
   const [validatingVendedor, setValidatingVendedor] = useState(false);
@@ -219,76 +297,8 @@ export function useCustomerSelection({
     return result;
   }, []);
 
-  /** Load local purchase history (sales_orders + sales_price_history) in background */
-  const loadLocalPurchaseHistory = useCallback((localUserId: string) => {
-    Promise.all([
-      supabase.from('sales_orders')
-        .select('items, created_at')
-        .eq('customer_user_id', localUserId)
-        .neq('status', 'orcamento')
-        .order('created_at', { ascending: false })
-        .limit(100),
-      supabase.from('sales_price_history')
-        .select('product_id, created_at')
-        .eq('customer_user_id', localUserId)
-        .order('created_at', { ascending: false }),
-    ]).then(([ordersRes, priceHistRes]) => {
-      const history: Record<string, string> = {};
-      if (ordersRes.data) {
-        for (const order of ordersRes.data) {
-          const items = order.items as any[];
-          if (Array.isArray(items)) {
-            for (const item of items) {
-              const code = item.codigo || item.product_code || '';
-              if (code && !history[code]) history[code] = order.created_at;
-              const pid = item.product_id || '';
-              if (pid && !history[`pid:${pid}`]) history[`pid:${pid}`] = order.created_at;
-            }
-          }
-        }
-      }
-      if (priceHistRes.data) {
-        for (const row of priceHistRes.data) {
-          if (!history[`pid:${row.product_id}`]) history[`pid:${row.product_id}`] = row.created_at;
-        }
-      }
-      setCustomerPurchaseHistory(prev => ({ ...prev, ...history }));
-    });
-  }, []);
-
-  /** Load Omie purchase history in background and merge into purchase history */
-  const loadOmiePurchaseHistory = useCallback((cust: OmieCustomer) => {
-    const omieHistoryPromises: Promise<any>[] = [];
-    if (cust.codigo_cliente) {
-      omieHistoryPromises.push(
-        supabase.functions.invoke('omie-vendas-sync', {
-          body: { action: 'historico_produtos_cliente', codigo_cliente: cust.codigo_cliente, account: 'oben' },
-        })
-      );
-    }
-    if (cust.codigo_cliente_colacor) {
-      omieHistoryPromises.push(
-        supabase.functions.invoke('omie-vendas-sync', {
-          body: { action: 'historico_produtos_cliente', codigo_cliente: cust.codigo_cliente_colacor, account: 'colacor' },
-        })
-      );
-    }
-    if (omieHistoryPromises.length === 0) return;
-    Promise.all(omieHistoryPromises).then((results) => {
-      const omieHistory: Record<string, string> = {};
-      for (const res of results) {
-        if (res?.data?.history) {
-          const h = res.data.history as Record<string, string>;
-          for (const [omieCod, dateStr] of Object.entries(h)) {
-            if (!omieHistory[`omie:${omieCod}`]) omieHistory[`omie:${omieCod}`] = dateStr;
-          }
-        }
-      }
-      if (Object.keys(omieHistory).length > 0) {
-        setCustomerPurchaseHistory(prev => ({ ...prev, ...omieHistory }));
-      }
-    });
-  }, []);
+  // Purchase history (local + Omie) agora vem do useQuery acima
+  // (key: ['customer-purchase-history', customerUserId, codigoOben, codigoColacor])
 
   /* ─── Public actions ─── */
 
@@ -298,7 +308,6 @@ export function useCustomerSelection({
     setCustomers([]);
     setVendedorDivergencias([]);
     setSelectedAddress('');
-    setCustomerPurchaseHistory({});
     setRequiresPo(false);
     try {
       setSelectedCustomer(cust);
@@ -307,10 +316,9 @@ export function useCustomerSelection({
 
       if (localUserId) {
         setCustomerUserId(localUserId);
-        // addresses + user-tools são carregados automaticamente via useQuery quando customerUserId muda
+        // addresses + user-tools + purchase-history são carregados automaticamente via useQuery
         reloadPriceHistory?.();
         onLocalUserResolved?.(localUserId);
-        loadLocalPurchaseHistory(localUserId);
       }
 
       const settledResults = await Promise.allSettled([
@@ -409,8 +417,10 @@ export function useCustomerSelection({
         }).catch(() => {});
       }
 
-      // Background: Omie history → purchase history
-      loadOmiePurchaseHistory(cust);
+      // Purchase history (local + Omie) é carregado pelo useQuery acima.
+      // Ao atualizar selectedCustomer com codigo_cliente_colacor preenchido pelo
+      // autoCreateInMissingAccounts, a query refaz o fetch automaticamente.
+
 
       // Merge local "last-practiced" prices into Omie pricing maps
       const localPricesByOmie = await resolveLocalPricesByOmieCode(localPriceResult.data || null);
@@ -458,7 +468,6 @@ export function useCustomerSelection({
     }
   }, [
     resolveLocalUserId, autoCreateInMissingAccounts, resolveLocalPricesByOmieCode,
-    loadLocalPurchaseHistory, loadOmiePurchaseHistory,
     onLocalUserResolved, reloadPriceHistory, toast,
   ]);
 
@@ -473,11 +482,11 @@ export function useCustomerSelection({
     setCustomerParcelaRankingColacor([]);
     setVendedorDivergencias([]);
     setSelectedAddress('');
-    setCustomerPurchaseHistory({});
     setRequiresPo(false);
-    // Limpa o cache de endereços e ferramentas do cliente anterior
+    // Limpa o cache de endereços, ferramentas e histórico do cliente anterior
     queryClient.removeQueries({ queryKey: ['customer-addresses'] });
     queryClient.removeQueries({ queryKey: ['user-tools'] });
+    queryClient.removeQueries({ queryKey: ['customer-purchase-history'] });
   }, [queryClient]);
 
   return {
@@ -500,8 +509,8 @@ export function useCustomerSelection({
     // Addresses (lista vem do useQuery; selectedAddress permanece como state)
     addresses,
     selectedAddress, setSelectedAddress,
-    // History
-    customerPurchaseHistory, setCustomerPurchaseHistory,
+    // History (vem do useQuery; sem setter público)
+    customerPurchaseHistory,
     // Vendedor
     vendedorDivergencias, validatingVendedor,
     // Actions
