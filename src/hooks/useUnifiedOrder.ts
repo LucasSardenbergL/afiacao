@@ -91,6 +91,16 @@ export interface OmieCustomer {
 }
 
 export interface FormaPagamento {
+
+export interface CompanyProfile {
+  account: string;
+  legal_name: string;
+  cnpj: string;
+  phone: string | null;
+  address: string | null;
+}
+
+interface _FormaPagamentoMarker {
   codigo: string;
   descricao: string;
 }
@@ -140,6 +150,7 @@ export function useUnifiedOrder() {
   const [loadingCustomer, setLoadingCustomer] = useState(false);
   const [customerUserId, setCustomerUserId] = useState<string | null>(null);
   const [requiresPo, setRequiresPo] = useState<boolean>(false);
+  const [companyProfiles, setCompanyProfiles] = useState<Record<string, CompanyProfile>>({});
 
   // Products by account
   const [obenProducts, setObenProducts] = useState<Product[]>([]);
