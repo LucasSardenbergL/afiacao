@@ -468,7 +468,6 @@ export function useCustomerSelection({
     }
   }, [
     resolveLocalUserId, autoCreateInMissingAccounts, resolveLocalPricesByOmieCode,
-    loadLocalPurchaseHistory, loadOmiePurchaseHistory,
     onLocalUserResolved, reloadPriceHistory, toast,
   ]);
 
