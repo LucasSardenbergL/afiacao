@@ -107,24 +107,8 @@ export function useCustomerSelection({
 
   /* ─── Helpers ─── */
 
-  const loadAddresses = useCallback(async (userId: string) => {
-    try {
-      const { data } = await supabase
-        .from('addresses')
-        .select('*')
-        .eq('user_id', userId)
-        .order('is_default', { ascending: false });
-      if (data && data.length > 0) {
-        const formatted: AddressData[] = data.map(addr => ({
-          id: addr.id, label: addr.label, street: addr.street, number: addr.number,
-          complement: addr.complement, neighborhood: addr.neighborhood, city: addr.city,
-          state: addr.state, zipCode: addr.zip_code,
-        }));
-        setAddresses(formatted);
-        setSelectedAddress(formatted[0].id);
-      }
-    } catch (e) { console.error(e); }
-  }, []);
+  // loadAddresses agora é o useQuery acima (key: ['customer-addresses', customerUserId])
+
 
   /** Resolve local user id from omie_clientes mapping or profiles.document.
    *  Also captures requires_po flag when fetched from profiles. */
@@ -313,7 +297,6 @@ export function useCustomerSelection({
     setCustomerSearch('');
     setCustomers([]);
     setVendedorDivergencias([]);
-    setAddresses([]);
     setSelectedAddress('');
     setCustomerPurchaseHistory({});
     setRequiresPo(false);
@@ -324,7 +307,7 @@ export function useCustomerSelection({
 
       if (localUserId) {
         setCustomerUserId(localUserId);
-        loadAddresses(localUserId);
+        // addresses + user-tools são carregados automaticamente via useQuery quando customerUserId muda
         reloadPriceHistory?.();
         onLocalUserResolved?.(localUserId);
         loadLocalPurchaseHistory(localUserId);
