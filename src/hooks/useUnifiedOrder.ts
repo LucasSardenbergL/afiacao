@@ -139,6 +139,7 @@ export function useUnifiedOrder() {
   const [searchingCustomers, setSearchingCustomers] = useState(false);
   const [loadingCustomer, setLoadingCustomer] = useState(false);
   const [customerUserId, setCustomerUserId] = useState<string | null>(null);
+  const [requiresPo, setRequiresPo] = useState<boolean>(false);
 
   // Products by account
   const [obenProducts, setObenProducts] = useState<Product[]>([]);
@@ -520,6 +521,7 @@ export function useUnifiedOrder() {
     setAddresses([]);
     setSelectedAddress('');
     setCustomerPurchaseHistory({});
+    setRequiresPo(false);
     try {
       setSelectedCustomer(cust);
       let localUserId = cust.local_user_id || null;
@@ -536,12 +538,22 @@ export function useUnifiedOrder() {
         if (docClean.length >= 11) {
           const { data: profile } = await supabase
             .from('profiles')
-            .select('user_id')
+            .select('user_id, requires_po')
             .or(`document.eq.${docClean},document.eq.${cust.cnpj_cpf}`)
             .limit(1)
             .maybeSingle();
           if (profile?.user_id) localUserId = profile.user_id;
+          if (profile?.requires_po) setRequiresPo(true);
         }
+      }
+      // If we have a localUserId but didn't fetch requires_po above, fetch it now
+      if (localUserId) {
+        const { data: poProfile } = await supabase
+          .from('profiles')
+          .select('requires_po')
+          .eq('user_id', localUserId)
+          .maybeSingle();
+        if (poProfile?.requires_po) setRequiresPo(true);
       }
       if (localUserId) {
         setCustomerUserId(localUserId);
@@ -1576,7 +1588,7 @@ export function useUnifiedOrder() {
     afiacaoPaymentMethod, setAfiacaoPaymentMethod,
     volumesOben, volumesColacor,
     ordemCompra, setOrdemCompra,
-    isOrdemCompraCustomer: selectedCustomer?.cnpj_cpf?.replace(/\D/g, '') === '64422892000100',
+    isOrdemCompraCustomer: requiresPo,
     // Delivery
     deliveryOption, setDeliveryOption, addresses, selectedAddress, setSelectedAddress,
     selectedTimeSlot, setSelectedTimeSlot, showAddressOptions, setShowAddressOptions,

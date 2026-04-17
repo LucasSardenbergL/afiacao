@@ -6,6 +6,7 @@ import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Input } from '@/components/ui/input';
+import { Checkbox } from '@/components/ui/checkbox';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { AddToolDialog } from '@/components/AddToolDialog';
 import { supabase } from '@/integrations/supabase/client';
@@ -33,6 +34,7 @@ interface Customer {
   document: string | null;
   customer_type: string | null;
   created_at: string;
+  requires_po?: boolean;
 }
 
 interface ToolCategory {
@@ -258,6 +260,39 @@ function CustomerListView({
 }
 
 /* ─── Customer 360 Profile View ─── */
+function RequiresPoToggle({ customer }: { customer: Customer }) {
+  const { toast } = useToast();
+  const [checked, setChecked] = useState<boolean>(!!customer.requires_po);
+  const [saving, setSaving] = useState(false);
+
+  const handleChange = async (next: boolean) => {
+    setSaving(true);
+    const prev = checked;
+    setChecked(next);
+    try {
+      const { error } = await supabase
+        .from('profiles')
+        .update({ requires_po: next })
+        .eq('user_id', customer.user_id);
+      if (error) throw error;
+      customer.requires_po = next;
+      toast({ title: next ? 'Cliente exige ordem de compra' : 'Ordem de compra desativada' });
+    } catch (e: any) {
+      setChecked(prev);
+      toast({ title: 'Erro ao salvar', description: e?.message, variant: 'destructive' });
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  return (
+    <label className="flex items-center gap-2 text-sm pt-2 border-t border-border cursor-pointer">
+      <Checkbox checked={checked} disabled={saving} onCheckedChange={(v) => handleChange(!!v)} />
+      <span>Exige ordem de compra</span>
+    </label>
+  );
+}
+
 function Customer360View({
   customer,
   score,
@@ -376,6 +411,7 @@ function Customer360View({
                 <span className="font-mono text-xs">{formatDocument(customer.document)}</span>
               </div>
             )}
+            <RequiresPoToggle customer={customer} />
           </CardContent>
         </Card>
 
@@ -609,7 +645,7 @@ const AdminCustomers = () => {
 
       const { data, error } = await supabase
         .from('profiles')
-        .select('user_id, name, email, phone, document, customer_type, created_at')
+        .select('user_id, name, email, phone, document, customer_type, created_at, requires_po')
         .eq('is_employee', false)
         .order('name');
       if (error) throw error;
