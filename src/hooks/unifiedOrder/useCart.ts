@@ -178,7 +178,7 @@ export function useCart({ getProductPrice, getServicePrice, servicos }: UseCartA
   );
 
   const updateServiceServico = useCallback(
-    (toolId: string, codigoServico: number, servicos: OmieServico[]) => {
+    (toolId: string, codigoServico: number) => {
       const servico = servicos.find(s => s.omie_codigo_servico === codigoServico) || null;
       setCart(prev =>
         prev.map(c =>
@@ -188,7 +188,7 @@ export function useCart({ getProductPrice, getServicePrice, servicos }: UseCartA
         ),
       );
     },
-    [],
+    [servicos],
   );
 
   const updateServiceNotes = useCallback((toolId: string, newNotes: string) => {
