@@ -234,29 +234,36 @@ export function useUnifiedOrder() {
   const { loadDefaultPrices, calculatePrice } = usePricingEngine();
   const { loadPriceHistory, getLastPrice } = usePriceHistory(customerUserId || undefined);
 
-  const productItems = useMemo(() => cart.filter((c): c is ProductCartItem => c.type === 'product'), [cart]);
-  const obenProductItems = useMemo(() => productItems.filter(c => c.account === 'oben'), [productItems]);
-  const colacorProductItems = useMemo(() => productItems.filter(c => c.account === 'colacor'), [productItems]);
-  const serviceItems = useMemo(() => cart.filter((c): c is ServiceCartItem => c.type === 'service'), [cart]);
-  const cartProductIds = useMemo(() => productItems.map(c => c.product.id), [productItems]);
+  // Pricing helpers (defined here so useCart can depend on them)
+  const getProductPrice = useCallback((product: Product): number => {
+    const account = (product.account || 'oben') as ProductAccount;
+    const prices = account === 'oben' ? customerPricesOben : customerPricesColacor;
+    const omiePrice = prices[product.omie_codigo_produto];
+    return (omiePrice && omiePrice > 0) ? omiePrice : product.valor_unitario;
+  }, [customerPricesOben, customerPricesColacor]);
 
-  // Auto-calculate volumes: packaging units (5L, GL, LT, BD, BH) count their qty; all others = 1 volume total
-  const VOLUME_UNITS = ['5L', 'GL', 'LT', 'BD', 'BH'];
-  const calcVolumes = (items: ProductCartItem[]) => {
-    let volumeQty = 0;
-    let hasNonVolume = false;
-    for (const item of items) {
-      const un = (item.product.unidade || '').toUpperCase().trim();
-      if (VOLUME_UNITS.includes(un)) {
-        volumeQty += item.quantity;
-      } else {
-        hasNonVolume = true;
-      }
-    }
-    return volumeQty + (hasNonVolume ? 1 : 0);
-  };
-  const volumesOben = useMemo(() => calcVolumes(obenProductItems), [obenProductItems]);
-  const volumesColacor = useMemo(() => calcVolumes(colacorProductItems), [colacorProductItems]);
+  const getServicePrice = useCallback((item: ServiceCartItem): number | null => {
+    const serviceType = item.servico?.descricao || '';
+    const lastPrice = getLastPrice(item.userTool.id, serviceType);
+    if (lastPrice !== null) return lastPrice;
+    const specs = item.userTool.specifications as Record<string, string> | null;
+    return calculatePrice({ tool_category_id: item.userTool.tool_category_id, specifications: specs });
+  }, [getLastPrice, calculatePrice]);
+
+  // Cart hook — encapsulates cart state, derived items, totals, and actions
+  const cartHook = useCart({ getProductPrice, getServicePrice, servicos });
+  const {
+    cart, setCart,
+    tintPendingProduct, setTintPendingProduct,
+    activeTab, setActiveTab,
+    productItems, obenProductItems, colacorProductItems, serviceItems, cartProductIds,
+    volumesOben, volumesColacor,
+    obenSubtotal, colacorProdSubtotal, serviceSubtotal, totalEstimated,
+    addProductToCart, addTintProductToCart, addServiceToCart,
+    updateServiceServico, updateServiceNotes, updateServicePhotos,
+    updateQuantity, updateProductPrice, removeFromCart, clearCart,
+  } = cartHook;
+
 
   const sortedFormasPagamentoOben = useMemo(() => {
     if (customerParcelaRankingOben.length === 0) return formasPagamentoOben;
