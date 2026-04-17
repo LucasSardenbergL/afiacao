@@ -509,8 +509,8 @@ export function useCustomerSelection({
     // Addresses (lista vem do useQuery; selectedAddress permanece como state)
     addresses,
     selectedAddress, setSelectedAddress,
-    // History
-    customerPurchaseHistory, setCustomerPurchaseHistory,
+    // History (vem do useQuery; sem setter público)
+    customerPurchaseHistory,
     // Vendedor
     vendedorDivergencias, validatingVendedor,
     // Actions
