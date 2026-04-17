@@ -619,10 +619,7 @@ export function useUnifiedOrder() {
         });
       }
 
-      const [
-        priceOben, priceColacor, parcelaOben, parcelaColacor,
-        localPriceResult, colacorClientResult, afiacaoClientResult,
-      ] = await Promise.all([
+      const settledResults = await Promise.allSettled([
         supabase.functions.invoke('omie-vendas-sync', {
           body: { action: 'buscar_precos_cliente', codigo_cliente: cust.codigo_cliente, account: 'oben' },
         }),
@@ -650,6 +647,47 @@ export function useUnifiedOrder() {
             })
           : Promise.resolve({ data: null }),
       ]);
+
+      const labels = [
+        'preços Oben',
+        'preços Colacor',
+        'última parcela Oben',
+        'última parcela Colacor',
+        'histórico de preço local',
+        'cliente Colacor',
+        'cliente Afiação',
+      ];
+      const failedParts: string[] = [];
+      const getResult = (idx: number): any => {
+        const r = settledResults[idx];
+        if (r.status === 'fulfilled') {
+          const val: any = r.value;
+          if (val && val.error) {
+            console.error(`[selectCustomer] ${labels[idx]} retornou erro:`, val.error?.message || val.error);
+            failedParts.push(labels[idx]);
+            return { data: null };
+          }
+          return val ?? { data: null };
+        }
+        console.error(`[selectCustomer] ${labels[idx]} falhou:`, r.reason?.message || r.reason);
+        failedParts.push(labels[idx]);
+        return { data: null };
+      };
+
+      const priceOben = getResult(0);
+      const priceColacor = getResult(1);
+      const parcelaOben = getResult(2);
+      const parcelaColacor = getResult(3);
+      const localPriceResult = getResult(4);
+      const colacorClientResult = getResult(5);
+      const afiacaoClientResult = getResult(6);
+
+      if (failedParts.length > 0) {
+        toast({
+          title: 'Alguns dados do cliente não foram carregados',
+          description: `Falharam: ${failedParts.join(', ')}. Você pode continuar, mas preços/parcelas podem não refletir o contrato.`,
+        });
+      }
 
       if (colacorClientResult?.data?.cliente) {
         cust.codigo_cliente_colacor = colacorClientResult.data.cliente.codigo_cliente;
