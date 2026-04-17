@@ -33,6 +33,7 @@ interface Customer {
   document: string | null;
   customer_type: string | null;
   created_at: string;
+  requires_po?: boolean;
 }
 
 interface ToolCategory {
@@ -609,7 +610,7 @@ const AdminCustomers = () => {
 
       const { data, error } = await supabase
         .from('profiles')
-        .select('user_id, name, email, phone, document, customer_type, created_at')
+        .select('user_id, name, email, phone, document, customer_type, created_at, requires_po')
         .eq('is_employee', false)
         .order('name');
       if (error) throw error;
