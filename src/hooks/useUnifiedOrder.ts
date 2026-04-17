@@ -1,5 +1,6 @@
 import { useState, useEffect, useCallback, useMemo } from 'react';
 import { useNavigate } from 'react-router-dom';
+import { useQuery } from '@tanstack/react-query';
 import { supabase } from '@/integrations/supabase/client';
 import { useAuth } from '@/contexts/AuthContext';
 import { useToast } from '@/hooks/use-toast';
@@ -64,24 +65,85 @@ export function useUnifiedOrder() {
   const { user, isStaff, loading: authLoading } = useAuth();
   const { toast } = useToast();
 
-  // Company profiles (printing)
-  const [companyProfiles, setCompanyProfiles] = useState<Record<string, CompanyProfile>>({});
+  // Company profiles (printing) — react-query, 1h stale
+  const { data: companyProfiles = {} } = useQuery({
+    queryKey: ['company-profiles'],
+    staleTime: 60 * 60 * 1000,
+    queryFn: async () => {
+      const { data, error } = await supabase
+        .from('company_profiles')
+        .select('account, legal_name, cnpj, phone, address');
+      if (error) throw error;
+      const map: Record<string, CompanyProfile> = {};
+      for (const row of data || []) map[row.account] = row as CompanyProfile;
+      return map;
+    },
+  });
 
   // Product catalog state lives in useProductCatalog hook (declared after customer selection below)
 
   // Afiação
   const [userTools, setUserTools] = useState<UserTool[]>([]);
   const [loadingTools, setLoadingTools] = useState(false);
-  const [servicos, setServicos] = useState<OmieServico[]>([]);
-  const [loadingServicos, setLoadingServicos] = useState(true);
   const [addToolDialogOpen, setAddToolDialogOpen] = useState(false);
   const [creatingLocalProfile, setCreatingLocalProfile] = useState(false);
-  const [toolCategories, setToolCategories] = useState<ToolCategory[]>([]);
 
-  // Payment (forms list & method — customer parcelas live in useCustomerSelection)
-  const [formasPagamentoOben, setFormasPagamentoOben] = useState<FormaPagamento[]>([]);
-  const [formasPagamentoColacor, setFormasPagamentoColacor] = useState<FormaPagamento[]>([]);
-  const [loadingFormas, setLoadingFormas] = useState(false);
+  // Serviços Colacor — react-query, 5min stale (staff e customer usam)
+  const { data: servicos = [], isLoading: loadingServicos } = useQuery<OmieServico[]>({
+    queryKey: ['servicos-colacor'],
+    staleTime: 5 * 60 * 1000,
+    queryFn: async () => {
+      const { data, error } = await supabase
+        .from('omie_servicos')
+        .select('omie_codigo_servico, omie_codigo_integracao, descricao')
+        .eq('inativo', false)
+        .order('descricao');
+      if (error) throw error;
+      return (data || []).map((s) => ({
+        omie_codigo_servico: s.omie_codigo_servico,
+        omie_codigo_integracao: s.omie_codigo_integracao || '',
+        descricao: s.descricao,
+        codigo_lc116: '', codigo_servico_municipio: '',
+        valor_unitario: 0, unidade: 'UN',
+      }));
+    },
+  });
+
+  // Tool categories — react-query, 30min stale
+  const { data: toolCategories = [] } = useQuery<ToolCategory[]>({
+    queryKey: ['tool-categories'],
+    staleTime: 30 * 60 * 1000,
+    queryFn: async () => {
+      const { data, error } = await supabase
+        .from('tool_categories')
+        .select('id, name, description, suggested_interval_days')
+        .order('name');
+      if (error) throw error;
+      return (data || []) as ToolCategory[];
+    },
+  });
+
+  // Payment (forms list & method) — react-query por conta, 10min stale, só staff
+  const formasPagamentoQuery = (account: ProductAccount) =>
+    useQuery<FormaPagamento[]>({
+      queryKey: ['formas-pagamento', account],
+      enabled: isStaff,
+      staleTime: 10 * 60 * 1000,
+      queryFn: async () => {
+        const { data, error } = await supabase.functions.invoke('omie-vendas-sync', {
+          body: { action: 'listar_formas_pagamento', account },
+        });
+        if (error) throw error;
+        return (data?.formas || []) as FormaPagamento[];
+      },
+    });
+
+  const obenFormasQuery = formasPagamentoQuery('oben');
+  const colacorFormasQuery = formasPagamentoQuery('colacor');
+  const formasPagamentoOben = obenFormasQuery.data || [];
+  const formasPagamentoColacor = colacorFormasQuery.data || [];
+  const loadingFormas = obenFormasQuery.isLoading || colacorFormasQuery.isLoading;
+
   const [ordemCompra, setOrdemCompra] = useState<string>('');
   const [afiacaoPaymentMethod, setAfiacaoPaymentMethod] = useState<string>('a_vista');
 
@@ -233,25 +295,18 @@ export function useUnifiedOrder() {
     ? (cart.length === 0 ? 1 : 2)
     : (!selectedCustomer ? 0 : cart.length === 0 ? 1 : 2);
 
-  // Staff: load all catalogs (products are loaded inside useProductCatalog when isStaff=true)
+  // Staff: load default prices (servicos/categorias/formas/companyProfiles agora via react-query)
   useEffect(() => {
     if (isStaff) {
-      loadFormasPagamento('oben');
-      loadFormasPagamento('colacor');
-      loadServicosColacor();
       loadDefaultPrices();
-      loadCategories();
-      loadCompanyProfiles();
     }
   }, [isStaff]);
 
   // Customer: auto-setup own context (skip customer search)
   useEffect(() => {
     if (!isCustomerMode || !user || selectedCustomer) return;
-    // Load services catalog and tools for the logged-in customer
-    loadServicosColacor();
+    // servicos/categorias agora vêm via react-query automaticamente
     loadDefaultPrices();
-    loadCategories();
     setCustomerUserId(user.id);
     loadUserTools(user.id);
     loadAddresses(user.id);
@@ -279,66 +334,9 @@ export function useUnifiedOrder() {
   }, [isCustomerMode, user]);
 
   // Customer search & selection now live in useCustomerSelection hook
-
   // loadProductsForAccount + syncStockInBackground now live in useProductCatalog hook
-
-  const loadServicosColacor = async () => {
-    try {
-      setLoadingServicos(true);
-      const { data } = await supabase
-        .from('omie_servicos')
-        .select('omie_codigo_servico, omie_codigo_integracao, descricao')
-        .eq('inativo', false)
-        .order('descricao');
-      if (data) {
-        setServicos(data.map(s => ({
-          omie_codigo_servico: s.omie_codigo_servico,
-          omie_codigo_integracao: s.omie_codigo_integracao || '',
-          descricao: s.descricao,
-          codigo_lc116: '', codigo_servico_municipio: '',
-          valor_unitario: 0, unidade: 'UN',
-        })));
-      }
-    } catch (e) { console.error(e); }
-    finally { setLoadingServicos(false); }
-  };
-
-  const loadCompanyProfiles = async () => {
-    try {
-      const { data } = await supabase
-        .from('company_profiles')
-        .select('account, legal_name, cnpj, phone, address');
-      if (data) {
-        const map: Record<string, CompanyProfile> = {};
-        for (const row of data) map[row.account] = row as CompanyProfile;
-        setCompanyProfiles(map);
-      }
-    } catch (e) { console.error('Error loading company profiles', e); }
-  };
-
-  const loadFormasPagamento = async (account: ProductAccount) => {
-    setLoadingFormas(true);
-    try {
-      const { data } = await supabase.functions.invoke('omie-vendas-sync', {
-        body: { action: 'listar_formas_pagamento', account },
-      });
-      if (data?.formas) {
-        if (account === 'oben') setFormasPagamentoOben(data.formas);
-        else setFormasPagamentoColacor(data.formas);
-      }
-    } catch (e) { console.error(e); }
-    finally { setLoadingFormas(false); }
-  };
-
-  const loadCategories = async () => {
-    try {
-      const { data } = await supabase
-        .from('tool_categories')
-        .select('id, name, description, suggested_interval_days')
-        .order('name');
-      if (data) setToolCategories(data);
-    } catch (e) { console.error('Erro ao carregar categorias:', e); }
-  };
+  // loadServicosColacor / loadCategories / loadCompanyProfiles / loadFormasPagamento
+  // foram migrados para react-query (useQuery) acima.
 
   const loadUserTools = async (userId: string) => {
     setLoadingTools(true);
