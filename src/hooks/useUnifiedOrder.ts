@@ -283,7 +283,7 @@ export function useUnifiedOrder() {
     clearCustomerInternal();
     setCart([]);
     setOrdemCompra('');
-    setUserTools([]);
+    // user-tools cache é invalidado dentro de clearCustomerInternal
   }, [clearCustomerInternal, setCart]);
 
 
@@ -328,11 +328,10 @@ export function useUnifiedOrder() {
   // Customer: auto-setup own context (skip customer search)
   useEffect(() => {
     if (!isCustomerMode || !user || selectedCustomer) return;
-    // servicos/categorias agora vêm via react-query automaticamente
+    // servicos/categorias/userTools/addresses agora vêm via react-query automaticamente
+    // (basta setar customerUserId que as queries reagem)
     loadDefaultPrices();
     setCustomerUserId(user.id);
-    loadUserTools(user.id);
-    loadAddresses(user.id);
     loadPriceHistory();
     // Set a synthetic customer object so the UI considers customer selected
     (async () => {
@@ -358,21 +357,8 @@ export function useUnifiedOrder() {
 
   // Customer search & selection now live in useCustomerSelection hook
   // loadProductsForAccount + syncStockInBackground now live in useProductCatalog hook
-  // loadServicosColacor / loadCategories / loadCompanyProfiles / loadFormasPagamento
-  // foram migrados para react-query (useQuery) acima.
-
-  const loadUserTools = async (userId: string) => {
-    setLoadingTools(true);
-    try {
-      const { data } = await supabase
-        .from('user_tools')
-        .select('id, tool_category_id, generated_name, custom_name, quantity, specifications, tool_categories(name)')
-        .eq('user_id', userId)
-        .order('created_at', { ascending: false });
-      setUserTools((data || []) as UserTool[]);
-    } catch (e) { console.error(e); }
-    finally { setLoadingTools(false); }
-  };
+  // loadServicosColacor / loadCategories / loadCompanyProfiles / loadFormasPagamento /
+  // loadUserTools / loadAddresses foram migrados para react-query (useQuery) acima.
 
   // loadAddresses & selectCustomer now live in useCustomerSelection hook
 
