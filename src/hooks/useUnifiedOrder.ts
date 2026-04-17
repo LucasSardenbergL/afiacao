@@ -65,12 +65,7 @@ export function useUnifiedOrder() {
   // Company profiles (printing)
   const [companyProfiles, setCompanyProfiles] = useState<Record<string, CompanyProfile>>({});
 
-  // Products by account
-  const [obenProducts, setObenProducts] = useState<Product[]>([]);
-  const [colacorProducts, setColacorProducts] = useState<Product[]>([]);
-  const [productSearch, setProductSearch] = useState('');
-  const [loadingObenProducts, setLoadingObenProducts] = useState(true);
-  const [loadingColacorProducts, setLoadingColacorProducts] = useState(true);
+  // Product catalog state lives in useProductCatalog hook (declared after customer selection below)
 
   // Afiação
   const [userTools, setUserTools] = useState<UserTool[]>([]);
