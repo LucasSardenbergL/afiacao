@@ -273,37 +273,7 @@ export function useUnifiedOrder() {
     })();
   }, [isCustomerMode, user]);
 
-  // Customer search
-  useEffect(() => {
-    if (customerSearch.length < 2) { setCustomers([]); return; }
-    const timeout = setTimeout(async () => {
-      setSearchingCustomers(true);
-      try {
-        const { data, error } = await supabase.functions.invoke('omie-vendas-sync', {
-          body: { action: 'listar_clientes', search: customerSearch },
-        });
-        if (!error && data?.clientes) {
-          const clientes = data.clientes as OmieCustomer[];
-          if (clientes.length > 0) {
-            const codigos = clientes.map(c => c.codigo_cliente);
-            const { data: mappings } = await supabase
-              .from('omie_clientes')
-              .select('user_id, omie_codigo_cliente')
-              .in('omie_codigo_cliente', codigos);
-            if (mappings) {
-              for (const c of clientes) {
-                const m = mappings.find(mm => mm.omie_codigo_cliente === c.codigo_cliente);
-                if (m) c.local_user_id = m.user_id;
-              }
-            }
-          }
-          setCustomers(clientes);
-        }
-      } catch (e) { console.error(e); }
-      finally { setSearchingCustomers(false); }
-    }, 500);
-    return () => clearTimeout(timeout);
-  }, [customerSearch]);
+  // Customer search & selection now live in useCustomerSelection hook
 
   const loadProductsForAccount = async (account: ProductAccount) => {
     const setLoading = account === 'oben' ? setLoadingObenProducts : setLoadingColacorProducts;
