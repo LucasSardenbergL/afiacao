@@ -458,7 +458,7 @@ export function useCustomerSelection({
     }
   }, [
     resolveLocalUserId, autoCreateInMissingAccounts, resolveLocalPricesByOmieCode,
-    loadLocalPurchaseHistory, loadOmiePurchaseHistory, loadAddresses,
+    loadLocalPurchaseHistory, loadOmiePurchaseHistory,
     onLocalUserResolved, reloadPriceHistory, toast,
   ]);
 
@@ -472,11 +472,13 @@ export function useCustomerSelection({
     setCustomerParcelaRankingOben([]);
     setCustomerParcelaRankingColacor([]);
     setVendedorDivergencias([]);
-    setAddresses([]);
     setSelectedAddress('');
     setCustomerPurchaseHistory({});
     setRequiresPo(false);
-  }, []);
+    // Limpa o cache de endereços e ferramentas do cliente anterior
+    queryClient.removeQueries({ queryKey: ['customer-addresses'] });
+    queryClient.removeQueries({ queryKey: ['user-tools'] });
+  }, [queryClient]);
 
   return {
     // Search
@@ -495,8 +497,8 @@ export function useCustomerSelection({
     selectedParcelaColacor, setSelectedParcelaColacor,
     customerParcelaRankingOben,
     customerParcelaRankingColacor,
-    // Addresses
-    addresses, setAddresses,
+    // Addresses (lista vem do useQuery; selectedAddress permanece como state)
+    addresses,
     selectedAddress, setSelectedAddress,
     // History
     customerPurchaseHistory, setCustomerPurchaseHistory,
@@ -504,7 +506,5 @@ export function useCustomerSelection({
     vendedorDivergencias, validatingVendedor,
     // Actions
     selectCustomer, clearCustomer,
-    // Helpers (re-exported for parent reuse, e.g. customer-mode auto-setup)
-    loadAddresses,
   };
 }
