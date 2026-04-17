@@ -7,124 +7,41 @@ import { syncOrderToOmie, OmieServico } from '@/services/omieService';
 import { usePricingEngine } from '@/hooks/usePricingEngine';
 import { usePriceHistory } from '@/hooks/usePriceHistory';
 import { useCart, VOLUME_UNITS } from '@/hooks/unifiedOrder/useCart';
+import { useCustomerSelection } from '@/hooks/unifiedOrder/useCustomerSelection';
 import type { RecommendationItem } from '@/hooks/useRecommendationEngine';
 import { DELIVERY_FEES, DeliveryOption } from '@/types';
 import type { AIOrderResult, AICustomerMatch } from '@/components/UnifiedAIAssistant';
 import type { IdentifiedItem } from '@/components/VoiceServiceInput';
 
-// Re-export for backwards compatibility
+// Re-export shared types for backwards compatibility
 export { VOLUME_UNITS };
+export type {
+  ProductAccount,
+  Product,
+  ProductCartItem,
+  UserTool,
+  ServiceCartItem,
+  CartItem,
+  OmieCustomer,
+  FormaPagamento,
+  CompanyProfile,
+  AddressData,
+  ToolCategory,
+} from '@/hooks/unifiedOrder/types';
 
-/* ─── Types ─── */
-export type ProductAccount = 'oben' | 'colacor';
-
-export interface Product {
-  id: string;
-  codigo: string;
-  descricao: string;
-  unidade: string;
-  valor_unitario: number;
-  estoque: number;
-  ativo: boolean;
-  omie_codigo_produto: number;
-  account?: string;
-  is_tintometric?: boolean;
-  tint_type?: string;
-  metadata?: Record<string, any> | null;
-}
-
-export interface ProductCartItem {
-  type: 'product';
-  product: Product;
-  quantity: number;
-  unit_price: number;
-  account: ProductAccount;
-  // Tintometric optional fields
-  tint_cor_id?: string;
-  tint_nome_cor?: string;
-  tint_custo_corantes?: number;
-  tint_formula_id?: string;
-}
-
-export interface UserTool {
-  id: string;
-  tool_category_id: string;
-  generated_name: string | null;
-  custom_name: string | null;
-  quantity: number | null;
-  specifications: Record<string, unknown> | null;
-  tool_categories?: { name: string };
-}
-
-export interface ServiceCartItem {
-  type: 'service';
-  userTool: UserTool;
-  servico: OmieServico | null;
-  quantity: number;
-  notes?: string;
-  photos: string[];
-}
-
-export type CartItem = ProductCartItem | ServiceCartItem;
-
-export interface OmieCustomer {
-  codigo_cliente: number;
-  razao_social: string;
-  nome_fantasia: string;
-  cnpj_cpf: string;
-  codigo_vendedor: number | null;
-  local_user_id?: string | null;
-  codigo_cliente_colacor?: number | null;
-  codigo_vendedor_colacor?: number | null;
-  codigo_cliente_afiacao?: number | null;
-  codigo_vendedor_afiacao?: number | null;
-  // Address fields from Omie
-  endereco?: string;
-  endereco_numero?: string;
-  complemento?: string;
-  bairro?: string;
-  cidade?: string;
-  estado?: string;
-  cep?: string;
-  telefone?: string;
-  contato?: string;
-  // Segment/tags from Omie
-  tags?: string[];
-  atividade?: string;
-  segment?: string;
-}
-
-export interface FormaPagamento {
-  codigo: string;
-  descricao: string;
-}
-
-export interface CompanyProfile {
-  account: string;
-  legal_name: string;
-  cnpj: string;
-  phone: string | null;
-  address: string | null;
-}
-
-export interface AddressData {
-  id: string;
-  label: string;
-  street: string;
-  number: string;
-  complement: string | null;
-  neighborhood: string;
-  city: string;
-  state: string;
-  zipCode: string;
-}
-
-export interface ToolCategory {
-  id: string;
-  name: string;
-  description: string | null;
-  suggested_interval_days: number | null;
-}
+import type {
+  Product,
+  ProductAccount,
+  ProductCartItem,
+  ServiceCartItem,
+  CartItem,
+  OmieCustomer,
+  FormaPagamento,
+  CompanyProfile,
+  AddressData,
+  ToolCategory,
+  UserTool,
+} from '@/hooks/unifiedOrder/types';
 
 export const PAYMENT_OPTIONS = [
   { id: 'a_vista', label: 'À vista', description: 'PIX ou pagamento presencial na entrega/retirada' },
@@ -144,14 +61,7 @@ export function useUnifiedOrder() {
   const { user, isStaff, loading: authLoading } = useAuth();
   const { toast } = useToast();
 
-  // Customer
-  const [customerSearch, setCustomerSearch] = useState('');
-  const [customers, setCustomers] = useState<OmieCustomer[]>([]);
-  const [selectedCustomer, setSelectedCustomer] = useState<OmieCustomer | null>(null);
-  const [searchingCustomers, setSearchingCustomers] = useState(false);
-  const [loadingCustomer, setLoadingCustomer] = useState(false);
-  const [customerUserId, setCustomerUserId] = useState<string | null>(null);
-  const [requiresPo, setRequiresPo] = useState<boolean>(false);
+  // Company profiles (printing)
   const [companyProfiles, setCompanyProfiles] = useState<Record<string, CompanyProfile>>({});
 
   // Products by account
@@ -160,8 +70,6 @@ export function useUnifiedOrder() {
   const [productSearch, setProductSearch] = useState('');
   const [loadingObenProducts, setLoadingObenProducts] = useState(true);
   const [loadingColacorProducts, setLoadingColacorProducts] = useState(true);
-  const [customerPricesOben, setCustomerPricesOben] = useState<Record<number, number>>({});
-  const [customerPricesColacor, setCustomerPricesColacor] = useState<Record<number, number>>({});
 
   // Afiação
   const [userTools, setUserTools] = useState<UserTool[]>([]);
@@ -172,28 +80,15 @@ export function useUnifiedOrder() {
   const [creatingLocalProfile, setCreatingLocalProfile] = useState(false);
   const [toolCategories, setToolCategories] = useState<ToolCategory[]>([]);
 
-  // Vendedor validation
-  const [vendedorDivergencias, setVendedorDivergencias] = useState<string[]>([]);
-  const [validatingVendedor, setValidatingVendedor] = useState(false);
-
-  // Payment
+  // Payment (forms list & method — customer parcelas live in useCustomerSelection)
   const [formasPagamentoOben, setFormasPagamentoOben] = useState<FormaPagamento[]>([]);
   const [formasPagamentoColacor, setFormasPagamentoColacor] = useState<FormaPagamento[]>([]);
-  const [selectedParcelaOben, setSelectedParcelaOben] = useState<string>('999');
-  const [selectedParcelaColacor, setSelectedParcelaColacor] = useState<string>('999');
   const [loadingFormas, setLoadingFormas] = useState(false);
-  // Auto-calculated volumes (no manual input needed)
   const [ordemCompra, setOrdemCompra] = useState<string>('');
-  const [customerParcelaRankingOben, setCustomerParcelaRankingOben] = useState<string[]>([]);
-  const [customerParcelaRankingColacor, setCustomerParcelaRankingColacor] = useState<string[]>([]);
   const [afiacaoPaymentMethod, setAfiacaoPaymentMethod] = useState<string>('a_vista');
-  // Customer purchase history: product codigo -> last order date
-  const [customerPurchaseHistory, setCustomerPurchaseHistory] = useState<Record<string, string>>({});
 
   // Delivery
   const [deliveryOption, setDeliveryOption] = useState<DeliveryOption>('coleta_entrega');
-  const [addresses, setAddresses] = useState<AddressData[]>([]);
-  const [selectedAddress, setSelectedAddress] = useState<string>('');
   const [selectedTimeSlot, setSelectedTimeSlot] = useState<string>('');
   const [showAddressOptions, setShowAddressOptions] = useState(false);
 
@@ -230,8 +125,36 @@ export function useUnifiedOrder() {
     printDataList: Array<import('@/components/OrderPrintLayout').PrintOrderData>;
   } | null>(null);
 
-  // Pricing
+  // Pricing engine (calc-only, no customer dependency)
   const { loadDefaultPrices, calculatePrice } = usePricingEngine();
+
+  // Customer selection (search, selection, prices, parcelas, addresses, history, vendedor validation)
+  const customerSel = useCustomerSelection({
+    onLocalUserResolved: (uid) => { loadUserTools(uid); },
+    reloadPriceHistory: () => { loadPriceHistory(); },
+  });
+  const {
+    customerSearch, setCustomerSearch,
+    customers, searchingCustomers,
+    selectedCustomer, setSelectedCustomer,
+    loadingCustomer,
+    customerUserId, setCustomerUserId,
+    requiresPo,
+    customerPricesOben, setCustomerPricesOben,
+    customerPricesColacor, setCustomerPricesColacor,
+    selectedParcelaOben, setSelectedParcelaOben,
+    selectedParcelaColacor, setSelectedParcelaColacor,
+    customerParcelaRankingOben,
+    customerParcelaRankingColacor,
+    addresses, setAddresses,
+    selectedAddress, setSelectedAddress,
+    customerPurchaseHistory, setCustomerPurchaseHistory,
+    vendedorDivergencias, validatingVendedor,
+    selectCustomer, clearCustomer: clearCustomerInternal,
+    loadAddresses,
+  } = customerSel;
+
+  // Pricing history (depends on customerUserId from above)
   const { loadPriceHistory, getLastPrice } = usePriceHistory(customerUserId || undefined);
 
   // Pricing helpers (defined here so useCart can depend on them)
@@ -263,6 +186,14 @@ export function useUnifiedOrder() {
     updateServiceServico, updateServiceNotes, updateServicePhotos,
     updateQuantity, updateProductPrice, removeFromCart, clearCart,
   } = cartHook;
+
+  // Wrap clearCustomer to also clear cart + ordem de compra
+  const clearCustomer = useCallback(() => {
+    clearCustomerInternal();
+    setCart([]);
+    setOrdemCompra('');
+    setUserTools([]);
+  }, [clearCustomerInternal, setCart]);
 
 
   const sortedFormasPagamentoOben = useMemo(() => {
@@ -344,37 +275,7 @@ export function useUnifiedOrder() {
     })();
   }, [isCustomerMode, user]);
 
-  // Customer search
-  useEffect(() => {
-    if (customerSearch.length < 2) { setCustomers([]); return; }
-    const timeout = setTimeout(async () => {
-      setSearchingCustomers(true);
-      try {
-        const { data, error } = await supabase.functions.invoke('omie-vendas-sync', {
-          body: { action: 'listar_clientes', search: customerSearch },
-        });
-        if (!error && data?.clientes) {
-          const clientes = data.clientes as OmieCustomer[];
-          if (clientes.length > 0) {
-            const codigos = clientes.map(c => c.codigo_cliente);
-            const { data: mappings } = await supabase
-              .from('omie_clientes')
-              .select('user_id, omie_codigo_cliente')
-              .in('omie_codigo_cliente', codigos);
-            if (mappings) {
-              for (const c of clientes) {
-                const m = mappings.find(mm => mm.omie_codigo_cliente === c.codigo_cliente);
-                if (m) c.local_user_id = m.user_id;
-              }
-            }
-          }
-          setCustomers(clientes);
-        }
-      } catch (e) { console.error(e); }
-      finally { setSearchingCustomers(false); }
-    }, 500);
-    return () => clearTimeout(timeout);
-  }, [customerSearch]);
+  // Customer search & selection now live in useCustomerSelection hook
 
   const loadProductsForAccount = async (account: ProductAccount) => {
     const setLoading = account === 'oben' ? setLoadingObenProducts : setLoadingColacorProducts;
@@ -524,351 +425,7 @@ export function useUnifiedOrder() {
     finally { setLoadingTools(false); }
   };
 
-  const loadAddresses = async (userId: string) => {
-    try {
-      const { data } = await supabase
-        .from('addresses')
-        .select('*')
-        .eq('user_id', userId)
-        .order('is_default', { ascending: false });
-      if (data && data.length > 0) {
-        const formatted: AddressData[] = data.map(addr => ({
-          id: addr.id, label: addr.label, street: addr.street, number: addr.number,
-          complement: addr.complement, neighborhood: addr.neighborhood, city: addr.city,
-          state: addr.state, zipCode: addr.zip_code,
-        }));
-        setAddresses(formatted);
-        setSelectedAddress(formatted[0].id);
-      }
-    } catch (e) { console.error(e); }
-  };
-
-  const selectCustomer = async (cust: OmieCustomer) => {
-    setLoadingCustomer(true);
-    setCustomerSearch('');
-    setCustomers([]);
-    setCart([]);
-    setVendedorDivergencias([]);
-    setAddresses([]);
-    setSelectedAddress('');
-    setCustomerPurchaseHistory({});
-    setRequiresPo(false);
-    try {
-      setSelectedCustomer(cust);
-      let localUserId = cust.local_user_id || null;
-      if (!localUserId) {
-        const { data: mapping } = await supabase
-          .from('omie_clientes')
-          .select('user_id')
-          .eq('omie_codigo_cliente', cust.codigo_cliente)
-          .maybeSingle();
-        if (mapping?.user_id) localUserId = mapping.user_id;
-      }
-      if (!localUserId && cust.cnpj_cpf) {
-        const docClean = cust.cnpj_cpf.replace(/\D/g, '');
-        if (docClean.length >= 11) {
-          const { data: profile } = await supabase
-            .from('profiles')
-            .select('user_id, requires_po')
-            .or(`document.eq.${docClean},document.eq.${cust.cnpj_cpf}`)
-            .limit(1)
-            .maybeSingle();
-          if (profile?.user_id) localUserId = profile.user_id;
-          if (profile?.requires_po) setRequiresPo(true);
-        }
-      }
-      // If we have a localUserId but didn't fetch requires_po above, fetch it now
-      if (localUserId) {
-        const { data: poProfile } = await supabase
-          .from('profiles')
-          .select('requires_po')
-          .eq('user_id', localUserId)
-          .maybeSingle();
-        if (poProfile?.requires_po) setRequiresPo(true);
-      }
-      if (localUserId) {
-        setCustomerUserId(localUserId);
-        loadUserTools(localUserId);
-        loadAddresses(localUserId);
-        loadPriceHistory();
-        // Fetch local purchase history
-        Promise.all([
-          supabase.from('sales_orders')
-            .select('items, created_at')
-            .eq('customer_user_id', localUserId)
-            .neq('status', 'orcamento')
-            .order('created_at', { ascending: false })
-            .limit(100),
-          supabase.from('sales_price_history')
-            .select('product_id, created_at')
-            .eq('customer_user_id', localUserId)
-            .order('created_at', { ascending: false }),
-        ]).then(([ordersRes, priceHistRes]) => {
-          const history: Record<string, string> = {};
-          if (ordersRes.data) {
-            for (const order of ordersRes.data) {
-              const items = order.items as any[];
-              if (Array.isArray(items)) {
-                for (const item of items) {
-                  const code = item.codigo || item.product_code || '';
-                  if (code && !history[code]) history[code] = order.created_at;
-                  const pid = item.product_id || '';
-                  if (pid && !history[`pid:${pid}`]) history[`pid:${pid}`] = order.created_at;
-                }
-              }
-            }
-          }
-          if (priceHistRes.data) {
-            for (const row of priceHistRes.data) {
-              if (!history[`pid:${row.product_id}`]) history[`pid:${row.product_id}`] = row.created_at;
-            }
-          }
-          setCustomerPurchaseHistory(prev => ({ ...prev, ...history }));
-        });
-      }
-
-      const settledResults = await Promise.allSettled([
-        supabase.functions.invoke('omie-vendas-sync', {
-          body: { action: 'buscar_precos_cliente', codigo_cliente: cust.codigo_cliente, account: 'oben' },
-        }),
-        supabase.functions.invoke('omie-vendas-sync', {
-          body: { action: 'buscar_precos_cliente', codigo_cliente: cust.codigo_cliente, account: 'colacor' },
-        }),
-        supabase.functions.invoke('omie-vendas-sync', {
-          body: { action: 'buscar_ultima_parcela', codigo_cliente: cust.codigo_cliente, account: 'oben' },
-        }),
-        supabase.functions.invoke('omie-vendas-sync', {
-          body: { action: 'buscar_ultima_parcela', codigo_cliente: cust.codigo_cliente, account: 'colacor' },
-        }),
-        localUserId
-          ? supabase.from('sales_price_history').select('product_id, unit_price, created_at')
-              .eq('customer_user_id', localUserId).order('created_at', { ascending: false })
-          : Promise.resolve({ data: null }),
-        cust.cnpj_cpf
-          ? supabase.functions.invoke('omie-vendas-sync', {
-              body: { action: 'buscar_cliente', document: cust.cnpj_cpf, account: 'colacor' },
-            })
-          : Promise.resolve({ data: null }),
-        cust.cnpj_cpf
-          ? supabase.functions.invoke('omie-sync', {
-              body: { action: 'buscar_cliente_por_documento', document: cust.cnpj_cpf },
-            })
-          : Promise.resolve({ data: null }),
-      ]);
-
-      const labels = [
-        'preços Oben',
-        'preços Colacor',
-        'última parcela Oben',
-        'última parcela Colacor',
-        'histórico de preço local',
-        'cliente Colacor',
-        'cliente Afiação',
-      ];
-      const failedParts: string[] = [];
-      const getResult = (idx: number): any => {
-        const r = settledResults[idx];
-        if (r.status === 'fulfilled') {
-          const val: any = r.value;
-          if (val && val.error) {
-            console.error(`[selectCustomer] ${labels[idx]} retornou erro:`, val.error?.message || val.error);
-            failedParts.push(labels[idx]);
-            return { data: null };
-          }
-          return val ?? { data: null };
-        }
-        console.error(`[selectCustomer] ${labels[idx]} falhou:`, r.reason?.message || r.reason);
-        failedParts.push(labels[idx]);
-        return { data: null };
-      };
-
-      const priceOben = getResult(0);
-      const priceColacor = getResult(1);
-      const parcelaOben = getResult(2);
-      const parcelaColacor = getResult(3);
-      const localPriceResult = getResult(4);
-      const colacorClientResult = getResult(5);
-      const afiacaoClientResult = getResult(6);
-
-      if (failedParts.length > 0) {
-        toast({
-          title: 'Alguns dados do cliente não foram carregados',
-          description: `Falharam: ${failedParts.join(', ')}. Você pode continuar, mas preços/parcelas podem não refletir o contrato.`,
-        });
-      }
-
-      if (colacorClientResult?.data?.cliente) {
-        cust.codigo_cliente_colacor = colacorClientResult.data.cliente.codigo_cliente;
-        cust.codigo_vendedor_colacor = colacorClientResult.data.cliente.codigo_vendedor || null;
-      }
-      if (afiacaoClientResult?.data?.codigo_cliente) {
-        cust.codigo_cliente_afiacao = afiacaoClientResult.data.codigo_cliente;
-        cust.codigo_vendedor_afiacao = afiacaoClientResult.data.codigo_vendedor || null;
-      }
-
-      // Auto-create customer in accounts where they don't exist yet
-      const customerPayload = {
-        document: cust.cnpj_cpf,
-        razao_social: cust.razao_social,
-        nome_fantasia: cust.nome_fantasia,
-        endereco: cust.endereco,
-        endereco_numero: cust.endereco_numero,
-        bairro: cust.bairro,
-        cidade: cust.cidade,
-        estado: cust.estado,
-        cep: cust.cep,
-        telefone: cust.telefone,
-        contato: cust.contato,
-      };
-
-      const autoCreatePromises: Promise<any>[] = [];
-
-      if (!cust.codigo_cliente_colacor && cust.cnpj_cpf) {
-        autoCreatePromises.push(
-          supabase.functions.invoke('omie-vendas-sync', {
-            body: { action: 'criar_cliente', account: 'colacor', ...customerPayload },
-          }).then(res => {
-            if (res.data?.codigo_cliente) {
-              cust.codigo_cliente_colacor = res.data.codigo_cliente;
-              cust.codigo_vendedor_colacor = res.data.codigo_vendedor || null;
-              console.log(`[AutoCreate] Cliente criado na Colacor Vendas: ${res.data.codigo_cliente}`);
-            }
-          }).catch(e => console.warn('[AutoCreate] Erro ao criar na Colacor Vendas:', e))
-        );
-      }
-
-      if (!cust.codigo_cliente_afiacao && cust.cnpj_cpf) {
-        autoCreatePromises.push(
-          supabase.functions.invoke('omie-sync', {
-            body: { action: 'criar_cliente_afiacao', ...customerPayload },
-          }).then(res => {
-            if (res.data?.codigo_cliente) {
-              cust.codigo_cliente_afiacao = res.data.codigo_cliente;
-              cust.codigo_vendedor_afiacao = res.data.codigo_vendedor || null;
-              console.log(`[AutoCreate] Cliente criado na Colacor Afiação: ${res.data.codigo_cliente}`);
-            }
-          }).catch(e => console.warn('[AutoCreate] Erro ao criar na Colacor Afiação:', e))
-        );
-      }
-
-      if (autoCreatePromises.length > 0) {
-        await Promise.all(autoCreatePromises);
-      }
-
-      setSelectedCustomer({ ...cust });
-
-      // Save customer segment/tags to DB in background
-      if (cust.codigo_cliente && (cust.tags?.length || cust.atividade)) {
-        supabase.functions.invoke('omie-vendas-sync', {
-          body: {
-            action: 'salvar_segmento_cliente',
-            codigo_cliente: cust.codigo_cliente,
-            account: 'oben',
-            tags: cust.tags || [],
-            atividade: cust.atividade || '',
-          },
-        }).catch(() => {});
-      }
-
-      // Fetch Omie order history (runs in background, merges into purchase history + saves preferred items)
-      const omieHistoryPromises: Promise<any>[] = [];
-      if (cust.codigo_cliente) {
-        omieHistoryPromises.push(
-          supabase.functions.invoke('omie-vendas-sync', {
-            body: { action: 'historico_produtos_cliente', codigo_cliente: cust.codigo_cliente, account: 'oben' },
-          })
-        );
-      }
-      if (cust.codigo_cliente_colacor) {
-        omieHistoryPromises.push(
-          supabase.functions.invoke('omie-vendas-sync', {
-            body: { action: 'historico_produtos_cliente', codigo_cliente: cust.codigo_cliente_colacor, account: 'colacor' },
-          })
-        );
-      }
-      if (omieHistoryPromises.length > 0) {
-        Promise.all(omieHistoryPromises).then((results) => {
-          const omieHistory: Record<string, string> = {};
-          for (const res of results) {
-            if (res?.data?.history) {
-              const h = res.data.history as Record<string, string>;
-              for (const [omieCod, dateStr] of Object.entries(h)) {
-                if (!omieHistory[`omie:${omieCod}`]) {
-                  omieHistory[`omie:${omieCod}`] = dateStr;
-                }
-              }
-            }
-          }
-          if (Object.keys(omieHistory).length > 0) {
-            setCustomerPurchaseHistory(prev => ({ ...prev, ...omieHistory }));
-          }
-        });
-      }
-
-      const localPricesByProduct: Record<string, number> = {};
-      if (localPriceResult.data && localPriceResult.data.length > 0) {
-        for (const row of localPriceResult.data) {
-          if (!localPricesByProduct[row.product_id]) {
-            localPricesByProduct[row.product_id] = row.unit_price;
-          }
-        }
-      }
-
-      let localPricesByOmie: Record<number, number> = {};
-      const productIds = Object.keys(localPricesByProduct);
-      if (productIds.length > 0) {
-        const { data: productMappings } = await supabase
-          .from('omie_products').select('id, omie_codigo_produto').in('id', productIds);
-        if (productMappings) {
-          for (const pm of productMappings) {
-            const price = localPricesByProduct[pm.id];
-            if (price && price > 0) localPricesByOmie[pm.omie_codigo_produto] = price;
-          }
-        }
-      }
-
-      const mergedOben: Record<number, number> = { ...localPricesByOmie };
-      if (priceOben.data?.precos) {
-        for (const [k, v] of Object.entries(priceOben.data.precos as Record<string, number>)) {
-          if (v && v > 0) mergedOben[Number(k)] = v;
-        }
-      }
-      setCustomerPricesOben(mergedOben);
-
-      const mergedColacor: Record<number, number> = { ...localPricesByOmie };
-      if (priceColacor.data?.precos) {
-        for (const [k, v] of Object.entries(priceColacor.data.precos as Record<string, number>)) {
-          if (v && v > 0) mergedColacor[Number(k)] = v;
-        }
-      }
-      setCustomerPricesColacor(mergedColacor);
-
-      if (parcelaOben.data?.ultima_parcela) setSelectedParcelaOben(parcelaOben.data.ultima_parcela);
-      if (parcelaOben.data?.parcela_ranking) setCustomerParcelaRankingOben(parcelaOben.data.parcela_ranking.map((r: any) => r.codigo));
-      if (parcelaColacor.data?.ultima_parcela) setSelectedParcelaColacor(parcelaColacor.data.ultima_parcela);
-      if (parcelaColacor.data?.parcela_ranking) setCustomerParcelaRankingColacor(parcelaColacor.data.parcela_ranking.map((r: any) => r.codigo));
-    } catch (error: any) {
-      toast({ title: 'Erro', description: error.message, variant: 'destructive' });
-    } finally {
-      setLoadingCustomer(false);
-    }
-
-    if (cust.cnpj_cpf) {
-      setValidatingVendedor(true);
-      try {
-        const { data: validacao, error } = await supabase.functions.invoke('omie-cliente', {
-          body: { action: 'validar_vendedor', cnpj_cpf: cust.cnpj_cpf },
-        });
-        if (!error && validacao && !validacao.consistente) {
-          setVendedorDivergencias(validacao.divergencias || []);
-        }
-      } catch (err) {
-        console.error('Erro ao validar vendedor:', err);
-      } finally {
-        setValidatingVendedor(false);
-      }
-    }
-  };
+  // loadAddresses & selectCustomer now live in useCustomerSelection hook
 
   // Cart actions and pricing helpers (getProductPrice, getServicePrice,
   // addProductToCart, addTintProductToCart, addServiceToCart, updateServiceServico,
@@ -1522,21 +1079,9 @@ export function useUnifiedOrder() {
     }
   };
 
-  const clearCustomer = () => {
-    setSelectedCustomer(null);
-    setCustomerPricesOben({});
-    setCustomerPricesColacor({});
-    setCart([]);
-    setCustomerUserId(null);
-    setUserTools([]);
-    setSelectedParcelaOben('999');
-    setSelectedParcelaColacor('999');
-    setVendedorDivergencias([]);
-    setOrdemCompra('');
-    setAddresses([]);
-    setSelectedAddress('');
-    setCustomerPurchaseHistory({});
-  };
+  // clearCustomer defined earlier (wraps useCustomerSelection.clearCustomer + clears cart/ordemCompra/userTools)
+
+
 
   return {
     // Auth
