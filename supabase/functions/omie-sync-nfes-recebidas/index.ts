@@ -196,14 +196,19 @@ function extractPedidosFromDetalhe(detalhe: any): string[] {
 async function updateLinhasDoPedido(
   supabase: ReturnType<typeof createClient>,
   empresa: Empresa,
-  numeroPedido: string,
+  numeroContrato: string,
+  fornecedorCodigo: number | null,
   m: MappedNFe,
 ): Promise<number> {
-  const { data: linhas, error: selErr } = await supabase
+  let q = supabase
     .from("purchase_orders_tracking")
     .select("id, status, t2_data_faturamento, t4_data_recebimento")
     .eq("empresa", empresa)
-    .eq("numero_pedido", numeroPedido);
+    .eq("numero_contrato_fornecedor", numeroContrato);
+  if (fornecedorCodigo) {
+    q = q.eq("fornecedor_codigo_omie", fornecedorCodigo);
+  }
+  const { data: linhas, error: selErr } = await q;
   if (selErr) throw selErr;
   if (!linhas || linhas.length === 0) return 0;
 
