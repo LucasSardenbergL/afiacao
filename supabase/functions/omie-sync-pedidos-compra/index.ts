@@ -189,7 +189,8 @@ const PRESERVE_FIELDS = new Set([
  *   "70"=Recebido, "80"=Encerrado, "90"=Cancelado
  */
 function mapPedidoToRow(empresa: Empresa, pedido: any): Record<string, unknown> {
-  const cab = pedido?.cabecalho ?? {};
+  // PesquisarPedCompra retorna o cabeçalho em "cabecalho_consulta" (não "cabecalho")
+  const cab = pedido?.cabecalho_consulta ?? pedido?.cabecalho ?? {};
   const etapa = String(cab?.cEtapa ?? "").trim();
 
   let status = "CRIADO";
