@@ -152,8 +152,8 @@ serve(async (req) => {
       const omieSearchTerms = nameTerms.filter((t: string) => t.length >= 3).slice(0, 3);
       for (const term of omieSearchTerms) {
         try {
-          const OMIE_APP_KEY = Deno.env.get("OMIE_VENDAS_APP_KEY");
-          const OMIE_APP_SECRET = Deno.env.get("OMIE_VENDAS_APP_SECRET");
+          const OMIE_APP_KEY = Deno.env.get("OMIE_OBEN_APP_KEY");
+          const OMIE_APP_SECRET = Deno.env.get("OMIE_OBEN_APP_SECRET");
           if (OMIE_APP_KEY && OMIE_APP_SECRET) {
             const omieRes = await fetch("https://app.omie.com.br/api/v1/geral/clientes/", {
               method: "POST",
@@ -1126,10 +1126,10 @@ Responda SEMPRE usando a função identify_order_items.`;
             }
 
             // Fetch prices from Omie for both accounts
-            const OMIE_OBEN_KEY = Deno.env.get("OMIE_VENDAS_APP_KEY");
-            const OMIE_OBEN_SECRET = Deno.env.get("OMIE_VENDAS_APP_SECRET");
-            const OMIE_COLACOR_KEY = Deno.env.get("OMIE_COLACOR_VENDAS_APP_KEY");
-            const OMIE_COLACOR_SECRET = Deno.env.get("OMIE_COLACOR_VENDAS_APP_SECRET");
+            const OMIE_OBEN_KEY = Deno.env.get("OMIE_OBEN_APP_KEY");
+            const OMIE_OBEN_SECRET = Deno.env.get("OMIE_OBEN_APP_SECRET");
+            const OMIE_COLACOR_KEY = Deno.env.get("OMIE_COLACOR_APP_KEY");
+            const OMIE_COLACOR_SECRET = Deno.env.get("OMIE_COLACOR_APP_SECRET");
 
             const fetchOmiePrices = async (appKey: string, appSecret: string, codigoCliente: number): Promise<Record<number, number>> => {
               try {

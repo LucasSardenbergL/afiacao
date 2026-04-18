@@ -25,13 +25,13 @@ function getCredentials(company: Company) {
   switch (company) {
     case "oben":
       return {
-        key: Deno.env.get("OMIE_VENDAS_APP_KEY"),
-        secret: Deno.env.get("OMIE_VENDAS_APP_SECRET"),
+        key: Deno.env.get("OMIE_OBEN_APP_KEY"),
+        secret: Deno.env.get("OMIE_OBEN_APP_SECRET"),
       };
     case "colacor":
       return {
-        key: Deno.env.get("OMIE_COLACOR_VENDAS_APP_KEY"),
-        secret: Deno.env.get("OMIE_COLACOR_VENDAS_APP_SECRET"),
+        key: Deno.env.get("OMIE_COLACOR_APP_KEY"),
+        secret: Deno.env.get("OMIE_COLACOR_APP_SECRET"),
       };
     case "colacor_sc":
       return {

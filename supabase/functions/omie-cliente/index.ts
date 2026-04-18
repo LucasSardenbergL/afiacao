@@ -99,11 +99,11 @@ async function callOmieApi(
   call: string,
   params: Record<string, unknown>
 ): Promise<OmieListResponse> {
-  const OMIE_APP_KEY = Deno.env.get("OMIE_APP_KEY");
-  const OMIE_APP_SECRET = Deno.env.get("OMIE_APP_SECRET");
+  const OMIE_APP_KEY = Deno.env.get("OMIE_COLACOR_SC_APP_KEY");
+  const OMIE_APP_SECRET = Deno.env.get("OMIE_COLACOR_SC_APP_SECRET");
 
   if (!OMIE_APP_KEY || !OMIE_APP_SECRET) {
-    throw new Error("Credenciais do Omie não configuradas");
+    throw new Error("Credenciais do Omie (Colacor SC) não configuradas");
   }
 
   return callOmieApiWithCredentials(endpoint, call, params, OMIE_APP_KEY, OMIE_APP_SECRET);
@@ -117,23 +117,23 @@ interface OmieAccountConfig {
 
 function getOmieAccounts(): OmieAccountConfig[] {
   const accounts: OmieAccountConfig[] = [];
-  
-  const colacorKey = Deno.env.get("OMIE_APP_KEY");
-  const colacorSecret = Deno.env.get("OMIE_APP_SECRET");
-  if (colacorKey && colacorSecret) {
-    accounts.push({ name: "Colacor (Afiação)", appKey: colacorKey, appSecret: colacorSecret });
+
+  const colacorScKey = Deno.env.get("OMIE_COLACOR_SC_APP_KEY");
+  const colacorScSecret = Deno.env.get("OMIE_COLACOR_SC_APP_SECRET");
+  if (colacorScKey && colacorScSecret) {
+    accounts.push({ name: "Colacor SC (Afiação)", appKey: colacorScKey, appSecret: colacorScSecret });
   }
 
-  const obenKey = Deno.env.get("OMIE_VENDAS_APP_KEY");
-  const obenSecret = Deno.env.get("OMIE_VENDAS_APP_SECRET");
+  const obenKey = Deno.env.get("OMIE_OBEN_APP_KEY");
+  const obenSecret = Deno.env.get("OMIE_OBEN_APP_SECRET");
   if (obenKey && obenSecret) {
-    accounts.push({ name: "Oben (Vendas)", appKey: obenKey, appSecret: obenSecret });
+    accounts.push({ name: "Oben", appKey: obenKey, appSecret: obenSecret });
   }
 
-  const colacorVendasKey = Deno.env.get("OMIE_COLACOR_VENDAS_APP_KEY");
-  const colacorVendasSecret = Deno.env.get("OMIE_COLACOR_VENDAS_APP_SECRET");
-  if (colacorVendasKey && colacorVendasSecret) {
-    accounts.push({ name: "Colacor (Vendas)", appKey: colacorVendasKey, appSecret: colacorVendasSecret });
+  const colacorKey = Deno.env.get("OMIE_COLACOR_APP_KEY");
+  const colacorSecret = Deno.env.get("OMIE_COLACOR_APP_SECRET");
+  if (colacorKey && colacorSecret) {
+    accounts.push({ name: "Colacor", appKey: colacorKey, appSecret: colacorSecret });
   }
 
   return accounts;

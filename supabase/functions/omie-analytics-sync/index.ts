@@ -14,19 +14,20 @@ type OmieAccount = "vendas" | "servicos" | "colacor_vendas";
 function getCredentials(account: OmieAccount) {
   if (account === "vendas") {
     return {
-      key: Deno.env.get("OMIE_VENDAS_APP_KEY"),
-      secret: Deno.env.get("OMIE_VENDAS_APP_SECRET"),
+      key: Deno.env.get("OMIE_OBEN_APP_KEY"),
+      secret: Deno.env.get("OMIE_OBEN_APP_SECRET"),
     };
   }
   if (account === "colacor_vendas") {
     return {
-      key: Deno.env.get("OMIE_COLACOR_VENDAS_APP_KEY"),
-      secret: Deno.env.get("OMIE_COLACOR_VENDAS_APP_SECRET"),
+      key: Deno.env.get("OMIE_COLACOR_APP_KEY"),
+      secret: Deno.env.get("OMIE_COLACOR_APP_SECRET"),
     };
   }
+  // servicos = afiação Colacor SC
   return {
-    key: Deno.env.get("OMIE_APP_KEY"),
-    secret: Deno.env.get("OMIE_APP_SECRET"),
+    key: Deno.env.get("OMIE_COLACOR_SC_APP_KEY"),
+    secret: Deno.env.get("OMIE_COLACOR_SC_APP_SECRET"),
   };
 }
 

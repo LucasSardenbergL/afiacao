@@ -14,13 +14,13 @@ type Account = "oben" | "colacor";
 function getVendasCredentials(account: Account) {
   if (account === "colacor") {
     return {
-      key: Deno.env.get("OMIE_COLACOR_VENDAS_APP_KEY"),
-      secret: Deno.env.get("OMIE_COLACOR_VENDAS_APP_SECRET"),
+      key: Deno.env.get("OMIE_COLACOR_APP_KEY"),
+      secret: Deno.env.get("OMIE_COLACOR_APP_SECRET"),
     };
   }
   return {
-    key: Deno.env.get("OMIE_VENDAS_APP_KEY"),
-    secret: Deno.env.get("OMIE_VENDAS_APP_SECRET"),
+    key: Deno.env.get("OMIE_OBEN_APP_KEY"),
+    secret: Deno.env.get("OMIE_OBEN_APP_SECRET"),
   };
 }
 

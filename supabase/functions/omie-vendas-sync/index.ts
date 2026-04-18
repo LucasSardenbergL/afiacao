@@ -13,14 +13,14 @@ type Account = "oben" | "colacor";
 
 function getCredentials(account: Account) {
   if (account === "colacor") {
-    const APP_KEY = Deno.env.get("OMIE_COLACOR_VENDAS_APP_KEY");
-    const APP_SECRET = Deno.env.get("OMIE_COLACOR_VENDAS_APP_SECRET");
-    if (!APP_KEY || !APP_SECRET) throw new Error("Credenciais da Colacor (vendas) não configuradas");
+    const APP_KEY = Deno.env.get("OMIE_COLACOR_APP_KEY");
+    const APP_SECRET = Deno.env.get("OMIE_COLACOR_APP_SECRET");
+    if (!APP_KEY || !APP_SECRET) throw new Error("Credenciais da Colacor não configuradas");
     return { APP_KEY, APP_SECRET };
   }
-  const APP_KEY = Deno.env.get("OMIE_VENDAS_APP_KEY");
-  const APP_SECRET = Deno.env.get("OMIE_VENDAS_APP_SECRET");
-  if (!APP_KEY || !APP_SECRET) throw new Error("Credenciais da empresa de Vendas Omie não configuradas");
+  const APP_KEY = Deno.env.get("OMIE_OBEN_APP_KEY");
+  const APP_SECRET = Deno.env.get("OMIE_OBEN_APP_SECRET");
+  if (!APP_KEY || !APP_SECRET) throw new Error("Credenciais da Oben não configuradas");
   return { APP_KEY, APP_SECRET };
 }
 
