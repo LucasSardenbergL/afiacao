@@ -163,21 +163,28 @@ function mapNFe(nfe: any): {
   numero: string | null;
   serie: string | null;
   data_emissao_iso: string | null;
+  data_recebimento_iso: string | null;
   cancelada: boolean;
+  faturada: boolean;
+  recebida: boolean;
   status: "FATURADO" | "RECEBIDO" | "CANCELADO";
   transp_cnpj: string | null;
   transp_nome: string | null;
 } {
   const cab = nfe?.cabec ?? {};
   const info = nfe?.infoCadastro ?? {};
-  const transp = nfe?.transporte ?? {};
+  // transporte fica DENTRO de cabec conforme doc Omie
+  const transp = cab?.transporte ?? nfe?.transporte ?? {};
 
   const cancelada = String(info?.cCancelada ?? "N").toUpperCase() === "S";
   const recebida = String(info?.cRecebido ?? "N").toUpperCase() === "S";
+  const faturada = String(info?.cFaturado ?? "N").toUpperCase() === "S";
 
+  // Prioridade: CANCELADO > RECEBIDO > FATURADO
   let status: "FATURADO" | "RECEBIDO" | "CANCELADO" = "FATURADO";
   if (cancelada) status = "CANCELADO";
   else if (recebida) status = "RECEBIDO";
+  else if (faturada) status = "FATURADO";
 
   return {
     chave: (cab?.cChaveNFe ?? cab?.cChaveNfe)
@@ -189,7 +196,10 @@ function mapNFe(nfe: any): {
     numero: cab?.cNumeroNFe ?? null,
     serie: cab?.cSerieNFe ?? null,
     data_emissao_iso: parseBRDateToISO(cab?.dEmissaoNFe, "00:00:00"),
+    data_recebimento_iso: recebida ? parseBRDateToISO(info?.dRec, info?.hRec) : null,
     cancelada,
+    faturada,
+    recebida,
     status,
     transp_cnpj: transp?.cCnpjCpfTransp ? String(transp.cCnpjCpfTransp).replace(/\D/g, "") : null,
     transp_nome: transp?.cRazaoTransp ?? transp?.cNomeTransp ?? null,
