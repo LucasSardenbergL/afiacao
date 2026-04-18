@@ -286,10 +286,11 @@ async function processarEmpresa(
     }
 
     const resp = await callOmie(app_key, app_secret, "ListarRecebimentos", param);
-    const lista: any[] = resp?.nfCadastro ?? resp?.cadastros ?? resp?.nfes ?? [];
+    const lista: any[] =
+      resp?.recebimentos ?? resp?.recebimentosCadastro ?? resp?.nfCadastro ?? resp?.cadastros ?? resp?.nfes ?? [];
     const apenasCtes = lista.filter((it) => String(it?.cabec?.cModeloNFe ?? "") === CTE_MODELO);
     ctesBase.push(...apenasCtes);
-    totalPaginas = Number(resp?.total_de_paginas ?? 1);
+    totalPaginas = Number(resp?.nTotPaginas ?? resp?.total_de_paginas ?? 1);
     console.log(`[sync-ctes] ${empresa} pág ${pagina}/${totalPaginas} → ${lista.length} itens (${apenasCtes.length} CTes)`);
     pagina++;
     await sleep(RATE_LIMIT_DELAY_MS);
