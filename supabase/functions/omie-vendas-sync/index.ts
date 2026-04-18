@@ -1136,6 +1136,12 @@ async function criarPedidoVenda(
     account
   ) as any;
 
+  if (!result) {
+    throw new Error(
+      `Omie (${account}) não respondeu ao incluir pedido (provável rate limit 429 após retries). Tente novamente em alguns segundos.`
+    );
+  }
+
   const omie_pedido_id = result.codigo_pedido || null;
   const omie_numero_pedido = result.numero_pedido || cCodIntPed;
 
