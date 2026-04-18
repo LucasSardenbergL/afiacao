@@ -1,6 +1,9 @@
 // Edge Function: omie-sync-pedidos-compra
 // Sincroniza pedidos de compra do Omie (Oben + Colacor) para a tabela purchase_orders_tracking
 // Pública (verify_jwt = false) - acionada via POST manual ou cron
+//
+// Método Omie usado: PesquisarPedCompra
+// Doc: https://app.omie.com.br/api/v1/produtos/pedidocompra/#PesquisarPedCompra
 
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.45.0";
 
@@ -59,7 +62,6 @@ function parseBRDateToISO(dateBR?: string | null, timeBR?: string | null): strin
   const time = timeBR && /^\d{2}:\d{2}(:\d{2})?$/.test(timeBR)
     ? (timeBR.length === 5 ? `${timeBR}:00` : timeBR)
     : "00:00:00";
-  // Trata como horário Brasil (UTC-3) e converte pra UTC ISO
   return `${yyyy}-${mm}-${dd}T${time}-03:00`;
 }
 
@@ -94,22 +96,26 @@ async function callOmie(
   pagina: number,
   dataDe: string,
   dataAte: string,
-  fornecedorCodigo?: number,
 ): Promise<any> {
+  // PesquisarPedCompra NÃO suporta filtro nativo por fornecedor.
+  // Filtramos pós-resposta em syncEmpresa().
   const param: Record<string, unknown> = {
-    pagina,
-    registros_por_pagina: PAGE_SIZE,
-    apenas_importado_api: "N",
-    filtrar_por_data_de: dataDe,
-    filtrar_por_data_ate: dataAte,
+    nPagina: pagina,
+    nRegsPorPagina: PAGE_SIZE,
+    lApenasImportadoApi: "F",
+    lExibirPedidosPendentes: "T",
+    lExibirPedidosFaturados: "T",
+    lExibirPedidosRecebidos: "T",
+    lExibirPedidosCancelados: "T",
+    lExibirPedidosEncerrados: "T",
+    lExibirPedidosRecParciais: "T",
+    lExibirPedidosFatParciais: "T",
+    dDataInicial: dataDe,
+    dDataFinal: dataAte,
   };
-  if (fornecedorCodigo) {
-    // Campo correto na ListarPedidosCompra é "filtrar_por_codigo" para fornecedor
-    param.filtrar_por_codigo = fornecedorCodigo;
-  }
 
   const body = {
-    call: "ListarPedidosCompra",
+    call: "PesquisarPedCompra",
     app_key,
     app_secret,
     param: [param],
@@ -132,7 +138,6 @@ async function callOmie(
       json = { raw: text };
     }
 
-    // Rate limit
     if (res.status === 429 || (json?.faultstring && /rate limit/i.test(json.faultstring))) {
       console.warn(`[omie] rate limit atingido (tentativa ${attempt}/${MAX_RETRIES}), aguardando ${RETRY_DELAY_MS}ms`);
       await sleep(RETRY_DELAY_MS);
@@ -171,22 +176,37 @@ const PRESERVE_FIELDS = new Set([
   "lt_logistica_dias_uteis",
 ]);
 
+/**
+ * Mapeia um pedido retornado por PesquisarPedCompra → linha de purchase_orders_tracking.
+ * Estrutura do retorno (pedidos_pesquisa[]):
+ *   {
+ *     cabecalho: { nCodPed, cCodIntPed, dIncData, cIncHora, cEtapa, cNumero,
+ *                  dDtPrevisao, nCodFor, cObs, cObsInt, ... }
+ *     ...
+ *   }
+ * Status derivado de cEtapa (etapas Omie):
+ *   "10"=Digitação, "20"=Aprovação, "50"=Aprovado, "60"=Faturado,
+ *   "70"=Recebido, "80"=Encerrado, "90"=Cancelado
+ */
 function mapPedidoToRow(empresa: Empresa, pedido: any): Record<string, unknown> {
   const cab = pedido?.cabecalho ?? {};
-  const info = pedido?.informacoes_cadastro ?? {};
+  const etapa = String(cab?.cEtapa ?? "").trim();
 
-  const cancelado = info?.dCancelado && String(info.dCancelado).trim() !== "";
-  const status = cancelado ? "CANCELADO" : "CRIADO";
+  let status = "CRIADO";
+  if (etapa === "90") status = "CANCELADO";
+  else if (etapa === "80") status = "ENCERRADO";
+  else if (etapa === "70") status = "RECEBIDO";
+  else if (etapa === "60") status = "FATURADO";
 
   return {
     empresa,
-    omie_codigo_pedido: cab?.nCodPedido ?? null,
-    omie_codigo_integracao: cab?.cCodIntPedido ?? null,
+    omie_codigo_pedido: cab?.nCodPed ?? null,
+    omie_codigo_integracao: cab?.cCodIntPed ?? null,
     numero_pedido: cab?.cNumero ?? null,
     fornecedor_codigo_omie: cab?.nCodFor ?? null,
     grupo_leadtime: "OUTRO",
     status,
-    t1_data_pedido: parseBRDateToISO(cab?.dInclusao, cab?.hInclusao),
+    t1_data_pedido: parseBRDateToISO(cab?.dIncData, cab?.cIncHora),
     data_previsao_original: parseBRDateOnly(cab?.dDtPrevisao),
     observacoes: cab?.cObs ?? null,
     raw_data: pedido,
@@ -198,10 +218,9 @@ async function upsertPedido(
   row: Record<string, unknown>,
 ): Promise<void> {
   if (!row.omie_codigo_pedido) {
-    throw new Error("Pedido sem nCodPedido");
+    throw new Error("Pedido sem nCodPed");
   }
 
-  // Estratégia: SELECT existente -> se existe, faz UPDATE preservando campos; senão INSERT
   const { data: existing, error: selErr } = await supabase
     .from("purchase_orders_tracking")
     .select("id")
@@ -212,7 +231,6 @@ async function upsertPedido(
   if (selErr) throw selErr;
 
   if (existing?.id) {
-    // Remove campos preservados do update
     const updateRow: Record<string, unknown> = {};
     for (const [k, v] of Object.entries(row)) {
       if (!PRESERVE_FIELDS.has(k)) updateRow[k] = v;
@@ -258,7 +276,7 @@ async function syncEmpresa(
   while (pagina <= totalPaginas) {
     let resp: any;
     try {
-      resp = await callOmie(app_key, app_secret, pagina, dataDe, dataAte, fornecedorCodigo);
+      resp = await callOmie(app_key, app_secret, pagina, dataDe, dataAte);
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
       console.error(`[sync-pedidos] empresa=${empresa} pagina=${pagina} erro fetch: ${msg}`);
@@ -268,7 +286,6 @@ async function syncEmpresa(
 
     if (resp?.faultstring) {
       const fs = String(resp.faultstring);
-      // Sem resultados → encerra paginação limpa
       if (/not\s*found|sem\s*registros|n[ãa]o\s*encontrado/i.test(fs)) {
         console.log(`[sync-pedidos] empresa=${empresa} pagina=${pagina} sem resultados - encerrando`);
         break;
@@ -278,13 +295,15 @@ async function syncEmpresa(
       break;
     }
 
-    totalPaginas = resp?.total_de_paginas ?? 1;
-    let pedidos: any[] = resp?.pedido_compra_produto ?? [];
+    totalPaginas = resp?.nTotalPaginas ?? 1;
+    let pedidos: any[] = resp?.pedidos_pesquisa ?? [];
 
-    // Filtro pós-resposta caso a API retorne pedidos de outros fornecedores
+    // Filtro pós-resposta por fornecedor (PesquisarPedCompra não filtra nativamente)
     if (fornecedorCodigo) {
       const before = pedidos.length;
-      pedidos = pedidos.filter((p) => p?.cabecalho?.nCodFor === fornecedorCodigo);
+      pedidos = pedidos.filter(
+        (p) => Number(p?.cabecalho?.nCodFor) === Number(fornecedorCodigo),
+      );
       if (before !== pedidos.length) {
         console.log(
           `[sync-pedidos] empresa=${empresa} pagina=${pagina} filtro fornecedor: ${before} → ${pedidos.length}`,
@@ -303,7 +322,7 @@ async function syncEmpresa(
         summary.pedidos_sincronizados++;
       } catch (err) {
         const msg = err instanceof Error ? err.message : String(err);
-        const codigo = pedido?.cabecalho?.nCodPedido;
+        const codigo = pedido?.cabecalho?.nCodPed;
         console.error(`[sync-pedidos] empresa=${empresa} pedido=${codigo} erro upsert: ${msg}`);
         summary.erros++;
       }
