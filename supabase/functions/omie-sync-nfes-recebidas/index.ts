@@ -47,9 +47,11 @@ interface RequestBody {
 interface EmpresaSummary {
   empresa: Empresa;
   nfes_processadas: number;
-  pedidos_vinculados: number;       // NFes que casaram com 1+ pedido real
-  nfes_orfas: number;               // NFes inseridas como órfãs
-  vinculos_criados_total: number;   // soma de UPDATEs em linhas de pedido (NFe×pedido)
+  consultas_detalhadas: number;       // quantas ConsultarRecebimento rodaram com sucesso
+  pedidos_vinculados: number;         // NFes que casaram com 1+ pedido real
+  nfes_com_multiplos_pedidos: number; // NFes que referenciaram 2+ pedidos distintos
+  nfes_orfas: number;                 // NFes inseridas como órfãs
+  vinculos_criados_total: number;     // soma de UPDATEs em linhas de pedido (NFe×pedido)
   erros: number;
 }
 
