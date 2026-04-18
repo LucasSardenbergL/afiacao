@@ -278,6 +278,7 @@ async function upsertNFe(
     status: m.status,
     t1_data_pedido: m.data_emissao_iso, // fallback: usa T2 como T1
     t2_data_faturamento: m.data_emissao_iso,
+    t4_data_recebimento: m.recebida ? m.data_recebimento_iso : null,
     nfe_chave_acesso: m.chave,
     nfe_numero: m.numero,
     nfe_serie: m.serie,
