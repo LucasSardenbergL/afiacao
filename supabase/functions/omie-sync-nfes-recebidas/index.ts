@@ -481,7 +481,8 @@ Deno.serve(async (req) => {
         summary.push(s);
         console.log(
           `[sync-nfes] ${empresa} TOTAL: nfes=${s.nfes_processadas} ` +
-          `vinculadas=${s.pedidos_vinculados} orfas=${s.nfes_orfas} ` +
+          `consultas=${s.consultas_detalhadas} vinculadas=${s.pedidos_vinculados} ` +
+          `multi=${s.nfes_com_multiplos_pedidos} orfas=${s.nfes_orfas} ` +
           `vinculos=${s.vinculos_criados_total} erros=${s.erros} dur=${Date.now() - t0}ms`,
         );
       } catch (err) {
@@ -490,7 +491,9 @@ Deno.serve(async (req) => {
         summary.push({
           empresa,
           nfes_processadas: 0,
+          consultas_detalhadas: 0,
           pedidos_vinculados: 0,
+          nfes_com_multiplos_pedidos: 0,
           nfes_orfas: 0,
           vinculos_criados_total: 0,
           erros: 1,
