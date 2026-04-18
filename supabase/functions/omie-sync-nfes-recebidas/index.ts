@@ -1,17 +1,22 @@
 // Edge Function: omie-sync-nfes-recebidas
-// Sincroniza NFes de entrada (recebidas) do Omie (Oben + Colacor) para a tabela purchase_orders_tracking.
+// Sincroniza NFes de entrada (recebidas) do Omie (Oben + Colacor) para purchase_orders_tracking.
 // Pública (verify_jwt = false) — acionada via POST manual ou cron.
 //
-// Método Omie usado: ListarRecebimentos (endpoint /api/v1/produtos/recebimentonfe/)
-// Doc: https://app.omie.com.br/api/v1/produtos/recebimentonfe/#ListarRecebimentos
+// Métodos Omie usados (endpoint /api/v1/produtos/recebimentonfe/):
+//   - ListarRecebimentos  → lista NFes do período (cabec + infoCadastro)
+//   - ConsultarRecebimento → detalha 1 NFe e traz itensRecebimento[].itensInfoAdic.nNumPedCompra
 //
-// Estratégia de UPSERT:
-//   - Se já existe linha em purchase_orders_tracking com mesma nfe_chave_acesso → UPDATE
-//     preenche T2 (= dEmissaoNFe), nfe_numero, nfe_serie, status (FATURADO se ainda não recebido/cancelado)
-//   - Caso contrário → INSERT criando "NFe órfã" (sem pedido formal):
-//     omie_codigo_pedido = -nIdReceb (negativo p/ não colidir com pedidos reais),
-//     t1_data_pedido = dEmissaoNFe (fallback), t2_data_faturamento = dEmissaoNFe,
-//     grupo_leadtime = "OUTRO", status = "FATURADO"
+// Estratégia de vínculo NFe ↔ Pedido:
+//   1) Lista NFes do período via ListarRecebimentos.
+//   2) Para CADA NFe, chama ConsultarRecebimento(nIdReceb) e extrai
+//      a lista DEDUPLICADA de itensRecebimento[].itensInfoAdic.nNumPedCompra.
+//      Esses são CNUMERO de pedidos de compra (string, ex: "2083548"), NÃO o ID interno.
+//   3) Para cada nNumPedCompra:
+//        - SELECT em purchase_orders_tracking WHERE empresa = ? AND numero_pedido = ?
+//        - se achar (1+ linhas) → UPDATE em TODAS preenchendo
+//          T2, T4, nfe_chave_acesso, nfe_numero, nfe_serie, transp_*, status
+//   4) Se a NFe não casar com NENHUM nNumPedCompra (ou não tiver pedidos no detalhe)
+//      → INSERT linha órfã: omie_codigo_pedido = -nIdReceb, grupo_leadtime = "OUTRO".
 //
 // Body opcional:
 //   { "empresa": "OBEN" | "COLACOR" | "ALL", "dias": 30, "fornecedor_codigo_omie": 8689681266 }
@@ -41,10 +46,10 @@ interface RequestBody {
 
 interface EmpresaSummary {
   empresa: Empresa;
-  total_paginas: number;
-  nfes_sincronizadas: number;
-  nfes_com_pedido: number;
-  nfes_sem_pedido: number;
+  nfes_processadas: number;
+  pedidos_vinculados: number;       // NFes que casaram com 1+ pedido real
+  nfes_orfas: number;               // NFes inseridas como órfãs
+  vinculos_criados_total: number;   // soma de UPDATEs em linhas de pedido (NFe×pedido)
   erros: number;
 }
 
@@ -72,48 +77,22 @@ function getCredentials(empresa: Empresa): { app_key: string; app_secret: string
   if (empresa === "OBEN") {
     const app_key = Deno.env.get("OMIE_OBEN_APP_KEY");
     const app_secret = Deno.env.get("OMIE_OBEN_APP_SECRET");
-    if (!app_key || !app_secret) {
-      throw new Error("Credenciais OBEN ausentes: OMIE_OBEN_APP_KEY e/ou OMIE_OBEN_APP_SECRET");
-    }
+    if (!app_key || !app_secret) throw new Error("Credenciais OBEN ausentes");
     return { app_key, app_secret };
   }
   const app_key = Deno.env.get("OMIE_COLACOR_APP_KEY");
   const app_secret = Deno.env.get("OMIE_COLACOR_APP_SECRET");
-  if (!app_key || !app_secret) {
-    throw new Error("Credenciais COLACOR ausentes: OMIE_COLACOR_APP_KEY e/ou OMIE_COLACOR_APP_SECRET");
-  }
+  if (!app_key || !app_secret) throw new Error("Credenciais COLACOR ausentes");
   return { app_key, app_secret };
 }
 
 async function callOmie(
   app_key: string,
   app_secret: string,
-  pagina: number,
-  dataDe: string,
-  dataAte: string,
-  fornecedorCodigo?: number,
+  call: "ListarRecebimentos" | "ConsultarRecebimento",
+  param: Record<string, unknown>,
 ): Promise<any> {
-  // Filtros conforme rcbtoListarRequest da doc oficial
-  const param: Record<string, unknown> = {
-    nPagina: pagina,
-    nRegistrosPorPagina: PAGE_SIZE,
-    cOrdenarPor: "CODIGO",
-    dtEmissaoDe: dataDe,
-    dtEmissaoAte: dataAte,
-    cExibirDetalhes: "S",
-    // cEtapa vazio = TODAS as etapas (cadastro, conferência, concluído, faturado, recebido, cancelado)
-    cEtapa: "",
-  };
-  if (fornecedorCodigo) {
-    param.nIdFornecedor = fornecedorCodigo;
-  }
-
-  const body = {
-    call: "ListarRecebimentos",
-    app_key,
-    app_secret,
-    param: [param],
-  };
+  const body = { call, app_key, app_secret, param: [param] };
 
   let attempt = 0;
   while (attempt < MAX_RETRIES) {
@@ -123,39 +102,24 @@ async function callOmie(
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(body),
     });
-
     const text = await res.text();
     let json: any;
-    try {
-      json = JSON.parse(text);
-    } catch {
-      json = { raw: text };
-    }
+    try { json = JSON.parse(text); } catch { json = { raw: text }; }
 
     if (res.status === 429 || (json?.faultstring && /rate limit/i.test(json.faultstring))) {
-      console.warn(`[sync-nfes] rate limit atingido (tentativa ${attempt}/${MAX_RETRIES}), aguardando ${RETRY_DELAY_MS}ms`);
+      console.warn(`[sync-nfes] ${call} rate limit (try ${attempt}/${MAX_RETRIES}) wait ${RETRY_DELAY_MS}ms`);
       await sleep(RETRY_DELAY_MS);
       continue;
     }
-
     if (!res.ok) {
-      throw new Error(`Omie HTTP ${res.status}: ${text.slice(0, 500)}`);
+      throw new Error(`Omie ${call} HTTP ${res.status}: ${text.slice(0, 400)}`);
     }
-
     return json;
   }
-  throw new Error(`Omie: rate limit excedido após ${MAX_RETRIES} tentativas`);
+  throw new Error(`Omie ${call}: rate limit excedido após ${MAX_RETRIES} tentativas`);
 }
 
-/**
- * Mapeia uma NFe retornada por ListarRecebimentos.
- * Estrutura (recebimentos[]):
- *   { cabec: { nIdReceb, cChaveNfe, cNumeroNFe, cSerieNFe, dEmissaoNFe,
- *              nIdFornecedor, cRazaoSocial, cCNPJ_CPF, cEtapa, nValorNFe, ... },
- *     infoCadastro: { cFaturado, dFat, hFat, cRecebido, dRec, hRec, cCancelada, dCanc, ... },
- *     totais: { ... }, transporte: { cCnpjCpfTransp, cRazaoTransp, ... }, ... }
- */
-function mapNFe(nfe: any): {
+interface MappedNFe {
   chave: string | null;
   fornecedor_codigo: number | null;
   fornecedor_nome: string | null;
@@ -170,17 +134,17 @@ function mapNFe(nfe: any): {
   status: "FATURADO" | "RECEBIDO" | "CANCELADO";
   transp_cnpj: string | null;
   transp_nome: string | null;
-} {
+}
+
+function mapNFe(nfe: any): MappedNFe {
   const cab = nfe?.cabec ?? {};
   const info = nfe?.infoCadastro ?? {};
-  // transporte fica DENTRO de cabec conforme doc Omie
   const transp = cab?.transporte ?? nfe?.transporte ?? {};
 
   const cancelada = String(info?.cCancelada ?? "N").toUpperCase() === "S";
   const recebida = String(info?.cRecebido ?? "N").toUpperCase() === "S";
   const faturada = String(info?.cFaturado ?? "N").toUpperCase() === "S";
 
-  // Prioridade: CANCELADO > RECEBIDO > FATURADO
   let status: "FATURADO" | "RECEBIDO" | "CANCELADO" = "FATURADO";
   if (cancelada) status = "CANCELADO";
   else if (recebida) status = "RECEBIDO";
@@ -206,48 +170,58 @@ function mapNFe(nfe: any): {
   };
 }
 
-async function upsertNFe(
+/**
+ * Extrai a lista deduplicada de nNumPedCompra (CNUMERO do pedido de compra)
+ * a partir de itensRecebimento[].itensInfoAdic.nNumPedCompra do detalhe da NFe.
+ */
+function extractPedidosFromDetalhe(detalhe: any): string[] {
+  const itens: any[] = Array.isArray(detalhe?.itensRecebimento) ? detalhe.itensRecebimento : [];
+  const set = new Set<string>();
+  for (const it of itens) {
+    const adic = it?.itensInfoAdic ?? {};
+    const num = adic?.nNumPedCompra;
+    if (num !== undefined && num !== null && String(num).trim() !== "" && String(num).trim() !== "0") {
+      set.add(String(num).trim());
+    }
+  }
+  return Array.from(set);
+}
+
+/**
+ * Atualiza TODAS as linhas de purchase_orders_tracking (empresa, numero_pedido = num)
+ * com os dados da NFe. Retorna quantas linhas foram atualizadas.
+ */
+async function updateLinhasDoPedido(
   supabase: ReturnType<typeof createClient>,
   empresa: Empresa,
-  nfe: any,
-  m: ReturnType<typeof mapNFe>,
-  nIdReceb: number,
-): Promise<"com_pedido" | "sem_pedido"> {
-  if (!m.chave) {
-    throw new Error("NFe sem cChaveNfe");
-  }
-  if (!m.data_emissao_iso) {
-    throw new Error(`NFe ${m.chave} sem dEmissaoNFe`);
-  }
-
-  // 1) Tenta achar linha existente pela chave NFe (vínculo via webhook ou sync de pedidos)
-  const { data: existingByChave, error: selErr } = await supabase
+  numeroPedido: string,
+  m: MappedNFe,
+): Promise<number> {
+  const { data: linhas, error: selErr } = await supabase
     .from("purchase_orders_tracking")
     .select("id, status, t2_data_faturamento, t4_data_recebimento")
     .eq("empresa", empresa)
-    .eq("nfe_chave_acesso", m.chave)
-    .maybeSingle();
-
+    .eq("numero_pedido", numeroPedido);
   if (selErr) throw selErr;
+  if (!linhas || linhas.length === 0) return 0;
 
-  if (existingByChave?.id) {
-    // UPDATE: status segue regra CANCELADO > RECEBIDO > FATURADO conforme NFe atual,
-    // mas preserva CANCELADO/RECEBIDO já existentes se a NFe regrediu (defensivo).
-    const currentStatus = String(existingByChave.status ?? "");
+  let atualizadas = 0;
+  for (const linha of linhas) {
+    const currentStatus = String((linha as any).status ?? "");
     let finalStatus: "FATURADO" | "RECEBIDO" | "CANCELADO" = m.status;
     if (currentStatus === "CANCELADO") finalStatus = "CANCELADO";
     else if (currentStatus === "RECEBIDO" && m.status === "FATURADO") finalStatus = "RECEBIDO";
 
     const updateRow: Record<string, unknown> = {
-      t2_data_faturamento: existingByChave.t2_data_faturamento ?? m.data_emissao_iso,
+      t2_data_faturamento: (linha as any).t2_data_faturamento ?? m.data_emissao_iso,
+      nfe_chave_acesso: m.chave,
       nfe_numero: m.numero,
       nfe_serie: m.serie,
       status: finalStatus,
       updated_at: new Date().toISOString(),
     };
-    // T4 só popula se NFe está marcada como recebida no Omie e ainda não tem T4
     if (m.recebida && m.data_recebimento_iso) {
-      updateRow.t4_data_recebimento = existingByChave.t4_data_recebimento ?? m.data_recebimento_iso;
+      updateRow.t4_data_recebimento = (linha as any).t4_data_recebimento ?? m.data_recebimento_iso;
     }
     if (m.transp_cnpj) updateRow.transportadora_cnpj = m.transp_cnpj;
     if (m.transp_nome) updateRow.transportadora_nome = m.transp_nome;
@@ -257,26 +231,32 @@ async function upsertNFe(
     const { error: updErr } = await supabase
       .from("purchase_orders_tracking")
       .update(updateRow)
-      .eq("id", existingByChave.id);
+      .eq("id", (linha as any).id);
     if (updErr) throw updErr;
-    return "com_pedido";
+    atualizadas++;
   }
+  return atualizadas;
+}
 
-  // 2) NFe órfã (fornecedor sem pedido formal) — INSERT
-  // Usa omie_codigo_pedido = -nIdReceb (negativo) para não colidir com pedidos reais.
+async function insertOrfa(
+  supabase: ReturnType<typeof createClient>,
+  empresa: Empresa,
+  nfe: any,
+  m: MappedNFe,
+  nIdReceb: number,
+): Promise<void> {
   if (!m.fornecedor_codigo) {
     throw new Error(`NFe ${m.chave} sem nIdFornecedor — não pode inserir órfã`);
   }
-
   const insertRow: Record<string, unknown> = {
     empresa,
-    omie_codigo_pedido: -Math.abs(nIdReceb), // negativo = sintético, derivado de nIdReceb
+    omie_codigo_pedido: -Math.abs(nIdReceb),
     fornecedor_codigo_omie: m.fornecedor_codigo,
     fornecedor_nome: m.fornecedor_nome,
     fornecedor_cnpj: m.fornecedor_cnpj,
     grupo_leadtime: "OUTRO",
     status: m.status,
-    t1_data_pedido: m.data_emissao_iso, // fallback: usa T2 como T1
+    t1_data_pedido: m.data_emissao_iso,
     t2_data_faturamento: m.data_emissao_iso,
     t4_data_recebimento: m.recebida ? m.data_recebimento_iso : null,
     nfe_chave_acesso: m.chave,
@@ -287,19 +267,18 @@ async function upsertNFe(
     raw_data: nfe,
   };
 
-  // Pode haver outra NFe órfã com mesmo (-nIdReceb) já inserida (rerun) → upsert por chave manual
-  const { data: existingByOrfaKey } = await supabase
+  const { data: existing } = await supabase
     .from("purchase_orders_tracking")
     .select("id")
     .eq("empresa", empresa)
     .eq("omie_codigo_pedido", -Math.abs(nIdReceb))
     .maybeSingle();
 
-  if (existingByOrfaKey?.id) {
+  if (existing?.id) {
     const { error: updErr } = await supabase
       .from("purchase_orders_tracking")
       .update({ ...insertRow, updated_at: new Date().toISOString() })
-      .eq("id", existingByOrfaKey.id);
+      .eq("id", existing.id);
     if (updErr) throw updErr;
   } else {
     const { error: insErr } = await supabase
@@ -307,7 +286,6 @@ async function upsertNFe(
       .insert(insertRow);
     if (insErr) throw insErr;
   }
-  return "sem_pedido";
 }
 
 async function syncEmpresa(
@@ -318,10 +296,10 @@ async function syncEmpresa(
 ): Promise<EmpresaSummary> {
   const summary: EmpresaSummary = {
     empresa,
-    total_paginas: 0,
-    nfes_sincronizadas: 0,
-    nfes_com_pedido: 0,
-    nfes_sem_pedido: 0,
+    nfes_processadas: 0,
+    pedidos_vinculados: 0,
+    nfes_orfas: 0,
+    vinculos_criados_total: 0,
     erros: 0,
   };
 
@@ -333,16 +311,29 @@ async function syncEmpresa(
   const dataDe = formatDateBR(inicio);
   const dataAte = formatDateBR(hoje);
 
+  // Cache para evitar reprocessar mesma NFe (nIdReceb) no mesmo run
+  const processadasNoRun = new Set<number>();
+
   let pagina = 1;
   let totalPaginas = 1;
 
   while (pagina <= totalPaginas) {
     let resp: any;
     try {
-      resp = await callOmie(app_key, app_secret, pagina, dataDe, dataAte, fornecedorCodigo);
+      const param: Record<string, unknown> = {
+        nPagina: pagina,
+        nRegistrosPorPagina: PAGE_SIZE,
+        cOrdenarPor: "CODIGO",
+        dtEmissaoDe: dataDe,
+        dtEmissaoAte: dataAte,
+        cExibirDetalhes: "S",
+        cEtapa: "",
+      };
+      if (fornecedorCodigo) param.nIdFornecedor = fornecedorCodigo;
+      resp = await callOmie(app_key, app_secret, "ListarRecebimentos", param);
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
-      console.error(`[sync-nfes] empresa=${empresa} pagina=${pagina} erro fetch: ${msg}`);
+      console.error(`[sync-nfes] ${empresa} pag=${pagina} ListarRecebimentos erro: ${msg}`);
       summary.erros++;
       break;
     }
@@ -350,50 +341,75 @@ async function syncEmpresa(
     if (resp?.faultstring) {
       const fs = String(resp.faultstring);
       if (/not\s*found|sem\s*registros|n[ãa]o\s*encontrado|nenhum\s*registro/i.test(fs)) {
-        console.log(`[sync-nfes] empresa=${empresa} pagina=${pagina} sem resultados — encerrando`);
+        console.log(`[sync-nfes] ${empresa} pag=${pagina} sem resultados — fim`);
         break;
       }
-      console.error(`[sync-nfes] empresa=${empresa} pagina=${pagina} faultstring: ${fs}`);
+      console.error(`[sync-nfes] ${empresa} pag=${pagina} faultstring: ${fs}`);
       summary.erros++;
       break;
     }
 
     totalPaginas = Number(resp?.nTotalPaginas ?? 1);
     const nfes: any[] = Array.isArray(resp?.recebimentos) ? resp.recebimentos : [];
-
-    // DEBUG (página 1)
-    if (pagina === 1) {
-      console.log(
-        `[sync-nfes] DEBUG empresa=${empresa} top-level keys=${JSON.stringify(Object.keys(resp || {}))} ` +
-        `nTotalRegistros=${resp?.nTotalRegistros} nTotalPaginas=${totalPaginas}`,
-      );
-      if (nfes.length > 0) {
-        console.log(`[sync-nfes] SHAPE primeira NFe: ${JSON.stringify(nfes[0], null, 2).slice(0, 4000)}`);
-      }
-    }
-
-    console.log(
-      `[sync-nfes] empresa=${empresa} pagina=${pagina} recebidas=${nfes.length} (total_paginas=${totalPaginas})`,
-    );
+    console.log(`[sync-nfes] ${empresa} pag=${pagina}/${totalPaginas} nfes=${nfes.length}`);
 
     for (const nfe of nfes) {
       const nIdReceb = Number(nfe?.cabec?.nIdReceb ?? 0);
+      if (!nIdReceb) {
+        summary.erros++;
+        continue;
+      }
+      if (processadasNoRun.has(nIdReceb)) continue;
+      processadasNoRun.add(nIdReceb);
+
       try {
         const m = mapNFe(nfe);
-        const tipo = await upsertNFe(supabase, empresa, nfe, m, nIdReceb);
-        summary.nfes_sincronizadas++;
-        if (tipo === "com_pedido") summary.nfes_com_pedido++;
-        else summary.nfes_sem_pedido++;
+        if (!m.chave || !m.data_emissao_iso) {
+          throw new Error(`NFe nIdReceb=${nIdReceb} sem chave ou dEmissaoNFe`);
+        }
+
+        // ConsultarRecebimento → busca itens e nNumPedCompra
+        await sleep(RATE_LIMIT_DELAY_MS);
+        let detalhe: any;
+        try {
+          detalhe = await callOmie(app_key, app_secret, "ConsultarRecebimento", { nIdReceb });
+        } catch (errDet) {
+          const msgDet = errDet instanceof Error ? errDet.message : String(errDet);
+          console.warn(`[sync-nfes] ${empresa} nIdReceb=${nIdReceb} ConsultarRecebimento falhou: ${msgDet} — tratando como órfã`);
+          detalhe = null;
+        }
+
+        const numerosPedido = detalhe ? extractPedidosFromDetalhe(detalhe) : [];
+
+        let vinculadasNestaNFe = 0;
+        for (const numPed of numerosPedido) {
+          try {
+            const n = await updateLinhasDoPedido(supabase, empresa, numPed, m);
+            vinculadasNestaNFe += n;
+            summary.vinculos_criados_total += n;
+          } catch (errUpd) {
+            const msgU = errUpd instanceof Error ? errUpd.message : String(errUpd);
+            console.error(`[sync-nfes] ${empresa} chave=${m.chave} numPed=${numPed} update erro: ${msgU}`);
+            summary.erros++;
+          }
+        }
+
+        if (vinculadasNestaNFe > 0) {
+          summary.pedidos_vinculados++;
+        } else {
+          // Nenhum pedido casado → órfã
+          await insertOrfa(supabase, empresa, nfe, m, nIdReceb);
+          summary.nfes_orfas++;
+        }
+        summary.nfes_processadas++;
       } catch (err) {
         const msg = err instanceof Error ? err.message : String(err);
-        console.error(`[sync-nfes] empresa=${empresa} nIdReceb=${nIdReceb} chave=${nfe?.cabec?.cChaveNfe} erro: ${msg}`);
+        console.error(`[sync-nfes] ${empresa} nIdReceb=${nIdReceb} chave=${nfe?.cabec?.cChaveNFe ?? nfe?.cabec?.cChaveNfe} erro: ${msg}`);
         summary.erros++;
       }
     }
 
-    summary.total_paginas = pagina;
     pagina++;
-
     if (pagina <= totalPaginas) {
       await sleep(RATE_LIMIT_DELAY_MS);
     }
@@ -406,7 +422,6 @@ Deno.serve(async (req) => {
   if (req.method === "OPTIONS") {
     return new Response(null, { headers: corsHeaders });
   }
-
   const t0 = Date.now();
 
   try {
@@ -414,7 +429,7 @@ Deno.serve(async (req) => {
     const SUPABASE_SERVICE_ROLE_KEY = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY");
     if (!SUPABASE_URL || !SUPABASE_SERVICE_ROLE_KEY) {
       return new Response(
-        JSON.stringify({ ok: false, error: "SUPABASE_URL ou SUPABASE_SERVICE_ROLE_KEY ausentes" }),
+        JSON.stringify({ ok: false, error: "SUPABASE_URL/SERVICE_ROLE_KEY ausentes" }),
         { status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" } },
       );
     }
@@ -425,11 +440,7 @@ Deno.serve(async (req) => {
 
     let body: RequestBody = {};
     if (req.method === "POST") {
-      try {
-        body = await req.json();
-      } catch {
-        body = {};
-      }
+      try { body = await req.json(); } catch { body = {}; }
     }
 
     const empresaParam = (body.empresa ?? "ALL").toUpperCase() as "OBEN" | "COLACOR" | "ALL";
@@ -439,9 +450,7 @@ Deno.serve(async (req) => {
     const empresas: Empresa[] =
       empresaParam === "ALL" ? ["OBEN", "COLACOR"] : [empresaParam as Empresa];
 
-    console.log(
-      `[sync-nfes] início empresas=${empresas.join(",")} dias=${dias} fornecedor=${fornecedorCodigo ?? "todos"}`,
-    );
+    console.log(`[sync-nfes] início empresas=${empresas.join(",")} dias=${dias} fornecedor=${fornecedorCodigo ?? "todos"}`);
 
     const summary: EmpresaSummary[] = [];
     for (const empresa of empresas) {
@@ -449,30 +458,26 @@ Deno.serve(async (req) => {
         const s = await syncEmpresa(supabase, empresa, dias, fornecedorCodigo);
         summary.push(s);
         console.log(
-          `[sync-nfes] empresa=${empresa} TOTAL: paginas=${s.total_paginas} ` +
-          `nfes=${s.nfes_sincronizadas} (com_pedido=${s.nfes_com_pedido} sem_pedido=${s.nfes_sem_pedido}) ` +
-          `erros=${s.erros} duracao=${Date.now() - t0}ms`,
+          `[sync-nfes] ${empresa} TOTAL: nfes=${s.nfes_processadas} ` +
+          `vinculadas=${s.pedidos_vinculados} orfas=${s.nfes_orfas} ` +
+          `vinculos=${s.vinculos_criados_total} erros=${s.erros} dur=${Date.now() - t0}ms`,
         );
       } catch (err) {
         const msg = err instanceof Error ? err.message : String(err);
-        console.error(`[sync-nfes] empresa=${empresa} erro fatal: ${msg}`);
+        console.error(`[sync-nfes] ${empresa} erro fatal: ${msg}`);
         summary.push({
           empresa,
-          total_paginas: 0,
-          nfes_sincronizadas: 0,
-          nfes_com_pedido: 0,
-          nfes_sem_pedido: 0,
+          nfes_processadas: 0,
+          pedidos_vinculados: 0,
+          nfes_orfas: 0,
+          vinculos_criados_total: 0,
           erros: 1,
         });
       }
     }
 
     return new Response(
-      JSON.stringify({
-        ok: true,
-        duracao_ms: Date.now() - t0,
-        summary,
-      }),
+      JSON.stringify({ ok: true, duracao_ms: Date.now() - t0, summary }),
       { status: 200, headers: { ...corsHeaders, "Content-Type": "application/json" } },
     );
   } catch (err) {
