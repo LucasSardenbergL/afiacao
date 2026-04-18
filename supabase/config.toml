@@ -68,3 +68,6 @@ verify_jwt = false
 
 [functions.omie-sync-nfes-recebidas]
 verify_jwt = false
+
+[functions.omie-debug-consulta-recebimento]
+verify_jwt = false
