@@ -296,7 +296,15 @@ async function syncEmpresa(
     }
 
     totalPaginas = resp?.nTotalPaginas ?? 1;
-    let pedidos: any[] = resp?.pedidos_pesquisa ?? [];
+    let pedidos: any[] = resp?.pedidos_pesquisa ?? resp?.pedido_compra_produto ?? resp?.pedidoCompraProduto ?? [];
+
+    // DEBUG: log shape do primeiro pedido (página 1) e top-level keys
+    if (pagina === 1) {
+      console.log(`[sync-pedidos] DEBUG top-level keys: ${JSON.stringify(Object.keys(resp || {}))}`);
+      if (pedidos.length > 0) {
+        console.log(`[sync-pedidos] SHAPE primeiro pedido: ${JSON.stringify(pedidos[0], null, 2).slice(0, 4000)}`);
+      }
+    }
 
     // Filtro pós-resposta por fornecedor (PesquisarPedCompra não filtra nativamente)
     if (fornecedorCodigo) {
