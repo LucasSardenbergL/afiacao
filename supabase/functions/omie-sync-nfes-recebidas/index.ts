@@ -180,7 +180,9 @@ function mapNFe(nfe: any): {
   else if (recebida) status = "RECEBIDO";
 
   return {
-    chave: cab?.cChaveNfe ? String(cab.cChaveNfe).replace(/\D/g, "").slice(0, 44) : null,
+    chave: (cab?.cChaveNFe ?? cab?.cChaveNfe)
+      ? String(cab.cChaveNFe ?? cab.cChaveNfe).replace(/\D/g, "").slice(0, 44)
+      : null,
     fornecedor_codigo: cab?.nIdFornecedor ? Number(cab.nIdFornecedor) : null,
     fornecedor_nome: cab?.cRazaoSocial ?? cab?.cNome ?? null,
     fornecedor_cnpj: cab?.cCNPJ_CPF ? String(cab.cCNPJ_CPF).replace(/\D/g, "") : null,
