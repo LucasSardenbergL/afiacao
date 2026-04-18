@@ -4203,6 +4203,9 @@ export type Database = {
           created_at: string
           cte_chave_acesso: string | null
           cte_numero: string | null
+          cte_transportadora_cnpj: string | null
+          cte_transportadora_nome_real: string | null
+          cte_valor_frete: number | null
           data_previsao_original: string | null
           empresa: Database["public"]["Enums"]["empresa_reposicao"]
           fornecedor_cnpj: string | null
@@ -4214,6 +4217,7 @@ export type Database = {
           lt_bruto_dias_uteis: number | null
           lt_faturamento_dias_uteis: number | null
           lt_logistica_dias_uteis: number | null
+          match_cte_score: number | null
           nfe_chave_acesso: string | null
           nfe_numero: string | null
           nfe_serie: string | null
@@ -4239,6 +4243,9 @@ export type Database = {
           created_at?: string
           cte_chave_acesso?: string | null
           cte_numero?: string | null
+          cte_transportadora_cnpj?: string | null
+          cte_transportadora_nome_real?: string | null
+          cte_valor_frete?: number | null
           data_previsao_original?: string | null
           empresa: Database["public"]["Enums"]["empresa_reposicao"]
           fornecedor_cnpj?: string | null
@@ -4250,6 +4257,7 @@ export type Database = {
           lt_bruto_dias_uteis?: number | null
           lt_faturamento_dias_uteis?: number | null
           lt_logistica_dias_uteis?: number | null
+          match_cte_score?: number | null
           nfe_chave_acesso?: string | null
           nfe_numero?: string | null
           nfe_serie?: string | null
@@ -4275,6 +4283,9 @@ export type Database = {
           created_at?: string
           cte_chave_acesso?: string | null
           cte_numero?: string | null
+          cte_transportadora_cnpj?: string | null
+          cte_transportadora_nome_real?: string | null
+          cte_valor_frete?: number | null
           data_previsao_original?: string | null
           empresa?: Database["public"]["Enums"]["empresa_reposicao"]
           fornecedor_cnpj?: string | null
@@ -4286,6 +4297,7 @@ export type Database = {
           lt_bruto_dias_uteis?: number | null
           lt_faturamento_dias_uteis?: number | null
           lt_logistica_dias_uteis?: number | null
+          match_cte_score?: number | null
           nfe_chave_acesso?: string | null
           nfe_numero?: string | null
           nfe_serie?: string | null
