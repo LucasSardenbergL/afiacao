@@ -4223,11 +4223,15 @@ export type Database = {
           omie_codigo_integracao: string | null
           omie_codigo_pedido: number
           raw_data: Json | null
+          representante_codigo: string | null
+          representante_nome: string | null
           status: Database["public"]["Enums"]["status_pedido_compra"]
           t1_data_pedido: string
           t2_data_faturamento: string | null
           t3_data_cte: string | null
           t4_data_recebimento: string | null
+          transportadora_cnpj: string | null
+          transportadora_nome: string | null
           updated_at: string
         }
         Insert: {
@@ -4254,11 +4258,15 @@ export type Database = {
           omie_codigo_integracao?: string | null
           omie_codigo_pedido: number
           raw_data?: Json | null
+          representante_codigo?: string | null
+          representante_nome?: string | null
           status?: Database["public"]["Enums"]["status_pedido_compra"]
           t1_data_pedido: string
           t2_data_faturamento?: string | null
           t3_data_cte?: string | null
           t4_data_recebimento?: string | null
+          transportadora_cnpj?: string | null
+          transportadora_nome?: string | null
           updated_at?: string
         }
         Update: {
@@ -4285,11 +4293,15 @@ export type Database = {
           omie_codigo_integracao?: string | null
           omie_codigo_pedido?: number
           raw_data?: Json | null
+          representante_codigo?: string | null
+          representante_nome?: string | null
           status?: Database["public"]["Enums"]["status_pedido_compra"]
           t1_data_pedido?: string
           t2_data_faturamento?: string | null
           t3_data_cte?: string | null
           t4_data_recebimento?: string | null
+          transportadora_cnpj?: string | null
+          transportadora_nome?: string | null
           updated_at?: string
         }
         Relationships: []
