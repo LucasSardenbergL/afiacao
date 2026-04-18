@@ -231,12 +231,12 @@ async function upsertNFe(
   if (selErr) throw selErr;
 
   if (existingByChave?.id) {
-    // UPDATE: preserva T4/RECEBIDO/CANCELADO; só sobrescreve status para FATURADO se ainda não evoluiu
+    // UPDATE: status segue regra CANCELADO > RECEBIDO > FATURADO conforme NFe atual,
+    // mas preserva CANCELADO/RECEBIDO já existentes se a NFe regrediu (defensivo).
     const currentStatus = String(existingByChave.status ?? "");
-    const finalStatus =
-      currentStatus === "RECEBIDO" || currentStatus === "CANCELADO"
-        ? currentStatus
-        : m.status;
+    let finalStatus: "FATURADO" | "RECEBIDO" | "CANCELADO" = m.status;
+    if (currentStatus === "CANCELADO") finalStatus = "CANCELADO";
+    else if (currentStatus === "RECEBIDO" && m.status === "FATURADO") finalStatus = "RECEBIDO";
 
     const updateRow: Record<string, unknown> = {
       t2_data_faturamento: existingByChave.t2_data_faturamento ?? m.data_emissao_iso,
@@ -245,6 +245,10 @@ async function upsertNFe(
       status: finalStatus,
       updated_at: new Date().toISOString(),
     };
+    // T4 só popula se NFe está marcada como recebida no Omie e ainda não tem T4
+    if (m.recebida && m.data_recebimento_iso) {
+      updateRow.t4_data_recebimento = existingByChave.t4_data_recebimento ?? m.data_recebimento_iso;
+    }
     if (m.transp_cnpj) updateRow.transportadora_cnpj = m.transp_cnpj;
     if (m.transp_nome) updateRow.transportadora_nome = m.transp_nome;
     if (m.fornecedor_nome) updateRow.fornecedor_nome = m.fornecedor_nome;
