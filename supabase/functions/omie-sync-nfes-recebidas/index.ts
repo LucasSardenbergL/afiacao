@@ -163,21 +163,28 @@ function mapNFe(nfe: any): {
   numero: string | null;
   serie: string | null;
   data_emissao_iso: string | null;
+  data_recebimento_iso: string | null;
   cancelada: boolean;
+  faturada: boolean;
+  recebida: boolean;
   status: "FATURADO" | "RECEBIDO" | "CANCELADO";
   transp_cnpj: string | null;
   transp_nome: string | null;
 } {
   const cab = nfe?.cabec ?? {};
   const info = nfe?.infoCadastro ?? {};
-  const transp = nfe?.transporte ?? {};
+  // transporte fica DENTRO de cabec conforme doc Omie
+  const transp = cab?.transporte ?? nfe?.transporte ?? {};
 
   const cancelada = String(info?.cCancelada ?? "N").toUpperCase() === "S";
   const recebida = String(info?.cRecebido ?? "N").toUpperCase() === "S";
+  const faturada = String(info?.cFaturado ?? "N").toUpperCase() === "S";
 
+  // Prioridade: CANCELADO > RECEBIDO > FATURADO
   let status: "FATURADO" | "RECEBIDO" | "CANCELADO" = "FATURADO";
   if (cancelada) status = "CANCELADO";
   else if (recebida) status = "RECEBIDO";
+  else if (faturada) status = "FATURADO";
 
   return {
     chave: (cab?.cChaveNFe ?? cab?.cChaveNfe)
@@ -189,7 +196,10 @@ function mapNFe(nfe: any): {
     numero: cab?.cNumeroNFe ?? null,
     serie: cab?.cSerieNFe ?? null,
     data_emissao_iso: parseBRDateToISO(cab?.dEmissaoNFe, "00:00:00"),
+    data_recebimento_iso: recebida ? parseBRDateToISO(info?.dRec, info?.hRec) : null,
     cancelada,
+    faturada,
+    recebida,
     status,
     transp_cnpj: transp?.cCnpjCpfTransp ? String(transp.cCnpjCpfTransp).replace(/\D/g, "") : null,
     transp_nome: transp?.cRazaoTransp ?? transp?.cNomeTransp ?? null,
@@ -221,12 +231,12 @@ async function upsertNFe(
   if (selErr) throw selErr;
 
   if (existingByChave?.id) {
-    // UPDATE: preserva T4/RECEBIDO/CANCELADO; só sobrescreve status para FATURADO se ainda não evoluiu
+    // UPDATE: status segue regra CANCELADO > RECEBIDO > FATURADO conforme NFe atual,
+    // mas preserva CANCELADO/RECEBIDO já existentes se a NFe regrediu (defensivo).
     const currentStatus = String(existingByChave.status ?? "");
-    const finalStatus =
-      currentStatus === "RECEBIDO" || currentStatus === "CANCELADO"
-        ? currentStatus
-        : m.status;
+    let finalStatus: "FATURADO" | "RECEBIDO" | "CANCELADO" = m.status;
+    if (currentStatus === "CANCELADO") finalStatus = "CANCELADO";
+    else if (currentStatus === "RECEBIDO" && m.status === "FATURADO") finalStatus = "RECEBIDO";
 
     const updateRow: Record<string, unknown> = {
       t2_data_faturamento: existingByChave.t2_data_faturamento ?? m.data_emissao_iso,
@@ -235,6 +245,10 @@ async function upsertNFe(
       status: finalStatus,
       updated_at: new Date().toISOString(),
     };
+    // T4 só popula se NFe está marcada como recebida no Omie e ainda não tem T4
+    if (m.recebida && m.data_recebimento_iso) {
+      updateRow.t4_data_recebimento = existingByChave.t4_data_recebimento ?? m.data_recebimento_iso;
+    }
     if (m.transp_cnpj) updateRow.transportadora_cnpj = m.transp_cnpj;
     if (m.transp_nome) updateRow.transportadora_nome = m.transp_nome;
     if (m.fornecedor_nome) updateRow.fornecedor_nome = m.fornecedor_nome;
@@ -264,6 +278,7 @@ async function upsertNFe(
     status: m.status,
     t1_data_pedido: m.data_emissao_iso, // fallback: usa T2 como T1
     t2_data_faturamento: m.data_emissao_iso,
+    t4_data_recebimento: m.recebida ? m.data_recebimento_iso : null,
     nfe_chave_acesso: m.chave,
     nfe_numero: m.numero,
     nfe_serie: m.serie,
