@@ -4217,6 +4217,7 @@ export type Database = {
           nfe_chave_acesso: string | null
           nfe_numero: string | null
           nfe_serie: string | null
+          numero_contrato_fornecedor: string | null
           numero_pedido: string | null
           numero_pedido_fornecedor: string | null
           observacoes: string | null
@@ -4252,6 +4253,7 @@ export type Database = {
           nfe_chave_acesso?: string | null
           nfe_numero?: string | null
           nfe_serie?: string | null
+          numero_contrato_fornecedor?: string | null
           numero_pedido?: string | null
           numero_pedido_fornecedor?: string | null
           observacoes?: string | null
@@ -4287,6 +4289,7 @@ export type Database = {
           nfe_chave_acesso?: string | null
           nfe_numero?: string | null
           nfe_serie?: string | null
+          numero_contrato_fornecedor?: string | null
           numero_pedido?: string | null
           numero_pedido_fornecedor?: string | null
           observacoes?: string | null

@@ -47,9 +47,11 @@ interface RequestBody {
 interface EmpresaSummary {
   empresa: Empresa;
   nfes_processadas: number;
-  pedidos_vinculados: number;       // NFes que casaram com 1+ pedido real
-  nfes_orfas: number;               // NFes inseridas como órfãs
-  vinculos_criados_total: number;   // soma de UPDATEs em linhas de pedido (NFe×pedido)
+  consultas_detalhadas: number;       // quantas ConsultarRecebimento rodaram com sucesso
+  pedidos_vinculados: number;         // NFes que casaram com 1+ pedido real
+  nfes_com_multiplos_pedidos: number; // NFes que referenciaram 2+ pedidos distintos
+  nfes_orfas: number;                 // NFes inseridas como órfãs
+  vinculos_criados_total: number;     // soma de UPDATEs em linhas de pedido (NFe×pedido)
   erros: number;
 }
 
@@ -194,14 +196,19 @@ function extractPedidosFromDetalhe(detalhe: any): string[] {
 async function updateLinhasDoPedido(
   supabase: ReturnType<typeof createClient>,
   empresa: Empresa,
-  numeroPedido: string,
+  numeroContrato: string,
+  fornecedorCodigo: number | null,
   m: MappedNFe,
 ): Promise<number> {
-  const { data: linhas, error: selErr } = await supabase
+  let q = supabase
     .from("purchase_orders_tracking")
     .select("id, status, t2_data_faturamento, t4_data_recebimento")
     .eq("empresa", empresa)
-    .eq("numero_pedido", numeroPedido);
+    .eq("numero_contrato_fornecedor", numeroContrato);
+  if (fornecedorCodigo) {
+    q = q.eq("fornecedor_codigo_omie", fornecedorCodigo);
+  }
+  const { data: linhas, error: selErr } = await q;
   if (selErr) throw selErr;
   if (!linhas || linhas.length === 0) return 0;
 
@@ -297,7 +304,9 @@ async function syncEmpresa(
   const summary: EmpresaSummary = {
     empresa,
     nfes_processadas: 0,
+    consultas_detalhadas: 0,
     pedidos_vinculados: 0,
+    nfes_com_multiplos_pedidos: 0,
     nfes_orfas: 0,
     vinculos_criados_total: 0,
     erros: 0,
@@ -373,6 +382,7 @@ async function syncEmpresa(
         let detalhe: any;
         try {
           detalhe = await callOmie(app_key, app_secret, "ConsultarRecebimento", { nIdReceb });
+          summary.consultas_detalhadas++;
         } catch (errDet) {
           const msgDet = errDet instanceof Error ? errDet.message : String(errDet);
           console.warn(`[sync-nfes] ${empresa} nIdReceb=${nIdReceb} ConsultarRecebimento falhou: ${msgDet} — tratando como órfã`);
@@ -381,12 +391,23 @@ async function syncEmpresa(
 
         const numerosPedido = detalhe ? extractPedidosFromDetalhe(detalhe) : [];
 
+        if (numerosPedido.length >= 2) {
+          console.log(
+            `[sync-nfes] ${empresa} chave=${m.chave} nIdReceb=${nIdReceb} ` +
+            `referencia ${numerosPedido.length} pedidos distintos: ${numerosPedido.join(", ")}`,
+          );
+        }
+
         let vinculadasNestaNFe = 0;
+        let pedidosCasados = 0;
         for (const numPed of numerosPedido) {
           try {
-            const n = await updateLinhasDoPedido(supabase, empresa, numPed, m);
+            const n = await updateLinhasDoPedido(
+              supabase, empresa, numPed, m.fornecedor_codigo, m,
+            );
             vinculadasNestaNFe += n;
             summary.vinculos_criados_total += n;
+            if (n > 0) pedidosCasados++;
           } catch (errUpd) {
             const msgU = errUpd instanceof Error ? errUpd.message : String(errUpd);
             console.error(`[sync-nfes] ${empresa} chave=${m.chave} numPed=${numPed} update erro: ${msgU}`);
@@ -396,8 +417,9 @@ async function syncEmpresa(
 
         if (vinculadasNestaNFe > 0) {
           summary.pedidos_vinculados++;
+          if (pedidosCasados >= 2) summary.nfes_com_multiplos_pedidos++;
         } else {
-          // Nenhum pedido casado → órfã
+          // Nenhum pedido casado por numero_contrato → órfã
           await insertOrfa(supabase, empresa, nfe, m, nIdReceb);
           summary.nfes_orfas++;
         }
@@ -459,7 +481,8 @@ Deno.serve(async (req) => {
         summary.push(s);
         console.log(
           `[sync-nfes] ${empresa} TOTAL: nfes=${s.nfes_processadas} ` +
-          `vinculadas=${s.pedidos_vinculados} orfas=${s.nfes_orfas} ` +
+          `consultas=${s.consultas_detalhadas} vinculadas=${s.pedidos_vinculados} ` +
+          `multi=${s.nfes_com_multiplos_pedidos} orfas=${s.nfes_orfas} ` +
           `vinculos=${s.vinculos_criados_total} erros=${s.erros} dur=${Date.now() - t0}ms`,
         );
       } catch (err) {
@@ -468,7 +491,9 @@ Deno.serve(async (req) => {
         summary.push({
           empresa,
           nfes_processadas: 0,
+          consultas_detalhadas: 0,
           pedidos_vinculados: 0,
+          nfes_com_multiplos_pedidos: 0,
           nfes_orfas: 0,
           vinculos_criados_total: 0,
           erros: 1,

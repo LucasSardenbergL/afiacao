@@ -204,6 +204,9 @@ function mapPedidoToRow(empresa: Empresa, pedido: any): Record<string, unknown> 
     omie_codigo_pedido: cab?.nCodPed ?? null,
     omie_codigo_integracao: cab?.cCodIntPed ?? null,
     numero_pedido: cab?.cNumero ?? null,
+    numero_contrato_fornecedor: cab?.cContrato
+      ? String(cab.cContrato).trim() || null
+      : null,
     fornecedor_codigo_omie: cab?.nCodFor ?? null,
     grupo_leadtime: "OUTRO",
     status,
