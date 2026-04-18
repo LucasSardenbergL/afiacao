@@ -14,19 +14,19 @@ function getCredentials(account: string): { key: string; secret: string } {
   switch (account) {
     case "oben":
       return {
-        key: Deno.env.get("OMIE_VENDAS_APP_KEY")!,
-        secret: Deno.env.get("OMIE_VENDAS_APP_SECRET")!,
+        key: Deno.env.get("OMIE_OBEN_APP_KEY")!,
+        secret: Deno.env.get("OMIE_OBEN_APP_SECRET")!,
       };
     case "colacor":
       return {
-        key: Deno.env.get("OMIE_COLACOR_VENDAS_APP_KEY")!,
-        secret: Deno.env.get("OMIE_COLACOR_VENDAS_APP_SECRET")!,
+        key: Deno.env.get("OMIE_COLACOR_APP_KEY")!,
+        secret: Deno.env.get("OMIE_COLACOR_APP_SECRET")!,
       };
     case "afiacao":
     default:
       return {
-        key: Deno.env.get("OMIE_APP_KEY")!,
-        secret: Deno.env.get("OMIE_APP_SECRET")!,
+        key: Deno.env.get("OMIE_COLACOR_SC_APP_KEY")!,
+        secret: Deno.env.get("OMIE_COLACOR_SC_APP_SECRET")!,
       };
   }
 }

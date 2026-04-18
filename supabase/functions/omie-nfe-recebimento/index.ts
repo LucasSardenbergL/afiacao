@@ -66,15 +66,16 @@ function formatDateBR(isoDate: string | null): string | null {
 // ── Credential mapping by warehouse code ──
 function getOmieCredentials(warehouseCode: string): { appKey: string; appSecret: string } {
   if (warehouseCode === "CC") {
+    // CC = Colacor SC (afiação)
     return {
-      appKey: Deno.env.get("OMIE_APP_KEY") ?? "",
-      appSecret: Deno.env.get("OMIE_APP_SECRET") ?? "",
+      appKey: Deno.env.get("OMIE_COLACOR_SC_APP_KEY") ?? "",
+      appSecret: Deno.env.get("OMIE_COLACOR_SC_APP_SECRET") ?? "",
     };
   }
   // OB (Oben) - default
   return {
-    appKey: Deno.env.get("OMIE_VENDAS_APP_KEY") ?? "",
-    appSecret: Deno.env.get("OMIE_VENDAS_APP_SECRET") ?? "",
+    appKey: Deno.env.get("OMIE_OBEN_APP_KEY") ?? "",
+    appSecret: Deno.env.get("OMIE_OBEN_APP_SECRET") ?? "",
   };
 }
 

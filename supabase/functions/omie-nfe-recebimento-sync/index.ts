@@ -36,15 +36,16 @@ interface OmieCredentials {
 
 function getCredentials(): OmieCredentials[] {
   const creds: OmieCredentials[] = [];
-  const obenKey = Deno.env.get("OMIE_VENDAS_APP_KEY");
-  const obenSecret = Deno.env.get("OMIE_VENDAS_APP_SECRET");
+  const obenKey = Deno.env.get("OMIE_OBEN_APP_KEY");
+  const obenSecret = Deno.env.get("OMIE_OBEN_APP_SECRET");
   if (obenKey && obenSecret) {
     creds.push({ appKey: obenKey, appSecret: obenSecret, warehouseCode: "OB" });
   }
-  const colacorKey = Deno.env.get("OMIE_APP_KEY");
-  const colacorSecret = Deno.env.get("OMIE_APP_SECRET");
-  if (colacorKey && colacorSecret) {
-    creds.push({ appKey: colacorKey, appSecret: colacorSecret, warehouseCode: "CC" });
+  // CC = Colacor SC (afiação)
+  const colacorScKey = Deno.env.get("OMIE_COLACOR_SC_APP_KEY");
+  const colacorScSecret = Deno.env.get("OMIE_COLACOR_SC_APP_SECRET");
+  if (colacorScKey && colacorScSecret) {
+    creds.push({ appKey: colacorScKey, appSecret: colacorScSecret, warehouseCode: "CC" });
   }
   return creds;
 }

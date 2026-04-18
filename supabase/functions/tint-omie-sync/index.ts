@@ -19,9 +19,9 @@ async function callOmieApi(
   call: string,
   params: Record<string, unknown>,
 ) {
-  const APP_KEY = Deno.env.get("OMIE_VENDAS_APP_KEY");
-  const APP_SECRET = Deno.env.get("OMIE_VENDAS_APP_SECRET");
-  if (!APP_KEY || !APP_SECRET) throw new Error("Credenciais Oben (vendas) não configuradas");
+  const APP_KEY = Deno.env.get("OMIE_OBEN_APP_KEY");
+  const APP_SECRET = Deno.env.get("OMIE_OBEN_APP_SECRET");
+  if (!APP_KEY || !APP_SECRET) throw new Error("Credenciais Oben não configuradas");
 
   const body = {
     call,

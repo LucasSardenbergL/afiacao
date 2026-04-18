@@ -39,11 +39,11 @@ async function callOmieApi(
   call: string,
   params: Record<string, unknown>
 ): Promise<OmieListResponse> {
-  const OMIE_APP_KEY = Deno.env.get("OMIE_APP_KEY");
-  const OMIE_APP_SECRET = Deno.env.get("OMIE_APP_SECRET");
+  const OMIE_APP_KEY = Deno.env.get("OMIE_COLACOR_SC_APP_KEY");
+  const OMIE_APP_SECRET = Deno.env.get("OMIE_COLACOR_SC_APP_SECRET");
 
   if (!OMIE_APP_KEY || !OMIE_APP_SECRET) {
-    throw new Error("Credenciais do Omie não configuradas");
+    throw new Error("Credenciais do Omie (Colacor SC) não configuradas");
   }
 
   const body = {
