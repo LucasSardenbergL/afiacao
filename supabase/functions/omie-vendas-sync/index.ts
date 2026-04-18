@@ -445,7 +445,7 @@ async function buscarHistoricoPrecosOmie(codigoCliente: number, account: Account
     ) as any;
 
     const precos: Record<number, number> = {};
-    const pedidos = result.pedido_venda_produto || [];
+    const pedidos = result?.pedido_venda_produto || [];
 
     // Percorrer pedidos do mais recente ao mais antigo
     for (const pedido of pedidos) {
@@ -533,7 +533,7 @@ async function buscarUltimaParcela(codigoCliente: number, account: Account = "ob
       account
     ) as any;
 
-    const pedidos = result.pedido_venda_produto || [];
+    const pedidos = result?.pedido_venda_produto || [];
     const parcelaCount: Record<string, number> = {};
     let ultimaParcela: string | null = null;
 
@@ -1135,6 +1135,12 @@ async function criarPedidoVenda(
     payload,
     account
   ) as any;
+
+  if (!result) {
+    throw new Error(
+      `Omie (${account}) não respondeu ao incluir pedido (provável rate limit 429 após retries). Tente novamente em alguns segundos.`
+    );
+  }
 
   const omie_pedido_id = result.codigo_pedido || null;
   const omie_numero_pedido = result.numero_pedido || cCodIntPed;
