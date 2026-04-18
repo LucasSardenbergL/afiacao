@@ -273,8 +273,8 @@ async function processarEmpresa(
   let totalPaginas = 1;
   do {
     const param: Record<string, unknown> = {
-      pagina,
-      registros_por_pagina: PAGE_SIZE,
+      nPagina: pagina,
+      nRegistrosPorPagina: PAGE_SIZE,
       cOrdenarPor: "CODIGO",
       cExibirDetalhes: "S",
       cEtapa: "",
