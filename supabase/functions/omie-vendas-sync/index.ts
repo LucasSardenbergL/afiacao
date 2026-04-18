@@ -533,7 +533,7 @@ async function buscarUltimaParcela(codigoCliente: number, account: Account = "ob
       account
     ) as any;
 
-    const pedidos = result.pedido_venda_produto || [];
+    const pedidos = result?.pedido_venda_produto || [];
     const parcelaCount: Record<string, number> = {};
     let ultimaParcela: string | null = null;
 
