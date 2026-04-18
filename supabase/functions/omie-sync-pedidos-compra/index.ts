@@ -331,7 +331,7 @@ async function syncEmpresa(
         summary.pedidos_sincronizados++;
       } catch (err) {
         const msg = err instanceof Error ? err.message : String(err);
-        const codigo = pedido?.cabecalho?.nCodPed;
+        const codigo = pedido?.cabecalho_consulta?.nCodPed ?? pedido?.cabecalho?.nCodPed;
         console.error(`[sync-pedidos] empresa=${empresa} pedido=${codigo} erro upsert: ${msg}`);
         summary.erros++;
       }
