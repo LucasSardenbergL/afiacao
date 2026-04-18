@@ -281,9 +281,8 @@ async function processarEmpresa(
       dtEmissaoDe: dEmissaoDe,
       dtEmissaoAte: dEmissaoAte,
     };
-    if (fornecedorCodigo) {
-      (param as any).nIdFornecedor = fornecedorCodigo;
-    }
+    // NÃO passamos nIdFornecedor: o fornecedor do CTe é a TRANSPORTADORA, não a Sayerlack.
+    // O filtro por fornecedor (Sayerlack) é aplicado depois, na busca de candidatas NFe.
 
     const resp = await callOmie(app_key, app_secret, "ListarRecebimentos", param);
     const lista: any[] =
