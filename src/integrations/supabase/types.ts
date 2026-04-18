@@ -14,6 +14,78 @@ export type Database = {
   }
   public: {
     Tables: {
+      abc_xyz_classification: {
+        Row: {
+          classe_abc: Database["public"]["Enums"]["classe_abc"] | null
+          classe_abc_anterior: Database["public"]["Enums"]["classe_abc"] | null
+          classe_abc_efetiva: Database["public"]["Enums"]["classe_abc"] | null
+          classe_xyz: Database["public"]["Enums"]["classe_xyz"] | null
+          classe_xyz_anterior: Database["public"]["Enums"]["classe_xyz"] | null
+          classe_xyz_efetiva: Database["public"]["Enums"]["classe_xyz"] | null
+          coeficiente_variacao: number | null
+          created_at: string
+          demanda_desvio_padrao: number | null
+          demanda_media_mensal: number | null
+          empresa: Database["public"]["Enums"]["empresa_reposicao"]
+          id: string
+          mes_referencia: string
+          meses_na_classe_abc: number
+          meses_na_classe_xyz: number
+          percentual_valor_acumulado: number | null
+          rank_pareto: number | null
+          sku_codigo: string | null
+          sku_codigo_omie: number
+          sku_descricao: string | null
+          valor_consumido_12m: number | null
+        }
+        Insert: {
+          classe_abc?: Database["public"]["Enums"]["classe_abc"] | null
+          classe_abc_anterior?: Database["public"]["Enums"]["classe_abc"] | null
+          classe_abc_efetiva?: Database["public"]["Enums"]["classe_abc"] | null
+          classe_xyz?: Database["public"]["Enums"]["classe_xyz"] | null
+          classe_xyz_anterior?: Database["public"]["Enums"]["classe_xyz"] | null
+          classe_xyz_efetiva?: Database["public"]["Enums"]["classe_xyz"] | null
+          coeficiente_variacao?: number | null
+          created_at?: string
+          demanda_desvio_padrao?: number | null
+          demanda_media_mensal?: number | null
+          empresa: Database["public"]["Enums"]["empresa_reposicao"]
+          id?: string
+          mes_referencia: string
+          meses_na_classe_abc?: number
+          meses_na_classe_xyz?: number
+          percentual_valor_acumulado?: number | null
+          rank_pareto?: number | null
+          sku_codigo?: string | null
+          sku_codigo_omie: number
+          sku_descricao?: string | null
+          valor_consumido_12m?: number | null
+        }
+        Update: {
+          classe_abc?: Database["public"]["Enums"]["classe_abc"] | null
+          classe_abc_anterior?: Database["public"]["Enums"]["classe_abc"] | null
+          classe_abc_efetiva?: Database["public"]["Enums"]["classe_abc"] | null
+          classe_xyz?: Database["public"]["Enums"]["classe_xyz"] | null
+          classe_xyz_anterior?: Database["public"]["Enums"]["classe_xyz"] | null
+          classe_xyz_efetiva?: Database["public"]["Enums"]["classe_xyz"] | null
+          coeficiente_variacao?: number | null
+          created_at?: string
+          demanda_desvio_padrao?: number | null
+          demanda_media_mensal?: number | null
+          empresa?: Database["public"]["Enums"]["empresa_reposicao"]
+          id?: string
+          mes_referencia?: string
+          meses_na_classe_abc?: number
+          meses_na_classe_xyz?: number
+          percentual_valor_acumulado?: number | null
+          rank_pareto?: number | null
+          sku_codigo?: string | null
+          sku_codigo_omie?: number
+          sku_descricao?: string | null
+          valor_consumido_12m?: number | null
+        }
+        Relationships: []
+      }
       addresses: {
         Row: {
           city: string
@@ -3409,6 +3481,48 @@ export type Database = {
         }
         Relationships: []
       }
+      omie_webhook_events: {
+        Row: {
+          author_id: string | null
+          empresa: Database["public"]["Enums"]["empresa_reposicao"]
+          event_id: string
+          id: string
+          message_id: string | null
+          payload: Json
+          processed_at: string | null
+          processing_error: string | null
+          received_at: string
+          retry_count: number
+          topic: string
+        }
+        Insert: {
+          author_id?: string | null
+          empresa: Database["public"]["Enums"]["empresa_reposicao"]
+          event_id: string
+          id?: string
+          message_id?: string | null
+          payload: Json
+          processed_at?: string | null
+          processing_error?: string | null
+          received_at?: string
+          retry_count?: number
+          topic: string
+        }
+        Update: {
+          author_id?: string | null
+          empresa?: Database["public"]["Enums"]["empresa_reposicao"]
+          event_id?: string
+          id?: string
+          message_id?: string | null
+          payload?: Json
+          processed_at?: string | null
+          processing_error?: string | null
+          received_at?: string
+          retry_count?: number
+          topic?: string
+        }
+        Relationships: []
+      }
       order_items: {
         Row: {
           created_at: string | null
@@ -4084,6 +4198,102 @@ export type Database = {
         }
         Relationships: []
       }
+      purchase_orders_tracking: {
+        Row: {
+          created_at: string
+          cte_chave_acesso: string | null
+          cte_numero: string | null
+          data_previsao_original: string | null
+          empresa: Database["public"]["Enums"]["empresa_reposicao"]
+          fornecedor_cnpj: string | null
+          fornecedor_codigo_omie: number
+          fornecedor_nome: string | null
+          grupo_leadtime: string | null
+          id: string
+          infcpl_raw: string | null
+          lt_bruto_dias_uteis: number | null
+          lt_faturamento_dias_uteis: number | null
+          lt_logistica_dias_uteis: number | null
+          nfe_chave_acesso: string | null
+          nfe_numero: string | null
+          nfe_serie: string | null
+          numero_pedido: string | null
+          numero_pedido_fornecedor: string | null
+          observacoes: string | null
+          omie_codigo_integracao: string | null
+          omie_codigo_pedido: number
+          raw_data: Json | null
+          status: Database["public"]["Enums"]["status_pedido_compra"]
+          t1_data_pedido: string
+          t2_data_faturamento: string | null
+          t3_data_cte: string | null
+          t4_data_recebimento: string | null
+          updated_at: string
+        }
+        Insert: {
+          created_at?: string
+          cte_chave_acesso?: string | null
+          cte_numero?: string | null
+          data_previsao_original?: string | null
+          empresa: Database["public"]["Enums"]["empresa_reposicao"]
+          fornecedor_cnpj?: string | null
+          fornecedor_codigo_omie: number
+          fornecedor_nome?: string | null
+          grupo_leadtime?: string | null
+          id?: string
+          infcpl_raw?: string | null
+          lt_bruto_dias_uteis?: number | null
+          lt_faturamento_dias_uteis?: number | null
+          lt_logistica_dias_uteis?: number | null
+          nfe_chave_acesso?: string | null
+          nfe_numero?: string | null
+          nfe_serie?: string | null
+          numero_pedido?: string | null
+          numero_pedido_fornecedor?: string | null
+          observacoes?: string | null
+          omie_codigo_integracao?: string | null
+          omie_codigo_pedido: number
+          raw_data?: Json | null
+          status?: Database["public"]["Enums"]["status_pedido_compra"]
+          t1_data_pedido: string
+          t2_data_faturamento?: string | null
+          t3_data_cte?: string | null
+          t4_data_recebimento?: string | null
+          updated_at?: string
+        }
+        Update: {
+          created_at?: string
+          cte_chave_acesso?: string | null
+          cte_numero?: string | null
+          data_previsao_original?: string | null
+          empresa?: Database["public"]["Enums"]["empresa_reposicao"]
+          fornecedor_cnpj?: string | null
+          fornecedor_codigo_omie?: number
+          fornecedor_nome?: string | null
+          grupo_leadtime?: string | null
+          id?: string
+          infcpl_raw?: string | null
+          lt_bruto_dias_uteis?: number | null
+          lt_faturamento_dias_uteis?: number | null
+          lt_logistica_dias_uteis?: number | null
+          nfe_chave_acesso?: string | null
+          nfe_numero?: string | null
+          nfe_serie?: string | null
+          numero_pedido?: string | null
+          numero_pedido_fornecedor?: string | null
+          observacoes?: string | null
+          omie_codigo_integracao?: string | null
+          omie_codigo_pedido?: number
+          raw_data?: Json | null
+          status?: Database["public"]["Enums"]["status_pedido_compra"]
+          t1_data_pedido?: string
+          t2_data_faturamento?: string | null
+          t3_data_cte?: string | null
+          t4_data_recebimento?: string | null
+          updated_at?: string
+        }
+        Relationships: []
+      }
       recommendation_config: {
         Row: {
           description: string | null
@@ -4293,6 +4503,147 @@ export type Database = {
         }
         Relationships: []
       }
+      reposition_parameters: {
+        Row: {
+          aplicado_em: string | null
+          aprovado_em: string | null
+          aprovado_por: string | null
+          calculado_em: string | null
+          classe_abc: Database["public"]["Enums"]["classe_abc"] | null
+          classe_xyz: Database["public"]["Enums"]["classe_xyz"] | null
+          created_at: string
+          delta_estoque_min_pct: number | null
+          delta_lt_pct: number | null
+          demanda_desvio_padrao: number | null
+          demanda_media_diaria: number | null
+          empresa: Database["public"]["Enums"]["empresa_reposicao"]
+          estoque_max_atual_omie: number | null
+          estoque_min_atual_omie: number | null
+          estoque_min_sugerido: number | null
+          estoque_seguranca: number | null
+          fornecedor_codigo_omie: number | null
+          fornecedor_nome: string | null
+          grupo_leadtime: string | null
+          id: string
+          lt_atual_omie: number | null
+          lt_desvio_padrao: number | null
+          lt_medio_realizado: number | null
+          lt_percentil_95: number | null
+          lt_sugerido: number | null
+          motivo_rejeicao: string | null
+          n_amostras_demanda: number | null
+          n_amostras_leadtime: number | null
+          override_justificativa: string | null
+          override_por: string | null
+          ponto_pedido_sugerido: number | null
+          sku_codigo: string | null
+          sku_codigo_omie: number
+          sku_descricao: string | null
+          status_revisao: Database["public"]["Enums"]["status_revisao"]
+          updated_at: string
+          z_aplicado: number | null
+          z_override: number | null
+        }
+        Insert: {
+          aplicado_em?: string | null
+          aprovado_em?: string | null
+          aprovado_por?: string | null
+          calculado_em?: string | null
+          classe_abc?: Database["public"]["Enums"]["classe_abc"] | null
+          classe_xyz?: Database["public"]["Enums"]["classe_xyz"] | null
+          created_at?: string
+          delta_estoque_min_pct?: number | null
+          delta_lt_pct?: number | null
+          demanda_desvio_padrao?: number | null
+          demanda_media_diaria?: number | null
+          empresa: Database["public"]["Enums"]["empresa_reposicao"]
+          estoque_max_atual_omie?: number | null
+          estoque_min_atual_omie?: number | null
+          estoque_min_sugerido?: number | null
+          estoque_seguranca?: number | null
+          fornecedor_codigo_omie?: number | null
+          fornecedor_nome?: string | null
+          grupo_leadtime?: string | null
+          id?: string
+          lt_atual_omie?: number | null
+          lt_desvio_padrao?: number | null
+          lt_medio_realizado?: number | null
+          lt_percentil_95?: number | null
+          lt_sugerido?: number | null
+          motivo_rejeicao?: string | null
+          n_amostras_demanda?: number | null
+          n_amostras_leadtime?: number | null
+          override_justificativa?: string | null
+          override_por?: string | null
+          ponto_pedido_sugerido?: number | null
+          sku_codigo?: string | null
+          sku_codigo_omie: number
+          sku_descricao?: string | null
+          status_revisao?: Database["public"]["Enums"]["status_revisao"]
+          updated_at?: string
+          z_aplicado?: number | null
+          z_override?: number | null
+        }
+        Update: {
+          aplicado_em?: string | null
+          aprovado_em?: string | null
+          aprovado_por?: string | null
+          calculado_em?: string | null
+          classe_abc?: Database["public"]["Enums"]["classe_abc"] | null
+          classe_xyz?: Database["public"]["Enums"]["classe_xyz"] | null
+          created_at?: string
+          delta_estoque_min_pct?: number | null
+          delta_lt_pct?: number | null
+          demanda_desvio_padrao?: number | null
+          demanda_media_diaria?: number | null
+          empresa?: Database["public"]["Enums"]["empresa_reposicao"]
+          estoque_max_atual_omie?: number | null
+          estoque_min_atual_omie?: number | null
+          estoque_min_sugerido?: number | null
+          estoque_seguranca?: number | null
+          fornecedor_codigo_omie?: number | null
+          fornecedor_nome?: string | null
+          grupo_leadtime?: string | null
+          id?: string
+          lt_atual_omie?: number | null
+          lt_desvio_padrao?: number | null
+          lt_medio_realizado?: number | null
+          lt_percentil_95?: number | null
+          lt_sugerido?: number | null
+          motivo_rejeicao?: string | null
+          n_amostras_demanda?: number | null
+          n_amostras_leadtime?: number | null
+          override_justificativa?: string | null
+          override_por?: string | null
+          ponto_pedido_sugerido?: number | null
+          sku_codigo?: string | null
+          sku_codigo_omie?: number
+          sku_descricao?: string | null
+          status_revisao?: Database["public"]["Enums"]["status_revisao"]
+          updated_at?: string
+          z_aplicado?: number | null
+          z_override?: number | null
+        }
+        Relationships: []
+      }
+      roadmap_state: {
+        Row: {
+          id: string
+          state: Json
+          updated_at: string
+        }
+        Insert: {
+          id?: string
+          state: Json
+          updated_at?: string
+        }
+        Update: {
+          id?: string
+          state?: Json
+          updated_at?: string
+        }
+        Relationships: []
+      }
       route_visits: {
         Row: {
           check_in_at: string | null
@@ -4498,6 +4849,102 @@ export type Database = {
             columns: ["order_id"]
             isOneToOne: false
             referencedRelation: "orders"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      sku_leadtime_history: {
+        Row: {
+          created_at: string
+          empresa: Database["public"]["Enums"]["empresa_reposicao"]
+          fornecedor_codigo_omie: number | null
+          fornecedor_nome: string | null
+          grupo_leadtime: string | null
+          id: string
+          lt_bruto_dias_uteis: number | null
+          lt_faturamento_dias_uteis: number | null
+          lt_logistica_dias_uteis: number | null
+          quantidade_pedida: number | null
+          quantidade_recebida: number | null
+          sku_codigo: string | null
+          sku_codigo_omie: number
+          sku_descricao: string | null
+          sku_ncm: string | null
+          sku_unidade: string | null
+          t1_data_pedido: string
+          t2_data_faturamento: string | null
+          t3_data_cte: string | null
+          t4_data_recebimento: string | null
+          tracking_id: string
+          updated_at: string
+          valor_total: number | null
+          valor_unitario: number | null
+        }
+        Insert: {
+          created_at?: string
+          empresa: Database["public"]["Enums"]["empresa_reposicao"]
+          fornecedor_codigo_omie?: number | null
+          fornecedor_nome?: string | null
+          grupo_leadtime?: string | null
+          id?: string
+          lt_bruto_dias_uteis?: number | null
+          lt_faturamento_dias_uteis?: number | null
+          lt_logistica_dias_uteis?: number | null
+          quantidade_pedida?: number | null
+          quantidade_recebida?: number | null
+          sku_codigo?: string | null
+          sku_codigo_omie: number
+          sku_descricao?: string | null
+          sku_ncm?: string | null
+          sku_unidade?: string | null
+          t1_data_pedido: string
+          t2_data_faturamento?: string | null
+          t3_data_cte?: string | null
+          t4_data_recebimento?: string | null
+          tracking_id: string
+          updated_at?: string
+          valor_total?: number | null
+          valor_unitario?: number | null
+        }
+        Update: {
+          created_at?: string
+          empresa?: Database["public"]["Enums"]["empresa_reposicao"]
+          fornecedor_codigo_omie?: number | null
+          fornecedor_nome?: string | null
+          grupo_leadtime?: string | null
+          id?: string
+          lt_bruto_dias_uteis?: number | null
+          lt_faturamento_dias_uteis?: number | null
+          lt_logistica_dias_uteis?: number | null
+          quantidade_pedida?: number | null
+          quantidade_recebida?: number | null
+          sku_codigo?: string | null
+          sku_codigo_omie?: number
+          sku_descricao?: string | null
+          sku_ncm?: string | null
+          sku_unidade?: string | null
+          t1_data_pedido?: string
+          t2_data_faturamento?: string | null
+          t3_data_cte?: string | null
+          t4_data_recebimento?: string | null
+          tracking_id?: string
+          updated_at?: string
+          valor_total?: number | null
+          valor_unitario?: number | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "sku_leadtime_history_tracking_id_fkey"
+            columns: ["tracking_id"]
+            isOneToOne: false
+            referencedRelation: "purchase_orders_tracking"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "sku_leadtime_history_tracking_id_fkey"
+            columns: ["tracking_id"]
+            isOneToOne: false
+            referencedRelation: "v_pedidos_em_aberto"
             referencedColumns: ["id"]
           },
         ]
@@ -6461,8 +6908,71 @@ export type Database = {
         }
         Relationships: []
       }
+      v_leadtime_por_grupo: {
+        Row: {
+          empresa: Database["public"]["Enums"]["empresa_reposicao"] | null
+          grupo_leadtime: string | null
+          lt_bruto_max: number | null
+          lt_bruto_medio: number | null
+          lt_bruto_p95: number | null
+          lt_bruto_stddev: number | null
+          lt_faturamento_medio: number | null
+          lt_logistica_medio: number | null
+          n_pedidos: number | null
+        }
+        Relationships: []
+      }
+      v_pedidos_em_aberto: {
+        Row: {
+          dias_desde_pedido: number | null
+          empresa: Database["public"]["Enums"]["empresa_reposicao"] | null
+          estagio: string | null
+          fornecedor_nome: string | null
+          grupo_leadtime: string | null
+          id: string | null
+          omie_codigo_pedido: number | null
+          status: Database["public"]["Enums"]["status_pedido_compra"] | null
+          t1_data_pedido: string | null
+          t2_data_faturamento: string | null
+          t3_data_cte: string | null
+          t4_data_recebimento: string | null
+        }
+        Insert: {
+          dias_desde_pedido?: never
+          empresa?: Database["public"]["Enums"]["empresa_reposicao"] | null
+          estagio?: never
+          fornecedor_nome?: string | null
+          grupo_leadtime?: string | null
+          id?: string | null
+          omie_codigo_pedido?: number | null
+          status?: Database["public"]["Enums"]["status_pedido_compra"] | null
+          t1_data_pedido?: string | null
+          t2_data_faturamento?: string | null
+          t3_data_cte?: string | null
+          t4_data_recebimento?: string | null
+        }
+        Update: {
+          dias_desde_pedido?: never
+          empresa?: Database["public"]["Enums"]["empresa_reposicao"] | null
+          estagio?: never
+          fornecedor_nome?: string | null
+          grupo_leadtime?: string | null
+          id?: string | null
+          omie_codigo_pedido?: number | null
+          status?: Database["public"]["Enums"]["status_pedido_compra"] | null
+          t1_data_pedido?: string | null
+          t2_data_faturamento?: string | null
+          t3_data_cte?: string | null
+          t4_data_recebimento?: string | null
+        }
+        Relationships: []
+      }
     }
     Functions: {
+      dias_uteis_entre: {
+        Args: { fim: string; inicio: string }
+        Returns: number
+      }
       fin_calcular_confiabilidade: {
         Args: { p_ano: number; p_company: string; p_mes: number }
         Returns: Json
@@ -6541,11 +7051,14 @@ export type Database = {
     }
     Enums: {
       app_role: "admin" | "employee" | "customer" | "master" | "manager"
+      classe_abc: "A" | "B" | "C"
+      classe_xyz: "X" | "Y" | "Z"
       commercial_role:
         | "operacional"
         | "gerencial"
         | "estrategico"
         | "super_admin"
+      empresa_reposicao: "OBEN" | "COLACOR"
       farmer_call_result:
         | "contato_sucesso"
         | "sem_resposta"
@@ -6554,6 +7067,20 @@ export type Database = {
         | "numero_invalido"
         | "reagendado"
       farmer_call_type: "reativacao" | "cross_sell" | "up_sell" | "follow_up"
+      status_pedido_compra:
+        | "CRIADO"
+        | "FATURADO"
+        | "EM_TRANSPORTE"
+        | "RECEBIDO"
+        | "CANCELADO"
+        | "DIVERGENCIA"
+      status_revisao:
+        | "NAO_REVISADO"
+        | "PENDENTE_APROVACAO"
+        | "APROVADO"
+        | "APLICADO"
+        | "REJEITADO"
+        | "APLICADO_AUTOMATICO"
       tint_integration_mode: "csv_only" | "shadow_mode" | "automatic_primary"
     }
     CompositeTypes: {
@@ -6683,12 +7210,15 @@ export const Constants = {
   public: {
     Enums: {
       app_role: ["admin", "employee", "customer", "master", "manager"],
+      classe_abc: ["A", "B", "C"],
+      classe_xyz: ["X", "Y", "Z"],
       commercial_role: [
         "operacional",
         "gerencial",
         "estrategico",
         "super_admin",
       ],
+      empresa_reposicao: ["OBEN", "COLACOR"],
       farmer_call_result: [
         "contato_sucesso",
         "sem_resposta",
@@ -6698,6 +7228,22 @@ export const Constants = {
         "reagendado",
       ],
       farmer_call_type: ["reativacao", "cross_sell", "up_sell", "follow_up"],
+      status_pedido_compra: [
+        "CRIADO",
+        "FATURADO",
+        "EM_TRANSPORTE",
+        "RECEBIDO",
+        "CANCELADO",
+        "DIVERGENCIA",
+      ],
+      status_revisao: [
+        "NAO_REVISADO",
+        "PENDENTE_APROVACAO",
+        "APROVADO",
+        "APLICADO",
+        "REJEITADO",
+        "APLICADO_AUTOMATICO",
+      ],
       tint_integration_mode: ["csv_only", "shadow_mode", "automatic_primary"],
     },
   },
