@@ -71,3 +71,6 @@ verify_jwt = false
 
 [functions.omie-debug-consulta-recebimento]
 verify_jwt = false
+
+[functions.omie-debug-consulta-cte]
+verify_jwt = false
