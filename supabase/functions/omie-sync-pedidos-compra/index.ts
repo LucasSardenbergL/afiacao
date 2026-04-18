@@ -311,7 +311,7 @@ async function syncEmpresa(
     if (fornecedorCodigo) {
       const before = pedidos.length;
       pedidos = pedidos.filter(
-        (p) => Number(p?.cabecalho?.nCodFor) === Number(fornecedorCodigo),
+        (p) => Number(p?.cabecalho_consulta?.nCodFor ?? p?.cabecalho?.nCodFor) === Number(fornecedorCodigo),
       );
       if (before !== pedidos.length) {
         console.log(
