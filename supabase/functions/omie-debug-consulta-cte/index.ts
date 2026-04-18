@@ -136,8 +136,11 @@ Deno.serve(async (req) => {
         {
           nPagina: pagina,
           nRegistrosPorPagina: 50,
-          dEmissaoInicial: fmt(inicio),
-          dEmissaoFinal: fmt(hoje),
+          cOrdenarPor: "CODIGO",
+          dtEmissaoDe: fmt(inicio),
+          dtEmissaoAte: fmt(hoje),
+          cExibirDetalhes: "S",
+          cEtapa: "",
         },
         creds,
       );
