@@ -189,7 +189,8 @@ const PRESERVE_FIELDS = new Set([
  *   "70"=Recebido, "80"=Encerrado, "90"=Cancelado
  */
 function mapPedidoToRow(empresa: Empresa, pedido: any): Record<string, unknown> {
-  const cab = pedido?.cabecalho ?? {};
+  // PesquisarPedCompra retorna o cabeçalho em "cabecalho_consulta" (não "cabecalho")
+  const cab = pedido?.cabecalho_consulta ?? pedido?.cabecalho ?? {};
   const etapa = String(cab?.cEtapa ?? "").trim();
 
   let status = "CRIADO";
@@ -296,13 +297,21 @@ async function syncEmpresa(
     }
 
     totalPaginas = resp?.nTotalPaginas ?? 1;
-    let pedidos: any[] = resp?.pedidos_pesquisa ?? [];
+    let pedidos: any[] = resp?.pedidos_pesquisa ?? resp?.pedido_compra_produto ?? resp?.pedidoCompraProduto ?? [];
+
+    // DEBUG: log shape do primeiro pedido (página 1) e top-level keys
+    if (pagina === 1) {
+      console.log(`[sync-pedidos] DEBUG top-level keys: ${JSON.stringify(Object.keys(resp || {}))}`);
+      if (pedidos.length > 0) {
+        console.log(`[sync-pedidos] SHAPE primeiro pedido: ${JSON.stringify(pedidos[0], null, 2).slice(0, 4000)}`);
+      }
+    }
 
     // Filtro pós-resposta por fornecedor (PesquisarPedCompra não filtra nativamente)
     if (fornecedorCodigo) {
       const before = pedidos.length;
       pedidos = pedidos.filter(
-        (p) => Number(p?.cabecalho?.nCodFor) === Number(fornecedorCodigo),
+        (p) => Number(p?.cabecalho_consulta?.nCodFor ?? p?.cabecalho?.nCodFor) === Number(fornecedorCodigo),
       );
       if (before !== pedidos.length) {
         console.log(
@@ -322,7 +331,7 @@ async function syncEmpresa(
         summary.pedidos_sincronizados++;
       } catch (err) {
         const msg = err instanceof Error ? err.message : String(err);
-        const codigo = pedido?.cabecalho?.nCodPed;
+        const codigo = pedido?.cabecalho_consulta?.nCodPed ?? pedido?.cabecalho?.nCodPed;
         console.error(`[sync-pedidos] empresa=${empresa} pedido=${codigo} erro upsert: ${msg}`);
         summary.erros++;
       }
