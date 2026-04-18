@@ -1,27 +1,27 @@
 // Edge Function: omie-sync-ctes-recebidos
-// Sincroniza CTes (modelo 57) recebidos do Omie e tenta vincular a NFes
-// existentes em purchase_orders_tracking via match HEURÍSTICO (data + valor de frete).
+// Sincroniza CTes (modelo 57) recebidos do Omie e tenta vincular a NFes Sayerlack
+// existentes em purchase_orders_tracking via match POR TRANSPORTADORA.
 //
 // Pública (verify_jwt = false). Acionada via POST manual ou cron.
 //
-// Métodos Omie usados (endpoint /api/v1/produtos/recebimentonfe/):
-//   - ListarRecebimentos (filtro cModeloNFe = "57")
-//   - ConsultarRecebimento(nIdReceb)
-//
-// Match heurístico CTe → NFe:
-//   Para cada CTe (data emissão dE_cte, valor frete v_frete):
-//     candidatas = NFes em POT (mesma empresa+fornecedor) onde:
-//        nfe_chave_acesso != null
-//        t3_data_cte IS NULL (ainda sem CTe)
-//        t2_data_faturamento entre (dE_cte - 3d) e dE_cte
-//     score por candidata:
-//        valor_esperado = valor_nfe * 0.025
-//        desvio = |v_frete - valor_esperado| / valor_esperado
-//        desvio <= 0.10 → 0.95   (alto)
-//        desvio <= 0.20 → 0.75   (médio)
-//        desvio  > 0.20 → 0.40   (baixo)
-//     escolhe a NFe de MAIOR score (empate → mais próxima de dE_cte).
-//     se melhor score < 0.40 → CTe órfão (não cria linha extra; só conta).
+// Regras de match (Sayerlack apenas — fornecedor_codigo_omie = 8689681266):
+//   1. Identificar transportadora pela tag transporte.cRazaoTransp do detalhe do CTe.
+//   2. Filtrar candidatas:
+//        - empresa = OBEN, fornecedor_codigo_omie = SAYERLACK
+//        - t2_data_faturamento entre (cte_data - 3d) e cte_data
+//        - t3_data_cte IS NULL  (NFe ainda sem CTe)
+//   3. Aplicar regra por transportadora:
+//        SP_MINAS  → método "SP_MINAS_25PCT": valor_esperado = nfe_valor * 0.025
+//                    desvio <= 15% → score 0.95
+//                    desvio <= 30% → score 0.75
+//                    desvio  > 30% → órfão
+//                    múltiplas candidatas válidas → menor desvio
+//        CONECT    → método "CONECT_DATA_FALLBACK": apenas janela de data
+//                    1 candidata    → score 0.60
+//                    2+ candidatas  → mais próxima em data, score 0.50
+//                    0 candidatas   → órfão
+//        OUTRAS    → não tentar match com NFes Sayerlack (registra órfão).
+//   4. Nunca matchar NFe que já tem t3_data_cte preenchido (filtro 2).
 //
 // Body opcional:
 //   { "empresa": "OBEN" | "COLACOR" | "ALL", "dias": 30, "fornecedor_codigo_omie": 8689681266 }
@@ -41,9 +41,15 @@ const RATE_LIMIT_DELAY_MS = 1100;
 const RETRY_DELAY_MS = 5000;
 const MAX_RETRIES = 3;
 const CTE_MODELO = "57";
-const FRETE_PCT_ESPERADO = 0.025; // 2.5% do valor da NFe
+const SAYERLACK_FORNECEDOR_DEFAULT = 8689681266;
+
+// SP Minas – % esperado
+const SPMINAS_FRETE_PCT = 0.025;
+const SPMINAS_DESVIO_ALTO = 0.15;
+const SPMINAS_DESVIO_MEDIO = 0.30;
 
 type Empresa = "OBEN" | "COLACOR";
+type MatchMetodo = "SP_MINAS_25PCT" | "CONECT_DATA_FALLBACK";
 
 interface RequestBody {
   empresa?: "OBEN" | "COLACOR" | "ALL";
@@ -54,11 +60,13 @@ interface RequestBody {
 interface EmpresaSummary {
   empresa: Empresa;
   ctes_processados: number;
-  ctes_matched: number;
-  ctes_sem_match: number;
-  matches_alto_score: number;   // >= 0.90
-  matches_medio_score: number;  // 0.70-0.90
-  matches_baixo_score: number;  // 0.40-0.70
+  ctes_sp_minas: number;
+  ctes_conect: number;
+  ctes_outras_transp_ignoradas: number;
+  matches_alto_score_sp_minas: number;
+  matches_medio_score_sp_minas: number;
+  matches_conect: number;
+  ctes_orfaos: number;
   erros: number;
 }
 
@@ -131,7 +139,6 @@ interface MappedCte {
   nIdReceb: number;
   chave: string | null;
   numero: string | null;
-  fornecedor_codigo: number | null;
   data_emissao_iso: string | null;
   data_emissao_date: Date | null;
   valor_frete: number;
@@ -141,7 +148,8 @@ interface MappedCte {
 
 function mapCte(item: any, detalhe: any): MappedCte {
   const cab = detalhe?.cabec ?? item?.cabec ?? {};
-  const transp = detalhe?.transporte ?? cab?.transporte ?? item?.transporte ?? {};
+  // Tag correta da transportadora: transporte.cRazaoTransp (não cabec).
+  const transp = detalhe?.transporte ?? item?.transporte ?? {};
 
   const dataIso = parseBRDateToISO(cab?.dEmissaoNFe, "00:00:00");
 
@@ -151,13 +159,22 @@ function mapCte(item: any, detalhe: any): MappedCte {
       ? String(cab.cChaveNFe ?? cab.cChaveNfe).replace(/\D/g, "").slice(0, 44)
       : null,
     numero: cab?.cNumeroNFe ? String(cab.cNumeroNFe) : null,
-    fornecedor_codigo: cab?.nIdFornecedor ? Number(cab.nIdFornecedor) : null,
     data_emissao_iso: dataIso,
     data_emissao_date: dataIso ? new Date(dataIso) : null,
     valor_frete: Number(cab?.nValorNFe ?? 0),
     transp_cnpj: transp?.cCnpjCpfTransp ? String(transp.cCnpjCpfTransp).replace(/\D/g, "") : null,
     transp_nome: transp?.cRazaoTransp ?? transp?.cNomeTransp ?? null,
   };
+}
+
+type TranspKind = "SP_MINAS" | "CONECT" | "OUTRA";
+
+function classificarTransp(nome: string | null): TranspKind {
+  if (!nome) return "OUTRA";
+  const n = nome.toUpperCase();
+  if (n.includes("SP MINAS") || n.includes("SPMINAS")) return "SP_MINAS";
+  if (n.includes("CONECT")) return "CONECT";
+  return "OUTRA";
 }
 
 interface NFeCandidata {
@@ -170,38 +187,8 @@ interface NFeCandidata {
 interface MatchResult {
   candidata: NFeCandidata;
   score: number;
-  desvio: number;
-}
-
-function calcularMatch(cte: MappedCte, candidatas: NFeCandidata[]): MatchResult | null {
-  if (cte.valor_frete <= 0 || candidatas.length === 0) return null;
-
-  const matches: MatchResult[] = [];
-  for (const c of candidatas) {
-    if (!c.valor_nfe || c.valor_nfe <= 0) continue;
-    const valorEsperado = c.valor_nfe * FRETE_PCT_ESPERADO;
-    const desvio = Math.abs(cte.valor_frete - valorEsperado) / valorEsperado;
-    let score = 0;
-    if (desvio <= 0.10) score = 0.95;
-    else if (desvio <= 0.20) score = 0.75;
-    else score = 0.40;
-    matches.push({ candidata: c, score, desvio });
-  }
-
-  if (matches.length === 0) return null;
-
-  // ordena: maior score; empate → fatura mais próxima da emissão do CTe
-  matches.sort((a, b) => {
-    if (b.score !== a.score) return b.score - a.score;
-    if (!cte.data_emissao_date) return 0;
-    const da = Math.abs(new Date(a.candidata.t2_data_faturamento).getTime() - cte.data_emissao_date.getTime());
-    const db = Math.abs(new Date(b.candidata.t2_data_faturamento).getTime() - cte.data_emissao_date.getTime());
-    return da - db;
-  });
-
-  const best = matches[0];
-  if (best.score < 0.40) return null;
-  return best;
+  desvio: number | null;
+  metodo: MatchMetodo;
 }
 
 async function buscarCandidatas(
@@ -241,20 +228,59 @@ async function buscarCandidatas(
   });
 }
 
+function matchSpMinas(cte: MappedCte, candidatas: NFeCandidata[]): MatchResult | null {
+  if (cte.valor_frete <= 0 || candidatas.length === 0) return null;
+
+  type Calc = { c: NFeCandidata; desvio: number };
+  const calc: Calc[] = [];
+  for (const c of candidatas) {
+    if (!c.valor_nfe || c.valor_nfe <= 0) continue;
+    const valorEsperado = c.valor_nfe * SPMINAS_FRETE_PCT;
+    const desvio = Math.abs(cte.valor_frete - valorEsperado) / valorEsperado;
+    if (desvio <= SPMINAS_DESVIO_MEDIO) {
+      calc.push({ c, desvio });
+    }
+  }
+  if (calc.length === 0) return null;
+
+  // menor desvio primeiro
+  calc.sort((a, b) => a.desvio - b.desvio);
+  const best = calc[0];
+  const score = best.desvio <= SPMINAS_DESVIO_ALTO ? 0.95 : 0.75;
+  return { candidata: best.c, score, desvio: best.desvio, metodo: "SP_MINAS_25PCT" };
+}
+
+function matchConect(cte: MappedCte, candidatas: NFeCandidata[]): MatchResult | null {
+  if (candidatas.length === 0 || !cte.data_emissao_date) return null;
+
+  if (candidatas.length === 1) {
+    return { candidata: candidatas[0], score: 0.60, desvio: null, metodo: "CONECT_DATA_FALLBACK" };
+  }
+  // 2+: mais próxima em data do CTe
+  const ordered = [...candidatas].sort((a, b) => {
+    const da = Math.abs(new Date(a.t2_data_faturamento).getTime() - cte.data_emissao_date!.getTime());
+    const db = Math.abs(new Date(b.t2_data_faturamento).getTime() - cte.data_emissao_date!.getTime());
+    return da - db;
+  });
+  return { candidata: ordered[0], score: 0.50, desvio: null, metodo: "CONECT_DATA_FALLBACK" };
+}
+
 async function processarEmpresa(
   supabase: ReturnType<typeof createClient>,
   empresa: Empresa,
   dias: number,
-  fornecedorCodigo: number | null,
+  fornecedorCodigo: number,
 ): Promise<EmpresaSummary> {
   const summary: EmpresaSummary = {
     empresa,
     ctes_processados: 0,
-    ctes_matched: 0,
-    ctes_sem_match: 0,
-    matches_alto_score: 0,
-    matches_medio_score: 0,
-    matches_baixo_score: 0,
+    ctes_sp_minas: 0,
+    ctes_conect: 0,
+    ctes_outras_transp_ignoradas: 0,
+    matches_alto_score_sp_minas: 0,
+    matches_medio_score_sp_minas: 0,
+    matches_conect: 0,
+    ctes_orfaos: 0,
     erros: 0,
   };
 
@@ -266,8 +292,7 @@ async function processarEmpresa(
 
   console.log(`[sync-ctes] ${empresa} período ${dEmissaoDe} → ${dEmissaoAte} (modelo 57)`);
 
-  // 1) Lista TODOS recebimentos do período (NFe + CTe). API NÃO aceita filtro cModeloNFe.
-  //    Filtramos em memória por cabec.cModeloNFe === "57".
+  // 1) Lista TODOS recebimentos do período. Filtra modelo 57 em memória.
   const ctesBase: any[] = [];
   let pagina = 1;
   let totalPaginas = 1;
@@ -281,8 +306,6 @@ async function processarEmpresa(
       dtEmissaoDe: dEmissaoDe,
       dtEmissaoAte: dEmissaoAte,
     };
-    // NÃO passamos nIdFornecedor: o fornecedor do CTe é a TRANSPORTADORA, não a Sayerlack.
-    // O filtro por fornecedor (Sayerlack) é aplicado depois, na busca de candidatas NFe.
 
     const resp = await callOmie(app_key, app_secret, "ListarRecebimentos", param);
     const lista: any[] =
@@ -297,7 +320,7 @@ async function processarEmpresa(
 
   console.log(`[sync-ctes] ${empresa} total CTes período: ${ctesBase.length}`);
 
-  // 2) Para cada CTe, ConsultarRecebimento + match heurístico
+  // 2) Para cada CTe, ConsultarRecebimento + match por transportadora
   for (const item of ctesBase) {
     try {
       summary.ctes_processados++;
@@ -311,27 +334,41 @@ async function processarEmpresa(
       await sleep(RATE_LIMIT_DELAY_MS);
 
       const cte = mapCte(item, det);
-      if (!cte.data_emissao_date || cte.valor_frete <= 0) {
-        summary.ctes_sem_match++;
-        console.log(`[sync-ctes] CTe ${nIdReceb} sem dados mínimos (data ou valor frete)`);
+      const transpKind = classificarTransp(cte.transp_nome);
+
+      if (transpKind === "OUTRA") {
+        summary.ctes_outras_transp_ignoradas++;
+        console.log(`[sync-ctes] CTe ${cte.numero} transp="${cte.transp_nome}" — ignorada (não SP Minas / não Conect)`);
         continue;
       }
-      if (!fornecedorCodigo) {
-        summary.ctes_sem_match++;
-        console.log(`[sync-ctes] CTe ${nIdReceb} sem fornecedor_codigo_omie no request`);
+
+      if (!cte.data_emissao_date) {
+        summary.erros++;
+        console.log(`[sync-ctes] CTe ${nIdReceb} sem data de emissão`);
         continue;
       }
+
+      if (transpKind === "SP_MINAS") summary.ctes_sp_minas++;
+      else if (transpKind === "CONECT") summary.ctes_conect++;
 
       const candidatas = await buscarCandidatas(supabase, empresa, fornecedorCodigo, cte);
-      console.log(`[sync-ctes] CTe ${cte.numero} (R$${cte.valor_frete.toFixed(2)}) → ${candidatas.length} candidatas`);
+      console.log(
+        `[sync-ctes] CTe ${cte.numero} (${transpKind}, R$${cte.valor_frete.toFixed(2)}) ` +
+        `→ ${candidatas.length} candidatas Sayerlack na janela`,
+      );
 
-      const match = calcularMatch(cte, candidatas);
+      let match: MatchResult | null = null;
+      if (transpKind === "SP_MINAS") {
+        match = matchSpMinas(cte, candidatas);
+      } else if (transpKind === "CONECT") {
+        match = matchConect(cte, candidatas);
+      }
+
       if (!match) {
-        summary.ctes_sem_match++;
+        summary.ctes_orfaos++;
         continue;
       }
 
-      // UPDATE na linha da NFe
       const { error: upErr } = await supabase
         .from("purchase_orders_tracking")
         .update({
@@ -342,6 +379,7 @@ async function processarEmpresa(
           cte_transportadora_nome_real: cte.transp_nome,
           cte_transportadora_cnpj: cte.transp_cnpj,
           match_cte_score: match.score,
+          match_cte_metodo: match.metodo,
         })
         .eq("id", match.candidata.id);
 
@@ -351,14 +389,17 @@ async function processarEmpresa(
         continue;
       }
 
-      summary.ctes_matched++;
-      if (match.score >= 0.90) summary.matches_alto_score++;
-      else if (match.score >= 0.70) summary.matches_medio_score++;
-      else summary.matches_baixo_score++;
+      if (match.metodo === "SP_MINAS_25PCT") {
+        if (match.score >= 0.90) summary.matches_alto_score_sp_minas++;
+        else summary.matches_medio_score_sp_minas++;
+      } else {
+        summary.matches_conect++;
+      }
 
+      const desvioStr = match.desvio !== null ? ` desvio=${(match.desvio * 100).toFixed(1)}%` : "";
       console.log(
-        `[sync-ctes] MATCH CTe ${cte.numero} ↔ pedido ${match.candidata.numero_pedido} ` +
-        `score=${match.score} desvio=${(match.desvio * 100).toFixed(1)}%`,
+        `[sync-ctes] MATCH ${match.metodo} CTe ${cte.numero} ↔ pedido ${match.candidata.numero_pedido} ` +
+        `score=${match.score}${desvioStr}`,
       );
     } catch (e) {
       console.error("[sync-ctes] erro item:", e);
@@ -384,7 +425,7 @@ Deno.serve(async (req) => {
 
     const empresaParam = (body.empresa ?? "OBEN") as "OBEN" | "COLACOR" | "ALL";
     const dias = Number(body.dias ?? 30);
-    const fornecedor = body.fornecedor_codigo_omie ?? null;
+    const fornecedor = Number(body.fornecedor_codigo_omie ?? SAYERLACK_FORNECEDOR_DEFAULT);
 
     const empresas: Empresa[] = empresaParam === "ALL" ? ["OBEN", "COLACOR"] : [empresaParam];
 
@@ -397,11 +438,13 @@ Deno.serve(async (req) => {
         summaries.push({
           empresa: emp,
           ctes_processados: 0,
-          ctes_matched: 0,
-          ctes_sem_match: 0,
-          matches_alto_score: 0,
-          matches_medio_score: 0,
-          matches_baixo_score: 0,
+          ctes_sp_minas: 0,
+          ctes_conect: 0,
+          ctes_outras_transp_ignoradas: 0,
+          matches_alto_score_sp_minas: 0,
+          matches_medio_score_sp_minas: 0,
+          matches_conect: 0,
+          ctes_orfaos: 0,
           erros: 1,
         });
       }
