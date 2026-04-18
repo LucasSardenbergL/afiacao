@@ -445,7 +445,7 @@ async function buscarHistoricoPrecosOmie(codigoCliente: number, account: Account
     ) as any;
 
     const precos: Record<number, number> = {};
-    const pedidos = result.pedido_venda_produto || [];
+    const pedidos = result?.pedido_venda_produto || [];
 
     // Percorrer pedidos do mais recente ao mais antigo
     for (const pedido of pedidos) {
