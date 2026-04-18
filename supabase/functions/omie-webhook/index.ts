@@ -132,17 +132,21 @@ async function processarEvento(
   console.log(`[processar] ${empresa} · ${topic}`);
   try {
     switch (topic) {
-      case "PedidoCompra.Incluido":
-      case "PedidoCompra.Alterado":
-      case "PedidoCompra.Excluido":
+      case "CompraProduto.Incluida":
+      case "CompraProduto.Alterada":
+      case "CompraProduto.Cancelada":
+      case "CompraProduto.Excluida":
+      case "CompraProduto.Encerrada":
+      case "CompraProduto.EtapaAlterada":
         // TODO Fase 1: sync purchase_orders_tracking
         break;
-      case "NFe.Recebida":
-      case "DocumentoEntrada.Incluido":
-        // TODO Fase 1: atualizar T2 (data faturamento)
+      case "NotaEntrada.Incluida":
+      case "NotaEntrada.Concluida":
+      case "NotaEntrada.Cancelada":
+        // TODO Fase 1: atualizar T2/T4 (NFe recebida)
         break;
-      case "CTe.Recebido":
-        // TODO Fase 1: atualizar T3 (data CTe)
+      case "RecebimentoProduto.Concluido":
+        // TODO Fase 1: confirmar entrada física (T4)
         break;
       case "Produto.Alterado":
         // TODO Fase 3: disparar recálculo se parâmetros mudaram
