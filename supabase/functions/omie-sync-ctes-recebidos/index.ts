@@ -266,7 +266,8 @@ async function processarEmpresa(
 
   console.log(`[sync-ctes] ${empresa} período ${dEmissaoDe} → ${dEmissaoAte} (modelo 57)`);
 
-  // 1) Lista CTes do período
+  // 1) Lista TODOS recebimentos do período (NFe + CTe). API NÃO aceita filtro cModeloNFe.
+  //    Filtramos em memória por cabec.cModeloNFe === "57".
   const ctesBase: any[] = [];
   let pagina = 1;
   let totalPaginas = 1;
@@ -277,7 +278,6 @@ async function processarEmpresa(
       cOrdenarPor: "CODIGO",
       cExibirDetalhes: "S",
       cEtapa: "",
-      cModeloNFe: CTE_MODELO,
       dtEmissaoDe: dEmissaoDe,
       dtEmissaoAte: dEmissaoAte,
     };
@@ -287,9 +287,10 @@ async function processarEmpresa(
 
     const resp = await callOmie(app_key, app_secret, "ListarRecebimentos", param);
     const lista: any[] = resp?.nfCadastro ?? resp?.cadastros ?? resp?.nfes ?? [];
-    ctesBase.push(...lista);
+    const apenasCtes = lista.filter((it) => String(it?.cabec?.cModeloNFe ?? "") === CTE_MODELO);
+    ctesBase.push(...apenasCtes);
     totalPaginas = Number(resp?.total_de_paginas ?? 1);
-    console.log(`[sync-ctes] ${empresa} página ${pagina}/${totalPaginas} → ${lista.length} CTes`);
+    console.log(`[sync-ctes] ${empresa} pág ${pagina}/${totalPaginas} → ${lista.length} itens (${apenasCtes.length} CTes)`);
     pagina++;
     await sleep(RATE_LIMIT_DELAY_MS);
   } while (pagina <= totalPaginas);
