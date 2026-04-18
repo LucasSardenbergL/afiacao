@@ -4217,6 +4217,7 @@ export type Database = {
           lt_bruto_dias_uteis: number | null
           lt_faturamento_dias_uteis: number | null
           lt_logistica_dias_uteis: number | null
+          match_cte_metodo: string | null
           match_cte_score: number | null
           nfe_chave_acesso: string | null
           nfe_numero: string | null
@@ -4257,6 +4258,7 @@ export type Database = {
           lt_bruto_dias_uteis?: number | null
           lt_faturamento_dias_uteis?: number | null
           lt_logistica_dias_uteis?: number | null
+          match_cte_metodo?: string | null
           match_cte_score?: number | null
           nfe_chave_acesso?: string | null
           nfe_numero?: string | null
@@ -4297,6 +4299,7 @@ export type Database = {
           lt_bruto_dias_uteis?: number | null
           lt_faturamento_dias_uteis?: number | null
           lt_logistica_dias_uteis?: number | null
+          match_cte_metodo?: string | null
           match_cte_score?: number | null
           nfe_chave_acesso?: string | null
           nfe_numero?: string | null
