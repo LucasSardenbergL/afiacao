@@ -304,7 +304,9 @@ async function syncEmpresa(
   const summary: EmpresaSummary = {
     empresa,
     nfes_processadas: 0,
+    consultas_detalhadas: 0,
     pedidos_vinculados: 0,
+    nfes_com_multiplos_pedidos: 0,
     nfes_orfas: 0,
     vinculos_criados_total: 0,
     erros: 0,
