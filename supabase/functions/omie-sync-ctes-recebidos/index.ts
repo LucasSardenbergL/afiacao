@@ -312,14 +312,18 @@ async function processarEmpresa(
       await sleep(RATE_LIMIT_DELAY_MS);
 
       const cte = mapCte(item, det);
-      if (!cte.data_emissao_date || cte.valor_frete <= 0 || !cte.fornecedor_codigo) {
+      if (!cte.data_emissao_date || cte.valor_frete <= 0) {
         summary.ctes_sem_match++;
-        console.log(`[sync-ctes] CTe ${nIdReceb} sem dados mínimos para match`);
+        console.log(`[sync-ctes] CTe ${nIdReceb} sem dados mínimos (data ou valor frete)`);
+        continue;
+      }
+      if (!fornecedorCodigo) {
+        summary.ctes_sem_match++;
+        console.log(`[sync-ctes] CTe ${nIdReceb} sem fornecedor_codigo_omie no request`);
         continue;
       }
 
-      const filtroFornecedor = fornecedorCodigo ?? cte.fornecedor_codigo;
-      const candidatas = await buscarCandidatas(supabase, empresa, filtroFornecedor, cte);
+      const candidatas = await buscarCandidatas(supabase, empresa, fornecedorCodigo, cte);
       console.log(`[sync-ctes] CTe ${cte.numero} (R$${cte.valor_frete.toFixed(2)}) → ${candidatas.length} candidatas`);
 
       const match = calcularMatch(cte, candidatas);
