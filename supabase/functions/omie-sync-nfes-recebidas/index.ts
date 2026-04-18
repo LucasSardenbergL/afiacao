@@ -42,6 +42,8 @@ interface RequestBody {
   empresa?: "OBEN" | "COLACOR" | "ALL";
   dias?: number;
   fornecedor_codigo_omie?: number;
+  data_inicial?: string; // dd/mm/yyyy — sobrepõe `dias` se fornecido
+  data_final?: string;   // dd/mm/yyyy — sobrepõe `dias` se fornecido
 }
 
 interface EmpresaSummary {
@@ -300,6 +302,8 @@ async function syncEmpresa(
   empresa: Empresa,
   dias: number,
   fornecedorCodigo: number | undefined,
+  dataInicialOverride?: string,
+  dataFinalOverride?: string,
 ): Promise<EmpresaSummary> {
   const summary: EmpresaSummary = {
     empresa,
@@ -314,11 +318,19 @@ async function syncEmpresa(
 
   const { app_key, app_secret } = getCredentials(empresa);
 
-  const hoje = new Date();
-  const inicio = new Date();
-  inicio.setDate(hoje.getDate() - dias);
-  const dataDe = formatDateBR(inicio);
-  const dataAte = formatDateBR(hoje);
+  let dataDe: string;
+  let dataAte: string;
+  if (dataInicialOverride && dataFinalOverride) {
+    dataDe = dataInicialOverride;
+    dataAte = dataFinalOverride;
+  } else {
+    const hoje = new Date();
+    const inicio = new Date();
+    inicio.setDate(hoje.getDate() - dias);
+    dataDe = formatDateBR(inicio);
+    dataAte = formatDateBR(hoje);
+  }
+  console.log(`[sync-nfes] ${empresa} janela ${dataDe} → ${dataAte}`);
 
   // Cache para evitar reprocessar mesma NFe (nIdReceb) no mesmo run
   const processadasNoRun = new Set<number>();
