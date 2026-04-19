@@ -218,8 +218,8 @@ Deno.serve(async (req) => {
         pagina,
         registros_por_pagina: registrosPorPagina,
         apenas_importado_api: "N",
-        filtrar_por_data_de: dEmiInicial,
-        filtrar_por_data_ate: dEmiFinal,
+        dEmiInicial,
+        dEmiFinal,
         tpNF: "1", // 1 = saída/venda
         filtrar_por_status: "N",
         ordenar_por: "CODIGO",
@@ -284,7 +284,7 @@ Deno.serve(async (req) => {
         try {
           const ide = nf?.ide ?? {};
           const compl = nf?.compl ?? {};
-          const dest = nf?.dest ?? {};
+          const dest = nf?.nfDestInt ?? nf?.dest ?? {};
           const det: any[] = Array.isArray(nf?.det) ? nf.det : [];
 
           const chave: string = String(compl?.cChaveNFe ?? "").trim();
@@ -302,7 +302,6 @@ Deno.serve(async (req) => {
           }
 
           if (!chave || !dataEmissao) {
-            // Sem chave → não conseguimos UPSERT por chave, pulamos
             console.warn(`NF sem chave/data, pulando (numero=${numero})`);
             continue;
           }
@@ -318,37 +317,30 @@ Deno.serve(async (req) => {
 
           if (clienteCodigo) clientesDistintos.add(clienteCodigo);
 
-          // Montar linhas a inserir
           const rows: any[] = [];
           let itensValidosNesta = 0;
 
           for (const it of det) {
             const prod = it?.prod ?? {};
-            const cfop = normalizeCfop(prod?.cfop);
+            const prodInt = it?.nfProdInt ?? {};
+            const cfop = normalizeCfop(prod?.CFOP ?? prod?.cfop);
 
             if (cfop && CFOPS_NAO_VENDA.has(cfop)) {
               itens_pulados_cfop++;
               continue;
             }
 
-            const skuOmie = prod?.codigo_produto != null
-              ? Number(prod.codigo_produto)
-              : (prod?.nCodProd != null ? Number(prod.nCodProd) : null);
+            // ID interno Omie do produto (bigint)
+            const skuOmie = prodInt?.nCodProd != null ? Number(prodInt.nCodProd) : null;
             if (!skuOmie || !Number.isFinite(skuOmie)) {
               continue;
             }
 
-            const qtde = Number(prod?.quantidade ?? prod?.nQtde ?? 0);
-            const vProd = Number(prod?.valor_unitario != null ? (Number(prod.valor_unitario) * qtde) : (prod?.vProd ?? 0));
-            // Preferir vProd direto se vier
-            const valorTotal = prod?.vProd != null
-              ? Number(prod.vProd)
-              : (prod?.valor_mercadoria != null ? Number(prod.valor_mercadoria) : vProd);
+            const qtde = Number(prod?.qCom ?? 0);
+            const valorTotal = prod?.vProd != null ? Number(prod.vProd) : null;
             const valorUnitario = prod?.vUnCom != null
               ? Number(prod.vUnCom)
-              : (prod?.valor_unitario != null
-                ? Number(prod.valor_unitario)
-                : (qtde > 0 ? valorTotal / qtde : null));
+              : (qtde > 0 && valorTotal != null ? valorTotal / qtde : null);
 
             skusDistintos.add(skuOmie);
 
@@ -364,13 +356,13 @@ Deno.serve(async (req) => {
               cliente_uf: null,
               cliente_cidade: null,
               sku_codigo_omie: skuOmie,
-              sku_codigo: prod?.codigo ?? prod?.cProd ?? null,
-              sku_descricao: prod?.descricao ?? prod?.xProd ?? null,
-              sku_ncm: prod?.ncm ?? prod?.cNCM ?? null,
-              sku_unidade: prod?.unidade ?? prod?.cUnidadeNfe ?? null,
+              sku_codigo: prod?.cProd ?? prodInt?.cCodProdInt ?? null,
+              sku_descricao: prod?.xProd ?? null,
+              sku_ncm: prod?.NCM ?? null,
+              sku_unidade: prod?.uCom ?? null,
               quantidade: qtde,
               valor_unitario: Number.isFinite(valorUnitario as number) ? valorUnitario : null,
-              valor_total: Number.isFinite(valorTotal) ? valorTotal : null,
+              valor_total: Number.isFinite(valorTotal as number) ? valorTotal : null,
               cfop: cfop || null,
               raw_data: it,
             });
