@@ -451,7 +451,124 @@ async function syncEmpresa(
         const msg = err instanceof Error ? err.message : String(err);
         console.error(`[sync-nfes] ${empresa} nIdReceb=${nIdReceb} chave=${nfe?.cabec?.cChaveNFe ?? nfe?.cabec?.cChaveNfe} erro: ${msg}`);
         summary.erros++;
+}
+
+/**
+ * Backfill: para NFes já existentes em purchase_orders_tracking que tenham
+ * nfe_chave_acesso preenchida mas raw_data incompleto (sem cabec.nIdReceb),
+ * chama ConsultarRecebimento(cChaveNFe) e atualiza raw_data + campos NULL.
+ */
+async function backfillRawData(
+  supabase: ReturnType<typeof createClient>,
+  empresa: Empresa,
+  fornecedorCodigo: number | undefined,
+  t0: number,
+): Promise<BackfillSummary> {
+  const out: BackfillSummary = {
+    nfes_identificadas_para_backfill: 0,
+    nfes_backfilled: 0,
+    nfes_pulou_por_timeout: 0,
+    erros: 0,
+  };
+
+  const { app_key, app_secret } = getCredentials(empresa);
+
+  let q = supabase
+    .from("purchase_orders_tracking")
+    .select("id, nfe_chave_acesso, raw_data, t2_data_faturamento, t4_data_recebimento, transportadora_nome, transportadora_cnpj")
+    .eq("empresa", empresa)
+    .not("nfe_chave_acesso", "is", null);
+  if (fornecedorCodigo) q = q.eq("fornecedor_codigo_omie", fornecedorCodigo);
+
+  const { data: linhas, error: selErr } = await q;
+  if (selErr) {
+    console.error(`[backfill] ${empresa} select erro: ${selErr.message}`);
+    out.erros++;
+    return out;
+  }
+
+  // Filtra em memória os incompletos
+  const incompletos = (linhas ?? []).filter((l: any) => {
+    const rd = l.raw_data;
+    if (!rd || typeof rd !== "object") return true;
+    const cab = rd.cabec;
+    if (!cab || typeof cab !== "object") return true;
+    return !cab.nIdReceb;
+  });
+
+  out.nfes_identificadas_para_backfill = incompletos.length;
+  console.log(`[backfill] ${empresa} identificadas=${incompletos.length}`);
+
+  for (const linha of incompletos) {
+    if (Date.now() - t0 > TIMEOUT_GUARD_MS) {
+      out.nfes_pulou_por_timeout = incompletos.length - (out.nfes_backfilled + out.erros);
+      console.warn(`[backfill] ${empresa} TIMEOUT GUARD — interrompido. Pendentes=${out.nfes_pulou_por_timeout}`);
+      break;
+    }
+
+    const chave = String((linha as any).nfe_chave_acesso ?? "").replace(/\D/g, "").slice(0, 44);
+    if (chave.length !== 44) {
+      out.erros++;
+      continue;
+    }
+
+    try {
+      await sleep(RATE_LIMIT_DELAY_MS);
+      const detalhe = await callOmie(app_key, app_secret, "ConsultarRecebimento", { cChaveNFe: chave });
+
+      if (!detalhe || detalhe?.faultstring) {
+        const fs = String(detalhe?.faultstring ?? "vazio");
+        console.warn(`[backfill] ${empresa} chave=${chave} sem detalhe: ${fs}`);
+        out.erros++;
+        continue;
       }
+
+      const m = mapNFe(detalhe);
+      const updateRow: Record<string, unknown> = {
+        raw_data: detalhe,
+        updated_at: new Date().toISOString(),
+      };
+      if (!(linha as any).t2_data_faturamento && m.data_emissao_iso) {
+        updateRow.t2_data_faturamento = m.data_emissao_iso;
+      }
+      if (!(linha as any).t4_data_recebimento && m.recebida && m.data_recebimento_iso) {
+        updateRow.t4_data_recebimento = m.data_recebimento_iso;
+      }
+      if (!(linha as any).transportadora_nome && m.transp_nome) {
+        updateRow.transportadora_nome = m.transp_nome;
+      }
+      if (!(linha as any).transportadora_cnpj && m.transp_cnpj) {
+        updateRow.transportadora_cnpj = m.transp_cnpj;
+      }
+
+      const { error: updErr } = await supabase
+        .from("purchase_orders_tracking")
+        .update(updateRow)
+        .eq("id", (linha as any).id);
+      if (updErr) {
+        console.error(`[backfill] ${empresa} chave=${chave} update erro: ${updErr.message}`);
+        out.erros++;
+        continue;
+      }
+      out.nfes_backfilled++;
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      console.error(`[backfill] ${empresa} chave=${chave} erro: ${msg}`);
+      out.erros++;
+      // Se for rate-limit persistente (425/429), abortar limpo
+      if (/rate limit|425|429/i.test(msg)) {
+        const restantes = incompletos.length - (out.nfes_backfilled + out.erros);
+        if (restantes > 0) {
+          out.nfes_pulou_por_timeout += restantes;
+          console.warn(`[backfill] ${empresa} aborto por rate limit. Pendentes=${restantes}`);
+        }
+        break;
+      }
+    }
+  }
+
+  console.log(`[backfill] ${empresa} backfilled=${out.nfes_backfilled} erros=${out.erros} pulou=${out.nfes_pulou_por_timeout}`);
+  return out;
     }
 
     pagina++;
