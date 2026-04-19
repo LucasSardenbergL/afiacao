@@ -989,7 +989,7 @@ function SkuDetailSheet({
               </div>
             )}
             <div className="flex gap-2 pt-3">
-              {!editing ? (
+              {sku.read_only ? null : !editing ? (
                 <Button size="sm" variant="outline" onClick={startEdit}>
                   Editar valores manualmente
                 </Button>
