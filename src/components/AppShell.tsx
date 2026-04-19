@@ -70,6 +70,7 @@ const unifiedNavSections: { title: string; items: NavItem[] }[] = [
       { icon: ClipboardList, label: 'Histórico de alterações', path: '/admin/reposicao/historico', managerOnly: true },
       { icon: AlertTriangle, label: 'Alertas de outlier', path: '/admin/reposicao/alertas', managerOnly: true },
       { icon: Factory, label: 'Grupos de produção', path: '/admin/reposicao/grupos-producao', managerOnly: true },
+      { icon: Target, label: 'SLA de fornecedor', path: '/admin/reposicao/sla-fornecedor', managerOnly: true },
       { icon: PlayCircle, label: 'Aplicação no Omie', path: '/admin/reposicao/aplicacao', managerOnly: true },
     ],
   },
