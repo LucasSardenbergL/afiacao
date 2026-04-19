@@ -24,7 +24,8 @@ const OMIE_ENDPOINT = "https://app.omie.com.br/api/v1/produtos/recebimentonfe/";
 const RATE_LIMIT_DELAY_MS = 1100;
 const RETRY_DELAY_MS = 5000;
 const MAX_RETRIES = 3;
-const TIME_BUDGET_MS = 130_000;
+const TIMEOUT_GUARD_MS = 120_000;
+const TIMEOUT_CHECK_EVERY_NFES = 10;
 
 type Empresa = "OBEN" | "COLACOR";
 
@@ -46,9 +47,15 @@ interface EmpresaSummary {
   interrompido_por_timeout: boolean;
 }
 
+interface ExistingTrackingRow {
+  tracking_id: string;
+}
+
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
-function getCredentials(empresa: Empresa): { app_key: string; app_secret: string } {
+function getCredentials(
+  empresa: Empresa,
+): { app_key: string; app_secret: string } {
   if (empresa === "OBEN") {
     const app_key = Deno.env.get("OMIE_OBEN_APP_KEY");
     const app_secret = Deno.env.get("OMIE_OBEN_APP_SECRET");
@@ -78,9 +85,18 @@ async function callOmie(
     });
     const text = await res.text();
     let json: any;
-    try { json = JSON.parse(text); } catch { json = { raw: text }; }
-    if (res.status === 429 || (json?.faultstring && /rate limit/i.test(json.faultstring))) {
-      console.warn(`[sync-sku-items] ${call} rate limit (try ${attempt}/${MAX_RETRIES})`);
+    try {
+      json = JSON.parse(text);
+    } catch {
+      json = { raw: text };
+    }
+    if (
+      res.status === 429 ||
+      (json?.faultstring && /rate limit/i.test(json.faultstring))
+    ) {
+      console.warn(
+        `[sync-sku-items] ${call} rate limit (try ${attempt}/${MAX_RETRIES})`,
+      );
       await sleep(RETRY_DELAY_MS);
       continue;
     }
@@ -105,14 +121,21 @@ function toStr(v: unknown): string | null {
 }
 
 /** Dias úteis entre duas datas ISO (segunda..sexta). Convenção: lead time exclui o dia inicial. */
-function diasUteisEntre(inicioIso: string | null, fimIso: string | null): number | null {
+function diasUteisEntre(
+  inicioIso: string | null,
+  fimIso: string | null,
+): number | null {
   if (!inicioIso || !fimIso) return null;
   const ini = new Date(inicioIso);
   const fim = new Date(fimIso);
   if (isNaN(ini.getTime()) || isNaN(fim.getTime()) || fim < ini) return null;
   let total = 0;
-  const cursor = new Date(Date.UTC(ini.getUTCFullYear(), ini.getUTCMonth(), ini.getUTCDate()));
-  const last = new Date(Date.UTC(fim.getUTCFullYear(), fim.getUTCMonth(), fim.getUTCDate()));
+  const cursor = new Date(
+    Date.UTC(ini.getUTCFullYear(), ini.getUTCMonth(), ini.getUTCDate()),
+  );
+  const last = new Date(
+    Date.UTC(fim.getUTCFullYear(), fim.getUTCMonth(), fim.getUTCDate()),
+  );
   while (cursor <= last) {
     const dow = cursor.getUTCDay();
     if (dow !== 0 && dow !== 6) total++;
@@ -134,7 +157,9 @@ interface NFeRow {
 }
 
 Deno.serve(async (req) => {
-  if (req.method === "OPTIONS") return new Response("ok", { headers: corsHeaders });
+  if (req.method === "OPTIONS") {
+    return new Response("ok", { headers: corsHeaders });
+  }
   const startedAt = Date.now();
 
   try {
@@ -154,15 +179,31 @@ Deno.serve(async (req) => {
 
     let q = supabase
       .from("purchase_orders_tracking")
-      .select("id, nfe_chave_acesso, t1_data_pedido, t2_data_faturamento, t3_data_cte, t4_data_recebimento, fornecedor_codigo_omie, fornecedor_nome, raw_data")
+      .select(
+        "id, nfe_chave_acesso, t1_data_pedido, t2_data_faturamento, t3_data_cte, t4_data_recebimento, fornecedor_codigo_omie, fornecedor_nome, raw_data",
+      )
       .eq("empresa", empresa)
       .gte("t2_data_faturamento", cutoffIso)
       .not("t2_data_faturamento", "is", null)
-      .not("nfe_chave_acesso", "is", null);
+      .not("nfe_chave_acesso", "is", null)
+      .order("t2_data_faturamento", { ascending: false });
     if (fornecedorFiltro) q = q.eq("fornecedor_codigo_omie", fornecedorFiltro);
 
     const { data: nfes, error: nfesErr } = await q;
     if (nfesErr) throw nfesErr;
+
+    const trackingIds = ((nfes ?? []) as NFeRow[]).map((nfe) => nfe.id);
+    const existingTrackingIds = new Set<string>();
+    if (trackingIds.length > 0) {
+      const { data: existingRows, error: existingErr } = await supabase
+        .from("sku_leadtime_history")
+        .select("tracking_id")
+        .in("tracking_id", trackingIds);
+      if (existingErr) throw existingErr;
+      for (const row of (existingRows ?? []) as ExistingTrackingRow[]) {
+        if (row?.tracking_id) existingTrackingIds.add(row.tracking_id);
+      }
+    }
 
     const summary: EmpresaSummary = {
       empresa,
@@ -177,17 +218,26 @@ Deno.serve(async (req) => {
     };
 
     const skusVistos = new Set<number>();
+    let nfesInspecionadas = 0;
 
     for (const nfeRaw of (nfes ?? []) as NFeRow[]) {
-      if (Date.now() - startedAt > TIME_BUDGET_MS) {
+      nfesInspecionadas++;
+      if (
+        nfesInspecionadas % TIMEOUT_CHECK_EVERY_NFES === 0 &&
+        Date.now() - startedAt > TIMEOUT_GUARD_MS
+      ) {
         summary.interrompido_por_timeout = true;
         break;
       }
+
+      if (existingTrackingIds.has(nfeRaw.id)) {
+        continue;
+      }
+
       summary.nfes_processadas++;
 
       const nIdReceb = nfeRaw.raw_data?.cabec?.nIdReceb;
       if (!nIdReceb) {
-        summary.erros++;
         console.warn(`[sync-sku-items] NFe ${nfeRaw.id} sem nIdReceb`);
         continue;
       }
@@ -195,15 +245,21 @@ Deno.serve(async (req) => {
       let detalhe: any;
       try {
         await sleep(RATE_LIMIT_DELAY_MS);
-        detalhe = await callOmie(app_key, app_secret, "ConsultarRecebimento", { nIdReceb: Number(nIdReceb) });
+        detalhe = await callOmie(app_key, app_secret, "ConsultarRecebimento", {
+          nIdReceb: Number(nIdReceb),
+        });
         summary.consultas_detalhadas++;
       } catch (e) {
-        summary.erros++;
-        console.error(`[sync-sku-items] ConsultarRecebimento ${nIdReceb} falhou:`, e instanceof Error ? e.message : e);
+        console.error(
+          `[sync-sku-items] ConsultarRecebimento ${nIdReceb} falhou:`,
+          e instanceof Error ? e.message : e,
+        );
         continue;
       }
 
-      const itens: any[] = Array.isArray(detalhe?.itensRecebimento) ? detalhe.itensRecebimento : [];
+      const itens: any[] = Array.isArray(detalhe?.itensRecebimento)
+        ? detalhe.itensRecebimento
+        : [];
 
       for (const item of itens) {
         const cab = item?.itensCabec ?? {};
@@ -212,18 +268,25 @@ Deno.serve(async (req) => {
 
         const skuCodigoOmie = toNum(cab?.nIdProduto);
         if (!skuCodigoOmie) {
-          summary.erros++;
           continue;
         }
 
         const nNumPedCompra = toStr(adic?.nNumPedCompra);
 
         // Tentar mapear o pedido específico via numero_contrato_fornecedor
-        let pedidoMatch: { id: string; t1_data_pedido: string; numero_pedido: string | null; grupo_leadtime: string | null; fornecedor_nome: string | null } | null = null;
+        let pedidoMatch: {
+          id: string;
+          t1_data_pedido: string;
+          numero_pedido: string | null;
+          grupo_leadtime: string | null;
+          fornecedor_nome: string | null;
+        } | null = null;
         if (nNumPedCompra && nNumPedCompra !== "0") {
           const { data: pedidoRows, error: pedErr } = await supabase
             .from("purchase_orders_tracking")
-            .select("id, t1_data_pedido, numero_pedido, grupo_leadtime, fornecedor_nome")
+            .select(
+              "id, t1_data_pedido, numero_pedido, grupo_leadtime, fornecedor_nome",
+            )
             .eq("empresa", empresa)
             .eq("fornecedor_codigo_omie", nfeRaw.fornecedor_codigo_omie)
             .eq("numero_contrato_fornecedor", nNumPedCompra)
@@ -250,7 +313,8 @@ Deno.serve(async (req) => {
           sku_unidade: toStr(cab?.cUnidadeNfe),
           sku_ncm: toStr(cab?.cNCM),
           fornecedor_codigo_omie: nfeRaw.fornecedor_codigo_omie,
-          fornecedor_nome: pedidoMatch?.fornecedor_nome ?? nfeRaw.fornecedor_nome,
+          fornecedor_nome: pedidoMatch?.fornecedor_nome ??
+            nfeRaw.fornecedor_nome,
           grupo_leadtime: pedidoMatch?.grupo_leadtime ?? "OUTRO",
           quantidade_pedida: toNum(cab?.nQtdeNFe),
           quantidade_recebida: toNum(ajustes?.nQtdeRecebida),
@@ -271,25 +335,44 @@ Deno.serve(async (req) => {
           .upsert(upsertRow, { onConflict: "tracking_id,sku_codigo_omie" });
         if (upErr) {
           summary.erros++;
-          console.error(`[sync-sku-items] upsert NFe ${nfeRaw.id} sku ${skuCodigoOmie} falhou:`, upErr.message);
+          console.error(
+            `[sync-sku-items] upsert NFe ${nfeRaw.id} sku ${skuCodigoOmie} falhou:`,
+            upErr.message,
+          );
           continue;
         }
         summary.itens_processados++;
         skusVistos.add(skuCodigoOmie);
+      }
+
+      if (Date.now() - startedAt > TIMEOUT_GUARD_MS) {
+        summary.interrompido_por_timeout = true;
+        break;
       }
     }
 
     summary.skus_distintos = skusVistos.size;
 
     return new Response(
-      JSON.stringify({ ok: true, duracao_ms: Date.now() - startedAt, summary: [summary] }),
+      JSON.stringify({
+        ok: true,
+        duracao_ms: Date.now() - startedAt,
+        summary: [summary],
+      }),
       { headers: { ...corsHeaders, "Content-Type": "application/json" } },
     );
   } catch (e) {
     console.error("[sync-sku-items] erro fatal:", e);
     return new Response(
-      JSON.stringify({ ok: false, error: e instanceof Error ? e.message : String(e), duracao_ms: Date.now() - startedAt }),
-      { status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" } },
+      JSON.stringify({
+        ok: false,
+        error: e instanceof Error ? e.message : String(e),
+        duracao_ms: Date.now() - startedAt,
+      }),
+      {
+        status: 500,
+        headers: { ...corsHeaders, "Content-Type": "application/json" },
+      },
     );
   }
 });
