@@ -117,7 +117,12 @@ type RowWithPrice = SkuParam & {
   preco_compra_real: number | null;
   preco_venda_medio: number | null;
   fonte_preco: string | null;
+  status_sugestao?: string | null;
+  fornecedor_habilitado?: boolean | null;
+  read_only?: boolean;
 };
+
+type StatusFilterValue = "pendente" | "aprovado" | "aguardando_fornecedor" | "todos";
 
 const fonteBadgeVariant = (fonte: string | null | undefined): "success" | "warning" | "danger" | "outline" => {
   if (!fonte) return "danger";
