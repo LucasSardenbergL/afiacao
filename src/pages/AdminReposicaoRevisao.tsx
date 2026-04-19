@@ -408,9 +408,10 @@ export default function AdminReposicaoRevisao() {
               <Label className="text-xs">Status</Label>
               <Select
                 value={statusFilter}
-                onValueChange={(v: "pendente" | "aprovado" | "todos") => {
+                onValueChange={(v: StatusFilterValue) => {
                   setPage(0);
                   setStatusFilter(v);
+                  setSelected({});
                 }}
               >
                 <SelectTrigger>
@@ -419,6 +420,9 @@ export default function AdminReposicaoRevisao() {
                 <SelectContent>
                   <SelectItem value="pendente">Pendentes</SelectItem>
                   <SelectItem value="aprovado">Aprovados</SelectItem>
+                  <SelectItem value="aguardando_fornecedor">
+                    Aguardando habilitação de fornecedor
+                  </SelectItem>
                   <SelectItem value="todos">Todos</SelectItem>
                 </SelectContent>
               </Select>
