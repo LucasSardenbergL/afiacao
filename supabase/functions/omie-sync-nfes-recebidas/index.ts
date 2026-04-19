@@ -611,37 +611,54 @@ Deno.serve(async (req) => {
     const fornecedorCodigo = body.fornecedor_codigo_omie;
     const dataInicial = typeof body.data_inicial === "string" ? body.data_inicial : undefined;
     const dataFinal = typeof body.data_final === "string" ? body.data_final : undefined;
+    const apenasBackfill = body.apenas_backfill === true;
+    const pularBackfill = body.pular_backfill === true;
 
     const empresas: Empresa[] =
       empresaParam === "ALL" ? ["OBEN", "COLACOR"] : [empresaParam as Empresa];
 
-    console.log(`[sync-nfes] início empresas=${empresas.join(",")} dias=${dias} janela=${dataInicial ?? "-"}→${dataFinal ?? "-"} fornecedor=${fornecedorCodigo ?? "todos"}`);
+    console.log(`[sync-nfes] início empresas=${empresas.join(",")} dias=${dias} janela=${dataInicial ?? "-"}→${dataFinal ?? "-"} fornecedor=${fornecedorCodigo ?? "todos"} apenas_backfill=${apenasBackfill} pular_backfill=${pularBackfill}`);
 
     const summary: EmpresaSummary[] = [];
     for (const empresa of empresas) {
       try {
-        const s = await syncEmpresa(supabase, empresa, dias, fornecedorCodigo, dataInicial, dataFinal);
-        console.log(
-          `[sync-nfes] ${empresa} TOTAL: nfes=${s.nfes_processadas} ` +
-          `consultas=${s.consultas_detalhadas} vinculadas=${s.pedidos_vinculados} ` +
-          `multi=${s.nfes_com_multiplos_pedidos} orfas=${s.nfes_orfas} ` +
-          `vinculos=${s.vinculos_criados_total} erros=${s.erros} dur=${Date.now() - t0}ms`,
-        );
-
-        // Backfill retroativo: NFes existentes com raw_data incompleto
-        try {
-          const bf = await backfillRawData(supabase, empresa, fornecedorCodigo, t0);
-          s.backfill = bf;
-          if (bf.nfes_pulou_por_timeout > 0) s.interrompido_por_timeout = true;
-        } catch (errBf) {
-          const msgBf = errBf instanceof Error ? errBf.message : String(errBf);
-          console.error(`[sync-nfes] ${empresa} backfill erro fatal: ${msgBf}`);
-          s.backfill = {
-            nfes_identificadas_para_backfill: 0,
-            nfes_backfilled: 0,
-            nfes_pulou_por_timeout: 0,
-            erros: 1,
+        let s: EmpresaSummary;
+        if (apenasBackfill) {
+          s = {
+            empresa,
+            nfes_processadas: 0,
+            consultas_detalhadas: 0,
+            pedidos_vinculados: 0,
+            nfes_com_multiplos_pedidos: 0,
+            nfes_orfas: 0,
+            vinculos_criados_total: 0,
+            erros: 0,
           };
+        } else {
+          s = await syncEmpresa(supabase, empresa, dias, fornecedorCodigo, dataInicial, dataFinal);
+          console.log(
+            `[sync-nfes] ${empresa} TOTAL: nfes=${s.nfes_processadas} ` +
+            `consultas=${s.consultas_detalhadas} vinculadas=${s.pedidos_vinculados} ` +
+            `multi=${s.nfes_com_multiplos_pedidos} orfas=${s.nfes_orfas} ` +
+            `vinculos=${s.vinculos_criados_total} erros=${s.erros} dur=${Date.now() - t0}ms`,
+          );
+        }
+
+        if (!pularBackfill) {
+          try {
+            const bf = await backfillRawData(supabase, empresa, fornecedorCodigo, t0);
+            s.backfill = bf;
+            if (bf.nfes_pulou_por_timeout > 0) s.interrompido_por_timeout = true;
+          } catch (errBf) {
+            const msgBf = errBf instanceof Error ? errBf.message : String(errBf);
+            console.error(`[sync-nfes] ${empresa} backfill erro fatal: ${msgBf}`);
+            s.backfill = {
+              nfes_identificadas_para_backfill: 0,
+              nfes_backfilled: 0,
+              nfes_pulou_por_timeout: 0,
+              erros: 1,
+            };
+          }
         }
 
         summary.push(s);
