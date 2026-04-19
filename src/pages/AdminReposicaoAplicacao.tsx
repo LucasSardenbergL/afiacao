@@ -140,11 +140,10 @@ export default function AdminReposicaoAplicacao() {
   const { data: contadores } = useQuery({
     queryKey: ["fila-aplicacao-contadores", EMPRESA],
     queryFn: async () => {
-      const base = supabase
+      const { data } = await (supabase as any)
         .from("fila_aplicacao_omie")
         .select("status_validacao, aplicado_em")
         .eq("empresa", EMPRESA);
-      const { data } = await base;
       const c = { pronto: 0, inativo: 0, substituicao: 0, aplicado: 0 };
       (data ?? []).forEach((r: any) => {
         if (r.aplicado_em) c.aplicado++;
