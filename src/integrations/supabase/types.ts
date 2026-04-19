@@ -5083,6 +5083,7 @@ export type Database = {
           demanda_desvio_padrao: number | null
           demanda_dias_com_movimento: number | null
           demanda_media_diaria: number | null
+          demanda_multiplicador_override: number | null
           demanda_total_90d: number | null
           empresa: string
           estoque_maximo: number | null
@@ -5102,7 +5103,11 @@ export type Database = {
           lt_p95_dias: number | null
           meses_consecutivos_nova_classe: number | null
           motivo_classe_forcada: string | null
+          motivo_override: string | null
           omie_ultima_sincronizacao: string | null
+          override_criado_em: string | null
+          override_criado_por: string | null
+          override_validade_ate: string | null
           ponto_pedido: number | null
           ponto_pedido_omie: number | null
           sku_codigo_omie: number
@@ -5128,6 +5133,7 @@ export type Database = {
           demanda_desvio_padrao?: number | null
           demanda_dias_com_movimento?: number | null
           demanda_media_diaria?: number | null
+          demanda_multiplicador_override?: number | null
           demanda_total_90d?: number | null
           empresa: string
           estoque_maximo?: number | null
@@ -5147,7 +5153,11 @@ export type Database = {
           lt_p95_dias?: number | null
           meses_consecutivos_nova_classe?: number | null
           motivo_classe_forcada?: string | null
+          motivo_override?: string | null
           omie_ultima_sincronizacao?: string | null
+          override_criado_em?: string | null
+          override_criado_por?: string | null
+          override_validade_ate?: string | null
           ponto_pedido?: number | null
           ponto_pedido_omie?: number | null
           sku_codigo_omie: number
@@ -5173,6 +5183,7 @@ export type Database = {
           demanda_desvio_padrao?: number | null
           demanda_dias_com_movimento?: number | null
           demanda_media_diaria?: number | null
+          demanda_multiplicador_override?: number | null
           demanda_total_90d?: number | null
           empresa?: string
           estoque_maximo?: number | null
@@ -5192,7 +5203,11 @@ export type Database = {
           lt_p95_dias?: number | null
           meses_consecutivos_nova_classe?: number | null
           motivo_classe_forcada?: string | null
+          motivo_override?: string | null
           omie_ultima_sincronizacao?: string | null
+          override_criado_em?: string | null
+          override_criado_por?: string | null
+          override_validade_ate?: string | null
           ponto_pedido?: number | null
           ponto_pedido_omie?: number | null
           sku_codigo_omie?: number
