@@ -513,17 +513,32 @@ export default function AdminReposicaoRevisao() {
               </TableHeader>
               <TableBody>
                 {rows.map((r) => (
-                  <TableRow key={r.id}>
+                  <TableRow key={r.id} className={r.read_only ? "bg-muted/30" : undefined}>
                     <TableCell>
-                      <Checkbox
-                        checked={!!selected[r.id]}
-                        onCheckedChange={(v) =>
-                          setSelected((s) => ({ ...s, [r.id]: !!v }))
-                        }
-                      />
+                      {r.read_only ? (
+                        <span className="inline-block h-4 w-4" aria-hidden />
+                      ) : (
+                        <Checkbox
+                          checked={!!selected[r.id]}
+                          onCheckedChange={(v) =>
+                            setSelected((s) => ({ ...s, [r.id]: !!v }))
+                          }
+                        />
+                      )}
                     </TableCell>
                     <TableCell className="font-mono text-xs">{r.sku_codigo_omie}</TableCell>
-                    <TableCell className="max-w-xs truncate">{r.sku_descricao}</TableCell>
+                    <TableCell className="max-w-xs">
+                      <div className="truncate">{r.sku_descricao}</div>
+                      {r.read_only && r.fornecedor_nome && (
+                        <Badge
+                          variant="warning"
+                          className="mt-1 text-[10px] font-medium"
+                          title="Fornecedor pendente de habilitação para reposição"
+                        >
+                          🏭 {r.fornecedor_nome}
+                        </Badge>
+                      )}
+                    </TableCell>
                     <TableCell>
                       <Badge variant={classBadge(r.classe_consolidada) as any}>
                         {r.classe_consolidada}
@@ -542,7 +557,15 @@ export default function AdminReposicaoRevisao() {
                     <TableCell className="text-right">{fmt(r.ponto_pedido, 0)}</TableCell>
                     <TableCell className="text-right">{fmt(r.estoque_maximo, 0)}</TableCell>
                     <TableCell>
-                      {r.aprovado_em ? (
+                      {r.read_only ? (
+                        <Badge
+                          variant="secondary"
+                          className="bg-muted text-muted-foreground border-muted-foreground/20"
+                          title="SKU bloqueado: fornecedor ainda não habilitado para reposição automática"
+                        >
+                          Aguardando fornecedor
+                        </Badge>
+                      ) : r.aprovado_em ? (
                         <Badge variant="default">Aprovado</Badge>
                       ) : (
                         <Badge variant="outline">Pendente</Badge>
