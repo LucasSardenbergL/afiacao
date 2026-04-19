@@ -683,16 +683,27 @@ function SkuDetailSheet({
 
   if (!sku) return null;
 
+  const Z = stats?.z_aplicado ?? sku.z_score ?? null;
+  const D = sku.demanda_media_diaria ?? null;
+  const LT = stats?.lead_time_medio ?? sku.lt_medio_dias_uteis ?? null;
+  const sigmaD = stats?.demanda_sigma_diario ?? sku.demanda_desvio_padrao ?? null;
+  const sigmaLT = sku.lt_desvio_padrao_dias ?? null;
+  const Cp = stats?.custo_pedido_aplicado ?? null;
+  const Cm = stats?.custo_capital_efetivo_perc ?? null;
+  const preco = stats?.preco_item_eoq ?? stats?.preco_compra_real ?? null;
+  const QC = stats?.qtde_compra_ciclo_sugerida ?? null;
+  const markup =
+    stats?.preco_compra_real && stats?.preco_venda_medio
+      ? stats.preco_venda_medio / stats.preco_compra_real
+      : null;
+
   const justificativaAuto =
-    `SKU classe ${sku.classe_consolidada}. Demanda média ${fmt(sku.demanda_media_diaria)}/dia` +
-    (stats?.pico_maximo_dia ? ` com pico de ${fmt(stats.pico_maximo_dia, 0)}` : "") +
-    ` observado nos últimos 180 dias. LT médio ${fmt(sku.lt_medio_dias_uteis, 1)} dias úteis. ` +
-    `Usando fórmula rolling pessimista (C3) que considera a pior janela de LT observada no histórico, ` +
-    `o ponto de pedido foi definido em ${fmt(sku.ponto_pedido, 0)} unidades para cobrir lead time + segurança` +
-    (stats?.dias_seguranca ? ` de ${stats.dias_seguranca} dias` : "") +
-    `. Estoque máximo em ${fmt(sku.estoque_maximo, 0)} garante cobertura de reposição` +
-    (stats?.cobertura_alvo_dias ? ` de ${stats.cobertura_alvo_dias} dias` : "") +
-    `.`;
+    `SKU classe ${sku.classe_consolidada}. Fórmula Silver-Pyke-Peterson com service level Z = ${fmt(Z, 2)}:\n` +
+    `• Safety Stock = Z × √(LT × σ_D² + D² × σ_LT²) = ${fmt(Z, 2)} × √(${fmt(LT, 1)}×${fmt(sigmaD, 2)}² + ${fmt(D, 2)}²×${fmt(sigmaLT, 2)}²) = ${fmt(sku.estoque_minimo, 0)}\n` +
+    `• Ponto de Pedido = D×LT + SS = ${fmt(D, 2)}×${fmt(LT, 1)} + ${fmt(sku.estoque_minimo, 0)} = ${fmt(sku.ponto_pedido, 0)}\n` +
+    `• Lote de Compra (EOQ) = √(2 × D_anual × Cp / (Cm × preço)) = √(2×${fmt(D, 2)}×252×${fmt(Cp, 2)} / (${fmt(Cm, 4)}×${fmtBRL(preco)})) = ${fmt(QC, 0)}\n` +
+    `• Estoque Máximo = PP + QC = ${fmt(sku.ponto_pedido, 0)} + ${fmt(QC, 0)} = ${fmt(sku.estoque_maximo, 0)}\n` +
+    `Cobertura efetiva: ${stats?.cobertura_alvo_dias ?? sku.cobertura_alvo_dias ?? "—"} dias de demanda.`;
 
   const startEdit = () => {
     setEdit({
