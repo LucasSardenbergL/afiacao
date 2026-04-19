@@ -7317,6 +7317,20 @@ export type Database = {
       }
     }
     Functions: {
+      atualizar_classificacao_skus: {
+        Args: { p_empresa: string }
+        Returns: {
+          acao: string
+          classe_anterior: string
+          classe_aplicada: string
+          classe_proposta: string
+          sku_codigo_omie: number
+        }[]
+      }
+      atualizar_parametros_numericos_skus: {
+        Args: { p_empresa: string }
+        Returns: number
+      }
       dias_uteis_entre: {
         Args: { fim: string; inicio: string }
         Returns: number
