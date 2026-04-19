@@ -358,15 +358,16 @@ export default function AdminReposicaoRevisao() {
     setClasses((prev) => (prev.includes(c) ? prev.filter((x) => x !== c) : [...prev, c]));
   };
 
-  const allChecked = rows.length > 0 && rows.every((r) => selected[r.id]);
+  const selectableRows = useMemo(() => rows.filter((r) => !r.read_only), [rows]);
+  const allChecked = selectableRows.length > 0 && selectableRows.every((r) => selected[r.id]);
   const toggleAll = () => {
     if (allChecked) {
       const next = { ...selected };
-      rows.forEach((r) => delete next[r.id]);
+      selectableRows.forEach((r) => delete next[r.id]);
       setSelected(next);
     } else {
       const next = { ...selected };
-      rows.forEach((r) => (next[r.id] = true));
+      selectableRows.forEach((r) => (next[r.id] = true));
       setSelected(next);
     }
   };
