@@ -1047,27 +1047,47 @@ function SkuDetailSheet({
 
           {/* Aprovação */}
           <section className="space-y-2 border-t pt-4">
-            <Label>Justificativa da aprovação (opcional)</Label>
-            <Textarea
-              value={justificativa}
-              onChange={(e) => setJustificativa(e.target.value)}
-              placeholder="Ex: Parâmetros condizem com a sazonalidade observada."
-            />
-            {sku.aprovado_em && (
-              <p className="text-xs text-muted-foreground">
-                Já aprovado em {new Date(sku.aprovado_em).toLocaleString("pt-BR")} por{" "}
-                {sku.aprovado_por}.
-              </p>
+            {sku.read_only ? (
+              <div className="rounded-md border border-dashed bg-muted/50 p-3 text-sm text-muted-foreground space-y-1">
+                <div className="font-medium text-foreground flex items-center gap-2">
+                  <Badge variant="secondary" className="bg-muted">Aguardando fornecedor</Badge>
+                </div>
+                <p>
+                  Este SKU não pode ser aprovado enquanto o fornecedor{" "}
+                  <strong>{sku.fornecedor_nome ?? "—"}</strong> não estiver habilitado para
+                  reposição automática. Habilite o fornecedor antes de aprovar os parâmetros.
+                </p>
+                <div className="flex justify-end pt-2">
+                  <Button variant="outline" onClick={onClose}>
+                    Fechar
+                  </Button>
+                </div>
+              </div>
+            ) : (
+              <>
+                <Label>Justificativa da aprovação (opcional)</Label>
+                <Textarea
+                  value={justificativa}
+                  onChange={(e) => setJustificativa(e.target.value)}
+                  placeholder="Ex: Parâmetros condizem com a sazonalidade observada."
+                />
+                {sku.aprovado_em && (
+                  <p className="text-xs text-muted-foreground">
+                    Já aprovado em {new Date(sku.aprovado_em).toLocaleString("pt-BR")} por{" "}
+                    {sku.aprovado_por}.
+                  </p>
+                )}
+                <div className="flex justify-end gap-2 pt-2">
+                  <Button variant="outline" onClick={onClose}>
+                    Fechar
+                  </Button>
+                  <Button onClick={() => onApprove(justificativa)} disabled={isApproving}>
+                    {isApproving && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
+                    {sku.aprovado_em ? "Reaprovar" : "Aprovar este SKU"}
+                  </Button>
+                </div>
+              </>
             )}
-            <div className="flex justify-end gap-2 pt-2">
-              <Button variant="outline" onClick={onClose}>
-                Fechar
-              </Button>
-              <Button onClick={() => onApprove(justificativa)} disabled={isApproving}>
-                {isApproving && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
-                {sku.aprovado_em ? "Reaprovar" : "Aprovar este SKU"}
-              </Button>
-            </div>
           </section>
         </div>
       </SheetContent>
