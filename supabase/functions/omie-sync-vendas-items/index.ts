@@ -261,7 +261,10 @@ Deno.serve(async (req) => {
           console.log(
             `[${empresa}] SAMPLE det[0] keys=${Object.keys(sample.det[0]).join(",")} prod_keys=${
               Object.keys(sample.det[0]?.prod ?? {}).join(",")
-            }`,
+            } nfProdInt_keys=${Object.keys(sample.det[0]?.nfProdInt ?? {}).join(",")}`,
+          );
+          console.log(
+            `[${empresa}] SAMPLE nfDestInt_keys=${Object.keys(sample?.nfDestInt ?? {}).join(",")} dest_keys=${Object.keys(sample?.dest ?? {}).join(",")}`,
           );
         }
       }
