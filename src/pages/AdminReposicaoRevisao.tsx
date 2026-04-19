@@ -83,12 +83,58 @@ type SkuParam = {
   ponto_pedido: number | null;
   estoque_maximo: number | null;
   estoque_seguranca: number | null;
+  z_score: number | null;
   cobertura_alvo_dias: number | null;
   aplicar_no_omie: boolean | null;
   aprovado_em: string | null;
   aprovado_por: string | null;
   justificativa_aprovacao: string | null;
   ultima_atualizacao_calculo: string | null;
+};
+
+type ViewStats = {
+  pico_maximo_dia: number | null;
+  p95_diario: number | null;
+  p90_quando_vende: number | null;
+  dias_seguranca: number | null;
+  cobertura_alvo_dias: number | null;
+  preco_compra_real: number | null;
+  preco_venda_medio: number | null;
+  preco_item_eoq: number | null;
+  fonte_preco: string | null;
+  n_compras: number | null;
+  custo_capital_efetivo_perc: number | null;
+  custo_pedido_aplicado: number | null;
+  modo_pedido: string | null;
+  z_aplicado: number | null;
+  demanda_sigma_diario: number | null;
+  sigma_lt_d: number | null;
+  lead_time_medio: number | null;
+  qtde_compra_ciclo_sugerida: number | null;
+};
+
+type RowWithPrice = SkuParam & {
+  preco_compra_real: number | null;
+  preco_venda_medio: number | null;
+  fonte_preco: string | null;
+};
+
+const fonteBadgeVariant = (fonte: string | null | undefined): "success" | "warning" | "danger" | "outline" => {
+  if (!fonte) return "danger";
+  const f = fonte.toLowerCase();
+  if (f.includes("compra") && f.includes("real")) return "success";
+  if (f.includes("estim")) return "warning";
+  if (f.includes("sem")) return "danger";
+  return "outline";
+};
+
+const fonteBadgeLabel = (fonte: string | null | undefined) => {
+  if (!fonte) return "Sem preço";
+  const f = fonte.toLowerCase();
+  if (f.includes("compra") && f.includes("real")) return "Compra real";
+  if (f.includes("estim")) return "Estimado";
+  if (f.includes("sem")) return "Sem preço";
+  return fonte;
 };
 
 const classBadge = (classe: string | null) => {
@@ -115,7 +161,7 @@ export default function AdminReposicaoRevisao() {
   const [search, setSearch] = useState("");
   const [page, setPage] = useState(0);
   const [selected, setSelected] = useState<Record<string, boolean>>({});
-  const [openSku, setOpenSku] = useState<SkuParam | null>(null);
+  const [openSku, setOpenSku] = useState<RowWithPrice | null>(null);
   const [confirmBatch, setConfirmBatch] = useState(false);
   const [batchJustificativa, setBatchJustificativa] = useState("");
 
@@ -146,7 +192,39 @@ export default function AdminReposicaoRevisao() {
 
       const { data, error, count } = await q;
       if (error) throw error;
-      return { rows: (data ?? []) as SkuParam[], total: count ?? 0 };
+
+      const baseRows = (data ?? []) as SkuParam[];
+
+      // Buscar preços/fonte da view para todos os SKUs da página em uma chamada
+      let priced: RowWithPrice[] = baseRows.map((r) => ({
+        ...r,
+        preco_compra_real: null,
+        preco_venda_medio: null,
+        fonte_preco: null,
+      }));
+
+      if (baseRows.length > 0) {
+        const codes = baseRows.map((r) => r.sku_codigo_omie);
+        const { data: vrows } = await supabase
+          .from("v_sku_parametros_sugeridos" as any)
+          .select("sku_codigo_omie, preco_compra_real, preco_venda_medio, fonte_preco")
+          .eq("empresa", empresa)
+          .in("sku_codigo_omie", codes);
+
+        const map = new Map<number, any>();
+        (vrows ?? []).forEach((row: any) => map.set(Number(row.sku_codigo_omie), row));
+        priced = baseRows.map((r) => {
+          const v = map.get(Number(r.sku_codigo_omie));
+          return {
+            ...r,
+            preco_compra_real: v?.preco_compra_real ?? null,
+            preco_venda_medio: v?.preco_venda_medio ?? null,
+            fonte_preco: v?.fonte_preco ?? null,
+          };
+        });
+      }
+
+      return { rows: priced, total: count ?? 0 };
     },
   });
 
@@ -343,6 +421,9 @@ export default function AdminReposicaoRevisao() {
                   <TableHead>Descrição</TableHead>
                   <TableHead>Classe</TableHead>
                   <TableHead className="text-right">D/dia</TableHead>
+                  <TableHead className="text-right">R$ compra</TableHead>
+                  <TableHead className="text-right">R$ venda</TableHead>
+                  <TableHead>Fonte</TableHead>
                   <TableHead className="text-right">LT (du)</TableHead>
                   <TableHead className="text-right">EM</TableHead>
                   <TableHead className="text-right">PP</TableHead>
@@ -370,6 +451,13 @@ export default function AdminReposicaoRevisao() {
                       </Badge>
                     </TableCell>
                     <TableCell className="text-right">{fmt(r.demanda_media_diaria)}</TableCell>
+                    <TableCell className="text-right">{fmtBRL(r.preco_compra_real)}</TableCell>
+                    <TableCell className="text-right">{fmtBRL(r.preco_venda_medio)}</TableCell>
+                    <TableCell>
+                      <Badge variant={fonteBadgeVariant(r.fonte_preco) as any}>
+                        {fonteBadgeLabel(r.fonte_preco)}
+                      </Badge>
+                    </TableCell>
                     <TableCell className="text-right">{fmt(r.lt_medio_dias_uteis, 1)}</TableCell>
                     <TableCell className="text-right">{fmt(r.estoque_minimo, 0)}</TableCell>
                     <TableCell className="text-right">{fmt(r.ponto_pedido, 0)}</TableCell>
@@ -390,7 +478,7 @@ export default function AdminReposicaoRevisao() {
                 ))}
                 {rows.length === 0 && (
                   <TableRow>
-                    <TableCell colSpan={11} className="text-center text-muted-foreground py-8">
+                    <TableCell colSpan={14} className="text-center text-muted-foreground py-8">
                       Nenhum SKU encontrado para os filtros atuais.
                     </TableCell>
                   </TableRow>
@@ -520,7 +608,7 @@ function SkuDetailSheet({
   isApproving,
   isSaving,
 }: {
-  sku: SkuParam | null;
+  sku: RowWithPrice | null;
   onClose: () => void;
   onApprove: (justificativa?: string) => void;
   onSaveValues: (values: Partial<SkuParam>) => void;
@@ -537,15 +625,20 @@ function SkuDetailSheet({
 
   const open = !!sku;
 
-  // Stats from view (pico, p95)
-  const { data: stats } = useQuery({
+  // Stats from view (pico, p95, preços, custos, fórmula)
+  const { data: stats } = useQuery<ViewStats | null>({
     queryKey: ["sku_view_stats", sku?.empresa, sku?.sku_codigo_omie],
     enabled: open,
     queryFn: async () => {
       if (!sku) return null;
       const { data, error } = await supabase
         .from("v_sku_parametros_sugeridos" as any)
-        .select("pico_maximo_dia, p95_diario, p90_quando_vende, dias_seguranca, cobertura_alvo_dias")
+        .select(
+          "pico_maximo_dia, p95_diario, p90_quando_vende, cobertura_alvo_dias, " +
+            "preco_compra_real, preco_venda_medio, preco_item_eoq, fonte_preco, n_compras, " +
+            "custo_capital_efetivo_perc, custo_pedido_aplicado, modo_pedido, " +
+            "z_aplicado, demanda_sigma_diario, sigma_lt_d, lead_time_medio, qtde_compra_ciclo_sugerida"
+        )
         .eq("empresa", sku.empresa)
         .eq("sku_codigo_omie", sku.sku_codigo_omie)
         .maybeSingle();
@@ -590,16 +683,27 @@ function SkuDetailSheet({
 
   if (!sku) return null;
 
+  const Z = stats?.z_aplicado ?? sku.z_score ?? null;
+  const D = sku.demanda_media_diaria ?? null;
+  const LT = stats?.lead_time_medio ?? sku.lt_medio_dias_uteis ?? null;
+  const sigmaD = stats?.demanda_sigma_diario ?? sku.demanda_desvio_padrao ?? null;
+  const sigmaLT = sku.lt_desvio_padrao_dias ?? null;
+  const Cp = stats?.custo_pedido_aplicado ?? null;
+  const Cm = stats?.custo_capital_efetivo_perc ?? null;
+  const preco = stats?.preco_item_eoq ?? stats?.preco_compra_real ?? null;
+  const QC = stats?.qtde_compra_ciclo_sugerida ?? null;
+  const markup =
+    stats?.preco_compra_real && stats?.preco_venda_medio
+      ? stats.preco_venda_medio / stats.preco_compra_real
+      : null;
+
   const justificativaAuto =
-    `SKU classe ${sku.classe_consolidada}. Demanda média ${fmt(sku.demanda_media_diaria)}/dia` +
-    (stats?.pico_maximo_dia ? ` com pico de ${fmt(stats.pico_maximo_dia, 0)}` : "") +
-    ` observado nos últimos 180 dias. LT médio ${fmt(sku.lt_medio_dias_uteis, 1)} dias úteis. ` +
-    `Usando fórmula rolling pessimista (C3) que considera a pior janela de LT observada no histórico, ` +
-    `o ponto de pedido foi definido em ${fmt(sku.ponto_pedido, 0)} unidades para cobrir lead time + segurança` +
-    (stats?.dias_seguranca ? ` de ${stats.dias_seguranca} dias` : "") +
-    `. Estoque máximo em ${fmt(sku.estoque_maximo, 0)} garante cobertura de reposição` +
-    (stats?.cobertura_alvo_dias ? ` de ${stats.cobertura_alvo_dias} dias` : "") +
-    `.`;
+    `SKU classe ${sku.classe_consolidada}. Fórmula Silver-Pyke-Peterson com service level Z = ${fmt(Z, 2)}:\n` +
+    `• Safety Stock = Z × √(LT × σ_D² + D² × σ_LT²) = ${fmt(Z, 2)} × √(${fmt(LT, 1)}×${fmt(sigmaD, 2)}² + ${fmt(D, 2)}²×${fmt(sigmaLT, 2)}²) = ${fmt(sku.estoque_minimo, 0)}\n` +
+    `• Ponto de Pedido = D×LT + SS = ${fmt(D, 2)}×${fmt(LT, 1)} + ${fmt(sku.estoque_minimo, 0)} = ${fmt(sku.ponto_pedido, 0)}\n` +
+    `• Lote de Compra (EOQ) = √(2 × D_anual × Cp / (Cm × preço)) = √(2×${fmt(D, 2)}×252×${fmt(Cp, 2)} / (${fmt(Cm, 4)}×${fmtBRL(preco)})) = ${fmt(QC, 0)}\n` +
+    `• Estoque Máximo = PP + QC = ${fmt(sku.ponto_pedido, 0)} + ${fmt(QC, 0)} = ${fmt(sku.estoque_maximo, 0)}\n` +
+    `Cobertura efetiva: ${stats?.cobertura_alvo_dias ?? sku.cobertura_alvo_dias ?? "—"} dias de demanda.`;
 
   const startEdit = () => {
     setEdit({
@@ -671,6 +775,48 @@ function SkuDetailSheet({
               <dd>{fmt(stats?.pico_maximo_dia, 0)}</dd>
               <dt className="text-muted-foreground">P95 diário</dt>
               <dd>{fmt(stats?.p95_diario)}</dd>
+            </dl>
+          </section>
+
+          {/* Preço e custo */}
+          <section>
+            <h3 className="font-semibold mb-2">Preço e custo</h3>
+            <dl className="grid grid-cols-2 gap-x-4 gap-y-1">
+              <dt className="text-muted-foreground">Preço de compra médio</dt>
+              <dd className="flex items-center gap-2">
+                {fmtBRL(stats?.preco_compra_real)}
+                <span className="text-xs text-muted-foreground">
+                  (baseado em {stats?.n_compras ?? 0} compras)
+                </span>
+              </dd>
+              <dt className="text-muted-foreground">Preço de venda médio (180d)</dt>
+              <dd>{fmtBRL(stats?.preco_venda_medio)}</dd>
+              <dt className="text-muted-foreground">Markup implícito</dt>
+              <dd>
+                {markup
+                  ? `${fmt(markup, 2)}x (${fmt((markup - 1) * 100, 1)}%)`
+                  : "—"}
+              </dd>
+              <dt className="text-muted-foreground">Custo de capital efetivo</dt>
+              <dd>
+                {stats?.custo_capital_efetivo_perc != null
+                  ? `${fmt(stats.custo_capital_efetivo_perc * 100, 2)}% a.a.`
+                  : "—"}
+              </dd>
+              <dt className="text-muted-foreground">Custo de pedido aplicado</dt>
+              <dd>{fmtBRL(stats?.custo_pedido_aplicado)}</dd>
+              <dt className="text-muted-foreground">Modo atual</dt>
+              <dd>
+                <Badge variant={stats?.modo_pedido === "api" ? "info" as any : "outline"}>
+                  {stats?.modo_pedido === "api" ? "API" : stats?.modo_pedido === "manual" ? "Manual" : "—"}
+                </Badge>
+              </dd>
+              <dt className="text-muted-foreground">Fonte do preço</dt>
+              <dd>
+                <Badge variant={fonteBadgeVariant(stats?.fonte_preco) as any}>
+                  {fonteBadgeLabel(stats?.fonte_preco)}
+                </Badge>
+              </dd>
             </dl>
           </section>
 
@@ -761,7 +907,7 @@ function SkuDetailSheet({
           {/* Justificativa auto */}
           <section>
             <h3 className="font-semibold mb-2">Justificativa</h3>
-            <p className="text-muted-foreground leading-relaxed">{justificativaAuto}</p>
+            <p className="text-muted-foreground leading-relaxed whitespace-pre-line font-mono text-xs">{justificativaAuto}</p>
           </section>
 
           {/* Gráfico */}
