@@ -4883,6 +4883,93 @@ export type Database = {
           },
         ]
       }
+      simulacao_estoque_resultados: {
+        Row: {
+          candidato: string
+          classe_abc: string | null
+          classe_consolidada: string | null
+          dias_em_ruptura: number | null
+          dias_simulados: number | null
+          empresa: string
+          estoque_max_aplicado: number | null
+          estoque_max_observado: number | null
+          estoque_medio: number | null
+          estoque_min_aplicado: number | null
+          estoque_min_observado: number | null
+          giros_ano: number | null
+          id: number
+          lead_time_aplicado: number | null
+          metadata: Json | null
+          num_pedidos_disparados: number | null
+          ponto_pedido_aplicado: number | null
+          qtde_compra_aplicada: number | null
+          qtde_demandada_total: number | null
+          qtde_ruptura_total: number | null
+          simulado_em: string | null
+          sku_codigo_omie: string
+          sku_descricao: string | null
+          srl_perc: number | null
+          valor_emi: number | null
+          valor_ruptura_estimado: number | null
+        }
+        Insert: {
+          candidato: string
+          classe_abc?: string | null
+          classe_consolidada?: string | null
+          dias_em_ruptura?: number | null
+          dias_simulados?: number | null
+          empresa: string
+          estoque_max_aplicado?: number | null
+          estoque_max_observado?: number | null
+          estoque_medio?: number | null
+          estoque_min_aplicado?: number | null
+          estoque_min_observado?: number | null
+          giros_ano?: number | null
+          id?: number
+          lead_time_aplicado?: number | null
+          metadata?: Json | null
+          num_pedidos_disparados?: number | null
+          ponto_pedido_aplicado?: number | null
+          qtde_compra_aplicada?: number | null
+          qtde_demandada_total?: number | null
+          qtde_ruptura_total?: number | null
+          simulado_em?: string | null
+          sku_codigo_omie: string
+          sku_descricao?: string | null
+          srl_perc?: number | null
+          valor_emi?: number | null
+          valor_ruptura_estimado?: number | null
+        }
+        Update: {
+          candidato?: string
+          classe_abc?: string | null
+          classe_consolidada?: string | null
+          dias_em_ruptura?: number | null
+          dias_simulados?: number | null
+          empresa?: string
+          estoque_max_aplicado?: number | null
+          estoque_max_observado?: number | null
+          estoque_medio?: number | null
+          estoque_min_aplicado?: number | null
+          estoque_min_observado?: number | null
+          giros_ano?: number | null
+          id?: number
+          lead_time_aplicado?: number | null
+          metadata?: Json | null
+          num_pedidos_disparados?: number | null
+          ponto_pedido_aplicado?: number | null
+          qtde_compra_aplicada?: number | null
+          qtde_demandada_total?: number | null
+          qtde_ruptura_total?: number | null
+          simulado_em?: string | null
+          sku_codigo_omie?: string
+          sku_descricao?: string | null
+          srl_perc?: number | null
+          valor_emi?: number | null
+          valor_ruptura_estimado?: number | null
+        }
+        Relationships: []
+      }
       sku_leadtime_history: {
         Row: {
           created_at: string
@@ -4982,6 +5069,8 @@ export type Database = {
       sku_parametros: {
         Row: {
           aplicar_no_omie: boolean | null
+          aprovado_em: string | null
+          aprovado_por: string | null
           ativo: boolean | null
           classe_abc: string | null
           classe_consolidada: string | null
@@ -4997,12 +5086,15 @@ export type Database = {
           demanda_total_90d: number | null
           empresa: string
           estoque_maximo: number | null
+          estoque_maximo_omie: number | null
           estoque_minimo: number | null
+          estoque_minimo_omie: number | null
           estoque_seguranca: number | null
           fonte_leadtime: string | null
           fornecedor_codigo_omie: number | null
           fornecedor_nome: string | null
           id: string
+          justificativa_aprovacao: string | null
           lote_minimo_fornecedor: number | null
           lt_desvio_padrao_dias: number | null
           lt_medio_dias_uteis: number | null
@@ -5010,7 +5102,9 @@ export type Database = {
           lt_p95_dias: number | null
           meses_consecutivos_nova_classe: number | null
           motivo_classe_forcada: string | null
+          omie_ultima_sincronizacao: string | null
           ponto_pedido: number | null
+          ponto_pedido_omie: number | null
           sku_codigo_omie: number
           sku_descricao: string | null
           ultima_aplicacao_omie: string | null
@@ -5020,6 +5114,8 @@ export type Database = {
         }
         Insert: {
           aplicar_no_omie?: boolean | null
+          aprovado_em?: string | null
+          aprovado_por?: string | null
           ativo?: boolean | null
           classe_abc?: string | null
           classe_consolidada?: string | null
@@ -5035,12 +5131,15 @@ export type Database = {
           demanda_total_90d?: number | null
           empresa: string
           estoque_maximo?: number | null
+          estoque_maximo_omie?: number | null
           estoque_minimo?: number | null
+          estoque_minimo_omie?: number | null
           estoque_seguranca?: number | null
           fonte_leadtime?: string | null
           fornecedor_codigo_omie?: number | null
           fornecedor_nome?: string | null
           id?: string
+          justificativa_aprovacao?: string | null
           lote_minimo_fornecedor?: number | null
           lt_desvio_padrao_dias?: number | null
           lt_medio_dias_uteis?: number | null
@@ -5048,7 +5147,9 @@ export type Database = {
           lt_p95_dias?: number | null
           meses_consecutivos_nova_classe?: number | null
           motivo_classe_forcada?: string | null
+          omie_ultima_sincronizacao?: string | null
           ponto_pedido?: number | null
+          ponto_pedido_omie?: number | null
           sku_codigo_omie: number
           sku_descricao?: string | null
           ultima_aplicacao_omie?: string | null
@@ -5058,6 +5159,8 @@ export type Database = {
         }
         Update: {
           aplicar_no_omie?: boolean | null
+          aprovado_em?: string | null
+          aprovado_por?: string | null
           ativo?: boolean | null
           classe_abc?: string | null
           classe_consolidada?: string | null
@@ -5073,12 +5176,15 @@ export type Database = {
           demanda_total_90d?: number | null
           empresa?: string
           estoque_maximo?: number | null
+          estoque_maximo_omie?: number | null
           estoque_minimo?: number | null
+          estoque_minimo_omie?: number | null
           estoque_seguranca?: number | null
           fonte_leadtime?: string | null
           fornecedor_codigo_omie?: number | null
           fornecedor_nome?: string | null
           id?: string
+          justificativa_aprovacao?: string | null
           lote_minimo_fornecedor?: number | null
           lt_desvio_padrao_dias?: number | null
           lt_medio_dias_uteis?: number | null
@@ -5086,7 +5192,9 @@ export type Database = {
           lt_p95_dias?: number | null
           meses_consecutivos_nova_classe?: number | null
           motivo_classe_forcada?: string | null
+          omie_ultima_sincronizacao?: string | null
           ponto_pedido?: number | null
+          ponto_pedido_omie?: number | null
           sku_codigo_omie?: number
           sku_descricao?: string | null
           ultima_aplicacao_omie?: string | null
@@ -7236,6 +7344,57 @@ export type Database = {
         }
         Relationships: []
       }
+      v_simulacao_comparativa: {
+        Row: {
+          candidato: string | null
+          classe_abc: string | null
+          classe_consolidada: string | null
+          dias_em_ruptura: number | null
+          empresa: string | null
+          estoque_max_aplicado: number | null
+          estoque_max_observado: number | null
+          estoque_medio: number | null
+          estoque_min_aplicado: number | null
+          giros_ano: number | null
+          lead_time_aplicado: number | null
+          num_pedidos_disparados: number | null
+          ponto_pedido_aplicado: number | null
+          qtde_compra_aplicada: number | null
+          qtde_demandada_total: number | null
+          qtde_ruptura_total: number | null
+          rank_emi: number | null
+          rank_giros: number | null
+          rank_srl: number | null
+          rank_srl_emi: number | null
+          sku_codigo_omie: string | null
+          sku_descricao: string | null
+          srl_perc: number | null
+          valor_emi: number | null
+          valor_ruptura_estimado: number | null
+          vencedor: string | null
+        }
+        Relationships: []
+      }
+      v_simulacao_ranking_global: {
+        Row: {
+          candidato: string | null
+          dias_rupt_total: number | null
+          emi_medio_rs: number | null
+          emi_total_rs: number | null
+          empresa: string | null
+          giros_medios: number | null
+          pedidos_disparados_total: number | null
+          perda_ruptura_total_rs: number | null
+          skus_simulados: number | null
+          skus_srl_95_plus: number | null
+          skus_srl_98_plus: number | null
+          skus_srl_criticos: number | null
+          srl_mediano: number | null
+          srl_medio: number | null
+          srl_pior: number | null
+        }
+        Relationships: []
+      }
       v_sku_classificacao_abc_xyz: {
         Row: {
           classe_abc_proposta: string | null
@@ -7270,6 +7429,26 @@ export type Database = {
         }
         Relationships: []
       }
+      v_sku_demanda_rajada: {
+        Row: {
+          demanda_desvio_diario: number | null
+          demanda_media_diaria: number | null
+          dias_com_movimento: number | null
+          empresa: string | null
+          p90_diario: number | null
+          p90_quando_vende: number | null
+          p95_diario: number | null
+          p95_quando_vende: number | null
+          p99_diario: number | null
+          pico_maximo_dia: number | null
+          qtde_total_180d: number | null
+          sku_codigo_omie: number | null
+          sku_descricao: string | null
+          sku_unidade: string | null
+          valor_total_180d: number | null
+        }
+        Relationships: []
+      }
       v_sku_leadtime_estatisticas: {
         Row: {
           empresa: string | null
@@ -7294,6 +7473,7 @@ export type Database = {
           cobertura_alvo_dias: number | null
           coef_variacao_ordem: number | null
           demanda_media_diaria: number | null
+          dias_com_movimento: number | null
           dias_seguranca: number | null
           empresa: string | null
           estoque_maximo_sugerido: number | null
@@ -7303,7 +7483,16 @@ export type Database = {
           lead_time_desvio: number | null
           lead_time_medio: number | null
           lt_p95_dias: number | null
+          minimo_operacional: number | null
           num_ordens: number | null
+          p90_diario: number | null
+          p90_quando_vende: number | null
+          p95_diario: number | null
+          p95_quando_vende: number | null
+          p99_diario: number | null
+          pico_maximo_dia: number | null
+          pico_razoavel: number | null
+          pior_janela_lt: number | null
           ponto_pedido_sugerido: number | null
           qtde_compra_ciclo_sugerida: number | null
           qtde_desvio_por_ordem: number | null
@@ -7311,7 +7500,17 @@ export type Database = {
           sku_codigo_omie: number | null
           sku_descricao: string | null
           status_sugestao: string | null
+          valor_total_180d: number | null
           valor_total_90d: number | null
+        }
+        Relationships: []
+      }
+      v_sku_pior_janela_lt: {
+        Row: {
+          empresa: string | null
+          lt_dias_uteis: number | null
+          pior_janela_lt: number | null
+          sku_codigo_omie: string | null
         }
         Relationships: []
       }
@@ -7411,8 +7610,27 @@ export type Database = {
           valor: number
         }[]
       }
+      rodar_bateria_simulacao: {
+        Args: { p_empresa: string; p_top_n?: number }
+        Returns: {
+          candidatos_testados: number
+          simulacoes_total: number
+          skus_simulados: number
+          tempo_execucao_seg: number
+          valor_coberto_rs: number
+        }[]
+      }
       show_limit: { Args: never; Returns: number }
       show_trgm: { Args: { "": string }; Returns: string[] }
+      simular_formula_estoque: {
+        Args: {
+          p_candidato: string
+          p_dias_simulacao?: number
+          p_empresa: string
+          p_sku: string
+        }
+        Returns: Json
+      }
       tint_run_reconciliation: {
         Args: { p_sync_run_id: string }
         Returns: Json
