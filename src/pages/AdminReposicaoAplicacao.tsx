@@ -140,11 +140,10 @@ export default function AdminReposicaoAplicacao() {
   const { data: contadores } = useQuery({
     queryKey: ["fila-aplicacao-contadores", EMPRESA],
     queryFn: async () => {
-      const base = supabase
+      const { data } = await (supabase as any)
         .from("fila_aplicacao_omie")
         .select("status_validacao, aplicado_em")
         .eq("empresa", EMPRESA);
-      const { data } = await base;
       const c = { pronto: 0, inativo: 0, substituicao: 0, aplicado: 0 };
       (data ?? []).forEach((r: any) => {
         if (r.aplicado_em) c.aplicado++;
@@ -161,7 +160,7 @@ export default function AdminReposicaoAplicacao() {
   const { data: itens, isLoading } = useQuery({
     queryKey: ["fila-aplicacao", EMPRESA, tab],
     queryFn: async () => {
-      let q = supabase.from("fila_aplicacao_omie").select("*").eq("empresa", EMPRESA);
+      let q: any = (supabase as any).from("fila_aplicacao_omie").select("*").eq("empresa", EMPRESA);
       if (tab === "pronto") q = q.eq("status_validacao", "pronto").is("aplicado_em", null);
       else if (tab === "inativo")
         q = q.eq("status_validacao", "bloqueado_inativo").is("aplicado_em", null);
