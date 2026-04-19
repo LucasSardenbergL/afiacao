@@ -568,6 +568,57 @@ export type Database = {
           },
         ]
       }
+      empresa_configuracao_custos: {
+        Row: {
+          armazenagem_fisica: number
+          atualizado_em: string | null
+          atualizado_por: string | null
+          custo_pedido_api: number
+          custo_pedido_manual: number
+          empresa: string
+          haircut_venda_custo: number
+          modo_pedido: string
+          observacoes: string | null
+          selic_anual: number
+          spread_oportunidade: number
+          z_classe_a: number
+          z_classe_b: number
+          z_classe_c: number
+        }
+        Insert: {
+          armazenagem_fisica: number
+          atualizado_em?: string | null
+          atualizado_por?: string | null
+          custo_pedido_api: number
+          custo_pedido_manual: number
+          empresa: string
+          haircut_venda_custo?: number
+          modo_pedido?: string
+          observacoes?: string | null
+          selic_anual: number
+          spread_oportunidade: number
+          z_classe_a?: number
+          z_classe_b?: number
+          z_classe_c?: number
+        }
+        Update: {
+          armazenagem_fisica?: number
+          atualizado_em?: string | null
+          atualizado_por?: string | null
+          custo_pedido_api?: number
+          custo_pedido_manual?: number
+          empresa?: string
+          haircut_venda_custo?: number
+          modo_pedido?: string
+          observacoes?: string | null
+          selic_anual?: number
+          spread_oportunidade?: number
+          z_classe_a?: number
+          z_classe_b?: number
+          z_classe_c?: number
+        }
+        Relationships: []
+      }
       farmer_agenda: {
         Row: {
           agenda_date: string
@@ -7487,18 +7538,23 @@ export type Database = {
           classe_xyz_proposta: string | null
           cobertura_alvo_dias: number | null
           coef_variacao_ordem: number | null
+          custo_capital_efetivo_perc: number | null
+          custo_pedido_aplicado: number | null
           demanda_media_diaria: number | null
+          demanda_sigma_diario: number | null
           dias_com_movimento: number | null
-          dias_seguranca: number | null
           empresa: string | null
           estoque_maximo_sugerido: number | null
           estoque_minimo_sugerido: number | null
           fonte_leadtime: string | null
+          fonte_preco: string | null
           fornecedor_nome: string | null
           lead_time_desvio: number | null
           lead_time_medio: number | null
           lt_p95_dias: number | null
           minimo_operacional: number | null
+          modo_pedido: string | null
+          n_compras: number | null
           num_ordens: number | null
           p90_diario: number | null
           p90_quando_vende: number | null
@@ -7506,17 +7562,20 @@ export type Database = {
           p95_quando_vende: number | null
           p99_diario: number | null
           pico_maximo_dia: number | null
-          pico_razoavel: number | null
-          pior_janela_lt: number | null
           ponto_pedido_sugerido: number | null
+          preco_compra_real: number | null
+          preco_item_eoq: number | null
+          preco_venda_medio: number | null
           qtde_compra_ciclo_sugerida: number | null
           qtde_desvio_por_ordem: number | null
           qtde_media_por_ordem: number | null
+          sigma_lt_d: number | null
           sku_codigo_omie: number | null
           sku_descricao: string | null
           status_sugestao: string | null
           valor_total_180d: number | null
           valor_total_90d: number | null
+          z_aplicado: number | null
         }
         Relationships: []
       }
@@ -7525,6 +7584,15 @@ export type Database = {
           empresa: string | null
           lt_dias_uteis: number | null
           pior_janela_lt: number | null
+          sku_codigo_omie: string | null
+        }
+        Relationships: []
+      }
+      v_sku_sigma_demanda: {
+        Row: {
+          empresa: string | null
+          media_demanda_diaria: number | null
+          sigma_demanda_diaria: number | null
           sku_codigo_omie: string | null
         }
         Relationships: []
