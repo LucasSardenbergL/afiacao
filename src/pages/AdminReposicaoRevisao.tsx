@@ -192,7 +192,39 @@ export default function AdminReposicaoRevisao() {
 
       const { data, error, count } = await q;
       if (error) throw error;
-      return { rows: (data ?? []) as SkuParam[], total: count ?? 0 };
+
+      const baseRows = (data ?? []) as SkuParam[];
+
+      // Buscar preços/fonte da view para todos os SKUs da página em uma chamada
+      let priced: RowWithPrice[] = baseRows.map((r) => ({
+        ...r,
+        preco_compra_real: null,
+        preco_venda_medio: null,
+        fonte_preco: null,
+      }));
+
+      if (baseRows.length > 0) {
+        const codes = baseRows.map((r) => r.sku_codigo_omie);
+        const { data: vrows } = await supabase
+          .from("v_sku_parametros_sugeridos" as any)
+          .select("sku_codigo_omie, preco_compra_real, preco_venda_medio, fonte_preco")
+          .eq("empresa", empresa)
+          .in("sku_codigo_omie", codes);
+
+        const map = new Map<number, any>();
+        (vrows ?? []).forEach((row: any) => map.set(Number(row.sku_codigo_omie), row));
+        priced = baseRows.map((r) => {
+          const v = map.get(Number(r.sku_codigo_omie));
+          return {
+            ...r,
+            preco_compra_real: v?.preco_compra_real ?? null,
+            preco_venda_medio: v?.preco_venda_medio ?? null,
+            fonte_preco: v?.fonte_preco ?? null,
+          };
+        });
+      }
+
+      return { rows: priced, total: count ?? 0 };
     },
   });
 
