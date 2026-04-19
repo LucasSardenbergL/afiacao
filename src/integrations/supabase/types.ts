@@ -7241,11 +7241,12 @@ export type Database = {
           classe_abc_proposta: string | null
           classe_consolidada_proposta: string | null
           classe_xyz_proposta: string | null
-          coef_variacao_demanda: number | null
-          demanda_desvio_padrao: number | null
+          coef_variacao_ordem: number | null
           demanda_media_diaria: number | null
-          dias_com_movimento: number | null
           empresa: string | null
+          num_ordens: number | null
+          qtde_desvio_por_ordem: number | null
+          qtde_media_por_ordem: number | null
           sku_codigo_omie: number | null
           sku_descricao: string | null
           valor_total_90d: number | null
@@ -7254,12 +7255,13 @@ export type Database = {
       }
       v_sku_demanda_estatisticas: {
         Row: {
-          coef_variacao_demanda: number | null
-          demanda_desvio_padrao: number | null
+          coef_variacao_ordem: number | null
           demanda_media_diaria: number | null
           demanda_total_90d: number | null
-          dias_com_movimento: number | null
           empresa: string | null
+          num_ordens: number | null
+          qtde_desvio_por_ordem: number | null
+          qtde_media_por_ordem: number | null
           sku_codigo_omie: number | null
           sku_descricao: string | null
           sku_unidade: string | null
@@ -7290,10 +7292,9 @@ export type Database = {
           classe_consolidada: string | null
           classe_xyz_proposta: string | null
           cobertura_alvo_dias: number | null
-          coef_variacao_demanda: number | null
-          demanda_desvio: number | null
+          coef_variacao_ordem: number | null
           demanda_media_diaria: number | null
-          dias_com_movimento: number | null
+          dias_seguranca: number | null
           empresa: string | null
           estoque_maximo_sugerido: number | null
           estoque_minimo_sugerido: number | null
@@ -7302,12 +7303,15 @@ export type Database = {
           lead_time_desvio: number | null
           lead_time_medio: number | null
           lt_p95_dias: number | null
+          num_ordens: number | null
           ponto_pedido_sugerido: number | null
           qtde_compra_ciclo_sugerida: number | null
+          qtde_desvio_por_ordem: number | null
+          qtde_media_por_ordem: number | null
           sku_codigo_omie: number | null
           sku_descricao: string | null
+          status_sugestao: string | null
           valor_total_90d: number | null
-          z_score: number | null
         }
         Relationships: []
       }
