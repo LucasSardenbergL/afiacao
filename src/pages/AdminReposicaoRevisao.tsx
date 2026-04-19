@@ -421,6 +421,9 @@ export default function AdminReposicaoRevisao() {
                   <TableHead>Descrição</TableHead>
                   <TableHead>Classe</TableHead>
                   <TableHead className="text-right">D/dia</TableHead>
+                  <TableHead className="text-right">R$ compra</TableHead>
+                  <TableHead className="text-right">R$ venda</TableHead>
+                  <TableHead>Fonte</TableHead>
                   <TableHead className="text-right">LT (du)</TableHead>
                   <TableHead className="text-right">EM</TableHead>
                   <TableHead className="text-right">PP</TableHead>
@@ -448,6 +451,13 @@ export default function AdminReposicaoRevisao() {
                       </Badge>
                     </TableCell>
                     <TableCell className="text-right">{fmt(r.demanda_media_diaria)}</TableCell>
+                    <TableCell className="text-right">{fmtBRL(r.preco_compra_real)}</TableCell>
+                    <TableCell className="text-right">{fmtBRL(r.preco_venda_medio)}</TableCell>
+                    <TableCell>
+                      <Badge variant={fonteBadgeVariant(r.fonte_preco) as any}>
+                        {fonteBadgeLabel(r.fonte_preco)}
+                      </Badge>
+                    </TableCell>
                     <TableCell className="text-right">{fmt(r.lt_medio_dias_uteis, 1)}</TableCell>
                     <TableCell className="text-right">{fmt(r.estoque_minimo, 0)}</TableCell>
                     <TableCell className="text-right">{fmt(r.ponto_pedido, 0)}</TableCell>
@@ -468,7 +478,7 @@ export default function AdminReposicaoRevisao() {
                 ))}
                 {rows.length === 0 && (
                   <TableRow>
-                    <TableCell colSpan={11} className="text-center text-muted-foreground py-8">
+                    <TableCell colSpan={14} className="text-center text-muted-foreground py-8">
                       Nenhum SKU encontrado para os filtros atuais.
                     </TableCell>
                   </TableRow>
