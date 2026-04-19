@@ -166,9 +166,11 @@ export default function AdminReposicaoAlertas() {
 
   const totalPages = Math.max(1, Math.ceil((lista?.total ?? 0) / PAGE_SIZE));
 
+  const isSemGrupo = drillEvento?.tipo === "sku_sem_grupo";
+
   // Drill-down: histórico de vendas (90d) ou LT
   const { data: historico } = useQuery({
-    enabled: !!drillEvento,
+    enabled: !!drillEvento && !isSemGrupo,
     queryKey: ["outlier-historico", drillEvento?.id],
     queryFn: async () => {
       if (!drillEvento) return null;
@@ -230,7 +232,7 @@ export default function AdminReposicaoAlertas() {
 
   // Impacto previsto
   const { data: impacto } = useQuery({
-    enabled: !!drillEvento,
+    enabled: !!drillEvento && !isSemGrupo,
     queryKey: ["outlier-impacto", drillEvento?.id],
     queryFn: async () => {
       if (!drillEvento) return null;
