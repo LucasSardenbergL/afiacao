@@ -124,7 +124,7 @@ const desvioColorClass = (pct: number | null) => {
   if (pct == null) return "text-muted-foreground";
   if (pct <= 10) return "text-success font-medium";
   if (pct <= 25) return "text-warning font-medium";
-  if (pct <= 50) return "text-orange-600 font-semibold";
+  if (pct <= 50) return "text-warning font-semibold";
   return "text-destructive font-semibold";
 };
 
@@ -310,7 +310,7 @@ export default function AdminReposicaoSlaFornecedor() {
                 <div className="flex flex-wrap gap-1.5 pt-1">
                   <Badge variant="success">{f.cumprindo} ok</Badge>
                   <Badge variant="warning">{f.limite} limite</Badge>
-                  <Badge variant="warning" className="bg-orange-100 text-orange-900 border-orange-300">{f.violando} viol.</Badge>
+                  <Badge variant="warning">{f.violando} viol.</Badge>
                   <Badge variant="destructive">{f.critico} crít.</Badge>
                 </div>
               </CardContent>
