@@ -160,7 +160,7 @@ export default function AdminReposicaoAplicacao() {
   const { data: itens, isLoading } = useQuery({
     queryKey: ["fila-aplicacao", EMPRESA, tab],
     queryFn: async () => {
-      let q = supabase.from("fila_aplicacao_omie").select("*").eq("empresa", EMPRESA);
+      let q: any = (supabase as any).from("fila_aplicacao_omie").select("*").eq("empresa", EMPRESA);
       if (tab === "pronto") q = q.eq("status_validacao", "pronto").is("aplicado_em", null);
       else if (tab === "inativo")
         q = q.eq("status_validacao", "bloqueado_inativo").is("aplicado_em", null);
