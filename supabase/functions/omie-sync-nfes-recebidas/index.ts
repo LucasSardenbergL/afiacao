@@ -44,6 +44,8 @@ interface RequestBody {
   fornecedor_codigo_omie?: number;
   data_inicial?: string; // dd/mm/yyyy — sobrepõe `dias` se fornecido
   data_final?: string;   // dd/mm/yyyy — sobrepõe `dias` se fornecido
+  apenas_backfill?: boolean; // pula ListarRecebimentos e roda só o backfill retroativo
+  pular_backfill?: boolean;  // roda só ListarRecebimentos sem backfill
 }
 
 interface BackfillSummary {
