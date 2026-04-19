@@ -162,7 +162,7 @@ export default function AdminReposicaoRevisao() {
 
   const [empresa] = useState("OBEN");
   const [classes, setClasses] = useState<string[]>([]);
-  const [statusFilter, setStatusFilter] = useState<"pendente" | "aprovado" | "todos">("pendente");
+  const [statusFilter, setStatusFilter] = useState<StatusFilterValue>("pendente");
   const [search, setSearch] = useState("");
   const [page, setPage] = useState(0);
   const [selected, setSelected] = useState<Record<string, boolean>>({});
