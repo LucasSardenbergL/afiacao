@@ -117,7 +117,12 @@ type RowWithPrice = SkuParam & {
   preco_compra_real: number | null;
   preco_venda_medio: number | null;
   fonte_preco: string | null;
+  status_sugestao?: string | null;
+  fornecedor_habilitado?: boolean | null;
+  read_only?: boolean;
 };
+
+type StatusFilterValue = "pendente" | "aprovado" | "aguardando_fornecedor" | "todos";
 
 const fonteBadgeVariant = (fonte: string | null | undefined): "success" | "warning" | "danger" | "outline" => {
   if (!fonte) return "danger";
@@ -157,7 +162,7 @@ export default function AdminReposicaoRevisao() {
 
   const [empresa] = useState("OBEN");
   const [classes, setClasses] = useState<string[]>([]);
-  const [statusFilter, setStatusFilter] = useState<"pendente" | "aprovado" | "todos">("pendente");
+  const [statusFilter, setStatusFilter] = useState<StatusFilterValue>("pendente");
   const [search, setSearch] = useState("");
   const [page, setPage] = useState(0);
   const [selected, setSelected] = useState<Record<string, boolean>>({});
@@ -168,6 +173,72 @@ export default function AdminReposicaoRevisao() {
   const { data, isLoading } = useQuery({
     queryKey: ["sku_parametros_revisao", empresa, classes, statusFilter, search, page],
     queryFn: async () => {
+      // Caso especial: SKUs aguardando habilitação de fornecedor vêm da view
+      if (statusFilter === "aguardando_fornecedor") {
+        let q = supabase
+          .from("v_sku_parametros_sugeridos" as any)
+          .select("*", { count: "exact" })
+          .eq("empresa", empresa)
+          .eq("status_sugestao", "AGUARDANDO_HABILITACAO_FORNECEDOR");
+
+        if (classes.length > 0) q = q.in("classe_consolidada", classes);
+        if (search.trim()) {
+          const s = search.trim();
+          if (/^\d+$/.test(s)) {
+            q = q.eq("sku_codigo_omie", Number(s));
+          } else {
+            q = q.ilike("sku_descricao", `%${s}%`);
+          }
+        }
+
+        q = q.order("valor_total_90d", { ascending: false, nullsFirst: false });
+        q = q.range(page * PAGE_SIZE, (page + 1) * PAGE_SIZE - 1);
+
+        const { data: vdata, error, count } = await q;
+        if (error) throw error;
+
+        const priced: RowWithPrice[] = ((vdata ?? []) as any[]).map((v) => ({
+          id: `view-${v.sku_codigo_omie}`,
+          empresa: v.empresa,
+          sku_codigo_omie: Number(v.sku_codigo_omie),
+          sku_descricao: v.sku_descricao,
+          fornecedor_nome: v.fornecedor_nome,
+          classe_consolidada: v.classe_consolidada,
+          classe_abc: v.classe_abc_proposta,
+          classe_xyz: v.classe_xyz_proposta,
+          demanda_media_diaria: v.demanda_media_diaria,
+          demanda_desvio_padrao: v.demanda_sigma_diario,
+          demanda_coef_variacao: v.coef_variacao_ordem,
+          demanda_dias_com_movimento: v.dias_com_movimento,
+          demanda_total_90d: null,
+          valor_vendido_90d: v.valor_total_90d,
+          lt_medio_dias_uteis: v.lead_time_medio,
+          lt_desvio_padrao_dias: v.lead_time_desvio,
+          lt_p95_dias: v.lt_p95_dias,
+          lt_n_observacoes: null,
+          fonte_leadtime: v.fonte_leadtime,
+          estoque_minimo: v.estoque_minimo_sugerido,
+          ponto_pedido: v.ponto_pedido_sugerido,
+          estoque_maximo: v.estoque_maximo_sugerido,
+          estoque_seguranca: null,
+          z_score: v.z_aplicado,
+          cobertura_alvo_dias: v.cobertura_alvo_dias,
+          aplicar_no_omie: false,
+          aprovado_em: null,
+          aprovado_por: null,
+          justificativa_aprovacao: null,
+          ultima_atualizacao_calculo: v.calculado_em,
+          preco_compra_real: v.preco_compra_real,
+          preco_venda_medio: v.preco_venda_medio,
+          fonte_preco: v.fonte_preco,
+          status_sugestao: v.status_sugestao,
+          fornecedor_habilitado: v.fornecedor_habilitado,
+          read_only: true,
+        }));
+
+        return { rows: priced, total: count ?? 0 };
+      }
+
       let q = supabase
         .from("sku_parametros")
         .select("*", { count: "exact" })
@@ -207,7 +278,7 @@ export default function AdminReposicaoRevisao() {
         const codes = baseRows.map((r) => r.sku_codigo_omie);
         const { data: vrows } = await supabase
           .from("v_sku_parametros_sugeridos" as any)
-          .select("sku_codigo_omie, preco_compra_real, preco_venda_medio, fonte_preco")
+          .select("sku_codigo_omie, preco_compra_real, preco_venda_medio, fonte_preco, fornecedor_habilitado, status_sugestao")
           .eq("empresa", empresa)
           .in("sku_codigo_omie", codes);
 
@@ -220,6 +291,9 @@ export default function AdminReposicaoRevisao() {
             preco_compra_real: v?.preco_compra_real ?? null,
             preco_venda_medio: v?.preco_venda_medio ?? null,
             fonte_preco: v?.fonte_preco ?? null,
+            status_sugestao: v?.status_sugestao ?? null,
+            fornecedor_habilitado: v?.fornecedor_habilitado ?? null,
+            read_only: false,
           };
         });
       }
@@ -284,15 +358,16 @@ export default function AdminReposicaoRevisao() {
     setClasses((prev) => (prev.includes(c) ? prev.filter((x) => x !== c) : [...prev, c]));
   };
 
-  const allChecked = rows.length > 0 && rows.every((r) => selected[r.id]);
+  const selectableRows = useMemo(() => rows.filter((r) => !r.read_only), [rows]);
+  const allChecked = selectableRows.length > 0 && selectableRows.every((r) => selected[r.id]);
   const toggleAll = () => {
     if (allChecked) {
       const next = { ...selected };
-      rows.forEach((r) => delete next[r.id]);
+      selectableRows.forEach((r) => delete next[r.id]);
       setSelected(next);
     } else {
       const next = { ...selected };
-      rows.forEach((r) => (next[r.id] = true));
+      selectableRows.forEach((r) => (next[r.id] = true));
       setSelected(next);
     }
   };
@@ -334,9 +409,10 @@ export default function AdminReposicaoRevisao() {
               <Label className="text-xs">Status</Label>
               <Select
                 value={statusFilter}
-                onValueChange={(v: "pendente" | "aprovado" | "todos") => {
+                onValueChange={(v: StatusFilterValue) => {
                   setPage(0);
                   setStatusFilter(v);
+                  setSelected({});
                 }}
               >
                 <SelectTrigger>
@@ -345,6 +421,9 @@ export default function AdminReposicaoRevisao() {
                 <SelectContent>
                   <SelectItem value="pendente">Pendentes</SelectItem>
                   <SelectItem value="aprovado">Aprovados</SelectItem>
+                  <SelectItem value="aguardando_fornecedor">
+                    Aguardando habilitação de fornecedor
+                  </SelectItem>
                   <SelectItem value="todos">Todos</SelectItem>
                 </SelectContent>
               </Select>
@@ -434,17 +513,32 @@ export default function AdminReposicaoRevisao() {
               </TableHeader>
               <TableBody>
                 {rows.map((r) => (
-                  <TableRow key={r.id}>
+                  <TableRow key={r.id} className={r.read_only ? "bg-muted/30" : undefined}>
                     <TableCell>
-                      <Checkbox
-                        checked={!!selected[r.id]}
-                        onCheckedChange={(v) =>
-                          setSelected((s) => ({ ...s, [r.id]: !!v }))
-                        }
-                      />
+                      {r.read_only ? (
+                        <span className="inline-block h-4 w-4" aria-hidden />
+                      ) : (
+                        <Checkbox
+                          checked={!!selected[r.id]}
+                          onCheckedChange={(v) =>
+                            setSelected((s) => ({ ...s, [r.id]: !!v }))
+                          }
+                        />
+                      )}
                     </TableCell>
                     <TableCell className="font-mono text-xs">{r.sku_codigo_omie}</TableCell>
-                    <TableCell className="max-w-xs truncate">{r.sku_descricao}</TableCell>
+                    <TableCell className="max-w-xs">
+                      <div className="truncate">{r.sku_descricao}</div>
+                      {r.read_only && r.fornecedor_nome && (
+                        <Badge
+                          variant="warning"
+                          className="mt-1 text-[10px] font-medium"
+                          title="Fornecedor pendente de habilitação para reposição"
+                        >
+                          🏭 {r.fornecedor_nome}
+                        </Badge>
+                      )}
+                    </TableCell>
                     <TableCell>
                       <Badge variant={classBadge(r.classe_consolidada) as any}>
                         {r.classe_consolidada}
@@ -463,7 +557,15 @@ export default function AdminReposicaoRevisao() {
                     <TableCell className="text-right">{fmt(r.ponto_pedido, 0)}</TableCell>
                     <TableCell className="text-right">{fmt(r.estoque_maximo, 0)}</TableCell>
                     <TableCell>
-                      {r.aprovado_em ? (
+                      {r.read_only ? (
+                        <Badge
+                          variant="secondary"
+                          className="bg-muted text-muted-foreground border-muted-foreground/20"
+                          title="SKU bloqueado: fornecedor ainda não habilitado para reposição automática"
+                        >
+                          Aguardando fornecedor
+                        </Badge>
+                      ) : r.aprovado_em ? (
                         <Badge variant="default">Aprovado</Badge>
                       ) : (
                         <Badge variant="outline">Pendente</Badge>
@@ -887,7 +989,7 @@ function SkuDetailSheet({
               </div>
             )}
             <div className="flex gap-2 pt-3">
-              {!editing ? (
+              {sku.read_only ? null : !editing ? (
                 <Button size="sm" variant="outline" onClick={startEdit}>
                   Editar valores manualmente
                 </Button>
@@ -945,27 +1047,47 @@ function SkuDetailSheet({
 
           {/* Aprovação */}
           <section className="space-y-2 border-t pt-4">
-            <Label>Justificativa da aprovação (opcional)</Label>
-            <Textarea
-              value={justificativa}
-              onChange={(e) => setJustificativa(e.target.value)}
-              placeholder="Ex: Parâmetros condizem com a sazonalidade observada."
-            />
-            {sku.aprovado_em && (
-              <p className="text-xs text-muted-foreground">
-                Já aprovado em {new Date(sku.aprovado_em).toLocaleString("pt-BR")} por{" "}
-                {sku.aprovado_por}.
-              </p>
+            {sku.read_only ? (
+              <div className="rounded-md border border-dashed bg-muted/50 p-3 text-sm text-muted-foreground space-y-1">
+                <div className="font-medium text-foreground flex items-center gap-2">
+                  <Badge variant="secondary" className="bg-muted">Aguardando fornecedor</Badge>
+                </div>
+                <p>
+                  Este SKU não pode ser aprovado enquanto o fornecedor{" "}
+                  <strong>{sku.fornecedor_nome ?? "—"}</strong> não estiver habilitado para
+                  reposição automática. Habilite o fornecedor antes de aprovar os parâmetros.
+                </p>
+                <div className="flex justify-end pt-2">
+                  <Button variant="outline" onClick={onClose}>
+                    Fechar
+                  </Button>
+                </div>
+              </div>
+            ) : (
+              <>
+                <Label>Justificativa da aprovação (opcional)</Label>
+                <Textarea
+                  value={justificativa}
+                  onChange={(e) => setJustificativa(e.target.value)}
+                  placeholder="Ex: Parâmetros condizem com a sazonalidade observada."
+                />
+                {sku.aprovado_em && (
+                  <p className="text-xs text-muted-foreground">
+                    Já aprovado em {new Date(sku.aprovado_em).toLocaleString("pt-BR")} por{" "}
+                    {sku.aprovado_por}.
+                  </p>
+                )}
+                <div className="flex justify-end gap-2 pt-2">
+                  <Button variant="outline" onClick={onClose}>
+                    Fechar
+                  </Button>
+                  <Button onClick={() => onApprove(justificativa)} disabled={isApproving}>
+                    {isApproving && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
+                    {sku.aprovado_em ? "Reaprovar" : "Aprovar este SKU"}
+                  </Button>
+                </div>
+              </>
             )}
-            <div className="flex justify-end gap-2 pt-2">
-              <Button variant="outline" onClick={onClose}>
-                Fechar
-              </Button>
-              <Button onClick={() => onApprove(justificativa)} disabled={isApproving}>
-                {isApproving && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
-                {sku.aprovado_em ? "Reaprovar" : "Aprovar este SKU"}
-              </Button>
-            </div>
           </section>
         </div>
       </SheetContent>

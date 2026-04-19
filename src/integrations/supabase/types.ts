@@ -2985,6 +2985,39 @@ export type Database = {
         }
         Relationships: []
       }
+      fornecedor_habilitado_reposicao: {
+        Row: {
+          criado_em: string | null
+          data_habilitacao: string | null
+          empresa: string
+          fornecedor_nome: string
+          habilitado: boolean
+          habilitado_por: string | null
+          id: number
+          observacoes: string | null
+        }
+        Insert: {
+          criado_em?: string | null
+          data_habilitacao?: string | null
+          empresa: string
+          fornecedor_nome: string
+          habilitado?: boolean
+          habilitado_por?: string | null
+          id?: number
+          observacoes?: string | null
+        }
+        Update: {
+          criado_em?: string | null
+          data_habilitacao?: string | null
+          empresa?: string
+          fornecedor_nome?: string
+          habilitado?: boolean
+          habilitado_por?: string | null
+          id?: number
+          observacoes?: string | null
+        }
+        Relationships: []
+      }
       gamification_scores: {
         Row: {
           consistency_score: number
@@ -7655,6 +7688,7 @@ export type Database = {
           estoque_minimo_sugerido: number | null
           fonte_leadtime: string | null
           fonte_preco: string | null
+          fornecedor_habilitado: boolean | null
           fornecedor_nome: string | null
           lead_time_desvio: number | null
           lead_time_medio: number | null
