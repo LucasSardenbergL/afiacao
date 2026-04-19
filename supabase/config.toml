@@ -77,3 +77,6 @@ verify_jwt = false
 
 [functions.omie-sync-ctes-recebidos]
 verify_jwt = false
+
+[functions.omie-sync-sku-items]
+verify_jwt = false
