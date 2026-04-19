@@ -6759,6 +6759,81 @@ export type Database = {
           },
         ]
       }
+      venda_items_history: {
+        Row: {
+          cfop: string | null
+          cliente_cidade: string | null
+          cliente_cnpj_cpf: string | null
+          cliente_codigo_omie: number | null
+          cliente_razao_social: string | null
+          cliente_uf: string | null
+          created_at: string
+          data_emissao: string
+          empresa: string
+          id: string
+          nfe_chave_acesso: string | null
+          nfe_numero: string | null
+          nfe_serie: string | null
+          quantidade: number
+          raw_data: Json | null
+          sku_codigo: string | null
+          sku_codigo_omie: number
+          sku_descricao: string | null
+          sku_ncm: string | null
+          sku_unidade: string | null
+          valor_total: number | null
+          valor_unitario: number | null
+        }
+        Insert: {
+          cfop?: string | null
+          cliente_cidade?: string | null
+          cliente_cnpj_cpf?: string | null
+          cliente_codigo_omie?: number | null
+          cliente_razao_social?: string | null
+          cliente_uf?: string | null
+          created_at?: string
+          data_emissao: string
+          empresa: string
+          id?: string
+          nfe_chave_acesso?: string | null
+          nfe_numero?: string | null
+          nfe_serie?: string | null
+          quantidade: number
+          raw_data?: Json | null
+          sku_codigo?: string | null
+          sku_codigo_omie: number
+          sku_descricao?: string | null
+          sku_ncm?: string | null
+          sku_unidade?: string | null
+          valor_total?: number | null
+          valor_unitario?: number | null
+        }
+        Update: {
+          cfop?: string | null
+          cliente_cidade?: string | null
+          cliente_cnpj_cpf?: string | null
+          cliente_codigo_omie?: number | null
+          cliente_razao_social?: string | null
+          cliente_uf?: string | null
+          created_at?: string
+          data_emissao?: string
+          empresa?: string
+          id?: string
+          nfe_chave_acesso?: string | null
+          nfe_numero?: string | null
+          nfe_serie?: string | null
+          quantidade?: number
+          raw_data?: Json | null
+          sku_codigo?: string | null
+          sku_codigo_omie?: number
+          sku_descricao?: string | null
+          sku_ncm?: string | null
+          sku_unidade?: string | null
+          valor_total?: number | null
+          valor_unitario?: number | null
+        }
+        Relationships: []
+      }
       warehouses: {
         Row: {
           cnpj: string | null

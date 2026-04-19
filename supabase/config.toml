@@ -80,3 +80,6 @@ verify_jwt = false
 
 [functions.omie-sync-sku-items]
 verify_jwt = false
+
+[functions.omie-sync-vendas-items]
+verify_jwt = false
