@@ -68,7 +68,7 @@ interface EmpresaSummary {
   backfill?: BackfillSummary;
 }
 
-const TIMEOUT_GUARD_MS = 120_000;
+const TIMEOUT_GUARD_MS = 130_000;
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
