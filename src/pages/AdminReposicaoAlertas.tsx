@@ -244,7 +244,68 @@ export default function AdminReposicaoAlertas() {
     },
   });
 
-  // Mutation: resolver
+  // Grupos disponíveis do fornecedor (só para sku_sem_grupo)
+  const { data: gruposFornecedor } = useQuery({
+    enabled: !!drillEvento && isSemGrupo,
+    queryKey: ["grupos-fornecedor", drillEvento?.empresa, drillEvento?.detalhes?.fornecedor],
+    queryFn: async () => {
+      if (!drillEvento) return [];
+      const { data, error } = await (supabase as any)
+        .from("fornecedor_grupo_producao")
+        .select("id, codigo_grupo, descricao, lt_producao_dias")
+        .eq("empresa", drillEvento.empresa)
+        .eq("fornecedor_nome", drillEvento.detalhes?.fornecedor)
+        .order("codigo_grupo");
+      if (error) throw error;
+      return data ?? [];
+    },
+  });
+
+  const [grupoEscolhido, setGrupoEscolhido] = useState<string>("");
+
+  // Mutation: atribuir grupo
+  const atribuirGrupoMut = useMutation({
+    mutationFn: async () => {
+      if (!drillEvento || !grupoEscolhido) throw new Error("Selecione um grupo");
+      const grupo = (gruposFornecedor ?? []).find((g: any) => g.id === grupoEscolhido);
+      if (!grupo) throw new Error("Grupo inválido");
+      // Insere associação
+      const { error: insErr } = await (supabase as any)
+        .from("sku_grupo_producao")
+        .insert({
+          empresa: drillEvento.empresa,
+          sku_codigo_omie: drillEvento.sku_codigo_omie,
+          fornecedor_grupo_id: grupo.id,
+          fornecedor_nome: drillEvento.detalhes?.fornecedor,
+          codigo_grupo: grupo.codigo_grupo,
+        });
+      if (insErr) throw insErr;
+      // Marca evento como aceito
+      const { error: resErr } = await (supabase as any).rpc("resolver_outlier", {
+        p_evento_id: drillEvento.id,
+        p_decisao: "aceitar",
+        p_justificativa: `Atribuído ao grupo ${grupo.codigo_grupo} — ${grupo.descricao}`,
+        p_usuario_email: user?.email || null,
+      });
+      if (resErr) throw resErr;
+      // Recalcula parâmetros (LT mudou)
+      try {
+        await (supabase as any).rpc("atualizar_parametros_numericos_skus", { p_empresa: drillEvento.empresa });
+      } catch (e) {
+        console.warn("Recálculo falhou:", e);
+      }
+    },
+    onSuccess: () => {
+      toast.success("SKU classificado e parâmetros recalculados");
+      qc.invalidateQueries({ queryKey: ["outliers-lista"] });
+      qc.invalidateQueries({ queryKey: ["outlier-stats"] });
+      qc.invalidateQueries({ queryKey: ["outlier-pendentes-count"] });
+      setDrillEvento(null);
+      setGrupoEscolhido("");
+    },
+    onError: (err: any) => toast.error(err.message ?? "Erro ao atribuir grupo"),
+  });
+
   const resolverMut = useMutation({
     mutationFn: async ({ ids, decisao, just }: { ids: number[]; decisao: string; just: string }) => {
       const results = [];
