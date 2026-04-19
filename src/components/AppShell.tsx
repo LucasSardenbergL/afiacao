@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
-import { BookOpen, Lock, Calculator, FileText, Palette, Beaker, FileUp, Droplets, LayoutDashboard, Users, ShoppingCart, Phone, GraduationCap, BarChart3, Settings, ChevronLeft, ChevronRight, Search, Bell, User, LogOut, Package, TrendingUp, Headphones, Target, Menu, X, ClipboardList, PlusCircle, Shield, Wrench, Award, Scissors, DollarSign, Layers, Printer, UserCheck, FileCheck, Boxes } from 'lucide-react';
+import { BookOpen, Lock, Calculator, FileText, Palette, Beaker, FileUp, Droplets, LayoutDashboard, Users, ShoppingCart, Phone, GraduationCap, BarChart3, Settings, ChevronLeft, ChevronRight, Search, Bell, User, LogOut, Package, TrendingUp, Headphones, Target, Menu, X, ClipboardList, PlusCircle, Shield, Wrench, Award, Scissors, DollarSign, Layers, Printer, UserCheck, FileCheck, Boxes, AlertTriangle } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { useAuth } from '@/contexts/AuthContext';
 import { useUserRole } from '@/hooks/useUserRole';
@@ -68,6 +68,7 @@ const unifiedNavSections: { title: string; items: NavItem[] }[] = [
     items: [
       { icon: Boxes, label: 'Revisão de parâmetros', path: '/admin/reposicao/revisao', managerOnly: true },
       { icon: ClipboardList, label: 'Histórico de alterações', path: '/admin/reposicao/historico', managerOnly: true },
+      { icon: AlertTriangle, label: 'Alertas de outlier', path: '/admin/reposicao/alertas', managerOnly: true },
     ],
   },
   {
@@ -187,6 +188,34 @@ function AppSidebar({ collapsed, onToggle }: { collapsed: boolean; onToggle: () 
   const { isStaff } = useUserRole();
   const isSalesOnly = useSalesOnlyRestriction();
 
+  // Contador de alertas de outlier pendentes (críticos + atenção)
+  const { data: outlierPendentes } = useQuery({
+    queryKey: ['outlier-pendentes-count'],
+    queryFn: async () => {
+      const { count } = await supabase
+        .from('eventos_outlier')
+        .select('*', { count: 'exact', head: true })
+        .eq('status', 'pendente')
+        .in('severidade', ['critico', 'atencao']);
+      return count ?? 0;
+    },
+    enabled: isStaff,
+    refetchInterval: 60000,
+    staleTime: 30000,
+  });
+
+  const sectionsWithBadges = React.useMemo(
+    () => [...unifiedNavSections, docNavSection].map((s) => ({
+      ...s,
+      items: s.items.map((it) =>
+        it.path === '/admin/reposicao/alertas' && outlierPendentes
+          ? { ...it, badge: outlierPendentes }
+          : it
+      ),
+    })),
+    [outlierPendentes],
+  );
+
   const isActive = (path: string) => {
     if (path === '/') return location.pathname === '/';
     return location.pathname.startsWith(path);
@@ -226,7 +255,7 @@ function AppSidebar({ collapsed, onToggle }: { collapsed: boolean; onToggle: () 
 
       {/* Navigation */}
       <nav className="flex-1 min-h-0 overflow-y-auto py-2">
-        {[...unifiedNavSections, docNavSection].map((section) => {
+        {sectionsWithBadges.map((section) => {
           // Sales-only restriction: only show "Vendas" section
           if (isSalesOnly && section.title !== 'Vendas') return null;
 
