@@ -64,6 +64,13 @@ const unifiedNavSections: { title: string; items: NavItem[] }[] = [
     ],
   },
   {
+    title: 'Reposição',
+    items: [
+      { icon: Boxes, label: 'Revisão de parâmetros', path: '/admin/reposicao/revisao', managerOnly: true },
+      { icon: ClipboardList, label: 'Histórico de alterações', path: '/admin/reposicao/historico', managerOnly: true },
+    ],
+  },
+  {
     title: 'Produção',
     items: [
       { icon: Wrench, label: 'Ordens de Produção', path: '/producao' },
