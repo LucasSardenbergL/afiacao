@@ -163,11 +163,25 @@ Deno.serve(async (req) => {
       .eq("empresa", empresa)
       .gte("t2_data_faturamento", cutoffIso)
       .not("t2_data_faturamento", "is", null)
-      .not("nfe_chave_acesso", "is", null);
+      .not("nfe_chave_acesso", "is", null)
+      .order("t2_data_faturamento", { ascending: false });
     if (fornecedorFiltro) q = q.eq("fornecedor_codigo_omie", fornecedorFiltro);
 
     const { data: nfes, error: nfesErr } = await q;
     if (nfesErr) throw nfesErr;
+
+    const trackingIds = ((nfes ?? []) as NFeRow[]).map((nfe) => nfe.id);
+    const existingTrackingIds = new Set<string>();
+    if (trackingIds.length > 0) {
+      const { data: existingRows, error: existingErr } = await supabase
+        .from("sku_leadtime_history")
+        .select("tracking_id")
+        .in("tracking_id", trackingIds);
+      if (existingErr) throw existingErr;
+      for (const row of (existingRows ?? []) as ExistingTrackingRow[]) {
+        if (row?.tracking_id) existingTrackingIds.add(row.tracking_id);
+      }
+    }
 
     const summary: EmpresaSummary = {
       empresa,
@@ -182,17 +196,26 @@ Deno.serve(async (req) => {
     };
 
     const skusVistos = new Set<number>();
+    let nfesInspecionadas = 0;
 
     for (const nfeRaw of (nfes ?? []) as NFeRow[]) {
-      if (Date.now() - startedAt > TIME_BUDGET_MS) {
+      nfesInspecionadas++;
+      if (
+        nfesInspecionadas % TIMEOUT_CHECK_EVERY_NFES === 0 &&
+        Date.now() - startedAt > TIMEOUT_GUARD_MS
+      ) {
         summary.interrompido_por_timeout = true;
         break;
       }
+
+      if (existingTrackingIds.has(nfeRaw.id)) {
+        continue;
+      }
+
       summary.nfes_processadas++;
 
       const nIdReceb = nfeRaw.raw_data?.cabec?.nIdReceb;
       if (!nIdReceb) {
-        summary.erros++;
         console.warn(`[sync-sku-items] NFe ${nfeRaw.id} sem nIdReceb`);
         continue;
       }
@@ -203,7 +226,6 @@ Deno.serve(async (req) => {
         detalhe = await callOmie(app_key, app_secret, "ConsultarRecebimento", { nIdReceb: Number(nIdReceb) });
         summary.consultas_detalhadas++;
       } catch (e) {
-        summary.erros++;
         console.error(`[sync-sku-items] ConsultarRecebimento ${nIdReceb} falhou:`, e instanceof Error ? e.message : e);
         continue;
       }
@@ -217,7 +239,6 @@ Deno.serve(async (req) => {
 
         const skuCodigoOmie = toNum(cab?.nIdProduto);
         if (!skuCodigoOmie) {
-          summary.erros++;
           continue;
         }
 
