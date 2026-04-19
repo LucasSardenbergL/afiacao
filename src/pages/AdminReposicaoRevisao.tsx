@@ -161,7 +161,7 @@ export default function AdminReposicaoRevisao() {
   const [search, setSearch] = useState("");
   const [page, setPage] = useState(0);
   const [selected, setSelected] = useState<Record<string, boolean>>({});
-  const [openSku, setOpenSku] = useState<SkuParam | null>(null);
+  const [openSku, setOpenSku] = useState<RowWithPrice | null>(null);
   const [confirmBatch, setConfirmBatch] = useState(false);
   const [batchJustificativa, setBatchJustificativa] = useState("");
 
