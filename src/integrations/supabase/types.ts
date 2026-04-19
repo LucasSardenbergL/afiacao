@@ -7404,6 +7404,13 @@ export type Database = {
       }
       is_super_admin: { Args: { _user_id: string }; Returns: boolean }
       refresh_customer_metrics: { Args: never; Returns: undefined }
+      reprocessar_sku_items_via_raw_data: {
+        Args: { p_empresa: string }
+        Returns: {
+          etapa: string
+          valor: number
+        }[]
+      }
       show_limit: { Args: never; Returns: number }
       show_trgm: { Args: { "": string }; Returns: string[] }
       tint_run_reconciliation: {
