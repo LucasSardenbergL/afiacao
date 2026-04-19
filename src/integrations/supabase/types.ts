@@ -1864,66 +1864,6 @@ export type Database = {
           },
         ]
       }
-      fila_aplicacao_omie: {
-        Row: {
-          aplicado_em: string | null
-          criado_em: string | null
-          delta_max_perc: number | null
-          empresa: string
-          erro_omie: string | null
-          estoque_maximo_novo: number | null
-          estoque_maximo_omie_atual: number | null
-          estoque_minimo_novo: number | null
-          estoque_minimo_omie_atual: number | null
-          id: number
-          mensagem_bloqueio: string | null
-          ponto_pedido_novo: number | null
-          ponto_pedido_omie_atual: number | null
-          resposta_omie: Json | null
-          sku_codigo_omie: string
-          sku_descricao: string | null
-          status_validacao: string
-        }
-        Insert: {
-          aplicado_em?: string | null
-          criado_em?: string | null
-          delta_max_perc?: number | null
-          empresa: string
-          erro_omie?: string | null
-          estoque_maximo_novo?: number | null
-          estoque_maximo_omie_atual?: number | null
-          estoque_minimo_novo?: number | null
-          estoque_minimo_omie_atual?: number | null
-          id?: number
-          mensagem_bloqueio?: string | null
-          ponto_pedido_novo?: number | null
-          ponto_pedido_omie_atual?: number | null
-          resposta_omie?: Json | null
-          sku_codigo_omie: string
-          sku_descricao?: string | null
-          status_validacao: string
-        }
-        Update: {
-          aplicado_em?: string | null
-          criado_em?: string | null
-          delta_max_perc?: number | null
-          empresa?: string
-          erro_omie?: string | null
-          estoque_maximo_novo?: number | null
-          estoque_maximo_omie_atual?: number | null
-          estoque_minimo_novo?: number | null
-          estoque_minimo_omie_atual?: number | null
-          id?: number
-          mensagem_bloqueio?: string | null
-          ponto_pedido_novo?: number | null
-          ponto_pedido_omie_atual?: number | null
-          resposta_omie?: Json | null
-          sku_codigo_omie?: string
-          sku_descricao?: string | null
-          status_validacao?: string
-        }
-        Relationships: []
-      }
       fin_categoria_dre_mapping: {
         Row: {
           company: string
@@ -3042,6 +2982,48 @@ export type Database = {
           started_at?: string | null
           status?: string | null
           triggered_by?: string | null
+        }
+        Relationships: []
+      }
+      fornecedor_grupo_producao: {
+        Row: {
+          atualizado_em: string | null
+          criado_em: string | null
+          descricao: string | null
+          empresa: string
+          fornecedor_nome: string
+          grupo_codigo: string
+          horario_corte: string | null
+          id: number
+          lt_producao_dias: number
+          lt_producao_unidade: string
+          observacoes: string | null
+        }
+        Insert: {
+          atualizado_em?: string | null
+          criado_em?: string | null
+          descricao?: string | null
+          empresa: string
+          fornecedor_nome: string
+          grupo_codigo: string
+          horario_corte?: string | null
+          id?: number
+          lt_producao_dias: number
+          lt_producao_unidade?: string
+          observacoes?: string | null
+        }
+        Update: {
+          atualizado_em?: string | null
+          criado_em?: string | null
+          descricao?: string | null
+          empresa?: string
+          fornecedor_nome?: string
+          grupo_codigo?: string
+          horario_corte?: string | null
+          id?: number
+          lt_producao_dias?: number
+          lt_producao_unidade?: string
+          observacoes?: string | null
         }
         Relationships: []
       }
@@ -5221,6 +5203,30 @@ export type Database = {
         }
         Relationships: []
       }
+      sku_grupo_producao: {
+        Row: {
+          atualizado_em: string | null
+          atualizado_por: string | null
+          empresa: string
+          grupo_codigo: string
+          sku_codigo_omie: string
+        }
+        Insert: {
+          atualizado_em?: string | null
+          atualizado_por?: string | null
+          empresa: string
+          grupo_codigo: string
+          sku_codigo_omie: string
+        }
+        Update: {
+          atualizado_em?: string | null
+          atualizado_por?: string | null
+          empresa?: string
+          grupo_codigo?: string
+          sku_codigo_omie?: string
+        }
+        Relationships: []
+      }
       sku_leadtime_history: {
         Row: {
           created_at: string
@@ -5345,6 +5351,7 @@ export type Database = {
           fonte_leadtime: string | null
           fornecedor_codigo_omie: number | null
           fornecedor_nome: string | null
+          habilitado_reposicao_automatica: boolean | null
           id: string
           justificativa_aprovacao: string | null
           lote_minimo_fornecedor: number | null
@@ -5395,6 +5402,7 @@ export type Database = {
           fonte_leadtime?: string | null
           fornecedor_codigo_omie?: number | null
           fornecedor_nome?: string | null
+          habilitado_reposicao_automatica?: boolean | null
           id?: string
           justificativa_aprovacao?: string | null
           lote_minimo_fornecedor?: number | null
@@ -5445,6 +5453,7 @@ export type Database = {
           fonte_leadtime?: string | null
           fornecedor_codigo_omie?: number | null
           fornecedor_nome?: string | null
+          habilitado_reposicao_automatica?: boolean | null
           id?: string
           justificativa_aprovacao?: string | null
           lote_minimo_fornecedor?: number | null
@@ -7943,16 +7952,6 @@ export type Database = {
       fin_user_can_access: {
         Args: { check_company?: string }
         Returns: boolean
-      }
-      gerar_fila_aplicacao_omie: {
-        Args: { p_empresa?: string }
-        Returns: {
-          bloqueados_inativos: number
-          bloqueados_nao_existe: number
-          bloqueados_substituicao: number
-          prontos: number
-          total_aprovados: number
-        }[]
       }
       get_commercial_role: {
         Args: { _user_id: string }
