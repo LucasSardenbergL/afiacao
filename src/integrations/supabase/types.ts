@@ -7915,6 +7915,7 @@ export type Database = {
           tipo: string
         }[]
       }
+      detectar_skus_sem_grupo: { Args: { p_empresa?: string }; Returns: number }
       dias_uteis_entre: {
         Args: { fim: string; inicio: string }
         Returns: number

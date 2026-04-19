@@ -92,7 +92,13 @@ const statusBadge = (status: string) => {
 };
 
 const tipoLabel = (tipo: string) =>
-  tipo === "venda_atipica" ? "Venda atípica" : tipo === "lt_atipico" ? "LT atípico" : tipo;
+  tipo === "venda_atipica"
+    ? "Venda atípica"
+    : tipo === "lt_atipico"
+    ? "LT atípico"
+    : tipo === "sku_sem_grupo"
+    ? "SKU sem grupo"
+    : tipo;
 
 const fmt = (n: number | null | undefined, dec = 2) =>
   n === null || n === undefined ? "—" : Number(n).toLocaleString("pt-BR", { minimumFractionDigits: dec, maximumFractionDigits: dec });
@@ -160,9 +166,11 @@ export default function AdminReposicaoAlertas() {
 
   const totalPages = Math.max(1, Math.ceil((lista?.total ?? 0) / PAGE_SIZE));
 
+  const isSemGrupo = drillEvento?.tipo === "sku_sem_grupo";
+
   // Drill-down: histórico de vendas (90d) ou LT
   const { data: historico } = useQuery({
-    enabled: !!drillEvento,
+    enabled: !!drillEvento && !isSemGrupo,
     queryKey: ["outlier-historico", drillEvento?.id],
     queryFn: async () => {
       if (!drillEvento) return null;
@@ -224,7 +232,7 @@ export default function AdminReposicaoAlertas() {
 
   // Impacto previsto
   const { data: impacto } = useQuery({
-    enabled: !!drillEvento,
+    enabled: !!drillEvento && !isSemGrupo,
     queryKey: ["outlier-impacto", drillEvento?.id],
     queryFn: async () => {
       if (!drillEvento) return null;
@@ -236,7 +244,68 @@ export default function AdminReposicaoAlertas() {
     },
   });
 
-  // Mutation: resolver
+  // Grupos disponíveis do fornecedor (só para sku_sem_grupo)
+  const { data: gruposFornecedor } = useQuery({
+    enabled: !!drillEvento && isSemGrupo,
+    queryKey: ["grupos-fornecedor", drillEvento?.empresa, drillEvento?.detalhes?.fornecedor],
+    queryFn: async () => {
+      if (!drillEvento) return [];
+      const { data, error } = await (supabase as any)
+        .from("fornecedor_grupo_producao")
+        .select("id, codigo_grupo, descricao, lt_producao_dias")
+        .eq("empresa", drillEvento.empresa)
+        .eq("fornecedor_nome", drillEvento.detalhes?.fornecedor)
+        .order("codigo_grupo");
+      if (error) throw error;
+      return data ?? [];
+    },
+  });
+
+  const [grupoEscolhido, setGrupoEscolhido] = useState<string>("");
+
+  // Mutation: atribuir grupo
+  const atribuirGrupoMut = useMutation({
+    mutationFn: async () => {
+      if (!drillEvento || !grupoEscolhido) throw new Error("Selecione um grupo");
+      const grupo = (gruposFornecedor ?? []).find((g: any) => g.id === grupoEscolhido);
+      if (!grupo) throw new Error("Grupo inválido");
+      // Insere associação
+      const { error: insErr } = await (supabase as any)
+        .from("sku_grupo_producao")
+        .insert({
+          empresa: drillEvento.empresa,
+          sku_codigo_omie: drillEvento.sku_codigo_omie,
+          fornecedor_grupo_id: grupo.id,
+          fornecedor_nome: drillEvento.detalhes?.fornecedor,
+          codigo_grupo: grupo.codigo_grupo,
+        });
+      if (insErr) throw insErr;
+      // Marca evento como aceito
+      const { error: resErr } = await (supabase as any).rpc("resolver_outlier", {
+        p_evento_id: drillEvento.id,
+        p_decisao: "aceitar",
+        p_justificativa: `Atribuído ao grupo ${grupo.codigo_grupo} — ${grupo.descricao}`,
+        p_usuario_email: user?.email || null,
+      });
+      if (resErr) throw resErr;
+      // Recalcula parâmetros (LT mudou)
+      try {
+        await (supabase as any).rpc("atualizar_parametros_numericos_skus", { p_empresa: drillEvento.empresa });
+      } catch (e) {
+        console.warn("Recálculo falhou:", e);
+      }
+    },
+    onSuccess: () => {
+      toast.success("SKU classificado e parâmetros recalculados");
+      qc.invalidateQueries({ queryKey: ["outliers-lista"] });
+      qc.invalidateQueries({ queryKey: ["outlier-stats"] });
+      qc.invalidateQueries({ queryKey: ["outlier-pendentes-count"] });
+      setDrillEvento(null);
+      setGrupoEscolhido("");
+    },
+    onError: (err: any) => toast.error(err.message ?? "Erro ao atribuir grupo"),
+  });
+
   const resolverMut = useMutation({
     mutationFn: async ({ ids, decisao, just }: { ids: number[]; decisao: string; just: string }) => {
       const results = [];
@@ -274,7 +343,10 @@ export default function AdminReposicaoAlertas() {
   });
 
   const todosSelecionavel = useMemo(
-    () => (lista?.rows ?? []).filter((r) => r.status === "pendente" && r.severidade !== "critico"),
+    () =>
+      (lista?.rows ?? []).filter(
+        (r) => r.status === "pendente" && r.severidade !== "critico" && r.tipo !== "sku_sem_grupo",
+      ),
     [lista],
   );
   const todosMarcados = todosSelecionavel.length > 0 && todosSelecionavel.every((r) => selecionados.has(r.id));
@@ -376,6 +448,7 @@ export default function AdminReposicaoAlertas() {
                   <SelectItem value="__all__">Todos</SelectItem>
                   <SelectItem value="venda_atipica">Venda atípica</SelectItem>
                   <SelectItem value="lt_atipico">LT atípico</SelectItem>
+                  <SelectItem value="sku_sem_grupo">SKU sem grupo</SelectItem>
                 </SelectContent>
               </Select>
             </div>
@@ -453,7 +526,8 @@ export default function AdminReposicaoAlertas() {
                 <TableRow><TableCell colSpan={12} className="text-center py-8 text-muted-foreground">Nenhum alerta encontrado</TableCell></TableRow>
               )}
               {lista?.rows.map((r) => {
-                const podeSelecionar = r.status === "pendente" && r.severidade !== "critico";
+                const podeSelecionar =
+                  r.status === "pendente" && r.severidade !== "critico" && r.tipo !== "sku_sem_grupo";
                 return (
                   <TableRow key={r.id} className="hover:bg-muted/50">
                     <TableCell>
@@ -533,70 +607,121 @@ export default function AdminReposicaoAlertas() {
                   </CardContent>
                 </Card>
 
-                {/* Seção 3 - Gráfico */}
-                <Card>
-                  <CardHeader className="pb-2"><CardTitle className="text-sm">3. Histórico</CardTitle></CardHeader>
-                  <CardContent>
-                    <div className="h-[220px]">
-                      <ResponsiveContainer width="100%" height="100%">
-                        {drillEvento.tipo === "venda_atipica" ? (
-                          <BarChart data={(historico as any[]) ?? []}>
-                            <CartesianGrid strokeDasharray="3 3" />
-                            <XAxis dataKey="dia" tick={{ fontSize: 10 }} />
-                            <YAxis tick={{ fontSize: 10 }} />
-                            <ReTooltip />
-                            <Bar dataKey="qtde">
-                              {((historico as any[]) ?? []).map((d, i) => (
-                                <Cell key={i} fill={d.isOutlier ? "hsl(var(--destructive))" : "hsl(var(--primary))"} />
-                              ))}
-                            </Bar>
-                          </BarChart>
-                        ) : (
-                          <ScatterChart>
-                            <CartesianGrid strokeDasharray="3 3" />
-                            <XAxis dataKey="idx" tick={{ fontSize: 10 }} name="#" />
-                            <YAxis dataKey="lt" tick={{ fontSize: 10 }} name="LT (dias)" />
-                            <ReTooltip />
-                            {impacto?.media_atual != null && (
-                              <ReferenceLine y={impacto.media_atual} stroke="hsl(var(--muted-foreground))" strokeDasharray="3 3" />
+                {/* Seção 3 - Gráfico (não aplicável a sku_sem_grupo) */}
+                {!isSemGrupo && (
+                  <Card>
+                    <CardHeader className="pb-2"><CardTitle className="text-sm">3. Histórico</CardTitle></CardHeader>
+                    <CardContent>
+                      <div className="h-[220px]">
+                        <ResponsiveContainer width="100%" height="100%">
+                          {drillEvento.tipo === "venda_atipica" ? (
+                            <BarChart data={(historico as any[]) ?? []}>
+                              <CartesianGrid strokeDasharray="3 3" />
+                              <XAxis dataKey="dia" tick={{ fontSize: 10 }} />
+                              <YAxis tick={{ fontSize: 10 }} />
+                              <ReTooltip />
+                              <Bar dataKey="qtde">
+                                {((historico as any[]) ?? []).map((d, i) => (
+                                  <Cell key={i} fill={d.isOutlier ? "hsl(var(--destructive))" : "hsl(var(--primary))"} />
+                                ))}
+                              </Bar>
+                            </BarChart>
+                          ) : (
+                            <ScatterChart>
+                              <CartesianGrid strokeDasharray="3 3" />
+                              <XAxis dataKey="idx" tick={{ fontSize: 10 }} name="#" />
+                              <YAxis dataKey="lt" tick={{ fontSize: 10 }} name="LT (dias)" />
+                              <ReTooltip />
+                              {impacto?.media_atual != null && (
+                                <ReferenceLine y={impacto.media_atual} stroke="hsl(var(--muted-foreground))" strokeDasharray="3 3" />
+                              )}
+                              <Scatter data={(historico as any[]) ?? []}>
+                                {((historico as any[]) ?? []).map((d, i) => (
+                                  <Cell key={i} fill={d.isOutlier ? "hsl(var(--destructive))" : "hsl(var(--primary))"} />
+                                ))}
+                              </Scatter>
+                            </ScatterChart>
+                          )}
+                        </ResponsiveContainer>
+                      </div>
+                    </CardContent>
+                  </Card>
+                )}
+
+                {/* Seção 4 - Impacto (não aplicável a sku_sem_grupo) */}
+                {!isSemGrupo && (
+                  <Card>
+                    <CardHeader className="pb-2"><CardTitle className="text-sm">4. Impacto se excluir</CardTitle></CardHeader>
+                    <CardContent className="text-sm space-y-1">
+                      {impacto && !impacto.error ? (
+                        <>
+                          <div>σ atual: <span className="font-mono">{fmt(impacto.sigma_atual)}</span> → sem outlier: <span className="font-mono">{fmt(impacto.sigma_sem)}</span></div>
+                          <div>Média atual: <span className="font-mono">{fmt(impacto.media_atual)}</span> → sem: <span className="font-mono">{fmt(impacto.media_sem)}</span></div>
+                          {impacto.em_atual !== undefined && (
+                            <div className="pt-2 p-2 bg-muted/50 rounded">
+                              Estoque mínimo sugerido: <span className="font-mono">{impacto.em_atual}</span> → <span className="font-mono">{impacto.em_sem}</span>{" "}
+                              <Badge variant={impacto.delta_em < 0 ? "success" : "warning"}>
+                                {impacto.delta_em > 0 ? "+" : ""}{impacto.delta_em} un
+                              </Badge>
+                            </div>
+                          )}
+                        </>
+                      ) : (
+                        <div className="text-muted-foreground">Calculando…</div>
+                      )}
+                    </CardContent>
+                  </Card>
+                )}
+
+                {/* Seção 3 alternativa: atribuir grupo (sku_sem_grupo) */}
+                {isSemGrupo && drillEvento.status === "pendente" && (
+                  <Card>
+                    <CardHeader className="pb-2">
+                      <CardTitle className="text-sm">3. Atribuir grupo de produção</CardTitle>
+                    </CardHeader>
+                    <CardContent className="space-y-3">
+                      <div className="text-sm">
+                        <span className="text-muted-foreground">Fornecedor:</span>{" "}
+                        <span className="font-medium">{drillEvento.detalhes?.fornecedor ?? "—"}</span>
+                      </div>
+                      <div>
+                        <Label className="text-xs">Grupo de produção</Label>
+                        <Select value={grupoEscolhido} onValueChange={setGrupoEscolhido}>
+                          <SelectTrigger>
+                            <SelectValue placeholder="Selecione o grupo" />
+                          </SelectTrigger>
+                          <SelectContent>
+                            {(gruposFornecedor ?? []).map((g: any) => (
+                              <SelectItem key={g.id} value={g.id}>
+                                {g.codigo_grupo} — {g.descricao} (LT {g.lt_producao_dias}d)
+                              </SelectItem>
+                            ))}
+                            {(gruposFornecedor ?? []).length === 0 && (
+                              <div className="px-2 py-1.5 text-xs text-muted-foreground">
+                                Nenhum grupo cadastrado para este fornecedor
+                              </div>
                             )}
-                            <Scatter data={(historico as any[]) ?? []}>
-                              {((historico as any[]) ?? []).map((d, i) => (
-                                <Cell key={i} fill={d.isOutlier ? "hsl(var(--destructive))" : "hsl(var(--primary))"} />
-                              ))}
-                            </Scatter>
-                          </ScatterChart>
-                        )}
-                      </ResponsiveContainer>
-                    </div>
-                  </CardContent>
-                </Card>
+                          </SelectContent>
+                        </Select>
+                      </div>
+                      <Button
+                        className="w-full"
+                        disabled={!grupoEscolhido || atribuirGrupoMut.isPending}
+                        onClick={() => atribuirGrupoMut.mutate()}
+                      >
+                        {atribuirGrupoMut.isPending && <Loader2 className="h-4 w-4 mr-1 animate-spin" />}
+                        <CheckCircle2 className="h-4 w-4 mr-1" /> Atribuir e marcar como aceito
+                      </Button>
+                      <p className="text-xs text-muted-foreground">
+                        Ao atribuir, o SKU é classificado, o alerta é fechado e os parâmetros de reposição
+                        são recalculados com o novo LT de produção.
+                      </p>
+                    </CardContent>
+                  </Card>
+                )}
 
-                {/* Seção 4 - Impacto */}
-                <Card>
-                  <CardHeader className="pb-2"><CardTitle className="text-sm">4. Impacto se excluir</CardTitle></CardHeader>
-                  <CardContent className="text-sm space-y-1">
-                    {impacto && !impacto.error ? (
-                      <>
-                        <div>σ atual: <span className="font-mono">{fmt(impacto.sigma_atual)}</span> → sem outlier: <span className="font-mono">{fmt(impacto.sigma_sem)}</span></div>
-                        <div>Média atual: <span className="font-mono">{fmt(impacto.media_atual)}</span> → sem: <span className="font-mono">{fmt(impacto.media_sem)}</span></div>
-                        {impacto.em_atual !== undefined && (
-                          <div className="pt-2 p-2 bg-muted/50 rounded">
-                            Estoque mínimo sugerido: <span className="font-mono">{impacto.em_atual}</span> → <span className="font-mono">{impacto.em_sem}</span>{" "}
-                            <Badge variant={impacto.delta_em < 0 ? "success" : "warning"}>
-                              {impacto.delta_em > 0 ? "+" : ""}{impacto.delta_em} un
-                            </Badge>
-                          </div>
-                        )}
-                      </>
-                    ) : (
-                      <div className="text-muted-foreground">Calculando…</div>
-                    )}
-                  </CardContent>
-                </Card>
-
-                {/* Seção 5 - Ação */}
-                {drillEvento.status === "pendente" && (
+                {/* Seção 5 - Decisão padrão (oculta para sku_sem_grupo) */}
+                {!isSemGrupo && drillEvento.status === "pendente" && (
                   <Card>
                     <CardHeader className="pb-2"><CardTitle className="text-sm">5. Decisão</CardTitle></CardHeader>
                     <CardContent className="space-y-3">
