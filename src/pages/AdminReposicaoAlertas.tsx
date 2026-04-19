@@ -607,70 +607,121 @@ export default function AdminReposicaoAlertas() {
                   </CardContent>
                 </Card>
 
-                {/* Seção 3 - Gráfico */}
-                <Card>
-                  <CardHeader className="pb-2"><CardTitle className="text-sm">3. Histórico</CardTitle></CardHeader>
-                  <CardContent>
-                    <div className="h-[220px]">
-                      <ResponsiveContainer width="100%" height="100%">
-                        {drillEvento.tipo === "venda_atipica" ? (
-                          <BarChart data={(historico as any[]) ?? []}>
-                            <CartesianGrid strokeDasharray="3 3" />
-                            <XAxis dataKey="dia" tick={{ fontSize: 10 }} />
-                            <YAxis tick={{ fontSize: 10 }} />
-                            <ReTooltip />
-                            <Bar dataKey="qtde">
-                              {((historico as any[]) ?? []).map((d, i) => (
-                                <Cell key={i} fill={d.isOutlier ? "hsl(var(--destructive))" : "hsl(var(--primary))"} />
-                              ))}
-                            </Bar>
-                          </BarChart>
-                        ) : (
-                          <ScatterChart>
-                            <CartesianGrid strokeDasharray="3 3" />
-                            <XAxis dataKey="idx" tick={{ fontSize: 10 }} name="#" />
-                            <YAxis dataKey="lt" tick={{ fontSize: 10 }} name="LT (dias)" />
-                            <ReTooltip />
-                            {impacto?.media_atual != null && (
-                              <ReferenceLine y={impacto.media_atual} stroke="hsl(var(--muted-foreground))" strokeDasharray="3 3" />
+                {/* Seção 3 - Gráfico (não aplicável a sku_sem_grupo) */}
+                {!isSemGrupo && (
+                  <Card>
+                    <CardHeader className="pb-2"><CardTitle className="text-sm">3. Histórico</CardTitle></CardHeader>
+                    <CardContent>
+                      <div className="h-[220px]">
+                        <ResponsiveContainer width="100%" height="100%">
+                          {drillEvento.tipo === "venda_atipica" ? (
+                            <BarChart data={(historico as any[]) ?? []}>
+                              <CartesianGrid strokeDasharray="3 3" />
+                              <XAxis dataKey="dia" tick={{ fontSize: 10 }} />
+                              <YAxis tick={{ fontSize: 10 }} />
+                              <ReTooltip />
+                              <Bar dataKey="qtde">
+                                {((historico as any[]) ?? []).map((d, i) => (
+                                  <Cell key={i} fill={d.isOutlier ? "hsl(var(--destructive))" : "hsl(var(--primary))"} />
+                                ))}
+                              </Bar>
+                            </BarChart>
+                          ) : (
+                            <ScatterChart>
+                              <CartesianGrid strokeDasharray="3 3" />
+                              <XAxis dataKey="idx" tick={{ fontSize: 10 }} name="#" />
+                              <YAxis dataKey="lt" tick={{ fontSize: 10 }} name="LT (dias)" />
+                              <ReTooltip />
+                              {impacto?.media_atual != null && (
+                                <ReferenceLine y={impacto.media_atual} stroke="hsl(var(--muted-foreground))" strokeDasharray="3 3" />
+                              )}
+                              <Scatter data={(historico as any[]) ?? []}>
+                                {((historico as any[]) ?? []).map((d, i) => (
+                                  <Cell key={i} fill={d.isOutlier ? "hsl(var(--destructive))" : "hsl(var(--primary))"} />
+                                ))}
+                              </Scatter>
+                            </ScatterChart>
+                          )}
+                        </ResponsiveContainer>
+                      </div>
+                    </CardContent>
+                  </Card>
+                )}
+
+                {/* Seção 4 - Impacto (não aplicável a sku_sem_grupo) */}
+                {!isSemGrupo && (
+                  <Card>
+                    <CardHeader className="pb-2"><CardTitle className="text-sm">4. Impacto se excluir</CardTitle></CardHeader>
+                    <CardContent className="text-sm space-y-1">
+                      {impacto && !impacto.error ? (
+                        <>
+                          <div>σ atual: <span className="font-mono">{fmt(impacto.sigma_atual)}</span> → sem outlier: <span className="font-mono">{fmt(impacto.sigma_sem)}</span></div>
+                          <div>Média atual: <span className="font-mono">{fmt(impacto.media_atual)}</span> → sem: <span className="font-mono">{fmt(impacto.media_sem)}</span></div>
+                          {impacto.em_atual !== undefined && (
+                            <div className="pt-2 p-2 bg-muted/50 rounded">
+                              Estoque mínimo sugerido: <span className="font-mono">{impacto.em_atual}</span> → <span className="font-mono">{impacto.em_sem}</span>{" "}
+                              <Badge variant={impacto.delta_em < 0 ? "success" : "warning"}>
+                                {impacto.delta_em > 0 ? "+" : ""}{impacto.delta_em} un
+                              </Badge>
+                            </div>
+                          )}
+                        </>
+                      ) : (
+                        <div className="text-muted-foreground">Calculando…</div>
+                      )}
+                    </CardContent>
+                  </Card>
+                )}
+
+                {/* Seção 3 alternativa: atribuir grupo (sku_sem_grupo) */}
+                {isSemGrupo && drillEvento.status === "pendente" && (
+                  <Card>
+                    <CardHeader className="pb-2">
+                      <CardTitle className="text-sm">3. Atribuir grupo de produção</CardTitle>
+                    </CardHeader>
+                    <CardContent className="space-y-3">
+                      <div className="text-sm">
+                        <span className="text-muted-foreground">Fornecedor:</span>{" "}
+                        <span className="font-medium">{drillEvento.detalhes?.fornecedor ?? "—"}</span>
+                      </div>
+                      <div>
+                        <Label className="text-xs">Grupo de produção</Label>
+                        <Select value={grupoEscolhido} onValueChange={setGrupoEscolhido}>
+                          <SelectTrigger>
+                            <SelectValue placeholder="Selecione o grupo" />
+                          </SelectTrigger>
+                          <SelectContent>
+                            {(gruposFornecedor ?? []).map((g: any) => (
+                              <SelectItem key={g.id} value={g.id}>
+                                {g.codigo_grupo} — {g.descricao} (LT {g.lt_producao_dias}d)
+                              </SelectItem>
+                            ))}
+                            {(gruposFornecedor ?? []).length === 0 && (
+                              <div className="px-2 py-1.5 text-xs text-muted-foreground">
+                                Nenhum grupo cadastrado para este fornecedor
+                              </div>
                             )}
-                            <Scatter data={(historico as any[]) ?? []}>
-                              {((historico as any[]) ?? []).map((d, i) => (
-                                <Cell key={i} fill={d.isOutlier ? "hsl(var(--destructive))" : "hsl(var(--primary))"} />
-                              ))}
-                            </Scatter>
-                          </ScatterChart>
-                        )}
-                      </ResponsiveContainer>
-                    </div>
-                  </CardContent>
-                </Card>
+                          </SelectContent>
+                        </Select>
+                      </div>
+                      <Button
+                        className="w-full"
+                        disabled={!grupoEscolhido || atribuirGrupoMut.isPending}
+                        onClick={() => atribuirGrupoMut.mutate()}
+                      >
+                        {atribuirGrupoMut.isPending && <Loader2 className="h-4 w-4 mr-1 animate-spin" />}
+                        <CheckCircle2 className="h-4 w-4 mr-1" /> Atribuir e marcar como aceito
+                      </Button>
+                      <p className="text-xs text-muted-foreground">
+                        Ao atribuir, o SKU é classificado, o alerta é fechado e os parâmetros de reposição
+                        são recalculados com o novo LT de produção.
+                      </p>
+                    </CardContent>
+                  </Card>
+                )}
 
-                {/* Seção 4 - Impacto */}
-                <Card>
-                  <CardHeader className="pb-2"><CardTitle className="text-sm">4. Impacto se excluir</CardTitle></CardHeader>
-                  <CardContent className="text-sm space-y-1">
-                    {impacto && !impacto.error ? (
-                      <>
-                        <div>σ atual: <span className="font-mono">{fmt(impacto.sigma_atual)}</span> → sem outlier: <span className="font-mono">{fmt(impacto.sigma_sem)}</span></div>
-                        <div>Média atual: <span className="font-mono">{fmt(impacto.media_atual)}</span> → sem: <span className="font-mono">{fmt(impacto.media_sem)}</span></div>
-                        {impacto.em_atual !== undefined && (
-                          <div className="pt-2 p-2 bg-muted/50 rounded">
-                            Estoque mínimo sugerido: <span className="font-mono">{impacto.em_atual}</span> → <span className="font-mono">{impacto.em_sem}</span>{" "}
-                            <Badge variant={impacto.delta_em < 0 ? "success" : "warning"}>
-                              {impacto.delta_em > 0 ? "+" : ""}{impacto.delta_em} un
-                            </Badge>
-                          </div>
-                        )}
-                      </>
-                    ) : (
-                      <div className="text-muted-foreground">Calculando…</div>
-                    )}
-                  </CardContent>
-                </Card>
-
-                {/* Seção 5 - Ação */}
-                {drillEvento.status === "pendente" && (
+                {/* Seção 5 - Decisão padrão (oculta para sku_sem_grupo) */}
+                {!isSemGrupo && drillEvento.status === "pendente" && (
                   <Card>
                     <CardHeader className="pb-2"><CardTitle className="text-sm">5. Decisão</CardTitle></CardHeader>
                     <CardContent className="space-y-3">
