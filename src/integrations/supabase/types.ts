@@ -7644,6 +7644,23 @@ export type Database = {
         }
         Relationships: []
       }
+      v_fornecedor_sla_compliance: {
+        Row: {
+          critico: number | null
+          cumprindo: number | null
+          empresa: string | null
+          fornecedor_nome: string | null
+          limite: number | null
+          lt_observado_medio: number | null
+          lt_teorico_medio: number | null
+          pct_compliance: number | null
+          poucos_dados: number | null
+          sem_sla: number | null
+          skus_avaliados: number | null
+          violando: number | null
+        }
+        Relationships: []
+      }
       v_leadtime_por_grupo: {
         Row: {
           empresa: Database["public"]["Enums"]["empresa_reposicao"] | null
@@ -7888,6 +7905,26 @@ export type Database = {
           media_demanda_diaria: number | null
           sigma_demanda_diaria: number | null
           sku_codigo_omie: string | null
+        }
+        Relationships: []
+      }
+      v_sku_sla_compliance: {
+        Row: {
+          desvio_pct: number | null
+          empresa: string | null
+          fornecedor_nome: string | null
+          grupo_descricao: string | null
+          grupo_producao: string | null
+          lt_obs_anterior_5: number | null
+          lt_obs_recente_5: number | null
+          lt_observado_medio: number | null
+          lt_teorico: number | null
+          n_observacoes: number | null
+          sku_codigo_omie: string | null
+          sku_descricao: string | null
+          status_sla: string | null
+          tendencia: string | null
+          ultimo_recebimento: string | null
         }
         Relationships: []
       }
