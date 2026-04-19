@@ -303,6 +303,11 @@ Deno.serve(async (req) => {
         summary.itens_processados++;
         skusVistos.add(skuCodigoOmie);
       }
+
+      if (Date.now() - startedAt > TIMEOUT_GUARD_MS) {
+        summary.interrompido_por_timeout = true;
+        break;
+      }
     }
 
     summary.skus_distintos = skusVistos.size;
