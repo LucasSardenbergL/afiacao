@@ -608,7 +608,7 @@ function SkuDetailSheet({
   isApproving,
   isSaving,
 }: {
-  sku: SkuParam | null;
+  sku: RowWithPrice | null;
   onClose: () => void;
   onApprove: (justificativa?: string) => void;
   onSaveValues: (values: Partial<SkuParam>) => void;
@@ -625,15 +625,20 @@ function SkuDetailSheet({
 
   const open = !!sku;
 
-  // Stats from view (pico, p95)
-  const { data: stats } = useQuery({
+  // Stats from view (pico, p95, preços, custos, fórmula)
+  const { data: stats } = useQuery<ViewStats | null>({
     queryKey: ["sku_view_stats", sku?.empresa, sku?.sku_codigo_omie],
     enabled: open,
     queryFn: async () => {
       if (!sku) return null;
       const { data, error } = await supabase
         .from("v_sku_parametros_sugeridos" as any)
-        .select("pico_maximo_dia, p95_diario, p90_quando_vende, dias_seguranca, cobertura_alvo_dias")
+        .select(
+          "pico_maximo_dia, p95_diario, p90_quando_vende, cobertura_alvo_dias, " +
+            "preco_compra_real, preco_venda_medio, preco_item_eoq, fonte_preco, n_compras, " +
+            "custo_capital_efetivo_perc, custo_pedido_aplicado, modo_pedido, " +
+            "z_aplicado, demanda_sigma_diario, sigma_lt_d, lead_time_medio, qtde_compra_ciclo_sugerida"
+        )
         .eq("empresa", sku.empresa)
         .eq("sku_codigo_omie", sku.sku_codigo_omie)
         .maybeSingle();
