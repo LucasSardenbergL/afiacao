@@ -173,6 +173,72 @@ export default function AdminReposicaoRevisao() {
   const { data, isLoading } = useQuery({
     queryKey: ["sku_parametros_revisao", empresa, classes, statusFilter, search, page],
     queryFn: async () => {
+      // Caso especial: SKUs aguardando habilitação de fornecedor vêm da view
+      if (statusFilter === "aguardando_fornecedor") {
+        let q = supabase
+          .from("v_sku_parametros_sugeridos" as any)
+          .select("*", { count: "exact" })
+          .eq("empresa", empresa)
+          .eq("status_sugestao", "AGUARDANDO_HABILITACAO_FORNECEDOR");
+
+        if (classes.length > 0) q = q.in("classe_consolidada", classes);
+        if (search.trim()) {
+          const s = search.trim();
+          if (/^\d+$/.test(s)) {
+            q = q.eq("sku_codigo_omie", Number(s));
+          } else {
+            q = q.ilike("sku_descricao", `%${s}%`);
+          }
+        }
+
+        q = q.order("valor_total_90d", { ascending: false, nullsFirst: false });
+        q = q.range(page * PAGE_SIZE, (page + 1) * PAGE_SIZE - 1);
+
+        const { data: vdata, error, count } = await q;
+        if (error) throw error;
+
+        const priced: RowWithPrice[] = ((vdata ?? []) as any[]).map((v) => ({
+          id: `view-${v.sku_codigo_omie}`,
+          empresa: v.empresa,
+          sku_codigo_omie: Number(v.sku_codigo_omie),
+          sku_descricao: v.sku_descricao,
+          fornecedor_nome: v.fornecedor_nome,
+          classe_consolidada: v.classe_consolidada,
+          classe_abc: v.classe_abc_proposta,
+          classe_xyz: v.classe_xyz_proposta,
+          demanda_media_diaria: v.demanda_media_diaria,
+          demanda_desvio_padrao: v.demanda_sigma_diario,
+          demanda_coef_variacao: v.coef_variacao_ordem,
+          demanda_dias_com_movimento: v.dias_com_movimento,
+          demanda_total_90d: null,
+          valor_vendido_90d: v.valor_total_90d,
+          lt_medio_dias_uteis: v.lead_time_medio,
+          lt_desvio_padrao_dias: v.lead_time_desvio,
+          lt_p95_dias: v.lt_p95_dias,
+          lt_n_observacoes: null,
+          fonte_leadtime: v.fonte_leadtime,
+          estoque_minimo: v.estoque_minimo_sugerido,
+          ponto_pedido: v.ponto_pedido_sugerido,
+          estoque_maximo: v.estoque_maximo_sugerido,
+          estoque_seguranca: null,
+          z_score: v.z_aplicado,
+          cobertura_alvo_dias: v.cobertura_alvo_dias,
+          aplicar_no_omie: false,
+          aprovado_em: null,
+          aprovado_por: null,
+          justificativa_aprovacao: null,
+          ultima_atualizacao_calculo: v.calculado_em,
+          preco_compra_real: v.preco_compra_real,
+          preco_venda_medio: v.preco_venda_medio,
+          fonte_preco: v.fonte_preco,
+          status_sugestao: v.status_sugestao,
+          fornecedor_habilitado: v.fornecedor_habilitado,
+          read_only: true,
+        }));
+
+        return { rows: priced, total: count ?? 0 };
+      }
+
       let q = supabase
         .from("sku_parametros")
         .select("*", { count: "exact" })
@@ -212,7 +278,7 @@ export default function AdminReposicaoRevisao() {
         const codes = baseRows.map((r) => r.sku_codigo_omie);
         const { data: vrows } = await supabase
           .from("v_sku_parametros_sugeridos" as any)
-          .select("sku_codigo_omie, preco_compra_real, preco_venda_medio, fonte_preco")
+          .select("sku_codigo_omie, preco_compra_real, preco_venda_medio, fonte_preco, fornecedor_habilitado, status_sugestao")
           .eq("empresa", empresa)
           .in("sku_codigo_omie", codes);
 
@@ -225,6 +291,9 @@ export default function AdminReposicaoRevisao() {
             preco_compra_real: v?.preco_compra_real ?? null,
             preco_venda_medio: v?.preco_venda_medio ?? null,
             fonte_preco: v?.fonte_preco ?? null,
+            status_sugestao: v?.status_sugestao ?? null,
+            fornecedor_habilitado: v?.fornecedor_habilitado ?? null,
+            read_only: false,
           };
         });
       }
