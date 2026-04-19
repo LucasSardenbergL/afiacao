@@ -83,12 +83,58 @@ type SkuParam = {
   ponto_pedido: number | null;
   estoque_maximo: number | null;
   estoque_seguranca: number | null;
+  z_score: number | null;
   cobertura_alvo_dias: number | null;
   aplicar_no_omie: boolean | null;
   aprovado_em: string | null;
   aprovado_por: string | null;
   justificativa_aprovacao: string | null;
   ultima_atualizacao_calculo: string | null;
+};
+
+type ViewStats = {
+  pico_maximo_dia: number | null;
+  p95_diario: number | null;
+  p90_quando_vende: number | null;
+  dias_seguranca: number | null;
+  cobertura_alvo_dias: number | null;
+  preco_compra_real: number | null;
+  preco_venda_medio: number | null;
+  preco_item_eoq: number | null;
+  fonte_preco: string | null;
+  n_compras: number | null;
+  custo_capital_efetivo_perc: number | null;
+  custo_pedido_aplicado: number | null;
+  modo_pedido: string | null;
+  z_aplicado: number | null;
+  demanda_sigma_diario: number | null;
+  sigma_lt_d: number | null;
+  lead_time_medio: number | null;
+  qtde_compra_ciclo_sugerida: number | null;
+};
+
+type RowWithPrice = SkuParam & {
+  preco_compra_real: number | null;
+  preco_venda_medio: number | null;
+  fonte_preco: string | null;
+};
+
+const fonteBadgeVariant = (fonte: string | null | undefined): "success" | "warning" | "danger" | "outline" => {
+  if (!fonte) return "danger";
+  const f = fonte.toLowerCase();
+  if (f.includes("compra") && f.includes("real")) return "success";
+  if (f.includes("estim")) return "warning";
+  if (f.includes("sem")) return "danger";
+  return "outline";
+};
+
+const fonteBadgeLabel = (fonte: string | null | undefined) => {
+  if (!fonte) return "Sem preço";
+  const f = fonte.toLowerCase();
+  if (f.includes("compra") && f.includes("real")) return "Compra real";
+  if (f.includes("estim")) return "Estimado";
+  if (f.includes("sem")) return "Sem preço";
+  return fonte;
 };
 
 const classBadge = (classe: string | null) => {
