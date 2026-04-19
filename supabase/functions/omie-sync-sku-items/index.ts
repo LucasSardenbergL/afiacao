@@ -24,7 +24,7 @@ const OMIE_ENDPOINT = "https://app.omie.com.br/api/v1/produtos/recebimentonfe/";
 const RATE_LIMIT_DELAY_MS = 1100;
 const RETRY_DELAY_MS = 5000;
 const MAX_RETRIES = 3;
-const TIMEOUT_GUARD_MS = 120_000;
+const TIMEOUT_GUARD_MS = 90_000;
 const TIMEOUT_CHECK_EVERY_NFES = 10;
 
 type Empresa = "OBEN" | "COLACOR";
