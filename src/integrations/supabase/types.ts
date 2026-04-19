@@ -4979,6 +4979,170 @@ export type Database = {
           },
         ]
       }
+      sku_parametros: {
+        Row: {
+          aplicar_no_omie: boolean | null
+          ativo: boolean | null
+          classe_abc: string | null
+          classe_consolidada: string | null
+          classe_forcada: string | null
+          classe_proposta_pendente: string | null
+          classe_xyz: string | null
+          cobertura_alvo_dias: number | null
+          data_ultima_mudanca_classe: string | null
+          demanda_coef_variacao: number | null
+          demanda_desvio_padrao: number | null
+          demanda_dias_com_movimento: number | null
+          demanda_media_diaria: number | null
+          demanda_total_90d: number | null
+          empresa: string
+          estoque_maximo: number | null
+          estoque_minimo: number | null
+          estoque_seguranca: number | null
+          fonte_leadtime: string | null
+          fornecedor_codigo_omie: number | null
+          fornecedor_nome: string | null
+          id: string
+          lote_minimo_fornecedor: number | null
+          lt_desvio_padrao_dias: number | null
+          lt_medio_dias_uteis: number | null
+          lt_n_observacoes: number | null
+          lt_p95_dias: number | null
+          meses_consecutivos_nova_classe: number | null
+          motivo_classe_forcada: string | null
+          ponto_pedido: number | null
+          sku_codigo_omie: number
+          sku_descricao: string | null
+          ultima_aplicacao_omie: string | null
+          ultima_atualizacao_calculo: string | null
+          valor_vendido_90d: number | null
+          z_score: number | null
+        }
+        Insert: {
+          aplicar_no_omie?: boolean | null
+          ativo?: boolean | null
+          classe_abc?: string | null
+          classe_consolidada?: string | null
+          classe_forcada?: string | null
+          classe_proposta_pendente?: string | null
+          classe_xyz?: string | null
+          cobertura_alvo_dias?: number | null
+          data_ultima_mudanca_classe?: string | null
+          demanda_coef_variacao?: number | null
+          demanda_desvio_padrao?: number | null
+          demanda_dias_com_movimento?: number | null
+          demanda_media_diaria?: number | null
+          demanda_total_90d?: number | null
+          empresa: string
+          estoque_maximo?: number | null
+          estoque_minimo?: number | null
+          estoque_seguranca?: number | null
+          fonte_leadtime?: string | null
+          fornecedor_codigo_omie?: number | null
+          fornecedor_nome?: string | null
+          id?: string
+          lote_minimo_fornecedor?: number | null
+          lt_desvio_padrao_dias?: number | null
+          lt_medio_dias_uteis?: number | null
+          lt_n_observacoes?: number | null
+          lt_p95_dias?: number | null
+          meses_consecutivos_nova_classe?: number | null
+          motivo_classe_forcada?: string | null
+          ponto_pedido?: number | null
+          sku_codigo_omie: number
+          sku_descricao?: string | null
+          ultima_aplicacao_omie?: string | null
+          ultima_atualizacao_calculo?: string | null
+          valor_vendido_90d?: number | null
+          z_score?: number | null
+        }
+        Update: {
+          aplicar_no_omie?: boolean | null
+          ativo?: boolean | null
+          classe_abc?: string | null
+          classe_consolidada?: string | null
+          classe_forcada?: string | null
+          classe_proposta_pendente?: string | null
+          classe_xyz?: string | null
+          cobertura_alvo_dias?: number | null
+          data_ultima_mudanca_classe?: string | null
+          demanda_coef_variacao?: number | null
+          demanda_desvio_padrao?: number | null
+          demanda_dias_com_movimento?: number | null
+          demanda_media_diaria?: number | null
+          demanda_total_90d?: number | null
+          empresa?: string
+          estoque_maximo?: number | null
+          estoque_minimo?: number | null
+          estoque_seguranca?: number | null
+          fonte_leadtime?: string | null
+          fornecedor_codigo_omie?: number | null
+          fornecedor_nome?: string | null
+          id?: string
+          lote_minimo_fornecedor?: number | null
+          lt_desvio_padrao_dias?: number | null
+          lt_medio_dias_uteis?: number | null
+          lt_n_observacoes?: number | null
+          lt_p95_dias?: number | null
+          meses_consecutivos_nova_classe?: number | null
+          motivo_classe_forcada?: string | null
+          ponto_pedido?: number | null
+          sku_codigo_omie?: number
+          sku_descricao?: string | null
+          ultima_aplicacao_omie?: string | null
+          ultima_atualizacao_calculo?: string | null
+          valor_vendido_90d?: number | null
+          z_score?: number | null
+        }
+        Relationships: []
+      }
+      sku_parametros_historico: {
+        Row: {
+          classe_consolidada: string | null
+          demanda_media_diaria: number | null
+          estoque_seguranca: number | null
+          id: string
+          lt_medio_dias_uteis: number | null
+          ponto_pedido: number | null
+          sku_parametro_id: string | null
+          snapshot_em: string | null
+          trigger: string | null
+          z_score: number | null
+        }
+        Insert: {
+          classe_consolidada?: string | null
+          demanda_media_diaria?: number | null
+          estoque_seguranca?: number | null
+          id?: string
+          lt_medio_dias_uteis?: number | null
+          ponto_pedido?: number | null
+          sku_parametro_id?: string | null
+          snapshot_em?: string | null
+          trigger?: string | null
+          z_score?: number | null
+        }
+        Update: {
+          classe_consolidada?: string | null
+          demanda_media_diaria?: number | null
+          estoque_seguranca?: number | null
+          id?: string
+          lt_medio_dias_uteis?: number | null
+          ponto_pedido?: number | null
+          sku_parametro_id?: string | null
+          snapshot_em?: string | null
+          trigger?: string | null
+          z_score?: number | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "sku_parametros_historico_sku_parametro_id_fkey"
+            columns: ["sku_parametro_id"]
+            isOneToOne: false
+            referencedRelation: "sku_parametros"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       sync_reprocess_config: {
         Row: {
           description: string | null
@@ -7069,6 +7233,81 @@ export type Database = {
           t2_data_faturamento?: string | null
           t3_data_cte?: string | null
           t4_data_recebimento?: string | null
+        }
+        Relationships: []
+      }
+      v_sku_classificacao_abc_xyz: {
+        Row: {
+          classe_abc_proposta: string | null
+          classe_consolidada_proposta: string | null
+          classe_xyz_proposta: string | null
+          coef_variacao_demanda: number | null
+          demanda_desvio_padrao: number | null
+          demanda_media_diaria: number | null
+          dias_com_movimento: number | null
+          empresa: string | null
+          sku_codigo_omie: number | null
+          sku_descricao: string | null
+          valor_total_90d: number | null
+        }
+        Relationships: []
+      }
+      v_sku_demanda_estatisticas: {
+        Row: {
+          coef_variacao_demanda: number | null
+          demanda_desvio_padrao: number | null
+          demanda_media_diaria: number | null
+          demanda_total_90d: number | null
+          dias_com_movimento: number | null
+          empresa: string | null
+          sku_codigo_omie: number | null
+          sku_descricao: string | null
+          sku_unidade: string | null
+          ultima_venda_data: string | null
+          valor_total_90d: number | null
+        }
+        Relationships: []
+      }
+      v_sku_leadtime_estatisticas: {
+        Row: {
+          empresa: string | null
+          fonte_leadtime: string | null
+          fornecedor_codigo_omie: number | null
+          fornecedor_nome: string | null
+          lt_desvio_padrao_dias: number | null
+          lt_medio_dias_uteis: number | null
+          lt_n_observacoes: number | null
+          lt_p95_dias: number | null
+          sku_codigo_omie: number | null
+          sku_descricao: string | null
+        }
+        Relationships: []
+      }
+      v_sku_parametros_sugeridos: {
+        Row: {
+          calculado_em: string | null
+          classe_abc_proposta: string | null
+          classe_consolidada: string | null
+          classe_xyz_proposta: string | null
+          cobertura_alvo_dias: number | null
+          coef_variacao_demanda: number | null
+          demanda_desvio: number | null
+          demanda_media_diaria: number | null
+          dias_com_movimento: number | null
+          empresa: string | null
+          estoque_maximo_sugerido: number | null
+          estoque_minimo_sugerido: number | null
+          fonte_leadtime: string | null
+          fornecedor_nome: string | null
+          lead_time_desvio: number | null
+          lead_time_medio: number | null
+          lt_p95_dias: number | null
+          ponto_pedido_sugerido: number | null
+          qtde_compra_ciclo_sugerida: number | null
+          sku_codigo_omie: number | null
+          sku_descricao: string | null
+          valor_total_90d: number | null
+          z_score: number | null
         }
         Relationships: []
       }
