@@ -46,6 +46,13 @@ interface RequestBody {
   data_final?: string;   // dd/mm/yyyy — sobrepõe `dias` se fornecido
 }
 
+interface BackfillSummary {
+  nfes_identificadas_para_backfill: number;
+  nfes_backfilled: number;
+  nfes_pulou_por_timeout: number;
+  erros: number;
+}
+
 interface EmpresaSummary {
   empresa: Empresa;
   nfes_processadas: number;
@@ -55,7 +62,11 @@ interface EmpresaSummary {
   nfes_orfas: number;                 // NFes inseridas como órfãs
   vinculos_criados_total: number;     // soma de UPDATEs em linhas de pedido (NFe×pedido)
   erros: number;
+  interrompido_por_timeout?: boolean;
+  backfill?: BackfillSummary;
 }
+
+const TIMEOUT_GUARD_MS = 120_000;
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
