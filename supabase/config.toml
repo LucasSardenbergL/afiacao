@@ -89,3 +89,6 @@ verify_jwt = false
 
 [functions.omie-sync-status-produtos]
 verify_jwt = false
+
+[functions.omie-aplicar-parametros]
+verify_jwt = false
