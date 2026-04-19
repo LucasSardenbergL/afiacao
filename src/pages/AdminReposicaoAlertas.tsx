@@ -92,7 +92,13 @@ const statusBadge = (status: string) => {
 };
 
 const tipoLabel = (tipo: string) =>
-  tipo === "venda_atipica" ? "Venda atípica" : tipo === "lt_atipico" ? "LT atípico" : tipo;
+  tipo === "venda_atipica"
+    ? "Venda atípica"
+    : tipo === "lt_atipico"
+    ? "LT atípico"
+    : tipo === "sku_sem_grupo"
+    ? "SKU sem grupo"
+    : tipo;
 
 const fmt = (n: number | null | undefined, dec = 2) =>
   n === null || n === undefined ? "—" : Number(n).toLocaleString("pt-BR", { minimumFractionDigits: dec, maximumFractionDigits: dec });
@@ -376,6 +382,7 @@ export default function AdminReposicaoAlertas() {
                   <SelectItem value="__all__">Todos</SelectItem>
                   <SelectItem value="venda_atipica">Venda atípica</SelectItem>
                   <SelectItem value="lt_atipico">LT atípico</SelectItem>
+                  <SelectItem value="sku_sem_grupo">SKU sem grupo</SelectItem>
                 </SelectContent>
               </Select>
             </div>
