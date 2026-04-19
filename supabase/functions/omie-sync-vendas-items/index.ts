@@ -370,20 +370,36 @@ Deno.serve(async (req) => {
           }
 
           if (rows.length > 0) {
+            // Consolidar duplicatas (mesmo SKU 2x na mesma NF) somando qtd e valor_total
+            const dedup = new Map<number, any>();
+            for (const r of rows) {
+              const key = r.sku_codigo_omie;
+              const existing = dedup.get(key);
+              if (!existing) {
+                dedup.set(key, { ...r });
+              } else {
+                existing.quantidade = Number(existing.quantidade) + Number(r.quantidade);
+                existing.valor_total = Number(existing.valor_total ?? 0) + Number(r.valor_total ?? 0);
+                existing.valor_unitario = existing.quantidade > 0
+                  ? existing.valor_total / existing.quantidade
+                  : existing.valor_unitario;
+              }
+            }
+            const dedupedRows = Array.from(dedup.values());
+
             const { error: upErr } = await supabase
               .from("venda_items_history")
-              .upsert(rows, { onConflict: "nfe_chave_acesso,sku_codigo_omie" });
+              .upsert(dedupedRows, { onConflict: "nfe_chave_acesso,sku_codigo_omie" });
 
             if (upErr) {
               erros++;
               console.error(`Upsert erro NF ${numero}:`, upErr.message);
             } else {
-              itens_processados += itensValidosNesta;
+              itens_processados += dedupedRows.length;
               chavesExistentes.add(chave);
               nfes_processadas++;
             }
           } else {
-            // NF sem itens válidos (todos pulados por CFOP) → marcar como processada para não reprocessar
             nfes_processadas++;
             chavesExistentes.add(chave);
           }
