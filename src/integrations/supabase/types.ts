@@ -7732,6 +7732,10 @@ export type Database = {
         Args: { fim: string; inicio: string }
         Returns: number
       }
+      estimar_impacto_exclusao_outlier: {
+        Args: { p_evento_id: number }
+        Returns: Json
+      }
       fin_calcular_confiabilidade: {
         Args: { p_ano: number; p_company: string; p_mes: number }
         Returns: Json
@@ -7807,6 +7811,15 @@ export type Database = {
           etapa: string
           valor: number
         }[]
+      }
+      resolver_outlier: {
+        Args: {
+          p_decisao: string
+          p_evento_id: number
+          p_justificativa?: string
+          p_usuario_email?: string
+        }
+        Returns: Json
       }
       rodar_bateria_simulacao: {
         Args: { p_empresa: string; p_top_n?: number }
