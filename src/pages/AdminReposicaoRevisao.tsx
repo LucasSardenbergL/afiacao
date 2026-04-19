@@ -778,6 +778,48 @@ function SkuDetailSheet({
             </dl>
           </section>
 
+          {/* Preço e custo */}
+          <section>
+            <h3 className="font-semibold mb-2">Preço e custo</h3>
+            <dl className="grid grid-cols-2 gap-x-4 gap-y-1">
+              <dt className="text-muted-foreground">Preço de compra médio</dt>
+              <dd className="flex items-center gap-2">
+                {fmtBRL(stats?.preco_compra_real)}
+                <span className="text-xs text-muted-foreground">
+                  (baseado em {stats?.n_compras ?? 0} compras)
+                </span>
+              </dd>
+              <dt className="text-muted-foreground">Preço de venda médio (180d)</dt>
+              <dd>{fmtBRL(stats?.preco_venda_medio)}</dd>
+              <dt className="text-muted-foreground">Markup implícito</dt>
+              <dd>
+                {markup
+                  ? `${fmt(markup, 2)}x (${fmt((markup - 1) * 100, 1)}%)`
+                  : "—"}
+              </dd>
+              <dt className="text-muted-foreground">Custo de capital efetivo</dt>
+              <dd>
+                {stats?.custo_capital_efetivo_perc != null
+                  ? `${fmt(stats.custo_capital_efetivo_perc * 100, 2)}% a.a.`
+                  : "—"}
+              </dd>
+              <dt className="text-muted-foreground">Custo de pedido aplicado</dt>
+              <dd>{fmtBRL(stats?.custo_pedido_aplicado)}</dd>
+              <dt className="text-muted-foreground">Modo atual</dt>
+              <dd>
+                <Badge variant={stats?.modo_pedido === "api" ? "info" as any : "outline"}>
+                  {stats?.modo_pedido === "api" ? "API" : stats?.modo_pedido === "manual" ? "Manual" : "—"}
+                </Badge>
+              </dd>
+              <dt className="text-muted-foreground">Fonte do preço</dt>
+              <dd>
+                <Badge variant={fonteBadgeVariant(stats?.fonte_preco) as any}>
+                  {fonteBadgeLabel(stats?.fonte_preco)}
+                </Badge>
+              </dd>
+            </dl>
+          </section>
+
           {/* Lead time */}
           <section>
             <h3 className="font-semibold mb-2">Lead time</h3>
