@@ -907,7 +907,7 @@ function SkuDetailSheet({
           {/* Justificativa auto */}
           <section>
             <h3 className="font-semibold mb-2">Justificativa</h3>
-            <p className="text-muted-foreground leading-relaxed">{justificativaAuto}</p>
+            <p className="text-muted-foreground leading-relaxed whitespace-pre-line font-mono text-xs">{justificativaAuto}</p>
           </section>
 
           {/* Gráfico */}
