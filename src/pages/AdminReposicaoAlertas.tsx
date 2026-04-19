@@ -343,7 +343,10 @@ export default function AdminReposicaoAlertas() {
   });
 
   const todosSelecionavel = useMemo(
-    () => (lista?.rows ?? []).filter((r) => r.status === "pendente" && r.severidade !== "critico"),
+    () =>
+      (lista?.rows ?? []).filter(
+        (r) => r.status === "pendente" && r.severidade !== "critico" && r.tipo !== "sku_sem_grupo",
+      ),
     [lista],
   );
   const todosMarcados = todosSelecionavel.length > 0 && todosSelecionavel.every((r) => selecionados.has(r.id));
