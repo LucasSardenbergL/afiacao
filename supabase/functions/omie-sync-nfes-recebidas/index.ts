@@ -451,6 +451,16 @@ async function syncEmpresa(
         const msg = err instanceof Error ? err.message : String(err);
         console.error(`[sync-nfes] ${empresa} nIdReceb=${nIdReceb} chave=${nfe?.cabec?.cChaveNFe ?? nfe?.cabec?.cChaveNfe} erro: ${msg}`);
         summary.erros++;
+      }
+    }
+
+    pagina++;
+    if (pagina <= totalPaginas) {
+      await sleep(RATE_LIMIT_DELAY_MS);
+    }
+  }
+
+  return summary;
 }
 
 /**
@@ -487,7 +497,6 @@ async function backfillRawData(
     return out;
   }
 
-  // Filtra em memória os incompletos
   const incompletos = (linhas ?? []).filter((l: any) => {
     const rd = l.raw_data;
     if (!rd || typeof rd !== "object") return true;
@@ -555,7 +564,6 @@ async function backfillRawData(
       const msg = err instanceof Error ? err.message : String(err);
       console.error(`[backfill] ${empresa} chave=${chave} erro: ${msg}`);
       out.erros++;
-      // Se for rate-limit persistente (425/429), abortar limpo
       if (/rate limit|425|429/i.test(msg)) {
         const restantes = incompletos.length - (out.nfes_backfilled + out.erros);
         if (restantes > 0) {
@@ -569,15 +577,6 @@ async function backfillRawData(
 
   console.log(`[backfill] ${empresa} backfilled=${out.nfes_backfilled} erros=${out.erros} pulou=${out.nfes_pulou_por_timeout}`);
   return out;
-    }
-
-    pagina++;
-    if (pagina <= totalPaginas) {
-      await sleep(RATE_LIMIT_DELAY_MS);
-    }
-  }
-
-  return summary;
 }
 
 Deno.serve(async (req) => {
