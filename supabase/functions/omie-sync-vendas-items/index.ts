@@ -15,7 +15,7 @@ const corsHeaders = {
 
 const OMIE_NF_URL = "https://app.omie.com.br/api/v1/produtos/nfconsultar/";
 const RATE_LIMIT_MS = 1100;
-const TIMEOUT_GUARD_MS = 120_000;
+const TIMEOUT_GUARD_MS = 25_000; // retornar antes do gateway cortar (~30s)
 const MAX_RETRIES = 3;
 
 // CFOPs de operações que NÃO são venda → pular item
@@ -246,6 +246,25 @@ Deno.serve(async (req) => {
       totalPaginas = Number(data.total_de_paginas ?? 1);
       const nfes = Array.isArray(data.nfCadastro) ? data.nfCadastro : [];
       nfes_listadas += nfes.length;
+
+      // Diagnóstico do primeiro payload (apenas página 1)
+      if (pagina === 1 && nfes.length > 0) {
+        const sample = nfes[0];
+        console.log(
+          `[${empresa}] SAMPLE keys=${Object.keys(sample).join(",")} det_len=${
+            Array.isArray(sample?.det) ? sample.det.length : "no_det"
+          } compl_keys=${Object.keys(sample?.compl ?? {}).join(",")} ide_keys=${
+            Object.keys(sample?.ide ?? {}).join(",")
+          }`,
+        );
+        if (Array.isArray(sample?.det) && sample.det[0]) {
+          console.log(
+            `[${empresa}] SAMPLE det[0] keys=${Object.keys(sample.det[0]).join(",")} prod_keys=${
+              Object.keys(sample.det[0]?.prod ?? {}).join(",")
+            }`,
+          );
+        }
+      }
 
       console.log(
         `[${empresa}] Página ${pagina}/${totalPaginas} → ${nfes.length} NF-es listadas`,
