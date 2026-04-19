@@ -86,3 +86,6 @@ verify_jwt = false
 
 [functions.omie-cron-diario]
 verify_jwt = false
+
+[functions.omie-sync-status-produtos]
+verify_jwt = false

@@ -1864,6 +1864,66 @@ export type Database = {
           },
         ]
       }
+      fila_aplicacao_omie: {
+        Row: {
+          aplicado_em: string | null
+          criado_em: string | null
+          delta_max_perc: number | null
+          empresa: string
+          erro_omie: string | null
+          estoque_maximo_novo: number | null
+          estoque_maximo_omie_atual: number | null
+          estoque_minimo_novo: number | null
+          estoque_minimo_omie_atual: number | null
+          id: number
+          mensagem_bloqueio: string | null
+          ponto_pedido_novo: number | null
+          ponto_pedido_omie_atual: number | null
+          resposta_omie: Json | null
+          sku_codigo_omie: string
+          sku_descricao: string | null
+          status_validacao: string
+        }
+        Insert: {
+          aplicado_em?: string | null
+          criado_em?: string | null
+          delta_max_perc?: number | null
+          empresa: string
+          erro_omie?: string | null
+          estoque_maximo_novo?: number | null
+          estoque_maximo_omie_atual?: number | null
+          estoque_minimo_novo?: number | null
+          estoque_minimo_omie_atual?: number | null
+          id?: number
+          mensagem_bloqueio?: string | null
+          ponto_pedido_novo?: number | null
+          ponto_pedido_omie_atual?: number | null
+          resposta_omie?: Json | null
+          sku_codigo_omie: string
+          sku_descricao?: string | null
+          status_validacao: string
+        }
+        Update: {
+          aplicado_em?: string | null
+          criado_em?: string | null
+          delta_max_perc?: number | null
+          empresa?: string
+          erro_omie?: string | null
+          estoque_maximo_novo?: number | null
+          estoque_maximo_omie_atual?: number | null
+          estoque_minimo_novo?: number | null
+          estoque_minimo_omie_atual?: number | null
+          id?: number
+          mensagem_bloqueio?: string | null
+          ponto_pedido_novo?: number | null
+          ponto_pedido_omie_atual?: number | null
+          resposta_omie?: Json | null
+          sku_codigo_omie?: string
+          sku_descricao?: string | null
+          status_validacao?: string
+        }
+        Relationships: []
+      }
       fin_categoria_dre_mapping: {
         Row: {
           company: string
@@ -5457,6 +5517,90 @@ export type Database = {
           },
         ]
       }
+      sku_status_omie: {
+        Row: {
+          ativo_no_omie: boolean | null
+          data_inativacao: string | null
+          empresa: string
+          estoque_maximo_omie: number | null
+          estoque_minimo_omie: number | null
+          fonte_sincronizacao: string | null
+          ponto_pedido_omie: number | null
+          sku_codigo_omie: string
+          sku_descricao: string | null
+          ultima_sincronizacao: string | null
+        }
+        Insert: {
+          ativo_no_omie?: boolean | null
+          data_inativacao?: string | null
+          empresa: string
+          estoque_maximo_omie?: number | null
+          estoque_minimo_omie?: number | null
+          fonte_sincronizacao?: string | null
+          ponto_pedido_omie?: number | null
+          sku_codigo_omie: string
+          sku_descricao?: string | null
+          ultima_sincronizacao?: string | null
+        }
+        Update: {
+          ativo_no_omie?: boolean | null
+          data_inativacao?: string | null
+          empresa?: string
+          estoque_maximo_omie?: number | null
+          estoque_minimo_omie?: number | null
+          fonte_sincronizacao?: string | null
+          ponto_pedido_omie?: number | null
+          sku_codigo_omie?: string
+          sku_descricao?: string | null
+          ultima_sincronizacao?: string | null
+        }
+        Relationships: []
+      }
+      sku_substituicao: {
+        Row: {
+          acao_parametros: string
+          aplicado_em: string | null
+          criado_em: string | null
+          criado_por: string | null
+          data_substituicao: string
+          empresa: string
+          id: number
+          motivo: string | null
+          observacoes: string | null
+          sku_codigo_antigo: string
+          sku_codigo_novo: string
+          status: string
+        }
+        Insert: {
+          acao_parametros: string
+          aplicado_em?: string | null
+          criado_em?: string | null
+          criado_por?: string | null
+          data_substituicao: string
+          empresa: string
+          id?: number
+          motivo?: string | null
+          observacoes?: string | null
+          sku_codigo_antigo: string
+          sku_codigo_novo: string
+          status?: string
+        }
+        Update: {
+          acao_parametros?: string
+          aplicado_em?: string | null
+          criado_em?: string | null
+          criado_por?: string | null
+          data_substituicao?: string
+          empresa?: string
+          id?: number
+          motivo?: string | null
+          observacoes?: string | null
+          sku_codigo_antigo?: string
+          sku_codigo_novo?: string
+          status?: string
+        }
+        Relationships: []
+      }
       sync_reprocess_config: {
         Row: {
           description: string | null
@@ -7800,6 +7944,16 @@ export type Database = {
         Args: { check_company?: string }
         Returns: boolean
       }
+      gerar_fila_aplicacao_omie: {
+        Args: { p_empresa?: string }
+        Returns: {
+          bloqueados_inativos: number
+          bloqueados_nao_existe: number
+          bloqueados_substituicao: number
+          prontos: number
+          total_aprovados: number
+        }[]
+      }
       get_commercial_role: {
         Args: { _user_id: string }
         Returns: Database["public"]["Enums"]["commercial_role"]
@@ -7839,6 +7993,17 @@ export type Database = {
       }
       is_super_admin: { Args: { _user_id: string }; Returns: boolean }
       refresh_customer_metrics: { Args: never; Returns: undefined }
+      registrar_substituicao_sku: {
+        Args: {
+          p_acao_parametros: string
+          p_codigo_antigo: string
+          p_codigo_novo: string
+          p_empresa: string
+          p_motivo: string
+          p_usuario: string
+        }
+        Returns: Json
+      }
       reprocessar_sku_items_via_raw_data: {
         Args: { p_empresa: string }
         Returns: {
@@ -7878,6 +8043,10 @@ export type Database = {
       }
       tint_run_reconciliation: {
         Args: { p_sync_run_id: string }
+        Returns: Json
+      }
+      validar_sku_para_aplicacao: {
+        Args: { p_empresa: string; p_sku: string }
         Returns: Json
       }
     }
