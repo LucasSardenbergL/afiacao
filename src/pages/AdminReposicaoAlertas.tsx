@@ -526,7 +526,8 @@ export default function AdminReposicaoAlertas() {
                 <TableRow><TableCell colSpan={12} className="text-center py-8 text-muted-foreground">Nenhum alerta encontrado</TableCell></TableRow>
               )}
               {lista?.rows.map((r) => {
-                const podeSelecionar = r.status === "pendente" && r.severidade !== "critico";
+                const podeSelecionar =
+                  r.status === "pendente" && r.severidade !== "critico" && r.tipo !== "sku_sem_grupo";
                 return (
                   <TableRow key={r.id} className="hover:bg-muted/50">
                     <TableCell>
