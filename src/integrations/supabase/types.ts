@@ -619,6 +619,63 @@ export type Database = {
         }
         Relationships: []
       }
+      eventos_outlier: {
+        Row: {
+          data_evento: string
+          decidido_em: string | null
+          decidido_por: string | null
+          desvios_padrao: number | null
+          detalhes: Json | null
+          detectado_em: string | null
+          empresa: string
+          id: number
+          justificativa_decisao: string | null
+          severidade: string
+          sku_codigo_omie: string
+          sku_descricao: string | null
+          status: string
+          tipo: string
+          valor_esperado: number | null
+          valor_observado: number | null
+        }
+        Insert: {
+          data_evento: string
+          decidido_em?: string | null
+          decidido_por?: string | null
+          desvios_padrao?: number | null
+          detalhes?: Json | null
+          detectado_em?: string | null
+          empresa: string
+          id?: number
+          justificativa_decisao?: string | null
+          severidade: string
+          sku_codigo_omie: string
+          sku_descricao?: string | null
+          status?: string
+          tipo: string
+          valor_esperado?: number | null
+          valor_observado?: number | null
+        }
+        Update: {
+          data_evento?: string
+          decidido_em?: string | null
+          decidido_por?: string | null
+          desvios_padrao?: number | null
+          detalhes?: Json | null
+          detectado_em?: string | null
+          empresa?: string
+          id?: number
+          justificativa_decisao?: string | null
+          severidade?: string
+          sku_codigo_omie?: string
+          sku_descricao?: string | null
+          status?: string
+          tipo?: string
+          valor_esperado?: number | null
+          valor_observado?: number | null
+        }
+        Relationships: []
+      }
       farmer_agenda: {
         Row: {
           agenda_date: string
@@ -3363,6 +3420,56 @@ export type Database = {
             columns: ["warehouse_id"]
             isOneToOne: false
             referencedRelation: "warehouses"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      observacoes_excluidas: {
+        Row: {
+          data_observacao: string
+          empresa: string
+          evento_outlier_id: number | null
+          excluido_em: string | null
+          excluido_por: string | null
+          id: number
+          justificativa: string | null
+          referencia_original: string | null
+          sku_codigo_omie: string
+          tipo_observacao: string
+          valor_excluido: number | null
+        }
+        Insert: {
+          data_observacao: string
+          empresa: string
+          evento_outlier_id?: number | null
+          excluido_em?: string | null
+          excluido_por?: string | null
+          id?: number
+          justificativa?: string | null
+          referencia_original?: string | null
+          sku_codigo_omie: string
+          tipo_observacao: string
+          valor_excluido?: number | null
+        }
+        Update: {
+          data_observacao?: string
+          empresa?: string
+          evento_outlier_id?: number | null
+          excluido_em?: string | null
+          excluido_por?: string | null
+          id?: number
+          justificativa?: string | null
+          referencia_original?: string | null
+          sku_codigo_omie?: string
+          tipo_observacao?: string
+          valor_excluido?: number | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "observacoes_excluidas_evento_outlier_id_fkey"
+            columns: ["evento_outlier_id"]
+            isOneToOne: false
+            referencedRelation: "eventos_outlier"
             referencedColumns: ["id"]
           },
         ]
@@ -7612,6 +7719,14 @@ export type Database = {
       atualizar_parametros_numericos_skus: {
         Args: { p_empresa: string }
         Returns: number
+      }
+      detectar_outliers_empresa: {
+        Args: { p_empresa?: string }
+        Returns: {
+          eventos_criticos: number
+          novos_eventos: number
+          tipo: string
+        }[]
       }
       dias_uteis_entre: {
         Args: { fim: string; inicio: string }
