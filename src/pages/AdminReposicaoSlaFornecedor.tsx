@@ -525,15 +525,35 @@ export default function AdminReposicaoSlaFornecedor() {
                           label={{ value: `Teórico ${skuDetalhe.lt_teorico}d`, position: "right", fontSize: 10 }}
                         />
                       )}
-                      <Line type="monotone" dataKey="lt" name="LT bruto" stroke="hsl(var(--primary))" dot={(props: any) => {
+                      <Line
+                        type="monotone"
+                        dataKey="faturamento"
+                        name="Faturamento"
+                        stroke="hsl(217 91% 70%)"
+                        strokeWidth={1.5}
+                        strokeDasharray="4 3"
+                        dot={{ r: 2.5 }}
+                        connectNulls
+                        isAnimationActive={false}
+                      />
+                      <Line
+                        type="monotone"
+                        dataKey="logistica"
+                        name="Logística"
+                        stroke="hsl(25 95% 65%)"
+                        strokeWidth={1.5}
+                        strokeDasharray="4 3"
+                        dot={{ r: 2.5 }}
+                        connectNulls
+                        isAnimationActive={false}
+                      />
+                      <Line type="monotone" dataKey="lt" name="LT bruto" stroke="hsl(var(--primary))" strokeWidth={2.5} isAnimationActive={false} dot={(props: any) => {
                         const { cx, cy, payload } = props;
                         const violou = skuDetalhe.lt_teorico != null && payload.lt > skuDetalhe.lt_teorico * 1.25;
                         return (
-                          <circle cx={cx} cy={cy} r={4} fill={violou ? "hsl(var(--destructive))" : "hsl(var(--primary))"} />
+                          <circle cx={cx} cy={cy} r={4} fill={violou ? "hsl(var(--destructive))" : "hsl(var(--primary))"} stroke="white" strokeWidth={1} />
                         );
                       }} />
-                      <Line type="monotone" dataKey="faturamento" name="Faturamento" stroke="hsl(var(--success))" strokeDasharray="3 3" dot={false} />
-                      <Line type="monotone" dataKey="logistica" name="Logística" stroke="hsl(var(--warning))" strokeDasharray="3 3" dot={false} />
                     </LineChart>
                   </ResponsiveContainer>
                 )}
