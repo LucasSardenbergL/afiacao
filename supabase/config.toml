@@ -104,3 +104,9 @@ verify_jwt = false
 
 [functions.disparar-pedidos-aprovados]
 verify_jwt = false
+
+[functions.omie-sync-condicoes-pagamento]
+verify_jwt = false
+
+[functions.omie-sync-condicao-fornecedor]
+verify_jwt = false
