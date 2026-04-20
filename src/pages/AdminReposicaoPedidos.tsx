@@ -12,7 +12,17 @@ import { Textarea } from '@/components/ui/textarea';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
-import { AlertTriangle, CheckCircle2, Clock, ExternalLink, Eye, Loader2, PlayCircle, RefreshCw, XCircle } from 'lucide-react';
+import { AlertTriangle, Ban, CheckCircle2, Clock, ExternalLink, Eye, Loader2, PlayCircle, RefreshCw, Trash2, XCircle } from 'lucide-react';
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from '@/components/ui/alert-dialog';
 import { toast } from 'sonner';
 import { format } from 'date-fns';
 import { ptBR } from 'date-fns/locale';
@@ -24,6 +34,8 @@ type Status =
   | 'bloqueado_guardrail'
   | 'disparado'
   | 'cancelado'
+  | 'cancelado_humano'
+  | 'expirado_sem_aprovacao'
   | string;
 
 interface PedidoSugerido {
@@ -42,6 +54,8 @@ interface PedidoSugerido {
   status: Status;
   mensagem_bloqueio: string | null;
   omie_pedido_compra_numero: string | null;
+  aprovado_em: string | null;
+  aprovado_por: string | null;
 }
 
 interface PedidoItem {
@@ -68,6 +82,8 @@ const statusMeta: Record<string, { label: string; variant: 'default' | 'secondar
   bloqueado_guardrail: { label: 'Bloqueado', variant: 'destructive' },
   disparado: { label: 'Disparado', variant: 'secondary', className: 'bg-emerald-500/15 text-emerald-700 dark:text-emerald-400 border-emerald-500/30' },
   cancelado: { label: 'Cancelado', variant: 'outline' },
+  cancelado_humano: { label: 'Cancelado (vazio)', variant: 'outline' },
+  expirado_sem_aprovacao: { label: 'Expirado sem aprovação', variant: 'secondary', className: 'bg-muted text-muted-foreground border-border' },
 };
 
 function formatBRL(v: number | null | undefined) {
