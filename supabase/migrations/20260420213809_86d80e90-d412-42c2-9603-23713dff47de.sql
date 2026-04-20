@@ -1,0 +1,1 @@
+UPDATE pedido_compra_sugerido SET status = 'aprovado_aguardando_disparo', resposta_canal = NULL, atualizado_em = now() WHERE id = 33 AND empresa = 'OBEN' AND status = 'falha_envio';

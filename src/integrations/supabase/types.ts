@@ -3149,31 +3149,43 @@ export type Database = {
           criado_em: string | null
           dia_semana: number
           empresa: string
+          fonte_informacao: string | null
           fornecedor_nome: string
           hora_abertura: string | null
           hora_fechamento: string | null
           id: number
           observacoes: string | null
+          validado_com_fornecedor: boolean | null
+          validado_em: string | null
+          validado_por: string | null
         }
         Insert: {
           criado_em?: string | null
           dia_semana: number
           empresa: string
+          fonte_informacao?: string | null
           fornecedor_nome: string
           hora_abertura?: string | null
           hora_fechamento?: string | null
           id?: number
           observacoes?: string | null
+          validado_com_fornecedor?: boolean | null
+          validado_em?: string | null
+          validado_por?: string | null
         }
         Update: {
           criado_em?: string | null
           dia_semana?: number
           empresa?: string
+          fonte_informacao?: string | null
           fornecedor_nome?: string
           hora_abertura?: string | null
           hora_fechamento?: string | null
           id?: number
           observacoes?: string | null
+          validado_com_fornecedor?: boolean | null
+          validado_em?: string | null
+          validado_por?: string | null
         }
         Relationships: []
       }
@@ -8478,7 +8490,11 @@ export type Database = {
       }
       fornecedor_operacional: {
         Args: { p_empresa: string; p_fornecedor: string; p_timestamp?: string }
-        Returns: boolean
+        Returns: {
+          calendario_validado: boolean
+          motivo: string
+          opera: boolean
+        }[]
       }
       gerar_pedidos_sugeridos_ciclo: {
         Args: { p_data_ciclo?: string; p_empresa?: string }
