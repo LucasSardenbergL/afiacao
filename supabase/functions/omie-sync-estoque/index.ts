@@ -200,51 +200,72 @@ Deno.serve(async (req) => {
       );
     }
 
-    // 2-3) Paginar Omie
+    // 2-3) Paginar Omie — ListarPosEstoque (físico + reservado)
     const dataPosicao = ddmmyyyy(new Date());
-    const encontrados = new Map<string, OmieEstoqueItem>();
+    const encontrados = new Map<string, OmiePosEstoqueItem>();
 
     let page = 1;
     let totalPaginas = 1;
     let totalRegistros = 0;
 
     do {
-      const resp = await callOmie(appKey, appSecret, page, dataPosicao);
+      const resp = await callOmie<OmiePosEstoqueResponse>(
+        appKey, appSecret, "ListarPosEstoque",
+        { nPagina: page, nRegPorPagina: PAGE_SIZE, dDataPosicao: dataPosicao, cExibeTodos: "S" },
+      );
       totalPaginas = resp.nTotPaginas ?? 1;
-      totalRegistros = resp.nTotalRegistros ?? totalRegistros;
-      const lista = resp.produtos ?? resp.produto_servico_resumido ?? [];
+      totalRegistros = resp.nTotRegistros ?? totalRegistros;
+      const lista = resp.produtos ?? [];
       for (const item of lista) {
-        const codigo = String(
-          item.codigo_produto ?? item.cCodigo ?? "",
-        ).trim();
+        const codigo = String(item.nCodProd ?? "").trim();
         if (!codigo) continue;
-        if (habilitadoMap.has(codigo)) {
-          encontrados.set(codigo, item);
-        }
+        if (habilitadoMap.has(codigo)) encontrados.set(codigo, item);
       }
       console.log(
-        `[omie-sync-estoque] página ${page}/${totalPaginas} — ${lista.length} itens, ${encontrados.size}/${totalEsperado} casados.`,
+        `[omie-sync-estoque] ListarPosEstoque pág ${page}/${totalPaginas} — ${lista.length} itens, ${encontrados.size}/${totalEsperado} casados.`,
       );
       page++;
     } while (page <= totalPaginas);
 
     console.log(
-      `[omie-sync-estoque] varredura concluída: ${totalRegistros} produtos no Omie, ${encontrados.size}/${totalEsperado} habilitados encontrados.`,
+      `[omie-sync-estoque] varredura concluída: ${totalRegistros} no Omie, ${encontrados.size}/${totalEsperado} habilitados encontrados.`,
     );
+
+    // 3.b) Saldo pendente de ENTRADA (pedidos de compra) — não-fatal
+    const pendenteEntrada = new Map<string, number>();
+    try {
+      let pPag = 1, pTot = 1;
+      do {
+        const resp = await callOmie<OmieSaldoPendenteResponse>(
+          appKey, appSecret, "ListarSaldoPendente",
+          { pagina: pPag, registros_por_pagina: PAGE_SIZE, tipo: "entrada" },
+        );
+        pTot = resp.total_de_paginas ?? 1;
+        for (const item of resp.saldo_pendente_lista ?? []) {
+          const codigo = String(item.id_prod ?? "").trim();
+          if (!codigo || !habilitadoMap.has(codigo)) continue;
+          pendenteEntrada.set(codigo, (pendenteEntrada.get(codigo) ?? 0) + Number(item.qtde_entrada ?? 0));
+        }
+        pPag++;
+      } while (pPag <= pTot);
+      console.log(`[omie-sync-estoque] ListarSaldoPendente: ${pendenteEntrada.size} SKUs com entrada pendente.`);
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      console.warn(`[omie-sync-estoque] ListarSaldoPendente falhou (não-fatal): ${msg}`);
+    }
 
     // 4) UPSERT em sku_estoque_atual
     const upsertRows = Array.from(encontrados.entries()).map(([codigo, item]) => {
       const fisico = Number(item.fisico ?? 0);
       const reservado = Number(item.reservado ?? 0);
-      const pedidoCompra = Number(item.pedidoCompra ?? 0);
       return {
         empresa,
         sku_codigo_omie: codigo,
         estoque_fisico: fisico,
         estoque_disponivel: fisico - reservado,
-        estoque_pendente_entrada: pedidoCompra,
+        estoque_pendente_entrada: pendenteEntrada.get(codigo) ?? 0,
         ultima_sincronizacao: new Date().toISOString(),
-        fonte_sync: "ListarPosicaoEstoque",
+        fonte_sync: "ListarPosEstoque",
       };
     });
 
