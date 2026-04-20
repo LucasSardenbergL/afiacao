@@ -100,8 +100,8 @@ function tipoLabel(t: string | null) {
 const EMPRESA = "OBEN";
 
 export default function AdminReposicaoCadeiaLogistica() {
-  const { isAdmin, isManager } = useUserRole();
-  const podeEditar = isAdmin || isManager;
+  const { isAdmin } = useUserRole();
+  const podeEditar = isAdmin;
   const qc = useQueryClient();
 
   const [expanded, setExpanded] = useState<Set<string>>(new Set());
