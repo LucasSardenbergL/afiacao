@@ -196,9 +196,9 @@ export default function AdminReposicaoSlaFornecedor() {
           data: r.t4_data_recebimento
             ? new Date(r.t4_data_recebimento).toLocaleDateString("pt-BR", { day: "2-digit", month: "2-digit" })
             : "",
-          lt: r.lt_bruto_dias_uteis,
-          faturamento: r.lt_faturamento_dias_uteis ?? null,
-          logistica: r.lt_logistica_dias_uteis ?? null,
+          lt: r.lt_bruto_dias_uteis != null ? Number(r.lt_bruto_dias_uteis) : null,
+          faturamento: r.lt_faturamento_dias_uteis != null ? Number(r.lt_faturamento_dias_uteis) : null,
+          logistica: r.lt_logistica_dias_uteis != null ? Number(r.lt_logistica_dias_uteis) : null,
         }));
     },
   });
