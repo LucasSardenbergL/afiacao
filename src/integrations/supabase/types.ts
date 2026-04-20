@@ -2985,6 +2985,69 @@ export type Database = {
         }
         Relationships: []
       }
+      fornecedor_cadeia_logistica: {
+        Row: {
+          ativo: boolean | null
+          atualizado_em: string | null
+          atualizado_por: string | null
+          criado_em: string | null
+          descricao: string
+          empresa: string
+          etapa_codigo: string
+          fornecedor_nome: string
+          id: number
+          lt_dias: number
+          lt_unidade: string
+          observacoes: string | null
+          ordem: number
+          parceiro_contato: string | null
+          parceiro_nome: string | null
+          parceiro_tipo: string | null
+          valido_ate: string | null
+          valido_desde: string | null
+        }
+        Insert: {
+          ativo?: boolean | null
+          atualizado_em?: string | null
+          atualizado_por?: string | null
+          criado_em?: string | null
+          descricao: string
+          empresa: string
+          etapa_codigo: string
+          fornecedor_nome: string
+          id?: number
+          lt_dias: number
+          lt_unidade?: string
+          observacoes?: string | null
+          ordem: number
+          parceiro_contato?: string | null
+          parceiro_nome?: string | null
+          parceiro_tipo?: string | null
+          valido_ate?: string | null
+          valido_desde?: string | null
+        }
+        Update: {
+          ativo?: boolean | null
+          atualizado_em?: string | null
+          atualizado_por?: string | null
+          criado_em?: string | null
+          descricao?: string
+          empresa?: string
+          etapa_codigo?: string
+          fornecedor_nome?: string
+          id?: number
+          lt_dias?: number
+          lt_unidade?: string
+          observacoes?: string | null
+          ordem?: number
+          parceiro_contato?: string | null
+          parceiro_nome?: string | null
+          parceiro_tipo?: string | null
+          valido_ate?: string | null
+          valido_desde?: string | null
+        }
+        Relationships: []
+      }
       fornecedor_grupo_producao: {
         Row: {
           atualizado_em: string | null
@@ -7653,20 +7716,13 @@ export type Database = {
         }
         Relationships: []
       }
-      v_fornecedor_sla_compliance: {
+      v_fornecedor_lt_logistica_total: {
         Row: {
-          critico: number | null
-          cumprindo: number | null
+          cadeia_descricao: string | null
           empresa: string | null
           fornecedor_nome: string | null
-          limite: number | null
-          lt_observado_medio: number | null
-          lt_teorico_medio: number | null
-          pct_compliance: number | null
-          poucos_dados: number | null
-          sem_sla: number | null
-          skus_avaliados: number | null
-          violando: number | null
+          lt_logistica_total_dias_uteis: number | null
+          num_etapas: number | null
         }
         Relationships: []
       }
@@ -7851,6 +7907,7 @@ export type Database = {
       }
       v_sku_lt_teorico: {
         Row: {
+          cadeia_descricao: string | null
           empresa: string | null
           grupo_codigo: string | null
           horario_corte: string | null
@@ -7859,61 +7916,8 @@ export type Database = {
           lt_producao_dias: number | null
           lt_producao_unidade: string | null
           lt_total_teorico_dias_uteis: number | null
+          num_etapas_logistica: number | null
           sku_codigo_omie: string | null
-        }
-        Relationships: []
-      }
-      v_sku_parametros_sugeridos: {
-        Row: {
-          calculado_em: string | null
-          classe_abc_proposta: string | null
-          classe_consolidada: string | null
-          classe_xyz_proposta: string | null
-          cobertura_alvo_dias: number | null
-          coef_variacao_ordem: number | null
-          custo_capital_efetivo_perc: number | null
-          custo_pedido_aplicado: number | null
-          demanda_media_diaria: number | null
-          demanda_sigma_diario: number | null
-          dias_com_movimento: number | null
-          empresa: string | null
-          estoque_maximo_sugerido: number | null
-          estoque_minimo_sugerido: number | null
-          fonte_leadtime: string | null
-          fonte_lt: string | null
-          fonte_preco: string | null
-          fornecedor_habilitado: boolean | null
-          fornecedor_nome: string | null
-          grupo_codigo: string | null
-          lead_time_desvio: number | null
-          lead_time_medio: number | null
-          lt_historico_medio: number | null
-          lt_p95_dias: number | null
-          lt_total_teorico_dias_uteis: number | null
-          minimo_operacional: number | null
-          modo_pedido: string | null
-          n_compras: number | null
-          num_ordens: number | null
-          p90_diario: number | null
-          p90_quando_vende: number | null
-          p95_diario: number | null
-          p95_quando_vende: number | null
-          p99_diario: number | null
-          pico_maximo_dia: number | null
-          ponto_pedido_sugerido: number | null
-          preco_compra_real: number | null
-          preco_item_eoq: number | null
-          preco_venda_medio: number | null
-          qtde_compra_ciclo_sugerida: number | null
-          qtde_desvio_por_ordem: number | null
-          qtde_media_por_ordem: number | null
-          sigma_lt_d: number | null
-          sku_codigo_omie: number | null
-          sku_descricao: string | null
-          status_sugestao: string | null
-          valor_total_180d: number | null
-          valor_total_90d: number | null
-          z_aplicado: number | null
         }
         Relationships: []
       }
@@ -7932,26 +7936,6 @@ export type Database = {
           media_demanda_diaria: number | null
           sigma_demanda_diaria: number | null
           sku_codigo_omie: string | null
-        }
-        Relationships: []
-      }
-      v_sku_sla_compliance: {
-        Row: {
-          desvio_pct: number | null
-          empresa: string | null
-          fornecedor_nome: string | null
-          grupo_descricao: string | null
-          grupo_producao: string | null
-          lt_obs_anterior_5: number | null
-          lt_obs_recente_5: number | null
-          lt_observado_medio: number | null
-          lt_teorico: number | null
-          n_observacoes: number | null
-          sku_codigo_omie: string | null
-          sku_descricao: string | null
-          status_sla: string | null
-          tendencia: string | null
-          ultimo_recebimento: string | null
         }
         Relationships: []
       }
