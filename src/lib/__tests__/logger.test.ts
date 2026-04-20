@@ -119,7 +119,8 @@ describe('logger', () => {
 
     it('extrai cause quando presente (ES2022)', () => {
       const root = new Error('root cause');
-      const err = new Error('wrapper', { cause: root });
+      const err = new Error('wrapper');
+      (err as Error & { cause?: unknown }).cause = root;
       logger.error(err);
       const entry = logger.getRecentLogs()[0];
       expect(entry.error?.cause).toBeDefined();
