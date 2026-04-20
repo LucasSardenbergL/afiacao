@@ -25,9 +25,9 @@ interface RpcResult {
 interface PedidoResumo {
   id: string;
   fornecedor_nome: string;
-  grupo_producao: string | null;
+  grupo_codigo: string | null;
   status: string;
-  qtde_skus: number;
+  num_skus: number;
   valor_total: number;
   mensagem_bloqueio: string | null;
   horario_corte_planejado: string | null;
@@ -72,8 +72,8 @@ function buildEmailHtml(
       (p) => `
         <tr>
           <td style="padding:8px;border-bottom:1px solid #e5e7eb;">${statusBadge(p.status)}</td>
-          <td style="padding:8px;border-bottom:1px solid #e5e7eb;">${p.fornecedor_nome ?? "—"}<br><small style="color:#6b7280;">${p.grupo_producao ?? ""}</small></td>
-          <td style="padding:8px;border-bottom:1px solid #e5e7eb;text-align:right;">${p.qtde_skus}</td>
+          <td style="padding:8px;border-bottom:1px solid #e5e7eb;">${p.fornecedor_nome ?? "—"}<br><small style="color:#6b7280;">${p.grupo_codigo ?? ""}</small></td>
+          <td style="padding:8px;border-bottom:1px solid #e5e7eb;text-align:right;">${p.num_skus}</td>
           <td style="padding:8px;border-bottom:1px solid #e5e7eb;text-align:right;font-weight:600;">${fmtBRL(p.valor_total)}</td>
           <td style="padding:8px;border-bottom:1px solid #e5e7eb;font-size:11px;color:#991b1b;">${p.mensagem_bloqueio ?? ""}</td>
         </tr>`,
@@ -180,7 +180,7 @@ Deno.serve(async (req: Request) => {
     const { data: pedidos, error: pedErr } = await db
       .from("pedido_compra_sugerido")
       .select(
-        "id, fornecedor_nome, grupo_producao, status, qtde_skus, valor_total, mensagem_bloqueio, horario_corte_planejado",
+        "id, fornecedor_nome, grupo_codigo, status, num_skus, valor_total, mensagem_bloqueio, horario_corte_planejado",
       )
       .eq("empresa", empresa)
       .eq("data_ciclo", dataCiclo)
