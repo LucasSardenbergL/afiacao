@@ -3036,6 +3036,9 @@ export type Database = {
           habilitado: boolean
           habilitado_por: string | null
           id: number
+          lt_logistica_dias: number | null
+          lt_logistica_observacoes: string | null
+          lt_logistica_unidade: string | null
           observacoes: string | null
         }
         Insert: {
@@ -3046,6 +3049,9 @@ export type Database = {
           habilitado?: boolean
           habilitado_por?: string | null
           id?: number
+          lt_logistica_dias?: number | null
+          lt_logistica_observacoes?: string | null
+          lt_logistica_unidade?: string | null
           observacoes?: string | null
         }
         Update: {
@@ -3056,6 +3062,9 @@ export type Database = {
           habilitado?: boolean
           habilitado_por?: string | null
           id?: number
+          lt_logistica_dias?: number | null
+          lt_logistica_observacoes?: string | null
+          lt_logistica_unidade?: string | null
           observacoes?: string | null
         }
         Relationships: []
@@ -7840,6 +7849,20 @@ export type Database = {
         }
         Relationships: []
       }
+      v_sku_lt_teorico: {
+        Row: {
+          empresa: string | null
+          grupo_codigo: string | null
+          horario_corte: string | null
+          lt_logistica_dias: number | null
+          lt_logistica_unidade: string | null
+          lt_producao_dias: number | null
+          lt_producao_unidade: string | null
+          lt_total_teorico_dias_uteis: number | null
+          sku_codigo_omie: string | null
+        }
+        Relationships: []
+      }
       v_sku_parametros_sugeridos: {
         Row: {
           calculado_em: string | null
@@ -7857,12 +7880,16 @@ export type Database = {
           estoque_maximo_sugerido: number | null
           estoque_minimo_sugerido: number | null
           fonte_leadtime: string | null
+          fonte_lt: string | null
           fonte_preco: string | null
           fornecedor_habilitado: boolean | null
           fornecedor_nome: string | null
+          grupo_codigo: string | null
           lead_time_desvio: number | null
           lead_time_medio: number | null
+          lt_historico_medio: number | null
           lt_p95_dias: number | null
+          lt_total_teorico_dias_uteis: number | null
           minimo_operacional: number | null
           modo_pedido: string | null
           n_compras: number | null
