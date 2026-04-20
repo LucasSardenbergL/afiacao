@@ -3288,6 +3288,33 @@ export type Database = {
         }
         Relationships: []
       }
+      fornecedor_omie_cache: {
+        Row: {
+          cached_at: string
+          cnpj: string | null
+          empresa: string
+          fornecedor_nome: string
+          omie_codigo_cliente_fornecedor: number
+          razao_social_omie: string | null
+        }
+        Insert: {
+          cached_at?: string
+          cnpj?: string | null
+          empresa: string
+          fornecedor_nome: string
+          omie_codigo_cliente_fornecedor: number
+          razao_social_omie?: string | null
+        }
+        Update: {
+          cached_at?: string
+          cnpj?: string | null
+          empresa?: string
+          fornecedor_nome?: string
+          omie_codigo_cliente_fornecedor?: number
+          razao_social_omie?: string | null
+        }
+        Relationships: []
+      }
       gamification_scores: {
         Row: {
           consistency_score: number
