@@ -651,8 +651,8 @@ export default function AdminReposicaoPedidos() {
       <DetalhesModal
         pedido={detalhesPedido}
         open={!!detalhesPedido}
-        onOpenChange={(v) => !v && setDetalhesPedido(null)}
-        onApproved={() => setDetalhesPedido(null)}
+        onOpenChange={handleCloseDetalhes}
+        onApproved={() => handleCloseDetalhes(false)}
       />
       <CancelarModal
         pedido={cancelarPedido}
