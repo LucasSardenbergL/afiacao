@@ -26,6 +26,9 @@ interface PedidoRow {
   valor_total: number;
   num_skus: number;
   status: string;
+  condicao_pagamento_codigo?: string | null;
+  condicao_pagamento_descricao?: string | null;
+  num_parcelas?: number | null;
   canal_pedido?: string | null;
   email_pedido?: string | null;
   whatsapp_pedido?: string | null;
@@ -243,20 +246,30 @@ async function processarPedido(
       nValUnit: Number(it.preco_unitario),
     }));
 
-    const param = {
-      cabecalho_incluir: {
-        cCodIntPed: `AFI-${pedido.id}`,
-        dDtPrevisao: diasUteisFromHoje(ltDias),
-        nCodFor: Number(fornecedor.codigo),
-        cNumPedido: numeroPedido,
-        cObs:
-          `Pedido gerado automaticamente pelo Afiação em ${new Date().toISOString()}${
-            modo === "dry_run" ? " [DRY-RUN]" : ""
-          }`,
-        cObsInt: modo === "dry_run" ? "DRY-RUN Afiação" : "Disparo Afiação",
-      },
-      produtos_incluir,
+    // Condição de pagamento (do pedido sugerido)
+    const condCodigo = pedido.condicao_pagamento_codigo
+      ? Number(pedido.condicao_pagamento_codigo)
+      : null;
+    if (!condCodigo) {
+      throw new Error(
+        `Pedido sem condição de pagamento. Selecione uma condição antes de disparar.`,
+      );
+    }
+
+    const cabecalho_incluir: Record<string, unknown> = {
+      cCodIntPed: `AFI-${pedido.id}`,
+      dDtPrevisao: diasUteisFromHoje(ltDias),
+      nCodFor: Number(fornecedor.codigo),
+      cNumPedido: numeroPedido,
+      nCodCondPagto: condCodigo,
+      cObs:
+        `Pedido gerado automaticamente pelo Afiação em ${new Date().toISOString()}${
+          modo === "dry_run" ? " [DRY-RUN]" : ""
+        }`,
+      cObsInt: modo === "dry_run" ? "DRY-RUN Afiação" : "Disparo Afiação",
     };
+
+    const param = { cabecalho_incluir, produtos_incluir };
 
     // e. Chama Omie (método correto conforme doc: IncluirPedCompra)
     const resp = await omieCall(
@@ -545,7 +558,7 @@ Deno.serve(async (req: Request) => {
     // 2. Pedidos aprovados (com dados do fornecedor)
     const { data: aprovadosRaw, error: aprErr } = await db
       .from("pedido_compra_sugerido")
-      .select("id, empresa, fornecedor_nome, grupo_codigo, data_ciclo, valor_total, num_skus, status")
+      .select("id, empresa, fornecedor_nome, grupo_codigo, data_ciclo, valor_total, num_skus, status, condicao_pagamento_codigo, condicao_pagamento_descricao, num_parcelas")
       .eq("empresa", empresa)
       .eq("data_ciclo", dataCiclo)
       .eq("status", "aprovado_aguardando_disparo");

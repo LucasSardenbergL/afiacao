@@ -3189,6 +3189,39 @@ export type Database = {
         }
         Relationships: []
       }
+      fornecedor_condicao_pagamento_padrao: {
+        Row: {
+          empresa: string
+          fonte_omie_pedido_id: string | null
+          fornecedor_nome: string
+          ultima_atualizacao: string | null
+          ultima_condicao_codigo: string | null
+          ultima_condicao_descricao: string | null
+          ultimo_num_parcelas: number | null
+          ultimos_dias_parcelas: string | null
+        }
+        Insert: {
+          empresa: string
+          fonte_omie_pedido_id?: string | null
+          fornecedor_nome: string
+          ultima_atualizacao?: string | null
+          ultima_condicao_codigo?: string | null
+          ultima_condicao_descricao?: string | null
+          ultimo_num_parcelas?: number | null
+          ultimos_dias_parcelas?: string | null
+        }
+        Update: {
+          empresa?: string
+          fonte_omie_pedido_id?: string | null
+          fornecedor_nome?: string
+          ultima_atualizacao?: string | null
+          ultima_condicao_codigo?: string | null
+          ultima_condicao_descricao?: string | null
+          ultimo_num_parcelas?: number | null
+          ultimos_dias_parcelas?: string | null
+        }
+        Relationships: []
+      }
       fornecedor_grupo_producao: {
         Row: {
           atualizado_em: string | null
@@ -3846,6 +3879,36 @@ export type Database = {
         }
         Relationships: []
       }
+      omie_condicao_pagamento_catalogo: {
+        Row: {
+          ativo: boolean | null
+          codigo: string
+          descricao: string | null
+          dias_parcelas: string | null
+          empresa: string
+          num_parcelas: number | null
+          ultima_sincronizacao: string | null
+        }
+        Insert: {
+          ativo?: boolean | null
+          codigo: string
+          descricao?: string | null
+          dias_parcelas?: string | null
+          empresa: string
+          num_parcelas?: number | null
+          ultima_sincronizacao?: string | null
+        }
+        Update: {
+          ativo?: boolean | null
+          codigo?: string
+          descricao?: string | null
+          dias_parcelas?: string | null
+          empresa?: string
+          num_parcelas?: number | null
+          ultima_sincronizacao?: string | null
+        }
+        Relationships: []
+      }
       omie_ordens_servico: {
         Row: {
           created_at: string
@@ -4303,9 +4366,13 @@ export type Database = {
           canal_usado: string | null
           cancelado_em: string | null
           cancelado_por: string | null
+          condicao_origem: string | null
+          condicao_pagamento_codigo: string | null
+          condicao_pagamento_descricao: string | null
           criado_em: string | null
           data_ciclo: string
           delta_vs_anterior_perc: number | null
+          dias_parcelas: string | null
           empresa: string
           fornecedor_nome: string
           grupo_codigo: string | null
@@ -4315,6 +4382,7 @@ export type Database = {
           id: number
           justificativa_cancelamento: string | null
           mensagem_bloqueio: string | null
+          num_parcelas: number | null
           num_skus: number
           omie_pedido_compra_id: string | null
           omie_pedido_compra_numero: string | null
@@ -4332,9 +4400,13 @@ export type Database = {
           canal_usado?: string | null
           cancelado_em?: string | null
           cancelado_por?: string | null
+          condicao_origem?: string | null
+          condicao_pagamento_codigo?: string | null
+          condicao_pagamento_descricao?: string | null
           criado_em?: string | null
           data_ciclo?: string
           delta_vs_anterior_perc?: number | null
+          dias_parcelas?: string | null
           empresa: string
           fornecedor_nome: string
           grupo_codigo?: string | null
@@ -4344,6 +4416,7 @@ export type Database = {
           id?: number
           justificativa_cancelamento?: string | null
           mensagem_bloqueio?: string | null
+          num_parcelas?: number | null
           num_skus?: number
           omie_pedido_compra_id?: string | null
           omie_pedido_compra_numero?: string | null
@@ -4361,9 +4434,13 @@ export type Database = {
           canal_usado?: string | null
           cancelado_em?: string | null
           cancelado_por?: string | null
+          condicao_origem?: string | null
+          condicao_pagamento_codigo?: string | null
+          condicao_pagamento_descricao?: string | null
           criado_em?: string | null
           data_ciclo?: string
           delta_vs_anterior_perc?: number | null
+          dias_parcelas?: string | null
           empresa?: string
           fornecedor_nome?: string
           grupo_codigo?: string | null
@@ -4373,6 +4450,7 @@ export type Database = {
           id?: number
           justificativa_cancelamento?: string | null
           mensagem_bloqueio?: string | null
+          num_parcelas?: number | null
           num_skus?: number
           omie_pedido_compra_id?: string | null
           omie_pedido_compra_numero?: string | null
