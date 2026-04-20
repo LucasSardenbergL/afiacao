@@ -488,9 +488,10 @@ function DetalhesModal({
                     </TableCell>
                   )}
                 </TableRow>
-              ))}
+                );
+              })}
               <TableRow>
-                <TableCell colSpan={6} className="text-right font-medium">Total</TableCell>
+                <TableCell colSpan={7} className="text-right font-medium">Total</TableCell>
                 <TableCell className="text-right font-bold tabular-nums">{formatBRL(totalAtual)}</TableCell>
                 {podeEditar && <TableCell />}
               </TableRow>
