@@ -424,10 +424,10 @@ export function useUnifiedOrder() {
   // AI Customer handler
   const handleAICustomerSelect = useCallback(async (customer: AICustomerMatch) => {
     let codigoCliente = customer.codigo_cliente;
-    if (!codigoCliente && (customer as any).user_id) {
+    if (!codigoCliente && customer.user_id) {
       const { data: omieMapping } = await supabase
         .from('omie_clientes').select('omie_codigo_cliente')
-        .eq('user_id', (customer as any).user_id).maybeSingle();
+        .eq('user_id', customer.user_id).maybeSingle();
       if (omieMapping?.omie_codigo_cliente) codigoCliente = omieMapping.omie_codigo_cliente;
     }
     if (!codigoCliente && customer.cnpj_cpf) {
@@ -451,7 +451,7 @@ export function useUnifiedOrder() {
       nome_fantasia: customer.nome_fantasia,
       cnpj_cpf: customer.cnpj_cpf,
       codigo_vendedor: null,
-      local_user_id: (customer as any).user_id || undefined,
+      local_user_id: customer.user_id || undefined,
     };
     await selectCustomer(omieCustomer);
   }, [selectCustomer]);
@@ -471,7 +471,7 @@ export function useUnifiedOrder() {
         ));
       } else {
         const account = (product.account || aiProd.account || 'oben') as ProductAccount;
-        const aiPrice = (aiProd as any).unit_price;
+        const aiPrice = aiProd.unit_price;
         const unitPrice = (aiPrice && aiPrice > 0) ? aiPrice : getProductPrice(product as Product);
         newCartItems.push({ type: 'product', product: product as Product, quantity: aiProd.quantity, unit_price: unitPrice, account });
       }
