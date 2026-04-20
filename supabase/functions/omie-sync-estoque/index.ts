@@ -70,12 +70,12 @@ function ddmmyyyy(d: Date): string {
   return `${dd}/${mm}/${d.getFullYear()}`;
 }
 
-async function callOmie(
+async function callOmie<T>(
   appKey: string,
   appSecret: string,
-  page: number,
-  dataPosicao: string,
-): Promise<OmieEstoqueResponse> {
+  call: string,
+  param: Record<string, unknown>,
+): Promise<T> {
   let lastErr: unknown = null;
   for (let attempt = 1; attempt <= MAX_RETRIES; attempt++) {
     try {
@@ -83,22 +83,15 @@ async function callOmie(
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          call: "ListarPosicaoEstoque",
+          call,
           app_key: appKey,
           app_secret: appSecret,
-          param: [
-            {
-              nPagina: page,
-              nRegPorPagina: PAGE_SIZE,
-              dDataPosicao: dataPosicao,
-              cExibeTodos: "S",
-            },
-          ],
+          param: [param],
         }),
       });
 
       if (res.status === 429) {
-        console.warn(`[omie-sync-estoque] 429 rate limit page=${page}, sleeping 60s`);
+        console.warn(`[omie-sync-estoque] 429 rate limit em ${call}, sleeping 60s`);
         await new Promise((r) => setTimeout(r, 60_000));
         continue;
       }
@@ -110,7 +103,7 @@ async function callOmie(
         const body = await res.text();
         throw new Error(`HTTP ${res.status}: ${body.slice(0, 300)}`);
       }
-      const json = (await res.json()) as OmieEstoqueResponse;
+      const json = (await res.json()) as T & { faultcode?: string; faultstring?: string };
       if (json.faultcode) {
         throw new Error(`Omie fault ${json.faultcode}: ${json.faultstring}`);
       }
@@ -118,10 +111,10 @@ async function callOmie(
     } catch (err) {
       lastErr = err;
       const msg = err instanceof Error ? err.message : String(err);
-      if (msg.startsWith("AUTH_ERROR")) throw err; // não retry auth
+      if (msg.startsWith("AUTH_ERROR")) throw err;
       const wait = 1000 * Math.pow(2, attempt - 1);
       console.warn(
-        `[omie-sync-estoque] attempt ${attempt}/${MAX_RETRIES} failed page=${page}: ${msg}. retry em ${wait}ms`,
+        `[omie-sync-estoque] ${call} attempt ${attempt}/${MAX_RETRIES} falhou: ${msg}. retry em ${wait}ms`,
       );
       await new Promise((r) => setTimeout(r, wait));
     }
