@@ -101,3 +101,6 @@ verify_jwt = false
 
 [functions.gerar-pedidos-diario]
 verify_jwt = false
+
+[functions.disparar-pedidos-aprovados]
+verify_jwt = false
