@@ -1,6 +1,6 @@
 import { supabase } from '@/integrations/supabase/client';
 import { logger } from '@/lib/logger';
-import type { FunctionInvokeOptions } from '@supabase/functions-js';
+import type { FunctionInvokeOptions } from '@supabase/supabase-js';
 
 export class AuthRequiredError extends Error {
   constructor() {
