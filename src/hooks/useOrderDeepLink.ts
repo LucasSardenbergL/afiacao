@@ -1,6 +1,7 @@
 import { useEffect, useRef, useMemo } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import { supabase } from '@/integrations/supabase/client';
+import { logger } from '@/lib/logger';
 import type { OmieCustomer, Product } from '@/hooks/useUnifiedOrder';
 
 /* ─── Deep-link query param keys ─── */
@@ -64,7 +65,11 @@ export function useOrderDeepLink({
           body: { action: 'listar_clientes', search: params.customerId },
         });
         if (error || !data?.clientes?.length) {
-          console.warn('[DeepLink] Cliente não encontrado:', params.customerId);
+          logger.warn('DeepLink: customer not found', {
+            stage: 'resolve_order',
+            customerIdParam: params.customerId,
+            error,
+          });
           return;
         }
 
@@ -76,7 +81,11 @@ export function useOrderDeepLink({
         );
         selectCustomer(exact || clientes[0]);
       } catch (err) {
-        console.warn('[DeepLink] Erro ao buscar cliente:', err);
+        logger.warn('DeepLink: error fetching customer', {
+          stage: 'resolve_order',
+          customerIdParam: params.customerId,
+          error: err,
+        });
       }
     })();
   }, [params.customerId, selectedCustomer, selectCustomer]);
@@ -105,7 +114,11 @@ export function useOrderDeepLink({
     if (product) {
       addProductToCart(product);
     } else {
-      console.warn('[DeepLink] Produto não encontrado:', params.productId);
+      logger.warn('DeepLink: product not found in catalog', {
+        stage: 'fallback_to_list',
+        productIdParam: params.productId,
+        catalogSize: allProducts.length,
+      });
     }
   }, [
     params.productId, selectedCustomer, loadingCustomer,

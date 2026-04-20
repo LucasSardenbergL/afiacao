@@ -1,5 +1,6 @@
 import { useState, useCallback } from 'react';
 import { supabase } from '@/integrations/supabase/client';
+import { logger } from '@/lib/logger';
 
 interface PriceHistoryEntry {
   user_tool_id: string;
@@ -28,7 +29,7 @@ export function usePriceHistory(userId: string | undefined) {
         .order('created_at', { ascending: false });
 
       if (error) {
-        console.error('Error loading price history:', error);
+        logger.error('Failed to load price history', { stage: 'load_history', customerUserId: userId, error });
         return;
       }
 
@@ -55,7 +56,7 @@ export function usePriceHistory(userId: string | undefined) {
 
       setPriceHistory(historyMap);
     } catch (error) {
-      console.error('Error loading price history:', error);
+      logger.error('Unexpected error loading price history', { stage: 'load_history', customerUserId: userId, error });
     } finally {
       setIsLoading(false);
     }
@@ -98,10 +99,14 @@ export function usePriceHistory(userId: string | undefined) {
         });
 
       if (error) {
-        console.error('Error saving price history:', error);
+        logger.error('Failed to save price history entry', {
+          stage: 'save_entry', customerUserId: userId, userToolId, serviceType, unitPrice, error,
+        });
       }
     } catch (error) {
-      console.error('Error saving price history:', error);
+      logger.error('Unexpected error saving price history entry', {
+        stage: 'save_entry', customerUserId: userId, userToolId, serviceType, unitPrice, error,
+      });
     }
   }, [userId]);
 

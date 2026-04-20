@@ -1,6 +1,7 @@
 import { useState, useEffect, useCallback } from 'react';
 import { supabase } from '@/integrations/supabase/client';
 import { useToast } from '@/hooks/use-toast';
+import { logger } from '@/lib/logger';
 
 interface BiometricAuthResult {
   email: string;
@@ -58,7 +59,8 @@ export const useBiometricAuth = (): BiometricAuthHook => {
         try {
           const available = await PublicKeyCredential.isUserVerifyingPlatformAuthenticatorAvailable();
           setIsSupported(available);
-        } catch (error) { console.error('Erro ao verificar suporte biométrico:', error);
+        } catch (error) {
+          logger.warn('Biometric support check failed', { stage: 'register', error });
           setIsSupported(false);
         }
       }
@@ -80,7 +82,7 @@ export const useBiometricAuth = (): BiometricAuthHook => {
       setIsRegistered(registered);
       return registered;
     } catch (error) {
-      console.error('Error checking biometric registration:', error);
+      logger.warn('Failed to check biometric registration', { stage: 'check_registration', error });
       return false;
     }
   }, []);
@@ -178,7 +180,7 @@ export const useBiometricAuth = (): BiometricAuthHook => {
 
       return true;
     } catch (error: any) {
-      console.error('Biometric registration error:', error);
+      logger.error('Biometric registration failed', { stage: 'register', errorName: error?.name, error });
       if (error.name === 'NotAllowedError') {
         toast({
           title: 'Acesso negado',
@@ -250,7 +252,7 @@ export const useBiometricAuth = (): BiometricAuthHook => {
         actionLink: data.actionLink,
       };
     } catch (error: any) {
-      console.error('Biometric authentication error:', error);
+      logger.warn('Biometric authentication failed', { stage: 'authenticate', errorName: error?.name, error });
       if (error.name === 'NotAllowedError') {
         toast({
           title: 'Acesso negado',
@@ -295,7 +297,7 @@ export const useBiometricAuth = (): BiometricAuthHook => {
 
       return true;
     } catch (error) {
-      console.error('Error removing biometric:', error);
+      logger.error('Failed to remove biometric credential', { stage: 'remove_credential', error });
       toast({
         title: 'Erro',
         description: 'Não foi possível remover a biometria',

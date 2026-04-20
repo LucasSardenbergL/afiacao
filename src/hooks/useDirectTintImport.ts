@@ -1,5 +1,6 @@
 import { useState, useRef, useCallback } from 'react';
 import { supabase } from '@/integrations/supabase/client';
+import { logger } from '@/lib/logger';
 import Papa from 'papaparse';
 
 const ACCOUNT = 'oben';
@@ -77,7 +78,14 @@ export function useDirectTintImport() {
     for (const r of corantes.data ?? []) coranteCache.current.set(r.id_corante_sayersystem, r.id);
     for (const r of subcolecoes.data ?? []) subcolecaoCache.current.set(r.id_subcolecao_sayersystem, r.id);
     for (const r of skus.data ?? []) skuCache.current.set(`${r.produto_id}:${r.base_id}:${r.embalagem_id}`, r.id);
-    console.log(`[direct-import] Caches: ${produtoCache.current.size} produtos, ${baseCache.current.size} bases, ${embalagemCache.current.size} embalagens, ${coranteCache.current.size} corantes, ${skuCache.current.size} skus`);
+    logger.info('Tint import caches pre-warmed', {
+      stage: 'pre_warm_caches',
+      produtos: produtoCache.current.size,
+      bases: baseCache.current.size,
+      embalagens: embalagemCache.current.size,
+      corantes: coranteCache.current.size,
+      skus: skuCache.current.size,
+    });
   };
 
   // ─── Process dados_corantes ───
@@ -108,8 +116,15 @@ export function useDirectTintImport() {
         const { error } = await supabase.from('tint_corantes').upsert(
           upsertRows, { onConflict: 'account,id_corante_sayersystem' }
         );
-        if (error) { errors += upsertRows.length; console.error('[direct] corantes batch error:', error); }
-        else { imported += upsertRows.length; }
+        if (error) {
+          errors += upsertRows.length;
+          logger.critical('Tint corantes batch upsert failed — possible formula data loss', {
+            stage: 'upload_corantes',
+            batchIndex: b,
+            rowCount: upsertRows.length,
+            error,
+          });
+        } else { imported += upsertRows.length; }
       }
 
       setProgress(prev => prev ? {
@@ -398,7 +413,10 @@ export function useDirectTintImport() {
           }
         } catch (e: any) {
           errors++;
-          console.error(`[direct] formula row error:`, e.message);
+          logger.warn('Tint formula row processing failed (skipping row)', {
+            stage: 'upload_formulas',
+            error: e,
+          });
         }
       }
 
@@ -419,7 +437,11 @@ export function useDirectTintImport() {
         const { data: inserted, error: insErr } = await supabase.from('tint_formulas')
           .insert(subBatch.map(f => f.row)).select('id');
         if (insErr) {
-          console.error('[direct] formula insert error:', insErr);
+          logger.critical('Tint formulas insert failed — formula data lost', {
+            stage: 'upload_formulas',
+            rowCount: subBatch.length,
+            error: insErr,
+          });
           errors += subBatch.length;
           imported -= subBatch.length;
           continue;
@@ -434,7 +456,11 @@ export function useDirectTintImport() {
         }
         if (allItems.length > 0) {
           const { error: itemErr } = await supabase.from('tint_formula_itens').insert(allItems);
-          if (itemErr) console.error('[direct] formula_itens insert error:', itemErr);
+          if (itemErr) logger.critical('Tint formula_itens insert failed — formula items lost', {
+            stage: 'upload_formulas',
+            rowCount: allItems.length,
+            error: itemErr,
+          });
         }
       }
 
@@ -511,7 +537,13 @@ export function useDirectTintImport() {
         attempt++;
         if (attempt > 1) {
           const delay = Math.min(2000 * Math.pow(2, attempt - 2), 10000);
-          console.warn(`[rpc] batch ${b + 1} retry ${attempt}/${MAX_RETRIES} after ${delay}ms`);
+          logger.warn('Tint RPC batch retry scheduled', {
+            stage: 'rpc_call',
+            batchIndex: b + 1,
+            attempt,
+            maxRetries: MAX_RETRIES,
+            delayMs: delay,
+          });
           setProgress(prev => prev ? {
             ...prev, phase: `RPC Postgres — Lote ${b + 1} de ${totalBatches} (tentativa ${attempt}/${MAX_RETRIES})`,
           } : prev);
@@ -525,9 +557,23 @@ export function useDirectTintImport() {
         });
 
         if (error) {
-          console.error(`[rpc] batch ${b + 1} attempt ${attempt} error:`, error);
-          if (attempt >= MAX_RETRIES) {
+          const isFinal = attempt >= MAX_RETRIES;
+          if (isFinal) {
+            logger.critical('Tint RPC batch failed after retries — formula data lost', {
+              stage: 'rpc_call',
+              batchIndex: b + 1,
+              attempt,
+              rowCount: batch.length,
+              error,
+            });
             errors += batch.length;
+          } else {
+            logger.warn('Tint RPC batch attempt failed (will retry)', {
+              stage: 'rpc_call',
+              batchIndex: b + 1,
+              attempt,
+              error,
+            });
           }
         } else {
           batchSuccess = true;
@@ -602,7 +648,11 @@ export function useDirectTintImport() {
           return { status: 'duplicado', imported: 0, updated: 0, errors: 0, importacaoId: existingImport.id };
         }
 
-        console.log(`[direct-import] Cleaning up old import ${existingImport.id} (status: ${existingImport.status})`);
+        logger.info('Cleaning up previous tint import', {
+          stage: 'post_import_sync',
+          importId: existingImport.id,
+          previousStatus: existingImport.status,
+        });
         await supabase.from('tint_formula_itens').delete().in(
           'formula_id',
           (await supabase.from('tint_formulas').select('id').eq('importacao_id', existingImport.id)).data?.map(f => f.id) ?? []

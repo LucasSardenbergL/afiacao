@@ -6,6 +6,7 @@ import { useToast } from '@/hooks/use-toast';
 import { usePriceHistory } from '@/hooks/usePriceHistory';
 import { usePricingEngine } from '@/hooks/usePricingEngine';
 import { updateOrderInOmie, deleteOrderFromOmie, checkOsExistsInOmie } from '@/services/omieService';
+import { logger } from '@/lib/logger';
 import type { Order, OrderItem, Profile } from '@/components/admin-order/types';
 
 export function useAdminOrderDetail(id: string | undefined) {
@@ -173,7 +174,7 @@ export function useAdminOrderDetail(id: string | undefined) {
         return;
       }
     } catch (error) {
-      console.error('Error loading order:', error);
+      logger.error('Failed to load order', { stage: 'load_order', orderId: id, error });
       toast({
         title: 'Erro',
         description: 'Não foi possível carregar o pedido',
@@ -289,7 +290,9 @@ export function useAdminOrderDetail(id: string | undefined) {
 
       navigate('/admin');
     } catch (error) {
-      console.error('Error saving order:', error);
+      logger.critical('Failed to save order — possible data inconsistency', {
+        stage: 'update_status', orderId: order.id, syncToOmie, error,
+      });
       toast({ title: 'Erro', description: 'Não foi possível salvar o pedido', variant: 'destructive' });
     } finally {
       setSaving(false);
@@ -309,7 +312,7 @@ export function useAdminOrderDetail(id: string | undefined) {
         toast({ title: 'Erro ao excluir', description: result.error, variant: 'destructive' });
       }
     } catch (error) {
-      console.error('Erro ao excluir pedido:', error);
+      logger.error('Failed to delete order', { stage: 'delete_order', orderId: order.id, error });
       toast({ title: 'Erro', description: 'Não foi possível excluir o pedido', variant: 'destructive' });
     } finally {
       setDeleting(false);
