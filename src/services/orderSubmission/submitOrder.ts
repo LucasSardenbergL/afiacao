@@ -1,4 +1,5 @@
 import { syncOrderToOmie } from '@/services/omieService';
+import { logger } from '@/lib/logger';
 import { DELIVERY_FEES } from '@/types';
 import type {
   SubmitOrderParams,
@@ -83,7 +84,14 @@ export async function submitOrder(params: SubmitOrderParams): Promise<SubmitOrde
       if (insertError) throw insertError;
       salesOrderId = salesOrder.id;
     } catch (e: any) {
-      console.error('[submitOrder] Oben insert failed — aborting:', e);
+      logger.critical('Failed to insert sales_order in Supabase — aborting', {
+        stage: 'supabase_insert',
+        account: 'oben',
+        customerId: customer.codigo_cliente,
+        customerUserId: customerUserId || user.id,
+        itemCount: obenProductItems.length,
+        error: e,
+      });
       return {
         success: false,
         results,
@@ -119,7 +127,13 @@ export async function submitOrder(params: SubmitOrderParams): Promise<SubmitOrde
         errors.push({ step: 'sync_oben_omie', message: omieError.message || 'Falha ao sincronizar Oben com Omie' });
       }
     } catch (e: any) {
-      console.error('[submitOrder] Oben Omie sync exception:', e);
+      logger.error('Oben Omie sync exception', {
+        stage: 'omie_sync',
+        account: 'oben',
+        customerId: customer.codigo_cliente,
+        salesOrderId,
+        error: e,
+      });
       results.push('PV Oben (pendente ERP)');
       errors.push({ step: 'sync_oben_omie', message: e?.message || 'Falha ao sincronizar Oben com Omie' });
     }
@@ -157,7 +171,14 @@ export async function submitOrder(params: SubmitOrderParams): Promise<SubmitOrde
       if (insertError) throw insertError;
       salesOrderId = salesOrder.id;
     } catch (e: any) {
-      console.error('[submitOrder] Colacor insert failed — aborting:', e);
+      logger.critical('Failed to insert sales_order in Supabase — aborting', {
+        stage: 'supabase_insert',
+        account: 'colacor',
+        customerId: customer.codigo_cliente_colacor || customer.codigo_cliente,
+        customerUserId: customerUserId || user.id,
+        itemCount: colacorProductItems.length,
+        error: e,
+      });
       return {
         success: false,
         results,
@@ -197,7 +218,12 @@ export async function submitOrder(params: SubmitOrderParams): Promise<SubmitOrde
               step: 'create_production_order',
               message: 'Responsável padrão de produção não configurado (Governance > Settings).',
             });
-            console.warn('[submitOrder] Skipping production order: default_production_assignee_id is not set');
+            logger.warn('Skipping production order: default_production_assignee_id is not set', {
+              stage: 'op_creation',
+              account: 'colacor',
+              salesOrderId,
+              produtoAcabadoCount: produtoAcabadoItems.length,
+            });
           } else {
             try {
               await supabase.functions.invoke('omie-vendas-sync', {
@@ -215,9 +241,21 @@ export async function submitOrder(params: SubmitOrderParams): Promise<SubmitOrde
                   })),
                 },
               });
-              console.log('[submitOrder] Production orders created for', produtoAcabadoItems.length, 'items');
+              logger.info('Production orders created', {
+                stage: 'op_creation',
+                account: 'colacor',
+                salesOrderId,
+                count: produtoAcabadoItems.length,
+              });
             } catch (opErr: any) {
-              console.warn('[submitOrder] Failed to create production orders:', opErr);
+              logger.critical('Failed to create production orders for produto acabado', {
+                stage: 'op_creation',
+                account: 'colacor',
+                customerId: customer.codigo_cliente_colacor || customer.codigo_cliente,
+                salesOrderId,
+                itemCount: produtoAcabadoItems.length,
+                error: opErr,
+              });
               errors.push({ step: 'create_production_order', message: opErr?.message || 'Falha ao criar OP' });
             }
           }
@@ -227,7 +265,13 @@ export async function submitOrder(params: SubmitOrderParams): Promise<SubmitOrde
         errors.push({ step: 'sync_colacor_omie', message: omieError.message || 'Falha ao sincronizar Colacor com Omie' });
       }
     } catch (e: any) {
-      console.error('[submitOrder] Colacor Omie sync exception:', e);
+      logger.error('Colacor Omie sync exception', {
+        stage: 'omie_sync',
+        account: 'colacor',
+        customerId: customer.codigo_cliente_colacor || customer.codigo_cliente,
+        salesOrderId,
+        error: e,
+      });
       results.push('PV Colacor (pendente ERP)');
       errors.push({ step: 'sync_colacor_omie', message: e?.message || 'Falha ao sincronizar Colacor com Omie' });
     }
@@ -285,7 +329,12 @@ export async function submitOrder(params: SubmitOrderParams): Promise<SubmitOrde
         errors.push({ step: 'sync_os_omie', message: 'Falha ao sincronizar OS com Omie' });
       }
     } catch (e: any) {
-      console.error('[submitOrder] OS Omie sync exception:', e);
+      logger.error('Afiação OS Omie sync exception', {
+        stage: 'omie_sync',
+        account: 'afiacao',
+        customerId: customer.codigo_cliente_afiacao || customer.codigo_cliente,
+        error: e,
+      });
       results.push('OS Afiação (pendente ERP)');
       errors.push({ step: 'sync_os_omie', message: e?.message || 'Falha ao sincronizar OS com Omie' });
     }

@@ -1,4 +1,5 @@
 import { supabase } from "@/integrations/supabase/client";
+import { logger } from "@/lib/logger";
 
 interface OrderData {
   items: Array<{
@@ -63,13 +64,23 @@ export async function syncOrderToOmie(
     });
 
     if (error) {
-      console.error("[Omie Service] Erro ao sincronizar:", error);
+      logger.error("Omie sync_order failed", {
+        functionName: "omie-sync",
+        action: "sync_order",
+        orderId,
+        error,
+      });
       return { success: false, error: error.message };
     }
 
     return data as OmieSyncResult;
   } catch (err) {
-    console.error("[Omie Service] Erro inesperado:", err);
+    logger.error("Omie sync_order unexpected exception", {
+      functionName: "omie-sync",
+      action: "sync_order",
+      orderId,
+      error: err,
+    });
     return {
       success: false,
       error: err instanceof Error ? err.message : "Erro desconhecido",
@@ -89,13 +100,21 @@ export async function checkOmieClient(): Promise<{
     });
 
     if (error) {
-      console.error("[Omie Service] Erro ao verificar cliente:", error);
+      logger.error("Omie check_client failed", {
+        functionName: "omie-sync",
+        action: "check_client",
+        error,
+      });
       return { exists: false, omie_codigo_cliente: null };
     }
 
     return data;
   } catch (err) {
-    console.error("[Omie Service] Erro inesperado:", err);
+    logger.error("Omie check_client unexpected exception", {
+      functionName: "omie-sync",
+      action: "check_client",
+      error: err,
+    });
     return { exists: false, omie_codigo_cliente: null };
   }
 }
@@ -123,13 +142,21 @@ export async function listOmieServices(): Promise<{
     });
 
     if (error) {
-      console.error("[Omie Service] Erro ao listar serviços:", error);
+      logger.error("Omie list_services failed", {
+        functionName: "omie-sync",
+        action: "list_services",
+        error,
+      });
       return { success: false, servicos: [], error: error.message };
     }
 
     return data;
   } catch (err) {
-    console.error("[Omie Service] Erro inesperado:", err);
+    logger.error("Omie list_services unexpected exception", {
+      functionName: "omie-sync",
+      action: "list_services",
+      error: err,
+    });
     return {
       success: false,
       servicos: [],
@@ -161,13 +188,21 @@ export async function listOmieContasCorrentes(): Promise<{
     });
 
     if (error) {
-      console.error("[Omie Service] Erro ao listar contas correntes:", error);
+      logger.error("Omie list_contas_correntes failed", {
+        functionName: "omie-sync",
+        action: "list_contas_correntes",
+        error,
+      });
       return { success: false, contas_correntes: [], error: error.message };
     }
 
     return data;
   } catch (err) {
-    console.error("[Omie Service] Erro inesperado:", err);
+    logger.error("Omie list_contas_correntes unexpected exception", {
+      functionName: "omie-sync",
+      action: "list_contas_correntes",
+      error: err,
+    });
     return {
       success: false,
       contas_correntes: [],
@@ -191,13 +226,21 @@ export async function syncOmieServices(): Promise<{
     });
 
     if (error) {
-      console.error("[Omie Service] Erro ao sincronizar serviços:", error);
+      logger.error("Omie sync_services failed", {
+        functionName: "omie-sync",
+        action: "sync_services",
+        error,
+      });
       return { success: false, error: error.message };
     }
 
     return data;
   } catch (err) {
-    console.error("[Omie Service] Erro inesperado:", err);
+    logger.error("Omie sync_services unexpected exception", {
+      functionName: "omie-sync",
+      action: "sync_services",
+      error: err,
+    });
     return {
       success: false,
       error: err instanceof Error ? err.message : "Erro desconhecido",
@@ -242,13 +285,23 @@ export async function updateOrderInOmie(
     });
 
     if (error) {
-      console.error("[Omie Service] Erro ao atualizar pedido:", error);
+      logger.error("Omie update_order failed", {
+        functionName: "omie-sync",
+        action: "update_order",
+        orderId,
+        error,
+      });
       return { success: false, error: error.message };
     }
 
     return data as UpdateOrderResult;
   } catch (err) {
-    console.error("[Omie Service] Erro inesperado:", err);
+    logger.error("Omie update_order unexpected exception", {
+      functionName: "omie-sync",
+      action: "update_order",
+      orderId,
+      error: err,
+    });
     return {
       success: false,
       error: err instanceof Error ? err.message : "Erro desconhecido",
@@ -275,7 +328,13 @@ export async function checkOsExistsInOmie(orderId: string): Promise<{ exists: bo
     });
     if (error) return { exists: true }; // Assume exists on error
     return data;
-  } catch (error) { console.error('Erro ao verificar OS existente:', error);
+  } catch (error) {
+    logger.warn('Failed to check OS exists in Omie (assuming exists)', {
+      functionName: "omie-sync",
+      action: "check_os_exists",
+      orderId,
+      error,
+    });
     return { exists: true };
   }
 }
