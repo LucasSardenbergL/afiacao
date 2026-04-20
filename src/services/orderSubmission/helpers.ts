@@ -5,6 +5,7 @@ import type {
   ServiceCartItem,
   UserTool,
 } from '@/hooks/unifiedOrder/types';
+import { logger } from '@/lib/logger';
 import type { SubmitClient } from './types';
 
 export const getToolName = (t: UserTool): string =>
@@ -59,7 +60,11 @@ export async function resolveCustomerPhone(
         .maybeSingle();
       if (data?.phone) phone = data.phone;
     } catch (e) {
-      console.error('[orderSubmission] Failed to resolve customer phone:', e);
+      logger.warn('Failed to resolve customer phone (using fallback)', {
+        userId: uid,
+        customerId: customer.codigo_cliente,
+        error: e,
+      });
     }
   }
   return phone;

@@ -1,6 +1,7 @@
 import { createContext, useContext, useEffect, useState, ReactNode } from 'react';
 import { User, Session } from '@supabase/supabase-js';
 import { supabase } from '@/integrations/supabase/client';
+import { logger } from '@/lib/logger';
 
 export type AppRole = 'admin' | 'employee' | 'customer' | 'master';
 
@@ -59,7 +60,11 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
       ]);
 
       if (roleResult.error) {
-        console.error('Error fetching user role:', roleResult.error);
+        logger.critical('Failed to fetch user role (fail-closed)', {
+          stage: 'role_fetch',
+          userId,
+          error: roleResult.error,
+        });
         // fail-closed
         setRole(null);
         setIsApproved(false);
@@ -85,7 +90,11 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
         }
       } else {
         if (profileResult.error) {
-          console.error('Error fetching approval status:', profileResult.error);
+          logger.critical('Failed to fetch approval status (fail-closed)', {
+            stage: 'approval_fetch',
+            userId,
+            error: profileResult.error,
+          });
           // fail-closed
           setIsApproved(false);
         } else {
@@ -93,7 +102,11 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
         }
       }
     } catch (error) {
-      console.error('Error fetching user role/approval:', error);
+      logger.critical('Unexpected error fetching user role/approval (fail-closed)', {
+        stage: 'role_fetch',
+        userId,
+        error,
+      });
       // fail-closed
       setRole(null);
       setIsApproved(false);
@@ -139,7 +152,7 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
     supabase.auth.getSession().then(async ({ data: { session }, error }) => {
       if (!isMounted) return;
       if (error) {
-        console.error('Error fetching session:', error);
+        logger.error('Error fetching session', { stage: 'get_session', error });
         setLoading(false);
         return;
       }
@@ -176,7 +189,11 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
         });
       }
     } catch (error) {
-      console.error('Error creating profile:', error);
+      logger.error('Failed to create profile', {
+        stage: 'profile_create',
+        userId,
+        error,
+      });
     }
   };
 

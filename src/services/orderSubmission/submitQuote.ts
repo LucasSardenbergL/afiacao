@@ -1,4 +1,5 @@
 import type { SubmitQuoteParams, SubmitQuoteResult, SubmitErrorEntry } from './types';
+import { logger } from '@/lib/logger';
 import { formatCustomerAddress, resolveCustomerPhone } from './helpers';
 
 /**
@@ -51,7 +52,15 @@ export async function submitQuote(params: SubmitQuoteParams): Promise<SubmitQuot
       if (error) throw error;
       results.push('Orçamento Oben salvo');
     } catch (e: any) {
-      console.error('[submitQuote] Oben insert failed:', e);
+      logger.critical('Failed to insert quote in Supabase', {
+        stage: 'supabase_insert',
+        account: 'oben',
+        customerId: customer.codigo_cliente,
+        customerUserId: customerUserId || user.id,
+        itemCount: obenProductItems.length,
+        kind: 'quote',
+        error: e,
+      });
       return {
         success: false,
         results,
@@ -88,7 +97,15 @@ export async function submitQuote(params: SubmitQuoteParams): Promise<SubmitQuot
       if (error) throw error;
       results.push('Orçamento Colacor salvo');
     } catch (e: any) {
-      console.error('[submitQuote] Colacor insert failed:', e);
+      logger.critical('Failed to insert quote in Supabase', {
+        stage: 'supabase_insert',
+        account: 'colacor',
+        customerId: customer.codigo_cliente_colacor || customer.codigo_cliente,
+        customerUserId: customerUserId || user.id,
+        itemCount: colacorProductItems.length,
+        kind: 'quote',
+        error: e,
+      });
       errors.push({ step: 'insert_colacor_quote', message: e?.message || 'Erro ao salvar orçamento Colacor' });
     }
   }
