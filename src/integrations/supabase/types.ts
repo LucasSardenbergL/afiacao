@@ -253,6 +253,27 @@ export type Database = {
         }
         Relationships: []
       }
+      calendario_feriados: {
+        Row: {
+          data: string
+          nome: string
+          observacoes: string | null
+          tipo: string
+        }
+        Insert: {
+          data: string
+          nome: string
+          observacoes?: string | null
+          tipo?: string
+        }
+        Update: {
+          data?: string
+          nome?: string
+          observacoes?: string | null
+          tipo?: string
+        }
+        Relationships: []
+      }
       category_mappings: {
         Row: {
           id: string
@@ -3120,6 +3141,39 @@ export type Database = {
           id?: number
           valores_anteriores?: Json | null
           valores_novos?: Json | null
+        }
+        Relationships: []
+      }
+      fornecedor_calendario_operacao: {
+        Row: {
+          criado_em: string | null
+          dia_semana: number
+          empresa: string
+          fornecedor_nome: string
+          hora_abertura: string | null
+          hora_fechamento: string | null
+          id: number
+          observacoes: string | null
+        }
+        Insert: {
+          criado_em?: string | null
+          dia_semana: number
+          empresa: string
+          fornecedor_nome: string
+          hora_abertura?: string | null
+          hora_fechamento?: string | null
+          id?: number
+          observacoes?: string | null
+        }
+        Update: {
+          criado_em?: string | null
+          dia_semana?: number
+          empresa?: string
+          fornecedor_nome?: string
+          hora_abertura?: string | null
+          hora_fechamento?: string | null
+          id?: number
+          observacoes?: string | null
         }
         Relationships: []
       }
@@ -8395,6 +8449,10 @@ export type Database = {
         Args: { check_company?: string }
         Returns: boolean
       }
+      fornecedor_operacional: {
+        Args: { p_empresa: string; p_fornecedor: string; p_timestamp?: string }
+        Returns: boolean
+      }
       gerar_pedidos_sugeridos_ciclo: {
         Args: { p_data_ciclo?: string; p_empresa?: string }
         Returns: {
@@ -8442,6 +8500,10 @@ export type Database = {
         Returns: Json
       }
       is_super_admin: { Args: { _user_id: string }; Returns: boolean }
+      proxima_janela_operacional: {
+        Args: { p_a_partir?: string; p_empresa: string; p_fornecedor: string }
+        Returns: string
+      }
       refresh_customer_metrics: { Args: never; Returns: undefined }
       registrar_substituicao_sku: {
         Args: {
