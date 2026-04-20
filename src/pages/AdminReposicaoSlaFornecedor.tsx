@@ -533,7 +533,7 @@ export default function AdminReposicaoSlaFornecedor() {
                         strokeWidth={1.5}
                         strokeDasharray="4 3"
                         dot={{ r: 2.5 }}
-                        connectNulls
+                        connectNulls={false}
                         isAnimationActive={false}
                       />
                       <Line
@@ -544,7 +544,7 @@ export default function AdminReposicaoSlaFornecedor() {
                         strokeWidth={1.5}
                         strokeDasharray="4 3"
                         dot={{ r: 2.5 }}
-                        connectNulls
+                        connectNulls={false}
                         isAnimationActive={false}
                       />
                       <Line type="monotone" dataKey="lt" name="LT bruto" stroke="hsl(var(--primary))" strokeWidth={2.5} isAnimationActive={false} dot={(props: any) => {
