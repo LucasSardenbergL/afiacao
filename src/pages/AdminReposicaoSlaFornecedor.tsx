@@ -186,6 +186,7 @@ export default function AdminReposicaoSlaFornecedor() {
         .from("sku_leadtime_history")
         .select("t4_data_recebimento, lt_bruto_dias_uteis, lt_faturamento_dias_uteis, lt_logistica_dias_uteis")
         .eq("sku_codigo_omie", Number(skuDetalhe.sku_codigo_omie))
+        .not("lt_bruto_dias_uteis", "is", null)
         .order("t4_data_recebimento", { ascending: false })
         .limit(15);
       if (error) throw error;
@@ -196,8 +197,8 @@ export default function AdminReposicaoSlaFornecedor() {
             ? new Date(r.t4_data_recebimento).toLocaleDateString("pt-BR", { day: "2-digit", month: "2-digit" })
             : "",
           lt: r.lt_bruto_dias_uteis,
-          faturamento: r.lt_faturamento_dias_uteis,
-          logistica: r.lt_logistica_dias_uteis,
+          faturamento: r.lt_faturamento_dias_uteis ?? null,
+          logistica: r.lt_logistica_dias_uteis ?? null,
         }));
     },
   });
