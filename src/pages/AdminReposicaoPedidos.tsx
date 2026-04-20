@@ -76,6 +76,7 @@ interface PedidoItem {
   sku_codigo_omie: string;
   sku_descricao: string | null;
   estoque_atual: number | null;
+  estoque_minimo: number | null;
   ponto_pedido: number | null;
   estoque_maximo: number | null;
   qtde_sugerida: number;
@@ -84,6 +85,12 @@ interface PedidoItem {
   valor_linha: number | null;
   primeira_compra: boolean | null;
   ajustado_humano: boolean | null;
+}
+
+function getEstoqueZoneClass(estoque: number, minimo: number, pp: number): string {
+  if (estoque < minimo) return 'text-red-600 dark:text-red-400 font-semibold';
+  if (estoque <= pp) return 'text-amber-600 dark:text-amber-400 font-semibold';
+  return 'text-emerald-600 dark:text-emerald-400';
 }
 
 const EMPRESA = 'OBEN';
