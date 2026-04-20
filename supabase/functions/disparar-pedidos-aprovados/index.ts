@@ -236,40 +236,40 @@ async function processarPedido(
       .replace(/-/g, "");
     const numeroPedido = `AFI${ts}${String(pedido.id).slice(-4)}`.slice(0, 15);
 
-    const det = (items as ItemRow[]).map((it) => ({
-      produto: {
-        codigo_produto: String(it.sku_codigo_omie),
-        quantidade: Number(it.qtde_final),
-        valor_unitario: Number(it.preco_unitario),
-      },
+    const produtos_incluir = (items as ItemRow[]).map((it, idx) => ({
+      cCodIntItem: `ITEM${String(idx + 1).padStart(3, "0")}`,
+      nCodProd: Number(it.sku_codigo_omie),
+      nQtde: Number(it.qtde_final),
+      nValUnit: Number(it.preco_unitario),
     }));
 
     const param = {
-      cabecalho: {
-        codigo_cliente_fornecedor: fornecedor.codigo,
-        numero_pedido: numeroPedido,
-        data_previsao: diasUteisFromHoje(ltDias),
-        etapa: "10",
-        observacoes:
-          `Pedido gerado automaticamente pelo Afiação em ${
-            new Date().toISOString()
-          }${modo === "dry_run" ? " [DRY-RUN]" : ""}`,
+      cabecalho_incluir: {
+        cCodIntPed: `AFI-${pedido.id}`,
+        dDtPrevisao: diasUteisFromHoje(ltDias),
+        nCodFor: Number(fornecedor.codigo),
+        cNumPedido: numeroPedido,
+        cObs:
+          `Pedido gerado automaticamente pelo Afiação em ${new Date().toISOString()}${
+            modo === "dry_run" ? " [DRY-RUN]" : ""
+          }`,
+        cObsInt: modo === "dry_run" ? "DRY-RUN Afiação" : "Disparo Afiação",
       },
-      det,
+      produtos_incluir,
     };
 
-    // e. Chama Omie
+    // e. Chama Omie (método correto conforme doc: IncluirPedCompra)
     const resp = await omieCall(
       OMIE_PEDIDO_COMPRA_URL,
-      "IncluirPedidoCompra",
+      "IncluirPedCompra",
       param,
       creds,
     );
 
     const omieId = String(
-      resp?.codigo_pedido ?? resp?.codigo_pedido_integracao ?? "",
+      resp?.nCodPed ?? resp?.codigo_pedido ?? resp?.cCodIntPed ?? "",
     );
-    const omieNumero = String(resp?.numero_pedido ?? numeroPedido);
+    const omieNumero = String(resp?.cNumero ?? resp?.numero_pedido ?? numeroPedido);
 
     // f. Update pedido
     const novoStatus = modo === "dry_run" ? "disparado_simulado" : "disparado";
