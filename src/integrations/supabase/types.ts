@@ -575,8 +575,10 @@ export type Database = {
           atualizado_por: string | null
           custo_pedido_api: number
           custo_pedido_manual: number
+          email_notificacoes: string | null
           empresa: string
-          haircut_venda_custo: number
+          haircut_fallback_preco: number
+          modo_disparo_pedidos: string | null
           modo_pedido: string
           observacoes: string | null
           selic_anual: number
@@ -591,8 +593,10 @@ export type Database = {
           atualizado_por?: string | null
           custo_pedido_api: number
           custo_pedido_manual: number
+          email_notificacoes?: string | null
           empresa: string
-          haircut_venda_custo?: number
+          haircut_fallback_preco?: number
+          modo_disparo_pedidos?: string | null
           modo_pedido?: string
           observacoes?: string | null
           selic_anual: number
@@ -607,8 +611,10 @@ export type Database = {
           atualizado_por?: string | null
           custo_pedido_api?: number
           custo_pedido_manual?: number
+          email_notificacoes?: string | null
           empresa?: string
-          haircut_venda_custo?: number
+          haircut_fallback_preco?: number
+          modo_disparo_pedidos?: string | null
           modo_pedido?: string
           observacoes?: string | null
           selic_anual?: number
