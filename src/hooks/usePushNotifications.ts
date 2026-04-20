@@ -1,6 +1,7 @@
 import { useState, useEffect, useCallback } from 'react';
 import { supabase } from '@/integrations/supabase/client';
 import { useAuth } from '@/contexts/AuthContext';
+import { logger } from '@/lib/logger';
 
 // Status labels in Portuguese
 const ORDER_STATUS_LABELS: Record<string, string> = {
@@ -28,7 +29,7 @@ export function usePushNotifications() {
 
   const requestPermission = useCallback(async (): Promise<boolean> => {
     if (!isSupported) {
-      console.log('Push notifications not supported');
+      logger.info('Push notifications not supported on this device', { stage: 'request_permission' });
       return false;
     }
 
@@ -37,14 +38,14 @@ export function usePushNotifications() {
       setPermission(result);
       return result === 'granted';
     } catch (error) {
-      console.error('Error requesting notification permission:', error);
+      logger.warn('Failed to request notification permission', { stage: 'request_permission', error });
       return false;
     }
   }, [isSupported]);
 
   const showNotification = useCallback((title: string, options?: NotificationOptions) => {
     if (permission !== 'granted') {
-      console.log('Notification permission not granted');
+      logger.info('Notification permission not granted (skipping)', { stage: 'subscribe_topic', permission });
       return;
     }
 
@@ -66,7 +67,7 @@ export function usePushNotifications() {
         });
       }
     } catch (error) {
-      console.error('Error showing notification:', error);
+      logger.warn('Failed to show notification', { stage: 'register_token', error });
     }
   }, [permission]);
 
@@ -161,7 +162,7 @@ export function usePushNotifications() {
         });
       }
     } catch (error) {
-      console.error('Error checking sharpening alerts:', error);
+      logger.warn('Failed to check sharpening alerts', { stage: 'subscribe_topic', error });
     }
   }, [user, showNotification]);
 

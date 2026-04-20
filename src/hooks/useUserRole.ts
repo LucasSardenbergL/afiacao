@@ -1,6 +1,7 @@
 import { useState, useEffect } from 'react';
 import { useAuth } from '@/contexts/AuthContext';
 import { supabase } from '@/integrations/supabase/client';
+import { logger } from '@/lib/logger';
 
 export type AppRole = 'admin' | 'employee' | 'customer' | 'master';
 
@@ -35,13 +36,21 @@ export function useUserRole(): UseUserRoleReturn {
         .maybeSingle();
 
       if (error) {
-        console.error('Error fetching user role:', error);
+        logger.error('Failed to fetch user role (defaulting to customer)', {
+          stage: 'fetch_role',
+          userId: user.id,
+          error,
+        });
         setRole('customer');
       } else {
         setRole((data?.role as AppRole) || 'customer');
       }
     } catch (error) {
-      console.error('Error fetching user role:', error);
+      logger.error('Unexpected error fetching user role (defaulting to customer)', {
+        stage: 'fetch_role',
+        userId: user.id,
+        error,
+      });
       setRole('customer');
     } finally {
       setLoading(false);

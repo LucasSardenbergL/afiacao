@@ -4,6 +4,7 @@ import { Mic, Send, Loader2, Sparkles, X, Square, Wrench } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { cn } from '@/lib/utils';
 import { useToast } from '@/hooks/use-toast';
+import { logger } from '@/lib/logger';
 
 interface UserTool {
   id: string;
@@ -84,7 +85,7 @@ export function VoiceServiceInput({ userTools, onItemsIdentified, isLoading = fa
         mimeType = 'audio/ogg';
       }
 
-      console.log('Using MIME type:', mimeType);
+      logger.debug('Voice recording mime type selected', { stage: 'start_recording', mimeType });
       
       const mediaRecorder = new MediaRecorder(stream, { mimeType });
       mediaRecorderRef.current = mediaRecorder;
@@ -100,13 +101,13 @@ export function VoiceServiceInput({ userTools, onItemsIdentified, isLoading = fa
         
         if (audioChunksRef.current.length > 0) {
           const audioBlob = new Blob(audioChunksRef.current, { type: mimeType });
-          console.log('Audio blob created:', audioBlob.size, 'bytes');
+          logger.debug('Voice audio blob created', { stage: 'start_recording', sizeBytes: audioBlob.size });
           await transcribeAudio(audioBlob);
         }
       };
 
       mediaRecorder.onerror = (event) => {
-        console.error('MediaRecorder error:', event);
+        logger.error('MediaRecorder runtime error', { stage: 'start_recording', event });
         toast({
           title: 'Erro na gravação',
           description: 'Ocorreu um erro ao gravar o áudio.',
@@ -123,12 +124,14 @@ export function VoiceServiceInput({ userTools, onItemsIdentified, isLoading = fa
         setRecordingDuration(prev => prev + 1);
       }, 1000);
 
-      console.log('Recording started');
+      logger.debug('Voice recording started', { stage: 'start_recording' });
     } catch (error) {
-      console.error('Error starting recording:', error);
-      
       const err = error as { name?: string; message?: string };
-      
+      if (err.name === 'NotAllowedError') {
+        logger.info('Microphone permission denied by user', { stage: 'request_mic_permission' });
+      } else {
+        logger.error('Failed to start voice recording', { stage: 'request_mic_permission', errorName: err.name, error });
+      }
       if (err.name === 'NotAllowedError') {
         toast({
           title: 'Permissão negada',

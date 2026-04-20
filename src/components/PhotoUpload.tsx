@@ -2,6 +2,7 @@ import { useState, useRef } from 'react';
 import { Button } from '@/components/ui/button';
 import { supabase } from '@/integrations/supabase/client';
 import { useToast } from '@/hooks/use-toast';
+import { logger } from '@/lib/logger';
 import { Camera, X, Loader2, Image as ImageIcon } from 'lucide-react';
 import { cn } from '@/lib/utils';
 
@@ -66,7 +67,12 @@ export function PhotoUpload({ photos, onPhotosChange, userId, maxPhotos = 5, dis
           .upload(fileName, file);
 
         if (error) {
-          console.error('Error uploading photo:', error);
+          logger.error('Failed to upload photo', {
+            stage: 'upload',
+            fileSize: file.size,
+            fileType: file.type,
+            error,
+          });
           toast({
             title: 'Erro ao enviar foto',
             description: error.message,
@@ -91,7 +97,7 @@ export function PhotoUpload({ photos, onPhotosChange, userId, maxPhotos = 5, dis
         });
       }
     } catch (error) {
-      console.error('Error uploading photos:', error);
+      logger.error('Unexpected error uploading photos', { stage: 'upload', error });
       toast({
         title: 'Erro ao enviar fotos',
         description: 'Tente novamente',
@@ -116,7 +122,10 @@ export function PhotoUpload({ photos, onPhotosChange, userId, maxPhotos = 5, dis
       }
       onPhotosChange(photos.filter(p => p !== photoUrl));
     } catch (error) {
-      console.error('Error removing photo:', error);
+      logger.warn('Failed to remove photo from storage (removing from UI anyway)', {
+        stage: 'persist_url',
+        error,
+      });
       // Still remove from UI even if storage delete fails
       onPhotosChange(photos.filter(p => p !== photoUrl));
     }
