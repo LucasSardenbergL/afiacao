@@ -1,6 +1,9 @@
-// @ts-nocheck
 import { supabase } from "@/integrations/supabase/client";
 import type { Company } from "@/contexts/CompanyContext";
+import type {
+  FinAgingPagarView,
+  FinAgingReceberView,
+} from "./financeiroTypes";
 
 // ═══════════════ TYPES ═══════════════
 
@@ -103,6 +106,45 @@ export interface FluxoCaixaDiario {
   saldo_realizado: number;
 }
 
+const EMPTY_AGING: AgingData = {
+  a_vencer_qtd: 0,
+  a_vencer_valor: 0,
+  vencido_1_30_qtd: 0,
+  vencido_1_30_valor: 0,
+  vencido_31_60_qtd: 0,
+  vencido_31_60_valor: 0,
+  vencido_61_90_qtd: 0,
+  vencido_61_90_valor: 0,
+  vencido_90_plus_qtd: 0,
+  vencido_90_plus_valor: 0,
+};
+
+const AGING_KEYS = Object.keys(EMPTY_AGING) as (keyof AgingData)[];
+
+type AgingViewRow = FinAgingPagarView | FinAgingReceberView;
+
+// Both aging views share the same numeric columns; this helper consolidates
+// nullable view rows into the strict AgingData shape.
+function consolidateAging(rows: AgingViewRow[]): AgingData {
+  const out: AgingData = { ...EMPTY_AGING };
+  for (const row of rows) {
+    for (const key of AGING_KEYS) {
+      out[key] += row[key] ?? 0;
+    }
+  }
+  return out;
+}
+
+function pickAgingForCompany(rows: AgingViewRow[], company: Company): AgingData {
+  const row = rows.find((r) => r.company === company);
+  if (!row) return { ...EMPTY_AGING };
+  const out: AgingData = { ...EMPTY_AGING };
+  for (const key of AGING_KEYS) {
+    out[key] = row[key] ?? 0;
+  }
+  return out;
+}
+
 // ═══════════════ SYNC ACTIONS ═══════════════
 
 export async function triggerFinanceiroSync(
@@ -133,43 +175,49 @@ export async function getResumoFinanceiro(companies: Company[]): Promise<Record<
       .from("fin_contas_correntes")
       .select("descricao, saldo_atual, banco")
       .eq("company", company)
-      .eq("ativo", true) as any;
+      .eq("ativo", true);
 
     // Totais a receber aberto (Omie uses: A VENCER, ATRASADO, VENCE HOJE)
     const { data: crAberto } = await supabase
       .from("fin_contas_receber")
       .select("valor_documento, valor_recebido")
       .eq("company", company)
-      .in("status_titulo", ["A VENCER", "ATRASADO", "VENCE HOJE"]) as any;
+      .in("status_titulo", ["A VENCER", "ATRASADO", "VENCE HOJE"]);
 
     // Totais a pagar aberto
     const { data: cpAberto } = await supabase
       .from("fin_contas_pagar")
       .select("valor_documento, valor_pago")
       .eq("company", company)
-      .in("status_titulo", ["A VENCER", "ATRASADO", "VENCE HOJE"]) as any;
+      .in("status_titulo", ["A VENCER", "ATRASADO", "VENCE HOJE"]);
 
     // Vencidos (ATRASADO in Omie)
     const { data: crVencido } = await supabase
       .from("fin_contas_receber")
       .select("valor_documento, valor_recebido")
       .eq("company", company)
-      .eq("status_titulo", "ATRASADO") as any;
+      .eq("status_titulo", "ATRASADO");
 
     const { data: cpVencido } = await supabase
       .from("fin_contas_pagar")
       .select("valor_documento, valor_pago")
       .eq("company", company)
-      .eq("status_titulo", "ATRASADO") as any;
+      .eq("status_titulo", "ATRASADO");
 
-    const sumCR = (arr: any[] | null) =>
-      (arr || []).reduce((s: number, r: any) => s + ((r.valor_documento || 0) - (r.valor_recebido || 0)), 0);
-    const sumCP = (arr: any[] | null) =>
-      (arr || []).reduce((s: number, r: any) => s + ((r.valor_documento || 0) - (r.valor_pago || 0)), 0);
+    const sumCR = (arr: { valor_documento: number | null; valor_recebido: number | null }[] | null) =>
+      (arr || []).reduce((s, r) => s + ((r.valor_documento || 0) - (r.valor_recebido || 0)), 0);
+    const sumCP = (arr: { valor_documento: number | null; valor_pago: number | null }[] | null) =>
+      (arr || []).reduce((s, r) => s + ((r.valor_documento || 0) - (r.valor_pago || 0)), 0);
+
+    const contasNorm = (contas || []).map((c) => ({
+      descricao: c.descricao ?? "",
+      saldo_atual: c.saldo_atual ?? 0,
+      banco: c.banco ?? "",
+    }));
 
     resumo[company] = {
-      contas_correntes: contas || [],
-      saldo_total_cc: (contas || []).reduce((s: number, c: any) => s + (c.saldo_atual || 0), 0),
+      contas_correntes: contasNorm,
+      saldo_total_cc: contasNorm.reduce((s, c) => s + c.saldo_atual, 0),
       total_a_receber: sumCR(crAberto),
       total_a_pagar: sumCP(cpAberto),
       total_vencido_receber: sumCR(crVencido),
@@ -188,7 +236,7 @@ export async function getContasPagar(
   let query = supabase
     .from("fin_contas_pagar")
     .select("*")
-    .order("data_vencimento", { ascending: true }) as any;
+    .order("data_vencimento", { ascending: true });
 
   if (company !== 'all') query = query.eq("company", company);
   if (filtros?.status) query = query.eq("status_titulo", filtros.status);
@@ -198,7 +246,7 @@ export async function getContasPagar(
 
   const { data, error } = await query;
   if (error) throw error;
-  return data || [];
+  return (data || []) as unknown as FinContaPagar[];
 }
 
 export async function getContasReceber(
@@ -208,7 +256,7 @@ export async function getContasReceber(
   let query = supabase
     .from("fin_contas_receber")
     .select("*")
-    .order("data_vencimento", { ascending: true }) as any;
+    .order("data_vencimento", { ascending: true });
 
   if (company !== 'all') query = query.eq("company", company);
   if (filtros?.status) query = query.eq("status_titulo", filtros.status);
@@ -218,76 +266,27 @@ export async function getContasReceber(
 
   const { data, error } = await query;
   if (error) throw error;
-  return data || [];
+  return (data || []) as unknown as FinContaReceber[];
 }
 
 export async function getAgingReceber(company: Company | 'all'): Promise<AgingData> {
   const { data, error } = await supabase
-    .from("fin_aging_receber" as any)
-    .select("*")
-    .then(({ data, error }: any) => {
-      if (error) return { data: null, error };
-      if (company === 'all') {
-        // Consolidar todas as empresas
-        const consolidated: AgingData = {
-          a_vencer_qtd: 0, a_vencer_valor: 0,
-          vencido_1_30_qtd: 0, vencido_1_30_valor: 0,
-          vencido_31_60_qtd: 0, vencido_31_60_valor: 0,
-          vencido_61_90_qtd: 0, vencido_61_90_valor: 0,
-          vencido_90_plus_qtd: 0, vencido_90_plus_valor: 0,
-        };
-        for (const row of (data || [])) {
-          for (const key of Object.keys(consolidated) as (keyof AgingData)[]) {
-            consolidated[key] += row[key] || 0;
-          }
-        }
-        return { data: consolidated, error: null };
-      }
-      const row = (data || []).find((r: any) => r.company === company);
-      return { data: row || null, error: null };
-    });
+    .from("fin_aging_receber")
+    .select("*");
 
-  return data || {
-    a_vencer_qtd: 0, a_vencer_valor: 0,
-    vencido_1_30_qtd: 0, vencido_1_30_valor: 0,
-    vencido_31_60_qtd: 0, vencido_31_60_valor: 0,
-    vencido_61_90_qtd: 0, vencido_61_90_valor: 0,
-    vencido_90_plus_qtd: 0, vencido_90_plus_valor: 0,
-  };
+  if (error || !data) return { ...EMPTY_AGING };
+  if (company === 'all') return consolidateAging(data);
+  return pickAgingForCompany(data, company);
 }
 
 export async function getAgingPagar(company: Company | 'all'): Promise<AgingData> {
   const { data, error } = await supabase
-    .from("fin_aging_pagar" as any)
-    .select("*")
-    .then(({ data, error }: any) => {
-      if (error) return { data: null, error };
-      if (company === 'all') {
-        const consolidated: AgingData = {
-          a_vencer_qtd: 0, a_vencer_valor: 0,
-          vencido_1_30_qtd: 0, vencido_1_30_valor: 0,
-          vencido_31_60_qtd: 0, vencido_31_60_valor: 0,
-          vencido_61_90_qtd: 0, vencido_61_90_valor: 0,
-          vencido_90_plus_qtd: 0, vencido_90_plus_valor: 0,
-        };
-        for (const row of (data || [])) {
-          for (const key of Object.keys(consolidated) as (keyof AgingData)[]) {
-            consolidated[key] += row[key] || 0;
-          }
-        }
-        return { data: consolidated, error: null };
-      }
-      const row = (data || []).find((r: any) => r.company === company);
-      return { data: row || null, error: null };
-    });
+    .from("fin_aging_pagar")
+    .select("*");
 
-  return data || {
-    a_vencer_qtd: 0, a_vencer_valor: 0,
-    vencido_1_30_qtd: 0, vencido_1_30_valor: 0,
-    vencido_31_60_qtd: 0, vencido_31_60_valor: 0,
-    vencido_61_90_qtd: 0, vencido_61_90_valor: 0,
-    vencido_90_plus_qtd: 0, vencido_90_plus_valor: 0,
-  };
+  if (error || !data) return { ...EMPTY_AGING };
+  if (company === 'all') return consolidateAging(data);
+  return pickAgingForCompany(data, company);
 }
 
 export async function getDRE(
@@ -300,7 +299,7 @@ export async function getDRE(
     .select("*")
     .eq("company", company)
     .eq("ano", ano)
-    .order("mes", { ascending: true }) as any;
+    .order("mes", { ascending: true });
 
   if (meses && meses.length > 0) {
     query = query.in("mes", meses);
@@ -308,7 +307,7 @@ export async function getDRE(
 
   const { data, error } = await query;
   if (error) throw error;
-  return data || [];
+  return (data || []) as unknown as FinDRE[];
 }
 
 export async function getDREConsolidado(
@@ -329,28 +328,28 @@ export async function getFluxoCaixa(
   dataFim: string
 ): Promise<FluxoCaixaDiario[]> {
   // Buscar CR e CP para projetar fluxo
-  const crQuery = supabase
+  let crQuery = supabase
     .from("fin_contas_receber")
     .select("data_vencimento, data_recebimento, valor_documento, valor_recebido, status_titulo")
     .gte("data_vencimento", dataInicio)
-    .lte("data_vencimento", dataFim) as any;
-  
-  const cpQuery = supabase
+    .lte("data_vencimento", dataFim);
+
+  let cpQuery = supabase
     .from("fin_contas_pagar")
     .select("data_vencimento, data_pagamento, valor_documento, valor_pago, status_titulo")
     .gte("data_vencimento", dataInicio)
-    .lte("data_vencimento", dataFim) as any;
+    .lte("data_vencimento", dataFim);
 
   if (company !== 'all') {
-    crQuery.eq("company", company);
-    cpQuery.eq("company", company);
+    crQuery = crQuery.eq("company", company);
+    cpQuery = cpQuery.eq("company", company);
   }
 
   const [{ data: crData }, { data: cpData }] = await Promise.all([crQuery, cpQuery]);
 
   // Agrupar por dia
   const fluxoMap = new Map<string, FluxoCaixaDiario>();
-  
+
   const ensureDay = (d: string): FluxoCaixaDiario => {
     if (!fluxoMap.has(d)) {
       fluxoMap.set(d, {
@@ -369,7 +368,7 @@ export async function getFluxoCaixa(
   for (const cr of crData || []) {
     if (cr.data_vencimento) {
       const day = ensureDay(cr.data_vencimento);
-      if (['A VENCER', 'ATRASADO', 'VENCE HOJE'].includes(cr.status_titulo)) {
+      if (cr.status_titulo && ['A VENCER', 'ATRASADO', 'VENCE HOJE'].includes(cr.status_titulo)) {
         day.entradas_previstas += cr.valor_documento || 0;
       }
     }
@@ -382,7 +381,7 @@ export async function getFluxoCaixa(
   for (const cp of cpData || []) {
     if (cp.data_vencimento) {
       const day = ensureDay(cp.data_vencimento);
-      if (['A VENCER', 'ATRASADO', 'VENCE HOJE'].includes(cp.status_titulo)) {
+      if (cp.status_titulo && ['A VENCER', 'ATRASADO', 'VENCE HOJE'].includes(cp.status_titulo)) {
         day.saidas_previstas += cp.valor_documento || 0;
       }
     }
@@ -418,7 +417,7 @@ export async function getTopInadimplentes(
   let query = supabase
     .from("fin_contas_receber")
     .select("nome_cliente, cnpj_cpf, valor_documento, valor_recebido")
-    .eq("status_titulo", "ATRASADO") as any;
+    .eq("status_titulo", "ATRASADO");
 
   if (company !== 'all') query = query.eq("company", company);
 
@@ -430,7 +429,12 @@ export async function getTopInadimplentes(
   for (const r of data || []) {
     const key = r.cnpj_cpf || r.nome_cliente || 'Desconhecido';
     const saldo = (r.valor_documento || 0) - (r.valor_recebido || 0);
-    const existing = map.get(key) || { nome: r.nome_cliente, cnpj: r.cnpj_cpf, total: 0, qtd: 0 };
+    const existing = map.get(key) || {
+      nome: r.nome_cliente ?? '',
+      cnpj: r.cnpj_cpf ?? '',
+      total: 0,
+      qtd: 0,
+    };
     existing.total += saldo;
     existing.qtd += 1;
     map.set(key, existing);
@@ -487,21 +491,21 @@ export async function getCapitalDeGiro(company: Company | 'all'): Promise<Capita
       .from("fin_contas_receber")
       .select("valor_documento, valor_recebido, data_emissao, data_vencimento, nome_cliente")
       .eq("company", co)
-      .in("status_titulo", ["A VENCER", "ATRASADO", "VENCE HOJE"]) as any;
+      .in("status_titulo", ["A VENCER", "ATRASADO", "VENCE HOJE"]);
 
     // CP aberto
     const { data: cpAberto } = await supabase
       .from("fin_contas_pagar")
       .select("valor_documento, valor_pago, data_emissao, data_vencimento, nome_fornecedor")
       .eq("company", co)
-      .in("status_titulo", ["A VENCER", "ATRASADO", "VENCE HOJE"]) as any;
+      .in("status_titulo", ["A VENCER", "ATRASADO", "VENCE HOJE"]);
 
     // Saldo CC
     const { data: ccs } = await supabase
       .from("fin_contas_correntes")
       .select("saldo_atual")
       .eq("company", co)
-      .eq("ativo", true) as any;
+      .eq("ativo", true);
 
     // CR recebidos últimos 90 dias (para calcular PMR)
     const d90ago = new Date();
@@ -511,7 +515,7 @@ export async function getCapitalDeGiro(company: Company | 'all'): Promise<Capita
       .select("data_emissao, data_recebimento, valor_recebido")
       .eq("company", co)
       .in("status_titulo", ["RECEBIDO", "LIQUIDADO"])
-      .gte("data_recebimento", d90ago.toISOString().slice(0, 10)) as any;
+      .gte("data_recebimento", d90ago.toISOString().slice(0, 10));
 
     // CP pagos últimos 90 dias (para calcular PMP)
     const { data: cpPagos } = await supabase
@@ -519,21 +523,27 @@ export async function getCapitalDeGiro(company: Company | 'all'): Promise<Capita
       .select("data_emissao, data_pagamento, valor_pago")
       .eq("company", co)
       .in("status_titulo", ["PAGO", "LIQUIDADO"])
-      .gte("data_pagamento", d90ago.toISOString().slice(0, 10)) as any;
+      .gte("data_pagamento", d90ago.toISOString().slice(0, 10));
 
-    const calcSaldoCR = (arr: any[]) => (arr || []).reduce((s: number, r: any) => s + ((r.valor_documento || 0) - (r.valor_recebido || 0)), 0);
-    const calcSaldoCP = (arr: any[]) => (arr || []).reduce((s: number, r: any) => s + ((r.valor_documento || 0) - (r.valor_pago || 0)), 0);
-    const totalCR = calcSaldoCR(crAberto);
-    const totalCP = calcSaldoCP(cpAberto);
-    const totalCC = (ccs || []).reduce((s: number, c: any) => s + (c.saldo_atual || 0), 0);
+    type CrRow = { valor_documento: number | null; valor_recebido: number | null };
+    type CpRow = { valor_documento: number | null; valor_pago: number | null };
+    const calcSaldoCR = (arr: CrRow[] | null) =>
+      (arr || []).reduce((s, r) => s + ((r.valor_documento || 0) - (r.valor_recebido || 0)), 0);
+    const calcSaldoCP = (arr: CpRow[] | null) =>
+      (arr || []).reduce((s, r) => s + ((r.valor_documento || 0) - (r.valor_pago || 0)), 0);
+
+    const totalCR = calcSaldoCR(crAberto as CrRow[] | null);
+    const totalCP = calcSaldoCP(cpAberto as CpRow[] | null);
+    const totalCC = (ccs || []).reduce((s, c) => s + (c.saldo_atual || 0), 0);
 
     // PMR: média ponderada de dias entre emissão e recebimento
     let pmrNumerator = 0, pmrDenominator = 0;
     for (const r of crRecebidos || []) {
-      if (r.data_emissao && r.data_recebimento && r.valor_recebido > 0) {
+      const valor = r.valor_recebido ?? 0;
+      if (r.data_emissao && r.data_recebimento && valor > 0) {
         const dias = Math.max(0, (new Date(r.data_recebimento).getTime() - new Date(r.data_emissao).getTime()) / 86400000);
-        pmrNumerator += dias * r.valor_recebido;
-        pmrDenominator += r.valor_recebido;
+        pmrNumerator += dias * valor;
+        pmrDenominator += valor;
       }
     }
     const pmr = pmrDenominator > 0 ? Math.round(pmrNumerator / pmrDenominator) : 0;
@@ -541,10 +551,11 @@ export async function getCapitalDeGiro(company: Company | 'all'): Promise<Capita
     // PMP: média ponderada de dias entre emissão e pagamento
     let pmpNumerator = 0, pmpDenominator = 0;
     for (const p of cpPagos || []) {
-      if (p.data_emissao && p.data_pagamento && p.valor_pago > 0) {
+      const valor = p.valor_pago ?? 0;
+      if (p.data_emissao && p.data_pagamento && valor > 0) {
         const dias = Math.max(0, (new Date(p.data_pagamento).getTime() - new Date(p.data_emissao).getTime()) / 86400000);
-        pmpNumerator += dias * p.valor_pago;
-        pmpDenominator += p.valor_pago;
+        pmpNumerator += dias * valor;
+        pmpDenominator += valor;
       }
     }
     const pmp = pmpDenominator > 0 ? Math.round(pmpNumerator / pmpDenominator) : 0;
@@ -568,11 +579,11 @@ export async function getCapitalDeGiro(company: Company | 'all'): Promise<Capita
 
     // Projeção 30 dias: CR vencendo nos próx 30d + CP vencendo nos próx 30d
     const entradas30 = (crAberto || [])
-      .filter((r: any) => r.data_vencimento >= today && r.data_vencimento <= in30)
-      .reduce((s: number, r: any) => s + ((r.valor_documento || 0) - (r.valor_recebido || 0)), 0);
+      .filter((r) => r.data_vencimento && r.data_vencimento >= today && r.data_vencimento <= in30)
+      .reduce((s, r) => s + ((r.valor_documento || 0) - (r.valor_recebido || 0)), 0);
     const saidas30 = (cpAberto || [])
-      .filter((p: any) => p.data_vencimento >= today && p.data_vencimento <= in30)
-      .reduce((s: number, p: any) => s + ((p.valor_documento || 0) - (p.valor_pago || 0)), 0);
+      .filter((p) => p.data_vencimento && p.data_vencimento >= today && p.data_vencimento <= in30)
+      .reduce((s, p) => s + ((p.valor_documento || 0) - (p.valor_pago || 0)), 0);
 
     results.push({
       company: co,
@@ -623,20 +634,26 @@ export async function getCategoryMappings(
   company: Company | '_default'
 ): Promise<FinCategoriaDREMapping[]> {
   const { data, error } = await supabase
-    .from("fin_categoria_dre_mapping" as any)
+    .from("fin_categoria_dre_mapping")
     .select("*")
     .in("company", company === '_default' ? ['_default'] : [company, '_default'])
     .order("omie_codigo", { ascending: true });
 
   if (error) throw error;
-  return data || [];
+  return (data || []).map((row) => ({
+    id: row.id,
+    company: row.company,
+    omie_codigo: row.omie_codigo,
+    dre_linha: row.dre_linha,
+    notas: row.notas,
+  }));
 }
 
 export async function upsertCategoryMapping(
   mapping: Omit<FinCategoriaDREMapping, 'id'>
 ): Promise<void> {
   const { error } = await supabase
-    .from("fin_categoria_dre_mapping" as any)
+    .from("fin_categoria_dre_mapping")
     .upsert(
       { ...mapping, updated_at: new Date().toISOString() },
       { onConflict: "company,omie_codigo" }
@@ -646,7 +663,7 @@ export async function upsertCategoryMapping(
 
 export async function deleteCategoryMapping(id: string): Promise<void> {
   const { error } = await supabase
-    .from("fin_categoria_dre_mapping" as any)
+    .from("fin_categoria_dre_mapping")
     .delete()
     .eq("id", id);
   if (error) throw error;
@@ -662,10 +679,14 @@ export async function getCategoriasOmie(company: Company): Promise<{
     .select("omie_codigo, descricao, tipo")
     .eq("company", company)
     .eq("ativo", true)
-    .order("omie_codigo", { ascending: true }) as any;
+    .order("omie_codigo", { ascending: true });
 
   if (error) throw error;
-  return data || [];
+  return (data || []).map((c) => ({
+    omie_codigo: c.omie_codigo,
+    descricao: c.descricao,
+    tipo: c.tipo ?? '',
+  }));
 }
 
 // ═══════════════ EXPORT CSV ═══════════════
@@ -712,7 +733,7 @@ export function exportContasReceberCSV(data: FinContaReceber[]): string {
 
 export function exportDRECSV(data: FinDRE[]): string {
   const meses = ['Jan', 'Fev', 'Mar', 'Abr', 'Mai', 'Jun', 'Jul', 'Ago', 'Set', 'Out', 'Nov', 'Dez'];
-  const lines = [
+  const lines: (keyof FinDRE)[] = [
     'receita_bruta', 'deducoes', 'receita_liquida', 'cmv', 'lucro_bruto',
     'despesas_operacionais', 'despesas_administrativas', 'despesas_comerciais',
     'despesas_financeiras', 'receitas_financeiras', 'resultado_operacional',
@@ -720,8 +741,11 @@ export function exportDRECSV(data: FinDRE[]): string {
   ];
   const header = ['Linha', ...data.map(d => `${meses[d.mes - 1]}/${d.ano}`)];
   const rows = lines.map(field => [
-    field,
-    ...data.map(d => (d as any)[field] || 0)
+    field as string,
+    ...data.map(d => {
+      const v = d[field];
+      return typeof v === 'number' ? v : 0;
+    })
   ]);
   return [toCsvRow(header), ...rows.map(toCsvRow)].join('\n');
 }
@@ -747,14 +771,15 @@ export async function getLastSyncTime(): Promise<string | null> {
 
   for (const table of tables) {
     const { data } = await supabase
-      .from(table as any)
+      .from(table)
       .select('updated_at')
       .order('updated_at', { ascending: false })
       .limit(1);
 
-    if (data?.[0]?.updated_at) {
-      if (!latest || data[0].updated_at > latest) {
-        latest = data[0].updated_at;
+    const updatedAt = data?.[0]?.updated_at;
+    if (updatedAt) {
+      if (!latest || updatedAt > latest) {
+        latest = updatedAt;
       }
     }
   }
