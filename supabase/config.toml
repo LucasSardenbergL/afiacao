@@ -95,3 +95,6 @@ verify_jwt = false
 
 [functions.omie-sync-estoque]
 verify_jwt = false
+
+[functions.omie-sync-metadados]
+verify_jwt = false

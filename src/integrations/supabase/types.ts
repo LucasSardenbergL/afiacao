@@ -676,6 +676,33 @@ export type Database = {
         }
         Relationships: []
       }
+      familia_nao_comprada: {
+        Row: {
+          criado_em: string | null
+          empresa: string
+          familia: string
+          id: number
+          motivo: string
+          observacoes: string | null
+        }
+        Insert: {
+          criado_em?: string | null
+          empresa: string
+          familia: string
+          id?: number
+          motivo: string
+          observacoes?: string | null
+        }
+        Update: {
+          criado_em?: string | null
+          empresa?: string
+          familia?: string
+          id?: number
+          motivo?: string
+          observacoes?: string | null
+        }
+        Relationships: []
+      }
       farmer_agenda: {
         Row: {
           agenda_date: string
@@ -5690,6 +5717,7 @@ export type Database = {
           ponto_pedido_omie: number | null
           sku_codigo_omie: number
           sku_descricao: string | null
+          tipo_reposicao: string | null
           ultima_aplicacao_omie: string | null
           ultima_atualizacao_calculo: string | null
           valor_vendido_90d: number | null
@@ -5741,6 +5769,7 @@ export type Database = {
           ponto_pedido_omie?: number | null
           sku_codigo_omie: number
           sku_descricao?: string | null
+          tipo_reposicao?: string | null
           ultima_aplicacao_omie?: string | null
           ultima_atualizacao_calculo?: string | null
           valor_vendido_90d?: number | null
@@ -5792,6 +5821,7 @@ export type Database = {
           ponto_pedido_omie?: number | null
           sku_codigo_omie?: number
           sku_descricao?: string | null
+          tipo_reposicao?: string | null
           ultima_aplicacao_omie?: string | null
           ultima_atualizacao_calculo?: string | null
           valor_vendido_90d?: number | null

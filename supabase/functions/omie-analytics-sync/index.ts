@@ -167,36 +167,38 @@ async function syncProducts(db: ReturnType<typeof createClient>, account: OmieAc
       const produtos = result.produto_servico_cadastro || [];
 
       if (account === "vendas" || account === "colacor_vendas") {
-        // Upsert to omie_products (existing table)
-        const rows = produtos
-          .filter((p: any) => p.inativo !== "S")
-          .map((p: any) => ({
-            omie_codigo_produto: p.codigo_produto,
-            omie_codigo_produto_integracao: p.codigo_produto_integracao || null,
-            codigo: p.codigo || `PROD-${p.codigo_produto}`,
-            descricao: p.descricao || "Sem descrição",
-            unidade: p.unidade || "UN",
-            ncm: p.ncm || null,
-            valor_unitario: p.valor_unitario || 0,
-            estoque: p.quantidade_estoque || 0,
-            ativo: true,
-            account,
-            imagem_url: p.imagens?.[0]?.url_imagem || null,
-            familia: p.descricao_familia || null,
-            subfamilia: p.descricao_subfamilia || null,
-            metadata: {
-              marca: p.marca,
-              modelo: p.modelo,
-              peso_bruto: p.peso_bruto,
-              peso_liq: p.peso_liq,
-              descricao_familia: p.descricao_familia,
-              cfop: p.cfop,
-            },
-            updated_at: new Date().toISOString(),
-          }));
+        // UPSERT — INCLUI inativos para refletir o flag `ativo` corretamente
+        const acctValue = account === "colacor_vendas" ? "colacor" : "oben";
+        const rows = produtos.map((p: any) => ({
+          omie_codigo_produto: p.codigo_produto,
+          omie_codigo_produto_integracao: p.codigo_produto_integracao || null,
+          codigo: p.codigo || `PROD-${p.codigo_produto}`,
+          descricao: p.descricao || "Sem descrição",
+          unidade: p.unidade || "UN",
+          ncm: p.ncm || null,
+          valor_unitario: p.valor_unitario || 0,
+          estoque: p.quantidade_estoque || 0,
+          ativo: p.inativo !== "S",
+          account: acctValue,
+          imagem_url: p.imagens?.[0]?.url_imagem || null,
+          familia: p.descricao_familia || null,
+          subfamilia: p.descricao_subfamilia || null,
+          metadata: {
+            marca: p.marca,
+            modelo: p.modelo,
+            peso_bruto: p.peso_bruto,
+            peso_liq: p.peso_liq,
+            descricao_familia: p.descricao_familia,
+            cfop: p.cfop,
+            inativo_omie: p.inativo,
+          },
+          updated_at: new Date().toISOString(),
+        }));
 
         if (rows.length > 0) {
-          const { error } = await db.from("omie_products").upsert(rows, { onConflict: "omie_codigo_produto,account" });
+          const { error } = await db
+            .from("omie_products")
+            .upsert(rows, { onConflict: "omie_codigo_produto,account" });
           if (error) console.error(`[Sync] Erro upsert produtos p${pagina}:`, error);
           else totalSynced += rows.length;
         }
