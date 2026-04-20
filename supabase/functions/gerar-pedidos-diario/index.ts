@@ -14,6 +14,7 @@ const corsHeaders = {
 
 const RESEND_URL = "https://api.resend.com/emails";
 const FROM_EMAIL = "Reposicao OBEN <onboarding@resend.dev>";
+const APP_URL = Deno.env.get("APP_URL") ?? "https://steu.lovable.app";
 
 interface RpcResult {
   pedidos_gerados: number;
@@ -60,77 +61,128 @@ function buildEmailHtml(
 ): string {
   const bloqueados = pedidos.filter((p) => p.status === "bloqueado_guardrail");
   const pendentes = pedidos.filter((p) => p.status === "pendente_aprovacao");
+  const listaUrl = `${APP_URL}/admin/reposicao/pedidos`;
 
   const banner = bloqueados.length > 0
-    ? `<div style="background:#fee;border-left:4px solid #ef4444;padding:12px;margin-bottom:16px;color:#991b1b;">
-         <strong>⚠ ${bloqueados.length} pedido(s) bloqueado(s) por guardrail.</strong> Revise antes do disparo.
+    ? `<div style="background:#fee2e2;border-left:4px solid #ef4444;padding:14px 16px;margin:0 0 20px;color:#991b1b;border-radius:6px;">
+         <strong style="font-size:14px;">⚠ ${bloqueados.length} pedido(s) bloqueado(s) por guardrail.</strong>
+         <div style="font-size:12px;margin-top:4px;opacity:0.9;">Revise antes do disparo das 10:00 BRT.</div>
        </div>`
     : "";
 
-  const linhas = pedidos
-    .map(
-      (p) => `
-        <tr>
-          <td style="padding:8px;border-bottom:1px solid #e5e7eb;">${statusBadge(p.status)}</td>
-          <td style="padding:8px;border-bottom:1px solid #e5e7eb;">${p.fornecedor_nome ?? "—"}<br><small style="color:#6b7280;">${p.grupo_codigo ?? ""}</small></td>
-          <td style="padding:8px;border-bottom:1px solid #e5e7eb;text-align:right;">${p.num_skus}</td>
-          <td style="padding:8px;border-bottom:1px solid #e5e7eb;text-align:right;font-weight:600;">${fmtBRL(p.valor_total)}</td>
-          <td style="padding:8px;border-bottom:1px solid #e5e7eb;font-size:11px;color:#991b1b;">${p.mensagem_bloqueio ?? ""}</td>
-        </tr>`,
-    )
-    .join("");
+  const cardFor = (p: PedidoResumo): string => {
+    const isBloqueado = p.status === "bloqueado_guardrail";
+    const isPendente = p.status === "pendente_aprovacao";
+    const borderColor = isBloqueado
+      ? "#ef4444"
+      : isPendente
+      ? "#f59e0b"
+      : "#e5e7eb";
+    const bgColor = isBloqueado
+      ? "#fef2f2"
+      : "#ffffff";
+    const url = `${APP_URL}/admin/reposicao/pedidos?id=${p.id}`;
+    const motivoBloqueio = p.mensagem_bloqueio
+      ? `<div style="margin-top:10px;padding:8px 10px;background:#fff;border-radius:4px;font-size:11px;color:#991b1b;border:1px solid #fecaca;">
+           <strong>Motivo:</strong> ${p.mensagem_bloqueio}
+         </div>`
+      : "";
+
+    return `
+<table role="presentation" cellpadding="0" cellspacing="0" border="0" style="width:100%;margin:0 0 12px;border-collapse:separate;">
+  <tr>
+    <td>
+      <a href="${url}" style="display:block;text-decoration:none;color:inherit;background:${bgColor};border:1px solid ${borderColor};border-left:4px solid ${borderColor};border-radius:8px;padding:14px 16px;">
+        <table role="presentation" cellpadding="0" cellspacing="0" border="0" style="width:100%;">
+          <tr>
+            <td style="vertical-align:top;">
+              <div style="font-size:15px;font-weight:600;color:#111827;line-height:1.3;">${p.fornecedor_nome ?? "—"}</div>
+              <div style="font-size:11px;color:#6b7280;margin-top:2px;">Grupo: ${p.grupo_codigo ?? "—"}</div>
+            </td>
+            <td style="text-align:right;vertical-align:top;white-space:nowrap;">
+              ${statusBadge(p.status)}
+            </td>
+          </tr>
+          <tr>
+            <td colspan="2" style="padding-top:12px;">
+              <table role="presentation" cellpadding="0" cellspacing="0" border="0" style="width:100%;">
+                <tr>
+                  <td style="font-size:12px;color:#6b7280;">
+                    <strong style="color:#111827;font-size:14px;">${p.num_skus}</strong> SKUs
+                  </td>
+                  <td style="text-align:right;font-size:14px;font-weight:700;color:#111827;">
+                    ${fmtBRL(p.valor_total)}
+                  </td>
+                </tr>
+              </table>
+            </td>
+          </tr>
+        </table>
+        ${motivoBloqueio}
+        <div style="margin-top:10px;font-size:11px;color:#3b82f6;font-weight:600;">
+          Abrir pedido →
+        </div>
+      </a>
+    </td>
+  </tr>
+</table>`;
+  };
+
+  const cards = pedidos.length > 0
+    ? pedidos.map(cardFor).join("")
+    : `<div style="padding:24px;text-align:center;color:#6b7280;background:#f9fafb;border-radius:8px;">Nenhum pedido gerado neste ciclo.</div>`;
 
   return `
 <!DOCTYPE html>
 <html>
-<head><meta charset="utf-8"></head>
-<body style="font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Arial,sans-serif;background:#f9fafb;margin:0;padding:24px;color:#111827;">
-  <div style="max-width:720px;margin:0 auto;background:#fff;border-radius:8px;padding:24px;box-shadow:0 1px 3px rgba(0,0,0,0.05);">
-    <h1 style="margin:0 0 4px;font-size:20px;">Pedidos sugeridos — ciclo ${dataCiclo}</h1>
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Pedidos sugeridos ${dataCiclo}</title>
+</head>
+<body style="font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Arial,sans-serif;background:#f3f4f6;margin:0;padding:16px;color:#111827;">
+  <div style="max-width:640px;margin:0 auto;background:#fff;border-radius:12px;padding:24px;box-shadow:0 1px 3px rgba(0,0,0,0.05);">
+    <h1 style="margin:0 0 4px;font-size:20px;color:#111827;">Pedidos sugeridos — ciclo ${dataCiclo}</h1>
     <p style="margin:0 0 20px;color:#6b7280;font-size:13px;">Empresa: <strong>${empresa}</strong> · Janela de override até 09:30 BRT</p>
 
     ${banner}
 
-    <table style="width:100%;border-collapse:collapse;margin-bottom:20px;">
+    <table role="presentation" cellpadding="0" cellspacing="0" border="0" style="width:100%;border-collapse:separate;border-spacing:6px 0;margin-bottom:24px;">
       <tr>
-        <td style="padding:12px;background:#f3f4f6;border-radius:6px;text-align:center;width:25%;">
-          <div style="font-size:24px;font-weight:700;color:#111827;">${rpc.pedidos_gerados}</div>
-          <div style="font-size:11px;color:#6b7280;text-transform:uppercase;">Pedidos</div>
+        <td style="padding:12px 8px;background:#f3f4f6;border-radius:8px;text-align:center;width:25%;">
+          <div style="font-size:22px;font-weight:700;color:#111827;line-height:1;">${rpc.pedidos_gerados}</div>
+          <div style="font-size:10px;color:#6b7280;text-transform:uppercase;letter-spacing:0.5px;margin-top:4px;">Pedidos</div>
         </td>
-        <td style="width:8px;"></td>
-        <td style="padding:12px;background:#f3f4f6;border-radius:6px;text-align:center;width:25%;">
-          <div style="font-size:24px;font-weight:700;color:#111827;">${rpc.skus_incluidos}</div>
-          <div style="font-size:11px;color:#6b7280;text-transform:uppercase;">SKUs</div>
+        <td style="padding:12px 8px;background:#f3f4f6;border-radius:8px;text-align:center;width:25%;">
+          <div style="font-size:22px;font-weight:700;color:#111827;line-height:1;">${rpc.skus_incluidos}</div>
+          <div style="font-size:10px;color:#6b7280;text-transform:uppercase;letter-spacing:0.5px;margin-top:4px;">SKUs</div>
         </td>
-        <td style="width:8px;"></td>
-        <td style="padding:12px;background:#f3f4f6;border-radius:6px;text-align:center;width:25%;">
-          <div style="font-size:18px;font-weight:700;color:#111827;">${fmtBRL(rpc.valor_total_ciclo)}</div>
-          <div style="font-size:11px;color:#6b7280;text-transform:uppercase;">Valor total</div>
+        <td style="padding:12px 8px;background:#f3f4f6;border-radius:8px;text-align:center;width:25%;">
+          <div style="font-size:14px;font-weight:700;color:#111827;line-height:1;">${fmtBRL(rpc.valor_total_ciclo)}</div>
+          <div style="font-size:10px;color:#6b7280;text-transform:uppercase;letter-spacing:0.5px;margin-top:4px;">Valor total</div>
         </td>
-        <td style="width:8px;"></td>
-        <td style="padding:12px;background:${rpc.bloqueados > 0 ? "#fee2e2" : "#f3f4f6"};border-radius:6px;text-align:center;width:25%;">
-          <div style="font-size:24px;font-weight:700;color:${rpc.bloqueados > 0 ? "#991b1b" : "#111827"};">${rpc.bloqueados}</div>
-          <div style="font-size:11px;color:#6b7280;text-transform:uppercase;">Bloqueados</div>
+        <td style="padding:12px 8px;background:${rpc.bloqueados > 0 ? "#fee2e2" : "#f3f4f6"};border-radius:8px;text-align:center;width:25%;">
+          <div style="font-size:22px;font-weight:700;color:${rpc.bloqueados > 0 ? "#991b1b" : "#111827"};line-height:1;">${rpc.bloqueados}</div>
+          <div style="font-size:10px;color:#6b7280;text-transform:uppercase;letter-spacing:0.5px;margin-top:4px;">Bloqueados</div>
         </td>
       </tr>
     </table>
 
-    <h2 style="font-size:15px;margin:24px 0 8px;">Detalhe por pedido</h2>
-    <table style="width:100%;border-collapse:collapse;font-size:13px;">
-      <thead>
-        <tr style="background:#f9fafb;">
-          <th style="padding:8px;text-align:left;font-weight:600;color:#374151;">Status</th>
-          <th style="padding:8px;text-align:left;font-weight:600;color:#374151;">Fornecedor / Grupo</th>
-          <th style="padding:8px;text-align:right;font-weight:600;color:#374151;">SKUs</th>
-          <th style="padding:8px;text-align:right;font-weight:600;color:#374151;">Valor</th>
-          <th style="padding:8px;text-align:left;font-weight:600;color:#374151;">Bloqueio</th>
-        </tr>
-      </thead>
-      <tbody>${linhas || `<tr><td colspan="5" style="padding:16px;text-align:center;color:#6b7280;">Nenhum pedido gerado neste ciclo.</td></tr>`}</tbody>
+    <h2 style="font-size:14px;margin:0 0 12px;color:#374151;text-transform:uppercase;letter-spacing:0.5px;">Pedidos do ciclo</h2>
+    ${cards}
+
+    <table role="presentation" cellpadding="0" cellspacing="0" border="0" style="width:100%;margin:24px 0 0;">
+      <tr>
+        <td style="text-align:center;">
+          <a href="${listaUrl}" style="display:inline-block;background:#111827;color:#ffffff;text-decoration:none;padding:12px 28px;border-radius:8px;font-size:14px;font-weight:600;">
+            Ver todos os pedidos
+          </a>
+        </td>
+      </tr>
     </table>
 
-    <p style="margin-top:24px;font-size:12px;color:#6b7280;">
-      ${pendentes.length} pedido(s) aguardando aprovação. Acesse <strong>/admin/reposicao/pedidos</strong> para revisar antes das 09:30 BRT.
+    <p style="margin:20px 0 0;font-size:11px;color:#9ca3af;text-align:center;">
+      ${pendentes.length} pedido(s) aguardando aprovação · disparo automático às 10:00 BRT
     </p>
   </div>
 </body>
