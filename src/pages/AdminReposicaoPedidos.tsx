@@ -153,6 +153,8 @@ function DetalhesModal({
   const queryClient = useQueryClient();
   const [edits, setEdits] = useState<Record<number, number>>({});
   const [obs, setObs] = useState('');
+  const [removerItem, setRemoverItem] = useState<PedidoItem | null>(null);
+  const [descontinuarItem, setDescontinuarItem] = useState<PedidoItem | null>(null);
 
   const { data: itens, isLoading } = useQuery({
     queryKey: ['pedido-itens', pedido?.id],
