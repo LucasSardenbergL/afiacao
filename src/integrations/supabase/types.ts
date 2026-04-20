@@ -3134,43 +3134,70 @@ export type Database = {
       }
       fornecedor_habilitado_reposicao: {
         Row: {
+          canal_pedido: string | null
           criado_em: string | null
           data_habilitacao: string | null
+          delta_max_perc: number | null
+          email_pedido: string | null
           empresa: string
           fornecedor_nome: string
           habilitado: boolean
           habilitado_por: string | null
+          horario_corte_pedido: string | null
           id: number
+          janela_override_minutos: number | null
           lt_logistica_dias: number | null
           lt_logistica_observacoes: string | null
           lt_logistica_unidade: string | null
+          nome_contato: string | null
           observacoes: string | null
+          observacoes_pedido: string | null
+          valor_maximo_mensal: number | null
+          whatsapp_pedido: string | null
         }
         Insert: {
+          canal_pedido?: string | null
           criado_em?: string | null
           data_habilitacao?: string | null
+          delta_max_perc?: number | null
+          email_pedido?: string | null
           empresa: string
           fornecedor_nome: string
           habilitado?: boolean
           habilitado_por?: string | null
+          horario_corte_pedido?: string | null
           id?: number
+          janela_override_minutos?: number | null
           lt_logistica_dias?: number | null
           lt_logistica_observacoes?: string | null
           lt_logistica_unidade?: string | null
+          nome_contato?: string | null
           observacoes?: string | null
+          observacoes_pedido?: string | null
+          valor_maximo_mensal?: number | null
+          whatsapp_pedido?: string | null
         }
         Update: {
+          canal_pedido?: string | null
           criado_em?: string | null
           data_habilitacao?: string | null
+          delta_max_perc?: number | null
+          email_pedido?: string | null
           empresa?: string
           fornecedor_nome?: string
           habilitado?: boolean
           habilitado_por?: string | null
+          horario_corte_pedido?: string | null
           id?: number
+          janela_override_minutos?: number | null
           lt_logistica_dias?: number | null
           lt_logistica_observacoes?: string | null
           lt_logistica_unidade?: string | null
+          nome_contato?: string | null
           observacoes?: string | null
+          observacoes_pedido?: string | null
+          valor_maximo_mensal?: number | null
+          whatsapp_pedido?: string | null
         }
         Relationships: []
       }
@@ -4080,6 +4107,155 @@ export type Database = {
           total?: number
           updated_at?: string
           user_id?: string
+        }
+        Relationships: []
+      }
+      pedido_compra_item: {
+        Row: {
+          ajustado_humano: boolean | null
+          criado_em: string | null
+          estoque_atual: number | null
+          estoque_maximo: number | null
+          id: number
+          pedido_id: number
+          ponto_pedido: number | null
+          preco_unitario: number | null
+          primeira_compra: boolean | null
+          qtde_final: number | null
+          qtde_sugerida: number
+          sku_codigo_omie: string
+          sku_descricao: string | null
+          valor_linha: number | null
+        }
+        Insert: {
+          ajustado_humano?: boolean | null
+          criado_em?: string | null
+          estoque_atual?: number | null
+          estoque_maximo?: number | null
+          id?: number
+          pedido_id: number
+          ponto_pedido?: number | null
+          preco_unitario?: number | null
+          primeira_compra?: boolean | null
+          qtde_final?: number | null
+          qtde_sugerida: number
+          sku_codigo_omie: string
+          sku_descricao?: string | null
+          valor_linha?: number | null
+        }
+        Update: {
+          ajustado_humano?: boolean | null
+          criado_em?: string | null
+          estoque_atual?: number | null
+          estoque_maximo?: number | null
+          id?: number
+          pedido_id?: number
+          ponto_pedido?: number | null
+          preco_unitario?: number | null
+          primeira_compra?: boolean | null
+          qtde_final?: number | null
+          qtde_sugerida?: number
+          sku_codigo_omie?: string
+          sku_descricao?: string | null
+          valor_linha?: number | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "pedido_compra_item_pedido_id_fkey"
+            columns: ["pedido_id"]
+            isOneToOne: false
+            referencedRelation: "pedido_compra_sugerido"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      pedido_compra_sugerido: {
+        Row: {
+          aprovado_em: string | null
+          aprovado_por: string | null
+          atualizado_em: string | null
+          canal_usado: string | null
+          cancelado_em: string | null
+          cancelado_por: string | null
+          criado_em: string | null
+          data_ciclo: string
+          delta_vs_anterior_perc: number | null
+          empresa: string
+          fornecedor_nome: string
+          grupo_codigo: string | null
+          horario_corte_planejado: string | null
+          horario_disparo_real: string | null
+          horario_geracao: string | null
+          id: number
+          justificativa_cancelamento: string | null
+          mensagem_bloqueio: string | null
+          num_skus: number
+          omie_pedido_compra_id: string | null
+          omie_pedido_compra_numero: string | null
+          omie_registrado_em: string | null
+          pedido_anterior_valor: number | null
+          resposta_canal: Json | null
+          status: string
+          valor_mes_ate_agora: number | null
+          valor_total: number
+        }
+        Insert: {
+          aprovado_em?: string | null
+          aprovado_por?: string | null
+          atualizado_em?: string | null
+          canal_usado?: string | null
+          cancelado_em?: string | null
+          cancelado_por?: string | null
+          criado_em?: string | null
+          data_ciclo?: string
+          delta_vs_anterior_perc?: number | null
+          empresa: string
+          fornecedor_nome: string
+          grupo_codigo?: string | null
+          horario_corte_planejado?: string | null
+          horario_disparo_real?: string | null
+          horario_geracao?: string | null
+          id?: number
+          justificativa_cancelamento?: string | null
+          mensagem_bloqueio?: string | null
+          num_skus?: number
+          omie_pedido_compra_id?: string | null
+          omie_pedido_compra_numero?: string | null
+          omie_registrado_em?: string | null
+          pedido_anterior_valor?: number | null
+          resposta_canal?: Json | null
+          status?: string
+          valor_mes_ate_agora?: number | null
+          valor_total?: number
+        }
+        Update: {
+          aprovado_em?: string | null
+          aprovado_por?: string | null
+          atualizado_em?: string | null
+          canal_usado?: string | null
+          cancelado_em?: string | null
+          cancelado_por?: string | null
+          criado_em?: string | null
+          data_ciclo?: string
+          delta_vs_anterior_perc?: number | null
+          empresa?: string
+          fornecedor_nome?: string
+          grupo_codigo?: string | null
+          horario_corte_planejado?: string | null
+          horario_disparo_real?: string | null
+          horario_geracao?: string | null
+          id?: number
+          justificativa_cancelamento?: string | null
+          mensagem_bloqueio?: string | null
+          num_skus?: number
+          omie_pedido_compra_id?: string | null
+          omie_pedido_compra_numero?: string | null
+          omie_registrado_em?: string | null
+          pedido_anterior_valor?: number | null
+          resposta_canal?: Json | null
+          status?: string
+          valor_mes_ate_agora?: number | null
+          valor_total?: number
         }
         Relationships: []
       }
@@ -5314,6 +5490,36 @@ export type Database = {
           srl_perc?: number | null
           valor_emi?: number | null
           valor_ruptura_estimado?: number | null
+        }
+        Relationships: []
+      }
+      sku_estoque_atual: {
+        Row: {
+          empresa: string
+          estoque_disponivel: number | null
+          estoque_fisico: number
+          estoque_pendente_entrada: number | null
+          fonte_sync: string | null
+          sku_codigo_omie: string
+          ultima_sincronizacao: string | null
+        }
+        Insert: {
+          empresa: string
+          estoque_disponivel?: number | null
+          estoque_fisico?: number
+          estoque_pendente_entrada?: number | null
+          fonte_sync?: string | null
+          sku_codigo_omie: string
+          ultima_sincronizacao?: string | null
+        }
+        Update: {
+          empresa?: string
+          estoque_disponivel?: number | null
+          estoque_fisico?: number
+          estoque_pendente_entrada?: number | null
+          fonte_sync?: string | null
+          sku_codigo_omie?: string
+          ultima_sincronizacao?: string | null
         }
         Relationships: []
       }
@@ -7979,6 +8185,60 @@ export type Database = {
         }
         Relationships: []
       }
+      v_sku_parametros_sugeridos: {
+        Row: {
+          calculado_em: string | null
+          classe_abc_proposta: string | null
+          classe_consolidada: string | null
+          classe_xyz_proposta: string | null
+          cobertura_alvo_dias: number | null
+          coef_variacao_ordem: number | null
+          custo_capital_efetivo_perc: number | null
+          custo_pedido_aplicado: number | null
+          demanda_media_diaria: number | null
+          demanda_sigma_diario: number | null
+          dias_com_movimento: number | null
+          empresa: string | null
+          estoque_maximo_sugerido: number | null
+          estoque_minimo_sugerido: number | null
+          fonte_leadtime: string | null
+          fonte_lt: string | null
+          fonte_preco: string | null
+          fornecedor_habilitado: boolean | null
+          fornecedor_nome: string | null
+          grupo_codigo: string | null
+          lead_time_desvio: number | null
+          lead_time_medio: number | null
+          lt_historico_medio: number | null
+          lt_p95_dias: number | null
+          lt_total_teorico_dias_uteis: number | null
+          minimo_operacional: number | null
+          modo_pedido: string | null
+          n_compras: number | null
+          num_ordens: number | null
+          p90_diario: number | null
+          p90_quando_vende: number | null
+          p95_diario: number | null
+          p95_quando_vende: number | null
+          p99_diario: number | null
+          pico_maximo_dia: number | null
+          ponto_pedido_sugerido: number | null
+          preco_compra_real: number | null
+          preco_item_eoq: number | null
+          preco_venda_medio: number | null
+          qtde_compra_ciclo_sugerida: number | null
+          qtde_desvio_por_ordem: number | null
+          qtde_media_por_ordem: number | null
+          sigma_lt_d: number | null
+          sku_codigo_omie: number | null
+          sku_descricao: string | null
+          status_sugestao: string | null
+          valor_total_180d: number | null
+          valor_total_90d: number | null
+          z_aplicado: number | null
+        }
+        Relationships: []
+      }
       v_sku_pior_janela_lt: {
         Row: {
           empresa: string | null
@@ -8026,6 +8286,10 @@ export type Database = {
       }
     }
     Functions: {
+      aprovar_pedido_sugerido: {
+        Args: { p_pedido_id: number; p_usuario: string }
+        Returns: Json
+      }
       atualizar_classificacao_skus: {
         Args: { p_empresa: string }
         Returns: {
@@ -8039,6 +8303,14 @@ export type Database = {
       atualizar_parametros_numericos_skus: {
         Args: { p_empresa: string }
         Returns: number
+      }
+      cancelar_pedido_sugerido: {
+        Args: {
+          p_justificativa: string
+          p_pedido_id: number
+          p_usuario: string
+        }
+        Returns: Json
       }
       detectar_outliers_empresa: {
         Args: { p_empresa?: string }
@@ -8086,6 +8358,15 @@ export type Database = {
       fin_user_can_access: {
         Args: { check_company?: string }
         Returns: boolean
+      }
+      gerar_pedidos_sugeridos_ciclo: {
+        Args: { p_data_ciclo?: string; p_empresa?: string }
+        Returns: {
+          bloqueados: number
+          pedidos_gerados: number
+          skus_incluidos: number
+          valor_total: number
+        }[]
       }
       get_commercial_role: {
         Args: { _user_id: string }
