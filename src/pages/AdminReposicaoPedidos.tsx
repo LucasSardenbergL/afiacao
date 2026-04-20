@@ -619,6 +619,8 @@ function PedidoRow({
   const podeAprovar = p.status === 'pendente_aprovacao' || p.status === 'bloqueado_guardrail';
   const podeCancelar = ['pendente_aprovacao', 'bloqueado_guardrail', 'aprovado_aguardando_disparo'].includes(p.status);
 
+  const showAprovacao = p.status === 'aprovado_aguardando_disparo' || p.status === 'disparado';
+
   return (
     <TableRow className={p.status === 'bloqueado_guardrail' ? 'bg-destructive/5' : ''}>
       <TableCell><StatusBadge status={p.status} /></TableCell>
@@ -636,6 +638,16 @@ function PedidoRow({
         ) : <span className="text-muted-foreground">—</span>}
       </TableCell>
       <TableCell className="text-right">{formatTime(p.horario_corte_planejado)}</TableCell>
+      <TableCell className="text-xs">
+        {showAprovacao && p.aprovado_em ? (
+          <div>
+            <div className="font-medium tabular-nums">{format(new Date(p.aprovado_em), 'dd/MM HH:mm')}</div>
+            <div className="text-muted-foreground line-clamp-1">{p.aprovado_por ?? '—'}</div>
+          </div>
+        ) : (
+          <span className="text-muted-foreground">—</span>
+        )}
+      </TableCell>
       <TableCell>
         <div className="flex justify-end gap-1">
           <Button size="sm" variant="ghost" onClick={onVerDetalhes}>
