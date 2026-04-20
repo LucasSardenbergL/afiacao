@@ -185,7 +185,25 @@ function DetalhesModal({
         .eq('pedido_id', pedido.id)
         .order('id', { ascending: true });
       if (error) throw error;
-      return (data ?? []) as PedidoItem[];
+      const baseItens = data ?? [];
+      if (baseItens.length === 0) return [] as PedidoItem[];
+
+      // Buscar estoque_minimo de sku_parametros (JOIN manual)
+      const skuCodigos = baseItens.map((it) => Number(it.sku_codigo_omie)).filter((n) => !isNaN(n));
+      const { data: params } = await supabase
+        .from('sku_parametros')
+        .select('sku_codigo_omie, estoque_minimo')
+        .eq('empresa', pedido.empresa)
+        .in('sku_codigo_omie', skuCodigos);
+      const minMap = new Map<string, number>();
+      (params ?? []).forEach((p) => {
+        minMap.set(String(p.sku_codigo_omie), Number(p.estoque_minimo ?? 0));
+      });
+
+      return baseItens.map((it) => ({
+        ...it,
+        estoque_minimo: minMap.get(String(it.sku_codigo_omie)) ?? 0,
+      })) as PedidoItem[];
     },
     enabled: !!pedido && open,
   });
