@@ -1,4 +1,5 @@
 import { supabase } from '@/integrations/supabase/client';
+import { logger } from '@/lib/logger';
 
 export class AuthRequiredError extends Error {
   constructor() {
@@ -33,6 +34,13 @@ export async function invokeFunction<T = unknown>(
   });
 
   if (error) {
+    const errWithMeta = error as { message?: string; code?: string; status?: number };
+    logger.error(`Edge function failed: ${functionName}`, {
+      functionName,
+      errorCode: errWithMeta.code,
+      httpStatus: errWithMeta.status,
+      error,
+    });
     throw new EdgeFunctionError(
       error.message || `Erro ao chamar ${functionName}`,
       functionName,
