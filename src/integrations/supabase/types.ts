@@ -3048,6 +3048,48 @@ export type Database = {
         }
         Relationships: []
       }
+      fornecedor_cadeia_logistica_historico: {
+        Row: {
+          acao: string
+          alterado_por: string | null
+          criado_em: string
+          descricao_mudanca: string
+          empresa: string
+          etapa_codigo: string | null
+          etapa_id: number | null
+          fornecedor_nome: string
+          id: number
+          valores_anteriores: Json | null
+          valores_novos: Json | null
+        }
+        Insert: {
+          acao: string
+          alterado_por?: string | null
+          criado_em?: string
+          descricao_mudanca: string
+          empresa: string
+          etapa_codigo?: string | null
+          etapa_id?: number | null
+          fornecedor_nome: string
+          id?: number
+          valores_anteriores?: Json | null
+          valores_novos?: Json | null
+        }
+        Update: {
+          acao?: string
+          alterado_por?: string | null
+          criado_em?: string
+          descricao_mudanca?: string
+          empresa?: string
+          etapa_codigo?: string | null
+          etapa_id?: number | null
+          fornecedor_nome?: string
+          id?: number
+          valores_anteriores?: Json | null
+          valores_novos?: Json | null
+        }
+        Relationships: []
+      }
       fornecedor_grupo_producao: {
         Row: {
           atualizado_em: string | null
