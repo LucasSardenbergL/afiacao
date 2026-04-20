@@ -254,6 +254,92 @@ function DetalhesModal({
     },
   });
 
+  // Recalcula valor total e status do pedido após remoção de item
+  const recalcularPedido = async () => {
+    if (!pedido) return;
+    const { data: restantes, error } = await supabase
+      .from('pedido_compra_item')
+      .select('id, qtde_final, qtde_sugerida, preco_unitario')
+      .eq('pedido_id', pedido.id);
+    if (error) throw error;
+
+    const itensRest = restantes ?? [];
+    const novoTotal = itensRest.reduce((acc, it) => {
+      const q = Number(it.qtde_final ?? it.qtde_sugerida ?? 0);
+      const p = Number(it.preco_unitario ?? 0);
+      return acc + q * p;
+    }, 0);
+
+    const updates: Record<string, unknown> = {
+      valor_total: novoTotal,
+      num_skus: itensRest.length,
+      atualizado_em: new Date().toISOString(),
+    };
+    if (itensRest.length === 0) {
+      updates.status = 'cancelado_humano';
+      updates.cancelado_por = user?.email ?? 'sistema';
+      updates.cancelado_em = new Date().toISOString();
+      updates.justificativa_cancelamento = 'Todos os itens foram removidos manualmente';
+    }
+    const { error: errPed } = await supabase
+      .from('pedido_compra_sugerido')
+      .update(updates)
+      .eq('id', pedido.id);
+    if (errPed) throw errPed;
+    return { vazio: itensRest.length === 0 };
+  };
+
+  const removerItemMutation = useMutation({
+    mutationFn: async (itemId: number) => {
+      const { error } = await supabase.from('pedido_compra_item').delete().eq('id', itemId);
+      if (error) throw error;
+      return await recalcularPedido();
+    },
+    onSuccess: (res) => {
+      toast.success(res?.vazio ? 'Item removido. Pedido cancelado (sem itens restantes).' : 'Item removido');
+      queryClient.invalidateQueries({ queryKey: ['pedido-itens', pedido?.id] });
+      queryClient.invalidateQueries({ queryKey: ['pedidos-ciclo'] });
+      setRemoverItem(null);
+      if (res?.vazio) onOpenChange(false);
+    },
+    onError: (e: Error) => {
+      toast.error(`Erro ao remover item: ${e.message}`);
+    },
+  });
+
+  const descontinuarMutation = useMutation({
+    mutationFn: async (item: PedidoItem) => {
+      // 1. descontinua o SKU
+      const { error: errSku } = await supabase
+        .from('sku_parametros')
+        .update({
+          tipo_reposicao: 'descontinuado',
+          habilitado_reposicao_automatica: false,
+        })
+        .eq('empresa', pedido!.empresa)
+        .eq('sku_codigo_omie', Number(item.sku_codigo_omie));
+      if (errSku) throw errSku;
+      // 2. remove a linha
+      const { error: errDel } = await supabase.from('pedido_compra_item').delete().eq('id', item.id);
+      if (errDel) throw errDel;
+      return await recalcularPedido();
+    },
+    onSuccess: (res) => {
+      toast.success(
+        res?.vazio
+          ? 'SKU descontinuado e item removido. Pedido cancelado (sem itens restantes).'
+          : 'SKU descontinuado. Não será mais incluído em ciclos futuros.'
+      );
+      queryClient.invalidateQueries({ queryKey: ['pedido-itens', pedido?.id] });
+      queryClient.invalidateQueries({ queryKey: ['pedidos-ciclo'] });
+      setDescontinuarItem(null);
+      if (res?.vazio) onOpenChange(false);
+    },
+    onError: (e: Error) => {
+      toast.error(`Erro ao descontinuar SKU: ${e.message}`);
+    },
+  });
+
   if (!pedido) return null;
   const podeEditar = pedido.status === 'pendente_aprovacao' || pedido.status === 'bloqueado_guardrail';
 
