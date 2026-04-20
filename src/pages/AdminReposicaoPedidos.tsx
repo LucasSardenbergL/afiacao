@@ -12,7 +12,17 @@ import { Textarea } from '@/components/ui/textarea';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
-import { AlertTriangle, CheckCircle2, Clock, ExternalLink, Eye, Loader2, PlayCircle, RefreshCw, XCircle } from 'lucide-react';
+import { AlertTriangle, Ban, CheckCircle2, Clock, ExternalLink, Eye, Loader2, PlayCircle, RefreshCw, Trash2, XCircle } from 'lucide-react';
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from '@/components/ui/alert-dialog';
 import { toast } from 'sonner';
 import { format } from 'date-fns';
 import { ptBR } from 'date-fns/locale';
@@ -24,6 +34,8 @@ type Status =
   | 'bloqueado_guardrail'
   | 'disparado'
   | 'cancelado'
+  | 'cancelado_humano'
+  | 'expirado_sem_aprovacao'
   | string;
 
 interface PedidoSugerido {
@@ -42,6 +54,8 @@ interface PedidoSugerido {
   status: Status;
   mensagem_bloqueio: string | null;
   omie_pedido_compra_numero: string | null;
+  aprovado_em: string | null;
+  aprovado_por: string | null;
 }
 
 interface PedidoItem {
@@ -68,6 +82,8 @@ const statusMeta: Record<string, { label: string; variant: 'default' | 'secondar
   bloqueado_guardrail: { label: 'Bloqueado', variant: 'destructive' },
   disparado: { label: 'Disparado', variant: 'secondary', className: 'bg-emerald-500/15 text-emerald-700 dark:text-emerald-400 border-emerald-500/30' },
   cancelado: { label: 'Cancelado', variant: 'outline' },
+  cancelado_humano: { label: 'Cancelado (vazio)', variant: 'outline' },
+  expirado_sem_aprovacao: { label: 'Expirado sem aprovação', variant: 'secondary', className: 'bg-muted text-muted-foreground border-border' },
 };
 
 function formatBRL(v: number | null | undefined) {
@@ -137,6 +153,8 @@ function DetalhesModal({
   const queryClient = useQueryClient();
   const [edits, setEdits] = useState<Record<number, number>>({});
   const [obs, setObs] = useState('');
+  const [removerItem, setRemoverItem] = useState<PedidoItem | null>(null);
+  const [descontinuarItem, setDescontinuarItem] = useState<PedidoItem | null>(null);
 
   const { data: itens, isLoading } = useQuery({
     queryKey: ['pedido-itens', pedido?.id],
@@ -236,6 +254,92 @@ function DetalhesModal({
     },
   });
 
+  // Recalcula valor total e status do pedido após remoção de item
+  const recalcularPedido = async () => {
+    if (!pedido) return;
+    const { data: restantes, error } = await supabase
+      .from('pedido_compra_item')
+      .select('id, qtde_final, qtde_sugerida, preco_unitario')
+      .eq('pedido_id', pedido.id);
+    if (error) throw error;
+
+    const itensRest = restantes ?? [];
+    const novoTotal = itensRest.reduce((acc, it) => {
+      const q = Number(it.qtde_final ?? it.qtde_sugerida ?? 0);
+      const p = Number(it.preco_unitario ?? 0);
+      return acc + q * p;
+    }, 0);
+
+    const updates: Record<string, unknown> = {
+      valor_total: novoTotal,
+      num_skus: itensRest.length,
+      atualizado_em: new Date().toISOString(),
+    };
+    if (itensRest.length === 0) {
+      updates.status = 'cancelado_humano';
+      updates.cancelado_por = user?.email ?? 'sistema';
+      updates.cancelado_em = new Date().toISOString();
+      updates.justificativa_cancelamento = 'Todos os itens foram removidos manualmente';
+    }
+    const { error: errPed } = await supabase
+      .from('pedido_compra_sugerido')
+      .update(updates)
+      .eq('id', pedido.id);
+    if (errPed) throw errPed;
+    return { vazio: itensRest.length === 0 };
+  };
+
+  const removerItemMutation = useMutation({
+    mutationFn: async (itemId: number) => {
+      const { error } = await supabase.from('pedido_compra_item').delete().eq('id', itemId);
+      if (error) throw error;
+      return await recalcularPedido();
+    },
+    onSuccess: (res) => {
+      toast.success(res?.vazio ? 'Item removido. Pedido cancelado (sem itens restantes).' : 'Item removido');
+      queryClient.invalidateQueries({ queryKey: ['pedido-itens', pedido?.id] });
+      queryClient.invalidateQueries({ queryKey: ['pedidos-ciclo'] });
+      setRemoverItem(null);
+      if (res?.vazio) onOpenChange(false);
+    },
+    onError: (e: Error) => {
+      toast.error(`Erro ao remover item: ${e.message}`);
+    },
+  });
+
+  const descontinuarMutation = useMutation({
+    mutationFn: async (item: PedidoItem) => {
+      // 1. descontinua o SKU
+      const { error: errSku } = await supabase
+        .from('sku_parametros')
+        .update({
+          tipo_reposicao: 'descontinuado',
+          habilitado_reposicao_automatica: false,
+        })
+        .eq('empresa', pedido!.empresa)
+        .eq('sku_codigo_omie', Number(item.sku_codigo_omie));
+      if (errSku) throw errSku;
+      // 2. remove a linha
+      const { error: errDel } = await supabase.from('pedido_compra_item').delete().eq('id', item.id);
+      if (errDel) throw errDel;
+      return await recalcularPedido();
+    },
+    onSuccess: (res) => {
+      toast.success(
+        res?.vazio
+          ? 'SKU descontinuado e item removido. Pedido cancelado (sem itens restantes).'
+          : 'SKU descontinuado. Não será mais incluído em ciclos futuros.'
+      );
+      queryClient.invalidateQueries({ queryKey: ['pedido-itens', pedido?.id] });
+      queryClient.invalidateQueries({ queryKey: ['pedidos-ciclo'] });
+      setDescontinuarItem(null);
+      if (res?.vazio) onOpenChange(false);
+    },
+    onError: (e: Error) => {
+      toast.error(`Erro ao descontinuar SKU: ${e.message}`);
+    },
+  });
+
   if (!pedido) return null;
   const podeEditar = pedido.status === 'pendente_aprovacao' || pedido.status === 'bloqueado_guardrail';
 
@@ -279,6 +383,7 @@ function DetalhesModal({
                 <TableHead className="text-right">Qtde</TableHead>
                 <TableHead className="text-right">Preço</TableHead>
                 <TableHead className="text-right">Total linha</TableHead>
+                {podeEditar && <TableHead className="text-right">Ações</TableHead>}
               </TableRow>
             </TableHeader>
             <TableBody>
@@ -313,11 +418,37 @@ function DetalhesModal({
                   </TableCell>
                   <TableCell className="text-right tabular-nums">{formatBRL(l.preco_unitario)}</TableCell>
                   <TableCell className="text-right tabular-nums font-medium">{formatBRL(l._valor)}</TableCell>
+                  {podeEditar && (
+                    <TableCell className="text-right">
+                      <div className="flex justify-end gap-1">
+                        <Button
+                          size="sm"
+                          variant="ghost"
+                          title="Remover linha deste pedido"
+                          onClick={() => setRemoverItem(l)}
+                          disabled={removerItemMutation.isPending || descontinuarMutation.isPending}
+                        >
+                          <Trash2 className="w-4 h-4" />
+                        </Button>
+                        <Button
+                          size="sm"
+                          variant="ghost"
+                          title="Remover linha + descontinuar SKU"
+                          className="text-destructive hover:text-destructive"
+                          onClick={() => setDescontinuarItem(l)}
+                          disabled={removerItemMutation.isPending || descontinuarMutation.isPending}
+                        >
+                          <Ban className="w-4 h-4" />
+                        </Button>
+                      </div>
+                    </TableCell>
+                  )}
                 </TableRow>
               ))}
               <TableRow>
                 <TableCell colSpan={6} className="text-right font-medium">Total</TableCell>
                 <TableCell className="text-right font-bold tabular-nums">{formatBRL(totalAtual)}</TableCell>
+                {podeEditar && <TableCell />}
               </TableRow>
             </TableBody>
           </Table>
@@ -347,12 +478,61 @@ function DetalhesModal({
                 onClick={() => aprovarMutation.mutate()}
               >
                 {aprovarMutation.isPending && <Loader2 className="w-4 h-4 mr-1 animate-spin" />}
-                Aprovar e enviar
+                ✓ Aprovar pedido completo
               </Button>
             </>
           )}
         </DialogFooter>
       </DialogContent>
+
+      {/* Confirmação: remover linha */}
+      <AlertDialog open={!!removerItem} onOpenChange={(v) => !v && setRemoverItem(null)}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Remover este item do pedido?</AlertDialogTitle>
+            <AlertDialogDescription>
+              SKU <span className="font-mono">{removerItem?.sku_codigo_omie}</span> — {removerItem?.sku_descricao ?? '—'}.
+              <br />O valor total do pedido será recalculado. Se for o último item, o pedido será cancelado automaticamente.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel disabled={removerItemMutation.isPending}>Cancelar</AlertDialogCancel>
+            <AlertDialogAction
+              disabled={removerItemMutation.isPending}
+              onClick={() => removerItem && removerItemMutation.mutate(removerItem.id)}
+            >
+              {removerItemMutation.isPending && <Loader2 className="w-4 h-4 mr-1 animate-spin" />}
+              Remover
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+
+      {/* Confirmação: remover + descontinuar */}
+      <AlertDialog open={!!descontinuarItem} onOpenChange={(v) => !v && setDescontinuarItem(null)}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Descontinuar SKU permanentemente?</AlertDialogTitle>
+            <AlertDialogDescription>
+              SKU <span className="font-mono">{descontinuarItem?.sku_codigo_omie}</span> — {descontinuarItem?.sku_descricao ?? '—'}.
+              <br />
+              <strong className="text-destructive">Tem certeza?</strong> Este SKU não será mais incluído em ciclos futuros de reposição automática.
+              A linha também será removida deste pedido.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel disabled={descontinuarMutation.isPending}>Voltar</AlertDialogCancel>
+            <AlertDialogAction
+              disabled={descontinuarMutation.isPending}
+              className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+              onClick={() => descontinuarItem && descontinuarMutation.mutate(descontinuarItem)}
+            >
+              {descontinuarMutation.isPending && <Loader2 className="w-4 h-4 mr-1 animate-spin" />}
+              Descontinuar e remover
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </Dialog>
   );
 }
@@ -439,6 +619,8 @@ function PedidoRow({
   const podeAprovar = p.status === 'pendente_aprovacao' || p.status === 'bloqueado_guardrail';
   const podeCancelar = ['pendente_aprovacao', 'bloqueado_guardrail', 'aprovado_aguardando_disparo'].includes(p.status);
 
+  const showAprovacao = p.status === 'aprovado_aguardando_disparo' || p.status === 'disparado';
+
   return (
     <TableRow className={p.status === 'bloqueado_guardrail' ? 'bg-destructive/5' : ''}>
       <TableCell><StatusBadge status={p.status} /></TableCell>
@@ -456,6 +638,16 @@ function PedidoRow({
         ) : <span className="text-muted-foreground">—</span>}
       </TableCell>
       <TableCell className="text-right">{formatTime(p.horario_corte_planejado)}</TableCell>
+      <TableCell className="text-xs">
+        {showAprovacao && p.aprovado_em ? (
+          <div>
+            <div className="font-medium tabular-nums">{format(new Date(p.aprovado_em), 'dd/MM HH:mm')}</div>
+            <div className="text-muted-foreground line-clamp-1">{p.aprovado_por ?? '—'}</div>
+          </div>
+        ) : (
+          <span className="text-muted-foreground">—</span>
+        )}
+      </TableCell>
       <TableCell>
         <div className="flex justify-end gap-1">
           <Button size="sm" variant="ghost" onClick={onVerDetalhes}>
@@ -624,6 +816,7 @@ export default function AdminReposicaoPedidos() {
                       <TableHead className="text-right">Valor</TableHead>
                       <TableHead className="text-right">Δ vs anterior</TableHead>
                       <TableHead className="text-right">Corte</TableHead>
+                      <TableHead>Aprovado em / Por</TableHead>
                       <TableHead className="text-right">Ações</TableHead>
                     </TableRow>
                   </TableHeader>
