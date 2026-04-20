@@ -3048,6 +3048,48 @@ export type Database = {
         }
         Relationships: []
       }
+      fornecedor_cadeia_logistica_historico: {
+        Row: {
+          acao: string
+          alterado_por: string | null
+          criado_em: string
+          descricao_mudanca: string
+          empresa: string
+          etapa_codigo: string | null
+          etapa_id: number | null
+          fornecedor_nome: string
+          id: number
+          valores_anteriores: Json | null
+          valores_novos: Json | null
+        }
+        Insert: {
+          acao: string
+          alterado_por?: string | null
+          criado_em?: string
+          descricao_mudanca: string
+          empresa: string
+          etapa_codigo?: string | null
+          etapa_id?: number | null
+          fornecedor_nome: string
+          id?: number
+          valores_anteriores?: Json | null
+          valores_novos?: Json | null
+        }
+        Update: {
+          acao?: string
+          alterado_por?: string | null
+          criado_em?: string
+          descricao_mudanca?: string
+          empresa?: string
+          etapa_codigo?: string | null
+          etapa_id?: number | null
+          fornecedor_nome?: string
+          id?: number
+          valores_anteriores?: Json | null
+          valores_novos?: Json | null
+        }
+        Relationships: []
+      }
       fornecedor_grupo_producao: {
         Row: {
           atualizado_em: string | null
@@ -7726,6 +7768,22 @@ export type Database = {
         }
         Relationships: []
       }
+      v_fornecedor_sla_compliance: {
+        Row: {
+          desvio_medio_perc: number | null
+          empresa: string | null
+          fornecedor_nome: string | null
+          lt_medio_observado_agregado: number | null
+          lt_teorico_agregado: number | null
+          perc_sla_compliance: number | null
+          skus_criticos: number | null
+          skus_cumprindo: number | null
+          skus_limite: number | null
+          skus_total: number | null
+          skus_violando: number | null
+        }
+        Relationships: []
+      }
       v_leadtime_por_grupo: {
         Row: {
           empresa: Database["public"]["Enums"]["empresa_reposicao"] | null
@@ -7936,6 +7994,33 @@ export type Database = {
           media_demanda_diaria: number | null
           sigma_demanda_diaria: number | null
           sku_codigo_omie: string | null
+        }
+        Relationships: []
+      }
+      v_sku_sla_compliance: {
+        Row: {
+          desvio_absoluto: number | null
+          desvio_perc: number | null
+          empresa: string | null
+          fornecedor_nome: string | null
+          grupo_codigo: string | null
+          lt_faturamento_medio: number | null
+          lt_logistica_medio: number | null
+          lt_max: number | null
+          lt_min: number | null
+          lt_observado_desvio: number | null
+          lt_observado_mediana: number | null
+          lt_observado_medio: number | null
+          lt_observado_p95: number | null
+          lt_recente_medio: number | null
+          lt_teorico: number | null
+          n_observacoes: number | null
+          n_recentes: number | null
+          sku_codigo_omie: string | null
+          sku_descricao: string | null
+          status_sla: string | null
+          tendencia: string | null
+          ultimo_recebimento: string | null
         }
         Relationships: []
       }
