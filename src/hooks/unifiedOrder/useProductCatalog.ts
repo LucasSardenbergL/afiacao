@@ -23,7 +23,7 @@ async function fetchProductsForAccount(account: ProductAccount): Promise<Product
     .from('omie_products')
     .select(PRODUCT_COLUMNS)
     .eq('account', account);
-  const { data } = await buildExclusionQuery(baseQuery as any).order('descricao');
+  const { data } = await buildExclusionQuery(baseQuery).order('descricao');
   return (data || []) as Product[];
 }
 

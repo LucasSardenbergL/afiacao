@@ -1,5 +1,6 @@
 import { supabase } from '@/integrations/supabase/client';
 import { logger } from '@/lib/logger';
+import type { FunctionInvokeOptions } from '@supabase/functions-js';
 
 export class AuthRequiredError extends Error {
   constructor() {
@@ -21,7 +22,7 @@ export class EdgeFunctionError extends Error {
  */
 export async function invokeFunction<T = unknown>(
   functionName: string,
-  body?: Record<string, unknown> | FormData,
+  body?: FunctionInvokeOptions['body'],
 ): Promise<T> {
   const { data: { session } } = await supabase.auth.getSession();
 
@@ -30,7 +31,7 @@ export async function invokeFunction<T = unknown>(
   }
 
   const { data, error } = await supabase.functions.invoke(functionName, {
-    body: body as any,
+    body,
   });
 
   if (error) {

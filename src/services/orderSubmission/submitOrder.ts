@@ -80,7 +80,7 @@ export async function submitOrder(params: SubmitOrderParams): Promise<SubmitOrde
           customer_address: storedAddress,
           customer_phone: storedPhone,
           ready_by_date: meta.readyByDate || null,
-        } as any).select('id').single();
+        }).select('id').single();
       if (insertError) throw insertError;
       salesOrderId = salesOrder.id;
     } catch (e: any) {
@@ -167,7 +167,7 @@ export async function submitOrder(params: SubmitOrderParams): Promise<SubmitOrde
           customer_address: storedAddress,
           customer_phone: storedPhone,
           ready_by_date: meta.readyByDate || null,
-        } as any).select('id').single();
+        }).select('id').single();
       if (insertError) throw insertError;
       salesOrderId = salesOrder.id;
     } catch (e: any) {

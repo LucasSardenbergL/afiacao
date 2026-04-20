@@ -48,7 +48,7 @@ export async function submitQuote(params: SubmitQuoteParams): Promise<SubmitQuot
         account: 'oben',
         customer_address: storedAddress,
         customer_phone: storedPhone,
-      } as any);
+      });
       if (error) throw error;
       results.push('Orçamento Oben salvo');
     } catch (e: any) {
@@ -93,7 +93,7 @@ export async function submitQuote(params: SubmitQuoteParams): Promise<SubmitQuot
         account: 'colacor',
         customer_address: storedAddress,
         customer_phone: storedPhone,
-      } as any);
+      });
       if (error) throw error;
       results.push('Orçamento Colacor salvo');
     } catch (e: any) {
