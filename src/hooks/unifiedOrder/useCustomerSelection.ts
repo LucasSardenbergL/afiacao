@@ -9,6 +9,21 @@ import type {
   AddressData,
 } from './types';
 
+/* Types for purchase-history merge (jsonb items + price history rows) */
+interface SalesOrderItemSnapshot {
+  codigo?: string;
+  product_code?: string;
+  product_id?: string;
+}
+interface SalesOrderHistoryRow {
+  items: SalesOrderItemSnapshot[] | null;
+  created_at: string;
+}
+interface SalesPriceHistoryRow {
+  product_id: string;
+  created_at: string;
+}
+
 interface UseCustomerSelectionArgs {
   /** Called after a customer is selected and a local user id was resolved.
    *  The hook owner uses this to load tools, addresses, price history, etc. */
@@ -118,8 +133,8 @@ export function useCustomerSelection({
       const history: Record<string, string> = {};
 
       if (ordersSettled.status === 'fulfilled' && ordersSettled.value?.data) {
-        for (const order of ordersSettled.value.data as any[]) {
-          const items = order.items as any[];
+        for (const order of ordersSettled.value.data as unknown as SalesOrderHistoryRow[]) {
+          const items = order.items as SalesOrderItemSnapshot[] | null;
           if (Array.isArray(items)) {
             for (const item of items) {
               const code = item.codigo || item.product_code || '';
@@ -132,7 +147,7 @@ export function useCustomerSelection({
       }
 
       if (priceSettled.status === 'fulfilled' && priceSettled.value?.data) {
-        for (const row of priceSettled.value.data as any[]) {
+        for (const row of priceSettled.value.data as unknown as SalesPriceHistoryRow[]) {
           if (!history[`pid:${row.product_id}`]) history[`pid:${row.product_id}`] = row.created_at;
         }
       }
