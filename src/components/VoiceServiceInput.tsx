@@ -165,7 +165,7 @@ export function VoiceServiceInput({ userTools, onItemsIdentified, isLoading = fa
     }
 
     setIsRecording(false);
-    console.log('Recording stopped');
+    logger.debug('Voice recording stopped', { stage: 'start_recording' });
   }, []);
 
   const transcribeAudio = async (audioBlob: Blob) => {
@@ -182,11 +182,11 @@ export function VoiceServiceInput({ userTools, onItemsIdentified, isLoading = fa
       const formData = new FormData();
       formData.append('audio', audioBlob, `recording.${extension}`);
 
-      console.log('Sending audio to transcription service...');
+      logger.debug('Sending audio to transcription service', { stage: 'transcribe' });
 
       const result = await invokeFunction<{ text?: string }>('elevenlabs-transcribe', formData as any);
 
-      console.log('Transcription result:', result);
+      logger.debug('Transcription completed', { stage: 'transcribe', hasText: !!result.text });
 
       if (result.text) {
         setText(prev => prev + (prev ? ' ' : '') + result.text);
@@ -202,7 +202,7 @@ export function VoiceServiceInput({ userTools, onItemsIdentified, isLoading = fa
         });
       }
     } catch (error) {
-      console.error('Transcription error:', error);
+      logger.error('Audio transcription failed', { stage: 'transcribe', error });
       toast({
         title: 'Erro na transcrição',
         description: error instanceof Error ? error.message : 'Tente novamente.',
@@ -273,7 +273,7 @@ export function VoiceServiceInput({ userTools, onItemsIdentified, isLoading = fa
         setAiMessage('Não consegui identificar ferramentas no seu texto. Tente mencionar o nome das suas ferramentas cadastradas.');
       }
     } catch (error) {
-      console.error('Erro ao analisar:', error);
+      logger.error('Voice service analysis failed', { stage: 'parse_items', textLength: text.trim().length, error });
       toast({
         title: 'Erro na análise',
         description: error instanceof Error ? error.message : 'Tente novamente.',
