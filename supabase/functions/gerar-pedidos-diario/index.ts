@@ -14,6 +14,7 @@ const corsHeaders = {
 
 const RESEND_URL = "https://api.resend.com/emails";
 const FROM_EMAIL = "Reposicao OBEN <onboarding@resend.dev>";
+const APP_URL = Deno.env.get("APP_URL") ?? "https://steu.lovable.app";
 
 interface RpcResult {
   pedidos_gerados: number;
