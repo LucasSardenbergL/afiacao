@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
-import { BookOpen, Lock, Calculator, FileText, Palette, Beaker, FileUp, Droplets, LayoutDashboard, Users, ShoppingCart, Phone, GraduationCap, BarChart3, Settings, ChevronLeft, ChevronRight, Search, Bell, User, LogOut, Package, TrendingUp, Headphones, Target, Menu, X, ClipboardList, PlusCircle, Shield, Wrench, Award, Scissors, DollarSign, Layers, Printer, UserCheck, FileCheck, Boxes, AlertTriangle, PlayCircle, Factory, Truck } from 'lucide-react';
+import { BookOpen, Lock, Calculator, FileText, Palette, Beaker, FileUp, Droplets, LayoutDashboard, Users, ShoppingCart, ShoppingBag, Phone, GraduationCap, BarChart3, Settings, ChevronLeft, ChevronRight, Search, Bell, User, LogOut, Package, TrendingUp, Headphones, Target, Menu, X, ClipboardList, PlusCircle, Shield, Wrench, Award, Scissors, DollarSign, Layers, Printer, UserCheck, FileCheck, Boxes, AlertTriangle, PlayCircle, Factory, Truck } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { useAuth } from '@/contexts/AuthContext';
 import { useUserRole } from '@/hooks/useUserRole';
@@ -71,6 +71,7 @@ const unifiedNavSections: { title: string; items: NavItem[] }[] = [
       { icon: AlertTriangle, label: 'Alertas de outlier', path: '/admin/reposicao/alertas', managerOnly: true },
       { icon: Factory, label: 'Grupos de produção', path: '/admin/reposicao/grupos-producao', managerOnly: true },
       { icon: Truck, label: 'Cadeia logística', path: '/admin/reposicao/cadeia-logistica', managerOnly: true },
+      { icon: ShoppingBag, label: 'Pedidos sugeridos', path: '/admin/reposicao/pedidos', managerOnly: true },
       { icon: Target, label: 'SLA de fornecedor', path: '/admin/reposicao/sla-fornecedor', managerOnly: true },
       { icon: PlayCircle, label: 'Aplicação no Omie', path: '/admin/reposicao/aplicacao', managerOnly: true },
     ],
@@ -208,16 +209,37 @@ function AppSidebar({ collapsed, onToggle }: { collapsed: boolean; onToggle: () 
     staleTime: 30000,
   });
 
+  // Contador de pedidos pendentes/bloqueados do dia atual
+  const { data: pedidosPendentes } = useQuery({
+    queryKey: ['pedidos-pendentes-count'],
+    queryFn: async () => {
+      const today = new Date().toISOString().slice(0, 10);
+      const { count } = await supabase
+        .from('pedido_compra_sugerido')
+        .select('*', { count: 'exact', head: true })
+        .eq('data_ciclo', today)
+        .in('status', ['pendente_aprovacao', 'bloqueado_guardrail']);
+      return count ?? 0;
+    },
+    enabled: isStaff,
+    refetchInterval: 30000,
+    staleTime: 15000,
+  });
+
   const sectionsWithBadges = React.useMemo(
     () => [...unifiedNavSections, docNavSection].map((s) => ({
       ...s,
-      items: s.items.map((it) =>
-        it.path === '/admin/reposicao/alertas' && outlierPendentes
-          ? { ...it, badge: outlierPendentes }
-          : it
-      ),
+      items: s.items.map((it) => {
+        if (it.path === '/admin/reposicao/alertas' && outlierPendentes) {
+          return { ...it, badge: outlierPendentes };
+        }
+        if (it.path === '/admin/reposicao/pedidos' && pedidosPendentes) {
+          return { ...it, badge: pedidosPendentes };
+        }
+        return it;
+      }),
     })),
-    [outlierPendentes],
+    [outlierPendentes, pedidosPendentes],
   );
 
   const isActive = (path: string) => {
