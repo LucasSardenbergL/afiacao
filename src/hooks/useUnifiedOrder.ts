@@ -16,6 +16,8 @@ import type { RecommendationItem } from '@/hooks/useRecommendationEngine';
 import { DeliveryOption } from '@/types';
 import type { AIOrderResult, AICustomerMatch } from '@/components/UnifiedAIAssistant';
 import type { IdentifiedItem } from '@/components/VoiceServiceInput';
+import { logger } from '@/lib/logger';
+import { maskDocument } from '@/lib/format';
 
 // Re-export shared types for backwards compatibility
 export { VOLUME_UNITS };
@@ -350,7 +352,12 @@ export function useUnifiedOrder() {
           local_user_id: user.id,
         });
       } catch (err) {
-        console.error('Erro ao carregar perfil do cliente:', err);
+        logger.error('Failed to load customer profile in customer-mode auto-setup', {
+          mode: 'customer',
+          stage: 'customer_profile_load',
+          customerUserId: user.id,
+          error: err,
+        });
       }
     })();
   }, [isCustomerMode, user]);
@@ -429,7 +436,14 @@ export function useUnifiedOrder() {
           body: { action: 'buscar_cliente', document: customer.cnpj_cpf, account: 'oben' },
         });
         if (omieResult?.codigo_cliente) codigoCliente = omieResult.codigo_cliente;
-      } catch (e) { console.error('Error resolving customer via omie:', e); }
+      } catch (e) {
+        logger.error('Failed to resolve customer via Omie (AI flow)', {
+          mode: 'staff',
+          stage: 'ai_resolve_customer_omie',
+          customerCnpjCpf: maskDocument(customer.cnpj_cpf),
+          error: e,
+        });
+      }
     }
     const omieCustomer: OmieCustomer = {
       codigo_cliente: codigoCliente || 0,
@@ -540,7 +554,13 @@ export function useUnifiedOrder() {
       toast({ title: 'Perfil criado', description: 'Agora cadastre as ferramentas.' });
       setAddToolDialogOpen(true);
     } catch (e) {
-      console.error(e);
+      logger.error('Failed to prepare local profile for staff add-tool flow', {
+        mode: 'staff',
+        stage: 'create_local_profile',
+        customerCnpjCpf: maskDocument(selectedCustomer.cnpj_cpf),
+        codigoCliente: selectedCustomer.codigo_cliente,
+        error: e,
+      });
       toast({ title: 'Erro', description: 'Não foi possível preparar o cadastro.', variant: 'destructive' });
     } finally {
       setCreatingLocalProfile(false);

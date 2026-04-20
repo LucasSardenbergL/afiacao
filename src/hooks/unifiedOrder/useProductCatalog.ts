@@ -1,5 +1,6 @@
 import { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import { supabase } from '@/integrations/supabase/client';
+import { logger } from '@/lib/logger';
 import { buildExclusionQuery } from './types';
 import type { Product, ProductAccount } from './types';
 
@@ -63,7 +64,11 @@ export function useProductCatalog({
           const refreshed = await fetchProductsForAccount(account);
           if (refreshed.length > 0) setProds(refreshed);
         } catch (e) {
-          console.error(`Background stock sync error (${account}):`, e);
+          logger.error('Background stock sync error', {
+            account,
+            stage: 'background_stock_sync',
+            error: e,
+          });
         }
       });
     },
@@ -92,14 +97,22 @@ export function useProductCatalog({
             }
             products = await fetchProductsForAccount(account);
           } catch (syncErr) {
-            console.error(`Sync error (${account}):`, syncErr);
+            logger.error('Catalog sync error (empty catalog fallback)', {
+              account,
+              stage: 'fallback_sync',
+              error: syncErr,
+            });
           }
         }
 
         setProds(products);
         syncStockInBackground(account, setProds);
       } catch (e) {
-        console.error(`loadProductsForAccount(${account}) error:`, e);
+        logger.error('loadProductsForAccount failed', {
+          account,
+          stage: 'initial_load',
+          error: e,
+        });
       } finally {
         setLoading(false);
       }

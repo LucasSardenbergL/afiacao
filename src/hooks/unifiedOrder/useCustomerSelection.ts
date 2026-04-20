@@ -2,6 +2,8 @@ import { useState, useEffect, useCallback } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { supabase } from '@/integrations/supabase/client';
 import { useToast } from '@/hooks/use-toast';
+import { logger } from '@/lib/logger';
+import { maskDocument } from '@/lib/format';
 import type {
   OmieCustomer,
   AddressData,
@@ -177,7 +179,13 @@ export function useCustomerSelection({
           }
           setCustomers(clientes);
         }
-      } catch (e) { console.error(e); }
+      } catch (e) {
+        logger.error('Customer search failed', {
+          stage: 'customer_search',
+          searchTermLength: customerSearch.length,
+          error: e,
+        });
+      }
       finally { setSearchingCustomers(false); }
     }, 500);
     return () => clearTimeout(timeout);
@@ -251,9 +259,17 @@ export function useCustomerSelection({
           if (res.data?.codigo_cliente) {
             cust.codigo_cliente_colacor = res.data.codigo_cliente;
             cust.codigo_vendedor_colacor = res.data.codigo_vendedor || null;
-            console.log(`[AutoCreate] Cliente criado na Colacor Vendas: ${res.data.codigo_cliente}`);
+            logger.info('Customer auto-created on Colacor Vendas', {
+              stage: 'auto_create_colacor',
+              customerCnpjCpf: maskDocument(cust.cnpj_cpf),
+              codigoClienteColacor: res.data.codigo_cliente,
+            });
           }
-        }).catch(e => console.warn('[AutoCreate] Erro ao criar na Colacor Vendas:', e))
+        }).catch(e => logger.warn('Auto-create customer on Colacor Vendas failed (continuing)', {
+          stage: 'auto_create_colacor',
+          customerCnpjCpf: maskDocument(cust.cnpj_cpf),
+          error: e,
+        }))
       );
     }
 
@@ -265,9 +281,17 @@ export function useCustomerSelection({
           if (res.data?.codigo_cliente) {
             cust.codigo_cliente_afiacao = res.data.codigo_cliente;
             cust.codigo_vendedor_afiacao = res.data.codigo_vendedor || null;
-            console.log(`[AutoCreate] Cliente criado na Colacor Afiação: ${res.data.codigo_cliente}`);
+            logger.info('Customer auto-created on Colacor Afiação', {
+              stage: 'auto_create_afiacao',
+              customerCnpjCpf: maskDocument(cust.cnpj_cpf),
+              codigoClienteAfiacao: res.data.codigo_cliente,
+            });
           }
-        }).catch(e => console.warn('[AutoCreate] Erro ao criar na Colacor Afiação:', e))
+        }).catch(e => logger.warn('Auto-create customer on Colacor Afiação failed (continuing)', {
+          stage: 'auto_create_afiacao',
+          customerCnpjCpf: maskDocument(cust.cnpj_cpf),
+          error: e,
+        }))
       );
     }
 
@@ -365,13 +389,25 @@ export function useCustomerSelection({
         if (r.status === 'fulfilled') {
           const val: any = r.value;
           if (val && val.error) {
-            console.error(`[selectCustomer] ${labels[idx]} retornou erro:`, val.error?.message || val.error);
+            logger.warn('selectCustomer: settled call returned error (tolerated)', {
+              stage: 'select_customer_settle',
+              part: labels[idx],
+              customerCnpjCpf: maskDocument(cust.cnpj_cpf),
+              codigoCliente: cust.codigo_cliente,
+              error: val.error,
+            });
             failedParts.push(labels[idx]);
             return { data: null };
           }
           return val ?? { data: null };
         }
-        console.error(`[selectCustomer] ${labels[idx]} falhou:`, r.reason?.message || r.reason);
+        logger.warn('selectCustomer: settled call rejected (tolerated)', {
+          stage: 'select_customer_settle',
+          part: labels[idx],
+          customerCnpjCpf: maskDocument(cust.cnpj_cpf),
+          codigoCliente: cust.codigo_cliente,
+          error: r.reason,
+        });
         failedParts.push(labels[idx]);
         return { data: null };
       };
@@ -461,7 +497,12 @@ export function useCustomerSelection({
           setVendedorDivergencias(validacao.divergencias || []);
         }
       } catch (err) {
-        console.error('Erro ao validar vendedor:', err);
+        logger.error('Vendedor validation call failed', {
+          stage: 'validate_vendedor',
+          customerCnpjCpf: maskDocument(cust.cnpj_cpf),
+          codigoCliente: cust.codigo_cliente,
+          error: err,
+        });
       } finally {
         setValidatingVendedor(false);
       }
