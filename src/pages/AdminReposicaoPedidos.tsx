@@ -383,6 +383,7 @@ function DetalhesModal({
                 <TableHead className="text-right">Qtde</TableHead>
                 <TableHead className="text-right">Preço</TableHead>
                 <TableHead className="text-right">Total linha</TableHead>
+                {podeEditar && <TableHead className="text-right">Ações</TableHead>}
               </TableRow>
             </TableHeader>
             <TableBody>
@@ -417,11 +418,37 @@ function DetalhesModal({
                   </TableCell>
                   <TableCell className="text-right tabular-nums">{formatBRL(l.preco_unitario)}</TableCell>
                   <TableCell className="text-right tabular-nums font-medium">{formatBRL(l._valor)}</TableCell>
+                  {podeEditar && (
+                    <TableCell className="text-right">
+                      <div className="flex justify-end gap-1">
+                        <Button
+                          size="sm"
+                          variant="ghost"
+                          title="Remover linha deste pedido"
+                          onClick={() => setRemoverItem(l)}
+                          disabled={removerItemMutation.isPending || descontinuarMutation.isPending}
+                        >
+                          <Trash2 className="w-4 h-4" />
+                        </Button>
+                        <Button
+                          size="sm"
+                          variant="ghost"
+                          title="Remover linha + descontinuar SKU"
+                          className="text-destructive hover:text-destructive"
+                          onClick={() => setDescontinuarItem(l)}
+                          disabled={removerItemMutation.isPending || descontinuarMutation.isPending}
+                        >
+                          <Ban className="w-4 h-4" />
+                        </Button>
+                      </div>
+                    </TableCell>
+                  )}
                 </TableRow>
               ))}
               <TableRow>
                 <TableCell colSpan={6} className="text-right font-medium">Total</TableCell>
                 <TableCell className="text-right font-bold tabular-nums">{formatBRL(totalAtual)}</TableCell>
+                {podeEditar && <TableCell />}
               </TableRow>
             </TableBody>
           </Table>
@@ -451,12 +478,61 @@ function DetalhesModal({
                 onClick={() => aprovarMutation.mutate()}
               >
                 {aprovarMutation.isPending && <Loader2 className="w-4 h-4 mr-1 animate-spin" />}
-                Aprovar e enviar
+                ✓ Aprovar pedido completo
               </Button>
             </>
           )}
         </DialogFooter>
       </DialogContent>
+
+      {/* Confirmação: remover linha */}
+      <AlertDialog open={!!removerItem} onOpenChange={(v) => !v && setRemoverItem(null)}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Remover este item do pedido?</AlertDialogTitle>
+            <AlertDialogDescription>
+              SKU <span className="font-mono">{removerItem?.sku_codigo_omie}</span> — {removerItem?.sku_descricao ?? '—'}.
+              <br />O valor total do pedido será recalculado. Se for o último item, o pedido será cancelado automaticamente.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel disabled={removerItemMutation.isPending}>Cancelar</AlertDialogCancel>
+            <AlertDialogAction
+              disabled={removerItemMutation.isPending}
+              onClick={() => removerItem && removerItemMutation.mutate(removerItem.id)}
+            >
+              {removerItemMutation.isPending && <Loader2 className="w-4 h-4 mr-1 animate-spin" />}
+              Remover
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+
+      {/* Confirmação: remover + descontinuar */}
+      <AlertDialog open={!!descontinuarItem} onOpenChange={(v) => !v && setDescontinuarItem(null)}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Descontinuar SKU permanentemente?</AlertDialogTitle>
+            <AlertDialogDescription>
+              SKU <span className="font-mono">{descontinuarItem?.sku_codigo_omie}</span> — {descontinuarItem?.sku_descricao ?? '—'}.
+              <br />
+              <strong className="text-destructive">Tem certeza?</strong> Este SKU não será mais incluído em ciclos futuros de reposição automática.
+              A linha também será removida deste pedido.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel disabled={descontinuarMutation.isPending}>Voltar</AlertDialogCancel>
+            <AlertDialogAction
+              disabled={descontinuarMutation.isPending}
+              className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+              onClick={() => descontinuarItem && descontinuarMutation.mutate(descontinuarItem)}
+            >
+              {descontinuarMutation.isPending && <Loader2 className="w-4 h-4 mr-1 animate-spin" />}
+              Descontinuar e remover
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </Dialog>
   );
 }
