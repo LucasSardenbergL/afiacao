@@ -76,6 +76,7 @@ interface PedidoItem {
   sku_codigo_omie: string;
   sku_descricao: string | null;
   estoque_atual: number | null;
+  estoque_minimo: number | null;
   ponto_pedido: number | null;
   estoque_maximo: number | null;
   qtde_sugerida: number;
@@ -84,6 +85,12 @@ interface PedidoItem {
   valor_linha: number | null;
   primeira_compra: boolean | null;
   ajustado_humano: boolean | null;
+}
+
+function getEstoqueZoneClass(estoque: number, minimo: number, pp: number): string {
+  if (estoque < minimo) return 'text-red-600 dark:text-red-400 font-semibold';
+  if (estoque <= pp) return 'text-amber-600 dark:text-amber-400 font-semibold';
+  return 'text-emerald-600 dark:text-emerald-400';
 }
 
 const EMPRESA = 'OBEN';
@@ -178,7 +185,25 @@ function DetalhesModal({
         .eq('pedido_id', pedido.id)
         .order('id', { ascending: true });
       if (error) throw error;
-      return (data ?? []) as PedidoItem[];
+      const baseItens = data ?? [];
+      if (baseItens.length === 0) return [] as PedidoItem[];
+
+      // Buscar estoque_minimo de sku_parametros (JOIN manual)
+      const skuCodigos = baseItens.map((it) => Number(it.sku_codigo_omie)).filter((n) => !isNaN(n));
+      const { data: params } = await supabase
+        .from('sku_parametros')
+        .select('sku_codigo_omie, estoque_minimo')
+        .eq('empresa', pedido.empresa)
+        .in('sku_codigo_omie', skuCodigos);
+      const minMap = new Map<string, number>();
+      (params ?? []).forEach((p) => {
+        minMap.set(String(p.sku_codigo_omie), Number(p.estoque_minimo ?? 0));
+      });
+
+      return baseItens.map((it) => ({
+        ...it,
+        estoque_minimo: minMap.get(String(it.sku_codigo_omie)) ?? 0,
+      })) as PedidoItem[];
     },
     enabled: !!pedido && open,
   });
@@ -390,6 +415,7 @@ function DetalhesModal({
               <TableRow>
                 <TableHead>SKU</TableHead>
                 <TableHead className="text-right">Estoque</TableHead>
+                <TableHead className="text-right">Mínimo</TableHead>
                 <TableHead className="text-right">PP</TableHead>
                 <TableHead className="text-right">Emax</TableHead>
                 <TableHead className="text-right">Qtde</TableHead>
@@ -399,7 +425,12 @@ function DetalhesModal({
               </TableRow>
             </TableHeader>
             <TableBody>
-              {linhas.map((l) => (
+              {linhas.map((l) => {
+                const estoque = Number(l.estoque_atual ?? 0);
+                const minimo = Number(l.estoque_minimo ?? 0);
+                const pp = Number(l.ponto_pedido ?? 0);
+                const zoneClass = getEstoqueZoneClass(estoque, minimo, pp);
+                return (
                 <TableRow key={l.id}>
                   <TableCell>
                     <div className="font-mono text-xs">{l.sku_codigo_omie}</div>
@@ -408,8 +439,9 @@ function DetalhesModal({
                       <Badge variant="destructive" className="mt-1 text-[10px] h-4">primeira compra</Badge>
                     )}
                   </TableCell>
-                  <TableCell className="text-right tabular-nums">{Number(l.estoque_atual ?? 0).toFixed(0)}</TableCell>
-                  <TableCell className="text-right tabular-nums">{Number(l.ponto_pedido ?? 0).toFixed(0)}</TableCell>
+                  <TableCell className={`text-right tabular-nums ${zoneClass}`}>{estoque.toFixed(0)}</TableCell>
+                  <TableCell className="text-right tabular-nums text-muted-foreground">{minimo.toFixed(0)}</TableCell>
+                  <TableCell className="text-right tabular-nums">{pp.toFixed(0)}</TableCell>
                   <TableCell className="text-right tabular-nums">{Number(l.estoque_maximo ?? 0).toFixed(0)}</TableCell>
                   <TableCell className="text-right">
                     {podeEditar ? (
@@ -456,9 +488,10 @@ function DetalhesModal({
                     </TableCell>
                   )}
                 </TableRow>
-              ))}
+                );
+              })}
               <TableRow>
-                <TableCell colSpan={6} className="text-right font-medium">Total</TableCell>
+                <TableCell colSpan={7} className="text-right font-medium">Total</TableCell>
                 <TableCell className="text-right font-bold tabular-nums">{formatBRL(totalAtual)}</TableCell>
                 {podeEditar && <TableCell />}
               </TableRow>
