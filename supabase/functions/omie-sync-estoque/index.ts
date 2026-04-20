@@ -238,7 +238,7 @@ Deno.serve(async (req) => {
       do {
         const resp = await callOmie<OmieSaldoPendenteResponse>(
           appKey, appSecret, "ListarSaldoPendente",
-          { pagina: pPag, registros_por_pagina: PAGE_SIZE, tipo: "entrada" },
+          { pagina: pPag, registros_por_pagina: PAGE_SIZE, tipo: "ENTRADA" },
         );
         pTot = resp.total_de_paginas ?? 1;
         for (const item of resp.saldo_pendente_lista ?? []) {
