@@ -21,22 +21,45 @@ const MAX_RETRIES = 3;
 
 type Empresa = "OBEN" | "COLACOR";
 
-interface OmieEstoqueItem {
+// Item do método ListarPosEstoque (response.produtos[])
+interface OmiePosEstoqueItem {
+  nCodProd?: number;
+  cCodInt?: string;
   cCodigo?: string;
-  codigo_produto?: number | string;
+  cDescricao?: string;
   fisico?: number;
   reservado?: number;
-  pedidoCompra?: number;
+  nPendente?: number; // pendente em pedidos de VENDA (saída), não entrada
+  estoque_minimo?: number;
+  codigo_local_estoque?: number;
   [k: string]: unknown;
 }
 
-interface OmieEstoqueResponse {
+interface OmiePosEstoqueResponse {
   nPagina?: number;
   nTotPaginas?: number;
   nRegistros?: number;
-  nTotalRegistros?: number;
-  produtos?: OmieEstoqueItem[];
-  produto_servico_resumido?: OmieEstoqueItem[];
+  nTotRegistros?: number;
+  produtos?: OmiePosEstoqueItem[];
+  faultcode?: string;
+  faultstring?: string;
+}
+
+// Item do método ListarSaldoPendente (response.saldo_pendente_lista[])
+interface OmieSaldoPendenteItem {
+  id_prod?: number;
+  codigo_local_estoque?: number;
+  qtde_saida?: number;
+  qtde_entrada?: number; // <- pedidos de compra abertos
+  [k: string]: unknown;
+}
+
+interface OmieSaldoPendenteResponse {
+  pagina?: number;
+  total_de_paginas?: number;
+  registros?: number;
+  total_de_registros?: number;
+  saldo_pendente_lista?: OmieSaldoPendenteItem[];
   faultcode?: string;
   faultstring?: string;
 }
