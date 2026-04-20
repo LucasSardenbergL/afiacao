@@ -98,3 +98,6 @@ verify_jwt = false
 
 [functions.omie-sync-metadados]
 verify_jwt = false
+
+[functions.gerar-pedidos-diario]
+verify_jwt = false
