@@ -8365,7 +8365,7 @@ export type Database = {
           bloqueados: number
           pedidos_gerados: number
           skus_incluidos: number
-          valor_total: number
+          valor_total_ciclo: number
         }[]
       }
       get_commercial_role: {
