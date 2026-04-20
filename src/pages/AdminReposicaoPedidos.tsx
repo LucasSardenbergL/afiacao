@@ -816,6 +816,7 @@ export default function AdminReposicaoPedidos() {
                       <TableHead className="text-right">Valor</TableHead>
                       <TableHead className="text-right">Δ vs anterior</TableHead>
                       <TableHead className="text-right">Corte</TableHead>
+                      <TableHead>Aprovado em / Por</TableHead>
                       <TableHead className="text-right">Ações</TableHead>
                     </TableRow>
                   </TableHeader>
