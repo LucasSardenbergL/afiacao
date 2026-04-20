@@ -415,6 +415,7 @@ function DetalhesModal({
               <TableRow>
                 <TableHead>SKU</TableHead>
                 <TableHead className="text-right">Estoque</TableHead>
+                <TableHead className="text-right">Mínimo</TableHead>
                 <TableHead className="text-right">PP</TableHead>
                 <TableHead className="text-right">Emax</TableHead>
                 <TableHead className="text-right">Qtde</TableHead>
@@ -424,7 +425,12 @@ function DetalhesModal({
               </TableRow>
             </TableHeader>
             <TableBody>
-              {linhas.map((l) => (
+              {linhas.map((l) => {
+                const estoque = Number(l.estoque_atual ?? 0);
+                const minimo = Number(l.estoque_minimo ?? 0);
+                const pp = Number(l.ponto_pedido ?? 0);
+                const zoneClass = getEstoqueZoneClass(estoque, minimo, pp);
+                return (
                 <TableRow key={l.id}>
                   <TableCell>
                     <div className="font-mono text-xs">{l.sku_codigo_omie}</div>
@@ -433,8 +439,9 @@ function DetalhesModal({
                       <Badge variant="destructive" className="mt-1 text-[10px] h-4">primeira compra</Badge>
                     )}
                   </TableCell>
-                  <TableCell className="text-right tabular-nums">{Number(l.estoque_atual ?? 0).toFixed(0)}</TableCell>
-                  <TableCell className="text-right tabular-nums">{Number(l.ponto_pedido ?? 0).toFixed(0)}</TableCell>
+                  <TableCell className={`text-right tabular-nums ${zoneClass}`}>{estoque.toFixed(0)}</TableCell>
+                  <TableCell className="text-right tabular-nums text-muted-foreground">{minimo.toFixed(0)}</TableCell>
+                  <TableCell className="text-right tabular-nums">{pp.toFixed(0)}</TableCell>
                   <TableCell className="text-right tabular-nums">{Number(l.estoque_maximo ?? 0).toFixed(0)}</TableCell>
                   <TableCell className="text-right">
                     {podeEditar ? (
