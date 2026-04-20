@@ -56,6 +56,18 @@ interface PedidoSugerido {
   omie_pedido_compra_numero: string | null;
   aprovado_em: string | null;
   aprovado_por: string | null;
+  condicao_pagamento_codigo: string | null;
+  condicao_pagamento_descricao: string | null;
+  num_parcelas: number | null;
+  dias_parcelas: string | null;
+  condicao_origem: string | null;
+}
+
+interface CondicaoPagamento {
+  codigo: string;
+  descricao: string;
+  num_parcelas: number | null;
+  dias_parcelas: string | null;
 }
 
 interface PedidoItem {
