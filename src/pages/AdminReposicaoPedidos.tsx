@@ -485,6 +485,7 @@ function PedidoRow({
 /* ─── Página principal ─── */
 export default function AdminReposicaoPedidos() {
   const queryClient = useQueryClient();
+  const [searchParams, setSearchParams] = useSearchParams();
   const [now, setNow] = useState(new Date());
   const [detalhesPedido, setDetalhesPedido] = useState<PedidoSugerido | null>(null);
   const [cancelarPedido, setCancelarPedido] = useState<PedidoSugerido | null>(null);
@@ -511,6 +512,36 @@ export default function AdminReposicaoPedidos() {
     },
     refetchInterval: 30_000,
   });
+
+  // Deep link: abrir modal automaticamente quando ?id= estiver presente
+  useEffect(() => {
+    const idParam = searchParams.get('id');
+    if (!idParam || !pedidos) return;
+    const idNum = Number(idParam);
+    if (Number.isNaN(idNum)) return;
+    if (detalhesPedido?.id === idNum) return;
+    const found = pedidos.find((p) => p.id === idNum);
+    if (found) {
+      setDetalhesPedido(found);
+    } else {
+      toast.error(`Pedido #${idNum} não encontrado no ciclo de hoje`);
+      // limpa o param inválido
+      const next = new URLSearchParams(searchParams);
+      next.delete('id');
+      setSearchParams(next, { replace: true });
+    }
+  }, [searchParams, pedidos, detalhesPedido?.id, setSearchParams]);
+
+  const handleCloseDetalhes = (open: boolean) => {
+    if (!open) {
+      setDetalhesPedido(null);
+      if (searchParams.has('id')) {
+        const next = new URLSearchParams(searchParams);
+        next.delete('id');
+        setSearchParams(next, { replace: true });
+      }
+    }
+  };
 
   const gerarMutation = useMutation({
     mutationFn: async () => {
