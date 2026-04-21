@@ -243,3 +243,125 @@ Expand de cada linha abre drawer lateral com:
 ### Gerar ciclo manualmente
 
 Se quiser disparar o ciclo fora do dia agendado (ex: você vai estar ausente no dia previsto), botão "Gerar ciclo oportunidade" no topo direito. Confirma, sistema gera pedidos especiais agora.
+
+---
+
+## Ciclo de oportunidade
+
+### Quando roda
+
+Automaticamente pelo cron diário, quando:
+
+- `data_corte_pedido` de alguma campanha ativa bate com hoje, OU
+- `data_vigencia` de algum aumento bate com amanhã (hoje é a véspera)
+
+Horário fixo: 08:00 BRT.
+
+### O que gera
+
+Pedidos de compra com `tipo_ciclo = 'oportunidade_promo'` ou `oportunidade_aumento`, separados do ciclo normal. Aparecem em `/admin/reposicao/pedidos` com badge específico.
+
+### Diferença do ciclo normal
+
+Ciclo normal é diário, roda para todo SKU que atingiu ponto de pedido. Ciclo oportunidade é pontual, roda para SKUs que têm benefício econômico naquele dia específico.
+
+Importante: pedidos de oportunidade **não contaminam** as estatísticas de lead time. Tem campo `origem_compra` em `sku_leadtime_history` que separa: só pedidos normais alimentam o cálculo de lead time. Isso protege os parâmetros de reposição de serem distorcidos por compras atípicas.
+
+### Revisão e disparo
+
+Mesmo fluxo do ciclo normal:
+
+1. Ciclo gera pedidos em estado `pendente_aprovacao`
+2. Você revisa em `/admin/reposicao/pedidos`
+3. Aprova ou ajusta quantidades
+4. Às 10:00 BRT, o disparador automático envia para Sayerlack via Omie
+
+Se quiser ajustar antes das 10:00, você tem a manhã inteira.
+
+---
+
+## Negociações paralelas
+
+### Quando usar
+
+Promoção oficial da Sayerlack tem condições fixas. Mas às vezes você negocia condições especiais com um gerente ou vendedor, fora do catálogo oficial. Essas negociações são modeladas como campanhas `tipo_origem = 'negociacao_cliente'`.
+
+Exemplos:
+- Desconto extra em um SKU específico por volume
+- Extensão de prazo de faturamento
+- Condição especial em um ou dois SKUs pontuais
+
+### Fluxo
+
+Cria campanha manualmente em `/admin/reposicao/promocoes` → "Nova negociação". Estado inicial `negociando`.
+
+Na Tab "Negociação" da campanha, registra eventos da conversa: proposta enviada, contraproposta recebida, aceite, recusa. Cada evento tem tipo, percentual proposto, volume mínimo proposto, conteúdo em texto livre e data.
+
+A timeline serve como memória da negociação. Útil quando ela se estende por dias e você esquece onde parou.
+
+Quando chegar a acordo, muda estado para `ativa` e o sistema passa a considerar nas oportunidades.
+
+### Escolha de SKU para negociação paralela
+
+No SQL 16 (em desenvolvimento) vai ter um ranking de SKUs candidatos a negociação paralela baseado em giro, volume e preço. Atualmente você escolhe baseado na sua experiência.
+
+---
+
+## Alertas
+
+### Tipos e severidades
+
+Tabela `fornecedor_alerta` centraliza avisos do sistema. Aparecem como badge no menu lateral e na página de Oportunidades.
+
+- **promocao_nova** (info): campanha foi ativada. Cria evento de Calendar.
+- **promocao_suspensa** (urgente): campanha cancelada durante vigência. Email imediato.
+- **aumento_anunciado** (atenção): aumento cadastrado e ativado. Evento de Calendar para véspera.
+- **polling_erro** (atenção): polling de email falhou. Investigar configuração.
+- **mapeamento_pendente** (info): aumento cadastrado mas categorias sem mapeamento de família.
+- **oportunidade_calculada** (atenção): ciclo oportunidade rodou, X pedidos gerados.
+
+### Ação esperada
+
+Cada alerta tem título e mensagem clara sobre o que fazer. A maioria se resolve visitando a página correspondente (campanha, aumento, pedidos). Alerta marca como resolvido automaticamente quando você age.
+
+### Canais de notificação
+
+1. **Badge visual** no menu lateral: sempre presente enquanto há alertas não resolvidos.
+2. **Email** para `lucascoelhosardenberg@gmail.com`: apenas alertas urgentes ou mudanças de estado importantes.
+3. **Evento no Google Calendar** (agenda `primary`): criado para alertas de tipo `promocao_nova` e `aumento_anunciado`, na véspera da ação necessária.
+
+---
+
+## Polling automático de emails
+
+### Configuração
+
+Três remetentes monitorados automaticamente:
+
+- **juliana@sayerlack.com.br**: promoções mensais e suspensões. Processa como `campanha_sayerlack`.
+- **sc@sayerlack.com.br**: anúncios de reajuste de preços. Processa como `aumento_sayerlack`.
+- **noreply@gooddata.com**: relatório semanal de progresso trimestral (toda segunda-feira). Processa como `relatorio_trimestral`.
+
+### Frequência
+
+Polling roda a cada 60 minutos (configurável em `fornecedor_email_polling.intervalo_min`). Último horário de execução aparece na tabela de configuração.
+
+### O que acontece com cada email
+
+1. Sistema lista emails novos do remetente
+2. Filtra por padrões de assunto configurados
+3. Se encontra, baixa anexos PDF/imagem
+4. Sobe para bucket `promocoes` ou `aumentos`
+5. Invoca edge function de extração Vision com tipo apropriado
+6. Cria campanha/aumento em rascunho
+7. Gera alerta
+8. Atualiza checkpoint (último email processado)
+
+Se assunto contém padrão de suspensão (ex: "SUSPENSA", "CANCELADA"), cria alerta urgente **sem** processar o anexo — requer sua intervenção manual.
+
+### Quando o polling falha
+
+Alerta `polling_erro` é gerado com detalhes. Mais comum:
+- Credenciais OAuth do Gmail expiradas — precisa renovar manualmente
+- Remetente bloqueado ou spam — conferir filtros Gmail
+- PDF corrompido ou em formato não suportado
