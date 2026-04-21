@@ -148,3 +148,98 @@ O desconto efetivo é aditivo: promoção 20% + extra 8% = 28%. Tooltip na tabel
 - **data_corte_faturamento**: último dia em que a NF deve sair. Pode cair no mês seguinte. Default: último dia do mês subsequente a data_fim.
 
 Você pode esticar `data_corte_pedido` e `data_corte_faturamento` quando negociar com Sayerlack, desde que Sayerlack confirme.
+
+---
+
+## Aumentos anunciados
+
+### Diferença de promoção
+
+Promoção é benefício passageiro — compre enquanto vale. Aumento é prejuízo futuro — compre antes de pagar mais. A matemática é simétrica com sinal trocado: evitar aumento de 5% equivale a ganhar desconto de 5%.
+
+### Cadastro via PDF
+
+Emails de aumento vêm de `sc@sayerlack.com.br` com assunto "Reajuste de preços...". O polling automático processa igual às promoções. Ou upload manual em `/admin/reposicao/aumentos`.
+
+A extração identifica:
+- Nome do anúncio
+- Data de vigência (quando o preço novo começa)
+- Categorias afetadas com percentuais (ex: "Diluentes PU - 5%")
+- Opcionalmente, datas de vigência específicas por categoria
+
+### Estados
+
+- **Rascunho**: recém-criado, sem mapeamentos.
+- **Ativo**: confirmado, aguardando data de vigência. Gera alertas e oportunidades.
+- **Vigente**: passou da `data_vigencia`. Preços já subiram.
+- **Expirado**: automaticamente após 30 dias de vigência. Histórico.
+- **Cancelada**: abortado manualmente.
+
+### Mapeamento categoria → famílias Omie
+
+**Etapa crítica**: o PDF traz categorias em texto ("Diluentes PU", "Tintas Nitrocelulose"). O sistema precisa saber quais famílias do seu catálogo Omie correspondem a cada categoria.
+
+Tab "Categorias e mapeamento" da página de detalhe. Para cada categoria extraída:
+
+1. Ajusta o percentual se veio errado
+2. Clica em "Mapeamento" da linha
+3. No diálogo, marca opção "Aplicar a TODA a família" e seleciona as famílias Omie correspondentes (pode ser mais de uma)
+4. Ou desmarca a opção e seleciona SKUs individuais específicos (raro, só se precisar de granularidade)
+5. Salva
+6. Marca checkbox "Confirmado" da categoria
+
+### SKUs afetados
+
+Tab "SKUs afetados" mostra em tempo real quais produtos serão atingidos pelo aumento. Valida antes de ativar. Se aparecer produto que não faz sentido, volta e ajusta o mapeamento.
+
+### Ativação
+
+Na sidebar direita, botão "Ativar anúncio" só habilita quando todas as categorias confirmadas tiverem pelo menos uma família mapeada. Ativação cria evento no Calendar para `data_vigencia - 1 dia útil` e envia email.
+
+---
+
+## Oportunidades unificadas
+
+Página `/admin/reposicao/oportunidades`. Visão consolidada de todos os SKUs que valem a pena comprar hoje.
+
+### Cards do topo
+
+**Economia total potencial**: soma da economia bruta estimada de todos os SKUs com oportunidade ativa. Considera promoção + aumento simultaneamente.
+
+**SKUs com oportunidade**: quantos SKUs têm algum benefício hoje, de quantos você tem cadastrados no total.
+
+**Data limite mais próxima**: o SKU com prazo mais apertado para agir. Badge amarelo se menos de 7 dias, vermelho se menos de 3.
+
+**Ciclo oportunidade do dia**: se hoje é dia em que um ciclo especial roda (último dia útil de campanha ou véspera de aumento), mostra botão para disparar. Se não, status cinza.
+
+### Cenários
+
+Cada linha da tabela tem um cenário que define a natureza da oportunidade:
+
+- **promo_flat**: SKU em promoção sem volume mínimo. Compra normal já captura desconto. Sem antecipação necessária.
+- **promo_volume**: SKU em promoção com volume mínimo. Vale inflar quantidade se economia líquida (desconto - custo de capital) for positiva.
+- **aumento_apenas**: SKU não está em promoção mas vai sofrer aumento. Vale antecipar compra dentro do teto de "fim do mês subsequente ao aumento".
+- **promo_e_aumento**: SKU está em promoção E vai sofrer aumento. Benefício aditivo, melhor momento para comprar.
+
+### Como agir em cada cenário
+
+**promo_flat**: nada especial. Seu ciclo normal de reposição já pega o desconto quando SKU atingir ponto de pedido. Você só vai ver esse SKU na lista porque economia existe, mas ação é automática.
+
+**promo_volume**: se volume mínimo é maior que sua compra normal, sistema sugere inflar para atingir volume. Você decide se vale aceitar o estoque extra.
+
+**aumento_apenas**: antecipar compra é a ação. No ciclo de oportunidade automático (um dia antes da vigência), sistema gera pedido com quantidade suficiente para cobrir até fim do mês subsequente.
+
+**promo_e_aumento**: prioridade máxima. Maior benefício combinado. Ciclo especial vai pegar o maior entre "corte de promoção" e "véspera de aumento" para disparar.
+
+### Decomposição por SKU
+
+Expand de cada linha abre drawer lateral com:
+
+- Parâmetros do SKU (demanda diária, preço EOQ, custo de capital aplicado, status de reposição)
+- Card da campanha de promoção (se houver) com link para detalhe
+- Card(s) de aumento(s) afetando (se houver) com link para detalhe
+- Cálculo textual: "Comprando X unidades nos próximos Y dias captura Z% de benefício total, economizando R$ W bruto"
+
+### Gerar ciclo manualmente
+
+Se quiser disparar o ciclo fora do dia agendado (ex: você vai estar ausente no dia previsto), botão "Gerar ciclo oportunidade" no topo direito. Confirma, sistema gera pedidos especiais agora.
