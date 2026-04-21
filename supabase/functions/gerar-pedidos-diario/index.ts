@@ -335,6 +335,7 @@ Deno.serve(async (req: Request) => {
         email_status: emailStatus,
         email_recipient: recipient ?? null,
         email_detail: emailDetail,
+        promocoes: promoSummary,
       },
     });
 
@@ -344,6 +345,7 @@ Deno.serve(async (req: Request) => {
         empresa,
         data_ciclo: dataCiclo,
         ...rpc,
+        promocoes: promoSummary,
         email_status: emailStatus,
         email_recipient: recipient,
         duration_ms: duration,
