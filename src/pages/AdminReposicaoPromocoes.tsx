@@ -17,7 +17,10 @@ import {
   Clock,
   RotateCw,
   X,
+  ChevronDown,
+  ChevronRight,
 } from "lucide-react";
+import { agruparPorMes, chavesUltimosNMeses } from "@/lib/agruparPorMes";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
