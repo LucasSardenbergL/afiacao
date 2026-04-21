@@ -365,3 +365,55 @@ Alerta `polling_erro` é gerado com detalhes. Mais comum:
 - Credenciais OAuth do Gmail expiradas — precisa renovar manualmente
 - Remetente bloqueado ou spam — conferir filtros Gmail
 - PDF corrompido ou em formato não suportado
+
+---
+
+## Troubleshooting
+
+**Campanha aparece como "Campanha não encontrada" após upload**
+
+O redirect da UI pode estar desatualizado. Volta para `/admin/reposicao/promocoes` e procura a campanha nova na lista. Se está lá, o upload funcionou — só o redirect falhou.
+
+**Upload de PDF retorna baixa confiança**
+
+Gemini não extraiu bem. Opções: (a) subir imagem da mesma campanha em vez de PDF; (b) cadastrar manualmente pela interface; (c) para campanhas históricas, baixa confiança é aceitável desde que nome, datas e a maioria dos SKUs estejam corretos.
+
+**Promoção ativada mas não aparece em oportunidades**
+
+Checar:
+
+1. Estado é `ativa`? Sidebar direita mostra badge verde.
+
+2. Data atual está entre `data_inicio` e `data_fim`?
+
+3. Itens estão confirmados? Tab Itens, todos com checkbox confirmado marcado.
+
+4. SKUs em `sku_parametros` estão com `ativo = true`? Para SKUs novos, pode não ter entrado ainda.
+
+**Aumento ativado mas SKUs afetados mostra lista vazia**
+
+Na Tab "Categorias e mapeamento", para cada categoria, você precisa ter mapeado pelo menos uma família Omie. Se mapeou SKUs específicos, confere se eles existem e estão ativos em `omie_products`.
+
+**Economia bruta estimada vem NULL**
+
+SKU não tem `preco_item_eoq` calculado. Significa que o SKU é novo (sem histórico de compra nem venda nos últimos 180 dias) e o sistema não tem base para calcular custo. Esse SKU não entra na otimização — considere primeira compra manual.
+
+**Ciclo de oportunidade gerou zero pedidos**
+
+Pode ter acontecido que os SKUs afetados já estavam com estoque acima do ponto de pedido (compra normal não era necessária) e também não havia economia líquida suficiente para justificar antecipação. Se quiser forçar, pode criar pedido manual baseado nas oportunidades mostradas na Página 3.
+
+**Alerta de polling_erro recorrente**
+
+Verifica configuração da conta Google no Supabase. Tokens OAuth expiram periodicamente e requerem renovação. Entra em contato com suporte Lovable se o erro persistir após renovação.
+
+**Quero desfazer uma ativação**
+
+Campanha/aumento ativo: volta na sidebar e clica "Cancelar". Isso move para estado `cancelada` e para de afetar oportunidades. Para realmente apagar (não recomendado após ter sido usado no sistema), só via SQL Editor com `DELETE FROM promocao_campanha WHERE id = X`.
+
+**Desconto extra não está somando no desconto efetivo**
+
+Confere que preencheu `desconto_extra_perc` com número positivo (1-50) e salvou. Se continuar zero na view `v_promocao_item_efetivo`, pode ser cache do navegador — recarrega a página.
+
+---
+
+## Apêndice: diagrama de dados
