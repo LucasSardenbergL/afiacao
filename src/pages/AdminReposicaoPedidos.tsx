@@ -413,7 +413,7 @@ function DetalhesModal({
           <Table>
             <TableHeader>
               <TableRow>
-                <TableHead>SKU</TableHead>
+                <TableHead className="min-w-[280px]">SKU</TableHead>
                 <TableHead className="text-right">Estoque</TableHead>
                 <TableHead className="text-right">Mínimo</TableHead>
                 <TableHead className="text-right">PP</TableHead>
@@ -432,9 +432,9 @@ function DetalhesModal({
                 const zoneClass = getEstoqueZoneClass(estoque, minimo, pp);
                 return (
                 <TableRow key={l.id}>
-                  <TableCell>
-                    <div className="font-mono text-xs">{l.sku_codigo_omie}</div>
-                    <div className="text-xs text-muted-foreground line-clamp-1">{l.sku_descricao ?? '—'}</div>
+                  <TableCell className="align-top">
+                    <div className="font-mono text-xs text-muted-foreground">{l.sku_codigo_omie}</div>
+                    <div className="text-sm font-medium whitespace-normal break-words">{l.sku_descricao ?? '—'}</div>
                     {l.primeira_compra && (
                       <Badge variant="destructive" className="mt-1 text-[10px] h-4">primeira compra</Badge>
                     )}
