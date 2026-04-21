@@ -75,6 +75,41 @@ interface ExtractedPromo {
   observacoes: string;
 }
 
+// ============= AUMENTO =============
+const AUMENTO_PROMPT = `Este documento anuncia reajustes de preços do fornecedor Renner Sayerlack. Extraia:
+- Nome do anúncio / assunto
+- Data em que o novo preço começa a valer (data_vigencia, formato YYYY-MM-DD)
+- Data em que o anúncio foi feito (data_anuncio, se houver)
+- Lista de categorias afetadas, com nome exato como no documento e percentual de aumento
+- Se alguma categoria tem data de vigência específica diferente do geral, registre-a
+- Confiança na extração (0-1)
+- Observações sobre ambiguidades ou dados faltantes
+
+Retorne APENAS JSON no formato exato:
+{
+  "nome": "...",
+  "data_vigencia": "YYYY-MM-DD",
+  "data_anuncio": "YYYY-MM-DD ou null",
+  "categorias": [
+    { "categoria_fornecedor": "...", "aumento_perc": 5.0, "data_vigencia_especifica": null }
+  ],
+  "confianca": 0.95,
+  "observacoes": "..."
+}`;
+
+interface ExtractedAumento {
+  nome: string;
+  data_vigencia: string;
+  data_anuncio: string | null;
+  categorias: Array<{
+    categoria_fornecedor: string;
+    aumento_perc: number;
+    data_vigencia_especifica: string | null;
+  }>;
+  confianca: number;
+  observacoes: string;
+}
+
 function fallbackExtraction(reason: string, rawText = ""): ExtractedPromo {
   const today = new Date().toISOString().slice(0, 10);
   return {
@@ -83,6 +118,20 @@ function fallbackExtraction(reason: string, rawText = ""): ExtractedPromo {
     data_fim: today,
     fornecedor_nome: "DESCONHECIDO",
     items: [],
+    confianca: 0,
+    observacoes:
+      `${reason}` +
+      (rawText ? ` Resposta bruta: ${rawText.slice(0, 500)}` : ""),
+  };
+}
+
+function fallbackAumento(reason: string, rawText = ""): ExtractedAumento {
+  const today = new Date().toISOString().slice(0, 10);
+  return {
+    nome: `Aumento não identificado — ${today}`,
+    data_vigencia: today,
+    data_anuncio: null,
+    categorias: [],
     confianca: 0,
     observacoes:
       `${reason}` +
