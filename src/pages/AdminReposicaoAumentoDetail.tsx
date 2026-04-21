@@ -1216,53 +1216,71 @@ function MapeamentoDialog({
                 Nenhuma família mapeada.
               </p>
             )}
-            {selecionadas.map((s) => (
-              <Card key={s.familia}>
-                <CardContent className="pt-4 space-y-2">
-                  <div className="flex items-center justify-between gap-2">
-                    <span className="font-medium text-sm">{s.familia}</span>
-                    <Button
-                      variant="ghost"
-                      size="sm"
-                      onClick={() => removerFamilia(s.familia)}
-                    >
-                      <Trash2 className="h-4 w-4 text-destructive" />
-                    </Button>
-                  </div>
-                  <div className="flex items-center gap-2">
-                    <Checkbox
-                      id={`esp-${s.familia}`}
-                      checked={s.apenasEspecificos}
-                      onCheckedChange={(c) =>
-                        toggleEspecificos(s.familia, c === true)
-                      }
-                    />
-                    <Label
-                      htmlFor={`esp-${s.familia}`}
-                      className="text-xs font-normal cursor-pointer"
-                    >
-                      Apenas SKUs específicos desta família
-                    </Label>
-                  </div>
-                  {s.apenasEspecificos && (
-                    <div className="pl-6 space-y-1">
-                      <p className="text-xs text-muted-foreground">
-                        {s.skusEspecificos.length} SKU
-                        {s.skusEspecificos.length === 1 ? "" : "s"} selecionado
-                        {s.skusEspecificos.length === 1 ? "" : "s"}
-                      </p>
+            {selecionadas.map((s) => {
+              const aplicaFamiliaInteira = !s.apenasEspecificos;
+              return (
+                <Card key={s.familia}>
+                  <CardContent className="pt-4 space-y-3">
+                    <div className="flex items-center justify-between gap-2">
+                      <span className="font-medium text-sm">{s.familia}</span>
                       <Button
-                        variant="outline"
+                        variant="ghost"
                         size="sm"
-                        onClick={() => setSkuPickerFor(s.familia)}
+                        onClick={() => removerFamilia(s.familia)}
                       >
-                        Selecionar SKUs
+                        <Trash2 className="h-4 w-4 text-destructive" />
                       </Button>
                     </div>
-                  )}
-                </CardContent>
-              </Card>
-            ))}
+
+                    {/* Toggle principal — default = família inteira */}
+                    <div
+                      className={`flex items-start gap-2 rounded-md border p-2.5 ${
+                        aplicaFamiliaInteira
+                          ? "border-primary/40 bg-primary/5"
+                          : "border-border"
+                      }`}
+                    >
+                      <Checkbox
+                        id={`fam-${s.familia}`}
+                        checked={aplicaFamiliaInteira}
+                        onCheckedChange={(c) =>
+                          toggleEspecificos(s.familia, !(c === true))
+                        }
+                        className="mt-0.5"
+                      />
+                      <div className="flex-1 min-w-0">
+                        <Label
+                          htmlFor={`fam-${s.familia}`}
+                          className="text-sm font-medium cursor-pointer"
+                        >
+                          Aplicar a TODA a família (todos os SKUs)
+                        </Label>
+                        <p className="text-xs text-muted-foreground mt-0.5">
+                          Salva uma única linha no banco. Desmarque para escolher SKUs específicos.
+                        </p>
+                      </div>
+                    </div>
+
+                    {!aplicaFamiliaInteira && (
+                      <div className="space-y-1.5">
+                        <p className="text-xs text-muted-foreground">
+                          {s.skusEspecificos.length} SKU
+                          {s.skusEspecificos.length === 1 ? "" : "s"} selecionado
+                          {s.skusEspecificos.length === 1 ? "" : "s"}
+                        </p>
+                        <Button
+                          variant="outline"
+                          size="sm"
+                          onClick={() => setSkuPickerFor(s.familia)}
+                        >
+                          Selecionar SKUs
+                        </Button>
+                      </div>
+                    )}
+                  </CardContent>
+                </Card>
+              );
+            })}
           </div>
         </div>
 
