@@ -137,6 +137,7 @@ export default function AdminReposicaoPromocoes() {
   const qc = useQueryClient();
 
   const [filtroEstado, setFiltroEstado] = useState<string>(ALL);
+  const [filtroFornecedor, setFiltroFornecedor] = useState<string>(ALL);
   const [busca, setBusca] = useState("");
 
 
