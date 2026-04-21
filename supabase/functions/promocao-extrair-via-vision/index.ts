@@ -412,33 +412,8 @@ Deno.serve(async (req: Request) => {
     );
   }
 
-  // 2. Salva arquivo no Storage (bucket 'promocoes') para rastreabilidade
-  const ext = arquivoTipo === "pdf" || arquivoTipo === "application/pdf"
-    ? "pdf"
-    : arquivoTipo === "image/png"
-    ? "png"
-    : arquivoTipo === "image/webp"
-    ? "webp"
-    : "jpg";
-  const fileName = `${empresa}/${Date.now()}_${
-    Math.random().toString(36).slice(2, 8)
-  }.${ext}`;
-  const fileBytes = Uint8Array.from(atob(arquivoBase64), (c) => c.charCodeAt(0));
-  const contentType = arquivoTipo === "pdf" || arquivoTipo === "application/pdf"
-    ? "application/pdf"
-    : arquivoTipo;
+  // (upload já realizado antes da bifurcação por tipo_documento)
 
-  const { error: uploadErr } = await supabase.storage
-    .from("promocoes")
-    .upload(fileName, fileBytes, { contentType });
-  if (uploadErr) {
-    console.error(
-      `[promocao-extrair-via-vision] upload falhou: ${uploadErr.message}`,
-    );
-  }
-  const arquivoUrl = uploadErr ? null : fileName;
-
-  // 3. Cria campanha em rascunho
   const { data: campanha, error: campErr } = await supabase
     .from("promocao_campanha")
     .insert({
