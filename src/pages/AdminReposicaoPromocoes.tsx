@@ -17,7 +17,10 @@ import {
   Clock,
   RotateCw,
   X,
+  ChevronDown,
+  ChevronRight,
 } from "lucide-react";
+import { agruparPorMes, chavesUltimosNMeses } from "@/lib/agruparPorMes";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
@@ -208,6 +211,24 @@ export default function AdminReposicaoPromocoes() {
     () => campanhas.filter((c) => c.estado === "rascunho").length,
     [campanhas],
   );
+
+  // Agrupa campanhas por mês (data_inicio), com meses vazios entre o mais antigo e o atual
+  const grupos = useMemo(
+    () => agruparPorMes(campanhas, (c) => c.data_inicio),
+    [campanhas],
+  );
+
+  // Default: últimos 3 meses expandidos, demais recolhidos
+  const [collapsedMeses, setCollapsedMeses] = useState<Record<string, boolean>>({});
+  const ultimos3 = useMemo(() => chavesUltimosNMeses(3), []);
+  const isCollapsed = useCallback(
+    (chave: string) =>
+      chave in collapsedMeses ? collapsedMeses[chave] : !ultimos3.has(chave),
+    [collapsedMeses, ultimos3],
+  );
+  const toggleMes = useCallback((chave: string) => {
+    setCollapsedMeses((prev) => ({ ...prev, [chave]: !(prev[chave] ?? false) }));
+  }, []);
 
   // ============ UPLOAD MULTIPLO ============
   const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -471,73 +492,110 @@ export default function AdminReposicaoPromocoes() {
             </div>
           </div>
 
-          {/* Tabela */}
+          {/* Tabela agrupada por mês */}
           {isLoading ? (
             <div className="flex items-center gap-2 text-sm text-muted-foreground">
               <Loader2 className="h-4 w-4 animate-spin" /> Carregando…
             </div>
+          ) : grupos.length === 0 ? (
+            <div className="text-center text-muted-foreground py-12 text-sm">
+              Nenhuma campanha cadastrada ainda.
+            </div>
           ) : (
-            <div className="overflow-x-auto">
-              <Table>
-                <TableHeader>
-                  <TableRow>
-                    <TableHead>Nome</TableHead>
-                    <TableHead>Fornecedor</TableHead>
-                    <TableHead>Tipo</TableHead>
-                    <TableHead>Período</TableHead>
-                    <TableHead>Estado</TableHead>
-                    <TableHead className="text-right">Itens</TableHead>
-                    <TableHead>Confiança</TableHead>
-                  </TableRow>
-                </TableHeader>
-                <TableBody>
-                  {campanhas.length === 0 && (
-                    <TableRow>
-                      <TableCell
-                        colSpan={7}
-                        className="text-center text-muted-foreground py-12"
-                      >
-                        Nenhuma campanha encontrada.
-                      </TableCell>
-                    </TableRow>
-                  )}
-                  {campanhas.map((c) => (
-                    <TableRow
-                      key={c.id}
-                      className="cursor-pointer"
-                      onClick={() =>
-                        navigate(`/admin/reposicao/promocoes/${c.id}`)
-                      }
+            <div className="overflow-x-auto space-y-4">
+              {grupos.map((grupo) => {
+                const collapsed = isCollapsed(grupo.chave);
+                return (
+                  <div key={grupo.chave} className="rounded-md border">
+                    <button
+                      type="button"
+                      onClick={() => toggleMes(grupo.chave)}
+                      className="w-full flex items-center justify-between gap-2 px-3 py-2 bg-muted/40 hover:bg-muted/60 transition-colors text-left"
                     >
-                      <TableCell className="font-medium">{c.nome}</TableCell>
-                      <TableCell className="text-muted-foreground">
-                        {c.fornecedor_nome}
-                      </TableCell>
-                      <TableCell>
-                        {c.tipo_origem === "negociacao_cliente" ? (
-                          <Badge variant="outline" className="bg-blue-500/15 text-blue-700 dark:text-blue-400 border-blue-500/30">
-                            Negociação
-                          </Badge>
+                      <div className="flex items-center gap-2">
+                        {collapsed ? (
+                          <ChevronRight className="h-4 w-4 text-muted-foreground" />
                         ) : (
-                          <Badge variant="outline">Fornecedor</Badge>
+                          <ChevronDown className="h-4 w-4 text-muted-foreground" />
                         )}
-                      </TableCell>
-                      <TableCell className="tabular-nums text-sm">
-                        {formatPeriodo(c.data_inicio, c.data_fim)}
-                      </TableCell>
-                      <TableCell>
-                        <Badge variant="outline" className={estadoBadgeClass(c.estado)}>
-                          {ESTADOS.find((e) => e.value === c.estado)?.label ?? c.estado}
+                        <span className="font-semibold text-sm">{grupo.label}</span>
+                        <Badge variant="outline" className="text-xs">
+                          {grupo.itens.length}{" "}
+                          {grupo.itens.length === 1 ? "campanha" : "campanhas"}
                         </Badge>
-                      </TableCell>
-                      <TableCell className="text-right tabular-nums font-medium">
-                        {c.num_itens}
-                      </TableCell>
-                      <TableCell>{confiancaBadge(c.extracao_confianca)}</TableCell>
-                    </TableRow>
-                  ))}
-                </TableBody>
-              </Table>
+                      </div>
+                    </button>
+
+                    {!collapsed && (
+                      grupo.vazio ? (
+                        <div className="flex items-center justify-between gap-3 px-3 py-4 text-sm">
+                          <span className="text-muted-foreground">
+                            Nenhuma campanha cadastrada neste mês.
+                          </span>
+                          <Button
+                            size="sm"
+                            variant="outline"
+                            onClick={() => setUploadOpen(true)}
+                          >
+                            <Upload className="h-3.5 w-3.5" /> Upload PDF
+                          </Button>
+                        </div>
+                      ) : (
+                        <Table>
+                          <TableHeader>
+                            <TableRow>
+                              <TableHead>Nome</TableHead>
+                              <TableHead>Fornecedor</TableHead>
+                              <TableHead>Tipo</TableHead>
+                              <TableHead>Período</TableHead>
+                              <TableHead>Estado</TableHead>
+                              <TableHead className="text-right">Itens</TableHead>
+                              <TableHead>Confiança</TableHead>
+                            </TableRow>
+                          </TableHeader>
+                          <TableBody>
+                            {grupo.itens.map((c) => (
+                              <TableRow
+                                key={c.id}
+                                className="cursor-pointer"
+                                onClick={() =>
+                                  navigate(`/admin/reposicao/promocoes/${c.id}`)
+                                }
+                              >
+                                <TableCell className="font-medium">{c.nome}</TableCell>
+                                <TableCell className="text-muted-foreground">
+                                  {c.fornecedor_nome}
+                                </TableCell>
+                                <TableCell>
+                                  {c.tipo_origem === "negociacao_cliente" ? (
+                                    <Badge variant="outline" className="bg-blue-500/15 text-blue-700 dark:text-blue-400 border-blue-500/30">
+                                      Negociação
+                                    </Badge>
+                                  ) : (
+                                    <Badge variant="outline">Fornecedor</Badge>
+                                  )}
+                                </TableCell>
+                                <TableCell className="tabular-nums text-sm">
+                                  {formatPeriodo(c.data_inicio, c.data_fim)}
+                                </TableCell>
+                                <TableCell>
+                                  <Badge variant="outline" className={estadoBadgeClass(c.estado)}>
+                                    {ESTADOS.find((e) => e.value === c.estado)?.label ?? c.estado}
+                                  </Badge>
+                                </TableCell>
+                                <TableCell className="text-right tabular-nums font-medium">
+                                  {c.num_itens}
+                                </TableCell>
+                                <TableCell>{confiancaBadge(c.extracao_confianca)}</TableCell>
+                              </TableRow>
+                            ))}
+                          </TableBody>
+                        </Table>
+                      )
+                    )}
+                  </div>
+                );
+              })}
             </div>
           )}
         </CardContent>
