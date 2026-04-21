@@ -110,6 +110,62 @@ interface ExtractedAumento {
   observacoes: string;
 }
 
+// ============= NORMALIZAÇÃO DE FORNECEDOR =============
+// Consulta `fornecedor_mapeamento_extracao` para resolver aliases extraídos pela IA
+// para o nome canônico (razão social) usado no resto do sistema.
+// Fallback hardcoded para Sayerlack/Renner caso a tabela esteja indisponível.
+async function normalizarFornecedor(
+  supabase: ReturnType<typeof createClient>,
+  extraido: string | null | undefined,
+  _tipoDocumento: string,
+): Promise<string> {
+  const normalizado = (extraido ?? "").toLowerCase().trim();
+  if (!normalizado) return "DESCONHECIDO";
+
+  // 1) tenta match exato (case-insensitive) na tabela
+  try {
+    const { data: exact } = await supabase
+      .from("fornecedor_mapeamento_extracao")
+      .select("nome_canonico")
+      .eq("ativo", true)
+      .ilike("alias_extraido", normalizado)
+      .maybeSingle();
+    if (exact?.nome_canonico) return exact.nome_canonico;
+
+    // 2) tenta match por substring — pega o alias mais longo que esteja contido no extraído
+    const { data: aliases } = await supabase
+      .from("fornecedor_mapeamento_extracao")
+      .select("alias_extraido, nome_canonico")
+      .eq("ativo", true);
+
+    if (Array.isArray(aliases) && aliases.length > 0) {
+      const ordenados = [...aliases].sort(
+        (a, b) =>
+          (b.alias_extraido?.length ?? 0) - (a.alias_extraido?.length ?? 0),
+      );
+      for (const a of ordenados) {
+        const alias = (a.alias_extraido ?? "").toLowerCase().trim();
+        if (alias && normalizado.includes(alias)) {
+          return a.nome_canonico;
+        }
+      }
+    }
+  } catch (err) {
+    console.warn(
+      `[normalizarFornecedor] consulta tabela falhou, usando fallback: ${
+        String(err).slice(0, 200)
+      }`,
+    );
+  }
+
+  // 3) Fallback hardcoded (caso a tabela esteja indisponível)
+  if (normalizado.includes("sayerlack") || normalizado.includes("renner")) {
+    return "RENNER SAYERLACK S/A";
+  }
+
+  return extraido?.trim() || "DESCONHECIDO";
+}
+
 function fallbackExtraction(reason: string, rawText = ""): ExtractedPromo {
   const today = new Date().toISOString().slice(0, 10);
   return {
@@ -334,11 +390,17 @@ Deno.serve(async (req: Request) => {
       );
     }
 
+    const fornecedorCanonicoAum = await normalizarFornecedor(
+      supabase,
+      fornecedorNomeFallback,
+      "aumento",
+    );
+
     const { data: aumentoRpc, error: rpcErr } = await supabase.rpc(
       "registrar_aumento_via_vision",
       {
         p_empresa: empresa,
-        p_fornecedor_nome: fornecedorNomeFallback,
+        p_fornecedor_nome: fornecedorCanonicoAum,
         p_nome: extractedAum.nome,
         p_data_vigencia: extractedAum.data_vigencia,
         p_data_anuncio: extractedAum.data_anuncio,
@@ -414,11 +476,17 @@ Deno.serve(async (req: Request) => {
 
   // (upload já realizado antes da bifurcação por tipo_documento)
 
+  const fornecedorCanonico = await normalizarFornecedor(
+    supabase,
+    extracted.fornecedor_nome || fornecedorNomeFallback,
+    "campanha_sayerlack",
+  );
+
   const { data: campanha, error: campErr } = await supabase
     .from("promocao_campanha")
     .insert({
       empresa,
-      fornecedor_nome: extracted.fornecedor_nome || fornecedorNomeFallback,
+      fornecedor_nome: fornecedorCanonico,
       nome: extracted.nome,
       tipo_origem: "fornecedor_impoe",
       data_inicio: extracted.data_inicio,
