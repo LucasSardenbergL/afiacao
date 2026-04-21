@@ -269,6 +269,25 @@ export default function AdminReposicaoOportunidades() {
     },
   });
 
+  // Quick reference: histórico total de campanhas de promoção
+  const { data: historicoPromocoes } = useQuery({
+    queryKey: ["historico-promocoes-count", EMPRESA],
+    queryFn: async () => {
+      const { data, error } = await (supabase as any)
+        .from("promocao_campanha")
+        .select("data_inicio")
+        .eq("empresa", EMPRESA);
+      if (error) throw error;
+      const rows = (data ?? []) as Array<{ data_inicio: string | null }>;
+      const meses = new Set<string>();
+      for (const r of rows) {
+        const k = r.data_inicio?.slice(0, 7);
+        if (k) meses.add(k);
+      }
+      return { campanhas: rows.length, meses: meses.size };
+    },
+  });
+
   // ============ DERIVED STATE ============
   const fornecedoresUnicos = useMemo(() => {
     const set = new Set<string>();
