@@ -1,6 +1,7 @@
 // Edge Function: promocao-extrair-via-vision
-// Recebe PDF ou imagem de promoção de fornecedor, extrai estrutura via Lovable AI Gateway (Gemini Pro Vision),
-// grava campanha em 'rascunho' com itens resolvidos (sku_codigo_omie quando possível).
+// Recebe PDF ou imagem de promoção de fornecedor OU de aviso de aumento de preços,
+// extrai estrutura via Lovable AI Gateway (Gemini Pro Vision),
+// grava campanha (promoção) ou registra aumento (RPC) conforme tipo_documento.
 //
 // Body:
 // {
@@ -8,6 +9,7 @@
 //   fornecedor_nome: string,
 //   arquivo_base64: string,
 //   arquivo_tipo: 'pdf'|'image/jpeg'|'image/png',
+//   tipo_documento?: 'campanha_sayerlack' | 'aumento',  // default 'campanha_sayerlack'
 //   origem_email?: { remetente?: string, assunto?: string, data?: string },
 //   criado_por?: string
 // }
