@@ -1,6 +1,7 @@
 // Edge Function: promocao-extrair-via-vision
-// Recebe PDF ou imagem de promoção de fornecedor, extrai estrutura via Lovable AI Gateway (Gemini Pro Vision),
-// grava campanha em 'rascunho' com itens resolvidos (sku_codigo_omie quando possível).
+// Recebe PDF ou imagem de promoção de fornecedor OU de aviso de aumento de preços,
+// extrai estrutura via Lovable AI Gateway (Gemini Pro Vision),
+// grava campanha (promoção) ou registra aumento (RPC) conforme tipo_documento.
 //
 // Body:
 // {
@@ -8,6 +9,7 @@
 //   fornecedor_nome: string,
 //   arquivo_base64: string,
 //   arquivo_tipo: 'pdf'|'image/jpeg'|'image/png',
+//   tipo_documento?: 'campanha_sayerlack' | 'aumento',  // default 'campanha_sayerlack'
 //   origem_email?: { remetente?: string, assunto?: string, data?: string },
 //   criado_por?: string
 // }
@@ -73,6 +75,41 @@ interface ExtractedPromo {
   observacoes: string;
 }
 
+// ============= AUMENTO =============
+const AUMENTO_PROMPT = `Este documento anuncia reajustes de preços do fornecedor Renner Sayerlack. Extraia:
+- Nome do anúncio / assunto
+- Data em que o novo preço começa a valer (data_vigencia, formato YYYY-MM-DD)
+- Data em que o anúncio foi feito (data_anuncio, se houver)
+- Lista de categorias afetadas, com nome exato como no documento e percentual de aumento
+- Se alguma categoria tem data de vigência específica diferente do geral, registre-a
+- Confiança na extração (0-1)
+- Observações sobre ambiguidades ou dados faltantes
+
+Retorne APENAS JSON no formato exato:
+{
+  "nome": "...",
+  "data_vigencia": "YYYY-MM-DD",
+  "data_anuncio": "YYYY-MM-DD ou null",
+  "categorias": [
+    { "categoria_fornecedor": "...", "aumento_perc": 5.0, "data_vigencia_especifica": null }
+  ],
+  "confianca": 0.95,
+  "observacoes": "..."
+}`;
+
+interface ExtractedAumento {
+  nome: string;
+  data_vigencia: string;
+  data_anuncio: string | null;
+  categorias: Array<{
+    categoria_fornecedor: string;
+    aumento_perc: number;
+    data_vigencia_especifica: string | null;
+  }>;
+  confianca: number;
+  observacoes: string;
+}
+
 function fallbackExtraction(reason: string, rawText = ""): ExtractedPromo {
   const today = new Date().toISOString().slice(0, 10);
   return {
@@ -88,10 +125,25 @@ function fallbackExtraction(reason: string, rawText = ""): ExtractedPromo {
   };
 }
 
-async function callVisionGateway(
+function fallbackAumento(reason: string, rawText = ""): ExtractedAumento {
+  const today = new Date().toISOString().slice(0, 10);
+  return {
+    nome: `Aumento não identificado — ${today}`,
+    data_vigencia: today,
+    data_anuncio: null,
+    categorias: [],
+    confianca: 0,
+    observacoes:
+      `${reason}` +
+      (rawText ? ` Resposta bruta: ${rawText.slice(0, 500)}` : ""),
+  };
+}
+
+async function callVisionRaw(
   fileBase64: string,
   fileType: string,
-): Promise<ExtractedPromo> {
+  prompt: string,
+): Promise<string> {
   const apiKey = Deno.env.get("LOVABLE_API_KEY");
   if (!apiKey) throw new Error("LOVABLE_API_KEY não configurada");
 
@@ -100,7 +152,6 @@ async function callVisionGateway(
     ? "application/pdf"
     : fileType;
 
-  // OpenAI-compatível: usa image_url com data URI (Gemini via gateway aceita PDF e imagens)
   const dataUri = `data:${normalizedType};base64,${fileBase64}`;
 
   const response = await fetch(LOVABLE_AI_URL, {
@@ -116,7 +167,7 @@ async function callVisionGateway(
           role: "user",
           content: [
             { type: "image_url", image_url: { url: dataUri } },
-            { type: "text", text: EXTRACTION_PROMPT },
+            { type: "text", text: prompt },
           ],
         },
       ],
@@ -141,24 +192,52 @@ async function callVisionGateway(
   }
 
   const data = await response.json();
-  const textResponse: string = data.choices?.[0]?.message?.content ?? "";
+  return data.choices?.[0]?.message?.content ?? "";
+}
 
-  // Best-effort: tenta parsear mesmo se vier com markdown wrapper
+function stripJsonFences(textResponse: string): string {
   let cleaned = textResponse.trim();
   if (cleaned.startsWith("```json")) cleaned = cleaned.slice(7);
   if (cleaned.startsWith("```")) cleaned = cleaned.slice(3);
   if (cleaned.endsWith("```")) cleaned = cleaned.slice(0, -3);
-  cleaned = cleaned.trim();
+  return cleaned.trim();
+}
 
+async function callVisionGateway(
+  fileBase64: string,
+  fileType: string,
+): Promise<ExtractedPromo> {
+  const textResponse = await callVisionRaw(fileBase64, fileType, EXTRACTION_PROMPT);
+  const cleaned = stripJsonFences(textResponse);
   try {
     const parsed = JSON.parse(cleaned) as ExtractedPromo;
-    // Validações mínimas para evitar quebra a jusante
     if (!Array.isArray(parsed.items)) parsed.items = [];
     if (typeof parsed.confianca !== "number") parsed.confianca = 0;
     if (!parsed.observacoes) parsed.observacoes = "";
     return parsed;
   } catch (err) {
     return fallbackExtraction(
+      `ERRO PARSING: ${String(err).slice(0, 200)}.`,
+      textResponse,
+    );
+  }
+}
+
+async function callVisionGatewayAumento(
+  fileBase64: string,
+  fileType: string,
+): Promise<ExtractedAumento> {
+  const textResponse = await callVisionRaw(fileBase64, fileType, AUMENTO_PROMPT);
+  const cleaned = stripJsonFences(textResponse);
+  try {
+    const parsed = JSON.parse(cleaned) as ExtractedAumento;
+    if (!Array.isArray(parsed.categorias)) parsed.categorias = [];
+    if (typeof parsed.confianca !== "number") parsed.confianca = 0;
+    if (!parsed.observacoes) parsed.observacoes = "";
+    if (!parsed.data_anuncio) parsed.data_anuncio = null;
+    return parsed;
+  } catch (err) {
+    return fallbackAumento(
       `ERRO PARSING: ${String(err).slice(0, 200)}.`,
       textResponse,
     );
@@ -190,6 +269,9 @@ Deno.serve(async (req: Request) => {
     (body.fornecedor_nome as string) ?? "RENNER SAYERLACK S/A";
   const arquivoBase64 = body.arquivo_base64 as string | undefined;
   const arquivoTipo = (body.arquivo_tipo as string) ?? "pdf";
+  const tipoDocumentoRaw = (body.tipo_documento as string) ?? "campanha_sayerlack";
+  const tipoDocumento: "campanha_sayerlack" | "aumento" =
+    tipoDocumentoRaw === "aumento" ? "aumento" : "campanha_sayerlack";
   const origemEmail = body.origem_email as
     | { remetente?: string; assunto?: string; data?: string }
     | undefined;
@@ -206,26 +288,10 @@ Deno.serve(async (req: Request) => {
   }
 
   console.log(
-    `[promocao-extrair-via-vision] start empresa=${empresa} tipo=${arquivoTipo} bytes_b64=${arquivoBase64.length}`,
+    `[promocao-extrair-via-vision] start empresa=${empresa} tipo_doc=${tipoDocumento} tipo_arq=${arquivoTipo} bytes_b64=${arquivoBase64.length}`,
   );
 
-  // 1. Chama Vision via Lovable AI Gateway
-  let extracted: ExtractedPromo;
-  try {
-    extracted = await callVisionGateway(arquivoBase64, arquivoTipo);
-  } catch (err) {
-    const msg = String(err).slice(0, 300);
-    console.error(`[promocao-extrair-via-vision] vision falhou: ${msg}`);
-    return new Response(
-      JSON.stringify({ error: `Vision falhou: ${msg}` }),
-      {
-        status: 500,
-        headers: { ...corsHeaders, "Content-Type": "application/json" },
-      },
-    );
-  }
-
-  // 2. Salva arquivo no Storage (bucket 'promocoes') para rastreabilidade
+  // ===== Upload do arquivo no Storage (compartilhado entre fluxos) =====
   const ext = arquivoTipo === "pdf" || arquivoTipo === "application/pdf"
     ? "pdf"
     : arquivoTipo === "image/png"
@@ -251,7 +317,103 @@ Deno.serve(async (req: Request) => {
   }
   const arquivoUrl = uploadErr ? null : fileName;
 
-  // 3. Cria campanha em rascunho
+  // ===== FLUXO AUMENTO =====
+  if (tipoDocumento === "aumento") {
+    let extractedAum: ExtractedAumento;
+    try {
+      extractedAum = await callVisionGatewayAumento(arquivoBase64, arquivoTipo);
+    } catch (err) {
+      const msg = String(err).slice(0, 300);
+      console.error(`[promocao-extrair-via-vision] vision aumento falhou: ${msg}`);
+      return new Response(
+        JSON.stringify({ error: `Vision falhou: ${msg}` }),
+        {
+          status: 500,
+          headers: { ...corsHeaders, "Content-Type": "application/json" },
+        },
+      );
+    }
+
+    const { data: aumentoRpc, error: rpcErr } = await supabase.rpc(
+      "registrar_aumento_via_vision",
+      {
+        p_empresa: empresa,
+        p_fornecedor_nome: fornecedorNomeFallback,
+        p_nome: extractedAum.nome,
+        p_data_vigencia: extractedAum.data_vigencia,
+        p_data_anuncio: extractedAum.data_anuncio,
+        p_categorias: extractedAum.categorias,
+        p_origem_arquivo_url: arquivoUrl,
+        p_origem_email_remetente: origemEmail?.remetente ?? null,
+        p_origem_email_assunto: origemEmail?.assunto ?? null,
+        p_origem_email_data: origemEmail?.data ?? null,
+        p_extracao_confianca: extractedAum.confianca,
+        p_extracao_observacoes: extractedAum.observacoes,
+      },
+    );
+
+    if (rpcErr) {
+      console.error(
+        `[promocao-extrair-via-vision] registrar_aumento_via_vision erro: ${rpcErr.message}`,
+      );
+      return new Response(
+        JSON.stringify({
+          error: `erro ao registrar aumento: ${rpcErr.message}`,
+        }),
+        {
+          status: 500,
+          headers: { ...corsHeaders, "Content-Type": "application/json" },
+        },
+      );
+    }
+
+    const aumentoId =
+      typeof aumentoRpc === "string"
+        ? aumentoRpc
+        : (aumentoRpc as { id?: string } | null)?.id ?? aumentoRpc;
+
+    console.log(
+      `[promocao-extrair-via-vision] OK aumento_id=${aumentoId} categorias=${extractedAum.categorias.length} confianca=${extractedAum.confianca}`,
+    );
+
+    return new Response(
+      JSON.stringify({
+        ok: true,
+        tipo_documento: "aumento",
+        aumento_id: aumentoId,
+        extracao: {
+          confianca: extractedAum.confianca,
+          observacoes: extractedAum.observacoes,
+          categorias_extraidas: extractedAum.categorias.length,
+        },
+        arquivo_url: arquivoUrl,
+        proximo_passo: `Revisar aumento extraído na UI`,
+      }),
+      {
+        headers: { ...corsHeaders, "Content-Type": "application/json" },
+        status: 200,
+      },
+    );
+  }
+
+  // ===== FLUXO PROMOÇÃO (default — comportamento original) =====
+  let extracted: ExtractedPromo;
+  try {
+    extracted = await callVisionGateway(arquivoBase64, arquivoTipo);
+  } catch (err) {
+    const msg = String(err).slice(0, 300);
+    console.error(`[promocao-extrair-via-vision] vision falhou: ${msg}`);
+    return new Response(
+      JSON.stringify({ error: `Vision falhou: ${msg}` }),
+      {
+        status: 500,
+        headers: { ...corsHeaders, "Content-Type": "application/json" },
+      },
+    );
+  }
+
+  // (upload já realizado antes da bifurcação por tipo_documento)
+
   const { data: campanha, error: campErr } = await supabase
     .from("promocao_campanha")
     .insert({
