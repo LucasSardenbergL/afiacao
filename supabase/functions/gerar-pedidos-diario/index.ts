@@ -228,6 +228,33 @@ Deno.serve(async (req: Request) => {
     }) as RpcResult;
     console.log(`[gerar-pedidos-diario] RPC OK:`, rpc);
 
+    // 1.5. Aplica promoções ativas hoje aos pedidos recém-gerados (best-effort)
+    let promoSummary: {
+      itens_flat_aplicados: number;
+      itens_forward_buying_aplicados: number;
+      pedidos_afetados: number;
+      economia_total_estimada: number;
+      pedidos_bloqueados_por_delta: number;
+    } | null = null;
+    try {
+      const { data: promoRows, error: promoErr } = await db.rpc(
+        "aplicar_promocoes_no_ciclo",
+        { p_empresa: empresa, p_data_ciclo: dataCiclo },
+      );
+      if (promoErr) {
+        console.error(
+          `[gerar-pedidos-diario] aplicar_promocoes_no_ciclo falhou: ${promoErr.message}`,
+        );
+      } else if (promoRows && promoRows[0]) {
+        promoSummary = promoRows[0] as typeof promoSummary;
+        console.log(
+          `[promocoes] flat=${promoSummary?.itens_flat_aplicados} forward_buying=${promoSummary?.itens_forward_buying_aplicados} economia=R$${promoSummary?.economia_total_estimada} bloqueados_delta=${promoSummary?.pedidos_bloqueados_por_delta}`,
+        );
+      }
+    } catch (e) {
+      console.error(`[gerar-pedidos-diario] promo throw:`, e);
+    }
+
     // 2. Detalhes dos pedidos do ciclo
     const { data: pedidos, error: pedErr } = await db
       .from("pedido_compra_sugerido")
