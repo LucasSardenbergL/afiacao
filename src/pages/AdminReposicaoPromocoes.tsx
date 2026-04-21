@@ -1,6 +1,6 @@
 import { useState, useRef, useMemo } from "react";
 import { useNavigate } from "react-router-dom";
-import { useQuery } from "@tanstack/react-query";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
 import { toast } from "sonner";
 import {
@@ -108,6 +108,7 @@ function formatPeriodo(inicio: string, fim: string): string {
 
 export default function AdminReposicaoPromocoes() {
   const navigate = useNavigate();
+  const qc = useQueryClient();
 
   const [filtroEstado, setFiltroEstado] = useState<string>(ALL);
   const [busca, setBusca] = useState("");
@@ -208,15 +209,45 @@ export default function AdminReposicaoPromocoes() {
       if (error) throw error;
       if (data?.error) throw new Error(data.error);
 
+      const campanhaId: number | undefined = data?.campanha_id;
       const itensExtraidos =
         data?.extracao?.items_extraidos ?? data?.items?.length ?? 0;
-      toast.success(`${itensExtraidos} ${itensExtraidos === 1 ? "item extraído" : "itens extraídos"}`);
+
+      // Confirma a propagação consultando a campanha recém-criada antes de
+      // prosseguir, evitando race condition com a tela de detalhe.
+      let nomeCampanha = "Campanha";
+      if (campanhaId) {
+        for (let i = 0; i < 6; i++) {
+          const { data: row } = await supabase
+            .from("promocao_campanha" as any)
+            .select("nome")
+            .eq("id", campanhaId)
+            .maybeSingle();
+          if (row && (row as any).nome) {
+            nomeCampanha = (row as any).nome as string;
+            break;
+          }
+          await new Promise((r) => setTimeout(r, 250));
+        }
+      }
 
       setUploadOpen(false);
       resetUpload();
 
-      if (data?.campanha_id) {
-        navigate(`/admin/reposicao/promocoes/${data.campanha_id}`);
+      // Atualiza a lista para mostrar a campanha recém-criada
+      qc.invalidateQueries({ queryKey: ["promocao-campanhas"] });
+
+      if (permanecerNaLista || !campanhaId) {
+        toast.success(
+          campanhaId
+            ? `Campanha "${nomeCampanha}" criada em rascunho (${itensExtraidos} ${itensExtraidos === 1 ? "item" : "itens"})`
+            : `${itensExtraidos} ${itensExtraidos === 1 ? "item extraído" : "itens extraídos"}`,
+        );
+      } else {
+        toast.success(
+          `${itensExtraidos} ${itensExtraidos === 1 ? "item extraído" : "itens extraídos"}`,
+        );
+        navigate(`/admin/reposicao/promocoes/${campanhaId}`);
       }
     } catch (e: any) {
       toast.error(e?.message || "Erro ao extrair promoção");
