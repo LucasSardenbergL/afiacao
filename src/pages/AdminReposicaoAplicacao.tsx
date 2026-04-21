@@ -470,7 +470,7 @@ export default function AdminReposicaoAplicacao() {
                         />
                       </TableCell>
                       <TableCell className="font-mono text-xs">{it.sku_codigo_omie}</TableCell>
-                      <TableCell className="max-w-xs truncate">{it.sku_descricao}</TableCell>
+                      <TableCell className="min-w-[280px] whitespace-normal break-words">{it.sku_descricao}</TableCell>
                       <TableCell>
                         <DeltaArrow
                           novo={it.estoque_minimo_novo}
@@ -605,7 +605,7 @@ export default function AdminReposicaoAplicacao() {
                           : "—"}
                       </TableCell>
                       <TableCell className="font-mono text-xs">{it.sku_codigo_omie}</TableCell>
-                      <TableCell className="max-w-xs truncate">{it.sku_descricao}</TableCell>
+                      <TableCell className="min-w-[280px] whitespace-normal break-words">{it.sku_descricao}</TableCell>
                       <TableCell>{it.estoque_minimo_novo}</TableCell>
                       <TableCell>{it.ponto_pedido_novo}</TableCell>
                       <TableCell>

@@ -449,9 +449,9 @@ export default function AdminReposicaoSlaFornecedor() {
                         <TableCell>
                           <Badge variant={STATUS_VARIANT[s.status_sla]}>{STATUS_LABEL[s.status_sla]}</Badge>
                         </TableCell>
-                        <TableCell>
-                          <div className="font-mono text-xs">{s.sku_codigo_omie}</div>
-                          <div className="text-xs text-muted-foreground truncate max-w-[280px]" title={s.sku_descricao ?? ""}>
+                        <TableCell className="align-top min-w-[280px]">
+                          <div className="font-mono text-xs text-muted-foreground">{s.sku_codigo_omie}</div>
+                          <div className="text-sm font-medium whitespace-normal break-words">
                             {s.sku_descricao ?? "—"}
                           </div>
                         </TableCell>
