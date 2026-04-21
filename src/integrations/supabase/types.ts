@@ -4448,6 +4448,13 @@ export type Database = {
             referencedRelation: "v_promocao_avaliacao_hoje"
             referencedColumns: ["item_id"]
           },
+          {
+            foreignKeyName: "pedido_compra_item_promocao_item_id_fkey"
+            columns: ["promocao_item_id"]
+            isOneToOne: false
+            referencedRelation: "v_promocao_item_efetivo"
+            referencedColumns: ["id"]
+          },
         ]
       }
       pedido_compra_sugerido: {
@@ -5096,6 +5103,11 @@ export type Database = {
           campanha_id: number
           confirmado: boolean
           criado_em: string | null
+          desconto_extra_email_referencia: string | null
+          desconto_extra_negociado_em: string | null
+          desconto_extra_negociado_por: string | null
+          desconto_extra_observacoes: string | null
+          desconto_extra_perc: number | null
           desconto_perc: number
           descricao_produto_fornecedor: string | null
           id: number
@@ -5112,6 +5124,11 @@ export type Database = {
           campanha_id: number
           confirmado?: boolean
           criado_em?: string | null
+          desconto_extra_email_referencia?: string | null
+          desconto_extra_negociado_em?: string | null
+          desconto_extra_negociado_por?: string | null
+          desconto_extra_observacoes?: string | null
+          desconto_extra_perc?: number | null
           desconto_perc: number
           descricao_produto_fornecedor?: string | null
           id?: number
@@ -5128,6 +5145,11 @@ export type Database = {
           campanha_id?: number
           confirmado?: boolean
           criado_em?: string | null
+          desconto_extra_email_referencia?: string | null
+          desconto_extra_negociado_em?: string | null
+          desconto_extra_negociado_por?: string | null
+          desconto_extra_observacoes?: string | null
+          desconto_extra_perc?: number | null
           desconto_perc?: number
           descricao_produto_fornecedor?: string | null
           id?: number
@@ -5223,6 +5245,13 @@ export type Database = {
             isOneToOne: false
             referencedRelation: "v_promocao_avaliacao_hoje"
             referencedColumns: ["item_id"]
+          },
+          {
+            foreignKeyName: "promocao_negociacao_evento_item_id_fkey"
+            columns: ["item_id"]
+            isOneToOne: false
+            referencedRelation: "v_promocao_item_efetivo"
+            referencedColumns: ["id"]
           },
         ]
       }
@@ -8564,6 +8593,8 @@ export type Database = {
           custo_capital_periodo_perc: number | null
           data_fim: string | null
           data_inicio: string | null
+          desconto_base: number | null
+          desconto_extra: number | null
           desconto_perc: number | null
           dias_extra_estoque: number | null
           economia_bruta_valor: number | null
@@ -8579,10 +8610,80 @@ export type Database = {
           sku_codigo_fornecedor: string | null
           sku_codigo_omie: number | null
           sku_descricao: string | null
+          tem_negociacao_extra: boolean | null
           tipo_origem: string | null
           volume_minimo: number | null
         }
         Relationships: []
+      }
+      v_promocao_item_efetivo: {
+        Row: {
+          ativo: boolean | null
+          campanha_id: number | null
+          confirmado: boolean | null
+          desconto_base: number | null
+          desconto_efetivo: number | null
+          desconto_extra: number | null
+          desconto_extra_email_referencia: string | null
+          desconto_extra_negociado_em: string | null
+          desconto_extra_negociado_por: string | null
+          desconto_extra_observacoes: string | null
+          id: number | null
+          sku_codigo_fornecedor: string | null
+          sku_codigo_omie: number | null
+          tem_negociacao_extra: boolean | null
+          volume_minimo: number | null
+        }
+        Insert: {
+          ativo?: boolean | null
+          campanha_id?: number | null
+          confirmado?: boolean | null
+          desconto_base?: number | null
+          desconto_efetivo?: never
+          desconto_extra?: number | null
+          desconto_extra_email_referencia?: string | null
+          desconto_extra_negociado_em?: string | null
+          desconto_extra_negociado_por?: string | null
+          desconto_extra_observacoes?: string | null
+          id?: number | null
+          sku_codigo_fornecedor?: string | null
+          sku_codigo_omie?: number | null
+          tem_negociacao_extra?: never
+          volume_minimo?: number | null
+        }
+        Update: {
+          ativo?: boolean | null
+          campanha_id?: number | null
+          confirmado?: boolean | null
+          desconto_base?: number | null
+          desconto_efetivo?: never
+          desconto_extra?: number | null
+          desconto_extra_email_referencia?: string | null
+          desconto_extra_negociado_em?: string | null
+          desconto_extra_negociado_por?: string | null
+          desconto_extra_observacoes?: string | null
+          id?: number | null
+          sku_codigo_fornecedor?: string | null
+          sku_codigo_omie?: number | null
+          tem_negociacao_extra?: never
+          volume_minimo?: number | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "promocao_item_campanha_id_fkey"
+            columns: ["campanha_id"]
+            isOneToOne: false
+            referencedRelation: "promocao_campanha"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "promocao_item_campanha_id_fkey"
+            columns: ["campanha_id"]
+            isOneToOne: false
+            referencedRelation: "v_promocao_avaliacao_hoje"
+            referencedColumns: ["campanha_id"]
+          },
+        ]
       }
       v_simulacao_comparativa: {
         Row: {
@@ -8739,6 +8840,7 @@ export type Database = {
           estoque_maximo_sugerido: number | null
           estoque_minimo_sugerido: number | null
           estoque_seguranca_sugerido: number | null
+          fonte_fornecedor: string | null
           fonte_leadtime: string | null
           fonte_lt: string | null
           fonte_preco: string | null
@@ -8877,6 +8979,12 @@ export type Database = {
         Args: { p_evento_id: number }
         Returns: Json
       }
+      expandir_promocao_item:
+        | { Args: { p_item_id: number }; Returns: Json }
+        | {
+            Args: { p_item_id: number; p_threshold_similaridade?: number }
+            Returns: Json
+          }
       fin_calcular_confiabilidade: {
         Args: { p_ano: number; p_company: string; p_mes: number }
         Returns: Json
@@ -8962,6 +9070,15 @@ export type Database = {
         Returns: Json
       }
       is_super_admin: { Args: { _user_id: string }; Returns: boolean }
+      listar_skus_por_codigo_fornecedor: {
+        Args: { p_codigo_fornecedor: string; p_empresa: string }
+        Returns: {
+          codigo_interno: string
+          descricao: string
+          familia: string
+          omie_codigo_produto: number
+        }[]
+      }
       proxima_janela_operacional: {
         Args: { p_a_partir?: string; p_empresa: string; p_fornecedor: string }
         Returns: string
