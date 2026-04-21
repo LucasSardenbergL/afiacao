@@ -257,7 +257,7 @@ function AppSidebar({ collapsed, onToggle }: { collapsed: boolean; onToggle: () 
         return it;
       }),
     })),
-    [outlierPendentes, pedidosPendentes],
+    [outlierPendentes, pedidosPendentes, aumentosAtivos],
   );
 
   const isActive = (path: string) => {
