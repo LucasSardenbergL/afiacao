@@ -75,6 +75,7 @@ const unifiedNavSections: { title: string; items: NavItem[] }[] = [
       { icon: Target, label: 'SLA de fornecedor', path: '/admin/reposicao/sla-fornecedor', managerOnly: true },
       { icon: PlayCircle, label: 'Aplicação no Omie', path: '/admin/reposicao/aplicacao', managerOnly: true },
       { icon: Percent, label: 'Promoções', path: '/admin/reposicao/promocoes', managerOnly: true },
+      { icon: TrendingUp, label: 'Aumentos anunciados', path: '/admin/reposicao/aumentos', managerOnly: true },
     ],
   },
   {
@@ -227,6 +228,19 @@ function AppSidebar({ collapsed, onToggle }: { collapsed: boolean; onToggle: () 
     staleTime: 15000,
   });
 
+  // Contador de aumentos ativos aguardando vigência
+  const { data: aumentosAtivos } = useQuery({
+    queryKey: ['aumentos-ativos-count'],
+    queryFn: async () => {
+      const { count } = await supabase
+        .from('fornecedor_aumento_anunciado' as any)
+        .select('*', { count: 'exact', head: true })
+        .eq('estado', 'ativo');
+      return count ?? 0;
+    },
+    refetchInterval: 60000,
+  });
+
   const sectionsWithBadges = React.useMemo(
     () => [...unifiedNavSections, docNavSection].map((s) => ({
       ...s,
@@ -236,6 +250,9 @@ function AppSidebar({ collapsed, onToggle }: { collapsed: boolean; onToggle: () 
         }
         if (it.path === '/admin/reposicao/pedidos' && pedidosPendentes) {
           return { ...it, badge: pedidosPendentes };
+        }
+        if (it.path === '/admin/reposicao/aumentos' && aumentosAtivos) {
+          return { ...it, badge: aumentosAtivos };
         }
         return it;
       }),
