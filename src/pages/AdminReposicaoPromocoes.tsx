@@ -186,100 +186,207 @@ export default function AdminReposicaoPromocoes() {
     },
   });
 
+  // Upload modal — múltiplos arquivos
+  const [uploadOpen, setUploadOpen] = useState(false);
+  const [items, setItems] = useState<UploadItem[]>([]);
+  const [processando, setProcessando] = useState(false);
+  const fileInputRef = useRef<HTMLInputElement>(null);
+
+  // ============ QUERIES ============
+  const { data: campanhas = [], isLoading } = useQuery({
+    queryKey: ["promocao-campanhas", filtroEstado, busca],
+    queryFn: async () => {
+      let q = supabase
+        .from("promocao_campanha" as any)
+        .select(
+          "id, nome, fornecedor_nome, tipo_origem, data_inicio, data_fim, estado, extracao_confianca, criado_em",
+        )
+        .eq("empresa", EMPRESA)
+        .eq("fornecedor_nome", FORNECEDOR_DEFAULT)
+        .order("criado_em", { ascending: false });
+
+      if (filtroEstado !== ALL) q = q.eq("estado", filtroEstado);
+      if (busca.trim()) q = q.ilike("nome", `%${busca.trim()}%`);
+
+      const { data, error } = await q;
+      if (error) throw error;
+      const rows = (data || []) as unknown as Campanha[];
+
+      // Buscar contagem de itens em batch
+      const ids = rows.map((c) => c.id);
+      const counts: Record<number, number> = {};
+      if (ids.length > 0) {
+        const { data: itens } = await supabase
+          .from("promocao_item" as any)
+          .select("campanha_id")
+          .in("campanha_id", ids);
+        ((itens || []) as any[]).forEach((it) => {
+          counts[it.campanha_id] = (counts[it.campanha_id] || 0) + 1;
+        });
+      }
+
+      return rows.map<CampanhaComContagem>((c) => ({
+        ...c,
+        num_itens: counts[c.id] || 0,
+      }));
+    },
+  });
+
   const aguardandoRevisao = useMemo(
     () => campanhas.filter((c) => c.estado === "rascunho").length,
     [campanhas],
   );
 
-  // ============ HANDLERS ============
+  // ============ UPLOAD MULTIPLO ============
   const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0] ?? null;
-    setArquivo(file);
-  };
-
-  const resetUpload = () => {
-    setArquivo(null);
+    const files = Array.from(e.target.files ?? []);
+    if (files.length === 0) return;
+    const novos: UploadItem[] = files.map((f) => ({
+      id: `${f.name}-${f.size}-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
+      file: f,
+      status: "aguardando",
+    }));
+    setItems((prev) => [...prev, ...novos]);
     if (fileInputRef.current) fileInputRef.current.value = "";
   };
 
-  const handleExtrair = async () => {
-    if (!arquivo) return;
-    setExtraindo(true);
-    try {
-      const base64 = await new Promise<string>((resolve, reject) => {
-        const reader = new FileReader();
-        reader.onload = () => {
-          const result = reader.result as string;
-          const idx = result.indexOf(",");
-          resolve(idx >= 0 ? result.slice(idx + 1) : result);
-        };
-        reader.onerror = () => reject(reader.error);
-        reader.readAsDataURL(arquivo);
-      });
+  const removerItem = (id: string) => {
+    setItems((prev) => prev.filter((i) => i.id !== id));
+  };
 
-      const arquivo_tipo =
-        arquivo.type === "application/pdf" ? "pdf" : arquivo.type;
+  const resetUpload = () => {
+    setItems([]);
+    if (fileInputRef.current) fileInputRef.current.value = "";
+  };
 
-      const { data, error } = await supabase.functions.invoke(
-        "promocao-extrair-via-vision",
-        {
-          body: {
-            empresa: EMPRESA,
-            fornecedor_nome: FORNECEDOR_DEFAULT,
-            arquivo_tipo,
-            arquivo_base64: base64,
+  const updateItem = useCallback((id: string, patch: Partial<UploadItem>) => {
+    setItems((prev) => prev.map((i) => (i.id === id ? { ...i, ...patch } : i)));
+  }, []);
+
+  const processarArquivo = useCallback(
+    async (item: UploadItem): Promise<void> => {
+      updateItem(item.id, { status: "processando", erro: undefined });
+      try {
+        const base64 = await new Promise<string>((resolve, reject) => {
+          const reader = new FileReader();
+          reader.onload = () => {
+            const result = reader.result as string;
+            const idx = result.indexOf(",");
+            resolve(idx >= 0 ? result.slice(idx + 1) : result);
+          };
+          reader.onerror = () => reject(reader.error);
+          reader.readAsDataURL(item.file);
+        });
+
+        const arquivo_tipo =
+          item.file.type === "application/pdf" ? "pdf" : item.file.type;
+
+        const { data, error } = await supabase.functions.invoke(
+          "promocao-extrair-via-vision",
+          {
+            body: {
+              empresa: EMPRESA,
+              fornecedor_nome: FORNECEDOR_DEFAULT,
+              arquivo_tipo,
+              arquivo_base64: base64,
+            },
           },
-        },
-      );
+        );
 
-      if (error) throw error;
-      if (data?.error) throw new Error(data.error);
+        if (error) throw error;
+        if (data?.error) throw new Error(data.error);
 
-      const campanhaId: number | undefined = data?.campanha_id;
-      const itensExtraidos =
-        data?.extracao?.items_extraidos ?? data?.items?.length ?? 0;
+        const campanhaId: number | undefined = data?.campanha_id;
+        const itensExtraidos =
+          data?.extracao?.items_extraidos ?? data?.items?.length ?? 0;
+        const confianca: number | null =
+          data?.extracao?.confianca ?? data?.confianca ?? null;
 
-      // Confirma a propagação consultando a campanha recém-criada antes de
-      // prosseguir, evitando race condition com a tela de detalhe.
-      let nomeCampanha = "Campanha";
-      if (campanhaId) {
-        for (let i = 0; i < 6; i++) {
-          const { data: row } = await supabase
-            .from("promocao_campanha" as any)
-            .select("nome")
-            .eq("id", campanhaId)
-            .maybeSingle();
-          if (row && (row as any).nome) {
-            nomeCampanha = (row as any).nome as string;
-            break;
+        // Confirma propagação para evitar race com a lista
+        let nomeCampanha = "Campanha";
+        if (campanhaId) {
+          for (let i = 0; i < 6; i++) {
+            const { data: row } = await supabase
+              .from("promocao_campanha" as any)
+              .select("nome")
+              .eq("id", campanhaId)
+              .maybeSingle();
+            if (row && (row as any).nome) {
+              nomeCampanha = (row as any).nome as string;
+              break;
+            }
+            await new Promise((r) => setTimeout(r, 250));
           }
-          await new Promise((r) => setTimeout(r, 250));
         }
+
+        updateItem(item.id, {
+          status: "concluido",
+          campanhaId,
+          nomeCampanha,
+          itensExtraidos,
+          confianca,
+        });
+      } catch (e: any) {
+        updateItem(item.id, {
+          status: "erro",
+          erro: e?.message || "Falha desconhecida",
+        });
       }
+    },
+    [updateItem],
+  );
 
-      setUploadOpen(false);
-      resetUpload();
+  const iniciarProcessamento = async () => {
+    const fila = items.filter((i) => i.status === "aguardando" || i.status === "erro");
+    if (fila.length === 0) return;
+    setProcessando(true);
 
-      // Atualiza a lista para mostrar a campanha recém-criada
-      qc.invalidateQueries({ queryKey: ["promocao-campanhas"] });
+    // Marca toda a fila como aguardando (caso haja "erro" sendo retentado)
+    fila.forEach((it) => {
+      if (it.status === "erro") updateItem(it.id, { status: "aguardando", erro: undefined });
+    });
 
-      if (permanecerNaLista || !campanhaId) {
-        toast.success(
-          campanhaId
-            ? `Campanha "${nomeCampanha}" criada em rascunho (${itensExtraidos} ${itensExtraidos === 1 ? "item" : "itens"})`
-            : `${itensExtraidos} ${itensExtraidos === 1 ? "item extraído" : "itens extraídos"}`,
-        );
-      } else {
-        toast.success(
-          `${itensExtraidos} ${itensExtraidos === 1 ? "item extraído" : "itens extraídos"}`,
-        );
-        navigate(`/admin/reposicao/promocoes/${campanhaId}`);
-      }
-    } catch (e: any) {
-      toast.error(e?.message || "Erro ao extrair promoção");
-    } finally {
-      setExtraindo(false);
-    }
+    // Pool de concorrência simples (até MAX_CONCURRENT em paralelo)
+    let cursor = 0;
+    const next = async (): Promise<void> => {
+      const idx = cursor++;
+      if (idx >= fila.length) return;
+      await processarArquivo(fila[idx]);
+      return next();
+    };
+    const workers = Array.from(
+      { length: Math.min(MAX_CONCURRENT, fila.length) },
+      () => next(),
+    );
+    await Promise.all(workers);
+
+    setProcessando(false);
+    qc.invalidateQueries({ queryKey: ["promocao-campanhas"] });
+  };
+
+  const tentarNovamente = async (id: string) => {
+    const it = items.find((x) => x.id === id);
+    if (!it) return;
+    setProcessando(true);
+    await processarArquivo(it);
+    setProcessando(false);
+    qc.invalidateQueries({ queryKey: ["promocao-campanhas"] });
+  };
+
+  const totalItens = items.length;
+  const concluidos = items.filter((i) => i.status === "concluido").length;
+  const comErro = items.filter((i) => i.status === "erro").length;
+  const aguardando = items.filter((i) => i.status === "aguardando").length;
+  const emProcesso = items.filter((i) => i.status === "processando").length;
+  const finalizados = concluidos + comErro;
+  const progresso = totalItens > 0 ? Math.round((finalizados / totalItens) * 100) : 0;
+  const todosFinalizados = totalItens > 0 && finalizados === totalItens && !processando;
+  const podeIniciar = !processando && (aguardando > 0 || (comErro > 0 && emProcesso === 0));
+
+  const fecharModal = () => {
+    if (processando) return;
+    setUploadOpen(false);
+    resetUpload();
   };
 
   return (
