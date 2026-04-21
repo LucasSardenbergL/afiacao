@@ -212,6 +212,24 @@ export default function AdminReposicaoPromocoes() {
     [campanhas],
   );
 
+  // Agrupa campanhas por mês (data_inicio), com meses vazios entre o mais antigo e o atual
+  const grupos = useMemo(
+    () => agruparPorMes(campanhas, (c) => c.data_inicio),
+    [campanhas],
+  );
+
+  // Default: últimos 3 meses expandidos, demais recolhidos
+  const [collapsedMeses, setCollapsedMeses] = useState<Record<string, boolean>>({});
+  const ultimos3 = useMemo(() => chavesUltimosNMeses(3), []);
+  const isCollapsed = useCallback(
+    (chave: string) =>
+      chave in collapsedMeses ? collapsedMeses[chave] : !ultimos3.has(chave),
+    [collapsedMeses, ultimos3],
+  );
+  const toggleMes = useCallback((chave: string) => {
+    setCollapsedMeses((prev) => ({ ...prev, [chave]: !(prev[chave] ?? false) }));
+  }, []);
+
   // ============ UPLOAD MULTIPLO ============
   const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const files = Array.from(e.target.files ?? []);
