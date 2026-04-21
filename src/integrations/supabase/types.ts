@@ -3707,6 +3707,30 @@ export type Database = {
         }
         Relationships: []
       }
+      fornecedor_mapeamento_extracao: {
+        Row: {
+          alias_extraido: string
+          ativo: boolean
+          criado_em: string
+          id: number
+          nome_canonico: string
+        }
+        Insert: {
+          alias_extraido: string
+          ativo?: boolean
+          criado_em?: string
+          id?: number
+          nome_canonico: string
+        }
+        Update: {
+          alias_extraido?: string
+          ativo?: boolean
+          criado_em?: string
+          id?: number
+          nome_canonico?: string
+        }
+        Relationships: []
+      }
       fornecedor_omie_cache: {
         Row: {
           cached_at: string
