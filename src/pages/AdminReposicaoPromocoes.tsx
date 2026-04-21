@@ -150,7 +150,7 @@ export default function AdminReposicaoPromocoes() {
 
   // ============ QUERIES ============
   const { data: campanhas = [], isLoading } = useQuery({
-    queryKey: ["promocao-campanhas", filtroEstado, busca],
+    queryKey: ["promocao-campanhas", filtroEstado, filtroFornecedor, busca],
     queryFn: async () => {
       let q = supabase
         .from("promocao_campanha" as any)
@@ -158,10 +158,10 @@ export default function AdminReposicaoPromocoes() {
           "id, nome, fornecedor_nome, tipo_origem, data_inicio, data_fim, estado, extracao_confianca, criado_em",
         )
         .eq("empresa", EMPRESA)
-        .eq("fornecedor_nome", FORNECEDOR_DEFAULT)
         .order("criado_em", { ascending: false });
 
       if (filtroEstado !== ALL) q = q.eq("estado", filtroEstado);
+      if (filtroFornecedor !== ALL) q = q.eq("fornecedor_nome", filtroFornecedor);
       if (busca.trim()) q = q.ilike("nome", `%${busca.trim()}%`);
 
       const { data, error } = await q;
