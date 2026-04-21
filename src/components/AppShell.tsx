@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
-import { BookOpen, Lock, Calculator, FileText, Palette, Beaker, FileUp, Droplets, LayoutDashboard, Users, ShoppingCart, ShoppingBag, Phone, GraduationCap, BarChart3, Settings, ChevronLeft, ChevronRight, Search, Bell, User, LogOut, Package, TrendingUp, Headphones, Target, Menu, X, ClipboardList, PlusCircle, Shield, Wrench, Award, Scissors, DollarSign, Layers, Printer, UserCheck, FileCheck, Boxes, AlertTriangle, PlayCircle, Factory, Truck, Percent } from 'lucide-react';
+import { BookOpen, Lock, Calculator, FileText, Palette, Beaker, FileUp, Droplets, LayoutDashboard, Users, ShoppingCart, ShoppingBag, Phone, GraduationCap, BarChart3, Settings, ChevronLeft, ChevronRight, Search, Bell, User, LogOut, Package, TrendingUp, Headphones, Target, Menu, X, ClipboardList, PlusCircle, Shield, Wrench, Award, Scissors, DollarSign, Layers, Printer, UserCheck, FileCheck, Boxes, AlertTriangle, PlayCircle, Factory, Truck, Percent, Sparkles } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { useAuth } from '@/contexts/AuthContext';
 import { useUserRole } from '@/hooks/useUserRole';
@@ -74,6 +74,7 @@ const unifiedNavSections: { title: string; items: NavItem[] }[] = [
       { icon: ShoppingBag, label: 'Pedidos sugeridos', path: '/admin/reposicao/pedidos', managerOnly: true },
       { icon: Target, label: 'SLA de fornecedor', path: '/admin/reposicao/sla-fornecedor', managerOnly: true },
       { icon: PlayCircle, label: 'Aplicação no Omie', path: '/admin/reposicao/aplicacao', managerOnly: true },
+      { icon: Sparkles, label: 'Oportunidades', path: '/admin/reposicao/oportunidades', managerOnly: true },
       { icon: Percent, label: 'Promoções', path: '/admin/reposicao/promocoes', managerOnly: true },
       { icon: TrendingUp, label: 'Aumentos anunciados', path: '/admin/reposicao/aumentos', managerOnly: true },
     ],
