@@ -390,11 +390,17 @@ Deno.serve(async (req: Request) => {
       );
     }
 
+    const fornecedorCanonicoAum = await normalizarFornecedor(
+      supabase,
+      fornecedorNomeFallback,
+      "aumento",
+    );
+
     const { data: aumentoRpc, error: rpcErr } = await supabase.rpc(
       "registrar_aumento_via_vision",
       {
         p_empresa: empresa,
-        p_fornecedor_nome: fornecedorNomeFallback,
+        p_fornecedor_nome: fornecedorCanonicoAum,
         p_nome: extractedAum.nome,
         p_data_vigencia: extractedAum.data_vigencia,
         p_data_anuncio: extractedAum.data_anuncio,
