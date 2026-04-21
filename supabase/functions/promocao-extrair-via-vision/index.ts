@@ -110,6 +110,62 @@ interface ExtractedAumento {
   observacoes: string;
 }
 
+// ============= NORMALIZAÇÃO DE FORNECEDOR =============
+// Consulta `fornecedor_mapeamento_extracao` para resolver aliases extraídos pela IA
+// para o nome canônico (razão social) usado no resto do sistema.
+// Fallback hardcoded para Sayerlack/Renner caso a tabela esteja indisponível.
+async function normalizarFornecedor(
+  supabase: ReturnType<typeof createClient>,
+  extraido: string | null | undefined,
+  _tipoDocumento: string,
+): Promise<string> {
+  const normalizado = (extraido ?? "").toLowerCase().trim();
+  if (!normalizado) return "DESCONHECIDO";
+
+  // 1) tenta match exato (case-insensitive) na tabela
+  try {
+    const { data: exact } = await supabase
+      .from("fornecedor_mapeamento_extracao")
+      .select("nome_canonico")
+      .eq("ativo", true)
+      .ilike("alias_extraido", normalizado)
+      .maybeSingle();
+    if (exact?.nome_canonico) return exact.nome_canonico;
+
+    // 2) tenta match por substring — pega o alias mais longo que esteja contido no extraído
+    const { data: aliases } = await supabase
+      .from("fornecedor_mapeamento_extracao")
+      .select("alias_extraido, nome_canonico")
+      .eq("ativo", true);
+
+    if (Array.isArray(aliases) && aliases.length > 0) {
+      const ordenados = [...aliases].sort(
+        (a, b) =>
+          (b.alias_extraido?.length ?? 0) - (a.alias_extraido?.length ?? 0),
+      );
+      for (const a of ordenados) {
+        const alias = (a.alias_extraido ?? "").toLowerCase().trim();
+        if (alias && normalizado.includes(alias)) {
+          return a.nome_canonico;
+        }
+      }
+    }
+  } catch (err) {
+    console.warn(
+      `[normalizarFornecedor] consulta tabela falhou, usando fallback: ${
+        String(err).slice(0, 200)
+      }`,
+    );
+  }
+
+  // 3) Fallback hardcoded (caso a tabela esteja indisponível)
+  if (normalizado.includes("sayerlack") || normalizado.includes("renner")) {
+    return "RENNER SAYERLACK S/A";
+  }
+
+  return extraido?.trim() || "DESCONHECIDO";
+}
+
 function fallbackExtraction(reason: string, rawText = ""): ExtractedPromo {
   const today = new Date().toISOString().slice(0, 10);
   return {
