@@ -180,6 +180,23 @@ export default function AdminReposicaoAumentos() {
     [aumentos],
   );
 
+  // Agrupa aumentos por mês (data_vigencia)
+  const grupos = useMemo(
+    () => agruparPorMes(aumentos, (a) => a.data_vigencia),
+    [aumentos],
+  );
+
+  const [collapsedMeses, setCollapsedMeses] = useState<Record<string, boolean>>({});
+  const ultimos3 = useMemo(() => chavesUltimosNMeses(3), []);
+  const isCollapsed = useCallback(
+    (chave: string) =>
+      chave in collapsedMeses ? collapsedMeses[chave] : !ultimos3.has(chave),
+    [collapsedMeses, ultimos3],
+  );
+  const toggleMes = useCallback((chave: string) => {
+    setCollapsedMeses((prev) => ({ ...prev, [chave]: !(prev[chave] ?? false) }));
+  }, []);
+
   // ============ HANDLERS ============
   const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0] ?? null;
