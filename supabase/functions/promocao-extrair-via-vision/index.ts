@@ -139,10 +139,11 @@ function fallbackAumento(reason: string, rawText = ""): ExtractedAumento {
   };
 }
 
-async function callVisionGateway(
+async function callVisionRaw(
   fileBase64: string,
   fileType: string,
-): Promise<ExtractedPromo> {
+  prompt: string,
+): Promise<string> {
   const apiKey = Deno.env.get("LOVABLE_API_KEY");
   if (!apiKey) throw new Error("LOVABLE_API_KEY não configurada");
 
@@ -151,7 +152,6 @@ async function callVisionGateway(
     ? "application/pdf"
     : fileType;
 
-  // OpenAI-compatível: usa image_url com data URI (Gemini via gateway aceita PDF e imagens)
   const dataUri = `data:${normalizedType};base64,${fileBase64}`;
 
   const response = await fetch(LOVABLE_AI_URL, {
@@ -167,7 +167,7 @@ async function callVisionGateway(
           role: "user",
           content: [
             { type: "image_url", image_url: { url: dataUri } },
-            { type: "text", text: EXTRACTION_PROMPT },
+            { type: "text", text: prompt },
           ],
         },
       ],
@@ -192,24 +192,52 @@ async function callVisionGateway(
   }
 
   const data = await response.json();
-  const textResponse: string = data.choices?.[0]?.message?.content ?? "";
+  return data.choices?.[0]?.message?.content ?? "";
+}
 
-  // Best-effort: tenta parsear mesmo se vier com markdown wrapper
+function stripJsonFences(textResponse: string): string {
   let cleaned = textResponse.trim();
   if (cleaned.startsWith("```json")) cleaned = cleaned.slice(7);
   if (cleaned.startsWith("```")) cleaned = cleaned.slice(3);
   if (cleaned.endsWith("```")) cleaned = cleaned.slice(0, -3);
-  cleaned = cleaned.trim();
+  return cleaned.trim();
+}
 
+async function callVisionGateway(
+  fileBase64: string,
+  fileType: string,
+): Promise<ExtractedPromo> {
+  const textResponse = await callVisionRaw(fileBase64, fileType, EXTRACTION_PROMPT);
+  const cleaned = stripJsonFences(textResponse);
   try {
     const parsed = JSON.parse(cleaned) as ExtractedPromo;
-    // Validações mínimas para evitar quebra a jusante
     if (!Array.isArray(parsed.items)) parsed.items = [];
     if (typeof parsed.confianca !== "number") parsed.confianca = 0;
     if (!parsed.observacoes) parsed.observacoes = "";
     return parsed;
   } catch (err) {
     return fallbackExtraction(
+      `ERRO PARSING: ${String(err).slice(0, 200)}.`,
+      textResponse,
+    );
+  }
+}
+
+async function callVisionGatewayAumento(
+  fileBase64: string,
+  fileType: string,
+): Promise<ExtractedAumento> {
+  const textResponse = await callVisionRaw(fileBase64, fileType, AUMENTO_PROMPT);
+  const cleaned = stripJsonFences(textResponse);
+  try {
+    const parsed = JSON.parse(cleaned) as ExtractedAumento;
+    if (!Array.isArray(parsed.categorias)) parsed.categorias = [];
+    if (typeof parsed.confianca !== "number") parsed.confianca = 0;
+    if (!parsed.observacoes) parsed.observacoes = "";
+    if (!parsed.data_anuncio) parsed.data_anuncio = null;
+    return parsed;
+  } catch (err) {
+    return fallbackAumento(
       `ERRO PARSING: ${String(err).slice(0, 200)}.`,
       textResponse,
     );
