@@ -463,6 +463,28 @@ export default function AdminReposicaoPromocoes() {
                 </div>
               </div>
             )}
+
+            <div className="flex items-start gap-2 rounded-md border border-dashed p-3">
+              <Checkbox
+                id="permanecer-lista"
+                checked={permanecerNaLista}
+                onCheckedChange={(c) => setPermanecerNaLista(c === true)}
+                disabled={extraindo}
+                className="mt-0.5"
+              />
+              <div className="flex-1 space-y-1">
+                <Label
+                  htmlFor="permanecer-lista"
+                  className="cursor-pointer text-sm font-medium leading-none"
+                >
+                  Permanecer na lista após upload (uso em lote)
+                </Label>
+                <p className="text-xs text-muted-foreground">
+                  Ideal para subir vários PDFs em sequência. Desmarque para abrir
+                  o detalhe da campanha logo após a extração.
+                </p>
+              </div>
+            </div>
           </div>
 
           <DialogFooter>
