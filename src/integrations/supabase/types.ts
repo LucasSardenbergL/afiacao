@@ -274,6 +274,45 @@ export type Database = {
         }
         Relationships: []
       }
+      categoria_aumento_familia_mapeamento: {
+        Row: {
+          aumento_item_id: number
+          criado_em: string | null
+          familia_omie: string
+          id: number
+          sku_codigo_omie_especifico: number | null
+        }
+        Insert: {
+          aumento_item_id: number
+          criado_em?: string | null
+          familia_omie: string
+          id?: number
+          sku_codigo_omie_especifico?: number | null
+        }
+        Update: {
+          aumento_item_id?: number
+          criado_em?: string | null
+          familia_omie?: string
+          id?: number
+          sku_codigo_omie_especifico?: number | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "categoria_aumento_familia_mapeamento_aumento_item_id_fkey"
+            columns: ["aumento_item_id"]
+            isOneToOne: false
+            referencedRelation: "fornecedor_aumento_item"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "categoria_aumento_familia_mapeamento_aumento_item_id_fkey"
+            columns: ["aumento_item_id"]
+            isOneToOne: false
+            referencedRelation: "v_sku_aumento_vigente"
+            referencedColumns: ["aumento_item_id"]
+          },
+        ]
+      }
       category_mappings: {
         Row: {
           id: string
@@ -3039,6 +3078,231 @@ export type Database = {
         }
         Relationships: []
       }
+      fornecedor_alerta: {
+        Row: {
+          aumento_id: number | null
+          calendar_evento_id: string | null
+          campanha_id: number | null
+          criado_em: string | null
+          email_enviado: boolean | null
+          email_enviado_em: string | null
+          email_origem_id: string | null
+          empresa: string
+          fornecedor_nome: string | null
+          id: number
+          mensagem: string | null
+          resolvido: boolean | null
+          resolvido_em: string | null
+          resolvido_por: string | null
+          severidade: string
+          tipo: string
+          titulo: string
+          visualizado: boolean | null
+          visualizado_em: string | null
+        }
+        Insert: {
+          aumento_id?: number | null
+          calendar_evento_id?: string | null
+          campanha_id?: number | null
+          criado_em?: string | null
+          email_enviado?: boolean | null
+          email_enviado_em?: string | null
+          email_origem_id?: string | null
+          empresa: string
+          fornecedor_nome?: string | null
+          id?: number
+          mensagem?: string | null
+          resolvido?: boolean | null
+          resolvido_em?: string | null
+          resolvido_por?: string | null
+          severidade?: string
+          tipo: string
+          titulo: string
+          visualizado?: boolean | null
+          visualizado_em?: string | null
+        }
+        Update: {
+          aumento_id?: number | null
+          calendar_evento_id?: string | null
+          campanha_id?: number | null
+          criado_em?: string | null
+          email_enviado?: boolean | null
+          email_enviado_em?: string | null
+          email_origem_id?: string | null
+          empresa?: string
+          fornecedor_nome?: string | null
+          id?: number
+          mensagem?: string | null
+          resolvido?: boolean | null
+          resolvido_em?: string | null
+          resolvido_por?: string | null
+          severidade?: string
+          tipo?: string
+          titulo?: string
+          visualizado?: boolean | null
+          visualizado_em?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "fornecedor_alerta_aumento_id_fkey"
+            columns: ["aumento_id"]
+            isOneToOne: false
+            referencedRelation: "fornecedor_aumento_anunciado"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "fornecedor_alerta_aumento_id_fkey"
+            columns: ["aumento_id"]
+            isOneToOne: false
+            referencedRelation: "v_sku_aumento_vigente"
+            referencedColumns: ["aumento_id"]
+          },
+          {
+            foreignKeyName: "fornecedor_alerta_campanha_id_fkey"
+            columns: ["campanha_id"]
+            isOneToOne: false
+            referencedRelation: "promocao_campanha"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "fornecedor_alerta_campanha_id_fkey"
+            columns: ["campanha_id"]
+            isOneToOne: false
+            referencedRelation: "v_oportunidade_economica_hoje"
+            referencedColumns: ["campanha_id"]
+          },
+          {
+            foreignKeyName: "fornecedor_alerta_campanha_id_fkey"
+            columns: ["campanha_id"]
+            isOneToOne: false
+            referencedRelation: "v_promocao_avaliacao_hoje"
+            referencedColumns: ["campanha_id"]
+          },
+        ]
+      }
+      fornecedor_aumento_anunciado: {
+        Row: {
+          atualizado_em: string | null
+          atualizado_por: string | null
+          criado_em: string | null
+          criado_por: string | null
+          data_anuncio: string | null
+          data_vigencia: string
+          empresa: string
+          estado: string
+          extracao_confianca: number | null
+          extracao_observacoes: string | null
+          extraido_em: string | null
+          fornecedor_nome: string
+          id: number
+          nome: string
+          observacoes: string | null
+          origem_arquivo_tipo: string | null
+          origem_arquivo_url: string | null
+          origem_email_assunto: string | null
+          origem_email_data: string | null
+          origem_email_remetente: string | null
+        }
+        Insert: {
+          atualizado_em?: string | null
+          atualizado_por?: string | null
+          criado_em?: string | null
+          criado_por?: string | null
+          data_anuncio?: string | null
+          data_vigencia: string
+          empresa: string
+          estado?: string
+          extracao_confianca?: number | null
+          extracao_observacoes?: string | null
+          extraido_em?: string | null
+          fornecedor_nome: string
+          id?: number
+          nome: string
+          observacoes?: string | null
+          origem_arquivo_tipo?: string | null
+          origem_arquivo_url?: string | null
+          origem_email_assunto?: string | null
+          origem_email_data?: string | null
+          origem_email_remetente?: string | null
+        }
+        Update: {
+          atualizado_em?: string | null
+          atualizado_por?: string | null
+          criado_em?: string | null
+          criado_por?: string | null
+          data_anuncio?: string | null
+          data_vigencia?: string
+          empresa?: string
+          estado?: string
+          extracao_confianca?: number | null
+          extracao_observacoes?: string | null
+          extraido_em?: string | null
+          fornecedor_nome?: string
+          id?: number
+          nome?: string
+          observacoes?: string | null
+          origem_arquivo_tipo?: string | null
+          origem_arquivo_url?: string | null
+          origem_email_assunto?: string | null
+          origem_email_data?: string | null
+          origem_email_remetente?: string | null
+        }
+        Relationships: []
+      }
+      fornecedor_aumento_item: {
+        Row: {
+          ativo: boolean
+          atualizado_em: string | null
+          aumento_id: number
+          aumento_perc: number
+          categoria_fornecedor: string
+          confirmado: boolean
+          criado_em: string | null
+          data_vigencia_especifica: string | null
+          id: number
+          observacoes: string | null
+        }
+        Insert: {
+          ativo?: boolean
+          atualizado_em?: string | null
+          aumento_id: number
+          aumento_perc: number
+          categoria_fornecedor: string
+          confirmado?: boolean
+          criado_em?: string | null
+          data_vigencia_especifica?: string | null
+          id?: number
+          observacoes?: string | null
+        }
+        Update: {
+          ativo?: boolean
+          atualizado_em?: string | null
+          aumento_id?: number
+          aumento_perc?: number
+          categoria_fornecedor?: string
+          confirmado?: boolean
+          criado_em?: string | null
+          data_vigencia_especifica?: string | null
+          id?: number
+          observacoes?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "fornecedor_aumento_item_aumento_id_fkey"
+            columns: ["aumento_id"]
+            isOneToOne: false
+            referencedRelation: "fornecedor_aumento_anunciado"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "fornecedor_aumento_item_aumento_id_fkey"
+            columns: ["aumento_id"]
+            isOneToOne: false
+            referencedRelation: "v_sku_aumento_vigente"
+            referencedColumns: ["aumento_id"]
+          },
+        ]
+      }
       fornecedor_cadeia_logistica: {
         Row: {
           ativo: boolean | null
@@ -3221,6 +3485,116 @@ export type Database = {
           ultimos_dias_parcelas?: string | null
         }
         Relationships: []
+      }
+      fornecedor_email_polling: {
+        Row: {
+          aceitar_imagem: boolean | null
+          aceitar_pdf: boolean | null
+          assunto_contem: string[] | null
+          assunto_suspensao: string[] | null
+          ativo: boolean | null
+          atualizado_em: string | null
+          criado_em: string | null
+          empresa: string
+          fornecedor_nome: string
+          id: number
+          notificar_calendar_id: string | null
+          notificar_email: string | null
+          observacoes: string | null
+          remetente_email: string
+          tipo_documento: string
+          ultimo_email_processado_id: string | null
+          ultimo_poll_em: string | null
+        }
+        Insert: {
+          aceitar_imagem?: boolean | null
+          aceitar_pdf?: boolean | null
+          assunto_contem?: string[] | null
+          assunto_suspensao?: string[] | null
+          ativo?: boolean | null
+          atualizado_em?: string | null
+          criado_em?: string | null
+          empresa: string
+          fornecedor_nome: string
+          id?: number
+          notificar_calendar_id?: string | null
+          notificar_email?: string | null
+          observacoes?: string | null
+          remetente_email: string
+          tipo_documento?: string
+          ultimo_email_processado_id?: string | null
+          ultimo_poll_em?: string | null
+        }
+        Update: {
+          aceitar_imagem?: boolean | null
+          aceitar_pdf?: boolean | null
+          assunto_contem?: string[] | null
+          assunto_suspensao?: string[] | null
+          ativo?: boolean | null
+          atualizado_em?: string | null
+          criado_em?: string | null
+          empresa?: string
+          fornecedor_nome?: string
+          id?: number
+          notificar_calendar_id?: string | null
+          notificar_email?: string | null
+          observacoes?: string | null
+          remetente_email?: string
+          tipo_documento?: string
+          ultimo_email_processado_id?: string | null
+          ultimo_poll_em?: string | null
+        }
+        Relationships: []
+      }
+      fornecedor_email_polling_log: {
+        Row: {
+          alertas_suspensao: number | null
+          anexos_extraidos: number | null
+          aumentos_criados: number | null
+          campanhas_criadas: number | null
+          detalhes: Json | null
+          emails_encontrados: number | null
+          emails_processados: number | null
+          erro: string | null
+          executado_em: string
+          id: number
+          polling_config_id: number | null
+        }
+        Insert: {
+          alertas_suspensao?: number | null
+          anexos_extraidos?: number | null
+          aumentos_criados?: number | null
+          campanhas_criadas?: number | null
+          detalhes?: Json | null
+          emails_encontrados?: number | null
+          emails_processados?: number | null
+          erro?: string | null
+          executado_em?: string
+          id?: number
+          polling_config_id?: number | null
+        }
+        Update: {
+          alertas_suspensao?: number | null
+          anexos_extraidos?: number | null
+          aumentos_criados?: number | null
+          campanhas_criadas?: number | null
+          detalhes?: Json | null
+          emails_encontrados?: number | null
+          emails_processados?: number | null
+          erro?: string | null
+          executado_em?: string
+          id?: number
+          polling_config_id?: number | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "fornecedor_email_polling_log_polling_config_id_fkey"
+            columns: ["polling_config_id"]
+            isOneToOne: false
+            referencedRelation: "fornecedor_email_polling"
+            referencedColumns: ["id"]
+          },
+        ]
       }
       fornecedor_grupo_producao: {
         Row: {
@@ -4445,6 +4819,13 @@ export type Database = {
             foreignKeyName: "pedido_compra_item_promocao_item_id_fkey"
             columns: ["promocao_item_id"]
             isOneToOne: false
+            referencedRelation: "v_oportunidade_economica_hoje"
+            referencedColumns: ["promo_item_id"]
+          },
+          {
+            foreignKeyName: "pedido_compra_item_promocao_item_id_fkey"
+            columns: ["promocao_item_id"]
+            isOneToOne: false
             referencedRelation: "v_promocao_avaliacao_hoje"
             referencedColumns: ["item_id"]
           },
@@ -4486,9 +4867,12 @@ export type Database = {
           omie_pedido_compra_id: string | null
           omie_pedido_compra_numero: string | null
           omie_registrado_em: string | null
+          origem_evento_id: number | null
+          origem_evento_tipo: string | null
           pedido_anterior_valor: number | null
           resposta_canal: Json | null
           status: string
+          tipo_ciclo: string
           valor_mes_ate_agora: number | null
           valor_total: number
         }
@@ -4520,9 +4904,12 @@ export type Database = {
           omie_pedido_compra_id?: string | null
           omie_pedido_compra_numero?: string | null
           omie_registrado_em?: string | null
+          origem_evento_id?: number | null
+          origem_evento_tipo?: string | null
           pedido_anterior_valor?: number | null
           resposta_canal?: Json | null
           status?: string
+          tipo_ciclo?: string
           valor_mes_ate_agora?: number | null
           valor_total?: number
         }
@@ -4554,9 +4941,12 @@ export type Database = {
           omie_pedido_compra_id?: string | null
           omie_pedido_compra_numero?: string | null
           omie_registrado_em?: string | null
+          origem_evento_id?: number | null
+          origem_evento_tipo?: string | null
           pedido_anterior_valor?: number | null
           resposta_canal?: Json | null
           status?: string
+          tipo_ciclo?: string
           valor_mes_ate_agora?: number | null
           valor_total?: number
         }
@@ -5030,6 +5420,8 @@ export type Database = {
           atualizado_por: string | null
           criado_em: string | null
           criado_por: string | null
+          data_corte_faturamento: string | null
+          data_corte_pedido: string | null
           data_fim: string
           data_inicio: string
           empresa: string
@@ -5046,6 +5438,7 @@ export type Database = {
           origem_email_assunto: string | null
           origem_email_data: string | null
           origem_email_remetente: string | null
+          permite_pedido_oportunidade: boolean | null
           tipo_origem: string
         }
         Insert: {
@@ -5053,6 +5446,8 @@ export type Database = {
           atualizado_por?: string | null
           criado_em?: string | null
           criado_por?: string | null
+          data_corte_faturamento?: string | null
+          data_corte_pedido?: string | null
           data_fim: string
           data_inicio: string
           empresa: string
@@ -5069,6 +5464,7 @@ export type Database = {
           origem_email_assunto?: string | null
           origem_email_data?: string | null
           origem_email_remetente?: string | null
+          permite_pedido_oportunidade?: boolean | null
           tipo_origem: string
         }
         Update: {
@@ -5076,6 +5472,8 @@ export type Database = {
           atualizado_por?: string | null
           criado_em?: string | null
           criado_por?: string | null
+          data_corte_faturamento?: string | null
+          data_corte_pedido?: string | null
           data_fim?: string
           data_inicio?: string
           empresa?: string
@@ -5092,6 +5490,7 @@ export type Database = {
           origem_email_assunto?: string | null
           origem_email_data?: string | null
           origem_email_remetente?: string | null
+          permite_pedido_oportunidade?: boolean | null
           tipo_origem?: string
         }
         Relationships: []
@@ -5172,6 +5571,13 @@ export type Database = {
             foreignKeyName: "promocao_item_campanha_id_fkey"
             columns: ["campanha_id"]
             isOneToOne: false
+            referencedRelation: "v_oportunidade_economica_hoje"
+            referencedColumns: ["campanha_id"]
+          },
+          {
+            foreignKeyName: "promocao_item_campanha_id_fkey"
+            columns: ["campanha_id"]
+            isOneToOne: false
             referencedRelation: "v_promocao_avaliacao_hoje"
             referencedColumns: ["campanha_id"]
           },
@@ -5229,6 +5635,13 @@ export type Database = {
             foreignKeyName: "promocao_negociacao_evento_campanha_id_fkey"
             columns: ["campanha_id"]
             isOneToOne: false
+            referencedRelation: "v_oportunidade_economica_hoje"
+            referencedColumns: ["campanha_id"]
+          },
+          {
+            foreignKeyName: "promocao_negociacao_evento_campanha_id_fkey"
+            columns: ["campanha_id"]
+            isOneToOne: false
             referencedRelation: "v_promocao_avaliacao_hoje"
             referencedColumns: ["campanha_id"]
           },
@@ -5238,6 +5651,13 @@ export type Database = {
             isOneToOne: false
             referencedRelation: "promocao_item"
             referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "promocao_negociacao_evento_item_id_fkey"
+            columns: ["item_id"]
+            isOneToOne: false
+            referencedRelation: "v_oportunidade_economica_hoje"
+            referencedColumns: ["promo_item_id"]
           },
           {
             foreignKeyName: "promocao_negociacao_evento_item_id_fkey"
@@ -6092,6 +6512,7 @@ export type Database = {
           lt_bruto_dias_uteis: number | null
           lt_faturamento_dias_uteis: number | null
           lt_logistica_dias_uteis: number | null
+          origem_compra: string
           quantidade_pedida: number | null
           quantidade_recebida: number | null
           sku_codigo: string | null
@@ -6118,6 +6539,7 @@ export type Database = {
           lt_bruto_dias_uteis?: number | null
           lt_faturamento_dias_uteis?: number | null
           lt_logistica_dias_uteis?: number | null
+          origem_compra?: string
           quantidade_pedida?: number | null
           quantidade_recebida?: number | null
           sku_codigo?: string | null
@@ -6144,6 +6566,7 @@ export type Database = {
           lt_bruto_dias_uteis?: number | null
           lt_faturamento_dias_uteis?: number | null
           lt_logistica_dias_uteis?: number | null
+          origem_compra?: string
           quantidade_pedida?: number | null
           quantidade_recebida?: number | null
           sku_codigo?: string | null
@@ -8541,6 +8964,36 @@ export type Database = {
         }
         Relationships: []
       }
+      v_oportunidade_economica_hoje: {
+        Row: {
+          aumento_evitado_perc: number | null
+          aumentos_json: Json | null
+          campanha_id: number | null
+          campanha_nome: string | null
+          cenario: string | null
+          custo_capital_efetivo_perc: number | null
+          data_limite_acao: string | null
+          demanda_diaria: number | null
+          desconto_promo_perc: number | null
+          desconto_total_perc: number | null
+          dias_ate_limite: number | null
+          economia_bruta_estimada: number | null
+          empresa: string | null
+          fornecedor_nome: string | null
+          modo_promo: string | null
+          preco_item_eoq: number | null
+          promo_data_corte_faturamento: string | null
+          promo_data_corte_pedido: string | null
+          promo_item_id: number | null
+          proxima_vigencia_aumento: string | null
+          qtde_base: number | null
+          qtde_oportunidade: number | null
+          sku_codigo_omie: number | null
+          sku_descricao: string | null
+          tem_negociacao_extra: boolean | null
+        }
+        Relationships: []
+      }
       v_pedidos_em_aberto: {
         Row: {
           dias_desde_pedido: number | null
@@ -8680,6 +9133,13 @@ export type Database = {
             foreignKeyName: "promocao_item_campanha_id_fkey"
             columns: ["campanha_id"]
             isOneToOne: false
+            referencedRelation: "v_oportunidade_economica_hoje"
+            referencedColumns: ["campanha_id"]
+          },
+          {
+            foreignKeyName: "promocao_item_campanha_id_fkey"
+            columns: ["campanha_id"]
+            isOneToOne: false
             referencedRelation: "v_promocao_avaliacao_hoje"
             referencedColumns: ["campanha_id"]
           },
@@ -8733,6 +9193,23 @@ export type Database = {
           srl_mediano: number | null
           srl_medio: number | null
           srl_pior: number | null
+        }
+        Relationships: []
+      }
+      v_sku_aumento_vigente: {
+        Row: {
+          aumento_estado: string | null
+          aumento_id: number | null
+          aumento_item_id: number | null
+          aumento_nome: string | null
+          aumento_perc: number | null
+          categoria_fornecedor: string | null
+          data_vigencia_efetiva: string | null
+          empresa_lower: string | null
+          familia: string | null
+          fornecedor_nome: string | null
+          sku_codigo_omie: number | null
+          sku_descricao: string | null
         }
         Relationships: []
       }
@@ -8807,6 +9284,105 @@ export type Database = {
         }
         Relationships: []
       }
+      v_sku_leadtime_history_normal: {
+        Row: {
+          created_at: string | null
+          empresa: Database["public"]["Enums"]["empresa_reposicao"] | null
+          fornecedor_codigo_omie: number | null
+          fornecedor_nome: string | null
+          grupo_leadtime: string | null
+          id: string | null
+          lt_bruto_dias_uteis: number | null
+          lt_faturamento_dias_uteis: number | null
+          lt_logistica_dias_uteis: number | null
+          origem_compra: string | null
+          quantidade_pedida: number | null
+          quantidade_recebida: number | null
+          sku_codigo: string | null
+          sku_codigo_omie: number | null
+          sku_descricao: string | null
+          sku_ncm: string | null
+          sku_unidade: string | null
+          t1_data_pedido: string | null
+          t2_data_faturamento: string | null
+          t3_data_cte: string | null
+          t4_data_recebimento: string | null
+          tracking_id: string | null
+          updated_at: string | null
+          valor_total: number | null
+          valor_unitario: number | null
+        }
+        Insert: {
+          created_at?: string | null
+          empresa?: Database["public"]["Enums"]["empresa_reposicao"] | null
+          fornecedor_codigo_omie?: number | null
+          fornecedor_nome?: string | null
+          grupo_leadtime?: string | null
+          id?: string | null
+          lt_bruto_dias_uteis?: number | null
+          lt_faturamento_dias_uteis?: number | null
+          lt_logistica_dias_uteis?: number | null
+          origem_compra?: string | null
+          quantidade_pedida?: number | null
+          quantidade_recebida?: number | null
+          sku_codigo?: string | null
+          sku_codigo_omie?: number | null
+          sku_descricao?: string | null
+          sku_ncm?: string | null
+          sku_unidade?: string | null
+          t1_data_pedido?: string | null
+          t2_data_faturamento?: string | null
+          t3_data_cte?: string | null
+          t4_data_recebimento?: string | null
+          tracking_id?: string | null
+          updated_at?: string | null
+          valor_total?: number | null
+          valor_unitario?: number | null
+        }
+        Update: {
+          created_at?: string | null
+          empresa?: Database["public"]["Enums"]["empresa_reposicao"] | null
+          fornecedor_codigo_omie?: number | null
+          fornecedor_nome?: string | null
+          grupo_leadtime?: string | null
+          id?: string | null
+          lt_bruto_dias_uteis?: number | null
+          lt_faturamento_dias_uteis?: number | null
+          lt_logistica_dias_uteis?: number | null
+          origem_compra?: string | null
+          quantidade_pedida?: number | null
+          quantidade_recebida?: number | null
+          sku_codigo?: string | null
+          sku_codigo_omie?: number | null
+          sku_descricao?: string | null
+          sku_ncm?: string | null
+          sku_unidade?: string | null
+          t1_data_pedido?: string | null
+          t2_data_faturamento?: string | null
+          t3_data_cte?: string | null
+          t4_data_recebimento?: string | null
+          tracking_id?: string | null
+          updated_at?: string | null
+          valor_total?: number | null
+          valor_unitario?: number | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "sku_leadtime_history_tracking_id_fkey"
+            columns: ["tracking_id"]
+            isOneToOne: false
+            referencedRelation: "purchase_orders_tracking"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "sku_leadtime_history_tracking_id_fkey"
+            columns: ["tracking_id"]
+            isOneToOne: false
+            referencedRelation: "v_pedidos_em_aberto"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       v_sku_lt_teorico: {
         Row: {
           cadeia_descricao: string | null
@@ -8879,15 +9455,6 @@ export type Database = {
         }
         Relationships: []
       }
-      v_sku_pior_janela_lt: {
-        Row: {
-          empresa: string | null
-          lt_dias_uteis: number | null
-          pior_janela_lt: number | null
-          sku_codigo_omie: string | null
-        }
-        Relationships: []
-      }
       v_sku_sigma_demanda: {
         Row: {
           empresa: string | null
@@ -8940,6 +9507,14 @@ export type Database = {
         Args: { p_pedido_id: number; p_usuario: string }
         Returns: Json
       }
+      atualizar_campanha_datas_corte: {
+        Args: {
+          p_campanha_id: number
+          p_data_corte_faturamento?: string
+          p_data_corte_pedido?: string
+        }
+        Returns: boolean
+      }
       atualizar_classificacao_skus: {
         Args: { p_empresa: string }
         Returns: {
@@ -8948,6 +9523,14 @@ export type Database = {
           classe_aplicada: string
           classe_proposta: string
           sku_codigo_omie: number
+        }[]
+      }
+      atualizar_estados_eventos_comerciais: {
+        Args: never
+        Returns: {
+          aumentos_expirados: number
+          aumentos_vigentes: number
+          campanhas_encerradas: number
         }[]
       }
       atualizar_parametros_numericos_skus: {
@@ -8961,6 +9544,16 @@ export type Database = {
           p_usuario: string
         }
         Returns: Json
+      }
+      ciclo_oportunidade_do_dia: {
+        Args: { p_data_ciclo?: string; p_empresa?: string }
+        Returns: {
+          economia_estimada: number
+          executou: boolean
+          motivo: string
+          pedidos_gerados: number
+          skus_incluidos: number
+        }[]
       }
       detectar_outliers_empresa: {
         Args: { p_empresa?: string }
@@ -9023,6 +9616,37 @@ export type Database = {
           opera: boolean
         }[]
       }
+      fornecedor_polling_pendente: {
+        Args: { p_intervalo_min?: number }
+        Returns: {
+          aceitar_imagem: boolean
+          aceitar_pdf: boolean
+          assunto_contem: string[]
+          assunto_suspensao: string[]
+          config_id: number
+          empresa: string
+          fornecedor_nome: string
+          notificar_calendar_id: string
+          notificar_email: string
+          remetente_email: string
+          tipo_documento: string
+          ultimo_email_processado_id: string
+        }[]
+      }
+      gerar_pedidos_oportunidade_ciclo: {
+        Args: {
+          p_cenarios?: string[]
+          p_data_ciclo?: string
+          p_empresa?: string
+        }
+        Returns: {
+          cenarios_cobertos: string[]
+          economia_bruta: number
+          pedidos_gerados: number
+          skus_incluidos: number
+          valor_total: number
+        }[]
+      }
       gerar_pedidos_sugeridos_ciclo: {
         Args: { p_data_ciclo?: string; p_empresa?: string }
         Returns: {
@@ -9079,11 +9703,74 @@ export type Database = {
           omie_codigo_produto: number
         }[]
       }
+      marcar_alerta_notificado: {
+        Args: {
+          p_alerta_id: number
+          p_calendar_evento_id?: string
+          p_email_enviado?: boolean
+        }
+        Returns: boolean
+      }
+      processar_alertas_pendentes_notificacao: {
+        Args: { p_empresa?: string }
+        Returns: {
+          alerta_id: number
+          aumento_id: number
+          calendar_evento_data: string
+          calendar_evento_duracao_minutos: number
+          calendar_evento_titulo: string
+          calendar_id: string
+          campanha_id: number
+          deve_criar_calendar_evento: boolean
+          deve_enviar_email: boolean
+          email_destino: string
+          empresa: string
+          mensagem: string
+          payload_json: Json
+          severidade: string
+          tipo: string
+          titulo: string
+        }[]
+      }
       proxima_janela_operacional: {
         Args: { p_a_partir?: string; p_empresa: string; p_fornecedor: string }
         Returns: string
       }
       refresh_customer_metrics: { Args: never; Returns: undefined }
+      registrar_aumento_via_vision: {
+        Args: {
+          p_categorias: Json
+          p_criado_por?: string
+          p_data_anuncio: string
+          p_data_vigencia: string
+          p_empresa: string
+          p_extracao_confianca?: number
+          p_extracao_observacoes?: string
+          p_fornecedor_nome: string
+          p_nome: string
+          p_origem_arquivo_tipo?: string
+          p_origem_arquivo_url?: string
+          p_origem_email_assunto?: string
+          p_origem_email_data?: string
+          p_origem_email_remetente?: string
+        }
+        Returns: number
+      }
+      registrar_polling_resultado: {
+        Args: {
+          p_alertas_suspensao: number
+          p_anexos_extraidos: number
+          p_aumentos_criados: number
+          p_campanhas_criadas: number
+          p_config_id: number
+          p_detalhes?: Json
+          p_emails_encontrados: number
+          p_emails_processados: number
+          p_erro?: string
+          p_ultimo_email_id?: string
+        }
+        Returns: number
+      }
       registrar_substituicao_sku: {
         Args: {
           p_acao_parametros: string
