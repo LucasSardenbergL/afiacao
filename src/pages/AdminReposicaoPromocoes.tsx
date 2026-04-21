@@ -24,6 +24,8 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { Input } from "@/components/ui/input";
+import { Checkbox } from "@/components/ui/checkbox";
+import { Label } from "@/components/ui/label";
 import {
   Dialog,
   DialogContent,
@@ -114,6 +116,7 @@ export default function AdminReposicaoPromocoes() {
   const [uploadOpen, setUploadOpen] = useState(false);
   const [arquivo, setArquivo] = useState<File | null>(null);
   const [extraindo, setExtraindo] = useState(false);
+  const [permanecerNaLista, setPermanecerNaLista] = useState(true);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   // ============ QUERIES ============
