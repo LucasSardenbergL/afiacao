@@ -137,6 +137,7 @@ export default function AdminReposicaoPromocoes() {
   const qc = useQueryClient();
 
   const [filtroEstado, setFiltroEstado] = useState<string>(ALL);
+  const [filtroFornecedor, setFiltroFornecedor] = useState<string>(ALL);
   const [busca, setBusca] = useState("");
 
 
@@ -149,7 +150,7 @@ export default function AdminReposicaoPromocoes() {
 
   // ============ QUERIES ============
   const { data: campanhas = [], isLoading } = useQuery({
-    queryKey: ["promocao-campanhas", filtroEstado, busca],
+    queryKey: ["promocao-campanhas", filtroEstado, filtroFornecedor, busca],
     queryFn: async () => {
       let q = supabase
         .from("promocao_campanha" as any)
@@ -157,10 +158,10 @@ export default function AdminReposicaoPromocoes() {
           "id, nome, fornecedor_nome, tipo_origem, data_inicio, data_fim, estado, extracao_confianca, criado_em",
         )
         .eq("empresa", EMPRESA)
-        .eq("fornecedor_nome", FORNECEDOR_DEFAULT)
         .order("criado_em", { ascending: false });
 
       if (filtroEstado !== ALL) q = q.eq("estado", filtroEstado);
+      if (filtroFornecedor !== ALL) q = q.eq("fornecedor_nome", filtroFornecedor);
       if (busca.trim()) q = q.ilike("nome", `%${busca.trim()}%`);
 
       const { data, error } = await q;
@@ -184,6 +185,22 @@ export default function AdminReposicaoPromocoes() {
         ...c,
         num_itens: counts[c.id] || 0,
       }));
+    },
+  });
+
+  const { data: fornecedores = [] } = useQuery({
+    queryKey: ["promocao-fornecedores", EMPRESA],
+    queryFn: async () => {
+      const { data, error } = await supabase
+        .from("promocao_campanha" as any)
+        .select("fornecedor_nome")
+        .eq("empresa", EMPRESA);
+      if (error) throw error;
+      const set = new Set<string>();
+      ((data || []) as any[]).forEach((r) => {
+        if (r.fornecedor_nome) set.add(r.fornecedor_nome);
+      });
+      return Array.from(set).sort();
     },
   });
 
@@ -430,7 +447,20 @@ export default function AdminReposicaoPromocoes() {
                 ))}
               </SelectContent>
             </Select>
-            <div className="md:col-span-3 relative">
+            <Select value={filtroFornecedor} onValueChange={setFiltroFornecedor}>
+              <SelectTrigger>
+                <SelectValue placeholder="Fornecedor" />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value={ALL}>Todos os fornecedores</SelectItem>
+                {fornecedores.map((f) => (
+                  <SelectItem key={f} value={f}>
+                    {f}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+            <div className="md:col-span-2 relative">
               <Search className="h-4 w-4 absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground" />
               <Input
                 placeholder="Buscar por nome…"
