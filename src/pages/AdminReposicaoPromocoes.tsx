@@ -1,4 +1,4 @@
-import { useState, useRef, useMemo } from "react";
+import { useState, useRef, useMemo, useCallback } from "react";
 import { useNavigate } from "react-router-dom";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
@@ -12,6 +12,11 @@ import {
   Handshake,
   AlertTriangle,
   FileText,
+  CheckCircle2,
+  XCircle,
+  Clock,
+  RotateCw,
+  X,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -24,8 +29,6 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { Input } from "@/components/ui/input";
-import { Checkbox } from "@/components/ui/checkbox";
-import { Label } from "@/components/ui/label";
 import {
   Dialog,
   DialogContent,
@@ -42,6 +45,29 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table";
+import { Progress } from "@/components/ui/progress";
+import {
+  Tooltip,
+  TooltipContent,
+  TooltipProvider,
+  TooltipTrigger,
+} from "@/components/ui/tooltip";
+import { cn } from "@/lib/utils";
+
+const MAX_CONCURRENT = 3;
+
+type UploadStatus = "aguardando" | "processando" | "concluido" | "erro";
+
+type UploadItem = {
+  id: string;
+  file: File;
+  status: UploadStatus;
+  campanhaId?: number;
+  nomeCampanha?: string;
+  itensExtraidos?: number;
+  confianca?: number | null;
+  erro?: string;
+};
 
 const EMPRESA = "OBEN";
 const FORNECEDOR_DEFAULT = "RENNER SAYERLACK S/A";
