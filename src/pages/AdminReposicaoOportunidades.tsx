@@ -425,6 +425,22 @@ export default function AdminReposicaoOportunidades() {
           </div>
         </header>
 
+        {historicoPromocoes && historicoPromocoes.campanhas > 0 && (
+          <div className="text-xs text-muted-foreground -mt-2">
+            Histórico de promoções:{" "}
+            <button
+              type="button"
+              onClick={() => navigate("/admin/reposicao/promocoes")}
+              className="font-medium text-foreground hover:underline"
+            >
+              {historicoPromocoes.campanhas}{" "}
+              {historicoPromocoes.campanhas === 1 ? "campanha" : "campanhas"}
+            </button>{" "}
+            em {historicoPromocoes.meses}{" "}
+            {historicoPromocoes.meses === 1 ? "mês" : "meses"}
+          </div>
+        )}
+
         {/* KPI Cards */}
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
           <Card>
