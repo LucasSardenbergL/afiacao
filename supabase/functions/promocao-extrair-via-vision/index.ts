@@ -476,11 +476,17 @@ Deno.serve(async (req: Request) => {
 
   // (upload já realizado antes da bifurcação por tipo_documento)
 
+  const fornecedorCanonico = await normalizarFornecedor(
+    supabase,
+    extracted.fornecedor_nome || fornecedorNomeFallback,
+    "campanha_sayerlack",
+  );
+
   const { data: campanha, error: campErr } = await supabase
     .from("promocao_campanha")
     .insert({
       empresa,
-      fornecedor_nome: extracted.fornecedor_nome || fornecedorNomeFallback,
+      fornecedor_nome: fornecedorCanonico,
       nome: extracted.nome,
       tipo_origem: "fornecedor_impoe",
       data_inicio: extracted.data_inicio,
