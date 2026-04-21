@@ -242,6 +242,21 @@ function AppSidebar({ collapsed, onToggle }: { collapsed: boolean; onToggle: () 
     refetchInterval: 60000,
   });
 
+  // Contador de oportunidades econômicas ativas hoje (OBEN)
+  const { data: oportunidadesAtivas } = useQuery({
+    queryKey: ['oportunidades-ativas-count'],
+    queryFn: async () => {
+      const { count } = await supabase
+        .from('v_oportunidade_economica_hoje' as any)
+        .select('*', { count: 'exact', head: true })
+        .eq('empresa', 'OBEN');
+      return count ?? 0;
+    },
+    enabled: isStaff,
+    refetchInterval: 60000,
+    staleTime: 30000,
+  });
+
   const sectionsWithBadges = React.useMemo(
     () => [...unifiedNavSections, docNavSection].map((s) => ({
       ...s,
@@ -255,10 +270,13 @@ function AppSidebar({ collapsed, onToggle }: { collapsed: boolean; onToggle: () 
         if (it.path === '/admin/reposicao/aumentos' && aumentosAtivos) {
           return { ...it, badge: aumentosAtivos };
         }
+        if (it.path === '/admin/reposicao/oportunidades' && oportunidadesAtivas) {
+          return { ...it, badge: oportunidadesAtivas };
+        }
         return it;
       }),
     })),
-    [outlierPendentes, pedidosPendentes, aumentosAtivos],
+    [outlierPendentes, pedidosPendentes, aumentosAtivos, oportunidadesAtivas],
   );
 
   const isActive = (path: string) => {
