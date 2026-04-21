@@ -269,6 +269,9 @@ Deno.serve(async (req: Request) => {
     (body.fornecedor_nome as string) ?? "RENNER SAYERLACK S/A";
   const arquivoBase64 = body.arquivo_base64 as string | undefined;
   const arquivoTipo = (body.arquivo_tipo as string) ?? "pdf";
+  const tipoDocumentoRaw = (body.tipo_documento as string) ?? "campanha_sayerlack";
+  const tipoDocumento: "campanha_sayerlack" | "aumento" =
+    tipoDocumentoRaw === "aumento" ? "aumento" : "campanha_sayerlack";
   const origemEmail = body.origem_email as
     | { remetente?: string; assunto?: string; data?: string }
     | undefined;
@@ -285,10 +288,115 @@ Deno.serve(async (req: Request) => {
   }
 
   console.log(
-    `[promocao-extrair-via-vision] start empresa=${empresa} tipo=${arquivoTipo} bytes_b64=${arquivoBase64.length}`,
+    `[promocao-extrair-via-vision] start empresa=${empresa} tipo_doc=${tipoDocumento} tipo_arq=${arquivoTipo} bytes_b64=${arquivoBase64.length}`,
   );
 
-  // 1. Chama Vision via Lovable AI Gateway
+  // ===== Upload do arquivo no Storage (compartilhado entre fluxos) =====
+  const ext = arquivoTipo === "pdf" || arquivoTipo === "application/pdf"
+    ? "pdf"
+    : arquivoTipo === "image/png"
+    ? "png"
+    : arquivoTipo === "image/webp"
+    ? "webp"
+    : "jpg";
+  const fileName = `${empresa}/${Date.now()}_${
+    Math.random().toString(36).slice(2, 8)
+  }.${ext}`;
+  const fileBytes = Uint8Array.from(atob(arquivoBase64), (c) => c.charCodeAt(0));
+  const contentType = arquivoTipo === "pdf" || arquivoTipo === "application/pdf"
+    ? "application/pdf"
+    : arquivoTipo;
+
+  const { error: uploadErr } = await supabase.storage
+    .from("promocoes")
+    .upload(fileName, fileBytes, { contentType });
+  if (uploadErr) {
+    console.error(
+      `[promocao-extrair-via-vision] upload falhou: ${uploadErr.message}`,
+    );
+  }
+  const arquivoUrl = uploadErr ? null : fileName;
+
+  // ===== FLUXO AUMENTO =====
+  if (tipoDocumento === "aumento") {
+    let extractedAum: ExtractedAumento;
+    try {
+      extractedAum = await callVisionGatewayAumento(arquivoBase64, arquivoTipo);
+    } catch (err) {
+      const msg = String(err).slice(0, 300);
+      console.error(`[promocao-extrair-via-vision] vision aumento falhou: ${msg}`);
+      return new Response(
+        JSON.stringify({ error: `Vision falhou: ${msg}` }),
+        {
+          status: 500,
+          headers: { ...corsHeaders, "Content-Type": "application/json" },
+        },
+      );
+    }
+
+    const { data: aumentoRpc, error: rpcErr } = await supabase.rpc(
+      "registrar_aumento_via_vision",
+      {
+        p_empresa: empresa,
+        p_fornecedor_nome: fornecedorNomeFallback,
+        p_nome: extractedAum.nome,
+        p_data_vigencia: extractedAum.data_vigencia,
+        p_data_anuncio: extractedAum.data_anuncio,
+        p_categorias: extractedAum.categorias,
+        p_origem_arquivo_url: arquivoUrl,
+        p_origem_email_remetente: origemEmail?.remetente ?? null,
+        p_origem_email_assunto: origemEmail?.assunto ?? null,
+        p_origem_email_data: origemEmail?.data ?? null,
+        p_extracao_confianca: extractedAum.confianca,
+        p_extracao_observacoes: extractedAum.observacoes,
+      },
+    );
+
+    if (rpcErr) {
+      console.error(
+        `[promocao-extrair-via-vision] registrar_aumento_via_vision erro: ${rpcErr.message}`,
+      );
+      return new Response(
+        JSON.stringify({
+          error: `erro ao registrar aumento: ${rpcErr.message}`,
+        }),
+        {
+          status: 500,
+          headers: { ...corsHeaders, "Content-Type": "application/json" },
+        },
+      );
+    }
+
+    const aumentoId =
+      typeof aumentoRpc === "string"
+        ? aumentoRpc
+        : (aumentoRpc as { id?: string } | null)?.id ?? aumentoRpc;
+
+    console.log(
+      `[promocao-extrair-via-vision] OK aumento_id=${aumentoId} categorias=${extractedAum.categorias.length} confianca=${extractedAum.confianca}`,
+    );
+
+    return new Response(
+      JSON.stringify({
+        ok: true,
+        tipo_documento: "aumento",
+        aumento_id: aumentoId,
+        extracao: {
+          confianca: extractedAum.confianca,
+          observacoes: extractedAum.observacoes,
+          categorias_extraidas: extractedAum.categorias.length,
+        },
+        arquivo_url: arquivoUrl,
+        proximo_passo: `Revisar aumento extraído na UI`,
+      }),
+      {
+        headers: { ...corsHeaders, "Content-Type": "application/json" },
+        status: 200,
+      },
+    );
+  }
+
+  // ===== FLUXO PROMOÇÃO (default — comportamento original) =====
   let extracted: ExtractedPromo;
   try {
     extracted = await callVisionGateway(arquivoBase64, arquivoTipo);
