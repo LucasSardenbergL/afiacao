@@ -139,52 +139,7 @@ export default function AdminReposicaoPromocoes() {
   const [filtroEstado, setFiltroEstado] = useState<string>(ALL);
   const [busca, setBusca] = useState("");
 
-  // Upload modal
-  const [uploadOpen, setUploadOpen] = useState(false);
-  const [arquivo, setArquivo] = useState<File | null>(null);
-  const [extraindo, setExtraindo] = useState(false);
-  const [permanecerNaLista, setPermanecerNaLista] = useState(true);
-  const fileInputRef = useRef<HTMLInputElement>(null);
 
-  // ============ QUERIES ============
-  const { data: campanhas = [], isLoading } = useQuery({
-    queryKey: ["promocao-campanhas", filtroEstado, busca],
-    queryFn: async () => {
-      let q = supabase
-        .from("promocao_campanha" as any)
-        .select(
-          "id, nome, fornecedor_nome, tipo_origem, data_inicio, data_fim, estado, extracao_confianca, criado_em",
-        )
-        .eq("empresa", EMPRESA)
-        .eq("fornecedor_nome", FORNECEDOR_DEFAULT)
-        .order("criado_em", { ascending: false });
-
-      if (filtroEstado !== ALL) q = q.eq("estado", filtroEstado);
-      if (busca.trim()) q = q.ilike("nome", `%${busca.trim()}%`);
-
-      const { data, error } = await q;
-      if (error) throw error;
-      const rows = (data || []) as unknown as Campanha[];
-
-      // Buscar contagem de itens em batch
-      const ids = rows.map((c) => c.id);
-      const counts: Record<number, number> = {};
-      if (ids.length > 0) {
-        const { data: itens } = await supabase
-          .from("promocao_item" as any)
-          .select("campanha_id")
-          .in("campanha_id", ids);
-        ((itens || []) as any[]).forEach((it) => {
-          counts[it.campanha_id] = (counts[it.campanha_id] || 0) + 1;
-        });
-      }
-
-      return rows.map<CampanhaComContagem>((c) => ({
-        ...c,
-        num_itens: counts[c.id] || 0,
-      }));
-    },
-  });
 
   // Upload modal — múltiplos arquivos
   const [uploadOpen, setUploadOpen] = useState(false);
