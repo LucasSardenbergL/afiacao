@@ -447,7 +447,20 @@ export default function AdminReposicaoPromocoes() {
                 ))}
               </SelectContent>
             </Select>
-            <div className="md:col-span-3 relative">
+            <Select value={filtroFornecedor} onValueChange={setFiltroFornecedor}>
+              <SelectTrigger>
+                <SelectValue placeholder="Fornecedor" />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value={ALL}>Todos os fornecedores</SelectItem>
+                {fornecedores.map((f) => (
+                  <SelectItem key={f} value={f}>
+                    {f}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+            <div className="md:col-span-2 relative">
               <Search className="h-4 w-4 absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground" />
               <Input
                 placeholder="Buscar por nome…"
