@@ -628,6 +628,352 @@ export type Database = {
           },
         ]
       }
+      des_checkin_qualitativo: {
+        Row: {
+          ano: number
+          atualizado_em: string | null
+          avaliado_com: string | null
+          avaliado_por: string | null
+          criado_em: string | null
+          data_avaliacao: string
+          empresa: string
+          id: number
+          observacoes_gerais: string | null
+          tipo: string
+          trimestre: number
+        }
+        Insert: {
+          ano: number
+          atualizado_em?: string | null
+          avaliado_com?: string | null
+          avaliado_por?: string | null
+          criado_em?: string | null
+          data_avaliacao: string
+          empresa: string
+          id?: number
+          observacoes_gerais?: string | null
+          tipo?: string
+          trimestre: number
+        }
+        Update: {
+          ano?: number
+          atualizado_em?: string | null
+          avaliado_com?: string | null
+          avaliado_por?: string | null
+          criado_em?: string | null
+          data_avaliacao?: string
+          empresa?: string
+          id?: number
+          observacoes_gerais?: string | null
+          tipo?: string
+          trimestre?: number
+        }
+        Relationships: []
+      }
+      des_checkin_qualitativo_resposta: {
+        Row: {
+          atingido: boolean
+          checkin_id: number
+          criado_em: string | null
+          criterio_id: number
+          id: number
+          observacao: string | null
+        }
+        Insert: {
+          atingido?: boolean
+          checkin_id: number
+          criado_em?: string | null
+          criterio_id: number
+          id?: number
+          observacao?: string | null
+        }
+        Update: {
+          atingido?: boolean
+          checkin_id?: number
+          criado_em?: string | null
+          criterio_id?: number
+          id?: number
+          observacao?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "des_checkin_qualitativo_resposta_checkin_id_fkey"
+            columns: ["checkin_id"]
+            isOneToOne: false
+            referencedRelation: "des_checkin_qualitativo"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "des_checkin_qualitativo_resposta_criterio_id_fkey"
+            columns: ["criterio_id"]
+            isOneToOne: false
+            referencedRelation: "des_criterio_qualitativo"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      des_contrato_versao: {
+        Row: {
+          criado_em: string | null
+          data_fim_vigencia: string | null
+          data_inicio_vigencia: string
+          id: number
+          observacoes: string | null
+          versao: string
+        }
+        Insert: {
+          criado_em?: string | null
+          data_fim_vigencia?: string | null
+          data_inicio_vigencia: string
+          id?: number
+          observacoes?: string | null
+          versao: string
+        }
+        Update: {
+          criado_em?: string | null
+          data_fim_vigencia?: string | null
+          data_inicio_vigencia?: string
+          id?: number
+          observacoes?: string | null
+          versao?: string
+        }
+        Relationships: []
+      }
+      des_criterio_percentual: {
+        Row: {
+          criado_em: string | null
+          criterio_id: number
+          faixa_id: number
+          id: number
+          percentual: number
+        }
+        Insert: {
+          criado_em?: string | null
+          criterio_id: number
+          faixa_id: number
+          id?: number
+          percentual: number
+        }
+        Update: {
+          criado_em?: string | null
+          criterio_id?: number
+          faixa_id?: number
+          id?: number
+          percentual?: number
+        }
+        Relationships: [
+          {
+            foreignKeyName: "des_criterio_percentual_criterio_id_fkey"
+            columns: ["criterio_id"]
+            isOneToOne: false
+            referencedRelation: "des_criterio_qualitativo"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "des_criterio_percentual_faixa_id_fkey"
+            columns: ["faixa_id"]
+            isOneToOne: false
+            referencedRelation: "des_faixa_quantitativa"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      des_criterio_qualitativo: {
+        Row: {
+          codigo: string
+          contrato_versao_id: number
+          criado_em: string | null
+          descricao: string | null
+          id: number
+          nome: string
+          ordem: number
+          tipo: string
+        }
+        Insert: {
+          codigo: string
+          contrato_versao_id: number
+          criado_em?: string | null
+          descricao?: string | null
+          id?: number
+          nome: string
+          ordem: number
+          tipo: string
+        }
+        Update: {
+          codigo?: string
+          contrato_versao_id?: number
+          criado_em?: string | null
+          descricao?: string | null
+          id?: number
+          nome?: string
+          ordem?: number
+          tipo?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "des_criterio_qualitativo_contrato_versao_id_fkey"
+            columns: ["contrato_versao_id"]
+            isOneToOne: false
+            referencedRelation: "des_contrato_versao"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      des_faixa_quantitativa: {
+        Row: {
+          contrato_versao_id: number
+          criado_em: string | null
+          desconto_padrao_perc: number
+          estrelas: number
+          faixa_numero: number
+          id: number
+          observacoes: string | null
+          volume_max: number | null
+          volume_min: number
+        }
+        Insert: {
+          contrato_versao_id: number
+          criado_em?: string | null
+          desconto_padrao_perc: number
+          estrelas: number
+          faixa_numero: number
+          id?: number
+          observacoes?: string | null
+          volume_max?: number | null
+          volume_min: number
+        }
+        Update: {
+          contrato_versao_id?: number
+          criado_em?: string | null
+          desconto_padrao_perc?: number
+          estrelas?: number
+          faixa_numero?: number
+          id?: number
+          observacoes?: string | null
+          volume_max?: number | null
+          volume_min?: number
+        }
+        Relationships: [
+          {
+            foreignKeyName: "des_faixa_quantitativa_contrato_versao_id_fkey"
+            columns: ["contrato_versao_id"]
+            isOneToOne: false
+            referencedRelation: "des_contrato_versao"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      des_meta_empresa: {
+        Row: {
+          ano: number
+          atualizado_em: string | null
+          criado_em: string | null
+          empresa: string
+          faixa_des_objetivo: number | null
+          id: number
+          meta_faturamento: number
+          observacoes: string | null
+          trimestre: number
+        }
+        Insert: {
+          ano: number
+          atualizado_em?: string | null
+          criado_em?: string | null
+          empresa: string
+          faixa_des_objetivo?: number | null
+          id?: number
+          meta_faturamento: number
+          observacoes?: string | null
+          trimestre: number
+        }
+        Update: {
+          ano?: number
+          atualizado_em?: string | null
+          criado_em?: string | null
+          empresa?: string
+          faixa_des_objetivo?: number | null
+          id?: number
+          meta_faturamento?: number
+          observacoes?: string | null
+          trimestre?: number
+        }
+        Relationships: []
+      }
+      des_trimestre_snapshot: {
+        Row: {
+          ano: number
+          criado_em: string | null
+          data_envio_email: string | null
+          data_referencia: string
+          empresa: string
+          extracao_confianca: number | null
+          fat_bruto_qtde: number | null
+          fat_bruto_valor: number
+          id: number
+          laminas_m2: number | null
+          nd_fat_tot_perc: number | null
+          nd_fat_tot_valor: number | null
+          objetivo_qtde: number | null
+          objetivo_valor: number
+          origem_arquivo_url: string | null
+          pedidos_abertos_qtde: number | null
+          pedidos_abertos_valor: number | null
+          perc_atingimento_qtde: number | null
+          perc_atingimento_valor: number | null
+          preco_medio_trimestre: number | null
+          tingimix_qtde: number | null
+          trimestre: number
+        }
+        Insert: {
+          ano: number
+          criado_em?: string | null
+          data_envio_email?: string | null
+          data_referencia: string
+          empresa: string
+          extracao_confianca?: number | null
+          fat_bruto_qtde?: number | null
+          fat_bruto_valor: number
+          id?: number
+          laminas_m2?: number | null
+          nd_fat_tot_perc?: number | null
+          nd_fat_tot_valor?: number | null
+          objetivo_qtde?: number | null
+          objetivo_valor: number
+          origem_arquivo_url?: string | null
+          pedidos_abertos_qtde?: number | null
+          pedidos_abertos_valor?: number | null
+          perc_atingimento_qtde?: number | null
+          perc_atingimento_valor?: number | null
+          preco_medio_trimestre?: number | null
+          tingimix_qtde?: number | null
+          trimestre: number
+        }
+        Update: {
+          ano?: number
+          criado_em?: string | null
+          data_envio_email?: string | null
+          data_referencia?: string
+          empresa?: string
+          extracao_confianca?: number | null
+          fat_bruto_qtde?: number | null
+          fat_bruto_valor?: number
+          id?: number
+          laminas_m2?: number | null
+          nd_fat_tot_perc?: number | null
+          nd_fat_tot_valor?: number | null
+          objetivo_qtde?: number | null
+          objetivo_valor?: number
+          origem_arquivo_url?: string | null
+          pedidos_abertos_qtde?: number | null
+          pedidos_abertos_valor?: number | null
+          perc_atingimento_qtde?: number | null
+          perc_atingimento_valor?: number | null
+          preco_medio_trimestre?: number | null
+          tingimix_qtde?: number | null
+          trimestre?: number
+        }
+        Relationships: []
+      }
       empresa_configuracao_custos: {
         Row: {
           armazenagem_fisica: number
@@ -3486,6 +3832,39 @@ export type Database = {
         }
         Relationships: []
       }
+      fornecedor_custo_adicional_config: {
+        Row: {
+          ativo: boolean | null
+          criado_em: string | null
+          empresa: string
+          fornecedor_nome: string
+          id: number
+          observacoes: string | null
+          tipo: string
+          valor: number
+        }
+        Insert: {
+          ativo?: boolean | null
+          criado_em?: string | null
+          empresa: string
+          fornecedor_nome: string
+          id?: number
+          observacoes?: string | null
+          tipo: string
+          valor: number
+        }
+        Update: {
+          ativo?: boolean | null
+          criado_em?: string | null
+          empresa?: string
+          fornecedor_nome?: string
+          id?: number
+          observacoes?: string | null
+          tipo?: string
+          valor?: number
+        }
+        Relationships: []
+      }
       fornecedor_email_polling: {
         Row: {
           aceitar_imagem: boolean | null
@@ -3755,6 +4134,45 @@ export type Database = {
           fornecedor_nome?: string
           omie_codigo_cliente_fornecedor?: number
           razao_social_omie?: string | null
+        }
+        Relationships: []
+      }
+      fornecedor_prazo_pagamento_config: {
+        Row: {
+          ativo: boolean | null
+          codigo: string
+          criado_em: string | null
+          desconto_ou_encargo_perc: number
+          empresa: string
+          fornecedor_nome: string
+          id: number
+          nome: string
+          observacoes: string | null
+          padrao: boolean | null
+        }
+        Insert: {
+          ativo?: boolean | null
+          codigo: string
+          criado_em?: string | null
+          desconto_ou_encargo_perc: number
+          empresa: string
+          fornecedor_nome: string
+          id?: number
+          nome: string
+          observacoes?: string | null
+          padrao?: boolean | null
+        }
+        Update: {
+          ativo?: boolean | null
+          codigo?: string
+          criado_em?: string | null
+          desconto_ou_encargo_perc?: number
+          empresa?: string
+          fornecedor_nome?: string
+          id?: number
+          nome?: string
+          observacoes?: string | null
+          padrao?: boolean | null
         }
         Relationships: []
       }

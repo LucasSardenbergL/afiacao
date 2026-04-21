@@ -20,6 +20,7 @@ import {
   TooltipContent,
   TooltipTrigger,
 } from '@/components/ui/tooltip';
+import { HelpDrawer } from '@/components/help/HelpDrawer';
 
 /* ─── Navigation config ─── */
 interface NavItem {
@@ -150,6 +151,7 @@ const unifiedNavSections: { title: string; items: NavItem[] }[] = [
 const docNavSection: { title: string; items: NavItem[] } = {
   title: 'Documentação',
   items: [
+    { icon: BookOpen, label: 'Ajuda', path: '/admin/ajuda' },
     { icon: BookOpen, label: 'Design System', path: '/design-system' },
     { icon: BookOpen, label: 'UX Rules', path: '/ux-rules' },
   ],
@@ -419,6 +421,7 @@ function AppTopbar({ sidebarCollapsed, onMobileMenuToggle }: { sidebarCollapsed:
 
 
       <div className="flex items-center gap-1">
+        <HelpDrawer />
         <Button variant="ghost" size="icon" className="h-8 w-8 text-muted-foreground">
           <Bell className="w-4 h-4" />
         </Button>
