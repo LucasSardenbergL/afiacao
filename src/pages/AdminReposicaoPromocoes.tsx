@@ -1,6 +1,6 @@
 import { useState, useRef, useMemo } from "react";
 import { useNavigate } from "react-router-dom";
-import { useQuery } from "@tanstack/react-query";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
 import { toast } from "sonner";
 import {
@@ -24,6 +24,8 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { Input } from "@/components/ui/input";
+import { Checkbox } from "@/components/ui/checkbox";
+import { Label } from "@/components/ui/label";
 import {
   Dialog,
   DialogContent,
@@ -106,6 +108,7 @@ function formatPeriodo(inicio: string, fim: string): string {
 
 export default function AdminReposicaoPromocoes() {
   const navigate = useNavigate();
+  const qc = useQueryClient();
 
   const [filtroEstado, setFiltroEstado] = useState<string>(ALL);
   const [busca, setBusca] = useState("");
@@ -114,6 +117,7 @@ export default function AdminReposicaoPromocoes() {
   const [uploadOpen, setUploadOpen] = useState(false);
   const [arquivo, setArquivo] = useState<File | null>(null);
   const [extraindo, setExtraindo] = useState(false);
+  const [permanecerNaLista, setPermanecerNaLista] = useState(true);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   // ============ QUERIES ============
@@ -205,15 +209,45 @@ export default function AdminReposicaoPromocoes() {
       if (error) throw error;
       if (data?.error) throw new Error(data.error);
 
+      const campanhaId: number | undefined = data?.campanha_id;
       const itensExtraidos =
         data?.extracao?.items_extraidos ?? data?.items?.length ?? 0;
-      toast.success(`${itensExtraidos} ${itensExtraidos === 1 ? "item extraído" : "itens extraídos"}`);
+
+      // Confirma a propagação consultando a campanha recém-criada antes de
+      // prosseguir, evitando race condition com a tela de detalhe.
+      let nomeCampanha = "Campanha";
+      if (campanhaId) {
+        for (let i = 0; i < 6; i++) {
+          const { data: row } = await supabase
+            .from("promocao_campanha" as any)
+            .select("nome")
+            .eq("id", campanhaId)
+            .maybeSingle();
+          if (row && (row as any).nome) {
+            nomeCampanha = (row as any).nome as string;
+            break;
+          }
+          await new Promise((r) => setTimeout(r, 250));
+        }
+      }
 
       setUploadOpen(false);
       resetUpload();
 
-      if (data?.campanha_id) {
-        navigate(`/admin/reposicao/promocoes/${data.campanha_id}`);
+      // Atualiza a lista para mostrar a campanha recém-criada
+      qc.invalidateQueries({ queryKey: ["promocao-campanhas"] });
+
+      if (permanecerNaLista || !campanhaId) {
+        toast.success(
+          campanhaId
+            ? `Campanha "${nomeCampanha}" criada em rascunho (${itensExtraidos} ${itensExtraidos === 1 ? "item" : "itens"})`
+            : `${itensExtraidos} ${itensExtraidos === 1 ? "item extraído" : "itens extraídos"}`,
+        );
+      } else {
+        toast.success(
+          `${itensExtraidos} ${itensExtraidos === 1 ? "item extraído" : "itens extraídos"}`,
+        );
+        navigate(`/admin/reposicao/promocoes/${campanhaId}`);
       }
     } catch (e: any) {
       toast.error(e?.message || "Erro ao extrair promoção");
@@ -429,6 +463,28 @@ export default function AdminReposicaoPromocoes() {
                 </div>
               </div>
             )}
+
+            <div className="flex items-start gap-2 rounded-md border border-dashed p-3">
+              <Checkbox
+                id="permanecer-lista"
+                checked={permanecerNaLista}
+                onCheckedChange={(c) => setPermanecerNaLista(c === true)}
+                disabled={extraindo}
+                className="mt-0.5"
+              />
+              <div className="flex-1 space-y-1">
+                <Label
+                  htmlFor="permanecer-lista"
+                  className="cursor-pointer text-sm font-medium leading-none"
+                >
+                  Permanecer na lista após upload (uso em lote)
+                </Label>
+                <p className="text-xs text-muted-foreground">
+                  Ideal para subir vários PDFs em sequência. Desmarque para abrir
+                  o detalhe da campanha logo após a extração.
+                </p>
+              </div>
+            </div>
           </div>
 
           <DialogFooter>
