@@ -1388,6 +1388,39 @@ function SkuPickerDialog({
             onChange={(e) => setBusca(e.target.value)}
           />
         </div>
+        <div className="flex items-center justify-between gap-2">
+          <p className="text-xs text-muted-foreground">
+            {filtrados.length} SKU{filtrados.length === 1 ? "" : "s"}
+            {busca.trim() ? " filtrado" : " na família"}
+            {filtrados.length !== 1 && busca.trim() ? "s" : ""}
+          </p>
+          <div className="flex gap-2">
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => {
+                const next = new Set(selected);
+                filtrados.forEach((s) => next.add(s.omie_codigo_produto));
+                setSelected(next);
+              }}
+              disabled={isLoading || filtrados.length === 0}
+            >
+              Selecionar todos
+            </Button>
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => {
+                const next = new Set(selected);
+                filtrados.forEach((s) => next.delete(s.omie_codigo_produto));
+                setSelected(next);
+              }}
+              disabled={isLoading || filtrados.length === 0}
+            >
+              Desmarcar todos
+            </Button>
+          </div>
+        </div>
         <div className="border rounded-md max-h-[400px] overflow-y-auto">
           {isLoading ? (
             <div className="p-4 text-sm text-muted-foreground flex items-center gap-2">
