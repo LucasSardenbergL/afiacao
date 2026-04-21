@@ -188,6 +188,22 @@ export default function AdminReposicaoPromocoes() {
     },
   });
 
+  const { data: fornecedores = [] } = useQuery({
+    queryKey: ["promocao-fornecedores", EMPRESA],
+    queryFn: async () => {
+      const { data, error } = await supabase
+        .from("promocao_campanha" as any)
+        .select("fornecedor_nome")
+        .eq("empresa", EMPRESA);
+      if (error) throw error;
+      const set = new Set<string>();
+      ((data || []) as any[]).forEach((r) => {
+        if (r.fornecedor_nome) set.add(r.fornecedor_nome);
+      });
+      return Array.from(set).sort();
+    },
+  });
+
   const aguardandoRevisao = useMemo(
     () => campanhas.filter((c) => c.estado === "rascunho").length,
     [campanhas],
