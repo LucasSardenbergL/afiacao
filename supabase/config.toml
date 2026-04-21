@@ -110,3 +110,6 @@ verify_jwt = false
 
 [functions.omie-sync-condicao-fornecedor]
 verify_jwt = false
+
+[functions.promocao-extrair-via-vision]
+verify_jwt = false
