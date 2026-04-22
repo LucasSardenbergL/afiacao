@@ -261,6 +261,22 @@ function AppSidebar({ collapsed, onToggle }: { collapsed: boolean; onToggle: () 
     staleTime: 30000,
   });
 
+  // Contador de sugestões novas de negociação paralela (OBEN)
+  const { data: negociacaoNovasCount } = useQuery({
+    queryKey: ['negociacao-paralela-sugestoes-count'],
+    queryFn: async () => {
+      const { count } = await supabase
+        .from('v_sugestao_negociacao_ativa' as any)
+        .select('*', { count: 'exact', head: true })
+        .eq('empresa', 'OBEN')
+        .eq('status', 'nova');
+      return count ?? 0;
+    },
+    enabled: isStaff,
+    refetchInterval: 60000,
+    staleTime: 30000,
+  });
+
   const sectionsWithBadges = React.useMemo(
     () => [...unifiedNavSections, docNavSection].map((s) => ({
       ...s,
@@ -277,10 +293,13 @@ function AppSidebar({ collapsed, onToggle }: { collapsed: boolean; onToggle: () 
         if (it.path === '/admin/reposicao/oportunidades' && oportunidadesAtivas) {
           return { ...it, badge: oportunidadesAtivas };
         }
+        if (it.path === '/admin/reposicao/negociacao-paralela' && negociacaoNovasCount) {
+          return { ...it, badge: negociacaoNovasCount };
+        }
         return it;
       }),
     })),
-    [outlierPendentes, pedidosPendentes, aumentosAtivos, oportunidadesAtivas],
+    [outlierPendentes, pedidosPendentes, aumentosAtivos, oportunidadesAtivas, negociacaoNovasCount],
   );
 
   const isActive = (path: string) => {
