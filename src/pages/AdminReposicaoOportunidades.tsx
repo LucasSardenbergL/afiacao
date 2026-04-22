@@ -217,6 +217,23 @@ export default function AdminReposicaoOportunidades() {
   const [drawerSku, setDrawerSku] = useState<Oportunidade | null>(null);
   const [confirmCicloOpen, setConfirmCicloOpen] = useState(false);
   const [executandoCiclo, setExecutandoCiclo] = useState(false);
+  const [bannerNegociacaoFechado, setBannerNegociacaoFechado] = useState(
+    () => typeof window !== 'undefined' && sessionStorage.getItem('banner-negociacao-fechado') === '1',
+  );
+
+  // Contador de sugestões "novas" de negociação paralela (banner)
+  const { data: negociacaoNovasCount = 0 } = useQuery({
+    queryKey: ["negociacao-paralela-sugestoes-count"],
+    queryFn: async () => {
+      const { count } = await supabase
+        .from("v_sugestao_negociacao_ativa" as any)
+        .select("*", { count: "exact", head: true })
+        .eq("empresa", EMPRESA)
+        .eq("status", "nova");
+      return count ?? 0;
+    },
+    staleTime: 30_000,
+  });
 
   // ============ QUERIES ============
   const { data: oportunidades = [], isLoading, isFetching } = useQuery({
