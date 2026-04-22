@@ -116,7 +116,7 @@ export function PosicaoAtualTab({ empresa, ano, trimestre }: Props) {
         .eq("trimestre", trimestre)
         .maybeSingle();
       if (error) throw error;
-      return data as PosicaoRow | null;
+      return data as unknown as PosicaoRow | null;
     },
   });
 
@@ -133,7 +133,7 @@ export function PosicaoAtualTab({ empresa, ano, trimestre }: Props) {
       }
       const { data, error } = await q.order("data_emissao", { ascending: false });
       if (error) throw error;
-      return (data ?? []) as PedidoTransito[];
+      return (data ?? []) as unknown as PedidoTransito[];
     },
   });
 

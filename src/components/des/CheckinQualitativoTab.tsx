@@ -124,7 +124,7 @@ export function CheckinQualitativoTab({ empresa, ano, trimestre }: Props) {
         .eq("trimestre", trimestre)
         .maybeSingle();
       if (error) throw error;
-      return data as { faixa_conservadora: any; faixa_otimista: any } | null;
+      return data as unknown as { faixa_conservadora: any; faixa_otimista: any } | null;
     },
   });
 
@@ -155,7 +155,7 @@ export function CheckinQualitativoTab({ empresa, ano, trimestre }: Props) {
         .eq("ano", ano)
         .eq("trimestre", trimestre);
       if (error) throw error;
-      return (data ?? []) as CheckinAtualRow[];
+      return (data ?? []) as unknown as CheckinAtualRow[];
     },
   });
 
@@ -173,7 +173,7 @@ export function CheckinQualitativoTab({ empresa, ano, trimestre }: Props) {
         .limit(1)
         .maybeSingle();
       if (error) throw error;
-      return data as DescontoCheckin | null;
+      return data as unknown as DescontoCheckin | null;
     },
   });
 
