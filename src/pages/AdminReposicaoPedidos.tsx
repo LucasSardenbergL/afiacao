@@ -382,7 +382,7 @@ function DetalhesModal({
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="max-w-7xl xl:max-w-screen-xl max-h-[90vh] overflow-y-auto">
+      <DialogContent className="max-w-7xl xl:max-w-screen-2xl w-[95vw] max-h-[90vh] overflow-y-auto">
         <DialogHeader>
           <DialogTitle className="flex items-center gap-3">
             Pedido #{pedido.id} — {pedido.fornecedor_nome}
@@ -413,7 +413,7 @@ function DetalhesModal({
           <Table>
             <TableHeader>
               <TableRow>
-                <TableHead className="min-w-[280px]">SKU</TableHead>
+                <TableHead className="w-[40%] min-w-[320px]">SKU</TableHead>
                 <TableHead className="text-right">Estoque</TableHead>
                 <TableHead className="text-right">Mínimo</TableHead>
                 <TableHead className="text-right">PP</TableHead>
@@ -432,9 +432,11 @@ function DetalhesModal({
                 const zoneClass = getEstoqueZoneClass(estoque, minimo, pp);
                 return (
                 <TableRow key={l.id}>
-                  <TableCell className="align-top">
+                  <TableCell className="align-top whitespace-normal">
                     <div className="font-mono text-xs text-muted-foreground">{l.sku_codigo_omie}</div>
-                    <div className="text-sm font-medium whitespace-normal break-words">{l.sku_descricao ?? '—'}</div>
+                    <div className="text-sm font-medium whitespace-normal break-words leading-snug">
+                      {l.sku_descricao ?? '—'}
+                    </div>
                     {l.primeira_compra && (
                       <Badge variant="destructive" className="mt-1 text-[10px] h-4">primeira compra</Badge>
                     )}
