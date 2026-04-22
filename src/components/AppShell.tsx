@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
-import { BookOpen, Lock, Calculator, FileText, Palette, Beaker, FileUp, Droplets, LayoutDashboard, Users, ShoppingCart, ShoppingBag, Phone, GraduationCap, BarChart3, Settings, ChevronLeft, ChevronRight, Search, Bell, User, LogOut, Package, TrendingUp, Headphones, Target, Menu, X, ClipboardList, PlusCircle, Shield, Wrench, Award, Scissors, DollarSign, Layers, Printer, UserCheck, FileCheck, Boxes, AlertTriangle, PlayCircle, Factory, Truck, Percent, Sparkles } from 'lucide-react';
+import { BookOpen, Lock, Calculator, FileText, Palette, Beaker, FileUp, Droplets, LayoutDashboard, Users, ShoppingCart, ShoppingBag, Phone, GraduationCap, BarChart3, Settings, ChevronLeft, ChevronRight, Search, Bell, User, LogOut, Package, TrendingUp, Headphones, Target, Menu, X, ClipboardList, PlusCircle, Shield, Wrench, Award, Scissors, DollarSign, Layers, Printer, UserCheck, FileCheck, Boxes, AlertTriangle, PlayCircle, Factory, Truck, Percent, Sparkles, Handshake } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { useAuth } from '@/contexts/AuthContext';
 import { useUserRole } from '@/hooks/useUserRole';
@@ -76,6 +76,7 @@ const unifiedNavSections: { title: string; items: NavItem[] }[] = [
       { icon: Target, label: 'SLA de fornecedor', path: '/admin/reposicao/sla-fornecedor', managerOnly: true },
       { icon: PlayCircle, label: 'Aplicação no Omie', path: '/admin/reposicao/aplicacao', managerOnly: true },
       { icon: Sparkles, label: 'Oportunidades', path: '/admin/reposicao/oportunidades', managerOnly: true },
+      { icon: Handshake, label: 'Negociação Paralela', path: '/admin/reposicao/negociacao-paralela', managerOnly: true },
       { icon: Percent, label: 'Promoções', path: '/admin/reposicao/promocoes', managerOnly: true },
       { icon: TrendingUp, label: 'Aumentos anunciados', path: '/admin/reposicao/aumentos', managerOnly: true },
     ],
@@ -260,6 +261,22 @@ function AppSidebar({ collapsed, onToggle }: { collapsed: boolean; onToggle: () 
     staleTime: 30000,
   });
 
+  // Contador de sugestões novas de negociação paralela (OBEN)
+  const { data: negociacaoNovasCount } = useQuery({
+    queryKey: ['negociacao-paralela-sugestoes-count'],
+    queryFn: async () => {
+      const { count } = await supabase
+        .from('v_sugestao_negociacao_ativa' as any)
+        .select('*', { count: 'exact', head: true })
+        .eq('empresa', 'OBEN')
+        .eq('status', 'nova');
+      return count ?? 0;
+    },
+    enabled: isStaff,
+    refetchInterval: 60000,
+    staleTime: 30000,
+  });
+
   const sectionsWithBadges = React.useMemo(
     () => [...unifiedNavSections, docNavSection].map((s) => ({
       ...s,
@@ -276,10 +293,13 @@ function AppSidebar({ collapsed, onToggle }: { collapsed: boolean; onToggle: () 
         if (it.path === '/admin/reposicao/oportunidades' && oportunidadesAtivas) {
           return { ...it, badge: oportunidadesAtivas };
         }
+        if (it.path === '/admin/reposicao/negociacao-paralela' && negociacaoNovasCount) {
+          return { ...it, badge: negociacaoNovasCount };
+        }
         return it;
       }),
     })),
-    [outlierPendentes, pedidosPendentes, aumentosAtivos, oportunidadesAtivas],
+    [outlierPendentes, pedidosPendentes, aumentosAtivos, oportunidadesAtivas, negociacaoNovasCount],
   );
 
   const isActive = (path: string) => {

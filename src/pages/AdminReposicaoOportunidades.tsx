@@ -16,6 +16,8 @@ import {
   ExternalLink,
   EyeOff,
   ArrowRight,
+  Handshake,
+  X,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -217,6 +219,23 @@ export default function AdminReposicaoOportunidades() {
   const [drawerSku, setDrawerSku] = useState<Oportunidade | null>(null);
   const [confirmCicloOpen, setConfirmCicloOpen] = useState(false);
   const [executandoCiclo, setExecutandoCiclo] = useState(false);
+  const [bannerNegociacaoFechado, setBannerNegociacaoFechado] = useState(
+    () => typeof window !== 'undefined' && sessionStorage.getItem('banner-negociacao-fechado') === '1',
+  );
+
+  // Contador de sugestões "novas" de negociação paralela (banner)
+  const { data: negociacaoNovasCount = 0 } = useQuery({
+    queryKey: ["negociacao-paralela-sugestoes-count"],
+    queryFn: async () => {
+      const { count } = await supabase
+        .from("v_sugestao_negociacao_ativa" as any)
+        .select("*", { count: "exact", head: true })
+        .eq("empresa", EMPRESA)
+        .eq("status", "nova");
+      return count ?? 0;
+    },
+    staleTime: 30_000,
+  });
 
   // ============ QUERIES ============
   const { data: oportunidades = [], isLoading, isFetching } = useQuery({
@@ -424,6 +443,39 @@ export default function AdminReposicaoOportunidades() {
             </Button>
           </div>
         </header>
+
+        {!bannerNegociacaoFechado && negociacaoNovasCount > 0 && (
+          <div className="flex items-center justify-between gap-3 rounded-lg border border-blue-500/30 bg-blue-500/10 px-4 py-3 text-sm">
+            <div className="flex items-center gap-2 flex-1">
+              <Handshake className="h-4 w-4 text-blue-600 dark:text-blue-400 shrink-0" />
+              <span>
+                <strong>{negociacaoNovasCount}</strong> SKU{negociacaoNovasCount === 1 ? '' : 's'}{' '}
+                {negociacaoNovasCount === 1 ? 'foi sugerido' : 'foram sugeridos'} para negociação paralela.
+              </span>
+            </div>
+            <div className="flex items-center gap-2 shrink-0">
+              <Button
+                size="sm"
+                variant="outline"
+                onClick={() => navigate('/admin/reposicao/negociacao-paralela')}
+              >
+                Ver sugestões
+              </Button>
+              <Button
+                size="icon"
+                variant="ghost"
+                className="h-7 w-7"
+                onClick={() => {
+                  sessionStorage.setItem('banner-negociacao-fechado', '1');
+                  setBannerNegociacaoFechado(true);
+                }}
+                aria-label="Fechar"
+              >
+                <X className="h-4 w-4" />
+              </Button>
+            </div>
+          </div>
+        )}
 
         {historicoPromocoes && historicoPromocoes.campanhas > 0 && (
           <div className="text-xs text-muted-foreground -mt-2">
