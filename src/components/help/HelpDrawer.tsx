@@ -5,12 +5,14 @@ import { Button } from '@/components/ui/button';
 import { Sheet, SheetContent, SheetHeader, SheetTitle, SheetTrigger } from '@/components/ui/sheet';
 import { ScrollArea } from '@/components/ui/scroll-area';
 import { MarkdownContent } from './MarkdownContent';
-import { defaultHelpModule } from '@/content/help';
-import { extractSection, getHelpAnchorForRoute, slugify } from '@/lib/help-utils';
+import { getHelpModule, defaultHelpModule } from '@/content/help';
+import { extractSection, getHelpMappingForRoute, slugify } from '@/lib/help-utils';
 
 interface HelpDrawerProps {
   /** Override the route-based anchor */
   anchor?: string;
+  /** Override the route-based module */
+  module?: string;
   /** Custom trigger; defaults to a "?" icon button */
   trigger?: React.ReactNode;
 }
@@ -18,12 +20,15 @@ interface HelpDrawerProps {
 /**
  * Side drawer that shows the contextual help section for the current route.
  */
-export function HelpDrawer({ anchor, trigger }: HelpDrawerProps) {
+export function HelpDrawer({ anchor, module, trigger }: HelpDrawerProps) {
   const location = useLocation();
   const [open, setOpen] = useState(false);
 
-  const resolvedAnchor = anchor ?? getHelpAnchorForRoute(location.pathname);
-  const sectionContent = extractSection(defaultHelpModule.content, resolvedAnchor);
+  const routeMapping = getHelpMappingForRoute(location.pathname);
+  const resolvedModuleSlug = module ?? routeMapping.module;
+  const resolvedAnchor = anchor ?? routeMapping.anchor;
+  const activeModule = getHelpModule(resolvedModuleSlug) ?? defaultHelpModule;
+  const sectionContent = extractSection(activeModule.content, resolvedAnchor);
 
   // ESC closes (Sheet handles it natively, kept here for completeness)
   useEffect(() => {
@@ -35,7 +40,7 @@ export function HelpDrawer({ anchor, trigger }: HelpDrawerProps) {
     return () => window.removeEventListener('keydown', onKey);
   }, [open]);
 
-  const fullDocsUrl = `/admin/ajuda?modulo=${defaultHelpModule.slug}#${slugify(
+  const fullDocsUrl = `/admin/ajuda?modulo=${activeModule.slug}#${slugify(
     sectionContent.match(/^#{1,6}\s+(.+)$/m)?.[1] ?? resolvedAnchor,
   )}`;
 
