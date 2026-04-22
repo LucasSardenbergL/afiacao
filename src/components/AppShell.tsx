@@ -89,6 +89,7 @@ const unifiedNavSections: { title: string; items: NavItem[] }[] = [
   {
     title: 'Performance',
     items: [
+      { icon: Target, label: 'Avaliação Trimestral', path: '/admin/des/trimestre-atual', managerOnly: true },
       { icon: Phone, label: 'Ligações', path: '/farmer/calls' },
       { icon: Headphones, label: 'Copilot', path: '/farmer/copilot' },
       { icon: GraduationCap, label: 'Coaching SPIN', path: '/coaching' },
