@@ -417,3 +417,40 @@ Confere que preencheu `desconto_extra_perc` com número positivo (1-50) e salvou
 ---
 
 ## Apêndice: diagrama de dados
+
+Estrutura das tabelas principais do módulo:
+
+**Promoções:**
+
+- `promocao_campanha` — tabela de campanhas (ativas, encerradas, canceladas)
+- `promocao_item` — SKUs dentro de cada campanha, com preço, desconto base e campos `desconto_extra_*` para negociação esporádica
+- `promocao_negociacao_evento` — timeline de eventos de negociação (proposta enviada, contraproposta, aceite, recusa)
+
+**Aumentos:**
+
+- `fornecedor_aumento_anunciado` — anúncios de reajuste de preços
+- `fornecedor_aumento_item` — categorias de cada aumento com percentual
+- `categoria_aumento_familia_mapeamento` — vínculo entre categoria do fornecedor e família Omie
+
+**Controle de origem das compras:**
+
+- `sku_leadtime_history.origem_compra` — classifica como "normal", "oportunidade_promo" ou "oportunidade_aumento"
+- `pedido_compra_sugerido.tipo_ciclo` — distingue ciclo normal do ciclo de oportunidade
+
+**Polling e alertas:**
+
+- `fornecedor_email_polling` — 3 remetentes configurados (juliana, sc, gooddata)
+- `fornecedor_email_polling_log` — histórico de execuções
+- `fornecedor_alerta` — central de notificações
+
+**Views principais:**
+
+- `v_oportunidade_economica_hoje` — view unificada de todas as oportunidades
+- `v_sku_aumento_vigente` — SKUs afetados por aumentos ativos
+- `v_promocao_avaliacao_hoje` — SKUs em promoção ativa
+- `v_promocao_item_efetivo` — calcula desconto efetivo (base + extra)
+
+---
+
+_Documentação viva. Atualizações conforme o módulo evolui._
+
