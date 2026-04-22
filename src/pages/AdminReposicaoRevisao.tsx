@@ -526,9 +526,9 @@ export default function AdminReposicaoRevisao() {
                         />
                       )}
                     </TableCell>
-                    <TableCell className="font-mono text-xs">{r.sku_codigo_omie}</TableCell>
-                    <TableCell className="max-w-xs">
-                      <div className="truncate">{r.sku_descricao}</div>
+                    <TableCell className="font-mono text-xs align-top">{r.sku_codigo_omie}</TableCell>
+                    <TableCell className="min-w-[280px] align-top">
+                      <div className="whitespace-normal break-words leading-snug">{r.sku_descricao}</div>
                       {r.read_only && r.fornecedor_nome && (
                         <Badge
                           variant="warning"
@@ -658,12 +658,12 @@ export default function AdminReposicaoRevisao() {
                 <TableBody>
                   {selectedRows.map((r) => (
                     <TableRow key={r.id}>
-                      <TableCell className="font-mono text-xs">{r.sku_codigo_omie}</TableCell>
-                      <TableCell className="text-xs max-w-[260px] truncate">
+                      <TableCell className="font-mono text-xs align-top">{r.sku_codigo_omie}</TableCell>
+                      <TableCell className="text-xs min-w-[260px] whitespace-normal break-words leading-snug align-top">
                         {r.sku_descricao}
                       </TableCell>
-                      <TableCell>{r.classe_consolidada}</TableCell>
-                      <TableCell className="text-right">{fmt(r.estoque_maximo, 0)}</TableCell>
+                      <TableCell className="align-top">{r.classe_consolidada}</TableCell>
+                      <TableCell className="text-right align-top">{fmt(r.estoque_maximo, 0)}</TableCell>
                     </TableRow>
                   ))}
                 </TableBody>
