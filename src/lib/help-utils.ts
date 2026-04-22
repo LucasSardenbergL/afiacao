@@ -113,6 +113,9 @@ export function getHelpMappingForRoute(pathname: string): HelpRouteMapping {
   }
 
   // Eventos Comerciais module (Reposição)
+  if (pathname.startsWith('/admin/reposicao/negociacao-paralela')) {
+    return { module: 'eventos-comerciais', anchor: 'negociações-paralelas' };
+  }
   if (pathname.startsWith('/admin/reposicao/promocoes')) {
     return { module: 'eventos-comerciais', anchor: 'promoções' };
   }
