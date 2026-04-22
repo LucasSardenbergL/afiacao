@@ -704,6 +704,20 @@ export type Database = {
             referencedColumns: ["id"]
           },
           {
+            foreignKeyName: "des_checkin_qualitativo_resposta_checkin_id_fkey"
+            columns: ["checkin_id"]
+            isOneToOne: false
+            referencedRelation: "v_des_checkin_atual"
+            referencedColumns: ["checkin_id"]
+          },
+          {
+            foreignKeyName: "des_checkin_qualitativo_resposta_checkin_id_fkey"
+            columns: ["checkin_id"]
+            isOneToOne: false
+            referencedRelation: "v_des_desconto_por_checkin"
+            referencedColumns: ["checkin_id"]
+          },
+          {
             foreignKeyName: "des_checkin_qualitativo_resposta_criterio_id_fkey"
             columns: ["criterio_id"]
             isOneToOne: false
@@ -5251,6 +5265,13 @@ export type Database = {
             referencedColumns: ["id"]
           },
           {
+            foreignKeyName: "pedido_compra_item_pedido_id_fkey"
+            columns: ["pedido_id"]
+            isOneToOne: false
+            referencedRelation: "v_des_pedidos_em_transito"
+            referencedColumns: ["pedido_id"]
+          },
+          {
             foreignKeyName: "pedido_compra_item_promocao_item_id_fkey"
             columns: ["promocao_item_id"]
             isOneToOne: false
@@ -9366,6 +9387,109 @@ export type Database = {
         }
         Relationships: []
       }
+      v_des_checkin_atual: {
+        Row: {
+          ano: number | null
+          atingido: boolean | null
+          avaliado_com: string | null
+          avaliado_por: string | null
+          checkin_id: number | null
+          codigo: string | null
+          criterio_tipo: string | null
+          data_avaliacao: string | null
+          empresa: string | null
+          nome: string | null
+          observacao_criterio: string | null
+          tipo: string | null
+          trimestre: number | null
+        }
+        Relationships: []
+      }
+      v_des_desconto_por_checkin: {
+        Row: {
+          ano: number | null
+          bonus_atingido_perc: number | null
+          checkin_id: number | null
+          data_avaliacao: string | null
+          desconto_padrao: number | null
+          desconto_total_maximo: number | null
+          desconto_total_projetado: number | null
+          empresa: string | null
+          estrelas: number | null
+          faixa_numero: number | null
+          qualitativos_atingidos_perc: number | null
+          tipo: string | null
+          trimestre: number | null
+        }
+        Relationships: []
+      }
+      v_des_pedidos_em_transito: {
+        Row: {
+          ano_atual: number | null
+          data_ciclo: string | null
+          data_emissao: string | null
+          data_faturamento_prevista: string | null
+          empresa: string | null
+          fatura_no_trimestre: boolean | null
+          fim_trimestre: string | null
+          fornecedor_nome: string | null
+          grupo_codigo: string | null
+          horario_disparo_real: string | null
+          inicio_trimestre: string | null
+          pedido_id: number | null
+          status: string | null
+          tipo_ciclo: string | null
+          trimestre_atual: number | null
+          valor_total: number | null
+          zona_confianca: string | null
+        }
+        Relationships: []
+      }
+      v_des_posicao_trimestre_ao_vivo: {
+        Row: {
+          ano: number | null
+          calculado_em: string | null
+          dias_restantes: number | null
+          empresa: string | null
+          faixa_conservadora: Json | null
+          faixa_des_alvo: number | null
+          faixa_otimista: Json | null
+          fat_bruto_confirmado: number | null
+          fim_trimestre: string | null
+          gap_para_meta_pessoal: number | null
+          gooddata_data_referencia: string | null
+          gooddata_objetivo: number | null
+          gooddata_pedidos_abertos: number | null
+          inicio_trimestre: string | null
+          meta_pessoal: number | null
+          posicao_ao_vivo_conservadora: number | null
+          posicao_ao_vivo_otimista: number | null
+          qtd_pedidos_fora_trimestre: number | null
+          qtd_pedidos_no_trimestre: number | null
+          trimestre: number | null
+          valor_em_transito_risco: number | null
+          valor_em_transito_seguro: number | null
+          valor_fora_trimestre: number | null
+        }
+        Relationships: []
+      }
+      v_des_snapshot_mais_recente: {
+        Row: {
+          ano: number | null
+          criado_em: string | null
+          data_referencia: string | null
+          empresa: string | null
+          fat_bruto_qtde: number | null
+          fat_bruto_valor: number | null
+          id: number | null
+          objetivo_qtde: number | null
+          objetivo_valor: number | null
+          pedidos_abertos_qtde: number | null
+          pedidos_abertos_valor: number | null
+          trimestre: number | null
+        }
+        Relationships: []
+      }
       v_fornecedor_lt_logistica_total: {
         Row: {
           cadeia_descricao: string | null
@@ -9997,6 +10121,25 @@ export type Database = {
           skus_incluidos: number
         }[]
       }
+      des_data_faturamento_prevista: {
+        Args: {
+          p_data_emissao: string
+          p_empresa?: string
+          p_grupo_codigo: string
+        }
+        Returns: string
+      }
+      des_determinar_faixa: {
+        Args: { p_valor: number; p_versao?: string }
+        Returns: {
+          desconto_padrao_perc: number
+          estrelas: number
+          faixa_id: number
+          faixa_numero: number
+          volume_max: number
+          volume_min: number
+        }[]
+      }
       detectar_outliers_empresa: {
         Args: { p_empresa?: string }
         Returns: {
@@ -10262,6 +10405,17 @@ export type Database = {
           p_dias_simulacao?: number
           p_empresa: string
           p_sku: string
+        }
+        Returns: Json
+      }
+      simular_puxar_volume_trimestre: {
+        Args: {
+          p_ano?: number
+          p_dias_estoque_extra?: number
+          p_empresa?: string
+          p_prazo_pagamento_codigo?: string
+          p_trimestre?: number
+          p_valor_extra?: number
         }
         Returns: Json
       }
