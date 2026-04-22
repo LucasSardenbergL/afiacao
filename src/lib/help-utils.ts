@@ -92,15 +92,52 @@ export function extractSection(markdown: string, anchor: string): string {
 }
 
 /**
- * Map of admin routes to documentation anchors.
+ * Map of admin routes to documentation module + anchors.
+ * Each entry returns the module slug and the anchor (without leading '#').
+ */
+export interface HelpRouteMapping {
+  module: string;
+  anchor: string;
+}
+
+export function getHelpMappingForRoute(pathname: string): HelpRouteMapping {
+  // Avaliação Trimestral DES module
+  if (pathname.startsWith('/admin/des/trimestre-atual')) {
+    return { module: 'avaliacao-trimestral-des', anchor: 'posicao-ao-vivo' };
+  }
+  if (pathname.startsWith('/admin/des/configuracao')) {
+    return { module: 'avaliacao-trimestral-des', anchor: 'visao-geral-do-programa-des' };
+  }
+  if (pathname.startsWith('/admin/des')) {
+    return { module: 'avaliacao-trimestral-des', anchor: 'visao-geral-do-programa-des' };
+  }
+
+  // Eventos Comerciais module (Reposição)
+  if (pathname.startsWith('/admin/reposicao/promocoes')) {
+    return { module: 'eventos-comerciais', anchor: 'promoções' };
+  }
+  if (pathname.startsWith('/admin/reposicao/aumentos')) {
+    return { module: 'eventos-comerciais', anchor: 'aumentos-anunciados' };
+  }
+  if (pathname.startsWith('/admin/reposicao/oportunidades')) {
+    return { module: 'eventos-comerciais', anchor: 'oportunidades-unificadas' };
+  }
+  if (pathname.startsWith('/admin/reposicao/pedidos')) {
+    return { module: 'eventos-comerciais', anchor: 'ciclo-de-oportunidade' };
+  }
+  if (pathname.startsWith('/admin/reposicao')) {
+    return { module: 'eventos-comerciais', anchor: 'visão-geral' };
+  }
+
+  return { module: 'eventos-comerciais', anchor: 'visão-geral' };
+}
+
+/**
+ * Backwards-compatible helper that returns just the anchor for a route.
+ * @deprecated use getHelpMappingForRoute to get both module and anchor.
  */
 export function getHelpAnchorForRoute(pathname: string): string {
-  if (pathname.startsWith('/admin/reposicao/promocoes')) return 'promoções';
-  if (pathname.startsWith('/admin/reposicao/aumentos')) return 'aumentos-anunciados';
-  if (pathname.startsWith('/admin/reposicao/oportunidades')) return 'oportunidades-unificadas';
-  if (pathname.startsWith('/admin/reposicao/pedidos')) return 'ciclo-de-oportunidade';
-  if (pathname.startsWith('/admin/reposicao')) return 'visão-geral';
-  return 'visão-geral';
+  return getHelpMappingForRoute(pathname).anchor;
 }
 
 /**
@@ -111,3 +148,4 @@ export interface HelpModule {
   title: string;
   content: string;
 }
+
