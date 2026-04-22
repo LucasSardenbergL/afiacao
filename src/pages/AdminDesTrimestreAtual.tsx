@@ -3,6 +3,8 @@ import { ChevronRight } from "lucide-react";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { PosicaoAtualTab } from "@/components/des/PosicaoAtualTab";
 import { CheckinQualitativoTab } from "@/components/des/CheckinQualitativoTab";
+import { SimuladorTab } from "@/components/des/SimuladorTab";
+import { HistoricoTab } from "@/components/des/HistoricoTab";
 
 const EMPRESA = "OBEN";
 
@@ -47,16 +49,12 @@ export default function AdminDesTrimestreAtual() {
           <CheckinQualitativoTab empresa={EMPRESA} ano={ano} trimestre={trimestre} />
         </TabsContent>
 
-        <TabsContent value="simulador" className="mt-6">
-          <div className="rounded-lg border border-dashed border-border bg-muted/30 p-12 text-center">
-            <p className="text-sm text-muted-foreground">Simulador em desenvolvimento.</p>
-          </div>
+        <TabsContent value="simulador" className="space-y-6 mt-6">
+          <SimuladorTab empresa={EMPRESA} ano={ano} trimestre={trimestre} />
         </TabsContent>
 
-        <TabsContent value="historico" className="mt-6">
-          <div className="rounded-lg border border-dashed border-border bg-muted/30 p-12 text-center">
-            <p className="text-sm text-muted-foreground">Histórico em desenvolvimento.</p>
-          </div>
+        <TabsContent value="historico" className="space-y-6 mt-6">
+          <HistoricoTab empresa={EMPRESA} ano={ano} trimestre={trimestre} />
         </TabsContent>
       </Tabs>
     </div>
