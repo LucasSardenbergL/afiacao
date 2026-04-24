@@ -1,5 +1,6 @@
 import eventosComerciaisRaw from './eventos-comerciais.md?raw';
 import avaliacaoTrimestralDesRaw from './avaliacao-trimestral-des.md?raw';
+import negociacaoParalelaRaw from './negociacao-paralela.md?raw';
 import type { HelpModule } from '@/lib/help-utils';
 
 /**
@@ -15,6 +16,11 @@ export const helpModules: HelpModule[] = [
     slug: 'avaliacao-trimestral-des',
     title: 'Avaliação Trimestral DES',
     content: avaliacaoTrimestralDesRaw,
+  },
+  {
+    slug: 'negociacao-paralela',
+    title: 'Negociação Paralela',
+    content: negociacaoParalelaRaw,
   },
 ];
 

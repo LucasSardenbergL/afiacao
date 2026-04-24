@@ -112,10 +112,12 @@ export function getHelpMappingForRoute(pathname: string): HelpRouteMapping {
     return { module: 'avaliacao-trimestral-des', anchor: 'visao-geral-do-programa-des' };
   }
 
-  // Eventos Comerciais module (Reposição)
+  // Negociação Paralela module
   if (pathname.startsWith('/admin/reposicao/negociacao-paralela')) {
-    return { module: 'eventos-comerciais', anchor: 'negociações-paralelas' };
+    return { module: 'negociacao-paralela', anchor: 'ranking-de-candidatos' };
   }
+
+  // Eventos Comerciais module (Reposição)
   if (pathname.startsWith('/admin/reposicao/promocoes')) {
     return { module: 'eventos-comerciais', anchor: 'promoções' };
   }
