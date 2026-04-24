@@ -117,6 +117,7 @@ const AdminReposicaoOportunidades = lazy(() => import("./pages/AdminReposicaoOpo
 const AdminReposicaoNegociacaoParalela = lazy(() => import("./pages/AdminReposicaoNegociacaoParalela"));
 const AdminAjuda = lazy(() => import("./pages/AdminAjuda"));
 const AdminDesTrimestreAtual = lazy(() => import("./pages/AdminDesTrimestreAtual"));
+const AdminNotificacoes = lazy(() => import("./pages/AdminNotificacoes"));
 
 const PageLoader = () => (
   <div className="flex flex-col gap-4 p-6">
@@ -258,6 +259,7 @@ const App = () => (
               <Route path="admin/reposicao/negociacao-paralela" element={<AdminReposicaoNegociacaoParalela />} />
               <Route path="admin/ajuda" element={<AdminAjuda />} />
               <Route path="admin/des/trimestre-atual" element={<AdminDesTrimestreAtual />} />
+              <Route path="admin/notificacoes" element={<AdminNotificacoes />} />
             </Route>
 
             <Route path="*" element={<NotFound />} />

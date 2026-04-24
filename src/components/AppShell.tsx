@@ -135,6 +135,12 @@ const unifiedNavSections: { title: string; items: NavItem[] }[] = [
     ],
   },
   {
+    title: 'Automação',
+    items: [
+      { icon: Bell, label: 'Notificações', path: '/admin/notificacoes', managerOnly: true },
+    ],
+  },
+  {
     title: 'Gestão',
     items: [
       { icon: UserCheck, label: 'Liberar Acessos', path: '/admin/approvals', managerOnly: true },
