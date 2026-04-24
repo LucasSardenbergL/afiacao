@@ -3441,63 +3441,96 @@ export type Database = {
       fornecedor_alerta: {
         Row: {
           aumento_id: number | null
+          calendar_event_id: string | null
           calendar_evento_id: string | null
           campanha_id: number | null
           criado_em: string | null
+          data_evento: string | null
+          duracao_minutos: number | null
           email_enviado: boolean | null
           email_enviado_em: string | null
           email_origem_id: string | null
           empresa: string
+          erro_notificacao: string | null
+          fornecedor_id: string | null
           fornecedor_nome: string | null
+          gmail_message_id: string | null
           id: number
           mensagem: string | null
+          metadata: Json | null
+          notificado_em: string | null
           resolvido: boolean | null
           resolvido_em: string | null
           resolvido_por: string | null
           severidade: string
+          status: string | null
+          tentativas: number | null
           tipo: string
+          tipo_alerta: string | null
           titulo: string
           visualizado: boolean | null
           visualizado_em: string | null
         }
         Insert: {
           aumento_id?: number | null
+          calendar_event_id?: string | null
           calendar_evento_id?: string | null
           campanha_id?: number | null
           criado_em?: string | null
+          data_evento?: string | null
+          duracao_minutos?: number | null
           email_enviado?: boolean | null
           email_enviado_em?: string | null
           email_origem_id?: string | null
           empresa: string
+          erro_notificacao?: string | null
+          fornecedor_id?: string | null
           fornecedor_nome?: string | null
+          gmail_message_id?: string | null
           id?: number
           mensagem?: string | null
+          metadata?: Json | null
+          notificado_em?: string | null
           resolvido?: boolean | null
           resolvido_em?: string | null
           resolvido_por?: string | null
           severidade?: string
+          status?: string | null
+          tentativas?: number | null
           tipo: string
+          tipo_alerta?: string | null
           titulo: string
           visualizado?: boolean | null
           visualizado_em?: string | null
         }
         Update: {
           aumento_id?: number | null
+          calendar_event_id?: string | null
           calendar_evento_id?: string | null
           campanha_id?: number | null
           criado_em?: string | null
+          data_evento?: string | null
+          duracao_minutos?: number | null
           email_enviado?: boolean | null
           email_enviado_em?: string | null
           email_origem_id?: string | null
           empresa?: string
+          erro_notificacao?: string | null
+          fornecedor_id?: string | null
           fornecedor_nome?: string | null
+          gmail_message_id?: string | null
           id?: number
           mensagem?: string | null
+          metadata?: Json | null
+          notificado_em?: string | null
           resolvido?: boolean | null
           resolvido_em?: string | null
           resolvido_por?: string | null
           severidade?: string
+          status?: string | null
+          tentativas?: number | null
           tipo?: string
+          tipo_alerta?: string | null
           titulo?: string
           visualizado?: boolean | null
           visualizado_em?: string | null
@@ -9842,6 +9875,16 @@ export type Database = {
           lt_faturamento_medio: number | null
           lt_logistica_medio: number | null
           n_pedidos: number | null
+        }
+        Relationships: []
+      }
+      v_notificacoes_status: {
+        Row: {
+          com_calendar_event: number | null
+          dia: string | null
+          esgotados: number | null
+          status: string | null
+          total: number | null
         }
         Relationships: []
       }
