@@ -4302,6 +4302,57 @@ export type Database = {
         }
         Relationships: []
       }
+      gmail_webhook_log: {
+        Row: {
+          alertas_criados: number[] | null
+          aumentos_criados: number[] | null
+          campanhas_criadas: number[] | null
+          detalhes: Json | null
+          erro: string | null
+          id: number
+          message_id: string
+          processado_em: string | null
+          recebido_em: string
+          received_at: string | null
+          remetente: string
+          status: string
+          subject: string | null
+          tipo_documento: string | null
+        }
+        Insert: {
+          alertas_criados?: number[] | null
+          aumentos_criados?: number[] | null
+          campanhas_criadas?: number[] | null
+          detalhes?: Json | null
+          erro?: string | null
+          id?: number
+          message_id: string
+          processado_em?: string | null
+          recebido_em?: string
+          received_at?: string | null
+          remetente: string
+          status?: string
+          subject?: string | null
+          tipo_documento?: string | null
+        }
+        Update: {
+          alertas_criados?: number[] | null
+          aumentos_criados?: number[] | null
+          campanhas_criadas?: number[] | null
+          detalhes?: Json | null
+          erro?: string | null
+          id?: number
+          message_id?: string
+          processado_em?: string | null
+          recebido_em?: string
+          received_at?: string | null
+          remetente?: string
+          status?: string
+          subject?: string | null
+          tipo_documento?: string | null
+        }
+        Relationships: []
+      }
       health_score_history: {
         Row: {
           calculated_at: string
