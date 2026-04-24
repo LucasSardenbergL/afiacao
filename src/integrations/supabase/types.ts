@@ -9602,6 +9602,37 @@ export type Database = {
         }
         Relationships: []
       }
+      v_cron_jobs_falhas: {
+        Row: {
+          duracao_segundos: number | null
+          end_time: string | null
+          jobid: number | null
+          jobname: string | null
+          return_message: string | null
+          runid: number | null
+          start_time: string | null
+          status: string | null
+        }
+        Relationships: []
+      }
+      v_cron_jobs_status: {
+        Row: {
+          active: boolean | null
+          command: string | null
+          duracao_media_segundos: number | null
+          execucoes_7d: number | null
+          falhas_7d: number | null
+          jobid: number | null
+          jobname: string | null
+          schedule: string | null
+          sucessos_7d: number | null
+          ultima_duracao_seg: number | null
+          ultima_execucao: string | null
+          ultima_mensagem: string | null
+          ultimo_status: string | null
+        }
+        Relationships: []
+      }
       v_des_checkin_atual: {
         Row: {
           ano: number | null
@@ -10638,6 +10669,13 @@ export type Database = {
         Returns: Json
       }
       is_super_admin: { Args: { _user_id: string }; Returns: boolean }
+      limpar_sugestoes_antigas: {
+        Args: never
+        Returns: {
+          deletadas: number
+          expiradas: number
+        }[]
+      }
       listar_skus_por_codigo_fornecedor: {
         Args: { p_codigo_fornecedor: string; p_empresa: string }
         Returns: {
