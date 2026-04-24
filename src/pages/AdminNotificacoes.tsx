@@ -118,7 +118,7 @@ export default function AdminNotificacoes() {
         .gte('dia', new Date(Date.now() - 30 * 24 * 3600_000).toISOString().slice(0, 10))
         .order('dia', { ascending: true });
       if (error) throw error;
-      return data as Array<{ dia: string; status: string; total: number; esgotados: number; com_calendar_event: number }>;
+      return (data as unknown) as Array<{ dia: string; status: string; total: number; esgotados: number; com_calendar_event: number }>;
     },
     refetchInterval: 60_000,
   });
