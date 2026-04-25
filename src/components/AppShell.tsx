@@ -317,10 +317,13 @@ function AppSidebar({ collapsed, onToggle }: { collapsed: boolean; onToggle: () 
         if (it.path === '/admin/reposicao/negociacao-paralela' && negociacaoNovasCount) {
           return { ...it, badge: negociacaoNovasCount };
         }
+        if (it.path === '/admin/notificacoes' && notificacoesPendentes) {
+          return { ...it, badge: notificacoesPendentes, badgeVariant: 'destructive' as const };
+        }
         return it;
       }),
     })),
-    [outlierPendentes, pedidosPendentes, aumentosAtivos, oportunidadesAtivas, negociacaoNovasCount],
+    [outlierPendentes, pedidosPendentes, aumentosAtivos, oportunidadesAtivas, negociacaoNovasCount, notificacoesPendentes],
   );
 
   const isActive = (path: string) => {
