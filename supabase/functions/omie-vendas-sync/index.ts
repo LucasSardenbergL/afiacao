@@ -239,10 +239,10 @@ async function syncEstoque(supabase: any, startPage = 1, maxPages = 3, account: 
         console.error(`[Omie Vendas][${account}] Erro buscando produtos para atualizar estoque na página ${pagina}:`, existingError);
       } else {
         const existingMap = new Map(
-          (existingProducts ?? []).map((product) => [Number(product.omie_codigo_produto), product.id])
+          ((existingProducts ?? []) as any[]).map((product: any) => [Number(product.omie_codigo_produto), product.id])
         );
 
-        const stockRows = produtos.reduce<Array<{ id: string; omie_codigo_produto: number; account: Account; estoque: number; updated_at: string }>>((rows, prod: any) => {
+        const stockRows = (produtos as any[]).reduce<Array<{ id: string; omie_codigo_produto: number; account: Account; estoque: number; updated_at: string }>>((rows: Array<{ id: string; omie_codigo_produto: number; account: Account; estoque: number; updated_at: string }>, prod: any) => {
           const omieCodigoProduto = Number(prod.nCodProd);
           const existingId = existingMap.get(omieCodigoProduto);
 
