@@ -28,6 +28,7 @@ interface NavItem {
   label: string;
   path: string;
   badge?: number;
+  badgeVariant?: 'default' | 'destructive';
   managerOnly?: boolean;
 }
 
@@ -283,6 +284,21 @@ function AppSidebar({ collapsed, onToggle }: { collapsed: boolean; onToggle: () 
     staleTime: 30000,
   });
 
+  // Contador de alertas de notificação pendentes
+  const { data: notificacoesPendentes } = useQuery({
+    queryKey: ['notificacoes-pendentes-count'],
+    queryFn: async () => {
+      const { count } = await supabase
+        .from('fornecedor_alerta')
+        .select('*', { count: 'exact', head: true })
+        .eq('status', 'pendente_notificacao');
+      return count ?? 0;
+    },
+    enabled: isStaff,
+    refetchInterval: 60000,
+    staleTime: 30000,
+  });
+
   const sectionsWithBadges = React.useMemo(
     () => [...unifiedNavSections, docNavSection].map((s) => ({
       ...s,
@@ -302,10 +318,13 @@ function AppSidebar({ collapsed, onToggle }: { collapsed: boolean; onToggle: () 
         if (it.path === '/admin/reposicao/negociacao-paralela' && negociacaoNovasCount) {
           return { ...it, badge: negociacaoNovasCount };
         }
+        if (it.path === '/admin/notificacoes' && notificacoesPendentes) {
+          return { ...it, badge: notificacoesPendentes, badgeVariant: 'destructive' as const };
+        }
         return it;
       }),
     })),
-    [outlierPendentes, pedidosPendentes, aumentosAtivos, oportunidadesAtivas, negociacaoNovasCount],
+    [outlierPendentes, pedidosPendentes, aumentosAtivos, oportunidadesAtivas, negociacaoNovasCount, notificacoesPendentes],
   );
 
   const isActive = (path: string) => {
@@ -383,7 +402,12 @@ function AppSidebar({ collapsed, onToggle }: { collapsed: boolean; onToggle: () 
                     <Icon className={cn('shrink-0', collapsed ? 'w-5 h-5' : 'w-4 h-4')} />
                     {!collapsed && <span className="truncate">{item.label}</span>}
                     {!collapsed && item.badge && item.badge > 0 && (
-                      <span className="ml-auto text-2xs bg-primary text-primary-foreground rounded-full px-1.5 py-0.5 min-w-[18px] text-center">
+                      <span className={cn(
+                        'ml-auto text-2xs rounded-full px-1.5 py-0.5 min-w-[18px] text-center',
+                        item.badgeVariant === 'destructive'
+                          ? 'bg-destructive text-destructive-foreground'
+                          : 'bg-primary text-primary-foreground'
+                      )}>
                         {item.badge}
                       </span>
                     )}
