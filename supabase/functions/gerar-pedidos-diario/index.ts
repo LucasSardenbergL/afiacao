@@ -248,7 +248,7 @@ Deno.serve(async (req: Request) => {
       } else if (promoRows && promoRows[0]) {
         promoSummary = promoRows[0] as typeof promoSummary;
         console.log(
-          `[promocoes] flat=${promoSummary?.itens_flat_aplicados} forward_buying=${promoSummary?.itens_forward_buying_aplicados} economia=R$${promoSummary?.economia_total_estimada} bloqueados_delta=${promoSummary?.pedidos_bloqueados_por_delta}`,
+          `[promocoes] flat=${(promoSummary as any)?.itens_flat_aplicados} forward_buying=${(promoSummary as any)?.itens_forward_buying_aplicados} economia=R$${(promoSummary as any)?.economia_total_estimada} bloqueados_delta=${(promoSummary as any)?.pedidos_bloqueados_por_delta}`,
         );
       }
     } catch (e) {
