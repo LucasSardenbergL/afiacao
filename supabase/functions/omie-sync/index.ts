@@ -637,7 +637,7 @@ serve(async (req) => {
           // 1. Sincronizar cliente (busca existente no Omie) - fluxo normal do cliente
           clienteResult = await syncClienteOmie(
             supabaseAdmin,
-            userId,
+            userId!,
             profileData,
             addressData
           );
