@@ -25,7 +25,7 @@ function parseCsv(content: string): string[][] {
   return lines.map((line) => line.split(";").map((c) => c.trim()));
 }
 
-type Supabase = ReturnType<typeof createClient>;
+type Supabase = any;
 
 const isFormulaImportType = (tipo: string) =>
   tipo === "formulas_padrao" || tipo === "formulas_personalizadas";

@@ -218,7 +218,7 @@ function mapPedidoToRow(empresa: Empresa, pedido: any): Record<string, unknown> 
 }
 
 async function upsertPedido(
-  supabase: ReturnType<typeof createClient>,
+  supabase: any,
   row: Record<string, unknown>,
 ): Promise<void> {
   if (!row.omie_codigo_pedido) {
@@ -254,7 +254,7 @@ async function upsertPedido(
 }
 
 async function syncEmpresa(
-  supabase: ReturnType<typeof createClient>,
+  supabase: any,
   empresa: Empresa,
   dias: number,
   fornecedorCodigo: number | undefined,
