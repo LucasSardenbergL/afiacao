@@ -402,7 +402,12 @@ function AppSidebar({ collapsed, onToggle }: { collapsed: boolean; onToggle: () 
                     <Icon className={cn('shrink-0', collapsed ? 'w-5 h-5' : 'w-4 h-4')} />
                     {!collapsed && <span className="truncate">{item.label}</span>}
                     {!collapsed && item.badge && item.badge > 0 && (
-                      <span className="ml-auto text-2xs bg-primary text-primary-foreground rounded-full px-1.5 py-0.5 min-w-[18px] text-center">
+                      <span className={cn(
+                        'ml-auto text-2xs rounded-full px-1.5 py-0.5 min-w-[18px] text-center',
+                        item.badgeVariant === 'destructive'
+                          ? 'bg-destructive text-destructive-foreground'
+                          : 'bg-primary text-primary-foreground'
+                      )}>
                         {item.badge}
                       </span>
                     )}
