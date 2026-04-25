@@ -3441,7 +3441,6 @@ export type Database = {
       fornecedor_alerta: {
         Row: {
           aumento_id: number | null
-          calendar_event_id: string | null
           calendar_evento_id: string | null
           campanha_id: number | null
           criado_em: string | null
@@ -3473,7 +3472,6 @@ export type Database = {
         }
         Insert: {
           aumento_id?: number | null
-          calendar_event_id?: string | null
           calendar_evento_id?: string | null
           campanha_id?: number | null
           criado_em?: string | null
@@ -3505,7 +3503,6 @@ export type Database = {
         }
         Update: {
           aumento_id?: number | null
-          calendar_event_id?: string | null
           calendar_evento_id?: string | null
           campanha_id?: number | null
           criado_em?: string | null
