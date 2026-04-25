@@ -243,7 +243,7 @@ async function validarVendedorMultiOmie(cnpjCpf: string): Promise<{
 }
 
 async function upsertAddressFromOmie(
-  adminClient: ReturnType<typeof createClient>,
+  adminClient: any,
   userId: string,
   cliente: OmieCliente
 ): Promise<boolean> {
