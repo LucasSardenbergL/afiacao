@@ -1,6 +1,6 @@
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { createClient } from "npm:@supabase/supabase-js@2";
-import { Resend } from "npm:resend@6.12.2";
+// Resend usado via fetch direto à REST API (https://api.resend.com/emails) para evitar dep npm
 
 const ALLOWED_ORIGIN = Deno.env.get("ALLOWED_ORIGIN") || "*";
 
@@ -77,8 +77,6 @@ async function sendOrderNotificationEmail(
   }
 
   try {
-    const resend = new Resend(RESEND_API_KEY);
-
     // Formatar lista de itens
     const itemsList = orderItems
       .map(item => `• ${item.quantity}x ${item.toolName || item.category}`)
@@ -112,14 +110,22 @@ async function sendOrderNotificationEmail(
       </div>
     `;
 
-    const emailResponse = await resend.emails.send({
-      from: "ColaCor App <onboarding@resend.dev>",
-      to: [ADMIN_EMAIL],
-      subject: `Novo Pedido - OS ${osNumber} - ${profileData.name}`,
-      html: emailHtml,
+    const emailResponse = await fetch("https://api.resend.com/emails", {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${RESEND_API_KEY}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        from: "ColaCor App <onboarding@resend.dev>",
+        to: [ADMIN_EMAIL],
+        subject: `Novo Pedido - OS ${osNumber} - ${profileData.name}`,
+        html: emailHtml,
+      }),
     });
 
-    console.log("[Notificação] Email enviado com sucesso:", emailResponse);
+    const emailData = await emailResponse.json().catch(() => ({}));
+    console.log("[Notificação] Email enviado com sucesso:", emailData);
   } catch (error) {
     // Não lançar erro para não afetar o fluxo principal do pedido
     console.error("[Notificação] Erro ao enviar email de notificação:", error);
