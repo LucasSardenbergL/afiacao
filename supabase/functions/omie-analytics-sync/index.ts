@@ -48,7 +48,7 @@ async function callOmie(account: OmieAccount, endpoint: string, call: string, pa
 
 // ======== SYNC STATE HELPERS ========
 
-async function getSyncState(db: ReturnType<typeof createClient>, entityType: string, account: string) {
+async function getSyncState(db: any, entityType: string, account: string) {
   const { data } = await db
     .from("sync_state")
     .select("*")
@@ -59,7 +59,7 @@ async function getSyncState(db: ReturnType<typeof createClient>, entityType: str
 }
 
 async function updateSyncState(
-  db: ReturnType<typeof createClient>,
+  db: any,
   entityType: string,
   account: string,
   updates: Record<string, unknown>
@@ -72,7 +72,7 @@ async function updateSyncState(
 
 // ======== SYNC CUSTOMERS ========
 
-async function syncCustomers(db: ReturnType<typeof createClient>, account: OmieAccount) {
+async function syncCustomers(db: any, account: OmieAccount) {
   await updateSyncState(db, "customers", account, { status: "running", error_message: null });
   let pagina = 1;
   let totalPaginas = 1;
@@ -147,7 +147,7 @@ async function syncCustomers(db: ReturnType<typeof createClient>, account: OmieA
 
 // ======== SYNC PRODUCTS ========
 
-async function syncProducts(db: ReturnType<typeof createClient>, account: OmieAccount, startPage = 1, maxPages = 10) {
+async function syncProducts(db: any, account: OmieAccount, startPage = 1, maxPages = 10) {
   await updateSyncState(db, "products", account, { status: "running", error_message: null });
   let pagina = startPage;
   let totalPaginas = startPage;
@@ -231,7 +231,7 @@ async function syncProducts(db: ReturnType<typeof createClient>, account: OmieAc
 
 // ======== SYNC ORDERS (INCREMENTAL) ========
 
-async function syncOrdersIncremental(db: ReturnType<typeof createClient>, account: OmieAccount) {
+async function syncOrdersIncremental(db: any, account: OmieAccount) {
   await updateSyncState(db, "orders", account, { status: "running", error_message: null });
 
   const state = await getSyncState(db, "orders", account);
@@ -349,7 +349,7 @@ async function syncOrdersIncremental(db: ReturnType<typeof createClient>, accoun
 
 // ======== SYNC INVENTORY ========
 
-async function syncInventory(db: ReturnType<typeof createClient>, account: OmieAccount) {
+async function syncInventory(db: any, account: OmieAccount) {
   await updateSyncState(db, "inventory", account, { status: "running", error_message: null });
   let pagina = 1;
   let totalPaginas = 1;
@@ -444,7 +444,7 @@ async function syncInventory(db: ReturnType<typeof createClient>, account: OmieA
 
 // ======== COMPUTE COSTS (Fallback Engine) ========
 
-async function computeCosts(db: ReturnType<typeof createClient>) {
+async function computeCosts(db: any) {
   // Load config
   const { data: configs } = await db.from("recommendation_config").select("key, value");
   const cfg: Record<string, number> = {};
@@ -567,7 +567,7 @@ async function computeCosts(db: ReturnType<typeof createClient>) {
 
 // ======== COMPUTE ASSOCIATION RULES (Apriori-like) ========
 
-async function computeAssociationRules(db: ReturnType<typeof createClient>) {
+async function computeAssociationRules(db: any) {
   // Load config
   const { data: configs } = await db.from("recommendation_config").select("key, value");
   const cfg: Record<string, number> = {};

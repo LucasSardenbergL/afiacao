@@ -138,7 +138,7 @@ interface ClienteOmieResult {
 
 // Função para buscar cliente no Omie (apenas existentes)
 async function syncClienteOmie(
-  supabase: ReturnType<typeof createClient>,
+  supabase: any,
   userId: string,
   profile: {
     name: string;
@@ -225,7 +225,7 @@ async function syncClienteOmie(
 
 // Função para criar Ordem de Serviço no Omie
 async function criarOrdemServicoOmie(
-  supabase: ReturnType<typeof createClient>,
+  supabase: any,
   orderId: string,
   omieCodigoCliente: number,
   omieCodigoVendedor: number | undefined,
@@ -387,7 +387,7 @@ async function criarOrdemServicoOmie(
 
 // Função para alterar Ordem de Serviço no Omie
 async function alterarOrdemServicoOmie(
-  supabase: ReturnType<typeof createClient>,
+  supabase: any,
   orderId: string,
   order: {
     items: Array<{
@@ -637,7 +637,7 @@ serve(async (req) => {
           // 1. Sincronizar cliente (busca existente no Omie) - fluxo normal do cliente
           clienteResult = await syncClienteOmie(
             supabaseAdmin,
-            userId,
+            userId!,
             profileData,
             addressData
           );

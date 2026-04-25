@@ -164,7 +164,7 @@ serve(async (req) => {
       if (!found) {
         throw new Error(`NF ${nf_number} não encontrada no Omie (verificadas ${pagina} páginas, endpoint: produtos/recebimentonfe/)`);
       }
-    } catch (e) {
+    } catch (e: any) {
       steps.push({ step: 1, description: `Buscar NF ${nf_number}`, status: "error", detail: e.message });
       return new Response(JSON.stringify({ steps, error: e.message }), {
         status: 200,
@@ -218,7 +218,7 @@ serve(async (req) => {
           status: "success",
         });
       }
-    } catch (e) {
+    } catch (e: any) {
       steps.push({ step: 2, description: "Consultar detalhes da NF", status: "error", detail: e.message });
       return new Response(JSON.stringify({ steps, error: e.message }), {
         status: 200,
@@ -302,7 +302,7 @@ serve(async (req) => {
           departmentCode = opsDept.codigo;
           console.log(`[process-nfe] Departamento Operações encontrado: ${departmentCode}`);
         }
-      } catch (e) {
+      } catch (e: any) {
         console.log(`[process-nfe] Erro ao listar departamentos: ${e.message}`);
       }
 
@@ -347,7 +347,7 @@ serve(async (req) => {
         status: "success",
         detail: itemResults.join(" | ") + (departmentCode ? ` | Depto: ${departmentCode}` : ""),
       });
-    } catch (e) {
+    } catch (e: any) {
       // If alter fails, try step by step approach
       steps.push({ step: 3, description: "Atualizar recebimento", status: "error", detail: e.message });
       return new Response(JSON.stringify({ steps, error: e.message }), {
@@ -364,7 +364,7 @@ serve(async (req) => {
         cEtapa: "40", // Conferência / Pronto para concluir
       }], account);
       steps.push({ step: 4, description: "Etapa alterada para conferência", status: "success" });
-    } catch (e) {
+    } catch (e: any) {
       if (e.message?.includes("já") || e.message?.includes("etapa")) {
         steps.push({ step: 4, description: "Etapa já configurada", status: "warning", detail: e.message });
       } else {
@@ -383,7 +383,7 @@ serve(async (req) => {
         cChaveNfe: cChaveNfe || "",
       }], account);
       steps.push({ step: 5, description: "Recebimento concluído com sucesso", status: "success" });
-    } catch (e) {
+    } catch (e: any) {
       steps.push({ step: 5, description: "Concluir recebimento", status: "error", detail: e.message });
       return new Response(JSON.stringify({ steps, error: e.message }), {
         status: 200,
@@ -395,7 +395,7 @@ serve(async (req) => {
       status: 200,
       headers: { ...corsHeaders, "Content-Type": "application/json" },
     });
-  } catch (e) {
+  } catch (e: any) {
     return new Response(JSON.stringify({ error: e.message }), {
       status: 500,
       headers: { ...corsHeaders, "Content-Type": "application/json" },

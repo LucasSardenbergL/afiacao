@@ -114,7 +114,7 @@ function getOmieItemIntegrationCode(index: number): number {
 }
 
 // Sincronizar todos os produtos da empresa de vendas
-async function syncProducts(supabase: ReturnType<typeof createClient>, startPage = 1, maxPages = 12, account: Account = "oben") {
+async function syncProducts(supabase: any, startPage = 1, maxPages = 12, account: Account = "oben") {
   let pagina = startPage;
   let totalPaginas = 1;
   let totalSynced = 0;
@@ -197,7 +197,7 @@ async function syncProducts(supabase: ReturnType<typeof createClient>, startPage
 }
 
 // Sincronizar estoque real dos produtos via ListarPosEstoque (paginado)
-async function syncEstoque(supabase: ReturnType<typeof createClient>, startPage = 1, maxPages = 3, account: Account = "oben") {
+async function syncEstoque(supabase: any, startPage = 1, maxPages = 3, account: Account = "oben") {
   let pagina = startPage;
   let totalPaginas = 1;
   let totalUpdated = 0;
@@ -239,10 +239,10 @@ async function syncEstoque(supabase: ReturnType<typeof createClient>, startPage 
         console.error(`[Omie Vendas][${account}] Erro buscando produtos para atualizar estoque na página ${pagina}:`, existingError);
       } else {
         const existingMap = new Map(
-          (existingProducts ?? []).map((product) => [Number(product.omie_codigo_produto), product.id])
+          ((existingProducts ?? []) as any[]).map((product: any) => [Number(product.omie_codigo_produto), product.id])
         );
 
-        const stockRows = produtos.reduce<Array<{ id: string; omie_codigo_produto: number; account: Account; estoque: number; updated_at: string }>>((rows, prod: any) => {
+        const stockRows = (produtos as any[]).reduce<Array<{ id: string; omie_codigo_produto: number; account: Account; estoque: number; updated_at: string }>>((rows: Array<{ id: string; omie_codigo_produto: number; account: Account; estoque: number; updated_at: string }>, prod: any) => {
           const omieCodigoProduto = Number(prod.nCodProd);
           const existingId = existingMap.get(omieCodigoProduto);
 
@@ -559,7 +559,7 @@ async function buscarUltimaParcela(codigoCliente: number, account: Account = "ob
 
 // Sincronizar pedidos de venda do Omie para o banco local (OPTIMIZED)
 async function syncPedidos(
-  supabase: ReturnType<typeof createClient>,
+  supabase: any,
   startPage = 1,
   maxPages = 10,
   account: Account = "oben",
@@ -1021,7 +1021,7 @@ function getAccountConfig(account: Account) {
 
 // Criar pedido de venda no Omie
 async function criarPedidoVenda(
-  supabase: ReturnType<typeof createClient>,
+  supabase: any,
   salesOrderId: string,
   codigoCliente: number,
   codigoVendedor: number | null,

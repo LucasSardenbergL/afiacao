@@ -115,7 +115,7 @@ interface ExtractedAumento {
 // para o nome canônico (razão social) usado no resto do sistema.
 // Fallback hardcoded para Sayerlack/Renner caso a tabela esteja indisponível.
 async function normalizarFornecedor(
-  supabase: ReturnType<typeof createClient>,
+  supabase: any,
   extraido: string | null | undefined,
   _tipoDocumento: string,
 ): Promise<string> {

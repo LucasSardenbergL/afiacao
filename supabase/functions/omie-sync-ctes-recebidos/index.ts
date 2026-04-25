@@ -192,7 +192,7 @@ interface MatchResult {
 }
 
 async function buscarCandidatas(
-  supabase: ReturnType<typeof createClient>,
+  supabase: any,
   empresa: Empresa,
   fornecedorCodigo: number,
   cte: MappedCte,
@@ -266,7 +266,7 @@ function matchConect(cte: MappedCte, candidatas: NFeCandidata[]): MatchResult | 
 }
 
 async function processarEmpresa(
-  supabase: ReturnType<typeof createClient>,
+  supabase: any,
   empresa: Empresa,
   dias: number,
   fornecedorCodigo: number,

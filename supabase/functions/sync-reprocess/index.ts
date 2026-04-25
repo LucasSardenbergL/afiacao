@@ -57,7 +57,7 @@ function formatOmieDate(d: Date): string {
 
 // ======== LOAD CONFIG ========
 
-async function loadReprocessConfig(db: ReturnType<typeof createClient>): Promise<Record<string, number>> {
+async function loadReprocessConfig(db: any): Promise<Record<string, number>> {
   const { data } = await db.from("sync_reprocess_config").select("key, value");
   const cfg: Record<string, number> = {};
   for (const c of data || []) cfg[c.key] = c.value;
@@ -67,7 +67,7 @@ async function loadReprocessConfig(db: ReturnType<typeof createClient>): Promise
 // ======== LOG HELPERS ========
 
 async function createReprocessLog(
-  db: ReturnType<typeof createClient>,
+  db: any,
   entityType: string,
   account: string,
   reprocessType: string,
@@ -86,7 +86,7 @@ async function createReprocessLog(
 }
 
 async function completeReprocessLog(
-  db: ReturnType<typeof createClient>,
+  db: any,
   logId: string,
   stats: {
     upserts_count: number;
@@ -112,7 +112,7 @@ async function completeReprocessLog(
 // ======== REPROCESS ORDERS ========
 
 async function reprocessOrders(
-  db: ReturnType<typeof createClient>,
+  db: any,
   account: Account,
   windowDays: number,
   reprocessType: string
@@ -281,7 +281,7 @@ async function reprocessOrders(
 // ======== REPROCESS PRODUCTS ========
 
 async function reprocessProducts(
-  db: ReturnType<typeof createClient>,
+  db: any,
   account: Account,
   reprocessType: string
 ) {
@@ -400,7 +400,7 @@ async function reprocessProducts(
 // ======== REPROCESS INVENTORY ========
 
 async function reprocessInventory(
-  db: ReturnType<typeof createClient>,
+  db: any,
   account: Account,
   reprocessType: string
 ) {

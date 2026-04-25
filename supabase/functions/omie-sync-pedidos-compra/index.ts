@@ -218,7 +218,7 @@ function mapPedidoToRow(empresa: Empresa, pedido: any): Record<string, unknown> 
 }
 
 async function upsertPedido(
-  supabase: ReturnType<typeof createClient>,
+  supabase: any,
   row: Record<string, unknown>,
 ): Promise<void> {
   if (!row.omie_codigo_pedido) {
@@ -228,8 +228,8 @@ async function upsertPedido(
   const { data: existing, error: selErr } = await supabase
     .from("purchase_orders_tracking")
     .select("id")
-    .eq("empresa", row.empresa)
-    .eq("omie_codigo_pedido", row.omie_codigo_pedido)
+    .eq("empresa", row.empresa as string)
+    .eq("omie_codigo_pedido", row.omie_codigo_pedido as string | number)
     .maybeSingle();
 
   if (selErr) throw selErr;
@@ -254,7 +254,7 @@ async function upsertPedido(
 }
 
 async function syncEmpresa(
-  supabase: ReturnType<typeof createClient>,
+  supabase: any,
   empresa: Empresa,
   dias: number,
   fornecedorCodigo: number | undefined,

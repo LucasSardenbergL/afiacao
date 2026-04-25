@@ -209,7 +209,7 @@ function extractPedidosFromDetalhe(detalhe: any): string[] {
  * com os dados da NFe. Retorna quantas linhas foram atualizadas.
  */
 async function updateLinhasDoPedido(
-  supabase: ReturnType<typeof createClient>,
+  supabase: any,
   empresa: Empresa,
   numeroContrato: string,
   fornecedorCodigo: number | null,
@@ -261,7 +261,7 @@ async function updateLinhasDoPedido(
 }
 
 async function insertOrfa(
-  supabase: ReturnType<typeof createClient>,
+  supabase: any,
   empresa: Empresa,
   nfe: any,
   m: MappedNFe,
@@ -311,7 +311,7 @@ async function insertOrfa(
 }
 
 async function syncEmpresa(
-  supabase: ReturnType<typeof createClient>,
+  supabase: any,
   empresa: Empresa,
   dias: number,
   fornecedorCodigo: number | undefined,
@@ -471,7 +471,7 @@ async function syncEmpresa(
  * chama ConsultarRecebimento(cChaveNFe) e atualiza raw_data + campos NULL.
  */
 async function backfillRawData(
-  supabase: ReturnType<typeof createClient>,
+  supabase: any,
   empresa: Empresa,
   fornecedorCodigo: number | undefined,
   t0: number,

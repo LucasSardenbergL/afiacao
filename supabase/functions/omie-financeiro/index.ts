@@ -93,7 +93,7 @@ async function callOmie(
 
 // ═══════════════ SYNC CATEGORIAS ═══════════════
 async function syncCategorias(
-  db: ReturnType<typeof createClient>,
+  db: any,
   company: Company
 ) {
   let pagina = 1;
@@ -140,7 +140,7 @@ async function syncCategorias(
 
 // ═══════════════ SYNC CONTAS CORRENTES ═══════════════
 async function syncContasCorrentes(
-  db: ReturnType<typeof createClient>,
+  db: any,
   company: Company
 ) {
   let pagina = 1;
@@ -207,7 +207,7 @@ async function syncContasCorrentes(
 
 // ═══════════════ SYNC CONTAS A PAGAR ═══════════════
 async function syncContasPagar(
-  db: ReturnType<typeof createClient>,
+  db: any,
   company: Company,
   filtroDataDe?: string,
   filtroDataAte?: string,
@@ -336,7 +336,7 @@ async function syncContasPagar(
 
 // ═══════════════ SYNC CONTAS A RECEBER ═══════════════
 async function syncContasReceber(
-  db: ReturnType<typeof createClient>,
+  db: any,
   company: Company,
   filtroDataDe?: string,
   filtroDataAte?: string,
@@ -527,7 +527,7 @@ function resolveMovementDescription(detalhes: Record<string, any>) {
 }
 
 async function syncMovimentacoes(
-  db: ReturnType<typeof createClient>,
+  db: any,
   company: Company,
   filtroDataDe?: string,
   filtroDataAte?: string,
@@ -653,7 +653,7 @@ async function syncMovimentacoes(
 
 // ═══════════════ CALCULAR DRE SNAPSHOT ═══════════════
 async function calcularDRE(
-  db: ReturnType<typeof createClient>,
+  db: any,
   company: Company,
   ano: number,
   mes: number
@@ -840,7 +840,7 @@ async function calcularDRE(
 
 // ═══════════════ RESUMO RÁPIDO (sem sync, direto do DB) ═══════════════
 async function getResumoFinanceiro(
-  db: ReturnType<typeof createClient>,
+  db: any,
   companies: Company[]
 ) {
   const resumo: Record<string, any> = {};
@@ -923,7 +923,7 @@ function formatOmieDate(d: Date): string {
 // ═══════════════ AUTH HELPER ═══════════════
 async function validateCaller(
   req: Request,
-  db: ReturnType<typeof createClient>
+  db: any
 ): Promise<{ authorized: boolean; userId?: string; error?: string }> {
   const authHeader = req.headers.get("authorization");
   if (!authHeader?.startsWith("Bearer ")) {
@@ -966,7 +966,7 @@ async function validateCaller(
 // ═══════════════ SYNC LOG ═══════════════
 
 async function logSync(
-  db: ReturnType<typeof createClient>,
+  db: any,
   action: string,
   companies: string[],
   triggeredBy: string
@@ -986,7 +986,7 @@ async function logSync(
 }
 
 async function completeSync(
-  db: ReturnType<typeof createClient>,
+  db: any,
   logId: string,
   results: any,
   errorMsg?: string,
