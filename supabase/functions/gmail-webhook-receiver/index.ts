@@ -147,22 +147,44 @@ Deno.serve(async (req: Request) => {
     auth: { persistSession: false },
   });
 
-  // 3. Deduplicação por message_id
+  // 3. Deduplicação por message_id — espelha o status real do registro original
   const { data: existing } = await supabase
     .from("gmail_webhook_log")
-    .select("id, status")
+    .select("id, status, erro")
     .eq("message_id", body.messageId)
     .maybeSingle();
 
   if (existing) {
     console.log(
-      `[gmail-webhook] Duplicado messageId=${body.messageId} log_id=${existing.id}`,
+      `[gmail-webhook] Duplicado messageId=${body.messageId} log_id=${existing.id} status_original=${existing.status}`,
     );
+
+    // Rejeitado anteriormente → 400 (não engana o cliente com 200)
+    if (existing.status === "rejeitado") {
+      return jsonResponse(400, {
+        error: existing.erro || "Remetente não suportado",
+        log_id: existing.id,
+        duplicado: true,
+      });
+    }
+
+    // Erro anterior → 500 retryable, dá oportunidade ao Apps Script de retentar
+    if (existing.status === "erro") {
+      return jsonResponse(500, {
+        error: `Falha anterior: ${existing.erro || "erro desconhecido"}`,
+        log_id: existing.id,
+        duplicado: true,
+        retryable: true,
+      });
+    }
+
+    // sucesso, parcial, suspensao, processando → mantém idempotência (200)
     return jsonResponse(200, {
       success: true,
       duplicado: true,
       log_id: existing.id,
-      message: "Já processado",
+      status_original: existing.status,
+      message: `Já processado (${existing.status})`,
     });
   }
 
