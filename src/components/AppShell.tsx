@@ -28,6 +28,7 @@ interface NavItem {
   label: string;
   path: string;
   badge?: number;
+  badgeVariant?: 'default' | 'destructive';
   managerOnly?: boolean;
 }
 
