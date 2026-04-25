@@ -17,7 +17,7 @@ import {
   AlertDialogTrigger,
 } from '@/components/ui/alert-dialog';
 import {
-  Sheet, SheetContent, SheetDescription, SheetHeader, SheetTitle,
+  Sheet, SheetContent, SheetHeader, SheetTitle,
 } from '@/components/ui/sheet';
 import { Skeleton } from '@/components/ui/skeleton';
 import { Zap, Mail, Calendar as CalendarIcon, ExternalLink, AlertCircle } from 'lucide-react';
@@ -26,10 +26,14 @@ import {
   BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Legend,
 } from 'recharts';
 
+type Severidade = 'info' | 'atencao' | 'urgente';
+
 type AlertaRow = {
   id: number;
-  tipo_alerta: string | null;
+  empresa: string;
+  fornecedor_nome: string | null;
   tipo: string;
+  severidade: Severidade;
   titulo: string;
   mensagem: string | null;
   status: string | null;
@@ -37,21 +41,14 @@ type AlertaRow = {
   criado_em: string;
   notificado_em: string | null;
   gmail_message_id: string | null;
-  calendar_event_id: string | null;
+  calendar_evento_id: string | null;
   erro_notificacao: string | null;
   metadata: Record<string, unknown> | null;
   data_evento: string | null;
 };
 
-const TIPO_VARIANT: Record<string, 'default' | 'secondary' | 'destructive' | 'success' | 'warning' | 'info' | 'purple' | 'indigo'> = {
-  promocao_suspensa: 'destructive',
-  aumento_anunciado: 'warning',
-  promocao_nova: 'success',
-  polling_erro: 'destructive',
-  mapeamento_pendente: 'info',
-  oportunidade_calculada: 'purple',
-  outro: 'secondary',
-};
+const SELECT_COLUMNS =
+  'id, empresa, fornecedor_nome, tipo, severidade, titulo, mensagem, status, tentativas, criado_em, notificado_em, gmail_message_id, calendar_evento_id, erro_notificacao, metadata, data_evento';
 
 function relTime(iso: string): string {
   const diff = Date.now() - new Date(iso).getTime();
@@ -69,10 +66,25 @@ function fmtDate(iso: string | null): string {
   return new Date(iso).toLocaleString('pt-BR', { timeZone: 'America/Sao_Paulo' });
 }
 
+function SeveridadeBadge({ s }: { s: Severidade }) {
+  if (s === 'urgente') return <Badge className="bg-destructive text-destructive-foreground">urgente</Badge>;
+  if (s === 'atencao') return <Badge className="bg-yellow-500 text-white">atenção</Badge>;
+  return <Badge variant="secondary">info</Badge>;
+}
+
+function StatusBadge({ s }: { s: string | null }) {
+  if (s === 'notificado') return <Badge className="bg-green-600 text-white">notificado</Badge>;
+  if (s === 'falha_notificacao') return <Badge variant="destructive">falha</Badge>;
+  return <Badge variant="outline">{s ?? '—'}</Badge>;
+}
+
 export default function AdminNotificacoes() {
   const qc = useQueryClient();
-  const [filtroTipo, setFiltroTipo] = useState<string>('__all__');
   const [drawerAlerta, setDrawerAlerta] = useState<AlertaRow | null>(null);
+
+  const [filtroSev, setFiltroSev] = useState<string>('__all__');
+  const [filtroEmpresa, setFiltroEmpresa] = useState<string>('__all__');
+  const [filtroTipo, setFiltroTipo] = useState<string>('__all__');
 
   // Pendentes
   const { data: pendentes, isLoading: loadingPend } = useQuery({
@@ -80,12 +92,12 @@ export default function AdminNotificacoes() {
     queryFn: async () => {
       const { data, error } = await supabase
         .from('fornecedor_alerta')
-        .select('id, tipo_alerta, tipo, titulo, mensagem, status, tentativas, criado_em, notificado_em, gmail_message_id, calendar_event_id, erro_notificacao, metadata, data_evento')
+        .select(SELECT_COLUMNS)
         .eq('status', 'pendente_notificacao')
         .order('criado_em', { ascending: false })
         .limit(200);
       if (error) throw error;
-      return data as AlertaRow[];
+      return data as unknown as AlertaRow[];
     },
     refetchInterval: 30_000,
   });
@@ -97,72 +109,34 @@ export default function AdminNotificacoes() {
       const since = new Date(Date.now() - 30 * 24 * 3600_000).toISOString();
       const { data, error } = await supabase
         .from('fornecedor_alerta')
-        .select('id, tipo_alerta, tipo, titulo, mensagem, status, tentativas, criado_em, notificado_em, gmail_message_id, calendar_event_id, erro_notificacao, metadata, data_evento')
+        .select(SELECT_COLUMNS)
         .in('status', ['notificado', 'falha_notificacao'])
         .gte('criado_em', since)
         .order('notificado_em', { ascending: false, nullsFirst: false })
         .limit(500);
       if (error) throw error;
-      return data as AlertaRow[];
+      return data as unknown as AlertaRow[];
     },
     refetchInterval: 60_000,
   });
 
-  // Estatísticas
-  const { data: stats } = useQuery({
-    queryKey: ['notificacoes', 'stats'],
+  // Estatísticas (30 dias completos para gráfico)
+  const { data: stats30, isLoading: loadingStats } = useQuery({
+    queryKey: ['notificacoes', 'stats30'],
     queryFn: async () => {
+      const since = new Date(Date.now() - 30 * 24 * 3600_000).toISOString();
       const { data, error } = await supabase
-        .from('v_notificacoes_status' as any)
-        .select('*')
-        .gte('dia', new Date(Date.now() - 30 * 24 * 3600_000).toISOString().slice(0, 10))
-        .order('dia', { ascending: true });
+        .from('fornecedor_alerta')
+        .select('id, status, criado_em, tentativas')
+        .gte('criado_em', since)
+        .limit(5000);
       if (error) throw error;
-      return (data as unknown) as Array<{ dia: string; status: string; total: number; esgotados: number; com_calendar_event: number }>;
+      return data as Array<{ id: number; status: string | null; criado_em: string; tentativas: number | null }>;
     },
     refetchInterval: 60_000,
   });
 
-  const tiposDisponiveis = useMemo(() => {
-    const set = new Set<string>();
-    pendentes?.forEach((r) => r.tipo_alerta && set.add(r.tipo_alerta));
-    return Array.from(set).sort();
-  }, [pendentes]);
-
-  const pendentesFiltrados = useMemo(() => {
-    if (!pendentes) return [];
-    if (filtroTipo === '__all__') return pendentes;
-    return pendentes.filter((r) => r.tipo_alerta === filtroTipo);
-  }, [pendentes, filtroTipo]);
-
-  // Resumo (cards)
-  const resumo = useMemo(() => {
-    if (!stats) return { total7d: 0, taxa: 0, esgotados: 0 };
-    const since7 = new Date(Date.now() - 7 * 24 * 3600_000).toISOString().slice(0, 10);
-    const last7 = stats.filter((s) => s.dia >= since7);
-    const total7d = last7.reduce((acc, s) => acc + Number(s.total), 0);
-    const sucesso = last7.filter((s) => s.status === 'notificado').reduce((a, s) => a + Number(s.total), 0);
-    const taxa = total7d > 0 ? Math.round((sucesso / total7d) * 100) : 0;
-    const esgotados = stats.reduce((a, s) => a + Number(s.esgotados ?? 0), 0);
-    return { total7d, taxa, esgotados };
-  }, [stats]);
-
-  // Dados gráfico
-  const chartData = useMemo(() => {
-    if (!stats) return [];
-    const map = new Map<string, { dia: string; notificado: number; pendente: number; falha: number }>();
-    stats.forEach((s) => {
-      const cur = map.get(s.dia) ?? { dia: s.dia, notificado: 0, pendente: 0, falha: 0 };
-      if (s.status === 'notificado') cur.notificado = Number(s.total);
-      else if (s.status === 'pendente_notificacao') cur.pendente = Number(s.total);
-      else if (s.status === 'falha_notificacao') cur.falha = Number(s.total);
-      map.set(s.dia, cur);
-    });
-    return Array.from(map.values()).sort((a, b) => a.dia.localeCompare(b.dia));
-  }, [stats]);
-
-  // Disparo manual
-  const dispararMutation = useMutation({
+  const dispatchMut = useMutation({
     mutationFn: async () => {
       const { data, error } = await supabase.functions.invoke('dispatch-notifications', {
         body: {},
@@ -171,104 +145,176 @@ export default function AdminNotificacoes() {
       return data as { processados: number; sucesso?: number; falhas?: number };
     },
     onSuccess: (data) => {
-      toast.success(
-        `${data.processados} processados — ${data.sucesso ?? 0} sucesso, ${data.falhas ?? 0} falhas`,
-      );
+      const proc = data?.processados ?? 0;
+      const ok = data?.sucesso ?? 0;
+      const fail = data?.falhas ?? 0;
+      toast.success(`${proc} processados, ${ok} sucesso, ${fail} falhas`);
       qc.invalidateQueries({ queryKey: ['notificacoes'] });
     },
-    onError: (err) => {
-      toast.error(`Falha no disparo: ${err instanceof Error ? err.message : String(err)}`);
+    onError: (err: unknown) => {
+      const msg = err instanceof Error ? err.message : String(err);
+      toast.error(`Falha ao disparar: ${msg}`);
     },
   });
 
+  // Opções dos filtros (derivadas de pendentes)
+  const empresasOpts = useMemo(
+    () => Array.from(new Set((pendentes ?? []).map((a) => a.empresa).filter(Boolean))),
+    [pendentes],
+  );
+  const tiposOpts = useMemo(
+    () => Array.from(new Set((pendentes ?? []).map((a) => a.tipo).filter(Boolean))),
+    [pendentes],
+  );
+
+  const pendentesFiltrados = useMemo(() => {
+    return (pendentes ?? []).filter((a) => {
+      if (filtroSev !== '__all__' && a.severidade !== filtroSev) return false;
+      if (filtroEmpresa !== '__all__' && a.empresa !== filtroEmpresa) return false;
+      if (filtroTipo !== '__all__' && a.tipo !== filtroTipo) return false;
+      return true;
+    });
+  }, [pendentes, filtroSev, filtroEmpresa, filtroTipo]);
+
+  // Stats
+  const total7d = useMemo(() => {
+    const cutoff = Date.now() - 7 * 24 * 3600_000;
+    return (stats30 ?? []).filter((a) => new Date(a.criado_em).getTime() >= cutoff).length;
+  }, [stats30]);
+
+  const taxaSucesso = useMemo(() => {
+    const finais = (stats30 ?? []).filter((a) => a.status === 'notificado' || a.status === 'falha_notificacao');
+    if (finais.length === 0) return 0;
+    const ok = finais.filter((a) => a.status === 'notificado').length;
+    return Math.round((ok / finais.length) * 100);
+  }, [stats30]);
+
+  const esgotados = useMemo(() => {
+    return (stats30 ?? []).filter((a) => a.status === 'falha_notificacao' && (a.tentativas ?? 0) >= 3).length;
+  }, [stats30]);
+
+  // Stack chart data por dia
+  const chartData = useMemo(() => {
+    const buckets: Record<string, { dia: string; notificado: number; pendente: number; falha: number }> = {};
+    for (let i = 29; i >= 0; i--) {
+      const d = new Date(Date.now() - i * 24 * 3600_000);
+      const key = d.toISOString().slice(0, 10);
+      buckets[key] = { dia: key.slice(5), notificado: 0, pendente: 0, falha: 0 };
+    }
+    for (const a of stats30 ?? []) {
+      const key = a.criado_em.slice(0, 10);
+      const b = buckets[key];
+      if (!b) continue;
+      if (a.status === 'notificado') b.notificado++;
+      else if (a.status === 'falha_notificacao') b.falha++;
+      else b.pendente++;
+    }
+    return Object.values(buckets);
+  }, [stats30]);
+
   return (
-    <div className="container mx-auto p-6 space-y-6">
-      {/* Header */}
-      <div className="flex items-center justify-between">
+    <div className="container mx-auto p-4 lg:p-6 space-y-6">
+      <div className="flex items-center justify-between gap-4">
         <div>
           <h1 className="text-2xl font-bold">Notificações</h1>
-          <p className="text-sm text-muted-foreground">Email + Google Calendar para alertas de fornecedores</p>
+          <p className="text-sm text-muted-foreground">
+            Disparo de alertas via Gmail + Google Calendar (sobre fornecedor_alerta).
+          </p>
         </div>
         <AlertDialog>
           <AlertDialogTrigger asChild>
-            <Button disabled={dispararMutation.isPending} size="lg">
-              <Zap className="mr-2 h-4 w-4" />
-              {dispararMutation.isPending ? 'Disparando…' : 'Disparar agora'}
+            <Button disabled={dispatchMut.isPending}>
+              <Zap className="w-4 h-4 mr-2" />
+              {dispatchMut.isPending ? 'Disparando...' : 'Disparar agora'}
             </Button>
           </AlertDialogTrigger>
           <AlertDialogContent>
             <AlertDialogHeader>
-              <AlertDialogTitle>Disparar notificações pendentes</AlertDialogTitle>
+              <AlertDialogTitle>Disparar notificações</AlertDialogTitle>
               <AlertDialogDescription>
                 Isso vai processar todos os alertas pendentes imediatamente. Confirma?
               </AlertDialogDescription>
             </AlertDialogHeader>
             <AlertDialogFooter>
               <AlertDialogCancel>Cancelar</AlertDialogCancel>
-              <AlertDialogAction onClick={() => dispararMutation.mutate()}>Confirmar</AlertDialogAction>
+              <AlertDialogAction onClick={() => dispatchMut.mutate()}>Disparar</AlertDialogAction>
             </AlertDialogFooter>
           </AlertDialogContent>
         </AlertDialog>
       </div>
 
-      {/* Cards de resumo */}
-      <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-        <Card>
-          <CardHeader className="pb-2"><CardTitle className="text-sm font-medium text-muted-foreground">Últimos 7 dias</CardTitle></CardHeader>
-          <CardContent><div className="text-3xl font-bold">{resumo.total7d}</div></CardContent>
-        </Card>
-        <Card>
-          <CardHeader className="pb-2"><CardTitle className="text-sm font-medium text-muted-foreground">Taxa de sucesso</CardTitle></CardHeader>
-          <CardContent><div className="text-3xl font-bold">{resumo.taxa}%</div></CardContent>
-        </Card>
-        <Card>
-          <CardHeader className="pb-2"><CardTitle className="text-sm font-medium text-muted-foreground">Esgotados (3 tentativas)</CardTitle></CardHeader>
-          <CardContent><div className="text-3xl font-bold text-destructive">{resumo.esgotados}</div></CardContent>
-        </Card>
-      </div>
-
       <Tabs defaultValue="pendentes">
         <TabsList>
-          <TabsTrigger value="pendentes">Pendentes ({pendentes?.length ?? 0})</TabsTrigger>
-          <TabsTrigger value="historico">Histórico (30d)</TabsTrigger>
-          <TabsTrigger value="estatisticas">Estatísticas</TabsTrigger>
+          <TabsTrigger value="pendentes">
+            Pendentes {pendentes ? `(${pendentes.length})` : ''}
+          </TabsTrigger>
+          <TabsTrigger value="historico">Histórico</TabsTrigger>
+          <TabsTrigger value="stats">Estatísticas</TabsTrigger>
         </TabsList>
 
-        {/* Pendentes */}
+        {/* PENDENTES */}
         <TabsContent value="pendentes" className="space-y-4">
-          <div className="flex items-center gap-2">
-            <span className="text-sm text-muted-foreground">Tipo:</span>
-            <Select value={filtroTipo} onValueChange={setFiltroTipo}>
-              <SelectTrigger className="w-[260px]"><SelectValue /></SelectTrigger>
-              <SelectContent>
-                <SelectItem value="__all__">Todos</SelectItem>
-                {tiposDisponiveis.map((t) => <SelectItem key={t} value={t}>{t}</SelectItem>)}
-              </SelectContent>
-            </Select>
-          </div>
           <Card>
-            <CardContent className="p-0">
-              {loadingPend ? <Skeleton className="h-64 m-4" /> : (
+            <CardHeader className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
+              <CardTitle className="text-base">Alertas pendentes</CardTitle>
+              <div className="flex flex-wrap gap-2">
+                <Select value={filtroSev} onValueChange={setFiltroSev}>
+                  <SelectTrigger className="w-[150px]"><SelectValue placeholder="Severidade" /></SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="__all__">Todas severidades</SelectItem>
+                    <SelectItem value="info">info</SelectItem>
+                    <SelectItem value="atencao">atenção</SelectItem>
+                    <SelectItem value="urgente">urgente</SelectItem>
+                  </SelectContent>
+                </Select>
+                <Select value={filtroEmpresa} onValueChange={setFiltroEmpresa}>
+                  <SelectTrigger className="w-[150px]"><SelectValue placeholder="Empresa" /></SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="__all__">Todas empresas</SelectItem>
+                    {empresasOpts.map((e) => <SelectItem key={e} value={e}>{e}</SelectItem>)}
+                  </SelectContent>
+                </Select>
+                <Select value={filtroTipo} onValueChange={setFiltroTipo}>
+                  <SelectTrigger className="w-[180px]"><SelectValue placeholder="Tipo" /></SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="__all__">Todos tipos</SelectItem>
+                    {tiposOpts.map((t) => <SelectItem key={t} value={t}>{t}</SelectItem>)}
+                  </SelectContent>
+                </Select>
+              </div>
+            </CardHeader>
+            <CardContent>
+              {loadingPend ? (
+                <Skeleton className="h-40 w-full" />
+              ) : pendentesFiltrados.length === 0 ? (
+                <p className="text-sm text-muted-foreground py-6 text-center">Nenhum alerta pendente.</p>
+              ) : (
                 <Table>
                   <TableHeader>
                     <TableRow>
+                      <TableHead>Severidade</TableHead>
+                      <TableHead>Empresa</TableHead>
                       <TableHead>Tipo</TableHead>
                       <TableHead>Título</TableHead>
+                      <TableHead>Fornecedor</TableHead>
                       <TableHead>Criado</TableHead>
                       <TableHead className="text-right">Tentativas</TableHead>
-                      <TableHead></TableHead>
                     </TableRow>
                   </TableHeader>
                   <TableBody>
-                    {pendentesFiltrados.length === 0 ? (
-                      <TableRow><TableCell colSpan={5} className="text-center py-8 text-muted-foreground">Nenhum alerta pendente</TableCell></TableRow>
-                    ) : pendentesFiltrados.map((a) => (
-                      <TableRow key={a.id}>
-                        <TableCell><Badge variant={TIPO_VARIANT[a.tipo_alerta ?? a.tipo] ?? 'secondary'}>{a.tipo_alerta ?? a.tipo}</Badge></TableCell>
-                        <TableCell className="max-w-md truncate">{a.titulo}</TableCell>
-                        <TableCell className="text-sm text-muted-foreground">{relTime(a.criado_em)}</TableCell>
+                    {pendentesFiltrados.map((a) => (
+                      <TableRow
+                        key={a.id}
+                        className="cursor-pointer"
+                        onClick={() => setDrawerAlerta(a)}
+                      >
+                        <TableCell><SeveridadeBadge s={a.severidade} /></TableCell>
+                        <TableCell><Badge variant="outline">{a.empresa}</Badge></TableCell>
+                        <TableCell className="text-xs">{a.tipo}</TableCell>
+                        <TableCell className="max-w-[320px] truncate">{a.titulo}</TableCell>
+                        <TableCell className="text-xs">{a.fornecedor_nome ?? '—'}</TableCell>
+                        <TableCell className="text-xs text-muted-foreground">{relTime(a.criado_em)}</TableCell>
                         <TableCell className="text-right">{a.tentativas ?? 0}/3</TableCell>
-                        <TableCell><Button variant="ghost" size="sm" onClick={() => setDrawerAlerta(a)}>Ver</Button></TableCell>
                       </TableRow>
                     ))}
                   </TableBody>
@@ -278,35 +324,44 @@ export default function AdminNotificacoes() {
           </Card>
         </TabsContent>
 
-        {/* Histórico */}
-        <TabsContent value="historico">
+        {/* HISTÓRICO */}
+        <TabsContent value="historico" className="space-y-4">
           <Card>
-            <CardContent className="p-0">
-              {loadingHist ? <Skeleton className="h-64 m-4" /> : (
+            <CardHeader>
+              <CardTitle className="text-base">Histórico (últimos 30 dias)</CardTitle>
+            </CardHeader>
+            <CardContent>
+              {loadingHist ? (
+                <Skeleton className="h-40 w-full" />
+              ) : (historico ?? []).length === 0 ? (
+                <p className="text-sm text-muted-foreground py-6 text-center">Sem histórico no período.</p>
+              ) : (
                 <Table>
                   <TableHeader>
                     <TableRow>
                       <TableHead>Status</TableHead>
+                      <TableHead>Severidade</TableHead>
+                      <TableHead>Empresa</TableHead>
                       <TableHead>Tipo</TableHead>
                       <TableHead>Título</TableHead>
                       <TableHead>Notificado em</TableHead>
-                      <TableHead></TableHead>
+                      <TableHead className="text-right">Ações</TableHead>
                     </TableRow>
                   </TableHeader>
                   <TableBody>
-                    {(!historico || historico.length === 0) ? (
-                      <TableRow><TableCell colSpan={5} className="text-center py-8 text-muted-foreground">Sem histórico nos últimos 30 dias</TableCell></TableRow>
-                    ) : historico.map((a) => (
+                    {(historico ?? []).map((a) => (
                       <TableRow key={a.id}>
-                        <TableCell>
-                          <Badge variant={a.status === 'notificado' ? 'success' : 'destructive'}>
-                            {a.status === 'notificado' ? 'Notificado' : 'Falha'}
-                          </Badge>
+                        <TableCell><StatusBadge s={a.status} /></TableCell>
+                        <TableCell><SeveridadeBadge s={a.severidade} /></TableCell>
+                        <TableCell><Badge variant="outline">{a.empresa}</Badge></TableCell>
+                        <TableCell className="text-xs">{a.tipo}</TableCell>
+                        <TableCell className="max-w-[320px] truncate">{a.titulo}</TableCell>
+                        <TableCell className="text-xs">{fmtDate(a.notificado_em)}</TableCell>
+                        <TableCell className="text-right">
+                          <Button size="sm" variant="ghost" onClick={() => setDrawerAlerta(a)}>
+                            Ver detalhes
+                          </Button>
                         </TableCell>
-                        <TableCell><Badge variant={TIPO_VARIANT[a.tipo_alerta ?? a.tipo] ?? 'secondary'}>{a.tipo_alerta ?? a.tipo}</Badge></TableCell>
-                        <TableCell className="max-w-md truncate">{a.titulo}</TableCell>
-                        <TableCell className="text-sm">{fmtDate(a.notificado_em)}</TableCell>
-                        <TableCell><Button variant="ghost" size="sm" onClick={() => setDrawerAlerta(a)}>Ver detalhes</Button></TableCell>
                       </TableRow>
                     ))}
                   </TableBody>
@@ -316,87 +371,133 @@ export default function AdminNotificacoes() {
           </Card>
         </TabsContent>
 
-        {/* Estatísticas */}
-        <TabsContent value="estatisticas">
+        {/* STATS */}
+        <TabsContent value="stats" className="space-y-4">
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+            <Card>
+              <CardHeader><CardTitle className="text-sm">Total últimos 7 dias</CardTitle></CardHeader>
+              <CardContent>
+                {loadingStats ? <Skeleton className="h-8 w-20" /> : <div className="text-3xl font-bold">{total7d}</div>}
+              </CardContent>
+            </Card>
+            <Card>
+              <CardHeader><CardTitle className="text-sm">Taxa de sucesso</CardTitle></CardHeader>
+              <CardContent>
+                {loadingStats ? <Skeleton className="h-8 w-20" /> : <div className="text-3xl font-bold">{taxaSucesso}%</div>}
+              </CardContent>
+            </Card>
+            <Card>
+              <CardHeader><CardTitle className="text-sm">Alertas esgotados (3 tentativas)</CardTitle></CardHeader>
+              <CardContent>
+                {loadingStats ? <Skeleton className="h-8 w-20" /> : <div className="text-3xl font-bold">{esgotados}</div>}
+              </CardContent>
+            </Card>
+          </div>
+
           <Card>
-            <CardHeader><CardTitle>Distribuição por dia (30 dias)</CardTitle></CardHeader>
-            <CardContent>
-              <div className="h-[400px]">
-                <ResponsiveContainer width="100%" height="100%">
-                  <BarChart data={chartData}>
-                    <CartesianGrid strokeDasharray="3 3" />
-                    <XAxis dataKey="dia" tick={{ fontSize: 11 }} />
-                    <YAxis />
-                    <Tooltip />
-                    <Legend />
-                    <Bar dataKey="notificado" stackId="a" fill="hsl(var(--primary))" name="Notificado" />
-                    <Bar dataKey="pendente" stackId="a" fill="hsl(45 90% 55%)" name="Pendente" />
-                    <Bar dataKey="falha" stackId="a" fill="hsl(var(--destructive))" name="Falha" />
-                  </BarChart>
-                </ResponsiveContainer>
-              </div>
+            <CardHeader><CardTitle className="text-base">Distribuição diária (30 dias)</CardTitle></CardHeader>
+            <CardContent style={{ height: 320 }}>
+              <ResponsiveContainer width="100%" height="100%">
+                <BarChart data={chartData}>
+                  <CartesianGrid strokeDasharray="3 3" />
+                  <XAxis dataKey="dia" />
+                  <YAxis />
+                  <Tooltip />
+                  <Legend />
+                  <Bar dataKey="notificado" stackId="a" fill="hsl(142 71% 45%)" name="notificado" />
+                  <Bar dataKey="pendente" stackId="a" fill="hsl(45 93% 47%)" name="pendente" />
+                  <Bar dataKey="falha" stackId="a" fill="hsl(0 84% 60%)" name="falha" />
+                </BarChart>
+              </ResponsiveContainer>
             </CardContent>
           </Card>
         </TabsContent>
       </Tabs>
 
-      {/* Drawer de detalhes */}
+      {/* DRAWER */}
       <Sheet open={!!drawerAlerta} onOpenChange={(o) => !o && setDrawerAlerta(null)}>
-        <SheetContent className="w-full sm:max-w-xl overflow-y-auto">
+        <SheetContent className="overflow-y-auto sm:max-w-lg">
           {drawerAlerta && (
             <>
               <SheetHeader>
-                <SheetTitle>{drawerAlerta.titulo}</SheetTitle>
-                <SheetDescription>
-                  <Badge variant={TIPO_VARIANT[drawerAlerta.tipo_alerta ?? drawerAlerta.tipo] ?? 'secondary'}>
-                    {drawerAlerta.tipo_alerta ?? drawerAlerta.tipo}
-                  </Badge>
-                  <span className="ml-2 text-xs">Alerta #{drawerAlerta.id}</span>
-                </SheetDescription>
+                <SheetTitle className="flex items-center gap-2">
+                  <SeveridadeBadge s={drawerAlerta.severidade} />
+                  <span className="truncate">{drawerAlerta.titulo}</span>
+                </SheetTitle>
               </SheetHeader>
-              <div className="space-y-4 mt-6 text-sm">
-                <div>
-                  <h4 className="font-semibold mb-1">Mensagem</h4>
-                  <p className="whitespace-pre-wrap text-muted-foreground">{drawerAlerta.mensagem || '—'}</p>
+
+              <div className="space-y-4 mt-4 text-sm">
+                <div className="flex flex-wrap gap-2">
+                  <Badge variant="outline">{drawerAlerta.empresa}</Badge>
+                  <Badge variant="secondary">{drawerAlerta.tipo}</Badge>
+                  <StatusBadge s={drawerAlerta.status} />
                 </div>
+
+                {drawerAlerta.fornecedor_nome && (
+                  <div><span className="font-medium">Fornecedor: </span>{drawerAlerta.fornecedor_nome}</div>
+                )}
+
+                <div>
+                  <div className="font-medium mb-1">Mensagem</div>
+                  <div className="whitespace-pre-wrap text-muted-foreground">
+                    {drawerAlerta.mensagem || '(sem mensagem)'}
+                  </div>
+                </div>
+
                 {drawerAlerta.data_evento && (
                   <div>
-                    <h4 className="font-semibold mb-1">Evento agendado</h4>
-                    <p className="text-muted-foreground">{fmtDate(drawerAlerta.data_evento)}</p>
+                    <span className="font-medium">Evento agendado: </span>
+                    {fmtDate(drawerAlerta.data_evento)}
                   </div>
                 )}
+
                 {drawerAlerta.metadata && Object.keys(drawerAlerta.metadata).length > 0 && (
                   <div>
-                    <h4 className="font-semibold mb-1">Metadata</h4>
-                    <pre className="bg-muted p-3 rounded text-xs overflow-auto">{JSON.stringify(drawerAlerta.metadata, null, 2)}</pre>
+                    <div className="font-medium mb-1">Metadata</div>
+                    <pre className="bg-muted rounded p-2 text-xs overflow-x-auto">
+                      {JSON.stringify(drawerAlerta.metadata, null, 2)}
+                    </pre>
                   </div>
                 )}
-                <div className="space-y-2 pt-2 border-t">
+
+                <div className="grid grid-cols-2 gap-3 text-xs text-muted-foreground">
+                  <div><div className="font-medium text-foreground">Criado</div>{fmtDate(drawerAlerta.criado_em)}</div>
+                  <div><div className="font-medium text-foreground">Notificado</div>{fmtDate(drawerAlerta.notificado_em)}</div>
+                  <div><div className="font-medium text-foreground">Tentativas</div>{drawerAlerta.tentativas ?? 0}/3</div>
+                  <div><div className="font-medium text-foreground">Alerta ID</div>{drawerAlerta.id}</div>
+                </div>
+
+                <div className="flex flex-wrap gap-2 pt-2">
                   {drawerAlerta.gmail_message_id && (
-                    <a
-                      href={`https://mail.google.com/mail/u/0/#all/${drawerAlerta.gmail_message_id}`}
-                      target="_blank" rel="noreferrer"
-                      className="flex items-center gap-2 text-primary hover:underline"
-                    >
-                      <Mail className="h-4 w-4" /> Abrir email no Gmail <ExternalLink className="h-3 w-3" />
-                    </a>
+                    <Button asChild variant="outline" size="sm">
+                      <a
+                        href={`https://mail.google.com/mail/u/0/#all/${drawerAlerta.gmail_message_id}`}
+                        target="_blank" rel="noreferrer"
+                      >
+                        <Mail className="w-3 h-3 mr-1" /> Abrir no Gmail <ExternalLink className="w-3 h-3 ml-1" />
+                      </a>
+                    </Button>
                   )}
-                  {drawerAlerta.calendar_event_id && (
-                    <a
-                      href={`https://calendar.google.com/calendar/u/0/r/eventedit/${drawerAlerta.calendar_event_id}`}
-                      target="_blank" rel="noreferrer"
-                      className="flex items-center gap-2 text-primary hover:underline"
-                    >
-                      <CalendarIcon className="h-4 w-4" /> Abrir evento no Calendar <ExternalLink className="h-3 w-3" />
-                    </a>
+                  {drawerAlerta.calendar_evento_id && (
+                    <Button asChild variant="outline" size="sm">
+                      <a
+                        href={`https://calendar.google.com/calendar/u/0/r/eventedit/${drawerAlerta.calendar_evento_id}`}
+                        target="_blank" rel="noreferrer"
+                      >
+                        <CalendarIcon className="w-3 h-3 mr-1" /> Abrir no Calendar <ExternalLink className="w-3 h-3 ml-1" />
+                      </a>
+                    </Button>
                   )}
                 </div>
+
                 {drawerAlerta.erro_notificacao && (
-                  <div className="bg-destructive/10 border border-destructive/30 rounded p-3">
-                    <h4 className="font-semibold mb-1 flex items-center gap-2 text-destructive">
-                      <AlertCircle className="h-4 w-4" /> Erro
-                    </h4>
-                    <pre className="text-xs whitespace-pre-wrap text-destructive">{drawerAlerta.erro_notificacao}</pre>
+                  <div className="border border-destructive/30 bg-destructive/5 rounded p-3">
+                    <div className="flex items-center gap-2 font-medium text-destructive mb-1">
+                      <AlertCircle className="w-4 h-4" /> Erro de notificação
+                    </div>
+                    <div className="text-xs text-destructive/80 whitespace-pre-wrap">
+                      {drawerAlerta.erro_notificacao}
+                    </div>
                   </div>
                 )}
               </div>
