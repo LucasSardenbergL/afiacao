@@ -283,6 +283,21 @@ function AppSidebar({ collapsed, onToggle }: { collapsed: boolean; onToggle: () 
     staleTime: 30000,
   });
 
+  // Contador de alertas de notificação pendentes
+  const { data: notificacoesPendentes } = useQuery({
+    queryKey: ['notificacoes-pendentes-count'],
+    queryFn: async () => {
+      const { count } = await supabase
+        .from('fornecedor_alerta')
+        .select('*', { count: 'exact', head: true })
+        .eq('status', 'pendente_notificacao');
+      return count ?? 0;
+    },
+    enabled: isStaff,
+    refetchInterval: 60000,
+    staleTime: 30000,
+  });
+
   const sectionsWithBadges = React.useMemo(
     () => [...unifiedNavSections, docNavSection].map((s) => ({
       ...s,
