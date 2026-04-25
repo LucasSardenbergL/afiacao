@@ -1,6 +1,6 @@
 import { serve } from "https://deno.land/std@0.190.0/http/server.ts";
 import { createClient } from "npm:@supabase/supabase-js@2";
-import { Resend } from "npm:resend@2";
+// Resend usado via fetch direto à REST API (https://api.resend.com/emails) para evitar dep npm
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
@@ -337,17 +337,27 @@ serve(async (req) => {
       reports.push(report);
 
       if (sendEmail && !previewOnly && resendApiKey && profile.email) {
-        const resend = new Resend(resendApiKey);
         const html = generateEmailHtml(report);
 
         try {
-          await resend.emails.send({
-            from: 'Colacor <noreply@colacor.com.br>',
-            to: [profile.email],
-            subject: `🔧 Relatório Mensal de Ferramentas - ${report.overdue_count > 0 ? `${report.overdue_count} ferramenta(s) atrasada(s)` : 'Tudo em dia!'}`,
-            html,
+          const resp = await fetch("https://api.resend.com/emails", {
+            method: "POST",
+            headers: {
+              Authorization: `Bearer ${resendApiKey}`,
+              "Content-Type": "application/json",
+            },
+            body: JSON.stringify({
+              from: 'Colacor <noreply@colacor.com.br>',
+              to: [profile.email],
+              subject: `🔧 Relatório Mensal de Ferramentas - ${report.overdue_count > 0 ? `${report.overdue_count} ferramenta(s) atrasada(s)` : 'Tudo em dia!'}`,
+              html,
+            }),
           });
-          console.log(`Email sent to ${profile.email}`);
+          if (!resp.ok) {
+            console.error(`Failed to send email to ${profile.email}: HTTP ${resp.status}`);
+          } else {
+            console.log(`Email sent to ${profile.email}`);
+          }
         } catch (emailErr) {
           console.error(`Failed to send email to ${profile.email}:`, emailErr);
         }
