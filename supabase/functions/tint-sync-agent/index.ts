@@ -214,7 +214,7 @@ Deno.serve(async (req) => {
             } else {
               inserts++;
             }
-          } catch (e) {
+          } catch (e: any) {
             errors++;
             errorDetails.push({ entity_type: entityType, entity_id: null, message: e.message });
             await logError(runId, entityType, null, e.message, null, item);
@@ -294,7 +294,7 @@ Deno.serve(async (req) => {
             });
           }
           inserts++;
-        } catch (e) {
+        } catch (e: any) {
           errors++;
           errorDetails.push({ entity_type: "formula", entity_id: f.cor_id, message: e.message });
           await logError(runId, "formula", f.cor_id, e.message, null, f);
@@ -374,7 +374,7 @@ Deno.serve(async (req) => {
             });
           }
           inserts++;
-        } catch (e) {
+        } catch (e: any) {
           errors++;
           errorDetails.push({ entity_type: "preparacao", entity_id: p.preparacao_id, message: e.message });
           await logError(runId, "preparacao", p.preparacao_id, e.message, null, p);
@@ -552,7 +552,7 @@ Deno.serve(async (req) => {
     }
 
     return json({ ok: false, error: `Unknown endpoint: ${path}` }, 404);
-  } catch (e) {
+  } catch (e: any) {
     console.error("tint-sync-agent error:", e);
     return json({ ok: false, error: e.message || "Internal error" }, 500);
   }
