@@ -55,6 +55,7 @@ export default defineConfig(({ mode }) => ({
         skipWaiting: true,
         clientsClaim: true,
         cleanupOutdatedCaches: true,
+        navigateFallbackDenylist: [/^\/~oauth/, /^\/__/],
         runtimeCaching: [
           {
             // Cache only catalog/config endpoints
