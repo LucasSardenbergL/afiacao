@@ -15,27 +15,22 @@ const isInIframe = (() => {
 })();
 
 if (isInLovablePreview || isInIframe) {
-  const clearPreviewCaches = async () => {
-    const registrations = "serviceWorker" in navigator
-      ? await navigator.serviceWorker.getRegistrations()
-      : [];
-
-    await Promise.all(registrations.map((registration) => registration.unregister()));
-
-    if ("caches" in window) {
-      const cacheNames = await caches.keys();
-      await Promise.all(cacheNames.map((cacheName) => caches.delete(cacheName)));
+  // Best-effort: unregister SWs and clear caches in background.
+  // NEVER reload here — that can race with React mount and cause an infinite spinner.
+  (async () => {
+    try {
+      if ("serviceWorker" in navigator) {
+        const registrations = await navigator.serviceWorker.getRegistrations();
+        await Promise.all(registrations.map((r) => r.unregister()));
+      }
+      if ("caches" in window) {
+        const cacheNames = await caches.keys();
+        await Promise.all(cacheNames.map((n) => caches.delete(n)));
+      }
+    } catch {
+      // ignore
     }
-
-    if (navigator.serviceWorker?.controller && !sessionStorage.getItem("preview-sw-cleaned")) {
-      sessionStorage.setItem("preview-sw-cleaned", "true");
-      window.location.reload();
-    }
-  };
-
-  clearPreviewCaches().catch(() => {
-    // Preview cache cleanup is best-effort only.
-  });
+  })();
 }
 
 createRoot(document.getElementById("root")!).render(<App />);
