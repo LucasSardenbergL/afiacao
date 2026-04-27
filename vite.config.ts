@@ -4,6 +4,8 @@ import path from "path";
 import { componentTagger } from "lovable-tagger";
 import { VitePWA } from "vite-plugin-pwa";
 
+const isLovablePreview = process.env.LOVABLE_PREVIEW === "true";
+
 // https://vitejs.dev/config/
 export default defineConfig(({ mode }) => ({
   server: {
@@ -16,7 +18,7 @@ export default defineConfig(({ mode }) => ({
   plugins: [
     react(),
     mode === "development" && componentTagger(),
-    VitePWA({
+    mode === "production" && !isLovablePreview && VitePWA({
       registerType: "autoUpdate",
       injectRegister: "script-defer",
       includeAssets: ["favicon.ico", "robots.txt"],
