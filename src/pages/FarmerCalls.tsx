@@ -285,14 +285,28 @@ const FarmerCalls = () => {
     return () => clearTimeout(debounce);
   }, [customerSearch, searchCustomers]);
 
-  const startCallTimer = () => {
+  const startCallTimer = async () => {
+    // If we have a customer with phone, trigger real Nvoip call
+    const phone = selectedCustomer?.phone;
+    if (phone) {
+      callStartRef.current = new Date();
+      setIsCallActive(true);
+      setCallSeconds(0);
+      await nvoipMakeCall(phone);
+      return;
+    }
+    // Fallback: manual stopwatch only
     setIsCallActive(true);
     callStartRef.current = new Date();
     callTimerRef.current = window.setInterval(() => setCallSeconds(s => s + 1), 1000);
   };
-  const stopCallTimer = () => {
+  const stopCallTimer = async () => {
     setIsCallActive(false);
     if (callTimerRef.current) { clearInterval(callTimerRef.current); callTimerRef.current = null; }
+    // Hang up real Nvoip call if active
+    if (nvoipIsActive) {
+      await nvoipEndCall();
+    }
   };
   const startFollowUpTimer = () => {
     setIsFollowUpActive(true);
