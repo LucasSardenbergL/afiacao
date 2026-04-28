@@ -668,10 +668,28 @@ const FarmerCalls = () => {
                   <div className="text-center">
                     <p className="text-xs text-muted-foreground mb-1">Ligação</p>
                     <p className="text-2xl font-mono font-bold">{formatTimer(callSeconds)}</p>
+                    {selectedCustomer?.phone ? (
+                      <Badge variant="outline" className="text-[10px] mt-1">
+                        {nvoipIsConnecting && <><Loader2 className="w-3 h-3 mr-1 animate-spin" /> Conectando...</>}
+                        {nvoipIsRinging && <><PhoneCall className="w-3 h-3 mr-1 animate-pulse" /> Tocando ramal/destino</>}
+                        {nvoipIsEstablished && <><PhoneIncoming className="w-3 h-3 mr-1 text-emerald-600" /> Em chamada</>}
+                        {!nvoipIsActive && !nvoipIsEstablished && (
+                          <>📞 Disca via Nvoip → {selectedCustomer.phone}</>
+                        )}
+                      </Badge>
+                    ) : (
+                      <Badge variant="outline" className="text-[10px] mt-1 text-amber-700">
+                        Sem telefone — cronômetro manual
+                      </Badge>
+                    )}
                     <Button size="sm" variant={isCallActive ? 'destructive' : 'default'} className="mt-2 w-full h-8"
-                      onClick={isCallActive ? stopCallTimer : startCallTimer}>
+                      onClick={isCallActive ? stopCallTimer : startCallTimer}
+                      disabled={nvoipIsConnecting}>
                       {isCallActive ? <><PhoneOff className="w-3 h-3 mr-1" /> Parar</> : <><Play className="w-3 h-3 mr-1" /> Iniciar</>}
                     </Button>
+                    {nvoipError && (
+                      <p className="text-[10px] text-destructive mt-1">{nvoipError}</p>
+                    )}
                   </div>
                   <div className="text-center">
                     <p className="text-xs text-muted-foreground mb-1">Follow-up</p>
