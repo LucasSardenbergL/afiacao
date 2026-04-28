@@ -303,10 +303,65 @@ const FarmerCalls = () => {
     if (query.length < 2) { setCustomers([]); return; }
     setSearchLoading(true);
     try {
-      const { data } = await supabase.from('profiles').select('user_id, name, email, phone').ilike('name', `%${query}%`).limit(10);
-      setCustomers((data || []) as Customer[]);
-    } catch (error) { console.error(error); }
-    finally { setSearchLoading(false); }
+      // 1) Same source as Sales: Omie ERP via edge function
+      const { data: omieData } = await supabase.functions.invoke('omie-vendas-sync', {
+        body: { action: 'listar_clientes', search: query },
+      });
+
+      const omieClientes = (omieData?.clientes || []) as Array<{
+        codigo_cliente: number;
+        razao_social?: string;
+        nome_fantasia?: string;
+        email?: string | null;
+        telefone?: string | null;
+        cnpj_cpf?: string | null;
+      }>;
+
+      // Resolve local user_id mappings in batch
+      let mappingByCode: Record<number, string> = {};
+      if (omieClientes.length > 0) {
+        const codigos = omieClientes.map(c => c.codigo_cliente);
+        const { data: mappings } = await supabase
+          .from('omie_clientes')
+          .select('user_id, omie_codigo_cliente')
+          .in('omie_codigo_cliente', codigos);
+        mappingByCode = Object.fromEntries((mappings || []).map(m => [m.omie_codigo_cliente, m.user_id]));
+      }
+
+      const omieMapped: Customer[] = omieClientes.map(c => ({
+        user_id: mappingByCode[c.codigo_cliente] || '', // resolved on save if empty
+        name: c.nome_fantasia || c.razao_social || 'Cliente',
+        email: c.email || null,
+        phone: c.telefone || null,
+        omie_codigo_cliente: c.codigo_cliente,
+        document: c.cnpj_cpf || null,
+      }));
+
+      // 2) Local profiles (for clients without Omie mapping yet)
+      const { data: localProfiles } = await supabase
+        .from('profiles')
+        .select('user_id, name, email, phone')
+        .ilike('name', `%${query}%`)
+        .limit(10);
+
+      const local: Customer[] = (localProfiles || []).map(p => ({
+        user_id: p.user_id,
+        name: p.name,
+        email: p.email,
+        phone: p.phone,
+      }));
+
+      // Merge dedupe: prefer Omie entries (richer), avoid duplicate user_ids
+      const seenUserIds = new Set(omieMapped.filter(c => c.user_id).map(c => c.user_id));
+      const merged = [
+        ...omieMapped,
+        ...local.filter(p => !seenUserIds.has(p.user_id)),
+      ];
+
+      setCustomers(merged);
+    } catch (error) {
+      console.error('Customer search failed', error);
+    } finally { setSearchLoading(false); }
   }, []);
 
   useEffect(() => {
