@@ -243,6 +243,31 @@ const FarmerCalls = () => {
     };
   }, []);
 
+  // Mirror real Nvoip call duration into the form's call timer
+  useEffect(() => {
+    if (nvoipIsActive || nvoipIsEstablished) {
+      setCallSeconds(nvoipDuration);
+    }
+  }, [nvoipDuration, nvoipIsActive, nvoipIsEstablished]);
+
+  // When Nvoip call ends, stop the active flag and pre-fill result
+  useEffect(() => {
+    const terminal: NvoipCallState[] = ['finished', 'noanswer', 'busy', 'failed', 'error'];
+    if (terminal.includes(nvoipState) && isCallActive) {
+      setIsCallActive(false);
+      const map: Record<string, string> = {
+        finished: 'contato_sucesso',
+        noanswer: 'sem_resposta',
+        busy: 'ocupado',
+        failed: 'sem_resposta',
+        error: 'numero_invalido',
+      };
+      if (map[nvoipState]) setCallResult(map[nvoipState]);
+      setCallSeconds(nvoipDuration);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [nvoipState]);
+
   const loadCallLogs = async () => {
     try {
       const { data } = await supabase
