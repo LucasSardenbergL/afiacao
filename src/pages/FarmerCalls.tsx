@@ -17,13 +17,13 @@ import { useToast } from '@/hooks/use-toast';
 import { useFarmerScoring } from '@/hooks/useFarmerScoring';
 import { cn } from '@/lib/utils';
 import { NvoipDialer } from '@/components/NvoipDialer';
-import { type NvoipCallState } from '@/hooks/useNvoipCall';
+import { useNvoipCall, type NvoipCallState } from '@/hooks/useNvoipCall';
 import {
   Phone, PhoneOff, Play, Pause, Clock, User, Search,
   Plus, Timer, CheckCircle, XCircle, Loader2, BarChart3,
   ArrowUpRight, DollarSign, Activity, Filter, FileText,
   Mic, StopCircle, MessageSquare, ChevronRight,
-  PhoneCall, AlertTriangle, TrendingUp, RotateCcw,
+  PhoneCall, PhoneIncoming, AlertTriangle, TrendingUp, RotateCcw,
 } from 'lucide-react';
 import { format } from 'date-fns';
 import { ptBR } from 'date-fns/locale';
@@ -188,6 +188,19 @@ const FarmerCalls = () => {
   const { toast } = useToast();
   const { agenda, clientScores, loading: agendaLoading } = useFarmerScoring();
 
+  // Real Nvoip call integration for the dialog timer
+  const {
+    callState: nvoipState,
+    callDuration: nvoipDuration,
+    makeCall: nvoipMakeCall,
+    endCall: nvoipEndCall,
+    isActive: nvoipIsActive,
+    isConnecting: nvoipIsConnecting,
+    isRinging: nvoipIsRinging,
+    isEstablished: nvoipIsEstablished,
+    error: nvoipError,
+  } = useNvoipCall();
+
   const [isCallActive, setIsCallActive] = useState(false);
   const [isFollowUpActive, setIsFollowUpActive] = useState(false);
   const [callSeconds, setCallSeconds] = useState(0);
@@ -229,6 +242,31 @@ const FarmerCalls = () => {
       if (followUpTimerRef.current) clearInterval(followUpTimerRef.current);
     };
   }, []);
+
+  // Mirror real Nvoip call duration into the form's call timer
+  useEffect(() => {
+    if (nvoipIsActive || nvoipIsEstablished) {
+      setCallSeconds(nvoipDuration);
+    }
+  }, [nvoipDuration, nvoipIsActive, nvoipIsEstablished]);
+
+  // When Nvoip call ends, stop the active flag and pre-fill result
+  useEffect(() => {
+    const terminal: NvoipCallState[] = ['finished', 'noanswer', 'busy', 'failed', 'error'];
+    if (terminal.includes(nvoipState) && isCallActive) {
+      setIsCallActive(false);
+      const map: Record<string, string> = {
+        finished: 'contato_sucesso',
+        noanswer: 'sem_resposta',
+        busy: 'ocupado',
+        failed: 'sem_resposta',
+        error: 'numero_invalido',
+      };
+      if (map[nvoipState]) setCallResult(map[nvoipState]);
+      setCallSeconds(nvoipDuration);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [nvoipState]);
 
   const loadCallLogs = async () => {
     try {
@@ -272,14 +310,28 @@ const FarmerCalls = () => {
     return () => clearTimeout(debounce);
   }, [customerSearch, searchCustomers]);
 
-  const startCallTimer = () => {
+  const startCallTimer = async () => {
+    // If we have a customer with phone, trigger real Nvoip call
+    const phone = selectedCustomer?.phone;
+    if (phone) {
+      callStartRef.current = new Date();
+      setIsCallActive(true);
+      setCallSeconds(0);
+      await nvoipMakeCall(phone);
+      return;
+    }
+    // Fallback: manual stopwatch only
     setIsCallActive(true);
     callStartRef.current = new Date();
     callTimerRef.current = window.setInterval(() => setCallSeconds(s => s + 1), 1000);
   };
-  const stopCallTimer = () => {
+  const stopCallTimer = async () => {
     setIsCallActive(false);
     if (callTimerRef.current) { clearInterval(callTimerRef.current); callTimerRef.current = null; }
+    // Hang up real Nvoip call if active
+    if (nvoipIsActive) {
+      await nvoipEndCall();
+    }
   };
   const startFollowUpTimer = () => {
     setIsFollowUpActive(true);
@@ -616,10 +668,28 @@ const FarmerCalls = () => {
                   <div className="text-center">
                     <p className="text-xs text-muted-foreground mb-1">Ligação</p>
                     <p className="text-2xl font-mono font-bold">{formatTimer(callSeconds)}</p>
+                    {selectedCustomer?.phone ? (
+                      <Badge variant="outline" className="text-[10px] mt-1">
+                        {nvoipIsConnecting && <><Loader2 className="w-3 h-3 mr-1 animate-spin" /> Conectando...</>}
+                        {nvoipIsRinging && <><PhoneCall className="w-3 h-3 mr-1 animate-pulse" /> Tocando ramal/destino</>}
+                        {nvoipIsEstablished && <><PhoneIncoming className="w-3 h-3 mr-1 text-emerald-600" /> Em chamada</>}
+                        {!nvoipIsActive && !nvoipIsEstablished && (
+                          <>📞 Disca via Nvoip → {selectedCustomer.phone}</>
+                        )}
+                      </Badge>
+                    ) : (
+                      <Badge variant="outline" className="text-[10px] mt-1 text-amber-700">
+                        Sem telefone — cronômetro manual
+                      </Badge>
+                    )}
                     <Button size="sm" variant={isCallActive ? 'destructive' : 'default'} className="mt-2 w-full h-8"
-                      onClick={isCallActive ? stopCallTimer : startCallTimer}>
+                      onClick={isCallActive ? stopCallTimer : startCallTimer}
+                      disabled={nvoipIsConnecting}>
                       {isCallActive ? <><PhoneOff className="w-3 h-3 mr-1" /> Parar</> : <><Play className="w-3 h-3 mr-1" /> Iniciar</>}
                     </Button>
+                    {nvoipError && (
+                      <p className="text-[10px] text-destructive mt-1">{nvoipError}</p>
+                    )}
                   </div>
                   <div className="text-center">
                     <p className="text-xs text-muted-foreground mb-1">Follow-up</p>
