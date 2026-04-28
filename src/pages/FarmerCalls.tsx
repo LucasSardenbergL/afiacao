@@ -34,6 +34,10 @@ interface Customer {
   name: string;
   email: string | null;
   phone: string | null;
+  /** Omie codigo_cliente (Oben). Used to resolve/create local user_id when saving. */
+  omie_codigo_cliente?: number | null;
+  /** Omie cnpj_cpf used to resolve local profile by document. */
+  document?: string | null;
 }
 
 interface CallLog {
