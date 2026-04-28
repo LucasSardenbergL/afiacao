@@ -34,6 +34,10 @@ interface Customer {
   name: string;
   email: string | null;
   phone: string | null;
+  /** Omie codigo_cliente (Oben). Used to resolve/create local user_id when saving. */
+  omie_codigo_cliente?: number | null;
+  /** Omie cnpj_cpf used to resolve local profile by document. */
+  document?: string | null;
 }
 
 interface CallLog {
@@ -299,10 +303,65 @@ const FarmerCalls = () => {
     if (query.length < 2) { setCustomers([]); return; }
     setSearchLoading(true);
     try {
-      const { data } = await supabase.from('profiles').select('user_id, name, email, phone').ilike('name', `%${query}%`).limit(10);
-      setCustomers((data || []) as Customer[]);
-    } catch (error) { console.error(error); }
-    finally { setSearchLoading(false); }
+      // 1) Same source as Sales: Omie ERP via edge function
+      const { data: omieData } = await supabase.functions.invoke('omie-vendas-sync', {
+        body: { action: 'listar_clientes', search: query },
+      });
+
+      const omieClientes = (omieData?.clientes || []) as Array<{
+        codigo_cliente: number;
+        razao_social?: string;
+        nome_fantasia?: string;
+        email?: string | null;
+        telefone?: string | null;
+        cnpj_cpf?: string | null;
+      }>;
+
+      // Resolve local user_id mappings in batch
+      let mappingByCode: Record<number, string> = {};
+      if (omieClientes.length > 0) {
+        const codigos = omieClientes.map(c => c.codigo_cliente);
+        const { data: mappings } = await supabase
+          .from('omie_clientes')
+          .select('user_id, omie_codigo_cliente')
+          .in('omie_codigo_cliente', codigos);
+        mappingByCode = Object.fromEntries((mappings || []).map(m => [m.omie_codigo_cliente, m.user_id]));
+      }
+
+      const omieMapped: Customer[] = omieClientes.map(c => ({
+        user_id: mappingByCode[c.codigo_cliente] || '', // resolved on save if empty
+        name: c.nome_fantasia || c.razao_social || 'Cliente',
+        email: c.email || null,
+        phone: c.telefone || null,
+        omie_codigo_cliente: c.codigo_cliente,
+        document: c.cnpj_cpf || null,
+      }));
+
+      // 2) Local profiles (for clients without Omie mapping yet)
+      const { data: localProfiles } = await supabase
+        .from('profiles')
+        .select('user_id, name, email, phone')
+        .ilike('name', `%${query}%`)
+        .limit(10);
+
+      const local: Customer[] = (localProfiles || []).map(p => ({
+        user_id: p.user_id,
+        name: p.name,
+        email: p.email,
+        phone: p.phone,
+      }));
+
+      // Merge dedupe: prefer Omie entries (richer), avoid duplicate user_ids
+      const seenUserIds = new Set(omieMapped.filter(c => c.user_id).map(c => c.user_id));
+      const merged = [
+        ...omieMapped,
+        ...local.filter(p => !seenUserIds.has(p.user_id)),
+      ];
+
+      setCustomers(merged);
+    } catch (error) {
+      console.error('Customer search failed', error);
+    } finally { setSearchLoading(false); }
   }, []);
 
   useEffect(() => {
@@ -356,8 +415,39 @@ const FarmerCalls = () => {
     setSaving(true);
     try {
       stopCallTimer(); stopFollowUpTimer();
+
+      // Resolve local user_id when the customer came from Omie without a mapping yet
+      let customerUserId = selectedCustomer.user_id;
+      if (!customerUserId && selectedCustomer.document) {
+        const docClean = selectedCustomer.document.replace(/\D/g, '');
+        const { data: profile } = await supabase
+          .from('profiles')
+          .select('user_id')
+          .or(`document.eq.${docClean},document.eq.${selectedCustomer.document}`)
+          .limit(1)
+          .maybeSingle();
+        if (profile?.user_id) customerUserId = profile.user_id;
+      }
+      if (!customerUserId && selectedCustomer.omie_codigo_cliente) {
+        const { data: mapping } = await supabase
+          .from('omie_clientes')
+          .select('user_id')
+          .eq('omie_codigo_cliente', selectedCustomer.omie_codigo_cliente)
+          .maybeSingle();
+        if (mapping?.user_id) customerUserId = mapping.user_id;
+      }
+      if (!customerUserId) {
+        toast({
+          title: 'Cliente sem cadastro local',
+          description: 'Esse cliente Omie ainda não tem perfil no app. Crie um pedido primeiro para vinculá-lo.',
+          variant: 'destructive',
+        });
+        setSaving(false);
+        return;
+      }
+
       const { error } = await supabase.from('farmer_calls').insert({
-        farmer_id: user.id, customer_user_id: selectedCustomer.user_id,
+        farmer_id: user.id, customer_user_id: customerUserId,
         call_type: callType as any, call_result: callResult as any,
         started_at: callStartRef.current?.toISOString() || new Date().toISOString(),
         ended_at: new Date().toISOString(),
@@ -642,12 +732,20 @@ const FarmerCalls = () => {
                   </div>
                   {searchLoading && <div className="flex justify-center py-2"><Loader2 className="w-4 h-4 animate-spin" /></div>}
                   {customers.length > 0 && (
-                    <div className="border rounded-lg mt-1 max-h-40 overflow-y-auto">
-                      {customers.map(c => (
-                        <button key={c.user_id} onClick={() => { setSelectedCustomer(c); setCustomerSearch(''); setCustomers([]); }}
+                    <div className="border rounded-lg mt-1 max-h-60 overflow-y-auto">
+                      {customers.map((c, idx) => (
+                        <button key={`${c.user_id || c.omie_codigo_cliente || c.document}-${idx}`}
+                          onClick={() => { setSelectedCustomer(c); setCustomerSearch(''); setCustomers([]); }}
                           className="w-full text-left px-3 py-2 hover:bg-muted/50 text-sm border-b last:border-b-0">
-                          <p className="font-medium">{c.name}</p>
-                          <p className="text-xs text-muted-foreground">{c.phone || c.email}</p>
+                          <div className="flex items-center justify-between gap-2">
+                            <p className="font-medium truncate">{c.name}</p>
+                            {c.omie_codigo_cliente && (
+                              <Badge variant="outline" className="text-[10px] shrink-0">Omie</Badge>
+                            )}
+                          </div>
+                          <p className="text-xs text-muted-foreground truncate">
+                            {[c.document, c.phone, c.email].filter(Boolean).join(' · ') || 'Sem contato'}
+                          </p>
                         </button>
                       ))}
                     </div>
