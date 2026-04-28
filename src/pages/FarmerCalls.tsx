@@ -23,7 +23,7 @@ import {
   Plus, Timer, CheckCircle, XCircle, Loader2, BarChart3,
   ArrowUpRight, DollarSign, Activity, Filter, FileText,
   Mic, StopCircle, MessageSquare, ChevronRight,
-  PhoneCall, AlertTriangle, TrendingUp, RotateCcw,
+  PhoneCall, PhoneIncoming, AlertTriangle, TrendingUp, RotateCcw,
 } from 'lucide-react';
 import { format } from 'date-fns';
 import { ptBR } from 'date-fns/locale';
