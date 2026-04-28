@@ -415,8 +415,39 @@ const FarmerCalls = () => {
     setSaving(true);
     try {
       stopCallTimer(); stopFollowUpTimer();
+
+      // Resolve local user_id when the customer came from Omie without a mapping yet
+      let customerUserId = selectedCustomer.user_id;
+      if (!customerUserId && selectedCustomer.document) {
+        const docClean = selectedCustomer.document.replace(/\D/g, '');
+        const { data: profile } = await supabase
+          .from('profiles')
+          .select('user_id')
+          .or(`document.eq.${docClean},document.eq.${selectedCustomer.document}`)
+          .limit(1)
+          .maybeSingle();
+        if (profile?.user_id) customerUserId = profile.user_id;
+      }
+      if (!customerUserId && selectedCustomer.omie_codigo_cliente) {
+        const { data: mapping } = await supabase
+          .from('omie_clientes')
+          .select('user_id')
+          .eq('omie_codigo_cliente', selectedCustomer.omie_codigo_cliente)
+          .maybeSingle();
+        if (mapping?.user_id) customerUserId = mapping.user_id;
+      }
+      if (!customerUserId) {
+        toast({
+          title: 'Cliente sem cadastro local',
+          description: 'Esse cliente Omie ainda não tem perfil no app. Crie um pedido primeiro para vinculá-lo.',
+          variant: 'destructive',
+        });
+        setSaving(false);
+        return;
+      }
+
       const { error } = await supabase.from('farmer_calls').insert({
-        farmer_id: user.id, customer_user_id: selectedCustomer.user_id,
+        farmer_id: user.id, customer_user_id: customerUserId,
         call_type: callType as any, call_result: callResult as any,
         started_at: callStartRef.current?.toISOString() || new Date().toISOString(),
         ended_at: new Date().toISOString(),
