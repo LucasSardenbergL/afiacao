@@ -188,6 +188,19 @@ const FarmerCalls = () => {
   const { toast } = useToast();
   const { agenda, clientScores, loading: agendaLoading } = useFarmerScoring();
 
+  // Real Nvoip call integration for the dialog timer
+  const {
+    callState: nvoipState,
+    callDuration: nvoipDuration,
+    makeCall: nvoipMakeCall,
+    endCall: nvoipEndCall,
+    isActive: nvoipIsActive,
+    isConnecting: nvoipIsConnecting,
+    isRinging: nvoipIsRinging,
+    isEstablished: nvoipIsEstablished,
+    error: nvoipError,
+  } = useNvoipCall();
+
   const [isCallActive, setIsCallActive] = useState(false);
   const [isFollowUpActive, setIsFollowUpActive] = useState(false);
   const [callSeconds, setCallSeconds] = useState(0);
