@@ -732,12 +732,20 @@ const FarmerCalls = () => {
                   </div>
                   {searchLoading && <div className="flex justify-center py-2"><Loader2 className="w-4 h-4 animate-spin" /></div>}
                   {customers.length > 0 && (
-                    <div className="border rounded-lg mt-1 max-h-40 overflow-y-auto">
-                      {customers.map(c => (
-                        <button key={c.user_id} onClick={() => { setSelectedCustomer(c); setCustomerSearch(''); setCustomers([]); }}
+                    <div className="border rounded-lg mt-1 max-h-60 overflow-y-auto">
+                      {customers.map((c, idx) => (
+                        <button key={`${c.user_id || c.omie_codigo_cliente || c.document}-${idx}`}
+                          onClick={() => { setSelectedCustomer(c); setCustomerSearch(''); setCustomers([]); }}
                           className="w-full text-left px-3 py-2 hover:bg-muted/50 text-sm border-b last:border-b-0">
-                          <p className="font-medium">{c.name}</p>
-                          <p className="text-xs text-muted-foreground">{c.phone || c.email}</p>
+                          <div className="flex items-center justify-between gap-2">
+                            <p className="font-medium truncate">{c.name}</p>
+                            {c.omie_codigo_cliente && (
+                              <Badge variant="outline" className="text-[10px] shrink-0">Omie</Badge>
+                            )}
+                          </div>
+                          <p className="text-xs text-muted-foreground truncate">
+                            {[c.document, c.phone, c.email].filter(Boolean).join(' · ') || 'Sem contato'}
+                          </p>
                         </button>
                       ))}
                     </div>
