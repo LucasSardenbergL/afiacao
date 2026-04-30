@@ -315,19 +315,8 @@ export default async ({ page, context }) => {
       // Tenta o seletor primário primeiro (mesmo do primeiro item, geralmente persiste)
       // Se não achar, tenta fallbacks até funcionar
       const addItemClicado = await page.evaluate(() => {
-        // Tentativa 1: #colSpanBtnIncluirItem (mesmo do primeiro item)
-        const primario = document.querySelector('#colSpanBtnIncluirItem button.btn-primary');
-        if (primario && primario.offsetParent !== null) {
-          primario.click();
-          return { clicked: true, via: 'colSpanBtnIncluirItem' };
-        }
-        // Tentativa 2: tfoot
-        const tfootBtn = document.querySelector('tfoot button.btn-primary');
-        if (tfootBtn && tfootBtn.offsetParent !== null) {
-          tfootBtn.click();
-          return { clicked: true, via: 'tfoot' };
-        }
-        // Tentativa 3: procura qualquer botão visível com texto "Incluir Item" (excluindo "Múltiplos")
+        // Tentativa 1 (PRIMÁRIA): busca pelo TEXTO visível "+ Incluir Item" excluindo "Múltiplos"
+        // Esta é a estratégia mais robusta porque o texto é estável entre primeiro e subsequentes
         const allBtns = Array.from(document.querySelectorAll('button'));
         const incluirBtn = allBtns.find(function(b) {
           const txt = (b.innerText || '').trim();
@@ -336,6 +325,18 @@ export default async ({ page, context }) => {
         if (incluirBtn) {
           incluirBtn.click();
           return { clicked: true, via: 'text_match', text: (incluirBtn.innerText || '').trim().substring(0, 30) };
+        }
+        // Tentativa 2 (fallback): #colSpanBtnIncluirItem (mesmo do primeiro item)
+        const primario = document.querySelector('#colSpanBtnIncluirItem button.btn-primary');
+        if (primario && primario.offsetParent !== null) {
+          primario.click();
+          return { clicked: true, via: 'colSpanBtnIncluirItem' };
+        }
+        // Tentativa 3 (fallback): tfoot
+        const tfootBtn = document.querySelector('tfoot button.btn-primary');
+        if (tfootBtn && tfootBtn.offsetParent !== null) {
+          tfootBtn.click();
+          return { clicked: true, via: 'tfoot' };
         }
         return {
           clicked: false,
