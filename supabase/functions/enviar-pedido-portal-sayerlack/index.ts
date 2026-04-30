@@ -352,7 +352,7 @@ export default async ({ page, context }) => {
         return {
           data: {
             success: false,
-            erro: `Não conseguiu clicar em "+ Incluir Item" para o item ${i} (${item.sku_portal}). Botão não encontrado por nenhum dos 3 seletores.`,
+            erro: 'Nao conseguiu clicar em "+ Incluir Item" para o item ' + i + ' (' + item.sku_portal + '). Botao nao encontrado por nenhum dos 3 seletores.',
             erroTipo: 'INCLUIR_ITEM_NOT_FOUND',
             iteracao: i,
             sku_falho: item.sku_portal,
