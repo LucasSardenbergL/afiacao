@@ -314,38 +314,54 @@ export default async ({ page, context }) => {
       trace.push({ step: 'item_' + i + '_start', sku: item.sku_portal, t: Date.now() - t0 });
       // Tenta o seletor primário primeiro (mesmo do primeiro item, geralmente persiste)
       // Se não achar, tenta fallbacks até funcionar
-      const addItemClicado = await page.evaluate(() => {
-        // Tentativa 1 (PRIMÁRIA): busca pelo TEXTO visível "+ Incluir Item" excluindo "Múltiplos"
-        // Esta é a estratégia mais robusta porque o texto é estável entre primeiro e subsequentes
+      const addItemClicado = await page.evaluate(function(idx) {
         const allBtns = Array.from(document.querySelectorAll('button'));
-        const incluirBtn = allBtns.find(function(b) {
+        const visibleBtns = allBtns.filter(function(b) { return b.offsetParent !== null; });
+        const debug_btns_visible = visibleBtns
+          .map(function(b) { return (b.innerText || '').trim().substring(0, 60); })
+          .slice(0, 20);
+        // Tentativa 1 (PRIMÁRIA): texto "+ Incluir Item" excluindo "Múltiplos"
+        const incluirBtn = visibleBtns.find(function(b) {
           const txt = (b.innerText || '').trim();
-          return txt.includes('Incluir Item') && !txt.includes('Múltiplos') && b.offsetParent !== null;
+          return txt.includes('Incluir Item') && !txt.includes('Múltiplos');
         });
         if (incluirBtn) {
           incluirBtn.click();
-          return { clicked: true, via: 'text_match', text: (incluirBtn.innerText || '').trim().substring(0, 30) };
+          return {
+            clicked: true,
+            via: 'text_match',
+            text: (incluirBtn.innerText || '').trim().substring(0, 30),
+            debug_btns_visible: debug_btns_visible
+          };
         }
-        // Tentativa 2 (fallback): #colSpanBtnIncluirItem (mesmo do primeiro item)
-        const primario = document.querySelector('#colSpanBtnIncluirItem button.btn-primary');
-        if (primario && primario.offsetParent !== null) {
-          primario.click();
-          return { clicked: true, via: 'colSpanBtnIncluirItem' };
+        // Tentativa 2 (#colSpanBtnIncluirItem): APENAS no primeiro item.
+        // Para idx > 0 esse seletor é armadilha — pega button visível mas inerte.
+        if (idx === 0) {
+          const primario = document.querySelector('#colSpanBtnIncluirItem button.btn-primary');
+          if (primario && primario.offsetParent !== null) {
+            primario.click();
+            return {
+              clicked: true,
+              via: 'colSpanBtnIncluirItem',
+              debug_btns_visible: debug_btns_visible
+            };
+          }
         }
-        // Tentativa 3 (fallback): tfoot
+        // Tentativa 3 (tfoot): sempre disponível
         const tfootBtn = document.querySelector('tfoot button.btn-primary');
         if (tfootBtn && tfootBtn.offsetParent !== null) {
           tfootBtn.click();
-          return { clicked: true, via: 'tfoot' };
+          return {
+            clicked: true,
+            via: 'tfoot',
+            debug_btns_visible: debug_btns_visible
+          };
         }
         return {
           clicked: false,
-          debug_btns_visible: allBtns
-            .filter(function(b) { return b.offsetParent !== null; })
-            .map(function(b) { return (b.innerText || '').trim().substring(0, 40); })
-            .slice(0, 15),
+          debug_btns_visible: debug_btns_visible
         };
-      });
+      }, i);
       console.log('[DEBUG_INCLUIR_ITEM_CLICK]', JSON.stringify({ iteration: i, ...addItemClicado }));
       trace.push({ step: 'incluir_item_clicked_iter_' + i, addItemClicado, t: Date.now() - t0 });
       if (!addItemClicado.clicked) {
