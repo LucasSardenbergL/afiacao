@@ -23,8 +23,10 @@ const MAX_PEDIDOS_POR_EXECUCAO = 5;
 const MAX_TENTATIVAS = 3;
 
 // Funcao JS que roda no Chrome remoto via Browserless
+// Sintaxe: Browserless v2 (/function endpoint) — usa "export default" em vez de "module.exports"
+// Ref: https://docs.browserless.io/rest-apis/function
 const BROWSERLESS_FUNCTION = `
-module.exports = async ({ page, context }) => {
+export default async ({ page, context }) => {
   const { user, pass, portalUrl, clienteCodigo, items } = context;
   const trace = [];
   const t0 = Date.now();
