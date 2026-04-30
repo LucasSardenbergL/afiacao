@@ -5405,6 +5405,7 @@ export type Database = {
           delta_vs_anterior_perc: number | null
           dias_parcelas: string | null
           empresa: string
+          enviado_portal_em: string | null
           fornecedor_nome: string
           grupo_codigo: string | null
           horario_corte_planejado: string | null
@@ -5421,8 +5422,15 @@ export type Database = {
           origem_evento_id: number | null
           origem_evento_tipo: string | null
           pedido_anterior_valor: number | null
+          portal_erro: string | null
+          portal_protocolo: string | null
+          portal_proximo_retry_em: string | null
+          portal_resposta: Json | null
+          portal_screenshot_url: string | null
+          portal_tentativas: number | null
           resposta_canal: Json | null
           status: string
+          status_envio_portal: string | null
           tipo_ciclo: string
           valor_mes_ate_agora: number | null
           valor_total: number
@@ -5442,6 +5450,7 @@ export type Database = {
           delta_vs_anterior_perc?: number | null
           dias_parcelas?: string | null
           empresa: string
+          enviado_portal_em?: string | null
           fornecedor_nome: string
           grupo_codigo?: string | null
           horario_corte_planejado?: string | null
@@ -5458,8 +5467,15 @@ export type Database = {
           origem_evento_id?: number | null
           origem_evento_tipo?: string | null
           pedido_anterior_valor?: number | null
+          portal_erro?: string | null
+          portal_protocolo?: string | null
+          portal_proximo_retry_em?: string | null
+          portal_resposta?: Json | null
+          portal_screenshot_url?: string | null
+          portal_tentativas?: number | null
           resposta_canal?: Json | null
           status?: string
+          status_envio_portal?: string | null
           tipo_ciclo?: string
           valor_mes_ate_agora?: number | null
           valor_total?: number
@@ -5479,6 +5495,7 @@ export type Database = {
           delta_vs_anterior_perc?: number | null
           dias_parcelas?: string | null
           empresa?: string
+          enviado_portal_em?: string | null
           fornecedor_nome?: string
           grupo_codigo?: string | null
           horario_corte_planejado?: string | null
@@ -5495,8 +5512,15 @@ export type Database = {
           origem_evento_id?: number | null
           origem_evento_tipo?: string | null
           pedido_anterior_valor?: number | null
+          portal_erro?: string | null
+          portal_protocolo?: string | null
+          portal_proximo_retry_em?: string | null
+          portal_resposta?: Json | null
+          portal_screenshot_url?: string | null
+          portal_tentativas?: number | null
           resposta_canal?: Json | null
           status?: string
+          status_envio_portal?: string | null
           tipo_ciclo?: string
           valor_mes_ate_agora?: number | null
           valor_total?: number
@@ -9874,6 +9898,17 @@ export type Database = {
           urgencia?: never
           volume_minimo_condicional?: number | null
           volume_minimo_unidade?: string | null
+        }
+        Relationships: []
+      }
+      v_envios_portal_status: {
+        Row: {
+          dia: string | null
+          esgotados: number | null
+          fornecedor_nome: string | null
+          media_tentativas: number | null
+          status_envio_portal: string | null
+          total: number | null
         }
         Relationships: []
       }
