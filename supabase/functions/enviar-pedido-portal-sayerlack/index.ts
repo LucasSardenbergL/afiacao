@@ -239,7 +239,20 @@ async function uploadScreenshot(
   base64: string,
 ): Promise<string | null> {
   try {
-    const bytes = Uint8Array.from(atob(base64), (c) => c.charCodeAt(0));
+    // Browserless v2 as vezes retorna data URL ("data:image/png;base64,XXXX") em vez de base64 puro.
+    // atob() falha com prefixo, entao removemos defensivamente.
+    let cleaned = base64;
+    if (cleaned && cleaned.startsWith("data:")) {
+      const commaIdx = cleaned.indexOf(",");
+      if (commaIdx !== -1) cleaned = cleaned.substring(commaIdx + 1);
+    }
+    console.log("[DEBUG_SCREENSHOT_PREFIX]", JSON.stringify({
+      pedido_id: pedidoId,
+      has_data_prefix: base64?.startsWith("data:") ?? false,
+      base64_length: cleaned?.length ?? 0,
+      base64_first_20: cleaned?.substring(0, 20) ?? null,
+    }));
+    const bytes = Uint8Array.from(atob(cleaned), (c) => c.charCodeAt(0));
     const path = `pedido_${pedidoId}_${Date.now()}.png`;
     const { error: upErr } = await supabase.storage
       .from("portal_screenshots")
