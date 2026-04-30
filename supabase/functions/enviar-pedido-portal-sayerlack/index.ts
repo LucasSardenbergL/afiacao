@@ -94,7 +94,7 @@ export default async ({ page, context }) => {
 
     await applyStealth();
     trace.push({ step: 'login_start', t: Date.now() - t0 });
-    await page.goto(portalUrl + '/login', { waitUntil: 'domcontentloaded', timeout: 20000 });
+    await page.goto(portalUrl + '/login', { waitUntil: 'networkidle0', timeout: 30000 });
     await page.waitForSelector('#user', { timeout: 10000 });
     await fillInput('#user', user);
     await fillInput('#password', pass);
@@ -119,10 +119,24 @@ export default async ({ page, context }) => {
       })(),
       (async () => {
         try {
-          await page.waitForSelector('#sidebar, .app-sidebar, [class*="sidebar"]', { timeout: 15000 });
+          await page.waitForSelector('#sidebar, .app-sidebar', { timeout: 15000 });
           return { ok: true, via: 'sidebar_found', url: page.url() };
         } catch {
           return { ok: false, via: 'sidebar_not_found', url: page.url() };
+        }
+      })(),
+      (async () => {
+        try {
+          await page.waitForFunction(
+            () => {
+              const userSpan = document.querySelector('.navbar-user .d-md-inline');
+              return userSpan && userSpan.innerText.trim().length > 0;
+            },
+            { timeout: 15000 }
+          );
+          return { ok: true, via: 'user_in_header', url: page.url() };
+        } catch {
+          return { ok: false, via: 'user_not_in_header', url: page.url() };
         }
       })(),
     ]);
@@ -167,8 +181,8 @@ export default async ({ page, context }) => {
     }
     trace.push({ step: 'login_success', via: loginCheck.via, url: loginCheck.url, t: Date.now() - t0 });
 
-    await page.goto(portalUrl + '/order-creation', { waitUntil: 'domcontentloaded', timeout: 15000 });
-    await page.waitForSelector('#btnNovoPedido', { timeout: 10000 });
+    await page.goto(portalUrl + '/order-creation', { waitUntil: 'networkidle0', timeout: 30000 });
+    await page.waitForSelector('#btnNovoPedido', { timeout: 25000 });
     await page.click('#btnNovoPedido');
     await page.waitForSelector('#select2-cliente-container', { timeout: 10000 });
     trace.push({ step: 'novo_pedido_open', t: Date.now() - t0 });
