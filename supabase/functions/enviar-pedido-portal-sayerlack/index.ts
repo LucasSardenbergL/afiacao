@@ -304,7 +304,7 @@ async function uploadScreenshot(
       base64_first_20: cleaned?.substring(0, 20) ?? null,
     }));
     const bytes = Uint8Array.from(atob(cleaned), (c) => c.charCodeAt(0));
-    const path = `pedido_${pedidoId}_${Date.now()}.png`;
+    const path = `pedido_${pedidoId}_${Date.now()}${suffix}.png`;
     const { error: upErr } = await supabase.storage
       .from("portal_screenshots")
       .upload(path, bytes, { contentType: "image/png", upsert: false });
