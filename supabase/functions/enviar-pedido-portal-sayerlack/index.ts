@@ -64,14 +64,50 @@ export default async ({ page, context }) => {
   const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
   try {
+    console.log('[DEBUG_CREDS]', JSON.stringify({
+      user_present: typeof user === 'string' && user.length > 0,
+      user_length: user?.length ?? 0,
+      pass_present: typeof pass === 'string' && pass.length > 0,
+      pass_length: pass?.length ?? 0,
+      portalUrl,
+      clienteCodigo,
+    }));
+
     trace.push({ step: 'login_start', t: Date.now() - t0 });
     await page.goto(portalUrl + '/login', { waitUntil: 'domcontentloaded', timeout: 20000 });
     await page.waitForSelector('#user', { timeout: 10000 });
     await fillInput('#user', user);
     await fillInput('#password', pass);
+
+    const preLoginScreenshot = await page.screenshot({ type: 'png', encoding: 'base64' });
+    trace.push({ step: 'pre_login_screenshot_taken', t: Date.now() - t0, screenshotLength: preLoginScreenshot.length });
+
     const navPromise = page.waitForNavigation({ timeout: 15000 }).catch(() => null);
     await clickButtonByText('Entrar');
     await navPromise;
+
+    const loginErrorInfo = await page.evaluate(() => {
+      const body = document.body.innerText;
+      const url = window.location.href;
+      const alertEl = document.querySelector('.alert, .alert-danger, .error-message, .login-error, [role="alert"]');
+      const alertText = alertEl ? alertEl.innerText.trim() : null;
+      return {
+        url,
+        alertText,
+        bodyPreview: body.substring(0, 1500),
+      };
+    });
+    console.log('[DEBUG_LOGIN_ERROR_TEXT]', JSON.stringify({
+      url: loginErrorInfo.url,
+      alertText: loginErrorInfo.alertText,
+      bodyContains_naoEPossivel: loginErrorInfo.bodyPreview.includes('Não é possível'),
+      bodyContains_credenciaisInvalidas:
+        loginErrorInfo.bodyPreview.toLowerCase().includes('credenciais') ||
+        loginErrorInfo.bodyPreview.toLowerCase().includes('inválida'),
+      bodyContains_manutencao: loginErrorInfo.bodyPreview.toLowerCase().includes('manuten'),
+      bodyPreview_first_500: loginErrorInfo.bodyPreview.substring(0, 500),
+    }));
+
     if (page.url().includes('/login/401') || page.url().endsWith('/login')) {
       const errorScreenshot = await page.screenshot({ type: 'png', encoding: 'base64' });
       return {
@@ -80,10 +116,14 @@ export default async ({ page, context }) => {
           erro: 'Login falhou — credenciais invalidas ou senha expirada',
           erroTipo: 'LOGIN_FAILED',
           urlFinal: page.url(),
+          urlAntesDoCheck: loginErrorInfo.url,
+          alertText: loginErrorInfo.alertText,
+          bodyPreview: loginErrorInfo.bodyPreview.substring(0, 800),
           trace,
         },
         type: 'application/json',
         screenshot: errorScreenshot,
+        preLoginScreenshot,
       };
     }
     trace.push({ step: 'login_success', t: Date.now() - t0 });
