@@ -10660,6 +10660,17 @@ export type Database = {
         Args: { fim: string; inicio: string }
         Returns: number
       }
+      envio_portal_lock_candidatos: {
+        Args: { p_max?: number }
+        Returns: {
+          empresa: string
+          fornecedor_nome: string
+          id: number
+          portal_protocolo: string
+          portal_tentativas: number
+          status_envio_portal: string
+        }[]
+      }
       estimar_impacto_exclusao_outlier: {
         Args: { p_evento_id: number }
         Returns: Json
