@@ -367,7 +367,7 @@ export default async ({ page, context }) => {
       }
       await sleep(500); // dá tempo do botão de incluir abrir o Select2
       // Diagnóstico DOM 1.5s após click do incluir, antes do waitForSelector
-      await sleep(1000); // tempo extra pra portal montar a linha nova
+      await sleep(2000); // tempo extra pra portal montar a linha nova (aumentado de 1000 pra 2000)
       const debugDomAposIncluir = await page.evaluate(() => {
         const allSelect2Containers = Array.from(document.querySelectorAll('[id^="select2-it_codigo"], [id*="it_codigo"]'));
         const allSelect2Search = Array.from(document.querySelectorAll('.select2-search__field'));
