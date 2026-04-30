@@ -69,10 +69,9 @@ export default async ({ page, context }) => {
     await page.waitForSelector('#user', { timeout: 10000 });
     await fillInput('#user', user);
     await fillInput('#password', pass);
-    await Promise.all([
-      page.waitForNavigation({ timeout: 15000 }).catch(() => null),
-      clickButtonByText('Entrar'),
-    ]);
+    const navPromise = page.waitForNavigation({ timeout: 15000 }).catch(() => null);
+    await clickButtonByText('Entrar');
+    await navPromise;
     if (page.url().includes('/login/401') || page.url().endsWith('/login')) {
       const errorScreenshot = await page.screenshot({ type: 'png', encoding: 'base64' });
       return {
