@@ -468,6 +468,41 @@ export default async ({ page, context }) => {
       await sleep(800);
       const qtdInputSel = '#datatable_itens tbody tr:nth-last-child(1) td:nth-of-type(7) input';
       await fillInput(qtdInputSel, String(item.qtde));
+
+      // Diagnóstico: confirmar identidade do botão de gravar item
+      const debugGravarItem = await page.evaluate(function() {
+        const btn = document.querySelector('#btnGravarItem');
+        if (!btn) return { found: false };
+        return {
+          found: true,
+          visible: btn.offsetParent !== null,
+          text: (btn.innerText || '').trim().substring(0, 40),
+          title: btn.getAttribute('title') || '',
+          classes: btn.className.substring(0, 80),
+          tagName: btn.tagName,
+          parentTag: btn.parentElement ? btn.parentElement.tagName : null,
+          parentClass: btn.parentElement ? btn.parentElement.className.substring(0, 60) : null,
+          candidatos_gravar: Array.from(document.querySelectorAll('button, a[role="button"], i.fa-save, span.fa-save'))
+            .filter(function(el) { return el.offsetParent !== null; })
+            .map(function(el) {
+              return {
+                tag: el.tagName,
+                id: el.id || '',
+                text: (el.innerText || '').trim().substring(0, 30),
+                title: el.getAttribute('title') || '',
+                classes: el.className.substring(0, 60)
+              };
+            })
+            .filter(function(info) {
+              const blob = (info.text + ' ' + info.title + ' ' + info.classes).toLowerCase();
+              return blob.includes('grav') || blob.includes('salv') || blob.includes('save') || blob.includes('disco') || blob.includes('disquete') || info.id.toLowerCase().includes('grav');
+            })
+            .slice(0, 10)
+        };
+      });
+      trace.push({ step: 'debug_btn_gravar_iter_' + i, t: Date.now() - t0, debugGravarItem: debugGravarItem });
+      console.log('[DEBUG_BTN_GRAVAR]', JSON.stringify({ iteration: i, ...debugGravarItem }));
+
       await page.click('#btnGravarItem');
       // Aguarda a linha aparecer/atualizar no datatable
       await page.waitForFunction(
