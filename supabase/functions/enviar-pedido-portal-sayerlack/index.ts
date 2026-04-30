@@ -92,8 +92,9 @@ export default async ({ page, context }) => {
       clienteCodigo,
     }));
 
-    trace.push({ step: 'login_start', t: Date.now() - t0 });
     await applyStealth();
+    trace.push({ step: 'login_start', t: Date.now() - t0 });
+    await page.goto(portalUrl + '/login', { waitUntil: 'domcontentloaded', timeout: 20000 });
     await page.waitForSelector('#user', { timeout: 10000 });
     await fillInput('#user', user);
     await fillInput('#password', pass);
