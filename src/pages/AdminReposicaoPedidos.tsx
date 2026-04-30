@@ -917,6 +917,9 @@ function PedidoRow({
         ) : <span className="text-muted-foreground">—</span>}
       </TableCell>
       <TableCell className="text-right">{formatTime(p.horario_corte_planejado)}</TableCell>
+      <TableCell>
+        <PortalBadge pedido={p} onClick={onVerPortal} />
+      </TableCell>
       <TableCell className="text-xs">
         {showAprovacao && p.aprovado_em ? (
           <div>
