@@ -94,7 +94,7 @@ export default async ({ page, context }) => {
 
     await applyStealth();
     trace.push({ step: 'login_start', t: Date.now() - t0 });
-    await page.goto(portalUrl + '/login', { waitUntil: 'networkidle0', timeout: 30000 });
+    await page.goto(portalUrl + '/login', { waitUntil: 'networkidle2', timeout: 30000 });
     await page.waitForSelector('#user', { timeout: 10000 });
     await fillInput('#user', user);
     await fillInput('#password', pass);
@@ -181,7 +181,79 @@ export default async ({ page, context }) => {
     }
     trace.push({ step: 'login_success', via: loginCheck.via, url: loginCheck.url, t: Date.now() - t0 });
 
-    await page.goto(portalUrl + '/order-creation', { waitUntil: 'networkidle0', timeout: 30000 });
+    await sleep(2000); // dá tempo do portal estabilizar sessão pós-login antes de navegar
+
+    await page.goto(portalUrl + '/order-creation', { waitUntil: 'networkidle2', timeout: 30000 });
+
+    const urlAposGoto = page.url();
+    const tituloAposGoto = await page.title().catch(() => 'unknown');
+    const bodyPreviewAposGoto = await page.evaluate(() => document.body.innerText.substring(0, 500)).catch(() => 'eval_failed');
+    const tem_btnNovoPedido_inicial = await page.evaluate(() => !!document.querySelector('#btnNovoPedido')).catch(() => false);
+    const tem_breadcrumb_pedidos = await page.evaluate(() => document.body.innerText.includes('Pedidos / Propostas')).catch(() => false);
+
+    console.log('[DEBUG_AFTER_GOTO]', JSON.stringify({
+      url_solicitada: portalUrl + '/order-creation',
+      url_real: urlAposGoto,
+      title: tituloAposGoto,
+      redirecionou: !urlAposGoto.endsWith('/order-creation'),
+      tem_btnNovoPedido_inicial,
+      tem_breadcrumb_pedidos,
+      bodyPreview: bodyPreviewAposGoto,
+    }));
+    trace.push({ step: 'after_goto_order_creation', url: urlAposGoto, redirecionou: !urlAposGoto.endsWith('/order-creation'), t: Date.now() - t0 });
+
+    // Se não chegou em /order-creation OU não tem btnNovoPedido, tenta navegar via menu
+    if (!urlAposGoto.endsWith('/order-creation') || !tem_btnNovoPedido_inicial) {
+      trace.push({ step: 'fallback_navigate_via_menu', t: Date.now() - t0 });
+
+      // Garante que sidebar está expandida (portal minifica por padrão)
+      await page.evaluate(() => {
+        const app = document.querySelector('#app');
+        if (app && app.classList.contains('app-sidebar-minified')) {
+          const minifyBtn = document.querySelector('.app-sidebar-minify-btn');
+          if (minifyBtn) minifyBtn.click();
+        }
+      });
+      await sleep(500);
+
+      // Click em "Vendas" pra expandir submenu
+      const expandiu_vendas = await page.evaluate(() => {
+        const links = Array.from(document.querySelectorAll('#sidebar .menu-link, .app-sidebar .menu-link'));
+        const vendasLink = links.find((l) => (l.innerText || '').includes('Vendas'));
+        if (vendasLink) { vendasLink.click(); return true; }
+        return false;
+      });
+      trace.push({ step: 'fallback_clicked_vendas', expandiu_vendas, t: Date.now() - t0 });
+      await sleep(800);
+
+      // Click em "Pedidos / Propostas"
+      const clicou_pedidos = await page.evaluate(() => {
+        const links = Array.from(document.querySelectorAll('a'));
+        const pedidosLink = links.find((l) => l.getAttribute('href') === '/order-creation' && (l.innerText || '').includes('Pedidos'));
+        if (pedidosLink) { pedidosLink.click(); return true; }
+        return false;
+      });
+      trace.push({ step: 'fallback_clicked_pedidos', clicou_pedidos, t: Date.now() - t0 });
+
+      if (!clicou_pedidos) {
+        const errorScreenshot = await page.screenshot({ type: 'png', encoding: 'base64' }).catch(() => null);
+        return {
+          data: {
+            success: false,
+            erro: 'Não conseguiu navegar para /order-creation nem via goto direto nem via click no menu',
+            erroTipo: 'NAVIGATION_FAILED',
+            urlFinal: page.url(),
+            trace,
+          },
+          type: 'application/json',
+          screenshot: errorScreenshot,
+          preLoginScreenshot,
+        };
+      }
+
+      await sleep(2000); // espera navegação completar
+    }
+
     await page.waitForSelector('#btnNovoPedido', { timeout: 25000 });
     await page.click('#btnNovoPedido');
     await page.waitForSelector('#select2-cliente-container', { timeout: 10000 });
