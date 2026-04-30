@@ -249,6 +249,7 @@ const App = () => (
               <Route path="admin/reposicao/grupos-producao" element={<AdminReposicaoGruposProducao />} />
               <Route path="admin/reposicao/cadeia-logistica" element={<AdminReposicaoCadeiaLogistica />} />
               <Route path="admin/reposicao/pedidos" element={<AdminReposicaoPedidos />} />
+              <Route path="admin/sku-mapeamento" element={<AdminSkuMapeamento />} />
               <Route path="admin/reposicao/sla-fornecedor" element={<AdminReposicaoSlaFornecedor />} />
               <Route path="admin/reposicao/promocoes" element={<AdminReposicaoPromocoes />} />
               <Route path="admin/reposicao/promocoes/novo" element={<AdminReposicaoPromocaoDetail />} />
