@@ -365,7 +365,38 @@ export default async ({ page, context }) => {
         };
       }
       await sleep(500); // dá tempo do botão de incluir abrir o Select2
-      await page.waitForSelector('#select2-it_codigo-container', { timeout: 8000 });
+      // Diagnóstico DOM 1.5s após click do incluir, antes do waitForSelector
+      await sleep(1000); // tempo extra pra portal montar a linha nova
+      const debugDomAposIncluir = await page.evaluate(() => {
+        const allSelect2Containers = Array.from(document.querySelectorAll('[id^="select2-it_codigo"], [id*="it_codigo"]'));
+        const allSelect2Search = Array.from(document.querySelectorAll('.select2-search__field'));
+        const datatableRows = document.querySelectorAll('#datatable_itens tbody tr');
+        const selectIts = Array.from(document.querySelectorAll('select[id^="it_codigo"], select[id*="it_codigo"]'));
+        return {
+          rows_count: datatableRows.length,
+          select2_containers_it_codigo: allSelect2Containers.map(function(el) {
+            return { id: el.id, visible: el.offsetParent !== null, tag: el.tagName };
+          }),
+          select2_search_fields_count: allSelect2Search.length,
+          select_native_it_codigo: selectIts.map(function(el) {
+            return { id: el.id, name: el.name || null };
+          }),
+          has_select2_it_codigo_container_exact: !!document.querySelector('#select2-it_codigo-container'),
+        };
+      });
+      console.log('[DEBUG_DOM_APOS_INCLUIR_2]', JSON.stringify({ iteration: i, ...debugDomAposIncluir }));
+      trace.push({ step: 'dom_apos_incluir_iter_' + i, debugDomAposIncluir, t: Date.now() - t0 });
+      // AGORA o waitForSelector original, mas com fallback inteligente
+      let select2ContainerSel = '#select2-it_codigo-container';
+      if (!debugDomAposIncluir.has_select2_it_codigo_container_exact && debugDomAposIncluir.select2_containers_it_codigo.length > 0) {
+        const visibleContainer = debugDomAposIncluir.select2_containers_it_codigo.find(function(c) { return c.visible; });
+        if (visibleContainer) {
+          select2ContainerSel = '#' + visibleContainer.id;
+          console.log('[DEBUG_SELECT2_FALLBACK]', 'Usando ID alternativo: ' + select2ContainerSel);
+          trace.push({ step: 'select2_fallback_iter_' + i, sel: select2ContainerSel, t: Date.now() - t0 });
+        }
+      }
+      await page.waitForSelector(select2ContainerSel, { timeout: 12000 });
       const debugPosIncluir = await page.evaluate(() => {
         const allBtns = Array.from(document.querySelectorAll('#panel_novo_pedido button.btn-primary, #colSpanBtnIncluirItem button.btn-primary, tfoot button.btn-primary'));
         return {
@@ -376,7 +407,7 @@ export default async ({ page, context }) => {
         };
       });
       console.log('[DEBUG_POS_INCLUIR_ITEM]', JSON.stringify({ iteration: i, ...debugPosIncluir }));
-      await page.click('#select2-it_codigo-container');
+      await page.click(select2ContainerSel);
       await sleep(300);
       await page.waitForSelector('.select2-search__field', { timeout: 5000 });
       await fillInput('.select2-search__field', item.sku_portal);
