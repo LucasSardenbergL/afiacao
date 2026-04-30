@@ -868,8 +868,9 @@ function DetalhesModal({
                 Salvar ajustes
               </Button>
               <Button
-                disabled={aprovarMutation.isPending}
+                disabled={aprovarMutation.isPending || !condicaoSelecionada}
                 onClick={() => aprovarMutation.mutate()}
+                title={!condicaoSelecionada ? 'Selecione a condição de pagamento antes de aprovar' : ''}
               >
                 {aprovarMutation.isPending && <Loader2 className="w-4 h-4 mr-1 animate-spin" />}
                 ✓ Aprovar pedido completo
