@@ -461,8 +461,11 @@ function DetalhesModal({
     if (!open) {
       setEdits({});
       setObs('');
+      setCondicaoCodigo('');
+    } else if (pedido) {
+      setCondicaoCodigo(pedido.condicao_pagamento_codigo ?? '');
     }
-  }, [open]);
+  }, [open, pedido]);
 
   const linhas = useMemo(() => {
     return (itens ?? []).map((it) => {
