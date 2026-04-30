@@ -403,8 +403,26 @@ function DetalhesModal({
   const queryClient = useQueryClient();
   const [edits, setEdits] = useState<Record<number, number>>({});
   const [obs, setObs] = useState('');
+  const [condicaoCodigo, setCondicaoCodigo] = useState<string>('');
   const [removerItem, setRemoverItem] = useState<PedidoItem | null>(null);
   const [descontinuarItem, setDescontinuarItem] = useState<PedidoItem | null>(null);
+
+  // Catálogo de condições de pagamento Omie (carregado uma vez)
+  const { data: condicoes = [] } = useQuery({
+    queryKey: ['condicoes-pagamento', pedido?.empresa],
+    queryFn: async () => {
+      if (!pedido) return [] as CondicaoPagamento[];
+      const { data, error } = await supabase
+        .from('omie_condicao_pagamento_catalogo')
+        .select('codigo, descricao, num_parcelas, dias_parcelas')
+        .eq('empresa', pedido.empresa)
+        .eq('ativo', true)
+        .order('descricao');
+      if (error) throw error;
+      return (data ?? []) as CondicaoPagamento[];
+    },
+    enabled: !!pedido && open,
+  });
 
   const { data: itens, isLoading } = useQuery({
     queryKey: ['pedido-itens', pedido?.id],
