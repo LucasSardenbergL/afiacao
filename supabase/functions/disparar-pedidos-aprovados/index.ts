@@ -247,26 +247,30 @@ async function processarPedido(
     }));
 
     // Condição de pagamento (do pedido sugerido)
-    // OBS: código "000" no Omie significa "À Vista" (válido). Não confundir com null/vazio.
+    // OBS: no Omie o campo é cCodParc (string3). Código "000" = "À Vista".
     const condRaw = pedido.condicao_pagamento_codigo;
     if (condRaw === null || condRaw === undefined || String(condRaw).trim() === "") {
       throw new Error(
         `Pedido sem condição de pagamento. Selecione uma condição antes de disparar.`,
       );
     }
-    const condCodigo = Number(condRaw);
-    if (Number.isNaN(condCodigo)) {
-      throw new Error(
-        `Condição de pagamento inválida: "${condRaw}". Deve ser numérica.`,
-      );
-    }
+    // Normaliza para string de até 3 chars, mantendo zeros à esquerda (ex: "000")
+    const cCodParc = String(condRaw).trim().slice(0, 3);
+    const nQtdeParc = Math.max(1, Number(pedido.num_parcelas ?? 1) || 1);
 
     const cabecalho_incluir: Record<string, unknown> = {
       cCodIntPed: `AFI-${pedido.id}`,
       dDtPrevisao: diasUteisFromHoje(ltDias),
       nCodFor: Number(fornecedor.codigo),
       cNumPedido: numeroPedido,
-      nCodCondPagto: condCodigo,
+      cCodParc,
+      nQtdeParc,
+      cObs:
+        `Pedido gerado automaticamente pelo Afiação em ${new Date().toISOString()}${
+          modo === "dry_run" ? " [DRY-RUN]" : ""
+        }`,
+      cObsInt: modo === "dry_run" ? "DRY-RUN Afiação" : "Disparo Afiação",
+    };
       cObs:
         `Pedido gerado automaticamente pelo Afiação em ${new Date().toISOString()}${
           modo === "dry_run" ? " [DRY-RUN]" : ""
