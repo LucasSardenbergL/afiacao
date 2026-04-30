@@ -47,8 +47,10 @@ async function omieCall(
 }
 
 interface CondPag {
-  codigo?: string;
+  nCodigo?: string | number;
+  codigo?: string | number;
   cCodCondPagto?: string;
+  cDescricao?: string;
   descricao?: string;
   cDescCondPagto?: string;
   nParcelas?: number;
@@ -60,8 +62,8 @@ interface CondPag {
 }
 
 function normalize(c: CondPag) {
-  const codigo = String(c.cCodCondPagto ?? c.codigo ?? "").trim();
-  const descricao = String(c.cDescCondPagto ?? c.descricao ?? "").trim();
+  const codigo = String(c.nCodigo ?? c.cCodCondPagto ?? c.codigo ?? "").trim();
+  const descricao = String(c.cDescricao ?? c.cDescCondPagto ?? c.descricao ?? "").trim();
   const num_parcelas = Number(c.nParcelas ?? c.numero_parcelas ?? 0) || null;
   const dias_parcelas = String(c.cDiasParcelas ?? c.dias_parcelas ?? "").trim() || null;
   const inativoFlag = String(c.cInativo ?? c.inativo ?? "N").toUpperCase();
