@@ -211,7 +211,7 @@ export default async ({ page, context }) => {
         const app = document.querySelector('#app');
         if (app && app.classList.contains('app-sidebar-minified')) {
           const minifyBtn = document.querySelector('.app-sidebar-minify-btn');
-          if (minifyBtn) (minifyBtn as HTMLElement).click();
+          if (minifyBtn) minifyBtn.click();
         }
       });
       await sleep(500);
@@ -219,8 +219,8 @@ export default async ({ page, context }) => {
       // Click em "Vendas" pra expandir submenu
       const expandiu_vendas = await page.evaluate(() => {
         const links = Array.from(document.querySelectorAll('#sidebar .menu-link, .app-sidebar .menu-link'));
-        const vendasLink = links.find((l) => ((l as HTMLElement).innerText || '').includes('Vendas'));
-        if (vendasLink) { (vendasLink as HTMLElement).click(); return true; }
+        const vendasLink = links.find((l) => (l.innerText || '').includes('Vendas'));
+        if (vendasLink) { vendasLink.click(); return true; }
         return false;
       });
       trace.push({ step: 'fallback_clicked_vendas', expandiu_vendas, t: Date.now() - t0 });
@@ -229,8 +229,8 @@ export default async ({ page, context }) => {
       // Click em "Pedidos / Propostas"
       const clicou_pedidos = await page.evaluate(() => {
         const links = Array.from(document.querySelectorAll('a'));
-        const pedidosLink = links.find((l) => l.getAttribute('href') === '/order-creation' && ((l as HTMLElement).innerText || '').includes('Pedidos'));
-        if (pedidosLink) { (pedidosLink as HTMLElement).click(); return true; }
+        const pedidosLink = links.find((l) => l.getAttribute('href') === '/order-creation' && (l.innerText || '').includes('Pedidos'));
+        if (pedidosLink) { pedidosLink.click(); return true; }
         return false;
       });
       trace.push({ step: 'fallback_clicked_pedidos', clicou_pedidos, t: Date.now() - t0 });
