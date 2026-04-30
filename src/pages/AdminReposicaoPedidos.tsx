@@ -42,6 +42,13 @@ type Status =
   | 'expirado_sem_aprovacao'
   | string;
 
+type StatusEnvioPortal =
+  | 'nao_aplicavel'
+  | 'pendente_envio_portal'
+  | 'enviando_portal'
+  | 'enviado_portal'
+  | 'falha_envio_portal';
+
 interface PedidoSugerido {
   id: number;
   empresa: string;
@@ -65,6 +72,15 @@ interface PedidoSugerido {
   num_parcelas: number | null;
   dias_parcelas: string | null;
   condicao_origem: string | null;
+  // Tracking de envio ao portal B2B
+  status_envio_portal: StatusEnvioPortal | null;
+  enviado_portal_em: string | null;
+  portal_protocolo: string | null;
+  portal_resposta: unknown;
+  portal_screenshot_url: string | null;
+  portal_tentativas: number | null;
+  portal_proximo_retry_em: string | null;
+  portal_erro: string | null;
 }
 
 interface CondicaoPagamento {
