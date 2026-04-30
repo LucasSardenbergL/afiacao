@@ -1099,6 +1099,7 @@ export default function AdminReposicaoPedidos() {
                       <TableHead className="text-right">Valor</TableHead>
                       <TableHead className="text-right">Δ vs anterior</TableHead>
                       <TableHead className="text-right">Corte</TableHead>
+                      <TableHead>Portal</TableHead>
                       <TableHead>Aprovado em / Por</TableHead>
                       <TableHead className="text-right">Ações</TableHead>
                     </TableRow>
@@ -1110,6 +1111,7 @@ export default function AdminReposicaoPedidos() {
                         p={p}
                         onVerDetalhes={() => setDetalhesPedido(p)}
                         onCancelar={() => setCancelarPedido(p)}
+                        onVerPortal={() => setPortalPedido(p)}
                       />
                     ))}
                   </TableBody>
@@ -1134,6 +1136,11 @@ export default function AdminReposicaoPedidos() {
         pedido={cancelarPedido}
         open={!!cancelarPedido}
         onOpenChange={(v) => !v && setCancelarPedido(null)}
+      />
+      <PortalDrawer
+        pedido={portalPedido}
+        open={!!portalPedido}
+        onOpenChange={(v) => !v && setPortalPedido(null)}
       />
     </div>
   );
