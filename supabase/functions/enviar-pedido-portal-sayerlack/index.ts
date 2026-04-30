@@ -150,7 +150,16 @@ export default async ({ page, context }) => {
       const qtdInputSel = '#datatable_itens tbody tr:nth-last-child(1) td:nth-of-type(7) input';
       await fillInput(qtdInputSel, String(item.qtde));
       await page.click('#btnGravarItem');
-      await sleep(1200);
+      // Aguarda a linha aparecer/atualizar no datatable
+      await page.waitForFunction(
+        (esperado) => {
+          const rows = document.querySelectorAll('#datatable_itens tbody tr');
+          return rows.length === esperado;
+        },
+        { timeout: 5000 },
+        i + 1
+      ).catch(() => null);
+      await sleep(400); // buffer pos-render
       trace.push({ step: 'item_' + i + '_saved', t: Date.now() - t0 });
     }
 
