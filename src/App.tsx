@@ -119,6 +119,7 @@ const AdminReposicaoNegociacaoParalela = lazy(() => import("./pages/AdminReposic
 const AdminAjuda = lazy(() => import("./pages/AdminAjuda"));
 const AdminDesTrimestreAtual = lazy(() => import("./pages/AdminDesTrimestreAtual"));
 const AdminNotificacoes = lazy(() => import("./pages/AdminNotificacoes"));
+const AdminPortalSayerlack = lazy(() => import("./pages/AdminPortalSayerlack"));
 
 const PageLoader = () => (
   <div className="flex flex-col gap-4 p-6">
@@ -262,6 +263,7 @@ const App = () => (
               <Route path="admin/ajuda" element={<AdminAjuda />} />
               <Route path="admin/des/trimestre-atual" element={<AdminDesTrimestreAtual />} />
               <Route path="admin/notificacoes" element={<AdminNotificacoes />} />
+              <Route path="admin/portal-sayerlack" element={<AdminPortalSayerlack />} />
             </Route>
 
             <Route path="*" element={<NotFound />} />
