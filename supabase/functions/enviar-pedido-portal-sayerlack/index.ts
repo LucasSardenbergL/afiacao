@@ -95,6 +95,7 @@ export default async ({ page, context }) => {
     trace.push({ step: 'novo_pedido_open', t: Date.now() - t0 });
 
     await page.click('#select2-cliente-container');
+    await sleep(300);
     await page.waitForSelector('.select2-search__field', { timeout: 5000 });
     await fillInput('.select2-search__field', clienteCodigo);
     await sleep(2000);
