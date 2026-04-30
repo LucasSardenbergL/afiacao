@@ -109,6 +109,7 @@ const AdminReposicaoGruposProducao = lazy(() => import("./pages/AdminReposicaoGr
 const AdminReposicaoSlaFornecedor = lazy(() => import("./pages/AdminReposicaoSlaFornecedor"));
 const AdminReposicaoCadeiaLogistica = lazy(() => import("./pages/AdminReposicaoCadeiaLogistica"));
 const AdminReposicaoPedidos = lazy(() => import("./pages/AdminReposicaoPedidos"));
+const AdminSkuMapeamento = lazy(() => import("./pages/AdminSkuMapeamento"));
 const AdminReposicaoPromocoes = lazy(() => import("./pages/AdminReposicaoPromocoes"));
 const AdminReposicaoPromocaoDetail = lazy(() => import("./pages/AdminReposicaoPromocaoDetail"));
 const AdminReposicaoAumentos = lazy(() => import("./pages/AdminReposicaoAumentos"));
