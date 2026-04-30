@@ -670,6 +670,7 @@ function DetalhesModal({
 
   if (!pedido) return null;
   const podeEditar = pedido.status === 'pendente_aprovacao' || pedido.status === 'bloqueado_guardrail';
+  const podeEditarCondicao = podeEditar || pedido.status === 'aprovado_aguardando_disparo';
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
