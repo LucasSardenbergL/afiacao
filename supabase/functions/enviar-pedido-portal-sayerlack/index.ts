@@ -548,12 +548,27 @@ async function processarPedido(
   // Extrair payload
   const data = bResp?.data ?? bResp ?? {};
   const screenshotB64: string | null = bResp?.screenshot ?? null;
+  const preLoginScreenshotB64: string | null = bResp?.preLoginScreenshot ?? null;
 
   // 8. Upload screenshot se houver
   if (screenshotB64) {
     result.screenshot_url = await uploadScreenshot(supabase, pedido.id, screenshotB64);
     if (result.screenshot_url) {
       console.log(`[envio-portal] Pedido #${pedido.id}: screenshot uploaded`);
+    }
+  }
+
+  // 8b. Upload pre-login screenshot (instrumentação para debug LOGIN_FAILED)
+  if (preLoginScreenshotB64) {
+    const preUrl = await uploadScreenshot(
+      supabase,
+      pedido.id,
+      preLoginScreenshotB64,
+      "_pre_login",
+    );
+    if (preUrl) {
+      console.log(`[envio-portal] Pedido #${pedido.id}: pre_login_screenshot uploaded`);
+      (data as Record<string, unknown>).preLoginScreenshotUrl = preUrl;
     }
   }
 
