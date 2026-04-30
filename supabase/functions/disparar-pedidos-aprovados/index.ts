@@ -271,12 +271,6 @@ async function processarPedido(
         }`,
       cObsInt: modo === "dry_run" ? "DRY-RUN Afiação" : "Disparo Afiação",
     };
-      cObs:
-        `Pedido gerado automaticamente pelo Afiação em ${new Date().toISOString()}${
-          modo === "dry_run" ? " [DRY-RUN]" : ""
-        }`,
-      cObsInt: modo === "dry_run" ? "DRY-RUN Afiação" : "Disparo Afiação",
-    };
 
     const param = { cabecalho_incluir, produtos_incluir };
 
