@@ -105,13 +105,13 @@ Deno.serve(async (req) => {
     do {
       try {
         const resp = await omieCall(
-          "ListarCondicoesPagamento",
+          "ListarParcelas",
           { pagina, registros_por_pagina: 50, apenas_importado_api: "N" },
           creds,
         );
         totalPaginas = Number(resp?.total_de_paginas ?? 1);
-        const lista: CondPag[] = resp?.condicoes_pagamento_cadastro ??
-          resp?.cadastros ?? resp?.lista ?? [];
+        const lista: CondPag[] = resp?.cadastros ??
+          resp?.condicoes_pagamento_cadastro ?? resp?.lista ?? [];
 
         if (lista.length === 0) {
           console.log(`[cond-pgto] página ${pagina}/${totalPaginas} vazia`);
