@@ -689,6 +689,61 @@ function DetalhesModal({
           <div><div className="text-muted-foreground">Horário corte</div><div className="font-medium">{formatTime(pedido.horario_corte_planejado)}</div></div>
         </div>
 
+        {/* Condição de pagamento Omie (obrigatório p/ disparo) */}
+        <div className="rounded-md border bg-muted/30 p-3 space-y-2">
+          <div className="flex items-center justify-between">
+            <label className="text-sm font-medium">
+              Condição de pagamento Omie
+              {!condicaoSelecionada && <span className="text-destructive ml-1">*</span>}
+            </label>
+            {pedido.condicao_origem && (
+              <Badge variant="outline" className="text-[10px] h-4">
+                origem: {pedido.condicao_origem}
+              </Badge>
+            )}
+          </div>
+          {podeEditarCondicao ? (
+            <div className="flex gap-2">
+              <Select value={condicaoCodigo || undefined} onValueChange={setCondicaoCodigo}>
+                <SelectTrigger className="flex-1">
+                  <SelectValue placeholder="Selecione a condição (obrigatório p/ disparar ao Omie)" />
+                </SelectTrigger>
+                <SelectContent className="max-h-[300px]">
+                  {condicoes.map((c) => (
+                    <SelectItem key={c.codigo} value={c.codigo}>
+                      <span className="font-mono text-xs mr-2">{c.codigo}</span>
+                      {c.descricao}
+                      {c.num_parcelas ? <span className="text-muted-foreground ml-2">({c.num_parcelas}x)</span> : null}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+              {pedido.status === 'aprovado_aguardando_disparo' && condicaoMudou && condicaoSelecionada && (
+                <Button
+                  size="sm"
+                  variant="secondary"
+                  disabled={salvarCondicaoMutation.isPending}
+                  onClick={() => salvarCondicaoMutation.mutate()}
+                >
+                  {salvarCondicaoMutation.isPending && <Loader2 className="w-4 h-4 mr-1 animate-spin" />}
+                  Salvar
+                </Button>
+              )}
+            </div>
+          ) : (
+            <div className="text-sm">
+              {pedido.condicao_pagamento_codigo
+                ? <><span className="font-mono text-xs mr-2">{pedido.condicao_pagamento_codigo}</span>{pedido.condicao_pagamento_descricao}</>
+                : <span className="text-muted-foreground italic">não definida</span>}
+            </div>
+          )}
+          {!condicaoSelecionada && podeEditarCondicao && (
+            <p className="text-xs text-destructive">
+              Sem condição selecionada o disparo ao Omie falhará.
+            </p>
+          )}
+        </div>
+
         {pedido.status === 'bloqueado_guardrail' && pedido.mensagem_bloqueio && (
           <Alert variant="destructive">
             <AlertTriangle className="h-4 w-4" />
