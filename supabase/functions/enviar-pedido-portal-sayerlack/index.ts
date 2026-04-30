@@ -312,6 +312,26 @@ export default async ({ page, context }) => {
     for (let i = 0; i < items.length; i++) {
       const item = items[i];
       trace.push({ step: 'item_' + i + '_start', sku: item.sku_portal, t: Date.now() - t0 });
+
+      // Aguardar fim da janela de validação assíncrona da data de entrega.
+      // O portal Sayerlack substitui os botões "Incluir Item" por "Validando data de entrega"
+      // durante validação backend; precisamos esperar voltar antes do próximo click.
+      await page.waitForFunction(function() {
+        const btns = Array.from(document.querySelectorAll('button'));
+        const visiveis = btns.filter(function(b) { return b.offsetParent !== null; });
+        const temIncluirItem = visiveis.some(function(b) {
+          const txt = (b.innerText || '').trim();
+          return txt.includes('Incluir Item') && !txt.includes('Múltiplos');
+        });
+        const temValidando = visiveis.some(function(b) {
+          return (b.innerText || '').includes('Validando');
+        });
+        return temIncluirItem && !temValidando;
+      }, { timeout: 15000, polling: 250 });
+      // Buffer mínimo pós-validação pra DOM estabilizar
+      await sleep(300);
+      trace.push({ step: 'validacao_data_entrega_ok_iter_' + i, t: Date.now() - t0 });
+
       // Tenta o seletor primário primeiro (mesmo do primeiro item, geralmente persiste)
       // Se não achar, tenta fallbacks até funcionar
       const addItemClicado = await page.evaluate(function(idx) {
