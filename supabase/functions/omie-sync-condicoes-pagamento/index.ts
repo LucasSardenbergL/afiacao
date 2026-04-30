@@ -10,7 +10,7 @@ const corsHeaders = {
     "authorization, x-client-info, apikey, content-type",
 };
 
-const OMIE_URL = "https://app.omie.com.br/api/v1/geral/condpag/";
+const OMIE_URL = "https://app.omie.com.br/api/v1/produtos/condicaopagamento/";
 
 function getOmieCreds(empresa: string): { app_key: string; app_secret: string } {
   const up = empresa.toUpperCase();
