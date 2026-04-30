@@ -312,10 +312,58 @@ export default async ({ page, context }) => {
     for (let i = 0; i < items.length; i++) {
       const item = items[i];
       trace.push({ step: 'item_' + i + '_start', sku: item.sku_portal, t: Date.now() - t0 });
-      const addItemBtnSel = i === 0
-        ? '#colSpanBtnIncluirItem button.btn-primary'
-        : 'tfoot button.btn-primary';
-      await page.click(addItemBtnSel);
+      // Tenta o seletor primário primeiro (mesmo do primeiro item, geralmente persiste)
+      // Se não achar, tenta fallbacks até funcionar
+      const addItemClicado = await page.evaluate(() => {
+        // Tentativa 1: #colSpanBtnIncluirItem (mesmo do primeiro item)
+        const primario = document.querySelector('#colSpanBtnIncluirItem button.btn-primary');
+        if (primario && (primario as HTMLElement).offsetParent !== null) {
+          (primario as HTMLElement).click();
+          return { clicked: true, via: 'colSpanBtnIncluirItem' };
+        }
+        // Tentativa 2: tfoot
+        const tfootBtn = document.querySelector('tfoot button.btn-primary');
+        if (tfootBtn && (tfootBtn as HTMLElement).offsetParent !== null) {
+          (tfootBtn as HTMLElement).click();
+          return { clicked: true, via: 'tfoot' };
+        }
+        // Tentativa 3: procura qualquer botão visível com texto "Incluir Item" (excluindo "Múltiplos")
+        const allBtns = Array.from(document.querySelectorAll('button')) as HTMLElement[];
+        const incluirBtn = allBtns.find((b) => {
+          const txt = (b.innerText || '').trim();
+          return txt.includes('Incluir Item') && !txt.includes('Múltiplos') && b.offsetParent !== null;
+        });
+        if (incluirBtn) {
+          incluirBtn.click();
+          return { clicked: true, via: 'text_match', text: (incluirBtn.innerText || '').trim().substring(0, 30) };
+        }
+        return {
+          clicked: false,
+          debug_btns_visible: allBtns
+            .filter((b) => b.offsetParent !== null)
+            .map((b) => (b.innerText || '').trim().substring(0, 40))
+            .slice(0, 15),
+        };
+      });
+      console.log('[DEBUG_INCLUIR_ITEM_CLICK]', JSON.stringify({ iteration: i, ...addItemClicado }));
+      trace.push({ step: 'incluir_item_clicked_iter_' + i, addItemClicado, t: Date.now() - t0 });
+      if (!addItemClicado.clicked) {
+        const errorScreenshot = await page.screenshot({ type: 'png', encoding: 'base64' }).catch(() => null);
+        return {
+          data: {
+            success: false,
+            erro: 'Nao conseguiu clicar em "+ Incluir Item" para o item ' + i + ' (' + item.sku_portal + '). Botao nao encontrado por nenhum dos 3 seletores.',
+            erroTipo: 'INCLUIR_ITEM_NOT_FOUND',
+            iteracao: i,
+            sku_falho: item.sku_portal,
+            debug_addItemClicado: addItemClicado,
+            trace,
+          },
+          type: 'application/json',
+          screenshot: errorScreenshot,
+          preLoginScreenshot,
+        };
+      }
       await sleep(500); // dá tempo do botão de incluir abrir o Select2
       await page.waitForSelector('#select2-it_codigo-container', { timeout: 8000 });
       const debugPosIncluir = await page.evaluate(() => {
