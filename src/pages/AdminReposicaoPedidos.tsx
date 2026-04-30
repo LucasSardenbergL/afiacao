@@ -516,12 +516,51 @@ function DetalhesModal({
     },
   });
 
+  const condicaoSelecionada = useMemo(
+    () => condicoes.find((c) => c.codigo === condicaoCodigo) ?? null,
+    [condicoes, condicaoCodigo],
+  );
+
+  const condicaoMudou = condicaoCodigo !== (pedido?.condicao_pagamento_codigo ?? '');
+
+  const salvarCondicaoMutation = useMutation({
+    mutationFn: async () => {
+      if (!pedido || !condicaoSelecionada) return;
+      const { error } = await supabase
+        .from('pedido_compra_sugerido')
+        .update({
+          condicao_pagamento_codigo: condicaoSelecionada.codigo,
+          condicao_pagamento_descricao: condicaoSelecionada.descricao,
+          num_parcelas: condicaoSelecionada.num_parcelas,
+          condicao_origem: 'manual_humano',
+          atualizado_em: new Date().toISOString(),
+        })
+        .eq('id', pedido.id);
+      if (error) throw error;
+    },
+    onSuccess: () => {
+      toast.success('Condição de pagamento salva');
+      queryClient.invalidateQueries({ queryKey: ['pedidos-ciclo'] });
+    },
+    onError: (e: Error) => {
+      logger.error('Erro ao salvar condição', { error: e });
+      toast.error(`Erro ao salvar condição: ${e.message}`);
+    },
+  });
+
   const aprovarMutation = useMutation({
     mutationFn: async () => {
       if (!pedido) return;
+      if (!condicaoSelecionada) {
+        throw new Error('Selecione uma condição de pagamento antes de aprovar');
+      }
       // salvar ajustes primeiro se houver
       if (Object.keys(edits).length > 0) {
         await salvarMutation.mutateAsync();
+      }
+      // salvar condição se mudou ou se ainda não havia
+      if (condicaoMudou) {
+        await salvarCondicaoMutation.mutateAsync();
       }
       const { data, error } = await supabase.rpc('aprovar_pedido_sugerido', {
         p_pedido_id: pedido.id,
