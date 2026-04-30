@@ -8,6 +8,7 @@ import { Badge } from '@/components/ui/badge';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { Input } from '@/components/ui/input';
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Textarea } from '@/components/ui/textarea';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
@@ -402,8 +403,26 @@ function DetalhesModal({
   const queryClient = useQueryClient();
   const [edits, setEdits] = useState<Record<number, number>>({});
   const [obs, setObs] = useState('');
+  const [condicaoCodigo, setCondicaoCodigo] = useState<string>('');
   const [removerItem, setRemoverItem] = useState<PedidoItem | null>(null);
   const [descontinuarItem, setDescontinuarItem] = useState<PedidoItem | null>(null);
+
+  // Catálogo de condições de pagamento Omie (carregado uma vez)
+  const { data: condicoes = [] } = useQuery({
+    queryKey: ['condicoes-pagamento', pedido?.empresa],
+    queryFn: async () => {
+      if (!pedido) return [] as CondicaoPagamento[];
+      const { data, error } = await supabase
+        .from('omie_condicao_pagamento_catalogo')
+        .select('codigo, descricao, num_parcelas, dias_parcelas')
+        .eq('empresa', pedido.empresa)
+        .eq('ativo', true)
+        .order('descricao');
+      if (error) throw error;
+      return (data ?? []) as CondicaoPagamento[];
+    },
+    enabled: !!pedido && open,
+  });
 
   const { data: itens, isLoading } = useQuery({
     queryKey: ['pedido-itens', pedido?.id],
@@ -442,8 +461,11 @@ function DetalhesModal({
     if (!open) {
       setEdits({});
       setObs('');
+      setCondicaoCodigo('');
+    } else if (pedido) {
+      setCondicaoCodigo(pedido.condicao_pagamento_codigo ?? '');
     }
-  }, [open]);
+  }, [open, pedido]);
 
   const linhas = useMemo(() => {
     return (itens ?? []).map((it) => {
@@ -494,12 +516,51 @@ function DetalhesModal({
     },
   });
 
+  const condicaoSelecionada = useMemo(
+    () => condicoes.find((c) => c.codigo === condicaoCodigo) ?? null,
+    [condicoes, condicaoCodigo],
+  );
+
+  const condicaoMudou = condicaoCodigo !== (pedido?.condicao_pagamento_codigo ?? '');
+
+  const salvarCondicaoMutation = useMutation({
+    mutationFn: async () => {
+      if (!pedido || !condicaoSelecionada) return;
+      const { error } = await supabase
+        .from('pedido_compra_sugerido')
+        .update({
+          condicao_pagamento_codigo: condicaoSelecionada.codigo,
+          condicao_pagamento_descricao: condicaoSelecionada.descricao,
+          num_parcelas: condicaoSelecionada.num_parcelas,
+          condicao_origem: 'manual_humano',
+          atualizado_em: new Date().toISOString(),
+        })
+        .eq('id', pedido.id);
+      if (error) throw error;
+    },
+    onSuccess: () => {
+      toast.success('Condição de pagamento salva');
+      queryClient.invalidateQueries({ queryKey: ['pedidos-ciclo'] });
+    },
+    onError: (e: Error) => {
+      logger.error('Erro ao salvar condição', { error: e });
+      toast.error(`Erro ao salvar condição: ${e.message}`);
+    },
+  });
+
   const aprovarMutation = useMutation({
     mutationFn: async () => {
       if (!pedido) return;
+      if (!condicaoSelecionada) {
+        throw new Error('Selecione uma condição de pagamento antes de aprovar');
+      }
       // salvar ajustes primeiro se houver
       if (Object.keys(edits).length > 0) {
         await salvarMutation.mutateAsync();
+      }
+      // salvar condição se mudou ou se ainda não havia
+      if (condicaoMudou) {
+        await salvarCondicaoMutation.mutateAsync();
       }
       const { data, error } = await supabase.rpc('aprovar_pedido_sugerido', {
         p_pedido_id: pedido.id,
@@ -609,6 +670,7 @@ function DetalhesModal({
 
   if (!pedido) return null;
   const podeEditar = pedido.status === 'pendente_aprovacao' || pedido.status === 'bloqueado_guardrail';
+  const podeEditarCondicao = podeEditar || pedido.status === 'aprovado_aguardando_disparo';
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
@@ -625,6 +687,61 @@ function DetalhesModal({
           <div><div className="text-muted-foreground">Nº SKUs</div><div className="font-medium">{pedido.num_skus}</div></div>
           <div><div className="text-muted-foreground">Valor total</div><div className="font-medium">{formatBRL(totalAtual || pedido.valor_total)}</div></div>
           <div><div className="text-muted-foreground">Horário corte</div><div className="font-medium">{formatTime(pedido.horario_corte_planejado)}</div></div>
+        </div>
+
+        {/* Condição de pagamento Omie (obrigatório p/ disparo) */}
+        <div className="rounded-md border bg-muted/30 p-3 space-y-2">
+          <div className="flex items-center justify-between">
+            <label className="text-sm font-medium">
+              Condição de pagamento Omie
+              {!condicaoSelecionada && <span className="text-destructive ml-1">*</span>}
+            </label>
+            {pedido.condicao_origem && (
+              <Badge variant="outline" className="text-[10px] h-4">
+                origem: {pedido.condicao_origem}
+              </Badge>
+            )}
+          </div>
+          {podeEditarCondicao ? (
+            <div className="flex gap-2">
+              <Select value={condicaoCodigo || undefined} onValueChange={setCondicaoCodigo}>
+                <SelectTrigger className="flex-1">
+                  <SelectValue placeholder="Selecione a condição (obrigatório p/ disparar ao Omie)" />
+                </SelectTrigger>
+                <SelectContent className="max-h-[300px]">
+                  {condicoes.map((c) => (
+                    <SelectItem key={c.codigo} value={c.codigo}>
+                      <span className="font-mono text-xs mr-2">{c.codigo}</span>
+                      {c.descricao}
+                      {c.num_parcelas ? <span className="text-muted-foreground ml-2">({c.num_parcelas}x)</span> : null}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+              {pedido.status === 'aprovado_aguardando_disparo' && condicaoMudou && condicaoSelecionada && (
+                <Button
+                  size="sm"
+                  variant="secondary"
+                  disabled={salvarCondicaoMutation.isPending}
+                  onClick={() => salvarCondicaoMutation.mutate()}
+                >
+                  {salvarCondicaoMutation.isPending && <Loader2 className="w-4 h-4 mr-1 animate-spin" />}
+                  Salvar
+                </Button>
+              )}
+            </div>
+          ) : (
+            <div className="text-sm">
+              {pedido.condicao_pagamento_codigo
+                ? <><span className="font-mono text-xs mr-2">{pedido.condicao_pagamento_codigo}</span>{pedido.condicao_pagamento_descricao}</>
+                : <span className="text-muted-foreground italic">não definida</span>}
+            </div>
+          )}
+          {!condicaoSelecionada && podeEditarCondicao && (
+            <p className="text-xs text-destructive">
+              Sem condição selecionada o disparo ao Omie falhará.
+            </p>
+          )}
         </div>
 
         {pedido.status === 'bloqueado_guardrail' && pedido.mensagem_bloqueio && (
@@ -751,8 +868,9 @@ function DetalhesModal({
                 Salvar ajustes
               </Button>
               <Button
-                disabled={aprovarMutation.isPending}
+                disabled={aprovarMutation.isPending || !condicaoSelecionada}
                 onClick={() => aprovarMutation.mutate()}
+                title={!condicaoSelecionada ? 'Selecione a condição de pagamento antes de aprovar' : ''}
               >
                 {aprovarMutation.isPending && <Loader2 className="w-4 h-4 mr-1 animate-spin" />}
                 ✓ Aprovar pedido completo
