@@ -10,7 +10,7 @@ const corsHeaders = {
     "authorization, x-client-info, apikey, content-type",
 };
 
-const OMIE_URL = "https://app.omie.com.br/api/v1/geral/condpag/";
+const OMIE_URL = "https://app.omie.com.br/api/v1/geral/parcelas/";
 
 function getOmieCreds(empresa: string): { app_key: string; app_secret: string } {
   const up = empresa.toUpperCase();
@@ -47,8 +47,10 @@ async function omieCall(
 }
 
 interface CondPag {
-  codigo?: string;
+  nCodigo?: string | number;
+  codigo?: string | number;
   cCodCondPagto?: string;
+  cDescricao?: string;
   descricao?: string;
   cDescCondPagto?: string;
   nParcelas?: number;
@@ -60,8 +62,8 @@ interface CondPag {
 }
 
 function normalize(c: CondPag) {
-  const codigo = String(c.cCodCondPagto ?? c.codigo ?? "").trim();
-  const descricao = String(c.cDescCondPagto ?? c.descricao ?? "").trim();
+  const codigo = String(c.nCodigo ?? c.cCodCondPagto ?? c.codigo ?? "").trim();
+  const descricao = String(c.cDescricao ?? c.cDescCondPagto ?? c.descricao ?? "").trim();
   const num_parcelas = Number(c.nParcelas ?? c.numero_parcelas ?? 0) || null;
   const dias_parcelas = String(c.cDiasParcelas ?? c.dias_parcelas ?? "").trim() || null;
   const inativoFlag = String(c.cInativo ?? c.inativo ?? "N").toUpperCase();
@@ -103,13 +105,13 @@ Deno.serve(async (req) => {
     do {
       try {
         const resp = await omieCall(
-          "ListarCondPagamento",
+          "ListarParcelas",
           { pagina, registros_por_pagina: 50, apenas_importado_api: "N" },
           creds,
         );
         totalPaginas = Number(resp?.total_de_paginas ?? 1);
-        const lista: CondPag[] = resp?.condicoes_pagamento_cadastro ??
-          resp?.cadastros ?? resp?.lista ?? [];
+        const lista: CondPag[] = resp?.cadastros ??
+          resp?.condicoes_pagamento_cadastro ?? resp?.lista ?? [];
 
         if (lista.length === 0) {
           console.log(`[cond-pgto] página ${pagina}/${totalPaginas} vazia`);
