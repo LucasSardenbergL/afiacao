@@ -103,7 +103,7 @@ Deno.serve(async (req) => {
     do {
       try {
         const resp = await omieCall(
-          "ListarCondPagamento",
+          "ListarCondicoesPagamento",
           { pagina, registros_por_pagina: 50, apenas_importado_api: "N" },
           creds,
         );
