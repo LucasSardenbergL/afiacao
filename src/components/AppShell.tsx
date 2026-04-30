@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
-import { BookOpen, Lock, Calculator, FileText, Palette, Beaker, FileUp, Droplets, LayoutDashboard, Users, ShoppingCart, ShoppingBag, Phone, GraduationCap, BarChart3, Settings, ChevronLeft, ChevronRight, Search, Bell, User, LogOut, Package, TrendingUp, Headphones, Target, Menu, X, ClipboardList, PlusCircle, Shield, Wrench, Award, Scissors, DollarSign, Layers, Printer, UserCheck, FileCheck, Boxes, AlertTriangle, PlayCircle, Factory, Truck, Percent, Sparkles, Handshake } from 'lucide-react';
+import { BookOpen, Lock, Calculator, FileText, Palette, Beaker, FileUp, Droplets, LayoutDashboard, Users, ShoppingCart, ShoppingBag, Phone, GraduationCap, BarChart3, Settings, ChevronLeft, ChevronRight, Search, Bell, User, LogOut, Package, TrendingUp, Headphones, Target, Menu, X, ClipboardList, PlusCircle, Shield, Wrench, Award, Scissors, DollarSign, Layers, Printer, UserCheck, FileCheck, Boxes, AlertTriangle, PlayCircle, Factory, Truck, Percent, Sparkles, Handshake, Link2 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { useAuth } from '@/contexts/AuthContext';
 import { useUserRole } from '@/hooks/useUserRole';
@@ -74,6 +74,7 @@ const unifiedNavSections: { title: string; items: NavItem[] }[] = [
       { icon: Factory, label: 'Grupos de produção', path: '/admin/reposicao/grupos-producao', managerOnly: true },
       { icon: Truck, label: 'Cadeia logística', path: '/admin/reposicao/cadeia-logistica', managerOnly: true },
       { icon: ShoppingBag, label: 'Pedidos sugeridos', path: '/admin/reposicao/pedidos', managerOnly: true },
+      { icon: Link2, label: 'Mapeamento SKU', path: '/admin/sku-mapeamento', managerOnly: true },
       { icon: Target, label: 'SLA de fornecedor', path: '/admin/reposicao/sla-fornecedor', managerOnly: true },
       { icon: PlayCircle, label: 'Aplicação no Omie', path: '/admin/reposicao/aplicacao', managerOnly: true },
       { icon: Sparkles, label: 'Oportunidades', path: '/admin/reposicao/oportunidades', managerOnly: true },

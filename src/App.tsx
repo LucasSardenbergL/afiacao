@@ -109,6 +109,7 @@ const AdminReposicaoGruposProducao = lazy(() => import("./pages/AdminReposicaoGr
 const AdminReposicaoSlaFornecedor = lazy(() => import("./pages/AdminReposicaoSlaFornecedor"));
 const AdminReposicaoCadeiaLogistica = lazy(() => import("./pages/AdminReposicaoCadeiaLogistica"));
 const AdminReposicaoPedidos = lazy(() => import("./pages/AdminReposicaoPedidos"));
+const AdminSkuMapeamento = lazy(() => import("./pages/AdminSkuMapeamento"));
 const AdminReposicaoPromocoes = lazy(() => import("./pages/AdminReposicaoPromocoes"));
 const AdminReposicaoPromocaoDetail = lazy(() => import("./pages/AdminReposicaoPromocaoDetail"));
 const AdminReposicaoAumentos = lazy(() => import("./pages/AdminReposicaoAumentos"));
@@ -248,6 +249,7 @@ const App = () => (
               <Route path="admin/reposicao/grupos-producao" element={<AdminReposicaoGruposProducao />} />
               <Route path="admin/reposicao/cadeia-logistica" element={<AdminReposicaoCadeiaLogistica />} />
               <Route path="admin/reposicao/pedidos" element={<AdminReposicaoPedidos />} />
+              <Route path="admin/sku-mapeamento" element={<AdminSkuMapeamento />} />
               <Route path="admin/reposicao/sla-fornecedor" element={<AdminReposicaoSlaFornecedor />} />
               <Route path="admin/reposicao/promocoes" element={<AdminReposicaoPromocoes />} />
               <Route path="admin/reposicao/promocoes/novo" element={<AdminReposicaoPromocaoDetail />} />

@@ -7066,6 +7066,48 @@ export type Database = {
         }
         Relationships: []
       }
+      sku_fornecedor_externo: {
+        Row: {
+          ativo: boolean
+          atualizado_em: string
+          criado_em: string
+          empresa: string
+          fator_conversao: number
+          fornecedor_nome: string
+          id: number
+          observacoes: string | null
+          sku_omie: string
+          sku_portal: string | null
+          unidade_portal: string
+        }
+        Insert: {
+          ativo?: boolean
+          atualizado_em?: string
+          criado_em?: string
+          empresa: string
+          fator_conversao?: number
+          fornecedor_nome: string
+          id?: number
+          observacoes?: string | null
+          sku_omie: string
+          sku_portal?: string | null
+          unidade_portal?: string
+        }
+        Update: {
+          ativo?: boolean
+          atualizado_em?: string
+          criado_em?: string
+          empresa?: string
+          fator_conversao?: number
+          fornecedor_nome?: string
+          id?: number
+          observacoes?: string | null
+          sku_omie?: string
+          sku_portal?: string | null
+          unidade_portal?: string
+        }
+        Relationships: []
+      }
       sku_grupo_producao: {
         Row: {
           atualizado_em: string | null
