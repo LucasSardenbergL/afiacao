@@ -23,25 +23,58 @@ const MAX_PEDIDOS_POR_EXECUCAO = 5;
 const MAX_TENTATIVAS = 3;
 
 // Funcao JS que roda no Chrome remoto via Browserless
-// Sintaxe: Browserless v2 (/function endpoint) — usa "export default" em vez de "module.exports"
+// Sintaxe: Browserless v2 (/function endpoint) — usa "export default" e API Puppeteer
+// Browserless v2 usa Puppeteer (NAO Playwright). Helpers Puppeteer-only:
+//   - page.type(sel, txt) [nao page.fill]
+//   - page.$ / page.$$ [nao page.locator]
+//   - seletores CSS puros, sem :has-text
 // Ref: https://docs.browserless.io/rest-apis/function
 const BROWSERLESS_FUNCTION = `
 export default async ({ page, context }) => {
   const { user, pass, portalUrl, clienteCodigo, items } = context;
   const trace = [];
   const t0 = Date.now();
+
+  // Helper: limpa input e digita (substitui page.fill do Playwright)
+  const fillInput = async (selector, value) => {
+    await page.click(selector);
+    await page.evaluate((sel) => {
+      const el = document.querySelector(sel);
+      if (el) {
+        el.value = '';
+        el.dispatchEvent(new Event('input', { bubbles: true }));
+      }
+    }, selector);
+    await page.type(selector, String(value));
+  };
+
+  // Helper: clica em botao por texto (substitui :has-text do Playwright)
+  const clickButtonByText = async (text) => {
+    const clicked = await page.evaluate((t) => {
+      const btn = Array.from(document.querySelectorAll('button')).find(
+        (b) => (b.innerText || '').trim().includes(t),
+      );
+      if (btn) { btn.click(); return true; }
+      return false;
+    }, text);
+    if (!clicked) throw new Error('Botao com texto "' + text + '" nao encontrado');
+  };
+
+  // Helper: sleep (substitui page.waitForTimeout que sumiu em puppeteer recente)
+  const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+
   try {
     trace.push({ step: 'login_start', t: Date.now() - t0 });
     await page.goto(portalUrl + '/login', { waitUntil: 'domcontentloaded', timeout: 20000 });
     await page.waitForSelector('#user', { timeout: 10000 });
-    await page.fill('#user', user);
-    await page.fill('#password', pass);
+    await fillInput('#user', user);
+    await fillInput('#password', pass);
     await Promise.all([
-      page.waitForNavigation({ timeout: 15000 }),
-      page.click('button:has-text("Entrar")'),
+      page.waitForNavigation({ timeout: 15000 }).catch(() => null),
+      clickButtonByText('Entrar'),
     ]);
     if (page.url().includes('/login/401') || page.url().endsWith('/login')) {
-      const errorScreenshot = await page.screenshot({ type: 'png' });
+      const errorScreenshot = await page.screenshot({ type: 'png', encoding: 'base64' });
       return {
         data: {
           success: false,
@@ -51,7 +84,7 @@ export default async ({ page, context }) => {
           trace,
         },
         type: 'application/json',
-        screenshot: errorScreenshot.toString('base64'),
+        screenshot: errorScreenshot,
       };
     }
     trace.push({ step: 'login_success', t: Date.now() - t0 });
@@ -64,11 +97,11 @@ export default async ({ page, context }) => {
 
     await page.click('#select2-cliente-container');
     await page.waitForSelector('.select2-search__field', { timeout: 5000 });
-    await page.fill('.select2-search__field', clienteCodigo);
-    await page.waitForTimeout(2000);
+    await fillInput('.select2-search__field', clienteCodigo);
+    await sleep(2000);
     const clienteOption = await page.$('.select2-results__option:not(.select2-results__message)');
     if (!clienteOption) {
-      const errorScreenshot = await page.screenshot({ type: 'png' });
+      const errorScreenshot = await page.screenshot({ type: 'png', encoding: 'base64' });
       return {
         data: {
           success: false,
@@ -77,11 +110,11 @@ export default async ({ page, context }) => {
           trace,
         },
         type: 'application/json',
-        screenshot: errorScreenshot.toString('base64'),
+        screenshot: errorScreenshot,
       };
     }
     await clienteOption.click();
-    await page.waitForTimeout(500);
+    await sleep(500);
     trace.push({ step: 'cliente_selecionado', t: Date.now() - t0 });
 
     for (let i = 0; i < items.length; i++) {
@@ -94,11 +127,11 @@ export default async ({ page, context }) => {
       await page.waitForSelector('#select2-it_codigo-container', { timeout: 8000 });
       await page.click('#select2-it_codigo-container');
       await page.waitForSelector('.select2-search__field', { timeout: 5000 });
-      await page.fill('.select2-search__field', item.sku_portal);
-      await page.waitForTimeout(2000);
+      await fillInput('.select2-search__field', item.sku_portal);
+      await sleep(2000);
       const skuOption = await page.$('.select2-results__option:not(.select2-results__message)');
       if (!skuOption) {
-        const errorScreenshot = await page.screenshot({ type: 'png' });
+        const errorScreenshot = await page.screenshot({ type: 'png', encoding: 'base64' });
         return {
           data: {
             success: false,
@@ -108,35 +141,40 @@ export default async ({ page, context }) => {
             trace,
           },
           type: 'application/json',
-          screenshot: errorScreenshot.toString('base64'),
+          screenshot: errorScreenshot,
         };
       }
       await skuOption.click();
-      await page.waitForTimeout(800);
+      await sleep(800);
       const qtdInputSel = '#datatable_itens tbody tr:nth-last-child(1) td:nth-of-type(7) input';
-      await page.fill(qtdInputSel, String(item.qtde));
+      await fillInput(qtdInputSel, String(item.qtde));
       await page.click('#btnGravarItem');
-      await page.waitForTimeout(1200);
+      await sleep(1200);
       trace.push({ step: 'item_' + i + '_saved', t: Date.now() - t0 });
     }
 
     await page.click('#btnSalvarNovoPedido');
     trace.push({ step: 'efetivar_clicked', t: Date.now() - t0 });
 
-    const successText = await page.waitForFunction(
+    // Aguarda o texto de sucesso aparecer (Puppeteer suporta waitForFunction sem jsonValue)
+    await page.waitForFunction(
       () => {
         const body = document.body.innerText;
-        const match = body.match(/Pedido (\\d+) criado com sucesso/);
-        return match ? match[0] : null;
+        return /Pedido \\d+ criado com sucesso/.test(body);
       },
       { timeout: 45000 }
     );
-    const successStr = await successText.jsonValue();
-    const protocoloMatch = successStr.match(/Pedido (\\d+) criado com sucesso/);
+    // Extrai o texto via evaluate puro
+    const successStr = await page.evaluate(() => {
+      const body = document.body.innerText;
+      const match = body.match(/Pedido (\\d+) criado com sucesso/);
+      return match ? match[0] : null;
+    });
+    const protocoloMatch = successStr ? successStr.match(/Pedido (\\d+) criado com sucesso/) : null;
     const protocolo = protocoloMatch ? protocoloMatch[1] : null;
     trace.push({ step: 'success_detected', protocolo, t: Date.now() - t0 });
 
-    const screenshot = await page.screenshot({ type: 'png', fullPage: false });
+    const screenshot = await page.screenshot({ type: 'png', fullPage: false, encoding: 'base64' });
     return {
       data: {
         success: true,
@@ -146,19 +184,19 @@ export default async ({ page, context }) => {
         trace,
       },
       type: 'application/json',
-      screenshot: screenshot.toString('base64'),
+      screenshot,
     };
   } catch (err) {
-    const errorScreenshot = await page.screenshot({ type: 'png' }).catch(() => null);
+    const errorScreenshot = await page.screenshot({ type: 'png', encoding: 'base64' }).catch(() => null);
     return {
       data: {
         success: false,
-        erro: err.message || String(err),
+        erro: (err && err.message) ? err.message : String(err),
         erroTipo: 'EXCEPTION',
         trace,
       },
       type: 'application/json',
-      screenshot: errorScreenshot ? errorScreenshot.toString('base64') : null,
+      screenshot: errorScreenshot,
     };
   }
 };
@@ -201,7 +239,20 @@ async function uploadScreenshot(
   base64: string,
 ): Promise<string | null> {
   try {
-    const bytes = Uint8Array.from(atob(base64), (c) => c.charCodeAt(0));
+    // Browserless v2 as vezes retorna data URL ("data:image/png;base64,XXXX") em vez de base64 puro.
+    // atob() falha com prefixo, entao removemos defensivamente.
+    let cleaned = base64;
+    if (cleaned && cleaned.startsWith("data:")) {
+      const commaIdx = cleaned.indexOf(",");
+      if (commaIdx !== -1) cleaned = cleaned.substring(commaIdx + 1);
+    }
+    console.log("[DEBUG_SCREENSHOT_PREFIX]", JSON.stringify({
+      pedido_id: pedidoId,
+      has_data_prefix: base64?.startsWith("data:") ?? false,
+      base64_length: cleaned?.length ?? 0,
+      base64_first_20: cleaned?.substring(0, 20) ?? null,
+    }));
+    const bytes = Uint8Array.from(atob(cleaned), (c) => c.charCodeAt(0));
     const path = `pedido_${pedidoId}_${Date.now()}.png`;
     const { error: upErr } = await supabase.storage
       .from("portal_screenshots")
