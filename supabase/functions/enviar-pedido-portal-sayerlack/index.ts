@@ -69,10 +69,9 @@ export default async ({ page, context }) => {
     await page.waitForSelector('#user', { timeout: 10000 });
     await fillInput('#user', user);
     await fillInput('#password', pass);
-    await Promise.all([
-      page.waitForNavigation({ timeout: 15000 }).catch(() => null),
-      clickButtonByText('Entrar'),
-    ]);
+    const navPromise = page.waitForNavigation({ timeout: 15000 }).catch(() => null);
+    await clickButtonByText('Entrar');
+    await navPromise;
     if (page.url().includes('/login/401') || page.url().endsWith('/login')) {
       const errorScreenshot = await page.screenshot({ type: 'png', encoding: 'base64' });
       return {
@@ -96,6 +95,7 @@ export default async ({ page, context }) => {
     trace.push({ step: 'novo_pedido_open', t: Date.now() - t0 });
 
     await page.click('#select2-cliente-container');
+    await sleep(300);
     await page.waitForSelector('.select2-search__field', { timeout: 5000 });
     await fillInput('.select2-search__field', clienteCodigo);
     await sleep(2000);
@@ -126,6 +126,7 @@ export default async ({ page, context }) => {
       await page.click(addItemBtnSel);
       await page.waitForSelector('#select2-it_codigo-container', { timeout: 8000 });
       await page.click('#select2-it_codigo-container');
+      await sleep(300);
       await page.waitForSelector('.select2-search__field', { timeout: 5000 });
       await fillInput('.select2-search__field', item.sku_portal);
       await sleep(2000);
@@ -149,7 +150,16 @@ export default async ({ page, context }) => {
       const qtdInputSel = '#datatable_itens tbody tr:nth-last-child(1) td:nth-of-type(7) input';
       await fillInput(qtdInputSel, String(item.qtde));
       await page.click('#btnGravarItem');
-      await sleep(1200);
+      // Aguarda a linha aparecer/atualizar no datatable
+      await page.waitForFunction(
+        (esperado) => {
+          const rows = document.querySelectorAll('#datatable_itens tbody tr');
+          return rows.length === esperado;
+        },
+        { timeout: 5000 },
+        i + 1
+      ).catch(() => null);
+      await sleep(400); // buffer pos-render
       trace.push({ step: 'item_' + i + '_saved', t: Date.now() - t0 });
     }
 
