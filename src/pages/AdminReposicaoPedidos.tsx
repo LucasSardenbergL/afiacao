@@ -963,6 +963,7 @@ export default function AdminReposicaoPedidos() {
   const [now, setNow] = useState(new Date());
   const [detalhesPedido, setDetalhesPedido] = useState<PedidoSugerido | null>(null);
   const [cancelarPedido, setCancelarPedido] = useState<PedidoSugerido | null>(null);
+  const [portalPedido, setPortalPedido] = useState<PedidoSugerido | null>(null);
   const [historicoData, setHistoricoData] = useState<string>(() => format(new Date(), 'yyyy-MM-dd'));
 
   useEffect(() => {
