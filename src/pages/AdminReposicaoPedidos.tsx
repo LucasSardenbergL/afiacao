@@ -31,6 +31,7 @@ import { toast } from 'sonner';
 import { format } from 'date-fns';
 import { ptBR } from 'date-fns/locale';
 import { logger } from '@/lib/logger';
+import { cn } from '@/lib/utils';
 
 type Status =
   | 'pendente_aprovacao'
