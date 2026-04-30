@@ -94,7 +94,7 @@ export default async ({ page, context }) => {
 
     await applyStealth();
     trace.push({ step: 'login_start', t: Date.now() - t0 });
-    await page.goto(portalUrl + '/login', { waitUntil: 'networkidle0', timeout: 30000 });
+    await page.goto(portalUrl + '/login', { waitUntil: 'networkidle2', timeout: 30000 });
     await page.waitForSelector('#user', { timeout: 10000 });
     await fillInput('#user', user);
     await fillInput('#password', pass);
