@@ -247,12 +247,17 @@ async function processarPedido(
     }));
 
     // Condição de pagamento (do pedido sugerido)
-    const condCodigo = pedido.condicao_pagamento_codigo
-      ? Number(pedido.condicao_pagamento_codigo)
-      : null;
-    if (!condCodigo) {
+    // OBS: código "000" no Omie significa "À Vista" (válido). Não confundir com null/vazio.
+    const condRaw = pedido.condicao_pagamento_codigo;
+    if (condRaw === null || condRaw === undefined || String(condRaw).trim() === "") {
       throw new Error(
         `Pedido sem condição de pagamento. Selecione uma condição antes de disparar.`,
+      );
+    }
+    const condCodigo = Number(condRaw);
+    if (Number.isNaN(condCodigo)) {
+      throw new Error(
+        `Condição de pagamento inválida: "${condRaw}". Deve ser numérica.`,
       );
     }
 
