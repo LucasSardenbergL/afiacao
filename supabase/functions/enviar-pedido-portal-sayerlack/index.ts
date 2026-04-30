@@ -63,6 +63,25 @@ export default async ({ page, context }) => {
   // Helper: sleep (substitui page.waitForTimeout que sumiu em puppeteer recente)
   const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
+  // Helper: aplica mascaras anti-deteccao (validado em teste isolado contra WAF Sayerlack)
+  const applyStealth = async () => {
+    await page.setUserAgent('Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0.0.0 Safari/537.36');
+    await page.setViewport({ width: 1366, height: 768, deviceScaleFactor: 1 });
+    await page.setExtraHTTPHeaders({
+      'Accept-Language': 'pt-BR,pt;q=0.9,en-US;q=0.8,en;q=0.7',
+      'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8',
+      'Sec-Ch-Ua': '"Chromium";v="130", "Google Chrome";v="130", "Not?A_Brand";v="99"',
+      'Sec-Ch-Ua-Mobile': '?0',
+      'Sec-Ch-Ua-Platform': '"macOS"',
+      'Upgrade-Insecure-Requests': '1',
+    });
+    await page.evaluateOnNewDocument(() => {
+      Object.defineProperty(navigator, 'webdriver', { get: () => false });
+      Object.defineProperty(navigator, 'plugins', { get: () => [1, 2, 3, 4, 5] });
+      Object.defineProperty(navigator, 'languages', { get: () => ['pt-BR', 'pt', 'en-US', 'en'] });
+    });
+  };
+
   try {
     console.log('[DEBUG_CREDS]', JSON.stringify({
       user_present: typeof user === 'string' && user.length > 0,
