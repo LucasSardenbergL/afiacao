@@ -313,10 +313,21 @@ export default async ({ page, context }) => {
       const item = items[i];
       trace.push({ step: 'item_' + i + '_start', sku: item.sku_portal, t: Date.now() - t0 });
       const addItemBtnSel = i === 0
-        ? '#panel_novo_pedido button.btn-primary'
+        ? '#colSpanBtnIncluirItem button.btn-primary'
         : 'tfoot button.btn-primary';
       await page.click(addItemBtnSel);
+      await sleep(500); // dá tempo do botão de incluir abrir o Select2
       await page.waitForSelector('#select2-it_codigo-container', { timeout: 8000 });
+      const debugPosIncluir = await page.evaluate(() => {
+        const allBtns = Array.from(document.querySelectorAll('#panel_novo_pedido button.btn-primary, #colSpanBtnIncluirItem button.btn-primary, tfoot button.btn-primary'));
+        return {
+          select2_sku_visible: !!document.querySelector('#select2-it_codigo-container'),
+          select2_search_field_visible: !!document.querySelector('.select2-search__field'),
+          btn_primary_count: allBtns.length,
+          btn_primary_texts: allBtns.map((b) => (b.innerText || '').trim().substring(0, 30)),
+        };
+      });
+      console.log('[DEBUG_POS_INCLUIR_ITEM]', JSON.stringify({ iteration: i, ...debugPosIncluir }));
       await page.click('#select2-it_codigo-container');
       await sleep(300);
       await page.waitForSelector('.select2-search__field', { timeout: 5000 });
