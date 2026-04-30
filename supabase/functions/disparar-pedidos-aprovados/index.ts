@@ -262,7 +262,9 @@ async function processarPedido(
       cCodIntPed: `AFI-${pedido.id}`,
       dDtPrevisao: diasUteisFromHoje(ltDias),
       nCodFor: Number(fornecedor.codigo),
-      cNumPedido: numeroPedido,
+      // cNumPedido (Nº do Pedido do Fornecedor) deixado em branco — preenchido pelo
+      // fornecedor quando confirmar. Usamos cContrato (Nº do Contrato) para nosso número interno.
+      cContrato: numeroPedido,
       cCodParc,
       nQtdeParc,
       cObs:
