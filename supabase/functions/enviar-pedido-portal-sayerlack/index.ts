@@ -317,19 +317,19 @@ export default async ({ page, context }) => {
       const addItemClicado = await page.evaluate(() => {
         // Tentativa 1: #colSpanBtnIncluirItem (mesmo do primeiro item)
         const primario = document.querySelector('#colSpanBtnIncluirItem button.btn-primary');
-        if (primario && (primario as HTMLElement).offsetParent !== null) {
-          (primario as HTMLElement).click();
+        if (primario && primario.offsetParent !== null) {
+          primario.click();
           return { clicked: true, via: 'colSpanBtnIncluirItem' };
         }
         // Tentativa 2: tfoot
         const tfootBtn = document.querySelector('tfoot button.btn-primary');
-        if (tfootBtn && (tfootBtn as HTMLElement).offsetParent !== null) {
-          (tfootBtn as HTMLElement).click();
+        if (tfootBtn && tfootBtn.offsetParent !== null) {
+          tfootBtn.click();
           return { clicked: true, via: 'tfoot' };
         }
         // Tentativa 3: procura qualquer botão visível com texto "Incluir Item" (excluindo "Múltiplos")
-        const allBtns = Array.from(document.querySelectorAll('button')) as HTMLElement[];
-        const incluirBtn = allBtns.find((b) => {
+        const allBtns = Array.from(document.querySelectorAll('button'));
+        const incluirBtn = allBtns.find(function(b) {
           const txt = (b.innerText || '').trim();
           return txt.includes('Incluir Item') && !txt.includes('Múltiplos') && b.offsetParent !== null;
         });
@@ -340,8 +340,8 @@ export default async ({ page, context }) => {
         return {
           clicked: false,
           debug_btns_visible: allBtns
-            .filter((b) => b.offsetParent !== null)
-            .map((b) => (b.innerText || '').trim().substring(0, 40))
+            .filter(function(b) { return b.offsetParent !== null; })
+            .map(function(b) { return (b.innerText || '').trim().substring(0, 40); })
             .slice(0, 15),
         };
       });
