@@ -63,6 +63,25 @@ export default async ({ page, context }) => {
   // Helper: sleep (substitui page.waitForTimeout que sumiu em puppeteer recente)
   const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
+  // Helper: aplica mascaras anti-deteccao (validado em teste isolado contra WAF Sayerlack)
+  const applyStealth = async () => {
+    await page.setUserAgent('Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0.0.0 Safari/537.36');
+    await page.setViewport({ width: 1366, height: 768, deviceScaleFactor: 1 });
+    await page.setExtraHTTPHeaders({
+      'Accept-Language': 'pt-BR,pt;q=0.9,en-US;q=0.8,en;q=0.7',
+      'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8',
+      'Sec-Ch-Ua': '"Chromium";v="130", "Google Chrome";v="130", "Not?A_Brand";v="99"',
+      'Sec-Ch-Ua-Mobile': '?0',
+      'Sec-Ch-Ua-Platform': '"macOS"',
+      'Upgrade-Insecure-Requests': '1',
+    });
+    await page.evaluateOnNewDocument(() => {
+      Object.defineProperty(navigator, 'webdriver', { get: () => false });
+      Object.defineProperty(navigator, 'plugins', { get: () => [1, 2, 3, 4, 5] });
+      Object.defineProperty(navigator, 'languages', { get: () => ['pt-BR', 'pt', 'en-US', 'en'] });
+    });
+  };
+
   try {
     console.log('[DEBUG_CREDS]', JSON.stringify({
       user_present: typeof user === 'string' && user.length > 0,
@@ -73,6 +92,7 @@ export default async ({ page, context }) => {
       clienteCodigo,
     }));
 
+    await applyStealth();
     trace.push({ step: 'login_start', t: Date.now() - t0 });
     await page.goto(portalUrl + '/login', { waitUntil: 'domcontentloaded', timeout: 20000 });
     await page.waitForSelector('#user', { timeout: 10000 });
@@ -86,37 +106,56 @@ export default async ({ page, context }) => {
     await clickButtonByText('Entrar');
     await navPromise;
 
-    const loginErrorInfo = await page.evaluate(() => {
-      const body = document.body.innerText;
-      const url = window.location.href;
-      const alertEl = document.querySelector('.alert, .alert-danger, .error-message, .login-error, [role="alert"]');
-      const alertText = alertEl ? alertEl.innerText.trim() : null;
-      return {
-        url,
-        alertText,
-        bodyPreview: body.substring(0, 1500),
-      };
-    });
-    console.log('[DEBUG_LOGIN_ERROR_TEXT]', JSON.stringify({
-      url: loginErrorInfo.url,
-      alertText: loginErrorInfo.alertText,
-      bodyContains_naoEPossivel: loginErrorInfo.bodyPreview.includes('Não é possível'),
-      bodyContains_credenciaisInvalidas:
-        loginErrorInfo.bodyPreview.toLowerCase().includes('credenciais') ||
-        loginErrorInfo.bodyPreview.toLowerCase().includes('inválida'),
-      bodyContains_manutencao: loginErrorInfo.bodyPreview.toLowerCase().includes('manuten'),
-      bodyPreview_first_500: loginErrorInfo.bodyPreview.substring(0, 500),
-    }));
+    // Heuristica robusta: aguarda evidencia POSITIVA de login bem-sucedido
+    // (URL mudou para fora de /login OU elemento exclusivo da area logada apareceu)
+    const loginCheck = await Promise.race([
+      (async () => {
+        for (let i = 0; i < 30; i++) { // 30 * 500ms = 15s max
+          const url = page.url();
+          if (!url.includes('/login')) return { ok: true, via: 'url_changed', url };
+          await sleep(500);
+        }
+        return { ok: false, via: 'url_stuck_login', url: page.url() };
+      })(),
+      (async () => {
+        try {
+          await page.waitForSelector('#sidebar, .app-sidebar, [class*="sidebar"]', { timeout: 15000 });
+          return { ok: true, via: 'sidebar_found', url: page.url() };
+        } catch {
+          return { ok: false, via: 'sidebar_not_found', url: page.url() };
+        }
+      })(),
+    ]);
 
-    if (page.url().includes('/login/401') || page.url().endsWith('/login')) {
+    if (!loginCheck.ok) {
       const errorScreenshot = await page.screenshot({ type: 'png', encoding: 'base64' });
+      const loginErrorInfo = await page.evaluate(() => {
+        const body = document.body.innerText;
+        const url = window.location.href;
+        const alertEl = document.querySelector('.alert, .alert-danger, .error-message, .login-error, [role="alert"]');
+        return {
+          url,
+          alertText: alertEl ? alertEl.innerText.trim() : null,
+          bodyPreview: body.substring(0, 1500),
+        };
+      });
+      console.log('[DEBUG_LOGIN_CHECK]', JSON.stringify({
+        via: loginCheck.via,
+        url: loginCheck.url,
+        alertText: loginErrorInfo.alertText,
+        bodyContains_naoEPossivel: loginErrorInfo.bodyPreview.includes('Não é possível'),
+        bodyContains_credenciaisInvalidas:
+          loginErrorInfo.bodyPreview.toLowerCase().includes('credenciais') ||
+          loginErrorInfo.bodyPreview.toLowerCase().includes('inválida'),
+        bodyPreview_first_500: loginErrorInfo.bodyPreview.substring(0, 500),
+      }));
       return {
         data: {
           success: false,
-          erro: 'Login falhou — credenciais invalidas ou senha expirada',
+          erro: loginErrorInfo.alertText || 'Login falhou — area logada nao detectada apos submit (possivel bloqueio ou credenciais invalidas)',
           erroTipo: 'LOGIN_FAILED',
           urlFinal: page.url(),
-          urlAntesDoCheck: loginErrorInfo.url,
+          loginCheckResult: loginCheck,
           alertText: loginErrorInfo.alertText,
           bodyPreview: loginErrorInfo.bodyPreview.substring(0, 800),
           trace,
@@ -126,7 +165,7 @@ export default async ({ page, context }) => {
         preLoginScreenshot,
       };
     }
-    trace.push({ step: 'login_success', t: Date.now() - t0 });
+    trace.push({ step: 'login_success', via: loginCheck.via, url: loginCheck.url, t: Date.now() - t0 });
 
     await page.goto(portalUrl + '/order-creation', { waitUntil: 'domcontentloaded', timeout: 15000 });
     await page.waitForSelector('#btnNovoPedido', { timeout: 10000 });
