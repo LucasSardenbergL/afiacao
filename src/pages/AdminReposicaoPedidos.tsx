@@ -147,6 +147,215 @@ function StatusBadge({ status }: { status: Status }) {
   );
 }
 
+/* ─── Portal B2B Badge + Drawer ─── */
+const portalStatusMeta: Record<StatusEnvioPortal, { label: string; className: string }> = {
+  nao_aplicavel: { label: '—', className: 'bg-muted text-muted-foreground border-border' },
+  pendente_envio_portal: { label: 'Aguardando envio', className: 'bg-blue-500/15 text-blue-700 dark:text-blue-400 border-blue-500/30' },
+  enviando_portal: { label: 'Enviando…', className: 'bg-blue-500/20 text-blue-700 dark:text-blue-400 border-blue-500/40 animate-pulse' },
+  enviado_portal: { label: '✓ Enviado', className: 'bg-emerald-500/15 text-emerald-700 dark:text-emerald-400 border-emerald-500/30' },
+  falha_envio_portal: { label: 'Falha', className: 'bg-destructive/15 text-destructive border-destructive/30' },
+};
+
+function PortalBadge({
+  pedido,
+  onClick,
+}: {
+  pedido: PedidoSugerido;
+  onClick: () => void;
+}) {
+  const status = (pedido.status_envio_portal ?? 'nao_aplicavel') as StatusEnvioPortal;
+  const meta = portalStatusMeta[status] ?? portalStatusMeta.nao_aplicavel;
+
+  const tooltipText =
+    status === 'enviado_portal' && pedido.portal_protocolo
+      ? `Protocolo: ${pedido.portal_protocolo}`
+      : status === 'falha_envio_portal' && pedido.portal_erro
+        ? pedido.portal_erro
+        : null;
+
+  const badge = (
+    <button
+      type="button"
+      onClick={onClick}
+      disabled={status === 'nao_aplicavel'}
+      className={cn(
+        'inline-flex items-center rounded-full border px-2.5 py-0.5 text-xs font-semibold transition-colors',
+        meta.className,
+        status === 'nao_aplicavel' ? 'cursor-default' : 'cursor-pointer hover:opacity-80',
+      )}
+    >
+      {meta.label}
+    </button>
+  );
+
+  if (!tooltipText) return badge;
+
+  return (
+    <TooltipProvider>
+      <Tooltip>
+        <TooltipTrigger asChild>{badge}</TooltipTrigger>
+        <TooltipContent className="max-w-xs whitespace-pre-wrap break-words">{tooltipText}</TooltipContent>
+      </Tooltip>
+    </TooltipProvider>
+  );
+}
+
+function PortalDrawer({
+  pedido,
+  open,
+  onOpenChange,
+}: {
+  pedido: PedidoSugerido | null;
+  open: boolean;
+  onOpenChange: (v: boolean) => void;
+}) {
+  const queryClient = useQueryClient();
+  const { isAdmin } = useUserRole();
+  const [confirmReenvio, setConfirmReenvio] = useState(false);
+
+  const reenviarMutation = useMutation({
+    mutationFn: async () => {
+      if (!pedido) return;
+      const { error } = await supabase
+        .from('pedido_compra_sugerido')
+        .update({
+          status_envio_portal: 'pendente_envio_portal',
+          portal_tentativas: 0,
+          portal_proximo_retry_em: null,
+          portal_erro: null,
+        })
+        .eq('id', pedido.id);
+      if (error) throw error;
+    },
+    onSuccess: () => {
+      toast.success('Pedido marcado para reenvio. O cron / disparo manual fará o envio.');
+      queryClient.invalidateQueries({ queryKey: ['pedidos-ciclo'] });
+      setConfirmReenvio(false);
+      onOpenChange(false);
+    },
+    onError: (e: Error) => toast.error(`Erro ao marcar reenvio: ${e.message}`),
+  });
+
+  if (!pedido) return null;
+  const status = (pedido.status_envio_portal ?? 'nao_aplicavel') as StatusEnvioPortal;
+  const tentativas = pedido.portal_tentativas ?? 0;
+  const tentativasColor =
+    tentativas <= 1 ? 'text-emerald-600' : tentativas === 2 ? 'text-amber-600' : 'text-destructive';
+
+  return (
+    <Sheet open={open} onOpenChange={onOpenChange}>
+      <SheetContent className="w-full sm:max-w-xl overflow-y-auto">
+        <SheetHeader>
+          <SheetTitle>Detalhes do envio ao portal</SheetTitle>
+          <SheetDescription>
+            Pedido #{pedido.id} — {pedido.fornecedor_nome}
+          </SheetDescription>
+        </SheetHeader>
+
+        <div className="space-y-5 py-4">
+          <div className="grid grid-cols-2 gap-3 text-sm">
+            <div>
+              <div className="text-muted-foreground text-xs">Status</div>
+              <div className="mt-1">
+                <Badge className={portalStatusMeta[status].className} variant="outline">
+                  {portalStatusMeta[status].label}
+                </Badge>
+              </div>
+            </div>
+            <div>
+              <div className="text-muted-foreground text-xs">Protocolo do portal</div>
+              <div className="font-mono font-medium">{pedido.portal_protocolo ?? '—'}</div>
+            </div>
+            <div>
+              <div className="text-muted-foreground text-xs">Enviado em</div>
+              <div className="font-medium">
+                {pedido.enviado_portal_em ? format(new Date(pedido.enviado_portal_em), 'dd/MM/yyyy HH:mm') : '—'}
+              </div>
+            </div>
+            <div>
+              <div className="text-muted-foreground text-xs">Tentativas</div>
+              <div className={`font-bold tabular-nums ${tentativasColor}`}>{tentativas}</div>
+            </div>
+            <div className="col-span-2">
+              <div className="text-muted-foreground text-xs">Próximo retry</div>
+              <div className="font-medium">
+                {pedido.portal_proximo_retry_em
+                  ? `próximo retry ${formatDistanceToNow(new Date(pedido.portal_proximo_retry_em), { addSuffix: true, locale: ptBR })}`
+                  : '—'}
+              </div>
+            </div>
+          </div>
+
+          {pedido.portal_screenshot_url && (
+            <div>
+              <div className="text-muted-foreground text-xs mb-1">Screenshot do portal</div>
+              <a href={pedido.portal_screenshot_url} target="_blank" rel="noreferrer">
+                <img
+                  src={pedido.portal_screenshot_url}
+                  alt="Confirmação do portal"
+                  className="rounded border max-h-72 w-auto"
+                />
+              </a>
+            </div>
+          )}
+
+          {pedido.portal_erro && (
+            <Alert variant="destructive">
+              <AlertTriangle className="h-4 w-4" />
+              <AlertTitle>Erro mais recente</AlertTitle>
+              <AlertDescription className="whitespace-pre-wrap break-words">{pedido.portal_erro}</AlertDescription>
+            </Alert>
+          )}
+
+          {pedido.portal_resposta != null && (
+            <details className="rounded border bg-muted/30 p-3 text-xs">
+              <summary className="cursor-pointer font-medium">Payload bruto da última tentativa</summary>
+              <pre className="mt-2 overflow-x-auto whitespace-pre-wrap break-words text-[11px] leading-snug">
+                {JSON.stringify(pedido.portal_resposta, null, 2)}
+              </pre>
+            </details>
+          )}
+        </div>
+
+        <SheetFooter className="gap-2 flex-col sm:flex-row">
+          <Button variant="outline" onClick={() => onOpenChange(false)}>Fechar</Button>
+          {isAdmin && status !== 'nao_aplicavel' && (
+            <Button
+              variant="secondary"
+              onClick={() => setConfirmReenvio(true)}
+              disabled={reenviarMutation.isPending}
+            >
+              <RotateCw className="w-4 h-4 mr-1" />
+              Forçar reenvio ao portal
+            </Button>
+          )}
+        </SheetFooter>
+
+        <AlertDialog open={confirmReenvio} onOpenChange={setConfirmReenvio}>
+          <AlertDialogContent>
+            <AlertDialogHeader>
+              <AlertDialogTitle>Forçar reenvio ao portal?</AlertDialogTitle>
+              <AlertDialogDescription>
+                Isso vai reenviar o pedido #{pedido.id} ao portal Sayerlack. Use apenas se você confirmou que o envio anterior não chegou. Confirmar?
+              </AlertDialogDescription>
+            </AlertDialogHeader>
+            <AlertDialogFooter>
+              <AlertDialogCancel disabled={reenviarMutation.isPending}>Cancelar</AlertDialogCancel>
+              <AlertDialogAction
+                disabled={reenviarMutation.isPending}
+                onClick={() => reenviarMutation.mutate()}
+              >
+                {reenviarMutation.isPending && <Loader2 className="w-4 h-4 mr-1 animate-spin" />}
+                Confirmar reenvio
+              </AlertDialogAction>
+            </AlertDialogFooter>
+          </AlertDialogContent>
+        </AlertDialog>
+      </SheetContent>
+    </Sheet>
+  );
+}
+
 function CycleIndicator({ now }: { now: Date }) {
   const minutes = now.getHours() * 60 + now.getMinutes();
   const overrideUntil = 9 * 60 + 30; // 09:30
