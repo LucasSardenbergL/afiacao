@@ -183,76 +183,103 @@ export default async ({ page, context }) => {
 
     await sleep(2000); // dá tempo do portal estabilizar sessão pós-login antes de navegar
 
-    await page.goto(portalUrl + '/order-creation', { waitUntil: 'networkidle2', timeout: 30000 });
+    // Navegação para /order-creation: SEMPRE via click no menu, NUNCA via goto direto
+    // Razão: portal Sayerlack redireciona goto direto para /login/order-creation (rota de erro)
+    trace.push({ step: 'navegacao_via_menu_start', urlAtual: page.url(), t: Date.now() - t0 });
 
-    const urlAposGoto = page.url();
-    const tituloAposGoto = await page.title().catch(() => 'unknown');
-    const bodyPreviewAposGoto = await page.evaluate(() => document.body.innerText.substring(0, 500)).catch(() => 'eval_failed');
-    const tem_btnNovoPedido_inicial = await page.evaluate(() => !!document.querySelector('#btnNovoPedido')).catch(() => false);
-    const tem_breadcrumb_pedidos = await page.evaluate(() => document.body.innerText.includes('Pedidos / Propostas')).catch(() => false);
-
-    console.log('[DEBUG_AFTER_GOTO]', JSON.stringify({
-      url_solicitada: portalUrl + '/order-creation',
-      url_real: urlAposGoto,
-      title: tituloAposGoto,
-      redirecionou: !urlAposGoto.endsWith('/order-creation'),
-      tem_btnNovoPedido_inicial,
-      tem_breadcrumb_pedidos,
-      bodyPreview: bodyPreviewAposGoto,
-    }));
-    trace.push({ step: 'after_goto_order_creation', url: urlAposGoto, redirecionou: !urlAposGoto.endsWith('/order-creation'), t: Date.now() - t0 });
-
-    // Se não chegou em /order-creation OU não tem btnNovoPedido, tenta navegar via menu
-    if (!urlAposGoto.endsWith('/order-creation') || !tem_btnNovoPedido_inicial) {
-      trace.push({ step: 'fallback_navigate_via_menu', t: Date.now() - t0 });
-
-      // Garante que sidebar está expandida (portal minifica por padrão)
-      await page.evaluate(() => {
-        const app = document.querySelector('#app');
-        if (app && app.classList.contains('app-sidebar-minified')) {
-          const minifyBtn = document.querySelector('.app-sidebar-minify-btn');
-          if (minifyBtn) minifyBtn.click();
-        }
-      });
-      await sleep(500);
-
-      // Click em "Vendas" pra expandir submenu
-      const expandiu_vendas = await page.evaluate(() => {
-        const links = Array.from(document.querySelectorAll('#sidebar .menu-link, .app-sidebar .menu-link'));
-        const vendasLink = links.find((l) => (l.innerText || '').includes('Vendas'));
-        if (vendasLink) { vendasLink.click(); return true; }
-        return false;
-      });
-      trace.push({ step: 'fallback_clicked_vendas', expandiu_vendas, t: Date.now() - t0 });
-      await sleep(800);
-
-      // Click em "Pedidos / Propostas"
-      const clicou_pedidos = await page.evaluate(() => {
-        const links = Array.from(document.querySelectorAll('a'));
-        const pedidosLink = links.find((l) => l.getAttribute('href') === '/order-creation' && (l.innerText || '').includes('Pedidos'));
-        if (pedidosLink) { pedidosLink.click(); return true; }
-        return false;
-      });
-      trace.push({ step: 'fallback_clicked_pedidos', clicou_pedidos, t: Date.now() - t0 });
-
-      if (!clicou_pedidos) {
-        const errorScreenshot = await page.screenshot({ type: 'png', encoding: 'base64' }).catch(() => null);
-        return {
-          data: {
-            success: false,
-            erro: 'Não conseguiu navegar para /order-creation nem via goto direto nem via click no menu',
-            erroTipo: 'NAVIGATION_FAILED',
-            urlFinal: page.url(),
-            trace,
-          },
-          type: 'application/json',
-          screenshot: errorScreenshot,
-          preLoginScreenshot,
-        };
-      }
-
-      await sleep(2000); // espera navegação completar
+    const urlAposLogin = page.url();
+    if (!urlAposLogin.endsWith('/home') && !urlAposLogin.includes('/home')) {
+      console.log('[DEBUG_NAV] URL inesperada após login:', urlAposLogin);
     }
+
+    // Garante sidebar expandida (portal tem botão minify que recolhe sidebar por padrão)
+    await page.evaluate(() => {
+      const app = document.querySelector('#app');
+      if (app && app.classList.contains('app-sidebar-minified')) {
+        const minifyBtn = document.querySelector('.app-sidebar-minify-btn');
+        if (minifyBtn) minifyBtn.click();
+      }
+    });
+    await sleep(800);
+
+    // Aguarda sidebar com itens estar disponível (DOM completo, não só aparente)
+    await page.waitForFunction(
+      () => {
+        const sidebarLinks = document.querySelectorAll('#sidebar .menu-link, .app-sidebar .menu-link');
+        return sidebarLinks.length > 0;
+      },
+      { timeout: 15000 }
+    ).catch(() => null);
+
+    // Click em "Vendas" para expandir submenu
+    const expandiu_vendas = await page.evaluate(() => {
+      const links = Array.from(document.querySelectorAll('#sidebar .menu-link, .app-sidebar .menu-link'));
+      const vendasLink = links.find((l) => (l.innerText || '').trim().includes('Vendas'));
+      if (vendasLink) {
+        vendasLink.click();
+        return { clicked: true, found_links: links.length, vendas_text: (vendasLink.innerText || '').trim().substring(0, 50) };
+      }
+      return { clicked: false, found_links: links.length, all_texts: links.map((l) => (l.innerText || '').trim().substring(0, 30)).slice(0, 10) };
+    });
+    console.log('[DEBUG_CLICK_VENDAS]', JSON.stringify(expandiu_vendas));
+    trace.push({ step: 'clicked_vendas', expandiu_vendas, t: Date.now() - t0 });
+    await sleep(1500); // espera submenu expandir e renderizar links
+
+    // Click em "Pedidos / Propostas" — esse SIM navega corretamente
+    const clicou_pedidos = await page.evaluate(() => {
+      // Procura especificamente por <a href="/order-creation"> que contenha "Pedidos"
+      const allLinks = Array.from(document.querySelectorAll('a'));
+      const pedidosLink = allLinks.find((l) =>
+        l.getAttribute('href') === '/order-creation' &&
+        (l.innerText || '').trim().toLowerCase().includes('pedidos')
+      );
+      if (pedidosLink) {
+        pedidosLink.click();
+        return { clicked: true, href: pedidosLink.getAttribute('href'), text: (pedidosLink.innerText || '').trim().substring(0, 50) };
+      }
+      // Fallback 1: qualquer <a> apontando para /order-creation
+      const fallbackLink = allLinks.find((l) => l.getAttribute('href') === '/order-creation');
+      if (fallbackLink) {
+        fallbackLink.click();
+        return { clicked: true, href: '/order-creation', text: (fallbackLink.innerText || '').trim().substring(0, 50), via_fallback: true };
+      }
+      return {
+        clicked: false,
+        total_links: allLinks.length,
+        links_com_order_creation: allLinks.filter((l) => (l.getAttribute('href') || '').includes('order-creation')).map((l) => ({ href: l.getAttribute('href'), text: (l.innerText || '').trim().substring(0, 50) })),
+      };
+    });
+    console.log('[DEBUG_CLICK_PEDIDOS]', JSON.stringify(clicou_pedidos));
+    trace.push({ step: 'clicked_pedidos', clicou_pedidos, t: Date.now() - t0 });
+
+    if (!clicou_pedidos.clicked) {
+      const errorScreenshot = await page.screenshot({ type: 'png', encoding: 'base64' }).catch(() => null);
+      return {
+        data: {
+          success: false,
+          erro: 'Não conseguiu clicar em "Pedidos / Propostas" no menu lateral. Sidebar pode não estar carregada ou estrutura mudou.',
+          erroTipo: 'NAVIGATION_FAILED',
+          urlFinal: page.url(),
+          debug_clicou_pedidos: clicou_pedidos,
+          debug_expandiu_vendas: expandiu_vendas,
+          trace,
+        },
+        type: 'application/json',
+        screenshot: errorScreenshot,
+        preLoginScreenshot,
+      };
+    }
+
+    // Aguarda navegação completar (URL muda para /order-creation)
+    await page.waitForFunction(
+      () => window.location.href.endsWith('/order-creation'),
+      { timeout: 15000 }
+    ).catch(() => null);
+    await sleep(2000); // dá tempo do DOM da página de pedidos estabilizar
+
+    const urlAposClick = page.url();
+    console.log('[DEBUG_AFTER_CLICK_PEDIDOS]', JSON.stringify({ url: urlAposClick, chegou_em_order_creation: urlAposClick.endsWith('/order-creation') }));
+    trace.push({ step: 'after_click_pedidos', url: urlAposClick, t: Date.now() - t0 });
 
     await page.waitForSelector('#btnNovoPedido', { timeout: 25000 });
     await page.click('#btnNovoPedido');
