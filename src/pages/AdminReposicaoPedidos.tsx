@@ -888,10 +888,12 @@ function PedidoRow({
   p,
   onVerDetalhes,
   onCancelar,
+  onVerPortal,
 }: {
   p: PedidoSugerido;
   onVerDetalhes: () => void;
   onCancelar: () => void;
+  onVerPortal: () => void;
 }) {
   const podeAprovar = p.status === 'pendente_aprovacao' || p.status === 'bloqueado_guardrail';
   const podeCancelar = ['pendente_aprovacao', 'bloqueado_guardrail', 'aprovado_aguardando_disparo'].includes(p.status);
