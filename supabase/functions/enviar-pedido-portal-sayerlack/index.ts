@@ -250,11 +250,19 @@ async function processarPedido(
   }
 
   // 1. Buscar itens com mapeamento
+  console.log("[DEBUG_RPC] tentando RPC envio_portal_itens_mapeados, pedido_id=", pedido.id);
   const { data: itens, error: itensErr } = await supabase.rpc("envio_portal_itens_mapeados", {
     p_pedido_id: pedido.id,
   }).select("*") as unknown as { data: ItemMapeado[] | null; error: any };
 
   let itensList: ItemMapeado[] | null = itens;
+  console.log("[DEBUG_RPC_RESULT]", JSON.stringify({
+    pedido_id: pedido.id,
+    itensErr: itensErr ? { message: itensErr.message, code: itensErr.code, details: itensErr.details } : null,
+    itensList_isNull: itensList === null,
+    itensList_isArray: Array.isArray(itensList),
+    itensList_length: Array.isArray(itensList) ? itensList.length : 'N/A',
+  }));
   // Fallback: query direta caso RPC nao exista
   if (itensErr || !itensList) {
     const { data: itensDirect, error: e2 } = await supabase
@@ -281,12 +289,27 @@ async function processarPedido(
       return result;
     }
     const skus = itensDirect.map((i: any) => i.sku_codigo_omie);
-    const { data: maps } = await supabase
+    console.log("[DEBUG_FALLBACK_ITENS]", JSON.stringify({
+      pedido_id: pedido.id,
+      pedido_empresa: pedido.empresa,
+      itensDirect_count: itensDirect?.length ?? 0,
+      skus_extraidos: skus,
+    }));
+    const { data: maps, error: mapsErr } = await supabase
       .from("sku_fornecedor_externo")
       .select("sku_omie, sku_portal, unidade_portal, fator_conversao, ativo")
       .eq("empresa", pedido.empresa)
       .ilike("fornecedor_nome", "%SAYERLACK%")
       .in("sku_omie", skus);
+    console.log("[DEBUG_FALLBACK_MAPS]", JSON.stringify({
+      pedido_id: pedido.id,
+      filtro_empresa: pedido.empresa,
+      filtro_fornecedor_pattern: '%SAYERLACK%',
+      filtro_skus: skus,
+      maps_count: maps?.length ?? 0,
+      maps_amostra: (maps ?? []).slice(0, 3).map((m: any) => ({ sku_omie: m.sku_omie, sku_portal: m.sku_portal, ativo: m.ativo })),
+      mapsErr: mapsErr ? { message: mapsErr.message, code: mapsErr.code } : null,
+    }));
     const mapByOmie = new Map<string, any>();
     (maps ?? []).forEach((m: any) => mapByOmie.set(m.sku_omie, m));
     itensList = itensDirect.map((i: any) => {
@@ -318,7 +341,18 @@ async function processarPedido(
     return result;
   }
 
+  console.log("[DEBUG_PRE_VALIDATION]", JSON.stringify({
+    pedido_id: pedido.id,
+    itensList_final: itensList.map((i) => ({
+      sku_codigo_omie: i.sku_codigo_omie,
+      sku_portal: i.sku_portal,
+      mapeamento_ativo: i.mapeamento_ativo,
+      qtde_final: i.qtde_final,
+    })),
+  }));
+
   // 2. Validar SKUs
+
   const semMap = itensList.filter(
     (i) => !i.sku_portal || i.mapeamento_ativo === false,
   );
