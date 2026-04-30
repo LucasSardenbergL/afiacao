@@ -287,6 +287,7 @@ async function uploadScreenshot(
   supabase: ReturnType<typeof createClient>,
   pedidoId: number,
   base64: string,
+  suffix: string = "",
 ): Promise<string | null> {
   try {
     // Browserless v2 as vezes retorna data URL ("data:image/png;base64,XXXX") em vez de base64 puro.
