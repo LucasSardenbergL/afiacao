@@ -126,6 +126,7 @@ export default async ({ page, context }) => {
       await page.click(addItemBtnSel);
       await page.waitForSelector('#select2-it_codigo-container', { timeout: 8000 });
       await page.click('#select2-it_codigo-container');
+      await sleep(300);
       await page.waitForSelector('.select2-search__field', { timeout: 5000 });
       await fillInput('.select2-search__field', item.sku_portal);
       await sleep(2000);
