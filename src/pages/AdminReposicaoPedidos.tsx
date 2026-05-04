@@ -1262,6 +1262,8 @@ export default function AdminReposicaoPedidos() {
                         onVerDetalhes={() => setDetalhesPedido(p)}
                         onCancelar={() => setCancelarPedido(p)}
                         onVerPortal={() => setPortalPedido(p)}
+                        onDisparar={() => dispararMutation.mutate(p.id)}
+                        disparando={dispararMutation.isPending && dispararMutation.variables === p.id}
                       />
                     ))}
                   </TableBody>
