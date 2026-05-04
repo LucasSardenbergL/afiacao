@@ -9698,6 +9698,36 @@ export type Database = {
         }
         Relationships: []
       }
+      referrals_for_referrer: {
+        Row: {
+          converted_at: string | null
+          created_at: string | null
+          id: string | null
+          points_awarded: boolean | null
+          referred_user_id: string | null
+          referrer_id: string | null
+          status: string | null
+        }
+        Insert: {
+          converted_at?: string | null
+          created_at?: string | null
+          id?: string | null
+          points_awarded?: boolean | null
+          referred_user_id?: string | null
+          referrer_id?: string | null
+          status?: string | null
+        }
+        Update: {
+          converted_at?: string | null
+          created_at?: string | null
+          id?: string | null
+          points_awarded?: boolean | null
+          referred_user_id?: string | null
+          referrer_id?: string | null
+          status?: string | null
+        }
+        Relationships: []
+      }
       v_cron_jobs_falhas: {
         Row: {
           duracao_segundos: number | null
