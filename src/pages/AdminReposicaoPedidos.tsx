@@ -1155,6 +1155,27 @@ export default function AdminReposicaoPedidos() {
     },
   });
 
+  const dispararMutation = useMutation({
+    mutationFn: async (pedidoId: number) => {
+      const { data, error } = await supabase.functions.invoke('disparar-pedidos-aprovados', {
+        body: { empresa: EMPRESA, pedido_id: pedidoId },
+      });
+      if (error) throw error;
+      return data;
+    },
+    onSuccess: (data, pedidoId) => {
+      const ok = data?.disparados ?? 0;
+      const fail = data?.falhas ?? 0;
+      if (ok > 0) toast.success(`Pedido #${pedidoId} disparado e registrado no Omie`);
+      else if (fail > 0) toast.error(`Pedido #${pedidoId}: falha ao disparar`);
+      else toast.info(`Pedido #${pedidoId}: nada a disparar (${JSON.stringify(data)})`);
+      queryClient.invalidateQueries({ queryKey: ['pedidos-ciclo'] });
+    },
+    onError: (e: Error) => {
+      toast.error(`Erro ao disparar: ${e.message}`);
+    },
+  });
+
   const bloqueados = (pedidos ?? []).filter((p) => p.status === 'bloqueado_guardrail');
 
   return (
