@@ -15,7 +15,7 @@ import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Sheet, SheetContent, SheetDescription, SheetHeader, SheetTitle, SheetFooter } from '@/components/ui/sheet';
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip';
-import { AlertTriangle, Ban, CheckCircle2, Clock, ExternalLink, Eye, Loader2, PlayCircle, RefreshCw, Trash2, XCircle, RotateCw } from 'lucide-react';
+import { AlertTriangle, Ban, CheckCircle2, Clock, ExternalLink, Eye, Loader2, PlayCircle, RefreshCw, Trash2, XCircle, RotateCw, Zap } from 'lucide-react';
 import { useUserRole } from '@/hooks/useUserRole';
 import { formatDistanceToNow } from 'date-fns';
 import {
@@ -1007,14 +1007,19 @@ function PedidoRow({
   onVerDetalhes,
   onCancelar,
   onVerPortal,
+  onDisparar,
+  disparando,
 }: {
   p: PedidoSugerido;
   onVerDetalhes: () => void;
   onCancelar: () => void;
   onVerPortal: () => void;
+  onDisparar: () => void;
+  disparando: boolean;
 }) {
   const podeAprovar = p.status === 'pendente_aprovacao' || p.status === 'bloqueado_guardrail';
   const podeCancelar = ['pendente_aprovacao', 'bloqueado_guardrail', 'aprovado_aguardando_disparo'].includes(p.status);
+  const podeDisparar = p.status === 'aprovado_aguardando_disparo';
 
   const showAprovacao = p.status === 'aprovado_aguardando_disparo' || p.status === 'disparado';
 
@@ -1055,6 +1060,12 @@ function PedidoRow({
           </Button>
           {podeAprovar && (
             <Button size="sm" variant="default" onClick={onVerDetalhes}>Aprovar</Button>
+          )}
+          {podeDisparar && (
+            <Button size="sm" variant="default" onClick={onDisparar} disabled={disparando}>
+              {disparando ? <Loader2 className="w-4 h-4 mr-1 animate-spin" /> : <Zap className="w-4 h-4 mr-1" />}
+              Disparar
+            </Button>
           )}
           {podeCancelar && (
             <Button size="sm" variant="outline" onClick={onCancelar}>
@@ -1155,6 +1166,27 @@ export default function AdminReposicaoPedidos() {
     },
   });
 
+  const dispararMutation = useMutation({
+    mutationFn: async (pedidoId: number) => {
+      const { data, error } = await supabase.functions.invoke('disparar-pedidos-aprovados', {
+        body: { empresa: EMPRESA, pedido_id: pedidoId },
+      });
+      if (error) throw error;
+      return data;
+    },
+    onSuccess: (data, pedidoId) => {
+      const ok = data?.disparados ?? 0;
+      const fail = data?.falhas ?? 0;
+      if (ok > 0) toast.success(`Pedido #${pedidoId} disparado e registrado no Omie`);
+      else if (fail > 0) toast.error(`Pedido #${pedidoId}: falha ao disparar`);
+      else toast.info(`Pedido #${pedidoId}: nada a disparar (${JSON.stringify(data)})`);
+      queryClient.invalidateQueries({ queryKey: ['pedidos-ciclo'] });
+    },
+    onError: (e: Error) => {
+      toast.error(`Erro ao disparar: ${e.message}`);
+    },
+  });
+
   const bloqueados = (pedidos ?? []).filter((p) => p.status === 'bloqueado_guardrail');
 
   return (
@@ -1230,6 +1262,8 @@ export default function AdminReposicaoPedidos() {
                         onVerDetalhes={() => setDetalhesPedido(p)}
                         onCancelar={() => setCancelarPedido(p)}
                         onVerPortal={() => setPortalPedido(p)}
+                        onDisparar={() => dispararMutation.mutate(p.id)}
+                        disparando={dispararMutation.isPending && dispararMutation.variables === p.id}
                       />
                     ))}
                   </TableBody>
