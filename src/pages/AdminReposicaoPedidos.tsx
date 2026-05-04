@@ -1007,14 +1007,19 @@ function PedidoRow({
   onVerDetalhes,
   onCancelar,
   onVerPortal,
+  onDisparar,
+  disparando,
 }: {
   p: PedidoSugerido;
   onVerDetalhes: () => void;
   onCancelar: () => void;
   onVerPortal: () => void;
+  onDisparar: () => void;
+  disparando: boolean;
 }) {
   const podeAprovar = p.status === 'pendente_aprovacao' || p.status === 'bloqueado_guardrail';
   const podeCancelar = ['pendente_aprovacao', 'bloqueado_guardrail', 'aprovado_aguardando_disparo'].includes(p.status);
+  const podeDisparar = p.status === 'aprovado_aguardando_disparo';
 
   const showAprovacao = p.status === 'aprovado_aguardando_disparo' || p.status === 'disparado';
 
