@@ -1061,6 +1061,12 @@ function PedidoRow({
           {podeAprovar && (
             <Button size="sm" variant="default" onClick={onVerDetalhes}>Aprovar</Button>
           )}
+          {podeDisparar && (
+            <Button size="sm" variant="default" onClick={onDisparar} disabled={disparando}>
+              {disparando ? <Loader2 className="w-4 h-4 mr-1 animate-spin" /> : <Zap className="w-4 h-4 mr-1" />}
+              Disparar
+            </Button>
+          )}
           {podeCancelar && (
             <Button size="sm" variant="outline" onClick={onCancelar}>
               <XCircle className="w-4 h-4" />
