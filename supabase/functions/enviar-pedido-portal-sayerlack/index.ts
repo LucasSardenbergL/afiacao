@@ -524,13 +524,81 @@ export default async ({ page, context }) => {
     await page.click('#btnSalvarNovoPedido');
     trace.push({ step: 'efetivar_clicked', t: Date.now() - t0 });
 
+    // Diagnóstico do estado da página pós-efetivar.
+    // Faz 3 snapshots em janelas de tempo distintas pra capturar evolução: 1s, 4s, 8s pós-click.
+    const snapshotPosEfetivar = async function(label, delayMs) {
+      await sleep(delayMs);
+      const snap = await page.evaluate(function() {
+        // Banner verde de sucesso (caso já tenha aparecido)
+        const corpo = document.body ? document.body.innerText : '';
+        const bannerSucesso = corpo.match(/Pedido\s*(\d+)\s*criado\s*com\s*sucesso/i);
+
+        // Modais visíveis (Bootstrap modal padrão do portal)
+        const modais = Array.from(document.querySelectorAll('.modal.show, .modal.in, [role="dialog"]'))
+          .filter(function(m) { return m.offsetParent !== null; })
+          .map(function(m) {
+            return {
+              texto: (m.innerText || '').trim().substring(0, 300),
+              classes: (m.className || '').substring(0, 100)
+            };
+          });
+
+        // Mensagens de erro/validação inline (alerts, toasts, validações)
+        const alertas = Array.from(document.querySelectorAll('.alert, .toast, .invalid-feedback, .help-block, .validation-message, .error-message, [role="alert"]'))
+          .filter(function(a) { return a.offsetParent !== null; })
+          .map(function(a) {
+            return {
+              texto: (a.innerText || '').trim().substring(0, 200),
+              classes: (a.className || '').substring(0, 80)
+            };
+          })
+          .filter(function(info) { return info.texto.length > 0; });
+
+        // Campos com classe de erro/inválido
+        const camposInvalidos = Array.from(document.querySelectorAll('.is-invalid, .has-error, .field-error, [aria-invalid="true"]'))
+          .filter(function(el) { return el.offsetParent !== null; })
+          .map(function(el) {
+            return {
+              tag: el.tagName,
+              id: el.id || '',
+              name: el.getAttribute('name') || '',
+              classes: (el.className || '').substring(0, 80)
+            };
+          })
+          .slice(0, 10);
+
+        // Botão "Efetivar Pedido" ainda existe? (se sim, o submit não foi aceito)
+        const btnEfetivarAindaPresente = !!document.querySelector('#btnSalvarNovoPedido');
+
+        return {
+          url: location.href,
+          title: document.title,
+          bannerSucesso: bannerSucesso ? bannerSucesso[0] : null,
+          pedidoNumero: bannerSucesso ? bannerSucesso[1] : null,
+          modais: modais,
+          modaisCount: modais.length,
+          alertas: alertas,
+          alertasCount: alertas.length,
+          camposInvalidos: camposInvalidos,
+          camposInvalidosCount: camposInvalidos.length,
+          btnEfetivarAindaPresente: btnEfetivarAindaPresente
+        };
+      });
+      trace.push({ step: 'snapshot_pos_efetivar_' + label, t: Date.now() - t0, snapshot: snap });
+      console.log('[DEBUG_POS_EFETIVAR_' + label + ']', JSON.stringify(snap));
+    };
+    // Capturar 3 snapshots: 1s, 4s, 8s pós-efetivar
+    await snapshotPosEfetivar('1s', 1000);
+    await snapshotPosEfetivar('4s', 3000);
+    await snapshotPosEfetivar('8s', 4000);
+
     // Aguarda o texto de sucesso aparecer (Puppeteer suporta waitForFunction sem jsonValue)
     await page.waitForFunction(
       () => {
         const body = document.body.innerText;
         return /Pedido \\d+ criado com sucesso/.test(body);
       },
-      { timeout: 45000 }
+      { timeout: 10000 }
     );
     // Extrai o texto via evaluate puro
     const successStr = await page.evaluate(() => {
