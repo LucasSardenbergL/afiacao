@@ -540,7 +540,7 @@ export default async ({ page, context }) => {
     const protocolo = protocoloMatch ? protocoloMatch[1] : null;
     trace.push({ step: 'success_detected', protocolo, t: Date.now() - t0 });
 
-    const screenshot = await page.screenshot({ type: 'jpeg', quality: 70, fullPage: true, encoding: 'base64' });
+    const screenshot = await page.screenshot({ type: 'jpeg', quality: 70, fullPage: false, encoding: 'base64' });
     return {
       data: {
         success: true,
