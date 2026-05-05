@@ -94,13 +94,10 @@ export default async ({ page, context }) => {
 
     await applyStealth();
     trace.push({ step: 'login_start', t: Date.now() - t0 });
-    await page.goto(portalUrl + '/login', { waitUntil: 'networkidle2', timeout: 30000 });
+    await page.goto(portalUrl + '/login', { waitUntil: 'domcontentloaded', timeout: 30000 });
     await page.waitForSelector('#user', { timeout: 10000 });
     await fillInput('#user', user);
     await fillInput('#password', pass);
-
-    const preLoginScreenshot = await page.screenshot({ type: 'png', encoding: 'base64' });
-    trace.push({ step: 'pre_login_screenshot_taken', t: Date.now() - t0, screenshotLength: preLoginScreenshot.length });
 
     const navPromise = page.waitForNavigation({ timeout: 15000 }).catch(() => null);
     await clickButtonByText('Entrar');
@@ -223,7 +220,12 @@ export default async ({ page, context }) => {
     });
     console.log('[DEBUG_CLICK_VENDAS]', JSON.stringify(expandiu_vendas));
     trace.push({ step: 'clicked_vendas', expandiu_vendas, t: Date.now() - t0 });
-    await sleep(1500); // espera submenu expandir e renderizar links
+    await page.waitForFunction(function() {
+      const links = Array.from(document.querySelectorAll('a'));
+      return links.some(function(a) {
+        return a.getAttribute('href') === '/order-creation' && a.offsetParent !== null;
+      });
+    }, { timeout: 3000, polling: 100 });
 
     // Click em "Pedidos / Propostas" — esse SIM navega corretamente
     const clicou_pedidos = await page.evaluate(() => {
@@ -538,7 +540,7 @@ export default async ({ page, context }) => {
     const protocolo = protocoloMatch ? protocoloMatch[1] : null;
     trace.push({ step: 'success_detected', protocolo, t: Date.now() - t0 });
 
-    const screenshot = await page.screenshot({ type: 'png', fullPage: false, encoding: 'base64' });
+    const screenshot = await page.screenshot({ type: 'jpeg', quality: 70, fullPage: true, encoding: 'base64' });
     return {
       data: {
         success: true,
