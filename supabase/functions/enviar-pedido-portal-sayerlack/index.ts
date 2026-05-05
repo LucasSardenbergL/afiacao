@@ -34,6 +34,7 @@ export default async ({ page, context }) => {
   const { user, pass, portalUrl, clienteCodigo, items } = context;
   const trace = [];
   const t0 = Date.now();
+  const TIMEOUT_INTERNO_MS = 45000; // 45s, antes do cap de 60s do Browserless
 
   // Helper: limpa input e digita (substitui page.fill do Playwright)
   const fillInput = async (selector, value) => {
@@ -82,7 +83,8 @@ export default async ({ page, context }) => {
     });
   };
 
-  try {
+  const runFlow = async () => {
+   try {
     console.log('[DEBUG_CREDS]', JSON.stringify({
       user_present: typeof user === 'string' && user.length > 0,
       user_length: user?.length ?? 0,
