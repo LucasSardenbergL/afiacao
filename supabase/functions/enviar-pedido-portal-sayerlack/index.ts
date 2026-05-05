@@ -34,7 +34,7 @@ export default async ({ page, context }) => {
   const { user, pass, portalUrl, clienteCodigo, items } = context;
   const trace = [];
   const t0 = Date.now();
-  const TIMEOUT_INTERNO_MS = 45000; // 45s, antes do cap de 60s do Browserless
+  const TIMEOUT_INTERNO_MS = 55000; // 55s, antes do cap de 60s do Browserless
 
   // Helper: limpa input e digita (substitui page.fill do Playwright)
   const fillInput = async (selector, value) => {
@@ -521,8 +521,84 @@ export default async ({ page, context }) => {
       trace.push({ step: 'item_' + i + '_saved', t: Date.now() - t0 });
     }
 
+    // Diagnóstico rico pré-click: estado do botão, contexto, hit-test, listeners jQuery
+    const preClickDiag = await page.evaluate(function() {
+      const btn = document.querySelector('#btnSalvarNovoPedido');
+      if (!btn) return { btnEncontrado: false };
+
+      const rect = btn.getBoundingClientRect();
+      const cx = rect.left + rect.width / 2;
+      const cy = rect.top + rect.height / 2;
+      const elemPonto = document.elementFromPoint(cx, cy);
+
+      // jQuery handlers count (se jQuery existir)
+      let jqHandlersInfo = 'sem_jquery';
+      try {
+        if (window.$ && window.$._data) {
+          const events = window.$._data(btn, 'events');
+          jqHandlersInfo = events ? JSON.stringify(Object.keys(events)) : 'sem_handlers_jq';
+        } else if (window.jQuery && window.jQuery._data) {
+          const events = window.jQuery._data(btn, 'events');
+          jqHandlersInfo = events ? JSON.stringify(Object.keys(events)) : 'sem_handlers_jq';
+        }
+      } catch (e) { jqHandlersInfo = 'erro_acesso_jq:' + (e.message || '').substring(0, 50); }
+
+      // Buscar pistas textuais no body
+      const corpo = (document.body.innerText || '').toLowerCase();
+      const temObrigatorio = corpo.includes('obrigatório') || corpo.includes('obrigatorio');
+      const temPreenchaCampo = corpo.includes('preencha') || corpo.includes('preenchimento');
+      const temErroGenerico = /\berro\b/.test(corpo);
+
+      // Estado computed do botão
+      const computed = window.getComputedStyle(btn);
+
+      return {
+        btnEncontrado: true,
+        disabled: btn.disabled,
+        ariaDisabled: btn.getAttribute('aria-disabled'),
+        classListContemDisabled: btn.classList.contains('disabled'),
+        classes: (btn.className || '').substring(0, 150),
+        offsetParentNull: btn.offsetParent === null,
+        rect: { x: Math.round(rect.x), y: Math.round(rect.y), w: Math.round(rect.width), h: Math.round(rect.height) },
+        pointerEvents: computed.pointerEvents,
+        opacity: computed.opacity,
+        visibility: computed.visibility,
+        elementoNoCentro: elemPonto ? {
+          tag: elemPonto.tagName,
+          id: elemPonto.id || '',
+          classes: (elemPonto.className || '').toString().substring(0, 100),
+          mesmoBotaoOuFilho: elemPonto === btn || btn.contains(elemPonto),
+          contemBotao: elemPonto.contains ? elemPonto.contains(btn) : false
+        } : null,
+        jqHandlersInfo: jqHandlersInfo,
+        pistasNoBody: {
+          temObrigatorio: temObrigatorio,
+          temPreenchaCampo: temPreenchaCampo,
+          temErroGenerico: temErroGenerico
+        },
+        parentHTML: btn.parentElement ? btn.parentElement.outerHTML.substring(0, 500) : null
+      };
+    });
+    trace.push({ step: 'pre_click_efetivar_diag', t: Date.now() - t0, diag: preClickDiag });
+    console.log('[DEBUG_PRE_CLICK_EFETIVAR]', JSON.stringify(preClickDiag));
+
     await page.click('#btnSalvarNovoPedido');
     trace.push({ step: 'efetivar_clicked', t: Date.now() - t0 });
+
+    // Snapshot imediato (sem sleep) pra capturar mudança instantânea no DOM
+    const snapImediato = await page.evaluate(function() {
+      const btn = document.querySelector('#btnSalvarNovoPedido');
+      return {
+        btnAindaPresente: !!btn,
+        btnDisabled: btn ? btn.disabled : null,
+        btnClassListDisabled: btn ? btn.classList.contains('disabled') : null,
+        btnClasses: btn ? (btn.className || '').substring(0, 150) : null,
+        url: location.href,
+        bodyTextSnippet: (document.body.innerText || '').substring(0, 300)
+      };
+    });
+    trace.push({ step: 'snapshot_pos_efetivar_imediato', t: Date.now() - t0, snapshot: snapImediato });
+    console.log('[DEBUG_POS_EFETIVAR_IMEDIATO]', JSON.stringify(snapImediato));
 
     // Diagnóstico do estado da página pós-efetivar.
     // Faz 3 snapshots em janelas de tempo distintas pra capturar evolução: 1s, 4s, 8s pós-click.
