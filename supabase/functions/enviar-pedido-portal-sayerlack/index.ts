@@ -566,7 +566,24 @@ export default async ({ page, context }) => {
       type: 'application/json',
       screenshot: errorScreenshot,
     };
-  }
+   }
+  };
+
+  const timeoutInterno = new Promise(function(resolve) {
+    setTimeout(function() {
+      resolve({
+        success: false,
+        erroTipo: 'TIMEOUT_INTERNO',
+        erro: 'Script ultrapassou ' + (TIMEOUT_INTERNO_MS / 1000) + 's — retornando trace parcial pra diagnóstico',
+        trace,
+        ultimoStep: trace.length > 0 ? trace[trace.length - 1].step : 'nenhum',
+        ultimoStepT: trace.length > 0 ? trace[trace.length - 1].t : null,
+        totalSteps: trace.length
+      });
+    }, TIMEOUT_INTERNO_MS);
+  });
+
+  return await Promise.race([runFlow(), timeoutInterno]);
 };
 `;
 
