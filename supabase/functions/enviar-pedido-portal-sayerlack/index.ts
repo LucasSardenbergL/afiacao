@@ -521,6 +521,21 @@ export default async ({ page, context }) => {
       trace.push({ step: 'item_' + i + '_saved', t: Date.now() - t0 });
     }
 
+    // Aguardar fim da janela "Validando data de entrega" pós-último item.
+    // O portal aplica disabled+pointer-events:none+opacity:0.65 no btnSalvarNovoPedido durante validação.
+    // Mesmo padrão usado entre items, agora antes do click do Efetivar.
+    await page.waitForFunction(function() {
+      const btns = Array.from(document.querySelectorAll('button'));
+      const visiveis = btns.filter(function(b) { return b.offsetParent !== null; });
+      const temValidando = visiveis.some(function(b) {
+        return (b.innerText || '').includes('Validando');
+      });
+      const btnEfetivar = document.querySelector('#btnSalvarNovoPedido');
+      const efetivarHabilitado = btnEfetivar && !btnEfetivar.disabled;
+      return !temValidando && efetivarHabilitado;
+    }, { timeout: 15000, polling: 250 });
+    trace.push({ step: 'validacao_data_entrega_ok_pre_efetivar', t: Date.now() - t0 });
+
     // Diagnóstico rico pré-click: estado do botão, contexto, hit-test, listeners jQuery
     const preClickDiag = await page.evaluate(function() {
       const btn = document.querySelector('#btnSalvarNovoPedido');
