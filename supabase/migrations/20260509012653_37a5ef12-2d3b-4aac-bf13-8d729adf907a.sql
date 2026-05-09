@@ -1,0 +1,1 @@
+UPDATE public.pedido_compra_sugerido SET data_ciclo = '2026-05-09', atualizado_em = now() WHERE id = 83 AND status = 'aprovado_aguardando_disparo';
