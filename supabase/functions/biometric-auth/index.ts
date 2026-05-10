@@ -37,9 +37,7 @@ serve(async (req) => {
     return new Response(null, { headers: corsHeaders });
   }
 
-  const __auth = await authorizeCronOrStaff(req);
-  if (!__auth.ok) return __auth.response;
-
+  // Pre-login WebAuthn flow: no JWT yet. Rate limit instead of auth guard.
   const ip = getClientIp(req);
   if (!checkRateLimit(ip)) {
     return new Response(
