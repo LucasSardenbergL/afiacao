@@ -517,6 +517,9 @@ serve(async (req) => {
     return new Response(null, { headers: corsHeaders });
   }
 
+  const auth = authorizeCron(req);
+  if (!auth.ok) return auth.response;
+
   try {
     const supabaseAdmin = createClient(
       Deno.env.get("SUPABASE_URL")!,
@@ -525,36 +528,6 @@ serve(async (req) => {
 
     const body = await req.json();
     const { action, account = "oben" } = body;
-
-    // Auth: either cron secret or user JWT
-    const cronSecret = req.headers.get("x-cron-secret");
-    const isCron = cronSecret === Deno.env.get("CRON_SECRET");
-
-    if (!isCron) {
-      const authHeader = req.headers.get("Authorization");
-      if (!authHeader?.startsWith("Bearer ")) {
-        return new Response(JSON.stringify({ error: "Não autorizado" }), {
-          status: 401,
-          headers: { ...corsHeaders, "Content-Type": "application/json" },
-        });
-      }
-
-      const supabaseAuth = createClient(
-        Deno.env.get("SUPABASE_URL")!,
-        Deno.env.get("SUPABASE_ANON_KEY")!,
-        { global: { headers: { Authorization: authHeader } } }
-      );
-
-      const { data: { user }, error: userError } = await supabaseAuth.auth.getUser(
-        authHeader.replace("Bearer ", "")
-      );
-      if (userError || !user) {
-        return new Response(JSON.stringify({ error: "Token inválido" }), {
-          status: 401,
-          headers: { ...corsHeaders, "Content-Type": "application/json" },
-        });
-      }
-    }
 
     const cfg = await loadReprocessConfig(supabaseAdmin);
     let result: unknown;
