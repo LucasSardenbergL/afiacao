@@ -5,8 +5,6 @@ import { logger } from '@/lib/logger';
 
 interface BiometricAuthResult {
   email: string;
-  tempToken: string;
-  actionLink: string;
 }
 
 interface BiometricAuthHook {
@@ -248,8 +246,6 @@ export const useBiometricAuth = (): BiometricAuthHook => {
 
       return {
         email: data.email,
-        tempToken: data.tempToken,
-        actionLink: data.actionLink,
       };
     } catch (error: any) {
       logger.warn('Biometric authentication failed', { stage: 'authenticate', errorName: error?.name, error });

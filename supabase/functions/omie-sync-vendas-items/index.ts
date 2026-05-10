@@ -136,9 +136,35 @@ async function omieCall(
   return { ok: false, status: 0, error: "max retries exceeded" };
 }
 
+async function authorizeCronOrStaff(req: Request): Promise<boolean> {
+  const SUPA_URL = Deno.env.get("SUPABASE_URL")!;
+  const SVC_KEY = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
+  const CRON_SEC = Deno.env.get("CRON_SECRET");
+  const cronSecret = req.headers.get("x-cron-secret");
+  if (cronSecret && CRON_SEC && cronSecret === CRON_SEC) return true;
+  const authHeader = req.headers.get("Authorization");
+  if (!authHeader?.startsWith("Bearer ")) return false;
+  const token = authHeader.slice(7);
+  if (token === SVC_KEY) return true;
+  try {
+    const userRes = await fetch(`${SUPA_URL}/auth/v1/user`, { headers: { Authorization: authHeader, apikey: SVC_KEY } });
+    if (!userRes.ok) return false;
+    const user = await userRes.json();
+    if (!user?.id) return false;
+    const roleRes = await fetch(`${SUPA_URL}/rest/v1/user_roles?user_id=eq.${user.id}&select=role`, { headers: { apikey: SVC_KEY, Authorization: `Bearer ${SVC_KEY}` } });
+    if (!roleRes.ok) return false;
+    const roles = (await roleRes.json()) as Array<{ role: string }>;
+    const allowed = new Set(["admin","employee","manager","master"]);
+    return roles.some((r) => allowed.has(r.role));
+  } catch { return false; }
+}
+
 Deno.serve(async (req) => {
   if (req.method === "OPTIONS") {
     return new Response("ok", { headers: corsHeaders });
+  }
+  if (!(await authorizeCronOrStaff(req))) {
+    return new Response(JSON.stringify({ error: "Unauthorized" }), { status: 401, headers: { ...corsHeaders, "Content-Type": "application/json" } });
   }
 
   const startedAt = Date.now();
