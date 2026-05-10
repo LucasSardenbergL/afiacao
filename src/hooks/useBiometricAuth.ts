@@ -5,8 +5,6 @@ import { logger } from '@/lib/logger';
 
 interface BiometricAuthResult {
   email: string;
-  tempToken: string;
-  actionLink: string;
 }
 
 interface BiometricAuthHook {
