@@ -116,3 +116,6 @@ verify_jwt = false
 
 [functions.promocao-extrair-via-vision]
 verify_jwt = false
+
+[functions.omie-analytics-sync]
+verify_jwt = false
