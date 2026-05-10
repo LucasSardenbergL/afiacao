@@ -1,4 +1,5 @@
 import { createClient } from 'npm:@supabase/supabase-js@2';
+import { authorizeCronOrStaff } from "../_shared/auth.ts";
 
 const ALLOWED_ORIGIN = Deno.env.get("ALLOWED_ORIGIN") || "*";
 
