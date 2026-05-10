@@ -1,44 +1,6 @@
 import { serve } from "https://deno.land/std@0.190.0/http/server.ts";
 import { createClient } from "npm:@supabase/supabase-js@2";
-
-const corsHeaders = {
-  'Access-Control-Allow-Origin': '*',
-  'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type, x-cron-secret',
-};
-
-// Authentication: requires admin auth OR cron secret
-async function authenticateRequest(req: Request): Promise<boolean> {
-  const supabaseUrl = Deno.env.get('SUPABASE_URL')!;
-  const supabaseAnonKey = Deno.env.get('SUPABASE_ANON_KEY')!;
-  const supabaseServiceKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!;
-
-  // Check cron secret
-  const cronSecret = req.headers.get('x-cron-secret');
-  const expectedCronSecret = Deno.env.get('CRON_SECRET');
-  if (cronSecret && expectedCronSecret && cronSecret === expectedCronSecret) {
-    return true;
-  }
-
-  // Check auth header for admin
-  const authHeader = req.headers.get('Authorization');
-  if (!authHeader?.startsWith('Bearer ')) return false;
-
-  const supabaseAuth = createClient(supabaseUrl, supabaseAnonKey, {
-    global: { headers: { Authorization: authHeader } },
-  });
-
-  const { data: { user }, error } = await supabaseAuth.auth.getUser();
-  if (error || !user) return false;
-
-  const supabase = createClient(supabaseUrl, supabaseServiceKey);
-  const { data: roleData } = await supabase
-    .from('user_roles')
-    .select('role')
-    .eq('user_id', user.id)
-    .single();
-
-  return roleData?.role === 'admin' || roleData?.role === 'employee';
-}
+import { authorizeCron, corsHeaders } from "../_shared/auth.ts";
 
 serve(async (req) => {
   if (req.method === 'OPTIONS') {
@@ -46,13 +8,8 @@ serve(async (req) => {
   }
 
   try {
-    const authenticated = await authenticateRequest(req);
-    if (!authenticated) {
-      return new Response(
-        JSON.stringify({ error: 'Não autorizado' }),
-        { status: 401, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
-      );
-    }
+    const auth = authorizeCron(req);
+    if (!auth.ok) return auth.response;
 
     const supabaseUrl = Deno.env.get('SUPABASE_URL')!;
     const supabaseKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!;
