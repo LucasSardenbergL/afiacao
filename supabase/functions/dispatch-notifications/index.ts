@@ -236,6 +236,25 @@ async function createCalendarEvent(accessToken: string, alerta: AlertaRow): Prom
 Deno.serve(async (req) => {
   if (req.method === 'OPTIONS') return new Response('ok', { headers: corsHeaders });
 
+  // Auth gate: x-cron-secret OR service_role OR staff JWT.
+  // Para path manual (staff JWT), exigir role=admin explicitamente.
+  const auth = await authorizeCronOrStaff(req);
+  if (!auth.ok) return auth.response;
+  if (auth.via === 'staff') {
+    const adminCheck = createClient(SUPABASE_URL, SERVICE_ROLE_KEY);
+    const { data: roles } = await adminCheck
+      .from('user_roles')
+      .select('role')
+      .eq('user_id', auth.userId!);
+    const isAdmin = (roles ?? []).some((r: { role: string }) => r.role === 'admin');
+    if (!isAdmin) {
+      return new Response(JSON.stringify({ error: 'Forbidden: admin only' }), {
+        status: 403,
+        headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+      });
+    }
+  }
+
   const startedAt = new Date().toISOString();
 
   if (!CLIENT_ID || !CLIENT_SECRET || !REFRESH_TOKEN) {
