@@ -2,10 +2,11 @@
 // Envia email via Gmail API + cria evento no Google Calendar via OAuth 2.0 (refresh token).
 // Sequencial: NUNCA processa alertas em paralelo.
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2.45.0';
+import { authorizeCronOrStaff } from '../_shared/auth.ts';
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
-  'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
+  'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type, x-cron-secret',
   'Access-Control-Allow-Methods': 'POST, OPTIONS',
 };
 
