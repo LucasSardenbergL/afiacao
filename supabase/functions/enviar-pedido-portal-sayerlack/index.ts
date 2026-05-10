@@ -1150,9 +1150,42 @@ async function processarPedido(
   return result;
 }
 
+async function authorizeCronOrStaff(req: Request): Promise<boolean> {
+  const CRON_SEC = Deno.env.get("CRON_SECRET");
+  const cronSecret = req.headers.get("x-cron-secret");
+  if (cronSecret && CRON_SEC && cronSecret === CRON_SEC) return true;
+  const authHeader = req.headers.get("Authorization");
+  if (!authHeader?.startsWith("Bearer ")) return false;
+  const token = authHeader.slice(7);
+  if (token === SERVICE_ROLE_KEY) return true;
+  try {
+    const userRes = await fetch(`${SUPABASE_URL}/auth/v1/user`, {
+      headers: { Authorization: authHeader, apikey: SERVICE_ROLE_KEY },
+    });
+    if (!userRes.ok) return false;
+    const user = await userRes.json();
+    if (!user?.id) return false;
+    const roleRes = await fetch(
+      `${SUPABASE_URL}/rest/v1/user_roles?user_id=eq.${user.id}&select=role`,
+      { headers: { apikey: SERVICE_ROLE_KEY, Authorization: `Bearer ${SERVICE_ROLE_KEY}` } },
+    );
+    if (!roleRes.ok) return false;
+    const roles = (await roleRes.json()) as Array<{ role: string }>;
+    const allowed = new Set(["admin", "employee", "manager", "master"]);
+    return roles.some((r) => allowed.has(r.role));
+  } catch { return false; }
+}
+
 Deno.serve(async (req) => {
   if (req.method === "OPTIONS") {
     return new Response("ok", { headers: corsHeaders });
+  }
+
+  if (!(await authorizeCronOrStaff(req))) {
+    return new Response(JSON.stringify({ error: "Unauthorized" }), {
+      status: 401,
+      headers: { ...corsHeaders, "Content-Type": "application/json" },
+    });
   }
 
   const tStart = Date.now();
