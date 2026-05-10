@@ -1,6 +1,5 @@
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { createClient } from "npm:@supabase/supabase-js@2";
-import { authorizeCronOrStaff } from "../_shared/auth.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -38,9 +37,7 @@ serve(async (req) => {
     return new Response(null, { headers: corsHeaders });
   }
 
-  const __auth = await authorizeCronOrStaff(req);
-  if (!__auth.ok) return __auth.response;
-
+  // Pre-login WebAuthn flow: no JWT yet. Rate limit instead of auth guard.
   const ip = getClientIp(req);
   if (!checkRateLimit(ip)) {
     return new Response(
