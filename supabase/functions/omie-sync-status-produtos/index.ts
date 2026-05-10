@@ -3,6 +3,7 @@
 // para a tabela sku_status_omie. Usa ListarProdutos paginado (50 por página).
 
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.45.0";
+import { authorizeCronOrStaff } from "../_shared/auth.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -72,6 +73,9 @@ async function omieCall(
 
 Deno.serve(async (req) => {
   if (req.method === "OPTIONS") return new Response("ok", { headers: corsHeaders });
+
+  const auth = await authorizeCronOrStaff(req);
+  if (!auth.ok) return auth.response;
 
   const startedAt = Date.now();
   const supabase = createClient(
