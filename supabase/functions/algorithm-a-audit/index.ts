@@ -31,6 +31,9 @@ Deno.serve(async (req) => {
     return new Response(null, { headers: corsHeaders });
   }
 
+  const auth = await authorizeCronOrStaff(req);
+  if (!auth.ok) return auth.response;
+
   try {
     const supabase = createClient(
       Deno.env.get('SUPABASE_URL')!,
