@@ -2,10 +2,11 @@
 // Envia email via Gmail API + cria evento no Google Calendar via OAuth 2.0 (refresh token).
 // Sequencial: NUNCA processa alertas em paralelo.
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2.45.0';
+import { authorizeCronOrStaff } from '../_shared/auth.ts';
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
-  'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
+  'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type, x-cron-secret',
   'Access-Control-Allow-Methods': 'POST, OPTIONS',
 };
 
@@ -234,6 +235,25 @@ async function createCalendarEvent(accessToken: string, alerta: AlertaRow): Prom
 
 Deno.serve(async (req) => {
   if (req.method === 'OPTIONS') return new Response('ok', { headers: corsHeaders });
+
+  // Auth gate: x-cron-secret OR service_role OR staff JWT.
+  // Para path manual (staff JWT), exigir role=admin explicitamente.
+  const auth = await authorizeCronOrStaff(req);
+  if (!auth.ok) return auth.response;
+  if (auth.via === 'staff') {
+    const adminCheck = createClient(SUPABASE_URL, SERVICE_ROLE_KEY);
+    const { data: roles } = await adminCheck
+      .from('user_roles')
+      .select('role')
+      .eq('user_id', auth.userId!);
+    const isAdmin = (roles ?? []).some((r: { role: string }) => r.role === 'admin');
+    if (!isAdmin) {
+      return new Response(JSON.stringify({ error: 'Forbidden: admin only' }), {
+        status: 403,
+        headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+      });
+    }
+  }
 
   const startedAt = new Date().toISOString();
 
