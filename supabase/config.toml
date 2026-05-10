@@ -69,12 +69,6 @@ verify_jwt = false
 [functions.omie-sync-nfes-recebidas]
 verify_jwt = false
 
-[functions.omie-debug-consulta-recebimento]
-verify_jwt = false
-
-[functions.omie-debug-consulta-cte]
-verify_jwt = false
-
 [functions.omie-sync-ctes-recebidos]
 verify_jwt = false
 
@@ -108,12 +102,6 @@ verify_jwt = false
 [functions.disparar-pedidos-aprovados]
 verify_jwt = false
 
-[functions.omie-sync-condicoes-pagamento]
-verify_jwt = false
-
-[functions.omie-sync-condicao-fornecedor]
-verify_jwt = false
-
 [functions.promocao-extrair-via-vision]
 verify_jwt = false
 
@@ -121,4 +109,7 @@ verify_jwt = false
 verify_jwt = false
 
 [functions.dispatch-notifications]
+verify_jwt = false
+
+[functions.omie-nfe-webhook]
 verify_jwt = false

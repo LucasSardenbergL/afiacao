@@ -1,9 +1,10 @@
 import { createClient } from "npm:@supabase/supabase-js@2";
+import { authorizeCronOrStaff } from "../_shared/auth.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
   "Access-Control-Allow-Headers":
-    "authorization, x-client-info, apikey, content-type",
+    "authorization, x-client-info, apikey, content-type, x-cron-secret",
 };
 
 function jsonResponse(body: Record<string, unknown>, status = 200) {
@@ -71,6 +72,10 @@ async function omieCall(appKey: string, appSecret: string, endpoint: string, met
 Deno.serve(async (req) => {
   if (req.method === "OPTIONS") {
     return new Response("ok", { headers: corsHeaders });
+  }
+  {
+    const __auth = await authorizeCronOrStaff(req);
+    if (!__auth.ok) return __auth.response;
   }
 
   const supabase = createClient(

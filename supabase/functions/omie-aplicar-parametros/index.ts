@@ -4,11 +4,12 @@
 // Para cada ID: revalida prontidão, chama Omie AlterarProduto, grava resposta.
 
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.45.0";
+import { authorizeCronOrStaff } from "../_shared/auth.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
   "Access-Control-Allow-Headers":
-    "authorization, x-client-info, apikey, content-type",
+    "authorization, x-client-info, apikey, content-type, x-cron-secret",
 };
 
 const OMIE_URL = "https://app.omie.com.br/api/v1/geral/produtos/";
@@ -90,6 +91,9 @@ async function omieAlterarProduto(
 
 Deno.serve(async (req) => {
   if (req.method === "OPTIONS") return new Response("ok", { headers: corsHeaders });
+
+  const __auth = await authorizeCronOrStaff(req);
+  if (!__auth.ok) return __auth.response;
 
   const supabase = createClient(
     Deno.env.get("SUPABASE_URL")!,

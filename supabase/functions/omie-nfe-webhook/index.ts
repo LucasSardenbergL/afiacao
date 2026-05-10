@@ -3,7 +3,7 @@ import { createClient } from "npm:@supabase/supabase-js@2";
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
   "Access-Control-Allow-Headers":
-    "authorization, x-client-info, apikey, content-type",
+    "authorization, x-client-info, apikey, content-type, x-webhook-secret",
 };
 
 function jsonResponse(body: Record<string, unknown>, status = 200) {
@@ -22,6 +22,13 @@ function smartRound(qty: number): number {
 Deno.serve(async (req) => {
   if (req.method === "OPTIONS") {
     return new Response("ok", { headers: corsHeaders });
+  }
+
+  // Shared-secret webhook auth (Omie cannot send a JWT).
+  const expectedSecret = Deno.env.get("OMIE_WEBHOOK_SECRET");
+  const providedSecret = req.headers.get("x-webhook-secret");
+  if (!expectedSecret || !providedSecret || providedSecret !== expectedSecret) {
+    return jsonResponse({ error: "Unauthorized" }, 401);
   }
 
   if (req.method !== "POST") {
