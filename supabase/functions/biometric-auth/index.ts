@@ -88,16 +88,14 @@ serve(async (req) => {
         );
       }
 
-      const actionLink = signInData.properties?.action_link || "";
-      const tokenMatch = actionLink.match(/token=([^&]+)/);
-      const token = tokenMatch ? tokenMatch[1] : "";
-
+      // SECURITY: Do NOT return the action_link or magic-link token to the client.
+      // Returning a sign-in token to an unauthenticated caller is account takeover.
+      // The credential existence check + counter bump is preserved for audit, and
+      // the client must complete sign-in via the standard supabase.auth flow.
       return new Response(
-        JSON.stringify({ 
-          success: true, 
+        JSON.stringify({
+          success: true,
           email: profile.email,
-          tempToken: token,
-          actionLink: actionLink
         }),
         { headers: { ...corsHeaders, "Content-Type": "application/json" } }
       );
