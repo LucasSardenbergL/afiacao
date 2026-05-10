@@ -24,6 +24,13 @@ Deno.serve(async (req) => {
     return new Response("ok", { headers: corsHeaders });
   }
 
+  // Shared-secret webhook auth (Omie cannot send a JWT).
+  const expectedSecret = Deno.env.get("OMIE_WEBHOOK_SECRET");
+  const providedSecret = req.headers.get("x-webhook-secret");
+  if (!expectedSecret || !providedSecret || providedSecret !== expectedSecret) {
+    return jsonResponse({ error: "Unauthorized" }, 401);
+  }
+
   if (req.method !== "POST") {
     return jsonResponse({ error: "Method not allowed" }, 405);
   }
