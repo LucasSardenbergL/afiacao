@@ -1,11 +1,6 @@
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { createClient } from "npm:@supabase/supabase-js@2";
-
-const corsHeaders = {
-  "Access-Control-Allow-Origin": "*",
-  "Access-Control-Allow-Headers":
-    "authorization, x-client-info, apikey, content-type, x-supabase-client-platform, x-supabase-client-platform-version, x-supabase-client-runtime, x-supabase-client-runtime-version",
-};
+import { authorizeCron, corsHeaders } from "../_shared/auth.ts";
 
 const OMIE_API_URL = "https://app.omie.com.br/api/v1";
 
@@ -522,6 +517,9 @@ serve(async (req) => {
     return new Response(null, { headers: corsHeaders });
   }
 
+  const auth = authorizeCron(req);
+  if (!auth.ok) return auth.response;
+
   try {
     const supabaseAdmin = createClient(
       Deno.env.get("SUPABASE_URL")!,
@@ -530,36 +528,6 @@ serve(async (req) => {
 
     const body = await req.json();
     const { action, account = "oben" } = body;
-
-    // Auth: either cron secret or user JWT
-    const cronSecret = req.headers.get("x-cron-secret");
-    const isCron = cronSecret === Deno.env.get("CRON_SECRET");
-
-    if (!isCron) {
-      const authHeader = req.headers.get("Authorization");
-      if (!authHeader?.startsWith("Bearer ")) {
-        return new Response(JSON.stringify({ error: "Não autorizado" }), {
-          status: 401,
-          headers: { ...corsHeaders, "Content-Type": "application/json" },
-        });
-      }
-
-      const supabaseAuth = createClient(
-        Deno.env.get("SUPABASE_URL")!,
-        Deno.env.get("SUPABASE_ANON_KEY")!,
-        { global: { headers: { Authorization: authHeader } } }
-      );
-
-      const { data: { user }, error: userError } = await supabaseAuth.auth.getUser(
-        authHeader.replace("Bearer ", "")
-      );
-      if (userError || !user) {
-        return new Response(JSON.stringify({ error: "Token inválido" }), {
-          status: 401,
-          headers: { ...corsHeaders, "Content-Type": "application/json" },
-        });
-      }
-    }
 
     const cfg = await loadReprocessConfig(supabaseAdmin);
     let result: unknown;

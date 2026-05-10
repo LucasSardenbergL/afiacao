@@ -7,11 +7,10 @@
 //  - Manual: POST { empresa: "OBEN" }
 
 import { createClient } from "npm:@supabase/supabase-js@2";
+import { authorizeCron, corsHeaders as sharedCors } from "../_shared/auth.ts";
 
 const corsHeaders = {
-  "Access-Control-Allow-Origin": "*",
-  "Access-Control-Allow-Headers":
-    "authorization, x-client-info, apikey, content-type",
+  ...sharedCors,
   "Access-Control-Allow-Methods": "POST, OPTIONS",
 };
 
@@ -139,6 +138,9 @@ Deno.serve(async (req) => {
   if (req.method === "OPTIONS") {
     return new Response(null, { headers: corsHeaders });
   }
+
+  const auth = authorizeCron(req);
+  if (!auth.ok) return auth.response;
 
   const startedAt = new Date();
   const t0 = performance.now();
