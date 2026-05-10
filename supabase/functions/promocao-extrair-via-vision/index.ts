@@ -18,6 +18,7 @@
 // Campos com baixa confiança são flagados em extracao_observacoes.
 
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.45.0";
+import { authorizeCronOrStaff } from "../_shared/auth.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -304,6 +305,8 @@ Deno.serve(async (req: Request) => {
   if (req.method === "OPTIONS") {
     return new Response("ok", { headers: corsHeaders });
   }
+  const __auth = await authorizeCronOrStaff(req);
+  if (!__auth.ok) return __auth.response;
 
   const supabase = createClient(
     Deno.env.get("SUPABASE_URL")!,
