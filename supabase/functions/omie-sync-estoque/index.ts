@@ -139,6 +139,9 @@ Deno.serve(async (req) => {
     return new Response(null, { headers: corsHeaders });
   }
 
+  const auth = authorizeCron(req);
+  if (!auth.ok) return auth.response;
+
   const startedAt = new Date();
   const t0 = performance.now();
 
