@@ -72,22 +72,7 @@ serve(async (req) => {
         })
         .eq("credential_id", credentialId);
 
-      // Generate a temporary sign-in link
-      const { data: signInData, error: signInError } = await supabase.auth.admin.generateLink({
-        type: "magiclink",
-        email: profile.email!,
-        options: {
-          redirectTo: `${req.headers.get("origin") || supabaseUrl}/`,
-        },
-      });
-
-      if (signInError || !signInData) {
-        return new Response(
-          JSON.stringify({ success: false, error: "Falha ao gerar autenticação" }),
-          { headers: { ...corsHeaders, "Content-Type": "application/json" }, status: 500 }
-        );
-      }
-
+      // (Magic-link generation removed — see security note below.)
       // SECURITY: Do NOT return the action_link or magic-link token to the client.
       // Returning a sign-in token to an unauthenticated caller is account takeover.
       // The credential existence check + counter bump is preserved for audit, and
