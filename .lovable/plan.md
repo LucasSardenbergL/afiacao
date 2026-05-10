@@ -1,132 +1,43 @@
-## Diagnóstico — Cron jobs vs. funções protegidas (Onda 1)
+# Diagnóstico — Onda 2 de Endurecimento de Edge Functions
 
-### 1) Inventário de cron jobs ativos (`cron.job`)
+Plan mode: apenas diagnóstico. Nenhum código ou agendamento será alterado.
 
-22 jobs encontrados. Os relevantes para esta auditoria:
+## Legenda
 
-| jobid | jobname | schedule | função alvo |
-|---|---|---|---|
-| 14 | `omie-cron-diario-oben` | `0 7 * * *` | **omie-cron-diario** |
-| 20 | `disparar-pedidos-aprovados-oben` | `0 13 * * *` | **disparar-pedidos-aprovados** |
-| 21 | `gerar-pedidos-diario-oben` | `15 9 * * *` | **gerar-pedidos-diario** |
-| — | (nenhum) | — | **enviar-pedido-portal-sayerlack** |
+- **authorizeCron**: aceita SOMENTE header `x-cron-secret` válido (uso exclusivo de cron / jobs internos).
+- **authorizeCronOrStaff**: aceita `x-cron-secret` OU JWT de usuário staff/admin (cron + invocação manual no app).
+- **service-role-only**: aceita SOMENTE chamadas com Bearer SERVICE_ROLE_KEY (sem usuário).
+- "ANON_KEY" no cron significa header `Authorization: Bearer <anon JWT>` — não é staff nem service-role; com `verify_jwt=false` passa pelo gateway, mas em código a função tipicamente cai em "Unauthorized" (401) se exigir `getUser()`.
 
-Os demais 19 jobs invocam outras funções (omie-analytics-sync, calculate-scores, omie-sync-estoque/metadados/status-produtos, process-recurring-orders, sync-reprocess, monthly-report, dispatch-notifications, algorithm-a-audit, omie-sync) ou rodam SQL puro — **não fazem parte deste escopo**.
+## Tabela — ordenada por risco (mais crítico primeiro)
 
-### 2) Estado atual dos headers nos 3 jobs afetados
+| # | Função | (a) Auth atual no código | (b) Quem chama | (c) Caller no cron | (d) Sugestão | Justificativa (1 linha) |
+|---|---|---|---|---|---|---|
+| 1 | **process-recurring-orders** | Lê `x-cron-secret` E `getUser()` Authorization, mas **não bloqueia se ambos faltarem** (fluxo segue com SERVICE_ROLE) | Cron (diário 07:00) | `Bearer ANON_KEY` | **authorizeCron** | Cria/dispara pedidos recorrentes em massa — só cron deve invocar; nenhum app caller. |
+| 2 | **dispatch-notifications** | Sem auth no handler; usa SERVICE_ROLE internamente; `verify_jwt=true` (default) — exige JWT válido qualquer | Cron (diário 11:10) + app (1) | `Bearer service_role_key` (via `current_setting`) | **authorizeCronOrStaff** | Dispara notificações a todos usuários; cron + reenvio manual de admin. |
+| 3 | **monthly-report** | `verify_jwt=false`; sem checagem de role no handler | Cron (mensal dia 1, 09:00) + app (1) | `Bearer ANON_KEY` | **authorizeCronOrStaff** | Gera e envia relatórios mensais por e-mail; staff pode disparar manual. |
+| 4 | **calculate-scores** | `getUser()` exige JWT de usuário (qualquer autenticado) | Cron (diário 06:00) + app (1) | `Bearer ANON_KEY` (vai falhar 401 hoje) | **authorizeCronOrStaff** | Recalcula scores/ranking; afeta visões gerenciais; admin reexecuta sob demanda. |
+| 5 | **algorithm-a-audit** | `verify_jwt=false`; SERVICE_ROLE interno; sem role check | Cron (semanal dom 03:00) + app (1) | `Bearer ANON_KEY` | **authorizeCronOrStaff** | Auditoria do Algoritmo A; cron semanal + auditor admin manual. |
+| 6 | **omie-analytics-sync** | `verify_jwt=true` (default); sem checagem de role | Cron (5 jobs: 06:00, 06:15, 07:00, 07:30, 02:00, */30, */2h) + app (1) | `Bearer ANON_KEY` | **authorizeCronOrStaff** | Núcleo de sincronia analítica Omie (produtos/pedidos/inventário/assoc rules/custos); cron pesado + replay admin. |
+| 7 | **sync-reprocess** | `verify_jwt=true`; sem role check no handler | Cron (2 jobs: */2h e diário 02:30) | `Bearer ANON_KEY` | **authorizeCron** | Reprocessamento operacional/estratégico; sem caller no app — só cron. |
+| 8 | **omie-sync-estoque** | `verify_jwt=false`; sem auth no handler | Cron (diário 09:00) | `Bearer ANON_KEY` | **authorizeCron** | Sync de estoque Omie agendado; nenhum app caller. |
+| 9 | **omie-sync-metadados** | `verify_jwt=false`; sem auth no handler | Cron (diário 08:30) | `Bearer ANON_KEY` | **authorizeCron** | Sync de metadados (vendedores, condições etc.); nenhum app caller. |
+| 10 | **omie-sync-status-produtos** | `verify_jwt=false`; SERVICE_ROLE interno; sem role check | Cron (diário 06:30) + app (1, AdminSkuMapeamento) | `Bearer ANON_KEY` | **authorizeCronOrStaff** | Atualiza status de produtos; admin pode reexecutar pelo painel SKU. |
+| 11 | **omie-sync** | `verify_jwt=false`; sem checagem de role | Cron (horário "sync_services") + app (2, OmieService) | `Bearer ANON_KEY` | **authorizeCronOrStaff** | Sync genérica de serviços/clientes Omie; usada por app e cron horário. |
 
-| jobid | jobname | Authorization | `x-cron-secret` | Status pós-Onda 1 |
-|---|---|---|---|---|
-| 14 | `omie-cron-diario-oben` | **ausente** | ausente | ❌ vai retornar 401 |
-| 20 | `disparar-pedidos-aprovados-oben` | Bearer **ANON_KEY** | ausente | ❌ vai retornar 401 (anon não é staff nem service-role) |
-| 21 | `gerar-pedidos-diario-oben` | Bearer **ANON_KEY** | ausente | ❌ vai retornar 401 |
+## Observações
 
-`enviar-pedido-portal-sayerlack` **não está agendada via pg_cron** — é disparada manualmente pelo app (botão `DispararAgoraButton`) usando JWT do usuário staff, então o `authorizeCronOrStaff` já aceita esse fluxo. Nada a fazer aqui via cron.
+- **Risco real hoje (sem mudança)**: as 4 funções que usam `getUser()` (`calculate-scores`, `process-recurring-orders` no caminho que não tem cron secret, e similares) **falham 401 quando chamadas pelo cron com ANON_KEY**, pois ANON não é usuário autenticado. As demais com `verify_jwt=false` e sem role check **executam mesmo com ANON**, o que é o problema oposto: qualquer um com a anon key pode disparar.
+- **`x-cron-secret` em uso**: só já existe nas 3 funções da Onda 1 (`gerar-pedidos-diario`, `disparar-pedidos-aprovados`, `omie-cron-diario`) e parcialmente em `process-recurring-orders`.
+- **`dispatch-notifications` é o único job no cron que já usa `service_role_key`** (via `current_setting('app.settings.service_role_key')`) — funciona, mas mistura padrão com os demais.
+- **App callers confirmados** (via `invokeFunction`/`functions.invoke`):
+  - 0 callers: `omie-sync-estoque`, `omie-sync-metadados`, `process-recurring-orders`, `sync-reprocess` → candidatos a `authorizeCron` (lockdown total).
+  - 1+ callers: demais → `authorizeCronOrStaff`.
+- **Nenhuma função listada é boa candidata a `service-role-only` puro**, pois ou já são chamadas pelo app (precisa staff JWT) ou são cron-only (mais limpo usar `x-cron-secret` que SERVICE_ROLE no header do cron).
 
-### 3) Pré-requisito: expor `CRON_SECRET` ao Postgres
+## Próximo passo (após sua aprovação, em build mode)
 
-O secret `CRON_SECRET` foi criado em **Edge Function Secrets** (vault do GoTrue/Functions), que **não é o mesmo `vault` lido por `vault.decrypted_secrets`** dentro do Postgres. Você tem duas opções — **escolha uma** antes de aplicar o script abaixo:
-
-**Opção A (recomendada, sem duplicar segredo):** colar o valor literal direto no `headers` do `cron.schedule`. Simples e auditável. O script abaixo usa um placeholder `'<<COLE_O_CRON_SECRET_AQUI>>'`.
-
-**Opção B (via vault do Postgres):** inserir o segredo também no `vault` do Postgres e ler com `vault.decrypted_secrets`:
-```sql
-SELECT vault.create_secret('<<COLE_O_CRON_SECRET_AQUI>>', 'CRON_SECRET');
--- depois, dentro do command do cron:
--- (SELECT decrypted_secret FROM vault.decrypted_secrets WHERE name = 'CRON_SECRET')
-```
-Se for usar Opção B, troque a string literal nos `headers` pelo subquery acima.
-
-### 4) Script SQL pronto (Opção A) — execute manualmente
-
-```sql
--- =========================================================
--- ONDA 1 — Reagendamento dos cron jobs com x-cron-secret
--- Substitua <<COLE_O_CRON_SECRET_AQUI>> pelo valor real do
--- secret CRON_SECRET (mesmo configurado em Edge Functions).
--- =========================================================
-
--- 14) omie-cron-diario-oben (07:00 diário)
-SELECT cron.unschedule('omie-cron-diario-oben');
-SELECT cron.schedule(
-  'omie-cron-diario-oben',
-  '0 7 * * *',
-  $$
-  SELECT net.http_post(
-    url     := 'https://fzvklzpomgnyikkfkzai.supabase.co/functions/v1/omie-cron-diario',
-    headers := jsonb_build_object(
-      'Content-Type',   'application/json',
-      'x-cron-secret',  '<<COLE_O_CRON_SECRET_AQUI>>'
-    ),
-    body    := '{"empresa":"OBEN"}'::jsonb,
-    timeout_milliseconds := 150000
-  ) AS request_id;
-  $$
-);
-
--- 20) disparar-pedidos-aprovados-oben (13:00 diário)
-SELECT cron.unschedule('disparar-pedidos-aprovados-oben');
-SELECT cron.schedule(
-  'disparar-pedidos-aprovados-oben',
-  '0 13 * * *',
-  $$
-  SELECT net.http_post(
-    url     := 'https://fzvklzpomgnyikkfkzai.supabase.co/functions/v1/disparar-pedidos-aprovados',
-    headers := jsonb_build_object(
-      'Content-Type',   'application/json',
-      'x-cron-secret',  '<<COLE_O_CRON_SECRET_AQUI>>'
-    ),
-    body    := '{"empresa":"OBEN"}'::jsonb,
-    timeout_milliseconds := 150000
-  ) AS request_id;
-  $$
-);
-
--- 21) gerar-pedidos-diario-oben (09:15 diário)
-SELECT cron.unschedule('gerar-pedidos-diario-oben');
-SELECT cron.schedule(
-  'gerar-pedidos-diario-oben',
-  '15 9 * * *',
-  $$
-  SELECT net.http_post(
-    url     := 'https://fzvklzpomgnyikkfkzai.supabase.co/functions/v1/gerar-pedidos-diario',
-    headers := jsonb_build_object(
-      'Content-Type',   'application/json',
-      'x-cron-secret',  '<<COLE_O_CRON_SECRET_AQUI>>'
-    ),
-    body    := '{"empresa":"OBEN"}'::jsonb,
-    timeout_milliseconds := 150000
-  ) AS request_id;
-  $$
-);
-
--- Validação
-SELECT jobname, schedule, command
-FROM cron.job
-WHERE jobname IN (
-  'omie-cron-diario-oben',
-  'disparar-pedidos-aprovados-oben',
-  'gerar-pedidos-diario-oben'
-)
-ORDER BY jobname;
-```
-
-### 5) Variante Opção B (vault no Postgres)
-
-Se preferir não colar o segredo em texto claro no `command`:
-
-```sql
--- 1x apenas (cria o secret no vault do Postgres)
-SELECT vault.create_secret('<<COLE_O_CRON_SECRET_AQUI>>', 'CRON_SECRET');
-```
-
-E em cada `cron.schedule`, troque o header por:
-```sql
-'x-cron-secret', (SELECT decrypted_secret FROM vault.decrypted_secrets WHERE name = 'CRON_SECRET')
-```
-
-### 6) Observações
-
-- Nenhuma alteração em `enviar-pedido-portal-sayerlack` é necessária via cron — não há job agendado.
-- Após aplicar, o próximo disparo natural valida tudo. Para testar imediatamente: `SELECT cron.schedule('test-once', '* * * * *', $$ ... $$);` apontando para uma das URLs e depois `cron.unschedule('test-once')`.
-- Os outros jobs (process-recurring-orders, monthly-report, calculate-scores, etc.) **continuam usando ANON_KEY**, o que segue funcionando porque essas funções não foram endurecidas nesta onda. Eles entrarão em ondas futuras.
+1. Aplicar `authorizeCron` em: `process-recurring-orders`, `sync-reprocess`, `omie-sync-estoque`, `omie-sync-metadados`.
+2. Aplicar `authorizeCronOrStaff` em: `dispatch-notifications`, `monthly-report`, `calculate-scores`, `algorithm-a-audit`, `omie-analytics-sync`, `omie-sync-status-produtos`, `omie-sync`.
+3. Gerar SQL (sem executar) para reescrever os 13 cron jobs trocando `Authorization: Bearer ANON_KEY` por `x-cron-secret: <CRON_SECRET>`.
+4. Garantir que cada app caller (8 invocações) já passa por `invokeFunction` com sessão staff válida — nenhum requer mudança de cliente.
