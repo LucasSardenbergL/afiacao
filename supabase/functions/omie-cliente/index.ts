@@ -499,62 +499,15 @@ serve(async (req) => {
           );
         }
 
-        const { cliente, cnpjData, isIndustrial, isEmployee } = await buscarClientePorDocumento(documento);
+        const { cliente, cnpjData } = await buscarClientePorDocumento(documento);
 
+        // Pre-signup: retorna apenas {existe, razao_social} (sem PII)
         if (cliente) {
-          result = {
-            found: true,
-            isIndustrial,
-            isEmployee,
-            cnae: cnpjData?.atividade_principal?.[0]?.code || null,
-            cnaeDescricao: cnpjData?.atividade_principal?.[0]?.text || null,
-            cliente: {
-              codigo_cliente: cliente.codigo_cliente,
-              razao_social: cliente.razao_social,
-              nome_fantasia: cliente.nome_fantasia,
-              cnpj_cpf: cliente.cnpj_cpf,
-              email: cliente.email,
-              telefone: cliente.telefone1_numero,
-              endereco: cliente.endereco,
-              endereco_numero: cliente.endereco_numero,
-              complemento: cliente.complemento,
-              bairro: cliente.bairro,
-              cidade: cliente.cidade,
-              estado: cliente.estado,
-              cep: cliente.cep,
-              pessoa_fisica: cliente.pessoa_fisica,
-              inscricao_estadual: cliente.inscricao_estadual,
-            },
-          };
+          result = { existe: true, razao_social: cliente.razao_social ?? null };
         } else if (cnpjData) {
-          result = {
-            found: false,
-            isIndustrial,
-            isEmployee: false,
-            cnae: cnpjData.atividade_principal?.[0]?.code || null,
-            cnaeDescricao: cnpjData.atividade_principal?.[0]?.text || null,
-            cliente: {
-              razao_social: cnpjData.nome,
-              nome_fantasia: cnpjData.fantasia,
-              email: cnpjData.email,
-              telefone: cnpjData.telefone,
-              endereco: cnpjData.logradouro,
-              endereco_numero: cnpjData.numero,
-              complemento: cnpjData.complemento,
-              bairro: cnpjData.bairro,
-              cidade: cnpjData.municipio,
-              estado: cnpjData.uf,
-              cep: cnpjData.cep,
-            },
-          };
+          result = { existe: false, razao_social: cnpjData.nome ?? null };
         } else {
-          result = {
-            found: false,
-            isIndustrial: false,
-            isEmployee: false,
-            cnae: null,
-            cliente: null,
-          };
+          result = { existe: false, razao_social: null };
         }
         break;
       }
