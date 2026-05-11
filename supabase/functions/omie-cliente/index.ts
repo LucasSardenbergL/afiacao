@@ -475,6 +475,38 @@ serve(async (req) => {
           { status: 401, headers: { ...corsHeaders, "Content-Type": "application/json" } }
         );
       }
+
+      // Staff-only gate for sensitive actions: pesquisar_clientes, consultar_cliente,
+      // criar_perfil_local, sync_all_clients. Other actions (sync_addresses,
+      // buscar_logos_empresas, validar_vendedor) keep their previous JWT-only behavior.
+      const STAFF_ONLY_ACTIONS = new Set([
+        "pesquisar_clientes",
+        "consultar_cliente",
+        "criar_perfil_local",
+        "sync_all_clients",
+      ]);
+      if (STAFF_ONLY_ACTIONS.has(action)) {
+        const serviceRoleKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
+        const adminClient = createClient(supabaseUrl, serviceRoleKey);
+        const { data: roleRows, error: roleErr } = await adminClient
+          .from("user_roles")
+          .select("role")
+          .eq("user_id", user.id);
+        if (roleErr) {
+          return new Response(
+            JSON.stringify({ error: "Falha ao verificar permissões" }),
+            { status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+          );
+        }
+        const allowed = new Set(["admin", "employee", "manager", "master"]);
+        const hasStaff = (roleRows ?? []).some((r: { role: string }) => allowed.has(r.role));
+        if (!hasStaff) {
+          return new Response(
+            JSON.stringify({ error: "Acesso restrito a equipe interna" }),
+            { status: 403, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+          );
+        }
+      }
     } else {
       // Pre-signup: rate-limit por IP (5/min)
       const ip = req.headers.get("x-forwarded-for")?.split(",")[0].trim()
