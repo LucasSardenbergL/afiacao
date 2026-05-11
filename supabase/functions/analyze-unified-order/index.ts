@@ -39,6 +39,23 @@ serve(async (req) => {
     }
     const loggedInUserId = (data.claims as any).sub || "";
 
+    // SECURITY: staff-only — prevents customer PII enumeration via
+    // searchCustomer + service_role profile bulk-fetch.
+    {
+      const supabaseKeyForRoles = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
+      const supabaseRoles = createClient(supabaseUrl, supabaseKeyForRoles);
+      const { data: callerRoles } = await supabaseRoles
+        .from("user_roles")
+        .select("role")
+        .eq("user_id", loggedInUserId);
+      const allowed = new Set(["admin", "employee", "manager", "master"]);
+      if (!(callerRoles ?? []).some((r: { role: string }) => allowed.has(r.role))) {
+        return new Response(JSON.stringify({ error: "Forbidden" }), {
+          status: 403, headers: { ...corsHeaders, "Content-Type": "application/json" },
+        });
+      }
+    }
+
     const { text, imageBase64, imagesBase64, products, userTools, customerUserId, searchCustomer } = await req.json();
 
     // Support single image (imageBase64) or multiple images (imagesBase64)
@@ -1240,11 +1257,23 @@ Responda SEMPRE usando a função identify_order_items.`;
       }
     }
 
+    // SECURITY: strip PII (cnpj_cpf/email/phone/document) from response payload.
+    const safeCustomer = validCustomer
+      ? {
+          nome_fantasia: validCustomer.nome_fantasia || "",
+          razao_social: validCustomer.razao_social || "",
+          cidade: validCustomer.cidade || "",
+          codigo_cliente: validCustomer.codigo_cliente || 0,
+          confidence: validCustomer.confidence || "medium",
+          user_id: validCustomer.user_id || null,
+        }
+      : null;
+
     return new Response(JSON.stringify({
       products: validProducts,
       services: validServices,
       suggestions: validSuggestions,
-      customer: validCustomer,
+      customer: safeCustomer,
       message: result.message || `Identificado ${validProducts.length} produto(s) e ${validServices.length} serviço(s).`,
     }), { headers: { ...corsHeaders, "Content-Type": "application/json" } });
 

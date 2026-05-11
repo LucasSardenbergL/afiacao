@@ -110,6 +110,19 @@ Deno.serve(async (req) => {
     return jsonRes({ error: "Unauthorized" }, 401);
   }
 
+  // SECURITY: staff-only — fixes privilege escalation that allowed any
+  // authenticated user to finalize NF-e receiving via service_role.
+  const callerUserId = (claimsData.claims as any).sub as string | undefined;
+  if (!callerUserId) return jsonRes({ error: "Unauthorized" }, 401);
+  const { data: callerRoles } = await supabase
+    .from("user_roles")
+    .select("role")
+    .eq("user_id", callerUserId);
+  const allowed = new Set(["admin", "employee", "manager", "master"]);
+  if (!(callerRoles ?? []).some((r: { role: string }) => allowed.has(r.role))) {
+    return jsonRes({ error: "Forbidden" }, 403);
+  }
+
   try {
     const body = await req.json();
     const nfeRecebimentoId: string = body.nfe_recebimento_id;
