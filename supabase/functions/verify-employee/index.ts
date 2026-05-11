@@ -228,22 +228,26 @@ serve(async (req) => {
       }
 
       case "set_employee_role": {
-        // Only allow setting own role or admin setting others
-        const targetUserId = userId || user.id;
-        
-        // Check if caller is admin or setting their own role
-        const { data: callerRole } = await supabase
+        // SECURITY: Only super_admin (master role) can grant the employee role.
+        // Self-promotion is forbidden — fixes privilege escalation
+        // (any authenticated user could previously self-grant employee).
+        const { data: callerRoles } = await supabase
           .from("user_roles")
           .select("role")
-          .eq("user_id", user.id)
-          .single();
+          .eq("user_id", user.id);
 
-        if (targetUserId !== user.id && callerRole?.role !== "admin") {
+        const isSuperAdmin = (callerRoles ?? []).some(
+          (r: { role: string }) => r.role === "master"
+        );
+
+        if (!isSuperAdmin) {
           return new Response(
             JSON.stringify({ error: "Sem permissão" }),
             { status: 403, headers: { ...corsHeaders, "Content-Type": "application/json" } }
           );
         }
+
+        const targetUserId = userId || user.id;
 
         await supabase
           .from("profiles")
