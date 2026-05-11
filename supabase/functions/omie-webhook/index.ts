@@ -180,6 +180,15 @@ serve(async (req: Request) => {
     );
   }
 
+  const expectedSecret = Deno.env.get("OMIE_WEBHOOK_SECRET");
+  const providedSecret = req.headers.get("x-webhook-secret");
+  if (!expectedSecret || !providedSecret || !timingSafeEq(expectedSecret, providedSecret)) {
+    return new Response(
+      JSON.stringify({ error: "Unauthorized" }),
+      { status: 401, headers: { ...corsHeaders, "Content-Type": "application/json" } },
+    );
+  }
+
   try {
     const payload = (await req.json()) as OmieWebhookPayload;
 
