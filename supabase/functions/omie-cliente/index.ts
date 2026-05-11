@@ -475,6 +475,17 @@ serve(async (req) => {
           { status: 401, headers: { ...corsHeaders, "Content-Type": "application/json" } }
         );
       }
+    } else {
+      // Pre-signup: rate-limit por IP (5/min)
+      const ip = req.headers.get("x-forwarded-for")?.split(",")[0].trim()
+        || req.headers.get("cf-connecting-ip")
+        || "unknown";
+      if (!checkRateLimit(ip)) {
+        return new Response(
+          JSON.stringify({ error: "Muitas requisições. Tente novamente em alguns instantes." }),
+          { status: 429, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+        );
+      }
     }
 
     let result: Record<string, unknown> = {};
