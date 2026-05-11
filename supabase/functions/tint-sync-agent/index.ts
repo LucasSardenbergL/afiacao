@@ -410,8 +410,8 @@ Deno.serve(async (req) => {
 
     // ============ SIMULATE (admin - JWT auth) ============
     if (path === "simulate" && req.method === "POST") {
-      const authHeader = req.headers.get("authorization");
-      if (!authHeader) return json({ ok: false, error: "Auth required" }, 401);
+      const authResult = await authorizeStaff();
+      if (!authResult.ok) return authResult.resp;
 
       const body = await req.json();
       const settingId = body.setting_id;
