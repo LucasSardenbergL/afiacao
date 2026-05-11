@@ -7,6 +7,22 @@ const corsHeaders = {
     "authorization, x-client-info, apikey, content-type, x-supabase-client-platform, x-supabase-client-platform-version, x-supabase-client-runtime, x-supabase-client-runtime-version",
 };
 
+// In-memory rate limit for unauthenticated buscar_por_documento (5/IP/min)
+const RATE_LIMIT_MAX = 5;
+const RATE_LIMIT_WINDOW_MS = 60_000;
+const rateLimitMap = new Map<string, { count: number; resetAt: number }>();
+function checkRateLimit(ip: string): boolean {
+  const now = Date.now();
+  const entry = rateLimitMap.get(ip);
+  if (!entry || now > entry.resetAt) {
+    rateLimitMap.set(ip, { count: 1, resetAt: now + RATE_LIMIT_WINDOW_MS });
+    return true;
+  }
+  if (entry.count >= RATE_LIMIT_MAX) return false;
+  entry.count++;
+  return true;
+}
+
 const OMIE_API_URL = "https://app.omie.com.br/api/v1";
 const RECEITA_API_URL = "https://receitaws.com.br/v1/cnpj";
 
@@ -459,6 +475,17 @@ serve(async (req) => {
           { status: 401, headers: { ...corsHeaders, "Content-Type": "application/json" } }
         );
       }
+    } else {
+      // Pre-signup: rate-limit por IP (5/min)
+      const ip = req.headers.get("x-forwarded-for")?.split(",")[0].trim()
+        || req.headers.get("cf-connecting-ip")
+        || "unknown";
+      if (!checkRateLimit(ip)) {
+        return new Response(
+          JSON.stringify({ error: "Muitas requisições. Tente novamente em alguns instantes." }),
+          { status: 429, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+        );
+      }
     }
 
     let result: Record<string, unknown> = {};
@@ -472,62 +499,15 @@ serve(async (req) => {
           );
         }
 
-        const { cliente, cnpjData, isIndustrial, isEmployee } = await buscarClientePorDocumento(documento);
+        const { cliente, cnpjData } = await buscarClientePorDocumento(documento);
 
+        // Pre-signup: retorna apenas {existe, razao_social} (sem PII)
         if (cliente) {
-          result = {
-            found: true,
-            isIndustrial,
-            isEmployee,
-            cnae: cnpjData?.atividade_principal?.[0]?.code || null,
-            cnaeDescricao: cnpjData?.atividade_principal?.[0]?.text || null,
-            cliente: {
-              codigo_cliente: cliente.codigo_cliente,
-              razao_social: cliente.razao_social,
-              nome_fantasia: cliente.nome_fantasia,
-              cnpj_cpf: cliente.cnpj_cpf,
-              email: cliente.email,
-              telefone: cliente.telefone1_numero,
-              endereco: cliente.endereco,
-              endereco_numero: cliente.endereco_numero,
-              complemento: cliente.complemento,
-              bairro: cliente.bairro,
-              cidade: cliente.cidade,
-              estado: cliente.estado,
-              cep: cliente.cep,
-              pessoa_fisica: cliente.pessoa_fisica,
-              inscricao_estadual: cliente.inscricao_estadual,
-            },
-          };
+          result = { existe: true, razao_social: cliente.razao_social ?? null };
         } else if (cnpjData) {
-          result = {
-            found: false,
-            isIndustrial,
-            isEmployee: false,
-            cnae: cnpjData.atividade_principal?.[0]?.code || null,
-            cnaeDescricao: cnpjData.atividade_principal?.[0]?.text || null,
-            cliente: {
-              razao_social: cnpjData.nome,
-              nome_fantasia: cnpjData.fantasia,
-              email: cnpjData.email,
-              telefone: cnpjData.telefone,
-              endereco: cnpjData.logradouro,
-              endereco_numero: cnpjData.numero,
-              complemento: cnpjData.complemento,
-              bairro: cnpjData.bairro,
-              cidade: cnpjData.municipio,
-              estado: cnpjData.uf,
-              cep: cnpjData.cep,
-            },
-          };
+          result = { existe: false, razao_social: cnpjData.nome ?? null };
         } else {
-          result = {
-            found: false,
-            isIndustrial: false,
-            isEmployee: false,
-            cnae: null,
-            cliente: null,
-          };
+          result = { existe: false, razao_social: null };
         }
         break;
       }
