@@ -22,6 +22,21 @@ Deno.serve(async (req) => {
   const supabaseUrl = Deno.env.get("SUPABASE_URL")!;
   const serviceKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
   const sb = createClient(supabaseUrl, serviceKey);
+  const anonKey = Deno.env.get("SUPABASE_ANON_KEY")!;
+
+  async function authorizeStaff(): Promise<{ ok: true } | { ok: false; resp: Response }> {
+    const authHeader = req.headers.get("Authorization") || req.headers.get("authorization");
+    if (!authHeader) return { ok: false, resp: json({ ok: false, error: "Unauthorized" }, 401) };
+    const userClient = createClient(supabaseUrl, anonKey, { global: { headers: { Authorization: authHeader } } });
+    const { data: userData, error: userErr } = await userClient.auth.getUser();
+    if (userErr || !userData?.user) return { ok: false, resp: json({ ok: false, error: "Unauthorized" }, 401) };
+    const { data: roles } = await sb.from("user_roles").select("role").eq("user_id", userData.user.id);
+    const allowed = new Set(["admin", "manager", "master", "employee"]);
+    if (!roles?.some((r: { role: string }) => allowed.has(r.role))) {
+      return { ok: false, resp: json({ ok: false, error: "Forbidden" }, 403) };
+    }
+    return { ok: true };
+  }
 
   const syncToken = req.headers.get("x-sync-token");
   const storeCode = req.headers.get("x-store-code");
@@ -395,8 +410,8 @@ Deno.serve(async (req) => {
 
     // ============ SIMULATE (admin - JWT auth) ============
     if (path === "simulate" && req.method === "POST") {
-      const authHeader = req.headers.get("authorization");
-      if (!authHeader) return json({ ok: false, error: "Auth required" }, 401);
+      const authResult = await authorizeStaff();
+      if (!authResult.ok) return authResult.resp;
 
       const body = await req.json();
       const settingId = body.setting_id;
@@ -546,8 +561,8 @@ Deno.serve(async (req) => {
 
     // ============ RECONCILE (admin - JWT auth) ============
     if (path === "reconcile" && req.method === "POST") {
-      const authHeader = req.headers.get("authorization");
-      if (!authHeader) return json({ ok: false, error: "Auth required" }, 401);
+      const authResult = await authorizeStaff();
+      if (!authResult.ok) return authResult.resp;
 
       const body = await req.json();
       const syncRunId = body.sync_run_id;
