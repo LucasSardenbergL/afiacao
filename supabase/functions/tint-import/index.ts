@@ -477,6 +477,9 @@ serve(async (req) => {
     return new Response(null, { headers: corsHeaders });
   }
 
+  const auth = await authorizeCronOrStaff(req);
+  if (!auth.ok) return auth.response;
+
   try {
     const supabaseUrl = Deno.env.get("SUPABASE_URL")!;
     const serviceRoleKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
