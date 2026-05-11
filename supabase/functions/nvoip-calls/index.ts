@@ -8,7 +8,10 @@ const corsHeaders = {
 };
 
 const NVOIP_BASE = "https://api.nvoip.com.br/v2";
-const OAUTH_BASIC = "Basic TnZvaXBBcGlWMjpUblp2YVhCQmNHbFdNakl3TWpFPQ==";
+const NVOIP_OAUTH_BASIC_ENV = Deno.env.get("NVOIP_OAUTH_BASIC") ?? "";
+const OAUTH_BASIC = NVOIP_OAUTH_BASIC_ENV.startsWith("Basic ")
+  ? NVOIP_OAUTH_BASIC_ENV
+  : `Basic ${NVOIP_OAUTH_BASIC_ENV}`;
 
 Deno.serve(async (req) => {
   if (req.method === "OPTIONS") {
