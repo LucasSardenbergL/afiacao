@@ -148,6 +148,9 @@ serve(async (req) => {
     return new Response("ok", { headers: corsHeaders });
   }
 
+  const auth = await authorizeCronOrStaff(req);
+  if (!auth.ok) return auth.response;
+
   try {
     // Authentication required
     const authHeader = req.headers.get("Authorization");
