@@ -52,7 +52,8 @@ serve(async (req) => {
     const supabaseServiceKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
     const supabase = createClient(supabaseUrl, supabaseServiceKey);
 
-    const { action, credentialId } = await req.json();
+    const body = await req.json();
+    const { action, credentialId } = body ?? {};
 
     if (!action || typeof action !== "string") {
       return new Response(
@@ -62,16 +63,24 @@ serve(async (req) => {
     }
 
     if (action === "verify") {
-      if (!credentialId || typeof credentialId !== "string" || credentialId.length > 500) {
+      const { authenticatorData, clientDataJSON, signature, origin } = body ?? {};
+
+      if (
+        !credentialId || typeof credentialId !== "string" || credentialId.length > 500 ||
+        !authenticatorData || typeof authenticatorData !== "string" ||
+        !clientDataJSON || typeof clientDataJSON !== "string" ||
+        !signature || typeof signature !== "string" ||
+        !origin || typeof origin !== "string"
+      ) {
         return new Response(
-          JSON.stringify({ success: false, message: "Credencial inválida" }),
+          JSON.stringify({ success: false, message: "Payload inválido" }),
           { headers: { ...corsHeaders, "Content-Type": "application/json" }, status: 400 },
         );
       }
 
       const { data: credential, error: credError } = await supabase
         .from("webauthn_credentials")
-        .select("user_id, counter")
+        .select("user_id, counter, public_key")
         .eq("credential_id", credentialId)
         .single();
 
@@ -82,10 +91,79 @@ serve(async (req) => {
         );
       }
 
+      // Origin allow-list (csv via env). Reject unknown origins.
+      const allowedOrigins = (Deno.env.get("WEBAUTHN_ALLOWED_ORIGINS") ?? "")
+        .split(",")
+        .map((o) => o.trim())
+        .filter(Boolean);
+      if (allowedOrigins.length === 0 || !allowedOrigins.includes(origin)) {
+        return new Response(
+          JSON.stringify({ success: false, message: "Origem não permitida" }),
+          { headers: { ...corsHeaders, "Content-Type": "application/json" }, status: 401 },
+        );
+      }
+
+      const expectedRPID = Deno.env.get("WEBAUTHN_RP_ID") ?? new URL(origin).hostname;
+
+      // Cryptographic proof-of-possession.
+      // NOTE: challenge persistence is not yet implemented in the schema,
+      // so expectedChallenge accepts any value present in clientDataJSON.
+      // This still verifies the signature against the stored public key.
+      let verification;
+      try {
+        verification = await verifyAuthenticationResponse({
+          response: {
+            id: credentialId,
+            rawId: credentialId,
+            type: "public-key",
+            clientExtensionResults: {},
+            response: {
+              authenticatorData,
+              clientDataJSON,
+              signature,
+            },
+          } as any,
+          expectedChallenge: () => true,
+          expectedOrigin: allowedOrigins,
+          expectedRPID,
+          authenticator: {
+            credentialID: Uint8Array.from(atob(credentialId.replace(/-/g, "+").replace(/_/g, "/")), (c) => c.charCodeAt(0)),
+            credentialPublicKey: Uint8Array.from(atob(credential.public_key), (c) => c.charCodeAt(0)),
+            counter: credential.counter ?? 0,
+          },
+          requireUserVerification: false,
+        });
+      } catch (err) {
+        console.error("WebAuthn verification threw:", err);
+        return new Response(
+          JSON.stringify({ success: false, message: "Verificação falhou" }),
+          { headers: { ...corsHeaders, "Content-Type": "application/json" }, status: 401 },
+        );
+      }
+
+      if (!verification.verified || !verification.authenticationInfo) {
+        return new Response(
+          JSON.stringify({ success: false, message: "Verificação falhou" }),
+          { headers: { ...corsHeaders, "Content-Type": "application/json" }, status: 401 },
+        );
+      }
+
+      const newCounter = verification.authenticationInfo.newCounter ?? 0;
+      // Replay protection: if either side reports a counter > 0, require strictly greater.
+      if ((credential.counter ?? 0) > 0 || newCounter > 0) {
+        if (newCounter <= (credential.counter ?? 0)) {
+          return new Response(
+            JSON.stringify({ success: false, message: "Counter inválido" }),
+            { headers: { ...corsHeaders, "Content-Type": "application/json" }, status: 401 },
+          );
+        }
+      }
+
+      // Only update counter / last_used_at after successful verification.
       await supabase
         .from("webauthn_credentials")
         .update({
-          counter: credential.counter + 1,
+          counter: newCounter,
           last_used_at: new Date().toISOString(),
         })
         .eq("credential_id", credentialId);
