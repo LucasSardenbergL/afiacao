@@ -29,14 +29,21 @@ Deno.serve(async (req) => {
 
   // ─── helpers ───
 
+  function timingSafeEq(a: string, b: string): boolean {
+    if (a.length !== b.length) return false;
+    let diff = 0;
+    for (let i = 0; i < a.length; i++) diff |= a.charCodeAt(i) ^ b.charCodeAt(i);
+    return diff === 0;
+  }
+
   async function validateAgent(): Promise<{ settingId: string; account: string; storeCode: string } | null> {
     if (!syncToken || !storeCode) return null;
     const { data } = await sb.from("tint_integration_settings")
-      .select("id, account, store_code, sync_enabled, integration_mode")
-      .eq("sync_token", syncToken)
+      .select("id, account, store_code, sync_enabled, integration_mode, sync_token")
       .eq("store_code", storeCode)
       .single();
     if (!data || !data.sync_enabled) return null;
+    if (!data.sync_token || !timingSafeEq(String(data.sync_token), syncToken)) return null;
     return { settingId: data.id, account: data.account, storeCode: data.store_code };
   }
 
