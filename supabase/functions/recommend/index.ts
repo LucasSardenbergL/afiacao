@@ -338,6 +338,21 @@ Deno.serve(async (req) => {
       return jsonRes({ error: "Token inválido" }, 401);
     }
 
+    // Staff-only: this function exposes internal cost/margin/EIP data and
+    // cross-customer purchase aggregates. Restrict to staff roles.
+    const { data: roleRows, error: roleErr } = await supabaseAdmin
+      .from("user_roles")
+      .select("role")
+      .eq("user_id", user.id);
+    if (roleErr) {
+      return jsonRes({ error: "Falha ao validar permissão" }, 500);
+    }
+    const STAFF_ROLES = new Set(["admin", "employee", "manager", "master"]);
+    const isStaff = (roleRows ?? []).some((r: { role: string }) => STAFF_ROLES.has(r.role));
+    if (!isStaff) {
+      return jsonRes({ error: "Forbidden" }, 403);
+    }
+
     const { action, ...params } = await req.json();
     let result: unknown;
 

@@ -476,14 +476,16 @@ serve(async (req) => {
         );
       }
 
-      // Staff-only gate for sensitive actions: pesquisar_clientes, consultar_cliente,
-      // criar_perfil_local, sync_all_clients. Other actions (sync_addresses,
-      // buscar_logos_empresas, validar_vendedor) keep their previous JWT-only behavior.
+      // Staff-only gate for sensitive/privileged actions. Only buscar_por_documento
+      // remains JWT-only (used by the public client lookup flow with rate limit).
       const STAFF_ONLY_ACTIONS = new Set([
         "pesquisar_clientes",
         "consultar_cliente",
         "criar_perfil_local",
         "sync_all_clients",
+        "sync_addresses",
+        "buscar_logos_empresas",
+        "validar_vendedor",
       ]);
       if (STAFF_ONLY_ACTIONS.has(action)) {
         const serviceRoleKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
