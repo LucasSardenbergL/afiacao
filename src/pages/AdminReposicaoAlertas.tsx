@@ -106,6 +106,7 @@ const fmt = (n: number | null | undefined, dec = 2) =>
 
 export default function AdminReposicaoAlertas() {
   const { user } = useAuth();
+  const { empresa } = useReposicaoEmpresa();
   const qc = useQueryClient();
 
   const [page, setPage] = useState(1);
