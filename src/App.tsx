@@ -125,6 +125,7 @@ const AdminEstoquePicking = lazy(() => import("./pages/AdminEstoquePicking"));
 const FinanceiroGestao = lazy(() => import("./pages/FinanceiroGestao"));
 const FinanceiroAnalise = lazy(() => import("./pages/FinanceiroAnalise"));
 const TintCatalogo = lazy(() => import("./pages/TintCatalogo"));
+const TintIntegracao = lazy(() => import("./pages/TintIntegracao"));
 const AdminAjuda = lazy(() => import("./pages/AdminAjuda"));
 const AdminDesTrimestreAtual = lazy(() => import("./pages/AdminDesTrimestreAtual"));
 const AdminNotificacoes = lazy(() => import("./pages/AdminNotificacoes"));
@@ -278,6 +279,7 @@ const App = () => (
               <Route path="financeiro/gestao" element={<FinanceiroGestao />} />
               <Route path="financeiro/analise" element={<FinanceiroAnalise />} />
               <Route path="tintometrico/catalogo" element={<TintCatalogo />} />
+              <Route path="tintometrico/integracao" element={<TintIntegracao />} />
               <Route path="admin/ajuda" element={<AdminAjuda />} />
               <Route path="admin/des/trimestre-atual" element={<AdminDesTrimestreAtual />} />
               <Route path="admin/notificacoes" element={<AdminNotificacoes />} />
