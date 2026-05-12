@@ -1,9 +1,11 @@
 import { useMemo, useState } from "react";
-import { useQuery } from "@tanstack/react-query";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
-import { Sparkles, TrendingUp, Package, Zap, Loader2 } from "lucide-react";
+import { toast } from "sonner";
+import { Sparkles, TrendingUp, Package, Zap, Loader2, PlayCircle } from "lucide-react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
 import {
   Select,
   SelectContent,
@@ -81,10 +83,38 @@ const diasBadgeClass = (d: number | null | undefined) => {
 };
 
 export default function AdminReposicaoCockpit() {
+  const queryClient = useQueryClient();
   const [filtroCenario, setFiltroCenario] = useState<string>(ALL);
   const [filtroFornecedor, setFiltroFornecedor] = useState<string>(ALL);
+  const [rodandoGeracao, setRodandoGeracao] = useState(false);
 
-  const { data: oportunidades = [], isLoading } = useQuery({
+  const handleRodarGeracao = async () => {
+    setRodandoGeracao(true);
+    try {
+      const { data, error } = await supabase.rpc("ciclo_oportunidade_do_dia" as any, {
+        p_empresa: EMPRESA,
+      });
+      if (error) throw error;
+      const result = (data ?? {}) as {
+        pedidos_criados?: number;
+        skus_incluidos?: number;
+        valor_total?: number;
+      };
+      toast.success(
+        `Ciclo gerado: ${result.pedidos_criados ?? 0} pedidos · ${
+          result.skus_incluidos ?? 0
+        } SKUs · ${formatBRL(result.valor_total ?? 0)}`,
+      );
+      queryClient.invalidateQueries({ queryKey: ["cockpit-oportunidades"] });
+      refetch();
+    } catch (e: any) {
+      toast.error(e?.message || "Erro ao gerar ciclo de oportunidade");
+    } finally {
+      setRodandoGeracao(false);
+    }
+  };
+
+  const { data: oportunidades = [], isLoading, refetch } = useQuery({
     queryKey: ["cockpit-oportunidades", EMPRESA],
     queryFn: async () => {
       const { data, error } = await supabase
@@ -132,10 +162,25 @@ export default function AdminReposicaoCockpit() {
       </header>
 
       <Card className="border-emerald-500/30 bg-gradient-to-br from-emerald-500/5 to-transparent">
-        <CardHeader className="pb-2">
-          <CardTitle className="text-xs font-medium text-muted-foreground uppercase tracking-wide">
-            Economia total potencial
-          </CardTitle>
+        <CardHeader className="pb-2 flex flex-row items-start justify-between gap-4">
+          <div>
+            <CardTitle className="text-xs font-medium text-muted-foreground uppercase tracking-wide">
+              Economia total potencial
+            </CardTitle>
+          </div>
+          <Button
+            size="sm"
+            onClick={handleRodarGeracao}
+            disabled={rodandoGeracao}
+            className="shrink-0"
+          >
+            {rodandoGeracao ? (
+              <Loader2 className="h-4 w-4 animate-spin mr-1.5" />
+            ) : (
+              <PlayCircle className="h-4 w-4 mr-1.5" />
+            )}
+            Rodar geração manual
+          </Button>
         </CardHeader>
         <CardContent>
           <div className="text-3xl sm:text-4xl font-bold text-emerald-700 dark:text-emerald-400">
