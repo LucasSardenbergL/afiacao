@@ -83,6 +83,11 @@ interface PedidoSugerido {
   portal_tentativas: number | null;
   portal_proximo_retry_em: string | null;
   portal_erro: string | null;
+  criado_em?: string | null;
+  cancelado_em?: string | null;
+  cancelado_por?: string | null;
+  justificativa_cancelamento?: string | null;
+  omie_registrado_em?: string | null;
 }
 
 interface CondicaoPagamento {
