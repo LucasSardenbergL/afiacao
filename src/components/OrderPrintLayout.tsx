@@ -120,7 +120,7 @@ export function openPrintOrder(data: PrintOrderData) {
   const showDesconto = data.desconto > 0 && cnpjsComDesconto.includes(data.customerDocument || '');
 
   const html = `<!DOCTYPE html>
-<html><head><meta charset="utf-8"><title>Pedido ${data.orderNumber}</title>
+<html><head><meta charset="utf-8"><title>Pedido ${escapeHtml(data.orderNumber)}</title>
 <style>
   @media print {
     @page { margin: 0; size: A4; }
@@ -151,29 +151,29 @@ export function openPrintOrder(data: PrintOrderData) {
 </style></head><body>
 <div class="header">
   <div class="header-left">
-    ${data.companyLogoUrl ? `<img src="${data.companyLogoUrl}" class="company-logo" crossorigin="anonymous" />` : ''}
+    ${data.companyLogoUrl ? `<img src="${escapeHtml(data.companyLogoUrl)}" class="company-logo" crossorigin="anonymous" />` : ''}
     <div>
-      <div class="company-name">${data.companyName}</div>
-      <div class="company-info">CNPJ: ${data.companyCnpj} • Tel: ${data.companyPhone}</div>
-      <div class="company-info">${data.companyAddress}</div>
+      <div class="company-name">${escapeHtml(data.companyName)}</div>
+      <div class="company-info">CNPJ: ${escapeHtml(data.companyCnpj)} • Tel: ${escapeHtml(data.companyPhone)}</div>
+      <div class="company-info">${escapeHtml(data.companyAddress)}</div>
     </div>
   </div>
   <div class="order-box">
     <div class="label">PEDIDO DE VENDA</div>
-    <div class="number">Nº ${data.orderNumber.replace(/^0+/, '') || '0'}</div>
-    <div class="date">${data.date}</div>
+    <div class="number">Nº ${escapeHtml(data.orderNumber.replace(/^0+/, '') || '0')}</div>
+    <div class="date">${escapeHtml(data.date)}</div>
   </div>
 </div>
 
 <div class="section-title">DADOS DO CLIENTE</div>
 <div style="display:flex;justify-content:space-between">
   <div>
-    <div class="customer-name">${data.customerName}</div>
-    <div class="customer-info">CPF/CNPJ: ${data.customerDocument || 'N/A'}${data.customerPhone ? ' • Tel: ' + data.customerPhone : ''}</div>
-    ${data.customerAddress ? `<div class="customer-info" style="margin-top:4px"><strong>Endereço:</strong> ${data.customerAddress}</div>` : ''}
+    <div class="customer-name">${escapeHtml(data.customerName)}</div>
+    <div class="customer-info">CPF/CNPJ: ${escapeHtml(data.customerDocument || 'N/A')}${data.customerPhone ? ' • Tel: ' + escapeHtml(data.customerPhone) : ''}</div>
+    ${data.customerAddress ? `<div class="customer-info" style="margin-top:4px"><strong>Endereço:</strong> ${escapeHtml(data.customerAddress)}</div>` : ''}
   </div>
   <div class="right-info">
-    ${data.vendedorName ? `Vendedor: ${data.vendedorName}` : ''}
+    ${data.vendedorName ? `Vendedor: ${escapeHtml(data.vendedorName)}` : ''}
   </div>
 </div>
 
@@ -200,7 +200,7 @@ export function openPrintOrder(data: PrintOrderData) {
 
 ${data.condPagamento || installmentText ? `
 <div class="section-title">CONDIÇÃO DE PAGAMENTO</div>
-<div style="font-size:11px;margin-bottom:4px">${data.condPagamento ? `<strong>Prazo:</strong> ${data.condPagamento}` : ''}</div>
+<div style="font-size:11px;margin-bottom:4px">${data.condPagamento ? `<strong>Prazo:</strong> ${escapeHtml(data.condPagamento)}` : ''}</div>
 ${installmentText ? `<div class="installments"><strong>Vencimentos:</strong><br/>${installmentText}</div>` : ''}
 ` : ''}
 
@@ -209,7 +209,7 @@ ${obs ? `
 <div class="obs-box">${obs.replace(/\n/g, '<br/>')}</div>
 ` : ''}
 
-<div class="footer">Documento gerado automaticamente pelo sistema • ${data.date}</div>
+<div class="footer">Documento gerado automaticamente pelo sistema • ${escapeHtml(data.date)}</div>
 <script>window.onload = function() { window.print(); }</script>
 </body></html>`;
 
