@@ -969,11 +969,20 @@ async function processarPedido(
   }
 
   // 3. Calcular qtde portal
-  const itemsPortal = itensList.map((i) => ({
-    sku_portal: i.sku_portal!,
-    qtde: Math.max(1, Math.round(i.qtde_final * i.fator_conversao)),
-    sku_descricao: i.sku_descricao,
-  }));
+  // Regra: SKUs WP*.3900QT (concentrados tintométricos) aceitam 1 casa decimal,
+  // arredondados para cima. Demais SKUs continuam em unidades inteiras.
+  const itemsPortal = itensList.map((i) => {
+    const raw = i.qtde_final * i.fator_conversao;
+    const isWPConcentrado = /^WP\d+\.3900QT$/i.test(i.sku_portal ?? "");
+    const qtde = isWPConcentrado
+      ? Math.max(0.1, Math.ceil(raw * 10) / 10)
+      : Math.max(1, Math.round(raw));
+    return {
+      sku_portal: i.sku_portal!,
+      qtde,
+      sku_descricao: i.sku_descricao,
+    };
+  });
 
   // 4. Marcar como enviando
   await supabase.from("pedido_compra_sugerido").update({
