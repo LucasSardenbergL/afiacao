@@ -116,34 +116,46 @@ function KpiCards() {
     staleTime: 30000,
   });
 
+  const oportunidadesValue = oportunidades?.value ?? 0;
+  const oportunidadesUnavailable = oportunidades?.unavailable ?? false;
+  const aumentosValue = aumentos?.value ?? 0;
+  const aumentosUnavailable = aumentos?.unavailable ?? false;
+  const negociacoesValue = negociacoes?.value ?? 0;
+  const negociacoesUnavailable = negociacoes?.unavailable ?? false;
+  const promocoesValue = promocoes ?? 0;
+
   const cards = [
     {
       label: "Oportunidades ativas hoje",
-      value: oportunidades ?? 0,
+      value: oportunidadesValue,
+      unavailable: oportunidadesUnavailable,
       icon: Sparkles,
-      tone: oportunidades && oportunidades > 0 ? "text-success" : "text-muted-foreground",
-      border: oportunidades && oportunidades > 0 ? "border-success/40" : "border-border",
+      tone: oportunidadesValue > 0 ? "text-success" : "text-muted-foreground",
+      border: oportunidadesValue > 0 ? "border-success/40" : "border-border",
     },
     {
       label: "Promoções vigentes",
-      value: promocoes ?? 0,
+      value: promocoesValue,
+      unavailable: false,
       icon: Tag,
-      tone: promocoes && promocoes > 0 ? "text-primary" : "text-muted-foreground",
-      border: promocoes && promocoes > 0 ? "border-primary/40" : "border-border",
+      tone: promocoesValue > 0 ? "text-primary" : "text-muted-foreground",
+      border: promocoesValue > 0 ? "border-primary/40" : "border-border",
     },
     {
       label: "Aumentos próximos 30 dias",
-      value: aumentos ?? 0,
+      value: aumentosValue,
+      unavailable: aumentosUnavailable,
       icon: ArrowUpRight,
-      tone: aumentos && aumentos > 0 ? "text-warning" : "text-muted-foreground",
-      border: aumentos && aumentos > 0 ? "border-warning/40" : "border-border",
+      tone: aumentosValue > 0 ? "text-warning" : "text-muted-foreground",
+      border: aumentosValue > 0 ? "border-warning/40" : "border-border",
     },
     {
       label: "Negociações sugeridas",
-      value: negociacoes ?? 0,
+      value: negociacoesValue,
+      unavailable: negociacoesUnavailable,
       icon: Handshake,
-      tone: negociacoes && negociacoes > 0 ? "text-primary" : "text-muted-foreground",
-      border: negociacoes && negociacoes > 0 ? "border-primary/40" : "border-border",
+      tone: negociacoesValue > 0 ? "text-primary" : "text-muted-foreground",
+      border: negociacoesValue > 0 ? "border-primary/40" : "border-border",
     },
   ];
 
@@ -155,6 +167,9 @@ function KpiCards() {
             <div>
               <div className="text-xs text-muted-foreground">{c.label}</div>
               <div className={`text-2xl font-bold mt-1 ${c.tone}`}>{c.value}</div>
+              {c.unavailable && (
+                <div className="text-[11px] text-muted-foreground mt-0.5">Sem dados disponíveis</div>
+              )}
             </div>
             <c.icon className={`h-8 w-8 ${c.tone} opacity-60`} />
           </CardContent>
