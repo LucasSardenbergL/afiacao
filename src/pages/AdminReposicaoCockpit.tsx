@@ -89,10 +89,43 @@ const diasBadgeClass = (d: number | null | undefined) => {
 
 export default function AdminReposicaoCockpit() {
   const queryClient = useQueryClient();
+  const navigate = useNavigate();
   const [filtroCenario, setFiltroCenario] = useState<string>(ALL);
   const [filtroFornecedor, setFiltroFornecedor] = useState<string>(ALL);
   const [rodandoGeracao, setRodandoGeracao] = useState(false);
   const [dataFim, setDataFim] = useState<Date>(() => new Date());
+
+  type PedidoDia = {
+    id: number;
+    status: string | null;
+    fornecedor_nome: string | null;
+    grupo_codigo: string | null;
+    num_skus: number | null;
+    valor_total: number | null;
+    delta_vs_anterior_perc: number | null;
+    horario_corte_planejado: string | null;
+    status_envio_portal: string | null;
+    aprovado_em: string | null;
+    aprovado_por: string | null;
+    portal_protocolo: string | null;
+  };
+
+  const { data: pedidosHoje = [], isLoading: loadingPedidos } = useQuery({
+    queryKey: ["cockpit-pedidos-hoje", EMPRESA],
+    queryFn: async () => {
+      const hoje = format(new Date(), "yyyy-MM-dd");
+      const { data, error } = await supabase
+        .from("pedido_compra_sugerido" as any)
+        .select(
+          "id,status,fornecedor_nome,grupo_codigo,num_skus,valor_total,delta_vs_anterior_perc,horario_corte_planejado,status_envio_portal,aprovado_em,aprovado_por,portal_protocolo",
+        )
+        .eq("empresa", EMPRESA)
+        .eq("data_ciclo", hoje)
+        .order("valor_total", { ascending: false });
+      if (error) throw error;
+      return ((data ?? []) as unknown) as PedidoDia[];
+    },
+  });
 
   const dataInicio = useMemo(() => {
     const d = new Date(dataFim);
