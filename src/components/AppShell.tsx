@@ -265,6 +265,8 @@ function AppSidebar({ collapsed, onToggle }: { collapsed: boolean; onToggle: () 
     staleTime: 30000,
   });
 
+  const { data: alertasCriticos } = useAlertasCriticos();
+
   const sectionsWithBadges = React.useMemo(
     () => [...unifiedNavSections, docNavSection].map((s) => ({
       ...s,
@@ -287,10 +289,13 @@ function AppSidebar({ collapsed, onToggle }: { collapsed: boolean; onToggle: () 
         if (it.path === '/admin/notificacoes' && notificacoesPendentes) {
           return { ...it, badge: notificacoesPendentes, badgeVariant: 'destructive' as const };
         }
+        if (it.path === '/admin/reposicao/parametros' && alertasCriticos && alertasCriticos > 0) {
+          return { ...it, badge: alertasCriticos, badgeVariant: 'destructive' as const };
+        }
         return it;
       }),
     })),
-    [outlierPendentes, pedidosPendentes, aumentosAtivos, oportunidadesAtivas, negociacaoNovasCount, notificacoesPendentes],
+    [outlierPendentes, pedidosPendentes, aumentosAtivos, oportunidadesAtivas, negociacaoNovasCount, notificacoesPendentes, alertasCriticos],
   );
 
   const isActive = (path: string) => {
