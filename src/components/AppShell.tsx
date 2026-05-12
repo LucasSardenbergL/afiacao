@@ -61,8 +61,8 @@ const unifiedNavSections: { title: string; items: NavItem[] }[] = [
   {
     title: 'Estoque',
     items: [
-      { icon: FileCheck, label: 'Recebimento', path: '/recebimento' },
-      { icon: Package, label: 'Picking', path: '/picking' },
+      { icon: FileCheck, label: 'Recebimento', path: '/admin/estoque/recebimento' },
+      { icon: Package, label: 'Picking & Estoque', path: '/admin/estoque/picking' },
     ],
   },
   {
