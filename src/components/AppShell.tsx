@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
-import { BookOpen, Lock, Calculator, FileText, Palette, Beaker, FileUp, Droplets, LayoutDashboard, Users, ShoppingCart, ShoppingBag, Phone, GraduationCap, BarChart3, Settings, ChevronLeft, ChevronRight, Search, Bell, User, LogOut, Package, TrendingUp, Headphones, Target, Menu, X, ClipboardList, PlusCircle, Shield, Wrench, Award, Scissors, DollarSign, Layers, Printer, UserCheck, FileCheck, Boxes, AlertTriangle, PlayCircle, Factory, Truck, Percent, Sparkles, Handshake, Link2, Globe2 } from 'lucide-react';
+import { BookOpen, Lock, Calculator, FileText, Palette, Beaker, FileUp, Droplets, LayoutDashboard, Users, ShoppingCart, ShoppingBag, Phone, GraduationCap, BarChart3, Settings, ChevronLeft, ChevronRight, Search, Bell, User, LogOut, Package, TrendingUp, Headphones, Target, Menu, X, ClipboardList, PlusCircle, Shield, Wrench, Award, Scissors, DollarSign, Layers, Printer, UserCheck, FileCheck, Boxes, AlertTriangle, PlayCircle, Factory, Truck, Percent, Sparkles, Handshake, Link2, Globe2, Database } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { useAuth } from '@/contexts/AuthContext';
 import { useUserRole } from '@/hooks/useUserRole';
@@ -70,19 +70,8 @@ const unifiedNavSections: { title: string; items: NavItem[] }[] = [
     items: [
       { icon: LayoutDashboard, label: 'Cockpit de Compras', path: '/admin/reposicao/cockpit', managerOnly: true },
       { icon: Settings, label: 'Parâmetros & Qualidade', path: '/admin/reposicao/parametros', managerOnly: true },
-      { icon: Boxes, label: 'Revisão de parâmetros', path: '/admin/reposicao/revisao', managerOnly: true },
-      { icon: ClipboardList, label: 'Histórico de alterações', path: '/admin/reposicao/historico', managerOnly: true },
-      { icon: AlertTriangle, label: 'Alertas de outlier', path: '/admin/reposicao/alertas', managerOnly: true },
-      { icon: Factory, label: 'Grupos de produção', path: '/admin/reposicao/grupos-producao', managerOnly: true },
-      { icon: Truck, label: 'Cadeia logística', path: '/admin/reposicao/cadeia-logistica', managerOnly: true },
-      { icon: ShoppingBag, label: 'Pedidos sugeridos', path: '/admin/reposicao/pedidos', managerOnly: true },
-      { icon: Link2, label: 'Mapeamento SKU', path: '/admin/sku-mapeamento', managerOnly: true },
-      { icon: Target, label: 'SLA de fornecedor', path: '/admin/reposicao/sla-fornecedor', managerOnly: true },
-      { icon: PlayCircle, label: 'Aplicação no Omie', path: '/admin/reposicao/aplicacao', managerOnly: true },
-      { icon: Sparkles, label: 'Oportunidades', path: '/admin/reposicao/oportunidades', managerOnly: true },
-      { icon: Handshake, label: 'Negociação Paralela', path: '/admin/reposicao/negociacao-paralela', managerOnly: true },
-      { icon: Percent, label: 'Promoções', path: '/admin/reposicao/promocoes', managerOnly: true },
-      { icon: TrendingUp, label: 'Aumentos anunciados', path: '/admin/reposicao/aumentos', managerOnly: true },
+      { icon: TrendingUp, label: 'Inteligência de Mercado', path: '/admin/reposicao/mercado', managerOnly: true },
+      { icon: Database, label: 'Cadastros & Config', path: '/admin/reposicao/cadastros', managerOnly: true },
     ],
   },
   {
