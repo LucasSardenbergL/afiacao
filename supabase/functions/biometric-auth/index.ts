@@ -62,6 +62,35 @@ serve(async (req) => {
       );
     }
 
+    if (action === "challenge") {
+      if (!credentialId || typeof credentialId !== "string" || credentialId.length > 500) {
+        return new Response(
+          JSON.stringify({ success: false, message: "credentialId inválido" }),
+          { headers: { ...corsHeaders, "Content-Type": "application/json" }, status: 400 },
+        );
+      }
+      const bytes = new Uint8Array(32);
+      crypto.getRandomValues(bytes);
+      const challenge = btoa(String.fromCharCode(...bytes))
+        .replace(/\+/g, "-")
+        .replace(/\//g, "_")
+        .replace(/=/g, "");
+      await supabase
+        .from("webauthn_challenges")
+        .upsert(
+          {
+            credential_id: credentialId,
+            challenge,
+            expires_at: new Date(Date.now() + 300_000).toISOString(),
+          },
+          { onConflict: "credential_id" },
+        );
+      return new Response(
+        JSON.stringify({ success: true, challenge }),
+        { headers: { ...corsHeaders, "Content-Type": "application/json" } },
+      );
+    }
+
     if (action === "verify") {
       const { authenticatorData, clientDataJSON, signature, origin } = body ?? {};
 
