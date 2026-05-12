@@ -175,14 +175,18 @@ const FinanceiroOrcamento = () => {
                         {s.variacao > 0 ? '+' : ''}{s.variacao.toFixed(1)}%
                       </TableCell>
                       <TableCell>
-                        <div className="flex items-center gap-1">
-                          {isGood
-                            ? <TrendingUp className="w-3.5 h-3.5 text-emerald-600" />
-                            : <TrendingDown className="w-3.5 h-3.5 text-red-600" />}
-                          <span className={`text-xs ${isGood ? 'text-emerald-600' : 'text-red-600'}`}>
-                            {isGood ? 'Favorável' : 'Desfavorável'}
-                          </span>
-                        </div>
+                        {!s.orcYtd ? (
+                          <Badge variant="secondary" className="text-xs">Sem orçamento</Badge>
+                        ) : (
+                          <div className="flex items-center gap-1">
+                            {isGood
+                              ? <TrendingUp className="w-3.5 h-3.5 text-emerald-600" />
+                              : <TrendingDown className="w-3.5 h-3.5 text-red-600" />}
+                            <span className={`text-xs ${isGood ? 'text-emerald-600' : 'text-red-600'}`}>
+                              {isGood ? 'Favorável' : 'Desfavorável'}
+                            </span>
+                          </div>
+                        )}
                       </TableCell>
                     </TableRow>
                   );
