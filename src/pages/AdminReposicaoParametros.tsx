@@ -33,14 +33,16 @@ const TabFallback = () => (
 
 /* ─── KPI Cards ─── */
 function KpiCards() {
+  const { empresa } = useReposicaoEmpresa();
+
   // (a) SKUs pendentes de aprovação — mesma query de AdminReposicaoRevisao (statusFilter === "pendente")
   const { data: skuPendentes } = useQuery({
-    queryKey: ["parametros-sku-pendentes"],
+    queryKey: ["parametros-sku-pendentes", empresa],
     queryFn: async () => {
       const { count, error } = await supabase
         .from("sku_parametros")
         .select("*", { count: "exact", head: true })
-        .eq("empresa", EMPRESA)
+        .eq("empresa", empresa)
         .eq("ativo", true)
         .is("aprovado_em", null);
       if (error) throw error;
