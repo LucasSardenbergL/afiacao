@@ -270,6 +270,7 @@ function AppSidebar({ collapsed, onToggle }: { collapsed: boolean; onToggle: () 
 
   const { data: alertasCriticos } = useAlertasCriticos();
   const { data: financeiroAtrasados } = useFinanceiroAlertas();
+  const { data: tintErros } = useTintAlertas();
 
   const sectionsWithBadges = React.useMemo(
     () => [...unifiedNavSections, docNavSection].map((s) => ({
