@@ -117,14 +117,8 @@ const unifiedNavSections: { title: string; items: NavItem[] }[] = [
     title: 'Gestão',
     items: [
       { icon: UserCheck, label: 'Liberar Acessos', path: '/admin/approvals', managerOnly: true },
-      { icon: Shield, label: 'Admin', path: '/admin', managerOnly: true },
-      { icon: BarChart3, label: 'Relatórios', path: '/admin/monthly-reports', managerOnly: true },
-      { icon: TrendingUp, label: 'Analytics & Sync', path: '/admin/analytics-sync', managerOnly: true },
-      { icon: Shield, label: 'Governança', path: '/governance/users', managerOnly: true },
-      { icon: Lock, label: 'Permissões', path: '/governance/permissions', managerOnly: true },
-      { icon: Calculator, label: 'Parâmetros', path: '/governance/math', managerOnly: true },
-      { icon: FileText, label: 'Auditoria', path: '/governance/audit', managerOnly: true },
-      { icon: Settings, label: 'Configurações', path: '/settings', managerOnly: true },
+      { icon: Shield, label: 'Admin & Relatórios', path: '/gestao/admin', managerOnly: true },
+      { icon: Lock, label: 'Governança', path: '/gestao/governanca', managerOnly: true },
     ],
   },
 ];
