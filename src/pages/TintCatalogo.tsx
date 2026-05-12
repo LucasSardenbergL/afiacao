@@ -40,13 +40,14 @@ function KpiCards({ empresa }: { empresa: string }) {
     queryKey: ["tint-catalogo-kpis", empresa],
     queryFn: async () => {
       const [formulas, skusTotal, skusMapeados, corantes] = await Promise.all([
-        supabase.from("tint_formulas").select("id", { count: "exact", head: true }),
-        supabase.from("tint_skus").select("id", { count: "exact", head: true }),
+        supabase.from("tint_formulas").select("id", { count: "exact", head: true }).eq("account", "oben"),
+        supabase.from("tint_skus").select("id", { count: "exact", head: true }).eq("account", "oben"),
         supabase
           .from("tint_skus")
           .select("id", { count: "exact", head: true })
+          .eq("account", "oben")
           .not("omie_product_id", "is", null),
-        supabase.from("tint_corantes").select("id", { count: "exact", head: true }),
+        supabase.from("tint_corantes").select("id", { count: "exact", head: true }).eq("account", "oben"),
       ]);
       // TODO: tabela tint_import_runs nao existe ainda; usando "—"
       return {
