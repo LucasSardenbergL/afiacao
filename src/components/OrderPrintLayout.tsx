@@ -95,21 +95,21 @@ export function openPrintOrder(data: PrintOrderData) {
   const obs = buildObsText(data);
   const installmentText = buildInstallmentDates(data.parcelaCode, data.condPagamento, data.total);
   const itemsRows = data.items.map((item, i) => {
-    const descLines = [item.descricao];
+    const descLines = [escapeHtml(item.descricao)];
     if (item.tintCorId && item.tintNomeCor) {
       const corParts = item.tintNomeCor.split(' - ');
       const simplified = corParts.length > 2 ? corParts.slice(0, -1).join(' - ') : item.tintNomeCor;
       const embMatch = item.descricao.match(/\b(QT|GL|LT|BD|BH|5L)\b/i);
       const embalagem = embMatch ? embMatch[1].toUpperCase() : '';
-      descLines.push(`Cor: ${item.tintCorId} - ${simplified}${embalagem ? ' - ' + embalagem : ''}`);
+      descLines.push(`Cor: ${escapeHtml(item.tintCorId)} - ${escapeHtml(simplified)}${embalagem ? ' - ' + escapeHtml(embalagem) : ''}`);
     }
     return `
       <tr style="background:${i % 2 === 1 ? '#f5f5f5' : '#fff'}">
         <td style="padding:6px 4px;border:1px solid #ddd;text-align:center;font-size:11px">${i + 1}</td>
-        <td style="padding:6px 4px;border:1px solid #ddd;font-size:11px">${item.codigo}</td>
+        <td style="padding:6px 4px;border:1px solid #ddd;font-size:11px">${escapeHtml(item.codigo)}</td>
         <td style="padding:6px 4px;border:1px solid #ddd;font-size:11px">${descLines.join('<br/>')}</td>
         <td style="padding:6px 4px;border:1px solid #ddd;text-align:center;font-size:11px">${item.quantidade}</td>
-        <td style="padding:6px 4px;border:1px solid #ddd;text-align:center;font-size:11px">${item.unidade}</td>
+        <td style="padding:6px 4px;border:1px solid #ddd;text-align:center;font-size:11px">${escapeHtml(item.unidade)}</td>
         <td style="padding:6px 4px;border:1px solid #ddd;text-align:right;font-size:11px">${fmt(item.valorUnitario)}</td>
         <td style="padding:6px 4px;border:1px solid #ddd;text-align:right;font-size:11px">${fmt(item.valorTotal)}</td>
       </tr>
