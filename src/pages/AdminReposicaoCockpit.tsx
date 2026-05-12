@@ -91,6 +91,46 @@ export default function AdminReposicaoCockpit() {
   const [filtroCenario, setFiltroCenario] = useState<string>(ALL);
   const [filtroFornecedor, setFiltroFornecedor] = useState<string>(ALL);
   const [rodandoGeracao, setRodandoGeracao] = useState(false);
+  const [dataFim, setDataFim] = useState<Date>(() => new Date());
+
+  const dataInicio = useMemo(() => {
+    const d = new Date(dataFim);
+    d.setDate(d.getDate() - 29);
+    return d;
+  }, [dataFim]);
+
+  const { data: historicoDiario = [], isLoading: loadingHistorico } = useQuery({
+    queryKey: ["cockpit-historico-30d", EMPRESA, format(dataFim, "yyyy-MM-dd")],
+    queryFn: async () => {
+      const inicio = format(dataInicio, "yyyy-MM-dd");
+      const fim = format(dataFim, "yyyy-MM-dd");
+      const { data, error } = await supabase
+        .from("pedido_compra_sugerido" as any)
+        .select("data_ciclo,fornecedor_nome,valor_total,status")
+        .eq("empresa", EMPRESA)
+        .gte("data_ciclo", inicio)
+        .lte("data_ciclo", fim);
+      if (error) throw error;
+      type Row = { data_ciclo: string; fornecedor_nome: string | null; valor_total: number | null; status: string | null };
+      const rows = (data ?? []) as Row[];
+      const map = new Map<string, { data: string; fornecedores: Set<string>; pedidos: number; valor: number; disparados: number; cancelados: number }>();
+      for (const r of rows) {
+        const key = r.data_ciclo;
+        if (!map.has(key)) {
+          map.set(key, { data: key, fornecedores: new Set(), pedidos: 0, valor: 0, disparados: 0, cancelados: 0 });
+        }
+        const acc = map.get(key)!;
+        if (r.fornecedor_nome) acc.fornecedores.add(r.fornecedor_nome);
+        acc.pedidos += 1;
+        acc.valor += Number(r.valor_total ?? 0);
+        if (r.status === "disparado" || r.status === "disparado_simulado") acc.disparados += 1;
+        if (r.status === "cancelado") acc.cancelados += 1;
+      }
+      return Array.from(map.values())
+        .map((x) => ({ ...x, fornecedores: x.fornecedores.size }))
+        .sort((a, b) => b.data.localeCompare(a.data));
+    },
+  });
 
   const handleRodarGeracao = async () => {
     setRodandoGeracao(true);
