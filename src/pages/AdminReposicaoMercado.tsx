@@ -39,13 +39,17 @@ function KpiCards() {
   const { data: oportunidades } = useQuery({
     queryKey: ["mercado-oportunidades", empresa],
     queryFn: async () => {
-      const { count, error } = await (supabase as any)
-        .from("v_oportunidade_economica_hoje")
-        .select("*", { count: "exact", head: true })
-        .eq("empresa", empresa)
-        .gt("dias_ate_limite", 0);
-      if (error) return 0;
-      return count ?? 0;
+      try {
+        const { count, error } = await (supabase as any)
+          .from("v_oportunidade_economica_hoje")
+          .select("*", { count: "exact", head: true })
+          .eq("empresa", empresa)
+          .gt("dias_ate_limite", 0);
+        if (error) return { value: 0, unavailable: true };
+        return { value: count ?? 0, unavailable: false };
+      } catch {
+        return { value: 0, unavailable: true };
+      }
     },
     refetchInterval: 60000,
     staleTime: 30000,
@@ -61,7 +65,7 @@ function KpiCards() {
         .select("*", { count: "exact", head: true })
         .lte("data_inicio", today)
         .gte("data_fim", today)
-        .eq("status", "ativa");
+        .eq("estado", "ativa");
       if (error) return 0;
       return count ?? 0;
     },
@@ -73,17 +77,21 @@ function KpiCards() {
   const { data: aumentos } = useQuery({
     queryKey: ["mercado-aumentos-30d"],
     queryFn: async () => {
-      const today = new Date();
-      const in30 = new Date(today.getTime() + 30 * 24 * 60 * 60 * 1000);
-      const todayISO = today.toISOString().slice(0, 10);
-      const in30ISO = in30.toISOString().slice(0, 10);
-      const { count, error } = await (supabase as any)
-        .from("fornecedor_aumento_anunciado")
-        .select("*", { count: "exact", head: true })
-        .gte("data_vigencia", todayISO)
-        .lte("data_vigencia", in30ISO);
-      if (error) return 0;
-      return count ?? 0;
+      try {
+        const today = new Date();
+        const in30 = new Date(today.getTime() + 30 * 24 * 60 * 60 * 1000);
+        const todayISO = today.toISOString().slice(0, 10);
+        const in30ISO = in30.toISOString().slice(0, 10);
+        const { count, error } = await (supabase as any)
+          .from("fornecedor_aumento_anunciado")
+          .select("*", { count: "exact", head: true })
+          .gte("data_vigencia", todayISO)
+          .lte("data_vigencia", in30ISO);
+        if (error) return { value: 0, unavailable: true };
+        return { value: count ?? 0, unavailable: false };
+      } catch {
+        return { value: 0, unavailable: true };
+      }
     },
     refetchInterval: 60000,
     staleTime: 30000,
@@ -93,12 +101,16 @@ function KpiCards() {
   const { data: negociacoes } = useQuery({
     queryKey: ["mercado-negociacoes-ativas", empresa],
     queryFn: async () => {
-      const { count, error } = await (supabase as any)
-        .from("v_sugestao_negociacao_ativa")
-        .select("*", { count: "exact", head: true })
-        .eq("empresa", empresa);
-      if (error) return 0;
-      return count ?? 0;
+      try {
+        const { count, error } = await (supabase as any)
+          .from("v_sugestao_negociacao_ativa")
+          .select("*", { count: "exact", head: true })
+          .eq("empresa", empresa);
+        if (error) return { value: 0, unavailable: true };
+        return { value: count ?? 0, unavailable: false };
+      } catch {
+        return { value: 0, unavailable: true };
+      }
     },
     refetchInterval: 60000,
     staleTime: 30000,
