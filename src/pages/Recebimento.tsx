@@ -39,7 +39,7 @@ function formatDate(dateStr: string | null) {
   return new Date(dateStr).toLocaleDateString('pt-BR');
 }
 
-export default function Recebimento() {
+export default function Recebimento({ statusFilter }: { statusFilter?: string[] } = {}) {
   const navigate = useNavigate();
   const queryClient = useQueryClient();
   const [selectedWarehouse, setSelectedWarehouse] = useState<string | null>(null);
