@@ -70,12 +70,12 @@ function KpiCards() {
 
   // (c) Fornecedores violando SLA — mesma view de AdminReposicaoSlaFornecedor (v_fornecedor_sla_compliance)
   const { data: fornViolando } = useQuery({
-    queryKey: ["parametros-sla-violando"],
+    queryKey: ["parametros-sla-violando", empresa],
     queryFn: async () => {
       const { data, error } = await (supabase as any)
         .from("v_fornecedor_sla_compliance")
         .select("violando,critico")
-        .eq("empresa", EMPRESA);
+        .eq("empresa", empresa);
       if (error) throw error;
       const rows = (data ?? []) as { violando: number; critico: number }[];
       return rows.filter((r) => (r.violando ?? 0) > 0 || (r.critico ?? 0) > 0).length;
