@@ -168,6 +168,7 @@ export default function AdminReposicaoCockpit() {
 
   const [selecionados, setSelecionados] = useState<Set<string>>(new Set());
   const [aplicando, setAplicando] = useState(false);
+  const [sincronizandoOmie, setSincronizandoOmie] = useState(false);
 
   const { data: filaParametros = [], isLoading: loadingFila } = useQuery({
     queryKey: ["cockpit-fila-parametros", EMPRESA],
