@@ -333,6 +333,88 @@ export default function AdminReposicaoCockpit() {
           )}
         </CardContent>
       </Card>
+
+      <Card>
+        <CardHeader className="flex flex-row items-start justify-between gap-4 flex-wrap">
+          <div>
+            <CardTitle className="text-base">Histórico — últimos 30 dias</CardTitle>
+            <p className="text-xs text-muted-foreground mt-1">
+              {format(dataInicio, "dd/MM/yyyy")} até {format(dataFim, "dd/MM/yyyy")}
+            </p>
+          </div>
+          <Popover>
+            <PopoverTrigger asChild>
+              <Button
+                variant="outline"
+                size="sm"
+                className={cn("justify-start text-left font-normal", !dataFim && "text-muted-foreground")}
+              >
+                <CalendarIcon className="h-4 w-4 mr-2" />
+                {format(dataFim, "dd/MM/yyyy")}
+              </Button>
+            </PopoverTrigger>
+            <PopoverContent className="w-auto p-0" align="end">
+              <Calendar
+                mode="single"
+                selected={dataFim}
+                onSelect={(d) => d && setDataFim(d)}
+                disabled={(d) => d > new Date()}
+                initialFocus
+                className={cn("p-3 pointer-events-auto")}
+              />
+            </PopoverContent>
+          </Popover>
+        </CardHeader>
+        <CardContent className="p-0">
+          {loadingHistorico ? (
+            <div className="flex items-center justify-center py-12 text-muted-foreground">
+              <Loader2 className="h-5 w-5 animate-spin mr-2" />
+              Carregando...
+            </div>
+          ) : historicoDiario.length === 0 ? (
+            <div className="py-12 text-center text-sm text-muted-foreground">
+              Nenhum pedido no período selecionado.
+            </div>
+          ) : (
+            <Table>
+              <TableHeader>
+                <TableRow>
+                  <TableHead>Data</TableHead>
+                  <TableHead className="text-right">Fornecedores</TableHead>
+                  <TableHead className="text-right">Pedidos</TableHead>
+                  <TableHead className="text-right">Valor total</TableHead>
+                  <TableHead className="text-right">Disparados</TableHead>
+                  <TableHead className="text-right">Cancelados</TableHead>
+                </TableRow>
+              </TableHeader>
+              <TableBody>
+                {historicoDiario.map((d) => (
+                  <TableRow key={d.data}>
+                    <TableCell className="text-sm">{formatDate(d.data)}</TableCell>
+                    <TableCell className="text-right">{d.fornecedores}</TableCell>
+                    <TableCell className="text-right">{d.pedidos}</TableCell>
+                    <TableCell className="text-right font-medium">{formatBRL(d.valor)}</TableCell>
+                    <TableCell className="text-right">
+                      <Badge variant="outline" className="bg-emerald-500/15 text-emerald-700 dark:text-emerald-400 border-emerald-500/30">
+                        {d.disparados}
+                      </Badge>
+                    </TableCell>
+                    <TableCell className="text-right">
+                      {d.cancelados > 0 ? (
+                        <Badge variant="outline" className="bg-destructive/15 text-destructive border-destructive/30">
+                          {d.cancelados}
+                        </Badge>
+                      ) : (
+                        <span className="text-muted-foreground">0</span>
+                      )}
+                    </TableCell>
+                  </TableRow>
+                ))}
+              </TableBody>
+            </Table>
+          )}
+        </CardContent>
+      </Card>
     </div>
   );
 }
