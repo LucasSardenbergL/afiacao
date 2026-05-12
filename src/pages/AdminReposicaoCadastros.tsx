@@ -230,6 +230,12 @@ export default function AdminReposicaoCadastros() {
             </Suspense>
           </TabsContent>
 
+          <TabsContent value="mapeamento" className="m-0">
+            <Suspense fallback={<TabFallback />}>
+              <AdminSkuMapeamento />
+            </Suspense>
+          </TabsContent>
+
           <TabsContent value="aplicacao" className="m-0">
             <Suspense fallback={<TabFallback />}>
               <AdminReposicaoAplicacao />
