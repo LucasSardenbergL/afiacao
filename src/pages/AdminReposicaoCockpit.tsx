@@ -247,6 +247,22 @@ export default function AdminReposicaoCockpit() {
     }
   };
 
+  const handleSincronizarOmie = async () => {
+    setSincronizandoOmie(true);
+    try {
+      const { data, error } = await supabase.functions.invoke("omie-sync-status-produtos", {
+        body: { empresa: EMPRESA },
+      });
+      if (error) throw error;
+      toast.success("Sincronização com Omie iniciada com sucesso");
+      queryClient.invalidateQueries({ queryKey: ["cockpit-fila-parametros"] });
+    } catch (e: any) {
+      toast.error(e?.message || "Erro ao sincronizar com Omie");
+    } finally {
+      setSincronizandoOmie(false);
+    }
+  };
+
   const dataInicio = useMemo(() => {
     const d = new Date(dataFim);
     d.setDate(d.getDate() - 29);
