@@ -369,7 +369,7 @@ const FinanceiroCockpit = () => {
               {inadimplentes.map((i, idx) => (
                 <div key={idx} className="flex items-center justify-between py-2 border-b last:border-0">
                   <div>
-                    <p className="font-medium text-sm">{i.nome}</p>
+                    <p className="font-medium text-sm">{i.nome || (i.cnpj ? `CNPJ: ${i.cnpj}` : 'Cliente não identificado')}</p>
                     <p className="text-xs text-muted-foreground">{i.qtd_titulos} título(s)</p>
                   </div>
                   <span className="font-bold text-red-600">{fmt(i.total_vencido)}</span>
