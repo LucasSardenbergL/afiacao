@@ -84,7 +84,7 @@ function buildObsText(data: PrintOrderData): string {
     );
   }
 
-  if (data.observacoes) parts.push(data.observacoes);
+  if (data.observacoes) parts.push(escapeHtml(data.observacoes));
 
   return parts.join('\n\n');
 }
