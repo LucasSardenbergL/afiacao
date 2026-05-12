@@ -22,6 +22,7 @@ import {
 } from '@/components/ui/tooltip';
 import { HelpDrawer } from '@/components/help/HelpDrawer';
 import { useAlertasCriticos } from '@/hooks/useAlertasCriticos';
+import { useFinanceiroAlertas } from '@/hooks/useFinanceiroAlertas';
 
 /* ─── Navigation config ─── */
 interface NavItem {
