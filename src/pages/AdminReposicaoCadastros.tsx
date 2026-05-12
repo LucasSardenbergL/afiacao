@@ -89,6 +89,21 @@ function KpiCards() {
     staleTime: 30000,
   });
 
+  // (d) Grupos de produção ativos
+  const { data: gruposAtivos } = useQuery({
+    queryKey: ["cadastros-grupos-ativos", empresa],
+    queryFn: async () => {
+      const { count, error } = await (supabase as any)
+        .from("fornecedor_grupo_producao")
+        .select("*", { count: "exact", head: true })
+        .eq("empresa", empresa);
+      if (error) return 0;
+      return count ?? 0;
+    },
+    refetchInterval: 60000,
+    staleTime: 30000,
+  });
+
   const cards = [
     {
       label: "Pedidos de compra abertos",
