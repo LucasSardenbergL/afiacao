@@ -169,12 +169,8 @@ export function useUnifiedOrder() {
   useEffect(() => {
     let cancelled = false;
     (async () => {
-      const { data } = await supabase
-        .from('company_config')
-        .select('value')
-        .eq('key', 'default_production_assignee_id')
-        .maybeSingle();
-      if (!cancelled) setDefaultProductionAssigneeId(data?.value || null);
+      const { data } = await supabase.rpc('get_default_production_assignee');
+      if (!cancelled) setDefaultProductionAssigneeId((data as string | null) || null);
     })();
     return () => { cancelled = true; };
   }, []);

@@ -10835,6 +10835,7 @@ export type Database = {
           ultima_compra_data: string
         }[]
       }
+      get_default_production_assignee: { Args: never; Returns: string }
       get_user_role: {
         Args: { _user_id: string }
         Returns: Database["public"]["Enums"]["app_role"]
