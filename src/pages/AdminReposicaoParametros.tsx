@@ -30,7 +30,7 @@ const TabFallback = () => (
 function KpiCards() {
   // (a) SKUs pendentes de aprovação — mesma query de AdminReposicaoRevisao (statusFilter === "pendente")
   const { data: skuPendentes } = useQuery({
-    queryKey: ["parametros-qualidade-sku-pendentes"],
+    queryKey: ["parametros-sku-pendentes"],
     queryFn: async () => {
       const { count, error } = await supabase
         .from("sku_parametros")
@@ -47,7 +47,7 @@ function KpiCards() {
 
   // (b) Alertas críticos pendentes — mesma query de AdminReposicaoAlertas (stats.criticos)
   const { data: alertasCriticos } = useQuery({
-    queryKey: ["parametros-qualidade-alertas-criticos"],
+    queryKey: ["parametros-alertas-criticos"],
     queryFn: async () => {
       const { count, error } = await supabase
         .from("eventos_outlier")
@@ -63,7 +63,7 @@ function KpiCards() {
 
   // (c) Fornecedores violando SLA — mesma view de AdminReposicaoSlaFornecedor (v_fornecedor_sla_compliance)
   const { data: fornViolando } = useQuery({
-    queryKey: ["parametros-qualidade-sla-violando"],
+    queryKey: ["parametros-sla-violando"],
     queryFn: async () => {
       const { data, error } = await (supabase as any)
         .from("v_fornecedor_sla_compliance")
