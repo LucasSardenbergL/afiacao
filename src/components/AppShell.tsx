@@ -68,6 +68,7 @@ const unifiedNavSections: { title: string; items: NavItem[] }[] = [
   {
     title: 'Reposição',
     items: [
+      { icon: LayoutDashboard, label: 'Cockpit de Compras', path: '/admin/reposicao/cockpit', managerOnly: true },
       { icon: Boxes, label: 'Revisão de parâmetros', path: '/admin/reposicao/revisao', managerOnly: true },
       { icon: ClipboardList, label: 'Histórico de alterações', path: '/admin/reposicao/historico', managerOnly: true },
       { icon: AlertTriangle, label: 'Alertas de outlier', path: '/admin/reposicao/alertas', managerOnly: true },
