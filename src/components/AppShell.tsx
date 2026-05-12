@@ -100,16 +100,8 @@ const unifiedNavSections: { title: string; items: NavItem[] }[] = [
     title: 'Financeiro',
     items: [
       { icon: Shield, label: 'Cockpit CFO', path: '/financeiro/cockpit', managerOnly: true },
-      { icon: DollarSign, label: 'Painel Financeiro', path: '/financeiro', managerOnly: true },
-      { icon: TrendingUp, label: 'Capital de Giro', path: '/financeiro/capital-giro', managerOnly: true },
-      { icon: ClipboardList, label: 'Fechamento Mensal', path: '/financeiro/fechamento', managerOnly: true },
-      { icon: BarChart3, label: 'Exploração Analítica', path: '/financeiro/analytics', managerOnly: true },
-      { icon: Scissors, label: 'Conciliação', path: '/financeiro/conciliacao', managerOnly: true },
-      { icon: Target, label: 'Orçado vs Real', path: '/financeiro/orcamento', managerOnly: true },
-      { icon: Layers, label: 'Intercompany', path: '/financeiro/intercompany', managerOnly: true },
-      { icon: Calculator, label: 'Tributário', path: '/financeiro/tributario', managerOnly: true },
-      { icon: Layers, label: 'Mapeamento DRE', path: '/financeiro/mapping', managerOnly: true },
-      { icon: Settings, label: 'Sincronização', path: '/financeiro/sync', managerOnly: true },
+      { icon: DollarSign, label: 'Gestão Financeira', path: '/financeiro/gestao', managerOnly: true },
+      { icon: BarChart3, label: 'Análise e Config', path: '/financeiro/analise', managerOnly: true },
     ],
   },
   {
