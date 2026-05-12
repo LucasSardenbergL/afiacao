@@ -172,7 +172,7 @@ export default function AdminReposicaoMercado() {
             <div>
               <h1 className="text-2xl font-bold">Inteligência de Mercado</h1>
               <p className="text-sm text-muted-foreground">
-                Oportunidades econômicas, promoções, aumentos anunciados e negociação paralela — em um só lugar.
+                Oportunidades de compra, promoções ativas, aumentos anunciados e negociações paralelas — em um só lugar.
               </p>
             </div>
           </div>
