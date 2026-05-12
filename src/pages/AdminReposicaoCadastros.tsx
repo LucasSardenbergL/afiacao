@@ -214,9 +214,7 @@ export default function AdminReposicaoCadastros() {
           </TabsList>
 
           <TabsContent value="pedidos" className="m-0">
-            <Suspense fallback={<TabFallback />}>
-              <AdminReposicaoPedidos />
-            </Suspense>
+            <HistoricoPedidosCiclos />
           </TabsContent>
 
           <TabsContent value="cadeia" className="m-0">
