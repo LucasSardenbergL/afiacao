@@ -81,7 +81,7 @@ function KpiCards({ empresa }: { empresa: string }) {
       const { data } = await (supabase as any)
         .from("fin_aging_receber")
         .select("*")
-        .eq("company", empresa)
+        .eq("company", empresa.toLowerCase())
         .maybeSingle();
       if (!data) return 0;
       const vencido =
