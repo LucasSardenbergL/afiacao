@@ -32,7 +32,7 @@ export default function GovernanceCompanies() {
   const [loading, setLoading] = useState(true);
   const [savingId, setSavingId] = useState<string | null>(null);
 
-  const isAdmin = role === 'master' || role === 'master';
+  const isAdmin = role === 'master';
 
   useEffect(() => {
     if (!user) return;
