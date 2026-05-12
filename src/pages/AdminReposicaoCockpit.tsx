@@ -3,7 +3,9 @@ import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useNavigate } from "react-router-dom";
 import { supabase } from "@/integrations/supabase/client";
 import { toast } from "sonner";
-import { Sparkles, TrendingUp, Package, Zap, Loader2, PlayCircle, CalendarIcon, ExternalLink, ArrowUpRight, ArrowDownRight } from "lucide-react";
+import { Sparkles, TrendingUp, Package, Zap, Loader2, PlayCircle, CalendarIcon, ExternalLink, ArrowUpRight, ArrowDownRight, AlertTriangle, CheckCircle2 } from "lucide-react";
+import { Checkbox } from "@/components/ui/checkbox";
+import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { format } from "date-fns";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
@@ -149,6 +151,100 @@ export default function AdminReposicaoCockpit() {
       return ((data ?? []) as unknown) as PedidoDia[];
     },
   });
+
+  type FilaParam = {
+    id: string;
+    sku_codigo_omie: number;
+    sku_descricao: string | null;
+    estoque_minimo: number | null;
+    ponto_pedido: number | null;
+    estoque_maximo: number | null;
+    estoque_minimo_omie: number | null;
+    ponto_pedido_omie: number | null;
+    estoque_maximo_omie: number | null;
+    omie_ultima_sincronizacao: string | null;
+    aprovado_em: string | null;
+  };
+
+  const [selecionados, setSelecionados] = useState<Set<string>>(new Set());
+  const [aplicando, setAplicando] = useState(false);
+
+  const { data: filaParametros = [], isLoading: loadingFila } = useQuery({
+    queryKey: ["cockpit-fila-parametros", EMPRESA],
+    queryFn: async () => {
+      const { data, error } = await supabase
+        .from("sku_parametros" as any)
+        .select(
+          "id,sku_codigo_omie,sku_descricao,estoque_minimo,ponto_pedido,estoque_maximo,estoque_minimo_omie,ponto_pedido_omie,estoque_maximo_omie,omie_ultima_sincronizacao,aprovado_em",
+        )
+        .eq("empresa", EMPRESA)
+        .eq("ativo", true)
+        .not("aprovado_em", "is", null)
+        .order("sku_codigo_omie", { ascending: true })
+        .limit(500);
+      if (error) throw error;
+      const rows = ((data ?? []) as unknown) as FilaParam[];
+      // Apenas com diferença em pelo menos 1 dos 3 parâmetros
+      return rows.filter((r) => {
+        const dEM = Math.abs(Number(r.estoque_minimo ?? 0) - Number(r.estoque_minimo_omie ?? 0));
+        const dPP = Math.abs(Number(r.ponto_pedido ?? 0) - Number(r.ponto_pedido_omie ?? 0));
+        const dMx = Math.abs(Number(r.estoque_maximo ?? 0) - Number(r.estoque_maximo_omie ?? 0));
+        return dEM + dPP + dMx > 0;
+      });
+    },
+  });
+
+  const ultimaSincFila = useMemo(() => {
+    let max = 0;
+    for (const r of filaParametros) {
+      const t = r.omie_ultima_sincronizacao ? new Date(r.omie_ultima_sincronizacao).getTime() : 0;
+      if (t > max) max = t;
+    }
+    return max ? new Date(max) : null;
+  }, [filaParametros]);
+
+  const sincDesatualizada = useMemo(() => {
+    if (!ultimaSincFila) return true;
+    return Date.now() - ultimaSincFila.getTime() > 24 * 60 * 60 * 1000;
+  }, [ultimaSincFila]);
+
+  const toggleSelecionado = (id: string) => {
+    setSelecionados((prev) => {
+      const n = new Set(prev);
+      if (n.has(id)) n.delete(id);
+      else n.add(id);
+      return n;
+    });
+  };
+
+  const toggleSelecionarTodos = () => {
+    setSelecionados((prev) =>
+      prev.size === filaParametros.length ? new Set() : new Set(filaParametros.map((r) => r.id)),
+    );
+  };
+
+  const handleAplicarSelecionados = async () => {
+    if (selecionados.size === 0) return;
+    setAplicando(true);
+    try {
+      const ids = Array.from(selecionados);
+      const { error } = await supabase
+        .from("sku_parametros" as any)
+        .update({
+          aplicar_no_omie: true,
+          aprovado_em: new Date().toISOString(),
+        })
+        .in("id", ids);
+      if (error) throw error;
+      toast.success(`${ids.length} SKU(s) marcado(s) para aplicação no Omie`);
+      setSelecionados(new Set());
+      queryClient.invalidateQueries({ queryKey: ["cockpit-fila-parametros"] });
+    } catch (e: any) {
+      toast.error(e?.message || "Erro ao marcar para aplicação");
+    } finally {
+      setAplicando(false);
+    }
+  };
 
   const dataInicio = useMemo(() => {
     const d = new Date(dataFim);
@@ -385,6 +481,144 @@ export default function AdminReposicaoCockpit() {
                     </TableCell>
                   </TableRow>
                 ))}
+              </TableBody>
+            </Table>
+          )}
+        </CardContent>
+      </Card>
+
+      <Card>
+        <CardHeader className="flex flex-row items-start justify-between gap-4 flex-wrap">
+          <div>
+            <CardTitle className="text-base">Fila de aplicação de parâmetros</CardTitle>
+            <p className="text-xs text-muted-foreground mt-1">
+              SKUs aprovados com EM/PP/Emax divergentes do Omie
+            </p>
+          </div>
+          <Button
+            size="sm"
+            onClick={handleAplicarSelecionados}
+            disabled={aplicando || selecionados.size === 0}
+          >
+            {aplicando ? (
+              <Loader2 className="h-4 w-4 animate-spin mr-1.5" />
+            ) : (
+              <CheckCircle2 className="h-4 w-4 mr-1.5" />
+            )}
+            Aplicar selecionados ({selecionados.size})
+          </Button>
+        </CardHeader>
+        <CardContent className="p-0">
+          {sincDesatualizada && filaParametros.length > 0 && (
+            <div className="px-6 pb-3">
+              <Alert className="bg-amber-500/10 border-amber-500/30 text-amber-900 dark:text-amber-200">
+                <AlertTriangle className="h-4 w-4" />
+                <AlertTitle>Sincronização desatualizada</AlertTitle>
+                <AlertDescription>
+                  {ultimaSincFila
+                    ? `Última sincronização com Omie em ${formatDateTime(ultimaSincFila.toISOString())}. Os valores "atual" podem estar defasados.`
+                    : "Nenhuma sincronização recente com Omie detectada para os SKUs da fila."}
+                </AlertDescription>
+              </Alert>
+            </div>
+          )}
+          {loadingFila ? (
+            <div className="flex items-center justify-center py-12 text-muted-foreground">
+              <Loader2 className="h-5 w-5 animate-spin mr-2" />
+              Carregando...
+            </div>
+          ) : filaParametros.length === 0 ? (
+            <div className="py-12 text-center text-sm text-muted-foreground">
+              Nenhum SKU pendente de aplicação no Omie.
+            </div>
+          ) : (
+            <Table>
+              <TableHeader>
+                <TableRow>
+                  <TableHead className="w-10">
+                    <Checkbox
+                      checked={
+                        selecionados.size > 0 && selecionados.size === filaParametros.length
+                      }
+                      onCheckedChange={toggleSelecionarTodos}
+                      aria-label="Selecionar todos"
+                    />
+                  </TableHead>
+                  <TableHead>SKU</TableHead>
+                  <TableHead>Descrição</TableHead>
+                  <TableHead className="text-right">EM (atual → novo)</TableHead>
+                  <TableHead className="text-right">PP (atual → novo)</TableHead>
+                  <TableHead className="text-right">Emax (atual → novo)</TableHead>
+                  <TableHead className="text-right">Δ máx</TableHead>
+                  <TableHead className="text-right">Ação</TableHead>
+                </TableRow>
+              </TableHeader>
+              <TableBody>
+                {filaParametros.map((r) => {
+                  const emA = Number(r.estoque_minimo_omie ?? 0);
+                  const emN = Number(r.estoque_minimo ?? 0);
+                  const ppA = Number(r.ponto_pedido_omie ?? 0);
+                  const ppN = Number(r.ponto_pedido ?? 0);
+                  const mxA = Number(r.estoque_maximo_omie ?? 0);
+                  const mxN = Number(r.estoque_maximo ?? 0);
+                  const dEM = emN - emA;
+                  const dPP = ppN - ppA;
+                  const dMx = mxN - mxA;
+                  const deltaMax = Math.max(Math.abs(dEM), Math.abs(dPP), Math.abs(dMx));
+                  const renderDelta = (atual: number, novo: number) => {
+                    const diff = novo - atual;
+                    const cls =
+                      diff > 0
+                        ? "text-emerald-700 dark:text-emerald-400"
+                        : diff < 0
+                          ? "text-destructive"
+                          : "text-muted-foreground";
+                    return (
+                      <span className="text-sm">
+                        <span className="text-muted-foreground">{atual}</span>
+                        <span className="mx-1">→</span>
+                        <span className={cn("font-medium", cls)}>{novo}</span>
+                      </span>
+                    );
+                  };
+                  const isSel = selecionados.has(r.id);
+                  return (
+                    <TableRow key={r.id} data-state={isSel ? "selected" : undefined}>
+                      <TableCell>
+                        <Checkbox
+                          checked={isSel}
+                          onCheckedChange={() => toggleSelecionado(r.id)}
+                          aria-label={`Selecionar SKU ${r.sku_codigo_omie}`}
+                        />
+                      </TableCell>
+                      <TableCell className="font-mono text-xs">{r.sku_codigo_omie}</TableCell>
+                      <TableCell className="text-sm max-w-xs truncate">
+                        {r.sku_descricao ?? "—"}
+                      </TableCell>
+                      <TableCell className="text-right">{renderDelta(emA, emN)}</TableCell>
+                      <TableCell className="text-right">{renderDelta(ppA, ppN)}</TableCell>
+                      <TableCell className="text-right">{renderDelta(mxA, mxN)}</TableCell>
+                      <TableCell className="text-right">
+                        <Badge variant="outline" className="font-mono">
+                          {deltaMax.toFixed(0)}
+                        </Badge>
+                      </TableCell>
+                      <TableCell className="text-right">
+                        <Button
+                          size="sm"
+                          variant="outline"
+                          onClick={async () => {
+                            setSelecionados(new Set([r.id]));
+                            await handleAplicarSelecionados();
+                          }}
+                          disabled={aplicando}
+                        >
+                          Aplicar
+                        </Button>
+                      </TableCell>
+                    </TableRow>
+                  );
+                })}
               </TableBody>
             </Table>
           )}
