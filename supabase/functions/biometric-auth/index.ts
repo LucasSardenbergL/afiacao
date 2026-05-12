@@ -62,6 +62,35 @@ serve(async (req) => {
       );
     }
 
+    if (action === "challenge") {
+      if (!credentialId || typeof credentialId !== "string" || credentialId.length > 500) {
+        return new Response(
+          JSON.stringify({ success: false, message: "credentialId inválido" }),
+          { headers: { ...corsHeaders, "Content-Type": "application/json" }, status: 400 },
+        );
+      }
+      const bytes = new Uint8Array(32);
+      crypto.getRandomValues(bytes);
+      const challenge = btoa(String.fromCharCode(...bytes))
+        .replace(/\+/g, "-")
+        .replace(/\//g, "_")
+        .replace(/=/g, "");
+      await supabase
+        .from("webauthn_challenges")
+        .upsert(
+          {
+            credential_id: credentialId,
+            challenge,
+            expires_at: new Date(Date.now() + 300_000).toISOString(),
+          },
+          { onConflict: "credential_id" },
+        );
+      return new Response(
+        JSON.stringify({ success: true, challenge }),
+        { headers: { ...corsHeaders, "Content-Type": "application/json" } },
+      );
+    }
+
     if (action === "verify") {
       const { authenticatorData, clientDataJSON, signature, origin } = body ?? {};
 
@@ -105,10 +134,22 @@ serve(async (req) => {
 
       const expectedRPID = Deno.env.get("WEBAUTHN_RP_ID") ?? new URL(origin).hostname;
 
+      // Fetch stored challenge (server-side, single use, 5 min TTL).
+      const { data: chalRec } = await supabase
+        .from("webauthn_challenges")
+        .select("challenge")
+        .eq("credential_id", credentialId)
+        .gt("expires_at", new Date().toISOString())
+        .maybeSingle();
+
+      if (!chalRec) {
+        return new Response(
+          JSON.stringify({ success: false, message: "Challenge expirado ou não encontrado" }),
+          { headers: { ...corsHeaders, "Content-Type": "application/json" }, status: 400 },
+        );
+      }
+
       // Cryptographic proof-of-possession.
-      // NOTE: challenge persistence is not yet implemented in the schema,
-      // so expectedChallenge accepts any value present in clientDataJSON.
-      // This still verifies the signature against the stored public key.
       let verification;
       try {
         verification = await verifyAuthenticationResponse({
@@ -123,7 +164,7 @@ serve(async (req) => {
               signature,
             },
           } as any,
-          expectedChallenge: () => true,
+          expectedChallenge: (c) => c === chalRec.challenge,
           expectedOrigin: allowedOrigins,
           expectedRPID,
           authenticator: {
@@ -158,6 +199,12 @@ serve(async (req) => {
           );
         }
       }
+
+      // Consume challenge (single use).
+      await supabase
+        .from("webauthn_challenges")
+        .delete()
+        .eq("credential_id", credentialId);
 
       // Only update counter / last_used_at after successful verification.
       await supabase
