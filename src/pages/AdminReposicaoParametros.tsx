@@ -1,11 +1,18 @@
-import { lazy, Suspense } from "react";
+import { lazy, Suspense, useState } from "react";
 import { useSearchParams } from "react-router-dom";
 import { useQuery } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
-import { Settings, Loader2, AlertTriangle, Package, Truck } from "lucide-react";
+import { Settings, Loader2, AlertTriangle, Package, Truck, Building2 } from "lucide-react";
 import { Card, CardContent } from "@/components/ui/card";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
+import { ReposicaoEmpresaProvider, useReposicaoEmpresa } from "@/contexts/ReposicaoEmpresaContext";
 // Reaproveita as 4 telas originais — mesmas queries Supabase, sem duplicar.
 // Tabelas/views usadas:
 //  - sku_parametros + vw_revisao_parametros  → AdminReposicaoRevisao
