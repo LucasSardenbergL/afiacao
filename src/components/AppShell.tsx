@@ -23,6 +23,7 @@ import {
 import { HelpDrawer } from '@/components/help/HelpDrawer';
 import { useAlertasCriticos } from '@/hooks/useAlertasCriticos';
 import { useFinanceiroAlertas } from '@/hooks/useFinanceiroAlertas';
+import { useTintAlertas } from '@/hooks/useTintAlertas';
 
 /* ─── Navigation config ─── */
 interface NavItem {
@@ -269,6 +270,7 @@ function AppSidebar({ collapsed, onToggle }: { collapsed: boolean; onToggle: () 
 
   const { data: alertasCriticos } = useAlertasCriticos();
   const { data: financeiroAtrasados } = useFinanceiroAlertas();
+  const { data: tintErros } = useTintAlertas();
 
   const sectionsWithBadges = React.useMemo(
     () => [...unifiedNavSections, docNavSection].map((s) => ({
@@ -298,10 +300,13 @@ function AppSidebar({ collapsed, onToggle }: { collapsed: boolean; onToggle: () 
         if (it.path === '/financeiro/gestao' && financeiroAtrasados && financeiroAtrasados > 0) {
           return { ...it, badge: financeiroAtrasados, badgeVariant: 'destructive' as const };
         }
+        if (it.path === '/tintometrico' && tintErros && tintErros > 0) {
+          return { ...it, badge: tintErros, badgeVariant: 'destructive' as const };
+        }
         return it;
       }),
     })),
-    [outlierPendentes, pedidosPendentes, aumentosAtivos, oportunidadesAtivas, negociacaoNovasCount, notificacoesPendentes, alertasCriticos, financeiroAtrasados],
+    [outlierPendentes, pedidosPendentes, aumentosAtivos, oportunidadesAtivas, negociacaoNovasCount, notificacoesPendentes, alertasCriticos, financeiroAtrasados, tintErros],
   );
 
   const isActive = (path: string) => {
