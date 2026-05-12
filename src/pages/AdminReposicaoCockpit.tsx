@@ -193,8 +193,11 @@ export default function AdminReposicaoCockpit() {
         </TabsContent>
 
         <TabsContent value="historico" className="m-0">
-          <CiclosAnterioresTab />
+          <Suspense fallback={<TabFallback />}>
+            <AdminReposicaoHistorico />
+          </Suspense>
         </TabsContent>
+
       </Tabs>
     </div>
   );
