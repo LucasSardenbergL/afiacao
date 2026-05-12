@@ -44,7 +44,7 @@ function KpiCards({ empresa }: { empresa: string }) {
       const { data } = await (supabase as any)
         .from("fin_contas_receber")
         .select("saldo, valor_documento, status_titulo")
-        .eq("company", empresa)
+        .eq("company", empresa.toLowerCase())
         .neq("status_titulo", "PAGO");
       return (data ?? []).reduce(
         (acc: number, r: any) =>
@@ -61,7 +61,7 @@ function KpiCards({ empresa }: { empresa: string }) {
       const { data } = await (supabase as any)
         .from("fin_contas_pagar")
         .select("saldo, valor_documento, status_titulo")
-        .eq("company", empresa)
+        .eq("company", empresa.toLowerCase())
         .neq("status_titulo", "PAGO");
       return (data ?? []).reduce(
         (acc: number, r: any) =>
@@ -81,7 +81,7 @@ function KpiCards({ empresa }: { empresa: string }) {
       const { data } = await (supabase as any)
         .from("fin_aging_receber")
         .select("*")
-        .eq("company", empresa)
+        .eq("company", empresa.toLowerCase())
         .maybeSingle();
       if (!data) return 0;
       const vencido =
