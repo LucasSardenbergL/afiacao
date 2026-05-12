@@ -120,6 +120,7 @@ const AdminReposicaoCockpit = lazy(() => import("./pages/AdminReposicaoCockpit")
 const AdminReposicaoParametros = lazy(() => import("./pages/AdminReposicaoParametros"));
 const AdminReposicaoMercado = lazy(() => import("./pages/AdminReposicaoMercado"));
 const AdminReposicaoCadastros = lazy(() => import("./pages/AdminReposicaoCadastros"));
+const AdminEstoqueRecebimento = lazy(() => import("./pages/AdminEstoqueRecebimento"));
 const AdminAjuda = lazy(() => import("./pages/AdminAjuda"));
 const AdminDesTrimestreAtual = lazy(() => import("./pages/AdminDesTrimestreAtual"));
 const AdminNotificacoes = lazy(() => import("./pages/AdminNotificacoes"));
