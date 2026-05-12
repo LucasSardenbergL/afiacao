@@ -268,6 +268,7 @@ function AppSidebar({ collapsed, onToggle }: { collapsed: boolean; onToggle: () 
   });
 
   const { data: alertasCriticos } = useAlertasCriticos();
+  const { data: financeiroAtrasados } = useFinanceiroAlertas();
 
   const sectionsWithBadges = React.useMemo(
     () => [...unifiedNavSections, docNavSection].map((s) => ({
@@ -294,10 +295,13 @@ function AppSidebar({ collapsed, onToggle }: { collapsed: boolean; onToggle: () 
         if (it.path === '/admin/reposicao/parametros' && alertasCriticos && alertasCriticos > 0) {
           return { ...it, badge: alertasCriticos, badgeVariant: 'destructive' as const };
         }
+        if (it.path === '/financeiro/gestao' && financeiroAtrasados && financeiroAtrasados > 0) {
+          return { ...it, badge: financeiroAtrasados, badgeVariant: 'destructive' as const };
+        }
         return it;
       }),
     })),
-    [outlierPendentes, pedidosPendentes, aumentosAtivos, oportunidadesAtivas, negociacaoNovasCount, notificacoesPendentes, alertasCriticos],
+    [outlierPendentes, pedidosPendentes, aumentosAtivos, oportunidadesAtivas, negociacaoNovasCount, notificacoesPendentes, alertasCriticos, financeiroAtrasados],
   );
 
   const isActive = (path: string) => {
