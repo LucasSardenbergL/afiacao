@@ -6,6 +6,7 @@ import { format, subDays } from "date-fns";
 import { Sparkles, Loader2, CalendarRange } from "lucide-react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { ProcessoComprasStepper } from "@/components/reposicao/ProcessoComprasStepper";
 import {
   Table,
   TableBody,
