@@ -245,3 +245,160 @@ export default function AdminReposicaoCadastros() {
     </ReposicaoEmpresaProvider>
   );
 }
+
+/* ─── Histórico de Pedidos por Ciclo ─── */
+type CicloRow = {
+  data_ciclo: string;
+  fornecedor_grupo: string | null;
+  status: string | null;
+  valor_total: number | null;
+  n_skus: number | null;
+};
+
+function statusVariant(status: string | null): "success" | "warning" | "destructive" | "secondary" {
+  const s = (status ?? "").toLowerCase();
+  if (s === "disparado") return "success";
+  if (s === "pendente") return "warning";
+  if (s === "bloqueado") return "destructive";
+  return "secondary";
+}
+
+function HistoricoPedidosCiclos() {
+  const { empresa } = useReposicaoEmpresa();
+  const today = new Date();
+  const past = new Date();
+  past.setDate(today.getDate() - 30);
+  const fmt = (d: Date) => d.toISOString().slice(0, 10);
+
+  const [de, setDe] = useState(fmt(past));
+  const [ate, setAte] = useState(fmt(today));
+  const [page, setPage] = useState(0);
+  const pageSize = 20;
+
+  const { data, isLoading } = useQuery({
+    queryKey: ["historico-ciclos", empresa, de, ate],
+    queryFn: async (): Promise<CicloRow[]> => {
+      const { data, error } = await (supabase as any)
+        .from("pedido_compra_sugerido")
+        .select("data_ciclo, fornecedor_grupo, status, valor_total, n_skus")
+        .eq("empresa", empresa)
+        .gte("data_ciclo", de)
+        .lte("data_ciclo", ate)
+        .order("data_ciclo", { ascending: false })
+        .limit(2000);
+      if (error) return [];
+      return (data ?? []) as CicloRow[];
+    },
+    staleTime: 30000,
+  });
+
+  const rows = data ?? [];
+  const totalPages = Math.max(1, Math.ceil(rows.length / pageSize));
+  const pageRows = useMemo(
+    () => rows.slice(page * pageSize, page * pageSize + pageSize),
+    [rows, page]
+  );
+
+  return (
+    <Card>
+      <CardHeader>
+        <CardTitle>Histórico de Pedidos por Ciclo</CardTitle>
+        <CardDescription>Todos os ciclos de compra agrupados por data</CardDescription>
+      </CardHeader>
+      <CardContent className="space-y-4">
+        <div className="flex flex-wrap items-end gap-3">
+          <div className="space-y-1">
+            <Label htmlFor="data-de" className="text-xs">De</Label>
+            <Input
+              id="data-de"
+              type="date"
+              value={de}
+              onChange={(e) => { setDe(e.target.value); setPage(0); }}
+              className="w-[160px]"
+            />
+          </div>
+          <div className="space-y-1">
+            <Label htmlFor="data-ate" className="text-xs">Até</Label>
+            <Input
+              id="data-ate"
+              type="date"
+              value={ate}
+              onChange={(e) => { setAte(e.target.value); setPage(0); }}
+              className="w-[160px]"
+            />
+          </div>
+        </div>
+
+        {isLoading ? (
+          <div className="flex items-center justify-center py-12 text-muted-foreground">
+            <Loader2 className="h-5 w-5 animate-spin mr-2" /> Carregando ciclos...
+          </div>
+        ) : rows.length === 0 ? (
+          <div className="py-12 text-center text-sm text-muted-foreground">
+            Nenhum ciclo encontrado para o período
+          </div>
+        ) : (
+          <>
+            <div className="rounded-md border">
+              <Table>
+                <TableHeader>
+                  <TableRow>
+                    <TableHead>Data do Ciclo</TableHead>
+                    <TableHead>Fornecedor</TableHead>
+                    <TableHead>Status</TableHead>
+                    <TableHead className="text-right">N SKUs</TableHead>
+                    <TableHead className="text-right">Valor Total</TableHead>
+                  </TableRow>
+                </TableHeader>
+                <TableBody>
+                  {pageRows.map((r, i) => (
+                    <TableRow key={`${r.data_ciclo}-${r.fornecedor_grupo}-${i}`}>
+                      <TableCell className="font-mono text-xs">
+                        {r.data_ciclo ? new Date(r.data_ciclo).toLocaleDateString("pt-BR") : "—"}
+                      </TableCell>
+                      <TableCell>{r.fornecedor_grupo ?? "—"}</TableCell>
+                      <TableCell>
+                        <Badge variant={statusVariant(r.status)}>{r.status ?? "—"}</Badge>
+                      </TableCell>
+                      <TableCell className="text-right">{r.n_skus ?? 0}</TableCell>
+                      <TableCell className="text-right">
+                        {(r.valor_total ?? 0).toLocaleString("pt-BR", {
+                          style: "currency",
+                          currency: "BRL",
+                        })}
+                      </TableCell>
+                    </TableRow>
+                  ))}
+                </TableBody>
+              </Table>
+            </div>
+
+            <div className="flex items-center justify-between text-sm text-muted-foreground">
+              <span>
+                {rows.length} ciclos · página {page + 1} de {totalPages}
+              </span>
+              <div className="flex gap-2">
+                <Button
+                  variant="outline"
+                  size="sm"
+                  disabled={page === 0}
+                  onClick={() => setPage((p) => Math.max(0, p - 1))}
+                >
+                  Anterior
+                </Button>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  disabled={page >= totalPages - 1}
+                  onClick={() => setPage((p) => Math.min(totalPages - 1, p + 1))}
+                >
+                  Próxima
+                </Button>
+              </div>
+            </div>
+          </>
+        )}
+      </CardContent>
+    </Card>
+  );
+}
