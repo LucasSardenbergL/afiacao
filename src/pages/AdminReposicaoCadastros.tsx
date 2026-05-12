@@ -2,7 +2,7 @@ import { lazy, Suspense, useState } from "react";
 import { useSearchParams } from "react-router-dom";
 import { useQuery } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
-import { Database, Loader2, ShoppingCart, Network, Layers, Send, Building2, AlertTriangle } from "lucide-react";
+import { Database, Loader2, ShoppingCart, Network, Layers, Send, Building2, AlertTriangle, Link2 } from "lucide-react";
 import { Card, CardContent } from "@/components/ui/card";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import {
@@ -22,6 +22,7 @@ const AdminReposicaoPedidos = lazy(() => import("./AdminReposicaoPedidos"));
 const AdminReposicaoCadeiaLogistica = lazy(() => import("./AdminReposicaoCadeiaLogistica"));
 const AdminReposicaoGruposProducao = lazy(() => import("./AdminReposicaoGruposProducao"));
 const AdminReposicaoAplicacao = lazy(() => import("./AdminReposicaoAplicacao"));
+const AdminSkuMapeamento = lazy(() => import("./AdminSkuMapeamento"));
 
 const TabFallback = () => (
   <div className="flex items-center justify-center py-16 text-muted-foreground">
@@ -193,7 +194,7 @@ export default function AdminReposicaoCadastros() {
         <KpiCards />
 
         <Tabs value={tab} onValueChange={handleTab} className="space-y-4">
-          <TabsList className="grid grid-cols-2 sm:grid-cols-4 w-full">
+          <TabsList className="grid grid-cols-2 sm:grid-cols-5 w-full">
             <TabsTrigger value="pedidos">
               <ShoppingCart className="h-4 w-4 mr-1" /> Pedidos
             </TabsTrigger>
@@ -202,6 +203,9 @@ export default function AdminReposicaoCadastros() {
             </TabsTrigger>
             <TabsTrigger value="grupos">
               <Layers className="h-4 w-4 mr-1" /> Grupos
+            </TabsTrigger>
+            <TabsTrigger value="mapeamento">
+              <Link2 className="h-4 w-4 mr-1" /> Mapeamento de SKUs
             </TabsTrigger>
             <TabsTrigger value="aplicacao">
               <Send className="h-4 w-4 mr-1" /> Aplicação Omie
@@ -223,6 +227,12 @@ export default function AdminReposicaoCadastros() {
           <TabsContent value="grupos" className="m-0">
             <Suspense fallback={<TabFallback />}>
               <AdminReposicaoGruposProducao />
+            </Suspense>
+          </TabsContent>
+
+          <TabsContent value="mapeamento" className="m-0">
+            <Suspense fallback={<TabFallback />}>
+              <AdminSkuMapeamento />
             </Suspense>
           </TabsContent>
 
