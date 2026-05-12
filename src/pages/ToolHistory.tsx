@@ -156,17 +156,22 @@ const ToolHistory = () => {
     }
   };
 
+function escapeHtml(s: string | undefined | null): string {
+  if (!s) return '';
+  return s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;').replace(/'/g,'&#39;');
+}
+
   const handlePrintQR = () => {
     if (!qrRef.current || !tool) return;
     const printWindow = window.open('', '_blank');
     if (!printWindow) return;
     const svgElement = qrRef.current.querySelector('svg');
     if (!svgElement) return;
-    printWindow.document.write(`<!DOCTYPE html><html><head><title>QR Code - ${tool.internal_code}</title>
+    printWindow.document.write(`<!DOCTYPE html><html><head><title>QR Code - ${escapeHtml(tool.internal_code)}</title>
       <style>body{display:flex;flex-direction:column;align-items:center;justify-content:center;min-height:100vh;margin:0;font-family:monospace}
       .code{font-size:18px;font-weight:bold;margin-top:12px;letter-spacing:2px}.name{font-size:12px;color:#666;margin-top:4px}
       @media print{body{padding:0}}</style></head><body>${svgElement.outerHTML}
-      <div class="code">${tool.internal_code}</div><div class="name">${tool.generated_name || tool.tool_categories?.name}</div>
+      <div class="code">${escapeHtml(tool.internal_code)}</div><div class="name">${escapeHtml(tool.generated_name || tool.tool_categories?.name)}</div>
       <script>window.print();window.close();</script></body></html>`);
     printWindow.document.close();
   };
