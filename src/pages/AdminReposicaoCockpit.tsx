@@ -2,10 +2,14 @@ import { useMemo, useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
 import { toast } from "sonner";
-import { Sparkles, TrendingUp, Package, Zap, Loader2, PlayCircle } from "lucide-react";
+import { Sparkles, TrendingUp, Package, Zap, Loader2, PlayCircle, CalendarIcon } from "lucide-react";
+import { format } from "date-fns";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { Calendar } from "@/components/ui/calendar";
+import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
+import { cn } from "@/lib/utils";
 import {
   Select,
   SelectContent,
@@ -87,6 +91,46 @@ export default function AdminReposicaoCockpit() {
   const [filtroCenario, setFiltroCenario] = useState<string>(ALL);
   const [filtroFornecedor, setFiltroFornecedor] = useState<string>(ALL);
   const [rodandoGeracao, setRodandoGeracao] = useState(false);
+  const [dataFim, setDataFim] = useState<Date>(() => new Date());
+
+  const dataInicio = useMemo(() => {
+    const d = new Date(dataFim);
+    d.setDate(d.getDate() - 29);
+    return d;
+  }, [dataFim]);
+
+  const { data: historicoDiario = [], isLoading: loadingHistorico } = useQuery({
+    queryKey: ["cockpit-historico-30d", EMPRESA, format(dataFim, "yyyy-MM-dd")],
+    queryFn: async () => {
+      const inicio = format(dataInicio, "yyyy-MM-dd");
+      const fim = format(dataFim, "yyyy-MM-dd");
+      const { data, error } = await supabase
+        .from("pedido_compra_sugerido" as any)
+        .select("data_ciclo,fornecedor_nome,valor_total,status")
+        .eq("empresa", EMPRESA)
+        .gte("data_ciclo", inicio)
+        .lte("data_ciclo", fim);
+      if (error) throw error;
+      type Row = { data_ciclo: string; fornecedor_nome: string | null; valor_total: number | null; status: string | null };
+      const rows = ((data ?? []) as unknown) as Row[];
+      const map = new Map<string, { data: string; fornecedores: Set<string>; pedidos: number; valor: number; disparados: number; cancelados: number }>();
+      for (const r of rows) {
+        const key = r.data_ciclo;
+        if (!map.has(key)) {
+          map.set(key, { data: key, fornecedores: new Set(), pedidos: 0, valor: 0, disparados: 0, cancelados: 0 });
+        }
+        const acc = map.get(key)!;
+        if (r.fornecedor_nome) acc.fornecedores.add(r.fornecedor_nome);
+        acc.pedidos += 1;
+        acc.valor += Number(r.valor_total ?? 0);
+        if (r.status === "disparado" || r.status === "disparado_simulado") acc.disparados += 1;
+        if (r.status === "cancelado") acc.cancelados += 1;
+      }
+      return Array.from(map.values())
+        .map((x) => ({ ...x, fornecedores: x.fornecedores.size }))
+        .sort((a, b) => b.data.localeCompare(a.data));
+    },
+  });
 
   const handleRodarGeracao = async () => {
     setRodandoGeracao(true);
@@ -281,6 +325,88 @@ export default function AdminReposicaoCockpit() {
                       <Badge variant="outline" className={diasBadgeClass(o.dias_ate_limite)}>
                         {o.dias_ate_limite ?? "—"}
                       </Badge>
+                    </TableCell>
+                  </TableRow>
+                ))}
+              </TableBody>
+            </Table>
+          )}
+        </CardContent>
+      </Card>
+
+      <Card>
+        <CardHeader className="flex flex-row items-start justify-between gap-4 flex-wrap">
+          <div>
+            <CardTitle className="text-base">Histórico — últimos 30 dias</CardTitle>
+            <p className="text-xs text-muted-foreground mt-1">
+              {format(dataInicio, "dd/MM/yyyy")} até {format(dataFim, "dd/MM/yyyy")}
+            </p>
+          </div>
+          <Popover>
+            <PopoverTrigger asChild>
+              <Button
+                variant="outline"
+                size="sm"
+                className={cn("justify-start text-left font-normal", !dataFim && "text-muted-foreground")}
+              >
+                <CalendarIcon className="h-4 w-4 mr-2" />
+                {format(dataFim, "dd/MM/yyyy")}
+              </Button>
+            </PopoverTrigger>
+            <PopoverContent className="w-auto p-0" align="end">
+              <Calendar
+                mode="single"
+                selected={dataFim}
+                onSelect={(d) => d && setDataFim(d)}
+                disabled={(d) => d > new Date()}
+                initialFocus
+                className={cn("p-3 pointer-events-auto")}
+              />
+            </PopoverContent>
+          </Popover>
+        </CardHeader>
+        <CardContent className="p-0">
+          {loadingHistorico ? (
+            <div className="flex items-center justify-center py-12 text-muted-foreground">
+              <Loader2 className="h-5 w-5 animate-spin mr-2" />
+              Carregando...
+            </div>
+          ) : historicoDiario.length === 0 ? (
+            <div className="py-12 text-center text-sm text-muted-foreground">
+              Nenhum pedido no período selecionado.
+            </div>
+          ) : (
+            <Table>
+              <TableHeader>
+                <TableRow>
+                  <TableHead>Data</TableHead>
+                  <TableHead className="text-right">Fornecedores</TableHead>
+                  <TableHead className="text-right">Pedidos</TableHead>
+                  <TableHead className="text-right">Valor total</TableHead>
+                  <TableHead className="text-right">Disparados</TableHead>
+                  <TableHead className="text-right">Cancelados</TableHead>
+                </TableRow>
+              </TableHeader>
+              <TableBody>
+                {historicoDiario.map((d) => (
+                  <TableRow key={d.data}>
+                    <TableCell className="text-sm">{formatDate(d.data)}</TableCell>
+                    <TableCell className="text-right">{d.fornecedores}</TableCell>
+                    <TableCell className="text-right">{d.pedidos}</TableCell>
+                    <TableCell className="text-right font-medium">{formatBRL(d.valor)}</TableCell>
+                    <TableCell className="text-right">
+                      <Badge variant="outline" className="bg-emerald-500/15 text-emerald-700 dark:text-emerald-400 border-emerald-500/30">
+                        {d.disparados}
+                      </Badge>
+                    </TableCell>
+                    <TableCell className="text-right">
+                      {d.cancelados > 0 ? (
+                        <Badge variant="outline" className="bg-destructive/15 text-destructive border-destructive/30">
+                          {d.cancelados}
+                        </Badge>
+                      ) : (
+                        <span className="text-muted-foreground">0</span>
+                      )}
                     </TableCell>
                   </TableRow>
                 ))}
