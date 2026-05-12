@@ -10984,8 +10984,6 @@ export type Database = {
           valor_coberto_rs: number
         }[]
       }
-      show_limit: { Args: never; Returns: number }
-      show_trgm: { Args: { "": string }; Returns: string[] }
       simular_formula_estoque: {
         Args: {
           p_candidato: string
