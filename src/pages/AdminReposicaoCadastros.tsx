@@ -150,7 +150,7 @@ export default function AdminReposicaoCadastros() {
             <div>
               <h1 className="text-2xl font-bold">Cadastros & Config</h1>
               <p className="text-sm text-muted-foreground">
-                Pedidos de compra, cadeia logística, grupos de produção e aplicação no Omie — em um só lugar.
+                Grupos de produção, cadeia logística, mapeamento de SKUs e pedidos sugeridos.
               </p>
             </div>
           </div>
