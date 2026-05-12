@@ -424,14 +424,18 @@ export async function getTopInadimplentes(
   const { data, error } = await query;
   if (error) return [];
 
-  // Agrupar por cliente
+  // Agrupar por cliente (nome_cliente como chave primária; cnpj_cpf como fallback)
   const map = new Map<string, { nome: string; cnpj: string; total: number; qtd: number }>();
   for (const r of data || []) {
-    const key = r.cnpj_cpf || r.nome_cliente || 'Desconhecido';
+    const nomeRaw = (r.nome_cliente ?? '').trim();
+    const cnpjRaw = (r.cnpj_cpf ?? '').trim();
+    const key = nomeRaw || cnpjRaw || '__unknown__';
+    const displayNome = nomeRaw
+      || (cnpjRaw ? `CNPJ: ${cnpjRaw}` : 'Cliente não identificado');
     const saldo = (r.valor_documento || 0) - (r.valor_recebido || 0);
     const existing = map.get(key) || {
-      nome: r.nome_cliente ?? '',
-      cnpj: r.cnpj_cpf ?? '',
+      nome: displayNome,
+      cnpj: cnpjRaw,
       total: 0,
       qtd: 0,
     };
@@ -444,7 +448,7 @@ export async function getTopInadimplentes(
     .sort((a, b) => b.total - a.total)
     .slice(0, limit)
     .map(({ nome, cnpj, total, qtd }) => ({
-      nome: nome || 'Desconhecido',
+      nome: nome || 'Cliente não identificado',
       cnpj: cnpj || '',
       total_vencido: total,
       qtd_titulos: qtd,
