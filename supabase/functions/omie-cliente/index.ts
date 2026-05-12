@@ -500,7 +500,7 @@ serve(async (req) => {
             { status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" } }
           );
         }
-        const allowed = new Set(["admin", "employee", "manager", "master"]);
+        const allowed = new Set(["employee", "master"]);
         const hasStaff = (roleRows ?? []).some((r: { role: string }) => allowed.has(r.role));
         if (!hasStaff) {
           return new Response(

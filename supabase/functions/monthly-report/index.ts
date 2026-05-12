@@ -231,8 +231,8 @@ async function authenticateRequest(req: Request): Promise<{ authenticated: boole
     .eq('user_id', user.id)
     .single();
 
-  const isStaff = roleData?.role === 'admin' || roleData?.role === 'employee';
-  return { authenticated: isStaff, isAdmin: roleData?.role === 'admin' };
+  const isStaff = roleData?.role === 'master' || roleData?.role === 'employee';
+  return { authenticated: isStaff, isAdmin: roleData?.role === 'master' };
 }
 
 serve(async (req) => {

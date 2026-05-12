@@ -50,7 +50,7 @@ Deno.serve(async (req) => {
       .eq("user_id", user.id)
       .maybeSingle();
 
-    if (!roleData || !["admin", "employee", "master"].includes(roleData.role)) {
+    if (!roleData || !["employee", "master"].includes(roleData.role)) {
       return new Response(JSON.stringify({ error: "Sem permissão" }), {
         status: 403,
         headers: { ...corsHeaders, "Content-Type": "application/json" },

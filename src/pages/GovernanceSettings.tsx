@@ -25,7 +25,7 @@ export default function GovernanceSettings() {
       const { data: roles, error: rErr } = await supabase
         .from('user_roles')
         .select('user_id, role')
-        .in('role', ['admin', 'employee', 'master']);
+        .in('role', ['employee', 'master']);
       if (rErr) throw rErr;
       const ids = Array.from(new Set((roles || []).map(r => r.user_id)));
       if (ids.length === 0) return [];

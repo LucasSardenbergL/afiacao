@@ -48,7 +48,7 @@ serve(async (req) => {
         .from("user_roles")
         .select("role")
         .eq("user_id", loggedInUserId);
-      const allowed = new Set(["admin", "employee", "manager", "master"]);
+      const allowed = new Set(["employee", "master"]);
       if (!(callerRoles ?? []).some((r: { role: string }) => allowed.has(r.role))) {
         return new Response(JSON.stringify({ error: "Forbidden" }), {
           status: 403, headers: { ...corsHeaders, "Content-Type": "application/json" },

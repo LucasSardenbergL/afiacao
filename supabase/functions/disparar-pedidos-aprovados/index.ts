@@ -548,7 +548,7 @@ async function authorizeCronOrStaff(req: Request): Promise<boolean> {
     );
     if (!roleRes.ok) return false;
     const roles = (await roleRes.json()) as Array<{ role: string }>;
-    const allowed = new Set(["admin", "employee", "manager", "master"]);
+    const allowed = new Set(["employee", "master"]);
     return roles.some((r) => allowed.has(r.role));
   } catch { return false; }
 }

@@ -79,7 +79,7 @@ Deno.serve(async (req) => {
       const { data: employees } = await supabase
         .from('user_roles')
         .select('user_id')
-        .in('role', ['admin', 'employee']);
+        .in('role', ['master', 'employee']);
 
       // Default farmer: first employee or admin found
       const defaultFarmerId = employees?.[0]?.user_id || '414a9727-ad1d-4998-914e-9c6ccf26cf50';

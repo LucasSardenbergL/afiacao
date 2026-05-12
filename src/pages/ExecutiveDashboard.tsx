@@ -33,7 +33,7 @@ const ExecutiveDashboard = () => {
   const [selectedFarmer, setSelectedFarmer] = useState<string>('all');
 
   useEffect(() => {
-    if (role === 'admin') {
+    if (role === 'master') {
       loadScores();
       loadFarmers();
     }
@@ -44,7 +44,7 @@ const ExecutiveDashboard = () => {
     const { data: roles } = await supabase
       .from('user_roles')
       .select('user_id')
-      .in('role', ['employee', 'admin']) as any;
+      .in('role', ['employee', 'master']) as any;
 
     if (!roles?.length) return;
     const ids = roles.map((r: any) => r.user_id);
