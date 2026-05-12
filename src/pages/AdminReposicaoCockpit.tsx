@@ -152,6 +152,100 @@ export default function AdminReposicaoCockpit() {
     },
   });
 
+  type FilaParam = {
+    id: string;
+    sku_codigo_omie: number;
+    sku_descricao: string | null;
+    estoque_minimo: number | null;
+    ponto_pedido: number | null;
+    estoque_maximo: number | null;
+    estoque_minimo_omie: number | null;
+    ponto_pedido_omie: number | null;
+    estoque_maximo_omie: number | null;
+    omie_ultima_sincronizacao: string | null;
+    aprovado_em: string | null;
+  };
+
+  const [selecionados, setSelecionados] = useState<Set<string>>(new Set());
+  const [aplicando, setAplicando] = useState(false);
+
+  const { data: filaParametros = [], isLoading: loadingFila } = useQuery({
+    queryKey: ["cockpit-fila-parametros", EMPRESA],
+    queryFn: async () => {
+      const { data, error } = await supabase
+        .from("sku_parametros" as any)
+        .select(
+          "id,sku_codigo_omie,sku_descricao,estoque_minimo,ponto_pedido,estoque_maximo,estoque_minimo_omie,ponto_pedido_omie,estoque_maximo_omie,omie_ultima_sincronizacao,aprovado_em",
+        )
+        .eq("empresa", EMPRESA)
+        .eq("ativo", true)
+        .not("aprovado_em", "is", null)
+        .order("sku_codigo_omie", { ascending: true })
+        .limit(500);
+      if (error) throw error;
+      const rows = ((data ?? []) as unknown) as FilaParam[];
+      // Apenas com diferença em pelo menos 1 dos 3 parâmetros
+      return rows.filter((r) => {
+        const dEM = Math.abs(Number(r.estoque_minimo ?? 0) - Number(r.estoque_minimo_omie ?? 0));
+        const dPP = Math.abs(Number(r.ponto_pedido ?? 0) - Number(r.ponto_pedido_omie ?? 0));
+        const dMx = Math.abs(Number(r.estoque_maximo ?? 0) - Number(r.estoque_maximo_omie ?? 0));
+        return dEM + dPP + dMx > 0;
+      });
+    },
+  });
+
+  const ultimaSincFila = useMemo(() => {
+    let max = 0;
+    for (const r of filaParametros) {
+      const t = r.omie_ultima_sincronizacao ? new Date(r.omie_ultima_sincronizacao).getTime() : 0;
+      if (t > max) max = t;
+    }
+    return max ? new Date(max) : null;
+  }, [filaParametros]);
+
+  const sincDesatualizada = useMemo(() => {
+    if (!ultimaSincFila) return true;
+    return Date.now() - ultimaSincFila.getTime() > 24 * 60 * 60 * 1000;
+  }, [ultimaSincFila]);
+
+  const toggleSelecionado = (id: string) => {
+    setSelecionados((prev) => {
+      const n = new Set(prev);
+      if (n.has(id)) n.delete(id);
+      else n.add(id);
+      return n;
+    });
+  };
+
+  const toggleSelecionarTodos = () => {
+    setSelecionados((prev) =>
+      prev.size === filaParametros.length ? new Set() : new Set(filaParametros.map((r) => r.id)),
+    );
+  };
+
+  const handleAplicarSelecionados = async () => {
+    if (selecionados.size === 0) return;
+    setAplicando(true);
+    try {
+      const ids = Array.from(selecionados);
+      const { error } = await supabase
+        .from("sku_parametros" as any)
+        .update({
+          aplicar_no_omie: true,
+          aprovado_em: new Date().toISOString(),
+        })
+        .in("id", ids);
+      if (error) throw error;
+      toast.success(`${ids.length} SKU(s) marcado(s) para aplicação no Omie`);
+      setSelecionados(new Set());
+      queryClient.invalidateQueries({ queryKey: ["cockpit-fila-parametros"] });
+    } catch (e: any) {
+      toast.error(e?.message || "Erro ao marcar para aplicação");
+    } finally {
+      setAplicando(false);
+    }
+  };
+
   const dataInicio = useMemo(() => {
     const d = new Date(dataFim);
     d.setDate(d.getDate() - 29);
