@@ -363,6 +363,22 @@ export default function AdminReposicaoCockpit() {
     [filtradas],
   );
 
+  const fornecedoresHoje = useMemo(() => {
+    const set = new Set<string>();
+    pedidosHoje.forEach((p) => p.fornecedor_nome && set.add(p.fornecedor_nome));
+    return set.size;
+  }, [pedidosHoje]);
+
+  const skusHoje = useMemo(
+    () => pedidosHoje.reduce((acc, p) => acc + Number(p.num_skus ?? 0), 0),
+    [pedidosHoje],
+  );
+
+  const valorHoje = useMemo(
+    () => pedidosHoje.reduce((acc, p) => acc + Number(p.valor_total ?? 0), 0),
+    [pedidosHoje],
+  );
+
   return (
     <div className="container mx-auto p-4 sm:p-6 space-y-6 max-w-7xl">
       <header className="flex items-center gap-3">
@@ -375,37 +391,78 @@ export default function AdminReposicaoCockpit() {
         </div>
       </header>
 
-      <Card className="border-emerald-500/30 bg-gradient-to-br from-emerald-500/5 to-transparent">
-        <CardHeader className="pb-2 flex flex-row items-start justify-between gap-4">
-          <div>
+      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+        <Card className="border-emerald-500/30 bg-gradient-to-br from-emerald-500/5 to-transparent">
+          <CardHeader className="pb-2">
             <CardTitle className="text-xs font-medium text-muted-foreground uppercase tracking-wide">
               Economia total potencial
             </CardTitle>
-          </div>
-          <Button
-            size="sm"
-            onClick={handleRodarGeracao}
-            disabled={rodandoGeracao}
-            className="shrink-0"
-          >
-            {rodandoGeracao ? (
-              <Loader2 className="h-4 w-4 animate-spin mr-1.5" />
-            ) : (
-              <PlayCircle className="h-4 w-4 mr-1.5" />
-            )}
-            Rodar geração manual
-          </Button>
-        </CardHeader>
-        <CardContent>
-          <div className="text-3xl sm:text-4xl font-bold text-emerald-700 dark:text-emerald-400">
-            {formatBRL(economiaTotal)}
-          </div>
-          <p className="text-xs text-muted-foreground mt-1">
-            {filtradas.length} oportunidade{filtradas.length === 1 ? "" : "s"} ativa
-            {filtradas.length === 1 ? "" : "s"} com janela de captura hoje
-          </p>
-        </CardContent>
-      </Card>
+          </CardHeader>
+          <CardContent>
+            <div className="text-2xl sm:text-3xl font-bold text-emerald-700 dark:text-emerald-400">
+              {formatBRL(economiaTotal)}
+            </div>
+            <p className="text-xs text-muted-foreground mt-1">
+              {filtradas.length} oportunidade{filtradas.length === 1 ? "" : "s"} ativa
+              {filtradas.length === 1 ? "" : "s"}
+            </p>
+          </CardContent>
+        </Card>
+
+        <Card>
+          <CardHeader className="pb-2">
+            <CardTitle className="text-xs font-medium text-muted-foreground uppercase tracking-wide">
+              Fornecedores c/ pedido hoje
+            </CardTitle>
+          </CardHeader>
+          <CardContent>
+            <div className="text-2xl sm:text-3xl font-bold">{fornecedoresHoje}</div>
+            <p className="text-xs text-muted-foreground mt-1">
+              {pedidosHoje.length} pedido{pedidosHoje.length === 1 ? "" : "s"} gerado
+              {pedidosHoje.length === 1 ? "" : "s"}
+            </p>
+          </CardContent>
+        </Card>
+
+        <Card>
+          <CardHeader className="pb-2">
+            <CardTitle className="text-xs font-medium text-muted-foreground uppercase tracking-wide">
+              Total de SKUs hoje
+            </CardTitle>
+          </CardHeader>
+          <CardContent>
+            <div className="text-2xl sm:text-3xl font-bold">{skusHoje}</div>
+            <p className="text-xs text-muted-foreground mt-1">Itens nos pedidos do dia</p>
+          </CardContent>
+        </Card>
+
+        <Card>
+          <CardHeader className="pb-2">
+            <CardTitle className="text-xs font-medium text-muted-foreground uppercase tracking-wide">
+              Valor total hoje
+            </CardTitle>
+          </CardHeader>
+          <CardContent>
+            <div className="text-2xl sm:text-3xl font-bold">{formatBRL(valorHoje)}</div>
+            <p className="text-xs text-muted-foreground mt-1">Soma dos pedidos gerados</p>
+          </CardContent>
+        </Card>
+      </div>
+
+      <div className="flex justify-end">
+        <Button
+          size="sm"
+          onClick={handleRodarGeracao}
+          disabled={rodandoGeracao}
+        >
+          {rodandoGeracao ? (
+            <Loader2 className="h-4 w-4 animate-spin mr-1.5" />
+          ) : (
+            <PlayCircle className="h-4 w-4 mr-1.5" />
+          )}
+          Rodar geração manual
+        </Button>
+      </div>
 
       <div className="flex flex-col sm:flex-row gap-3">
         <div className="flex-1">
