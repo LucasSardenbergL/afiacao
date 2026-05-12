@@ -162,10 +162,25 @@ export default function AdminReposicaoCockpit() {
       </header>
 
       <Card className="border-emerald-500/30 bg-gradient-to-br from-emerald-500/5 to-transparent">
-        <CardHeader className="pb-2">
-          <CardTitle className="text-xs font-medium text-muted-foreground uppercase tracking-wide">
-            Economia total potencial
-          </CardTitle>
+        <CardHeader className="pb-2 flex flex-row items-start justify-between gap-4">
+          <div>
+            <CardTitle className="text-xs font-medium text-muted-foreground uppercase tracking-wide">
+              Economia total potencial
+            </CardTitle>
+          </div>
+          <Button
+            size="sm"
+            onClick={handleRodarGeracao}
+            disabled={rodandoGeracao}
+            className="shrink-0"
+          >
+            {rodandoGeracao ? (
+              <Loader2 className="h-4 w-4 animate-spin mr-1.5" />
+            ) : (
+              <PlayCircle className="h-4 w-4 mr-1.5" />
+            )}
+            Rodar geração manual
+          </Button>
         </CardHeader>
         <CardContent>
           <div className="text-3xl sm:text-4xl font-bold text-emerald-700 dark:text-emerald-400">
