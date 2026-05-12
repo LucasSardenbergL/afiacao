@@ -202,7 +202,7 @@ export default function AdminEstoqueRecebimento() {
 
         <TabsContent value="conferencia" className="m-0">
           <Suspense fallback={<TabFallback />}>
-            <Recebimento key="conferencia" defaultStatusFilter={["em_conferencia", "divergencia"]} />
+            <Recebimento key="conferencia" />
           </Suspense>
         </TabsContent>
 
