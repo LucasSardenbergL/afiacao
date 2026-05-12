@@ -118,7 +118,7 @@ function KpiCards() {
   );
 }
 
-export default function AdminReposicaoParametrosQualidade() {
+export default function AdminReposicaoParametros() {
   const [params, setParams] = useSearchParams();
   const tab = params.get("tab") ?? "revisao";
 
@@ -145,20 +145,14 @@ export default function AdminReposicaoParametrosQualidade() {
       <Tabs value={tab} onValueChange={handleTab} className="space-y-4">
         <TabsList className="grid grid-cols-2 sm:grid-cols-4 w-full">
           <TabsTrigger value="revisao">Revisão</TabsTrigger>
+          <TabsTrigger value="alertas">Alertas</TabsTrigger>
+          <TabsTrigger value="sla">SLA de Fornecedor</TabsTrigger>
           <TabsTrigger value="historico">Histórico</TabsTrigger>
-          <TabsTrigger value="alertas">Outliers</TabsTrigger>
-          <TabsTrigger value="sla">SLA fornecedor</TabsTrigger>
         </TabsList>
 
         <TabsContent value="revisao" className="m-0">
           <Suspense fallback={<TabFallback />}>
             <AdminReposicaoRevisao />
-          </Suspense>
-        </TabsContent>
-
-        <TabsContent value="historico" className="m-0">
-          <Suspense fallback={<TabFallback />}>
-            <AdminReposicaoHistorico />
           </Suspense>
         </TabsContent>
 
@@ -171,6 +165,12 @@ export default function AdminReposicaoParametrosQualidade() {
         <TabsContent value="sla" className="m-0">
           <Suspense fallback={<TabFallback />}>
             <AdminReposicaoSlaFornecedor />
+          </Suspense>
+        </TabsContent>
+
+        <TabsContent value="historico" className="m-0">
+          <Suspense fallback={<TabFallback />}>
+            <AdminReposicaoHistorico />
           </Suspense>
         </TabsContent>
       </Tabs>
