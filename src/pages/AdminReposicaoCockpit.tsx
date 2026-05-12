@@ -83,8 +83,9 @@ const diasBadgeClass = (d: number | null | undefined) => {
 export default function AdminReposicaoCockpit() {
   const [filtroCenario, setFiltroCenario] = useState<string>(ALL);
   const [filtroFornecedor, setFiltroFornecedor] = useState<string>(ALL);
+  const [rodandoGeracao, setRodandoGeracao] = useState(false);
 
-  const { data: oportunidades = [], isLoading } = useQuery({
+  const { data: oportunidades = [], isLoading, refetch } = useQuery({
     queryKey: ["cockpit-oportunidades", EMPRESA],
     queryFn: async () => {
       const { data, error } = await supabase
