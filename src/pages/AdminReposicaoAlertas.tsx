@@ -2,6 +2,7 @@ import { useState, useMemo } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
 import { useAuth } from "@/contexts/AuthContext";
+import { useReposicaoEmpresa } from "@/contexts/ReposicaoEmpresaContext";
 import { toast } from "sonner";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -105,6 +106,7 @@ const fmt = (n: number | null | undefined, dec = 2) =>
 
 export default function AdminReposicaoAlertas() {
   const { user } = useAuth();
+  const { empresa } = useReposicaoEmpresa();
   const qc = useQueryClient();
 
   const [page, setPage] = useState(1);
@@ -322,7 +324,7 @@ export default function AdminReposicaoAlertas() {
       // Recálculo automático após exclusão
       if (decisao === "excluir") {
         try {
-          await (supabase as any).rpc("atualizar_parametros_numericos_skus", { p_empresa: "OBEN" });
+          await (supabase as any).rpc("atualizar_parametros_numericos_skus", { p_empresa: empresa });
         } catch (e) {
           console.warn("Recálculo falhou:", e);
         }
