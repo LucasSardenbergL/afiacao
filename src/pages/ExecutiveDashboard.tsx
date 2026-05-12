@@ -66,7 +66,7 @@ const ExecutiveDashboard = () => {
     );
   }
 
-  if (role !== 'admin') {
+  if (role !== 'master') {
     navigate('/', { replace: true });
     return null;
   }
