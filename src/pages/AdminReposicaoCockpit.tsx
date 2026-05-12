@@ -1,8 +1,9 @@
 import { useMemo, useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { useNavigate } from "react-router-dom";
 import { supabase } from "@/integrations/supabase/client";
 import { toast } from "sonner";
-import { Sparkles, TrendingUp, Package, Zap, Loader2, PlayCircle, CalendarIcon } from "lucide-react";
+import { Sparkles, TrendingUp, Package, Zap, Loader2, PlayCircle, CalendarIcon, ExternalLink, ArrowUpRight, ArrowDownRight } from "lucide-react";
 import { format } from "date-fns";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
