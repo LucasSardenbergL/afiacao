@@ -126,10 +126,17 @@ function KpiCards() {
       tone: filaPendente && filaPendente > 0 ? "text-primary" : "text-muted-foreground",
       border: filaPendente && filaPendente > 0 ? "border-primary/40" : "border-border",
     },
+    {
+      label: "Grupos de produção",
+      value: gruposAtivos ?? 0,
+      icon: Layers,
+      tone: gruposAtivos && gruposAtivos > 0 ? "text-primary" : "text-muted-foreground",
+      border: gruposAtivos && gruposAtivos > 0 ? "border-primary/40" : "border-border",
+    },
   ];
 
   return (
-    <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+    <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
       {cards.map((c) => (
         <Card key={c.label} className={c.border}>
           <CardContent className="pt-4 flex items-center justify-between">
