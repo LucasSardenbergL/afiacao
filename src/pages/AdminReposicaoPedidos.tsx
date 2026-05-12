@@ -83,6 +83,11 @@ interface PedidoSugerido {
   portal_tentativas: number | null;
   portal_proximo_retry_em: string | null;
   portal_erro: string | null;
+  criado_em?: string | null;
+  cancelado_em?: string | null;
+  cancelado_por?: string | null;
+  justificativa_cancelamento?: string | null;
+  omie_registrado_em?: string | null;
 }
 
 interface CondicaoPagamento {
@@ -383,6 +388,118 @@ function CycleIndicator({ now }: { now: Date }) {
     <div className="inline-flex items-center gap-2 px-3 py-1.5 rounded-md bg-muted text-muted-foreground border text-sm">
       <CheckCircle2 className="w-4 h-4" />
       Ciclo finalizado
+    </div>
+  );
+}
+
+/* ─── Painel: Status de envio ao portal ─── */
+function PortalStatusPanel({ pedido }: { pedido: PedidoSugerido | null }) {
+  if (!pedido) return null;
+  const status = (pedido.status_envio_portal ?? 'nao_aplicavel') as StatusEnvioPortal;
+  const meta = portalStatusMeta[status] ?? portalStatusMeta.nao_aplicavel;
+  const tentativas = pedido.portal_tentativas ?? 0;
+  const fmt = (iso: string | null | undefined) => {
+    if (!iso) return '—';
+    try { return format(new Date(iso), "dd/MM/yyyy HH:mm", { locale: ptBR }); } catch { return '—'; }
+  };
+  return (
+    <div className="rounded-md border bg-muted/20 p-3 space-y-2">
+      <div className="flex items-center justify-between">
+        <div className="text-sm font-medium">Status de envio ao portal</div>
+        <span className={cn(
+          'inline-flex items-center rounded-full border px-2 py-0.5 text-[11px] font-semibold',
+          meta.className,
+        )}>{meta.label}</span>
+      </div>
+      <dl className="grid grid-cols-2 gap-x-3 gap-y-1.5 text-xs">
+        <dt className="text-muted-foreground">Enviado em</dt>
+        <dd className="text-right tabular-nums">{fmt(pedido.enviado_portal_em)}</dd>
+        <dt className="text-muted-foreground">Protocolo</dt>
+        <dd className="text-right font-mono">{pedido.portal_protocolo ?? '—'}</dd>
+        <dt className="text-muted-foreground">Tentativas</dt>
+        <dd className="text-right tabular-nums">{tentativas}</dd>
+        <dt className="text-muted-foreground">Próx. retry</dt>
+        <dd className="text-right tabular-nums">{fmt(pedido.portal_proximo_retry_em)}</dd>
+      </dl>
+      {pedido.portal_erro && (
+        <div className="text-xs text-destructive whitespace-pre-wrap break-words border-t pt-2">
+          {pedido.portal_erro}
+        </div>
+      )}
+    </div>
+  );
+}
+
+/* ─── Painel: Histórico de ações ─── */
+function HistoricoAcoesPanel({ pedido }: { pedido: PedidoSugerido | null }) {
+  if (!pedido) return null;
+  type Evt = { ts: string; label: string; by?: string | null; detail?: string | null; tone: 'default' | 'success' | 'warn' | 'danger' };
+  const evts: Evt[] = [];
+  if (pedido.criado_em) evts.push({ ts: pedido.criado_em, label: 'Pedido gerado', tone: 'default' });
+  if (pedido.aprovado_em) evts.push({ ts: pedido.aprovado_em, label: 'Aprovado', by: pedido.aprovado_por, tone: 'success' });
+  if (pedido.enviado_portal_em) {
+    evts.push({
+      ts: pedido.enviado_portal_em,
+      label: 'Enviado ao portal',
+      detail: pedido.portal_protocolo ? `Protocolo ${pedido.portal_protocolo}` : null,
+      tone: pedido.status_envio_portal === 'falha_envio_portal' ? 'danger' : 'success',
+    });
+  }
+  if (pedido.horario_disparo_real) evts.push({ ts: pedido.horario_disparo_real, label: 'Disparado', tone: 'success' });
+  if (pedido.omie_registrado_em) evts.push({
+    ts: pedido.omie_registrado_em,
+    label: 'Registrado no Omie',
+    detail: pedido.omie_pedido_compra_numero ? `Nº ${pedido.omie_pedido_compra_numero}` : null,
+    tone: 'success',
+  });
+  if (pedido.cancelado_em) evts.push({
+    ts: pedido.cancelado_em,
+    label: 'Cancelado',
+    by: pedido.cancelado_por,
+    detail: pedido.justificativa_cancelamento,
+    tone: 'danger',
+  });
+  evts.sort((a, b) => new Date(b.ts).getTime() - new Date(a.ts).getTime());
+
+  const fmt = (iso: string) => {
+    try { return format(new Date(iso), "dd/MM/yyyy HH:mm", { locale: ptBR }); } catch { return iso; }
+  };
+  const dotCls: Record<Evt['tone'], string> = {
+    default: 'bg-muted-foreground',
+    success: 'bg-emerald-500',
+    warn: 'bg-amber-500',
+    danger: 'bg-destructive',
+  };
+  return (
+    <div className="rounded-md border bg-muted/20 p-3">
+      <div className="text-sm font-medium mb-2">Histórico de ações</div>
+      {evts.length === 0 ? (
+        <div className="text-xs text-muted-foreground py-2">Sem eventos registrados.</div>
+      ) : (
+        <ol className="space-y-2.5">
+          {evts.map((e, i) => (
+            <li key={i} className="flex gap-2.5 text-xs">
+              <div className="flex flex-col items-center pt-0.5">
+                <span className={cn('h-2 w-2 rounded-full', dotCls[e.tone])} />
+                {i < evts.length - 1 && <span className="flex-1 w-px bg-border mt-1" />}
+              </div>
+              <div className="flex-1 pb-1">
+                <div className="flex items-center justify-between gap-2">
+                  <span className="font-medium">{e.label}</span>
+                  <span className="tabular-nums text-muted-foreground">{fmt(e.ts)}</span>
+                </div>
+                {(e.by || e.detail) && (
+                  <div className="text-muted-foreground mt-0.5 break-words">
+                    {e.by && <span>por {e.by}</span>}
+                    {e.by && e.detail && <span> · </span>}
+                    {e.detail && <span>{e.detail}</span>}
+                  </div>
+                )}
+              </div>
+            </li>
+          ))}
+        </ol>
+      )}
     </div>
   );
 }
@@ -760,14 +877,15 @@ function DetalhesModal({
           <Table>
             <TableHeader>
               <TableRow>
-                <TableHead className="w-[40%] min-w-[320px]">SKU</TableHead>
-                <TableHead className="text-right">Estoque</TableHead>
-                <TableHead className="text-right">Mínimo</TableHead>
+                <TableHead className="w-[34%] min-w-[300px]">SKU / Descrição</TableHead>
+                <TableHead className="text-right">Estoque atual</TableHead>
+                <TableHead className="text-right">EM</TableHead>
                 <TableHead className="text-right">PP</TableHead>
                 <TableHead className="text-right">Emax</TableHead>
-                <TableHead className="text-right">Qtde</TableHead>
+                <TableHead className="text-right">Qtde sugerida</TableHead>
+                <TableHead className="text-right">Qtde final</TableHead>
                 <TableHead className="text-right">Preço</TableHead>
-                <TableHead className="text-right">Total linha</TableHead>
+                <TableHead className="text-right">Valor linha</TableHead>
                 {podeEditar && <TableHead className="text-right">Ações</TableHead>}
               </TableRow>
             </TableHeader>
@@ -777,6 +895,7 @@ function DetalhesModal({
                 const minimo = Number(l.estoque_minimo ?? 0);
                 const pp = Number(l.ponto_pedido ?? 0);
                 const zoneClass = getEstoqueZoneClass(estoque, minimo, pp);
+                const sugerida = Number(l.qtde_sugerida ?? 0);
                 return (
                 <TableRow key={l.id}>
                   <TableCell className="align-top whitespace-normal">
@@ -784,14 +903,20 @@ function DetalhesModal({
                     <div className="text-sm font-medium whitespace-normal break-words leading-snug">
                       {l.sku_descricao ?? '—'}
                     </div>
-                    {l.primeira_compra && (
-                      <Badge variant="destructive" className="mt-1 text-[10px] h-4">primeira compra</Badge>
-                    )}
+                    <div className="flex gap-1 mt-1">
+                      {l.primeira_compra && (
+                        <Badge variant="destructive" className="text-[10px] h-4">primeira compra</Badge>
+                      )}
+                      {l.ajustado_humano && (
+                        <Badge variant="outline" className="text-[10px] h-4">ajustado</Badge>
+                      )}
+                    </div>
                   </TableCell>
                   <TableCell className={`text-right tabular-nums ${zoneClass}`}>{estoque.toFixed(0)}</TableCell>
                   <TableCell className="text-right tabular-nums text-muted-foreground">{minimo.toFixed(0)}</TableCell>
                   <TableCell className="text-right tabular-nums">{pp.toFixed(0)}</TableCell>
                   <TableCell className="text-right tabular-nums">{Number(l.estoque_maximo ?? 0).toFixed(0)}</TableCell>
+                  <TableCell className="text-right tabular-nums text-muted-foreground">{sugerida.toFixed(0)}</TableCell>
                   <TableCell className="text-right">
                     {podeEditar ? (
                       <Input
@@ -806,7 +931,10 @@ function DetalhesModal({
                         }}
                       />
                     ) : (
-                      <span className="tabular-nums">{l._qtd.toFixed(0)}</span>
+                      <span className={cn(
+                        "tabular-nums",
+                        l._qtd !== sugerida && "font-semibold text-amber-700 dark:text-amber-400",
+                      )}>{l._qtd.toFixed(0)}</span>
                     )}
                   </TableCell>
                   <TableCell className="text-right tabular-nums">{formatBRL(l.preco_unitario)}</TableCell>
@@ -840,13 +968,20 @@ function DetalhesModal({
                 );
               })}
               <TableRow>
-                <TableCell colSpan={7} className="text-right font-medium">Total</TableCell>
+                <TableCell colSpan={8} className="text-right font-medium">Total</TableCell>
                 <TableCell className="text-right font-bold tabular-nums">{formatBRL(totalAtual)}</TableCell>
                 {podeEditar && <TableCell />}
               </TableRow>
             </TableBody>
           </Table>
         )}
+
+        {/* Status de envio ao portal + Histórico de ações */}
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+          <PortalStatusPanel pedido={pedido} />
+          <HistoricoAcoesPanel pedido={pedido} />
+        </div>
+
 
         {podeEditar && (
           <div>
