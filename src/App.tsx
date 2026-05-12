@@ -127,6 +127,7 @@ const FinanceiroAnalise = lazy(() => import("./pages/FinanceiroAnalise"));
 const TintCatalogo = lazy(() => import("./pages/TintCatalogo"));
 const TintIntegracao = lazy(() => import("./pages/TintIntegracao"));
 const PerformanceHub = lazy(() => import("./pages/PerformanceHub"));
+const VendasFerramentas = lazy(() => import("./pages/VendasFerramentas"));
 const AdminAjuda = lazy(() => import("./pages/AdminAjuda"));
 const AdminDesTrimestreAtual = lazy(() => import("./pages/AdminDesTrimestreAtual"));
 const AdminNotificacoes = lazy(() => import("./pages/AdminNotificacoes"));
