@@ -300,10 +300,13 @@ function AppSidebar({ collapsed, onToggle }: { collapsed: boolean; onToggle: () 
         if (it.path === '/financeiro/gestao' && financeiroAtrasados && financeiroAtrasados > 0) {
           return { ...it, badge: financeiroAtrasados, badgeVariant: 'destructive' as const };
         }
+        if (it.path === '/tintometrico' && tintErros && tintErros > 0) {
+          return { ...it, badge: tintErros, badgeVariant: 'destructive' as const };
+        }
         return it;
       }),
     })),
-    [outlierPendentes, pedidosPendentes, aumentosAtivos, oportunidadesAtivas, negociacaoNovasCount, notificacoesPendentes, alertasCriticos, financeiroAtrasados],
+    [outlierPendentes, pedidosPendentes, aumentosAtivos, oportunidadesAtivas, negociacaoNovasCount, notificacoesPendentes, alertasCriticos, financeiroAtrasados, tintErros],
   );
 
   const isActive = (path: string) => {
