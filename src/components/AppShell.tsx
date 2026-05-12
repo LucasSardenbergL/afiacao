@@ -107,16 +107,9 @@ const unifiedNavSections: { title: string; items: NavItem[] }[] = [
   {
     title: 'Tintométrico',
     items: [
-      { icon: Palette, label: 'Dashboard', path: '/tintometrico', managerOnly: true },
-      { icon: Beaker, label: 'Fórmulas', path: '/tintometrico/formulas', managerOnly: true },
-      { icon: FileUp, label: 'Importar', path: '/tintometrico/importar', managerOnly: true },
-      { icon: Package, label: 'Mapeamento Omie', path: '/tintometrico/mapeamento', managerOnly: true },
-      { icon: Calculator, label: 'Precificação', path: '/tintometrico/precos', managerOnly: true },
-      { icon: Droplets, label: 'Corantes', path: '/tintometrico/corantes', managerOnly: true },
-      { icon: Settings, label: 'Integrações', path: '/tintometrico/integracoes', managerOnly: true },
-      { icon: ClipboardList, label: 'Reconciliação', path: '/tintometrico/reconciliacao', managerOnly: true },
-      { icon: BarChart3, label: 'Sync Runs', path: '/tintometrico/sync-runs', managerOnly: true },
-      { icon: BookOpen, label: 'API Contract', path: '/tintometrico/api-contract', managerOnly: true },
+      { icon: BarChart3, label: 'Dashboard', path: '/tintometrico', managerOnly: true },
+      { icon: Palette, label: 'Catálogo e Preços', path: '/tintometrico/catalogo', managerOnly: true },
+      { icon: Settings, label: 'Integração e Sync', path: '/tintometrico/integracao', managerOnly: true },
     ],
   },
   {
