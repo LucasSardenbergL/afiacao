@@ -3,7 +3,7 @@ import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useNavigate } from "react-router-dom";
 import { supabase } from "@/integrations/supabase/client";
 import { toast } from "sonner";
-import { Sparkles, TrendingUp, Package, Zap, Loader2, PlayCircle, CalendarIcon, ExternalLink, ArrowUpRight, ArrowDownRight, AlertTriangle, CheckCircle2 } from "lucide-react";
+import { Sparkles, TrendingUp, Package, Zap, Loader2, PlayCircle, CalendarIcon, ExternalLink, ArrowUpRight, ArrowDownRight, AlertTriangle, CheckCircle2, RefreshCw } from "lucide-react";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { format } from "date-fns";
@@ -168,6 +168,7 @@ export default function AdminReposicaoCockpit() {
 
   const [selecionados, setSelecionados] = useState<Set<string>>(new Set());
   const [aplicando, setAplicando] = useState(false);
+  const [sincronizandoOmie, setSincronizandoOmie] = useState(false);
 
   const { data: filaParametros = [], isLoading: loadingFila } = useQuery({
     queryKey: ["cockpit-fila-parametros", EMPRESA],
@@ -243,6 +244,22 @@ export default function AdminReposicaoCockpit() {
       toast.error(e?.message || "Erro ao marcar para aplicação");
     } finally {
       setAplicando(false);
+    }
+  };
+
+  const handleSincronizarOmie = async () => {
+    setSincronizandoOmie(true);
+    try {
+      const { data, error } = await supabase.functions.invoke("omie-sync-status-produtos", {
+        body: { empresa: EMPRESA },
+      });
+      if (error) throw error;
+      toast.success("Sincronização com Omie iniciada com sucesso");
+      queryClient.invalidateQueries({ queryKey: ["cockpit-fila-parametros"] });
+    } catch (e: any) {
+      toast.error(e?.message || "Erro ao sincronizar com Omie");
+    } finally {
+      setSincronizandoOmie(false);
     }
   };
 
@@ -514,10 +531,24 @@ export default function AdminReposicaoCockpit() {
               <Alert className="bg-amber-500/10 border-amber-500/30 text-amber-900 dark:text-amber-200">
                 <AlertTriangle className="h-4 w-4" />
                 <AlertTitle>Sincronização desatualizada</AlertTitle>
-                <AlertDescription>
+                <AlertDescription className="flex items-center gap-2 flex-wrap">
                   {ultimaSincFila
                     ? `Última sincronização com Omie em ${formatDateTime(ultimaSincFila.toISOString())}. Os valores "atual" podem estar defasados.`
                     : "Nenhuma sincronização recente com Omie detectada para os SKUs da fila."}
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    className="h-7 text-xs border-amber-600/40 hover:bg-amber-500/20"
+                    onClick={handleSincronizarOmie}
+                    disabled={sincronizandoOmie}
+                  >
+                    {sincronizandoOmie ? (
+                      <Loader2 className="h-3 w-3 animate-spin mr-1" />
+                    ) : (
+                      <RefreshCw className="h-3 w-3 mr-1" />
+                    )}
+                    Sincronizar agora
+                  </Button>
                 </AlertDescription>
               </Alert>
             </div>
