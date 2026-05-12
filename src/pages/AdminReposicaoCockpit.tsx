@@ -392,6 +392,134 @@ export default function AdminReposicaoCockpit() {
       </Card>
 
       <Card>
+        <CardHeader>
+          <CardTitle className="text-base">Pedidos do dia</CardTitle>
+          <p className="text-xs text-muted-foreground mt-1">
+            Pedidos sugeridos com data de ciclo em {format(new Date(), "dd/MM/yyyy")}
+          </p>
+        </CardHeader>
+        <CardContent className="p-0">
+          {loadingPedidos ? (
+            <div className="flex items-center justify-center py-12 text-muted-foreground">
+              <Loader2 className="h-5 w-5 animate-spin mr-2" />
+              Carregando...
+            </div>
+          ) : pedidosHoje.length === 0 ? (
+            <div className="py-12 text-center text-sm text-muted-foreground">
+              Nenhum pedido gerado para hoje.
+            </div>
+          ) : (
+            <Table>
+              <TableHeader>
+                <TableRow>
+                  <TableHead>Status</TableHead>
+                  <TableHead>Fornecedor / Grupo</TableHead>
+                  <TableHead className="text-right">Nº SKUs</TableHead>
+                  <TableHead className="text-right">Valor</TableHead>
+                  <TableHead className="text-right">Δ vs anterior</TableHead>
+                  <TableHead>Corte</TableHead>
+                  <TableHead>Status portal</TableHead>
+                  <TableHead>Aprovado</TableHead>
+                  <TableHead className="text-right">Ações</TableHead>
+                </TableRow>
+              </TableHeader>
+              <TableBody>
+                {pedidosHoje.map((p) => {
+                  const statusInfo = STATUS_PEDIDO_LABEL[p.status ?? ""] ?? {
+                    label: p.status ?? "—",
+                    className: "bg-muted text-muted-foreground border-border",
+                  };
+                  const portalInfo = STATUS_PORTAL_LABEL[p.status_envio_portal ?? ""];
+                  const delta = Number(p.delta_vs_anterior_perc ?? 0);
+                  const deltaPositive = delta > 0;
+                  const deltaNegative = delta < 0;
+                  return (
+                    <TableRow key={p.id}>
+                      <TableCell>
+                        <Badge variant="outline" className={statusInfo.className}>
+                          {statusInfo.label}
+                        </Badge>
+                      </TableCell>
+                      <TableCell className="text-sm">
+                        <div className="font-medium">{p.fornecedor_nome ?? "—"}</div>
+                        {p.grupo_codigo && (
+                          <div className="text-xs text-muted-foreground">{p.grupo_codigo}</div>
+                        )}
+                      </TableCell>
+                      <TableCell className="text-right">{p.num_skus ?? 0}</TableCell>
+                      <TableCell className="text-right font-medium">
+                        {formatBRL(p.valor_total)}
+                      </TableCell>
+                      <TableCell className="text-right">
+                        {p.delta_vs_anterior_perc === null || p.delta_vs_anterior_perc === undefined ? (
+                          <span className="text-muted-foreground">—</span>
+                        ) : (
+                          <span
+                            className={cn(
+                              "inline-flex items-center gap-0.5 text-sm font-medium",
+                              deltaPositive && "text-emerald-700 dark:text-emerald-400",
+                              deltaNegative && "text-destructive",
+                            )}
+                          >
+                            {deltaPositive && <ArrowUpRight className="h-3 w-3" />}
+                            {deltaNegative && <ArrowDownRight className="h-3 w-3" />}
+                            {delta.toFixed(1)}%
+                          </span>
+                        )}
+                      </TableCell>
+                      <TableCell className="text-sm">
+                        {formatDateTime(p.horario_corte_planejado)}
+                      </TableCell>
+                      <TableCell>
+                        {portalInfo ? (
+                          <Badge variant="outline" className={portalInfo.className}>
+                            {portalInfo.label}
+                          </Badge>
+                        ) : (
+                          <span className="text-xs text-muted-foreground">—</span>
+                        )}
+                      </TableCell>
+                      <TableCell className="text-sm">
+                        {p.aprovado_em ? (
+                          <div>
+                            <div>{formatDateTime(p.aprovado_em)}</div>
+                            {p.aprovado_por && (
+                              <div className="text-xs text-muted-foreground">{p.aprovado_por}</div>
+                            )}
+                          </div>
+                        ) : (
+                          <span className="text-muted-foreground">—</span>
+                        )}
+                      </TableCell>
+                      <TableCell className="text-right">
+                        <div className="flex justify-end gap-1">
+                          <Button
+                            size="sm"
+                            variant="outline"
+                            onClick={() => navigate(`/admin/reposicao/pedidos?id=${p.id}`)}
+                          >
+                            Detalhes
+                          </Button>
+                          <Button
+                            size="sm"
+                            variant="outline"
+                            onClick={() => navigate(`/admin/portal-sayerlack?pedido=${p.id}`)}
+                          >
+                            <ExternalLink className="h-3.5 w-3.5 mr-1" />
+                            Abrir portal
+                          </Button>
+                        </div>
+                      </TableCell>
+                    </TableRow>
+                  );
+                })}
+              </TableBody>
+            </Table>
+          )}
+        </CardContent>
+      </Card>
+
+      <Card>
         <CardHeader className="flex flex-row items-start justify-between gap-4 flex-wrap">
           <div>
             <CardTitle className="text-base">Histórico — últimos 30 dias</CardTitle>
