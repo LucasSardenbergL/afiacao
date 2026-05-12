@@ -69,14 +69,19 @@ function KpiCards() {
     staleTime: 30000,
   });
 
-  // (c) Aumentos pendentes
+  // (c) Aumentos com vigência nos próximos 30 dias
   const { data: aumentos } = useQuery({
-    queryKey: ["mercado-aumentos-pendentes"],
+    queryKey: ["mercado-aumentos-30d"],
     queryFn: async () => {
+      const today = new Date();
+      const in30 = new Date(today.getTime() + 30 * 24 * 60 * 60 * 1000);
+      const todayISO = today.toISOString().slice(0, 10);
+      const in30ISO = in30.toISOString().slice(0, 10);
       const { count, error } = await (supabase as any)
         .from("fornecedor_aumento_anunciado")
         .select("*", { count: "exact", head: true })
-        .in("status", ["rascunho", "confirmado", "ativo"]);
+        .gte("data_vigencia", todayISO)
+        .lte("data_vigencia", in30ISO);
       if (error) return 0;
       return count ?? 0;
     },
