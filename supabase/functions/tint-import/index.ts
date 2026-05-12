@@ -244,7 +244,7 @@ async function processFormulas(supabase: Supabase, rows: string[][], account: st
         formulaId = existingFormula.id;
         updated++;
       } else {
-        const { data: ins, error } = await supabase.from("tint_formulas").insert(formulaRow).select("id").single();
+        const { data: ins, error } = await supabase.from("tint_formulas").upsert(formulaRow, { onConflict: 'chave' }).select("id").single();
         if (error) throw new Error(`Erro insert formula: ${error.message}`);
         formulaId = ins.id;
         imported++;
