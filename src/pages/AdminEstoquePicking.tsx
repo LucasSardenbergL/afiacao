@@ -312,7 +312,7 @@ function PickingTab({ account }: { account: string }) {
                     </TableCell>
                   </TableRow>
                 )}
-              </>
+              </Fragment>
             ))}
           </TableBody>
         </Table>
