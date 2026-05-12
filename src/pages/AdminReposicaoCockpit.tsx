@@ -3,7 +3,7 @@ import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useNavigate } from "react-router-dom";
 import { supabase } from "@/integrations/supabase/client";
 import { toast } from "sonner";
-import { Sparkles, TrendingUp, Package, Zap, Loader2, PlayCircle, CalendarIcon, ExternalLink, ArrowUpRight, ArrowDownRight, AlertTriangle, CheckCircle2 } from "lucide-react";
+import { Sparkles, TrendingUp, Package, Zap, Loader2, PlayCircle, CalendarIcon, ExternalLink, ArrowUpRight, ArrowDownRight, AlertTriangle, CheckCircle2, RefreshCw } from "lucide-react";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { format } from "date-fns";
