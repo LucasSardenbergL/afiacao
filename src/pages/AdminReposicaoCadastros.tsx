@@ -1,10 +1,15 @@
-import { lazy, Suspense, useState } from "react";
+import { lazy, Suspense, useMemo, useState } from "react";
 import { useSearchParams } from "react-router-dom";
 import { useQuery } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
 import { Database, Loader2, ShoppingCart, Network, Layers, Send, Building2, AlertTriangle, Link2 } from "lucide-react";
-import { Card, CardContent } from "@/components/ui/card";
+import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
+import { Button } from "@/components/ui/button";
+import { Badge } from "@/components/ui/badge";
+import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import {
   Select,
   SelectContent,
@@ -14,11 +19,7 @@ import {
 } from "@/components/ui/select";
 import { ReposicaoEmpresaProvider, useReposicaoEmpresa } from "@/contexts/ReposicaoEmpresaContext";
 
-// Reaproveita as 4 telas originais — mesmas queries Supabase, sem duplicar.
-//  - pedido_compra_sugerido + pedido_compra_item     → AdminReposicaoPedidos
-//  - fornecedor_grupo_producao + sku_grupo_producao  → AdminReposicaoCadeiaLogistica / GruposProducao
-//  - fila_aplicacao_omie                             → AdminReposicaoAplicacao
-const AdminReposicaoPedidos = lazy(() => import("./AdminReposicaoPedidos"));
+// Reaproveita as telas originais para tabs auxiliares — mesmas queries Supabase.
 const AdminReposicaoCadeiaLogistica = lazy(() => import("./AdminReposicaoCadeiaLogistica"));
 const AdminReposicaoGruposProducao = lazy(() => import("./AdminReposicaoGruposProducao"));
 const AdminReposicaoAplicacao = lazy(() => import("./AdminReposicaoAplicacao"));
