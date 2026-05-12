@@ -6,6 +6,7 @@ import { format, subDays } from "date-fns";
 import { Sparkles, Loader2, CalendarRange } from "lucide-react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { ProcessoComprasStepper } from "@/components/reposicao/ProcessoComprasStepper";
 import {
   Table,
   TableBody,
@@ -165,6 +166,8 @@ export default function AdminReposicaoCockpit() {
           </p>
         </div>
       </header>
+
+      <ProcessoComprasStepper currentStep={3} />
 
       <Tabs value={tab} onValueChange={handleTab} className="space-y-4">
         <TabsList className="grid grid-cols-2 sm:grid-cols-4 w-full">
