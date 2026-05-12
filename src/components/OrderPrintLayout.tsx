@@ -1,6 +1,11 @@
 import { format, addDays } from 'date-fns';
 import { ptBR } from 'date-fns/locale';
 
+function escapeHtml(s: string | undefined | null): string {
+  if (!s) return '';
+  return s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;').replace(/'/g,'&#39;');
+}
+
 export interface PrintOrderData {
   companyName: string;
   companyCnpj: string;
@@ -79,7 +84,7 @@ function buildObsText(data: PrintOrderData): string {
     );
   }
 
-  if (data.observacoes) parts.push(data.observacoes);
+  if (data.observacoes) parts.push(escapeHtml(data.observacoes));
 
   return parts.join('\n\n');
 }
@@ -90,21 +95,21 @@ export function openPrintOrder(data: PrintOrderData) {
   const obs = buildObsText(data);
   const installmentText = buildInstallmentDates(data.parcelaCode, data.condPagamento, data.total);
   const itemsRows = data.items.map((item, i) => {
-    const descLines = [item.descricao];
+    const descLines = [escapeHtml(item.descricao)];
     if (item.tintCorId && item.tintNomeCor) {
       const corParts = item.tintNomeCor.split(' - ');
       const simplified = corParts.length > 2 ? corParts.slice(0, -1).join(' - ') : item.tintNomeCor;
       const embMatch = item.descricao.match(/\b(QT|GL|LT|BD|BH|5L)\b/i);
       const embalagem = embMatch ? embMatch[1].toUpperCase() : '';
-      descLines.push(`Cor: ${item.tintCorId} - ${simplified}${embalagem ? ' - ' + embalagem : ''}`);
+      descLines.push(`Cor: ${escapeHtml(item.tintCorId)} - ${escapeHtml(simplified)}${embalagem ? ' - ' + escapeHtml(embalagem) : ''}`);
     }
     return `
       <tr style="background:${i % 2 === 1 ? '#f5f5f5' : '#fff'}">
         <td style="padding:6px 4px;border:1px solid #ddd;text-align:center;font-size:11px">${i + 1}</td>
-        <td style="padding:6px 4px;border:1px solid #ddd;font-size:11px">${item.codigo}</td>
+        <td style="padding:6px 4px;border:1px solid #ddd;font-size:11px">${escapeHtml(item.codigo)}</td>
         <td style="padding:6px 4px;border:1px solid #ddd;font-size:11px">${descLines.join('<br/>')}</td>
         <td style="padding:6px 4px;border:1px solid #ddd;text-align:center;font-size:11px">${item.quantidade}</td>
-        <td style="padding:6px 4px;border:1px solid #ddd;text-align:center;font-size:11px">${item.unidade}</td>
+        <td style="padding:6px 4px;border:1px solid #ddd;text-align:center;font-size:11px">${escapeHtml(item.unidade)}</td>
         <td style="padding:6px 4px;border:1px solid #ddd;text-align:right;font-size:11px">${fmt(item.valorUnitario)}</td>
         <td style="padding:6px 4px;border:1px solid #ddd;text-align:right;font-size:11px">${fmt(item.valorTotal)}</td>
       </tr>
@@ -115,7 +120,7 @@ export function openPrintOrder(data: PrintOrderData) {
   const showDesconto = data.desconto > 0 && cnpjsComDesconto.includes(data.customerDocument || '');
 
   const html = `<!DOCTYPE html>
-<html><head><meta charset="utf-8"><title>Pedido ${data.orderNumber}</title>
+<html><head><meta charset="utf-8"><title>Pedido ${escapeHtml(data.orderNumber)}</title>
 <style>
   @media print {
     @page { margin: 0; size: A4; }
@@ -146,29 +151,29 @@ export function openPrintOrder(data: PrintOrderData) {
 </style></head><body>
 <div class="header">
   <div class="header-left">
-    ${data.companyLogoUrl ? `<img src="${data.companyLogoUrl}" class="company-logo" crossorigin="anonymous" />` : ''}
+    ${data.companyLogoUrl ? `<img src="${escapeHtml(data.companyLogoUrl)}" class="company-logo" crossorigin="anonymous" />` : ''}
     <div>
-      <div class="company-name">${data.companyName}</div>
-      <div class="company-info">CNPJ: ${data.companyCnpj} • Tel: ${data.companyPhone}</div>
-      <div class="company-info">${data.companyAddress}</div>
+      <div class="company-name">${escapeHtml(data.companyName)}</div>
+      <div class="company-info">CNPJ: ${escapeHtml(data.companyCnpj)} • Tel: ${escapeHtml(data.companyPhone)}</div>
+      <div class="company-info">${escapeHtml(data.companyAddress)}</div>
     </div>
   </div>
   <div class="order-box">
     <div class="label">PEDIDO DE VENDA</div>
-    <div class="number">Nº ${data.orderNumber.replace(/^0+/, '') || '0'}</div>
-    <div class="date">${data.date}</div>
+    <div class="number">Nº ${escapeHtml(data.orderNumber.replace(/^0+/, '') || '0')}</div>
+    <div class="date">${escapeHtml(data.date)}</div>
   </div>
 </div>
 
 <div class="section-title">DADOS DO CLIENTE</div>
 <div style="display:flex;justify-content:space-between">
   <div>
-    <div class="customer-name">${data.customerName}</div>
-    <div class="customer-info">CPF/CNPJ: ${data.customerDocument || 'N/A'}${data.customerPhone ? ' • Tel: ' + data.customerPhone : ''}</div>
-    ${data.customerAddress ? `<div class="customer-info" style="margin-top:4px"><strong>Endereço:</strong> ${data.customerAddress}</div>` : ''}
+    <div class="customer-name">${escapeHtml(data.customerName)}</div>
+    <div class="customer-info">CPF/CNPJ: ${escapeHtml(data.customerDocument || 'N/A')}${data.customerPhone ? ' • Tel: ' + escapeHtml(data.customerPhone) : ''}</div>
+    ${data.customerAddress ? `<div class="customer-info" style="margin-top:4px"><strong>Endereço:</strong> ${escapeHtml(data.customerAddress)}</div>` : ''}
   </div>
   <div class="right-info">
-    ${data.vendedorName ? `Vendedor: ${data.vendedorName}` : ''}
+    ${data.vendedorName ? `Vendedor: ${escapeHtml(data.vendedorName)}` : ''}
   </div>
 </div>
 
@@ -195,7 +200,7 @@ export function openPrintOrder(data: PrintOrderData) {
 
 ${data.condPagamento || installmentText ? `
 <div class="section-title">CONDIÇÃO DE PAGAMENTO</div>
-<div style="font-size:11px;margin-bottom:4px">${data.condPagamento ? `<strong>Prazo:</strong> ${data.condPagamento}` : ''}</div>
+<div style="font-size:11px;margin-bottom:4px">${data.condPagamento ? `<strong>Prazo:</strong> ${escapeHtml(data.condPagamento)}` : ''}</div>
 ${installmentText ? `<div class="installments"><strong>Vencimentos:</strong><br/>${installmentText}</div>` : ''}
 ` : ''}
 
@@ -204,7 +209,7 @@ ${obs ? `
 <div class="obs-box">${obs.replace(/\n/g, '<br/>')}</div>
 ` : ''}
 
-<div class="footer">Documento gerado automaticamente pelo sistema • ${data.date}</div>
+<div class="footer">Documento gerado automaticamente pelo sistema • ${escapeHtml(data.date)}</div>
 <script>window.onload = function() { window.print(); }</script>
 </body></html>`;
 
