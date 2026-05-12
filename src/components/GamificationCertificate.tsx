@@ -32,11 +32,16 @@ export function GamificationCertificate({ userName, levelName, level, totalScore
 
     const certDate = date || format(new Date(), "dd 'de' MMMM 'de' yyyy", { locale: ptBR });
 
+    function escapeHtml(s: string | undefined | null): string {
+      if (!s) return '';
+      return s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;').replace(/'/g,'&#39;');
+    }
+
     printWindow.document.write(`
       <!DOCTYPE html>
       <html>
         <head>
-          <title>Certificado - ${userName}</title>
+          <title>Certificado - ${escapeHtml(userName)}</title>
           <style>
             * { margin: 0; padding: 0; box-sizing: border-box; }
             @page { size: landscape; margin: 0; }
@@ -87,11 +92,11 @@ export function GamificationCertificate({ userName, levelName, level, totalScore
             <p class="title">Certificado de Mérito</p>
             <h1 class="main-title">COLACOR</h1>
             <p style="font-size: 14px; color: #666; margin-bottom: 20px;">Certifica que</p>
-            <p class="recipient">${userName}</p>
-            <div class="level-badge">Nível ${level} — ${levelName}</div>
+            <p class="recipient">${escapeHtml(userName)}</p>
+            <div class="level-badge">Nível ${level} — ${escapeHtml(levelName)}</div>
             <p class="score">Pontuação: ${totalScore}/100</p>
             <p class="description">
-              Alcançou o nível <strong>${levelName}</strong> no Sistema de Gamificação Meritocrática,
+              Alcançou o nível <strong>${escapeHtml(levelName)}</strong> no Sistema de Gamificação Meritocrática,
               demonstrando excelência em manutenção preventiva, organização, educação técnica e eficiência operacional.
             </p>
             
@@ -102,7 +107,7 @@ export function GamificationCertificate({ userName, levelName, level, totalScore
               </div>
               <div class="footer-item">
                 <div class="footer-line"></div>
-                <p class="footer-label">${certDate}</p>
+                <p class="footer-label">${escapeHtml(certDate)}</p>
               </div>
             </div>
           </div>
