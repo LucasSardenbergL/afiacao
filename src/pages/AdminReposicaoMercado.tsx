@@ -120,7 +120,7 @@ function KpiCards() {
       border: promocoes && promocoes > 0 ? "border-primary/40" : "border-border",
     },
     {
-      label: "Aumentos pendentes",
+      label: "Aumentos próximos 30 dias",
       value: aumentos ?? 0,
       icon: ArrowUpRight,
       tone: aumentos && aumentos > 0 ? "text-warning" : "text-muted-foreground",
