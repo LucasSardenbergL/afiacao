@@ -128,6 +128,7 @@ function KpiCards() {
 export default function AdminReposicaoParametros() {
   const [params, setParams] = useSearchParams();
   const tab = params.get("tab") ?? "revisao";
+  const [empresa, setEmpresa] = useState("OBEN");
 
   const handleTab = (v: string) => {
     const next = new URLSearchParams(params);
@@ -136,51 +137,67 @@ export default function AdminReposicaoParametros() {
   };
 
   return (
-    <div className="container mx-auto p-4 sm:p-6 space-y-6 max-w-7xl">
-      <header className="flex items-center gap-3">
-        <Settings className="h-6 w-6 text-primary" />
-        <div>
-          <h1 className="text-2xl font-bold">Parâmetros & Qualidade</h1>
-          <p className="text-sm text-muted-foreground">
-            Revisão de parâmetros, triagem de outliers, histórico de alterações e compliance de SLA — em um só lugar.
-          </p>
-        </div>
-      </header>
+    <ReposicaoEmpresaProvider value={{ empresa, setEmpresa }}>
+      <div className="container mx-auto p-4 sm:p-6 space-y-6 max-w-7xl">
+        <header className="flex flex-col sm:flex-row sm:items-center gap-3 justify-between">
+          <div className="flex items-center gap-3">
+            <Settings className="h-6 w-6 text-primary" />
+            <div>
+              <h1 className="text-2xl font-bold">Parâmetros & Qualidade</h1>
+              <p className="text-sm text-muted-foreground">
+                Revisão de parâmetros, triagem de outliers, histórico de alterações e compliance de SLA — em um só lugar.
+              </p>
+            </div>
+          </div>
+          <div className="flex items-center gap-2">
+            <Building2 className="h-4 w-4 text-muted-foreground" />
+            <Select value={empresa} onValueChange={setEmpresa}>
+              <SelectTrigger className="w-[140px]">
+                <SelectValue placeholder="Empresa" />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="OBEN">OBEN</SelectItem>
+                <SelectItem value="COLACOR">COLACOR</SelectItem>
+              </SelectContent>
+            </Select>
+          </div>
+        </header>
 
-      <KpiCards />
+        <KpiCards />
 
-      <Tabs value={tab} onValueChange={handleTab} className="space-y-4">
-        <TabsList className="grid grid-cols-2 sm:grid-cols-4 w-full">
-          <TabsTrigger value="revisao">Revisão</TabsTrigger>
-          <TabsTrigger value="alertas">Alertas</TabsTrigger>
-          <TabsTrigger value="sla">SLA de Fornecedor</TabsTrigger>
-          <TabsTrigger value="historico">Histórico</TabsTrigger>
-        </TabsList>
+        <Tabs value={tab} onValueChange={handleTab} className="space-y-4">
+          <TabsList className="grid grid-cols-2 sm:grid-cols-4 w-full">
+            <TabsTrigger value="revisao">Revisão</TabsTrigger>
+            <TabsTrigger value="alertas">Alertas</TabsTrigger>
+            <TabsTrigger value="sla">SLA de Fornecedor</TabsTrigger>
+            <TabsTrigger value="historico">Histórico</TabsTrigger>
+          </TabsList>
 
-        <TabsContent value="revisao" className="m-0">
-          <Suspense fallback={<TabFallback />}>
-            <AdminReposicaoRevisao />
-          </Suspense>
-        </TabsContent>
+          <TabsContent value="revisao" className="m-0">
+            <Suspense fallback={<TabFallback />}>
+              <AdminReposicaoRevisao />
+            </Suspense>
+          </TabsContent>
 
-        <TabsContent value="alertas" className="m-0">
-          <Suspense fallback={<TabFallback />}>
-            <AdminReposicaoAlertas />
-          </Suspense>
-        </TabsContent>
+          <TabsContent value="alertas" className="m-0">
+            <Suspense fallback={<TabFallback />}>
+              <AdminReposicaoAlertas />
+            </Suspense>
+          </TabsContent>
 
-        <TabsContent value="sla" className="m-0">
-          <Suspense fallback={<TabFallback />}>
-            <AdminReposicaoSlaFornecedor />
-          </Suspense>
-        </TabsContent>
+          <TabsContent value="sla" className="m-0">
+            <Suspense fallback={<TabFallback />}>
+              <AdminReposicaoSlaFornecedor />
+            </Suspense>
+          </TabsContent>
 
-        <TabsContent value="historico" className="m-0">
-          <Suspense fallback={<TabFallback />}>
-            <AdminReposicaoHistorico />
-          </Suspense>
-        </TabsContent>
-      </Tabs>
-    </div>
+          <TabsContent value="historico" className="m-0">
+            <Suspense fallback={<TabFallback />}>
+              <AdminReposicaoHistorico />
+            </Suspense>
+          </TabsContent>
+        </Tabs>
+      </div>
+    </ReposicaoEmpresaProvider>
   );
 }
