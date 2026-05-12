@@ -661,6 +661,11 @@ ${allPages.join('\n<div class="page-break"></div>\n')}
   );
 };
 
+function escapeHtml(s: string | undefined | null): string {
+  if (!s) return '';
+  return s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;').replace(/'/g,'&#39;');
+}
+
 // Build HTML for a single order page (without <html>/<body> wrappers)
 function buildSingleOrderHtml(data: PrintOrderData): string {
   const fmt = (v: number) => v.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' });
@@ -691,20 +696,20 @@ function buildSingleOrderHtml(data: PrintOrderData): string {
   }
 
   const itemsRows = data.items.map((item, i) => {
-    const descLines = [item.descricao];
+    const descLines = [escapeHtml(item.descricao)];
     if (item.tintCorId && item.tintNomeCor) {
       const corParts = item.tintNomeCor.split(' - ');
       const simplified = corParts.length > 2 ? corParts.slice(0, -1).join(' - ') : item.tintNomeCor;
       const embMatch = item.descricao.match(/\b(QT|GL|LT|BD|BH|5L)\b/i);
       const embalagem = embMatch ? embMatch[1].toUpperCase() : '';
-      descLines.push(`Cor: ${item.tintCorId} - ${simplified}${embalagem ? ' - ' + embalagem : ''}`);
+      descLines.push(`Cor: ${escapeHtml(item.tintCorId)} - ${escapeHtml(simplified)}${embalagem ? ' - ' + escapeHtml(embalagem) : ''}`);
     }
     return `<tr style="background:${i % 2 === 1 ? '#f5f5f5' : '#fff'}">
       <td style="padding:6px 4px;border:1px solid #ddd;text-align:center;font-size:11px">${i + 1}</td>
-      <td style="padding:6px 4px;border:1px solid #ddd;font-size:11px">${item.codigo}</td>
+      <td style="padding:6px 4px;border:1px solid #ddd;font-size:11px">${escapeHtml(item.codigo)}</td>
       <td style="padding:6px 4px;border:1px solid #ddd;font-size:11px">${descLines.join('<br/>')}</td>
       <td style="padding:6px 4px;border:1px solid #ddd;text-align:center;font-size:11px">${item.quantidade}</td>
-      <td style="padding:6px 4px;border:1px solid #ddd;text-align:center;font-size:11px">${item.unidade}</td>
+      <td style="padding:6px 4px;border:1px solid #ddd;text-align:center;font-size:11px">${escapeHtml(item.unidade)}</td>
       <td style="padding:6px 4px;border:1px solid #ddd;text-align:right;font-size:11px">${fmt(item.valorUnitario)}</td>
       <td style="padding:6px 4px;border:1px solid #ddd;text-align:right;font-size:11px">${fmt(item.valorTotal)}</td>
     </tr>`;
@@ -714,34 +719,34 @@ function buildSingleOrderHtml(data: PrintOrderData): string {
   const showDesconto = data.desconto > 0 && cnpjsComDesconto.includes(data.customerDocument || '');
 
   const obs = data.isOben
-    ? 'RECIBO DE ENTREGA DE VENDA NÃO PRESENCIAL E-PTA-RE Nº: 45.000035717-51 / OBEN COMÉRCIO LTDA. TRANSPORTADORA: Transporte próprio: Oben Comercio Declaro que recebi as mercadorias constantes dessa Nota Fiscal, e que as mercadorias se destinam a uso e consumo, e que estão em perfeito estado e conferem com pedido feito no âmbito do comércio de telemarketing ou eletrônico e que foram recebidas no local por mim no local indicado acima.\n\nCPF/CNPJ:___________________________________ DATA DA ENTREGA:___/___/____\n\nNome/ASSINATURA:_________________________________________________' + (data.observacoes ? '\n\n' + data.observacoes : '')
-    : data.observacoes || '';
+    ? 'RECIBO DE ENTREGA DE VENDA NÃO PRESENCIAL E-PTA-RE Nº: 45.000035717-51 / OBEN COMÉRCIO LTDA. TRANSPORTADORA: Transporte próprio: Oben Comercio Declaro que recebi as mercadorias constantes dessa Nota Fiscal, e que as mercadorias se destinam a uso e consumo, e que estão em perfeito estado e conferem com pedido feito no âmbito do comércio de telemarketing ou eletrônico e que foram recebidas no local por mim no local indicado acima.\n\nCPF/CNPJ:___________________________________ DATA DA ENTREGA:___/___/____\n\nNome/ASSINATURA:_________________________________________________' + (data.observacoes ? '\n\n' + escapeHtml(data.observacoes) : '')
+    : escapeHtml(data.observacoes) || '';
 
   return `<div>
 <div class="header">
   <div class="header-left">
-    ${data.companyLogoUrl ? `<img src="${data.companyLogoUrl}" class="company-logo" crossorigin="anonymous" />` : ''}
+    ${data.companyLogoUrl ? `<img src="${escapeHtml(data.companyLogoUrl)}" class="company-logo" crossorigin="anonymous" />` : ''}
     <div>
-      <div class="company-name">${data.companyName}</div>
-      <div class="company-info">CNPJ: ${data.companyCnpj} • Tel: ${data.companyPhone}</div>
-      <div class="company-info">${data.companyAddress}</div>
+      <div class="company-name">${escapeHtml(data.companyName)}</div>
+      <div class="company-info">CNPJ: ${escapeHtml(data.companyCnpj)} • Tel: ${escapeHtml(data.companyPhone)}</div>
+      <div class="company-info">${escapeHtml(data.companyAddress)}</div>
     </div>
   </div>
   <div class="order-box">
     <div class="label">PEDIDO DE VENDA</div>
-    <div class="number">Nº ${data.orderNumber}</div>
+    <div class="number">Nº ${escapeHtml(data.orderNumber)}</div>
     <div class="date">${data.date}</div>
   </div>
 </div>
 <div class="section-title">DADOS DO CLIENTE</div>
 <div style="display:flex;justify-content:space-between">
   <div>
-    <div class="customer-name">${data.customerName}</div>
-    <div class="customer-info">CPF/CNPJ: ${data.customerDocument || 'N/A'}${data.customerPhone ? ' • Tel: ' + data.customerPhone : ''}</div>
-    ${data.customerAddress ? `<div class="customer-info" style="margin-top:4px"><strong>Endereço:</strong> ${data.customerAddress}</div>` : ''}
+    <div class="customer-name">${escapeHtml(data.customerName)}</div>
+    <div class="customer-info">CPF/CNPJ: ${escapeHtml(data.customerDocument) || 'N/A'}${data.customerPhone ? ' • Tel: ' + escapeHtml(data.customerPhone) : ''}</div>
+    ${data.customerAddress ? `<div class="customer-info" style="margin-top:4px"><strong>Endereço:</strong> ${escapeHtml(data.customerAddress)}</div>` : ''}
   </div>
   <div class="right-info">
-    ${data.vendedorName ? `Vendedor: ${data.vendedorName}` : ''}
+    ${data.vendedorName ? `Vendedor: ${escapeHtml(data.vendedorName)}` : ''}
   </div>
 </div>
 <div class="section-title">ITENS DO PEDIDO</div>
@@ -762,7 +767,7 @@ function buildSingleOrderHtml(data: PrintOrderData): string {
 </div>
 ${data.condPagamento || installmentText ? `
 <div class="section-title">CONDIÇÃO DE PAGAMENTO</div>
-<div style="font-size:11px;margin-bottom:4px">${data.condPagamento ? `<strong>Prazo:</strong> ${data.condPagamento}` : ''}</div>
+<div style="font-size:11px;margin-bottom:4px">${data.condPagamento ? `<strong>Prazo:</strong> ${escapeHtml(data.condPagamento)}` : ''}</div>
 ${installmentText ? `<div style="font-size:10px;color:#333;background:#f8f8f8;padding:6px 10px;border-radius:2px;border-left:3px solid #e91e63"><strong>Vencimentos:</strong><br/>${installmentText}</div>` : ''}
 ` : ''}
 ${obs ? `<div class="section-title">OBSERVAÇÕES</div><div class="obs-box">${obs.replace(/\n/g, '<br/>')}</div>` : ''}
