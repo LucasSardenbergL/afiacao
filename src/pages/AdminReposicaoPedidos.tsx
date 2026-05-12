@@ -760,14 +760,15 @@ function DetalhesModal({
           <Table>
             <TableHeader>
               <TableRow>
-                <TableHead className="w-[40%] min-w-[320px]">SKU</TableHead>
-                <TableHead className="text-right">Estoque</TableHead>
-                <TableHead className="text-right">Mínimo</TableHead>
+                <TableHead className="w-[34%] min-w-[300px]">SKU / Descrição</TableHead>
+                <TableHead className="text-right">Estoque atual</TableHead>
+                <TableHead className="text-right">EM</TableHead>
                 <TableHead className="text-right">PP</TableHead>
                 <TableHead className="text-right">Emax</TableHead>
-                <TableHead className="text-right">Qtde</TableHead>
+                <TableHead className="text-right">Qtde sugerida</TableHead>
+                <TableHead className="text-right">Qtde final</TableHead>
                 <TableHead className="text-right">Preço</TableHead>
-                <TableHead className="text-right">Total linha</TableHead>
+                <TableHead className="text-right">Valor linha</TableHead>
                 {podeEditar && <TableHead className="text-right">Ações</TableHead>}
               </TableRow>
             </TableHeader>
@@ -777,6 +778,7 @@ function DetalhesModal({
                 const minimo = Number(l.estoque_minimo ?? 0);
                 const pp = Number(l.ponto_pedido ?? 0);
                 const zoneClass = getEstoqueZoneClass(estoque, minimo, pp);
+                const sugerida = Number(l.qtde_sugerida ?? 0);
                 return (
                 <TableRow key={l.id}>
                   <TableCell className="align-top whitespace-normal">
@@ -784,14 +786,20 @@ function DetalhesModal({
                     <div className="text-sm font-medium whitespace-normal break-words leading-snug">
                       {l.sku_descricao ?? '—'}
                     </div>
-                    {l.primeira_compra && (
-                      <Badge variant="destructive" className="mt-1 text-[10px] h-4">primeira compra</Badge>
-                    )}
+                    <div className="flex gap-1 mt-1">
+                      {l.primeira_compra && (
+                        <Badge variant="destructive" className="text-[10px] h-4">primeira compra</Badge>
+                      )}
+                      {l.ajustado_humano && (
+                        <Badge variant="outline" className="text-[10px] h-4">ajustado</Badge>
+                      )}
+                    </div>
                   </TableCell>
                   <TableCell className={`text-right tabular-nums ${zoneClass}`}>{estoque.toFixed(0)}</TableCell>
                   <TableCell className="text-right tabular-nums text-muted-foreground">{minimo.toFixed(0)}</TableCell>
                   <TableCell className="text-right tabular-nums">{pp.toFixed(0)}</TableCell>
                   <TableCell className="text-right tabular-nums">{Number(l.estoque_maximo ?? 0).toFixed(0)}</TableCell>
+                  <TableCell className="text-right tabular-nums text-muted-foreground">{sugerida.toFixed(0)}</TableCell>
                   <TableCell className="text-right">
                     {podeEditar ? (
                       <Input
@@ -806,7 +814,10 @@ function DetalhesModal({
                         }}
                       />
                     ) : (
-                      <span className="tabular-nums">{l._qtd.toFixed(0)}</span>
+                      <span className={cn(
+                        "tabular-nums",
+                        l._qtd !== sugerida && "font-semibold text-amber-700 dark:text-amber-400",
+                      )}>{l._qtd.toFixed(0)}</span>
                     )}
                   </TableCell>
                   <TableCell className="text-right tabular-nums">{formatBRL(l.preco_unitario)}</TableCell>
@@ -840,13 +851,20 @@ function DetalhesModal({
                 );
               })}
               <TableRow>
-                <TableCell colSpan={7} className="text-right font-medium">Total</TableCell>
+                <TableCell colSpan={8} className="text-right font-medium">Total</TableCell>
                 <TableCell className="text-right font-bold tabular-nums">{formatBRL(totalAtual)}</TableCell>
                 {podeEditar && <TableCell />}
               </TableRow>
             </TableBody>
           </Table>
         )}
+
+        {/* Status de envio ao portal + Histórico de ações */}
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+          <PortalStatusPanel pedido={pedido} />
+          <HistoricoAcoesPanel pedido={pedido} />
+        </div>
+
 
         {podeEditar && (
           <div>
