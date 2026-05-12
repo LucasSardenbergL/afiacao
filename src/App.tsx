@@ -261,6 +261,7 @@ const App = () => (
               <Route path="admin/reposicao/aumentos/:id" element={<AdminReposicaoAumentoDetail />} />
               <Route path="admin/reposicao/oportunidades" element={<AdminReposicaoOportunidades />} />
               <Route path="admin/reposicao/negociacao-paralela" element={<AdminReposicaoNegociacaoParalela />} />
+              <Route path="admin/reposicao/cockpit" element={<AdminReposicaoCockpit />} />
               <Route path="admin/ajuda" element={<AdminAjuda />} />
               <Route path="admin/des/trimestre-atual" element={<AdminDesTrimestreAtual />} />
               <Route path="admin/notificacoes" element={<AdminNotificacoes />} />
