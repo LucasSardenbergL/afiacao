@@ -72,18 +72,21 @@ export default function Recebimento({ statusFilter }: { statusFilter?: string[] 
 
   // Fetch NF-es with item counts
   const { data: nfes, isLoading } = useQuery({
-    queryKey: ['nfe_recebimentos', selectedWarehouse],
+    queryKey: ['nfe_recebimentos', selectedWarehouse, statusFilter],
     queryFn: async () => {
       if (!selectedWarehouse) return [];
-      const { data, error } = await supabase
+      let query = supabase
         .from('nfe_recebimentos')
         .select(`
           *,
           nfe_recebimento_itens(id, status_item, quantidade_conferida, quantidade_esperada),
           cte_associados(id, valor_frete)
         `)
-        .eq('warehouse_id', selectedWarehouse)
-        .order('data_emissao', { ascending: true });
+        .eq('warehouse_id', selectedWarehouse);
+      if (statusFilter && statusFilter.length > 0) {
+        query = query.in('status', statusFilter);
+      }
+      const { data, error } = await query.order('data_emissao', { ascending: true });
       if (error) throw error;
       return data ?? [];
     },
