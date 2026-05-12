@@ -22,6 +22,7 @@ const AdminReposicaoPedidos = lazy(() => import("./AdminReposicaoPedidos"));
 const AdminReposicaoCadeiaLogistica = lazy(() => import("./AdminReposicaoCadeiaLogistica"));
 const AdminReposicaoGruposProducao = lazy(() => import("./AdminReposicaoGruposProducao"));
 const AdminReposicaoAplicacao = lazy(() => import("./AdminReposicaoAplicacao"));
+const AdminSkuMapeamento = lazy(() => import("./AdminSkuMapeamento"));
 
 const TabFallback = () => (
   <div className="flex items-center justify-center py-16 text-muted-foreground">
