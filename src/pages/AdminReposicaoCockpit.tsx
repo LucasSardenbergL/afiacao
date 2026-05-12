@@ -19,6 +19,7 @@ import {
 const AdminReposicaoPedidos = lazy(() => import("./AdminReposicaoPedidos"));
 const AdminReposicaoOportunidades = lazy(() => import("./AdminReposicaoOportunidades"));
 const AdminReposicaoAplicacao = lazy(() => import("./AdminReposicaoAplicacao"));
+const AdminReposicaoHistorico = lazy(() => import("./AdminReposicaoHistorico"));
 
 const EMPRESA = "OBEN";
 
