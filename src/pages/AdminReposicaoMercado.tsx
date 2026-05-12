@@ -42,7 +42,8 @@ function KpiCards() {
       const { count, error } = await (supabase as any)
         .from("v_oportunidade_economica_hoje")
         .select("*", { count: "exact", head: true })
-        .eq("empresa", empresa);
+        .eq("empresa", empresa)
+        .gt("dias_ate_limite", 0);
       if (error) return 0;
       return count ?? 0;
     },
