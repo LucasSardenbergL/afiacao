@@ -89,6 +89,21 @@ function KpiCards() {
     staleTime: 30000,
   });
 
+  // (d) Grupos de produção ativos
+  const { data: gruposAtivos } = useQuery({
+    queryKey: ["cadastros-grupos-ativos", empresa],
+    queryFn: async () => {
+      const { count, error } = await (supabase as any)
+        .from("fornecedor_grupo_producao")
+        .select("*", { count: "exact", head: true })
+        .eq("empresa", empresa);
+      if (error) return 0;
+      return count ?? 0;
+    },
+    refetchInterval: 60000,
+    staleTime: 30000,
+  });
+
   const cards = [
     {
       label: "Pedidos de compra abertos",
@@ -111,10 +126,17 @@ function KpiCards() {
       tone: filaPendente && filaPendente > 0 ? "text-primary" : "text-muted-foreground",
       border: filaPendente && filaPendente > 0 ? "border-primary/40" : "border-border",
     },
+    {
+      label: "Grupos de produção",
+      value: gruposAtivos ?? 0,
+      icon: Layers,
+      tone: gruposAtivos && gruposAtivos > 0 ? "text-primary" : "text-muted-foreground",
+      border: gruposAtivos && gruposAtivos > 0 ? "border-primary/40" : "border-border",
+    },
   ];
 
   return (
-    <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+    <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
       {cards.map((c) => (
         <Card key={c.label} className={c.border}>
           <CardContent className="pt-4 flex items-center justify-between">
