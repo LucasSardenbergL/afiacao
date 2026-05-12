@@ -87,6 +87,29 @@ const diasBadgeClass = (d: number | null | undefined) => {
   return "bg-muted text-muted-foreground border-border";
 };
 
+const STATUS_PEDIDO_LABEL: Record<string, { label: string; className: string }> = {
+  pendente_aprovacao: { label: "Pend. aprovação", className: "bg-amber-500/15 text-amber-700 dark:text-amber-400 border-amber-500/30" },
+  aprovado_aguardando_disparo: { label: "Aprovado", className: "bg-blue-500/15 text-blue-700 dark:text-blue-400 border-blue-500/30" },
+  disparado: { label: "Disparado", className: "bg-emerald-500/15 text-emerald-700 dark:text-emerald-400 border-emerald-500/30" },
+  disparado_simulado: { label: "Simulado", className: "bg-emerald-500/15 text-emerald-700 dark:text-emerald-400 border-emerald-500/30" },
+  cancelado: { label: "Cancelado", className: "bg-destructive/15 text-destructive border-destructive/30" },
+  expirado_sem_aprovacao: { label: "Expirado", className: "bg-muted text-muted-foreground border-border" },
+  falha_envio: { label: "Falha envio", className: "bg-destructive/15 text-destructive border-destructive/30" },
+};
+
+const STATUS_PORTAL_LABEL: Record<string, { label: string; className: string }> = {
+  enviado: { label: "Enviado", className: "bg-emerald-500/15 text-emerald-700 dark:text-emerald-400 border-emerald-500/30" },
+  pendente: { label: "Aguardando envio", className: "bg-amber-500/15 text-amber-700 dark:text-amber-400 border-amber-500/30" },
+  aguardando: { label: "Aguardando envio", className: "bg-amber-500/15 text-amber-700 dark:text-amber-400 border-amber-500/30" },
+  falha: { label: "Falha", className: "bg-destructive/15 text-destructive border-destructive/30" },
+  erro: { label: "Falha", className: "bg-destructive/15 text-destructive border-destructive/30" },
+};
+
+const formatDateTime = (d: string | null | undefined) => {
+  if (!d) return "—";
+  return new Date(d).toLocaleString("pt-BR", { day: "2-digit", month: "2-digit", hour: "2-digit", minute: "2-digit" });
+};
+
 export default function AdminReposicaoCockpit() {
   const queryClient = useQueryClient();
   const navigate = useNavigate();
