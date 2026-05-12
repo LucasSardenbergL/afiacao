@@ -248,7 +248,7 @@ function PickingTab({ account }: { account: string }) {
               </TableRow>
             )}
             {(data ?? []).map((t: any) => (
-              <>
+              <Fragment key={t.id}>
                 <TableRow key={t.id}>
                   <TableCell>
                     <Button
