@@ -19,6 +19,7 @@ import {
 const AdminReposicaoPedidos = lazy(() => import("./AdminReposicaoPedidos"));
 const AdminReposicaoOportunidades = lazy(() => import("./AdminReposicaoOportunidades"));
 const AdminReposicaoAplicacao = lazy(() => import("./AdminReposicaoAplicacao"));
+const AdminReposicaoHistorico = lazy(() => import("./AdminReposicaoHistorico"));
 
 const EMPRESA = "OBEN";
 
@@ -192,8 +193,11 @@ export default function AdminReposicaoCockpit() {
         </TabsContent>
 
         <TabsContent value="historico" className="m-0">
-          <CiclosAnterioresTab />
+          <Suspense fallback={<TabFallback />}>
+            <AdminReposicaoHistorico />
+          </Suspense>
         </TabsContent>
+
       </Tabs>
     </div>
   );
