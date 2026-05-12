@@ -573,15 +573,21 @@ Deno.serve(async (req: Request) => {
   const windowStart = new Date().toISOString();
 
   let empresa = "OBEN";
-  const dataCiclo = new Date().toISOString().slice(0, 10);
+  let dataCiclo = new Date().toISOString().slice(0, 10);
+  let pedidoId: number | null = null;
 
   try {
     if (req.method === "POST") {
       const body = await req.json().catch(() => ({}));
       if (body.empresa) empresa = body.empresa;
+      if (body.data_ciclo) dataCiclo = body.data_ciclo;
+      if (body.pedido_id != null) {
+        const parsedPedidoId = Number(body.pedido_id);
+        if (Number.isFinite(parsedPedidoId)) pedidoId = parsedPedidoId;
+      }
     }
 
-    console.log(`[disparar-pedidos] Início ${empresa} ${dataCiclo}`);
+    console.log(`[disparar-pedidos] Início ${empresa} ${dataCiclo}${pedidoId ? ` pedido=${pedidoId}` : ""}`);
 
     // 1. Config (modo + email)
     const { data: cfg, error: cfgErr } = await db
@@ -596,14 +602,20 @@ Deno.serve(async (req: Request) => {
     console.log(`[disparar-pedidos] modo=${modo} staffEmail=${staffEmail}`);
 
     // 2. Pedidos aprovados (com dados do fornecedor)
-    const { data: aprovadosRaw, error: aprErr } = await db
+    let aprovadosQuery = db
       .from("pedido_compra_sugerido")
       .select("id, empresa, fornecedor_nome, grupo_codigo, data_ciclo, valor_total, num_skus, status, condicao_pagamento_codigo, condicao_pagamento_descricao, num_parcelas")
       .eq("empresa", empresa)
-      .eq("data_ciclo", dataCiclo)
       .eq("status", "aprovado_aguardando_disparo");
+
+    aprovadosQuery = pedidoId
+      ? aprovadosQuery.eq("id", pedidoId)
+      : aprovadosQuery.eq("data_ciclo", dataCiclo);
+
+    const { data: aprovadosRaw, error: aprErr } = await aprovadosQuery;
     if (aprErr) throw new Error(`Aprovados: ${aprErr.message}`);
     const aprovados = (aprovadosRaw ?? []) as PedidoRow[];
+    if (pedidoId && aprovados[0]?.data_ciclo) dataCiclo = aprovados[0].data_ciclo;
 
     // Enrich com dados do fornecedor
     for (const p of aprovados) {
