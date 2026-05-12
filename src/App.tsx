@@ -117,6 +117,7 @@ const AdminReposicaoAumentoDetail = lazy(() => import("./pages/AdminReposicaoAum
 const AdminReposicaoOportunidades = lazy(() => import("./pages/AdminReposicaoOportunidades"));
 const AdminReposicaoNegociacaoParalela = lazy(() => import("./pages/AdminReposicaoNegociacaoParalela"));
 const AdminReposicaoCockpit = lazy(() => import("./pages/AdminReposicaoCockpit"));
+const AdminReposicaoParametrosQualidade = lazy(() => import("./pages/AdminReposicaoParametrosQualidade"));
 const AdminAjuda = lazy(() => import("./pages/AdminAjuda"));
 const AdminDesTrimestreAtual = lazy(() => import("./pages/AdminDesTrimestreAtual"));
 const AdminNotificacoes = lazy(() => import("./pages/AdminNotificacoes"));
