@@ -83,9 +83,36 @@ const diasBadgeClass = (d: number | null | undefined) => {
 };
 
 export default function AdminReposicaoCockpit() {
+  const queryClient = useQueryClient();
   const [filtroCenario, setFiltroCenario] = useState<string>(ALL);
   const [filtroFornecedor, setFiltroFornecedor] = useState<string>(ALL);
   const [rodandoGeracao, setRodandoGeracao] = useState(false);
+
+  const handleRodarGeracao = async () => {
+    setRodandoGeracao(true);
+    try {
+      const { data, error } = await supabase.rpc("ciclo_oportunidade_do_dia" as any, {
+        p_empresa: EMPRESA,
+      });
+      if (error) throw error;
+      const result = (data ?? {}) as {
+        pedidos_criados?: number;
+        skus_incluidos?: number;
+        valor_total?: number;
+      };
+      toast.success(
+        `Ciclo gerado: ${result.pedidos_criados ?? 0} pedidos · ${
+          result.skus_incluidos ?? 0
+        } SKUs · ${formatBRL(result.valor_total ?? 0)}`,
+      );
+      queryClient.invalidateQueries({ queryKey: ["cockpit-oportunidades"] });
+      refetch();
+    } catch (e: any) {
+      toast.error(e?.message || "Erro ao gerar ciclo de oportunidade");
+    } finally {
+      setRodandoGeracao(false);
+    }
+  };
 
   const { data: oportunidades = [], isLoading, refetch } = useQuery({
     queryKey: ["cockpit-oportunidades", EMPRESA],
