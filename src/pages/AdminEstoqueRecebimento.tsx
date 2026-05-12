@@ -196,19 +196,19 @@ export default function AdminEstoqueRecebimento() {
 
         <TabsContent value="nfes" className="m-0">
           <Suspense fallback={<TabFallback />}>
-            <Recebimento />
+            <Recebimento statusFilter={['pendente', 'divergencia']} />
           </Suspense>
         </TabsContent>
 
         <TabsContent value="conferencia" className="m-0">
           <Suspense fallback={<TabFallback />}>
-            <Recebimento key="conferencia" />
+            <Recebimento key="conferencia" statusFilter={['em_conferencia']} />
           </Suspense>
         </TabsContent>
 
         <TabsContent value="historico" className="m-0">
           <Suspense fallback={<TabFallback />}>
-            <Recebimento key="historico" />
+            <Recebimento key="historico" statusFilter={['efetivado', 'conferido']} />
           </Suspense>
         </TabsContent>
 
