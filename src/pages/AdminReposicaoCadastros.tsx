@@ -148,7 +148,7 @@ export default function AdminReposicaoCadastros() {
           <div className="flex items-center gap-3">
             <Database className="h-6 w-6 text-primary" />
             <div>
-              <h1 className="text-2xl font-bold">Cadastros & Operação</h1>
+              <h1 className="text-2xl font-bold">Cadastros & Config</h1>
               <p className="text-sm text-muted-foreground">
                 Pedidos de compra, cadeia logística, grupos de produção e aplicação no Omie — em um só lugar.
               </p>
