@@ -166,6 +166,8 @@ export default function AdminReposicaoCockpit() {
         </div>
       </header>
 
+      <ProcessoComprasStepper currentStep={3} />
+
       <Tabs value={tab} onValueChange={handleTab} className="space-y-4">
         <TabsList className="grid grid-cols-2 sm:grid-cols-4 w-full">
           <TabsTrigger value="ciclo">Ciclo de hoje</TabsTrigger>
