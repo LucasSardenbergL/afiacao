@@ -194,7 +194,7 @@ export default function AdminReposicaoCadastros() {
         <KpiCards />
 
         <Tabs value={tab} onValueChange={handleTab} className="space-y-4">
-          <TabsList className="grid grid-cols-2 sm:grid-cols-4 w-full">
+          <TabsList className="grid grid-cols-2 sm:grid-cols-5 w-full">
             <TabsTrigger value="pedidos">
               <ShoppingCart className="h-4 w-4 mr-1" /> Pedidos
             </TabsTrigger>
@@ -203,6 +203,9 @@ export default function AdminReposicaoCadastros() {
             </TabsTrigger>
             <TabsTrigger value="grupos">
               <Layers className="h-4 w-4 mr-1" /> Grupos
+            </TabsTrigger>
+            <TabsTrigger value="mapeamento">
+              <Link2 className="h-4 w-4 mr-1" /> Mapeamento de SKUs
             </TabsTrigger>
             <TabsTrigger value="aplicacao">
               <Send className="h-4 w-4 mr-1" /> Aplicação Omie
