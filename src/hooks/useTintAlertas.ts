@@ -3,7 +3,7 @@ import { supabase } from '@/integrations/supabase/client';
 
 /**
  * Conta importações tintométricas (tint_importacoes) com erros
- * (registros_erro > 0) na conta 'oben' nos últimos 30 dias.
+ * (registros_erro > 0) na conta 'oben' nos últimos 60 dias.
  * Retorna null em caso de erro / tabela indisponível.
  */
 export function useTintAlertas() {
@@ -11,7 +11,7 @@ export function useTintAlertas() {
     queryKey: ['tint-alertas-erros-count'],
     queryFn: async () => {
       try {
-        const since = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString();
+        const since = new Date(Date.now() - 60 * 24 * 60 * 60 * 1000).toISOString();
         const { count, error } = await (supabase as any)
           .from('tint_importacoes')
           .select('*', { count: 'exact', head: true })
