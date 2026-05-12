@@ -160,7 +160,7 @@ export default function AdminReposicaoRevisao() {
   const { user } = useAuth();
   const queryClient = useQueryClient();
 
-  const [empresa] = useState("OBEN");
+  const { empresa } = useReposicaoEmpresa();
   const [classes, setClasses] = useState<string[]>([]);
   const [statusFilter, setStatusFilter] = useState<StatusFilterValue>("pendente");
   const [search, setSearch] = useState("");

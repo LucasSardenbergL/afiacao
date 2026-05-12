@@ -36,7 +36,7 @@ import {
   YAxis,
 } from "recharts";
 
-const EMPRESA = "OBEN";
+import { useReposicaoEmpresa } from "@/contexts/ReposicaoEmpresaContext";
 
 type SlaStatus =
   | "cumprindo"

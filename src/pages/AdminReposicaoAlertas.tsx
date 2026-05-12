@@ -322,7 +322,7 @@ export default function AdminReposicaoAlertas() {
       // Recálculo automático após exclusão
       if (decisao === "excluir") {
         try {
-          await (supabase as any).rpc("atualizar_parametros_numericos_skus", { p_empresa: "OBEN" });
+          await (supabase as any).rpc("atualizar_parametros_numericos_skus", { p_empresa: empresa });
         } catch (e) {
           console.warn("Recálculo falhou:", e);
         }
