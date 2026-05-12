@@ -112,7 +112,7 @@ export default function AdminReposicaoCockpit() {
         .lte("data_ciclo", fim);
       if (error) throw error;
       type Row = { data_ciclo: string; fornecedor_nome: string | null; valor_total: number | null; status: string | null };
-      const rows = (data ?? []) as Row[];
+      const rows = ((data ?? []) as unknown) as Row[];
       const map = new Map<string, { data: string; fornecedores: Set<string>; pedidos: number; valor: number; disparados: number; cancelados: number }>();
       for (const r of rows) {
         const key = r.data_ciclo;
