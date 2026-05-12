@@ -30,7 +30,7 @@ const TabFallback = () => (
 function KpiCards() {
   // (a) SKUs pendentes de aprovação — mesma query de AdminReposicaoRevisao (statusFilter === "pendente")
   const { data: skuPendentes } = useQuery({
-    queryKey: ["parametros-qualidade-sku-pendentes"],
+    queryKey: ["parametros-sku-pendentes"],
     queryFn: async () => {
       const { count, error } = await supabase
         .from("sku_parametros")
@@ -47,7 +47,7 @@ function KpiCards() {
 
   // (b) Alertas críticos pendentes — mesma query de AdminReposicaoAlertas (stats.criticos)
   const { data: alertasCriticos } = useQuery({
-    queryKey: ["parametros-qualidade-alertas-criticos"],
+    queryKey: ["parametros-alertas-criticos"],
     queryFn: async () => {
       const { count, error } = await supabase
         .from("eventos_outlier")
@@ -63,7 +63,7 @@ function KpiCards() {
 
   // (c) Fornecedores violando SLA — mesma view de AdminReposicaoSlaFornecedor (v_fornecedor_sla_compliance)
   const { data: fornViolando } = useQuery({
-    queryKey: ["parametros-qualidade-sla-violando"],
+    queryKey: ["parametros-sla-violando"],
     queryFn: async () => {
       const { data, error } = await (supabase as any)
         .from("v_fornecedor_sla_compliance")
@@ -118,7 +118,7 @@ function KpiCards() {
   );
 }
 
-export default function AdminReposicaoParametrosQualidade() {
+export default function AdminReposicaoParametros() {
   const [params, setParams] = useSearchParams();
   const tab = params.get("tab") ?? "revisao";
 
@@ -145,20 +145,14 @@ export default function AdminReposicaoParametrosQualidade() {
       <Tabs value={tab} onValueChange={handleTab} className="space-y-4">
         <TabsList className="grid grid-cols-2 sm:grid-cols-4 w-full">
           <TabsTrigger value="revisao">Revisão</TabsTrigger>
+          <TabsTrigger value="alertas">Alertas</TabsTrigger>
+          <TabsTrigger value="sla">SLA de Fornecedor</TabsTrigger>
           <TabsTrigger value="historico">Histórico</TabsTrigger>
-          <TabsTrigger value="alertas">Outliers</TabsTrigger>
-          <TabsTrigger value="sla">SLA fornecedor</TabsTrigger>
         </TabsList>
 
         <TabsContent value="revisao" className="m-0">
           <Suspense fallback={<TabFallback />}>
             <AdminReposicaoRevisao />
-          </Suspense>
-        </TabsContent>
-
-        <TabsContent value="historico" className="m-0">
-          <Suspense fallback={<TabFallback />}>
-            <AdminReposicaoHistorico />
           </Suspense>
         </TabsContent>
 
@@ -171,6 +165,12 @@ export default function AdminReposicaoParametrosQualidade() {
         <TabsContent value="sla" className="m-0">
           <Suspense fallback={<TabFallback />}>
             <AdminReposicaoSlaFornecedor />
+          </Suspense>
+        </TabsContent>
+
+        <TabsContent value="historico" className="m-0">
+          <Suspense fallback={<TabFallback />}>
+            <AdminReposicaoHistorico />
           </Suspense>
         </TabsContent>
       </Tabs>
