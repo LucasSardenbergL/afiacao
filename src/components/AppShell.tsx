@@ -23,6 +23,7 @@ import {
 import { HelpDrawer } from '@/components/help/HelpDrawer';
 import { useAlertasCriticos } from '@/hooks/useAlertasCriticos';
 import { useFinanceiroAlertas } from '@/hooks/useFinanceiroAlertas';
+import { useTintAlertas } from '@/hooks/useTintAlertas';
 
 /* ─── Navigation config ─── */
 interface NavItem {
