@@ -347,7 +347,7 @@ Deno.serve(async (req) => {
     if (roleErr) {
       return jsonRes({ error: "Falha ao validar permissão" }, 500);
     }
-    const STAFF_ROLES = new Set(["admin", "employee", "manager", "master"]);
+    const STAFF_ROLES = new Set(["employee", "master"]);
     const isStaff = (roleRows ?? []).some((r: { role: string }) => STAFF_ROLES.has(r.role));
     if (!isStaff) {
       return jsonRes({ error: "Forbidden" }, 403);

@@ -3,7 +3,7 @@ import { useAuth } from '@/contexts/AuthContext';
 import { supabase } from '@/integrations/supabase/client';
 import { logger } from '@/lib/logger';
 
-export type AppRole = 'admin' | 'employee' | 'customer' | 'master';
+export type AppRole = 'employee' | 'customer' | 'master';
 
 interface UseUserRoleReturn {
   role: AppRole | null;
@@ -63,11 +63,11 @@ export function useUserRole(): UseUserRoleReturn {
 
   return {
     role,
-    isAdmin: role === 'admin',
+    isAdmin: role === 'master',
     isEmployee: role === 'employee',
     isCustomer: role === 'customer',
     isMaster: role === 'master',
-    isStaff: role === 'admin' || role === 'employee' || role === 'master',
+    isStaff: role === 'master' || role === 'employee',
     loading,
     refetch: fetchRole,
   };

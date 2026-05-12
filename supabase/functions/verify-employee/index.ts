@@ -273,7 +273,7 @@ serve(async (req) => {
           .eq("user_id", user.id)
           .single();
 
-        if (roleData?.role !== "admin") {
+        if (roleData?.role !== "master") {
           return new Response(
             JSON.stringify({ error: "Sem permissão" }),
             { status: 403, headers: { ...corsHeaders, "Content-Type": "application/json" } }

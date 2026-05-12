@@ -3,7 +3,7 @@ import { User, Session } from '@supabase/supabase-js';
 import { supabase } from '@/integrations/supabase/client';
 import { logger } from '@/lib/logger';
 
-export type AppRole = 'admin' | 'employee' | 'customer' | 'master';
+export type AppRole = 'employee' | 'customer' | 'master';
 
 interface AuthContextType {
   user: User | null;
@@ -76,7 +76,7 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
 
       // Staff (admin/employee/master) or users with commercial roles are auto-approved
       const hasCommercialRole = !!commercialResult.data?.commercial_role;
-      const isStaffRole = fetchedRole === 'admin' || fetchedRole === 'employee' || fetchedRole === 'master';
+      const isStaffRole = fetchedRole === 'employee' || fetchedRole === 'master';
       if (isStaffRole || hasCommercialRole) {
         setIsApproved(true);
         // Auto-approve staff profile if not yet approved
@@ -255,7 +255,7 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
     }
   };
 
-  const isAdmin = role === 'admin';
+  const isAdmin = role === 'master';
   const isEmployee = role === 'employee';
   const isMaster = role === 'master';
   const isStaff = isAdmin || isEmployee || isMaster;

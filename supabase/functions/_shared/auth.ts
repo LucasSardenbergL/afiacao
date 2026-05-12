@@ -71,7 +71,7 @@ export async function authorizeCronOrStaff(req: Request): Promise<AuthResult> {
     );
     if (!roleRes.ok) return { ok: false, response: unauthorized() };
     const roles = (await roleRes.json()) as Array<{ role: string }>;
-    const allowed = new Set(["admin", "employee", "manager", "master"]);
+    const allowed = new Set(["employee", "master"]);
     if (roles.some((r) => allowed.has(r.role))) {
       return { ok: true, via: "staff", userId: user.id };
     }

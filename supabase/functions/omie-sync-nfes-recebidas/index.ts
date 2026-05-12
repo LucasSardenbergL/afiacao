@@ -599,7 +599,7 @@ async function authorizeCronOrStaff(req: Request): Promise<boolean> {
     const roleRes = await fetch(`${SUPA_URL}/rest/v1/user_roles?user_id=eq.${user.id}&select=role`, { headers: { apikey: SVC_KEY, Authorization: `Bearer ${SVC_KEY}` } });
     if (!roleRes.ok) return false;
     const roles = (await roleRes.json()) as Array<{ role: string }>;
-    const allowed = new Set(["admin","employee","manager","master"]);
+    const allowed = new Set(["employee", "master"]);
     return roles.some((r) => allowed.has(r.role));
   } catch { return false; }
 }

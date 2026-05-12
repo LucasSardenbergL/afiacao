@@ -933,7 +933,7 @@ serve(async (req) => {
           .eq("user_id", userId)
           .maybeSingle();
 
-        if (!roleData || (roleData.role !== "admin" && roleData.role !== "employee")) {
+        if (!roleData || (roleData.role !== "master" && roleData.role !== "employee")) {
           return new Response(
             JSON.stringify({ error: "Apenas funcionários podem alterar pedidos" }),
             { status: 403, headers: { ...corsHeaders, "Content-Type": "application/json" } }
@@ -1087,7 +1087,7 @@ serve(async (req) => {
           .eq("user_id", userId)
           .maybeSingle();
 
-        if (!deleteRoleData || (deleteRoleData.role !== "admin" && deleteRoleData.role !== "employee")) {
+        if (!deleteRoleData || (deleteRoleData.role !== "master" && deleteRoleData.role !== "employee")) {
           return new Response(
             JSON.stringify({ error: "Apenas funcionários podem excluir pedidos" }),
             { status: 403, headers: { ...corsHeaders, "Content-Type": "application/json" } }

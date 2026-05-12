@@ -55,7 +55,7 @@ const AdminPriceTable = () => {
       .eq('user_id', user.id)
       .single();
 
-    if (roleData?.role === 'admin') {
+    if (roleData?.role === 'master') {
       setAuthorized(true);
     } else {
       navigate('/', { replace: true });

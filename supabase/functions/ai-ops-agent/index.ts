@@ -181,7 +181,7 @@ serve(async (req) => {
     // ── Role check: admin or employee only ──
     const { data: roleRow } = await supabaseAuth.from('user_roles').select('role').eq('user_id', user.id).maybeSingle();
     const userRole = roleRow?.role;
-    if (!userRole || !['admin', 'employee', 'master'].includes(userRole)) {
+    if (!userRole || !['employee', 'master'].includes(userRole)) {
       return new Response(JSON.stringify({ error: 'Forbidden' }), { status: 403, headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
     }
 

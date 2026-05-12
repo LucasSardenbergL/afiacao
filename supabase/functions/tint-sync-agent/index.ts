@@ -31,7 +31,7 @@ Deno.serve(async (req) => {
     const { data: userData, error: userErr } = await userClient.auth.getUser();
     if (userErr || !userData?.user) return { ok: false, resp: json({ ok: false, error: "Unauthorized" }, 401) };
     const { data: roles } = await sb.from("user_roles").select("role").eq("user_id", userData.user.id);
-    const allowed = new Set(["admin", "manager", "master", "employee"]);
+    const allowed = new Set(["employee", "master"]);
     if (!roles?.some((r: { role: string }) => allowed.has(r.role))) {
       return { ok: false, resp: json({ ok: false, error: "Forbidden" }, 403) };
     }
