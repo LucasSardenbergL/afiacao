@@ -435,7 +435,7 @@ export function useDirectTintImport() {
       for (let si = 0; si < newFormulas.length; si += 50) {
         const subBatch = newFormulas.slice(si, si + 50);
         const { data: inserted, error: insErr } = await supabase.from('tint_formulas')
-          .insert(subBatch.map(f => f.row)).select('id');
+          .upsert(subBatch.map(f => f.row), { onConflict: 'chave' }).select('id');
         if (insErr) {
           logger.critical('Tint formulas insert failed — formula data lost', {
             stage: 'upload_formulas',
