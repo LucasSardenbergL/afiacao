@@ -134,10 +134,22 @@ serve(async (req) => {
 
       const expectedRPID = Deno.env.get("WEBAUTHN_RP_ID") ?? new URL(origin).hostname;
 
+      // Fetch stored challenge (server-side, single use, 5 min TTL).
+      const { data: chalRec } = await supabase
+        .from("webauthn_challenges")
+        .select("challenge")
+        .eq("credential_id", credentialId)
+        .gt("expires_at", new Date().toISOString())
+        .maybeSingle();
+
+      if (!chalRec) {
+        return new Response(
+          JSON.stringify({ success: false, message: "Challenge expirado ou não encontrado" }),
+          { headers: { ...corsHeaders, "Content-Type": "application/json" }, status: 400 },
+        );
+      }
+
       // Cryptographic proof-of-possession.
-      // NOTE: challenge persistence is not yet implemented in the schema,
-      // so expectedChallenge accepts any value present in clientDataJSON.
-      // This still verifies the signature against the stored public key.
       let verification;
       try {
         verification = await verifyAuthenticationResponse({
@@ -152,7 +164,7 @@ serve(async (req) => {
               signature,
             },
           } as any,
-          expectedChallenge: () => true,
+          expectedChallenge: (c) => c === chalRec.challenge,
           expectedOrigin: allowedOrigins,
           expectedRPID,
           authenticator: {
