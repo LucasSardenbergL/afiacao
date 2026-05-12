@@ -200,6 +200,12 @@ serve(async (req) => {
         }
       }
 
+      // Consume challenge (single use).
+      await supabase
+        .from("webauthn_challenges")
+        .delete()
+        .eq("credential_id", credentialId);
+
       // Only update counter / last_used_at after successful verification.
       await supabase
         .from("webauthn_credentials")
