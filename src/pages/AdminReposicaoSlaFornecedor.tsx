@@ -136,6 +136,7 @@ const cardTone = (pct: number | null) => {
 };
 
 export default function AdminReposicaoSlaFornecedor() {
+  const { empresa } = useReposicaoEmpresa();
   const [filtroFornecedor, setFiltroFornecedor] = useState<string>("__all__");
   const [filtroStatus, setFiltroStatus] = useState<SlaStatus[]>([
     "cumprindo",
@@ -150,12 +151,12 @@ export default function AdminReposicaoSlaFornecedor() {
 
   // Compliance por fornecedor
   const { data: fornecedores, isLoading: loadingFor } = useQuery({
-    queryKey: ["sla-fornecedor", EMPRESA],
+    queryKey: ["sla-fornecedor", empresa],
     queryFn: async () => {
       const { data, error } = await (supabase as any)
         .from("v_fornecedor_sla_compliance")
         .select("*")
-        .eq("empresa", EMPRESA)
+        .eq("empresa", empresa)
         .order("pct_compliance", { ascending: true, nullsFirst: false });
       if (error) throw error;
       return (data ?? []) as ForCompliance[];
@@ -164,12 +165,12 @@ export default function AdminReposicaoSlaFornecedor() {
 
   // Compliance por SKU
   const { data: skus, isLoading: loadingSkus } = useQuery({
-    queryKey: ["sla-sku", EMPRESA],
+    queryKey: ["sla-sku", empresa],
     queryFn: async () => {
       const { data, error } = await (supabase as any)
         .from("v_sku_sla_compliance")
         .select("*")
-        .eq("empresa", EMPRESA)
+        .eq("empresa", empresa)
         .limit(5000);
       if (error) throw error;
       return (data ?? []) as SkuCompliance[];
