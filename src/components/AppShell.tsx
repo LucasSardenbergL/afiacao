@@ -21,6 +21,7 @@ import {
   TooltipTrigger,
 } from '@/components/ui/tooltip';
 import { HelpDrawer } from '@/components/help/HelpDrawer';
+import { useAlertasCriticos } from '@/hooks/useAlertasCriticos';
 
 /* ─── Navigation config ─── */
 interface NavItem {
