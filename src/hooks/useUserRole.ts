@@ -67,7 +67,7 @@ export function useUserRole(): UseUserRoleReturn {
     isEmployee: role === 'employee',
     isCustomer: role === 'customer',
     isMaster: role === 'master',
-    isStaff: role === 'master' || role === 'employee' || role === 'master',
+    isStaff: role === 'master' || role === 'employee',
     loading,
     refetch: fetchRole,
   };
