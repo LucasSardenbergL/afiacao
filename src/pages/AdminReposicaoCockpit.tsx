@@ -23,12 +23,17 @@ import {
   XCircle,
   Bell,
   Settings as SettingsIcon,
-  Eye,
   Package,
   DollarSign,
   TrendingUp,
   PiggyBank,
+  Printer,
+  Check,
+  GitCompare,
+  Info,
 } from "lucide-react";
+import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
+import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
@@ -267,6 +272,7 @@ type PedidoItem = {
   grupo_codigo: string | null;
   num_skus: number | null;
   valor_total: number | null;
+  pedido_anterior_valor: number | null;
   status: string | null;
   aprovado_em: string | null;
   cancelado_em: string | null;
@@ -281,7 +287,7 @@ function useItensDoDia() {
       const { data, error } = await supabase
         .from("pedido_compra_sugerido" as any)
         .select(
-          "id,fornecedor_nome,grupo_codigo,num_skus,valor_total,status,aprovado_em,cancelado_em,horario_disparo_real",
+          "id,fornecedor_nome,grupo_codigo,num_skus,valor_total,pedido_anterior_valor,status,aprovado_em,cancelado_em,horario_disparo_real",
         )
         .eq("empresa", EMPRESA)
         .eq("data_ciclo", today)
@@ -543,8 +549,343 @@ function MetricsStrip({ items }: { items: PedidoItem[] }) {
 }
 
 // ============================================================================
-// Itens do ciclo (com filtros + batch review)
+// Configuração de colunas (persistida em localStorage)
 // ============================================================================
+
+type ColKey =
+  | "fornecedor"
+  | "grupo"
+  | "skus"
+  | "valor"
+  | "status"
+  | "qtdAprovada"
+  | "preco"
+  | "confianca";
+
+const COL_DEFS: Array<{ key: ColKey; label: string }> = [
+  { key: "fornecedor", label: "Fornecedor" },
+  { key: "grupo", label: "Grupo" },
+  { key: "skus", label: "SKUs" },
+  { key: "valor", label: "Valor" },
+  { key: "status", label: "Status" },
+  { key: "qtdAprovada", label: "Qtd Aprovada" },
+  { key: "preco", label: "Preço" },
+  { key: "confianca", label: "Confiança" },
+];
+
+const DEFAULT_COLS: Record<ColKey, boolean> = {
+  fornecedor: true,
+  grupo: true,
+  skus: true,
+  valor: true,
+  status: true,
+  qtdAprovada: true,
+  preco: false,
+  confianca: false,
+};
+
+const COLS_STORAGE_KEY = "cockpit-colunas-v1";
+
+function useColumnConfig() {
+  const [cols, setCols] = useState<Record<ColKey, boolean>>(() => {
+    try {
+      const raw = localStorage.getItem(COLS_STORAGE_KEY);
+      if (!raw) return DEFAULT_COLS;
+      const parsed = JSON.parse(raw) as Partial<Record<ColKey, boolean>>;
+      return { ...DEFAULT_COLS, ...parsed };
+    } catch {
+      return DEFAULT_COLS;
+    }
+  });
+  const update = (key: ColKey, value: boolean) => {
+    const next = { ...cols, [key]: value };
+    setCols(next);
+    try {
+      localStorage.setItem(COLS_STORAGE_KEY, JSON.stringify(next));
+    } catch {
+      /* ignore */
+    }
+  };
+  return { cols, update };
+}
+
+function ColumnConfigPopover({
+  cols,
+  onChange,
+}: {
+  cols: Record<ColKey, boolean>;
+  onChange: (k: ColKey, v: boolean) => void;
+}) {
+  return (
+    <Popover>
+      <PopoverTrigger asChild>
+        <Button size="sm" variant="outline" title="Configurar colunas">
+          <SettingsIcon className="h-4 w-4" />
+        </Button>
+      </PopoverTrigger>
+      <PopoverContent className="w-56 p-3" align="end">
+        <div className="text-xs font-semibold mb-2 text-muted-foreground">
+          Colunas visíveis
+        </div>
+        <div className="space-y-2">
+          {COL_DEFS.map((c) => (
+            <label
+              key={c.key}
+              className="flex items-center gap-2 text-sm cursor-pointer"
+            >
+              <Checkbox
+                checked={cols[c.key]}
+                onCheckedChange={(v) => onChange(c.key, !!v)}
+              />
+              {c.label}
+            </label>
+          ))}
+        </div>
+      </PopoverContent>
+    </Popover>
+  );
+}
+
+// ============================================================================
+// Confiança (inferida do status quando não há dias_cobertura_*)
+// ============================================================================
+
+type ConfLevel = "alta" | "media" | "baixa";
+function inferConfianca(r: PedidoItem): { level: ConfLevel; reason: string } {
+  // Schema atual não possui dias_cobertura_atual/alvo — inferimos pelo status.
+  const s = (r.status ?? "").toLowerCase();
+  if (s.includes("disparado") || s.includes("aprovado")) {
+    return { level: "alta", reason: "Pedido já aprovado/disparado." };
+  }
+  if (s.includes("cancel")) {
+    return { level: "baixa", reason: "Pedido cancelado — comprar geraria sobrestoque." };
+  }
+  if (s.includes("bloque")) {
+    return { level: "baixa", reason: "Bloqueado por guardrail." };
+  }
+  return {
+    level: "media",
+    reason:
+      "Sem dados de cobertura no registro; confiança média por padrão (status pendente).",
+  };
+}
+
+// ============================================================================
+// Itens do ciclo (com filtros + batch review + ações inline + colunas)
+// ============================================================================
+
+function PrecoCell({ row }: { row: PedidoItem }) {
+  const atual = Number(row.valor_total ?? 0);
+  const anterior = Number(row.pedido_anterior_valor ?? NaN);
+  if (!Number.isFinite(anterior) || anterior === 0) {
+    return <span className="font-medium">{formatBRL(atual)}</span>;
+  }
+  const deltaPct = ((atual - anterior) / anterior) * 100;
+  const tone =
+    Math.abs(deltaPct) < 0.5
+      ? "text-muted-foreground"
+      : deltaPct < 0
+        ? "text-emerald-600"
+        : "text-destructive";
+  return (
+    <div className="flex flex-col items-end">
+      <span className="font-medium">{formatBRL(atual)}</span>
+      <span className={`text-[11px] ${tone}`}>
+        {deltaPct > 0 ? "+" : ""}
+        {deltaPct.toFixed(1)}%
+      </span>
+    </div>
+  );
+}
+
+function ConfiancaBadge({ row }: { row: PedidoItem }) {
+  const { level, reason } = inferConfianca(row);
+  const map = {
+    alta: { label: "Alta", cls: "bg-emerald-500/15 text-emerald-700 border-emerald-500/40" },
+    media: { label: "Média", cls: "bg-amber-500/15 text-amber-700 border-amber-500/40" },
+    baixa: { label: "Baixa", cls: "bg-muted text-muted-foreground border-border" },
+  } as const;
+  const m = map[level];
+  return (
+    <TooltipProvider delayDuration={200}>
+      <Tooltip>
+        <TooltipTrigger asChild>
+          <span
+            className={`inline-flex items-center gap-1 rounded-md border px-2 py-0.5 text-[11px] font-medium ${m.cls}`}
+          >
+            <Info className="h-3 w-3" /> {m.label}
+          </span>
+        </TooltipTrigger>
+        <TooltipContent className="max-w-[240px] text-xs">{reason}</TooltipContent>
+      </Tooltip>
+    </TooltipProvider>
+  );
+}
+
+function PedidoRow({
+  row,
+  reviewMode,
+  selected,
+  onToggle,
+  cols,
+  user,
+  onChanged,
+}: {
+  row: PedidoItem;
+  reviewMode: boolean;
+  selected: boolean;
+  onToggle: () => void;
+  cols: Record<ColKey, boolean>;
+  user: { id?: string; email?: string | null } | null;
+  onChanged: () => void;
+}) {
+  const [qty, setQty] = useState<number>(Number(row.num_skus ?? 0));
+  const [busy, setBusy] = useState<null | "approve" | "reject">(null);
+
+  useEffect(() => {
+    setQty(Number(row.num_skus ?? 0));
+  }, [row.num_skus]);
+
+  const isApproved = !!row.aprovado_em;
+  const isRejected = !!row.cancelado_em;
+
+  const rowBg = isApproved
+    ? "bg-emerald-500/5 hover:bg-emerald-500/10"
+    : isRejected
+      ? "bg-destructive/5 hover:bg-destructive/10"
+      : "";
+
+  const act = async (kind: "approve" | "reject") => {
+    if (busy) return;
+    setBusy(kind);
+    const nowIso = new Date().toISOString();
+    const who = user?.email ?? user?.id ?? "cockpit";
+    try {
+      const patch =
+        kind === "approve"
+          ? {
+              aprovado_em: nowIso,
+              aprovado_por: who,
+              status: "aprovado_aguardando_disparo" as const,
+              num_skus: qty,
+            }
+          : {
+              cancelado_em: nowIso,
+              cancelado_por: who,
+              status: "cancelado" as const,
+              justificativa_cancelamento: "Rejeitado inline no Cockpit",
+            };
+      const { error } = await supabase
+        .from("pedido_compra_sugerido" as any)
+        .update(patch)
+        .eq("id", row.id);
+      if (error) throw error;
+      await logAudit({
+        userId: user?.id ?? null,
+        action: kind === "approve" ? "Aprovação inline" : "Rejeição inline",
+        result: "Sucesso",
+        metadata: { id: row.id, qty },
+      });
+      toast.success(kind === "approve" ? "Pedido aprovado" : "Pedido rejeitado");
+      onChanged();
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      await logAudit({
+        userId: user?.id ?? null,
+        action: kind === "approve" ? "Aprovação inline" : "Rejeição inline",
+        result: `Erro: ${msg}`,
+        metadata: { id: row.id },
+      });
+      toast.error("Falha na operação");
+    } finally {
+      setBusy(null);
+    }
+  };
+
+  return (
+    <TableRow data-state={selected ? "selected" : undefined} className={rowBg}>
+      {reviewMode && (
+        <TableCell>
+          <Checkbox checked={selected} onCheckedChange={onToggle} />
+        </TableCell>
+      )}
+      {cols.fornecedor && (
+        <TableCell className="text-sm">{row.fornecedor_nome ?? "—"}</TableCell>
+      )}
+      {cols.grupo && (
+        <TableCell className="text-xs text-muted-foreground">
+          {row.grupo_codigo ?? "—"}
+        </TableCell>
+      )}
+      {cols.skus && (
+        <TableCell className="text-right">{row.num_skus ?? 0}</TableCell>
+      )}
+      {cols.valor && (
+        <TableCell className="text-right font-medium">
+          {formatBRL(row.valor_total)}
+        </TableCell>
+      )}
+      {cols.preco && (
+        <TableCell className="text-right">
+          <PrecoCell row={row} />
+        </TableCell>
+      )}
+      {cols.confianca && (
+        <TableCell>
+          <ConfiancaBadge row={row} />
+        </TableCell>
+      )}
+      {cols.status && (
+        <TableCell>
+          <Badge variant="secondary">{row.status ?? "—"}</Badge>
+        </TableCell>
+      )}
+      {cols.qtdAprovada && (
+        <TableCell>
+          <div className="flex items-center gap-1.5 justify-end">
+            <Input
+              type="number"
+              min={0}
+              value={qty}
+              disabled={isApproved || isRejected || busy !== null}
+              onChange={(e) => setQty(Number(e.target.value) || 0)}
+              onFocus={(e) => e.currentTarget.select()}
+              className="h-8 w-20 text-right"
+            />
+            <Button
+              size="icon"
+              variant="ghost"
+              className="h-8 w-8 text-emerald-600 hover:text-emerald-700 hover:bg-emerald-500/10"
+              disabled={isApproved || busy !== null}
+              onClick={() => act("approve")}
+              title="Aprovar"
+            >
+              {busy === "approve" ? (
+                <Loader2 className="h-4 w-4 animate-spin" />
+              ) : (
+                <Check className="h-4 w-4" />
+              )}
+            </Button>
+            <Button
+              size="icon"
+              variant="ghost"
+              className="h-8 w-8 text-destructive hover:bg-destructive/10"
+              disabled={isRejected || busy !== null}
+              onClick={() => act("reject")}
+              title="Rejeitar"
+            >
+              {busy === "reject" ? (
+                <Loader2 className="h-4 w-4 animate-spin" />
+              ) : (
+                <X className="h-4 w-4" />
+              )}
+            </Button>
+          </div>
+        </TableCell>
+      )}
+    </TableRow>
+  );
+}
 
 function CicloHojePanel({
   user,
@@ -556,6 +897,8 @@ function CicloHojePanel({
   fornecedores,
   statuses,
   isLoading,
+  cols,
+  onColChange,
 }: {
   user: { id?: string; email?: string | null } | null;
   reviewMode: boolean;
@@ -566,6 +909,8 @@ function CicloHojePanel({
   fornecedores: string[];
   statuses: string[];
   isLoading: boolean;
+  cols: Record<ColKey, boolean>;
+  onColChange: (k: ColKey, v: boolean) => void;
 }) {
   const queryClient = useQueryClient();
   const [selected, setSelected] = useState<Set<number>>(new Set());
@@ -590,6 +935,12 @@ function CicloHojePanel({
   const totalSelectedValue = filteredItems
     .filter((i) => selected.has(i.id))
     .reduce((s, r) => s + Number(r.valor_total ?? 0), 0);
+
+  const invalidate = () => {
+    queryClient.invalidateQueries({ queryKey: ["cockpit-itens-dia"] });
+    queryClient.invalidateQueries({ queryKey: ["cockpit-current-step"] });
+    queryClient.invalidateQueries({ queryKey: ["reposicao-pedidos"] });
+  };
 
   const runBatch = async (kind: "approve" | "reject") => {
     if (selected.size === 0 || busy) return;
@@ -627,9 +978,7 @@ function CicloHojePanel({
         `${ids.length} pedido(s) ${kind === "approve" ? "aprovado(s)" : "rejeitado(s)"}`,
       );
       setSelected(new Set());
-      queryClient.invalidateQueries({ queryKey: ["cockpit-itens-dia"] });
-      queryClient.invalidateQueries({ queryKey: ["cockpit-current-step"] });
-      queryClient.invalidateQueries({ queryKey: ["reposicao-pedidos"] });
+      invalidate();
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
       await logAudit({
@@ -703,6 +1052,7 @@ function CicloHojePanel({
           <ListChecks className="h-4 w-4 mr-1.5" />
           Modo revisão
         </Button>
+        <ColumnConfigPopover cols={cols} onChange={onColChange} />
       </div>
 
       {/* Items table */}
@@ -712,7 +1062,7 @@ function CicloHojePanel({
             Pedidos do ciclo ({filteredItems.length})
           </CardTitle>
         </CardHeader>
-        <CardContent className="p-0">
+        <CardContent className="p-0 overflow-x-auto">
           {isLoading ? (
             <TabFallback />
           ) : filteredItems.length === 0 ? (
@@ -728,36 +1078,30 @@ function CicloHojePanel({
                       <Checkbox checked={allChecked} onCheckedChange={toggleAll} />
                     </TableHead>
                   )}
-                  <TableHead>Fornecedor</TableHead>
-                  <TableHead>Grupo</TableHead>
-                  <TableHead className="text-right">SKUs</TableHead>
-                  <TableHead className="text-right">Valor</TableHead>
-                  <TableHead>Status</TableHead>
+                  {cols.fornecedor && <TableHead>Fornecedor</TableHead>}
+                  {cols.grupo && <TableHead>Grupo</TableHead>}
+                  {cols.skus && <TableHead className="text-right">SKUs</TableHead>}
+                  {cols.valor && <TableHead className="text-right">Valor</TableHead>}
+                  {cols.preco && <TableHead className="text-right">Preço</TableHead>}
+                  {cols.confianca && <TableHead>Confiança</TableHead>}
+                  {cols.status && <TableHead>Status</TableHead>}
+                  {cols.qtdAprovada && (
+                    <TableHead className="text-right">Qtd Aprovada</TableHead>
+                  )}
                 </TableRow>
               </TableHeader>
               <TableBody>
                 {filteredItems.map((r) => (
-                  <TableRow key={r.id} data-state={selected.has(r.id) ? "selected" : undefined}>
-                    {reviewMode && (
-                      <TableCell>
-                        <Checkbox
-                          checked={selected.has(r.id)}
-                          onCheckedChange={() => toggleOne(r.id)}
-                        />
-                      </TableCell>
-                    )}
-                    <TableCell className="text-sm">{r.fornecedor_nome ?? "—"}</TableCell>
-                    <TableCell className="text-xs text-muted-foreground">
-                      {r.grupo_codigo ?? "—"}
-                    </TableCell>
-                    <TableCell className="text-right">{r.num_skus ?? 0}</TableCell>
-                    <TableCell className="text-right font-medium">
-                      {formatBRL(r.valor_total)}
-                    </TableCell>
-                    <TableCell>
-                      <Badge variant="secondary">{r.status ?? "—"}</Badge>
-                    </TableCell>
-                  </TableRow>
+                  <PedidoRow
+                    key={r.id}
+                    row={r}
+                    reviewMode={reviewMode}
+                    selected={selected.has(r.id)}
+                    onToggle={() => toggleOne(r.id)}
+                    cols={cols}
+                    user={user}
+                    onChanged={invalidate}
+                  />
                 ))}
               </TableBody>
             </Table>
@@ -862,10 +1206,205 @@ type TabValue = (typeof TAB_VALUES)[number];
 // Histórico (chart) tab
 // ============================================================================
 
+type CompareRow = {
+  fornecedor_nome: string;
+  num_skus: number;
+  valor_total: number;
+};
+
+function CompareCyclesSection({ cycles }: { cycles: string[] }) {
+  const [a, setA] = useState<string>("");
+  const [b, setB] = useState<string>("");
+  const [diff, setDiff] = useState<{
+    novos: CompareRow[];
+    removidos: CompareRow[];
+    alterados: Array<{
+      fornecedor_nome: string;
+      a: CompareRow;
+      b: CompareRow;
+      deltaQty: number;
+      deltaVal: number;
+    }>;
+  } | null>(null);
+  const [loading, setLoading] = useState(false);
+
+  const fetchCycle = async (data_ciclo: string): Promise<CompareRow[]> => {
+    const { data, error } = await supabase
+      .from("pedido_compra_sugerido" as any)
+      .select("fornecedor_nome,num_skus,valor_total")
+      .eq("empresa", EMPRESA)
+      .eq("data_ciclo", data_ciclo);
+    if (error) throw error;
+    const rows = ((data ?? []) as unknown) as Array<{
+      fornecedor_nome: string | null;
+      num_skus: number | null;
+      valor_total: number | null;
+    }>;
+    const map = new Map<string, CompareRow>();
+    for (const r of rows) {
+      const key = r.fornecedor_nome ?? "—";
+      const acc = map.get(key) ?? { fornecedor_nome: key, num_skus: 0, valor_total: 0 };
+      acc.num_skus += Number(r.num_skus ?? 0);
+      acc.valor_total += Number(r.valor_total ?? 0);
+      map.set(key, acc);
+    }
+    return Array.from(map.values());
+  };
+
+  const compare = async () => {
+    if (!a || !b || a === b) {
+      toast.error("Selecione dois ciclos diferentes");
+      return;
+    }
+    setLoading(true);
+    try {
+      const [arows, brows] = await Promise.all([fetchCycle(a), fetchCycle(b)]);
+      const amap = new Map(arows.map((r) => [r.fornecedor_nome, r]));
+      const bmap = new Map(brows.map((r) => [r.fornecedor_nome, r]));
+      const novos = brows.filter((r) => !amap.has(r.fornecedor_nome));
+      const removidos = arows.filter((r) => !bmap.has(r.fornecedor_nome));
+      const alterados: typeof diff extends infer T
+        ? T extends { alterados: infer U }
+          ? U
+          : never
+        : never = [];
+      for (const br of brows) {
+        const ar = amap.get(br.fornecedor_nome);
+        if (!ar) continue;
+        if (ar.num_skus !== br.num_skus || ar.valor_total !== br.valor_total) {
+          alterados.push({
+            fornecedor_nome: br.fornecedor_nome,
+            a: ar,
+            b: br,
+            deltaQty: br.num_skus - ar.num_skus,
+            deltaVal: br.valor_total - ar.valor_total,
+          });
+        }
+      }
+      setDiff({ novos, removidos, alterados });
+    } catch (err) {
+      toast.error("Falha ao comparar ciclos");
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  return (
+    <Card>
+      <CardHeader className="py-3">
+        <div className="flex items-center gap-2">
+          <GitCompare className="h-4 w-4 text-muted-foreground" />
+          <CardTitle className="text-base">Comparar ciclos</CardTitle>
+        </div>
+      </CardHeader>
+      <CardContent className="space-y-3">
+        <div className="flex flex-wrap items-center gap-2">
+          <Select value={a} onValueChange={setA}>
+            <SelectTrigger className="w-[180px] h-9">
+              <SelectValue placeholder="Ciclo A" />
+            </SelectTrigger>
+            <SelectContent>
+              {cycles.map((c) => (
+                <SelectItem key={c} value={c}>
+                  {formatDate(c)}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+          <Select value={b} onValueChange={setB}>
+            <SelectTrigger className="w-[180px] h-9">
+              <SelectValue placeholder="Ciclo B" />
+            </SelectTrigger>
+            <SelectContent>
+              {cycles.map((c) => (
+                <SelectItem key={c} value={c}>
+                  {formatDate(c)}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+          <Button size="sm" onClick={compare} disabled={loading || !a || !b}>
+            {loading ? <Loader2 className="h-4 w-4 mr-1.5 animate-spin" /> : null}
+            Comparar
+          </Button>
+        </div>
+
+        {diff && (
+          <div className="space-y-3">
+            <div>
+              <div className="text-xs font-semibold text-emerald-700 mb-1">
+                Novos no Ciclo B ({diff.novos.length})
+              </div>
+              {diff.novos.length === 0 ? (
+                <div className="text-xs text-muted-foreground">Nenhum.</div>
+              ) : (
+                <div className="rounded-md border bg-emerald-500/5 divide-y">
+                  {diff.novos.map((r) => (
+                    <div key={r.fornecedor_nome} className="px-3 py-1.5 text-sm flex justify-between">
+                      <span>{r.fornecedor_nome}</span>
+                      <span className="text-muted-foreground">
+                        {r.num_skus} SKUs · {formatBRL(r.valor_total)}
+                      </span>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+
+            <div>
+              <div className="text-xs font-semibold text-destructive mb-1">
+                Removidos vs Ciclo A ({diff.removidos.length})
+              </div>
+              {diff.removidos.length === 0 ? (
+                <div className="text-xs text-muted-foreground">Nenhum.</div>
+              ) : (
+                <div className="rounded-md border bg-destructive/5 divide-y">
+                  {diff.removidos.map((r) => (
+                    <div key={r.fornecedor_nome} className="px-3 py-1.5 text-sm flex justify-between">
+                      <span>{r.fornecedor_nome}</span>
+                      <span className="text-muted-foreground">
+                        {r.num_skus} SKUs · {formatBRL(r.valor_total)}
+                      </span>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+
+            <div>
+              <div className="text-xs font-semibold text-amber-700 mb-1">
+                Alterados ({diff.alterados.length})
+              </div>
+              {diff.alterados.length === 0 ? (
+                <div className="text-xs text-muted-foreground">Nenhum.</div>
+              ) : (
+                <div className="rounded-md border bg-amber-500/5 divide-y">
+                  {diff.alterados.map((r) => (
+                    <div key={r.fornecedor_nome} className="px-3 py-1.5 text-sm flex justify-between gap-2">
+                      <span>{r.fornecedor_nome}</span>
+                      <span className="text-xs text-muted-foreground">
+                        Δ SKUs: {r.deltaQty > 0 ? "+" : ""}
+                        {r.deltaQty} · Δ valor: {r.deltaVal >= 0 ? "+" : ""}
+                        {formatBRL(r.deltaVal)}
+                      </span>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          </div>
+        )}
+      </CardContent>
+    </Card>
+  );
+}
+
 function HistoricoComChart() {
   const { data = [], isLoading } = useHistoricoChart();
+  const cycles = useMemo(() => data.map((d) => d.data).reverse(), [data]);
   return (
     <div className="space-y-4">
+      <CompareCyclesSection cycles={cycles} />
       <Card>
         <CardHeader className="py-3">
           <div className="flex items-center gap-2">
@@ -993,6 +1532,7 @@ export default function AdminReposicaoCockpit() {
   } = useCurrentStep();
 
   const { data: itensDia = [], isLoading: isLoadingItens } = useItensDoDia();
+  const { cols, update: updateCol } = useColumnConfig();
 
   const defaultTab: TabValue = currentStep === 4 ? "aplicaromie" : "ciclohoje";
   const tab: TabValue = (TAB_VALUES as readonly string[]).includes(tabParam ?? "")
@@ -1248,7 +1788,87 @@ export default function AdminReposicaoCockpit() {
     toast("Atualizando...", { duration: 1200 });
   };
 
-  // ------ Keyboard shortcuts ------------------------------------------------
+  // ------ PDF (window.print) -----------------------------------------------
+  const handlePrintPdf = () => {
+    const today = format(new Date(), "yyyy-MM-dd");
+    const styleId = "__cockpit_print_style__";
+    let style = document.getElementById(styleId) as HTMLStyleElement | null;
+    if (!style) {
+      style = document.createElement("style");
+      style.id = styleId;
+      style.media = "print";
+      document.head.appendChild(style);
+    }
+    style.innerHTML = `
+      @page { margin: 16mm; }
+      body * { visibility: hidden !important; }
+      #cockpit-print-area, #cockpit-print-area * { visibility: visible !important; }
+      #cockpit-print-area {
+        position: absolute !important;
+        left: 0; top: 0; width: 100%;
+        background: white; color: black;
+        padding: 12px 20px;
+        font-family: Inter, system-ui, sans-serif;
+        font-size: 12px;
+      }
+      #cockpit-print-area h1 { font-size: 18px; margin: 0 0 4px; }
+      #cockpit-print-area .meta { color: #555; font-size: 11px; margin-bottom: 12px; }
+      #cockpit-print-area table { width: 100%; border-collapse: collapse; }
+      #cockpit-print-area th, #cockpit-print-area td {
+        border: 1px solid #ccc; padding: 4px 6px; text-align: left;
+      }
+      #cockpit-print-area th { background: #f3f4f6; font-weight: 600; }
+      #cockpit-print-area .right { text-align: right; }
+      #cockpit-print-area .footer { margin-top: 12px; font-size: 10px; color: #777; text-align: right; }
+    `;
+
+    const existing = document.getElementById("cockpit-print-area");
+    if (existing) existing.remove();
+    const area = document.createElement("div");
+    area.id = "cockpit-print-area";
+    const rowsHtml = filteredItems
+      .map(
+        (r) => `<tr>
+        <td>${r.grupo_codigo ?? "—"}</td>
+        <td>${r.fornecedor_nome ?? "—"}</td>
+        <td class="right">${r.num_skus ?? 0}</td>
+        <td class="right">${r.aprovado_em ? (r.num_skus ?? 0) : ""}</td>
+        <td class="right">${formatBRL(r.valor_total)}</td>
+        <td>${r.status ?? "—"}</td>
+      </tr>`,
+      )
+      .join("");
+    area.innerHTML = `
+      <h1>COLACOR — Cockpit de Reposição</h1>
+      <div class="meta">Ciclo: ${formatDate(today)} · ${filteredItems.length} pedido(s)</div>
+      <table>
+        <thead>
+          <tr>
+            <th>SKU/Grupo</th><th>Fornecedor</th>
+            <th class="right">Qtd sugerida</th><th class="right">Qtd aprovada</th>
+            <th class="right">Valor</th><th>Status</th>
+          </tr>
+        </thead>
+        <tbody>${rowsHtml || `<tr><td colspan="6" style="text-align:center;color:#777">Sem itens</td></tr>`}</tbody>
+      </table>
+      <div class="footer">Gerado em ${new Date().toLocaleString("pt-BR")}</div>
+    `;
+    document.body.appendChild(area);
+
+    const cleanup = () => {
+      area.remove();
+      window.removeEventListener("afterprint", cleanup);
+    };
+    window.addEventListener("afterprint", cleanup);
+    setTimeout(() => window.print(), 50);
+
+    logAudit({
+      userId: user?.id ?? null,
+      action: "PDF gerado",
+      result: "Sucesso",
+      metadata: { count: filteredItems.length },
+    });
+  };
   const [shortcutsOpen, setShortcutsOpen] = useState(false);
 
   useKeyboardShortcuts({
@@ -1339,14 +1959,19 @@ export default function AdminReposicaoCockpit() {
             <TabsTrigger value="aplicaromie">Aplicar no Omie</TabsTrigger>
             <TabsTrigger value="anteriores">Ciclos anteriores</TabsTrigger>
           </TabsList>
-          <Button size="sm" variant="outline" onClick={handleExportCsv} disabled={isExporting}>
-            {isExporting ? (
-              <Loader2 className="h-4 w-4 mr-1.5 animate-spin" />
-            ) : (
-              <Download className="h-4 w-4 mr-1.5" />
-            )}
-            Exportar CSV
-          </Button>
+          <div className="flex items-center gap-2">
+            <Button size="sm" variant="outline" onClick={handleExportCsv} disabled={isExporting}>
+              {isExporting ? (
+                <Loader2 className="h-4 w-4 mr-1.5 animate-spin" />
+              ) : (
+                <Download className="h-4 w-4 mr-1.5" />
+              )}
+              Exportar CSV
+            </Button>
+            <Button size="sm" variant="outline" onClick={handlePrintPdf}>
+              <Printer className="h-4 w-4 mr-1.5" /> PDF
+            </Button>
+          </div>
         </div>
 
         <TabsContent value="ciclohoje" className="m-0">
@@ -1360,6 +1985,8 @@ export default function AdminReposicaoCockpit() {
             fornecedores={fornecedores}
             statuses={statuses}
             isLoading={isLoadingItens}
+            cols={cols}
+            onColChange={updateCol}
           />
         </TabsContent>
 
