@@ -12,9 +12,11 @@ type Step = {
 
 interface Props {
   currentStep?: number;
+  /** Optional click handler. When provided, overrides default navigation. */
+  onStepClick?: (step: number) => void;
 }
 
-export function ProcessoComprasStepper({ currentStep = 3 }: Props) {
+export function ProcessoComprasStepper({ currentStep = 3, onStepClick }: Props) {
   const navigate = useNavigate();
 
   const steps: Step[] = [
@@ -32,14 +34,22 @@ export function ProcessoComprasStepper({ currentStep = 3 }: Props) {
           const stepNum = idx + 1;
           const isCurrent = stepNum === currentStep;
           const Icon = step.icon;
-          const clickable = !!step.to;
+          const clickable = !!onStepClick || !!step.to;
+
+          const handleClick = () => {
+            if (onStepClick) {
+              onStepClick(stepNum);
+            } else if (step.to) {
+              navigate(step.to);
+            }
+          };
 
           return (
             <li key={step.label} className="flex items-center flex-1 min-w-0">
               <button
                 type="button"
                 disabled={!clickable}
-                onClick={() => step.to && navigate(step.to)}
+                onClick={handleClick}
                 className={cn(
                   "flex items-center gap-2 rounded-md px-3 py-2 w-full text-left transition-colors",
                   isCurrent
