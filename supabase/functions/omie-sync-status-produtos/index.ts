@@ -12,8 +12,10 @@ const corsHeaders = {
 };
 
 const OMIE_URL = "https://app.omie.com.br/api/v1/geral/produtos/";
-const PAGE_SIZE = 50;
+const PAGE_SIZE = 500; // Limite máximo do Omie ListarProdutos
 const MAX_RETRIES = 3;
+const DELAY_BETWEEN_PAGES_MS = 700; // ~85 req/min, dentro do rate limit
+const FLUSH_THRESHOLD = 100; // commit incremental a cada 100 SKUs
 
 interface OmieProduto {
   codigo_produto?: number;
