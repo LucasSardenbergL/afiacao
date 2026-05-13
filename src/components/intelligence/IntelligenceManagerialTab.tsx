@@ -27,6 +27,20 @@ export function IntelligenceManagerialTab() {
     },
   });
 
+  const { data: profiles } = useQuery({
+    queryKey: ['intel-profiles-names'],
+    queryFn: async () => {
+      const { data, error } = await supabase.from('profiles').select('user_id, name');
+      if (error) throw error;
+      return data || [];
+    },
+  });
+
+  const farmerNameMap = (profiles || []).reduce((acc, p) => {
+    if (p.user_id) acc[p.user_id] = p.name || '';
+    return acc;
+  }, {} as Record<string, string>);
+
   const { data: recommendations } = useQuery({
     queryKey: ['intel-reco-adoption'],
     queryFn: async () => {
@@ -100,7 +114,7 @@ export function IntelligenceManagerialTab() {
               <tbody>
                 {farmerMetrics.map(fm => (
                   <tr key={fm.farmerId} className="border-b border-border/50 hover:bg-muted/50">
-                    <td className="py-2 font-mono">{fm.farmerId.slice(0, 8)}...</td>
+                    <td className="py-2 font-mono">{farmerNameMap[fm.farmerId] ?? `${fm.farmerId.slice(0, 8)}...`}</td>
                     <td className="text-center py-2">{fm.clientCount}</td>
                     <td className="text-center py-2">
                       <Badge variant={fm.avgHealth > 60 ? 'default' : 'destructive'} className="text-2xs">{fm.avgHealth.toFixed(0)}</Badge>
@@ -134,7 +148,7 @@ export function IntelligenceManagerialTab() {
             <div className="h-48">
               <ResponsiveContainer width="100%" height="100%">
                 <BarChart data={allPerformance.slice(0, 10).map(p => ({
-                  name: p.farmer_id.slice(0, 6),
+                  name: farmerNameMap[p.farmer_id] ?? p.farmer_id.slice(0, 6),
                   iee: Number(p.iee_total || 0),
                   ipf: Number(p.ipf_total || 0),
                 }))}>
