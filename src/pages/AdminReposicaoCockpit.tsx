@@ -1,9 +1,9 @@
-import { lazy, Suspense, useEffect, useMemo, useState } from "react";
+import { lazy, Suspense, useEffect, useMemo, useState, useCallback } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useNavigate, useSearchParams } from "react-router-dom";
 import { supabase } from "@/integrations/supabase/client";
 import { useAuth } from "@/contexts/AuthContext";
-import { format, subDays } from "date-fns";
+import { format, subDays, differenceInHours } from "date-fns";
 import { toast } from "sonner";
 import {
   Sparkles,
@@ -14,12 +14,43 @@ import {
   ChevronDown,
   ChevronRight,
   ScrollText,
+  Search,
+  ListChecks,
+  RotateCw,
+  Keyboard,
+  X,
+  CheckCircle2,
+  XCircle,
+  Bell,
+  Settings as SettingsIcon,
+  Eye,
+  Package,
+  DollarSign,
+  TrendingUp,
+  PiggyBank,
 } from "lucide-react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
+import { Input } from "@/components/ui/input";
+import { Checkbox } from "@/components/ui/checkbox";
+import { Progress } from "@/components/ui/progress";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
+import {
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+  DialogDescription,
+} from "@/components/ui/dialog";
 import {
   Collapsible,
   CollapsibleContent,
@@ -34,13 +65,25 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table";
+import {
+  BarChart,
+  Bar,
+  XAxis,
+  YAxis,
+  CartesianGrid,
+  Tooltip as ReTooltip,
+  ResponsiveContainer,
+} from "recharts";
+import { useKeyboardShortcuts } from "@/hooks/useKeyboardShortcuts";
 
-// Reaproveita as telas originais como conteúdo das abas — mesmas queries Supabase.
 const AdminReposicaoPedidos = lazy(() => import("./AdminReposicaoPedidos"));
 const AdminReposicaoAplicacao = lazy(() => import("./AdminReposicaoAplicacao"));
 const AdminReposicaoHistorico = lazy(() => import("./AdminReposicaoHistorico"));
 
 const EMPRESA = "OBEN";
+const ALL = "__all__";
+const CUTOFF_HOUR = 9;
+const CUTOFF_MIN = 30;
 
 const formatBRL = (v: number | null | undefined) =>
   v === null || v === undefined
@@ -102,7 +145,7 @@ async function logAudit(params: {
       metadata: params.metadata ?? {},
     });
   } catch {
-    // não bloqueia a UI se a auditoria falhar
+    /* não bloqueia a UI */
   }
 }
 
@@ -215,109 +258,548 @@ function AuditLogSection() {
 }
 
 // ============================================================================
-// Ciclos anteriores
+// Itens do ciclo (hoje) — query reutilizada para filtros, métricas, batch e CSV
 // ============================================================================
 
-function CiclosAnterioresTab() {
-  const dataFim = useMemo(() => new Date(), []);
-  const dataInicio = useMemo(() => subDays(dataFim, 29), [dataFim]);
+type PedidoItem = {
+  id: number;
+  fornecedor_nome: string | null;
+  grupo_codigo: string | null;
+  num_skus: number | null;
+  valor_total: number | null;
+  status: string | null;
+  aprovado_em: string | null;
+  cancelado_em: string | null;
+  horario_disparo_real: string | null;
+};
 
-  type Row = {
-    data_ciclo: string;
-    fornecedor_nome: string | null;
-    valor_total: number | null;
-    status: string | null;
-  };
-
-  const { data: ciclos = [], isLoading } = useQuery({
-    queryKey: ["cockpit-ciclos-anteriores", EMPRESA, format(dataFim, "yyyy-MM-dd")],
+function useItensDoDia() {
+  const today = format(new Date(), "yyyy-MM-dd");
+  return useQuery({
+    queryKey: ["cockpit-itens-dia", EMPRESA, today],
     queryFn: async () => {
-      const inicio = format(dataInicio, "yyyy-MM-dd");
-      const fim = format(dataFim, "yyyy-MM-dd");
       const { data, error } = await supabase
         .from("pedido_compra_sugerido" as any)
-        .select("data_ciclo,fornecedor_nome,valor_total,status")
+        .select(
+          "id,fornecedor_nome,grupo_codigo,num_skus,valor_total,status,aprovado_em,cancelado_em,horario_disparo_real",
+        )
         .eq("empresa", EMPRESA)
-        .gte("data_ciclo", inicio)
-        .lte("data_ciclo", fim);
+        .eq("data_ciclo", today)
+        .order("fornecedor_nome");
       if (error) throw error;
-      const rows = ((data ?? []) as unknown) as Row[];
-      const map = new Map<
-        string,
-        { data: string; fornecedores: Set<string>; pedidos: number; valor: number; disparados: number; cancelados: number }
-      >();
+      return ((data ?? []) as unknown) as PedidoItem[];
+    },
+    staleTime: 30_000,
+  });
+}
+
+// ============================================================================
+// Histórico chart query (12 últimos ciclos)
+// ============================================================================
+
+function useHistoricoChart() {
+  const fim = useMemo(() => new Date(), []);
+  const inicio = useMemo(() => subDays(fim, 60), [fim]);
+  return useQuery({
+    queryKey: ["cockpit-historico-chart", EMPRESA, format(fim, "yyyy-MM-dd")],
+    queryFn: async () => {
+      const { data, error } = await supabase
+        .from("pedido_compra_sugerido" as any)
+        .select("data_ciclo,num_skus,valor_total")
+        .eq("empresa", EMPRESA)
+        .gte("data_ciclo", format(inicio, "yyyy-MM-dd"))
+        .lte("data_ciclo", format(fim, "yyyy-MM-dd"));
+      if (error) throw error;
+      const rows = ((data ?? []) as unknown) as Array<{
+        data_ciclo: string;
+        num_skus: number | null;
+        valor_total: number | null;
+      }>;
+      const map = new Map<string, { data: string; total: number; skus: number; valor: number }>();
       for (const r of rows) {
-        if (!map.has(r.data_ciclo)) {
-          map.set(r.data_ciclo, {
-            data: r.data_ciclo,
-            fornecedores: new Set(),
-            pedidos: 0,
-            valor: 0,
-            disparados: 0,
-            cancelados: 0,
-          });
-        }
-        const acc = map.get(r.data_ciclo)!;
-        if (r.fornecedor_nome) acc.fornecedores.add(r.fornecedor_nome);
-        acc.pedidos += 1;
+        const acc = map.get(r.data_ciclo) ?? {
+          data: r.data_ciclo,
+          total: 0,
+          skus: 0,
+          valor: 0,
+        };
+        acc.total += 1;
+        acc.skus += Number(r.num_skus ?? 0);
         acc.valor += Number(r.valor_total ?? 0);
-        if (r.status === "disparado" || r.status === "disparado_simulado") acc.disparados += 1;
-        if (r.status === "cancelado") acc.cancelados += 1;
+        map.set(r.data_ciclo, acc);
       }
       return Array.from(map.values())
-        .map((x) => ({ ...x, fornecedores: x.fornecedores.size }))
-        .sort((a, b) => b.data.localeCompare(a.data));
+        .sort((a, b) => a.data.localeCompare(b.data))
+        .slice(-12)
+        .map((x) => {
+          const [y, m, d] = x.data.split("-");
+          return { ...x, label: `${d}/${m}` };
+        });
     },
   });
+}
+
+// ============================================================================
+// Smart alerts
+// ============================================================================
+
+type SmartAlert = {
+  id: string;
+  level: "yellow" | "orange" | "red";
+  message: string;
+  actionLabel: string;
+  onAction: () => void;
+};
+
+function useSmartAlerts(): SmartAlert[] {
+  const navigate = useNavigate();
+
+  const { data: paramsPendentes = 0 } = useQuery({
+    queryKey: ["cockpit-alert-params-pendentes", EMPRESA],
+    queryFn: async () => {
+      const cutoff = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString();
+      const { count, error } = await supabase
+        .from("sku_parametros" as any)
+        .select("*", { count: "exact", head: true })
+        .eq("empresa", EMPRESA)
+        .eq("ativo", true)
+        .is("aprovado_em", null)
+        .lt("ultima_atualizacao_calculo", cutoff);
+      if (error) throw error;
+      return count ?? 0;
+    },
+    staleTime: 60_000,
+  });
+
+  const { data: skusSemParam = 0 } = useQuery({
+    queryKey: ["cockpit-alert-sem-parametro", EMPRESA],
+    queryFn: async () => {
+      const { count, error } = await supabase
+        .from("sku_parametros" as any)
+        .select("*", { count: "exact", head: true })
+        .eq("empresa", EMPRESA)
+        .eq("ativo", true)
+        .is("estoque_minimo", null);
+      if (error) throw error;
+      return count ?? 0;
+    },
+    staleTime: 60_000,
+  });
+
+  return useMemo(() => {
+    const list: SmartAlert[] = [];
+    if (paramsPendentes > 0) {
+      list.push({
+        id: "params-24h",
+        level: "yellow",
+        message: `${paramsPendentes} parâmetro(s) aguardam aprovação há mais de 24h`,
+        actionLabel: "Ver parâmetros",
+        onAction: () => navigate("/admin/reposicao/parametros"),
+      });
+    }
+    // Janela fecha em < 1h
+    const now = new Date();
+    const cutoff = new Date(now);
+    cutoff.setHours(CUTOFF_HOUR, CUTOFF_MIN, 0, 0);
+    const minutes = (cutoff.getTime() - now.getTime()) / 60_000;
+    if (minutes > 0 && minutes < 60) {
+      list.push({
+        id: "janela-1h",
+        level: "orange",
+        message: `Janela de compra fecha em ${Math.ceil(minutes)} minutos`,
+        actionLabel: "Ver cockpit",
+        onAction: () => navigate("/admin/reposicao/cockpit?tab=ciclohoje"),
+      });
+    }
+    if (skusSemParam > 0) {
+      list.push({
+        id: "skus-sem-param",
+        level: "red",
+        message: `${skusSemParam} SKU(s) ativos sem parâmetro configurado`,
+        actionLabel: "Configurar",
+        onAction: () => navigate("/admin/reposicao/parametros"),
+      });
+    }
+    return list;
+  }, [paramsPendentes, skusSemParam, navigate]);
+}
+
+function SmartAlertsSection() {
+  const alerts = useSmartAlerts();
+  const [dismissed, setDismissed] = useState<Set<string>>(() => {
+    try {
+      const raw = sessionStorage.getItem("cockpit-dismissed-alerts");
+      return new Set(raw ? (JSON.parse(raw) as string[]) : []);
+    } catch {
+      return new Set();
+    }
+  });
+
+  const dismiss = (id: string) => {
+    const next = new Set(dismissed);
+    next.add(id);
+    setDismissed(next);
+    try {
+      sessionStorage.setItem("cockpit-dismissed-alerts", JSON.stringify(Array.from(next)));
+    } catch {
+      /* ignore */
+    }
+  };
+
+  const visible = alerts.filter((a) => !dismissed.has(a.id)).slice(0, 3);
+  if (visible.length === 0) return null;
+
+  const tone = (l: SmartAlert["level"]) =>
+    l === "yellow"
+      ? "border-amber-500/40 bg-amber-500/5 text-amber-900 dark:text-amber-200"
+      : l === "orange"
+        ? "border-orange-500/40 bg-orange-500/5 text-orange-900 dark:text-orange-200"
+        : "border-destructive/40 bg-destructive/5 text-destructive";
+
+  const Icon = ({ l }: { l: SmartAlert["level"] }) =>
+    l === "red" ? (
+      <AlertTriangle className="h-4 w-4 shrink-0" />
+    ) : l === "orange" ? (
+      <Bell className="h-4 w-4 shrink-0" />
+    ) : (
+      <AlertTriangle className="h-4 w-4 shrink-0" />
+    );
 
   return (
-    <Card>
-      <CardHeader>
-        <div className="flex items-center gap-2">
-          <CalendarRange className="h-4 w-4 text-muted-foreground" />
-          <CardTitle className="text-base">Últimos 30 dias</CardTitle>
+    <div className="space-y-2">
+      {visible.map((a) => (
+        <div
+          key={a.id}
+          className={`flex items-center gap-3 rounded-md border px-3 py-2 text-sm ${tone(
+            a.level,
+          )}`}
+        >
+          <Icon l={a.level} />
+          <span className="flex-1">{a.message}</span>
+          <Button size="sm" variant="outline" onClick={a.onAction}>
+            {a.actionLabel}
+          </Button>
+          <button
+            type="button"
+            onClick={() => dismiss(a.id)}
+            className="opacity-60 hover:opacity-100"
+            aria-label="Dispensar"
+          >
+            <X className="h-4 w-4" />
+          </button>
         </div>
-        <p className="text-xs text-muted-foreground mt-1">
-          {format(dataInicio, "dd/MM/yyyy")} até {format(dataFim, "dd/MM/yyyy")}
-        </p>
-      </CardHeader>
-      <CardContent className="p-0">
-        {isLoading ? (
-          <TabFallback />
-        ) : ciclos.length === 0 ? (
-          <div className="py-12 text-center text-sm text-muted-foreground">
-            Nenhum ciclo no período.
-          </div>
-        ) : (
-          <Table>
-            <TableHeader>
-              <TableRow>
-                <TableHead>Data</TableHead>
-                <TableHead className="text-right">Fornecedores</TableHead>
-                <TableHead className="text-right">Pedidos</TableHead>
-                <TableHead className="text-right">Disparados</TableHead>
-                <TableHead className="text-right">Cancelados</TableHead>
-                <TableHead className="text-right">Valor total</TableHead>
-              </TableRow>
-            </TableHeader>
-            <TableBody>
-              {ciclos.map((c) => (
-                <TableRow key={c.data}>
-                  <TableCell className="text-sm">{formatDate(c.data)}</TableCell>
-                  <TableCell className="text-right">{c.fornecedores}</TableCell>
-                  <TableCell className="text-right">{c.pedidos}</TableCell>
-                  <TableCell className="text-right text-emerald-700 dark:text-emerald-400">
-                    {c.disparados}
-                  </TableCell>
-                  <TableCell className="text-right text-destructive">{c.cancelados}</TableCell>
-                  <TableCell className="text-right font-medium">{formatBRL(c.valor)}</TableCell>
-                </TableRow>
-              ))}
-            </TableBody>
-          </Table>
-        )}
+      ))}
+    </div>
+  );
+}
+
+// ============================================================================
+// Métricas do ciclo
+// ============================================================================
+
+function MetricsStrip({ items }: { items: PedidoItem[] }) {
+  const totalSkus = items.reduce((s, r) => s + Number(r.num_skus ?? 0), 0);
+  const valorEstimado = items.reduce((s, r) => s + Number(r.valor_total ?? 0), 0);
+  const aprovados = items.filter((r) => !!r.aprovado_em).length;
+  const pctAprovado = items.length > 0 ? (aprovados / items.length) * 100 : 0;
+  const economia = 0; // campo não disponível
+
+  const Card1 = ({
+    icon: I,
+    label,
+    value,
+    extra,
+  }: {
+    icon: typeof Package;
+    label: string;
+    value: string;
+    extra?: React.ReactNode;
+  }) => (
+    <Card>
+      <CardContent className="p-3">
+        <div className="flex items-center gap-2 text-xs text-muted-foreground mb-1">
+          <I className="h-3.5 w-3.5" />
+          {label}
+        </div>
+        <div className="text-lg font-semibold">{value}</div>
+        {extra}
       </CardContent>
     </Card>
+  );
+
+  return (
+    <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
+      <Card1 icon={Package} label="SKUs sugeridos" value={totalSkus.toLocaleString("pt-BR")} />
+      <Card1 icon={DollarSign} label="Valor estimado" value={formatBRL(valorEstimado)} />
+      <Card1
+        icon={TrendingUp}
+        label="% Aprovado"
+        value={`${pctAprovado.toFixed(0)}%`}
+        extra={<Progress value={pctAprovado} className="h-1.5 mt-2" />}
+      />
+      <Card1 icon={PiggyBank} label="Economia potencial" value={formatBRL(economia)} />
+    </div>
+  );
+}
+
+// ============================================================================
+// Itens do ciclo (com filtros + batch review)
+// ============================================================================
+
+function CicloHojePanel({
+  user,
+  reviewMode,
+  setReviewMode,
+  filters,
+  setFilters,
+  filteredItems,
+  fornecedores,
+  statuses,
+  isLoading,
+}: {
+  user: { id?: string; email?: string | null } | null;
+  reviewMode: boolean;
+  setReviewMode: (b: boolean) => void;
+  filters: { search: string; fornecedor: string; status: string };
+  setFilters: (f: { search: string; fornecedor: string; status: string }) => void;
+  filteredItems: PedidoItem[];
+  fornecedores: string[];
+  statuses: string[];
+  isLoading: boolean;
+}) {
+  const queryClient = useQueryClient();
+  const [selected, setSelected] = useState<Set<number>>(new Set());
+  const [busy, setBusy] = useState(false);
+
+  useEffect(() => {
+    if (!reviewMode) setSelected(new Set());
+  }, [reviewMode]);
+
+  const allChecked = filteredItems.length > 0 && filteredItems.every((i) => selected.has(i.id));
+  const toggleAll = () => {
+    if (allChecked) setSelected(new Set());
+    else setSelected(new Set(filteredItems.map((i) => i.id)));
+  };
+  const toggleOne = (id: number) => {
+    const next = new Set(selected);
+    if (next.has(id)) next.delete(id);
+    else next.add(id);
+    setSelected(next);
+  };
+
+  const totalSelectedValue = filteredItems
+    .filter((i) => selected.has(i.id))
+    .reduce((s, r) => s + Number(r.valor_total ?? 0), 0);
+
+  const runBatch = async (kind: "approve" | "reject") => {
+    if (selected.size === 0 || busy) return;
+    setBusy(true);
+    const ids = Array.from(selected);
+    const nowIso = new Date().toISOString();
+    const who = user?.email ?? user?.id ?? "cockpit";
+    try {
+      const patch =
+        kind === "approve"
+          ? {
+              aprovado_em: nowIso,
+              aprovado_por: who,
+              status: "aprovado_aguardando_disparo" as const,
+            }
+          : {
+              cancelado_em: nowIso,
+              cancelado_por: who,
+              status: "cancelado" as const,
+              justificativa_cancelamento: "Rejeitado em lote no Cockpit",
+            };
+      const { error } = await supabase
+        .from("pedido_compra_sugerido" as any)
+        .update(patch)
+        .in("id", ids);
+      if (error) throw error;
+
+      await logAudit({
+        userId: user?.id ?? null,
+        action: kind === "approve" ? "Aprovação em lote" : "Rejeição em lote",
+        result: "Sucesso",
+        metadata: { ids, count: ids.length },
+      });
+      toast.success(
+        `${ids.length} pedido(s) ${kind === "approve" ? "aprovado(s)" : "rejeitado(s)"}`,
+      );
+      setSelected(new Set());
+      queryClient.invalidateQueries({ queryKey: ["cockpit-itens-dia"] });
+      queryClient.invalidateQueries({ queryKey: ["cockpit-current-step"] });
+      queryClient.invalidateQueries({ queryKey: ["reposicao-pedidos"] });
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      await logAudit({
+        userId: user?.id ?? null,
+        action: kind === "approve" ? "Aprovação em lote" : "Rejeição em lote",
+        result: `Erro: ${msg}`,
+        metadata: { ids },
+      });
+      toast.error("Falha na operação em lote");
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const clearFilters = () =>
+    setFilters({ search: "", fornecedor: ALL, status: ALL });
+
+  return (
+    <div className="space-y-4">
+      {/* Filters bar */}
+      <div className="flex flex-wrap items-center gap-2 rounded-md border p-2 bg-card">
+        <div className="relative flex-1 min-w-[200px]">
+          <Search className="absolute left-2 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
+          <Input
+            value={filters.search}
+            onChange={(e) => setFilters({ ...filters, search: e.target.value })}
+            placeholder="Buscar SKU, descrição ou fornecedor..."
+            className="pl-8 h-9"
+          />
+        </div>
+        <Select
+          value={filters.fornecedor}
+          onValueChange={(v) => setFilters({ ...filters, fornecedor: v })}
+        >
+          <SelectTrigger className="w-[180px] h-9">
+            <SelectValue placeholder="Fornecedor" />
+          </SelectTrigger>
+          <SelectContent>
+            <SelectItem value={ALL}>Todos os fornecedores</SelectItem>
+            {fornecedores.map((f) => (
+              <SelectItem key={f} value={f}>
+                {f}
+              </SelectItem>
+            ))}
+          </SelectContent>
+        </Select>
+        <Select
+          value={filters.status}
+          onValueChange={(v) => setFilters({ ...filters, status: v })}
+        >
+          <SelectTrigger className="w-[180px] h-9">
+            <SelectValue placeholder="Status" />
+          </SelectTrigger>
+          <SelectContent>
+            <SelectItem value={ALL}>Todos os status</SelectItem>
+            {statuses.map((s) => (
+              <SelectItem key={s} value={s}>
+                {s}
+              </SelectItem>
+            ))}
+          </SelectContent>
+        </Select>
+        <Button size="sm" variant="ghost" onClick={clearFilters}>
+          Limpar filtros
+        </Button>
+        <Button
+          size="sm"
+          variant={reviewMode ? "default" : "outline"}
+          onClick={() => setReviewMode(!reviewMode)}
+        >
+          <ListChecks className="h-4 w-4 mr-1.5" />
+          Modo revisão
+        </Button>
+      </div>
+
+      {/* Items table */}
+      <Card>
+        <CardHeader className="py-3">
+          <CardTitle className="text-base">
+            Pedidos do ciclo ({filteredItems.length})
+          </CardTitle>
+        </CardHeader>
+        <CardContent className="p-0">
+          {isLoading ? (
+            <TabFallback />
+          ) : filteredItems.length === 0 ? (
+            <div className="py-10 text-center text-sm text-muted-foreground">
+              Nenhum pedido para os filtros atuais.
+            </div>
+          ) : (
+            <Table>
+              <TableHeader>
+                <TableRow>
+                  {reviewMode && (
+                    <TableHead className="w-[40px]">
+                      <Checkbox checked={allChecked} onCheckedChange={toggleAll} />
+                    </TableHead>
+                  )}
+                  <TableHead>Fornecedor</TableHead>
+                  <TableHead>Grupo</TableHead>
+                  <TableHead className="text-right">SKUs</TableHead>
+                  <TableHead className="text-right">Valor</TableHead>
+                  <TableHead>Status</TableHead>
+                </TableRow>
+              </TableHeader>
+              <TableBody>
+                {filteredItems.map((r) => (
+                  <TableRow key={r.id} data-state={selected.has(r.id) ? "selected" : undefined}>
+                    {reviewMode && (
+                      <TableCell>
+                        <Checkbox
+                          checked={selected.has(r.id)}
+                          onCheckedChange={() => toggleOne(r.id)}
+                        />
+                      </TableCell>
+                    )}
+                    <TableCell className="text-sm">{r.fornecedor_nome ?? "—"}</TableCell>
+                    <TableCell className="text-xs text-muted-foreground">
+                      {r.grupo_codigo ?? "—"}
+                    </TableCell>
+                    <TableCell className="text-right">{r.num_skus ?? 0}</TableCell>
+                    <TableCell className="text-right font-medium">
+                      {formatBRL(r.valor_total)}
+                    </TableCell>
+                    <TableCell>
+                      <Badge variant="secondary">{r.status ?? "—"}</Badge>
+                    </TableCell>
+                  </TableRow>
+                ))}
+              </TableBody>
+            </Table>
+          )}
+        </CardContent>
+      </Card>
+
+      {/* Conteúdo original detalhado */}
+      <Suspense fallback={<TabFallback />}>
+        <AdminReposicaoPedidos />
+      </Suspense>
+
+      {/* Sticky footer for batch review */}
+      {reviewMode && selected.size > 0 && (
+        <div className="fixed bottom-0 left-0 right-0 z-40 border-t bg-background/95 backdrop-blur supports-[backdrop-filter]:bg-background/80 shadow-lg">
+          <div className="container max-w-7xl mx-auto px-4 py-3 flex flex-wrap items-center justify-between gap-3">
+            <div className="text-sm">
+              <span className="font-semibold">{selected.size}</span> itens selecionados |{" "}
+              <span className="font-semibold">Total: {formatBRL(totalSelectedValue)}</span>
+            </div>
+            <div className="flex gap-2">
+              <Button
+                size="sm"
+                variant="outline"
+                onClick={() => runBatch("reject")}
+                disabled={busy}
+              >
+                <XCircle className="h-4 w-4 mr-1.5" /> Rejeitar selecionados
+              </Button>
+              <Button size="sm" onClick={() => runBatch("approve")} disabled={busy}>
+                {busy ? (
+                  <Loader2 className="h-4 w-4 mr-1.5 animate-spin" />
+                ) : (
+                  <CheckCircle2 className="h-4 w-4 mr-1.5" />
+                )}
+                Aprovar selecionados
+              </Button>
+            </div>
+          </div>
+        </div>
+      )}
+    </div>
   );
 }
 
@@ -377,6 +859,121 @@ const TAB_VALUES = ["ciclohoje", "aplicaromie", "anteriores"] as const;
 type TabValue = (typeof TAB_VALUES)[number];
 
 // ============================================================================
+// Histórico (chart) tab
+// ============================================================================
+
+function HistoricoComChart() {
+  const { data = [], isLoading } = useHistoricoChart();
+  return (
+    <div className="space-y-4">
+      <Card>
+        <CardHeader className="py-3">
+          <div className="flex items-center gap-2">
+            <CalendarRange className="h-4 w-4 text-muted-foreground" />
+            <CardTitle className="text-base">Últimos 12 ciclos</CardTitle>
+          </div>
+        </CardHeader>
+        <CardContent>
+          {isLoading ? (
+            <TabFallback />
+          ) : data.length === 0 ? (
+            <div className="py-8 text-center text-sm text-muted-foreground">
+              Sem ciclos no período.
+            </div>
+          ) : (
+            <div className="h-[220px] w-full">
+              <ResponsiveContainer>
+                <BarChart data={data}>
+                  <CartesianGrid strokeDasharray="3 3" className="stroke-muted" />
+                  <XAxis dataKey="label" className="text-xs" />
+                  <YAxis className="text-xs" />
+                  <ReTooltip
+                    formatter={(value: number, name: string) => {
+                      if (name === "valor") return [formatBRL(value), "Valor"];
+                      if (name === "skus") return [value, "SKUs"];
+                      return [value, name];
+                    }}
+                    labelFormatter={(l) => `Ciclo ${l}`}
+                    content={({ active, payload, label }) => {
+                      if (!active || !payload?.length) return null;
+                      const p = payload[0].payload as {
+                        label: string;
+                        total: number;
+                        skus: number;
+                        valor: number;
+                      };
+                      return (
+                        <div className="rounded-md border bg-popover p-2 text-xs shadow-md">
+                          <div className="font-medium mb-1">{label}</div>
+                          <div>Total pedidos: {p.total}</div>
+                          <div>SKUs: {p.skus}</div>
+                          <div>Valor: {formatBRL(p.valor)}</div>
+                        </div>
+                      );
+                    }}
+                  />
+                  <Bar dataKey="total" className="fill-primary" radius={[4, 4, 0, 0]} />
+                </BarChart>
+              </ResponsiveContainer>
+            </div>
+          )}
+        </CardContent>
+      </Card>
+
+      <Suspense fallback={<TabFallback />}>
+        <AdminReposicaoHistorico />
+      </Suspense>
+    </div>
+  );
+}
+
+// ============================================================================
+// Shortcuts dialog
+// ============================================================================
+
+const SHORTCUTS: Array<{ key: string; label: string }> = [
+  { key: "g", label: "Rodar geração manual" },
+  { key: "e", label: "Exportar CSV da aba atual" },
+  { key: "1", label: "Aba: Ciclo de hoje" },
+  { key: "2", label: "Aba: Aplicar no Omie" },
+  { key: "3", label: "Aba: Ciclos anteriores" },
+  { key: "r", label: "Atualizar dados" },
+  { key: "m", label: "Ativar/desativar modo revisão" },
+  { key: "?", label: "Abrir esta lista" },
+];
+
+function ShortcutsDialog({
+  open,
+  onOpenChange,
+}: {
+  open: boolean;
+  onOpenChange: (b: boolean) => void;
+}) {
+  return (
+    <Dialog open={open} onOpenChange={onOpenChange}>
+      <DialogContent>
+        <DialogHeader>
+          <DialogTitle className="flex items-center gap-2">
+            <Keyboard className="h-5 w-5" /> Atalhos disponíveis
+          </DialogTitle>
+          <DialogDescription>
+            Teclas rápidas do Cockpit. Não funcionam quando o foco está em um campo de texto.
+          </DialogDescription>
+        </DialogHeader>
+        <div className="border rounded-md divide-y">
+          {SHORTCUTS.map((s) => (
+            <div key={s.key} className="flex items-center justify-between px-3 py-2 text-sm">
+              <span>{s.label}</span>
+              <kbd className="px-2 py-1 text-xs font-mono rounded bg-muted border">{s.key}</kbd>
+            </div>
+          ))}
+        </div>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+// ============================================================================
 // Main page
 // ============================================================================
 
@@ -395,6 +992,8 @@ export default function AdminReposicaoCockpit() {
     isFetching: isFetchingStep,
   } = useCurrentStep();
 
+  const { data: itensDia = [], isLoading: isLoadingItens } = useItensDoDia();
+
   const defaultTab: TabValue = currentStep === 4 ? "aplicaromie" : "ciclohoje";
   const tab: TabValue = (TAB_VALUES as readonly string[]).includes(tabParam ?? "")
     ? (tabParam as TabValue)
@@ -406,7 +1005,7 @@ export default function AdminReposicaoCockpit() {
     }
   }, [tabParam, navigate]);
 
-  // ------ Realtime: invalida queries quando dados mudam no Supabase --------
+  // Realtime
   useEffect(() => {
     const channel = supabase
       .channel("cockpit-reposicao-realtime")
@@ -415,7 +1014,8 @@ export default function AdminReposicaoCockpit() {
         { event: "*", schema: "public", table: "pedido_compra_sugerido" },
         () => {
           queryClient.invalidateQueries({ queryKey: ["cockpit-current-step"] });
-          queryClient.invalidateQueries({ queryKey: ["cockpit-ciclos-anteriores"] });
+          queryClient.invalidateQueries({ queryKey: ["cockpit-itens-dia"] });
+          queryClient.invalidateQueries({ queryKey: ["cockpit-historico-chart"] });
           queryClient.invalidateQueries({ queryKey: ["reposicao-pedidos"] });
           queryClient.invalidateQueries({ queryKey: ["reposicao-aplicacao"] });
           queryClient.invalidateQueries({ queryKey: ["reposicao-historico"] });
@@ -438,11 +1038,14 @@ export default function AdminReposicaoCockpit() {
     };
   }, [queryClient]);
 
-  const handleTab = (v: string) => {
-    const next = new URLSearchParams(params);
-    next.set("tab", v);
-    setParams(next, { replace: true });
-  };
+  const handleTab = useCallback(
+    (v: string) => {
+      const next = new URLSearchParams(params);
+      next.set("tab", v);
+      setParams(next, { replace: true });
+    },
+    [params, setParams],
+  );
 
   const handleStepClick = (step: number) => {
     switch (step) {
@@ -464,7 +1067,37 @@ export default function AdminReposicaoCockpit() {
     }
   };
 
-  // ------ Export CSV por aba -------------------------------------------------
+  // Filtros + review mode (compartilhados com a aba ciclohoje)
+  const [reviewMode, setReviewMode] = useState(false);
+  const [filters, setFilters] = useState({ search: "", fornecedor: ALL, status: ALL });
+
+  const fornecedores = useMemo(
+    () =>
+      Array.from(new Set(itensDia.map((i) => i.fornecedor_nome).filter((x): x is string => !!x))).sort(),
+    [itensDia],
+  );
+  const statuses = useMemo(
+    () => Array.from(new Set(itensDia.map((i) => i.status).filter((x): x is string => !!x))).sort(),
+    [itensDia],
+  );
+
+  const filteredItems = useMemo(() => {
+    const q = filters.search.trim().toLowerCase();
+    return itensDia.filter((i) => {
+      if (filters.fornecedor !== ALL && i.fornecedor_nome !== filters.fornecedor) return false;
+      if (filters.status !== ALL && i.status !== filters.status) return false;
+      if (q) {
+        const hay = [i.fornecedor_nome, i.grupo_codigo, i.status]
+          .filter(Boolean)
+          .join(" ")
+          .toLowerCase();
+        if (!hay.includes(q)) return false;
+      }
+      return true;
+    });
+  }, [itensDia, filters]);
+
+  // ------ Export CSV --------------------------------------------------------
   const [isExporting, setIsExporting] = useState(false);
 
   const handleExportCsv = async () => {
@@ -474,22 +1107,7 @@ export default function AdminReposicaoCockpit() {
     const filename = `cockpit-${tab}-${today}.csv`;
     try {
       if (tab === "ciclohoje") {
-        const { data, error } = await supabase
-          .from("pedido_compra_sugerido" as any)
-          .select(
-            "fornecedor_nome,grupo_codigo,num_skus,valor_total,status,aprovado_em,horario_disparo_real",
-          )
-          .eq("empresa", EMPRESA)
-          .eq("data_ciclo", today);
-        if (error) throw error;
-        const rows = (((data ?? []) as unknown) as Array<{
-          fornecedor_nome: string | null;
-          grupo_codigo: string | null;
-          num_skus: number | null;
-          valor_total: number | null;
-          status: string | null;
-          aprovado_em: string | null;
-        }>).map((r) => [
+        const rows = filteredItems.map((r) => [
           r.grupo_codigo ?? "",
           r.fornecedor_nome ?? "",
           r.fornecedor_nome ?? "",
@@ -545,23 +1163,18 @@ export default function AdminReposicaoCockpit() {
           .gte("data_ciclo", format(inicio, "yyyy-MM-dd"))
           .lte("data_ciclo", format(fim, "yyyy-MM-dd"));
         if (error) throw error;
-        const map = new Map<
-          string,
-          { skus: number; valor: number; statuses: Set<string> }
-        >();
+        const map = new Map<string, { skus: number; valor: number; statuses: Set<string> }>();
         for (const r of (((data ?? []) as unknown) as Array<{
           data_ciclo: string;
           num_skus: number | null;
           valor_total: number | null;
           status: string | null;
         }>)) {
-          if (!map.has(r.data_ciclo)) {
-            map.set(r.data_ciclo, { skus: 0, valor: 0, statuses: new Set() });
-          }
-          const acc = map.get(r.data_ciclo)!;
+          const acc = map.get(r.data_ciclo) ?? { skus: 0, valor: 0, statuses: new Set<string>() };
           acc.skus += Number(r.num_skus ?? 0);
           acc.valor += Number(r.valor_total ?? 0);
           if (r.status) acc.statuses.add(r.status);
+          map.set(r.data_ciclo, acc);
         }
         const rows = Array.from(map.entries())
           .sort((a, b) => b[0].localeCompare(a[0]))
@@ -594,15 +1207,93 @@ export default function AdminReposicaoCockpit() {
     }
   };
 
+  // ------ Manual generation -------------------------------------------------
+  const [isGenerating, setIsGenerating] = useState(false);
+  const handleGenerate = async () => {
+    if (isGenerating) return;
+    setIsGenerating(true);
+    try {
+      const { error } = await supabase.functions.invoke("gerar-pedidos-diario", {
+        body: { empresa: EMPRESA, manual: true },
+      });
+      if (error) throw error;
+      await logAudit({
+        userId: user?.id ?? null,
+        action: "Geração manual",
+        result: "Sucesso",
+      });
+      toast.success("Geração disparada");
+      queryClient.invalidateQueries({ queryKey: ["cockpit-itens-dia"] });
+      queryClient.invalidateQueries({ queryKey: ["cockpit-current-step"] });
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      await logAudit({
+        userId: user?.id ?? null,
+        action: "Geração manual",
+        result: `Erro: ${msg}`,
+      });
+      toast.error("Falha na geração manual");
+    } finally {
+      setIsGenerating(false);
+    }
+  };
+
+  const handleRefetchAll = () => {
+    queryClient.invalidateQueries({ queryKey: ["cockpit-itens-dia"] });
+    queryClient.invalidateQueries({ queryKey: ["cockpit-current-step"] });
+    queryClient.invalidateQueries({ queryKey: ["cockpit-historico-chart"] });
+    queryClient.invalidateQueries({ queryKey: ["reposicao-pedidos"] });
+    queryClient.invalidateQueries({ queryKey: ["reposicao-aplicacao"] });
+    queryClient.invalidateQueries({ queryKey: ["reposicao-historico"] });
+    toast("Atualizando...", { duration: 1200 });
+  };
+
+  // ------ Keyboard shortcuts ------------------------------------------------
+  const [shortcutsOpen, setShortcutsOpen] = useState(false);
+
+  useKeyboardShortcuts({
+    g: () => handleGenerate(),
+    e: () => handleExportCsv(),
+    "1": () => handleTab("ciclohoje"),
+    "2": () => handleTab("aplicaromie"),
+    "3": () => handleTab("anteriores"),
+    r: () => handleRefetchAll(),
+    m: () => setReviewMode(!reviewMode),
+    "?": () => setShortcutsOpen(true),
+  });
+
   return (
-    <div className="container mx-auto p-4 sm:p-6 space-y-6 max-w-7xl">
-      <header className="flex items-center gap-3">
-        <Sparkles className="h-6 w-6 text-primary" />
-        <div>
-          <h1 className="text-2xl font-bold">Cockpit de Reposição</h1>
-          <p className="text-sm text-muted-foreground">
-            Todo o ciclo diário de compras em uma única tela
-          </p>
+    <div className="container mx-auto p-4 sm:p-6 space-y-6 max-w-7xl pb-24">
+      <header className="flex items-center justify-between gap-3 flex-wrap">
+        <div className="flex items-center gap-3">
+          <Sparkles className="h-6 w-6 text-primary" />
+          <div>
+            <h1 className="text-2xl font-bold">Cockpit de Reposição</h1>
+            <p className="text-sm text-muted-foreground">
+              Todo o ciclo diário de compras em uma única tela
+            </p>
+          </div>
+        </div>
+        <div className="flex items-center gap-2">
+          <Button
+            size="sm"
+            variant="ghost"
+            onClick={() => setShortcutsOpen(true)}
+            title="Atalhos de teclado (?)"
+          >
+            <Keyboard className="h-4 w-4" />
+          </Button>
+          <Button size="sm" variant="outline" onClick={handleRefetchAll} title="Atualizar (R)">
+            <RotateCw className="h-4 w-4 mr-1.5" /> Atualizar
+          </Button>
+          <Button size="sm" onClick={handleGenerate} disabled={isGenerating} title="Gerar (G)">
+            {isGenerating ? (
+              <Loader2 className="h-4 w-4 mr-1.5 animate-spin" />
+            ) : (
+              <Sparkles className="h-4 w-4 mr-1.5" />
+            )}
+            Gerar agora
+          </Button>
         </div>
       </header>
 
@@ -631,11 +1322,15 @@ export default function AdminReposicaoCockpit() {
         </Alert>
       )}
 
+      <SmartAlertsSection />
+
       <ProcessoComprasStepper
         currentStep={currentStep}
         onStepClick={handleStepClick}
         isLoading={isLoadingStep}
       />
+
+      <MetricsStrip items={itensDia} />
 
       <Tabs value={tab} onValueChange={handleTab} className="space-y-4">
         <div className="flex items-center justify-between gap-3 flex-wrap">
@@ -644,12 +1339,7 @@ export default function AdminReposicaoCockpit() {
             <TabsTrigger value="aplicaromie">Aplicar no Omie</TabsTrigger>
             <TabsTrigger value="anteriores">Ciclos anteriores</TabsTrigger>
           </TabsList>
-          <Button
-            size="sm"
-            variant="outline"
-            onClick={handleExportCsv}
-            disabled={isExporting}
-          >
+          <Button size="sm" variant="outline" onClick={handleExportCsv} disabled={isExporting}>
             {isExporting ? (
               <Loader2 className="h-4 w-4 mr-1.5 animate-spin" />
             ) : (
@@ -660,9 +1350,17 @@ export default function AdminReposicaoCockpit() {
         </div>
 
         <TabsContent value="ciclohoje" className="m-0">
-          <Suspense fallback={<TabFallback />}>
-            <AdminReposicaoPedidos />
-          </Suspense>
+          <CicloHojePanel
+            user={user}
+            reviewMode={reviewMode}
+            setReviewMode={setReviewMode}
+            filters={filters}
+            setFilters={setFilters}
+            filteredItems={filteredItems}
+            fornecedores={fornecedores}
+            statuses={statuses}
+            isLoading={isLoadingItens}
+          />
         </TabsContent>
 
         <TabsContent value="aplicaromie" className="m-0">
@@ -672,13 +1370,13 @@ export default function AdminReposicaoCockpit() {
         </TabsContent>
 
         <TabsContent value="anteriores" className="m-0">
-          <Suspense fallback={<TabFallback />}>
-            <AdminReposicaoHistorico />
-          </Suspense>
+          <HistoricoComChart />
         </TabsContent>
       </Tabs>
 
       <AuditLogSection />
+
+      <ShortcutsDialog open={shortcutsOpen} onOpenChange={setShortcutsOpen} />
     </div>
   );
 }
