@@ -305,7 +305,7 @@ const SalesOrders = () => {
                           className="h-7 w-7"
                           onClick={(e) => {
                             e.stopPropagation();
-                            handleShareOrder(order, profiles[order.customer_user_id] || 'Cliente');
+                            handleShareOrder(order, decodeHtml(profiles[order.customer_user_id] || 'Cliente'));
                           }}
                           title="Compartilhar via WhatsApp"
                         >
