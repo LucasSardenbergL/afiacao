@@ -17,6 +17,14 @@ import { shareOrderViaWhatsApp } from '@/utils/whatsappShare';
 
 type Account = 'oben' | 'colacor' | 'afiacao' | 'all';
 
+const decodeHtml = (s: string): string =>
+  s
+    .replace(/&amp;/g, '&')
+    .replace(/&apos;/g, "'")
+    .replace(/&quot;/g, '"')
+    .replace(/&lt;/g, '<')
+    .replace(/&gt;/g, '>');
+
 interface SalesOrder {
   id: string;
   customer_user_id: string;
@@ -168,7 +176,7 @@ const SalesOrders = () => {
     if (search.trim()) {
       const q = search.trim().toLowerCase();
       result = result.filter(o => {
-        const customerName = profiles[o.customer_user_id] || '';
+        const customerName = decodeHtml(profiles[o.customer_user_id] || '');
         const pvNumber = o.omie_numero_pedido || '';
         const itemDescs = (o.items || []).map(i => i.descricao).join(' ');
         return (
@@ -267,7 +275,7 @@ const SalesOrders = () => {
                     <div className="flex-1 min-w-0">
                       <div className="flex items-center gap-1.5">
                         <p className="font-medium text-sm truncate">
-                          {profiles[order.customer_user_id] || 'Cliente'}
+                          {decodeHtml(profiles[order.customer_user_id] || 'Cliente')}
                         </p>
                         <Badge variant="outline" className="text-[9px] px-1 py-0 shrink-0">
                           {accountLabel}
@@ -297,7 +305,7 @@ const SalesOrders = () => {
                           className="h-7 w-7"
                           onClick={(e) => {
                             e.stopPropagation();
-                            handleShareOrder(order, profiles[order.customer_user_id] || 'Cliente');
+                            handleShareOrder(order, decodeHtml(profiles[order.customer_user_id] || 'Cliente'));
                           }}
                           title="Compartilhar via WhatsApp"
                         >
