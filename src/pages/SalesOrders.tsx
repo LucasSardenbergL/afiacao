@@ -275,7 +275,7 @@ const SalesOrders = () => {
                     <div className="flex-1 min-w-0">
                       <div className="flex items-center gap-1.5">
                         <p className="font-medium text-sm truncate">
-                          {profiles[order.customer_user_id] || 'Cliente'}
+                          {decodeHtml(profiles[order.customer_user_id] || 'Cliente')}
                         </p>
                         <Badge variant="outline" className="text-[9px] px-1 py-0 shrink-0">
                           {accountLabel}
