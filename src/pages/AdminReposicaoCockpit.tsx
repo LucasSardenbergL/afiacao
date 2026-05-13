@@ -157,6 +157,7 @@ function useCurrentStep() {
         .from("v_oportunidade_economica_hoje" as any)
         .select("*", { count: "exact", head: true })
         .eq("empresa", EMPRESA);
+      if (oport.error) throw oport.error;
 
       // Etapa 2: parâmetros sugeridos pendentes de aprovação
       const params = await supabase
@@ -165,6 +166,7 @@ function useCurrentStep() {
         .eq("empresa", EMPRESA)
         .eq("ativo", true)
         .is("aprovado_em", null);
+      if (params.error) throw params.error;
 
       // Etapas 3/4/5: pedidos do ciclo de hoje por status
       const pedidos = await supabase
@@ -172,6 +174,7 @@ function useCurrentStep() {
         .select("status")
         .eq("empresa", EMPRESA)
         .eq("data_ciclo", today);
+      if (pedidos.error) throw pedidos.error;
 
       const statuses = (((pedidos.data ?? []) as unknown) as Array<{ status: string | null }>).map(
         (r) => r.status,
@@ -195,16 +198,27 @@ function useCurrentStep() {
   });
 }
 
+const TAB_VALUES = ["ciclohoje", "aplicaromie", "anteriores"] as const;
+type TabValue = (typeof TAB_VALUES)[number];
+
 export default function AdminReposicaoCockpit() {
   const navigate = useNavigate();
   const [params, setParams] = useSearchParams();
   const tabParam = params.get("tab");
 
-  const { data: currentStep = 3 } = useCurrentStep();
+  const {
+    data: currentStep = 3,
+    isLoading: isLoadingStep,
+    isError: stepError,
+    refetch: refetchStep,
+    isFetching: isFetchingStep,
+  } = useCurrentStep();
 
   // Aba padrão coerente com a etapa atual.
-  const defaultTab = currentStep === 4 ? "aplicar" : "ciclo";
-  const tab = tabParam ?? defaultTab;
+  const defaultTab: TabValue = currentStep === 4 ? "aplicaromie" : "ciclohoje";
+  const tab: TabValue = (TAB_VALUES as readonly string[]).includes(tabParam ?? "")
+    ? (tabParam as TabValue)
+    : defaultTab;
 
   // Redireciona ?tab=oportunidades para a página dedicada.
   useEffect(() => {
@@ -228,13 +242,13 @@ export default function AdminReposicaoCockpit() {
         navigate("/admin/reposicao/parametros");
         break;
       case 3:
-        handleTab("ciclo");
+        handleTab("ciclohoje");
         break;
       case 4:
-        handleTab("aplicar");
+        handleTab("aplicaromie");
         break;
       case 5:
-        handleTab("ciclo");
+        handleTab("ciclohoje");
         break;
     }
   };
@@ -251,28 +265,57 @@ export default function AdminReposicaoCockpit() {
         </div>
       </header>
 
-      <ProcessoComprasStepper currentStep={currentStep} onStepClick={handleStepClick} />
+      {stepError && (
+        <Alert variant="default" className="border-amber-500/40 bg-amber-500/5">
+          <AlertTriangle className="h-4 w-4 text-amber-600" />
+          <AlertTitle>Etapa atual indisponível</AlertTitle>
+          <AlertDescription className="flex items-center justify-between gap-3 flex-wrap">
+            <span>Não foi possível calcular a etapa atual. Exibindo dados em cache.</span>
+            <Button
+              size="sm"
+              variant="outline"
+              onClick={() => refetchStep()}
+              disabled={isFetchingStep}
+            >
+              {isFetchingStep ? (
+                <>
+                  <Loader2 className="h-3 w-3 mr-1.5 animate-spin" />
+                  Tentando...
+                </>
+              ) : (
+                "Tentar novamente"
+              )}
+            </Button>
+          </AlertDescription>
+        </Alert>
+      )}
+
+      <ProcessoComprasStepper
+        currentStep={currentStep}
+        onStepClick={handleStepClick}
+        isLoading={isLoadingStep}
+      />
 
       <Tabs value={tab} onValueChange={handleTab} className="space-y-4">
         <TabsList className="grid grid-cols-3 w-full">
-          <TabsTrigger value="ciclo">Ciclo de hoje</TabsTrigger>
-          <TabsTrigger value="aplicar">Aplicar no Omie</TabsTrigger>
-          <TabsTrigger value="historico">Ciclos anteriores</TabsTrigger>
+          <TabsTrigger value="ciclohoje">Ciclo de hoje</TabsTrigger>
+          <TabsTrigger value="aplicaromie">Aplicar no Omie</TabsTrigger>
+          <TabsTrigger value="anteriores">Ciclos anteriores</TabsTrigger>
         </TabsList>
 
-        <TabsContent value="ciclo" className="m-0">
+        <TabsContent value="ciclohoje" className="m-0">
           <Suspense fallback={<TabFallback />}>
             <AdminReposicaoPedidos />
           </Suspense>
         </TabsContent>
 
-        <TabsContent value="aplicar" className="m-0">
+        <TabsContent value="aplicaromie" className="m-0">
           <Suspense fallback={<TabFallback />}>
             <AdminReposicaoAplicacao />
           </Suspense>
         </TabsContent>
 
-        <TabsContent value="historico" className="m-0">
+        <TabsContent value="anteriores" className="m-0">
           <Suspense fallback={<TabFallback />}>
             <AdminReposicaoHistorico />
           </Suspense>
