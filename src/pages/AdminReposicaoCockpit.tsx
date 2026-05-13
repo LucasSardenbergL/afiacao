@@ -1319,7 +1319,7 @@ function CicloHojePanel({
             </Button>
             <Button onClick={runAutoApprove} disabled={busy || eligibleAutoItems.length === 0}>
               {busy && <Loader2 className="h-4 w-4 mr-1.5 animate-spin" />}
-              Confirmar aprovação
+              Confirmar aprovação automática
             </Button>
           </div>
         </DialogContent>
