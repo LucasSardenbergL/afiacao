@@ -10678,6 +10678,10 @@ export type Database = {
         Args: { p_empresa: string }
         Returns: number
       }
+      calcular_gatilhos_reposicao: {
+        Args: { p_empresa?: string; p_only_sku?: number }
+        Returns: Record<string, unknown>
+      }
       cancelar_pedido_sugerido: {
         Args: {
           p_justificativa: string

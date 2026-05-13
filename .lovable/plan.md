@@ -1,77 +1,56 @@
-# Consolidação de roles: admin + manager → master
+# Sync OBEN, fix do WFOI.6857QT e baixo giro
 
-## Objetivo
-Eliminar os roles `admin` e `manager` do aplicativo. O role `master` passa a ser o único nível de privilégio elevado, herdando todas as permissões anteriores.
+## 1. Diagnóstico atual (já levantado)
 
-## Escopo medido
-- **289 policies RLS** referenciam `'admin'` ou `'manager'`
-- **37 arquivos** TypeScript (frontend + edge functions) com checagens de role
-- **2 funções SQL** com lógica baseada em role
-- **Enum `app_role`** contém os valores `admin`, `manager`, `master`, `employee`, `customer`
+- **OBEN tem 380 SKUs** ativos em `sku_parametros`.
+- **Estoque atual sincronizado:** 130 / 380 (250 sem registro em `sku_estoque_atual`).
+- **Status Omie sincronizado:** 0 / 380. O `omie-sync-status-produtos` nunca rodou pra OBEN.
+- **Última sync de estoque:** 2026-05-10. Cron está rodando, mas com cobertura parcial.
+- **Todos os 380 SKUs estão sem fornecedor** (`fornecedor_codigo_omie IS NULL`).
+- **211 SKUs são classe BY/BZ/CY/CZ** (baixo giro).
+- **WFOI.6857QT** existe (Omie 8689767990), classe CY, ativo, mas: sem fornecedor, sem ponto de pedido, sem estoque sincronizado, sem registro em `sku_status_omie`. Sem histórico de NFe pra deduzir fornecedor.
 
-## Estratégia em 3 ondas
+## 2. O que vou entregar
 
-### Onda 1 — Banco (sem downtime, retrocompatível)
-1. Migração de dados: para todo usuário em `user_roles` com role `admin` ou `manager`, garantir que tenha role `master` (INSERT idempotente). Depois, deletar as linhas `admin`/`manager`.
-2. Reescrever a função `public.has_role(uuid, app_role)` para que:
-   - `has_role(uid, 'admin')` retorne true se usuário tem `master`
-   - `has_role(uid, 'manager')` retorne true se usuário tem `master`
-   - Demais roles continuam exatamente iguais
-3. Resultado imediato: as 289 policies continuam funcionando sem alteração; ninguém perde acesso.
+### A) Diagnóstico do sync OBEN
+1. Adicionar uma tela / cartão em `/admin/reposicao/parametros` (aba "Cadastros") com:
+   - Cobertura: SKUs com parâmetro × SKUs com estoque sincronizado × SKUs com status Omie.
+   - Lista expansível dos SKUs faltantes em cada lado.
+   - Botão "Forçar sync de status produtos OBEN" que dispara o `omie-sync-status-produtos` por empresa.
+2. Investigar por que `omie-sync-estoque` só pega 130/380. Hipóteses já mapeadas: filtro do sync exige fornecedor habilitado e SKU listado em `ListarPosicaoEstoque` — SKUs sem fornecedor nunca entram. Vou confirmar e documentar a regra real.
 
-### Onda 2 — Código (frontend + edge functions)
-Substituir nos 37 arquivos as checagens `=== 'admin'`, `=== 'manager'`, `hasRole('admin')`, `hasRole('manager')` por verificações em `master`. Pontos de cuidado:
-- **Não tocar em rotas** `/admin/...` — são paths de URL, não roles.
-- **Não tocar em nomes de tabelas/policies** que contenham a palavra `admin`/`manager` (ex.: `staff_xxx_admin_select`).
-- Atualizar `useUserRole`, `useCommercialRole`, `ProtectedRoute`, `AppShell`, telas de Governance.
-- Edge functions: ajustar verificações de RBAC interno.
+### B) Fix curto prazo do WFOI.6857QT
+Não consigo atribuir fornecedor sozinho — não há histórico de NFe nem cadastro Omie no banco local. **Preciso que você me informe o nome do fornecedor**. Assim que souber, faço:
+1. `UPDATE sku_parametros SET fornecedor_codigo_omie/nome` para os 2 SKUs (WFOI e WFOT 6857QT).
+2. Disparar `omie-sync-status-produtos` e `omie-sync-estoque` pra essa empresa.
+3. Rodar o cálculo de gatilho (item C) pra esses SKUs.
 
-### Onda 3 — Limpeza opcional (depois de validar)
-- Reescrever as 289 policies trocando literais `'admin'`/`'manager'` por `'master'` (cosmético — comportamento já idêntico após Onda 1).
-- Remover `admin` e `manager` do enum `app_role` via `ALTER TYPE … RENAME VALUE` ou recriação. Esta etapa é destrutiva e não é estritamente necessária para o objetivo funcional.
+### C) Cálculo de gatilho (ponto de pedido / estoque mínimo)
+Verifico se já existe uma edge function de cálculo (`calculate-scores` ou similar) que preencha `ponto_pedido` e `estoque_minimo`. Se existir, garanto que ela rode pros SKUs corrigidos. Se não existir ou não cobrir esses casos, crio uma edge function pequena `reposicao-calcular-gatilho` que aplica a fórmula:
+- `ponto_pedido = demanda_media_diaria × (lt_medio_dias_uteis + z × lt_desvio_padrao)`
+- `estoque_seguranca = z × demanda_desvio_padrao × √lt`
+- `estoque_minimo = estoque_seguranca`
+- z derivado da `classe_consolidada` (A=2.33, B=1.65, C=1.28).
+
+Onde dados estatísticos não existem ainda (item zerado de fato), aplico a regra do item D abaixo.
+
+### D) Regra "baixo giro: sugere 1 unidade"
+Para SKUs com `classe_consolidada IN ('AY','AZ','BY','BZ','CY','CZ')` **OU** `demanda_media_diaria < 0.05` (≈ 1,5 un/mês):
+1. No motor que popula `pedido_compra_sugerido` (vou localizar o cron / edge function que gera as sugestões), adicionar branch:
+   - Se `estoque_disponivel = 0` e SKU tem fornecedor habilitado, **sugere `qtd_sugerida = max(lote_minimo_fornecedor, 1)`** com `motivo = 'baixo_giro_estoque_zerado'` e flag `requer_validacao_humana = true`.
+2. Na tela do Cockpit, esses itens já caem no modo "review" (graças ao `calcApprovalSuggestion` que classifica como manual quando há `requer_validacao_humana` ou ausência de histórico). Confirmo o badge "Validar".
+3. Adiciono campo `motivo` (string) ou reuso `detalhes` JSONB se já existir, sem migração disruptiva.
+
+### E) Memória de regra
+Salvo em `mem://business-rules/reposicao-baixo-giro` a regra dos itens D pra futuras alterações respeitarem.
 
 ## Detalhes técnicos
 
-### Override de has_role (Onda 1)
-```sql
-CREATE OR REPLACE FUNCTION public.has_role(_user_id uuid, _role app_role)
-RETURNS boolean LANGUAGE sql STABLE SECURITY DEFINER
-SET search_path = public AS $$
-  SELECT EXISTS (
-    SELECT 1 FROM public.user_roles
-    WHERE user_id = _user_id
-      AND (
-        role = _role
-        OR (_role IN ('admin','manager') AND role = 'master')
-      )
-  )
-$$;
-```
+- **Sem schema novo agressivo**: vou tentar reaproveitar colunas existentes em `pedido_compra_sugerido`. Se faltar `motivo`/`requer_validacao_humana`, faço UMA migration aditiva mínima (NULL default).
+- **Funções afetadas**: `omie-sync-status-produtos`, `omie-sync-estoque`, e o gerador de sugestões (vou identificar — provavelmente `gerar-pedidos-diario` ou `calculate-scores`).
+- **UI**: adições não destrutivas em `AdminReposicaoParametros.tsx` e no Cockpit.
+- **Auto-resolução de alertas** (do que já entreguei) continua valendo.
 
-### Migração de dados
-```sql
-INSERT INTO public.user_roles (user_id, role)
-SELECT DISTINCT user_id, 'master'::app_role
-FROM public.user_roles
-WHERE role IN ('admin','manager')
-ON CONFLICT DO NOTHING;
+## Pergunta para destravar
 
-DELETE FROM public.user_roles WHERE role IN ('admin','manager');
-```
-
-### UI de gestão de roles
-Em `GovernancePermissions.tsx` / `GovernanceUsers.tsx`, remover `admin` e `manager` das listas de roles atribuíveis, mantendo apenas: `master`, `employee`, `customer` (e demais existentes).
-
-## Riscos
-- **Médio** — algum gatilho/edge function pode ter um literal `'admin'` esquecido em string concatenada e não pego pelo grep. A Onda 1 mitiga isso (master cobre os dois nomes).
-- **Baixo** — recriar enum sem `admin`/`manager` exigiria revisar todos os defaults de coluna; por isso fica como Onda 3 opcional.
-
-## Entregáveis
-- 1 migration (Onda 1) — aplicada e validada antes de mexer em código.
-- N edits TypeScript (Onda 2) — em PRs lógicos por área (governance, hooks, telas admin, edge functions).
-- 1 migration final (Onda 3) — somente se você quiser eliminar literais `'admin'`/`'manager'` do banco.
-
-## O que NÃO será alterado
-- Rotas `/admin/...`
-- Nomes de tabelas, índices, policies (ex.: `staff_pedido_compra_sugerido_insert`)
-- Conteúdo de colunas que armazenem strings `"admin"` em outros contextos
+**Qual fornecedor atribuir aos SKUs WFOI.6857QT e WFOT.6857QT?** Posso te trazer a lista de fornecedores OBEN habilitados pra você escolher, se preferir.
