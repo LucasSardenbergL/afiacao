@@ -52,7 +52,8 @@ export function ShortcutsDialog() {
   }, []);
 
   const grouped = useMemo(() => {
-    const map = new Map<string, typeof shortcuts>();
+    type Entry = (typeof shortcuts)[number];
+    const map = new Map<string, Entry[]>();
     for (const s of shortcuts) {
       const key = s.group ?? (s.scope === 'global' ? 'Global' : 'Esta página');
       if (!map.has(key)) map.set(key, []);
