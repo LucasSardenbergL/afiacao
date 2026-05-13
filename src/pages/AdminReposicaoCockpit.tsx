@@ -1705,6 +1705,8 @@ export default function AdminReposicaoCockpit() {
             fornecedores={fornecedores}
             statuses={statuses}
             isLoading={isLoadingItens}
+            cols={cols}
+            onColChange={updateCol}
           />
         </TabsContent>
 
