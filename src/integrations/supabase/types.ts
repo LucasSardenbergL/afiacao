@@ -10680,11 +10680,7 @@ export type Database = {
       }
       calcular_gatilhos_reposicao: {
         Args: { p_empresa?: string; p_only_sku?: number }
-        Returns: {
-          atualizados: number
-          baixo_giro: number
-          normais: number
-        }[]
+        Returns: Record<string, unknown>
       }
       cancelar_pedido_sugerido: {
         Args: {
