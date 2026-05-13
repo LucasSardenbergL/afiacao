@@ -287,7 +287,7 @@ function useItensDoDia() {
       const { data, error } = await supabase
         .from("pedido_compra_sugerido" as any)
         .select(
-          "id,fornecedor_nome,grupo_codigo,num_skus,valor_total,status,aprovado_em,cancelado_em,horario_disparo_real",
+          "id,fornecedor_nome,grupo_codigo,num_skus,valor_total,pedido_anterior_valor,status,aprovado_em,cancelado_em,horario_disparo_real",
         )
         .eq("empresa", EMPRESA)
         .eq("data_ciclo", today)
