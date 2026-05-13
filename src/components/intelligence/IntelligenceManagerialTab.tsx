@@ -148,7 +148,7 @@ export function IntelligenceManagerialTab() {
             <div className="h-48">
               <ResponsiveContainer width="100%" height="100%">
                 <BarChart data={allPerformance.slice(0, 10).map(p => ({
-                  name: p.farmer_id.slice(0, 6),
+                  name: farmerNameMap[p.farmer_id] ?? p.farmer_id.slice(0, 6),
                   iee: Number(p.iee_total || 0),
                   ipf: Number(p.ipf_total || 0),
                 }))}>
