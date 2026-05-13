@@ -114,7 +114,7 @@ export function IntelligenceManagerialTab() {
               <tbody>
                 {farmerMetrics.map(fm => (
                   <tr key={fm.farmerId} className="border-b border-border/50 hover:bg-muted/50">
-                    <td className="py-2 font-mono">{fm.farmerId.slice(0, 8)}...</td>
+                    <td className="py-2 font-mono">{farmerNameMap[fm.farmerId] ?? `${fm.farmerId.slice(0, 8)}...`}</td>
                     <td className="text-center py-2">{fm.clientCount}</td>
                     <td className="text-center py-2">
                       <Badge variant={fm.avgHealth > 60 ? 'default' : 'destructive'} className="text-2xs">{fm.avgHealth.toFixed(0)}</Badge>
