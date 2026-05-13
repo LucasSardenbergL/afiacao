@@ -1337,6 +1337,7 @@ export default function AdminReposicaoCockpit() {
   } = useCurrentStep();
 
   const { data: itensDia = [], isLoading: isLoadingItens } = useItensDoDia();
+  const { cols, update: updateCol } = useColumnConfig();
 
   const defaultTab: TabValue = currentStep === 4 ? "aplicaromie" : "ciclohoje";
   const tab: TabValue = (TAB_VALUES as readonly string[]).includes(tabParam ?? "")
