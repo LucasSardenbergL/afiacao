@@ -102,9 +102,12 @@ function KpiCards({ empresa }: { empresa: string }) {
     },
   });
 
+  const brl = (n: number) =>
+    n.toLocaleString("pt-BR", { style: "currency", currency: "BRL", maximumFractionDigits: 0 });
+
   const cards = [
-    { label: "Posição DES", value: data?.posicao ?? 0, icon: Trophy },
-    { label: "Meta Trimestral", value: data?.meta ?? 0, icon: Target },
+    { label: "Posição ao Vivo", value: brl(Number(data?.posicao ?? 0)), icon: Trophy },
+    { label: "Meta Pessoal", value: brl(Number(data?.meta ?? 0)), icon: Target },
     { label: "Ligações Hoje", value: data?.ligacoes ?? 0, icon: Phone },
     { label: "Score SPIN Médio", value: data?.spin ?? 0, icon: MessageSquare },
   ];
