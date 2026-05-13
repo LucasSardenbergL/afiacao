@@ -675,11 +675,13 @@ function inferConfianca(r: PedidoItem): { level: ConfLevel; reason: string } {
   };
 }
 
-// Re-export pure classifier from its own module so it stays testable.
+// Pure classifier lives in its own module so it stays testable.
 // See src/lib/reposicao/approvalSuggestion.ts
-export { calcApprovalSuggestion } from "@/lib/reposicao/approvalSuggestion";
-import type { ApprovalSuggestion } from "@/lib/reposicao/approvalSuggestion";
-import { calcApprovalSuggestion as _calcApprovalSuggestion } from "@/lib/reposicao/approvalSuggestion";
+import {
+  calcApprovalSuggestion,
+  type ApprovalSuggestion,
+} from "@/lib/reposicao/approvalSuggestion";
+export { calcApprovalSuggestion };
 
 // ============================================================================
 // Itens do ciclo (com filtros + batch review + ações inline + colunas)
