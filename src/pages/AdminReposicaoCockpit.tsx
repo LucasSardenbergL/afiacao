@@ -16,9 +16,8 @@ import {
   TableRow,
 } from "@/components/ui/table";
 
-// Reaproveita as 3 telas originais como conteúdo das abas — mesmas queries Supabase.
+// Reaproveita as telas originais como conteúdo das abas — mesmas queries Supabase.
 const AdminReposicaoPedidos = lazy(() => import("./AdminReposicaoPedidos"));
-const AdminReposicaoOportunidades = lazy(() => import("./AdminReposicaoOportunidades"));
 const AdminReposicaoAplicacao = lazy(() => import("./AdminReposicaoAplicacao"));
 const AdminReposicaoHistorico = lazy(() => import("./AdminReposicaoHistorico"));
 
