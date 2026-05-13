@@ -1026,6 +1026,15 @@ function CicloHojePanel({
     return Array.from(map.entries()).map(([fornecedor, qtd]) => ({ fornecedor, qtd }));
   }, [eligibleAutoItems]);
 
+  const manualReviewItems = useMemo(
+    () =>
+      filteredItems
+        .filter((item) => !item.aprovado_em && !item.cancelado_em)
+        .map((item) => ({ item, suggestion: calcApprovalSuggestion(item) }))
+        .filter(({ suggestion }) => suggestion.mode === "review"),
+    [filteredItems],
+  );
+
   const invalidate = () => {
     queryClient.invalidateQueries({ queryKey: ["cockpit-itens-dia"] });
     queryClient.invalidateQueries({ queryKey: ["cockpit-current-step"] });
