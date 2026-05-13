@@ -155,7 +155,7 @@ export function IntelligenceOperationalTab({ farmerId }: OperationalTabProps) {
                 .slice(0, 5)
                 .map(c => (
                   <div key={c.id} className="flex items-center justify-between text-xs">
-                    <span className="truncate">{c.customer_user_id.slice(0, 8)}...</span>
+                    <span className="truncate">{clientNameMap[c.customer_user_id] ?? `${c.customer_user_id.slice(0, 8)}...`}</span>
                     <div className="flex items-center gap-2">
                       <Badge variant={c.health_class === 'critico' ? 'destructive' : 'secondary'} className="text-2xs">{c.health_class}</Badge>
                       <span className="text-muted-foreground">HS: {Number(c.health_score).toFixed(0)}</span>
