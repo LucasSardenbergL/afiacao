@@ -548,8 +548,343 @@ function MetricsStrip({ items }: { items: PedidoItem[] }) {
 }
 
 // ============================================================================
-// Itens do ciclo (com filtros + batch review)
+// Configuração de colunas (persistida em localStorage)
 // ============================================================================
+
+type ColKey =
+  | "fornecedor"
+  | "grupo"
+  | "skus"
+  | "valor"
+  | "status"
+  | "qtdAprovada"
+  | "preco"
+  | "confianca";
+
+const COL_DEFS: Array<{ key: ColKey; label: string }> = [
+  { key: "fornecedor", label: "Fornecedor" },
+  { key: "grupo", label: "Grupo" },
+  { key: "skus", label: "SKUs" },
+  { key: "valor", label: "Valor" },
+  { key: "status", label: "Status" },
+  { key: "qtdAprovada", label: "Qtd Aprovada" },
+  { key: "preco", label: "Preço" },
+  { key: "confianca", label: "Confiança" },
+];
+
+const DEFAULT_COLS: Record<ColKey, boolean> = {
+  fornecedor: true,
+  grupo: true,
+  skus: true,
+  valor: true,
+  status: true,
+  qtdAprovada: true,
+  preco: false,
+  confianca: false,
+};
+
+const COLS_STORAGE_KEY = "cockpit-colunas-v1";
+
+function useColumnConfig() {
+  const [cols, setCols] = useState<Record<ColKey, boolean>>(() => {
+    try {
+      const raw = localStorage.getItem(COLS_STORAGE_KEY);
+      if (!raw) return DEFAULT_COLS;
+      const parsed = JSON.parse(raw) as Partial<Record<ColKey, boolean>>;
+      return { ...DEFAULT_COLS, ...parsed };
+    } catch {
+      return DEFAULT_COLS;
+    }
+  });
+  const update = (key: ColKey, value: boolean) => {
+    const next = { ...cols, [key]: value };
+    setCols(next);
+    try {
+      localStorage.setItem(COLS_STORAGE_KEY, JSON.stringify(next));
+    } catch {
+      /* ignore */
+    }
+  };
+  return { cols, update };
+}
+
+function ColumnConfigPopover({
+  cols,
+  onChange,
+}: {
+  cols: Record<ColKey, boolean>;
+  onChange: (k: ColKey, v: boolean) => void;
+}) {
+  return (
+    <Popover>
+      <PopoverTrigger asChild>
+        <Button size="sm" variant="outline" title="Configurar colunas">
+          <SettingsIcon className="h-4 w-4" />
+        </Button>
+      </PopoverTrigger>
+      <PopoverContent className="w-56 p-3" align="end">
+        <div className="text-xs font-semibold mb-2 text-muted-foreground">
+          Colunas visíveis
+        </div>
+        <div className="space-y-2">
+          {COL_DEFS.map((c) => (
+            <label
+              key={c.key}
+              className="flex items-center gap-2 text-sm cursor-pointer"
+            >
+              <Checkbox
+                checked={cols[c.key]}
+                onCheckedChange={(v) => onChange(c.key, !!v)}
+              />
+              {c.label}
+            </label>
+          ))}
+        </div>
+      </PopoverContent>
+    </Popover>
+  );
+}
+
+// ============================================================================
+// Confiança (inferida do status quando não há dias_cobertura_*)
+// ============================================================================
+
+type ConfLevel = "alta" | "media" | "baixa";
+function inferConfianca(r: PedidoItem): { level: ConfLevel; reason: string } {
+  // Schema atual não possui dias_cobertura_atual/alvo — inferimos pelo status.
+  const s = (r.status ?? "").toLowerCase();
+  if (s.includes("disparado") || s.includes("aprovado")) {
+    return { level: "alta", reason: "Pedido já aprovado/disparado." };
+  }
+  if (s.includes("cancel")) {
+    return { level: "baixa", reason: "Pedido cancelado — comprar geraria sobrestoque." };
+  }
+  if (s.includes("bloque")) {
+    return { level: "baixa", reason: "Bloqueado por guardrail." };
+  }
+  return {
+    level: "media",
+    reason:
+      "Sem dados de cobertura no registro; confiança média por padrão (status pendente).",
+  };
+}
+
+// ============================================================================
+// Itens do ciclo (com filtros + batch review + ações inline + colunas)
+// ============================================================================
+
+function PrecoCell({ row }: { row: PedidoItem }) {
+  const atual = Number(row.valor_total ?? 0);
+  const anterior = Number(row.pedido_anterior_valor ?? NaN);
+  if (!Number.isFinite(anterior) || anterior === 0) {
+    return <span className="font-medium">{formatBRL(atual)}</span>;
+  }
+  const deltaPct = ((atual - anterior) / anterior) * 100;
+  const tone =
+    Math.abs(deltaPct) < 0.5
+      ? "text-muted-foreground"
+      : deltaPct < 0
+        ? "text-emerald-600"
+        : "text-destructive";
+  return (
+    <div className="flex flex-col items-end">
+      <span className="font-medium">{formatBRL(atual)}</span>
+      <span className={`text-[11px] ${tone}`}>
+        {deltaPct > 0 ? "+" : ""}
+        {deltaPct.toFixed(1)}%
+      </span>
+    </div>
+  );
+}
+
+function ConfiancaBadge({ row }: { row: PedidoItem }) {
+  const { level, reason } = inferConfianca(row);
+  const map = {
+    alta: { label: "Alta", cls: "bg-emerald-500/15 text-emerald-700 border-emerald-500/40" },
+    media: { label: "Média", cls: "bg-amber-500/15 text-amber-700 border-amber-500/40" },
+    baixa: { label: "Baixa", cls: "bg-muted text-muted-foreground border-border" },
+  } as const;
+  const m = map[level];
+  return (
+    <TooltipProvider delayDuration={200}>
+      <Tooltip>
+        <TooltipTrigger asChild>
+          <span
+            className={`inline-flex items-center gap-1 rounded-md border px-2 py-0.5 text-[11px] font-medium ${m.cls}`}
+          >
+            <Info className="h-3 w-3" /> {m.label}
+          </span>
+        </TooltipTrigger>
+        <TooltipContent className="max-w-[240px] text-xs">{reason}</TooltipContent>
+      </Tooltip>
+    </TooltipProvider>
+  );
+}
+
+function PedidoRow({
+  row,
+  reviewMode,
+  selected,
+  onToggle,
+  cols,
+  user,
+  onChanged,
+}: {
+  row: PedidoItem;
+  reviewMode: boolean;
+  selected: boolean;
+  onToggle: () => void;
+  cols: Record<ColKey, boolean>;
+  user: { id?: string; email?: string | null } | null;
+  onChanged: () => void;
+}) {
+  const [qty, setQty] = useState<number>(Number(row.num_skus ?? 0));
+  const [busy, setBusy] = useState<null | "approve" | "reject">(null);
+
+  useEffect(() => {
+    setQty(Number(row.num_skus ?? 0));
+  }, [row.num_skus]);
+
+  const isApproved = !!row.aprovado_em;
+  const isRejected = !!row.cancelado_em;
+
+  const rowBg = isApproved
+    ? "bg-emerald-500/5 hover:bg-emerald-500/10"
+    : isRejected
+      ? "bg-destructive/5 hover:bg-destructive/10"
+      : "";
+
+  const act = async (kind: "approve" | "reject") => {
+    if (busy) return;
+    setBusy(kind);
+    const nowIso = new Date().toISOString();
+    const who = user?.email ?? user?.id ?? "cockpit";
+    try {
+      const patch =
+        kind === "approve"
+          ? {
+              aprovado_em: nowIso,
+              aprovado_por: who,
+              status: "aprovado_aguardando_disparo" as const,
+              num_skus: qty,
+            }
+          : {
+              cancelado_em: nowIso,
+              cancelado_por: who,
+              status: "cancelado" as const,
+              justificativa_cancelamento: "Rejeitado inline no Cockpit",
+            };
+      const { error } = await supabase
+        .from("pedido_compra_sugerido" as any)
+        .update(patch)
+        .eq("id", row.id);
+      if (error) throw error;
+      await logAudit({
+        userId: user?.id ?? null,
+        action: kind === "approve" ? "Aprovação inline" : "Rejeição inline",
+        result: "Sucesso",
+        metadata: { id: row.id, qty },
+      });
+      toast.success(kind === "approve" ? "Pedido aprovado" : "Pedido rejeitado");
+      onChanged();
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      await logAudit({
+        userId: user?.id ?? null,
+        action: kind === "approve" ? "Aprovação inline" : "Rejeição inline",
+        result: `Erro: ${msg}`,
+        metadata: { id: row.id },
+      });
+      toast.error("Falha na operação");
+    } finally {
+      setBusy(null);
+    }
+  };
+
+  return (
+    <TableRow data-state={selected ? "selected" : undefined} className={rowBg}>
+      {reviewMode && (
+        <TableCell>
+          <Checkbox checked={selected} onCheckedChange={onToggle} />
+        </TableCell>
+      )}
+      {cols.fornecedor && (
+        <TableCell className="text-sm">{row.fornecedor_nome ?? "—"}</TableCell>
+      )}
+      {cols.grupo && (
+        <TableCell className="text-xs text-muted-foreground">
+          {row.grupo_codigo ?? "—"}
+        </TableCell>
+      )}
+      {cols.skus && (
+        <TableCell className="text-right">{row.num_skus ?? 0}</TableCell>
+      )}
+      {cols.valor && (
+        <TableCell className="text-right font-medium">
+          {formatBRL(row.valor_total)}
+        </TableCell>
+      )}
+      {cols.preco && (
+        <TableCell className="text-right">
+          <PrecoCell row={row} />
+        </TableCell>
+      )}
+      {cols.confianca && (
+        <TableCell>
+          <ConfiancaBadge row={row} />
+        </TableCell>
+      )}
+      {cols.status && (
+        <TableCell>
+          <Badge variant="secondary">{row.status ?? "—"}</Badge>
+        </TableCell>
+      )}
+      {cols.qtdAprovada && (
+        <TableCell>
+          <div className="flex items-center gap-1.5 justify-end">
+            <Input
+              type="number"
+              min={0}
+              value={qty}
+              disabled={isApproved || isRejected || busy !== null}
+              onChange={(e) => setQty(Number(e.target.value) || 0)}
+              onFocus={(e) => e.currentTarget.select()}
+              className="h-8 w-20 text-right"
+            />
+            <Button
+              size="icon"
+              variant="ghost"
+              className="h-8 w-8 text-emerald-600 hover:text-emerald-700 hover:bg-emerald-500/10"
+              disabled={isApproved || busy !== null}
+              onClick={() => act("approve")}
+              title="Aprovar"
+            >
+              {busy === "approve" ? (
+                <Loader2 className="h-4 w-4 animate-spin" />
+              ) : (
+                <Check className="h-4 w-4" />
+              )}
+            </Button>
+            <Button
+              size="icon"
+              variant="ghost"
+              className="h-8 w-8 text-destructive hover:bg-destructive/10"
+              disabled={isRejected || busy !== null}
+              onClick={() => act("reject")}
+              title="Rejeitar"
+            >
+              {busy === "reject" ? (
+                <Loader2 className="h-4 w-4 animate-spin" />
+              ) : (
+                <X className="h-4 w-4" />
+              )}
+            </Button>
+          </div>
+        </TableCell>
+      )}
+    </TableRow>
+  );
+}
 
 function CicloHojePanel({
   user,
@@ -561,6 +896,8 @@ function CicloHojePanel({
   fornecedores,
   statuses,
   isLoading,
+  cols,
+  onColChange,
 }: {
   user: { id?: string; email?: string | null } | null;
   reviewMode: boolean;
@@ -571,6 +908,8 @@ function CicloHojePanel({
   fornecedores: string[];
   statuses: string[];
   isLoading: boolean;
+  cols: Record<ColKey, boolean>;
+  onColChange: (k: ColKey, v: boolean) => void;
 }) {
   const queryClient = useQueryClient();
   const [selected, setSelected] = useState<Set<number>>(new Set());
@@ -595,6 +934,12 @@ function CicloHojePanel({
   const totalSelectedValue = filteredItems
     .filter((i) => selected.has(i.id))
     .reduce((s, r) => s + Number(r.valor_total ?? 0), 0);
+
+  const invalidate = () => {
+    queryClient.invalidateQueries({ queryKey: ["cockpit-itens-dia"] });
+    queryClient.invalidateQueries({ queryKey: ["cockpit-current-step"] });
+    queryClient.invalidateQueries({ queryKey: ["reposicao-pedidos"] });
+  };
 
   const runBatch = async (kind: "approve" | "reject") => {
     if (selected.size === 0 || busy) return;
@@ -632,9 +977,7 @@ function CicloHojePanel({
         `${ids.length} pedido(s) ${kind === "approve" ? "aprovado(s)" : "rejeitado(s)"}`,
       );
       setSelected(new Set());
-      queryClient.invalidateQueries({ queryKey: ["cockpit-itens-dia"] });
-      queryClient.invalidateQueries({ queryKey: ["cockpit-current-step"] });
-      queryClient.invalidateQueries({ queryKey: ["reposicao-pedidos"] });
+      invalidate();
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
       await logAudit({
@@ -708,6 +1051,7 @@ function CicloHojePanel({
           <ListChecks className="h-4 w-4 mr-1.5" />
           Modo revisão
         </Button>
+        <ColumnConfigPopover cols={cols} onChange={onColChange} />
       </div>
 
       {/* Items table */}
@@ -717,7 +1061,7 @@ function CicloHojePanel({
             Pedidos do ciclo ({filteredItems.length})
           </CardTitle>
         </CardHeader>
-        <CardContent className="p-0">
+        <CardContent className="p-0 overflow-x-auto">
           {isLoading ? (
             <TabFallback />
           ) : filteredItems.length === 0 ? (
@@ -733,36 +1077,30 @@ function CicloHojePanel({
                       <Checkbox checked={allChecked} onCheckedChange={toggleAll} />
                     </TableHead>
                   )}
-                  <TableHead>Fornecedor</TableHead>
-                  <TableHead>Grupo</TableHead>
-                  <TableHead className="text-right">SKUs</TableHead>
-                  <TableHead className="text-right">Valor</TableHead>
-                  <TableHead>Status</TableHead>
+                  {cols.fornecedor && <TableHead>Fornecedor</TableHead>}
+                  {cols.grupo && <TableHead>Grupo</TableHead>}
+                  {cols.skus && <TableHead className="text-right">SKUs</TableHead>}
+                  {cols.valor && <TableHead className="text-right">Valor</TableHead>}
+                  {cols.preco && <TableHead className="text-right">Preço</TableHead>}
+                  {cols.confianca && <TableHead>Confiança</TableHead>}
+                  {cols.status && <TableHead>Status</TableHead>}
+                  {cols.qtdAprovada && (
+                    <TableHead className="text-right">Qtd Aprovada</TableHead>
+                  )}
                 </TableRow>
               </TableHeader>
               <TableBody>
                 {filteredItems.map((r) => (
-                  <TableRow key={r.id} data-state={selected.has(r.id) ? "selected" : undefined}>
-                    {reviewMode && (
-                      <TableCell>
-                        <Checkbox
-                          checked={selected.has(r.id)}
-                          onCheckedChange={() => toggleOne(r.id)}
-                        />
-                      </TableCell>
-                    )}
-                    <TableCell className="text-sm">{r.fornecedor_nome ?? "—"}</TableCell>
-                    <TableCell className="text-xs text-muted-foreground">
-                      {r.grupo_codigo ?? "—"}
-                    </TableCell>
-                    <TableCell className="text-right">{r.num_skus ?? 0}</TableCell>
-                    <TableCell className="text-right font-medium">
-                      {formatBRL(r.valor_total)}
-                    </TableCell>
-                    <TableCell>
-                      <Badge variant="secondary">{r.status ?? "—"}</Badge>
-                    </TableCell>
-                  </TableRow>
+                  <PedidoRow
+                    key={r.id}
+                    row={r}
+                    reviewMode={reviewMode}
+                    selected={selected.has(r.id)}
+                    onToggle={() => toggleOne(r.id)}
+                    cols={cols}
+                    user={user}
+                    onChanged={invalidate}
+                  />
                 ))}
               </TableBody>
             </Table>
