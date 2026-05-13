@@ -1026,6 +1026,15 @@ function CicloHojePanel({
     return Array.from(map.entries()).map(([fornecedor, qtd]) => ({ fornecedor, qtd }));
   }, [eligibleAutoItems]);
 
+  const manualReviewItems = useMemo(
+    () =>
+      filteredItems
+        .filter((item) => !item.aprovado_em && !item.cancelado_em)
+        .map((item) => ({ item, suggestion: calcApprovalSuggestion(item) }))
+        .filter(({ suggestion }) => suggestion.mode === "review"),
+    [filteredItems],
+  );
+
   const invalidate = () => {
     queryClient.invalidateQueries({ queryKey: ["cockpit-itens-dia"] });
     queryClient.invalidateQueries({ queryKey: ["cockpit-current-step"] });
@@ -1275,6 +1284,35 @@ function CicloHojePanel({
               </TableBody>
             </Table>
           </div>
+
+          {manualReviewItems.length > 0 && (
+            <div className="space-y-2 pt-2">
+              <div className="flex items-center gap-2 text-sm font-medium">
+                <AlertTriangle className="h-4 w-4 text-amber-500" />
+                {manualReviewItems.length} pedido(s) ficarão para aprovação manual
+              </div>
+              <div className="max-h-40 overflow-y-auto rounded-md border">
+                <Table>
+                  <TableHeader>
+                    <TableRow>
+                      <TableHead>Fornecedor</TableHead>
+                      <TableHead>Motivo</TableHead>
+                    </TableRow>
+                  </TableHeader>
+                  <TableBody>
+                    {manualReviewItems.map(({ item, suggestion }) => (
+                      <TableRow key={item.id}>
+                        <TableCell className="text-xs">{item.fornecedor_nome ?? "Sem fornecedor"}</TableCell>
+                        <TableCell className="text-xs text-muted-foreground">
+                          {suggestion.reasons.join("; ")}
+                        </TableCell>
+                      </TableRow>
+                    ))}
+                  </TableBody>
+                </Table>
+              </div>
+            </div>
+          )}
           <div className="flex justify-end gap-2 pt-2">
             <Button variant="outline" onClick={() => setConfirmAuto(false)} disabled={busy}>
               Cancelar
