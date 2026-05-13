@@ -12,8 +12,10 @@ const corsHeaders = {
 };
 
 const OMIE_URL = "https://app.omie.com.br/api/v1/geral/produtos/";
-const PAGE_SIZE = 50;
+const PAGE_SIZE = 500; // Limite máximo do Omie ListarProdutos
 const MAX_RETRIES = 3;
+const DELAY_BETWEEN_PAGES_MS = 700; // ~85 req/min, dentro do rate limit
+const FLUSH_THRESHOLD = 100; // commit incremental a cada 100 SKUs
 
 interface OmieProduto {
   codigo_produto?: number;
@@ -85,11 +87,41 @@ Deno.serve(async (req) => {
 
   let empresa = "OBEN";
   try {
+    const url = new URL(req.url);
+    const qEmp = url.searchParams.get("empresa");
+    if (qEmp) empresa = qEmp.toUpperCase();
     if (req.method === "POST") {
       const body = await req.json().catch(() => ({}));
       if (body?.empresa) empresa = String(body.empresa).toUpperCase();
     }
   } catch (_) {}
+
+  // Suporte a empresa=ALL: processa OBEN e COLACOR em sequência (chamadas HTTP separadas)
+  if (empresa === "ALL") {
+    const results: any[] = [];
+    const baseUrl = `${Deno.env.get("SUPABASE_URL")}/functions/v1/omie-sync-status-produtos`;
+    for (const emp of ["OBEN", "COLACOR"]) {
+      try {
+        const subResp = await fetch(baseUrl, {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            "Authorization": req.headers.get("authorization") ?? "",
+            "x-cron-secret": req.headers.get("x-cron-secret") ?? "",
+            "apikey": req.headers.get("apikey") ?? "",
+          },
+          body: JSON.stringify({ empresa: emp }),
+        });
+        const j = await subResp.json();
+        results.push({ empresa: emp, status: subResp.status, ...j });
+      } catch (e) {
+        results.push({ empresa: emp, error: e instanceof Error ? e.message : String(e) });
+      }
+    }
+    return new Response(JSON.stringify({ ok: true, results }), {
+      headers: { ...corsHeaders, "Content-Type": "application/json" },
+    });
+  }
 
   // Inicia log
   const { data: logRow } = await supabase
@@ -210,8 +242,8 @@ Deno.serve(async (req) => {
         });
       }
 
-      // Flush em lotes de 200
-      if (upserts.length >= 200) {
+      // Flush em lotes (commit incremental p/ não perder progresso em timeout)
+      if (upserts.length >= FLUSH_THRESHOLD) {
         const { error: upErr } = await supabase
           .from("sku_status_omie")
           .upsert(upserts, { onConflict: "empresa,sku_codigo_omie" });
@@ -225,8 +257,8 @@ Deno.serve(async (req) => {
       }
 
       page++;
-      // Rate limit: 60 req/min => 1.1s entre páginas
-      if (page <= totalPages) await new Promise((r) => setTimeout(r, 1100));
+      // Rate limit Omie: ~120 req/min em ListarProdutos. 700ms é seguro.
+      if (page <= totalPages) await new Promise((r) => setTimeout(r, DELAY_BETWEEN_PAGES_MS));
     } while (page <= totalPages);
 
     // Flush final
