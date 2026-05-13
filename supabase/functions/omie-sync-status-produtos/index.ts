@@ -87,11 +87,45 @@ Deno.serve(async (req) => {
 
   let empresa = "OBEN";
   try {
+    const url = new URL(req.url);
+    const qEmp = url.searchParams.get("empresa");
+    if (qEmp) empresa = qEmp.toUpperCase();
     if (req.method === "POST") {
       const body = await req.json().catch(() => ({}));
       if (body?.empresa) empresa = String(body.empresa).toUpperCase();
     }
   } catch (_) {}
+
+  // Suporte a empresa=ALL: processa OBEN e COLACOR em sequência
+  if (empresa === "ALL") {
+    const results: any[] = [];
+    for (const emp of ["OBEN", "COLACOR"]) {
+      const subReq = new Request(req.url, {
+        method: "POST",
+        headers: req.headers,
+        body: JSON.stringify({ empresa: emp }),
+      });
+      try {
+        const subResp = await (Deno as any).serve.handler?.(subReq) ??
+          await fetch(`${Deno.env.get("SUPABASE_URL")}/functions/v1/omie-sync-status-produtos`, {
+            method: "POST",
+            headers: {
+              "Content-Type": "application/json",
+              "Authorization": req.headers.get("authorization") ?? "",
+              "x-cron-secret": req.headers.get("x-cron-secret") ?? "",
+            },
+            body: JSON.stringify({ empresa: emp }),
+          });
+        const j = await subResp.json();
+        results.push({ empresa: emp, ...j });
+      } catch (e) {
+        results.push({ empresa: emp, error: e instanceof Error ? e.message : String(e) });
+      }
+    }
+    return new Response(JSON.stringify({ ok: true, results }), {
+      headers: { ...corsHeaders, "Content-Type": "application/json" },
+    });
+  }
 
   // Inicia log
   const { data: logRow } = await supabase
