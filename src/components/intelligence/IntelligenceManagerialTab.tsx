@@ -27,6 +27,20 @@ export function IntelligenceManagerialTab() {
     },
   });
 
+  const { data: profiles } = useQuery({
+    queryKey: ['intel-profiles-names'],
+    queryFn: async () => {
+      const { data, error } = await supabase.from('profiles').select('user_id, name');
+      if (error) throw error;
+      return data || [];
+    },
+  });
+
+  const farmerNameMap = (profiles || []).reduce((acc, p) => {
+    if (p.user_id) acc[p.user_id] = p.name || '';
+    return acc;
+  }, {} as Record<string, string>);
+
   const { data: recommendations } = useQuery({
     queryKey: ['intel-reco-adoption'],
     queryFn: async () => {
