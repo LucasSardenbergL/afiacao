@@ -246,8 +246,8 @@ Deno.serve(async (req) => {
         });
       }
 
-      // Flush em lotes de 200
-      if (upserts.length >= 200) {
+      // Flush em lotes (commit incremental p/ não perder progresso em timeout)
+      if (upserts.length >= FLUSH_THRESHOLD) {
         const { error: upErr } = await supabase
           .from("sku_status_omie")
           .upsert(upserts, { onConflict: "empresa,sku_codigo_omie" });
@@ -261,8 +261,8 @@ Deno.serve(async (req) => {
       }
 
       page++;
-      // Rate limit: 60 req/min => 1.1s entre páginas
-      if (page <= totalPages) await new Promise((r) => setTimeout(r, 1100));
+      // Rate limit Omie: ~120 req/min em ListarProdutos. 700ms é seguro.
+      if (page <= totalPages) await new Promise((r) => setTimeout(r, DELAY_BETWEEN_PAGES_MS));
     } while (page <= totalPages);
 
     // Flush final
