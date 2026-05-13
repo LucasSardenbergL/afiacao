@@ -272,6 +272,7 @@ type PedidoItem = {
   grupo_codigo: string | null;
   num_skus: number | null;
   valor_total: number | null;
+  pedido_anterior_valor: number | null;
   status: string | null;
   aprovado_em: string | null;
   cancelado_em: string | null;
