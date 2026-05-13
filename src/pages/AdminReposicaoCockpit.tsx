@@ -1105,12 +1105,13 @@ function CicloHojePanel({
           aprovado_em: nowIso,
           aprovado_por: who,
           status: "aprovado_aguardando_disparo",
+          justificativa_aprovacao: "Aprovação automática — critérios atingidos",
         })
         .in("id", ids);
       if (error) throw error;
       await logAudit({
         userId: user?.id ?? null,
-        action: "Aprovação automática de elegíveis",
+        action: "Aprovação automática — critérios atingidos",
         result: "Sucesso",
         metadata: { ids, count: ids.length },
       });
@@ -1121,7 +1122,7 @@ function CicloHojePanel({
       const msg = err instanceof Error ? err.message : String(err);
       await logAudit({
         userId: user?.id ?? null,
-        action: "Aprovação automática de elegíveis",
+        action: "Aprovação automática — critérios atingidos",
         result: `Erro: ${msg}`,
         metadata: { ids },
       });
