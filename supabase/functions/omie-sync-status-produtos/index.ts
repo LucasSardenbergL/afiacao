@@ -96,28 +96,24 @@ Deno.serve(async (req) => {
     }
   } catch (_) {}
 
-  // Suporte a empresa=ALL: processa OBEN e COLACOR em sequência
+  // Suporte a empresa=ALL: processa OBEN e COLACOR em sequência (chamadas HTTP separadas)
   if (empresa === "ALL") {
     const results: any[] = [];
+    const baseUrl = `${Deno.env.get("SUPABASE_URL")}/functions/v1/omie-sync-status-produtos`;
     for (const emp of ["OBEN", "COLACOR"]) {
-      const subReq = new Request(req.url, {
-        method: "POST",
-        headers: req.headers,
-        body: JSON.stringify({ empresa: emp }),
-      });
       try {
-        const subResp = await (Deno as any).serve.handler?.(subReq) ??
-          await fetch(`${Deno.env.get("SUPABASE_URL")}/functions/v1/omie-sync-status-produtos`, {
-            method: "POST",
-            headers: {
-              "Content-Type": "application/json",
-              "Authorization": req.headers.get("authorization") ?? "",
-              "x-cron-secret": req.headers.get("x-cron-secret") ?? "",
-            },
-            body: JSON.stringify({ empresa: emp }),
-          });
+        const subResp = await fetch(baseUrl, {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            "Authorization": req.headers.get("authorization") ?? "",
+            "x-cron-secret": req.headers.get("x-cron-secret") ?? "",
+            "apikey": req.headers.get("apikey") ?? "",
+          },
+          body: JSON.stringify({ empresa: emp }),
+        });
         const j = await subResp.json();
-        results.push({ empresa: emp, ...j });
+        results.push({ empresa: emp, status: subResp.status, ...j });
       } catch (e) {
         results.push({ empresa: emp, error: e instanceof Error ? e.message : String(e) });
       }
