@@ -34,6 +34,8 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table";
+import { toast } from "sonner";
+import { ScanBar } from "@/components/picking/ScanBar";
 
 const truncate = (s: string | null | undefined, n = 8) =>
   s ? s.slice(0, n) : "—";
@@ -190,6 +192,7 @@ function KpiCards({ account }: { account: string }) {
 /* ─── Picking tab ─── */
 function PickingTab({ account }: { account: string }) {
   const [expanded, setExpanded] = useState<string | null>(null);
+  const [lastScan, setLastScan] = useState<{ raw: string; kind: string; method: string; at: number } | null>(null);
 
   const { data, isLoading } = useQuery({
     queryKey: ["pk-picking-list", account],
@@ -218,6 +221,18 @@ function PickingTab({ account }: { account: string }) {
     },
   });
 
+  // Handler de scan — v1: registra o último bipe e mostra feedback. A integração com a task ativa
+  // (auto-foco no item correspondente, optimistic update) virá quando #19 (TouchPickingView) for
+  // implementado a fundo. Hoje serve como hook + canal de feedback ao separador.
+  const handleScan = (result: { raw: string; kind: 'address' | 'sku'; method: 'wedge' | 'manual' }) => {
+    setLastScan({ raw: result.raw, kind: result.kind, method: result.method, at: Date.now() });
+    // Latência alvo <100ms — toast com kind detectado
+    toast.success(
+      result.kind === 'address' ? `Endereço: ${result.raw}` : `Produto: ${result.raw}`,
+      { description: result.method === 'wedge' ? 'Lido por scanner' : 'Digitado', duration: 1500 },
+    );
+  };
+
   if (isLoading)
     return (
       <div className="flex justify-center py-12 text-muted-foreground">
@@ -226,7 +241,14 @@ function PickingTab({ account }: { account: string }) {
     );
 
   return (
-    <Card>
+    <div className="space-y-4">
+      <ScanBar onScan={handleScan} />
+      {lastScan && (
+        <div className="text-xs text-muted-foreground px-1">
+          Último bipe: <span className="font-mono text-foreground">{lastScan.raw}</span> ({lastScan.kind}) — {new Date(lastScan.at).toLocaleTimeString('pt-BR')}
+        </div>
+      )}
+      <Card>
       <CardContent className="p-0">
         <Table>
           <TableHeader>
@@ -318,6 +340,7 @@ function PickingTab({ account }: { account: string }) {
         </Table>
       </CardContent>
     </Card>
+    </div>
   );
 }
 

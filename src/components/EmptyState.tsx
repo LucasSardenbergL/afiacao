@@ -1,7 +1,8 @@
-import { motion } from 'framer-motion';
 import { Button } from '@/components/ui/button';
 import { LucideIcon } from 'lucide-react';
 import { cn } from '@/lib/utils';
+
+type Tone = 'operational' | 'friendly';
 
 interface EmptyStateProps {
   icon: LucideIcon;
@@ -9,45 +10,98 @@ interface EmptyStateProps {
   description: string;
   actionLabel?: string;
   onAction?: () => void;
+  secondaryActionLabel?: string;
+  onSecondaryAction?: () => void;
+  helpHref?: string;
+  helpLabel?: string;
   className?: string;
-  variant?: 'default' | 'subtle';
+  /** "operational" (default, B2B denso) ou "friendly" (cliente final / onboarding) */
+  tone?: Tone;
 }
 
-export function EmptyState({ icon: Icon, title, description, actionLabel, onAction, className, variant = 'default' }: EmptyStateProps) {
-  return (
-    <motion.div
-      initial={{ opacity: 0, y: 20 }}
-      animate={{ opacity: 1, y: 0 }}
-      transition={{ duration: 0.5, ease: "easeOut" }}
-      className={cn(
-        'flex flex-col items-center justify-center text-center py-12 px-6',
-        variant === 'default' && 'bg-card rounded-2xl border border-border shadow-soft',
-        className
-      )}
-    >
-      <motion.div
-        className="w-20 h-20 rounded-3xl bg-muted flex items-center justify-center mb-5 relative"
-        animate={{ y: [0, -6, 0] }}
-        transition={{ duration: 3, repeat: Infinity, ease: "easeInOut" }}
+export function EmptyState({
+  icon: Icon,
+  title,
+  description,
+  actionLabel,
+  onAction,
+  secondaryActionLabel,
+  onSecondaryAction,
+  helpHref,
+  helpLabel,
+  className,
+  tone = 'operational',
+}: EmptyStateProps) {
+  if (tone === 'friendly') {
+    return (
+      <div
+        className={cn(
+          'flex flex-col items-center justify-center text-center py-10 px-6',
+          'bg-card rounded-2xl border border-border',
+          className,
+        )}
       >
-        <Icon className="w-9 h-9 text-muted-foreground" />
-        {/* Decorative dots */}
-        <div className="absolute -top-1 -right-1 w-3 h-3 rounded-full bg-primary/20" />
-        <div className="absolute -bottom-2 -left-1 w-2 h-2 rounded-full bg-primary/10" />
-      </motion.div>
-
-      <h3 className="font-display font-bold text-lg text-foreground mb-1.5">{title}</h3>
-      <p className="text-sm text-muted-foreground max-w-[260px] leading-relaxed mb-6">
-        {description}
-      </p>
-
-      {actionLabel && onAction && (
-        <motion.div whileTap={{ scale: 0.97 }}>
-          <Button size="lg" onClick={onAction} className="shadow-glow rounded-xl font-semibold">
+        <div className="w-16 h-16 rounded-2xl bg-muted flex items-center justify-center mb-4">
+          <Icon className="w-7 h-7 text-muted-foreground" />
+        </div>
+        <h3 className="font-semibold text-base text-foreground mb-1">{title}</h3>
+        <p className="text-sm text-muted-foreground max-w-[280px] leading-relaxed mb-5">
+          {description}
+        </p>
+        {actionLabel && onAction && (
+          <Button size="default" onClick={onAction}>
             {actionLabel}
           </Button>
-        </motion.div>
+        )}
+        {helpHref && (
+          <a
+            href={helpHref}
+            className="mt-3 text-xs text-link-level hover:underline"
+            target="_blank"
+            rel="noreferrer"
+          >
+            {helpLabel ?? 'Saiba mais'}
+          </a>
+        )}
+      </div>
+    );
+  }
+
+  // Operational (B2B default): denso, sem motion, sem decoração
+  return (
+    <div
+      className={cn(
+        'flex flex-col items-center justify-center text-center py-8 px-4',
+        className,
       )}
-    </motion.div>
+    >
+      <Icon className="w-8 h-8 text-muted-foreground/60 mb-3" />
+      <h3 className="text-sm font-semibold text-foreground mb-1">{title}</h3>
+      <p className="text-sm text-muted-foreground max-w-[360px] leading-snug mb-4">
+        {description}
+      </p>
+      <div className="flex items-center gap-2">
+        {actionLabel && onAction && (
+          <Button size="sm" onClick={onAction}>
+            {actionLabel}
+          </Button>
+        )}
+        {secondaryActionLabel && onSecondaryAction && (
+          <Button size="sm" variant="outline" onClick={onSecondaryAction}>
+            {secondaryActionLabel}
+          </Button>
+        )}
+      </div>
+      {helpHref && (
+        <a
+          href={helpHref}
+          className="mt-3 text-xs text-link-level hover:underline"
+          target="_blank"
+          rel="noreferrer"
+        >
+          {helpLabel ?? 'Saiba mais'}
+        </a>
+      )}
+    </div>
   );
 }

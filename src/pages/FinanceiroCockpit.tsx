@@ -15,6 +15,7 @@ import {
   CheckCircle2, Info, XCircle
 } from 'lucide-react';
 import { CockpitDrillDown, type DrillDownType } from '@/components/financeiro/CockpitDrillDown';
+import { logger } from '@/lib/logger';
 
 const fmt = (v: number) => v.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' });
 const fmtCompact = (v: number) => {
@@ -100,7 +101,12 @@ const FinanceiroCockpit = () => {
       try {
         const { data: proj } = await supabase.rpc('fin_projecao_13_semanas' as any, {}) as any;
         setProjecao13(proj || []);
-      } catch { /* RPC may not exist yet */ }
+      } catch (e) {
+        // RPC pode não existir ainda — registra para visibilidade em vez de falhar silencioso
+        logger.warn('RPC fin_projecao_13_semanas indisponível', {
+          error: e instanceof Error ? e.message : String(e),
+        });
+      }
 
       // Confiabilidade for current month per company
       const confResults: any[] = [];
@@ -114,7 +120,12 @@ const FinanceiroCockpit = () => {
             .eq('mes', mes)
             .maybeSingle();
           if (conf) confResults.push(conf);
-        } catch { /* table may not exist yet */ }
+        } catch (e) {
+          logger.warn('Tabela fin_confiabilidade indisponível', {
+            company: co,
+            error: e instanceof Error ? e.message : String(e),
+          });
+        }
       }
       setConfiabilidade(confResults);
     } catch (e) {

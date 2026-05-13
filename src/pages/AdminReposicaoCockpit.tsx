@@ -81,7 +81,8 @@ import {
   Tooltip as ReTooltip,
   ResponsiveContainer,
 } from "recharts";
-import { useKeyboardShortcuts } from "@/hooks/useKeyboardShortcuts";
+import { useRegisterShortcuts } from "@/components/shell/ShortcutsRegistry";
+import { logger } from "@/lib/logger";
 
 const AdminReposicaoPedidos = lazy(() => import("./AdminReposicaoPedidos"));
 const AdminReposicaoAplicacao = lazy(() => import("./AdminReposicaoAplicacao"));
@@ -151,8 +152,13 @@ async function logAudit(params: {
       result: params.result,
       metadata: params.metadata ?? {},
     });
-  } catch {
-    /* não bloqueia a UI */
+  } catch (e) {
+    // não bloqueia a UI, mas registra no logger pra não perder a auditoria silenciosamente
+    logger.warn("Falha ao gravar cockpit_audit_log", {
+      action: params.action,
+      result: params.result,
+      error: e instanceof Error ? e.message : String(e),
+    });
   }
 }
 
@@ -1667,51 +1673,9 @@ function HistoricoComChart() {
   );
 }
 
-// ============================================================================
-// Shortcuts dialog
-// ============================================================================
-
-const SHORTCUTS: Array<{ key: string; label: string }> = [
-  { key: "g", label: "Rodar geração manual" },
-  { key: "e", label: "Exportar CSV da aba atual" },
-  { key: "1", label: "Aba: Ciclo de hoje" },
-  { key: "2", label: "Aba: Aplicar no Omie" },
-  { key: "3", label: "Aba: Ciclos anteriores" },
-  { key: "r", label: "Atualizar dados" },
-  { key: "m", label: "Ativar/desativar modo revisão" },
-  { key: "?", label: "Abrir esta lista" },
-];
-
-function ShortcutsDialog({
-  open,
-  onOpenChange,
-}: {
-  open: boolean;
-  onOpenChange: (b: boolean) => void;
-}) {
-  return (
-    <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent>
-        <DialogHeader>
-          <DialogTitle className="flex items-center gap-2">
-            <Keyboard className="h-5 w-5" /> Atalhos disponíveis
-          </DialogTitle>
-          <DialogDescription>
-            Teclas rápidas do Cockpit. Não funcionam quando o foco está em um campo de texto.
-          </DialogDescription>
-        </DialogHeader>
-        <div className="border rounded-md divide-y">
-          {SHORTCUTS.map((s) => (
-            <div key={s.key} className="flex items-center justify-between px-3 py-2 text-sm">
-              <span>{s.label}</span>
-              <kbd className="px-2 py-1 text-xs font-mono rounded bg-muted border">{s.key}</kbd>
-            </div>
-          ))}
-        </div>
-      </DialogContent>
-    </Dialog>
-  );
-}
+// O ShortcutsDialog interno e o array SHORTCUTS foram removidos — agora os atalhos
+// são registrados no ShortcutsRegistry global (useRegisterShortcuts) e o dialog
+// fica montado no AppShell, listando atalhos de qualquer página.
 
 // ============================================================================
 // Main page
@@ -2070,18 +2034,23 @@ export default function AdminReposicaoCockpit() {
       metadata: { count: filteredItems.length },
     });
   };
-  const [shortcutsOpen, setShortcutsOpen] = useState(false);
-
-  useKeyboardShortcuts({
-    g: () => handleGenerate(),
-    e: () => handleExportCsv(),
-    "1": () => handleTab("ciclohoje"),
-    "2": () => handleTab("aplicaromie"),
-    "3": () => handleTab("anteriores"),
-    r: () => handleRefetchAll(),
-    m: () => setReviewMode(!reviewMode),
-    "?": () => setShortcutsOpen(true),
-  });
+  // Atalhos do cockpit registrados no ShortcutsRegistry global (aparecem no dialog "?" do AppShell).
+  // Migrado do hook legado useKeyboardShortcuts para o pattern reusável (Fase 4 / item #1).
+  useRegisterShortcuts(
+    useMemo(
+      () => [
+        { keys: 'g', label: 'Gerar pedidos do dia',          group: 'Cockpit', handler: () => handleGenerate() },
+        { keys: 'e', label: 'Exportar CSV',                  group: 'Cockpit', handler: () => handleExportCsv() },
+        { keys: '1', label: 'Aba Ciclo de hoje',             group: 'Cockpit', handler: () => handleTab('ciclohoje') },
+        { keys: '2', label: 'Aba Aplicar no Omie',           group: 'Cockpit', handler: () => handleTab('aplicaromie') },
+        { keys: '3', label: 'Aba Ciclos anteriores',         group: 'Cockpit', handler: () => handleTab('anteriores') },
+        { keys: 'r', label: 'Atualizar dados',               group: 'Cockpit', handler: () => handleRefetchAll() },
+        { keys: 'm', label: 'Alternar modo seleção (bulk)',  group: 'Cockpit', handler: () => setReviewMode(!reviewMode) },
+      ],
+      // dependências dos handlers
+      [handleGenerate, handleExportCsv, handleTab, handleRefetchAll, reviewMode, setReviewMode],
+    ),
+  );
 
   return (
     <div className="container mx-auto p-4 sm:p-6 space-y-6 max-w-7xl pb-24">
@@ -2099,7 +2068,7 @@ export default function AdminReposicaoCockpit() {
           <Button
             size="sm"
             variant="ghost"
-            onClick={() => setShortcutsOpen(true)}
+            onClick={() => window.dispatchEvent(new Event('open-shortcuts-dialog'))}
             title="Atalhos de teclado (?)"
           >
             <Keyboard className="h-4 w-4" />
@@ -2203,8 +2172,7 @@ export default function AdminReposicaoCockpit() {
       </Tabs>
 
       <AuditLogSection />
-
-      <ShortcutsDialog open={shortcutsOpen} onOpenChange={setShortcutsOpen} />
+      {/* O ShortcutsDialog agora é global (mounted no AppShell). Atalhos do cockpit foram migrados para useRegisterShortcuts. */}
     </div>
   );
 }

@@ -24,6 +24,9 @@ import {
 } from '@/components/ui/dropdown-menu';
 import { format } from 'date-fns';
 import { ptBR } from 'date-fns/locale';
+import { useUrlState } from '@/hooks/useUrlState';
+import { useCustomerSegments } from '@/hooks/useCustomerSegments';
+import { Save, Bookmark, X as XIcon } from 'lucide-react';
 
 /* ─── Types ─── */
 interface Customer {
@@ -93,8 +96,16 @@ function CustomerListView({
   loading: boolean;
   onSelect: (c: Customer) => void;
 }) {
-  const [searchQuery, setSearchQuery] = useState('');
-  const [filterHealth, setFilterHealth] = useState<string>('all');
+  // Filtros sincronizados com URL (compartilhável, sobrevive a F5)
+  const [urlState, setUrlState] = useUrlState({ search: '', health: 'all' });
+  const searchQuery = urlState.search;
+  const filterHealth = urlState.health;
+  const setSearchQuery = (v: string) => setUrlState({ search: v });
+  const setFilterHealth = (v: string) => setUrlState({ health: v });
+
+  const { segments, save: saveSegment, remove: removeSegment } = useCustomerSegments();
+  const [savingSegment, setSavingSegment] = useState(false);
+  const [newSegmentName, setNewSegmentName] = useState('');
 
   const filtered = useMemo(() => {
     let result = customers;
@@ -132,6 +143,95 @@ function CustomerListView({
           <p className="text-sm text-muted-foreground">{customers.length} clientes na carteira</p>
         </div>
       </div>
+
+      {/* Segmentos salvos (chips) */}
+      {(segments.length > 0 || savingSegment || (searchQuery || filterHealth !== 'all')) && (
+        <div className="flex items-center gap-2 flex-wrap">
+          <span className="inline-flex items-center gap-1 text-xs font-medium text-muted-foreground uppercase tracking-wider">
+            <Bookmark className="w-3 h-3" />
+            Segmentos
+          </span>
+          {segments.map((seg) => (
+            <span
+              key={seg.id}
+              className="inline-flex items-center gap-1 pl-2.5 pr-1 py-1 rounded-md text-xs bg-muted hover:bg-muted/70 border border-border"
+            >
+              <button
+                type="button"
+                onClick={() => setUrlState({ search: seg.filters.search ?? '', health: seg.filters.health ?? 'all' })}
+                className="font-medium"
+                title="Aplicar segmento"
+              >
+                {seg.name}
+              </button>
+              <button
+                type="button"
+                onClick={() => removeSegment(seg.id)}
+                className="text-muted-foreground hover:text-destructive p-0.5"
+                aria-label={`Remover segmento ${seg.name}`}
+              >
+                <XIcon className="w-3 h-3" />
+              </button>
+            </span>
+          ))}
+          {(searchQuery || filterHealth !== 'all') && !savingSegment && (
+            <Button
+              size="sm"
+              variant="outline"
+              className="h-7 gap-1.5"
+              onClick={() => setSavingSegment(true)}
+            >
+              <Save className="w-3 h-3" />
+              Salvar como segmento
+            </Button>
+          )}
+          {savingSegment && (
+            <span className="inline-flex items-center gap-1.5">
+              <Input
+                placeholder="Nome do segmento"
+                value={newSegmentName}
+                autoFocus
+                onChange={(e) => setNewSegmentName(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter' && newSegmentName.trim()) {
+                    saveSegment(newSegmentName.trim(), { search: searchQuery, health: filterHealth });
+                    setNewSegmentName('');
+                    setSavingSegment(false);
+                  } else if (e.key === 'Escape') {
+                    setNewSegmentName('');
+                    setSavingSegment(false);
+                  }
+                }}
+                className="h-7 w-48 text-xs"
+              />
+              <Button
+                size="sm"
+                variant="default"
+                className="h-7"
+                disabled={!newSegmentName.trim()}
+                onClick={() => {
+                  saveSegment(newSegmentName.trim(), { search: searchQuery, health: filterHealth });
+                  setNewSegmentName('');
+                  setSavingSegment(false);
+                }}
+              >
+                Salvar
+              </Button>
+              <Button
+                size="sm"
+                variant="ghost"
+                className="h-7"
+                onClick={() => {
+                  setNewSegmentName('');
+                  setSavingSegment(false);
+                }}
+              >
+                Cancelar
+              </Button>
+            </span>
+          )}
+        </div>
+      )}
 
       {/* Search + Filters */}
       <div className="flex items-center gap-2">

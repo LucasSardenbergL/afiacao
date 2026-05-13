@@ -278,6 +278,24 @@
     --list-gap: 8px;
   }
 
+  /* ── Status text utilities (semantic tokens — substitui text-emerald-600 etc.) ── */
+  .text-status-success { color: hsl(var(--status-success)); }
+  .text-status-warning { color: hsl(var(--status-warning)); }
+  .text-status-error   { color: hsl(var(--status-error));   }
+  .text-status-info    { color: hsl(var(--status-info));    }
+  .text-status-purple  { color: hsl(var(--status-purple));  }
+  .text-status-indigo  { color: hsl(var(--status-indigo));  }
+
+  .text-status-success-fg { color: hsl(var(--status-success-foreground)); }
+  .text-status-warning-fg { color: hsl(var(--status-warning-foreground)); }
+  .text-status-error-fg   { color: hsl(var(--status-error-foreground));   }
+  .text-status-info-fg    { color: hsl(var(--status-info-foreground));    }
+
+  .bg-status-success-bg { background-color: hsl(var(--status-success-bg)); }
+  .bg-status-warning-bg { background-color: hsl(var(--status-warning-bg)); }
+  .bg-status-error-bg   { background-color: hsl(var(--status-error-bg));   }
+  .bg-status-info-bg    { background-color: hsl(var(--status-info-bg));    }
+
   /* ── Status badge colors (semantic) ── */
   .status-pending {
     background-color: hsl(var(--status-warning-bg));
