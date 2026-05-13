@@ -48,6 +48,20 @@ export function IntelligenceStrategicTab() {
     },
   });
 
+  const { data: clientProfiles } = useQuery({
+    queryKey: ['intel-strategic-client-profiles'],
+    queryFn: async () => {
+      const { data, error } = await supabase.from('profiles').select('user_id, name').eq('is_employee', false);
+      if (error) throw error;
+      return data || [];
+    },
+  });
+
+  const clientNameMap = (clientProfiles || []).reduce((acc, p) => {
+    if (p.user_id) acc[p.user_id] = p.name || '';
+    return acc;
+  }, {} as Record<string, string>);
+
   const totalMarginReal = marginAudit?.reduce((a, r) => a + Number(r.margin_real || 0), 0) || 0;
   const totalMarginPotential = marginAudit?.reduce((a, r) => a + Number(r.margin_potential || 0), 0) || 0;
   const totalGap = totalMarginPotential - totalMarginReal;
