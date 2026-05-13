@@ -31,6 +31,7 @@ import { CommandPalette } from '@/components/shell/CommandPalette';
 import { CommandPaletteTrigger } from '@/components/shell/CommandPaletteTrigger';
 import { CompanySwitcher } from '@/components/shell/CompanySwitcher';
 import { NetworkStatusIndicator } from '@/components/shell/NetworkStatusIndicator';
+import { ThemeToggle } from '@/components/shell/ThemeToggle';
 
 /* ─── Navigation config ─── */
 interface NavItem {
@@ -328,20 +329,20 @@ function AppSidebar({ collapsed, onToggle }: { collapsed: boolean; onToggle: () 
         collapsed ? 'w-sidebar-collapsed' : 'w-sidebar'
       )}
     >
-      {/* Logo */}
+      {/* Logo — usa foreground em vez de primary (evita cor de marca dominante) */}
       <div className={cn(
         'flex items-center h-topbar border-b border-sidebar-border px-3',
         collapsed ? 'justify-center' : 'justify-between'
       )}>
         {!collapsed && (
           <div className="flex items-center gap-2">
-            <Scissors className="w-5 h-5 text-primary" />
-            <span className="text-sidebar-primary-foreground font-semibold text-lg tracking-tight">
-              Central
+            <Scissors className="w-5 h-5 text-foreground" />
+            <span className="text-foreground font-semibold text-base tracking-tight">
+              Colacor
             </span>
           </div>
         )}
-        {collapsed && <Scissors className="w-5 h-5 text-primary" />}
+        {collapsed && <Scissors className="w-5 h-5 text-foreground" />}
         {!collapsed && (
           <button
             onClick={onToggle}
@@ -467,6 +468,7 @@ function AppTopbar({ sidebarCollapsed, onMobileMenuToggle }: { sidebarCollapsed:
       <div className="flex items-center gap-1">
         <CompanySwitcher />
         <NetworkStatusIndicator />
+        <ThemeToggle />
         <HelpDrawer />
 
         <DropdownMenu>
@@ -505,8 +507,8 @@ function MobileNav({ open, onClose }: { open: boolean; onClose: () => void }) {
       <div className="fixed left-0 top-0 bottom-0 z-50 flex w-64 flex-col overflow-hidden bg-sidebar border-r border-sidebar-border lg:hidden animate-slide-in-right">
         <div className="flex items-center justify-between h-topbar border-b border-sidebar-border px-3">
           <div className="flex items-center gap-2">
-            <Scissors className="w-5 h-5 text-primary" />
-            <span className="text-sidebar-primary-foreground font-semibold text-lg">Central</span>
+            <Scissors className="w-5 h-5 text-foreground" />
+            <span className="text-foreground font-semibold text-base tracking-tight">Colacor</span>
           </div>
           <button onClick={onClose} className="p-1.5 rounded-md text-sidebar-muted hover:text-sidebar-foreground">
             <X className="w-4 h-4" />

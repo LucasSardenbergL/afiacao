@@ -1,4 +1,5 @@
 import { lazy, Suspense } from "react";
+import { ThemeProvider } from "next-themes";
 import { ErrorBoundary } from "@/components/ErrorBoundary";
 // Sistema de toast unificado em Sonner (o Radix Toaster legado foi desligado;
 // o hook `useToast` continua existindo como wrapper que delega para Sonner — ver src/hooks/use-toast.ts).
@@ -152,6 +153,7 @@ const queryClient = new QueryClient({
 
 const App = () => (
   <QueryClientProvider client={queryClient}>
+    <ThemeProvider attribute="class" defaultTheme="light" enableSystem={false} disableTransitionOnChange>
     <TooltipProvider>
       <Sonner />
       <BrowserRouter>
@@ -299,6 +301,7 @@ const App = () => (
         </AuthProvider>
       </BrowserRouter>
     </TooltipProvider>
+    </ThemeProvider>
   </QueryClientProvider>
 );
 

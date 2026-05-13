@@ -250,8 +250,8 @@ export default function TintFormulas() {
                         <TableCell className="text-sm">{f.tint_produtos?.descricao}</TableCell>
                         <TableCell className="text-sm max-w-[150px] truncate">{f.tint_bases?.descricao}</TableCell>
                         <TableCell className="text-sm">{f.tint_embalagens?.descricao}</TableCell>
-                        <TableCell className="text-sm">{f.volume_final_ml ? `${f.volume_final_ml}ml` : '—'}</TableCell>
-                        <TableCell className="text-sm">{f.preco_final_sayersystem ? `R$ ${Number(f.preco_final_sayersystem).toFixed(2)}` : '—'}</TableCell>
+                        <TableCell className="text-sm tabular-nums">{f.volume_final_ml ? `${f.volume_final_ml}ml` : '—'}</TableCell>
+                        <TableCell className="text-sm font-mono tabular-nums">{f.preco_final_sayersystem ? `R$ ${Number(f.preco_final_sayersystem).toFixed(2)}` : '—'}</TableCell>
                         <TableCell>
                           <Badge variant="outline" className={f.personalizada ? 'status-purple' : 'status-progress'}>
                             {f.personalizada ? 'Personalizada' : 'Padrão'}

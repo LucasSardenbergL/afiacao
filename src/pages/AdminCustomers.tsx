@@ -315,16 +315,16 @@ function CustomerListView({
                       </Badge>
                     </td>
                     <td className="px-3 py-2.5 text-right hidden lg:table-cell">
-                      <span className="text-xs font-medium">
+                      <span className="text-xs font-medium tabular-nums">
                         {score ? fmt(score.avg_monthly_spend_180d) : '-'}
                       </span>
                     </td>
                     <td className="px-3 py-2.5 text-center hidden lg:table-cell">
                       {score?.days_since_last_purchase != null ? (
                         <span className={cn(
-                          'text-xs font-medium',
-                          score.days_since_last_purchase > 60 ? 'text-destructive' :
-                          score.days_since_last_purchase > 30 ? 'text-amber-600' :
+                          'text-xs font-medium tabular-nums',
+                          score.days_since_last_purchase > 60 ? 'text-status-error' :
+                          score.days_since_last_purchase > 30 ? 'text-status-warning' :
                           'text-muted-foreground'
                         )}>
                           {score.days_since_last_purchase}d
@@ -333,7 +333,7 @@ function CustomerListView({
                     </td>
                     <td className="px-3 py-2.5 text-right hidden md:table-cell">
                       {score ? (
-                        <span className="text-xs font-semibold">{score.priority_score.toFixed(1)}</span>
+                        <span className="text-xs font-semibold tabular-nums">{score.priority_score.toFixed(1)}</span>
                       ) : '-'}
                     </td>
                     <td className="px-2 py-2.5">

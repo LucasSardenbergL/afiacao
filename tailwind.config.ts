@@ -94,8 +94,8 @@ export default {
         },
       },
       fontFamily: {
-        sans: ["Inter", "system-ui", "-apple-system", "sans-serif"],
-        mono: ["JetBrains Mono", "Fira Code", "monospace"],
+        sans: ["Geist", "Inter", "system-ui", "-apple-system", "sans-serif"],
+        mono: ["'Geist Mono'", "'JetBrains Mono'", "Fira Code", "monospace"],
       },
       fontSize: {
         "2xs": ["0.625rem", { lineHeight: "0.875rem" }],   // 10px
@@ -165,11 +165,16 @@ export default {
         },
       },
       animation: {
-        "accordion-down": "accordion-down 0.2s ease-out",
-        "accordion-up": "accordion-up 0.2s ease-out",
-        "fade-in": "fade-in 0.2s ease-out both",
-        "scale-in": "scale-in 0.15s ease-out both",
-        "slide-in-right": "slide-in-right 0.25s ease-out",
+        // Easing Vercel — cubic-bezier(0.16, 1, 0.3, 1) — assinatura "polida sem drama"
+        "accordion-down": "accordion-down 200ms cubic-bezier(0.16, 1, 0.3, 1)",
+        "accordion-up": "accordion-up 200ms cubic-bezier(0.16, 1, 0.3, 1)",
+        "fade-in": "fade-in 200ms cubic-bezier(0.16, 1, 0.3, 1) both",
+        "scale-in": "scale-in 150ms cubic-bezier(0.16, 1, 0.3, 1) both",
+        "slide-in-right": "slide-in-right 300ms cubic-bezier(0.16, 1, 0.3, 1)",
+      },
+      transitionTimingFunction: {
+        // Default custom easing pra todas as transitions Tailwind (hover, focus etc.)
+        DEFAULT: "cubic-bezier(0.16, 1, 0.3, 1)",
       },
     },
   },

@@ -316,8 +316,8 @@ function SummaryCard({ icon: Icon, value, label, onClick }: {
         <div className="flex items-center gap-2 mb-1">
           <Icon className="w-4 h-4 text-muted-foreground" />
         </div>
-        <p className="text-2xl font-bold tracking-tight text-foreground">{value}</p>
-        <p className="text-2xs text-muted-foreground font-medium">{label}</p>
+        <p className="kpi-value text-2xl text-foreground">{value}</p>
+        <p className="text-2xs text-muted-foreground font-medium uppercase tracking-wider mt-1">{label}</p>
       </CardContent>
     </Card>
   );
@@ -342,9 +342,9 @@ function BacklogCard({ count, label, variant, onClick }: {
   };
 
   return (
-    <button onClick={onClick} className={cn('rounded-2xl p-3 border text-center transition-all hover:shadow-md', styles[variant])}>
-      <p className={cn('text-2xl font-bold', count > 0 ? countColor[variant] : 'text-muted-foreground')}>{count}</p>
-      <p className="text-2xs font-medium text-muted-foreground">{label}</p>
+    <button onClick={onClick} className={cn('rounded-md p-3 border text-center transition-colors hover:bg-muted/30', styles[variant])}>
+      <p className={cn('kpi-value text-2xl', count > 0 ? countColor[variant] : 'text-muted-foreground')}>{count}</p>
+      <p className="text-2xs font-medium text-muted-foreground uppercase tracking-wider mt-1">{label}</p>
     </button>
   );
 }
