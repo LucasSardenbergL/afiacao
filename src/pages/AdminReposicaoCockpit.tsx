@@ -1105,7 +1105,6 @@ function CicloHojePanel({
           aprovado_em: nowIso,
           aprovado_por: who,
           status: "aprovado_aguardando_disparo",
-          justificativa_aprovacao: "Aprovação automática — critérios atingidos",
         })
         .in("id", ids);
       if (error) throw error;
