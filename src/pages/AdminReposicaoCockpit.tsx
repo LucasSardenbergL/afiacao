@@ -675,32 +675,13 @@ function inferConfianca(r: PedidoItem): { level: ConfLevel; reason: string } {
   };
 }
 
-type ApprovalSuggestion = { mode: "auto" | "review"; reasons: string[] };
-
-function calcApprovalSuggestion(item: PedidoItem): ApprovalSuggestion {
-  const reasons: string[] = [];
-  const status = (item.status ?? "").toLowerCase();
-  const qtd = Number(item.num_skus ?? 0);
-  const valorAtual = Number(item.valor_total ?? 0);
-  const valorAnterior = Number(item.pedido_anterior_valor ?? 0);
-
-  if (!Number.isFinite(qtd) || qtd <= 0) {
-    reasons.push("Quantidade sugerida inválida");
-  }
-  if (item.aprovado_em || item.cancelado_em || !status.includes("pendente_aprovacao")) {
-    reasons.push("Confiança baixa/média — verificar status");
-  }
-  if (!Number.isFinite(valorAnterior) || valorAnterior <= 0) {
-    reasons.push("Primeiro pedido — sem referência histórica");
-  } else {
-    const delta = Math.abs(valorAtual - valorAnterior) / valorAnterior;
-    if (delta > 0.3) {
-      reasons.push(`Valor varia ${(delta * 100).toFixed(1)}% vs. ciclo anterior`);
-    }
-  }
-
-  return reasons.length === 0 ? { mode: "auto", reasons: [] } : { mode: "review", reasons };
-}
+// Pure classifier lives in its own module so it stays testable.
+// See src/lib/reposicao/approvalSuggestion.ts
+import {
+  calcApprovalSuggestion,
+  type ApprovalSuggestion,
+} from "@/lib/reposicao/approvalSuggestion";
+export { calcApprovalSuggestion };
 
 // ============================================================================
 // Itens do ciclo (com filtros + batch review + ações inline + colunas)
