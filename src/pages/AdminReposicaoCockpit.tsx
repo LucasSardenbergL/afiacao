@@ -1764,14 +1764,19 @@ export default function AdminReposicaoCockpit() {
             <TabsTrigger value="aplicaromie">Aplicar no Omie</TabsTrigger>
             <TabsTrigger value="anteriores">Ciclos anteriores</TabsTrigger>
           </TabsList>
-          <Button size="sm" variant="outline" onClick={handleExportCsv} disabled={isExporting}>
-            {isExporting ? (
-              <Loader2 className="h-4 w-4 mr-1.5 animate-spin" />
-            ) : (
-              <Download className="h-4 w-4 mr-1.5" />
-            )}
-            Exportar CSV
-          </Button>
+          <div className="flex items-center gap-2">
+            <Button size="sm" variant="outline" onClick={handleExportCsv} disabled={isExporting}>
+              {isExporting ? (
+                <Loader2 className="h-4 w-4 mr-1.5 animate-spin" />
+              ) : (
+                <Download className="h-4 w-4 mr-1.5" />
+              )}
+              Exportar CSV
+            </Button>
+            <Button size="sm" variant="outline" onClick={handlePrintPdf}>
+              <Printer className="h-4 w-4 mr-1.5" /> PDF
+            </Button>
+          </div>
         </div>
 
         <TabsContent value="ciclohoje" className="m-0">
