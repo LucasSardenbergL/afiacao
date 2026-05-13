@@ -3,9 +3,11 @@ import { useQuery } from "@tanstack/react-query";
 import { useNavigate, useSearchParams } from "react-router-dom";
 import { supabase } from "@/integrations/supabase/client";
 import { format, subDays } from "date-fns";
-import { Sparkles, Loader2, CalendarRange } from "lucide-react";
+import { Sparkles, Loader2, CalendarRange, AlertTriangle } from "lucide-react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
+import { Button } from "@/components/ui/button";
 import { ProcessoComprasStepper } from "@/components/reposicao/ProcessoComprasStepper";
 import {
   Table,
