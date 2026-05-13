@@ -1593,7 +1593,87 @@ export default function AdminReposicaoCockpit() {
     toast("Atualizando...", { duration: 1200 });
   };
 
-  // ------ Keyboard shortcuts ------------------------------------------------
+  // ------ PDF (window.print) -----------------------------------------------
+  const handlePrintPdf = () => {
+    const today = format(new Date(), "yyyy-MM-dd");
+    const styleId = "__cockpit_print_style__";
+    let style = document.getElementById(styleId) as HTMLStyleElement | null;
+    if (!style) {
+      style = document.createElement("style");
+      style.id = styleId;
+      style.media = "print";
+      document.head.appendChild(style);
+    }
+    style.innerHTML = `
+      @page { margin: 16mm; }
+      body * { visibility: hidden !important; }
+      #cockpit-print-area, #cockpit-print-area * { visibility: visible !important; }
+      #cockpit-print-area {
+        position: absolute !important;
+        left: 0; top: 0; width: 100%;
+        background: white; color: black;
+        padding: 12px 20px;
+        font-family: Inter, system-ui, sans-serif;
+        font-size: 12px;
+      }
+      #cockpit-print-area h1 { font-size: 18px; margin: 0 0 4px; }
+      #cockpit-print-area .meta { color: #555; font-size: 11px; margin-bottom: 12px; }
+      #cockpit-print-area table { width: 100%; border-collapse: collapse; }
+      #cockpit-print-area th, #cockpit-print-area td {
+        border: 1px solid #ccc; padding: 4px 6px; text-align: left;
+      }
+      #cockpit-print-area th { background: #f3f4f6; font-weight: 600; }
+      #cockpit-print-area .right { text-align: right; }
+      #cockpit-print-area .footer { margin-top: 12px; font-size: 10px; color: #777; text-align: right; }
+    `;
+
+    const existing = document.getElementById("cockpit-print-area");
+    if (existing) existing.remove();
+    const area = document.createElement("div");
+    area.id = "cockpit-print-area";
+    const rowsHtml = filteredItems
+      .map(
+        (r) => `<tr>
+        <td>${r.grupo_codigo ?? "—"}</td>
+        <td>${r.fornecedor_nome ?? "—"}</td>
+        <td class="right">${r.num_skus ?? 0}</td>
+        <td class="right">${r.aprovado_em ? (r.num_skus ?? 0) : ""}</td>
+        <td class="right">${formatBRL(r.valor_total)}</td>
+        <td>${r.status ?? "—"}</td>
+      </tr>`,
+      )
+      .join("");
+    area.innerHTML = `
+      <h1>COLACOR — Cockpit de Reposição</h1>
+      <div class="meta">Ciclo: ${formatDate(today)} · ${filteredItems.length} pedido(s)</div>
+      <table>
+        <thead>
+          <tr>
+            <th>SKU/Grupo</th><th>Fornecedor</th>
+            <th class="right">Qtd sugerida</th><th class="right">Qtd aprovada</th>
+            <th class="right">Valor</th><th>Status</th>
+          </tr>
+        </thead>
+        <tbody>${rowsHtml || `<tr><td colspan="6" style="text-align:center;color:#777">Sem itens</td></tr>`}</tbody>
+      </table>
+      <div class="footer">Gerado em ${new Date().toLocaleString("pt-BR")}</div>
+    `;
+    document.body.appendChild(area);
+
+    const cleanup = () => {
+      area.remove();
+      window.removeEventListener("afterprint", cleanup);
+    };
+    window.addEventListener("afterprint", cleanup);
+    setTimeout(() => window.print(), 50);
+
+    logAudit({
+      userId: user?.id ?? null,
+      action: "PDF gerado",
+      result: "Sucesso",
+      metadata: { count: filteredItems.length },
+    });
+  };
   const [shortcutsOpen, setShortcutsOpen] = useState(false);
 
   useKeyboardShortcuts({
