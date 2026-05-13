@@ -26,6 +26,11 @@ const buttonVariants = cva(
         sm: "h-8 rounded-md px-3 text-xs",
         lg: "h-10 rounded-md px-6",
         icon: "h-9 w-9",
+        // Touch targets for operational mobile (WCAG AA min, recommended for gloved hands)
+        touch: "h-11 px-5 py-2.5 text-base",          // 44px — separador / vendedor externo
+        "touch-icon": "h-11 w-11",
+        balcao: "h-14 px-6 py-3 text-base font-semibold",  // 56px — operador tintométrico touchscreen
+        "balcao-icon": "h-14 w-14",
       },
     },
     defaultVariants: {

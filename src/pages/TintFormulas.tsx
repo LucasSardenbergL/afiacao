@@ -10,7 +10,9 @@ import { Button } from '@/components/ui/button';
 import { Skeleton } from '@/components/ui/skeleton';
 import { Switch } from '@/components/ui/switch';
 import { Label } from '@/components/ui/label';
-import { Search, ChevronDown, ChevronUp } from 'lucide-react';
+import { Search, ChevronDown, ChevronUp, Star, History } from 'lucide-react';
+import { useTintRecentsFavorites, type TintFormulaRef } from '@/hooks/useTintRecentsFavorites';
+import { cn } from '@/lib/utils';
 
 const ACCOUNT = 'oben';
 const PAGE_SIZE = 50;
@@ -68,10 +70,26 @@ export default function TintFormulas() {
   const [onlyPersonalizada, setOnlyPersonalizada] = useState(false);
   const [page, setPage] = useState(0);
   const [expanded, setExpanded] = useState<string | null>(null);
+  const { recents, favorites, pushRecent, toggleFavorite, isFavorite } = useTintRecentsFavorites();
 
   const { data: produtos } = useProdutos();
   const { data: bases } = useBases(produtoFilter);
   const { data: omieMap } = useOmieMap();
+
+  const handleExpand = (formula: { id: string; cor_id: string; nome_cor: string; tint_produtos?: { descricao?: string }; tint_bases?: { descricao?: string } }) => {
+    const isOpening = expanded !== formula.id;
+    setExpanded(isOpening ? formula.id : null);
+    // ao expandir uma fórmula, registrar como "consultada"
+    if (isOpening) {
+      pushRecent({
+        id: formula.id,
+        cor_id: formula.cor_id,
+        nome_cor: formula.nome_cor,
+        produto_descricao: formula.tint_produtos?.descricao,
+        base_descricao: formula.tint_bases?.descricao,
+      });
+    }
+  };
 
   const { data, isLoading } = useQuery({
     queryKey: ['tint-formulas', search, produtoFilter, baseFilter, onlyPersonalizada, page],
@@ -121,6 +139,28 @@ export default function TintFormulas() {
     <div className="space-y-6">
       <h1 className="text-2xl font-bold">Tintométrico — Catálogo de Fórmulas</h1>
 
+      {/* Recentes & Favoritos — atalho de balcão */}
+      {(recents.length > 0 || favorites.length > 0) && (
+        <div className="space-y-2">
+          {favorites.length > 0 && (
+            <RecentsBar
+              icon={Star}
+              title="Favoritos"
+              items={favorites}
+              onSelect={(f) => setSearch(f.cor_id)}
+            />
+          )}
+          {recents.length > 0 && (
+            <RecentsBar
+              icon={History}
+              title="Recentes"
+              items={recents}
+              onSelect={(f) => setSearch(f.cor_id)}
+            />
+          )}
+        </div>
+      )}
+
       {/* Filters */}
       <Card>
         <CardContent className="pt-4">
@@ -166,6 +206,7 @@ export default function TintFormulas() {
                 <TableHeader>
                   <TableRow>
                     <TableHead className="w-8" />
+                    <TableHead className="w-8" />
                     <TableHead>Cor ID</TableHead>
                     <TableHead>Nome Cor</TableHead>
                     <TableHead>Produto</TableHead>
@@ -179,7 +220,28 @@ export default function TintFormulas() {
                 <TableBody>
                   {(data?.rows ?? []).map((f: any) => (
                     <>
-                      <TableRow key={f.id} className="cursor-pointer hover:bg-muted/50" onClick={() => setExpanded(expanded === f.id ? null : f.id)}>
+                      <TableRow key={f.id} className="cursor-pointer hover:bg-muted/50" onClick={() => handleExpand(f)}>
+                        <TableCell>
+                          <button
+                            type="button"
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              toggleFavorite({
+                                id: f.id,
+                                cor_id: f.cor_id,
+                                nome_cor: f.nome_cor,
+                                produto_descricao: f.tint_produtos?.descricao,
+                                base_descricao: f.tint_bases?.descricao,
+                              });
+                            }}
+                            className="text-muted-foreground hover:text-status-warning transition-colors"
+                            aria-label={isFavorite(f.id) ? 'Remover dos favoritos' : 'Favoritar'}
+                          >
+                            <Star
+                              className={cn('w-4 h-4', isFavorite(f.id) && 'fill-status-warning text-status-warning')}
+                            />
+                          </button>
+                        </TableCell>
                         <TableCell>
                           {expanded === f.id ? <ChevronUp className="w-4 h-4" /> : <ChevronDown className="w-4 h-4" />}
                         </TableCell>
@@ -191,14 +253,14 @@ export default function TintFormulas() {
                         <TableCell className="text-sm">{f.volume_final_ml ? `${f.volume_final_ml}ml` : '—'}</TableCell>
                         <TableCell className="text-sm">{f.preco_final_sayersystem ? `R$ ${Number(f.preco_final_sayersystem).toFixed(2)}` : '—'}</TableCell>
                         <TableCell>
-                          <Badge variant="outline" className={f.personalizada ? 'bg-purple-500/10 text-purple-700' : 'bg-blue-500/10 text-blue-700'}>
+                          <Badge variant="outline" className={f.personalizada ? 'status-purple' : 'status-progress'}>
                             {f.personalizada ? 'Personalizada' : 'Padrão'}
                           </Badge>
                         </TableCell>
                       </TableRow>
                       {expanded === f.id && expandedDetail && (
                         <TableRow key={`${f.id}-detail`}>
-                          <TableCell colSpan={9} className="bg-muted/30 p-4">
+                          <TableCell colSpan={10} className="bg-muted/30 p-4">
                             <div className="space-y-2">
                               <h4 className="text-sm font-semibold">Corantes utilizados</h4>
                               <Table>
@@ -251,6 +313,39 @@ export default function TintFormulas() {
           </CardContent>
         </Card>
       )}
+    </div>
+  );
+}
+
+function RecentsBar({
+  icon: Icon,
+  title,
+  items,
+  onSelect,
+}: {
+  icon: typeof Star;
+  title: string;
+  items: TintFormulaRef[];
+  onSelect: (item: TintFormulaRef) => void;
+}) {
+  return (
+    <div className="flex items-center gap-2 flex-wrap">
+      <span className="inline-flex items-center gap-1 text-xs font-medium text-muted-foreground uppercase tracking-wider">
+        <Icon className="w-3 h-3" />
+        {title}
+      </span>
+      {items.map((it) => (
+        <button
+          key={it.id}
+          type="button"
+          onClick={() => onSelect(it)}
+          className="inline-flex items-center gap-1.5 px-2 py-1 rounded-md text-xs bg-muted hover:bg-muted/70 border border-border transition-colors"
+          title={it.nome_cor}
+        >
+          <span className="font-mono">{it.cor_id}</span>
+          <span className="text-muted-foreground truncate max-w-[120px]">{it.nome_cor}</span>
+        </button>
+      ))}
     </div>
   );
 }

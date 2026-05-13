@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
-import { BookOpen, Lock, Calculator, FileText, Palette, Beaker, FileUp, Droplets, LayoutDashboard, Users, ShoppingCart, ShoppingBag, Phone, GraduationCap, BarChart3, Settings, ChevronLeft, ChevronRight, Search, Bell, User, LogOut, Package, TrendingUp, Headphones, Target, Menu, X, ClipboardList, PlusCircle, Shield, Wrench, Award, Scissors, DollarSign, Layers, Printer, UserCheck, FileCheck, Boxes, AlertTriangle, PlayCircle, Factory, Truck, Percent, Sparkles, Handshake, Link2, Globe2, Database } from 'lucide-react';
+import { BookOpen, Lock, Calculator, FileText, Palette, Beaker, FileUp, Droplets, LayoutDashboard, Users, ShoppingCart, ShoppingBag, Phone, GraduationCap, BarChart3, Settings, ChevronLeft, ChevronRight, Search, User, LogOut, Package, TrendingUp, Headphones, Target, Menu, X, ClipboardList, PlusCircle, Shield, Wrench, Award, Scissors, DollarSign, Layers, Printer, UserCheck, FileCheck, Boxes, AlertTriangle, PlayCircle, Factory, Truck, Percent, Sparkles, Handshake, Link2, Globe2, Database } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { useAuth } from '@/contexts/AuthContext';
 import { useUserRole } from '@/hooks/useUserRole';
@@ -24,6 +24,13 @@ import { HelpDrawer } from '@/components/help/HelpDrawer';
 import { useAlertasCriticos } from '@/hooks/useAlertasCriticos';
 import { useFinanceiroAlertas } from '@/hooks/useFinanceiroAlertas';
 import { useTintAlertas } from '@/hooks/useTintAlertas';
+import { ShortcutsRegistryProvider } from '@/components/shell/ShortcutsRegistry';
+import { ShortcutsDialog } from '@/components/shell/ShortcutsDialog';
+import { CommandsRegistryProvider } from '@/components/shell/CommandsRegistry';
+import { CommandPalette } from '@/components/shell/CommandPalette';
+import { CommandPaletteTrigger } from '@/components/shell/CommandPaletteTrigger';
+import { CompanySwitcher } from '@/components/shell/CompanySwitcher';
+import { NetworkStatusIndicator } from '@/components/shell/NetworkStatusIndicator';
 
 /* ─── Navigation config ─── */
 interface NavItem {
@@ -452,12 +459,15 @@ function AppTopbar({ sidebarCollapsed, onMobileMenuToggle }: { sidebarCollapsed:
         <Menu className="w-5 h-5" />
       </button>
 
+      {/* Centro: trigger do command palette (descoberta visual do Cmd+K) */}
+      <div className="flex-1 flex items-center justify-center px-4">
+        <CommandPaletteTrigger />
+      </div>
 
       <div className="flex items-center gap-1">
+        <CompanySwitcher />
+        <NetworkStatusIndicator />
         <HelpDrawer />
-        <Button variant="ghost" size="icon" className="h-8 w-8 text-muted-foreground">
-          <Bell className="w-4 h-4" />
-        </Button>
 
         <DropdownMenu>
           <DropdownMenuTrigger asChild>
@@ -549,31 +559,39 @@ export function AppShell({ children }: { children: React.ReactNode }) {
 
   return (
     <AppShellProvider>
-    <div className="min-h-screen bg-background density-compact">
-      {/* Desktop sidebar */}
-      <div className="hidden lg:block">
-        <AppSidebar collapsed={collapsed} onToggle={() => setCollapsed(!collapsed)} />
-      </div>
+      <ShortcutsRegistryProvider>
+        <CommandsRegistryProvider>
+          <div className="min-h-screen bg-background density-compact">
+            {/* Desktop sidebar */}
+            <div className="hidden lg:block">
+              <AppSidebar collapsed={collapsed} onToggle={() => setCollapsed(!collapsed)} />
+            </div>
 
-      {/* Mobile nav */}
-      <MobileNav open={mobileOpen} onClose={() => setMobileOpen(false)} />
+            {/* Mobile nav */}
+            <MobileNav open={mobileOpen} onClose={() => setMobileOpen(false)} />
 
-      {/* Topbar */}
-      <AppTopbar sidebarCollapsed={collapsed} onMobileMenuToggle={() => setMobileOpen(true)} />
+            {/* Topbar */}
+            <AppTopbar sidebarCollapsed={collapsed} onMobileMenuToggle={() => setMobileOpen(true)} />
 
-      {/* Main content */}
-      <main
-        className={cn(
-          'pt-topbar min-h-screen transition-all duration-200',
-          'lg:ml-sidebar',
-          collapsed && 'lg:ml-sidebar-collapsed'
-        )}
-      >
-        <div className="p-4 lg:p-6">
-          {children}
-        </div>
-      </main>
-    </div>
+            {/* Main content */}
+            <main
+              className={cn(
+                'pt-topbar min-h-screen transition-all duration-200',
+                'lg:ml-sidebar',
+                collapsed && 'lg:ml-sidebar-collapsed'
+              )}
+            >
+              <div className="p-4 lg:p-6">
+                {children}
+              </div>
+            </main>
+
+            {/* Overlays globais */}
+            <CommandPalette />
+            <ShortcutsDialog />
+          </div>
+        </CommandsRegistryProvider>
+      </ShortcutsRegistryProvider>
     </AppShellProvider>
   );
 }

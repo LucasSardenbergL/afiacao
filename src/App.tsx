@@ -1,6 +1,7 @@
 import { lazy, Suspense } from "react";
 import { ErrorBoundary } from "@/components/ErrorBoundary";
-import { Toaster } from "@/components/ui/toaster";
+// Sistema de toast unificado em Sonner (o Radix Toaster legado foi desligado;
+// o hook `useToast` continua existindo como wrapper que delega para Sonner — ver src/hooks/use-toast.ts).
 import { Toaster as Sonner } from "@/components/ui/sonner";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
@@ -10,7 +11,7 @@ import { CompanyProvider } from "@/contexts/CompanyContext";
 import { ProtectedRoute } from "@/components/ProtectedRoute";
 import { NotificationPrompt } from "@/components/NotificationPrompt";
 import { AppShellLayout } from "@/components/AppShellLayout";
-import { Skeleton } from "@/components/ui/skeleton";
+import { PageSkeleton } from "@/components/ui/page-skeleton";
 
 // Lazy-loaded pages
 const Index = lazy(() => import("./pages/Index"));
@@ -122,6 +123,7 @@ const AdminReposicaoMercado = lazy(() => import("./pages/AdminReposicaoMercado")
 const AdminReposicaoCadastros = lazy(() => import("./pages/AdminReposicaoCadastros"));
 const AdminEstoqueRecebimento = lazy(() => import("./pages/AdminEstoqueRecebimento"));
 const AdminEstoquePicking = lazy(() => import("./pages/AdminEstoquePicking"));
+const TouchPickingView = lazy(() => import("./pages/picking/TouchPickingView"));
 const FinanceiroGestao = lazy(() => import("./pages/FinanceiroGestao"));
 const FinanceiroAnalise = lazy(() => import("./pages/FinanceiroAnalise"));
 const TintCatalogo = lazy(() => import("./pages/TintCatalogo"));
@@ -135,13 +137,7 @@ const AdminDesTrimestreAtual = lazy(() => import("./pages/AdminDesTrimestreAtual
 const AdminNotificacoes = lazy(() => import("./pages/AdminNotificacoes"));
 const AdminPortalSayerlack = lazy(() => import("./pages/AdminPortalSayerlack"));
 
-const PageLoader = () => (
-  <div className="flex flex-col gap-4 p-6">
-    <Skeleton className="h-8 w-48" />
-    <Skeleton className="h-64 w-full" />
-    <Skeleton className="h-32 w-full" />
-  </div>
-);
+const PageLoader = () => <PageSkeleton variant="auto" />;
 
 const queryClient = new QueryClient({
   defaultOptions: {
@@ -157,7 +153,6 @@ const queryClient = new QueryClient({
 const App = () => (
   <QueryClientProvider client={queryClient}>
     <TooltipProvider>
-      <Toaster />
       <Sonner />
       <BrowserRouter>
         <AuthProvider>
@@ -280,6 +275,7 @@ const App = () => (
               <Route path="admin/reposicao/cadastros" element={<AdminReposicaoCadastros />} />
               <Route path="admin/estoque/recebimento" element={<AdminEstoqueRecebimento />} />
               <Route path="admin/estoque/picking" element={<AdminEstoquePicking />} />
+              <Route path="admin/estoque/picking/mobile" element={<TouchPickingView />} />
               <Route path="financeiro/gestao" element={<FinanceiroGestao />} />
               <Route path="financeiro/analise" element={<FinanceiroAnalise />} />
               <Route path="tintometrico/catalogo" element={<TintCatalogo />} />

@@ -1,3 +1,4 @@
+import { useEffect, useMemo, useState } from 'react';
 import { Loader2, ChevronLeft, CheckCircle, Building2, Scissors } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
@@ -9,6 +10,9 @@ import { OrderSuccessDialog } from '@/components/OrderSuccessDialog';
 import { cn } from '@/lib/utils';
 import { useUnifiedOrder } from '@/hooks/useUnifiedOrder';
 import { useOrderDeepLink } from '@/hooks/useOrderDeepLink';
+import { useOrderDraft } from '@/hooks/useOrderDraft';
+import { useAuth } from '@/contexts/AuthContext';
+import { RestoreDraftDialog } from '@/components/unified-order/RestoreDraftDialog';
 import { CustomerSearch } from '@/components/unified-order/CustomerSearch';
 import { ProductItemForm } from '@/components/unified-order/ProductItemForm';
 import { ServiceItemForm } from '@/components/unified-order/ServiceItemForm';
@@ -37,6 +41,8 @@ function OrderStepper({ step, isCustomerMode }: { step: number; isCustomerMode: 
 const UnifiedOrder = () => {
   const h = useUnifiedOrder();
   const { isCustomerMode } = h;
+  const { user } = useAuth();
+  const [restoreOpen, setRestoreOpen] = useState(false);
 
   useOrderDeepLink({
     selectedCustomer: h.selectedCustomer,
@@ -48,6 +54,50 @@ const UnifiedOrder = () => {
     loadingColacorProducts: h.loadingColacorProducts,
     loadingCustomer: h.loadingCustomer,
   });
+
+  // ─── Auto-save de rascunho ───
+  // Salva snapshot enquanto vendedor digita; mostra dialog para restaurar se voltar à tela com cart vazio.
+  // Limpa após pedido enviado com sucesso (orderSuccessOpen = true).
+  const draftScope = user?.id ?? 'anon';
+  const draftPayload = useMemo(
+    () => ({
+      cart: h.cart,
+      customerCodigoCliente: h.selectedCustomer?.codigo_cliente ?? null,
+      customerName: h.selectedCustomer?.razao_social ?? null,
+      notes: h.notes,
+      ordemCompra: h.ordemCompra,
+    }),
+    [h.cart, h.selectedCustomer, h.notes, h.ordemCompra],
+  );
+  const { draft, clear: clearDraft, dismiss: dismissDraft } = useOrderDraft({
+    scopeKey: draftScope,
+    state: draftPayload,
+    shouldSave: h.cart.length > 0,
+    clearTrigger: h.orderSuccessOpen, // limpa quando o success dialog abrir = pedido enviado
+  });
+
+  // Oferece restore se houver draft pendente E o cart atual estiver vazio (entrou novo na tela).
+  useEffect(() => {
+    if (draft && h.cart.length === 0 && !restoreOpen) {
+      setRestoreOpen(true);
+    }
+  }, [draft, h.cart.length, restoreOpen]);
+
+  const handleRestore = () => {
+    if (!draft) return;
+    const { state } = draft;
+    if (Array.isArray(state.cart)) h.setCart(state.cart);
+    if (typeof state.notes === 'string') h.setNotes(state.notes);
+    if (typeof state.ordemCompra === 'string') h.setOrdemCompra(state.ordemCompra);
+    setRestoreOpen(false);
+    // Não limpa o draft — ele será reescrito naturalmente conforme o vendedor edita.
+  };
+
+  const handleDiscardDraft = () => {
+    clearDraft();
+    dismissDraft();
+    setRestoreOpen(false);
+  };
 
   if (h.authLoading) {
     return <div className="flex items-center justify-center py-32"><Loader2 className="w-6 h-6 animate-spin text-muted-foreground" /></div>;
@@ -248,6 +298,17 @@ const UnifiedOrder = () => {
               orderNumbers: h.lastOrderData!.orderNumbers,
             });
           }}
+        />
+      )}
+
+      {draft && (
+        <RestoreDraftDialog
+          open={restoreOpen}
+          savedAt={draft.savedAt}
+          customerName={draft.state.customerName ?? undefined}
+          itemCount={Array.isArray(draft.state.cart) ? draft.state.cart.length : 0}
+          onRestore={handleRestore}
+          onDiscard={handleDiscardDraft}
         />
       )}
 
