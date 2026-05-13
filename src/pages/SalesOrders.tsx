@@ -176,7 +176,7 @@ const SalesOrders = () => {
     if (search.trim()) {
       const q = search.trim().toLowerCase();
       result = result.filter(o => {
-        const customerName = profiles[o.customer_user_id] || '';
+        const customerName = decodeHtml(profiles[o.customer_user_id] || '');
         const pvNumber = o.omie_numero_pedido || '';
         const itemDescs = (o.items || []).map(i => i.descricao).join(' ');
         return (
