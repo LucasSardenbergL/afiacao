@@ -17,6 +17,14 @@ import { shareOrderViaWhatsApp } from '@/utils/whatsappShare';
 
 type Account = 'oben' | 'colacor' | 'afiacao' | 'all';
 
+const decodeHtml = (s: string): string =>
+  s
+    .replace(/&amp;/g, '&')
+    .replace(/&apos;/g, "'")
+    .replace(/&quot;/g, '"')
+    .replace(/&lt;/g, '<')
+    .replace(/&gt;/g, '>');
+
 interface SalesOrder {
   id: string;
   customer_user_id: string;
