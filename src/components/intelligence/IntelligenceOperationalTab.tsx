@@ -59,6 +59,20 @@ export function IntelligenceOperationalTab({ farmerId }: OperationalTabProps) {
     },
   });
 
+  const { data: clientProfiles } = useQuery({
+    queryKey: ['intel-client-profiles'],
+    queryFn: async () => {
+      const { data, error } = await supabase.from('profiles').select('user_id, name');
+      if (error) throw error;
+      return data || [];
+    },
+  });
+
+  const clientNameMap = (clientProfiles || []).reduce((acc, p) => {
+    if (p.user_id) acc[p.user_id] = p.name || '';
+    return acc;
+  }, {} as Record<string, string>);
+
   const avgHealthScore = clientScores?.length
     ? (clientScores.reduce((acc, c) => acc + Number(c.health_score || 0), 0) / clientScores.length).toFixed(1)
     : '—';
