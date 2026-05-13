@@ -62,7 +62,7 @@ export function IntelligenceOperationalTab({ farmerId }: OperationalTabProps) {
   const { data: clientProfiles } = useQuery({
     queryKey: ['intel-client-profiles'],
     queryFn: async () => {
-      const { data, error } = await supabase.from('profiles').select('user_id, name');
+      const { data, error } = await supabase.from('profiles').select('user_id, name').eq('is_employee', false);
       if (error) throw error;
       return data || [];
     },
