@@ -31,6 +31,8 @@ import {
   Check,
   GitCompare,
   Info,
+  Pencil,
+  Zap,
 } from "lucide-react";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
@@ -654,6 +656,9 @@ type ConfLevel = "alta" | "media" | "baixa";
 function inferConfianca(r: PedidoItem): { level: ConfLevel; reason: string } {
   // Schema atual não possui dias_cobertura_atual/alvo — inferimos pelo status.
   const s = (r.status ?? "").toLowerCase();
+  if (s.includes("pendente_aprovacao")) {
+    return { level: "alta", reason: "Pedido pendente gerado pelos guardrails do ciclo." };
+  }
   if (s.includes("disparado") || s.includes("aprovado")) {
     return { level: "alta", reason: "Pedido já aprovado/disparado." };
   }
@@ -668,6 +673,33 @@ function inferConfianca(r: PedidoItem): { level: ConfLevel; reason: string } {
     reason:
       "Sem dados de cobertura no registro; confiança média por padrão (status pendente).",
   };
+}
+
+type ApprovalSuggestion = { mode: "auto" | "review"; reasons: string[] };
+
+function calcApprovalSuggestion(item: PedidoItem): ApprovalSuggestion {
+  const reasons: string[] = [];
+  const status = (item.status ?? "").toLowerCase();
+  const qtd = Number(item.num_skus ?? 0);
+  const valorAtual = Number(item.valor_total ?? 0);
+  const valorAnterior = Number(item.pedido_anterior_valor ?? 0);
+
+  if (!Number.isFinite(qtd) || qtd <= 0) {
+    reasons.push("Quantidade sugerida inválida");
+  }
+  if (item.aprovado_em || item.cancelado_em || !status.includes("pendente_aprovacao")) {
+    reasons.push("Confiança baixa/média — verificar status");
+  }
+  if (!Number.isFinite(valorAnterior) || valorAnterior <= 0) {
+    reasons.push("Primeiro pedido — sem referência histórica");
+  } else {
+    const delta = Math.abs(valorAtual - valorAnterior) / valorAnterior;
+    if (delta > 0.3) {
+      reasons.push(`Valor varia ${(delta * 100).toFixed(1)}% vs. ciclo anterior`);
+    }
+  }
+
+  return reasons.length === 0 ? { mode: "auto", reasons: [] } : { mode: "review", reasons };
 }
 
 // ============================================================================
@@ -741,6 +773,9 @@ function PedidoRow({
 }) {
   const [qty, setQty] = useState<number>(Number(row.num_skus ?? 0));
   const [busy, setBusy] = useState<null | "approve" | "reject">(null);
+  const [editingAuto, setEditingAuto] = useState(false);
+  const suggestion = calcApprovalSuggestion(row);
+  const showInlineEditor = suggestion.mode === "review" || editingAuto;
 
   useEffect(() => {
     setQty(Number(row.num_skus ?? 0));
@@ -843,6 +878,38 @@ function PedidoRow({
       {cols.qtdAprovada && (
         <TableCell>
           <div className="flex items-center gap-1.5 justify-end">
+            {suggestion.mode === "auto" && !showInlineEditor ? (
+              <>
+                <Badge variant="secondary" className="gap-1 bg-primary/10 text-primary border-primary/20">
+                  <Zap className="h-3 w-3" /> Auto
+                </Badge>
+                <span className="w-10 text-right tabular-nums font-medium">{qty}</span>
+                <Button
+                  size="icon"
+                  variant="outline"
+                  className="h-8 w-8"
+                  onClick={() => setEditingAuto(true)}
+                  title="Editar quantidade antes de aprovar"
+                >
+                  <Pencil className="h-3.5 w-3.5" />
+                </Button>
+              </>
+            ) : (
+              <>
+                {suggestion.mode === "review" && (
+                  <TooltipProvider delayDuration={200}>
+                    <Tooltip>
+                      <TooltipTrigger asChild>
+                        <Badge variant="outline" className="gap-1 border-amber-500/40 text-amber-700 bg-amber-500/10">
+                          <AlertTriangle className="h-3 w-3" /> Revisar
+                        </Badge>
+                      </TooltipTrigger>
+                      <TooltipContent className="max-w-[260px] text-xs">
+                        {suggestion.reasons.join(" · ")}
+                      </TooltipContent>
+                    </Tooltip>
+                  </TooltipProvider>
+                )}
             <Input
               type="number"
               min={0}
@@ -880,6 +947,8 @@ function PedidoRow({
                 <X className="h-4 w-4" />
               )}
             </Button>
+              </>
+            )}
           </div>
         </TableCell>
       )}
@@ -915,6 +984,7 @@ function CicloHojePanel({
   const queryClient = useQueryClient();
   const [selected, setSelected] = useState<Set<number>>(new Set());
   const [busy, setBusy] = useState(false);
+  const [confirmAuto, setConfirmAuto] = useState(false);
 
   useEffect(() => {
     if (!reviewMode) setSelected(new Set());
@@ -935,6 +1005,26 @@ function CicloHojePanel({
   const totalSelectedValue = filteredItems
     .filter((i) => selected.has(i.id))
     .reduce((s, r) => s + Number(r.valor_total ?? 0), 0);
+
+  const eligibleAutoItems = useMemo(
+    () =>
+      filteredItems.filter(
+        (item) =>
+          calcApprovalSuggestion(item).mode === "auto" &&
+          !item.aprovado_em &&
+          !item.cancelado_em,
+      ),
+    [filteredItems],
+  );
+
+  const autoApprovalGroups = useMemo(() => {
+    const map = new Map<string, number>();
+    eligibleAutoItems.forEach((item) => {
+      const fornecedor = item.fornecedor_nome ?? "Sem fornecedor";
+      map.set(fornecedor, (map.get(fornecedor) ?? 0) + Number(item.num_skus ?? 0));
+    });
+    return Array.from(map.entries()).map(([fornecedor, qtd]) => ({ fornecedor, qtd }));
+  }, [eligibleAutoItems]);
 
   const invalidate = () => {
     queryClient.invalidateQueries({ queryKey: ["cockpit-itens-dia"] });
@@ -993,6 +1083,45 @@ function CicloHojePanel({
     }
   };
 
+  const runAutoApprove = async () => {
+    if (eligibleAutoItems.length === 0 || busy) return;
+    setBusy(true);
+    const ids = eligibleAutoItems.map((item) => item.id);
+    const nowIso = new Date().toISOString();
+    const who = user?.email ?? user?.id ?? "cockpit";
+    try {
+      const { error } = await supabase
+        .from("pedido_compra_sugerido" as any)
+        .update({
+          aprovado_em: nowIso,
+          aprovado_por: who,
+          status: "aprovado_aguardando_disparo",
+        })
+        .in("id", ids);
+      if (error) throw error;
+      await logAudit({
+        userId: user?.id ?? null,
+        action: "Aprovação automática de elegíveis",
+        result: "Sucesso",
+        metadata: { ids, count: ids.length },
+      });
+      toast.success(`${ids.length} pedido(s) aprovado(s) automaticamente`);
+      setConfirmAuto(false);
+      invalidate();
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      await logAudit({
+        userId: user?.id ?? null,
+        action: "Aprovação automática de elegíveis",
+        result: `Erro: ${msg}`,
+        metadata: { ids },
+      });
+      toast.error("Falha ao aprovar elegíveis");
+    } finally {
+      setBusy(false);
+    }
+  };
+
   const clearFilters = () =>
     setFilters({ search: "", fornecedor: ALL, status: ALL });
 
@@ -1043,6 +1172,15 @@ function CicloHojePanel({
         </Select>
         <Button size="sm" variant="ghost" onClick={clearFilters}>
           Limpar filtros
+        </Button>
+        <Button
+          size="sm"
+          onClick={() => setConfirmAuto(true)}
+          disabled={eligibleAutoItems.length === 0 || busy}
+          title="Aprovar automaticamente apenas os itens classificados como Auto"
+        >
+          <Zap className="h-4 w-4 mr-1.5" />
+          Aprovar elegíveis ({eligibleAutoItems.length})
         </Button>
         <Button
           size="sm"
@@ -1108,6 +1246,46 @@ function CicloHojePanel({
           )}
         </CardContent>
       </Card>
+
+      <Dialog open={confirmAuto} onOpenChange={setConfirmAuto}>
+        <DialogContent className="max-w-lg">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              <Zap className="h-5 w-5 text-primary" /> Aprovar elegíveis automaticamente
+            </DialogTitle>
+            <DialogDescription>
+              {eligibleAutoItems.length} pedido(s) serão aprovados automaticamente.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="max-h-56 overflow-y-auto rounded-md border">
+            <Table>
+              <TableHeader>
+                <TableRow>
+                  <TableHead>Fornecedor</TableHead>
+                  <TableHead className="text-right">Qtd</TableHead>
+                </TableRow>
+              </TableHeader>
+              <TableBody>
+                {autoApprovalGroups.map((group) => (
+                  <TableRow key={group.fornecedor}>
+                    <TableCell>{group.fornecedor}</TableCell>
+                    <TableCell className="text-right tabular-nums">{group.qtd}</TableCell>
+                  </TableRow>
+                ))}
+              </TableBody>
+            </Table>
+          </div>
+          <div className="flex justify-end gap-2 pt-2">
+            <Button variant="outline" onClick={() => setConfirmAuto(false)} disabled={busy}>
+              Cancelar
+            </Button>
+            <Button onClick={runAutoApprove} disabled={busy || eligibleAutoItems.length === 0}>
+              {busy && <Loader2 className="h-4 w-4 mr-1.5 animate-spin" />}
+              Confirmar aprovação
+            </Button>
+          </div>
+        </DialogContent>
+      </Dialog>
 
       {/* Conteúdo original detalhado */}
       <Suspense fallback={<TabFallback />}>
