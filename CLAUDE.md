@@ -1,6 +1,6 @@
 # CLAUDE.md — Afiação (Sistema Operacional B2B Sardenberg)
 
-> Este arquivo orienta agentes de código (e humanos) trabalhando neste repositório. Última atualização: 2026-05-13 (auditoria UX completa, Fases 0-4 entregues — ver `docs/ux-audit/`).
+> Este arquivo orienta agentes de código (e humanos) trabalhando neste repositório. Última atualização: 2026-05-13 (auditoria UX completa, Fases 0-4 entregues e fix do `Bell` import aplicado — ver `docs/ux-audit/`).
 
 ---
 
