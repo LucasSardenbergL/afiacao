@@ -34,21 +34,21 @@ function TransparencyBadge({ conf }: { conf: any | null }) {
   const catHeur = conf.dre_categorias_heuristica || 0;
 
   const score = Math.round((pctMap * 0.4) + (pctConc * 0.3) + (fech === 'fechado' ? 30 : 0));
-  const color = score >= 70 ? 'text-emerald-600' : score >= 40 ? 'text-amber-600' : 'text-red-600';
-  const bg = score >= 70 ? 'bg-emerald-50 border-emerald-200' : score >= 40 ? 'bg-amber-50 border-amber-200' : 'bg-red-50 border-red-200';
+  const color = score >= 70 ? 'text-status-success' : score >= 40 ? 'text-status-warning' : 'text-status-error';
+  const bg = score >= 70 ? 'bg-status-success-bg border-status-success/20' : score >= 40 ? 'bg-status-warning-bg border-status-warning/20' : 'bg-status-error-bg border-status-error/20';
 
   return (
     <div className={`inline-flex items-center gap-2 px-2 py-1 rounded border text-xs ${bg}`}>
-      <span className={`font-bold ${color}`}>{score}%</span>
+      <span className={`font-semibold tabular-nums ${color}`}>{score}%</span>
       <span className="text-muted-foreground">confiável</span>
       <span className="text-muted-foreground">·</span>
-      <span>{pctMap.toFixed(0)}% mapeado</span>
+      <span className="tabular-nums">{pctMap.toFixed(0)}% mapeado</span>
       <span className="text-muted-foreground">·</span>
-      <span>{pctConc.toFixed(0)}% conciliado</span>
+      <span className="tabular-nums">{pctConc.toFixed(0)}% conciliado</span>
       {catHeur > 0 && (
         <>
           <span className="text-muted-foreground">·</span>
-          <span className="text-amber-600">{catHeur} cat. heurísticas</span>
+          <span className="text-status-warning">{catHeur} cat. heurísticas</span>
         </>
       )}
       <span className="text-muted-foreground">·</span>
@@ -59,9 +59,9 @@ function TransparencyBadge({ conf }: { conf: any | null }) {
 
 function FechamentoIcon({ status }: { status: string }) {
   switch (status) {
-    case 'fechado': return <span className="flex items-center gap-0.5 text-emerald-600"><Lock className="w-3 h-3" /> Fechado</span>;
-    case 'em_revisao': return <span className="flex items-center gap-0.5 text-amber-600"><Eye className="w-3 h-3" /> Revisão</span>;
-    case 'reaberto': return <span className="flex items-center gap-0.5 text-red-600"><AlertTriangle className="w-3 h-3" /> Reaberto</span>;
+    case 'fechado': return <span className="flex items-center gap-0.5 text-status-success"><Lock className="w-3 h-3" /> Fechado</span>;
+    case 'em_revisao': return <span className="flex items-center gap-0.5 text-status-warning"><Eye className="w-3 h-3" /> Revisão</span>;
+    case 'reaberto': return <span className="flex items-center gap-0.5 text-status-error"><AlertTriangle className="w-3 h-3" /> Reaberto</span>;
     default: return <span className="flex items-center gap-0.5 text-muted-foreground"><Clock className="w-3 h-3" /> Aberto</span>;
   }
 }
@@ -163,7 +163,7 @@ const FinanceiroCockpit = () => {
     ? totalCC / totalCP
     : 0;
   const riscoLabel = riscoLiquidez >= 1 ? 'Baixo' : riscoLiquidez >= 0.5 ? 'Médio' : 'Alto';
-  const riscoColor = riscoLiquidez >= 1 ? 'text-emerald-600' : riscoLiquidez >= 0.5 ? 'text-amber-600' : 'text-red-600';
+  const riscoColor = riscoLiquidez >= 1 ? 'text-status-success' : riscoLiquidez >= 0.5 ? 'text-status-warning' : 'text-status-error';
 
   // Concentração (do aging)
   const totalAgingCR = aging
@@ -233,7 +233,7 @@ const FinanceiroCockpit = () => {
           positive={ncg >= 0}
           icon={ncg >= 0 ? TrendingUp : TrendingDown}
           detail={ncg >= 0 ? 'CR cobre CP — posição confortável' : 'CP excede CR — atenção ao caixa'}
-          detailColor={ncg >= 0 ? 'text-emerald-600' : 'text-red-600'}
+          detailColor={ncg >= 0 ? 'text-status-success' : 'text-status-error'}
           badge="CR - CP"
           onClick={() => setDrillDown('cr_aberto')}
         />
@@ -242,15 +242,15 @@ const FinanceiroCockpit = () => {
       {/* Row 2: Margens + Inadimplência + Risco */}
       <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
         <MiniCard label="Margem Bruta" value={`${margemBruta.toFixed(1)}%`}
-          color={margemBruta >= 30 ? 'text-emerald-600' : 'text-amber-600'} />
+          color={margemBruta >= 30 ? 'text-status-success' : 'text-status-warning'} />
         <MiniCard label="Margem Operacional" value={`${margemOp.toFixed(1)}%`}
-          color={margemOp >= 10 ? 'text-emerald-600' : margemOp >= 0 ? 'text-amber-600' : 'text-red-600'} />
+          color={margemOp >= 10 ? 'text-status-success' : margemOp >= 0 ? 'text-status-warning' : 'text-status-error'} />
         <MiniCard label="Inadimplência" value={`${pctInadimplencia.toFixed(1)}%`}
-          color={pctInadimplencia <= 10 ? 'text-emerald-600' : pctInadimplencia <= 25 ? 'text-amber-600' : 'text-red-600'}
+          color={pctInadimplencia <= 10 ? 'text-status-success' : pctInadimplencia <= 25 ? 'text-status-warning' : 'text-status-error'}
           subtitle={fmtCompact(totalVencidoCR)}
           onClick={() => setDrillDown('inadimplencia')} />
         <MiniCard label="Aging Crítico (+60d)" value={`${pctCritico.toFixed(1)}%`}
-          color={pctCritico <= 5 ? 'text-emerald-600' : pctCritico <= 15 ? 'text-amber-600' : 'text-red-600'}
+          color={pctCritico <= 5 ? 'text-status-success' : pctCritico <= 15 ? 'text-status-warning' : 'text-status-error'}
           subtitle={fmtCompact((aging?.vencido_61_90_valor || 0) + (aging?.vencido_90_plus_valor || 0))}
           onClick={() => setDrillDown('aging_critico')} />
       </div>
@@ -288,18 +288,18 @@ const FinanceiroCockpit = () => {
                       </div>
                       <div className="text-right">
                         <p className="text-[10px] text-muted-foreground">MB</p>
-                        <p className={`font-bold ${mg >= 30 ? 'text-emerald-600' : 'text-amber-600'}`}>{mg.toFixed(1)}%</p>
+                        <p className={`font-bold ${mg >= 30 ? 'text-status-success' : 'text-status-warning'}`}>{mg.toFixed(1)}%</p>
                       </div>
                       <div className="text-right">
                         <p className="text-[10px] text-muted-foreground">Resultado</p>
-                        <p className={`font-bold ${d.resultado_liquido >= 0 ? 'text-emerald-600' : 'text-red-600'}`}>
+                        <p className={`font-bold ${d.resultado_liquido >= 0 ? 'text-status-success' : 'text-status-error'}`}>
                           {fmtCompact(d.resultado_liquido)}
                         </p>
                       </div>
                       {conf && (
                         <div className="text-right">
                           <p className="text-[10px] text-muted-foreground">Mapeado</p>
-                          <p className={`text-xs font-medium ${(conf.pct_valor_mapeado || 0) >= 80 ? 'text-emerald-600' : 'text-amber-600'}`}>
+                          <p className={`text-xs font-medium ${(conf.pct_valor_mapeado || 0) >= 80 ? 'text-status-success' : 'text-status-warning'}`}>
                             {(conf.pct_valor_mapeado || 0).toFixed(0)}%
                           </p>
                         </div>
@@ -337,16 +337,16 @@ const FinanceiroCockpit = () => {
                 </TableHeader>
                 <TableBody>
                   {projecao13.map((w: any, i: number) => (
-                    <TableRow key={i} className={w.saldo_projetado < 0 ? 'bg-red-50' : ''}>
+                    <TableRow key={i} className={w.saldo_projetado < 0 ? 'bg-status-error-bg' : ''}>
                       <TableCell className="text-xs">{w.semana_label}</TableCell>
-                      <TableCell className="text-right text-sm text-emerald-600">{fmtCompact(w.entradas_previstas)}</TableCell>
-                      <TableCell className="text-right text-sm text-red-600">{fmtCompact(w.saidas_previstas)}</TableCell>
-                      <TableCell className={`text-right text-sm font-medium ${w.fluxo_liquido >= 0 ? 'text-emerald-600' : 'text-red-600'}`}>
+                      <TableCell className="text-right text-sm text-status-success">{fmtCompact(w.entradas_previstas)}</TableCell>
+                      <TableCell className="text-right text-sm text-status-error">{fmtCompact(w.saidas_previstas)}</TableCell>
+                      <TableCell className={`text-right text-sm font-medium ${w.fluxo_liquido >= 0 ? 'text-status-success' : 'text-status-error'}`}>
                         {fmtCompact(w.fluxo_liquido)}
                       </TableCell>
-                      <TableCell className={`text-right text-sm font-bold ${w.saldo_projetado >= 0 ? 'text-blue-600' : 'text-red-600'}`}>
+                      <TableCell className={`text-right text-sm font-bold ${w.saldo_projetado >= 0 ? 'text-status-info' : 'text-status-error'}`}>
                         {fmtCompact(w.saldo_projetado)}
-                        {w.saldo_projetado < 0 && <AlertTriangle className="inline w-3 h-3 ml-1 text-red-500" />}
+                        {w.saldo_projetado < 0 && <AlertTriangle className="inline w-3 h-3 ml-1 text-status-error" />}
                       </TableCell>
                     </TableRow>
                   ))}
@@ -354,9 +354,9 @@ const FinanceiroCockpit = () => {
               </Table>
             </div>
             {projecao13.some((w: any) => w.saldo_projetado < 0) && (
-              <div className="mt-3 p-3 rounded-lg bg-red-50 border border-red-200 flex items-start gap-2">
-                <AlertTriangle className="w-4 h-4 text-red-600 mt-0.5 shrink-0" />
-                <p className="text-sm text-red-800">
+              <div className="mt-3 p-3 rounded-lg bg-status-error-bg border border-status-error/20 flex items-start gap-2">
+                <AlertTriangle className="w-4 h-4 text-status-error mt-0.5 shrink-0" />
+                <p className="text-sm text-status-error-fg">
                   Projeção indica saldo negativo em {projecao13.filter((w: any) => w.saldo_projetado < 0).length} semana(s).
                   Ação necessária antes de {projecao13.find((w: any) => w.saldo_projetado < 0)?.semana_label}.
                 </p>
@@ -371,7 +371,7 @@ const FinanceiroCockpit = () => {
         <Card>
           <CardHeader className="pb-3">
             <CardTitle className="text-base flex items-center gap-2">
-              <AlertTriangle className="w-4 h-4 text-red-500" />
+              <AlertTriangle className="w-4 h-4 text-status-error" />
               Inadimplência Crítica — Top 5
             </CardTitle>
           </CardHeader>
@@ -383,7 +383,7 @@ const FinanceiroCockpit = () => {
                     <p className="font-medium text-sm">{i.nome || (i.cnpj ? `CNPJ: ${i.cnpj}` : 'Cliente não identificado')}</p>
                     <p className="text-xs text-muted-foreground">{i.qtd_titulos} título(s)</p>
                   </div>
-                  <span className="font-bold text-red-600">{fmt(i.total_vencido)}</span>
+                  <span className="font-bold text-status-error">{fmt(i.total_vencido)}</span>
                 </div>
               ))}
             </div>
@@ -410,12 +410,12 @@ function CockpitCard({ title, value, positive, icon: Icon, detail, detailColor, 
   detail?: string; detailColor?: string; badge?: string; onClick?: () => void;
 }) {
   return (
-    <Card className={onClick ? 'cursor-pointer hover:shadow-md transition-shadow' : ''} onClick={onClick}>
+    <Card className={onClick ? 'cursor-pointer hover:bg-muted/30 transition-colors' : ''} onClick={onClick}>
       <CardContent className="p-5">
         <div className="flex items-start justify-between">
           <div>
-            <p className="text-xs text-muted-foreground font-medium uppercase tracking-wide">{title}</p>
-            <p className={`text-2xl font-bold mt-2 ${positive ? 'text-emerald-600' : 'text-red-600'}`}>{value}</p>
+            <p className="text-xs text-muted-foreground font-medium uppercase tracking-wider">{title}</p>
+            <p className={`kpi-value text-3xl mt-2 ${positive ? 'text-status-success' : 'text-status-error'}`}>{value}</p>
             {detail && (
               <p className={`text-xs mt-2 ${detailColor || 'text-muted-foreground'}`}>{detail}</p>
             )}
@@ -423,8 +423,8 @@ function CockpitCard({ title, value, positive, icon: Icon, detail, detailColor, 
               <Badge variant="outline" className="mt-2 text-[9px]">{badge}</Badge>
             )}
           </div>
-          <div className={`p-3 rounded-xl ${positive ? 'bg-emerald-50' : 'bg-red-50'}`}>
-            <Icon className={`w-5 h-5 ${positive ? 'text-emerald-600' : 'text-red-600'}`} />
+          <div className={`p-2.5 rounded-md ${positive ? 'bg-status-success-bg' : 'bg-status-error-bg'}`}>
+            <Icon className={`w-4 h-4 ${positive ? 'text-status-success' : 'text-status-error'}`} />
           </div>
         </div>
       </CardContent>
@@ -436,10 +436,10 @@ function MiniCard({ label, value, color, subtitle, onClick }: {
   label: string; value: string; color: string; subtitle?: string; onClick?: () => void;
 }) {
   return (
-    <div className={`p-3 rounded-lg border bg-card text-center ${onClick ? 'cursor-pointer hover:shadow-md transition-shadow' : ''}`} onClick={onClick}>
-      <p className="text-[10px] text-muted-foreground font-medium uppercase">{label}</p>
-      <p className={`text-xl font-bold mt-1 ${color}`}>{value}</p>
-      {subtitle && <p className="text-xs text-muted-foreground mt-0.5">{subtitle}</p>}
+    <div className={`p-3 rounded-md border bg-card text-center ${onClick ? 'cursor-pointer hover:bg-muted/30 transition-colors' : ''}`} onClick={onClick}>
+      <p className="text-[10px] text-muted-foreground font-medium uppercase tracking-wider">{label}</p>
+      <p className={`kpi-value text-xl mt-1 ${color}`}>{value}</p>
+      {subtitle && <p className="text-xs text-muted-foreground mt-0.5 tabular-nums">{subtitle}</p>}
     </div>
   );
 }

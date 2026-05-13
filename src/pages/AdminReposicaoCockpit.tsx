@@ -465,7 +465,7 @@ function SmartAlertsSection() {
 
   const tone = (l: SmartAlert["level"]) =>
     l === "yellow"
-      ? "border-amber-500/40 bg-amber-500/5 text-amber-900 dark:text-amber-200"
+      ? "border-status-warning/40 bg-status-warning-bg text-status-warning-fg"
       : l === "orange"
         ? "border-orange-500/40 bg-orange-500/5 text-orange-900 dark:text-orange-200"
         : "border-destructive/40 bg-destructive/5 text-destructive";
@@ -704,7 +704,7 @@ function PrecoCell({ row }: { row: PedidoItem }) {
     Math.abs(deltaPct) < 0.5
       ? "text-muted-foreground"
       : deltaPct < 0
-        ? "text-emerald-600"
+        ? "text-status-success"
         : "text-destructive";
   return (
     <div className="flex flex-col items-end">
@@ -720,8 +720,8 @@ function PrecoCell({ row }: { row: PedidoItem }) {
 function ConfiancaBadge({ row }: { row: PedidoItem }) {
   const { level, reason } = inferConfianca(row);
   const map = {
-    alta: { label: "Alta", cls: "bg-emerald-500/15 text-emerald-700 border-emerald-500/40" },
-    media: { label: "Média", cls: "bg-amber-500/15 text-amber-700 border-amber-500/40" },
+    alta: { label: "Alta", cls: "bg-status-success-bg text-status-success border-status-success/40" },
+    media: { label: "Média", cls: "bg-status-warning-bg text-status-warning border-status-warning/40" },
     baixa: { label: "Baixa", cls: "bg-muted text-muted-foreground border-border" },
   } as const;
   const m = map[level];
@@ -772,7 +772,7 @@ function PedidoRow({
   const isRejected = !!row.cancelado_em;
 
   const rowBg = isApproved
-    ? "bg-emerald-500/5 hover:bg-emerald-500/10"
+    ? "bg-status-success-bg/40 hover:bg-status-success-bg"
     : isRejected
       ? "bg-destructive/5 hover:bg-destructive/10"
       : "";
@@ -887,7 +887,7 @@ function PedidoRow({
                   <TooltipProvider delayDuration={200}>
                     <Tooltip>
                       <TooltipTrigger asChild>
-                        <Badge variant="outline" className="gap-1 border-amber-500/40 text-amber-700 bg-amber-500/10">
+                        <Badge variant="outline" className="gap-1 border-status-warning/40 text-status-warning bg-status-warning-bg">
                           <AlertTriangle className="h-3 w-3" /> Revisar
                         </Badge>
                       </TooltipTrigger>
@@ -909,7 +909,7 @@ function PedidoRow({
             <Button
               size="icon"
               variant="ghost"
-              className="h-8 w-8 text-emerald-600 hover:text-emerald-700 hover:bg-emerald-500/10"
+              className="h-8 w-8 text-status-success hover:text-status-success hover:bg-status-success-bg"
               disabled={isApproved || busy !== null}
               onClick={() => act("approve")}
               title="Aprovar"
@@ -1279,7 +1279,7 @@ function CicloHojePanel({
           {manualReviewItems.length > 0 && (
             <div className="space-y-2 pt-2">
               <div className="flex items-center gap-2 text-sm font-medium">
-                <AlertTriangle className="h-4 w-4 text-amber-500" />
+                <AlertTriangle className="h-4 w-4 text-status-warning" />
                 {manualReviewItems.length} pedido(s) ficarão para aprovação manual
               </div>
               <div className="max-h-40 overflow-y-auto rounded-md border">
@@ -1539,13 +1539,13 @@ function CompareCyclesSection({ cycles }: { cycles: string[] }) {
         {diff && (
           <div className="space-y-3">
             <div>
-              <div className="text-xs font-semibold text-emerald-700 mb-1">
+              <div className="text-xs font-semibold text-status-success mb-1">
                 Novos no Ciclo B ({diff.novos.length})
               </div>
               {diff.novos.length === 0 ? (
                 <div className="text-xs text-muted-foreground">Nenhum.</div>
               ) : (
-                <div className="rounded-md border bg-emerald-500/5 divide-y">
+                <div className="rounded-md border bg-status-success-bg/40 divide-y">
                   {diff.novos.map((r) => (
                     <div key={r.fornecedor_nome} className="px-3 py-1.5 text-sm flex justify-between">
                       <span>{r.fornecedor_nome}</span>
@@ -1579,13 +1579,13 @@ function CompareCyclesSection({ cycles }: { cycles: string[] }) {
             </div>
 
             <div>
-              <div className="text-xs font-semibold text-amber-700 mb-1">
+              <div className="text-xs font-semibold text-status-warning mb-1">
                 Alterados ({diff.alterados.length})
               </div>
               {diff.alterados.length === 0 ? (
                 <div className="text-xs text-muted-foreground">Nenhum.</div>
               ) : (
-                <div className="rounded-md border bg-amber-500/5 divide-y">
+                <div className="rounded-md border bg-status-warning-bg divide-y">
                   {diff.alterados.map((r) => (
                     <div key={r.fornecedor_nome} className="px-3 py-1.5 text-sm flex justify-between gap-2">
                       <span>{r.fornecedor_nome}</span>
@@ -2088,8 +2088,8 @@ export default function AdminReposicaoCockpit() {
       </header>
 
       {stepError && (
-        <Alert variant="default" className="border-amber-500/40 bg-amber-500/5">
-          <AlertTriangle className="h-4 w-4 text-amber-600" />
+        <Alert variant="default" className="border-status-warning/40 bg-status-warning-bg">
+          <AlertTriangle className="h-4 w-4 text-status-warning" />
           <AlertTitle>Etapa atual indisponível</AlertTitle>
           <AlertDescription className="flex items-center justify-between gap-3 flex-wrap">
             <span>Não foi possível calcular a etapa atual. Exibindo dados em cache.</span>
