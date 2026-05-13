@@ -1186,7 +1186,11 @@ function CicloHojePanel({
           size="sm"
           onClick={() => setConfirmAuto(true)}
           disabled={eligibleAutoItems.length === 0 || busy}
-          title="Aprovar automaticamente apenas os itens classificados como Auto"
+          title={
+            eligibleAutoItems.length === 0
+              ? "Nenhum item elegível para aprovação automática"
+              : "Aprovar automaticamente apenas os itens classificados como Auto"
+          }
         >
           <Zap className="h-4 w-4 mr-1.5" />
           Aprovar elegíveis ({eligibleAutoItems.length})
