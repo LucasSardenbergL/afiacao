@@ -269,6 +269,60 @@ Deno.serve(async (req) => {
       }
     }
 
+    // 4) Auto-resolver alertas de SKU inativado quando o SKU voltou a ficar ativo no Omie.
+    // Critério: para todos os SKUs desta empresa que aparecem ativos em sku_status_omie,
+    // marca como 'resolvido_auto' qualquer evento_outlier pendente de tipo 'sku_inativado_omie'.
+    let alertasResolvidosAuto = 0;
+    try {
+      const { data: ativosAtuais } = await supabase
+        .from("sku_status_omie")
+        .select("sku_codigo_omie")
+        .eq("empresa", empresa)
+        .eq("ativo_no_omie", true);
+
+      const ativosSet = new Set(
+        (ativosAtuais ?? []).map((r) => String(r.sku_codigo_omie)),
+      );
+
+      if (ativosSet.size > 0) {
+        const { data: pendentes } = await supabase
+          .from("eventos_outlier")
+          .select("id, sku_codigo_omie")
+          .eq("empresa", empresa)
+          .eq("tipo", "sku_inativado_omie")
+          .eq("status", "pendente");
+
+        const idsParaFechar = (pendentes ?? [])
+          .filter((e) => ativosSet.has(String(e.sku_codigo_omie)))
+          .map((e) => e.id);
+
+        if (idsParaFechar.length > 0) {
+          const { error: resErr } = await supabase
+            .from("eventos_outlier")
+            .update({
+              status: "resolvido_auto",
+              decidido_em: new Date().toISOString(),
+              decidido_por: "omie-sync-status-produtos",
+              justificativa_decisao:
+                "SKU voltou a ficar ativo no Omie — alerta resolvido automaticamente.",
+            })
+            .in("id", idsParaFechar);
+          if (resErr) {
+            console.error(
+              `[omie-sync-status-produtos] erro resolvendo alertas: ${resErr.message}`,
+            );
+          } else {
+            alertasResolvidosAuto = idsParaFechar.length;
+          }
+        }
+      }
+    } catch (e) {
+      console.error(
+        "[omie-sync-status-produtos] auto-resolução de alertas falhou:",
+        e instanceof Error ? e.message : String(e),
+      );
+    }
+
     const duration = Date.now() - startedAt;
     const summary = {
       empresa,
@@ -277,6 +331,7 @@ Deno.serve(async (req) => {
       nao_encontrados: naoEncontrados.length,
       sucessos,
       falhas,
+      alertas_resolvidos_auto: alertasResolvidosAuto,
       paginas_processadas: page - 1,
       duration_ms: duration,
     };
