@@ -59,6 +59,20 @@ export function IntelligenceOperationalTab({ farmerId }: OperationalTabProps) {
     },
   });
 
+  const { data: clientProfiles } = useQuery({
+    queryKey: ['intel-client-profiles'],
+    queryFn: async () => {
+      const { data, error } = await supabase.from('profiles').select('user_id, name');
+      if (error) throw error;
+      return data || [];
+    },
+  });
+
+  const clientNameMap = (clientProfiles || []).reduce((acc, p) => {
+    if (p.user_id) acc[p.user_id] = p.name || '';
+    return acc;
+  }, {} as Record<string, string>);
+
   const avgHealthScore = clientScores?.length
     ? (clientScores.reduce((acc, c) => acc + Number(c.health_score || 0), 0) / clientScores.length).toFixed(1)
     : '—';
@@ -141,7 +155,7 @@ export function IntelligenceOperationalTab({ farmerId }: OperationalTabProps) {
                 .slice(0, 5)
                 .map(c => (
                   <div key={c.id} className="flex items-center justify-between text-xs">
-                    <span className="truncate">{c.customer_user_id.slice(0, 8)}...</span>
+                    <span className="truncate">{clientNameMap[c.customer_user_id] ?? `${c.customer_user_id.slice(0, 8)}...`}</span>
                     <div className="flex items-center gap-2">
                       <Badge variant={c.health_class === 'critico' ? 'destructive' : 'secondary'} className="text-2xs">{c.health_class}</Badge>
                       <span className="text-muted-foreground">HS: {Number(c.health_score).toFixed(0)}</span>
