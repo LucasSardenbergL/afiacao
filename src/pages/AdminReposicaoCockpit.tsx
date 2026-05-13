@@ -23,12 +23,17 @@ import {
   XCircle,
   Bell,
   Settings as SettingsIcon,
-  Eye,
   Package,
   DollarSign,
   TrendingUp,
   PiggyBank,
+  Printer,
+  Check,
+  GitCompare,
+  Info,
 } from "lucide-react";
+import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
+import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
