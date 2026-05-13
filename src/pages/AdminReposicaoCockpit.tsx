@@ -171,7 +171,7 @@ function useCurrentStep() {
         .eq("empresa", EMPRESA)
         .eq("data_ciclo", today);
 
-      const statuses = ((pedidos.data ?? []) as Array<{ status: string | null }>).map(
+      const statuses = (((pedidos.data ?? []) as unknown) as Array<{ status: string | null }>).map(
         (r) => r.status,
       );
       const hasPendentes = statuses.some(
