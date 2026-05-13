@@ -48,7 +48,10 @@ function KpiCards({ empresa }: { empresa: string }) {
   const { data } = useQuery({
     queryKey: ["performance-hub-kpis", empresa],
     queryFn: async () => {
-      const today = new Date().toISOString().slice(0, 10);
+      const now = new Date();
+      const startOfDay = new Date(now.getFullYear(), now.getMonth(), now.getDate()).toISOString();
+      const trimestre = Math.floor(now.getMonth() / 3) + 1;
+      const ano = now.getFullYear();
       const client = supabase as unknown as {
         from: (t: string) => any;
       };
@@ -57,49 +60,42 @@ function KpiCards({ empresa }: { empresa: string }) {
         safeQuery(
           async () => {
             const { data } = await client
-              .from("des_avaliacoes")
-              .select("posicao_atual")
-              .order("created_at", { ascending: false })
+              .from("v_des_posicao_trimestre_ao_vivo")
+              .select("posicao_ao_vivo_otimista")
+              .eq("empresa", "OBEN")
+              .eq("trimestre", trimestre)
+              .eq("ano", ano)
               .limit(1)
               .maybeSingle();
-            return Number(data?.posicao_atual ?? 0);
+            return Number(data?.posicao_ao_vivo_otimista ?? 0);
           },
           0,
         ),
         safeQuery(
           async () => {
             const { data } = await client
-              .from("des_avaliacoes")
-              .select("meta_trimestral")
-              .order("created_at", { ascending: false })
+              .from("v_des_posicao_trimestre_ao_vivo")
+              .select("meta_pessoal")
+              .eq("empresa", "OBEN")
+              .eq("trimestre", trimestre)
+              .eq("ano", ano)
               .limit(1)
               .maybeSingle();
-            return Number(data?.meta_trimestral ?? 0);
+            return Number(data?.meta_pessoal ?? 0);
           },
           0,
         ),
         safeQuery(
           async () => {
             const { count } = await client
-              .from("farmer_calls")
+              .from("call_logs")
               .select("id", { count: "exact", head: true })
-              .gte("data", today);
+              .gte("created_at", startOfDay);
             return count ?? 0;
           },
           0,
         ),
-        safeQuery(
-          async () => {
-            const { data } = await client
-              .from("coaching_sessions")
-              .select("score_total");
-            const arr = (data ?? []) as Array<{ score_total: number | null }>;
-            if (!arr.length) return 0;
-            const sum = arr.reduce((a, r) => a + Number(r.score_total ?? 0), 0);
-            return Math.round((sum / arr.length) * 10) / 10;
-          },
-          0,
-        ),
+        Promise.resolve(0),
       ]);
 
       return { posicao, meta, ligacoes, spin };
