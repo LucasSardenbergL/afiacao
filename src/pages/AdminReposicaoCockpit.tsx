@@ -144,14 +144,97 @@ function CiclosAnterioresTab() {
   );
 }
 
+function useCurrentStep() {
+  const today = format(new Date(), "yyyy-MM-dd");
+
+  return useQuery({
+    queryKey: ["cockpit-current-step", EMPRESA, today],
+    queryFn: async () => {
+      // Etapa 1: oportunidades pendentes hoje
+      const oport = await supabase
+        .from("v_oportunidade_economica_hoje" as any)
+        .select("*", { count: "exact", head: true })
+        .eq("empresa", EMPRESA);
+
+      // Etapa 2: parâmetros sugeridos pendentes de aprovação
+      const params = await supabase
+        .from("sku_parametros" as any)
+        .select("*", { count: "exact", head: true })
+        .eq("empresa", EMPRESA)
+        .eq("ativo", true)
+        .is("aprovado_em", null);
+
+      // Etapas 3/4/5: pedidos do ciclo de hoje por status
+      const pedidos = await supabase
+        .from("pedido_compra_sugerido" as any)
+        .select("status")
+        .eq("empresa", EMPRESA)
+        .eq("data_ciclo", today);
+
+      const statuses = ((pedidos.data ?? []) as Array<{ status: string | null }>).map(
+        (r) => r.status,
+      );
+      const hasPendentes = statuses.some(
+        (s) => s === "pendente_aprovacao" || s === "bloqueado_guardrail",
+      );
+      const hasAprovados = statuses.some((s) => s === "aprovado_aguardando_disparo");
+      const hasDisparados = statuses.some((s) => s === "disparado");
+
+      // Heurística: menor etapa com trabalho pendente.
+      if ((oport.count ?? 0) > 0) return 1;
+      if ((params.count ?? 0) > 0) return 2;
+      if (hasPendentes) return 3;
+      if (hasAprovados) return 4;
+      if (hasDisparados) return 5;
+      return 3;
+    },
+    staleTime: 30_000,
+    refetchInterval: 60_000,
+  });
+}
+
 export default function AdminReposicaoCockpit() {
+  const navigate = useNavigate();
   const [params, setParams] = useSearchParams();
-  const tab = params.get("tab") ?? "ciclo";
+  const tabParam = params.get("tab");
+
+  const { data: currentStep = 3 } = useCurrentStep();
+
+  // Aba padrão coerente com a etapa atual.
+  const defaultTab = currentStep === 4 ? "aplicar" : "ciclo";
+  const tab = tabParam ?? defaultTab;
+
+  // Redireciona ?tab=oportunidades para a página dedicada.
+  useEffect(() => {
+    if (tabParam === "oportunidades") {
+      navigate("/admin/reposicao/oportunidades", { replace: true });
+    }
+  }, [tabParam, navigate]);
 
   const handleTab = (v: string) => {
     const next = new URLSearchParams(params);
     next.set("tab", v);
     setParams(next, { replace: true });
+  };
+
+  const handleStepClick = (step: number) => {
+    switch (step) {
+      case 1:
+        navigate("/admin/reposicao/oportunidades");
+        break;
+      case 2:
+        navigate("/admin/reposicao/parametros");
+        break;
+      case 3:
+        handleTab("ciclo");
+        break;
+      case 4:
+        handleTab("aplicar");
+        break;
+      case 5:
+        handleTab("ciclo");
+        break;
+    }
   };
 
   return (
@@ -166,12 +249,11 @@ export default function AdminReposicaoCockpit() {
         </div>
       </header>
 
-      <ProcessoComprasStepper currentStep={3} />
+      <ProcessoComprasStepper currentStep={currentStep} onStepClick={handleStepClick} />
 
       <Tabs value={tab} onValueChange={handleTab} className="space-y-4">
-        <TabsList className="grid grid-cols-2 sm:grid-cols-4 w-full">
+        <TabsList className="grid grid-cols-3 w-full">
           <TabsTrigger value="ciclo">Ciclo de hoje</TabsTrigger>
-          <TabsTrigger value="oportunidades">Oportunidades</TabsTrigger>
           <TabsTrigger value="aplicar">Aplicar no Omie</TabsTrigger>
           <TabsTrigger value="historico">Ciclos anteriores</TabsTrigger>
         </TabsList>
@@ -179,12 +261,6 @@ export default function AdminReposicaoCockpit() {
         <TabsContent value="ciclo" className="m-0">
           <Suspense fallback={<TabFallback />}>
             <AdminReposicaoPedidos />
-          </Suspense>
-        </TabsContent>
-
-        <TabsContent value="oportunidades" className="m-0">
-          <Suspense fallback={<TabFallback />}>
-            <AdminReposicaoOportunidades />
           </Suspense>
         </TabsContent>
 
