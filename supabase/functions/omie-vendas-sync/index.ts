@@ -263,15 +263,21 @@ async function syncEstoque(supabase: any, startPage = 1, maxPages = 3, account: 
         }, []);
 
         if (stockRows.length > 0) {
-          const { error: upsertError } = await supabase
-            .from("omie_products")
-            .upsert(stockRows, { onConflict: "omie_codigo_produto,account" });
-
-          if (upsertError) {
-            console.error(`[Omie Vendas][${account}] Erro batch upsert estoque página ${pagina}:`, upsertError);
-          } else {
-            totalUpdated += stockRows.length;
+          // Não há unique constraint (omie_codigo_produto,account) — usar UPDATE por id
+          // em vez de upsert para evitar tentativas de INSERT que violam NOT NULL.
+          let okCount = 0;
+          for (const row of stockRows) {
+            const { error: updErr } = await supabase
+              .from("omie_products")
+              .update({ estoque: row.estoque, updated_at: row.updated_at })
+              .eq("id", row.id);
+            if (updErr) {
+              console.error(`[Omie Vendas][${account}] Erro update estoque ${row.omie_codigo_produto}:`, updErr.message);
+            } else {
+              okCount++;
+            }
           }
+          totalUpdated += okCount;
         }
 
         const skippedProducts = productCodes.length - stockRows.length;
@@ -1169,14 +1175,7 @@ serve(async (req) => {
   if (!__auth.ok) return __auth.response;
 
   try {
-    // Validar autenticação
     const authHeader = req.headers.get("Authorization");
-    if (!authHeader?.startsWith("Bearer ")) {
-      return new Response(JSON.stringify({ error: "Não autorizado" }), {
-        status: 401,
-        headers: { ...corsHeaders, "Content-Type": "application/json" },
-      });
-    }
 
     // Admin client (bypasses RLS) for DB operations
     const supabaseAdmin = createClient(
@@ -1184,24 +1183,19 @@ serve(async (req) => {
       Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!
     );
 
-    // User client for auth validation
-    const supabase = createClient(
-      Deno.env.get("SUPABASE_URL")!,
-      Deno.env.get("SUPABASE_ANON_KEY")!,
-      { global: { headers: { Authorization: authHeader } } }
-    );
-
-    const { data: { user }, error: userError } = await supabase.auth.getUser(
-      authHeader.replace("Bearer ", "")
-    );
-    if (userError || !user) {
-      return new Response(JSON.stringify({ error: "Token inválido" }), {
-        status: 401,
-        headers: { ...corsHeaders, "Content-Type": "application/json" },
-      });
+    // Resolve userId quando vier JWT staff; cron/service_role passam sem user.
+    let userId: string | null = null;
+    if (__auth.via === "staff" && authHeader?.startsWith("Bearer ")) {
+      const supabase = createClient(
+        Deno.env.get("SUPABASE_URL")!,
+        Deno.env.get("SUPABASE_ANON_KEY")!,
+        { global: { headers: { Authorization: authHeader } } }
+      );
+      const { data: { user } } = await supabase.auth.getUser(
+        authHeader.replace("Bearer ", "")
+      );
+      userId = user?.id ?? null;
     }
-
-    const userId = user.id;
 
     const { action, account: rawAccount, ...params } = await req.json();
     const account: Account = (rawAccount === "colacor") ? "colacor" : "oben";
