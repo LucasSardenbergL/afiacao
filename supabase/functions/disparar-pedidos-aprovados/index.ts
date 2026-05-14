@@ -320,11 +320,32 @@ async function processarPedido(
       .replace(/-/g, "");
     const numeroPedido = `AFI${ts}${String(pedido.id).slice(-4)}`.slice(0, 15);
 
-    // d.1 Sayerlack/OBEN: envia ao portal ANTES e usa o protocolo como cContrato
+    // d.1 Sayerlack/OBEN: o portal é lento e precisa rodar em background.
+    // Se já houver protocolo de execução anterior, cria o Omie normalmente.
+    // Caso contrário, apenas enfileira o portal e finaliza sem marcar falha.
     let cContratoFinal = numeroPedido;
     let protocoloPortal: string | null = null;
     if (isSayerlackOben(pedido) && modo === "producao") {
-      protocoloPortal = await garantirEnvioPortalSayerlack(db, pedido.id);
+      const portal = await iniciarEnvioPortalSayerlack(db, pedido.id);
+      if (portal.state === "queued") {
+        await db
+          .from("pedido_compra_sugerido")
+          .update({
+            canal_usado: "portal_sayerlack",
+            resposta_canal: {
+              modo,
+              portal_async: true,
+              fornecedor_notificado: false,
+              mensagem: "Envio ao portal Sayerlack iniciado em background; Omie será registrado após confirmação manual/reprocessamento com protocolo.",
+            },
+            atualizado_em: new Date().toISOString(),
+          })
+          .eq("id", pedido.id);
+        result.status_final = "aguardando_portal_sayerlack";
+        result.canal = "portal_sayerlack";
+        return result;
+      }
+      protocoloPortal = portal.protocolo;
       // cContrato Omie aceita até 15 chars; protocolo é só dígitos
       cContratoFinal = String(protocoloPortal).slice(0, 15);
       result.canal = "portal_sayerlack";
