@@ -826,6 +826,10 @@ Deno.serve(async (req: Request) => {
     }
 
     const falhas = resultados.filter((r) => r.status_final === "falha_envio").length;
+    const aguardandoPortal = resultados.filter((r) => r.status_final === "aguardando_portal_sayerlack").length;
+    const disparadosOk = resultados.filter((r) =>
+      r.status_final === "disparado" || r.status_final === "disparado_simulado"
+    ).length;
     const duration = Date.now() - startedAt;
 
     await db.from("sync_reprocess_log").insert({
@@ -857,7 +861,8 @@ Deno.serve(async (req: Request) => {
         modo,
         data_ciclo: dataCiclo,
         aprovados: aprovados.length,
-        disparados: resultados.length - falhas,
+        disparados: disparadosOk,
+        aguardando_portal_sayerlack: aguardandoPortal,
         falhas,
         expirados,
         email_status: emailStatus,
