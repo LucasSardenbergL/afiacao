@@ -805,6 +805,27 @@ async function uploadScreenshot(
   }
 }
 
+async function registrarPedidoOmieAposPortal(pedido: PedidoCandidato) {
+  try {
+    const resp = await fetch(`${SUPABASE_URL}/functions/v1/disparar-pedidos-aprovados`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${SERVICE_ROLE_KEY}`,
+      },
+      body: JSON.stringify({ empresa: pedido.empresa, pedido_id: pedido.id }),
+    });
+    const text = await resp.text();
+    if (!resp.ok) {
+      console.error(`[envio-portal] Pedido #${pedido.id}: falha ao registrar Omie apos portal [${resp.status}] ${text.slice(0, 300)}`);
+      return;
+    }
+    console.log(`[envio-portal] Pedido #${pedido.id}: Omie acionado apos portal [${resp.status}] ${text.slice(0, 300)}`);
+  } catch (e: any) {
+    console.error(`[envio-portal] Pedido #${pedido.id}: excecao ao registrar Omie apos portal`, e?.message ?? e);
+  }
+}
+
 async function processarPedido(
   supabase: ReturnType<typeof createClient>,
   pedido: PedidoCandidato,
@@ -979,9 +1000,9 @@ async function processarPedido(
 
   try {
     const ctrl = new AbortController();
-    const timeout = setTimeout(() => ctrl.abort(), 120000);
+    const timeout = setTimeout(() => ctrl.abort(), 150000);
     const resp = await fetch(
-      `https://chrome.browserless.io/function?token=${BROWSERLESS_TOKEN}&timeout=60000`,
+      `https://chrome.browserless.io/function?token=${BROWSERLESS_TOKEN}&timeout=120000`,
       {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -1093,6 +1114,7 @@ async function processarPedido(
       portal_proximo_retry_em: null,
     }).eq("id", pedido.id);
     console.log(`[envio-portal] Pedido #${pedido.id}: enviando_portal -> enviado_portal OK (protocolo=${result.protocolo})`);
+    await registrarPedidoOmieAposPortal(pedido);
     result.duracao_ms = Date.now() - t0;
     return result;
   }
