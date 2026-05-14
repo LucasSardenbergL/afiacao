@@ -30,6 +30,20 @@ interface OmieProduto {
   };
 }
 
+type SyncResult = {
+  ok: boolean;
+  empresa: string;
+  total_alvo?: number;
+  encontrados_na_listagem?: number;
+  nao_encontrados?: number;
+  sucessos?: number;
+  falhas?: number;
+  alertas_resolvidos_auto?: number;
+  paginas_processadas?: number;
+  duration_ms?: number;
+  error?: string;
+};
+
 async function omieCall(
   appKey: string,
   appSecret: string,
