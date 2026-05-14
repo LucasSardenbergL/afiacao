@@ -1,6 +1,6 @@
 // Edge Function: omie-sync-status-produtos
 // Sincroniza status (ativo/inativo) e parâmetros atuais de estoque do Omie
-// para a tabela sku_status_omie. Usa ListarProdutos paginado (50 por página).
+// para a tabela sku_status_omie. Usa ListarProdutos paginado (500 por página).
 
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.45.0";
 import { authorizeCronOrStaff } from "../_shared/auth.ts";
@@ -8,7 +8,7 @@ import { authorizeCronOrStaff } from "../_shared/auth.ts";
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
   "Access-Control-Allow-Headers":
-    "authorization, x-client-info, apikey, content-type",
+    "authorization, x-client-info, apikey, content-type, x-cron-secret",
 };
 
 const OMIE_URL = "https://app.omie.com.br/api/v1/geral/produtos/";
@@ -29,20 +29,6 @@ interface OmieProduto {
     estoque_maximo?: number;
   };
 }
-
-type SyncResult = {
-  ok: boolean;
-  empresa: string;
-  total_alvo?: number;
-  encontrados_na_listagem?: number;
-  nao_encontrados?: number;
-  sucessos?: number;
-  falhas?: number;
-  alertas_resolvidos_auto?: number;
-  paginas_processadas?: number;
-  duration_ms?: number;
-  error?: string;
-};
 
 async function omieCall(
   appKey: string,
