@@ -34,7 +34,9 @@ export default async ({ page, context }) => {
   const { user, pass, portalUrl, clienteCodigo, items } = context;
   const trace = [];
   const t0 = Date.now();
-  const TIMEOUT_INTERNO_MS = 55000; // 55s, antes do cap de 60s do Browserless
+  // Não usamos timeout interno menor que o Browserless: em 14/05, o pedido #116
+  // clicou em "Efetivar Pedido" por volta de 53s e a Promise.race anterior
+  // devolveu TIMEOUT_INTERNO aos 55s, encerrando o browser antes do portal concluir.
 
   // Helper: limpa input e digita (substitui page.fill do Playwright)
   const fillInput = async (selector, value) => {
@@ -728,21 +730,7 @@ export default async ({ page, context }) => {
    }
   };
 
-  const timeoutInterno = new Promise(function(resolve) {
-    setTimeout(function() {
-      resolve({
-        success: false,
-        erroTipo: 'TIMEOUT_INTERNO',
-        erro: 'Script ultrapassou ' + (TIMEOUT_INTERNO_MS / 1000) + 's — retornando trace parcial pra diagnóstico',
-        trace,
-        ultimoStep: trace.length > 0 ? trace[trace.length - 1].step : 'nenhum',
-        ultimoStepT: trace.length > 0 ? trace[trace.length - 1].t : null,
-        totalSteps: trace.length
-      });
-    }, TIMEOUT_INTERNO_MS);
-  });
-
-  return await Promise.race([runFlow(), timeoutInterno]);
+  return await runFlow();
 };
 `;
 
