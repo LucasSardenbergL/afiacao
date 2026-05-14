@@ -29,18 +29,22 @@ export function DispararAgoraButton({
   const isIndividual = typeof pedidoId === 'number';
   const buttonLabel = label ?? (isIndividual ? 'Disparar este pedido agora' : 'Disparar agora');
   const dialogMsg = isIndividual
-    ? `Vai tentar enviar o pedido #${pedidoId} ao portal Sayerlack agora. Pode levar 30–60 segundos. Confirmar?`
-    : 'Isso vai processar até 5 pedidos pendentes em sequência. Cada pedido pode levar 30–60 segundos. Confirmar?';
+    ? `Vai enviar o pedido #${pedidoId} ao portal Sayerlack em segundo plano. A lista atualiza sozinha quando terminar (geralmente 30–90s). Confirmar?`
+    : 'Isso vai disparar até 5 pedidos pendentes em paralelo, em segundo plano. A lista atualiza sozinha quando cada um terminar. Confirmar?';
 
   const handleClick = async () => {
     setLoading(true);
     setOpen(false);
-    const t = toast.loading(isIndividual ? `Enviando pedido #${pedidoId}…` : 'Disparando lote…');
     try {
       const { data: sess } = await supabase.auth.getSession();
       const token = sess.session?.access_token ?? ANON_KEY;
+      // Modo async: edge function retorna 202 em <2s e processa em background.
+      // Não precisa de timeout longo aqui.
       const ctrl = new AbortController();
-      const timeout = setTimeout(() => ctrl.abort(), 600_000);
+      const timeout = setTimeout(() => ctrl.abort(), 15_000);
+
+      const payload: Record<string, unknown> = { async_mode: true };
+      if (isIndividual) payload.pedido_id = pedidoId;
 
       const res = await fetch(
         `${SUPABASE_URL}/functions/v1/enviar-pedido-portal-sayerlack`,
@@ -51,27 +55,32 @@ export function DispararAgoraButton({
             Authorization: `Bearer ${token}`,
             apikey: ANON_KEY,
           },
-          body: JSON.stringify(isIndividual ? { pedido_id: pedidoId } : {}),
+          body: JSON.stringify(payload),
           signal: ctrl.signal,
         },
       );
       clearTimeout(timeout);
 
       const body = await res.json().catch(() => ({}));
-      toast.dismiss(t);
 
-      if (!res.ok) {
+      if (!res.ok && res.status !== 202) {
         toast.error(`Falha: ${body?.error ?? res.statusText}`);
       } else {
-        const proc = body?.processados ?? (isIndividual ? 1 : 0);
-        const ok = body?.sucesso ?? (body?.status === 'enviado_portal' ? 1 : 0);
-        const fail = body?.falhas ?? (body?.status === 'falha_envio_portal' ? 1 : 0);
-        toast.success(`${proc} processado(s), ${ok} sucesso, ${fail} falha(s)`);
+        const ids: number[] = Array.isArray(body?.pedido_ids) ? body.pedido_ids : [];
+        if (ids.length === 0) {
+          toast.info('Nenhum pedido pendente para disparar.');
+        } else {
+          toast.success(
+            isIndividual
+              ? `Pedido #${ids[0]} em processamento. Acompanhe na lista (atualiza sozinho).`
+              : `${ids.length} pedido(s) em processamento. A lista atualiza sozinha conforme cada um terminar.`,
+            { duration: 6000 },
+          );
+        }
         onSuccess?.();
       }
     } catch (err: any) {
-      toast.dismiss(t);
-      toast.error(`Falha ao chamar edge function: ${err?.message ?? err}`);
+      toast.error(`Falha ao disparar: ${err?.message ?? err}`);
     } finally {
       setLoading(false);
     }
