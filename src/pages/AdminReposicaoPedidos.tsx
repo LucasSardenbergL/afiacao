@@ -1312,7 +1312,9 @@ export default function AdminReposicaoPedidos() {
     onSuccess: (data, pedidoId) => {
       const ok = data?.disparados ?? 0;
       const fail = data?.falhas ?? 0;
+      const aguardandoPortal = data?.aguardando_portal_sayerlack ?? 0;
       if (ok > 0) toast.success(`Pedido #${pedidoId} disparado e registrado no Omie`);
+      else if (aguardandoPortal > 0) toast.success(`Pedido #${pedidoId}: envio ao portal Sayerlack iniciado em segundo plano`);
       else if (fail > 0) toast.error(`Pedido #${pedidoId}: falha ao disparar`);
       else toast.info(`Pedido #${pedidoId}: nada a disparar (${JSON.stringify(data)})`);
       queryClient.invalidateQueries({ queryKey: ['pedidos-ciclo'] });
