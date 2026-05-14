@@ -1177,6 +1177,74 @@ async function authorizeCronOrStaff(req: Request): Promise<boolean> {
   } catch { return false; }
 }
 
+// Watchdog: libera pedidos travados em "enviando_portal" há mais de N minutos.
+// Útil quando o background task (EdgeRuntime.waitUntil) é interrompido.
+async function runWatchdog(supabase: any, minutos = 5) {
+  const cutoff = new Date(Date.now() - minutos * 60 * 1000).toISOString();
+  // Estouro de tentativas → falha definitiva. Caso contrário → volta para pendente.
+  const { data: stuck, error } = await supabase
+    .from("pedido_compra_sugerido")
+    .select("id, portal_tentativas")
+    .eq("empresa", "OBEN")
+    .ilike("fornecedor_nome", "%SAYERLACK%")
+    .eq("status_envio_portal", "enviando_portal")
+    .lt("atualizado_em", cutoff);
+  if (error) {
+    console.error("[envio-portal][watchdog] erro:", error.message);
+    return { liberados: 0, falhados: 0, erro: error.message };
+  }
+  let liberados = 0;
+  let falhados = 0;
+  for (const p of (stuck ?? []) as Array<{ id: number; portal_tentativas: number | null }>) {
+    const tent = (p.portal_tentativas ?? 0) + 1;
+    const definitiva = tent >= MAX_TENTATIVAS;
+    await supabase.from("pedido_compra_sugerido").update({
+      status_envio_portal: definitiva ? "falha_envio_portal" : "pendente_envio_portal",
+      portal_erro: `Watchdog: pedido travou em enviando_portal por mais de ${minutos}min`,
+      portal_tentativas: tent,
+      portal_proximo_retry_em: definitiva ? null : new Date(Date.now() + 5 * 60 * 1000).toISOString(),
+    }).eq("id", p.id);
+    if (definitiva) falhados++;
+    else liberados++;
+  }
+  console.log(`[envio-portal][watchdog] cutoff=${minutos}min liberados=${liberados} falhados=${falhados}`);
+  return { liberados, falhados };
+}
+
+// Processa lista de candidatos. Pode rodar em foreground (response síncrona)
+// ou em background via EdgeRuntime.waitUntil (modo async).
+async function processCandidatos(
+  supabase: any,
+  candidatos: PedidoCandidato[],
+): Promise<{ detalhes: ProcessResult[]; sucesso: number; falhasDef: number; falhasTmp: number }> {
+  const detalhes: ProcessResult[] = [];
+  let sucesso = 0;
+  let falhasDef = 0;
+  let falhasTmp = 0;
+  for (const p of candidatos) {
+    try {
+      const r = await processarPedido(supabase, p);
+      detalhes.push(r);
+      if (r.status_final === "enviado_portal") sucesso++;
+      else if (r.status_final === "falha_envio_portal") falhasDef++;
+      else if (r.status_final === "pendente_envio_portal") falhasTmp++;
+    } catch (e: any) {
+      console.error(`[envio-portal] Excecao no pedido #${p.id}:`, e?.message ?? e);
+      detalhes.push({
+        pedido_id: p.id,
+        status_inicial: p.status_envio_portal ?? "pendente_envio_portal",
+        status_final: "erro_excecao",
+        protocolo: null,
+        tentativas: p.portal_tentativas ?? 0,
+        erro: e?.message ?? String(e),
+        screenshot_url: null,
+        duracao_ms: 0,
+      });
+    }
+  }
+  return { detalhes, sucesso, falhasDef, falhasTmp };
+}
+
 Deno.serve(async (req) => {
   if (req.method === "OPTIONS") {
     return new Response("ok", { headers: corsHeaders });
@@ -1205,6 +1273,16 @@ Deno.serve(async (req) => {
   const supabase = createClient(SUPABASE_URL, SERVICE_ROLE_KEY, {
     auth: { persistSession: false, autoRefreshToken: false },
   });
+
+  // === MODO WATCHDOG ===
+  if (body?.watchdog === true || body?.modo === "watchdog") {
+    const minutos = Number.isFinite(body?.minutos) ? Number(body.minutos) : 5;
+    const r = await runWatchdog(supabase, minutos);
+    return new Response(
+      JSON.stringify({ modo: "watchdog", ...r, duracao_ms: Date.now() - tStart }),
+      { headers: { ...corsHeaders, "Content-Type": "application/json" }, status: 200 },
+    );
+  }
 
   // === MODO ECO ===
   if (body?.test_eco === true) {
