@@ -1002,7 +1002,7 @@ async function processarPedido(
     const ctrl = new AbortController();
     const timeout = setTimeout(() => ctrl.abort(), 150000);
     const resp = await fetch(
-      `https://chrome.browserless.io/function?token=${BROWSERLESS_TOKEN}&timeout=120000`,
+      `https://chrome.browserless.io/function?token=${BROWSERLESS_TOKEN}&timeout=60000`,
       {
         method: "POST",
         headers: { "Content-Type": "application/json" },
