@@ -44,12 +44,8 @@ export function authorizeCron(req: Request): AuthResult {
 export async function authorizeCronOrStaff(req: Request): Promise<AuthResult> {
   const expected = Deno.env.get("CRON_SECRET");
   const cronSecret = req.headers.get("x-cron-secret");
-  if (expected && cronSecret) {
-    const match = cronSecret === expected;
-    console.log(
-      `[auth] cron-secret check: provided_len=${cronSecret.length} expected_len=${expected.length} provided_prefix=${cronSecret.slice(0, 6)} expected_prefix=${expected.slice(0, 6)} match=${match}`,
-    );
-    if (match) return { ok: true, via: "cron" };
+  if (expected && cronSecret && cronSecret === expected) {
+    return { ok: true, via: "cron" };
   }
 
   const authHeader = req.headers.get("Authorization");
