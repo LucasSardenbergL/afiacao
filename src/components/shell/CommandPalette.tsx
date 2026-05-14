@@ -1,4 +1,4 @@
-import { useMemo } from 'react';
+import { useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import {
   CommandDialog,
@@ -7,11 +7,13 @@ import {
   CommandInput,
   CommandItem,
   CommandList,
+  CommandSeparator,
 } from '@/components/ui/command';
 import {
   LayoutDashboard, ShoppingCart, Users, Wrench, Package, Truck,
   BarChart3, DollarSign, Palette, Settings, BookOpen, PlusCircle,
-  ClipboardList, FileCheck, Boxes, Beaker, Shield,
+  ClipboardList, FileCheck, Boxes, Beaker, Shield, User, Beaker as Bottle,
+  FileText, Loader2, Clock, X,
 } from 'lucide-react';
 import {
   useCommandsRegistry,
@@ -19,6 +21,7 @@ import {
   type Command,
 } from './CommandsRegistry';
 import { useRegisterShortcuts } from './ShortcutsRegistry';
+import { useGlobalSearch, useSearchRecents, type SearchResult } from '@/hooks/useGlobalSearch';
 
 /**
  * Palette aberta com Cmd+K / Ctrl+K (atalho registrado abaixo).
@@ -27,8 +30,23 @@ import { useRegisterShortcuts } from './ShortcutsRegistry';
 export function CommandPalette() {
   const navigate = useNavigate();
   const { open, setOpen, commands: dynamicCommands } = useCommandsRegistry();
+  const [query, setQuery] = useState('');
+  const search = useGlobalSearch(query, open);
+  const { recents, push: pushRecent, clear: clearRecents } = useSearchRecents();
 
-  const close = () => setOpen(false);
+  const close = () => {
+    setOpen(false);
+    setQuery('');
+  };
+
+  const goToResult = (r: SearchResult) => {
+    pushRecent(r);
+    navigate(r.path);
+    close();
+  };
+
+  const iconForKind = (kind: SearchResult['kind']) =>
+    kind === 'customer' ? User : kind === 'formula' ? Bottle : FileText;
 
   // Atalho global Cmd+K / Ctrl+K
   useRegisterShortcuts(
@@ -105,11 +123,91 @@ export function CommandPalette() {
     return Array.from(m.entries());
   }, [allCommands]);
 
+  // cmdk by default filtra os items pelo input — desativamos via shouldFilter={false}
+  // pra que comandos estáticos APAREÇAM sempre + nossa busca remota tome conta do filtro real.
+  // Isso casa melhor com Linear/Raycast: você digita, vê resultados remotos imediatos.
+
   return (
-    <CommandDialog open={open} onOpenChange={setOpen}>
-      <CommandInput placeholder="Buscar telas, ações, fórmulas, pedidos..." />
+    <CommandDialog open={open} onOpenChange={(v) => { setOpen(v); if (!v) setQuery(''); }} shouldFilter>
+      <CommandInput
+        placeholder="Buscar telas, clientes, fórmulas, pedidos..."
+        value={query}
+        onValueChange={setQuery}
+      />
       <CommandList>
-        <CommandEmpty>Nada encontrado.</CommandEmpty>
+        <CommandEmpty>
+          {search.isLoading ? (
+            <span className="flex items-center justify-center gap-2 py-2 text-sm text-muted-foreground">
+              <Loader2 className="w-3.5 h-3.5 animate-spin" />
+              Buscando...
+            </span>
+          ) : query.trim().length >= 2 ? (
+            'Nada encontrado para esta busca.'
+          ) : (
+            'Digite ao menos 2 caracteres para buscar clientes, fórmulas ou pedidos.'
+          )}
+        </CommandEmpty>
+
+        {/* Resultados remotos — aparecem PRIMEIRO quando há query ativa */}
+        {search.isActive && search.groups.map(({ heading, results }) => (
+          <CommandGroup key={`remote-${heading}`} heading={heading}>
+            {results.map((r) => {
+              const Icon = iconForKind(r.kind);
+              return (
+                <CommandItem
+                  key={`${r.kind}-${r.id}`}
+                  value={`__remote__ ${r.title} ${r.subtitle ?? ''} ${r.kind}`}
+                  onSelect={() => goToResult(r)}
+                >
+                  <Icon className="mr-2 h-4 w-4 shrink-0 text-muted-foreground" />
+                  <span className="flex-1 truncate">{r.title}</span>
+                  {r.subtitle && (
+                    <span className="ml-2 text-xs text-muted-foreground font-tabular truncate max-w-[160px]">
+                      {r.subtitle}
+                    </span>
+                  )}
+                </CommandItem>
+              );
+            })}
+          </CommandGroup>
+        ))}
+
+        {/* Recentes — aparecem só quando query vazia */}
+        {!query.trim() && recents.length > 0 && (
+          <>
+            <CommandGroup heading="Recentes">
+              {recents.map((r) => {
+                const Icon = iconForKind(r.kind);
+                return (
+                  <CommandItem
+                    key={`recent-${r.kind}-${r.id}`}
+                    value={`__recent__ ${r.title} ${r.subtitle ?? ''}`}
+                    onSelect={() => goToResult(r)}
+                  >
+                    <Clock className="mr-2 h-4 w-4 shrink-0 text-muted-foreground/60" />
+                    <span className="flex-1 truncate">{r.title}</span>
+                    {r.subtitle && (
+                      <span className="ml-2 text-xs text-muted-foreground font-tabular truncate max-w-[160px]">
+                        {r.subtitle}
+                      </span>
+                    )}
+                  </CommandItem>
+                );
+              })}
+              <CommandItem
+                value="__clear-recents__"
+                onSelect={() => clearRecents()}
+                className="text-xs text-muted-foreground"
+              >
+                <X className="mr-2 h-3 w-3 shrink-0" />
+                Limpar recentes
+              </CommandItem>
+            </CommandGroup>
+            <CommandSeparator />
+          </>
+        )}
+
+        {/* Comandos estáticos / dinâmicos — sempre visíveis */}
         {groups.map(([group, items]) => (
           <CommandGroup key={group} heading={group}>
             {items.map((cmd) => {

@@ -17,8 +17,9 @@ import {
   Loader2, Plus, Wrench, Trash2, Search, User, Phone, FileText,
   ChevronLeft, Mail, Building2, ShoppingCart, TrendingUp, ArrowUpRight,
   BarChart3, Clock, AlertTriangle, ChevronRight, Filter, MoreHorizontal,
-  MessageSquare, Calendar, DollarSign, Package, Activity,
+  MessageSquare, Calendar, DollarSign, Package, Activity, Users,
 } from 'lucide-react';
+import { EmptyState } from '@/components/EmptyState';
 import {
   DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu';
@@ -347,12 +348,17 @@ function CustomerListView({
         </div>
 
         {filtered.length === 0 && (
-          <div className="text-center py-12">
-            <Search className="w-8 h-8 mx-auto mb-2 text-muted-foreground/40" />
-            <p className="text-sm text-muted-foreground">
-              {searchQuery ? 'Nenhum cliente encontrado' : 'Nenhum cliente na carteira'}
-            </p>
-          </div>
+          <EmptyState
+            icon={searchQuery || filterHealth !== 'all' ? Search : Users}
+            title={searchQuery || filterHealth !== 'all' ? 'Nenhum cliente com esses filtros' : 'Nenhum cliente na carteira'}
+            description={
+              searchQuery || filterHealth !== 'all'
+                ? 'Tente buscar por nome, CNPJ ou e-mail; ou trocar o filtro de saúde.'
+                : 'Quando um cliente for cadastrado ele vai aparecer aqui automaticamente.'
+            }
+            actionLabel={searchQuery || filterHealth !== 'all' ? 'Limpar filtros' : undefined}
+            onAction={searchQuery || filterHealth !== 'all' ? () => setUrlState({ search: '', health: 'all' }) : undefined}
+          />
         )}
       </Card>
     </div>

@@ -9,6 +9,9 @@ import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, 
 import { supabase } from '@/integrations/supabase/client';
 import { useAuth } from '@/contexts/AuthContext';
 import { Loader2, ShoppingCart, Plus, Package, Trash2, Building2, Wrench, Share2, Printer, Pencil, Search, ChevronLeft } from 'lucide-react';
+import { EmptyState } from '@/components/EmptyState';
+import { Checkbox } from '@/components/ui/checkbox';
+import { BulkActionsBar } from '@/components/ui/bulk-actions-bar';
 import { format } from 'date-fns';
 import { ptBR } from 'date-fns/locale';
 import { toast } from 'sonner';
@@ -60,6 +63,7 @@ const SalesOrders = () => {
   const [loading, setLoading] = useState(true);
   const [accountFilter, setAccountFilter] = useState<Account>('all');
   const [search, setSearch] = useState('');
+  const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   const { role } = useAuth();
   useEffect(() => {
     if (!authLoading && role !== null && !isStaff) navigate('/', { replace: true });
@@ -130,7 +134,15 @@ const SalesOrders = () => {
     }
   };
 
+  // Optimistic delete — remove imediatamente da lista, restaura em caso de erro
   const deleteOrder = async (order: SalesOrder) => {
+    const snapshot = orders;
+    setOrders((prev) => prev.filter((o) => o.id !== order.id));
+    setSelectedIds((prev) => {
+      const next = new Set(prev);
+      next.delete(order.id);
+      return next;
+    });
     try {
       const { error } = await supabase.functions.invoke('omie-vendas-sync', {
         body: {
@@ -140,11 +152,50 @@ const SalesOrders = () => {
         },
       });
       if (error) throw error;
-      setOrders((prev) => prev.filter((o) => o.id !== order.id));
-      toast.success('Pedido excluído com sucesso');
+      toast.success('Pedido excluído');
     } catch (e: any) {
       console.error(e);
-      toast.error('Erro ao excluir pedido');
+      setOrders(snapshot); // rollback
+      toast.error('Erro ao excluir pedido', { description: e?.message });
+    }
+  };
+
+  // Bulk delete — sequencial pra não floodar o Omie. Mostra progresso.
+  const deleteSelected = async () => {
+    if (selectedIds.size === 0) return;
+    const toDelete = orders.filter((o) => selectedIds.has(o.id) && o._source === 'sales');
+    const snapshot = orders;
+    // Optimistic: remove tudo da lista de uma vez
+    setOrders((prev) => prev.filter((o) => !selectedIds.has(o.id)));
+    setSelectedIds(new Set());
+
+    let success = 0;
+    let failed = 0;
+    for (const o of toDelete) {
+      try {
+        const { error } = await supabase.functions.invoke('omie-vendas-sync', {
+          body: {
+            action: 'excluir_pedido',
+            sales_order_id: o.id,
+            omie_pedido_id: o.omie_pedido_id,
+          },
+        });
+        if (error) throw error;
+        success++;
+      } catch (e) {
+        failed++;
+        console.error(e);
+      }
+    }
+
+    if (failed === 0) {
+      toast.success(`${success} pedido(s) excluído(s)`);
+    } else if (success === 0) {
+      setOrders(snapshot); // rollback completo
+      toast.error(`Falhou: ${failed} pedido(s) não puderam ser excluídos`);
+    } else {
+      // Parcial — mantém o sucesso
+      toast.warning(`${success} excluído(s), ${failed} falharam`);
     }
   };
 
@@ -256,10 +307,24 @@ const SalesOrders = () => {
       </div>
 
       {filteredOrders.length === 0 ? (
-        <div className="text-center py-12">
-          <ShoppingCart className="w-12 h-12 mx-auto text-muted-foreground/50 mb-3" />
-          <p className="text-muted-foreground">Nenhum pedido encontrado.</p>
-        </div>
+        <EmptyState
+          icon={ShoppingCart}
+          title={search.trim() || accountFilter !== 'all' ? 'Nenhum pedido com esses filtros' : 'Nenhum pedido ainda'}
+          description={
+            search.trim() || accountFilter !== 'all'
+              ? 'Tente ajustar a busca ou trocar a aba de empresa.'
+              : 'Crie seu primeiro pedido pra começar a operar.'
+          }
+          actionLabel={search.trim() || accountFilter !== 'all' ? 'Limpar filtros' : 'Novo pedido'}
+          onAction={() => {
+            if (search.trim() || accountFilter !== 'all') {
+              setSearch('');
+              setAccountFilter('all');
+            } else {
+              navigate('/sales/new');
+            }
+          }}
+        />
       ) : (
         <div className="space-y-2">
           {filteredOrders.map((order) => {
@@ -268,10 +333,27 @@ const SalesOrders = () => {
             const totalItems = order.items?.reduce((s, i) => s + (i.quantidade || 0), 0) || 0;
             const orderAccount = isAfiacao ? 'afiacao' : (order.account || 'oben');
             const accountLabel = isAfiacao ? 'Afiação' : orderAccount === 'colacor' ? 'Colacor' : 'Oben';
+            const isSelectable = !isAfiacao; // só sales_orders são bulk-deletáveis
+            const checked = selectedIds.has(order.id);
             return (
-              <Card key={`${order._source}-${order.id}`} className="cursor-pointer hover:shadow-md transition-shadow" onClick={() => isAfiacao ? navigate(`/orders/${order.id}`) : undefined}>
+              <Card key={`${order._source}-${order.id}`} className={`cursor-pointer hover:bg-muted/30 transition-colors ${checked ? 'ring-2 ring-foreground/20' : ''}`} onClick={() => isAfiacao ? navigate(`/orders/${order.id}`) : undefined}>
                 <CardContent className="p-3">
                   <div className="flex items-start justify-between gap-2">
+                    {isSelectable && (
+                      <Checkbox
+                        checked={checked}
+                        onClick={(e) => e.stopPropagation()}
+                        onCheckedChange={(v) => {
+                          setSelectedIds((prev) => {
+                            const next = new Set(prev);
+                            if (v) next.add(order.id);
+                            else next.delete(order.id);
+                            return next;
+                          });
+                        }}
+                        className="mt-0.5"
+                      />
+                    )}
                     <div className="flex-1 min-w-0">
                       <div className="flex items-center gap-1.5">
                         <p className="font-medium text-sm truncate">
@@ -357,6 +439,27 @@ const SalesOrders = () => {
           })}
         </div>
       )}
+
+      {/* Barra flutuante quando há seleção múltipla */}
+      <BulkActionsBar
+        count={selectedIds.size}
+        onClear={() => setSelectedIds(new Set())}
+        itemSingular="pedido"
+        itemPlural="pedidos"
+        actions={[
+          {
+            id: 'delete',
+            label: 'Excluir',
+            icon: Trash2,
+            variant: 'destructive',
+            onClick: () => {
+              if (confirm(`Excluir ${selectedIds.size} pedido(s)? Esta ação não pode ser desfeita.`)) {
+                deleteSelected();
+              }
+            },
+          },
+        ]}
+      />
     </div>
   );
 };

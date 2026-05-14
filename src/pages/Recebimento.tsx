@@ -4,6 +4,7 @@ import { useNavigate } from 'react-router-dom';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { supabase } from '@/integrations/supabase/client';
 import { FileCheck, Truck, Plus, Loader2, PackageCheck, RefreshCw } from 'lucide-react';
+import { EmptyState } from '@/components/EmptyState';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { Card, CardContent } from '@/components/ui/card';
@@ -245,10 +246,14 @@ export default function Recebimento({ statusFilter }: { statusFilter?: string[] 
         </div>
       ) : !nfes || nfes.length === 0 ? (
         <Card>
-          <CardContent className="py-12 text-center text-muted-foreground">
-            <PackageCheck className="h-12 w-12 mx-auto mb-3 opacity-40" />
-            <p className="text-lg font-medium">Nenhuma NF-e neste armazém</p>
-            <p className="text-sm mt-1">Novas NF-es aparecerão automaticamente via webhook</p>
+          <CardContent className="p-0">
+            <EmptyState
+              icon={PackageCheck}
+              title="Nenhuma NF-e neste armazém"
+              description="Novas NF-es aparecerão aqui automaticamente via webhook do Omie. Você também pode forçar processamento manual."
+              actionLabel="Processar NF-e manualmente"
+              onAction={() => navigate('/nfe-receipt')}
+            />
           </CardContent>
         </Card>
       ) : (
