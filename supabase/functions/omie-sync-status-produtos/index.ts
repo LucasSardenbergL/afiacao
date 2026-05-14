@@ -96,6 +96,14 @@ Deno.serve(async (req) => {
     }
   } catch (_) {}
 
+  const empresasPermitidas = new Set(["OBEN", "COLACOR"]);
+  if (!empresasPermitidas.has(empresa)) {
+    return new Response(JSON.stringify({ error: `Empresa inválida: ${empresa}` }), {
+      status: 400,
+      headers: { ...corsHeaders, "Content-Type": "application/json" },
+    });
+  }
+
   // Inicia log
   const { data: logRow } = await supabase
     .from("sync_reprocess_log")
