@@ -65,6 +65,7 @@ const ExecutiveDashboard = lazy(() => import("./pages/ExecutiveDashboard"));
 const AdminApprovals = lazy(() => import("./pages/AdminApprovals"));
 const NotFound = lazy(() => import("./pages/NotFound"));
 const DesignSystem = lazy(() => import("./pages/DesignSystem"));
+const DesignPreview = lazy(() => import("./pages/DesignPreview"));
 const CoachingSPIN = lazy(() => import("./pages/CoachingSPIN"));
 const SettingsConfig = lazy(() => import("./pages/SettingsConfig"));
 const UXRules = lazy(() => import("./pages/UXRules"));
@@ -217,6 +218,7 @@ const App = () => (
               <Route path="farmer/ipf" element={<FarmerIPFDashboard />} />
               <Route path="executive/dashboard" element={<ExecutiveDashboard />} />
               <Route path="design-system" element={<DesignSystem />} />
+              <Route path="design-preview" element={<DesignPreview />} />
               <Route path="ux-rules" element={<UXRules />} />
               <Route path="coaching" element={<CoachingSPIN />} />
               <Route path="settings" element={<SettingsConfig />} />

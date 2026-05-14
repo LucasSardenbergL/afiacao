@@ -27,10 +27,10 @@ import { useToast } from '@/hooks/use-toast';
 const fmt = (v: number) => v.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' });
 
 const objectiveColors: Record<string, string> = {
-  recuperacao: 'bg-red-100 text-red-800',
-  expansao_mix: 'bg-emerald-100 text-emerald-800',
-  upsell_premium: 'bg-blue-100 text-blue-800',
-  reativacao: 'bg-amber-100 text-amber-800',
+  recuperacao: 'bg-status-error-bg text-status-error-fg',
+  expansao_mix: 'bg-status-success-bg text-status-success-fg',
+  upsell_premium: 'bg-status-info-bg text-status-info-fg',
+  reativacao: 'bg-status-warning-bg text-status-warning-fg',
   consolidacao_margem: 'bg-orange-100 text-orange-800',
 };
 
@@ -149,8 +149,8 @@ const FarmerTacticalPlan = () => {
                 <div key={c.id} className="flex items-center justify-between p-2 rounded-lg border text-xs">
                   <div className="flex items-center gap-2 flex-1 min-w-0">
                     <div className={`w-2 h-2 rounded-full shrink-0 ${
-                      c.healthScore >= 70 ? 'bg-emerald-500' :
-                      c.healthScore >= 40 ? 'bg-amber-500' : 'bg-red-500'
+                      c.healthScore >= 70 ? 'bg-status-success-bg0' :
+                      c.healthScore >= 40 ? 'bg-status-warning-bg0' : 'bg-status-error-bg0'
                     }`} />
                     <span className="truncate font-medium">{c.name}</span>
                     <span className="text-[9px] text-muted-foreground shrink-0">HS:{Math.round(c.healthScore)}</span>
@@ -189,7 +189,7 @@ const FarmerTacticalPlan = () => {
           <DialogContent className="max-w-xs">
             <DialogHeader>
               <DialogTitle className="text-sm flex items-center gap-2">
-                <AlertCircle className="w-4 h-4 text-amber-500" />
+                <AlertCircle className="w-4 h-4 text-status-warning" />
                 Potencial Baixo
               </DialogTitle>
             </DialogHeader>
@@ -297,7 +297,7 @@ const PlanCard = ({
         {/* Efficiency indicator */}
         {plan.estimatedProfitPerHour > 0 && (
           <div className={`mt-1.5 flex items-center gap-1 text-[9px] ${
-            plan.estimatedProfitPerHour >= 50 ? 'text-emerald-600' : 'text-amber-600'
+            plan.estimatedProfitPerHour >= 50 ? 'text-status-success' : 'text-status-warning'
           }`}>
             <DollarSign className="w-3 h-3" />
             <span>Lucro estimado: {fmt(plan.estimatedProfitPerHour)}/h</span>
@@ -377,10 +377,10 @@ const PlanCard = ({
                 ))}
 
                 {plan.implicationQuestion && (
-                  <div className="p-2 rounded bg-amber-50 border border-amber-200">
+                  <div className="p-2 rounded bg-status-warning-bg border border-status-warning/30">
                     <div className="flex items-start justify-between gap-1">
                       <div>
-                        <p className="text-[9px] font-semibold text-amber-700">Pergunta de Implicação</p>
+                        <p className="text-[9px] font-semibold text-status-warning">Pergunta de Implicação</p>
                         <p className="text-xs">{plan.implicationQuestion}</p>
                       </div>
                       <CopyButton text={plan.implicationQuestion} copied={copiedText === plan.implicationQuestion} onCopy={onCopy} />
@@ -389,10 +389,10 @@ const PlanCard = ({
                 )}
 
                 {plan.offerTransition && (
-                  <div className="p-2 rounded bg-emerald-50 border border-emerald-200">
+                  <div className="p-2 rounded bg-status-success-bg border border-status-success/30">
                     <div className="flex items-start justify-between gap-1">
                       <div>
-                        <p className="text-[9px] font-semibold text-emerald-700">Transição para Oferta</p>
+                        <p className="text-[9px] font-semibold text-status-success">Transição para Oferta</p>
                         <p className="text-xs">{plan.offerTransition}</p>
                       </div>
                       <CopyButton text={plan.offerTransition} copied={copiedText === plan.offerTransition} onCopy={onCopy} />
@@ -408,16 +408,16 @@ const PlanCard = ({
                 {plan.probableObjections.map((obj, i) => (
                   <div key={i} className="p-2 rounded bg-muted/30 space-y-1">
                     <div className="flex items-center justify-between">
-                      <p className="text-xs font-medium text-red-700">⚠ {obj.objection}</p>
+                      <p className="text-xs font-medium text-status-error">⚠ {obj.objection}</p>
                       <Badge variant="outline" className="text-[8px]">{obj.probability}%</Badge>
                     </div>
                     <div className="space-y-0.5">
                       <div className="flex items-start gap-1">
-                        <span className="text-[9px] font-semibold text-blue-700 shrink-0">Técnica:</span>
+                        <span className="text-[9px] font-semibold text-status-info shrink-0">Técnica:</span>
                         <p className="text-[10px]">{obj.technical_response}</p>
                       </div>
                       <div className="flex items-start gap-1">
-                        <span className="text-[9px] font-semibold text-emerald-700 shrink-0">Econômica:</span>
+                        <span className="text-[9px] font-semibold text-status-success shrink-0">Econômica:</span>
                         <p className="text-[10px]">{obj.economic_response}</p>
                       </div>
                     </div>
@@ -431,7 +431,7 @@ const PlanCard = ({
               <Section title="Riscos Operacionais" icon={AlertTriangle}>
                 {plan.operationalRisks.map((risk, i) => (
                   <div key={i} className="flex items-start gap-1.5 text-[10px]">
-                    <AlertCircle className="w-3 h-3 text-amber-500 shrink-0 mt-0.5" />
+                    <AlertCircle className="w-3 h-3 text-status-warning shrink-0 mt-0.5" />
                     <span>{risk}</span>
                   </div>
                 ))}
@@ -479,7 +479,7 @@ const MetricRow = ({ label, value }: { label: string; value: string }) => (
 
 const CopyButton = ({ text, copied, onCopy }: { text: string; copied: boolean; onCopy: (t: string) => void }) => (
   <Button size="sm" variant="ghost" className="h-5 w-5 p-0 shrink-0" onClick={() => onCopy(text)}>
-    {copied ? <Check className="w-2.5 h-2.5 text-emerald-600" /> : <Copy className="w-2.5 h-2.5" />}
+    {copied ? <Check className="w-2.5 h-2.5 text-status-success" /> : <Copy className="w-2.5 h-2.5" />}
   </Button>
 );
 

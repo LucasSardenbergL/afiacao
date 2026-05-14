@@ -149,7 +149,7 @@ const FinanceiroCapitalGiro = () => {
             />
             <div className="p-4 rounded-lg border bg-card">
               <p className="text-xs text-muted-foreground font-medium">Ciclo Financeiro</p>
-              <p className={`text-2xl font-bold mt-1 ${active.ciclo_financeiro > 0 ? 'text-amber-600' : 'text-emerald-600'}`}>
+              <p className={`text-2xl font-bold mt-1 ${active.ciclo_financeiro > 0 ? 'text-status-warning' : 'text-status-success'}`}>
                 {active.ciclo_financeiro} dias
               </p>
               <p className="text-xs text-muted-foreground mt-1">
@@ -176,7 +176,7 @@ const FinanceiroCapitalGiro = () => {
                   </div>
                   <div className="h-4 rounded-full bg-muted overflow-hidden">
                     <div
-                      className="h-full rounded-full bg-blue-500 transition-all"
+                      className="h-full rounded-full bg-status-info-bg0 transition-all"
                       style={{ width: `${Math.min((active.pmr / Math.max(active.pmr, active.pmp, 1)) * 100, 100)}%` }}
                     />
                   </div>
@@ -189,15 +189,15 @@ const FinanceiroCapitalGiro = () => {
                   </div>
                   <div className="h-4 rounded-full bg-muted overflow-hidden">
                     <div
-                      className="h-full rounded-full bg-emerald-500 transition-all"
+                      className="h-full rounded-full bg-status-success-bg0 transition-all"
                       style={{ width: `${Math.min((active.pmp / Math.max(active.pmr, active.pmp, 1)) * 100, 100)}%` }}
                     />
                   </div>
                 </div>
               </div>
 
-              <div className={`p-4 rounded-lg ${active.ciclo_financeiro > 0 ? 'bg-amber-50 border-amber-200' : 'bg-emerald-50 border-emerald-200'} border`}>
-                <p className={`text-sm font-medium ${active.ciclo_financeiro > 0 ? 'text-amber-800' : 'text-emerald-800'}`}>
+              <div className={`p-4 rounded-lg ${active.ciclo_financeiro > 0 ? 'bg-status-warning-bg border-status-warning/30' : 'bg-status-success-bg border-status-success/30'} border`}>
+                <p className={`text-sm font-medium ${active.ciclo_financeiro > 0 ? 'text-status-warning-fg' : 'text-status-success-fg'}`}>
                   {active.ciclo_financeiro > 0
                     ? `Ciclo positivo de ${active.ciclo_financeiro} dias — você financia seus clientes por ${active.ciclo_financeiro} dias antes de receber.`
                     : active.ciclo_financeiro < 0
@@ -206,7 +206,7 @@ const FinanceiroCapitalGiro = () => {
                   }
                 </p>
                 {active.ciclo_financeiro > 15 && (
-                  <p className="text-xs mt-2 text-amber-700">
+                  <p className="text-xs mt-2 text-status-warning">
                     Considere: renegociar prazos com fornecedores, antecipar recebíveis, ou reduzir prazos de vendas.
                   </p>
                 )}
@@ -225,19 +225,19 @@ const FinanceiroCapitalGiro = () => {
             <CardContent>
               <div className="space-y-4">
                 <div className="grid grid-cols-3 gap-4 text-center">
-                  <div className="p-3 rounded-lg bg-blue-50">
+                  <div className="p-3 rounded-lg bg-status-info-bg">
                     <p className="text-xs text-muted-foreground">Saldo Atual CC</p>
-                    <p className="text-lg font-bold text-blue-600">{fmtCompact(active.saldo_cc)}</p>
+                    <p className="text-lg font-bold text-status-info">{fmtCompact(active.saldo_cc)}</p>
                   </div>
                   <div className="p-3 rounded-lg bg-muted/50">
                     <p className="text-xs text-muted-foreground">Fluxo Líquido 30d</p>
-                    <p className={`text-lg font-bold ${active.entradas_30d - active.saidas_30d >= 0 ? 'text-emerald-600' : 'text-red-600'}`}>
+                    <p className={`text-lg font-bold ${active.entradas_30d - active.saidas_30d >= 0 ? 'text-status-success' : 'text-status-error'}`}>
                       {fmtCompact(active.entradas_30d - active.saidas_30d)}
                     </p>
                   </div>
-                  <div className={`p-3 rounded-lg ${active.saldo_projetado_30d >= 0 ? 'bg-emerald-50' : 'bg-red-50'}`}>
+                  <div className={`p-3 rounded-lg ${active.saldo_projetado_30d >= 0 ? 'bg-status-success-bg' : 'bg-status-error-bg'}`}>
                     <p className="text-xs text-muted-foreground">Saldo Projetado</p>
-                    <p className={`text-lg font-bold ${active.saldo_projetado_30d >= 0 ? 'text-emerald-600' : 'text-red-600'}`}>
+                    <p className={`text-lg font-bold ${active.saldo_projetado_30d >= 0 ? 'text-status-success' : 'text-status-error'}`}>
                       {fmtCompact(active.saldo_projetado_30d)}
                     </p>
                   </div>
@@ -245,18 +245,18 @@ const FinanceiroCapitalGiro = () => {
 
                 {/* Waterfall visual */}
                 <div className="flex items-end justify-center gap-2 h-32">
-                  <WaterfallBar label="CC Atual" value={active.saldo_cc} max={Math.max(active.saldo_cc, active.saldo_projetado_30d, active.entradas_30d)} color="bg-blue-500" />
-                  <WaterfallBar label="Entradas" value={active.entradas_30d} max={Math.max(active.saldo_cc, active.saldo_projetado_30d, active.entradas_30d)} color="bg-emerald-500" />
-                  <WaterfallBar label="Saídas" value={active.saidas_30d} max={Math.max(active.saldo_cc, active.saldo_projetado_30d, active.entradas_30d)} color="bg-red-500" />
-                  <WaterfallBar label="Projetado" value={active.saldo_projetado_30d} max={Math.max(active.saldo_cc, active.saldo_projetado_30d, active.entradas_30d)} color={active.saldo_projetado_30d >= 0 ? 'bg-emerald-600' : 'bg-red-600'} />
+                  <WaterfallBar label="CC Atual" value={active.saldo_cc} max={Math.max(active.saldo_cc, active.saldo_projetado_30d, active.entradas_30d)} color="bg-status-info-bg0" />
+                  <WaterfallBar label="Entradas" value={active.entradas_30d} max={Math.max(active.saldo_cc, active.saldo_projetado_30d, active.entradas_30d)} color="bg-status-success-bg0" />
+                  <WaterfallBar label="Saídas" value={active.saidas_30d} max={Math.max(active.saldo_cc, active.saldo_projetado_30d, active.entradas_30d)} color="bg-status-error-bg0" />
+                  <WaterfallBar label="Projetado" value={active.saldo_projetado_30d} max={Math.max(active.saldo_cc, active.saldo_projetado_30d, active.entradas_30d)} color={active.saldo_projetado_30d >= 0 ? 'bg-status-success' : 'bg-status-error'} />
                 </div>
 
                 {active.saldo_projetado_30d < 0 && (
-                  <div className="flex items-start gap-2 p-3 rounded-lg bg-red-50 border border-red-200">
-                    <AlertTriangle className="w-4 h-4 text-red-600 mt-0.5" />
+                  <div className="flex items-start gap-2 p-3 rounded-lg bg-status-error-bg border border-status-error/30">
+                    <AlertTriangle className="w-4 h-4 text-status-error mt-0.5" />
                     <div>
-                      <p className="text-sm font-medium text-red-800">Projeção negativa</p>
-                      <p className="text-xs text-red-700 mt-1">
+                      <p className="text-sm font-medium text-status-error-fg">Projeção negativa</p>
+                      <p className="text-xs text-status-error mt-1">
                         Déficit projetado de {fmtCompact(Math.abs(active.saldo_projetado_30d))} nos próximos 30 dias.
                         Ação necessária: antecipar recebíveis, renegociar prazos de CP, ou injetar capital.
                       </p>
@@ -315,7 +315,7 @@ const FinanceiroCapitalGiro = () => {
                           {data.map(d => {
                             const val = (d as any)[line.field] || 0;
                             const isResult = ['capital_giro', 'capital_giro_liquido', 'saldo_projetado_30d'].includes(line.field);
-                            const color = isResult ? (val >= 0 ? 'text-emerald-600' : 'text-red-600') : '';
+                            const color = isResult ? (val >= 0 ? 'text-status-success' : 'text-status-error') : '';
                             let display = '';
                             if (line.fmt === 'currency') display = fmtCompact(val);
                             else if (line.fmt === 'days') display = `${val}d`;
@@ -351,12 +351,12 @@ const FinanceiroCapitalGiro = () => {
                     <div className="flex items-center gap-3">
                       <Progress
                         value={active.top5_cr_pct}
-                        className={`h-3 ${active.top5_cr_pct > 70 ? '[&>div]:bg-red-500' : active.top5_cr_pct > 50 ? '[&>div]:bg-amber-500' : '[&>div]:bg-emerald-500'}`}
+                        className={`h-3 ${active.top5_cr_pct > 70 ? '[&>div]:bg-status-error-bg0' : active.top5_cr_pct > 50 ? '[&>div]:bg-status-warning-bg0' : '[&>div]:bg-status-success-bg0'}`}
                       />
                       <span className="text-sm font-bold">{active.top5_cr_pct.toFixed(0)}%</span>
                     </div>
                     {active.top5_cr_pct > 60 && (
-                      <p className="text-xs text-amber-600 mt-1">Alta concentração — diversifique a base de clientes</p>
+                      <p className="text-xs text-status-warning mt-1">Alta concentração — diversifique a base de clientes</p>
                     )}
                   </div>
                   <div>
@@ -364,7 +364,7 @@ const FinanceiroCapitalGiro = () => {
                     <div className="flex items-center gap-3">
                       <Progress
                         value={active.top5_cp_pct}
-                        className={`h-3 ${active.top5_cp_pct > 70 ? '[&>div]:bg-amber-500' : '[&>div]:bg-blue-500'}`}
+                        className={`h-3 ${active.top5_cp_pct > 70 ? '[&>div]:bg-status-warning-bg0' : '[&>div]:bg-status-info-bg0'}`}
                       />
                       <span className="text-sm font-bold">{active.top5_cp_pct.toFixed(0)}%</span>
                     </div>
@@ -401,13 +401,13 @@ function MetricCard({ title, value, subtitle, positive, icon: Icon }: {
         <div className="flex items-start justify-between">
           <div>
             <p className="text-xs text-muted-foreground font-medium">{title}</p>
-            <p className={`text-lg font-bold mt-1 ${positive ? 'text-emerald-600' : 'text-red-600'}`}>
+            <p className={`text-lg font-bold mt-1 ${positive ? 'text-status-success' : 'text-status-error'}`}>
               {fmtCompact(value)}
             </p>
             <p className="text-xs text-muted-foreground mt-1">{subtitle}</p>
           </div>
-          <div className={`p-2 rounded-lg ${positive ? 'bg-emerald-50' : 'bg-red-50'}`}>
-            <Icon className={`w-4 h-4 ${positive ? 'text-emerald-600' : 'text-red-600'}`} />
+          <div className={`p-2 rounded-lg ${positive ? 'bg-status-success-bg' : 'bg-status-error-bg'}`}>
+            <Icon className={`w-4 h-4 ${positive ? 'text-status-success' : 'text-status-error'}`} />
           </div>
         </div>
       </CardContent>
@@ -474,22 +474,22 @@ function StressTest({ saldoCC, entradas30, saidas30, totalCR, pmr }: {
               const saldo = saldoCC + entradasAjust - saidas30;
               const impacto = saldo - (saldoCC + entradas30 - saidas30);
               const risco = saldo < 0 ? 'Crítico' : saldo < saldoCC * 0.3 ? 'Alto' : saldo < saldoCC * 0.6 ? 'Médio' : 'Baixo';
-              const riskColor = risco === 'Crítico' ? 'text-red-700 bg-red-100'
-                : risco === 'Alto' ? 'text-red-600 bg-red-50'
-                : risco === 'Médio' ? 'text-amber-600 bg-amber-50'
-                : 'text-emerald-600 bg-emerald-50';
+              const riskColor = risco === 'Crítico' ? 'text-status-error bg-status-error-bg'
+                : risco === 'Alto' ? 'text-status-error bg-status-error-bg'
+                : risco === 'Médio' ? 'text-status-warning bg-status-warning-bg'
+                : 'text-status-success bg-status-success-bg';
 
               return (
-                <TableRow key={s.label} className={saldo < 0 ? 'bg-red-50/50' : ''}>
+                <TableRow key={s.label} className={saldo < 0 ? 'bg-status-error-bg/50' : ''}>
                   <TableCell>
                     <p className="text-sm font-medium">{s.label}</p>
                     <p className="text-[10px] text-muted-foreground">{s.desc}</p>
                   </TableCell>
                   <TableCell className="text-right text-sm">{fmtCompact(entradasAjust)}</TableCell>
-                  <TableCell className={`text-right text-sm font-bold ${saldo >= 0 ? 'text-emerald-600' : 'text-red-600'}`}>
+                  <TableCell className={`text-right text-sm font-bold ${saldo >= 0 ? 'text-status-success' : 'text-status-error'}`}>
                     {fmtCompact(saldo)}
                   </TableCell>
-                  <TableCell className={`text-right text-sm ${impacto < 0 ? 'text-red-600' : ''}`}>
+                  <TableCell className={`text-right text-sm ${impacto < 0 ? 'text-status-error' : ''}`}>
                     {fmtCompact(impacto)}
                   </TableCell>
                   <TableCell>

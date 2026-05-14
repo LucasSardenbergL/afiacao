@@ -172,11 +172,11 @@ function tipoEventoIcon(tipo: string) {
 function estadoBadgeClass(estado: string): string {
   switch (estado) {
     case "rascunho":
-      return "bg-amber-500/15 text-amber-700 dark:text-amber-400 border-amber-500/30";
+      return "bg-status-warning-bg0/15 text-status-warning border-status-warning/30";
     case "negociando":
-      return "bg-blue-500/15 text-blue-700 dark:text-blue-400 border-blue-500/30";
+      return "bg-status-info-bg0/15 text-status-info border-status-info/30";
     case "ativa":
-      return "bg-emerald-500/15 text-emerald-700 dark:text-emerald-400 border-emerald-500/30";
+      return "bg-status-success-bg0/15 text-status-success border-status-success/30";
     case "encerrada":
       return "bg-muted text-muted-foreground border-border";
     case "cancelada":
@@ -197,11 +197,11 @@ const ESTADO_LABEL: Record<string, string> = {
 function confiancaBadge(c: number | null) {
   if (c === null || c === undefined) return null;
   let cls =
-    "bg-emerald-500/15 text-emerald-700 dark:text-emerald-400 border-emerald-500/30";
+    "bg-status-success-bg0/15 text-status-success border-status-success/30";
   if (c < 0.5) cls = "bg-destructive/15 text-destructive border-destructive/30";
   else if (c <= 0.8)
     cls =
-      "bg-amber-500/15 text-amber-700 dark:text-amber-400 border-amber-500/30";
+      "bg-status-warning-bg0/15 text-status-warning border-status-warning/30";
   return (
     <Badge variant="outline" className={cls}>
       Confiança {Math.round(c * 100)}%
@@ -278,7 +278,7 @@ function MapeamentoStatusCell({
           <TooltipTrigger asChild>
             <Badge
               variant="outline"
-              className="bg-emerald-500/15 text-emerald-700 dark:text-emerald-400 border-emerald-500/30 cursor-default"
+              className="bg-status-success-bg0/15 text-status-success border-status-success/30 cursor-default"
             >
               <Check className="h-3 w-3 mr-1" /> OK
             </Badge>
@@ -302,7 +302,7 @@ function MapeamentoStatusCell({
           <TooltipTrigger asChild>
             <Badge
               variant="outline"
-              className="bg-emerald-500/15 text-emerald-700 dark:text-emerald-400 border-emerald-500/30 cursor-default"
+              className="bg-status-success-bg0/15 text-status-success border-status-success/30 cursor-default"
             >
               <Sparkles className="h-3 w-3 mr-1" /> Variante
             </Badge>
@@ -331,7 +331,7 @@ function MapeamentoStatusCell({
         <PopoverTrigger asChild>
           <Badge
             variant="outline"
-            className="bg-amber-500/15 text-amber-700 dark:text-amber-400 border-amber-500/30 cursor-pointer"
+            className="bg-status-warning-bg0/15 text-status-warning border-status-warning/30 cursor-pointer"
           >
             Revisar — similaridade
           </Badge>
@@ -372,7 +372,7 @@ function MapeamentoStatusCell({
           <TooltipTrigger asChild>
             <Badge
               variant="outline"
-              className="bg-blue-500/15 text-blue-700 dark:text-blue-400 border-blue-500/30 cursor-default"
+              className="bg-status-info-bg0/15 text-status-info border-status-info/30 cursor-default"
             >
               Manual
             </Badge>
@@ -512,7 +512,7 @@ function DescontoExtraCell({
         {tem ? (
           <Badge
             variant="outline"
-            className="bg-blue-500/15 text-blue-700 dark:text-blue-400 border-blue-500/30 cursor-pointer"
+            className="bg-status-info-bg0/15 text-status-info border-status-info/30 cursor-pointer"
           >
             base + {item.desconto_extra_perc}%
           </Badge>
@@ -1081,7 +1081,7 @@ export default function AdminReposicaoPromocaoDetail() {
                         {tipoOrigem === "negociacao_cliente" ? (
                           <Badge
                             variant="outline"
-                            className="bg-blue-500/15 text-blue-700 dark:text-blue-400 border-blue-500/30"
+                            className="bg-status-info-bg0/15 text-status-info border-status-info/30"
                           >
                             Negociação
                           </Badge>

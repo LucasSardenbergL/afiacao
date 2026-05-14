@@ -6,11 +6,13 @@ import { cn } from '@/lib/utils';
 import { getOfflineQueueDepth, subscribeToOfflineQueue } from '@/lib/offline-queue';
 
 /**
- * Substitui o `Bell` ornamental do topbar antigo. Mostra:
- *  - Dot verde (online) / âmbar (lento) / vermelho (offline)
- *  - Hover: popover com RTT, tipo de conexão, # mutações na fila
+ * Indicador de rede com presença CONDICIONAL (Vercel/Linear pattern):
+ *  - Online + queue vazia: NÃO renderiza nada (limpa o topbar)
+ *  - Online + queue pendente: badge sutil com contador
+ *  - Slow: ícone Cloud + ring expanding pulsante
+ *  - Offline: ícone WifiOff + shake animation curta + estilo bold
  *
- * Quando o offline-queue (#20) registrar mutações pendentes, o badge vai mostrar count.
+ * Hover: popover com detalhes de RTT, tipo, fila.
  */
 export function NetworkStatusIndicator() {
   const status = useNetworkStatus();
@@ -28,12 +30,15 @@ export function NetworkStatusIndicator() {
     };
   }, []);
 
+  // Online + queue vazia = limpa visual (não renderiza nada)
+  if (status.quality === 'online' && queueDepth === 0) return null;
+
   const tone =
     status.quality === 'offline'
-      ? { dot: 'bg-status-error', label: 'Offline', icon: WifiOff, tint: 'text-status-error' }
+      ? { label: 'Offline', icon: WifiOff, tint: 'text-status-error-bold', ring: 'ring-status-error/20' }
       : status.quality === 'slow'
-        ? { dot: 'bg-status-warning', label: 'Conexão lenta', icon: Cloud, tint: 'text-status-warning' }
-        : { dot: 'bg-status-success', label: 'Online', icon: Wifi, tint: 'text-status-success' };
+        ? { label: 'Conexão lenta', icon: Cloud, tint: 'text-status-warning-bold', ring: 'ring-status-warning/20' }
+        : { label: 'Online · fila pendente', icon: Wifi, tint: 'text-status-info-bold', ring: 'ring-status-info/20' };
 
   const Icon = tone.icon;
 
@@ -42,19 +47,23 @@ export function NetworkStatusIndicator() {
       <PopoverTrigger asChild>
         <button
           type="button"
-          className="relative h-8 w-8 inline-flex items-center justify-center rounded-md text-muted-foreground hover:bg-muted hover:text-foreground transition-colors"
+          className={cn(
+            'relative h-8 w-8 inline-flex items-center justify-center rounded-md hover:bg-muted transition-colors',
+            tone.tint,
+            status.quality === 'offline' && 'animate-shake',
+          )}
           aria-label={`Status da conexão: ${tone.label}`}
         >
-          <Icon className={cn('w-4 h-4', tone.tint)} />
-          <span
-            className={cn(
-              'absolute top-1.5 right-1.5 w-2 h-2 rounded-full ring-2 ring-card',
-              tone.dot,
-              status.quality === 'slow' && 'animate-pulse',
-            )}
-          />
+          <Icon className="w-4 h-4 relative z-10" />
+          {/* Pulse ring expanding pra slow + offline */}
+          {(status.quality === 'slow' || status.quality === 'offline') && (
+            <span className={cn(
+              'absolute inset-0 rounded-md ring-2 animate-ping-slow',
+              tone.ring,
+            )} />
+          )}
           {queueDepth > 0 && (
-            <span className="absolute -bottom-0.5 -right-0.5 min-w-4 h-4 px-1 rounded-full bg-primary text-primary-foreground text-[9px] font-bold flex items-center justify-center">
+            <span className="absolute -bottom-0.5 -right-0.5 min-w-4 h-4 px-1 rounded-full bg-primary text-primary-foreground text-[9px] font-bold flex items-center justify-center tabular-nums">
               {queueDepth > 99 ? '99+' : queueDepth}
             </span>
           )}

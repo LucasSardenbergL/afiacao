@@ -39,11 +39,11 @@ const fmtDate = (d: string | null) => {
 
 const statusColor = (s: string) => {
   switch (s) {
-    case 'PAGO': case 'RECEBIDO': case 'LIQUIDADO': return 'bg-emerald-100 text-emerald-700';
-    case 'VENCIDO': return 'bg-red-100 text-red-700';
-    case 'PARCIAL': return 'bg-amber-100 text-amber-700';
+    case 'PAGO': case 'RECEBIDO': case 'LIQUIDADO': return 'bg-status-success-bg text-status-success';
+    case 'VENCIDO': return 'bg-status-error-bg text-status-error';
+    case 'PARCIAL': return 'bg-status-warning-bg text-status-warning';
     case 'CANCELADO': return 'bg-gray-100 text-gray-500';
-    default: return 'bg-blue-100 text-blue-700';
+    default: return 'bg-status-info-bg text-status-info';
   }
 };
 
@@ -169,7 +169,7 @@ const FinanceiroDashboard = () => {
       </div>
 
       {error && (
-        <div className="bg-red-50 border border-red-200 rounded-lg p-3 text-sm text-red-700">
+        <div className="bg-status-error-bg border border-status-error/30 rounded-lg p-3 text-sm text-status-error">
           {error}
         </div>
       )}
@@ -192,15 +192,15 @@ const FinanceiroDashboard = () => {
               {alerts.slice(0, 5).map((alert, i) => {
                 const Icon = alert.icon;
                 const bgColor = alert.severity === 'critical'
-                  ? 'bg-red-50 border-red-200'
+                  ? 'bg-status-error-bg border-status-error/30'
                   : alert.severity === 'warning'
-                    ? 'bg-amber-50 border-amber-200'
-                    : 'bg-blue-50 border-blue-200';
+                    ? 'bg-status-warning-bg border-status-warning/30'
+                    : 'bg-status-info-bg border-status-info/30';
                 const textColor = alert.severity === 'critical'
-                  ? 'text-red-700'
+                  ? 'text-status-error'
                   : alert.severity === 'warning'
-                    ? 'text-amber-700'
-                    : 'text-blue-700';
+                    ? 'text-status-warning'
+                    : 'text-status-info';
                 return (
                   <div key={i} className={`flex items-start gap-3 p-3 rounded-lg border ${bgColor}`}>
                     <Icon className={`w-4 h-4 mt-0.5 ${textColor}`} />
@@ -222,37 +222,37 @@ const FinanceiroDashboard = () => {
               title="A Receber"
               value={activeResumo?.total_a_receber || 0}
               icon={ArrowDownCircle}
-              color="text-emerald-600"
-              bgColor="bg-emerald-50"
+              color="text-status-success"
+              bgColor="bg-status-success-bg"
               subtitle={activeResumo?.total_vencido_receber 
                 ? `${fmt(activeResumo.total_vencido_receber)} vencido` 
                 : undefined}
-              subtitleColor="text-red-500"
+              subtitleColor="text-status-error"
             />
             <KpiCard
               title="A Pagar"
               value={activeResumo?.total_a_pagar || 0}
               icon={ArrowUpCircle}
-              color="text-red-600"
-              bgColor="bg-red-50"
+              color="text-status-error"
+              bgColor="bg-status-error-bg"
               subtitle={activeResumo?.total_vencido_pagar
                 ? `${fmt(activeResumo.total_vencido_pagar)} vencido`
                 : undefined}
-              subtitleColor="text-red-500"
+              subtitleColor="text-status-error"
             />
             <KpiCard
               title="Posição Líquida"
               value={activeResumo?.posicao_liquida || 0}
               icon={(activeResumo?.posicao_liquida || 0) >= 0 ? TrendingUp : TrendingDown}
-              color={(activeResumo?.posicao_liquida || 0) >= 0 ? 'text-emerald-600' : 'text-red-600'}
-              bgColor={(activeResumo?.posicao_liquida || 0) >= 0 ? 'bg-emerald-50' : 'bg-red-50'}
+              color={(activeResumo?.posicao_liquida || 0) >= 0 ? 'text-status-success' : 'text-status-error'}
+              bgColor={(activeResumo?.posicao_liquida || 0) >= 0 ? 'bg-status-success-bg' : 'bg-status-error-bg'}
             />
             <KpiCard
               title="Saldo Bancário"
               value={activeResumo?.saldo_total_cc || 0}
               icon={Wallet}
-              color="text-blue-600"
-              bgColor="bg-blue-50"
+              color="text-status-info"
+              bgColor="bg-status-info-bg"
             />
           </div>
 
@@ -274,15 +274,15 @@ const FinanceiroDashboard = () => {
                       <div className="flex items-center gap-6 text-sm">
                         <div className="text-right">
                           <p className="text-muted-foreground text-xs">A Receber</p>
-                          <p className="font-medium text-emerald-600">{fmtCompact(r.total_a_receber)}</p>
+                          <p className="font-medium text-status-success">{fmtCompact(r.total_a_receber)}</p>
                         </div>
                         <div className="text-right">
                           <p className="text-muted-foreground text-xs">A Pagar</p>
-                          <p className="font-medium text-red-600">{fmtCompact(r.total_a_pagar)}</p>
+                          <p className="font-medium text-status-error">{fmtCompact(r.total_a_pagar)}</p>
                         </div>
                         <div className="text-right">
                           <p className="text-muted-foreground text-xs">Líquida</p>
-                          <p className={`font-bold ${r.posicao_liquida >= 0 ? 'text-emerald-600' : 'text-red-600'}`}>
+                          <p className={`font-bold ${r.posicao_liquida >= 0 ? 'text-status-success' : 'text-status-error'}`}>
                             {fmtCompact(r.posicao_liquida)}
                           </p>
                         </div>
@@ -316,7 +316,7 @@ const FinanceiroDashboard = () => {
                     <p className="text-xs text-muted-foreground">Capital de Giro</p>
                     <p className={`text-lg font-bold mt-1 ${
                       (activeResumo.total_a_receber - activeResumo.total_a_pagar) >= 0 
-                        ? 'text-emerald-600' : 'text-red-600'
+                        ? 'text-status-success' : 'text-status-error'
                     }`}>
                       {fmtCompact(activeResumo.total_a_receber - activeResumo.total_a_pagar)}
                     </p>
@@ -327,7 +327,7 @@ const FinanceiroDashboard = () => {
                     <p className="text-xs text-muted-foreground">Inadimplência</p>
                     <p className={`text-lg font-bold mt-1 ${
                       activeResumo.total_a_receber > 0 && (activeResumo.total_vencido_receber / activeResumo.total_a_receber) > 0.15
-                        ? 'text-red-600' : 'text-amber-600'
+                        ? 'text-status-error' : 'text-status-warning'
                     }`}>
                       {activeResumo.total_a_receber > 0
                         ? `${((activeResumo.total_vencido_receber / activeResumo.total_a_receber) * 100).toFixed(1)}%`
@@ -340,7 +340,7 @@ const FinanceiroDashboard = () => {
                     <p className="text-xs text-muted-foreground">Cobertura de Caixa</p>
                     <p className={`text-lg font-bold mt-1 ${
                       activeResumo.total_a_pagar > 0 && (activeResumo.saldo_total_cc / activeResumo.total_a_pagar) >= 0.5
-                        ? 'text-emerald-600' : 'text-red-600'
+                        ? 'text-status-success' : 'text-status-error'
                     }`}>
                       {activeResumo.total_a_pagar > 0
                         ? `${((activeResumo.saldo_total_cc / activeResumo.total_a_pagar) * 100).toFixed(0)}%`
@@ -352,7 +352,7 @@ const FinanceiroDashboard = () => {
                   <div className="text-center p-3 rounded-lg bg-muted/40">
                     <p className="text-xs text-muted-foreground">Risco +90 dias</p>
                     <p className={`text-lg font-bold mt-1 ${
-                      agingReceber.vencido_90_plus_valor > 0 ? 'text-red-600' : 'text-emerald-600'
+                      agingReceber.vencido_90_plus_valor > 0 ? 'text-status-error' : 'text-status-success'
                     }`}>
                       {fmtCompact(agingReceber.vencido_90_plus_valor)}
                     </p>
@@ -389,7 +389,7 @@ const FinanceiroDashboard = () => {
             <Card>
               <CardHeader className="pb-3">
                 <CardTitle className="text-base flex items-center gap-2">
-                  <AlertTriangle className="w-4 h-4 text-red-500" />
+                  <AlertTriangle className="w-4 h-4 text-status-error" />
                   Maiores Inadimplentes
                 </CardTitle>
               </CardHeader>
@@ -403,7 +403,7 @@ const FinanceiroDashboard = () => {
                           {i.cnpj ? formatCnpj(i.cnpj) : '—'} · {i.qtd_titulos} título(s)
                         </p>
                       </div>
-                      <span className="font-bold text-red-600 text-sm">{fmt(i.total_vencido)}</span>
+                      <span className="font-bold text-status-error text-sm">{fmt(i.total_vencido)}</span>
                     </div>
                   ))}
                 </div>
@@ -416,7 +416,7 @@ const FinanceiroDashboard = () => {
             <Card>
               <CardHeader className="pb-3">
                 <CardTitle className="text-base flex items-center gap-2">
-                  <Wallet className="w-4 h-4 text-blue-500" />
+                  <Wallet className="w-4 h-4 text-status-info" />
                   Contas Correntes
                 </CardTitle>
               </CardHeader>
@@ -428,7 +428,7 @@ const FinanceiroDashboard = () => {
                         <p className="font-medium text-sm">{cc.descricao}</p>
                         <p className="text-xs text-muted-foreground">{cc.banco}</p>
                       </div>
-                      <span className={`font-bold text-sm ${cc.saldo_atual >= 0 ? 'text-emerald-600' : 'text-red-600'}`}>
+                      <span className={`font-bold text-sm ${cc.saldo_atual >= 0 ? 'text-status-success' : 'text-status-error'}`}>
                         {fmt(cc.saldo_atual)}
                       </span>
                     </div>
@@ -499,13 +499,13 @@ const FinanceiroDashboard = () => {
                 <p className="text-xs text-muted-foreground">Valor Total</p>
                 <p className="text-sm font-bold">{fmt(crTotals.valor)}</p>
               </div>
-              <div className="p-3 rounded-lg bg-emerald-50 text-center">
+              <div className="p-3 rounded-lg bg-status-success-bg text-center">
                 <p className="text-xs text-muted-foreground">Recebido</p>
-                <p className="text-sm font-bold text-emerald-600">{fmt(crTotals.recebido)}</p>
+                <p className="text-sm font-bold text-status-success">{fmt(crTotals.recebido)}</p>
               </div>
-              <div className="p-3 rounded-lg bg-blue-50 text-center">
+              <div className="p-3 rounded-lg bg-status-info-bg text-center">
                 <p className="text-xs text-muted-foreground">Saldo</p>
-                <p className="text-sm font-bold text-blue-600">{fmt(crTotals.saldo)}</p>
+                <p className="text-sm font-bold text-status-info">{fmt(crTotals.saldo)}</p>
               </div>
             </div>
           )}
@@ -546,7 +546,7 @@ const FinanceiroDashboard = () => {
                         </TableCell>
                         <TableCell className="text-sm">{fmtDate(cr.data_vencimento)}</TableCell>
                         <TableCell className="text-right font-medium">{fmt(cr.valor_documento)}</TableCell>
-                        <TableCell className="text-right text-emerald-600">{fmt(cr.valor_recebido)}</TableCell>
+                        <TableCell className="text-right text-status-success">{fmt(cr.valor_recebido)}</TableCell>
                         <TableCell className="text-right font-bold">{fmt(cr.saldo)}</TableCell>
                         <TableCell>
                           <Badge className={`text-xs ${statusColor(cr.status_titulo)}`}>
@@ -630,13 +630,13 @@ const FinanceiroDashboard = () => {
                 <p className="text-xs text-muted-foreground">Valor Total</p>
                 <p className="text-sm font-bold">{fmt(cpTotals.valor)}</p>
               </div>
-              <div className="p-3 rounded-lg bg-emerald-50 text-center">
+              <div className="p-3 rounded-lg bg-status-success-bg text-center">
                 <p className="text-xs text-muted-foreground">Pago</p>
-                <p className="text-sm font-bold text-emerald-600">{fmt(cpTotals.pago)}</p>
+                <p className="text-sm font-bold text-status-success">{fmt(cpTotals.pago)}</p>
               </div>
-              <div className="p-3 rounded-lg bg-red-50 text-center">
+              <div className="p-3 rounded-lg bg-status-error-bg text-center">
                 <p className="text-xs text-muted-foreground">Saldo</p>
-                <p className="text-sm font-bold text-red-600">{fmt(cpTotals.saldo)}</p>
+                <p className="text-sm font-bold text-status-error">{fmt(cpTotals.saldo)}</p>
               </div>
             </div>
           )}
@@ -677,7 +677,7 @@ const FinanceiroDashboard = () => {
                         </TableCell>
                         <TableCell className="text-sm">{fmtDate(cp.data_vencimento)}</TableCell>
                         <TableCell className="text-right font-medium">{fmt(cp.valor_documento)}</TableCell>
-                        <TableCell className="text-right text-emerald-600">{fmt(cp.valor_pago)}</TableCell>
+                        <TableCell className="text-right text-status-success">{fmt(cp.valor_pago)}</TableCell>
                         <TableCell className="text-right font-bold">{fmt(cp.saldo)}</TableCell>
                         <TableCell>
                           <Badge className={`text-xs ${statusColor(cp.status_titulo)}`}>
@@ -827,10 +827,10 @@ function AgingCard({ title, data, type }: { title: string; data: any; type: 'rec
     data.vencido_90_plus_valor;
 
   const bars = [
-    { label: 'A vencer', value: data.a_vencer_valor, qtd: data.a_vencer_qtd, color: 'bg-blue-500' },
-    { label: '1-30 dias', value: data.vencido_1_30_valor, qtd: data.vencido_1_30_qtd, color: 'bg-amber-500' },
+    { label: 'A vencer', value: data.a_vencer_valor, qtd: data.a_vencer_qtd, color: 'bg-status-info-bg0' },
+    { label: '1-30 dias', value: data.vencido_1_30_valor, qtd: data.vencido_1_30_qtd, color: 'bg-status-warning-bg0' },
     { label: '31-60 dias', value: data.vencido_31_60_valor, qtd: data.vencido_31_60_qtd, color: 'bg-orange-500' },
-    { label: '61-90 dias', value: data.vencido_61_90_valor, qtd: data.vencido_61_90_qtd, color: 'bg-red-500' },
+    { label: '61-90 dias', value: data.vencido_61_90_valor, qtd: data.vencido_61_90_qtd, color: 'bg-status-error-bg0' },
     { label: '+90 dias', value: data.vencido_90_plus_valor, qtd: data.vencido_90_plus_qtd, color: 'bg-red-700' },
   ];
 
@@ -917,26 +917,26 @@ function FluxoCaixaTab({ data, loading, saldoCC }: { data: any[]; loading: boole
       {/* Summary KPIs */}
       <div className="grid grid-cols-2 lg:grid-cols-5 gap-3">
         {saldoCC != null && (
-          <div className="p-3 rounded-lg bg-blue-50 text-center">
+          <div className="p-3 rounded-lg bg-status-info-bg text-center">
             <p className="text-xs text-muted-foreground">Saldo CC Atual</p>
-            <p className="text-sm font-bold text-blue-600">{fmtCompact(saldoCC)}</p>
+            <p className="text-sm font-bold text-status-info">{fmtCompact(saldoCC)}</p>
           </div>
         )}
-        <div className="p-3 rounded-lg bg-emerald-50 text-center">
+        <div className="p-3 rounded-lg bg-status-success-bg text-center">
           <p className="text-xs text-muted-foreground">Recebido</p>
-          <p className="text-sm font-bold text-emerald-600">{fmtCompact(totalEntradasRealizadas)}</p>
+          <p className="text-sm font-bold text-status-success">{fmtCompact(totalEntradasRealizadas)}</p>
         </div>
-        <div className="p-3 rounded-lg bg-red-50 text-center">
+        <div className="p-3 rounded-lg bg-status-error-bg text-center">
           <p className="text-xs text-muted-foreground">Pago</p>
-          <p className="text-sm font-bold text-red-600">{fmtCompact(totalSaidasRealizadas)}</p>
+          <p className="text-sm font-bold text-status-error">{fmtCompact(totalSaidasRealizadas)}</p>
         </div>
-        <div className="p-3 rounded-lg bg-emerald-50/50 text-center">
+        <div className="p-3 rounded-lg bg-status-success-bg/50 text-center">
           <p className="text-xs text-muted-foreground">Previsto Entrar</p>
-          <p className="text-sm font-bold text-emerald-500">{fmtCompact(totalEntradasPrevistas)}</p>
+          <p className="text-sm font-bold text-status-success">{fmtCompact(totalEntradasPrevistas)}</p>
         </div>
-        <div className="p-3 rounded-lg bg-red-50/50 text-center">
+        <div className="p-3 rounded-lg bg-status-error-bg/50 text-center">
           <p className="text-xs text-muted-foreground">Previsto Sair</p>
-          <p className="text-sm font-bold text-red-500">{fmtCompact(totalSaidasPrevistas)}</p>
+          <p className="text-sm font-bold text-status-error">{fmtCompact(totalSaidasPrevistas)}</p>
         </div>
       </div>
 
@@ -952,7 +952,7 @@ function FluxoCaixaTab({ data, loading, saldoCC }: { data: any[]; loading: boole
                 <span className="text-xs text-muted-foreground truncate">{w.label}</span>
                 <div className="relative h-6">
                   <div
-                    className="absolute top-0 h-3 rounded bg-emerald-400/70"
+                    className="absolute top-0 h-3 rounded bg-status-success/70"
                     style={{ width: `${(w.entradas / maxVal) * 100}%` }}
                   />
                   <div
@@ -960,20 +960,20 @@ function FluxoCaixaTab({ data, loading, saldoCC }: { data: any[]; loading: boole
                     style={{ width: `${(w.saidas / maxVal) * 100}%` }}
                   />
                 </div>
-                <span className={`text-right text-xs font-bold ${w.saldo >= 0 ? 'text-emerald-600' : 'text-red-600'}`}>
+                <span className={`text-right text-xs font-bold ${w.saldo >= 0 ? 'text-status-success' : 'text-status-error'}`}>
                   {fmtCompact(w.saldo)}
                 </span>
-                <span className={`text-right text-[10px] ${w.acumulado >= 0 ? 'text-blue-600' : 'text-red-600'}`}>
+                <span className={`text-right text-[10px] ${w.acumulado >= 0 ? 'text-status-info' : 'text-status-error'}`}>
                   {fmtCompact(w.acumulado)}
                 </span>
               </div>
             ))}
           </div>
           <div className="flex gap-4 mt-4 justify-center text-xs text-muted-foreground">
-            <span className="flex items-center gap-1"><span className="w-3 h-3 rounded bg-emerald-400/70" /> Entradas</span>
+            <span className="flex items-center gap-1"><span className="w-3 h-3 rounded bg-status-success/70" /> Entradas</span>
             <span className="flex items-center gap-1"><span className="w-3 h-3 rounded bg-red-400/70" /> Saídas</span>
             <span>Saldo semanal</span>
-            <span className="text-blue-600">Acumulado</span>
+            <span className="text-status-info">Acumulado</span>
           </div>
         </CardContent>
       </Card>
@@ -1007,17 +1007,17 @@ function DRETab({ data, view, ano }: { data: any[]; view: FinanceiroView; ano: n
 
   const dreLines = [
     { label: 'Receita Bruta', field: 'receita_bruta', bold: true, color: '' },
-    { label: '(-) Deduções', field: 'deducoes', bold: false, color: 'text-red-500' },
+    { label: '(-) Deduções', field: 'deducoes', bold: false, color: 'text-status-error' },
     { label: '= Receita Líquida', field: 'receita_liquida', bold: true, color: '' },
-    { label: '(-) CMV', field: 'cmv', bold: false, color: 'text-red-500' },
-    { label: '= Lucro Bruto', field: 'lucro_bruto', bold: true, color: 'text-emerald-600' },
-    { label: '(-) Desp. Operacionais', field: 'despesas_operacionais', bold: false, color: 'text-red-500' },
-    { label: '(-) Desp. Administrativas', field: 'despesas_administrativas', bold: false, color: 'text-red-500' },
-    { label: '(-) Desp. Comerciais', field: 'despesas_comerciais', bold: false, color: 'text-red-500' },
-    { label: '(-) Desp. Financeiras', field: 'despesas_financeiras', bold: false, color: 'text-red-500' },
-    { label: '(+) Rec. Financeiras', field: 'receitas_financeiras', bold: false, color: 'text-emerald-500' },
+    { label: '(-) CMV', field: 'cmv', bold: false, color: 'text-status-error' },
+    { label: '= Lucro Bruto', field: 'lucro_bruto', bold: true, color: 'text-status-success' },
+    { label: '(-) Desp. Operacionais', field: 'despesas_operacionais', bold: false, color: 'text-status-error' },
+    { label: '(-) Desp. Administrativas', field: 'despesas_administrativas', bold: false, color: 'text-status-error' },
+    { label: '(-) Desp. Comerciais', field: 'despesas_comerciais', bold: false, color: 'text-status-error' },
+    { label: '(-) Desp. Financeiras', field: 'despesas_financeiras', bold: false, color: 'text-status-error' },
+    { label: '(+) Rec. Financeiras', field: 'receitas_financeiras', bold: false, color: 'text-status-success' },
     { label: '= Resultado Operacional', field: 'resultado_operacional', bold: true, color: '' },
-    { label: '(-) Impostos', field: 'impostos', bold: false, color: 'text-red-500' },
+    { label: '(-) Impostos', field: 'impostos', bold: false, color: 'text-status-error' },
     { label: '= RESULTADO LÍQUIDO', field: 'resultado_liquido', bold: true, color: '' },
   ];
 
@@ -1025,17 +1025,17 @@ function DRETab({ data, view, ano }: { data: any[]; view: FinanceiroView; ano: n
     <div className="space-y-3">
       {/* Ponto 5: unmapped warning */}
       {uniqueUnmapped.length > 0 && (
-        <div className="flex items-start gap-2 p-3 rounded-lg bg-amber-50 border border-amber-200">
-          <AlertTriangle className="w-4 h-4 text-amber-600 mt-0.5 shrink-0" />
+        <div className="flex items-start gap-2 p-3 rounded-lg bg-status-warning-bg border border-status-warning/30">
+          <AlertTriangle className="w-4 h-4 text-status-warning mt-0.5 shrink-0" />
           <div>
-            <p className="text-sm font-medium text-amber-800">
+            <p className="text-sm font-medium text-status-warning-fg">
               {uniqueUnmapped.length} categoria(s) classificadas por heurística
             </p>
-            <p className="text-xs text-amber-700 mt-1">
+            <p className="text-xs text-status-warning mt-1">
               Estas categorias não têm mapeamento explícito — os valores podem estar em linhas incorretas.
               Configure em <span className="font-medium">Mapeamento DRE</span>.
             </p>
-            <p className="text-xs text-amber-600 mt-1 font-mono">
+            <p className="text-xs text-status-warning mt-1 font-mono">
               {uniqueUnmapped.slice(0, 8).join(', ')}{uniqueUnmapped.length > 8 ? ` (+${uniqueUnmapped.length - 8})` : ''}
             </p>
           </div>
@@ -1072,7 +1072,7 @@ function DRETab({ data, view, ano }: { data: any[]; view: FinanceiroView; ano: n
                   {rows.map((r: any) => {
                     const val = r[line.field] || 0;
                     const colorClass = line.color || (line.bold && line.field.includes('resultado')
-                      ? (val >= 0 ? 'text-emerald-600' : 'text-red-600')
+                      ? (val >= 0 ? 'text-status-success' : 'text-status-error')
                       : '');
                     return (
                       <TableCell key={r.mes} className={`text-right text-sm ${line.bold ? 'font-bold' : ''} ${colorClass}`}>
@@ -1104,7 +1104,7 @@ function DRETab({ data, view, ano }: { data: any[]; view: FinanceiroView; ano: n
                 {rows.map((r: any) => {
                   const pct = r.receita_liquida > 0 ? (r.resultado_liquido / r.receita_liquida) * 100 : 0;
                   return (
-                    <TableCell key={r.mes} className={`text-right text-sm font-medium ${pct >= 0 ? 'text-emerald-600' : 'text-red-600'}`}>
+                    <TableCell key={r.mes} className={`text-right text-sm font-medium ${pct >= 0 ? 'text-status-success' : 'text-status-error'}`}>
                       {pct.toFixed(1)}%
                     </TableCell>
                   );
@@ -1191,7 +1191,7 @@ function DREComparativo({ data, ano }: { data: Record<string, any[]>; ano: numbe
                     const val = (t as any)[line.field] || 0;
                     const isResult = line.field.includes('resultado') || line.field === 'margemLiquida';
                     const colorClass = isResult
-                      ? val >= 0 ? 'text-emerald-600' : 'text-red-600'
+                      ? val >= 0 ? 'text-status-success' : 'text-status-error'
                       : '';
                     return (
                       <TableCell key={t.company} className={`text-right text-sm font-medium ${colorClass}`}>

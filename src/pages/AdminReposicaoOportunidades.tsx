@@ -176,13 +176,13 @@ function diasEntre(dateStr: string | null | undefined): number | null {
 function cenarioIcon(cenario: Cenario) {
   switch (cenario) {
     case "promo_flat":
-      return <Sparkles className="h-4 w-4 text-amber-500" />;
+      return <Sparkles className="h-4 w-4 text-status-warning" />;
     case "promo_volume":
-      return <Package className="h-4 w-4 text-blue-500" />;
+      return <Package className="h-4 w-4 text-status-info" />;
     case "promo_e_aumento":
       return <Zap className="h-4 w-4 text-purple-500" />;
     case "aumento_apenas":
-      return <TrendingUp className="h-4 w-4 text-red-500" />;
+      return <TrendingUp className="h-4 w-4 text-status-error" />;
   }
 }
 
@@ -192,16 +192,16 @@ function cenarioLabel(cenario: Cenario): string {
 
 function descontoBadgeClass(p: number | null | undefined): string {
   const v = Number(p ?? 0);
-  if (v >= 15) return "bg-emerald-500/15 text-emerald-700 dark:text-emerald-400 border-emerald-500/30";
-  if (v >= 7) return "bg-blue-500/15 text-blue-700 dark:text-blue-400 border-blue-500/30";
-  if (v > 0) return "bg-amber-500/15 text-amber-700 dark:text-amber-400 border-amber-500/30";
+  if (v >= 15) return "bg-status-success-bg0/15 text-status-success border-status-success/30";
+  if (v >= 7) return "bg-status-info-bg0/15 text-status-info border-status-info/30";
+  if (v > 0) return "bg-status-warning-bg0/15 text-status-warning border-status-warning/30";
   return "bg-muted text-muted-foreground border-border";
 }
 
 function diasBadge(dias: number | null | undefined) {
   const d = dias ?? 999;
   if (d < 3) return "bg-destructive/15 text-destructive border-destructive/30";
-  if (d < 7) return "bg-amber-500/15 text-amber-700 dark:text-amber-400 border-amber-500/30";
+  if (d < 7) return "bg-status-warning-bg0/15 text-status-warning border-status-warning/30";
   return "bg-muted text-muted-foreground border-border";
 }
 
@@ -445,9 +445,9 @@ export default function AdminReposicaoOportunidades() {
         </header>
 
         {!bannerNegociacaoFechado && negociacaoNovasCount > 0 && (
-          <div className="flex items-center justify-between gap-3 rounded-lg border border-blue-500/30 bg-blue-500/10 px-4 py-3 text-sm">
+          <div className="flex items-center justify-between gap-3 rounded-lg border border-status-info/30 bg-status-info/10 px-4 py-3 text-sm">
             <div className="flex items-center gap-2 flex-1">
-              <Handshake className="h-4 w-4 text-blue-600 dark:text-blue-400 shrink-0" />
+              <Handshake className="h-4 w-4 text-status-info dark:text-status-info shrink-0" />
               <span>
                 <strong>{negociacaoNovasCount}</strong> SKU{negociacaoNovasCount === 1 ? '' : 's'}{' '}
                 {negociacaoNovasCount === 1 ? 'foi sugerido' : 'foram sugeridos'} para negociação paralela.
@@ -502,7 +502,7 @@ export default function AdminReposicaoOportunidades() {
               </CardTitle>
             </CardHeader>
             <CardContent>
-              <div className="text-2xl font-bold text-emerald-600 dark:text-emerald-400 tabular-nums">
+              <div className="text-2xl font-bold text-status-success tabular-nums">
                 {formatBRL(totalEconomia)}
               </div>
               <p className="text-xs text-muted-foreground mt-1">
@@ -569,7 +569,7 @@ export default function AdminReposicaoOportunidades() {
               {cicloHoje > 0 ? (
                 <>
                   <Badge
-                    className="bg-emerald-500/15 text-emerald-700 dark:text-emerald-400 border-emerald-500/30 cursor-pointer hover:bg-emerald-500/25"
+                    className="bg-status-success-bg0/15 text-status-success border-status-success/30 cursor-pointer hover:bg-status-success-bg0/25"
                     variant="outline"
                     onClick={() => setConfirmCicloOpen(true)}
                   >
@@ -771,7 +771,7 @@ export default function AdminReposicaoOportunidades() {
                         <TableCell
                           className={`text-right tabular-nums font-medium ${
                             Number(o.economia_bruta_estimada ?? 0) > 0
-                              ? "text-emerald-600 dark:text-emerald-400"
+                              ? "text-status-success"
                               : "text-muted-foreground"
                           }`}
                         >
@@ -839,7 +839,7 @@ export default function AdminReposicaoOportunidades() {
                 Vai gerar pedidos de oportunidade para{" "}
                 <strong>{oportunidades.length} SKUs</strong>, com economia total
                 estimada de{" "}
-                <strong className="text-emerald-600 dark:text-emerald-400">
+                <strong className="text-status-success">
                   {formatBRL(totalEconomia)}
                 </strong>
                 . Continuar?
@@ -947,10 +947,10 @@ function DrawerConteudo({
 
         {/* Promoção */}
         {incluiPromo && o.campanha_id && (
-          <Card className="border-amber-500/30 bg-amber-500/5">
+          <Card className="border-status-warning/30 bg-status-warning-bg0/5">
             <CardHeader className="pb-2">
               <CardTitle className="text-sm flex items-center gap-2">
-                <Sparkles className="h-4 w-4 text-amber-500" />
+                <Sparkles className="h-4 w-4 text-status-warning" />
                 Promoção ativa
               </CardTitle>
             </CardHeader>
@@ -990,10 +990,10 @@ function DrawerConteudo({
 
         {/* Aumentos */}
         {incluiAumento && aumentos.length > 0 && (
-          <Card className="border-red-500/30 bg-red-500/5">
+          <Card className="border-status-error/30 bg-status-error-bg0/5">
             <CardHeader className="pb-2">
               <CardTitle className="text-sm flex items-center gap-2">
-                <TrendingUp className="h-4 w-4 text-red-500" />
+                <TrendingUp className="h-4 w-4 text-status-error" />
                 {aumentos.length === 1
                   ? "Aumento afetando este SKU"
                   : `${aumentos.length} aumentos afetando este SKU`}
@@ -1018,7 +1018,7 @@ function DrawerConteudo({
                   {typeof a.aumento_perc === "number" && (
                     <div className="flex justify-between">
                       <span className="text-muted-foreground">% aumento</span>
-                      <span className="font-medium tabular-nums text-red-600 dark:text-red-400">
+                      <span className="font-medium tabular-nums text-status-error">
                         +{formatNumber(a.aumento_perc, 2)}%
                       </span>
                     </div>
@@ -1039,7 +1039,7 @@ function DrawerConteudo({
         )}
 
         {/* Cálculo */}
-        <Card className="border-emerald-500/30 bg-emerald-500/5">
+        <Card className="border-status-success/30 bg-status-success-bg0/5">
           <CardHeader className="pb-2">
             <CardTitle className="text-sm">Cálculo da economia</CardTitle>
           </CardHeader>
@@ -1054,7 +1054,7 @@ function DrawerConteudo({
             você captura{" "}
             <strong>{formatNumber(o.desconto_total_perc, 2)}%</strong> de
             benefício total, economizando{" "}
-            <strong className="text-emerald-700 dark:text-emerald-400">
+            <strong className="text-status-success">
               {formatBRL(o.economia_bruta_estimada)}
             </strong>{" "}
             bruto.

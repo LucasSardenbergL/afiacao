@@ -57,7 +57,7 @@ const FarmerBundles = () => {
         <div className="grid grid-cols-3 gap-2">
           <Card><CardContent className="p-2.5 text-center"><p className="text-lg font-bold">{rules.length}</p><p className="text-[9px] text-muted-foreground">Regras</p></CardContent></Card>
           <Card><CardContent className="p-2.5 text-center"><p className="text-lg font-bold">{totalBundles}</p><p className="text-[9px] text-muted-foreground">Bundles</p></CardContent></Card>
-          <Card><CardContent className="p-2.5 text-center"><p className="text-lg font-bold text-emerald-700">{fmt(totalLIE)}</p><p className="text-[9px] text-muted-foreground">LIE Total</p></CardContent></Card>
+          <Card><CardContent className="p-2.5 text-center"><p className="text-lg font-bold text-status-success">{fmt(totalLIE)}</p><p className="text-[9px] text-muted-foreground">LIE Total</p></CardContent></Card>
         </div>
 
         <Tabs defaultValue="bundles" className="w-full">
@@ -147,7 +147,7 @@ const CustomerBundleCard = ({ data, expanded, onToggle, bundleArgs, argGeneratin
             </div>
             <div className="flex items-center gap-2 mt-0.5">
               <span className="text-[10px] text-muted-foreground">{data.bundles.length} bundles</span>
-              <span className="text-[10px] font-semibold text-emerald-700">LIE {fmt(totalBundleLIE)}</span>
+              <span className="text-[10px] font-semibold text-status-success">LIE {fmt(totalBundleLIE)}</span>
               <Badge variant="outline" className={`text-[7px] ${profileInfo.color}`}>{profileInfo.label}</Badge>
             </div>
           </div>
@@ -160,17 +160,17 @@ const CustomerBundleCard = ({ data, expanded, onToggle, bundleArgs, argGeneratin
             <div className="bg-muted/50 rounded-lg p-2">
               <p className="text-[9px] font-semibold mb-1">📊 Comparação Inteligente</p>
               <div className="grid grid-cols-2 gap-2">
-                <div className={`rounded p-1.5 text-center ${bundleWins ? 'bg-emerald-50 ring-1 ring-emerald-300' : 'bg-muted'}`}>
-                  <Layers className="w-3 h-3 mx-auto mb-0.5 text-emerald-600" />
+                <div className={`rounded p-1.5 text-center ${bundleWins ? 'bg-status-success-bg ring-1 ring-emerald-300' : 'bg-muted'}`}>
+                  <Layers className="w-3 h-3 mx-auto mb-0.5 text-status-success" />
                   <p className="text-[9px] text-muted-foreground">Melhor Bundle</p>
                   <p className="text-xs font-bold">{fmt(bestBundleLIE)}</p>
-                  {bundleWins && <Badge className="text-[7px] bg-emerald-600 mt-0.5">🏆 Vencedor</Badge>}
+                  {bundleWins && <Badge className="text-[7px] bg-status-success mt-0.5">🏆 Vencedor</Badge>}
                 </div>
-                <div className={`rounded p-1.5 text-center ${!bundleWins ? 'bg-blue-50 ring-1 ring-blue-300' : 'bg-muted'}`}>
-                  <Zap className="w-3 h-3 mx-auto mb-0.5 text-blue-600" />
+                <div className={`rounded p-1.5 text-center ${!bundleWins ? 'bg-status-info-bg ring-1 ring-blue-300' : 'bg-muted'}`}>
+                  <Zap className="w-3 h-3 mx-auto mb-0.5 text-status-info" />
                   <p className="text-[9px] text-muted-foreground">Melhor Individual</p>
                   <p className="text-xs font-bold">{fmt(individualLIE)}</p>
-                  {!bundleWins && data.bestIndividual && <Badge className="text-[7px] bg-blue-600 mt-0.5">🏆 Vencedor</Badge>}
+                  {!bundleWins && data.bestIndividual && <Badge className="text-[7px] bg-status-info mt-0.5">🏆 Vencedor</Badge>}
                 </div>
               </div>
             </div>
@@ -258,7 +258,7 @@ const BundleCardFull = ({
           <Badge variant="outline" className="text-[8px]">Bundle #{rank}</Badge>
           <Badge className="text-[8px] bg-primary/10 text-primary">{bundle.products.length} produtos</Badge>
         </div>
-        <span className="text-xs font-bold text-emerald-700">{fmt(bundle.lieBundle)}</span>
+        <span className="text-xs font-bold text-status-success">{fmt(bundle.lieBundle)}</span>
       </div>
 
       {/* Products */}
@@ -266,7 +266,7 @@ const BundleCardFull = ({
         {bundle.products.map((p, i) => (
           <div key={i} className="flex items-center justify-between bg-background rounded px-2 py-1">
             <span className="text-[10px] truncate flex-1">{p.name}</span>
-            <span className="text-[10px] font-semibold text-emerald-700 ml-2">{fmt(p.margin)}</span>
+            <span className="text-[10px] font-semibold text-status-success ml-2">{fmt(p.margin)}</span>
           </div>
         ))}
       </div>
@@ -403,7 +403,7 @@ const BundleCardFull = ({
                     <FileText className="w-3 h-3" /> Técnica
                   </Button>
                   <Button size="sm" variant="ghost" className="h-6 text-[9px] gap-1 px-2 ml-auto" onClick={() => copyText(getActiveText())}>
-                    {copied ? <Check className="w-3 h-3 text-emerald-600" /> : <Copy className="w-3 h-3" />}
+                    {copied ? <Check className="w-3 h-3 text-status-success" /> : <Copy className="w-3 h-3" />}
                   </Button>
                 </div>
                 <div className="bg-muted/50 rounded p-2">
@@ -430,8 +430,8 @@ const QuestionCard = ({ question, onSetResponse, onToggleAlt }: {
   const displayText = question.useAlt ? question.alt : question.main;
 
   const responseIcons: Record<QuestionResponse, { icon: typeof ThumbsUp; label: string; color: string }> = {
-    interesse: { icon: ThumbsUp, label: 'Interesse', color: 'bg-emerald-100 text-emerald-700 border-emerald-300' },
-    objecao: { icon: ThumbsDown, label: 'Objeção', color: 'bg-red-100 text-red-700 border-red-300' },
+    interesse: { icon: ThumbsUp, label: 'Interesse', color: 'bg-status-success-bg text-status-success border-status-success/30' },
+    objecao: { icon: ThumbsDown, label: 'Objeção', color: 'bg-status-error-bg text-status-error border-status-error/30' },
     indiferenca: { icon: Minus, label: 'Indiferença', color: 'bg-muted text-muted-foreground border-border' },
   };
 
@@ -505,7 +505,7 @@ const RuleCard = ({ rule }: { rule: AssociationRule }) => (
       <div className="flex items-center gap-1 mb-1 flex-wrap">
         {rule.antecedentNames.map((n, i) => <Badge key={i} variant="outline" className="text-[8px]">{n}</Badge>)}
         <ArrowRight className="w-3 h-3 text-muted-foreground shrink-0" />
-        {rule.consequentNames.map((n, i) => <Badge key={i} className="text-[8px] bg-emerald-100 text-emerald-800">{n}</Badge>)}
+        {rule.consequentNames.map((n, i) => <Badge key={i} className="text-[8px] bg-status-success-bg text-status-success-fg">{n}</Badge>)}
       </div>
       <div className="flex gap-3 text-[9px]">
         <span>Sup: <strong>{(rule.support * 100).toFixed(1)}%</strong></span>

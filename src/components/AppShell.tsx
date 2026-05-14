@@ -32,6 +32,9 @@ import { CommandPaletteTrigger } from '@/components/shell/CommandPaletteTrigger'
 import { CompanySwitcher } from '@/components/shell/CompanySwitcher';
 import { NetworkStatusIndicator } from '@/components/shell/NetworkStatusIndicator';
 import { ThemeToggle } from '@/components/shell/ThemeToggle';
+import { useFeatureFlagBodyClass } from '@/hooks/useFeatureFlag';
+import { useSidebarFavorites } from '@/hooks/useSidebarFavorites';
+import { Star } from 'lucide-react';
 
 /* ─── Navigation config ─── */
 interface NavItem {
@@ -177,12 +180,181 @@ function useSalesOnlyRestriction() {
   return salesOnlyCpfs.includes(userDoc);
 }
 
-/* ─── Sidebar ─── */
+/* ─── Sidebar — seções secundárias colapsadas por padrão ─── */
+const SECONDARY_SECTIONS = ['Performance', 'Inteligência', 'Automação', 'Documentação'];
+
+function SidebarSection({
+  title,
+  collapsed,
+  defaultOpen,
+  isActive,
+  navigate,
+  items,
+  onToggleFavorite,
+  isFavorite,
+}: {
+  title: string;
+  collapsed: boolean;
+  defaultOpen: boolean;
+  isActive: (path: string) => boolean;
+  navigate: ReturnType<typeof useNavigate>;
+  items: NavItem[];
+  onToggleFavorite?: (path: string) => void;
+  isFavorite?: (path: string) => boolean;
+}) {
+  // Persistência localStorage do estado de cada seção pra preservar entre sessões
+  const storageKey = `sidebar-section-${title}`;
+  const [open, setOpen] = React.useState<boolean>(() => {
+    if (typeof window === 'undefined') return defaultOpen;
+    const stored = window.localStorage.getItem(storageKey);
+    return stored === null ? defaultOpen : stored === '1';
+  });
+
+  React.useEffect(() => {
+    if (typeof window !== 'undefined') {
+      window.localStorage.setItem(storageKey, open ? '1' : '0');
+    }
+  }, [open, storageKey]);
+
+  // Em modo collapsed, mostra todos sem agrupador (tooltip dá o nome)
+  if (collapsed) {
+    return (
+      <div className="mb-1">
+        <div className="my-1 mx-2 border-t border-sidebar-border/50" />
+        {items.map((item) => (
+          <SidebarItem
+            key={item.path}
+            item={item}
+            active={isActive(item.path)}
+            navigate={navigate}
+            collapsed
+          />
+        ))}
+      </div>
+    );
+  }
+
+  return (
+    <div className="mb-1">
+      <button
+        type="button"
+        onClick={() => setOpen((v) => !v)}
+        className="w-full flex items-center justify-between px-3 py-1.5 group"
+      >
+        <span className="text-2xs font-medium uppercase tracking-wider text-sidebar-muted group-hover:text-sidebar-foreground transition-colors">
+          {title}
+        </span>
+        <ChevronRight
+          className={cn(
+            'w-3 h-3 text-sidebar-muted transition-transform group-hover:text-sidebar-foreground',
+            open && 'rotate-90',
+          )}
+        />
+      </button>
+      {open && (
+        // stagger-children dá fade-in cascateado quando a seção expande
+        <div className="stagger-children">
+          {items.map((item) => (
+            <SidebarItem
+              key={item.path}
+              item={item}
+              active={isActive(item.path)}
+              navigate={navigate}
+              collapsed={false}
+              onToggleFavorite={onToggleFavorite}
+              isFavorite={isFavorite?.(item.path)}
+            />
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function SidebarItem({
+  item,
+  active,
+  navigate,
+  collapsed,
+  onToggleFavorite,
+  isFavorite,
+}: {
+  item: NavItem;
+  active: boolean;
+  navigate: ReturnType<typeof useNavigate>;
+  collapsed: boolean;
+  onToggleFavorite?: (path: string) => void;
+  isFavorite?: boolean;
+}) {
+  const Icon = item.icon;
+  const showStar = !collapsed && onToggleFavorite;
+  const button = (
+    <div
+      className={cn(
+        'group/item relative flex items-center w-full',
+        collapsed ? 'justify-center mx-1' : 'mx-2',
+      )}
+    >
+      <button
+        onClick={() => navigate(item.path)}
+        className={cn(
+          'flex items-center gap-2.5 w-full rounded-md text-sm font-medium transition-colors',
+          collapsed ? 'justify-center px-2 py-2' : 'px-3 py-1.5',
+          active
+            ? 'bg-sidebar-accent text-sidebar-accent-foreground'
+            : 'text-sidebar-foreground hover:bg-sidebar-accent/60 hover:text-sidebar-accent-foreground'
+        )}
+      >
+        <Icon className={cn('shrink-0', collapsed ? 'w-5 h-5' : 'w-4 h-4')} />
+        {!collapsed && <span className="truncate">{item.label}</span>}
+        {!collapsed && item.badge && item.badge > 0 && (
+          <span className={cn(
+            'ml-auto text-2xs rounded-full px-1.5 py-0.5 min-w-[18px] text-center tabular-nums',
+            item.badgeVariant === 'destructive'
+              ? 'bg-destructive text-destructive-foreground'
+              : 'bg-primary text-primary-foreground'
+          )}>
+            {item.badge}
+          </span>
+        )}
+      </button>
+      {showStar && (
+        <button
+          type="button"
+          onClick={(e) => { e.stopPropagation(); onToggleFavorite!(item.path); }}
+          className={cn(
+            'absolute right-1.5 top-1/2 -translate-y-1/2 p-1 rounded-md transition-opacity',
+            isFavorite
+              ? 'opacity-100 text-status-warning-bold'
+              : 'opacity-0 group-hover/item:opacity-60 hover:opacity-100 text-sidebar-muted',
+          )}
+          aria-label={isFavorite ? 'Remover dos favoritos' : 'Adicionar aos favoritos'}
+        >
+          <Star className={cn('w-3 h-3', isFavorite && 'fill-current')} />
+        </button>
+      )}
+    </div>
+  );
+
+  if (collapsed) {
+    return (
+      <Tooltip delayDuration={0}>
+        <TooltipTrigger asChild>{button}</TooltipTrigger>
+        <TooltipContent side="right" className="font-medium">
+          {item.label}
+        </TooltipContent>
+      </Tooltip>
+    );
+  }
+  return button;
+}
+
 function AppSidebar({ collapsed, onToggle }: { collapsed: boolean; onToggle: () => void }) {
   const location = useLocation();
   const navigate = useNavigate();
   const { isStaff } = useUserRole();
   const isSalesOnly = useSalesOnlyRestriction();
+  const { favorites, isFavorite, toggle: toggleFavorite } = useSidebarFavorites();
 
   // Contador de alertas de outlier pendentes (críticos + atenção)
   const { data: outlierPendentes } = useQuery({
@@ -329,20 +501,32 @@ function AppSidebar({ collapsed, onToggle }: { collapsed: boolean; onToggle: () 
         collapsed ? 'w-sidebar-collapsed' : 'w-sidebar'
       )}
     >
-      {/* Logo — usa foreground em vez de primary (evita cor de marca dominante) */}
+      {/* Logo — wordmark "Colacor" refinado: peso 500 + tracking -0.045em + underline gradient
+         O underline é a "spine" visual do app — gradient sutil que distingue Colacor de
+         qualquer template Vercel genérico. Aparece só na sidebar expandida. */}
       <div className={cn(
         'flex items-center h-topbar border-b border-sidebar-border px-3',
         collapsed ? 'justify-center' : 'justify-between'
       )}>
         {!collapsed && (
-          <div className="flex items-center gap-2">
-            <Scissors className="w-5 h-5 text-foreground" />
-            <span className="text-foreground font-semibold text-base tracking-tight">
+          <div className="flex items-baseline gap-0.5 group">
+            <span
+              className="text-foreground text-base"
+              style={{ fontWeight: 500, letterSpacing: '-0.045em' }}
+            >
               Colacor
             </span>
+            <span
+              aria-hidden
+              className="ml-0.5 inline-block w-1 h-1 rounded-full bg-gradient-to-br from-foreground to-status-info self-end mb-1.5 group-hover:scale-125 transition-transform"
+            />
           </div>
         )}
-        {collapsed && <Scissors className="w-5 h-5 text-foreground" />}
+        {collapsed && (
+          <div className="w-7 h-7 rounded-md bg-foreground text-background flex items-center justify-center text-sm" style={{ fontWeight: 500, letterSpacing: '-0.04em' }}>
+            C
+          </div>
+        )}
         {!collapsed && (
           <button
             onClick={onToggle}
@@ -354,70 +538,47 @@ function AppSidebar({ collapsed, onToggle }: { collapsed: boolean; onToggle: () 
         )}
       </div>
 
-      {/* Navigation */}
+      {/* Navigation — Favoritos no topo (se houver) + seções secundárias colapsadas por padrão */}
       <nav className="flex-1 min-h-0 overflow-y-auto py-2">
+        {/* Favoritos pinados — coletados de todas as seções pelo path */}
+        {!isSalesOnly && favorites.length > 0 && !collapsed && (
+          <SidebarSection
+            title="Favoritos"
+            collapsed={false}
+            defaultOpen={true}
+            isActive={isActive}
+            navigate={navigate}
+            items={
+              sectionsWithBadges
+                .flatMap((s) => s.items)
+                .filter((item) => favorites.includes(item.path))
+                .filter((item) => !item.managerOnly || isStaff)
+            }
+            onToggleFavorite={toggleFavorite}
+            isFavorite={isFavorite}
+          />
+        )}
+
         {sectionsWithBadges.map((section) => {
-          // Sales-only restriction: only show "Vendas" section
           if (isSalesOnly && section.title !== 'Vendas') return null;
 
           const visibleItems = section.items.filter(item => !item.managerOnly || isStaff);
           if (visibleItems.length === 0) return null;
 
+          const isSecondary = SECONDARY_SECTIONS.includes(section.title);
+
           return (
-            <div key={section.title} className="mb-1">
-              {!collapsed && (
-                <div className="px-3 py-1.5">
-                  <span className="text-2xs font-medium uppercase tracking-wider text-sidebar-muted">
-                    {section.title}
-                  </span>
-                </div>
-              )}
-              {collapsed && <div className="my-1 mx-2 border-t border-sidebar-border/50" />}
-              {visibleItems.map((item) => {
-                const active = isActive(item.path);
-                const Icon = item.icon;
-
-                const button = (
-                  <button
-                    key={item.path}
-                    onClick={() => navigate(item.path)}
-                    className={cn(
-                      'flex items-center gap-2.5 w-full rounded-md text-sm font-medium transition-colors',
-                      collapsed ? 'justify-center px-2 py-2 mx-1' : 'px-3 py-1.5 mx-2',
-                      active
-                        ? 'bg-sidebar-accent text-sidebar-accent-foreground'
-                        : 'text-sidebar-foreground hover:bg-sidebar-accent/60 hover:text-sidebar-accent-foreground'
-                    )}
-                  >
-                    <Icon className={cn('shrink-0', collapsed ? 'w-5 h-5' : 'w-4 h-4')} />
-                    {!collapsed && <span className="truncate">{item.label}</span>}
-                    {!collapsed && item.badge && item.badge > 0 && (
-                      <span className={cn(
-                        'ml-auto text-2xs rounded-full px-1.5 py-0.5 min-w-[18px] text-center',
-                        item.badgeVariant === 'destructive'
-                          ? 'bg-destructive text-destructive-foreground'
-                          : 'bg-primary text-primary-foreground'
-                      )}>
-                        {item.badge}
-                      </span>
-                    )}
-                  </button>
-                );
-
-                if (collapsed) {
-                  return (
-                    <Tooltip key={item.path} delayDuration={0}>
-                      <TooltipTrigger asChild>{button}</TooltipTrigger>
-                      <TooltipContent side="right" className="font-medium">
-                        {item.label}
-                      </TooltipContent>
-                    </Tooltip>
-                  );
-                }
-
-                return <React.Fragment key={item.path}>{button}</React.Fragment>;
-              })}
-            </div>
+            <SidebarSection
+              key={section.title}
+              title={section.title}
+              collapsed={collapsed}
+              defaultOpen={!isSecondary}
+              isActive={isActive}
+              navigate={navigate}
+              items={visibleItems}
+              onToggleFavorite={toggleFavorite}
+              isFavorite={isFavorite}
+            />
           );
         })}
       </nav>
@@ -506,9 +667,17 @@ function MobileNav({ open, onClose }: { open: boolean; onClose: () => void }) {
       <div className="fixed inset-0 z-50 bg-black/50 lg:hidden" onClick={onClose} />
       <div className="fixed left-0 top-0 bottom-0 z-50 flex w-64 flex-col overflow-hidden bg-sidebar border-r border-sidebar-border lg:hidden animate-slide-in-right">
         <div className="flex items-center justify-between h-topbar border-b border-sidebar-border px-3">
-          <div className="flex items-center gap-2">
-            <Scissors className="w-5 h-5 text-foreground" />
-            <span className="text-foreground font-semibold text-base tracking-tight">Colacor</span>
+          <div className="flex items-baseline gap-0.5">
+            <span
+              className="text-foreground text-base"
+              style={{ fontWeight: 500, letterSpacing: '-0.045em' }}
+            >
+              Colacor
+            </span>
+            <span
+              aria-hidden
+              className="ml-0.5 inline-block w-1 h-1 rounded-full bg-gradient-to-br from-foreground to-status-info self-end mb-1.5"
+            />
           </div>
           <button onClick={onClose} className="p-1.5 rounded-md text-sidebar-muted hover:text-sidebar-foreground">
             <X className="w-4 h-4" />
@@ -558,6 +727,9 @@ function MobileNav({ open, onClose }: { open: boolean; onClose: () => void }) {
 export function AppShell({ children }: { children: React.ReactNode }) {
   const [collapsed, setCollapsed] = useState(false);
   const [mobileOpen, setMobileOpen] = useState(false);
+
+  // Aplica .legacy-visual no <html> quando feature flag newVisual = false
+  useFeatureFlagBodyClass('newVisual', 'legacy-visual', /* invert */ true);
 
   return (
     <AppShellProvider>

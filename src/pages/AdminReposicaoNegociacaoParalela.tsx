@@ -158,9 +158,9 @@ function formatDateBR(d: string | null | undefined): string {
 function categoriaBadgeClass(cat: Categoria | null | undefined): string {
   switch (cat) {
     case "prioritario":
-      return "bg-amber-500/15 text-amber-700 dark:text-amber-400 border-amber-500/30";
+      return "bg-status-warning-bg0/15 text-status-warning border-status-warning/30";
     case "forte":
-      return "bg-blue-500/15 text-blue-700 dark:text-blue-400 border-blue-500/30";
+      return "bg-status-info-bg0/15 text-status-info border-status-info/30";
     case "moderado":
       return "bg-muted text-muted-foreground border-border";
     case "fraco":
@@ -177,9 +177,9 @@ function categoriaLabel(cat: Categoria | null | undefined): string {
 function statusBadgeClass(status: StatusSugestao): string {
   switch (status) {
     case "nova":
-      return "bg-emerald-500/15 text-emerald-700 dark:text-emerald-400 border-emerald-500/30";
+      return "bg-status-success-bg0/15 text-status-success border-status-success/30";
     case "visualizada":
-      return "bg-blue-500/15 text-blue-700 dark:text-blue-400 border-blue-500/30";
+      return "bg-status-info-bg0/15 text-status-info border-status-info/30";
     case "acao_tomada":
       return "bg-orange-500/15 text-orange-700 dark:text-orange-400 border-orange-500/30";
     default:
@@ -208,8 +208,8 @@ function statusLabel(status: StatusSugestao): string {
 
 function percPromoBadgeClass(p: number | null | undefined): string {
   const v = Number(p ?? 0);
-  if (v === 0) return "bg-emerald-500/15 text-emerald-700 dark:text-emerald-400 border-emerald-500/30";
-  if (v <= 30) return "bg-amber-500/15 text-amber-700 dark:text-amber-400 border-amber-500/30";
+  if (v === 0) return "bg-status-success-bg0/15 text-status-success border-status-success/30";
+  if (v <= 30) return "bg-status-warning-bg0/15 text-status-warning border-status-warning/30";
   return "bg-destructive/15 text-destructive border-destructive/30";
 }
 
@@ -649,7 +649,7 @@ export default function AdminReposicaoNegociacaoParalela() {
             </DropdownMenu>
             <Button
               size="sm"
-              className="ml-auto bg-emerald-600 hover:bg-emerald-700 text-white"
+              className="ml-auto bg-status-success hover:bg-status-success/90 text-white"
               onClick={() => openConvertDialog(s)}
             >
               <Handshake className="h-3.5 w-3.5 mr-1.5" />
@@ -686,9 +686,9 @@ export default function AdminReposicaoNegociacaoParalela() {
       </div>
 
       {/* Card explicativo */}
-      <Card className="border-blue-500/30 bg-blue-500/5">
+      <Card className="border-status-info/30 bg-status-info-bg0/5">
         <CardContent className="flex items-start gap-3 py-4">
-          <Info className="h-5 w-5 text-blue-600 dark:text-blue-400 mt-0.5 shrink-0" />
+          <Info className="h-5 w-5 text-status-info dark:text-status-info mt-0.5 shrink-0" />
           <p className="text-sm text-foreground/90 leading-relaxed">
             O sistema analisa seu histórico de compras e identifica SKUs candidatos a negociar descontos
             flat condicionais com a Sayerlack. Sugestões são geradas automaticamente; você decide quais
