@@ -34,7 +34,9 @@ export default async ({ page, context }) => {
   const { user, pass, portalUrl, clienteCodigo, items } = context;
   const trace = [];
   const t0 = Date.now();
-  const TIMEOUT_INTERNO_MS = 55000; // 55s, antes do cap de 60s do Browserless
+  // Não usamos timeout interno menor que o Browserless: em 14/05, o pedido #116
+  // clicou em "Efetivar Pedido" por volta de 53s e a Promise.race anterior
+  // devolveu TIMEOUT_INTERNO aos 55s, encerrando o browser antes do portal concluir.
 
   // Helper: limpa input e digita (substitui page.fill do Playwright)
   const fillInput = async (selector, value) => {
@@ -678,10 +680,9 @@ export default async ({ page, context }) => {
       trace.push({ step: 'snapshot_pos_efetivar_' + label, t: Date.now() - t0, snapshot: snap });
       console.log('[DEBUG_POS_EFETIVAR_' + label + ']', JSON.stringify(snap));
     };
-    // Capturar 3 snapshots: 1s, 4s, 8s pós-efetivar
+    // Captura só 1 snapshot rápido. O pedido #116 clicou em Efetivar perto de 53s;
+    // os snapshots de 4s/8s consumiam a janela restante do Browserless antes da confirmação.
     await snapshotPosEfetivar('1s', 1000);
-    await snapshotPosEfetivar('4s', 3000);
-    await snapshotPosEfetivar('8s', 4000);
 
     // Aguarda o texto de sucesso aparecer (Puppeteer suporta waitForFunction sem jsonValue)
     await page.waitForFunction(
@@ -689,7 +690,7 @@ export default async ({ page, context }) => {
         const body = document.body.innerText;
         return /Pedido \\d+ criado com sucesso/.test(body);
       },
-      { timeout: 10000 }
+      { timeout: 7000 }
     );
     // Extrai o texto via evaluate puro
     const successStr = await page.evaluate(() => {
@@ -728,21 +729,7 @@ export default async ({ page, context }) => {
    }
   };
 
-  const timeoutInterno = new Promise(function(resolve) {
-    setTimeout(function() {
-      resolve({
-        success: false,
-        erroTipo: 'TIMEOUT_INTERNO',
-        erro: 'Script ultrapassou ' + (TIMEOUT_INTERNO_MS / 1000) + 's — retornando trace parcial pra diagnóstico',
-        trace,
-        ultimoStep: trace.length > 0 ? trace[trace.length - 1].step : 'nenhum',
-        ultimoStepT: trace.length > 0 ? trace[trace.length - 1].t : null,
-        totalSteps: trace.length
-      });
-    }, TIMEOUT_INTERNO_MS);
-  });
-
-  return await Promise.race([runFlow(), timeoutInterno]);
+  return await runFlow();
 };
 `;
 
@@ -814,6 +801,27 @@ async function uploadScreenshot(
   } catch (e) {
     console.error(`[envio-portal] Excecao upload screenshot pedido ${pedidoId}:`, e);
     return null;
+  }
+}
+
+async function registrarPedidoOmieAposPortal(pedido: PedidoCandidato) {
+  try {
+    const resp = await fetch(`${SUPABASE_URL}/functions/v1/disparar-pedidos-aprovados`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${SERVICE_ROLE_KEY}`,
+      },
+      body: JSON.stringify({ empresa: pedido.empresa, pedido_id: pedido.id }),
+    });
+    const text = await resp.text();
+    if (!resp.ok) {
+      console.error(`[envio-portal] Pedido #${pedido.id}: falha ao registrar Omie apos portal [${resp.status}] ${text.slice(0, 300)}`);
+      return;
+    }
+    console.log(`[envio-portal] Pedido #${pedido.id}: Omie acionado apos portal [${resp.status}] ${text.slice(0, 300)}`);
+  } catch (e: any) {
+    console.error(`[envio-portal] Pedido #${pedido.id}: excecao ao registrar Omie apos portal`, e?.message ?? e);
   }
 }
 
@@ -991,7 +999,7 @@ async function processarPedido(
 
   try {
     const ctrl = new AbortController();
-    const timeout = setTimeout(() => ctrl.abort(), 120000);
+    const timeout = setTimeout(() => ctrl.abort(), 150000);
     const resp = await fetch(
       `https://chrome.browserless.io/function?token=${BROWSERLESS_TOKEN}&timeout=60000`,
       {
@@ -1105,6 +1113,7 @@ async function processarPedido(
       portal_proximo_retry_em: null,
     }).eq("id", pedido.id);
     console.log(`[envio-portal] Pedido #${pedido.id}: enviando_portal -> enviado_portal OK (protocolo=${result.protocolo})`);
+    await registrarPedidoOmieAposPortal(pedido);
     result.duracao_ms = Date.now() - t0;
     return result;
   }
