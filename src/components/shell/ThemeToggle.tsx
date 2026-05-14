@@ -8,6 +8,7 @@ import {
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu';
 import { cn } from '@/lib/utils';
+import { track } from '@/lib/analytics';
 
 /**
  * Toggle de tema (light / dark / system) — montado no AppShell topbar.
@@ -47,17 +48,17 @@ export function ThemeToggle() {
         </button>
       </DropdownMenuTrigger>
       <DropdownMenuContent align="end" className="w-36">
-        <DropdownMenuItem onClick={() => setTheme('light')}>
+        <DropdownMenuItem onClick={() => { setTheme('light'); track('theme.changed', { to: 'light' }); }}>
           <Sun className="w-4 h-4 mr-2" />
           Light
           {theme === 'light' && <span className="ml-auto text-xs text-muted-foreground">✓</span>}
         </DropdownMenuItem>
-        <DropdownMenuItem onClick={() => setTheme('dark')}>
+        <DropdownMenuItem onClick={() => { setTheme('dark'); track('theme.changed', { to: 'dark' }); }}>
           <Moon className="w-4 h-4 mr-2" />
           Dark
           {theme === 'dark' && <span className="ml-auto text-xs text-muted-foreground">✓</span>}
         </DropdownMenuItem>
-        <DropdownMenuItem onClick={() => setTheme('system')}>
+        <DropdownMenuItem onClick={() => { setTheme('system'); track('theme.changed', { to: 'system' }); }}>
           <Monitor className="w-4 h-4 mr-2" />
           Sistema
           {theme === 'system' && <span className="ml-auto text-xs text-muted-foreground">✓</span>}

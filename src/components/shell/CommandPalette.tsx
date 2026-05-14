@@ -22,6 +22,7 @@ import {
 } from './CommandsRegistry';
 import { useRegisterShortcuts } from './ShortcutsRegistry';
 import { useGlobalSearch, useSearchRecents, type SearchResult } from '@/hooks/useGlobalSearch';
+import { track } from '@/lib/analytics';
 
 /**
  * Palette aberta com Cmd+K / Ctrl+K (atalho registrado abaixo).
@@ -40,6 +41,7 @@ export function CommandPalette() {
   };
 
   const goToResult = (r: SearchResult) => {
+    track('cmdk.result_clicked', { kind: r.kind, has_subtitle: !!r.subtitle });
     pushRecent(r);
     navigate(r.path);
     close();
@@ -58,7 +60,13 @@ export function CommandPalette() {
           group: 'Global',
           scope: 'global',
           allowInInput: true,
-          handler: () => setOpen((v) => !v),
+          handler: () => {
+            setOpen((v) => {
+              const next = !v;
+              if (next) track('cmdk.opened', { trigger: 'shortcut' });
+              return next;
+            });
+          },
         },
       ],
       [setOpen],

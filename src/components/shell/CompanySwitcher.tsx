@@ -9,6 +9,7 @@ import {
 } from '@/components/ui/dropdown-menu';
 import { ALL_COMPANIES, COMPANIES, useCompany, type Company } from '@/contexts/CompanyContext';
 import { cn } from '@/lib/utils';
+import { track } from '@/lib/analytics';
 
 /**
  * Identidade visual mínima por empresa via monogramas.
@@ -86,7 +87,12 @@ export function CompanySwitcher() {
           return (
             <DropdownMenuItem
               key={id}
-              onClick={() => setActiveCompany(id)}
+              onClick={() => {
+                if (id !== activeCompany) {
+                  track('company.changed', { from: activeCompany, to: id });
+                }
+                setActiveCompany(id);
+              }}
               className="group flex items-center gap-3 py-2"
             >
               <CompanyMonogram id={id} size={28} />

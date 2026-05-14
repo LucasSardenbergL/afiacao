@@ -1,5 +1,6 @@
 import { Search } from 'lucide-react';
 import { useCommandsRegistry } from './CommandsRegistry';
+import { track } from '@/lib/analytics';
 
 /**
  * Pill clicável no topbar que abre a CommandPalette.
@@ -16,7 +17,7 @@ export function CommandPaletteTrigger() {
   return (
     <button
       type="button"
-      onClick={() => setOpen(true)}
+      onClick={() => { track('cmdk.opened', { trigger: 'pill' }); setOpen(true); }}
       className="hidden md:inline-flex items-center gap-2 h-8 px-2.5 rounded-md border border-border bg-muted/40 text-sm text-muted-foreground hover:bg-muted hover:text-foreground transition-colors min-w-[180px]"
       aria-label="Buscar e navegar"
     >

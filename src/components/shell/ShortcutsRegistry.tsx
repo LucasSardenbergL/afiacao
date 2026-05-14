@@ -8,6 +8,7 @@ import {
   useState,
   type ReactNode,
 } from 'react';
+import { track } from '@/lib/analytics';
 
 /**
  * Registry global de atalhos. Páginas declaram via `useRegisterShortcuts(...)`.
@@ -99,6 +100,12 @@ export function ShortcutsRegistryProvider({ children }: { children: ReactNode })
         if (s.keys.toLowerCase() === combo) {
           if (fromInput && !s.allowInInput && !hasMod) continue;
           e.preventDefault();
+          // Telemetria: rastreia uso real de atalhos pra validar adoção
+          track('shortcut.triggered', {
+            keys: s.keys,
+            label: s.label,
+            group: s.group ?? null,
+          });
           s.handler(e);
           return;
         }
