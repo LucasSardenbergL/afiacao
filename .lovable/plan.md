@@ -1,56 +1,84 @@
-# Sync OBEN, fix do WFOI.6857QT e baixo giro
+## Disparo assíncrono do portal Sayerlack
 
-## 1. Diagnóstico atual (já levantado)
+Hoje a edge function `enviar-pedido-portal-sayerlack` chama o Browserless e fica esperando até ~55s. Quando o portal Sayerlack está lento de verdade (>55s), o pedido falha mesmo que o portal aceitaria em 70-100s. Solução: desacoplar "disparar" de "esperar resposta" via callback.
 
-- **OBEN tem 380 SKUs** ativos em `sku_parametros`.
-- **Estoque atual sincronizado:** 130 / 380 (250 sem registro em `sku_estoque_atual`).
-- **Status Omie sincronizado:** 0 / 380. O `omie-sync-status-produtos` nunca rodou pra OBEN.
-- **Última sync de estoque:** 2026-05-10. Cron está rodando, mas com cobertura parcial.
-- **Todos os 380 SKUs estão sem fornecedor** (`fornecedor_codigo_omie IS NULL`).
-- **211 SKUs são classe BY/BZ/CY/CZ** (baixo giro).
-- **WFOI.6857QT** existe (Omie 8689767990), classe CY, ativo, mas: sem fornecedor, sem ponto de pedido, sem estoque sincronizado, sem registro em `sku_status_omie`. Sem histórico de NFe pra deduzir fornecedor.
+## Arquitetura
 
-## 2. O que vou entregar
+```text
+[Botão Disparar]
+      |
+      v
+[enviar-pedido-portal-sayerlack]
+   - valida mapeamentos + lock pessimista (pendente -> enviando)
+   - dispara Browserless via EdgeRuntime.waitUntil (background)
+   - retorna 202 em <2s para a UI
+                        |
+                        v
+                  [Browserless executa script]
+                  - login + adiciona itens + finaliza
+                  - no fim: fetch(CALLBACK_URL, { pedido_id, ...resultado })
+                        |
+                        v
+[sayerlack-portal-callback]  (NOVA edge, pública, x-callback-token)
+   - valida token + idempotência (só age se status='enviando_portal')
+   - sucesso: grava protocolo + chama criação do pedido de compra Omie
+   - falha: grava erro + screenshot
+                        |
+                        v
+[UI faz polling de 5s no status_envio_portal e atualiza]
+```
 
-### A) Diagnóstico do sync OBEN
-1. Adicionar uma tela / cartão em `/admin/reposicao/parametros` (aba "Cadastros") com:
-   - Cobertura: SKUs com parâmetro × SKUs com estoque sincronizado × SKUs com status Omie.
-   - Lista expansível dos SKUs faltantes em cada lado.
-   - Botão "Forçar sync de status produtos OBEN" que dispara o `omie-sync-status-produtos` por empresa.
-2. Investigar por que `omie-sync-estoque` só pega 130/380. Hipóteses já mapeadas: filtro do sync exige fornecedor habilitado e SKU listado em `ListarPosicaoEstoque` — SKUs sem fornecedor nunca entram. Vou confirmar e documentar a regra real.
+## Mudanças
 
-### B) Fix curto prazo do WFOI.6857QT
-Não consigo atribuir fornecedor sozinho — não há histórico de NFe nem cadastro Omie no banco local. **Preciso que você me informe o nome do fornecedor**. Assim que souber, faço:
-1. `UPDATE sku_parametros SET fornecedor_codigo_omie/nome` para os 2 SKUs (WFOI e WFOT 6857QT).
-2. Disparar `omie-sync-status-produtos` e `omie-sync-estoque` pra essa empresa.
-3. Rodar o cálculo de gatilho (item C) pra esses SKUs.
+### 1. `enviar-pedido-portal-sayerlack/index.ts`
+- Mantém validação, lock e montagem do payload Browserless
+- A chamada `fetch(BROWSERLESS_URL, ...)` passa a rodar dentro de `EdgeRuntime.waitUntil(...)` — função retorna 202 imediatamente
+- Remove o guard `TIMEOUT_INTERNO_MS = 55000` (Browserless pode usar até o cap dele)
+- O `BROWSERLESS_FUNCTION` ganha um bloco final que faz `fetch(CALLBACK_URL, { headers: { 'x-callback-token': TOKEN }, body: JSON.stringify({ pedido_id, sucesso, protocolo, erro, screenshot_b64, trace }) })`
+- Lote: dispara N pedidos em paralelo (cada um background) em vez de sequencial
 
-### C) Cálculo de gatilho (ponto de pedido / estoque mínimo)
-Verifico se já existe uma edge function de cálculo (`calculate-scores` ou similar) que preencha `ponto_pedido` e `estoque_minimo`. Se existir, garanto que ela rode pros SKUs corrigidos. Se não existir ou não cobrir esses casos, crio uma edge function pequena `reposicao-calcular-gatilho` que aplica a fórmula:
-- `ponto_pedido = demanda_media_diaria × (lt_medio_dias_uteis + z × lt_desvio_padrao)`
-- `estoque_seguranca = z × demanda_desvio_padrao × √lt`
-- `estoque_minimo = estoque_seguranca`
-- z derivado da `classe_consolidada` (A=2.33, B=1.65, C=1.28).
+### 2. NOVA `supabase/functions/sayerlack-portal-callback/index.ts`
+- Pública (`verify_jwt = false` no `config.toml`), valida `x-callback-token` contra `SAYERLACK_CALLBACK_TOKEN`
+- Body: `{ pedido_id, sucesso, protocolo?, erro?, screenshot_b64?, trace? }`
+- Idempotente: `UPDATE ... WHERE id=? AND status_envio_portal='enviando_portal'`
+- Se sucesso: extrai a lógica "criar pedido de compra Omie" hoje em `disparar-pedidos-aprovados/index.ts` para `_shared/criar-pedido-compra-omie.ts` e invoca aqui
+- Se falha: persiste `portal_erro`, `portal_resposta`, `portal_screenshot_url` (upload no storage)
 
-Onde dados estatísticos não existem ainda (item zerado de fato), aplico a regra do item D abaixo.
+### 3. `disparar-pedidos-aprovados/index.ts`
+- Hoje: dispara portal e espera síncrono antes de criar pedido Omie
+- Depois: só dispara o portal (fire-and-forget); Omie é criado pelo callback
+- Adiciona `?modo=watchdog`: marca como `falha_envio_portal` quem está em `enviando_portal` há mais de 3min
 
-### D) Regra "baixo giro: sugere 1 unidade"
-Para SKUs com `classe_consolidada IN ('AY','AZ','BY','BZ','CY','CZ')` **OU** `demanda_media_diaria < 0.05` (≈ 1,5 un/mês):
-1. No motor que popula `pedido_compra_sugerido` (vou localizar o cron / edge function que gera as sugestões), adicionar branch:
-   - Se `estoque_disponivel = 0` e SKU tem fornecedor habilitado, **sugere `qtd_sugerida = max(lote_minimo_fornecedor, 1)`** com `motivo = 'baixo_giro_estoque_zerado'` e flag `requer_validacao_humana = true`.
-2. Na tela do Cockpit, esses itens já caem no modo "review" (graças ao `calcApprovalSuggestion` que classifica como manual quando há `requer_validacao_humana` ou ausência de histórico). Confirmo o badge "Validar".
-3. Adiciono campo `motivo` (string) ou reuso `detalhes` JSONB se já existir, sem migração disruptiva.
+### 4. Watchdog (cron 5min)
+- Insert via `supabase--insert` (não migration, contém anon key) chamando `disparar-pedidos-aprovados?modo=watchdog`
 
-### E) Memória de regra
-Salvo em `mem://business-rules/reposicao-baixo-giro` a regra dos itens D pra futuras alterações respeitarem.
+### 5. UI (`AdminPortalSayerlack.tsx` + `DispararAgoraButton.tsx`)
+- Botão dispara, mostra toast "Em processamento" e fecha (sem spinner 60s)
+- Lista faz `refetchInterval: 5000` enquanto houver pedido em `enviando_portal`
+- Quando vira `enviado_portal` ou `falha_envio_portal`: toast + lista atualiza
+- Indicador "em processamento há Xs" para pedidos com `enviado_portal_em` antigo
 
 ## Detalhes técnicos
 
-- **Sem schema novo agressivo**: vou tentar reaproveitar colunas existentes em `pedido_compra_sugerido`. Se faltar `motivo`/`requer_validacao_humana`, faço UMA migration aditiva mínima (NULL default).
-- **Funções afetadas**: `omie-sync-status-produtos`, `omie-sync-estoque`, e o gerador de sugestões (vou identificar — provavelmente `gerar-pedidos-diario` ou `calculate-scores`).
-- **UI**: adições não destrutivas em `AdminReposicaoParametros.tsx` e no Cockpit.
-- **Auto-resolução de alertas** (do que já entreguei) continua valendo.
+- **`EdgeRuntime.waitUntil`**: API Supabase Edge que mantém worker rodando após response. Dá ~150s extras — suficiente para o cap de 60s do Browserless.
+- **Token de callback**: novo secret `SAYERLACK_CALLBACK_TOKEN` (gerar uma vez). Browserless recebe via `context` injetado no payload.
+- **Idempotência**: callback só atualiza se `status='enviando_portal'`. Callbacks duplicados ou tardios viram no-op.
+- **URL pública callback**: `https://fzvklzpomgnyikkfkzai.supabase.co/functions/v1/sayerlack-portal-callback` — Browserless alcança normalmente.
+- **Rollback**: se algo der errado, basta reverter os arquivos e o watchdog libera os pedidos travados em até 3min.
 
-## Pergunta para destravar
+## Critérios de sucesso
 
-**Qual fornecedor atribuir aos SKUs WFOI.6857QT e WFOT.6857QT?** Posso te trazer a lista de fornecedores OBEN habilitados pra você escolher, se preferir.
+- Botão devolve resposta em <3s mesmo com portal lento
+- Pedidos de 70-100s no portal passam a ter sucesso (hoje falham)
+- Lote de 5 termina em ~60-90s (paralelo) vs ~5min (sequencial)
+- Pedidos travados >3min em `enviando_portal` viram `falha_envio_portal` automaticamente
+
+## Fora do escopo
+
+- Otimização interna do script Puppeteer (opção 1) — pode somar depois sem conflito
+- Retry automático de falhas — fica manual via "Disparar este pedido agora"
+- Realtime (uso polling 5s; trocar por subscription depois é trivial)
+
+## Pré-requisito
+
+Vou pedir o secret `SAYERLACK_CALLBACK_TOKEN` antes de começar a implementação.
