@@ -448,18 +448,29 @@ function AppSidebar({ collapsed, onToggle }: { collapsed: boolean; onToggle: () 
         collapsed ? 'w-sidebar-collapsed' : 'w-sidebar'
       )}
     >
-      {/* Logo — wordmark "Colacor" puro, sem ícone (Vercel/Mercury style) */}
+      {/* Logo — wordmark "Colacor" refinado: peso 500 + tracking -0.045em + underline gradient
+         O underline é a "spine" visual do app — gradient sutil que distingue Colacor de
+         qualquer template Vercel genérico. Aparece só na sidebar expandida. */}
       <div className={cn(
         'flex items-center h-topbar border-b border-sidebar-border px-3',
         collapsed ? 'justify-center' : 'justify-between'
       )}>
         {!collapsed && (
-          <span className="text-foreground font-semibold text-base tracking-tight" style={{ letterSpacing: '-0.03em' }}>
-            Colacor
-          </span>
+          <div className="flex items-baseline gap-0.5 group">
+            <span
+              className="text-foreground text-base"
+              style={{ fontWeight: 500, letterSpacing: '-0.045em' }}
+            >
+              Colacor
+            </span>
+            <span
+              aria-hidden
+              className="ml-0.5 inline-block w-1 h-1 rounded-full bg-gradient-to-br from-foreground to-status-info self-end mb-1.5 group-hover:scale-125 transition-transform"
+            />
+          </div>
         )}
         {collapsed && (
-          <div className="w-7 h-7 rounded-md bg-foreground text-background flex items-center justify-center font-semibold text-sm">
+          <div className="w-7 h-7 rounded-md bg-foreground text-background flex items-center justify-center text-sm" style={{ fontWeight: 500, letterSpacing: '-0.04em' }}>
             C
           </div>
         )}
@@ -584,9 +595,18 @@ function MobileNav({ open, onClose }: { open: boolean; onClose: () => void }) {
       <div className="fixed inset-0 z-50 bg-black/50 lg:hidden" onClick={onClose} />
       <div className="fixed left-0 top-0 bottom-0 z-50 flex w-64 flex-col overflow-hidden bg-sidebar border-r border-sidebar-border lg:hidden animate-slide-in-right">
         <div className="flex items-center justify-between h-topbar border-b border-sidebar-border px-3">
-          <span className="text-foreground font-semibold text-base tracking-tight" style={{ letterSpacing: '-0.03em' }}>
-            Colacor
-          </span>
+          <div className="flex items-baseline gap-0.5">
+            <span
+              className="text-foreground text-base"
+              style={{ fontWeight: 500, letterSpacing: '-0.045em' }}
+            >
+              Colacor
+            </span>
+            <span
+              aria-hidden
+              className="ml-0.5 inline-block w-1 h-1 rounded-full bg-gradient-to-br from-foreground to-status-info self-end mb-1.5"
+            />
+          </div>
           <button onClick={onClose} className="p-1.5 rounded-md text-sidebar-muted hover:text-sidebar-foreground">
             <X className="w-4 h-4" />
           </button>

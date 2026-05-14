@@ -206,8 +206,8 @@ const FinanceiroCockpit = () => {
         )}
       </div>
 
-      {/* Row 1: Big 3 */}
-      <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+      {/* Row 1: Big 3 — staggered reveal pra page load orquestrado */}
+      <div className="grid grid-cols-1 md:grid-cols-3 gap-4 stagger-children">
         <CockpitCard
           title="Caixa Disponível"
           value={fmtCompact(totalCC)}
@@ -239,8 +239,8 @@ const FinanceiroCockpit = () => {
         />
       </div>
 
-      {/* Row 2: Margens + Inadimplência + Risco */}
-      <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+      {/* Row 2: Margens + Inadimplência + Risco — também staggered */}
+      <div className="grid grid-cols-2 md:grid-cols-4 gap-3 stagger-children">
         <MiniCard label="Margem Bruta" value={`${margemBruta.toFixed(1)}%`}
           color={margemBruta >= 30 ? 'text-status-success' : 'text-status-warning'} />
         <MiniCard label="Margem Operacional" value={`${margemOp.toFixed(1)}%`}

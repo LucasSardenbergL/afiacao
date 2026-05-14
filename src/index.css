@@ -36,11 +36,13 @@
 
 @layer base {
   :root {
-    /* ── Backgrounds — escala neutra warm-leaning ── */
-    --background: 0 0% 100%;             /* #FFFFFF */
+    /* ── Backgrounds — escala neutra warm-leaning
+       Background é off-white (0 0% 99%) em vez de branco puro pra remover frieza
+       e dar leve hierarquia natural com cards (que ficam #FFF puro = ligeiramente acima). ── */
+    --background: 0 0% 99%;              /* #FCFCFC — off-white quase imperceptível */
     --foreground: 0 0% 9%;               /* #171717 — preto suave */
 
-    --card: 0 0% 100%;
+    --card: 0 0% 100%;                   /* cards #FFF puro flutuam sutilmente sobre o bg */
     --card-foreground: 0 0% 9%;
 
     --popover: 0 0% 100%;
@@ -232,18 +234,23 @@
     letter-spacing: -0.005em;            /* sutil tightening Vercel-style */
   }
 
-  /* ── Typography scale — peso 600 (não 700) e tracking apertado em headings ── */
+  /* ── Typography scale — refinada pós-revisão skill frontend-design
+     h1/h2 em peso 500 + tracking -0.04em criam sensação "fina e premium"
+     (peso 600+ parece "corporativo"; peso 400- parece "aplicação web genérica").
+     h3/h4 mantêm peso 600 — em densidade alta o destaque ainda é necessário. ── */
   h1 {
-    @apply text-2xl tracking-tight;
-    font-weight: 600;
-    line-height: 1.15;
-    letter-spacing: -0.02em;
+    @apply tracking-tight;
+    font-size: 1.875rem;                 /* 30px — page title forte sem ser dramático */
+    font-weight: 500;
+    line-height: 1.1;
+    letter-spacing: -0.04em;
   }
   h2 {
-    @apply text-xl tracking-tight;
-    font-weight: 600;
-    line-height: 1.2;
-    letter-spacing: -0.02em;
+    @apply tracking-tight;
+    font-size: 1.375rem;                 /* 22px */
+    font-weight: 500;
+    line-height: 1.15;
+    letter-spacing: -0.03em;
   }
   h3 {
     @apply text-base;
@@ -354,6 +361,34 @@
     line-height: 1.1;
   }
 
+  /* ── Stagger reveal — pra page load orquestrado (Vercel/Mercury feel)
+     Uso: <div class="stagger-children">{children que pegam fade-in-up sequencial}</div>
+     Os filhos recebem animation-delay incremental via CSS variable --stagger-index automática
+     (até 12 filhos via :nth-child). Para >12 filhos, defina --stagger-index inline. ── */
+  .stagger-children > * {
+    animation: fade-in-up 350ms cubic-bezier(0.16, 1, 0.3, 1) both;
+    animation-delay: calc(var(--stagger-index, 0) * 50ms);
+  }
+  .stagger-children > *:nth-child(1)  { --stagger-index: 0; }
+  .stagger-children > *:nth-child(2)  { --stagger-index: 1; }
+  .stagger-children > *:nth-child(3)  { --stagger-index: 2; }
+  .stagger-children > *:nth-child(4)  { --stagger-index: 3; }
+  .stagger-children > *:nth-child(5)  { --stagger-index: 4; }
+  .stagger-children > *:nth-child(6)  { --stagger-index: 5; }
+  .stagger-children > *:nth-child(7)  { --stagger-index: 6; }
+  .stagger-children > *:nth-child(8)  { --stagger-index: 7; }
+  .stagger-children > *:nth-child(9)  { --stagger-index: 8; }
+  .stagger-children > *:nth-child(10) { --stagger-index: 9; }
+  .stagger-children > *:nth-child(11) { --stagger-index: 10; }
+  .stagger-children > *:nth-child(12) { --stagger-index: 11; }
+
+  /* Respeita prefers-reduced-motion */
+  @media (prefers-reduced-motion: reduce) {
+    .stagger-children > * {
+      animation: none;
+    }
+  }
+
   /* ── Status text utilities (semantic tokens — substitui text-emerald-600 etc.) ── */
   .text-status-success { color: hsl(var(--status-success)); }
   .text-status-warning { color: hsl(var(--status-warning)); }
@@ -424,6 +459,11 @@
 @keyframes fade-in {
   from { opacity: 0; }
   to { opacity: 1; }
+}
+
+@keyframes fade-in-up {
+  from { opacity: 0; transform: translateY(6px); }
+  to { opacity: 1; transform: translateY(0); }
 }
 
 @keyframes scale-in {
