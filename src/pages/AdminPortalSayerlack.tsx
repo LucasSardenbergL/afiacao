@@ -153,7 +153,13 @@ export default function AdminPortalSayerlack() {
       if (error) throw error;
       return (data ?? []) as PedidoRow[];
     },
-    refetchInterval: 30_000,
+    // Polling adaptativo: 5s enquanto houver pedido em processamento (background
+    // do envio assíncrono), 30s caso contrário.
+    refetchInterval: (q) => {
+      const rows = (q.state.data ?? []) as PedidoRow[];
+      const hasProcessing = rows.some((r) => r.status_envio_portal === 'enviando_portal');
+      return hasProcessing ? 5_000 : 30_000;
+    },
   });
 
   // ---------- Histórico ----------
