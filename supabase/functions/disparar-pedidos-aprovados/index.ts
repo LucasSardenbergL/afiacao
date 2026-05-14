@@ -326,6 +326,16 @@ async function processarPedido(
       .replace(/-/g, "");
     const numeroPedido = `AFI${ts}${String(pedido.id).slice(-4)}`.slice(0, 15);
 
+    // d.1 Sayerlack/OBEN: envia ao portal ANTES e usa o protocolo como cContrato
+    let cContratoFinal = numeroPedido;
+    let protocoloPortal: string | null = null;
+    if (isSayerlackOben(pedido) && modo === "producao") {
+      protocoloPortal = await garantirEnvioPortalSayerlack(db, pedido.id);
+      // cContrato Omie aceita até 15 chars; protocolo é só dígitos
+      cContratoFinal = String(protocoloPortal).slice(0, 15);
+      result.canal = "portal_sayerlack";
+    }
+
     const produtos_incluir = (items as ItemRow[]).map((it, idx) => ({
       cCodIntItem: `ITEM${String(idx + 1).padStart(3, "0")}`,
       nCodProd: Number(it.sku_codigo_omie),
@@ -350,8 +360,9 @@ async function processarPedido(
       dDtPrevisao: diasUteisFromHoje(ltDias),
       nCodFor: Number(fornecedor.codigo),
       // cNumPedido (Nº do Pedido do Fornecedor) deixado em branco — preenchido pelo
-      // fornecedor quando confirmar. Usamos cContrato (Nº do Contrato) para nosso número interno.
-      cContrato: numeroPedido,
+      // fornecedor quando confirmar. Para Sayerlack, usamos o protocolo do portal
+      // como cContrato (Nº do Contrato); para os demais, número interno AFI...
+      cContrato: cContratoFinal,
       cCodParc,
       nQtdeParc,
       cObs:
