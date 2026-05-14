@@ -263,15 +263,21 @@ async function syncEstoque(supabase: any, startPage = 1, maxPages = 3, account: 
         }, []);
 
         if (stockRows.length > 0) {
-          const { error: upsertError } = await supabase
-            .from("omie_products")
-            .upsert(stockRows, { onConflict: "omie_codigo_produto,account" });
-
-          if (upsertError) {
-            console.error(`[Omie Vendas][${account}] Erro batch upsert estoque página ${pagina}:`, upsertError);
-          } else {
-            totalUpdated += stockRows.length;
+          // Não há unique constraint (omie_codigo_produto,account) — usar UPDATE por id
+          // em vez de upsert para evitar tentativas de INSERT que violam NOT NULL.
+          let okCount = 0;
+          for (const row of stockRows) {
+            const { error: updErr } = await supabase
+              .from("omie_products")
+              .update({ estoque: row.estoque, updated_at: row.updated_at })
+              .eq("id", row.id);
+            if (updErr) {
+              console.error(`[Omie Vendas][${account}] Erro update estoque ${row.omie_codigo_produto}:`, updErr.message);
+            } else {
+              okCount++;
+            }
           }
+          totalUpdated += okCount;
         }
 
         const skippedProducts = productCodes.length - stockRows.length;
