@@ -255,6 +255,55 @@ Deno.serve(async (req) => {
       }
     }
 
+    // 2.5) Espelhar status ativo/inativo na tabela omie_products (catálogo).
+    // Várias funções/RPCs (ex.: gerar_pedidos_sugeridos_ciclo) consultam omie_products.ativo,
+    // então mantemos os dois em sincronia para evitar SKUs inativos entrando em pedidos.
+    try {
+      const account = empresa.toLowerCase();
+      const { data: encontradosStatus } = await supabase
+        .from("sku_status_omie")
+        .select("sku_codigo_omie, ativo_no_omie")
+        .eq("empresa", empresa)
+        .in("fonte_sincronizacao", ["ListarProdutos"])
+        .not("ativo_no_omie", "is", null);
+
+      const inativos = (encontradosStatus ?? [])
+        .filter((r) => r.ativo_no_omie === false)
+        .map((r) => Number(r.sku_codigo_omie))
+        .filter((n) => Number.isFinite(n));
+      const ativos = (encontradosStatus ?? [])
+        .filter((r) => r.ativo_no_omie === true)
+        .map((r) => Number(r.sku_codigo_omie))
+        .filter((n) => Number.isFinite(n));
+
+      if (inativos.length > 0) {
+        const { error: opErr } = await supabase
+          .from("omie_products")
+          .update({ ativo: false })
+          .eq("account", account)
+          .in("omie_codigo_produto", inativos);
+        if (opErr) console.error("Espelhar inativos em omie_products falhou:", opErr.message);
+      }
+      if (ativos.length > 0) {
+        // Reativa apenas os que estão marcados ativos no Omie (em lotes para não estourar payload)
+        const CHUNK = 500;
+        for (let i = 0; i < ativos.length; i += CHUNK) {
+          const slice = ativos.slice(i, i + CHUNK);
+          const { error: opErr2 } = await supabase
+            .from("omie_products")
+            .update({ ativo: true })
+            .eq("account", account)
+            .in("omie_codigo_produto", slice);
+          if (opErr2) console.error("Reativar em omie_products falhou:", opErr2.message);
+        }
+      }
+    } catch (e) {
+      console.error(
+        "[omie-sync-status-produtos] espelhamento omie_products falhou:",
+        e instanceof Error ? e.message : String(e),
+      );
+    }
+
     // 3) SKUs alvo que NÃO foram encontrados na listagem → marcar como nao_existe_omie
     const naoEncontrados: string[] = [];
     for (const cod of alvoSet) {
