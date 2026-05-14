@@ -35,10 +35,10 @@ export function NetworkStatusIndicator() {
 
   const tone =
     status.quality === 'offline'
-      ? { label: 'Offline', icon: WifiOff, tint: 'text-status-error-bold', ring: 'ring-status-error/20' }
+      ? { label: 'Offline', icon: WifiOff, tint: 'text-status-error-bold', ring: 'ring-status-error/20', dot: 'bg-status-error' }
       : status.quality === 'slow'
-        ? { label: 'Conexão lenta', icon: Cloud, tint: 'text-status-warning-bold', ring: 'ring-status-warning/20' }
-        : { label: 'Online · fila pendente', icon: Wifi, tint: 'text-status-info-bold', ring: 'ring-status-info/20' };
+        ? { label: 'Conexão lenta', icon: Cloud, tint: 'text-status-warning-bold', ring: 'ring-status-warning/20', dot: 'bg-status-warning' }
+        : { label: 'Online · fila pendente', icon: Wifi, tint: 'text-status-info-bold', ring: 'ring-status-info/20', dot: 'bg-status-info' };
 
   const Icon = tone.icon;
 
