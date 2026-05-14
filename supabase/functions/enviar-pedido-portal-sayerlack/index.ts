@@ -1394,38 +1394,57 @@ Deno.serve(async (req) => {
     );
   }
 
-  const detalhes: ProcessResult[] = [];
-  let sucesso = 0;
-  let falhasDef = 0;
-  let falhasTmp = 0;
+  // === MODO ASYNC ===
+  // Retorna 202 imediato e processa em background via EdgeRuntime.waitUntil.
+  // UI faz polling em status_envio_portal. Imune ao cap de 60s do Browserless +
+  // ao timeout do edge function caller.
+  const asyncMode = body?.async_mode === true || body?.async === true;
+  if (asyncMode) {
+    // Marca todos os candidatos como enviando_portal IMEDIATAMENTE para a UI já
+    // refletir o estado correto antes do background pegar.
+    const ids = candidatos.map((c) => c.id);
+    await supabase
+      .from("pedido_compra_sugerido")
+      .update({ status_envio_portal: "enviando_portal", portal_erro: null })
+      .in("id", ids);
 
-  for (const p of candidatos) {
-    try {
-      const r = await processarPedido(supabase, p);
-      detalhes.push(r);
-      if (r.status_final === "enviado_portal") sucesso++;
-      else if (r.status_final === "falha_envio_portal") falhasDef++;
-      else if (r.status_final === "pendente_envio_portal") falhasTmp++;
-    } catch (e: any) {
-      console.error(`[envio-portal] Excecao no pedido #${p.id}:`, e?.message ?? e);
-      detalhes.push({
-        pedido_id: p.id,
-        status_inicial: p.status_envio_portal ?? "pendente_envio_portal",
-        status_final: "erro_excecao",
-        protocolo: null,
-        tentativas: p.portal_tentativas ?? 0,
-        erro: e?.message ?? String(e),
-        screenshot_url: null,
-        duracao_ms: 0,
+    // Dispara em background. Erros vão para o log e o watchdog libera depois.
+    const bgTask = processCandidatos(supabase, candidatos)
+      .then((r) => {
+        console.log(`[envio-portal][async] OK processados=${r.detalhes.length} sucesso=${r.sucesso} falhas=${r.falhasDef + r.falhasTmp}`);
+      })
+      .catch((e) => {
+        console.error("[envio-portal][async] Excecao geral:", e?.message ?? e);
       });
-      // Se for token invalido, abortar lote
-      if (String(e?.message ?? "").includes("BROWSERLESS_TOKEN invalido")) {
-        return new Response(
-          JSON.stringify({ error: e.message, detalhes }),
-          { headers: { ...corsHeaders, "Content-Type": "application/json" }, status: 500 },
-        );
-      }
+    // @ts-ignore - EdgeRuntime existe no runtime do Supabase Edge
+    if (typeof EdgeRuntime !== "undefined" && typeof EdgeRuntime.waitUntil === "function") {
+      // @ts-ignore
+      EdgeRuntime.waitUntil(bgTask);
     }
+
+    return new Response(
+      JSON.stringify({
+        modo,
+        async: true,
+        accepted: true,
+        pedido_ids: ids,
+        candidatos_encontrados: candidatos.length,
+        duracao_total_ms: Date.now() - tStart,
+      }),
+      { headers: { ...corsHeaders, "Content-Type": "application/json" }, status: 202 },
+    );
+  }
+
+  // === MODO SÍNCRONO (legado, usado pelo cron disparar-pedidos-aprovados) ===
+  const { detalhes, sucesso, falhasDef, falhasTmp } = await processCandidatos(supabase, candidatos);
+
+  // Se algum erro foi BROWSERLESS_TOKEN invalido, devolve 500
+  const tokenInvalid = detalhes.find((d) => (d.erro ?? "").includes("BROWSERLESS_TOKEN invalido"));
+  if (tokenInvalid) {
+    return new Response(
+      JSON.stringify({ error: tokenInvalid.erro, detalhes }),
+      { headers: { ...corsHeaders, "Content-Type": "application/json" }, status: 500 },
+    );
   }
 
   const duracao = Date.now() - tStart;
