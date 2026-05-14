@@ -402,6 +402,8 @@ async function processarPedido(
           omie_resposta: resp,
           fornecedor_notificado: modo === "producao",
           fornecedor_omie: fornecedor,
+          portal_protocolo: protocoloPortal,
+          cContrato_usado: cContratoFinal,
         },
         status: novoStatus,
         atualizado_em: new Date().toISOString(),
