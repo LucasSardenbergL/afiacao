@@ -188,6 +188,93 @@ interface ProcessResult {
   erro?: string;
 }
 
+function isSayerlackOben(pedido: PedidoRow): boolean {
+  return (
+    (pedido.empresa ?? "").toUpperCase() === "OBEN" &&
+    /sayerlack/i.test(pedido.fornecedor_nome ?? "")
+  );
+}
+
+/**
+ * Para pedidos Sayerlack/OBEN: garante que o pedido foi enviado ao portal
+ * Sayerlack ANTES de criar o pedido de compra no Omie. Retorna o protocolo
+ * para ser usado como cContrato no IncluirPedCompra.
+ *
+ * Lança erro se o portal falhou (impede criação no Omie sem protocolo).
+ */
+async function garantirEnvioPortalSayerlack(
+  db: any,
+  pedidoId: number,
+): Promise<string> {
+  // Já enviado em execução anterior?
+  const { data: pre } = await db
+    .from("pedido_compra_sugerido")
+    .select("status_envio_portal, portal_protocolo, portal_erro")
+    .eq("id", pedidoId)
+    .maybeSingle();
+  if (pre?.status_envio_portal === "enviado_portal" && pre?.portal_protocolo) {
+    console.log(`[disparar-pedidos] Pedido ${pedidoId}: portal já enviado (protocolo=${pre.portal_protocolo})`);
+    return String(pre.portal_protocolo);
+  }
+
+  // Inicia em pendente para o portal aceitar
+  await db
+    .from("pedido_compra_sugerido")
+    .update({
+      status_envio_portal: "pendente_envio_portal",
+      portal_erro: null,
+    })
+    .eq("id", pedidoId);
+
+  const SUPA_URL = Deno.env.get("SUPABASE_URL")!;
+  const SVC_KEY = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
+  const url = `${SUPA_URL}/functions/v1/enviar-pedido-portal-sayerlack`;
+
+  console.log(`[disparar-pedidos] Pedido ${pedidoId}: chamando portal Sayerlack...`);
+  const ctrl = new AbortController();
+  const timeout = setTimeout(() => ctrl.abort(), 180_000);
+  let resp: Response;
+  try {
+    resp = await fetch(url, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${SVC_KEY}`,
+      },
+      body: JSON.stringify({ pedido_id: pedidoId }),
+      signal: ctrl.signal,
+    });
+  } finally {
+    clearTimeout(timeout);
+  }
+
+  const body = await resp.json().catch(() => ({} as any));
+  if (!resp.ok) {
+    throw new Error(
+      `Portal Sayerlack retornou ${resp.status}: ${JSON.stringify(body).slice(0, 300)}`,
+    );
+  }
+
+  // Reler o pedido para obter status_envio_portal e portal_protocolo definitivos
+  const { data: post } = await db
+    .from("pedido_compra_sugerido")
+    .select("status_envio_portal, portal_protocolo, portal_erro")
+    .eq("id", pedidoId)
+    .maybeSingle();
+
+  if (post?.status_envio_portal !== "enviado_portal" || !post?.portal_protocolo) {
+    const detalhe = post?.portal_erro
+      ? `: ${post.portal_erro}`
+      : (body?.detalhes?.[0]?.erro ? `: ${body.detalhes[0].erro}` : "");
+    throw new Error(
+      `Envio ao portal Sayerlack não confirmado (status=${post?.status_envio_portal ?? "?"})${detalhe}`,
+    );
+  }
+
+  console.log(`[disparar-pedidos] Pedido ${pedidoId}: portal OK, protocolo=${post.portal_protocolo}`);
+  return String(post.portal_protocolo);
+}
+
 async function processarPedido(
   db: any,
   pedido: PedidoRow,
