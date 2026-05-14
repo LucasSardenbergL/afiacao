@@ -720,12 +720,11 @@ Deno.serve(async (req: Request) => {
     let aprovadosQuery = db
       .from("pedido_compra_sugerido")
       .select("id, empresa, fornecedor_nome, grupo_codigo, data_ciclo, valor_total, num_skus, status, condicao_pagamento_codigo, condicao_pagamento_descricao, num_parcelas")
-      .eq("empresa", empresa)
-      .eq("status", "aprovado_aguardando_disparo");
+      .eq("empresa", empresa);
 
     aprovadosQuery = pedidoId
-      ? aprovadosQuery.eq("id", pedidoId)
-      : aprovadosQuery.eq("data_ciclo", dataCiclo);
+      ? aprovadosQuery.eq("id", pedidoId).in("status", ["aprovado_aguardando_disparo", "falha_envio"])
+      : aprovadosQuery.eq("data_ciclo", dataCiclo).eq("status", "aprovado_aguardando_disparo");
 
     const { data: aprovadosRaw, error: aprErr } = await aprovadosQuery;
     if (aprErr) throw new Error(`Aprovados: ${aprErr.message}`);
