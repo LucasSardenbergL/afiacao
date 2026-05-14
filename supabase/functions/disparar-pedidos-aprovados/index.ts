@@ -743,18 +743,21 @@ Deno.serve(async (req: Request) => {
     }
 
     // 3. Expirar não aprovados
-    const { data: expRows, error: expErr } = await db
-      .from("pedido_compra_sugerido")
-      .update({
-        status: "expirado_sem_aprovacao",
-        atualizado_em: new Date().toISOString(),
-      })
-      .eq("empresa", empresa)
-      .eq("data_ciclo", dataCiclo)
-      .eq("status", "pendente_aprovacao")
-      .select("id");
-    if (expErr) console.error("[disparar-pedidos] expirar erro:", expErr.message);
-    const expirados = expRows?.length ?? 0;
+    let expirados = 0;
+    if (!pedidoId) {
+      const { data: expRows, error: expErr } = await db
+        .from("pedido_compra_sugerido")
+        .update({
+          status: "expirado_sem_aprovacao",
+          atualizado_em: new Date().toISOString(),
+        })
+        .eq("empresa", empresa)
+        .eq("data_ciclo", dataCiclo)
+        .eq("status", "pendente_aprovacao")
+        .select("id");
+      if (expErr) console.error("[disparar-pedidos] expirar erro:", expErr.message);
+      expirados = expRows?.length ?? 0;
+    }
     console.log(`[disparar-pedidos] ${expirados} pedidos expirados`);
 
     // 4. Processar cada aprovado
