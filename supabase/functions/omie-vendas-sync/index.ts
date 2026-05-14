@@ -1169,14 +1169,7 @@ serve(async (req) => {
   if (!__auth.ok) return __auth.response;
 
   try {
-    // Validar autenticação
     const authHeader = req.headers.get("Authorization");
-    if (!authHeader?.startsWith("Bearer ")) {
-      return new Response(JSON.stringify({ error: "Não autorizado" }), {
-        status: 401,
-        headers: { ...corsHeaders, "Content-Type": "application/json" },
-      });
-    }
 
     // Admin client (bypasses RLS) for DB operations
     const supabaseAdmin = createClient(
@@ -1184,24 +1177,19 @@ serve(async (req) => {
       Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!
     );
 
-    // User client for auth validation
-    const supabase = createClient(
-      Deno.env.get("SUPABASE_URL")!,
-      Deno.env.get("SUPABASE_ANON_KEY")!,
-      { global: { headers: { Authorization: authHeader } } }
-    );
-
-    const { data: { user }, error: userError } = await supabase.auth.getUser(
-      authHeader.replace("Bearer ", "")
-    );
-    if (userError || !user) {
-      return new Response(JSON.stringify({ error: "Token inválido" }), {
-        status: 401,
-        headers: { ...corsHeaders, "Content-Type": "application/json" },
-      });
+    // Resolve userId quando vier JWT staff; cron/service_role passam sem user.
+    let userId: string | null = null;
+    if (__auth.via === "staff" && authHeader?.startsWith("Bearer ")) {
+      const supabase = createClient(
+        Deno.env.get("SUPABASE_URL")!,
+        Deno.env.get("SUPABASE_ANON_KEY")!,
+        { global: { headers: { Authorization: authHeader } } }
+      );
+      const { data: { user } } = await supabase.auth.getUser(
+        authHeader.replace("Bearer ", "")
+      );
+      userId = user?.id ?? null;
     }
-
-    const userId = user.id;
 
     const { action, account: rawAccount, ...params } = await req.json();
     const account: Account = (rawAccount === "colacor") ? "colacor" : "oben";
