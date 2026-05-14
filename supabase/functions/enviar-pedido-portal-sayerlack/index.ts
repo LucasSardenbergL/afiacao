@@ -680,10 +680,9 @@ export default async ({ page, context }) => {
       trace.push({ step: 'snapshot_pos_efetivar_' + label, t: Date.now() - t0, snapshot: snap });
       console.log('[DEBUG_POS_EFETIVAR_' + label + ']', JSON.stringify(snap));
     };
-    // Capturar 3 snapshots: 1s, 4s, 8s pós-efetivar
+    // Captura só 1 snapshot rápido. O pedido #116 clicou em Efetivar perto de 53s;
+    // os snapshots de 4s/8s consumiam a janela restante do Browserless antes da confirmação.
     await snapshotPosEfetivar('1s', 1000);
-    await snapshotPosEfetivar('4s', 3000);
-    await snapshotPosEfetivar('8s', 4000);
 
     // Aguarda o texto de sucesso aparecer (Puppeteer suporta waitForFunction sem jsonValue)
     await page.waitForFunction(
@@ -691,7 +690,7 @@ export default async ({ page, context }) => {
         const body = document.body.innerText;
         return /Pedido \\d+ criado com sucesso/.test(body);
       },
-      { timeout: 10000 }
+      { timeout: 7000 }
     );
     // Extrai o texto via evaluate puro
     const successStr = await page.evaluate(() => {
