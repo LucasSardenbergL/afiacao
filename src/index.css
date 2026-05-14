@@ -86,6 +86,18 @@
     --status-info: 212 80% 50%;
     --status-info-foreground: 212 80% 32%;
     --status-info-bg: 212 80% 96%;
+
+    /* ── Status BOLD — vibração maior pra acentos curtos
+       (badge "Live", dot indicator, micro-celebration). NÃO usar em texto longo. ── */
+    --status-success-bold: 142 70% 42%;
+    --status-warning-bold: 32 95% 50%;
+    --status-error-bold: 0 78% 52%;
+    --status-info-bold: 212 90% 55%;
+
+    /* ── Identidade por empresa — monogramas + acentos sutis no UI ── */
+    --company-colacor: 0 0% 9%;          /* preto industrial */
+    --company-oben: 212 80% 35%;         /* azul distribuidor */
+    --company-sc: 142 50% 32%;           /* verde serviços */
     --status-pending: 35 80% 45%;
     --status-progress: 212 80% 50%;
     --status-danger: 0 65% 48%;
@@ -178,6 +190,17 @@
     --status-info: 212 80% 65%;
     --status-info-foreground: 212 80% 85%;
     --status-info-bg: 212 50% 12%;
+
+    /* status BOLD pra acento (dark) */
+    --status-success-bold: 142 70% 60%;
+    --status-warning-bold: 32 95% 65%;
+    --status-error-bold: 0 78% 65%;
+    --status-info-bold: 212 90% 70%;
+
+    /* identidade por empresa (dark — monograma fica mais brilhante) */
+    --company-colacor: 0 0% 95%;
+    --company-oben: 212 80% 60%;
+    --company-sc: 142 50% 55%;
     --status-pending: 35 80% 60%;
     --status-progress: 212 80% 65%;
     --status-danger: 0 70% 60%;
@@ -361,6 +384,64 @@
     line-height: 1.1;
   }
 
+  /* ── KPI delta — texto pequeno ao lado do valor ("R$ 1.2M ↑12%") ── */
+  .kpi-delta {
+    font-family: 'Geist Mono', 'JetBrains Mono', monospace;
+    font-feature-settings: 'tnum';
+    font-size: 0.6875rem;                /* 11px */
+    font-weight: 500;
+    letter-spacing: -0.01em;
+    vertical-align: middle;
+    margin-left: 0.375rem;
+  }
+
+  /* ── Mono tabular pra IDs, datas, CNPJs, códigos —
+     identifica visualmente "este é um valor preciso, não descrição" ── */
+  .font-tabular {
+    font-family: 'Geist Mono', 'JetBrains Mono', monospace;
+    font-feature-settings: 'tnum';
+    letter-spacing: -0.01em;
+  }
+
+  /* ── Atmosphere pra hero de cockpits — gradient radial sutil
+     (Mercury/Stripe Dashboard pattern, NÃO Bootstrap-style hero gigante) ── */
+  .bg-cockpit-hero {
+    background-image: radial-gradient(
+      ellipse 80% 60% at 50% -10%,
+      hsl(var(--muted)) 0%,
+      transparent 60%
+    );
+  }
+
+  /* ── Noise grain texture — atmosphere via SVG inline (3% opacity)
+     Aplicar em hero KPIs pra dar "tactility" sem custo de imagem ── */
+  .noise {
+    position: relative;
+  }
+  .noise::before {
+    content: '';
+    position: absolute;
+    inset: 0;
+    pointer-events: none;
+    opacity: 0.025;
+    background-image: url("data:image/svg+xml;utf8,%3Csvg viewBox='0 0 200 200' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' /%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)' /%3E%3C/svg%3E");
+    mix-blend-mode: multiply;
+  }
+  .dark .noise::before {
+    opacity: 0.04;
+    mix-blend-mode: screen;
+  }
+
+  /* ── Status colors BOLD — uso restrito a acentos (badge "Pago", dot "Live") ── */
+  .text-status-success-bold { color: hsl(var(--status-success-bold)); }
+  .text-status-warning-bold { color: hsl(var(--status-warning-bold)); }
+  .text-status-error-bold   { color: hsl(var(--status-error-bold)); }
+  .text-status-info-bold    { color: hsl(var(--status-info-bold)); }
+  .bg-status-success-bold   { background-color: hsl(var(--status-success-bold)); }
+  .bg-status-warning-bold   { background-color: hsl(var(--status-warning-bold)); }
+  .bg-status-error-bold     { background-color: hsl(var(--status-error-bold)); }
+  .bg-status-info-bold      { background-color: hsl(var(--status-info-bold)); }
+
   /* ── Stagger reveal — pra page load orquestrado (Vercel/Mercury feel)
      Uso: <div class="stagger-children">{children que pegam fade-in-up sequencial}</div>
      Os filhos recebem animation-delay incremental via CSS variable --stagger-index automática
@@ -466,6 +547,17 @@
   to { opacity: 1; transform: translateY(0); }
 }
 
+@keyframes shake {
+  0%, 100% { transform: translateX(0); }
+  10%, 30%, 50%, 70%, 90% { transform: translateX(-1px); }
+  20%, 40%, 60%, 80% { transform: translateX(1px); }
+}
+
+@keyframes ping-slow {
+  0% { transform: scale(1); opacity: 0.6; }
+  100% { transform: scale(1.4); opacity: 0; }
+}
+
 @keyframes scale-in {
   from { opacity: 0; transform: scale(0.96); }
   to { opacity: 1; transform: scale(1); }
@@ -499,4 +591,12 @@
   background: linear-gradient(90deg, transparent 25%, hsl(var(--muted) / 0.5) 50%, transparent 75%);
   background-size: 200% 100%;
   animation: shimmer 1.5s infinite;
+}
+
+.animate-shake {
+  animation: shake 600ms cubic-bezier(0.36, 0.07, 0.19, 0.97) 1;
+}
+
+.animate-ping-slow {
+  animation: ping-slow 1.8s cubic-bezier(0, 0, 0.2, 1) infinite;
 }

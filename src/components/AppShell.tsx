@@ -33,6 +33,8 @@ import { CompanySwitcher } from '@/components/shell/CompanySwitcher';
 import { NetworkStatusIndicator } from '@/components/shell/NetworkStatusIndicator';
 import { ThemeToggle } from '@/components/shell/ThemeToggle';
 import { useFeatureFlagBodyClass } from '@/hooks/useFeatureFlag';
+import { useSidebarFavorites } from '@/hooks/useSidebarFavorites';
+import { Star } from 'lucide-react';
 
 /* ─── Navigation config ─── */
 interface NavItem {
@@ -188,6 +190,8 @@ function SidebarSection({
   isActive,
   navigate,
   items,
+  onToggleFavorite,
+  isFavorite,
 }: {
   title: string;
   collapsed: boolean;
@@ -195,6 +199,8 @@ function SidebarSection({
   isActive: (path: string) => boolean;
   navigate: ReturnType<typeof useNavigate>;
   items: NavItem[];
+  onToggleFavorite?: (path: string) => void;
+  isFavorite?: (path: string) => boolean;
 }) {
   // Persistência localStorage do estado de cada seção pra preservar entre sessões
   const storageKey = `sidebar-section-${title}`;
@@ -216,7 +222,13 @@ function SidebarSection({
       <div className="mb-1">
         <div className="my-1 mx-2 border-t border-sidebar-border/50" />
         {items.map((item) => (
-          <SidebarItem key={item.path} item={item} active={isActive(item.path)} navigate={navigate} collapsed />
+          <SidebarItem
+            key={item.path}
+            item={item}
+            active={isActive(item.path)}
+            navigate={navigate}
+            collapsed
+          />
         ))}
       </div>
     );
@@ -239,9 +251,22 @@ function SidebarSection({
           )}
         />
       </button>
-      {open && items.map((item) => (
-        <SidebarItem key={item.path} item={item} active={isActive(item.path)} navigate={navigate} collapsed={false} />
-      ))}
+      {open && (
+        // stagger-children dá fade-in cascateado quando a seção expande
+        <div className="stagger-children">
+          {items.map((item) => (
+            <SidebarItem
+              key={item.path}
+              item={item}
+              active={isActive(item.path)}
+              navigate={navigate}
+              collapsed={false}
+              onToggleFavorite={onToggleFavorite}
+              isFavorite={isFavorite?.(item.path)}
+            />
+          ))}
+        </div>
+      )}
     </div>
   );
 }
@@ -251,37 +276,64 @@ function SidebarItem({
   active,
   navigate,
   collapsed,
+  onToggleFavorite,
+  isFavorite,
 }: {
   item: NavItem;
   active: boolean;
   navigate: ReturnType<typeof useNavigate>;
   collapsed: boolean;
+  onToggleFavorite?: (path: string) => void;
+  isFavorite?: boolean;
 }) {
   const Icon = item.icon;
+  const showStar = !collapsed && onToggleFavorite;
   const button = (
-    <button
-      onClick={() => navigate(item.path)}
+    <div
       className={cn(
-        'flex items-center gap-2.5 w-full rounded-md text-sm font-medium transition-colors',
-        collapsed ? 'justify-center px-2 py-2 mx-1' : 'px-3 py-1.5 mx-2',
-        active
-          ? 'bg-sidebar-accent text-sidebar-accent-foreground'
-          : 'text-sidebar-foreground hover:bg-sidebar-accent/60 hover:text-sidebar-accent-foreground'
+        'group/item relative flex items-center w-full',
+        collapsed ? 'justify-center mx-1' : 'mx-2',
       )}
     >
-      <Icon className={cn('shrink-0', collapsed ? 'w-5 h-5' : 'w-4 h-4')} />
-      {!collapsed && <span className="truncate">{item.label}</span>}
-      {!collapsed && item.badge && item.badge > 0 && (
-        <span className={cn(
-          'ml-auto text-2xs rounded-full px-1.5 py-0.5 min-w-[18px] text-center tabular-nums',
-          item.badgeVariant === 'destructive'
-            ? 'bg-destructive text-destructive-foreground'
-            : 'bg-primary text-primary-foreground'
-        )}>
-          {item.badge}
-        </span>
+      <button
+        onClick={() => navigate(item.path)}
+        className={cn(
+          'flex items-center gap-2.5 w-full rounded-md text-sm font-medium transition-colors',
+          collapsed ? 'justify-center px-2 py-2' : 'px-3 py-1.5',
+          active
+            ? 'bg-sidebar-accent text-sidebar-accent-foreground'
+            : 'text-sidebar-foreground hover:bg-sidebar-accent/60 hover:text-sidebar-accent-foreground'
+        )}
+      >
+        <Icon className={cn('shrink-0', collapsed ? 'w-5 h-5' : 'w-4 h-4')} />
+        {!collapsed && <span className="truncate">{item.label}</span>}
+        {!collapsed && item.badge && item.badge > 0 && (
+          <span className={cn(
+            'ml-auto text-2xs rounded-full px-1.5 py-0.5 min-w-[18px] text-center tabular-nums',
+            item.badgeVariant === 'destructive'
+              ? 'bg-destructive text-destructive-foreground'
+              : 'bg-primary text-primary-foreground'
+          )}>
+            {item.badge}
+          </span>
+        )}
+      </button>
+      {showStar && (
+        <button
+          type="button"
+          onClick={(e) => { e.stopPropagation(); onToggleFavorite!(item.path); }}
+          className={cn(
+            'absolute right-1.5 top-1/2 -translate-y-1/2 p-1 rounded-md transition-opacity',
+            isFavorite
+              ? 'opacity-100 text-status-warning-bold'
+              : 'opacity-0 group-hover/item:opacity-60 hover:opacity-100 text-sidebar-muted',
+          )}
+          aria-label={isFavorite ? 'Remover dos favoritos' : 'Adicionar aos favoritos'}
+        >
+          <Star className={cn('w-3 h-3', isFavorite && 'fill-current')} />
+        </button>
       )}
-    </button>
+    </div>
   );
 
   if (collapsed) {
@@ -302,6 +354,7 @@ function AppSidebar({ collapsed, onToggle }: { collapsed: boolean; onToggle: () 
   const navigate = useNavigate();
   const { isStaff } = useUserRole();
   const isSalesOnly = useSalesOnlyRestriction();
+  const { favorites, isFavorite, toggle: toggleFavorite } = useSidebarFavorites();
 
   // Contador de alertas de outlier pendentes (críticos + atenção)
   const { data: outlierPendentes } = useQuery({
@@ -485,16 +538,33 @@ function AppSidebar({ collapsed, onToggle }: { collapsed: boolean; onToggle: () 
         )}
       </div>
 
-      {/* Navigation — seções secundárias colapsadas por padrão (Performance, Inteligência, Automação, Gestão, Documentação) */}
+      {/* Navigation — Favoritos no topo (se houver) + seções secundárias colapsadas por padrão */}
       <nav className="flex-1 min-h-0 overflow-y-auto py-2">
+        {/* Favoritos pinados — coletados de todas as seções pelo path */}
+        {!isSalesOnly && favorites.length > 0 && !collapsed && (
+          <SidebarSection
+            title="Favoritos"
+            collapsed={false}
+            defaultOpen={true}
+            isActive={isActive}
+            navigate={navigate}
+            items={
+              sectionsWithBadges
+                .flatMap((s) => s.items)
+                .filter((item) => favorites.includes(item.path))
+                .filter((item) => !item.managerOnly || isStaff)
+            }
+            onToggleFavorite={toggleFavorite}
+            isFavorite={isFavorite}
+          />
+        )}
+
         {sectionsWithBadges.map((section) => {
-          // Sales-only restriction: only show "Vendas" section
           if (isSalesOnly && section.title !== 'Vendas') return null;
 
           const visibleItems = section.items.filter(item => !item.managerOnly || isStaff);
           if (visibleItems.length === 0) return null;
 
-          // Seções secundárias colapsadas por padrão pra reduzir ruído visual da sidebar
           const isSecondary = SECONDARY_SECTIONS.includes(section.title);
 
           return (
@@ -506,6 +576,8 @@ function AppSidebar({ collapsed, onToggle }: { collapsed: boolean; onToggle: () 
               isActive={isActive}
               navigate={navigate}
               items={visibleItems}
+              onToggleFavorite={toggleFavorite}
+              isFavorite={isFavorite}
             />
           );
         })}

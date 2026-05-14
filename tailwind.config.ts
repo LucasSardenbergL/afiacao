@@ -96,6 +96,9 @@ export default {
       fontFamily: {
         sans: ["Geist", "Inter", "system-ui", "-apple-system", "sans-serif"],
         mono: ["'Geist Mono'", "'JetBrains Mono'", "Fira Code", "monospace"],
+        // Display serif pra h1 de telas-hero (cockpits, design preview).
+        // Newsreader é Production Type, free, com optical sizes 6-72.
+        display: ["Newsreader", "'Source Serif 4'", "Georgia", "serif"],
       },
       fontSize: {
         "2xs": ["0.625rem", { lineHeight: "0.875rem" }],   // 10px

@@ -286,7 +286,7 @@ const SalesOrders = () => {
                       </p>
                       {order.omie_numero_pedido && (
                         <p className="text-xs text-muted-foreground">
-                          PV: {order.omie_numero_pedido.replace(/^0+/, '') || '0'}
+                          PV: <span className="font-tabular text-foreground">{order.omie_numero_pedido.replace(/^0+/, '') || '0'}</span>
                         </p>
                       )}
                     </div>

@@ -11,26 +11,46 @@ import { ALL_COMPANIES, COMPANIES, useCompany, type Company } from '@/contexts/C
 import { cn } from '@/lib/utils';
 
 /**
- * Cada empresa tem identidade visual mínima — monograma colorido em quadrado 20×20.
- * Cores dessaturadas alinhadas à paleta low-fatigue (ver docs/visual-direction/04-identidade.md).
+ * Identidade visual mínima por empresa via monogramas.
+ * Cores agora vêm de tokens CSS (--company-*) — respeitam dark mode.
+ *
+ * Refinement: monograma com inner highlight (top 1px white/15) pra dar "depth"
+ * tactile, e ring colorido sutil ao hover.
  */
-const COMPANY_VISUAL: Record<Company, { letter: string; bg: string; hint: string }> = {
-  colacor:    { letter: 'C', bg: 'hsl(0 0% 9%)',       hint: 'Indústria' },
-  oben:       { letter: 'O', bg: 'hsl(212 80% 35%)',   hint: 'Distribuidora' },
-  colacor_sc: { letter: 'S', bg: 'hsl(142 50% 32%)',   hint: 'Serviços' },
+const COMPANY_VISUAL: Record<Company, { letter: string; tokenVar: string; hint: string }> = {
+  colacor:    { letter: 'C', tokenVar: '--company-colacor', hint: 'Indústria' },
+  oben:       { letter: 'O', tokenVar: '--company-oben',    hint: 'Distribuidora' },
+  colacor_sc: { letter: 'S', tokenVar: '--company-sc',      hint: 'Serviços' },
 };
 
-function CompanyMonogram({ id, size = 20 }: { id: Company; size?: number }) {
+function CompanyMonogram({
+  id,
+  size = 20,
+  withRingOnHover = false,
+}: {
+  id: Company;
+  size?: number;
+  withRingOnHover?: boolean;
+}) {
   const v = COMPANY_VISUAL[id];
   return (
     <div
-      className="rounded-md flex items-center justify-center font-semibold text-white shrink-0"
+      className={cn(
+        'rounded-md flex items-center justify-center font-semibold text-white shrink-0 transition-all',
+        // Inner highlight pra "depth" tactile (top white at 15% via inset shadow)
+        // + outer shadow muito sutil pra elevar do background
+        'shadow-[inset_0_1px_0_hsl(0_0%_100%/0.18),0_1px_2px_hsl(0_0%_0%/0.06)]',
+        withRingOnHover && 'group-hover:ring-2 group-hover:ring-offset-1 group-hover:ring-offset-background',
+      )}
       style={{
         width: size,
         height: size,
-        backgroundColor: v.bg,
+        backgroundColor: `hsl(var(${v.tokenVar}))`,
         fontSize: size <= 20 ? 11 : 13,
         letterSpacing: '-0.02em',
+        // Ring color via custom property pra hover
+        // @ts-expect-error CSS var inline
+        '--tw-ring-color': `hsl(var(${v.tokenVar}) / 0.4)`,
       }}
       aria-hidden
     >
@@ -47,9 +67,9 @@ export function CompanySwitcher() {
       <DropdownMenuTrigger asChild>
         <button
           type="button"
-          className="inline-flex items-center gap-2 h-8 px-2 rounded-md text-sm font-medium text-muted-foreground hover:bg-muted hover:text-foreground transition-colors"
+          className="group inline-flex items-center gap-2 h-8 px-2 rounded-md text-sm font-medium text-muted-foreground hover:bg-muted hover:text-foreground transition-colors"
         >
-          <CompanyMonogram id={activeCompany} size={20} />
+          <CompanyMonogram id={activeCompany} size={20} withRingOnHover />
           <span className="hidden sm:inline">{companyInfo.shortName}</span>
           <ChevronsUpDown className="w-3 h-3 opacity-60" />
         </button>
@@ -67,7 +87,7 @@ export function CompanySwitcher() {
             <DropdownMenuItem
               key={id}
               onClick={() => setActiveCompany(id)}
-              className="flex items-center gap-3 py-2"
+              className="group flex items-center gap-3 py-2"
             >
               <CompanyMonogram id={id} size={28} />
               <div className="flex-1 min-w-0">

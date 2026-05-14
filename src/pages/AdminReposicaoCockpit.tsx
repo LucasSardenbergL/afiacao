@@ -2054,17 +2054,22 @@ export default function AdminReposicaoCockpit() {
 
   return (
     <div className="container mx-auto p-4 sm:p-6 space-y-6 max-w-7xl pb-24">
-      <header className="flex items-center justify-between gap-3 flex-wrap">
-        <div className="flex items-center gap-3">
-          <Sparkles className="h-6 w-6 text-primary" />
+      <header className="relative bg-cockpit-hero noise rounded-lg border border-border px-6 py-7 flex items-center justify-between gap-3 flex-wrap overflow-hidden">
+        <div className="relative flex items-center gap-3">
+          <Sparkles className="h-6 w-6 text-foreground/70" />
           <div>
-            <h1 className="text-2xl font-bold">Cockpit de Reposição</h1>
-            <p className="text-sm text-muted-foreground">
-              Todo o ciclo diário de compras em uma única tela
+            <p className="text-[10px] uppercase tracking-[0.18em] text-muted-foreground font-medium mb-1">
+              Reposição · Cockpit de compras
+            </p>
+            <h1 className="font-display" style={{ fontSize: '2rem', fontWeight: 500, letterSpacing: '-0.04em', lineHeight: 1.1 }}>
+              Ciclo diário
+            </h1>
+            <p className="text-sm text-muted-foreground mt-1">
+              Todo o pipeline de compras em uma única tela.
             </p>
           </div>
         </div>
-        <div className="flex items-center gap-2">
+        <div className="relative flex items-center gap-2">
           <Button
             size="sm"
             variant="ghost"

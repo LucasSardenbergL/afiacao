@@ -67,20 +67,31 @@ export function EmptyState({
     );
   }
 
-  // Operational (B2B default): denso, sem motion, sem decoração
+  // Operational (B2B default): denso, sem motion. Padrão de pontos decorativo SUTIL no fundo
+  // (dots 1px com ~6% opacity) — dá identidade sem distrair.
   return (
     <div
       className={cn(
-        'flex flex-col items-center justify-center text-center py-8 px-4',
+        'relative flex flex-col items-center justify-center text-center py-8 px-4 overflow-hidden',
         className,
       )}
     >
-      <Icon className="w-8 h-8 text-muted-foreground/60 mb-3" />
-      <h3 className="text-sm font-semibold text-foreground mb-1">{title}</h3>
-      <p className="text-sm text-muted-foreground max-w-[360px] leading-snug mb-4">
+      <div
+        aria-hidden
+        className="absolute inset-0 pointer-events-none opacity-[0.06]"
+        style={{
+          backgroundImage: 'radial-gradient(currentColor 1px, transparent 1px)',
+          backgroundSize: '14px 14px',
+          maskImage: 'radial-gradient(ellipse at center, black 30%, transparent 70%)',
+          WebkitMaskImage: 'radial-gradient(ellipse at center, black 30%, transparent 70%)',
+        }}
+      />
+      <Icon className="relative w-8 h-8 text-muted-foreground/60 mb-3" />
+      <h3 className="relative text-sm font-semibold text-foreground mb-1">{title}</h3>
+      <p className="relative text-sm text-muted-foreground max-w-[360px] leading-snug mb-4">
         {description}
       </p>
-      <div className="flex items-center gap-2">
+      <div className="relative flex items-center gap-2">
         {actionLabel && onAction && (
           <Button size="sm" onClick={onAction}>
             {actionLabel}
@@ -95,7 +106,7 @@ export function EmptyState({
       {helpHref && (
         <a
           href={helpHref}
-          className="mt-3 text-xs text-link-level hover:underline"
+          className="relative mt-3 text-xs text-link-level hover:underline"
           target="_blank"
           rel="noreferrer"
         >

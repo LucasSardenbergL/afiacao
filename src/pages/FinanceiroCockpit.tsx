@@ -185,17 +185,22 @@ const FinanceiroCockpit = () => {
 
   return (
     <div className="space-y-4 pb-24">
-      {/* Header */}
-      <div className="flex items-center justify-between flex-wrap gap-3">
-        <div>
-          <h1 className="text-2xl font-bold tracking-tight">Cockpit CFO</h1>
-          <p className="text-sm text-muted-foreground mt-1">
-            Consolidado — {new Date().toLocaleDateString('pt-BR', { month: 'long', year: 'numeric' })}
+      {/* Header — display serif Newsreader em h1 + atmosphere gradient sutil + noise */}
+      <div className="relative bg-cockpit-hero noise rounded-lg border border-border px-6 py-8 flex items-center justify-between flex-wrap gap-3 overflow-hidden">
+        <div className="relative">
+          <p className="text-[10px] uppercase tracking-[0.18em] text-muted-foreground font-medium mb-1.5">
+            Financeiro · Cockpit
+          </p>
+          <h1 className="font-display" style={{ fontSize: '2.25rem', fontWeight: 500, letterSpacing: '-0.04em', lineHeight: 1.1 }}>
+            Visão consolidada
+          </h1>
+          <p className="text-sm text-muted-foreground mt-1.5 tabular-nums">
+            {new Date().toLocaleDateString('pt-BR', { month: 'long', year: 'numeric' })}
           </p>
         </div>
         {/* Global transparency */}
         {confiabilidade.length > 0 && (
-          <div className="flex flex-col items-end gap-1">
+          <div className="relative flex flex-col items-end gap-1">
             {confiabilidade.map(c => (
               <div key={c.company} className="flex items-center gap-2">
                 <span className="text-xs font-medium">{COMPANIES[c.company as Company]?.shortName}</span>

@@ -29,11 +29,41 @@ export default function DesignPreview() {
 
   return (
     <div className="max-w-6xl mx-auto pb-24 space-y-12">
+      {/* HERO — KPI gigante + display serif headline + atmosphere */}
+      <section className="relative bg-cockpit-hero noise rounded-lg border border-border px-8 py-12 overflow-hidden">
+        <div className="relative flex items-start justify-between gap-6 flex-wrap">
+          <div className="space-y-3 max-w-2xl">
+            <p className="text-xs uppercase tracking-[0.18em] text-muted-foreground font-medium">
+              Design system · v3
+            </p>
+            <h1 className="font-display" style={{ fontSize: '3rem', fontWeight: 500, letterSpacing: '-0.04em', lineHeight: 1.05 }}>
+              Sistema visual da Colacor.
+            </h1>
+            <p className="text-base text-muted-foreground max-w-xl leading-relaxed">
+              Tokens, tipografia e componentes calibrados pra uso operacional 8h.
+              Baseados em <span className="text-foreground font-medium">Vercel</span>,{' '}
+              <span className="text-foreground font-medium">Mercury</span> e{' '}
+              <span className="text-foreground font-medium">Stripe Dashboard</span>.
+            </p>
+          </div>
+          <div className="space-y-1 text-right">
+            <p className="text-[10px] uppercase tracking-[0.18em] text-muted-foreground font-medium">
+              Receita consolidada · 30d
+            </p>
+            <p className="kpi-value text-foreground" style={{ fontSize: '4rem', lineHeight: 1 }}>
+              R$ 12.4M
+              <span className="kpi-delta text-status-success-bold">↑ 8.2%</span>
+            </p>
+            <p className="text-xs text-muted-foreground tabular-nums">vs. mês anterior</p>
+          </div>
+        </div>
+      </section>
+
       {/* HEADER */}
       <header className="space-y-2">
         <div className="flex items-center justify-between">
           <div>
-            <h1>Design Preview</h1>
+            <h2>Design Preview</h2>
             <p className="text-sm text-muted-foreground mt-1">
               Showcase dos tokens novos. Use o toggle ao lado pra alternar light/dark.
             </p>

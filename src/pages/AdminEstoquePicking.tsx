@@ -286,10 +286,10 @@ function PickingTab({ account }: { account: string }) {
                       )}
                     </Button>
                   </TableCell>
-                  <TableCell className="font-mono text-xs">{truncate(t.id)}</TableCell>
-                  <TableCell className="font-mono text-xs">{truncate(t.sales_order_id)}</TableCell>
+                  <TableCell className="font-tabular text-xs">{truncate(t.id)}</TableCell>
+                  <TableCell className="font-tabular text-xs">{truncate(t.sales_order_id)}</TableCell>
                   <TableCell><StatusBadge status={t.status} /></TableCell>
-                  <TableCell className="font-mono text-xs">{truncate(t.assigned_to)}</TableCell>
+                  <TableCell className="font-tabular text-xs">{truncate(t.assigned_to)}</TableCell>
                   <TableCell className="text-xs">{fmtDate(t.created_at)}</TableCell>
                 </TableRow>
                 {expanded === t.id && (
@@ -318,8 +318,8 @@ function PickingTab({ account }: { account: string }) {
                                 <TableCell className="text-right text-xs">{it.quantidade}</TableCell>
                                 <TableCell className="text-right text-xs">{it.quantidade_separada ?? 0}</TableCell>
                                 <TableCell><StatusBadge status={it.status} /></TableCell>
-                                <TableCell className="font-mono text-xs">{it.lote_fefo ?? "—"}</TableCell>
-                                <TableCell className="font-mono text-xs">
+                                <TableCell className="font-tabular text-xs">{it.lote_fefo ?? "—"}</TableCell>
+                                <TableCell className="font-tabular text-xs">
                                   {it.lote_separado ? (
                                     <span className={it.lote_separado !== it.lote_fefo ? "text-warning" : ""}>
                                       {it.lote_separado}
@@ -406,7 +406,7 @@ function EstoqueTab({ account }: { account: string }) {
               )}
               {filtered.map((r: any) => (
                 <TableRow key={r.omie_codigo_produto}>
-                  <TableCell className="font-mono text-xs">{r.omie_codigo_produto}</TableCell>
+                  <TableCell className="font-tabular text-xs">{r.omie_codigo_produto}</TableCell>
                   <TableCell className="text-right">
                     {Number(r.saldo) <= 0 ? (
                       <Badge variant="outline" className="bg-destructive/15 text-destructive border-destructive/40">
@@ -475,9 +475,9 @@ function MovimentacoesTab() {
             {(data ?? []).map((e: any) => (
               <TableRow key={e.id}>
                 <TableCell className="text-xs"><Badge variant="outline">{e.event_type}</Badge></TableCell>
-                <TableCell className="font-mono text-xs">{truncate(e.picking_task_id)}</TableCell>
-                <TableCell className="font-mono text-xs">{e.lote_esperado ?? "—"}</TableCell>
-                <TableCell className="font-mono text-xs">
+                <TableCell className="font-tabular text-xs">{truncate(e.picking_task_id)}</TableCell>
+                <TableCell className="font-tabular text-xs">{e.lote_esperado ?? "—"}</TableCell>
+                <TableCell className="font-tabular text-xs">
                   {e.lote_informado ? (
                     <span className={e.lote_esperado && e.lote_informado !== e.lote_esperado ? "text-warning" : ""}>
                       {e.lote_informado}
@@ -557,8 +557,8 @@ function AuditoriaTab({ account }: { account: string }) {
             )}
             {(data ?? []).map((t: any) => (
               <TableRow key={t.id}>
-                <TableCell className="font-mono text-xs">{truncate(t.id)}</TableCell>
-                <TableCell className="font-mono text-xs">{truncate(t.sales_order_id)}</TableCell>
+                <TableCell className="font-tabular text-xs">{truncate(t.id)}</TableCell>
+                <TableCell className="font-tabular text-xs">{truncate(t.sales_order_id)}</TableCell>
                 <TableCell className="text-xs">{fmtDate(t.completed_at)}</TableCell>
                 <TableCell className="text-right">
                   {t.divergencias > 0 ? (
