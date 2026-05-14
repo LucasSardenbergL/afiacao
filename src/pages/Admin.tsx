@@ -174,38 +174,38 @@ const Admin = () => {
           
           <Button 
             variant="outline" 
-            className="w-full justify-between border-amber-300 bg-amber-50 hover:bg-amber-100"
+            className="w-full justify-between border-status-warning/30 bg-status-warning-bg hover:bg-status-warning-bg"
             onClick={() => navigate('/admin/demand-forecast')}
           >
             <div className="flex items-center gap-2">
-              <Clock className="w-4 h-4 text-amber-600" />
-              <span className="text-amber-900">Previsão de Demanda</span>
+              <Clock className="w-4 h-4 text-status-warning" />
+              <span className="text-status-warning-fg">Previsão de Demanda</span>
             </div>
-            <ChevronRight className="w-4 h-4 text-amber-600" />
+            <ChevronRight className="w-4 h-4 text-status-warning" />
           </Button>
           
           <Button 
             variant="outline" 
-            className="w-full justify-between border-emerald-300 bg-emerald-50 hover:bg-emerald-100"
+            className="w-full justify-between border-status-success/30 bg-status-success-bg hover:bg-status-success-bg"
             onClick={() => navigate('/admin/route-planner')}
           >
             <div className="flex items-center gap-2">
-              <MapPin className="w-4 h-4 text-emerald-600" />
-              <span className="text-emerald-900">Roteirizador</span>
+              <MapPin className="w-4 h-4 text-status-success" />
+              <span className="text-status-success-fg">Roteirizador</span>
             </div>
-            <ChevronRight className="w-4 h-4 text-emerald-600" />
+            <ChevronRight className="w-4 h-4 text-status-success" />
           </Button>
           
           <Button 
             variant="outline" 
-            className="w-full justify-between border-blue-300 bg-blue-50 hover:bg-blue-100"
+            className="w-full justify-between border-status-info/30 bg-status-info-bg hover:bg-status-info-bg"
             onClick={() => navigate('/admin/monthly-reports')}
           >
             <div className="flex items-center gap-2">
-              <Mail className="w-4 h-4 text-blue-600" />
-              <span className="text-blue-900">Relatório Mensal</span>
+              <Mail className="w-4 h-4 text-status-info" />
+              <span className="text-status-info-fg">Relatório Mensal</span>
             </div>
-            <ChevronRight className="w-4 h-4 text-blue-600" />
+            <ChevronRight className="w-4 h-4 text-status-info" />
           </Button>
           
           <Button 
@@ -304,7 +304,7 @@ const Admin = () => {
           </Card>
           <Card className="text-center">
             <CardContent className="pt-4 pb-3">
-              <p className="text-2xl font-bold text-amber-600">
+              <p className="text-2xl font-bold text-status-warning">
                 {orders.filter(o => !['entregue'].includes(o.status)).length}
               </p>
               <p className="text-xs text-muted-foreground">Pendentes</p>
@@ -312,7 +312,7 @@ const Admin = () => {
           </Card>
           <Card className="text-center">
             <CardContent className="pt-4 pb-3">
-              <p className="text-2xl font-bold text-emerald-600">
+              <p className="text-2xl font-bold text-status-success">
                 {orders.filter(o => o.status === 'entregue').length}
               </p>
               <p className="text-xs text-muted-foreground">Entregues</p>

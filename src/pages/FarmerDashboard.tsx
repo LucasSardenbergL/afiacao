@@ -20,18 +20,18 @@ import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip
 
 // ─── Helpers ─────────────────────────────────────────────────────────
 const healthColors: Record<string, { bg: string; text: string; border: string }> = {
-  saudavel: { bg: 'bg-emerald-50', text: 'text-emerald-700', border: 'border-emerald-200' },
-  estavel: { bg: 'bg-blue-50', text: 'text-blue-700', border: 'border-blue-200' },
-  atencao: { bg: 'bg-amber-50', text: 'text-amber-700', border: 'border-amber-200' },
-  critico: { bg: 'bg-red-50', text: 'text-red-700', border: 'border-red-200' },
+  saudavel: { bg: 'bg-status-success-bg', text: 'text-status-success', border: 'border-status-success/30' },
+  estavel: { bg: 'bg-status-info-bg', text: 'text-status-info', border: 'border-status-info/30' },
+  atencao: { bg: 'bg-status-warning-bg', text: 'text-status-warning', border: 'border-status-warning/30' },
+  critico: { bg: 'bg-status-error-bg', text: 'text-status-error', border: 'border-status-error/30' },
 };
 const healthLabels: Record<string, string> = {
   saudavel: '💚 Saudável', estavel: '💙 Estável', atencao: '⚠️ Atenção', critico: '🔴 Crítico',
 };
 const agendaTypeConfig: Record<string, { label: string; color: string }> = {
-  risco: { label: '🔴 Risco', color: 'bg-red-100 text-red-800' },
-  expansao: { label: '🟢 Expansão', color: 'bg-emerald-100 text-emerald-800' },
-  follow_up: { label: '🔵 Follow-up', color: 'bg-blue-100 text-blue-800' },
+  risco: { label: '🔴 Risco', color: 'bg-status-error-bg text-status-error-fg' },
+  expansao: { label: '🟢 Expansão', color: 'bg-status-success-bg text-status-success-fg' },
+  follow_up: { label: '🔵 Follow-up', color: 'bg-status-info-bg text-status-info-fg' },
 };
 
 const fmt = (v: number) => v.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' });
@@ -336,8 +336,8 @@ const FarmerDashboard = () => {
               </CardHeader>
               <CardContent className="p-3 pt-0 space-y-2">
                 <WeightBar label="Risco/Recuperação" value={config.agenda_pct_risco * 100} color="bg-destructive" />
-                <WeightBar label="Expansão" value={config.agenda_pct_expansao * 100} color="bg-emerald-500" />
-                <WeightBar label="Follow-up" value={config.agenda_pct_followup * 100} color="bg-blue-500" />
+                <WeightBar label="Expansão" value={config.agenda_pct_expansao * 100} color="bg-status-success-bg0" />
+                <WeightBar label="Follow-up" value={config.agenda_pct_followup * 100} color="bg-status-info-bg0" />
               </CardContent>
             </Card>
             <Button variant="outline" className="w-full" onClick={() => navigate('/farmer/governance')}>

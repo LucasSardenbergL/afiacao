@@ -24,9 +24,9 @@ import { cn } from '@/lib/utils';
 
 // ─── Helpers ───────────────────────────────────────────────────────
 const directionConfig: Record<CopilotDirection, { color: string; bg: string; icon: any; label: string }> = {
-  positivo: { color: 'text-emerald-700', bg: 'bg-emerald-50 border-emerald-200', icon: TrendingUp, label: 'Positivo' },
-  neutro: { color: 'text-amber-700', bg: 'bg-amber-50 border-amber-200', icon: Minus, label: 'Neutro' },
-  risco: { color: 'text-red-700', bg: 'bg-red-50 border-red-200', icon: TrendingDown, label: 'Em Risco' },
+  positivo: { color: 'text-status-success', bg: 'bg-status-success-bg border-status-success/30', icon: TrendingUp, label: 'Positivo' },
+  neutro: { color: 'text-status-warning', bg: 'bg-status-warning-bg border-status-warning/30', icon: Minus, label: 'Neutro' },
+  risco: { color: 'text-status-error', bg: 'bg-status-error-bg border-status-error/30', icon: TrendingDown, label: 'Em Risco' },
 };
 
 const phaseLabels: Record<CopilotPhase, string> = {
@@ -38,10 +38,10 @@ const phaseLabels: Record<CopilotPhase, string> = {
 };
 
 const intentLabels: Record<CopilotIntent, { label: string; color: string }> = {
-  interesse: { label: 'Interesse', color: 'bg-emerald-100 text-emerald-800' },
-  objecao_preco: { label: 'Objeção Preço', color: 'bg-red-100 text-red-800' },
+  interesse: { label: 'Interesse', color: 'bg-status-success-bg text-status-success-fg' },
+  objecao_preco: { label: 'Objeção Preço', color: 'bg-status-error-bg text-status-error-fg' },
   objecao_tecnica: { label: 'Objeção Técnica', color: 'bg-orange-100 text-orange-800' },
-  falta_urgencia: { label: 'Falta Urgência', color: 'bg-amber-100 text-amber-800' },
+  falta_urgencia: { label: 'Falta Urgência', color: 'bg-status-warning-bg text-status-warning-fg' },
   comparacao_concorrente: { label: 'Concorrente', color: 'bg-purple-100 text-purple-800' },
   indiferenca: { label: 'Indiferença', color: 'bg-muted text-muted-foreground' },
 };
@@ -329,9 +329,9 @@ const FarmerCopilot = () => {
               </div>
 
               {inputMode === 'text' && (
-                <div className="flex items-start gap-1.5 p-2 rounded-md bg-amber-50 border border-amber-200">
-                  <AlertTriangle className="w-3.5 h-3.5 text-amber-600 mt-0.5 shrink-0" />
-                  <p className="text-[9px] text-amber-700">
+                <div className="flex items-start gap-1.5 p-2 rounded-md bg-status-warning-bg border border-status-warning/30">
+                  <AlertTriangle className="w-3.5 h-3.5 text-status-warning mt-0.5 shrink-0" />
+                  <p className="text-[9px] text-status-warning">
                     No modo texto, cole ou digite trechos da conversa e clique em "Analisar" para receber sugestões.
                   </p>
                 </div>
@@ -372,7 +372,7 @@ const FarmerCopilot = () => {
                 <div className="flex items-center justify-between">
                   <div className="flex items-center gap-2">
                     {inputMode === 'voice' ? (
-                      <div className="w-2 h-2 rounded-full bg-red-500 animate-pulse" />
+                      <div className="w-2 h-2 rounded-full bg-status-error-bg0 animate-pulse" />
                     ) : (
                       <Type className="w-3.5 h-3.5 text-primary" />
                     )}
@@ -445,7 +445,7 @@ const FarmerCopilot = () => {
                       className="h-7 w-7 p-0 shrink-0"
                       onClick={() => handleCopySuggestion(analysis.suggestion)}
                     >
-                      {copied ? <Check className="w-3 h-3 text-emerald-600" /> : <Copy className="w-3 h-3" />}
+                      {copied ? <Check className="w-3 h-3 text-status-success" /> : <Copy className="w-3 h-3" />}
                     </Button>
                   </div>
                   <div className="flex items-center justify-between mt-2">
@@ -572,8 +572,8 @@ const FarmerCopilot = () => {
                       return (
                         <div key={i} className="flex items-center gap-2 text-[9px]">
                           <div className={`w-2 h-2 rounded-full ${
-                            a.direction === 'positivo' ? 'bg-emerald-500' :
-                            a.direction === 'risco' ? 'bg-red-500' : 'bg-amber-500'
+                            a.direction === 'positivo' ? 'bg-status-success-bg0' :
+                            a.direction === 'risco' ? 'bg-status-error-bg0' : 'bg-status-warning-bg0'
                           }`} />
                           <span className="font-medium">{intentLabels[a.intent]?.label}</span>
                           <span className="text-muted-foreground">→</span>

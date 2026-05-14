@@ -18,6 +18,8 @@ import {
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { useUserRole } from '@/hooks/useUserRole';
+import { useFeatureFlag } from '@/hooks/useFeatureFlag';
+import { Sparkles, Undo2 } from 'lucide-react';
 
 /* ─── Types ─── */
 interface WeightConfig {
@@ -87,6 +89,7 @@ const SettingsConfig = () => {
   const [weights, setWeights] = useState(defaultWeights);
   const [activeTab, setActiveTab] = useState('recommendations');
   const [hasChanges, setHasChanges] = useState(false);
+  const [newVisualEnabled, toggleNewVisual] = useFeatureFlag('newVisual', true);
 
   const updateWeight = (key: string, value: number) => {
     setWeights(prev => prev.map(w => w.key === key ? { ...w, value } : w));
@@ -108,6 +111,32 @@ const SettingsConfig = () => {
 
   return (
     <div className="space-y-4">
+        {/* Visual feature flag — permite rollback do novo visual sem deploy */}
+        <Card>
+          <CardContent className="p-4 flex items-center justify-between gap-3">
+            <div className="flex items-start gap-3 min-w-0">
+              <div className={cn(
+                'p-2 rounded-md shrink-0',
+                newVisualEnabled ? 'bg-foreground text-background' : 'bg-muted text-muted-foreground',
+              )}>
+                {newVisualEnabled ? <Sparkles className="w-4 h-4" /> : <Undo2 className="w-4 h-4" />}
+              </div>
+              <div className="min-w-0">
+                <p className="text-sm font-medium">
+                  Novo visual {newVisualEnabled ? 'ativado' : 'desativado'}
+                  <Badge variant="outline" className="ml-2 text-2xs">{newVisualEnabled ? 'v3' : 'legacy'}</Badge>
+                </p>
+                <p className="text-xs text-muted-foreground mt-0.5">
+                  {newVisualEnabled
+                    ? 'Tokens novos (Geist, paleta neutra, sombras sutis). Veja showcase em /design-preview.'
+                    : 'Visual antigo restaurado (Inter, paleta azul HubSpot). Toggle volta ao novo.'}
+                </p>
+              </div>
+            </div>
+            <Switch checked={newVisualEnabled} onCheckedChange={toggleNewVisual} />
+          </CardContent>
+        </Card>
+
         {/* Prototype Warning */}
         <div className="flex items-center gap-3 rounded-lg border border-amber-500/30 bg-amber-500/10 p-3">
           <AlertTriangle className="w-5 h-5 text-amber-600 shrink-0" />

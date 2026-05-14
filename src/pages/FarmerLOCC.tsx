@@ -32,10 +32,10 @@ const fmtDur = (s: number) => {
 };
 
 const healthColors: Record<string, { bg: string; text: string }> = {
-  saudavel: { bg: 'bg-emerald-50', text: 'text-emerald-700' },
-  estavel: { bg: 'bg-blue-50', text: 'text-blue-700' },
-  atencao: { bg: 'bg-amber-50', text: 'text-amber-700' },
-  critico: { bg: 'bg-red-50', text: 'text-red-700' },
+  saudavel: { bg: 'bg-status-success-bg', text: 'text-status-success' },
+  estavel: { bg: 'bg-status-info-bg', text: 'text-status-info' },
+  atencao: { bg: 'bg-status-warning-bg', text: 'text-status-warning' },
+  critico: { bg: 'bg-status-error-bg', text: 'text-status-error' },
 };
 
 const metricLabels: Record<string, string> = {
@@ -47,9 +47,9 @@ const metricLabels: Record<string, string> = {
 
 const statusColors: Record<string, string> = {
   rascunho: 'bg-muted text-muted-foreground',
-  ativo: 'bg-blue-100 text-blue-800',
-  concluido: 'bg-emerald-100 text-emerald-800',
-  cancelado: 'bg-red-100 text-red-800',
+  ativo: 'bg-status-info-bg text-status-info-fg',
+  concluido: 'bg-status-success-bg text-status-success-fg',
+  cancelado: 'bg-status-error-bg text-status-error-fg',
 };
 
 type TabKey = 'overview' | 'experiments' | 'capacity' | 'adaptive';
@@ -264,11 +264,11 @@ const OverviewTab = memo(({ summary, metrics, scoringCalc, recalculate, navigate
         <CardContent className="p-3">
           <div className="flex items-center justify-between">
             <div className="flex items-center gap-2">
-              <Zap className="w-4 h-4 text-amber-600" />
+              <Zap className="w-4 h-4 text-status-warning" />
               <span className="text-xs font-semibold">Recomendações LIE</span>
             </div>
             <div className="flex items-center gap-1">
-              <span className="text-xs font-bold text-emerald-700">
+              <span className="text-xs font-bold text-status-success">
                 {recommendations.reduce((s, r) => s + [...r.crossSell, ...r.upSell].reduce((s2, rec) => s2 + rec.lie, 0), 0).toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' })}
               </span>
               <ChevronRight className="w-3 h-3 text-muted-foreground" />
@@ -400,8 +400,8 @@ const AdaptiveTab = memo(({ config, metrics, navigate }: { config: any; metrics:
         <div>
           <p className="text-[10px] text-muted-foreground mb-1">Quotas da Agenda</p>
           <WeightBar label="Risco/Recuperação" value={config.agenda_pct_risco * 100} color="bg-destructive" />
-          <WeightBar label="Expansão" value={config.agenda_pct_expansao * 100} color="bg-emerald-500" />
-          <WeightBar label="Follow-up" value={config.agenda_pct_followup * 100} color="bg-blue-500" />
+          <WeightBar label="Expansão" value={config.agenda_pct_expansao * 100} color="bg-status-success-bg0" />
+          <WeightBar label="Follow-up" value={config.agenda_pct_followup * 100} color="bg-status-info-bg0" />
         </div>
       </CardContent>
     </Card>
@@ -415,9 +415,9 @@ const AdaptiveTab = memo(({ config, metrics, navigate }: { config: any; metrics:
         </div>
         <div className="flex items-center gap-2">
           <Badge className={
-            metrics.portfolioRecommendation === 'expand' ? 'bg-emerald-100 text-emerald-800' :
-            metrics.portfolioRecommendation === 'reduce' ? 'bg-red-100 text-red-800' :
-            'bg-blue-100 text-blue-800'
+            metrics.portfolioRecommendation === 'expand' ? 'bg-status-success-bg text-status-success-fg' :
+            metrics.portfolioRecommendation === 'reduce' ? 'bg-status-error-bg text-status-error-fg' :
+            'bg-status-info-bg text-status-info-fg'
           }>
             {metrics.portfolioRecommendation === 'expand' ? '📈 Expandir' :
              metrics.portfolioRecommendation === 'reduce' ? '📉 Reduzir' :
@@ -513,11 +513,11 @@ const ExperimentCard = ({ experiment, onStart, onMeasure, onCancel }: {
 
         {experiment.status === 'ativo' && (
           <div className="grid grid-cols-3 gap-1 text-center mb-2">
-            <div className="bg-blue-50 rounded p-1">
+            <div className="bg-status-info-bg rounded p-1">
               <p className="text-[9px] text-muted-foreground">Controle</p>
               <p className="text-[10px] font-bold">{Number(experiment.control_metric_value).toFixed(2)}</p>
             </div>
-            <div className="bg-emerald-50 rounded p-1">
+            <div className="bg-status-success-bg rounded p-1">
               <p className="text-[9px] text-muted-foreground">Teste</p>
               <p className="text-[10px] font-bold">{Number(experiment.test_metric_value).toFixed(2)}</p>
             </div>
@@ -531,9 +531,9 @@ const ExperimentCard = ({ experiment, onStart, onMeasure, onCancel }: {
         {experiment.status === 'concluido' && (
           <div className="mb-2">
             <div className="flex items-center gap-2">
-              {experiment.winner === 'teste' && <CheckCircle className="w-4 h-4 text-emerald-600" />}
-              {experiment.winner === 'controle' && <CheckCircle className="w-4 h-4 text-blue-600" />}
-              {experiment.winner === 'inconclusivo' && <XCircle className="w-4 h-4 text-amber-600" />}
+              {experiment.winner === 'teste' && <CheckCircle className="w-4 h-4 text-status-success" />}
+              {experiment.winner === 'controle' && <CheckCircle className="w-4 h-4 text-status-info" />}
+              {experiment.winner === 'inconclusivo' && <XCircle className="w-4 h-4 text-status-warning" />}
               <span className="text-xs font-semibold">
                 Vencedor: {experiment.winner === 'teste' ? '🏆 Teste' : experiment.winner === 'controle' ? '🏆 Controle' : '⚖️ Inconclusivo'}
               </span>

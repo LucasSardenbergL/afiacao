@@ -20,10 +20,10 @@ import { ptBR } from 'date-fns/locale';
 /* ─── Helpers ─── */
 
 const ACTION_LABELS: Record<string, { label: string; color: string }> = {
-  proposal_created: { label: 'Proposta criada', color: 'bg-blue-500/10 text-blue-700 border-blue-500/20' },
-  proposal_approved: { label: 'Proposta aprovada', color: 'bg-emerald-500/10 text-emerald-700 border-emerald-500/20' },
+  proposal_created: { label: 'Proposta criada', color: 'bg-status-info/10 text-status-info border-status-info/20' },
+  proposal_approved: { label: 'Proposta aprovada', color: 'bg-status-success/10 text-status-success border-status-success/20' },
   proposal_rejected: { label: 'Proposta rejeitada', color: 'bg-destructive/10 text-destructive border-destructive/20' },
-  param_updated: { label: 'Parâmetro alterado', color: 'bg-amber-500/10 text-amber-700 border-amber-500/20' },
+  param_updated: { label: 'Parâmetro alterado', color: 'bg-status-warning/10 text-status-warning border-status-warning/20' },
   permission_override: { label: 'Override de permissão', color: 'bg-purple-500/10 text-purple-700 border-purple-500/20' },
   role_changed: { label: 'Role alterado', color: 'bg-orange-500/10 text-orange-700 border-orange-500/20' },
 };
@@ -68,7 +68,7 @@ function ParamsDiff({ before, after }: { before: Record<string, any> | null; aft
           <span className="font-mono text-muted-foreground">{key}:</span>
           <span className="text-destructive/80 line-through">{JSON.stringify(before?.[key] ?? '—')}</span>
           <ArrowRight className="w-2.5 h-2.5 text-muted-foreground" />
-          <span className="text-emerald-600 font-medium">{JSON.stringify(after?.[key] ?? '—')}</span>
+          <span className="text-status-success font-medium">{JSON.stringify(after?.[key] ?? '—')}</span>
         </div>
       ))}
       {changedKeys.length > 3 && (
@@ -290,9 +290,9 @@ export default function GovernanceAudit() {
                   <div className="flex items-start gap-3 p-3">
                     {/* Left: color bar */}
                     <div className={`w-1 self-stretch rounded-full shrink-0 ${
-                      log.action.includes('approved') ? 'bg-emerald-500' :
+                      log.action.includes('approved') ? 'bg-status-success-bg0' :
                       log.action.includes('rejected') ? 'bg-destructive' :
-                      log.action.includes('created') ? 'bg-blue-500' : 'bg-amber-500'
+                      log.action.includes('created') ? 'bg-status-info-bg0' : 'bg-status-warning-bg0'
                     }`} />
 
                     <div className="flex-1 min-w-0 space-y-1.5">
@@ -392,7 +392,7 @@ export default function GovernanceAudit() {
                             <ArrowRight className="w-3 h-3 text-muted-foreground" />
                           </>
                         )}
-                        <span className="text-emerald-600 font-mono font-medium">{log.new_value || '—'}</span>
+                        <span className="text-status-success font-mono font-medium">{log.new_value || '—'}</span>
                       </div>
                     </div>
                   </div>

@@ -268,6 +268,12 @@
     transition-timing-function: cubic-bezier(0.16, 1, 0.3, 1);
   }
 
+  /* ── Tabelas shadcn: tabular-nums automático em todas as células
+     (números alinham, valores R$ ficam comparáveis lendo verticalmente) ── */
+  table {
+    font-feature-settings: 'tnum';
+  }
+
   /* ── Caption / small text ── */
   .caption {
     @apply text-xs text-muted-foreground leading-tight;
@@ -278,6 +284,28 @@
 }
 
 @layer utilities {
+  /* ── Feature flag override: .legacy-visual reverte os tokens novos para os antigos ──
+     Aplicado no <html> via useFeatureFlagBodyClass quando newVisual=false em settings. */
+  html.legacy-visual {
+    --primary: 222 83% 53%;
+    --background: 220 14% 96%;
+    --muted: 220 14% 94%;
+    --muted-foreground: 220 10% 42%;
+    --border: 220 13% 87%;
+    --radius: 0.5rem;
+    --sidebar-background: 220 25% 11%;
+    --sidebar-foreground: 220 14% 80%;
+    --sidebar-primary: 222 83% 60%;
+    --sidebar-primary-foreground: 0 0% 100%;
+    --sidebar-accent: 220 20% 18%;
+    --sidebar-accent-foreground: 220 14% 96%;
+    --sidebar-border: 220 20% 18%;
+    --sidebar-muted: 220 14% 50%;
+  }
+  html.legacy-visual body {
+    font-family: 'Inter', system-ui, -apple-system, sans-serif;
+  }
+
   /* ── Surface utilities ── */
   .surface-0 { background-color: hsl(var(--surface-0)); }
   .surface-1 { background-color: hsl(var(--surface-1)); }

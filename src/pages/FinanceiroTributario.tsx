@@ -135,27 +135,27 @@ const FinanceiroTributario = () => {
                   <p className="text-xs text-muted-foreground">Receita Bruta {ano}</p>
                   <p className="text-lg font-bold">{fmtCompact(receitaAnual)}</p>
                 </div>
-                <div className="p-3 rounded-lg bg-red-50 text-center">
+                <div className="p-3 rounded-lg bg-status-error-bg text-center">
                   <p className="text-xs text-muted-foreground">Impostos Pagos</p>
-                  <p className="text-lg font-bold text-red-600">{fmtCompact(impostosAnual)}</p>
+                  <p className="text-lg font-bold text-status-error">{fmtCompact(impostosAnual)}</p>
                 </div>
-                <div className="p-3 rounded-lg bg-amber-50 text-center">
+                <div className="p-3 rounded-lg bg-status-warning-bg text-center">
                   <p className="text-xs text-muted-foreground">Alíquota Efetiva</p>
-                  <p className={`text-lg font-bold ${aliqEfetiva > 15 ? 'text-red-600' : 'text-amber-600'}`}>
+                  <p className={`text-lg font-bold ${aliqEfetiva > 15 ? 'text-status-error' : 'text-status-warning'}`}>
                     {aliqEfetiva.toFixed(2)}%
                   </p>
                 </div>
                 {snInfo && (
-                  <div className="p-3 rounded-lg bg-blue-50 text-center">
+                  <div className="p-3 rounded-lg bg-status-info-bg text-center">
                     <p className="text-xs text-muted-foreground">Faixa SN</p>
-                    <p className="text-lg font-bold text-blue-600">{snInfo.faixa}</p>
+                    <p className="text-lg font-bold text-status-info">{snInfo.faixa}</p>
                     <p className="text-xs text-muted-foreground">Alíq. nominal {snInfo.aliquota.toFixed(2)}%</p>
                   </div>
                 )}
                 {regime !== 'simples' && (
-                  <div className="p-3 rounded-lg bg-blue-50 text-center">
+                  <div className="p-3 rounded-lg bg-status-info-bg text-center">
                     <p className="text-xs text-muted-foreground">Regime</p>
-                    <p className="text-sm font-bold text-blue-600">Lucro Presumido</p>
+                    <p className="text-sm font-bold text-status-info">Lucro Presumido</p>
                     <p className="text-xs text-muted-foreground">Presunção {LP_RATES.comercio.presuncao}% (comércio)</p>
                   </div>
                 )}
@@ -182,15 +182,15 @@ const FinanceiroTributario = () => {
                   <div className="flex items-center gap-3 pt-1 border-t">
                     <span className="text-xs font-bold w-28">Total Estimado</span>
                     <div className="flex-1" />
-                    <span className="text-sm font-bold text-red-600 w-20 text-right">{fmtCompact(lpBreakdown.total)}</span>
+                    <span className="text-sm font-bold text-status-error w-20 text-right">{fmtCompact(lpBreakdown.total)}</span>
                     <span className="text-xs font-bold w-14 text-right">
                       {receitaAnual > 0 ? (lpBreakdown.total / receitaAnual * 100).toFixed(2) : '0'}%
                     </span>
                   </div>
                   {Math.abs(lpBreakdown.total - impostosAnual) > 1000 && impostosAnual > 0 && (
-                    <div className="flex items-start gap-2 p-2 rounded bg-amber-50 border border-amber-200 mt-2">
-                      <AlertTriangle className="w-3.5 h-3.5 text-amber-600 mt-0.5 shrink-0" />
-                      <p className="text-xs text-amber-700">
+                    <div className="flex items-start gap-2 p-2 rounded bg-status-warning-bg border border-status-warning/30 mt-2">
+                      <AlertTriangle className="w-3.5 h-3.5 text-status-warning mt-0.5 shrink-0" />
+                      <p className="text-xs text-status-warning">
                         Diferença de {fmtCompact(Math.abs(lpBreakdown.total - impostosAnual))} entre estimado e pago.
                         Pode indicar ISS, ICMS, ou categorização incorreta.
                       </p>
@@ -220,8 +220,8 @@ const FinanceiroTributario = () => {
                             <TableRow key={d.mes}>
                               <TableCell className="text-sm">{meses[d.mes - 1]}</TableCell>
                               <TableCell className="text-right text-sm">{fmtCompact(d.receita_bruta)}</TableCell>
-                              <TableCell className="text-right text-sm text-red-600">{fmtCompact(d.impostos)}</TableCell>
-                              <TableCell className={`text-right text-sm font-medium ${aliq > 15 ? 'text-red-600' : 'text-amber-600'}`}>
+                              <TableCell className="text-right text-sm text-status-error">{fmtCompact(d.impostos)}</TableCell>
+                              <TableCell className={`text-right text-sm font-medium ${aliq > 15 ? 'text-status-error' : 'text-status-warning'}`}>
                                 {aliq.toFixed(2)}%
                               </TableCell>
                             </TableRow>

@@ -101,11 +101,11 @@ const ESTADOS: Array<{ value: string; label: string }> = [
 function estadoBadgeClass(estado: string): string {
   switch (estado) {
     case "rascunho":
-      return "bg-amber-500/15 text-amber-700 dark:text-amber-400 border-amber-500/30";
+      return "bg-status-warning-bg0/15 text-status-warning border-status-warning/30";
     case "negociando":
-      return "bg-blue-500/15 text-blue-700 dark:text-blue-400 border-blue-500/30";
+      return "bg-status-info-bg0/15 text-status-info border-status-info/30";
     case "ativa":
-      return "bg-emerald-500/15 text-emerald-700 dark:text-emerald-400 border-emerald-500/30";
+      return "bg-status-success-bg0/15 text-status-success border-status-success/30";
     case "encerrada":
       return "bg-muted text-muted-foreground border-border";
     case "cancelada":
@@ -117,9 +117,9 @@ function estadoBadgeClass(estado: string): string {
 
 function confiancaBadge(c: number | null) {
   if (c === null || c === undefined) return null;
-  let cls = "bg-emerald-500/15 text-emerald-700 dark:text-emerald-400 border-emerald-500/30";
+  let cls = "bg-status-success-bg0/15 text-status-success border-status-success/30";
   if (c < 0.5) cls = "bg-destructive/15 text-destructive border-destructive/30";
-  else if (c <= 0.8) cls = "bg-amber-500/15 text-amber-700 dark:text-amber-400 border-amber-500/30";
+  else if (c <= 0.8) cls = "bg-status-warning-bg0/15 text-status-warning border-status-warning/30";
   return (
     <Badge variant="outline" className={cls}>
       {Math.round(c * 100)}%
@@ -421,10 +421,10 @@ export default function AdminReposicaoPromocoes() {
 
       {/* Alerta de campanhas aguardando revisão */}
       {aguardandoRevisao > 0 && filtroEstado !== "rascunho" && (
-        <Card className="border-amber-500/40 bg-amber-500/5">
+        <Card className="border-status-warning/40 bg-status-warning-bg0/5">
           <CardContent className="flex items-center justify-between gap-3 py-4">
             <div className="flex items-center gap-3">
-              <AlertTriangle className="h-5 w-5 text-amber-600 dark:text-amber-400" />
+              <AlertTriangle className="h-5 w-5 text-status-warning" />
               <div>
                 <p className="font-medium">
                   {aguardandoRevisao}{" "}
@@ -568,7 +568,7 @@ export default function AdminReposicaoPromocoes() {
                                 </TableCell>
                                 <TableCell>
                                   {c.tipo_origem === "negociacao_cliente" ? (
-                                    <Badge variant="outline" className="bg-blue-500/15 text-blue-700 dark:text-blue-400 border-blue-500/30">
+                                    <Badge variant="outline" className="bg-status-info-bg0/15 text-status-info border-status-info/30">
                                       Negociação
                                     </Badge>
                                   ) : (
@@ -660,7 +660,7 @@ export default function AdminReposicaoPromocoes() {
                         </Badge>
                       )}
                       {it.status === "processando" && (
-                        <Badge variant="outline" className="gap-1 bg-blue-500/15 text-blue-700 dark:text-blue-400 border-blue-500/30">
+                        <Badge variant="outline" className="gap-1 bg-status-info-bg0/15 text-status-info border-status-info/30">
                           <Loader2 className="h-3 w-3 animate-spin" /> Processando
                         </Badge>
                       )}
@@ -671,7 +671,7 @@ export default function AdminReposicaoPromocoes() {
                               variant="outline"
                               className={cn(
                                 "gap-1 cursor-help",
-                                "bg-emerald-500/15 text-emerald-700 dark:text-emerald-400 border-emerald-500/30",
+                                "bg-status-success-bg0/15 text-status-success border-status-success/30",
                               )}
                             >
                               <CheckCircle2 className="h-3 w-3" /> Concluído

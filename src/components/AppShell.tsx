@@ -32,6 +32,7 @@ import { CommandPaletteTrigger } from '@/components/shell/CommandPaletteTrigger'
 import { CompanySwitcher } from '@/components/shell/CompanySwitcher';
 import { NetworkStatusIndicator } from '@/components/shell/NetworkStatusIndicator';
 import { ThemeToggle } from '@/components/shell/ThemeToggle';
+import { useFeatureFlagBodyClass } from '@/hooks/useFeatureFlag';
 
 /* ─── Navigation config ─── */
 interface NavItem {
@@ -177,7 +178,125 @@ function useSalesOnlyRestriction() {
   return salesOnlyCpfs.includes(userDoc);
 }
 
-/* ─── Sidebar ─── */
+/* ─── Sidebar — seções secundárias colapsadas por padrão ─── */
+const SECONDARY_SECTIONS = ['Performance', 'Inteligência', 'Automação', 'Documentação'];
+
+function SidebarSection({
+  title,
+  collapsed,
+  defaultOpen,
+  isActive,
+  navigate,
+  items,
+}: {
+  title: string;
+  collapsed: boolean;
+  defaultOpen: boolean;
+  isActive: (path: string) => boolean;
+  navigate: ReturnType<typeof useNavigate>;
+  items: NavItem[];
+}) {
+  // Persistência localStorage do estado de cada seção pra preservar entre sessões
+  const storageKey = `sidebar-section-${title}`;
+  const [open, setOpen] = React.useState<boolean>(() => {
+    if (typeof window === 'undefined') return defaultOpen;
+    const stored = window.localStorage.getItem(storageKey);
+    return stored === null ? defaultOpen : stored === '1';
+  });
+
+  React.useEffect(() => {
+    if (typeof window !== 'undefined') {
+      window.localStorage.setItem(storageKey, open ? '1' : '0');
+    }
+  }, [open, storageKey]);
+
+  // Em modo collapsed, mostra todos sem agrupador (tooltip dá o nome)
+  if (collapsed) {
+    return (
+      <div className="mb-1">
+        <div className="my-1 mx-2 border-t border-sidebar-border/50" />
+        {items.map((item) => (
+          <SidebarItem key={item.path} item={item} active={isActive(item.path)} navigate={navigate} collapsed />
+        ))}
+      </div>
+    );
+  }
+
+  return (
+    <div className="mb-1">
+      <button
+        type="button"
+        onClick={() => setOpen((v) => !v)}
+        className="w-full flex items-center justify-between px-3 py-1.5 group"
+      >
+        <span className="text-2xs font-medium uppercase tracking-wider text-sidebar-muted group-hover:text-sidebar-foreground transition-colors">
+          {title}
+        </span>
+        <ChevronRight
+          className={cn(
+            'w-3 h-3 text-sidebar-muted transition-transform group-hover:text-sidebar-foreground',
+            open && 'rotate-90',
+          )}
+        />
+      </button>
+      {open && items.map((item) => (
+        <SidebarItem key={item.path} item={item} active={isActive(item.path)} navigate={navigate} collapsed={false} />
+      ))}
+    </div>
+  );
+}
+
+function SidebarItem({
+  item,
+  active,
+  navigate,
+  collapsed,
+}: {
+  item: NavItem;
+  active: boolean;
+  navigate: ReturnType<typeof useNavigate>;
+  collapsed: boolean;
+}) {
+  const Icon = item.icon;
+  const button = (
+    <button
+      onClick={() => navigate(item.path)}
+      className={cn(
+        'flex items-center gap-2.5 w-full rounded-md text-sm font-medium transition-colors',
+        collapsed ? 'justify-center px-2 py-2 mx-1' : 'px-3 py-1.5 mx-2',
+        active
+          ? 'bg-sidebar-accent text-sidebar-accent-foreground'
+          : 'text-sidebar-foreground hover:bg-sidebar-accent/60 hover:text-sidebar-accent-foreground'
+      )}
+    >
+      <Icon className={cn('shrink-0', collapsed ? 'w-5 h-5' : 'w-4 h-4')} />
+      {!collapsed && <span className="truncate">{item.label}</span>}
+      {!collapsed && item.badge && item.badge > 0 && (
+        <span className={cn(
+          'ml-auto text-2xs rounded-full px-1.5 py-0.5 min-w-[18px] text-center tabular-nums',
+          item.badgeVariant === 'destructive'
+            ? 'bg-destructive text-destructive-foreground'
+            : 'bg-primary text-primary-foreground'
+        )}>
+          {item.badge}
+        </span>
+      )}
+    </button>
+  );
+
+  if (collapsed) {
+    return (
+      <Tooltip delayDuration={0}>
+        <TooltipTrigger asChild>{button}</TooltipTrigger>
+        <TooltipContent side="right" className="font-medium">
+          {item.label}
+        </TooltipContent>
+      </Tooltip>
+    );
+  }
+  return button;
+}
+
 function AppSidebar({ collapsed, onToggle }: { collapsed: boolean; onToggle: () => void }) {
   const location = useLocation();
   const navigate = useNavigate();
@@ -329,20 +448,21 @@ function AppSidebar({ collapsed, onToggle }: { collapsed: boolean; onToggle: () 
         collapsed ? 'w-sidebar-collapsed' : 'w-sidebar'
       )}
     >
-      {/* Logo — usa foreground em vez de primary (evita cor de marca dominante) */}
+      {/* Logo — wordmark "Colacor" puro, sem ícone (Vercel/Mercury style) */}
       <div className={cn(
         'flex items-center h-topbar border-b border-sidebar-border px-3',
         collapsed ? 'justify-center' : 'justify-between'
       )}>
         {!collapsed && (
-          <div className="flex items-center gap-2">
-            <Scissors className="w-5 h-5 text-foreground" />
-            <span className="text-foreground font-semibold text-base tracking-tight">
-              Colacor
-            </span>
+          <span className="text-foreground font-semibold text-base tracking-tight" style={{ letterSpacing: '-0.03em' }}>
+            Colacor
+          </span>
+        )}
+        {collapsed && (
+          <div className="w-7 h-7 rounded-md bg-foreground text-background flex items-center justify-center font-semibold text-sm">
+            C
           </div>
         )}
-        {collapsed && <Scissors className="w-5 h-5 text-foreground" />}
         {!collapsed && (
           <button
             onClick={onToggle}
@@ -354,7 +474,7 @@ function AppSidebar({ collapsed, onToggle }: { collapsed: boolean; onToggle: () 
         )}
       </div>
 
-      {/* Navigation */}
+      {/* Navigation — seções secundárias colapsadas por padrão (Performance, Inteligência, Automação, Gestão, Documentação) */}
       <nav className="flex-1 min-h-0 overflow-y-auto py-2">
         {sectionsWithBadges.map((section) => {
           // Sales-only restriction: only show "Vendas" section
@@ -363,61 +483,19 @@ function AppSidebar({ collapsed, onToggle }: { collapsed: boolean; onToggle: () 
           const visibleItems = section.items.filter(item => !item.managerOnly || isStaff);
           if (visibleItems.length === 0) return null;
 
+          // Seções secundárias colapsadas por padrão pra reduzir ruído visual da sidebar
+          const isSecondary = SECONDARY_SECTIONS.includes(section.title);
+
           return (
-            <div key={section.title} className="mb-1">
-              {!collapsed && (
-                <div className="px-3 py-1.5">
-                  <span className="text-2xs font-medium uppercase tracking-wider text-sidebar-muted">
-                    {section.title}
-                  </span>
-                </div>
-              )}
-              {collapsed && <div className="my-1 mx-2 border-t border-sidebar-border/50" />}
-              {visibleItems.map((item) => {
-                const active = isActive(item.path);
-                const Icon = item.icon;
-
-                const button = (
-                  <button
-                    key={item.path}
-                    onClick={() => navigate(item.path)}
-                    className={cn(
-                      'flex items-center gap-2.5 w-full rounded-md text-sm font-medium transition-colors',
-                      collapsed ? 'justify-center px-2 py-2 mx-1' : 'px-3 py-1.5 mx-2',
-                      active
-                        ? 'bg-sidebar-accent text-sidebar-accent-foreground'
-                        : 'text-sidebar-foreground hover:bg-sidebar-accent/60 hover:text-sidebar-accent-foreground'
-                    )}
-                  >
-                    <Icon className={cn('shrink-0', collapsed ? 'w-5 h-5' : 'w-4 h-4')} />
-                    {!collapsed && <span className="truncate">{item.label}</span>}
-                    {!collapsed && item.badge && item.badge > 0 && (
-                      <span className={cn(
-                        'ml-auto text-2xs rounded-full px-1.5 py-0.5 min-w-[18px] text-center',
-                        item.badgeVariant === 'destructive'
-                          ? 'bg-destructive text-destructive-foreground'
-                          : 'bg-primary text-primary-foreground'
-                      )}>
-                        {item.badge}
-                      </span>
-                    )}
-                  </button>
-                );
-
-                if (collapsed) {
-                  return (
-                    <Tooltip key={item.path} delayDuration={0}>
-                      <TooltipTrigger asChild>{button}</TooltipTrigger>
-                      <TooltipContent side="right" className="font-medium">
-                        {item.label}
-                      </TooltipContent>
-                    </Tooltip>
-                  );
-                }
-
-                return <React.Fragment key={item.path}>{button}</React.Fragment>;
-              })}
-            </div>
+            <SidebarSection
+              key={section.title}
+              title={section.title}
+              collapsed={collapsed}
+              defaultOpen={!isSecondary}
+              isActive={isActive}
+              navigate={navigate}
+              items={visibleItems}
+            />
           );
         })}
       </nav>
@@ -506,10 +584,9 @@ function MobileNav({ open, onClose }: { open: boolean; onClose: () => void }) {
       <div className="fixed inset-0 z-50 bg-black/50 lg:hidden" onClick={onClose} />
       <div className="fixed left-0 top-0 bottom-0 z-50 flex w-64 flex-col overflow-hidden bg-sidebar border-r border-sidebar-border lg:hidden animate-slide-in-right">
         <div className="flex items-center justify-between h-topbar border-b border-sidebar-border px-3">
-          <div className="flex items-center gap-2">
-            <Scissors className="w-5 h-5 text-foreground" />
-            <span className="text-foreground font-semibold text-base tracking-tight">Colacor</span>
-          </div>
+          <span className="text-foreground font-semibold text-base tracking-tight" style={{ letterSpacing: '-0.03em' }}>
+            Colacor
+          </span>
           <button onClick={onClose} className="p-1.5 rounded-md text-sidebar-muted hover:text-sidebar-foreground">
             <X className="w-4 h-4" />
           </button>
@@ -558,6 +635,9 @@ function MobileNav({ open, onClose }: { open: boolean; onClose: () => void }) {
 export function AppShell({ children }: { children: React.ReactNode }) {
   const [collapsed, setCollapsed] = useState(false);
   const [mobileOpen, setMobileOpen] = useState(false);
+
+  // Aplica .legacy-visual no <html> quando feature flag newVisual = false
+  useFeatureFlagBodyClass('newVisual', 'legacy-visual', /* invert */ true);
 
   return (
     <AppShellProvider>
