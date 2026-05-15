@@ -192,16 +192,16 @@ function cenarioLabel(cenario: Cenario): string {
 
 function descontoBadgeClass(p: number | null | undefined): string {
   const v = Number(p ?? 0);
-  if (v >= 15) return "bg-status-success-bg0/15 text-status-success border-status-success/30";
-  if (v >= 7) return "bg-status-info-bg0/15 text-status-info border-status-info/30";
-  if (v > 0) return "bg-status-warning-bg0/15 text-status-warning border-status-warning/30";
+  if (v >= 15) return "bg-status-success/15 text-status-success border-status-success/30";
+  if (v >= 7) return "bg-status-info/15 text-status-info border-status-info/30";
+  if (v > 0) return "bg-status-warning/15 text-status-warning border-status-warning/30";
   return "bg-muted text-muted-foreground border-border";
 }
 
 function diasBadge(dias: number | null | undefined) {
   const d = dias ?? 999;
   if (d < 3) return "bg-destructive/15 text-destructive border-destructive/30";
-  if (d < 7) return "bg-status-warning-bg0/15 text-status-warning border-status-warning/30";
+  if (d < 7) return "bg-status-warning/15 text-status-warning border-status-warning/30";
   return "bg-muted text-muted-foreground border-border";
 }
 
@@ -569,7 +569,7 @@ export default function AdminReposicaoOportunidades() {
               {cicloHoje > 0 ? (
                 <>
                   <Badge
-                    className="bg-status-success-bg0/15 text-status-success border-status-success/30 cursor-pointer hover:bg-status-success-bg0/25"
+                    className="bg-status-success/15 text-status-success border-status-success/30 cursor-pointer hover:bg-status-success/25"
                     variant="outline"
                     onClick={() => setConfirmCicloOpen(true)}
                   >
@@ -947,7 +947,7 @@ function DrawerConteudo({
 
         {/* Promoção */}
         {incluiPromo && o.campanha_id && (
-          <Card className="border-status-warning/30 bg-status-warning-bg0/5">
+          <Card className="border-status-warning/30 bg-status-warning/5">
             <CardHeader className="pb-2">
               <CardTitle className="text-sm flex items-center gap-2">
                 <Sparkles className="h-4 w-4 text-status-warning" />
@@ -990,7 +990,7 @@ function DrawerConteudo({
 
         {/* Aumentos */}
         {incluiAumento && aumentos.length > 0 && (
-          <Card className="border-status-error/30 bg-status-error-bg0/5">
+          <Card className="border-status-error/30 bg-status-error/5">
             <CardHeader className="pb-2">
               <CardTitle className="text-sm flex items-center gap-2">
                 <TrendingUp className="h-4 w-4 text-status-error" />
@@ -1039,7 +1039,7 @@ function DrawerConteudo({
         )}
 
         {/* Cálculo */}
-        <Card className="border-status-success/30 bg-status-success-bg0/5">
+        <Card className="border-status-success/30 bg-status-success/5">
           <CardHeader className="pb-2">
             <CardTitle className="text-sm">Cálculo da economia</CardTitle>
           </CardHeader>

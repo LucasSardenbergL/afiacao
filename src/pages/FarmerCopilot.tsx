@@ -372,7 +372,7 @@ const FarmerCopilot = () => {
                 <div className="flex items-center justify-between">
                   <div className="flex items-center gap-2">
                     {inputMode === 'voice' ? (
-                      <div className="w-2 h-2 rounded-full bg-status-error-bg0 animate-pulse" />
+                      <div className="w-2 h-2 rounded-full bg-status-error animate-pulse" />
                     ) : (
                       <Type className="w-3.5 h-3.5 text-primary" />
                     )}
@@ -572,8 +572,8 @@ const FarmerCopilot = () => {
                       return (
                         <div key={i} className="flex items-center gap-2 text-[9px]">
                           <div className={`w-2 h-2 rounded-full ${
-                            a.direction === 'positivo' ? 'bg-status-success-bg0' :
-                            a.direction === 'risco' ? 'bg-status-error-bg0' : 'bg-status-warning-bg0'
+                            a.direction === 'positivo' ? 'bg-status-success' :
+                            a.direction === 'risco' ? 'bg-status-error' : 'bg-status-warning'
                           }`} />
                           <span className="font-medium">{intentLabels[a.intent]?.label}</span>
                           <span className="text-muted-foreground">→</span>

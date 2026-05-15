@@ -336,8 +336,8 @@ const FarmerDashboard = () => {
               </CardHeader>
               <CardContent className="p-3 pt-0 space-y-2">
                 <WeightBar label="Risco/Recuperação" value={config.agenda_pct_risco * 100} color="bg-destructive" />
-                <WeightBar label="Expansão" value={config.agenda_pct_expansao * 100} color="bg-status-success-bg0" />
-                <WeightBar label="Follow-up" value={config.agenda_pct_followup * 100} color="bg-status-info-bg0" />
+                <WeightBar label="Expansão" value={config.agenda_pct_expansao * 100} color="bg-status-success" />
+                <WeightBar label="Follow-up" value={config.agenda_pct_followup * 100} color="bg-status-info" />
               </CardContent>
             </Card>
             <Button variant="outline" className="w-full" onClick={() => navigate('/farmer/governance')}>

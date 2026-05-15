@@ -290,9 +290,9 @@ export default function GovernanceAudit() {
                   <div className="flex items-start gap-3 p-3">
                     {/* Left: color bar */}
                     <div className={`w-1 self-stretch rounded-full shrink-0 ${
-                      log.action.includes('approved') ? 'bg-status-success-bg0' :
+                      log.action.includes('approved') ? 'bg-status-success' :
                       log.action.includes('rejected') ? 'bg-destructive' :
-                      log.action.includes('created') ? 'bg-status-info-bg0' : 'bg-status-warning-bg0'
+                      log.action.includes('created') ? 'bg-status-info' : 'bg-status-warning'
                     }`} />
 
                     <div className="flex-1 min-w-0 space-y-1.5">

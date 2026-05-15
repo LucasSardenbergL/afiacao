@@ -400,8 +400,8 @@ const AdaptiveTab = memo(({ config, metrics, navigate }: { config: any; metrics:
         <div>
           <p className="text-[10px] text-muted-foreground mb-1">Quotas da Agenda</p>
           <WeightBar label="Risco/Recuperação" value={config.agenda_pct_risco * 100} color="bg-destructive" />
-          <WeightBar label="Expansão" value={config.agenda_pct_expansao * 100} color="bg-status-success-bg0" />
-          <WeightBar label="Follow-up" value={config.agenda_pct_followup * 100} color="bg-status-info-bg0" />
+          <WeightBar label="Expansão" value={config.agenda_pct_expansao * 100} color="bg-status-success" />
+          <WeightBar label="Follow-up" value={config.agenda_pct_followup * 100} color="bg-status-info" />
         </div>
       </CardContent>
     </Card>
