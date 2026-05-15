@@ -26,6 +26,8 @@ export class SipClient {
 
     this.ua.on('registered', () => this.setState('registered'));
     this.ua.on('unregistered', () => this.setState('idle'));
+    // JsSIP event payload typed loosely — only `cause` is consumed here
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
     this.ua.on('registrationFailed', (e: any) => {
       this.setState('register_failed');
       this.emit('error', new Error(`SIP registration failed: ${e.cause}`));
@@ -71,6 +73,8 @@ export class SipClient {
       this.setState('established');
       this.extractRemoteStream();
     });
+    // JsSIP event payload typed loosely — only `cause` is consumed here
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
     this.currentSession.on('failed', (e: any) => {
       this.setState('failed');
       this.emit('error', new Error(`Call failed: ${e.cause}`));
@@ -118,6 +122,8 @@ export class SipClient {
   }
 
   on<K extends EventName>(event: K, handler: SipClientEvents[K]): void {
+    // Mapped-type array narrowing fights `push` here; the runtime push is sound
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
     (this.listeners[event] ??= [] as any).push(handler);
   }
 
@@ -136,6 +142,8 @@ export class SipClient {
   private emit<K extends EventName>(event: K, ...args: Parameters<SipClientEvents[K]>): void {
     const arr = this.listeners[event];
     if (!arr) return;
+    // Variadic call across a mapped union of handler signatures — TS can't prove the arg shape, runtime is sound
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
     for (const fn of arr) (fn as any)(...args);
   }
 }
