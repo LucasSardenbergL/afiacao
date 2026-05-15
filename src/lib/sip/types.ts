@@ -1,5 +1,3 @@
-// src/lib/sip/types.ts
-
 export type SipCallState =
   | 'idle'
   | 'registering'
@@ -34,9 +32,4 @@ export interface SipClientEvents {
   /** stream que chega do cliente — usado pra transcrição em PR2 */
   remoteStream: (stream: MediaStream) => void;
   error: (err: Error) => void;
-}
-
-export interface SipCallEndedData {
-  durationSeconds: number;
-  cause: string;
 }
