@@ -136,7 +136,7 @@ export function CommandPalette() {
   // Isso casa melhor com Linear/Raycast: você digita, vê resultados remotos imediatos.
 
   return (
-    <CommandDialog open={open} onOpenChange={(v) => { setOpen(v); if (!v) setQuery(''); }} shouldFilter>
+    <CommandDialog open={open} onOpenChange={(v) => { setOpen(v); if (!v) setQuery(''); }}>
       <CommandInput
         placeholder="Buscar telas, clientes, fórmulas, pedidos..."
         value={query}
