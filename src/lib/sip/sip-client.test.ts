@@ -165,6 +165,35 @@ describe('SipClient — outbound call', () => {
     expect(stateSpy).toHaveBeenCalledWith('calling');
   });
 
+  it('emite localStream antes de chamar ua.call (ordering invariant)', () => {
+    const session = {
+      on: vi.fn(),
+      terminate: vi.fn(),
+      connection: { getReceivers: vi.fn(() => []) },
+    };
+    uaMock.call.mockReturnValue(session);
+
+    const client = new SipClient({
+      wsUri: 'wss://sip.nvoip.com.br:7443/ws',
+      sipDomain: 'sip.nvoip.com.br',
+      username: '1234567',
+      password: 'abc',
+    });
+    client.connect();
+
+    const callOrder: string[] = [];
+    client.on('localStream', () => callOrder.push('localStream'));
+    uaMock.call.mockImplementation(() => {
+      callOrder.push('ua.call');
+      return session;
+    });
+
+    const fakeMic = new MediaStream();
+    client.makeCall('3799999', fakeMic);
+
+    expect(callOrder).toEqual(['localStream', 'ua.call']);
+  });
+
   it('lança erro se chamada disparada sem REGISTER', () => {
     uaMock.isRegistered.mockReturnValue(false);
     const client = new SipClient({
