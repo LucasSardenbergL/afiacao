@@ -950,10 +950,17 @@ export default async ({ page, context }) => {
     trace.push({ step: 'pre_click_efetivar_diag', t: Date.now() - t0, diag: preClickDiag });
     console.log('[DEBUG_PRE_CLICK_EFETIVAR]', JSON.stringify(preClickDiag));
 
-    await page.click('#btnSalvarNovoPedido');
-    trace.push({ step: 'efetivar_clicked', t: Date.now() - t0 });
+    // === PR3: wait composto pós-submit ===
+    // Arma os 4 sinais ANTES do click — qualquer um que cumpra ganha. Ignora
+    // rejeições individuais via Promise.any. Substitui o waitForFunction de
+    // banner único do PR1/PR2 (sinal frágil que perdia respostas atrasadas).
+    const postSubmitBudget = budgetFor('submit-pedido', 10_000, { reserveSubmit: false, minMs: 2_000 });
+    const signalPromise = waitForPositiveSubmitSignal(page, postSubmitBudget);
 
-    // Snapshot imediato (sem sleep) pra capturar mudança instantânea no DOM
+    await page.click('#btnSalvarNovoPedido');
+    trace.push({ step: 'efetivar_clicked', t: Date.now() - t0, postSubmitBudget, remaining: remainingMs() });
+
+    // Snapshot imediato (sem sleep) pra capturar mudança instantânea no DOM.
     const snapImediato = await page.evaluate(function() {
       const btn = document.querySelector('#btnSalvarNovoPedido');
       return {
@@ -968,100 +975,142 @@ export default async ({ page, context }) => {
     trace.push({ step: 'snapshot_pos_efetivar_imediato', t: Date.now() - t0, snapshot: snapImediato });
     console.log('[DEBUG_POS_EFETIVAR_IMEDIATO]', JSON.stringify(snapImediato));
 
-    // Diagnóstico do estado da página pós-efetivar.
-    // Faz 3 snapshots em janelas de tempo distintas pra capturar evolução: 1s, 4s, 8s pós-click.
-    const snapshotPosEfetivar = async function(label, delayMs) {
-      await sleep(delayMs);
-      const snap = await page.evaluate(function() {
-        // Banner verde de sucesso (caso já tenha aparecido)
-        const corpo = document.body ? document.body.innerText : '';
-        const bannerSucesso = corpo.match(/Pedido\s*(\d+)\s*criado\s*com\s*sucesso/i);
+    // Aguarda o primeiro sinal positivo. Se nenhum cumprir no budget, lança
+    // AggregateError (Promise.any) — capturado e classificado abaixo.
+    let firstSignal;
+    try {
+      firstSignal = await signalPromise;
+    } catch (err) {
+      firstSignal = { kind: 'none', error: (err && err.message) || String(err) };
+    }
+    trace.push({ step: 'first_signal', kind: firstSignal.kind, t: Date.now() - t0, remaining: remainingMs() });
+    console.log('[DEBUG_FIRST_SIGNAL]', JSON.stringify({ kind: firstSignal.kind, error: firstSignal.error || null }));
 
-        // Modais visíveis (Bootstrap modal padrão do portal)
-        const modais = Array.from(document.querySelectorAll('.modal.show, .modal.in, [role="dialog"]'))
-          .filter(function(m) { return m.offsetParent !== null; })
-          .map(function(m) {
-            return {
-              texto: (m.innerText || '').trim().substring(0, 300),
-              classes: (m.className || '').substring(0, 100)
-            };
-          });
+    // Microjanela: 250ms a mais pro recorder receber o body da response caso o
+    // sinal vencedor tenha sido banner/modal/url (que chegam antes do network
+    // em alguns cenários).
+    if (remainingMs() > 800) {
+      await sleep(250);
+    }
 
-        // Mensagens de erro/validação inline (alerts, toasts, validações)
-        const alertas = Array.from(document.querySelectorAll('.alert, .toast, .invalid-feedback, .help-block, .validation-message, .error-message, [role="alert"]'))
-          .filter(function(a) { return a.offsetParent !== null; })
-          .map(function(a) {
-            return {
-              texto: (a.innerText || '').trim().substring(0, 200),
-              classes: (a.className || '').substring(0, 80)
-            };
-          })
-          .filter(function(info) { return info.texto.length > 0; });
+    // Extrai protocolo via cascata de fontes confiáveis:
+    //   1. body da response do POST capturado pelo Promise.any (mais confiável)
+    //   2. DOM do banner (quando o sinal vencedor foi banner)
+    //   3. fallback PR1.5: qualquer response capturada pelo recorder
+    let protocolo = null;
+    let protocoloSource = null;
+    let responseInfo = null;
+    let bodySuccessFalse = false;  // portal devolveu success:false explícito
 
-        // Campos com classe de erro/inválido
-        const camposInvalidos = Array.from(document.querySelectorAll('.is-invalid, .has-error, .field-error, [aria-invalid="true"]'))
-          .filter(function(el) { return el.offsetParent !== null; })
-          .map(function(el) {
-            return {
-              tag: el.tagName,
-              id: el.id || '',
-              name: el.getAttribute('name') || '',
-              classes: (el.className || '').substring(0, 80)
-            };
-          })
-          .slice(0, 10);
+    if (firstSignal.kind === 'network' && firstSignal.response) {
+      const r = await readResponseBodySafe(firstSignal.response);
+      responseInfo = {
+        status: r.status,
+        ok: r.ok,
+        contentType: r.contentType,
+        parsedKind: r.parsed ? 'json' : (r.body ? 'text' : 'empty'),
+      };
+      if (r.parsed && r.parsed.success === false) bodySuccessFalse = true;
+      if (r.parsed && !bodySuccessFalse) {
+        protocolo = tryExtractProtocoloFromObject(r.parsed);
+        if (protocolo) protocoloSource = 'network_json';
+      }
+      if (!protocolo && r.body && !bodySuccessFalse) {
+        protocolo = tryExtractProtocolo(r.body);
+        if (protocolo) protocoloSource = 'network_text';
+      }
+    }
 
-        // Botão "Efetivar Pedido" ainda existe? (se sim, o submit não foi aceito)
-        const btnEfetivarAindaPresente = !!document.querySelector('#btnSalvarNovoPedido');
-
-        return {
-          url: location.href,
-          title: document.title,
-          bannerSucesso: bannerSucesso ? bannerSucesso[0] : null,
-          pedidoNumero: bannerSucesso ? bannerSucesso[1] : null,
-          modais: modais,
-          modaisCount: modais.length,
-          alertas: alertas,
-          alertasCount: alertas.length,
-          camposInvalidos: camposInvalidos,
-          camposInvalidosCount: camposInvalidos.length,
-          btnEfetivarAindaPresente: btnEfetivarAindaPresente
-        };
+    if (!protocolo && firstSignal.kind === 'banner') {
+      protocolo = await page.evaluate(() => {
+        const body = (document.body && document.body.innerText) || '';
+        const m = body.match(/Pedido\\s+(\\d+)\\s+criado/i);
+        return m ? m[1] : null;
       });
-      trace.push({ step: 'snapshot_pos_efetivar_' + label, t: Date.now() - t0, snapshot: snap });
-      console.log('[DEBUG_POS_EFETIVAR_' + label + ']', JSON.stringify(snap));
-    };
-    // Captura só 1 snapshot rápido. O pedido #116 clicou em Efetivar perto de 53s;
-    // os snapshots de 4s/8s consumiam a janela restante do Browserless antes da confirmação.
-    await snapshotPosEfetivar('1s', 1000);
+      if (protocolo) protocoloSource = 'banner_dom';
+    }
 
-    // Aguarda o texto de sucesso aparecer. PR2: usa o que sobrou do budget,
-    // sem reservar mais nada (já estamos no submit). Se o banner não vier a
-    // tempo, o catch externo classifica via evidência do recorder (PR1) —
-    // se o POST saiu, vira indeterminado; se não, erro_retentavel.
-    await page.waitForFunction(
-      () => {
-        const body = document.body.innerText;
-        return /Pedido \\d+ criado com sucesso/.test(body);
-      },
-      { timeout: budgetFor('submit-pedido-banner', 10_000, { reserveSubmit: false, minMs: 2_000 }) }
-    );
-    // Extrai o texto via evaluate puro
-    const successStr = await page.evaluate(() => {
-      const body = document.body.innerText;
-      const match = body.match(/Pedido (\\d+) criado com sucesso/);
-      return match ? match[0] : null;
+    if (!protocolo && !bodySuccessFalse) {
+      // Fallback PR1.5: olha qualquer response no recorder (não só a que o
+      // Promise.any pegou — outros POSTs podem ter trazido o número também).
+      const evidenceForExtract = recorder.getSubmitEvidence();
+      const fromRecorder = extractProtocoloFromEvidence(evidenceForExtract);
+      if (fromRecorder) {
+        protocolo = fromRecorder.protocolo;
+        protocoloSource = 'recorder_fallback';
+      }
+    }
+
+    trace.push({
+      step: 'submit_classified',
+      firstSignalKind: firstSignal.kind,
+      protocolo,
+      protocoloSource,
+      responseInfo,
+      bodySuccessFalse,
+      t: Date.now() - t0
     });
-    const protocoloMatch = successStr ? successStr.match(/Pedido (\\d+) criado com sucesso/) : null;
-    const protocolo = protocoloMatch ? protocoloMatch[1] : null;
-    trace.push({ step: 'success_detected', protocolo, t: Date.now() - t0 });
+    console.log('[DEBUG_SUBMIT_CLASSIFIED]', JSON.stringify({
+      firstSignalKind: firstSignal.kind, protocolo, protocoloSource, responseInfo, bodySuccessFalse
+    }));
 
-    const screenshot = await page.screenshot({ type: 'jpeg', quality: 70, fullPage: false, encoding: 'base64' });
+    const screenshot = await page.screenshot({ type: 'jpeg', quality: 70, fullPage: false, encoding: 'base64' }).catch(() => null);
+
+    // Decisão final (alinhada com a cascata de classifySubmitResult do doc):
+    //  - Portal devolveu success:false explícito → falha; buildEnvelope vê
+    //    requestSent e classifica como indeterminado (operador concilia).
+    //  - Sinal positivo (network/banner/modal) OU protocolo extraído de
+    //    qualquer fonte → success:true; buildEnvelope mapeia para
+    //    sucesso_portal (com protocolo) ou aceito_portal_sem_protocolo.
+    //  - firstSignal === 'url' (só URL change, sem nada mais) → success:false
+    //    com erroTipo AMBIGUO_URL_ONLY → indeterminado.
+    //  - firstSignal === 'none' → success:false com erroTipo NO_POSITIVE_SIGNAL
+    //    → buildEnvelope decide via requestSent (POST capturado → indeterminado;
+    //    sem POST → erro_retentavel).
+    if (bodySuccessFalse) {
+      return {
+        data: {
+          success: false,
+          erroTipo: 'PORTAL_RESPONSE_FAILURE',
+          erro: 'Portal devolveu success:false na resposta do POST de efetivação',
+          firstSignal: { kind: firstSignal.kind },
+          responseInfo,
+          durationMs: Date.now() - t0,
+          trace,
+        },
+        type: 'application/json',
+        screenshot,
+      };
+    }
+
+    const positiveKinds = ['network', 'banner', 'modal'];
+    if (positiveKinds.indexOf(firstSignal.kind) !== -1 || protocolo) {
+      trace.push({ step: 'success_detected', protocolo, source: protocoloSource, t: Date.now() - t0 });
+      return {
+        data: {
+          success: true,
+          protocolo,
+          protocoloSource,
+          firstSignal: { kind: firstSignal.kind },
+          responseInfo,
+          successText: protocolo ? ('Pedido ' + protocolo + ' criado com sucesso') : null,
+          durationMs: Date.now() - t0,
+          trace,
+        },
+        type: 'application/json',
+        screenshot,
+      };
+    }
+
+    // firstSignal === 'url' ou 'none', sem protocolo.
     return {
       data: {
-        success: true,
-        protocolo,
-        successText: successStr,
+        success: false,
+        erroTipo: firstSignal.kind === 'url' ? 'AMBIGUO_URL_ONLY' : 'NO_POSITIVE_SIGNAL',
+        erro: firstSignal.kind === 'url'
+          ? 'Apenas mudança de URL detectada após submit — sem protocolo, requer conciliação'
+          : 'Nenhum sinal positivo de submit em ' + postSubmitBudget + 'ms (banner/modal/network/url todos timed out)',
+        firstSignal: { kind: firstSignal.kind, error: firstSignal.error || null },
         durationMs: Date.now() - t0,
         trace,
       },
