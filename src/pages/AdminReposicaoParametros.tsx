@@ -138,12 +138,13 @@ export default function AdminReposicaoParametros() {
 
   return (
     <ReposicaoEmpresaProvider value={{ empresa, setEmpresa }}>
-      <div className="container mx-auto p-4 sm:p-6 space-y-6 max-w-7xl">
+      <div className="space-y-6">
         <header className="flex flex-col sm:flex-row sm:items-center gap-3 justify-between">
           <div className="flex items-center gap-3">
             <Settings className="h-6 w-6 text-primary" />
             <div>
-              <h1 className="text-2xl font-bold">Parâmetros & Qualidade</h1>
+              <div className="text-[10px] font-semibold tracking-wider text-primary uppercase">Etapa 2</div>
+              <h1 className="text-2xl font-bold">Parâmetros</h1>
               <p className="text-sm text-muted-foreground">
                 Revisão de parâmetros, triagem de outliers, histórico de alterações e compliance de SLA — em um só lugar.
               </p>

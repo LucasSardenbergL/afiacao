@@ -192,12 +192,13 @@ export default function AdminReposicaoMercado() {
 
   return (
     <ReposicaoEmpresaProvider value={{ empresa, setEmpresa }}>
-      <div className="container mx-auto p-4 sm:p-6 space-y-6 max-w-7xl">
+      <div className="space-y-6">
         <header className="flex flex-col sm:flex-row sm:items-center gap-3 justify-between">
           <div className="flex items-center gap-3">
             <TrendingUp className="h-6 w-6 text-primary" />
             <div>
-              <h1 className="text-2xl font-bold">Inteligência de Mercado</h1>
+              <div className="text-[10px] font-semibold tracking-wider text-primary uppercase">Etapa 1</div>
+              <h1 className="text-2xl font-bold">Mercado</h1>
               <p className="text-sm text-muted-foreground">
                 Oportunidades de compra, promoções ativas, aumentos anunciados e negociações paralelas — em um só lugar.
               </p>

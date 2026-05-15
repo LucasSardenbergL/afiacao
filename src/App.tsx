@@ -123,6 +123,12 @@ const AdminReposicaoNegociacaoParalela = lazy(() => import("./pages/AdminReposic
 const AdminReposicaoCockpit = lazy(() => import("./pages/AdminReposicaoCockpit"));
 const AdminReposicaoParametros = lazy(() => import("./pages/AdminReposicaoParametros"));
 const AdminReposicaoMercado = lazy(() => import("./pages/AdminReposicaoMercado"));
+const AdminReposicaoSessaoPedidos = lazy(() => import("./pages/AdminReposicaoSessaoPedidos"));
+const AdminReposicaoSessaoAplicacao = lazy(() => import("./pages/AdminReposicaoSessaoAplicacao"));
+const AdminReposicaoSessaoConfirmacao = lazy(() => import("./pages/AdminReposicaoSessaoConfirmacao"));
+const AdminReposicaoSessaoHistorico = lazy(() => import("./pages/AdminReposicaoSessaoHistorico"));
+const ReposicaoSessionLayout = lazy(() => import("./components/reposicao/ReposicaoSessionLayout"));
+const LegacyCockpitRedirect = lazy(() => import("./components/reposicao/LegacyCockpitRedirect"));
 const AdminReposicaoCadastros = lazy(() => import("./pages/AdminReposicaoCadastros"));
 const AdminEstoqueRecebimento = lazy(() => import("./pages/AdminEstoqueRecebimento"));
 const AdminEstoquePicking = lazy(() => import("./pages/AdminEstoquePicking"));
@@ -263,7 +269,7 @@ const App = () => (
               <Route path="admin/reposicao/revisao" element={<AdminReposicaoRevisao />} />
               <Route path="admin/reposicao/historico" element={<AdminReposicaoHistorico />} />
               <Route path="admin/reposicao/alertas" element={<AdminReposicaoAlertas />} />
-              <Route path="admin/reposicao/aplicacao" element={<AdminReposicaoAplicacao />} />
+              <Route path="admin/reposicao/aplicacao" element={<Navigate to="/admin/reposicao/sessao/aplicacao" replace />} />
               <Route path="admin/reposicao/grupos-producao" element={<AdminReposicaoGruposProducao />} />
               <Route path="admin/reposicao/cadeia-logistica" element={<AdminReposicaoCadeiaLogistica />} />
               <Route path="admin/reposicao/pedidos" element={<AdminReposicaoPedidos />} />
@@ -277,9 +283,20 @@ const App = () => (
               <Route path="admin/reposicao/aumentos/:id" element={<AdminReposicaoAumentoDetail />} />
               <Route path="admin/reposicao/oportunidades" element={<AdminReposicaoOportunidades />} />
               <Route path="admin/reposicao/negociacao-paralela" element={<AdminReposicaoNegociacaoParalela />} />
-              <Route path="admin/reposicao/cockpit" element={<AdminReposicaoCockpit />} />
-              <Route path="admin/reposicao/parametros" element={<AdminReposicaoParametros />} />
-              <Route path="admin/reposicao/mercado" element={<AdminReposicaoMercado />} />
+              {/* Canonical /sessao routes (inside ReposicaoSessionLayout) */}
+              <Route element={<ReposicaoSessionLayout />}>
+                <Route path="admin/reposicao/sessao" element={<AdminReposicaoCockpit />} />
+                <Route path="admin/reposicao/sessao/mercado" element={<AdminReposicaoMercado />} />
+                <Route path="admin/reposicao/sessao/parametros" element={<AdminReposicaoParametros />} />
+                <Route path="admin/reposicao/sessao/pedidos" element={<AdminReposicaoSessaoPedidos />} />
+                <Route path="admin/reposicao/sessao/aplicacao" element={<AdminReposicaoSessaoAplicacao />} />
+                <Route path="admin/reposicao/sessao/confirmacao" element={<AdminReposicaoSessaoConfirmacao />} />
+                <Route path="admin/reposicao/sessao/historico" element={<AdminReposicaoSessaoHistorico />} />
+              </Route>
+              {/* Legacy redirects */}
+              <Route path="admin/reposicao/cockpit" element={<LegacyCockpitRedirect />} />
+              <Route path="admin/reposicao/mercado" element={<Navigate to="/admin/reposicao/sessao/mercado" replace />} />
+              <Route path="admin/reposicao/parametros" element={<Navigate to="/admin/reposicao/sessao/parametros" replace />} />
               <Route path="admin/reposicao/cadastros" element={<AdminReposicaoCadastros />} />
               <Route path="admin/estoque/recebimento" element={<AdminEstoqueRecebimento />} />
               <Route path="admin/estoque/picking" element={<AdminEstoquePicking />} />
