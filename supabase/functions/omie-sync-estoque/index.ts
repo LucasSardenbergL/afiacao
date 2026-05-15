@@ -203,8 +203,12 @@ Deno.serve(async (req) => {
     }
 
     // 2-3) Paginar Omie — ListarPosEstoque (físico + reservado)
+    // IMPORTANTE: o método retorna UMA LINHA POR LOCAL DE ESTOQUE.
+    // Se o mesmo nCodProd está em N locais (matriz, filial, depósito),
+    // precisamos SOMAR físico/reservado/pendente de todos os locais —
+    // sobrescrever (Map.set) gerava estoque menor que o do ME.
     const dataPosicao = ddmmyyyy(new Date());
-    const encontrados = new Map<string, OmiePosEstoqueItem>();
+    const encontrados = new Map<string, { fisico: number; reservado: number; pendente: number; locais: number }>();
 
     let page = 1;
     let totalPaginas = 1;
@@ -221,7 +225,13 @@ Deno.serve(async (req) => {
       for (const item of lista) {
         const codigo = String(item.nCodProd ?? "").trim();
         if (!codigo) continue;
-        if (habilitadoMap.has(codigo)) encontrados.set(codigo, item);
+        if (!habilitadoMap.has(codigo)) continue;
+        const acc = encontrados.get(codigo) ?? { fisico: 0, reservado: 0, pendente: 0, locais: 0 };
+        acc.fisico += Number(item.fisico ?? 0);
+        acc.reservado += Number(item.reservado ?? 0);
+        acc.pendente += Number(item.nPendente ?? 0);
+        acc.locais += 1;
+        encontrados.set(codigo, acc);
       }
       console.log(
         `[omie-sync-estoque] ListarPosEstoque pág ${page}/${totalPaginas} — ${lista.length} itens, ${encontrados.size}/${totalEsperado} casados.`,
@@ -256,18 +266,16 @@ Deno.serve(async (req) => {
       console.warn(`[omie-sync-estoque] ListarSaldoPendente falhou (não-fatal): ${msg}`);
     }
 
-    // 4) UPSERT em sku_estoque_atual
-    const upsertRows = Array.from(encontrados.entries()).map(([codigo, item]) => {
-      const fisico = Number(item.fisico ?? 0);
-      const reservado = Number(item.reservado ?? 0);
+    // 4) UPSERT em sku_estoque_atual (valores já agregados por SKU)
+    const upsertRows = Array.from(encontrados.entries()).map(([codigo, agg]) => {
       return {
         empresa,
         sku_codigo_omie: codigo,
-        estoque_fisico: fisico,
-        estoque_disponivel: fisico - reservado,
+        estoque_fisico: agg.fisico,
+        estoque_disponivel: agg.fisico - agg.reservado,
         estoque_pendente_entrada: pendenteEntrada.get(codigo) ?? 0,
         ultima_sincronizacao: new Date().toISOString(),
-        fonte_sync: "ListarPosEstoque",
+        fonte_sync: agg.locais > 1 ? `ListarPosEstoque(${agg.locais} locais)` : "ListarPosEstoque",
       };
     });
 
