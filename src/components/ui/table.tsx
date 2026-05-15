@@ -40,21 +40,21 @@ const Table = React.forwardRef<HTMLTableElement, React.HTMLAttributes<HTMLTableE
 
     return (
       <div className="relative w-full">
-        {overflowing && (
-          <div
-            ref={phantomRef}
-            onScroll={onScrollPhantom}
-            className="sticky top-topbar z-20 overflow-x-auto overflow-y-hidden h-3 bg-background/80 backdrop-blur-sm"
-            aria-hidden="true"
-          >
-            <div style={{ width, height: 1 }} />
-          </div>
-        )}
         <div ref={scrollRef} onScroll={onScrollMain} className="relative w-full overflow-auto">
           <div ref={innerRef}>
             <table ref={ref} className={cn("w-full caption-bottom text-sm", className)} {...props} />
           </div>
         </div>
+        {overflowing && (
+          <div
+            ref={phantomRef}
+            onScroll={onScrollPhantom}
+            className="sticky bottom-2 z-20 overflow-x-auto overflow-y-hidden h-3 bg-background/90 backdrop-blur-sm rounded-full shadow-md border border-border/50 mt-1"
+            aria-hidden="true"
+          >
+            <div style={{ width, height: 1 }} />
+          </div>
+        )}
       </div>
     );
   },
