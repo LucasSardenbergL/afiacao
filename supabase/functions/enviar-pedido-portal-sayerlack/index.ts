@@ -352,11 +352,14 @@ export default async ({ page, context }) => {
 
     // Mantém a forma externa { data, type, screenshot, preLoginScreenshot } que
     // o Browserless v2 já serializa hoje; o envelope estruturado vai dentro de data.
+    // PR4: portal_data_entrega vem do submit quando o sinal vencedor foi
+    // network e o JSON foi parseado (ISO YYYY-MM-DD); null nos outros casos.
     return {
       data: {
         ok,
         status,
         protocolo,
+        portal_data_entrega: data.portal_data_entrega || null,
         safeToRetry,
         needsReconciliation,
         evidence: {
@@ -1626,6 +1629,13 @@ async function processarPedido(
     };
     if (opts.protocolo !== undefined) update.portal_protocolo = opts.protocolo;
     if (opts.enviadoPortalEm) update.enviado_portal_em = new Date().toISOString();
+    // PR4: persiste a data_entrega devolvida pelo portal (formato ISO YYYY-MM-DD).
+    // Só grava se veio um valor válido — não sobrescreve com null em re-tentativas
+    // que não capturaram a data (ex.: caminho PR1.5 do recorder fallback).
+    const portalDataEntrega = (envelope as any)?.portal_data_entrega;
+    if (typeof portalDataEntrega === "string" && /^\d{4}-\d{2}-\d{2}$/.test(portalDataEntrega)) {
+      update.portal_data_entrega = portalDataEntrega;
+    }
     await supabase.from("pedido_compra_sugerido").update(update).eq("id", pedido.id);
     await gravarTentativa(supabase, pedido.id, {
       iniciadoEm,
