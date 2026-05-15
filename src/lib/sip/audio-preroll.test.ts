@@ -18,6 +18,7 @@ describe('mixPrerollWithMic', () => {
       })),
       decodeAudioData: vi.fn().mockResolvedValue({ duration: 5 }),
       destination: {},
+      close: vi.fn().mockResolvedValue(undefined),
     };
     // @ts-expect-error stub global
     globalThis.AudioContext = vi.fn(() => audioContextMock);
@@ -31,7 +32,7 @@ describe('mixPrerollWithMic', () => {
 
     expect(globalThis.fetch).toHaveBeenCalledWith('/preroll/aviso.mp3');
     expect(audioContextMock.createMediaStreamSource).toHaveBeenCalledWith(micStream);
-    expect(result).toBe(destinationStream);
+    expect(result.stream).toBe(destinationStream);
   });
 
   it('inicia o source do pre-roll', async () => {
@@ -40,5 +41,14 @@ describe('mixPrerollWithMic', () => {
 
     const source = audioContextMock.createBufferSource.mock.results[0].value;
     expect(source.start).toHaveBeenCalled();
+  });
+
+  it('expõe close() que invoca AudioContext.close', async () => {
+    const micStream = new MediaStream();
+    const result = await mixPrerollWithMic('/preroll/aviso.mp3', micStream);
+
+    result.close();
+
+    expect(audioContextMock.close).toHaveBeenCalled();
   });
 });
