@@ -491,6 +491,7 @@ export default function AdminReposicaoRevisao() {
               <Loader2 className="h-6 w-6 animate-spin" />
             </div>
           ) : (
+            <div className="overflow-x-auto -mx-6 px-6">
             <Table>
               <TableHeader>
                 <TableRow>
