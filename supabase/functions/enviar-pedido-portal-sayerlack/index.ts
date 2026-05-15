@@ -371,20 +371,25 @@ export default async ({ page, context }) => {
 
     await applyStealth();
     trace.push({ step: 'login_start', t: Date.now() - t0 });
-    await page.goto(portalUrl + '/login', { waitUntil: 'domcontentloaded', timeout: 30000 });
-    await page.waitForSelector('#user', { timeout: 10000 });
+    await page.goto(portalUrl + '/login', { waitUntil: 'domcontentloaded', timeout: budgetFor('login-goto', 30_000) });
+    await page.waitForSelector('#user', { timeout: budgetFor('login-form', 10_000) });
     await fillInput('#user', user);
     await fillInput('#password', pass);
 
-    const navPromise = page.waitForNavigation({ timeout: 15000 }).catch(() => null);
+    const navPromise = page.waitForNavigation({ timeout: budgetFor('login-nav', 15_000) }).catch(() => null);
     await clickButtonByText('Entrar');
     await navPromise;
 
     // Heuristica robusta: aguarda evidencia POSITIVA de login bem-sucedido
     // (URL mudou para fora de /login OU elemento exclusivo da area logada apareceu)
+    // PR2: budget único para os 3 caminhos da Promise.race. Computado FORA dos
+    // IIFEs para que um BUDGET_EXHAUSTED propague pelo catch externo em vez de
+    // virar primeiro-settle da race (que mataria os outros caminhos cedo).
+    const loginCheckMs = budgetFor('login-check', 15_000);
+    const loginCheckPolls = Math.max(2, Math.floor(loginCheckMs / 500));
     const loginCheck = await Promise.race([
       (async () => {
-        for (let i = 0; i < 30; i++) { // 30 * 500ms = 15s max
+        for (let i = 0; i < loginCheckPolls; i++) {
           const url = page.url();
           if (!url.includes('/login')) return { ok: true, via: 'url_changed', url };
           await sleep(500);
@@ -393,7 +398,7 @@ export default async ({ page, context }) => {
       })(),
       (async () => {
         try {
-          await page.waitForSelector('#sidebar, .app-sidebar', { timeout: 15000 });
+          await page.waitForSelector('#sidebar, .app-sidebar', { timeout: loginCheckMs });
           return { ok: true, via: 'sidebar_found', url: page.url() };
         } catch {
           return { ok: false, via: 'sidebar_not_found', url: page.url() };
@@ -406,7 +411,7 @@ export default async ({ page, context }) => {
               const userSpan = document.querySelector('.navbar-user .d-md-inline');
               return userSpan && userSpan.innerText.trim().length > 0;
             },
-            { timeout: 15000 }
+            { timeout: loginCheckMs }
           );
           return { ok: true, via: 'user_in_header', url: page.url() };
         } catch {
@@ -482,7 +487,7 @@ export default async ({ page, context }) => {
         const sidebarLinks = document.querySelectorAll('#sidebar .menu-link, .app-sidebar .menu-link');
         return sidebarLinks.length > 0;
       },
-      { timeout: 15000 }
+      { timeout: budgetFor('sidebar-links', 15_000) }
     ).catch(() => null);
 
     // Click em "Vendas" para expandir submenu
@@ -502,7 +507,7 @@ export default async ({ page, context }) => {
       return links.some(function(a) {
         return a.getAttribute('href') === '/order-creation' && a.offsetParent !== null;
       });
-    }, { timeout: 3000, polling: 100 });
+    }, { timeout: budgetFor('sidebar-pedidos-link', 3_000, { minMs: 300 }), polling: 100 });
 
     // Click em "Pedidos / Propostas" — esse SIM navega corretamente
     const clicou_pedidos = await page.evaluate(() => {
@@ -552,7 +557,7 @@ export default async ({ page, context }) => {
     // Aguarda navegação completar (URL muda para /order-creation)
     await page.waitForFunction(
       () => window.location.href.endsWith('/order-creation'),
-      { timeout: 15000 }
+      { timeout: budgetFor('nav-order-creation', 15_000) }
     ).catch(() => null);
     await sleep(2000); // dá tempo do DOM da página de pedidos estabilizar
 
@@ -560,14 +565,14 @@ export default async ({ page, context }) => {
     console.log('[DEBUG_AFTER_CLICK_PEDIDOS]', JSON.stringify({ url: urlAposClick, chegou_em_order_creation: urlAposClick.endsWith('/order-creation') }));
     trace.push({ step: 'after_click_pedidos', url: urlAposClick, t: Date.now() - t0 });
 
-    await page.waitForSelector('#btnNovoPedido', { timeout: 25000 });
+    await page.waitForSelector('#btnNovoPedido', { timeout: budgetFor('btn-novo-pedido', 25_000) });
     await page.click('#btnNovoPedido');
-    await page.waitForSelector('#select2-cliente-container', { timeout: 10000 });
+    await page.waitForSelector('#select2-cliente-container', { timeout: budgetFor('select2-cliente-container', 10_000) });
     trace.push({ step: 'novo_pedido_open', t: Date.now() - t0 });
 
     await page.click('#select2-cliente-container');
     await sleep(300);
-    await page.waitForSelector('.select2-search__field', { timeout: 5000 });
+    await page.waitForSelector('.select2-search__field', { timeout: budgetFor('select2-cliente-search', 5_000) });
     await fillInput('.select2-search__field', clienteCodigo);
     await sleep(2000);
     const clienteOption = await page.$('.select2-results__option:not(.select2-results__message)');
