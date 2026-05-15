@@ -207,3 +207,41 @@ describe('SipClient — outbound call', () => {
       .toThrow(/not registered/i);
   });
 });
+
+describe('SipClient — hangUp cleanup', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    uaMock.isRegistered.mockReturnValue(true);
+  });
+
+  it('hangUp chama session.terminate e para tracks do localStream', () => {
+    const session = { on: vi.fn(), terminate: vi.fn(), connection: { getReceivers: () => [] } };
+    uaMock.call.mockReturnValue(session);
+
+    const client = new SipClient({
+      wsUri: 'wss://sip.nvoip.com.br:7443/ws',
+      sipDomain: 'sip.nvoip.com.br',
+      username: '1234567',
+      password: 'abc',
+    });
+    client.connect();
+    const stopMock = vi.fn();
+    const micStream = { getTracks: () => [{ stop: stopMock, kind: 'audio' }] } as unknown as MediaStream;
+    client.makeCall('3799', micStream);
+
+    client.hangUp();
+
+    expect(session.terminate).toHaveBeenCalled();
+    expect(stopMock).toHaveBeenCalled();
+  });
+
+  it('hangUp em estado idle é noop seguro', () => {
+    const client = new SipClient({
+      wsUri: 'wss://sip.nvoip.com.br:7443/ws',
+      sipDomain: 'sip.nvoip.com.br',
+      username: '1234567',
+      password: 'abc',
+    });
+    expect(() => client.hangUp()).not.toThrow();
+  });
+});

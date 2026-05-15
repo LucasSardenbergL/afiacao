@@ -9,6 +9,7 @@ export class SipClient {
   private listeners: { [K in EventName]?: Array<SipClientEvents[K]> } = {};
   private currentSession: any = null;
   private callStartedAt: number | null = null;
+  private currentLocalStream: MediaStream | null = null;
 
   constructor(private config: SipConfig) {
     const socket = new JsSIP.WebSocketInterface(config.wsUri);
@@ -51,6 +52,7 @@ export class SipClient {
     const target = `sip:${phoneE164}@${this.config.sipDomain}`;
     this.setState('calling');
     this.emit('localStream', micStream);
+    this.currentLocalStream = micStream;
 
     this.currentSession = this.ua.call(target, {
       mediaConstraints: { audio: true, video: false },
@@ -74,6 +76,31 @@ export class SipClient {
     this.currentSession.on('ended', () => {
       this.setState('ended');
     });
+  }
+
+  hangUp(): void {
+    if (this.currentSession) {
+      try {
+        this.currentSession.terminate();
+      } catch {
+        // session já encerrada — ok
+      }
+      this.currentSession = null;
+    }
+    if (this.currentLocalStream) {
+      for (const track of this.currentLocalStream.getTracks()) {
+        track.stop();
+      }
+      this.currentLocalStream = null;
+    }
+    if (this.state === 'calling' || this.state === 'ringing' || this.state === 'established') {
+      this.setState('ended');
+    }
+  }
+
+  getCallDurationSeconds(): number {
+    if (!this.callStartedAt) return 0;
+    return Math.floor((Date.now() - this.callStartedAt) / 1000);
   }
 
   private extractRemoteStream(): void {
