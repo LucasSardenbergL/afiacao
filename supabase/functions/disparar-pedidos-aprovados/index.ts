@@ -36,9 +36,21 @@ interface PedidoRow {
   nome_contato?: string | null;
   // PR4: data de entrega confirmada pelo portal Sayerlack (ISO YYYY-MM-DD).
   // Quando presente em pedido Sayerlack/OBEN, vira base do dDtPrevisao do
-  // Omie (+ 2 dias corridos). Quando ausente, cai no fallback de lead time.
+  // Omie (+ 2 dias úteis). Quando ausente, cai no fallback de lead time.
   portal_data_entrega?: string | null;
+  // PR5: split de pedidos grandes em filhos com <= 4 itens cada.
+  // Preenchidos só nos filhos (e split_total também no pai). Quando um filho
+  // chega no fluxo, é tratado como pedido independente — segue caminho normal.
+  split_parent_id?: number | null;
+  split_lote?: number | null;
+  split_total?: number | null;
 }
+
+// PR5: tamanho máximo de cada chunk no split. Pelo trace real de 15/05/2026:
+// login+nav (~12s) + N×7.5s/item + submit (~10s) + margem (~2s) <= 60s do
+// Browserless → N máximo viável = 4 itens. Constante única pra ficar fácil
+// recalibrar quando o p95 por item mudar.
+const SPLIT_CHUNK_SIZE = 4;
 
 interface ItemRow {
   sku_codigo_omie: string;
@@ -202,6 +214,103 @@ function isSayerlackOben(pedido: PedidoRow): boolean {
     (pedido.empresa ?? "").toUpperCase() === "OBEN" &&
     /sayerlack/i.test(pedido.fornecedor_nome ?? "")
   );
+}
+
+/**
+ * PR5: divide pedidos Sayerlack/OBEN com mais de SPLIT_CHUNK_SIZE itens em
+ * filhos menores. Cada filho cabe na janela de 60s do Browserless.
+ *
+ * Só atua em modo "producao" — dry_run não toca o banco. Só atua em pedidos
+ * Sayerlack/OBEN, e nunca em pedidos que já são filhos de um split anterior.
+ *
+ * Retorna a lista expandida: pedidos não-Sayerlack ou pequenos passam direto;
+ * pedidos grandes são substituídos pelos seus filhos. Se a RPC falhar, deixa
+ * o pedido original na lista (vai bater o teto do Browserless e ser tratado
+ * pelo PR2/PR3 — degradação suave).
+ */
+async function dividirPedidosGrandesSayerlack(
+  db: any,
+  aprovados: PedidoRow[],
+  modo: "dry_run" | "producao",
+): Promise<PedidoRow[]> {
+  if (modo !== "producao") return aprovados;
+
+  const expandido: PedidoRow[] = [];
+  for (const pedido of aprovados) {
+    if (pedido.split_parent_id) {
+      // Já é filho — não redivide.
+      expandido.push(pedido);
+      continue;
+    }
+    if (!isSayerlackOben(pedido)) {
+      expandido.push(pedido);
+      continue;
+    }
+
+    const { count: itensCount, error: countErr } = await db
+      .from("pedido_compra_item")
+      .select("id", { count: "exact", head: true })
+      .eq("pedido_id", pedido.id);
+
+    if (countErr) {
+      console.error(`[disparar-pedidos] Falha ao contar itens do pedido ${pedido.id}: ${countErr.message}`);
+      expandido.push(pedido);
+      continue;
+    }
+    if (!itensCount || itensCount <= SPLIT_CHUNK_SIZE) {
+      expandido.push(pedido);
+      continue;
+    }
+
+    console.log(`[disparar-pedidos] Pedido ${pedido.id} tem ${itensCount} itens — dividindo em chunks de ${SPLIT_CHUNK_SIZE}`);
+
+    const { data: filhos, error: splitErr } = await db.rpc("pedido_compra_split", {
+      p_pedido_id: pedido.id,
+      p_chunk_size: SPLIT_CHUNK_SIZE,
+    });
+
+    if (splitErr) {
+      console.error(`[disparar-pedidos] Falha no RPC pedido_compra_split para ${pedido.id}: ${splitErr.message}`);
+      // RPC é atômica: se falhou, o pai está intocado. Cai no fallback.
+      expandido.push(pedido);
+      continue;
+    }
+
+    const filhoIds = ((filhos ?? []) as Array<{ filho_id: number }>).map((f) => Number(f.filho_id));
+    if (filhoIds.length === 0) {
+      console.warn(`[disparar-pedidos] RPC retornou 0 filhos para ${pedido.id} (count=${itensCount}) — processando original`);
+      expandido.push(pedido);
+      continue;
+    }
+
+    const { data: filhoRows, error: fetchErr } = await db
+      .from("pedido_compra_sugerido")
+      .select("id, empresa, fornecedor_nome, grupo_codigo, data_ciclo, valor_total, num_skus, status, condicao_pagamento_codigo, condicao_pagamento_descricao, num_parcelas, portal_data_entrega, split_parent_id, split_lote, split_total")
+      .in("id", filhoIds)
+      .order("split_lote", { ascending: true });
+
+    if (fetchErr || !filhoRows) {
+      console.error(`[disparar-pedidos] Falha ao carregar filhos do split do pedido ${pedido.id}: ${fetchErr?.message ?? "sem dados"}`);
+      // Filhos existem no banco mas não conseguimos carregar agora — vão ser
+      // pegos no próximo run normal do cron (ficaram aprovado_aguardando_disparo).
+      continue;
+    }
+
+    // Replica enrichment de fornecedor que o caller faz nos aprovados originais.
+    for (const fr of filhoRows as PedidoRow[]) {
+      const { data: fh } = await db
+        .from("fornecedor_habilitado_reposicao")
+        .select("canal_pedido, email_pedido, whatsapp_pedido, observacoes_pedido, nome_contato")
+        .eq("empresa", fr.empresa)
+        .eq("fornecedor_nome", fr.fornecedor_nome)
+        .maybeSingle();
+      if (fh) Object.assign(fr, fh);
+    }
+
+    console.log(`[disparar-pedidos] Pedido ${pedido.id} → ${filhoIds.length} filhos: [${filhoIds.join(", ")}]`);
+    expandido.push(...(filhoRows as PedidoRow[]));
+  }
+  return expandido;
 }
 
 /**
@@ -780,7 +889,7 @@ Deno.serve(async (req: Request) => {
     // 2. Pedidos aprovados (com dados do fornecedor)
     let aprovadosQuery = db
       .from("pedido_compra_sugerido")
-      .select("id, empresa, fornecedor_nome, grupo_codigo, data_ciclo, valor_total, num_skus, status, condicao_pagamento_codigo, condicao_pagamento_descricao, num_parcelas, portal_data_entrega")
+      .select("id, empresa, fornecedor_nome, grupo_codigo, data_ciclo, valor_total, num_skus, status, condicao_pagamento_codigo, condicao_pagamento_descricao, num_parcelas, portal_data_entrega, split_parent_id, split_lote, split_total")
       .eq("empresa", empresa);
 
     aprovadosQuery = pedidoId
@@ -789,7 +898,7 @@ Deno.serve(async (req: Request) => {
 
     const { data: aprovadosRaw, error: aprErr } = await aprovadosQuery;
     if (aprErr) throw new Error(`Aprovados: ${aprErr.message}`);
-    const aprovados = (aprovadosRaw ?? []) as PedidoRow[];
+    let aprovados = (aprovadosRaw ?? []) as PedidoRow[];
     if (pedidoId && aprovados[0]?.data_ciclo) dataCiclo = aprovados[0].data_ciclo;
 
     // Enrich com dados do fornecedor
@@ -802,6 +911,11 @@ Deno.serve(async (req: Request) => {
         .maybeSingle();
       if (fh) Object.assign(p, fh);
     }
+
+    // PR5: divide pedidos Sayerlack/OBEN com >4 itens em filhos menores que
+    // caibam na janela de 60s do Browserless. Cada filho vira um pedido
+    // independente no banco e segue o caminho normal (portal → Omie).
+    aprovados = await dividirPedidosGrandesSayerlack(db, aprovados, modo);
 
     // 3. Expirar não aprovados
     let expirados = 0;
