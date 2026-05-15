@@ -5449,6 +5449,7 @@ export type Database = {
           origem_evento_id: number | null
           origem_evento_tipo: string | null
           pedido_anterior_valor: number | null
+          portal_data_entrega: string | null
           portal_erro: string | null
           portal_protocolo: string | null
           portal_proximo_retry_em: string | null
@@ -5456,6 +5457,9 @@ export type Database = {
           portal_screenshot_url: string | null
           portal_tentativas: number | null
           resposta_canal: Json | null
+          split_lote: number | null
+          split_parent_id: number | null
+          split_total: number | null
           status: string
           status_envio_portal: string | null
           tipo_ciclo: string
@@ -5494,6 +5498,7 @@ export type Database = {
           origem_evento_id?: number | null
           origem_evento_tipo?: string | null
           pedido_anterior_valor?: number | null
+          portal_data_entrega?: string | null
           portal_erro?: string | null
           portal_protocolo?: string | null
           portal_proximo_retry_em?: string | null
@@ -5501,6 +5506,9 @@ export type Database = {
           portal_screenshot_url?: string | null
           portal_tentativas?: number | null
           resposta_canal?: Json | null
+          split_lote?: number | null
+          split_parent_id?: number | null
+          split_total?: number | null
           status?: string
           status_envio_portal?: string | null
           tipo_ciclo?: string
@@ -5539,6 +5547,7 @@ export type Database = {
           origem_evento_id?: number | null
           origem_evento_tipo?: string | null
           pedido_anterior_valor?: number | null
+          portal_data_entrega?: string | null
           portal_erro?: string | null
           portal_protocolo?: string | null
           portal_proximo_retry_em?: string | null
@@ -5546,13 +5555,82 @@ export type Database = {
           portal_screenshot_url?: string | null
           portal_tentativas?: number | null
           resposta_canal?: Json | null
+          split_lote?: number | null
+          split_parent_id?: number | null
+          split_total?: number | null
           status?: string
           status_envio_portal?: string | null
           tipo_ciclo?: string
           valor_mes_ate_agora?: number | null
           valor_total?: number
         }
-        Relationships: []
+        Relationships: [
+          {
+            foreignKeyName: "pedido_compra_sugerido_split_parent_id_fkey"
+            columns: ["split_parent_id"]
+            isOneToOne: false
+            referencedRelation: "pedido_compra_sugerido"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "pedido_compra_sugerido_split_parent_id_fkey"
+            columns: ["split_parent_id"]
+            isOneToOne: false
+            referencedRelation: "v_des_pedidos_em_transito"
+            referencedColumns: ["pedido_id"]
+          },
+        ]
+      }
+      pedidos_portal_tentativas: {
+        Row: {
+          browserless_response_ms: number | null
+          concluido_em: string | null
+          elapsed_ms: number | null
+          erro: string | null
+          evidence: Json
+          id: string
+          iniciado_em: string
+          pedido_id: number
+          status_resultado: string
+        }
+        Insert: {
+          browserless_response_ms?: number | null
+          concluido_em?: string | null
+          elapsed_ms?: number | null
+          erro?: string | null
+          evidence?: Json
+          id?: string
+          iniciado_em?: string
+          pedido_id: number
+          status_resultado: string
+        }
+        Update: {
+          browserless_response_ms?: number | null
+          concluido_em?: string | null
+          elapsed_ms?: number | null
+          erro?: string | null
+          evidence?: Json
+          id?: string
+          iniciado_em?: string
+          pedido_id?: number
+          status_resultado?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "pedidos_portal_tentativas_pedido_id_fkey"
+            columns: ["pedido_id"]
+            isOneToOne: false
+            referencedRelation: "pedido_compra_sugerido"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "pedidos_portal_tentativas_pedido_id_fkey"
+            columns: ["pedido_id"]
+            isOneToOne: false
+            referencedRelation: "v_des_pedidos_em_transito"
+            referencedColumns: ["pedido_id"]
+          },
+        ]
       }
       permission_change_log: {
         Row: {
@@ -10906,6 +10984,14 @@ export type Database = {
           p_email_enviado?: boolean
         }
         Returns: boolean
+      }
+      pedido_compra_split: {
+        Args: { p_chunk_size?: number; p_pedido_id: number }
+        Returns: {
+          filho_id: number
+          lote: number
+          total: number
+        }[]
       }
       processar_alertas_pendentes_notificacao: {
         Args: { p_empresa?: string }
