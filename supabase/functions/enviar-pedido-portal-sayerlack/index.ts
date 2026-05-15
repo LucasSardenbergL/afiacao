@@ -38,6 +38,146 @@ export default async ({ page, context }) => {
   // clicou em "Efetivar Pedido" por volta de 53s e a Promise.race anterior
   // devolveu TIMEOUT_INTERNO aos 55s, encerrando o browser antes do portal concluir.
 
+  // preLoginScreenshot é referenciado em returns de erro; declarado aqui para
+  // nunca lançar ReferenceError (que mascararia o envelope estruturado).
+  let preLoginScreenshot = null;
+
+  // === PR1: Network Recorder ===
+  // Listener global armado ANTES de qualquer navegação. Captura todo POST que
+  // bate em endpoints suspeitos de efetivação. É a fonte primária de evidência
+  // para classificação: se um POST saiu, o pedido NUNCA é tratado como
+  // retentável — vai para conciliação.
+  const installOrderNetworkRecorder = (pg) => {
+    const SUSPECT_RE = /pedido|efetivar|salvar|criar|order|novo[-_]?pedido/i;
+    const events = [];
+    let requestSent = false;
+    pg.on('request', (req) => {
+      try {
+        const method = req.method();
+        const url = req.url();
+        if (method === 'POST' && SUSPECT_RE.test(url)) {
+          requestSent = true;
+          let postDataPreview = null;
+          try { postDataPreview = String(req.postData() || '').slice(0, 500); } catch (e) {}
+          events.push({ phase: 'request', method, url, postDataPreview, t: Date.now() - t0 });
+        }
+      } catch (e) {}
+    });
+    pg.on('response', (resp) => {
+      try {
+        const req = resp.request();
+        const method = req.method();
+        const url = resp.url();
+        if (method === 'POST' && SUSPECT_RE.test(url)) {
+          const entry = {
+            phase: 'response',
+            method,
+            url,
+            status: resp.status(),
+            contentType: (resp.headers() || {})['content-type'] || null,
+            bodyPreview: null,
+            t: Date.now() - t0,
+          };
+          events.push(entry);
+          // Enriquecimento assíncrono do corpo — best-effort. Pode não resolver
+          // antes da classificação; PR3 trata isso com microjanela dedicada.
+          resp.text()
+            .then((txt) => { entry.bodyPreview = String(txt || '').slice(0, 1000); })
+            .catch((e) => { entry.bodyPreview = '<<sem-corpo:' + String((e && e.message) || '').slice(0, 60) + '>>'; });
+        }
+      } catch (e) {}
+    });
+    return {
+      getSubmitEvidence: () => {
+        const requests = events.filter((e) => e.phase === 'request');
+        const responses = events.filter((e) => e.phase === 'response');
+        const okResponse = responses.find((r) => r.status >= 200 && r.status < 300) || null;
+        return {
+          requestSent,
+          requestCount: requests.length,
+          responseCount: responses.length,
+          okResponse: okResponse ? { url: okResponse.url, status: okResponse.status, contentType: okResponse.contentType } : null,
+          events,
+        };
+      },
+    };
+  };
+
+  // === PR1: Envelope estruturado ===
+  // Traduz o resultado bruto do runFlow (legado: { data: {...} }) + a evidência
+  // do recorder na máquina de estados. Regra de ouro: requestSent === true
+  // jamais resulta em estado retentável.
+  const buildEnvelope = (raw, evidence) => {
+    const elapsedMs = Date.now() - t0;
+    const data = (raw && raw.data) ? raw.data : {};
+    const screenshot = raw ? (raw.screenshot || null) : null;
+    const preLogin = raw ? (raw.preLoginScreenshot || null) : null;
+    const requestSent = !!(evidence && evidence.requestSent);
+    const protocolo = data.protocolo || null;
+
+    let status;
+    let ok;
+    let safeToRetry;
+    let needsReconciliation;
+
+    if (data.success === true) {
+      ok = true;
+      status = protocolo ? 'sucesso_portal' : 'aceito_portal_sem_protocolo';
+      safeToRetry = false;
+      needsReconciliation = !protocolo;
+    } else {
+      ok = false;
+      const tipo = data.erroTipo || 'UNKNOWN';
+      const erroLogicoPreSubmit =
+        tipo === 'LOGIN_FAILED' || tipo === 'CLIENTE_NOT_FOUND' || tipo === 'SKU_NOT_FOUND';
+      if (requestSent) {
+        // Houve POST: independente do tipo de erro, só conciliação resolve.
+        status = 'indeterminado_requer_conciliacao';
+        safeToRetry = false;
+        needsReconciliation = true;
+      } else if (erroLogicoPreSubmit) {
+        // Erro lógico antes de qualquer submit — retentar não adianta.
+        status = 'erro_nao_retentavel';
+        safeToRetry = false;
+        needsReconciliation = false;
+      } else {
+        // NAVIGATION_FAILED / INCLUIR_ITEM_NOT_FOUND / EXCEPTION (inclui o
+        // timeout do Browserless) / UNKNOWN, sem POST capturado.
+        status = 'erro_retentavel';
+        safeToRetry = true;
+        needsReconciliation = false;
+      }
+    }
+
+    // Mantém a forma externa { data, type, screenshot, preLoginScreenshot } que
+    // o Browserless v2 já serializa hoje; o envelope estruturado vai dentro de data.
+    return {
+      data: {
+        ok,
+        status,
+        protocolo,
+        safeToRetry,
+        needsReconciliation,
+        evidence: {
+          requestSent: evidence ? evidence.requestSent : false,
+          requestCount: evidence ? evidence.requestCount : 0,
+          responseCount: evidence ? evidence.responseCount : 0,
+          okResponse: evidence ? evidence.okResponse : null,
+          network: evidence ? evidence.events : [],
+          erroTipo: data.erroTipo || null,
+          erro: data.erro || null,
+          successText: data.successText || null,
+          loginCheckResult: data.loginCheckResult || null,
+          trace: data.trace || trace,
+        },
+        elapsedMs,
+      },
+      type: 'application/json',
+      screenshot,
+      preLoginScreenshot: preLogin,
+    };
+  };
+
   // Helper: limpa input e digita (substitui page.fill do Playwright)
   const fillInput = async (selector, value) => {
     await page.click(selector);
@@ -729,7 +869,26 @@ export default async ({ page, context }) => {
    }
   };
 
-  return await runFlow();
+  // Recorder armado ANTES do runFlow (logo, antes de qualquer page.goto).
+  const recorder = installOrderNetworkRecorder(page);
+  let raw;
+  try {
+    raw = await runFlow();
+  } catch (err) {
+    // Rede de segurança: runFlow tem try/catch interno, mas qualquer escape
+    // ainda devolve envelope estruturado (nunca um throw nu para o Browserless).
+    raw = {
+      data: {
+        success: false,
+        erro: (err && err.message) ? err.message : String(err),
+        erroTipo: 'EXCEPTION',
+        trace,
+      },
+      type: 'application/json',
+      screenshot: null,
+    };
+  }
+  return buildEnvelope(raw, recorder.getSubmitEvidence());
 };
 `;
 
