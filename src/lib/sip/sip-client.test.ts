@@ -125,3 +125,56 @@ describe('SipClient — register lifecycle', () => {
     expect(errArg.message).toContain('rejected');
   });
 });
+
+describe('SipClient — outbound call', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    uaMock.isRegistered.mockReturnValue(true);
+  });
+
+  it('chama ua.call com SIP URI E.164 e estado vira "calling"', () => {
+    const session = {
+      on: vi.fn(),
+      terminate: vi.fn(),
+      connection: {
+        getReceivers: vi.fn(() => [{ track: { kind: 'audio' } }]),
+      },
+    };
+    uaMock.call.mockReturnValue(session);
+
+    const client = new SipClient({
+      wsUri: 'wss://sip.nvoip.com.br:7443/ws',
+      sipDomain: 'sip.nvoip.com.br',
+      username: '1234567',
+      password: 'abc',
+    });
+    client.connect();
+    const stateSpy = vi.fn();
+    client.on('stateChange', stateSpy);
+
+    const fakeMic = new MediaStream();
+    client.makeCall('37999998888', fakeMic);
+
+    expect(uaMock.call).toHaveBeenCalledWith(
+      'sip:37999998888@sip.nvoip.com.br',
+      expect.objectContaining({
+        mediaStream: fakeMic,
+        rtcOfferConstraints: { offerToReceiveAudio: true, offerToReceiveVideo: false },
+      })
+    );
+    expect(stateSpy).toHaveBeenCalledWith('calling');
+  });
+
+  it('lança erro se chamada disparada sem REGISTER', () => {
+    uaMock.isRegistered.mockReturnValue(false);
+    const client = new SipClient({
+      wsUri: 'wss://sip.nvoip.com.br:7443/ws',
+      sipDomain: 'sip.nvoip.com.br',
+      username: '1234567',
+      password: 'abc',
+    });
+
+    expect(() => client.makeCall('3799999', new MediaStream()))
+      .toThrow(/not registered/i);
+  });
+});
