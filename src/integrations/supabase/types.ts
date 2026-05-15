@@ -5433,7 +5433,7 @@ export type Database = {
           dias_parcelas: string | null
           empresa: string
           enviado_portal_em: string | null
-          fornecedor_nome: string
+          fornecedor_nome: string | null
           grupo_codigo: string | null
           horario_corte_planejado: string | null
           horario_disparo_real: string | null
@@ -5478,7 +5478,7 @@ export type Database = {
           dias_parcelas?: string | null
           empresa: string
           enviado_portal_em?: string | null
-          fornecedor_nome: string
+          fornecedor_nome?: string | null
           grupo_codigo?: string | null
           horario_corte_planejado?: string | null
           horario_disparo_real?: string | null
@@ -5523,7 +5523,7 @@ export type Database = {
           dias_parcelas?: string | null
           empresa?: string
           enviado_portal_em?: string | null
-          fornecedor_nome?: string
+          fornecedor_nome?: string | null
           grupo_codigo?: string | null
           horario_corte_planejado?: string | null
           horario_disparo_real?: string | null

@@ -1,0 +1,1 @@
+ALTER TABLE public.pedido_compra_sugerido ALTER COLUMN fornecedor_nome DROP NOT NULL;
