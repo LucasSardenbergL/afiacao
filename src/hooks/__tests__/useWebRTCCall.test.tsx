@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { renderHook, act, waitFor } from '@testing-library/react';
 
 // Mock setup MUST be hoisted (vi.mock is hoisted above other code)
@@ -61,6 +61,10 @@ beforeEach(() => {
 });
 
 describe('useWebRTCCall', () => {
+  afterEach(() => {
+    vi.unstubAllEnvs();
+  });
+
   it('inicializa SipClient e chama connect após carregar credenciais', async () => {
     const { result } = renderHook(() => useWebRTCCall());
     await waitFor(() => expect(sipClientMock.connect).toHaveBeenCalled());
@@ -97,7 +101,6 @@ describe('useWebRTCCall', () => {
 
     expect(mixMock).toHaveBeenCalledWith('/preroll/aviso.mp3', expect.anything());
     expect(sipClientMock.makeCall).toHaveBeenCalledWith('37999998888', mixedStream);
-    vi.unstubAllEnvs();
   });
 
   it('endCall chama SipClient.hangUp E para tracks do mic raw E fecha preroll', async () => {
@@ -123,7 +126,6 @@ describe('useWebRTCCall', () => {
     expect(sipClientMock.hangUp).toHaveBeenCalled();
     expect(closeMix).toHaveBeenCalled();
     expect(stopMicTrack).toHaveBeenCalled();
-    vi.unstubAllEnvs();
   });
 
   it('makeCall com telefone inválido (<10 digitos) não chama SipClient.makeCall', async () => {

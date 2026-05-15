@@ -134,6 +134,9 @@ export function useWebRTCCall(): UseWebRTCCallReturn {
       return;
     }
 
+    // Race guard: if a prior call's audio is still allocated, release it before starting a new one
+    cleanupAudioResources();
+
     try {
       const rawMic = await navigator.mediaDevices.getUserMedia({ audio: true, video: false });
       rawMicRef.current = rawMic;
