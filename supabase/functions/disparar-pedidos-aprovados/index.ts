@@ -410,14 +410,20 @@ async function processarPedido(
     const nQtdeParc = Math.max(1, Number(pedido.num_parcelas ?? 1) || 1);
 
     // PR4: para Sayerlack/OBEN, usa a data de entrega confirmada pelo portal
-    // + 2 dias corridos como dDtPrevisao do Omie. Cai no fallback de lead time
-    // logístico se não capturamos a data do portal (ex.: caminho PR1.5 do
-    // recorder fallback, ou pedidos antigos antes da coluna existir).
+    // + 2 dias ÚTEIS como dDtPrevisao do Omie (pula sábado/domingo). Cai no
+    // fallback de lead time logístico se não capturamos a data do portal
+    // (ex.: caminho PR1.5 do recorder fallback, ou pedidos antigos antes da
+    // coluna existir).
     const dDtPrevisao = (() => {
       const portalDate = pedido.portal_data_entrega;
       if (typeof portalDate === "string" && /^\d{4}-\d{2}-\d{2}$/.test(portalDate)) {
         const d = new Date(`${portalDate}T00:00:00Z`);
-        d.setUTCDate(d.getUTCDate() + 2);
+        let adicionados = 0;
+        while (adicionados < 2) {
+          d.setUTCDate(d.getUTCDate() + 1);
+          const dow = d.getUTCDay(); // 0=domingo, 6=sábado
+          if (dow !== 0 && dow !== 6) adicionados++;
+        }
         return `${String(d.getUTCDate()).padStart(2, "0")}/${
           String(d.getUTCMonth() + 1).padStart(2, "0")
         }/${d.getUTCFullYear()}`;
