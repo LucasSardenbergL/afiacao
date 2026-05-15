@@ -34,6 +34,10 @@ interface PedidoRow {
   whatsapp_pedido?: string | null;
   observacoes_pedido?: string | null;
   nome_contato?: string | null;
+  // PR4: data de entrega confirmada pelo portal Sayerlack (ISO YYYY-MM-DD).
+  // Quando presente em pedido Sayerlack/OBEN, vira base do dDtPrevisao do
+  // Omie (+ 2 dias corridos). Quando ausente, cai no fallback de lead time.
+  portal_data_entrega?: string | null;
 }
 
 interface ItemRow {
@@ -405,9 +409,25 @@ async function processarPedido(
     const cCodParc = String(condRaw).trim().slice(0, 3);
     const nQtdeParc = Math.max(1, Number(pedido.num_parcelas ?? 1) || 1);
 
+    // PR4: para Sayerlack/OBEN, usa a data de entrega confirmada pelo portal
+    // + 2 dias corridos como dDtPrevisao do Omie. Cai no fallback de lead time
+    // logístico se não capturamos a data do portal (ex.: caminho PR1.5 do
+    // recorder fallback, ou pedidos antigos antes da coluna existir).
+    const dDtPrevisao = (() => {
+      const portalDate = pedido.portal_data_entrega;
+      if (typeof portalDate === "string" && /^\d{4}-\d{2}-\d{2}$/.test(portalDate)) {
+        const d = new Date(`${portalDate}T00:00:00Z`);
+        d.setUTCDate(d.getUTCDate() + 2);
+        return `${String(d.getUTCDate()).padStart(2, "0")}/${
+          String(d.getUTCMonth() + 1).padStart(2, "0")
+        }/${d.getUTCFullYear()}`;
+      }
+      return diasUteisFromHoje(ltDias);
+    })();
+
     const cabecalho_incluir: Record<string, unknown> = {
       cCodIntPed: `AFI-${pedido.id}`,
-      dDtPrevisao: diasUteisFromHoje(ltDias),
+      dDtPrevisao,
       nCodFor: Number(fornecedor.codigo),
       // cNumPedido (Nº do Pedido do Fornecedor) deixado em branco — preenchido pelo
       // fornecedor quando confirmar. Para Sayerlack, usamos o protocolo do portal
@@ -754,7 +774,7 @@ Deno.serve(async (req: Request) => {
     // 2. Pedidos aprovados (com dados do fornecedor)
     let aprovadosQuery = db
       .from("pedido_compra_sugerido")
-      .select("id, empresa, fornecedor_nome, grupo_codigo, data_ciclo, valor_total, num_skus, status, condicao_pagamento_codigo, condicao_pagamento_descricao, num_parcelas")
+      .select("id, empresa, fornecedor_nome, grupo_codigo, data_ciclo, valor_total, num_skus, status, condicao_pagamento_codigo, condicao_pagamento_descricao, num_parcelas, portal_data_entrega")
       .eq("empresa", empresa);
 
     aprovadosQuery = pedidoId
