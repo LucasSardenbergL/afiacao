@@ -16,7 +16,7 @@ import { useAuth } from '@/contexts/AuthContext';
 import { useToast } from '@/hooks/use-toast';
 import { useFarmerScoring } from '@/hooks/useFarmerScoring';
 import { cn } from '@/lib/utils';
-import { NvoipDialer } from '@/components/NvoipDialer';
+import { Dialer } from '@/components/call/Dialer';
 import { useNvoipCall, type NvoipCallState } from '@/hooks/useNvoipCall';
 import {
   Phone, PhoneOff, Play, Pause, Clock, User, Search,
@@ -572,7 +572,7 @@ const FarmerCalls = () => {
                     </div>
                     <div className="flex items-center gap-1.5 shrink-0">
                       {phone ? (
-                        <NvoipDialer
+                        <Dialer
                           phoneNumber={phone}
                           customerName={item.customer_name}
                           compact
