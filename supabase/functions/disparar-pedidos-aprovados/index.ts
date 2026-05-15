@@ -46,11 +46,15 @@ interface PedidoRow {
   split_total?: number | null;
 }
 
-// PR5: tamanho máximo de cada chunk no split. Pelo trace real de 15/05/2026:
-// login+nav (~12s) + N×7.5s/item + submit (~10s) + margem (~2s) <= 60s do
-// Browserless → N máximo viável = 4 itens. Constante única pra ficar fácil
-// recalibrar quando o p95 por item mudar.
-const SPLIT_CHUNK_SIZE = 4;
+// PR5: tamanho máximo de cada chunk no split. Calibração:
+//   Free (60s sessão):       4 itens  — split agressivo
+//   Prototyping (15min):    20 itens  — split só pra pedidos absurdamente grandes
+//
+// PR9: subimos pra 20 com upgrade pro Prototyping. Pedidos de até ~30 SKUs
+// cabem em uma sessão única (login 12s + 30×7.5s + submit 14s ≈ 251s,
+// abaixo do HARD_CEILING_MS=280s). Acima de 20, split ainda atua como
+// proteção (ex: pedido de 40 SKUs vira 2 filhos de 20).
+const SPLIT_CHUNK_SIZE = 20;
 
 interface ItemRow {
   sku_codigo_omie: string;

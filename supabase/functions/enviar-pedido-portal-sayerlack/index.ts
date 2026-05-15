@@ -47,7 +47,10 @@ export default async ({ page, context }) => {
   // um waitFor pendurado (cenário do bug original — "Waiting failed: 7000ms"
   // mascarando o teto externo), morremos controlado dentro de 58s e devolvemos
   // envelope estruturado. Todos os timeouts do script passam por budgetFor.
-  const HARD_CEILING_MS = 58_000;   // 2s margem abaixo dos 60s do Browserless
+  // PR9: upgrade do Browserless Free (60s) -> Prototyping (15min). Subimos o
+  // deadline interno para 280s (4min40s) — cabe pedido de 30+ SKUs em uma única
+  // sessão. Mantém 20s de margem antes do timeout HTTP de 300s na URL.
+  const HARD_CEILING_MS = 280_000;
   const RETURN_GUARD_MS = 2_000;    // tempo para Browserless serializar o JSON
   const SUBMIT_RESERVED_MS = 8_000; // reservado para o click + sinal pós-submit
   const ITEM_MIN_BUDGET_MS = 3_000; // tempo mínimo viável por item do loop
@@ -1513,9 +1516,11 @@ async function processarPedido(
 
   try {
     const ctrl = new AbortController();
-    const timeout = setTimeout(() => ctrl.abort(), 150000);
+    // PR9: 350s no abort do fetch (50s de margem após o ?timeout=300000 do
+    // Browserless Prototyping). Antes era 150s + ?timeout=60000.
+    const timeout = setTimeout(() => ctrl.abort(), 350_000);
     const resp = await fetch(
-      `https://chrome.browserless.io/function?token=${BROWSERLESS_TOKEN}&timeout=60000`,
+      `https://chrome.browserless.io/function?token=${BROWSERLESS_TOKEN}&timeout=300000`,
       {
         method: "POST",
         headers: { "Content-Type": "application/json" },
