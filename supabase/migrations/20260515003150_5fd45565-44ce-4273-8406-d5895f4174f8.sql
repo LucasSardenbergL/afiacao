@@ -1,0 +1,1 @@
+ALTER FUNCTION public.calcular_gatilhos_reposicao(text, bigint) SECURITY DEFINER;
