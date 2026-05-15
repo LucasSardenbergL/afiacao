@@ -56,6 +56,7 @@
     "framer-motion": "^12.34.3",
     "input-otp": "^1.4.2",
     "jsdom": "^20.0.3",
+    "jssip": "^3.10.7",
     "leaflet": "^1.9.4",
     "lucide-react": "^0.462.0",
     "next-themes": "^0.3.0",
