@@ -16,7 +16,6 @@ import {
   ScrollText,
   Search,
   ListChecks,
-  RotateCw,
   Keyboard,
   X,
   CheckCircle2,
@@ -1943,16 +1942,6 @@ export default function AdminReposicaoCockpit() {
     }
   };
 
-  const handleRefetchAll = () => {
-    queryClient.invalidateQueries({ queryKey: ["cockpit-itens-dia"] });
-    queryClient.invalidateQueries({ queryKey: ["cockpit-current-step"] });
-    queryClient.invalidateQueries({ queryKey: ["cockpit-historico-chart"] });
-    queryClient.invalidateQueries({ queryKey: ["reposicao-pedidos"] });
-    queryClient.invalidateQueries({ queryKey: ["reposicao-aplicacao"] });
-    queryClient.invalidateQueries({ queryKey: ["reposicao-historico"] });
-    toast("Atualizando...", { duration: 1200 });
-  };
-
   // ------ PDF (window.print) -----------------------------------------------
   const handlePrintPdf = () => {
     const today = format(new Date(), "yyyy-MM-dd");
@@ -2044,11 +2033,10 @@ export default function AdminReposicaoCockpit() {
         { keys: '1', label: 'Aba Ciclo de hoje',             group: 'Cockpit', handler: () => handleTab('ciclohoje') },
         { keys: '2', label: 'Aba Aplicar no Omie',           group: 'Cockpit', handler: () => handleTab('aplicaromie') },
         { keys: '3', label: 'Aba Ciclos anteriores',         group: 'Cockpit', handler: () => handleTab('anteriores') },
-        { keys: 'r', label: 'Atualizar dados',               group: 'Cockpit', handler: () => handleRefetchAll() },
         { keys: 'm', label: 'Alternar modo seleção (bulk)',  group: 'Cockpit', handler: () => setReviewMode(!reviewMode) },
       ],
       // dependências dos handlers
-      [handleGenerate, handleExportCsv, handleTab, handleRefetchAll, reviewMode, setReviewMode],
+      [handleGenerate, handleExportCsv, handleTab, reviewMode, setReviewMode],
     ),
   );
 
@@ -2077,9 +2065,6 @@ export default function AdminReposicaoCockpit() {
             title="Atalhos de teclado (?)"
           >
             <Keyboard className="h-4 w-4" />
-          </Button>
-          <Button size="sm" variant="outline" onClick={handleRefetchAll} title="Atualizar (R)">
-            <RotateCw className="h-4 w-4 mr-1.5" /> Atualizar
           </Button>
           <Button size="sm" onClick={handleGenerate} disabled={isGenerating} title="Gerar (G)">
             {isGenerating ? (
