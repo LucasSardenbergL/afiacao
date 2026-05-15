@@ -123,10 +123,10 @@ function getEstoqueZoneClass(estoque: number, minimo: number, pp: number): strin
 const EMPRESA = 'OBEN';
 
 const statusMeta: Record<string, { label: string; variant: 'default' | 'secondary' | 'destructive' | 'outline'; className?: string }> = {
-  pendente_aprovacao: { label: 'Pendente', variant: 'secondary', className: 'bg-status-warning-bg0/15 text-status-warning border-status-warning/30' },
-  aprovado_aguardando_disparo: { label: 'Aprovado', variant: 'secondary', className: 'bg-status-info-bg0/15 text-status-info border-status-info/30' },
+  pendente_aprovacao: { label: 'Pendente', variant: 'secondary', className: 'bg-status-warning/15 text-status-warning border-status-warning/30' },
+  aprovado_aguardando_disparo: { label: 'Aprovado', variant: 'secondary', className: 'bg-status-info/15 text-status-info border-status-info/30' },
   bloqueado_guardrail: { label: 'Bloqueado', variant: 'destructive' },
-  disparado: { label: 'Disparado', variant: 'secondary', className: 'bg-status-success-bg0/15 text-status-success border-status-success/30' },
+  disparado: { label: 'Disparado', variant: 'secondary', className: 'bg-status-success/15 text-status-success border-status-success/30' },
   cancelado: { label: 'Cancelado', variant: 'outline' },
   cancelado_humano: { label: 'Cancelado (vazio)', variant: 'outline' },
   expirado_sem_aprovacao: { label: 'Expirado sem aprovação', variant: 'secondary', className: 'bg-muted text-muted-foreground border-border' },
@@ -157,9 +157,9 @@ function StatusBadge({ status }: { status: Status }) {
 /* ─── Portal B2B Badge + Drawer ─── */
 const portalStatusMeta: Record<StatusEnvioPortal, { label: string; className: string }> = {
   nao_aplicavel: { label: '—', className: 'bg-muted text-muted-foreground border-border' },
-  pendente_envio_portal: { label: 'Aguardando envio', className: 'bg-status-info-bg0/15 text-status-info border-status-info/30' },
-  enviando_portal: { label: 'Enviando…', className: 'bg-status-info-bg0/20 text-status-info border-status-info/40 animate-pulse' },
-  enviado_portal: { label: '✓ Enviado', className: 'bg-status-success-bg0/15 text-status-success border-status-success/30' },
+  pendente_envio_portal: { label: 'Aguardando envio', className: 'bg-status-info/15 text-status-info border-status-info/30' },
+  enviando_portal: { label: 'Enviando…', className: 'bg-status-info/20 text-status-info border-status-info/40 animate-pulse' },
+  enviado_portal: { label: '✓ Enviado', className: 'bg-status-success/15 text-status-success border-status-success/30' },
   falha_envio_portal: { label: 'Falha', className: 'bg-destructive/15 text-destructive border-destructive/30' },
 };
 
@@ -370,7 +370,7 @@ function CycleIndicator({ now }: { now: Date }) {
 
   if (minutes < overrideUntil) {
     return (
-      <div className="inline-flex items-center gap-2 px-3 py-1.5 rounded-md bg-status-success-bg0/15 text-status-success border border-status-success/30 text-sm">
+      <div className="inline-flex items-center gap-2 px-3 py-1.5 rounded-md bg-status-success/15 text-status-success border border-status-success/30 text-sm">
         <Clock className="w-4 h-4" />
         Janela de override aberta até 09:30
       </div>
@@ -378,7 +378,7 @@ function CycleIndicator({ now }: { now: Date }) {
   }
   if (minutes < cutoff) {
     return (
-      <div className="inline-flex items-center gap-2 px-3 py-1.5 rounded-md bg-status-warning-bg0/15 text-status-warning border border-status-warning/30 text-sm">
+      <div className="inline-flex items-center gap-2 px-3 py-1.5 rounded-md bg-status-warning/15 text-status-warning border border-status-warning/30 text-sm">
         <PlayCircle className="w-4 h-4" />
         Disparando em breve
       </div>
@@ -466,8 +466,8 @@ function HistoricoAcoesPanel({ pedido }: { pedido: PedidoSugerido | null }) {
   };
   const dotCls: Record<Evt['tone'], string> = {
     default: 'bg-muted-foreground',
-    success: 'bg-status-success-bg0',
-    warn: 'bg-status-warning-bg0',
+    success: 'bg-status-success',
+    warn: 'bg-status-warning',
     danger: 'bg-destructive',
   };
   return (

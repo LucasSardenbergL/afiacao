@@ -827,11 +827,11 @@ function AgingCard({ title, data, type }: { title: string; data: any; type: 'rec
     data.vencido_90_plus_valor;
 
   const bars = [
-    { label: 'A vencer', value: data.a_vencer_valor, qtd: data.a_vencer_qtd, color: 'bg-status-info-bg0' },
-    { label: '1-30 dias', value: data.vencido_1_30_valor, qtd: data.vencido_1_30_qtd, color: 'bg-status-warning-bg0' },
+    { label: 'A vencer', value: data.a_vencer_valor, qtd: data.a_vencer_qtd, color: 'bg-status-info' },
+    { label: '1-30 dias', value: data.vencido_1_30_valor, qtd: data.vencido_1_30_qtd, color: 'bg-status-warning' },
     { label: '31-60 dias', value: data.vencido_31_60_valor, qtd: data.vencido_31_60_qtd, color: 'bg-orange-500' },
-    { label: '61-90 dias', value: data.vencido_61_90_valor, qtd: data.vencido_61_90_qtd, color: 'bg-status-error-bg0' },
-    { label: '+90 dias', value: data.vencido_90_plus_valor, qtd: data.vencido_90_plus_qtd, color: 'bg-red-700' },
+    { label: '61-90 dias', value: data.vencido_61_90_valor, qtd: data.vencido_61_90_qtd, color: 'bg-status-error' },
+    { label: '+90 dias', value: data.vencido_90_plus_valor, qtd: data.vencido_90_plus_qtd, color: 'bg-status-error' },
   ];
 
   return (
@@ -956,7 +956,7 @@ function FluxoCaixaTab({ data, loading, saldoCC }: { data: any[]; loading: boole
                     style={{ width: `${(w.entradas / maxVal) * 100}%` }}
                   />
                   <div
-                    className="absolute bottom-0 h-3 rounded bg-red-400/70"
+                    className="absolute bottom-0 h-3 rounded bg-status-error/70"
                     style={{ width: `${(w.saidas / maxVal) * 100}%` }}
                   />
                 </div>
@@ -971,7 +971,7 @@ function FluxoCaixaTab({ data, loading, saldoCC }: { data: any[]; loading: boole
           </div>
           <div className="flex gap-4 mt-4 justify-center text-xs text-muted-foreground">
             <span className="flex items-center gap-1"><span className="w-3 h-3 rounded bg-status-success/70" /> Entradas</span>
-            <span className="flex items-center gap-1"><span className="w-3 h-3 rounded bg-red-400/70" /> Saídas</span>
+            <span className="flex items-center gap-1"><span className="w-3 h-3 rounded bg-status-error/70" /> Saídas</span>
             <span>Saldo semanal</span>
             <span className="text-status-info">Acumulado</span>
           </div>

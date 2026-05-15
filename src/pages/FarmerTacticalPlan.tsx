@@ -149,8 +149,8 @@ const FarmerTacticalPlan = () => {
                 <div key={c.id} className="flex items-center justify-between p-2 rounded-lg border text-xs">
                   <div className="flex items-center gap-2 flex-1 min-w-0">
                     <div className={`w-2 h-2 rounded-full shrink-0 ${
-                      c.healthScore >= 70 ? 'bg-status-success-bg0' :
-                      c.healthScore >= 40 ? 'bg-status-warning-bg0' : 'bg-status-error-bg0'
+                      c.healthScore >= 70 ? 'bg-status-success' :
+                      c.healthScore >= 40 ? 'bg-status-warning' : 'bg-status-error'
                     }`} />
                     <span className="truncate font-medium">{c.name}</span>
                     <span className="text-[9px] text-muted-foreground shrink-0">HS:{Math.round(c.healthScore)}</span>

@@ -3,6 +3,7 @@ import { ScanLine, Keyboard } from 'lucide-react';
 import { Input } from '@/components/ui/input';
 import { Button } from '@/components/ui/button';
 import { cn } from '@/lib/utils';
+import { track } from '@/lib/analytics';
 
 /**
  * Barra de scan sticky para picking. Foco automático ao montar (separador chega na tela e já bipa).
@@ -68,6 +69,7 @@ export function ScanBar({
     const trimmed = raw.trim();
     if (!trimmed) return;
     const kind: ScanResult['kind'] = ADDRESS_REGEX.test(trimmed) ? 'address' : 'sku';
+    track('picking.scanned', { kind, method, length: trimmed.length });
     onScan({ raw: trimmed, kind, method });
     if (autoReset) setValue('');
   }

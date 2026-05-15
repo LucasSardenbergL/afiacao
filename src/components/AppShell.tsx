@@ -32,6 +32,8 @@ import { CommandPaletteTrigger } from '@/components/shell/CommandPaletteTrigger'
 import { CompanySwitcher } from '@/components/shell/CompanySwitcher';
 import { NetworkStatusIndicator } from '@/components/shell/NetworkStatusIndicator';
 import { ThemeToggle } from '@/components/shell/ThemeToggle';
+import { PageViewTracker } from '@/components/shell/PageViewTracker';
+import { AnalyticsIdentify } from '@/components/shell/AnalyticsIdentify';
 import { useFeatureFlagBodyClass } from '@/hooks/useFeatureFlag';
 import { useSidebarFavorites } from '@/hooks/useSidebarFavorites';
 import { Star } from 'lucide-react';
@@ -763,6 +765,10 @@ export function AppShell({ children }: { children: React.ReactNode }) {
             {/* Overlays globais */}
             <CommandPalette />
             <ShortcutsDialog />
+
+            {/* Telemetria — sem render visual, monta uma vez */}
+            <PageViewTracker />
+            <AnalyticsIdentify />
           </div>
         </CommandsRegistryProvider>
       </ShortcutsRegistryProvider>

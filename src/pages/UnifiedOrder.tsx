@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import { Loader2, ChevronLeft, CheckCircle, Building2, Scissors } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
+import { track } from '@/lib/analytics';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { RecommendationsPanel } from '@/components/RecommendationsPanel';
 import { AddToolDialog } from '@/components/AddToolDialog';
@@ -82,6 +83,18 @@ const UnifiedOrder = () => {
       setRestoreOpen(true);
     }
   }, [draft, h.cart.length, restoreOpen]);
+
+  // Telemetria: pedido enviado com sucesso (dispara uma vez ao abrir o success dialog)
+  useEffect(() => {
+    if (h.orderSuccessOpen && h.lastOrderData) {
+      track('pedido.criado', {
+        modo: isCustomerMode ? 'customer' : 'staff',
+        num_itens: h.lastOrderData.items?.length ?? 0,
+        valor_total: h.lastOrderData.total ?? 0,
+        num_pedidos: h.lastOrderData.orderNumbers?.length ?? 0,
+      });
+    }
+  }, [h.orderSuccessOpen, h.lastOrderData, isCustomerMode]);
 
   const handleRestore = () => {
     if (!draft) return;

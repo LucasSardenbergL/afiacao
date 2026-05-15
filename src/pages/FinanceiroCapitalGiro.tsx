@@ -176,7 +176,7 @@ const FinanceiroCapitalGiro = () => {
                   </div>
                   <div className="h-4 rounded-full bg-muted overflow-hidden">
                     <div
-                      className="h-full rounded-full bg-status-info-bg0 transition-all"
+                      className="h-full rounded-full bg-status-info transition-all"
                       style={{ width: `${Math.min((active.pmr / Math.max(active.pmr, active.pmp, 1)) * 100, 100)}%` }}
                     />
                   </div>
@@ -189,7 +189,7 @@ const FinanceiroCapitalGiro = () => {
                   </div>
                   <div className="h-4 rounded-full bg-muted overflow-hidden">
                     <div
-                      className="h-full rounded-full bg-status-success-bg0 transition-all"
+                      className="h-full rounded-full bg-status-success transition-all"
                       style={{ width: `${Math.min((active.pmp / Math.max(active.pmr, active.pmp, 1)) * 100, 100)}%` }}
                     />
                   </div>
@@ -245,9 +245,9 @@ const FinanceiroCapitalGiro = () => {
 
                 {/* Waterfall visual */}
                 <div className="flex items-end justify-center gap-2 h-32">
-                  <WaterfallBar label="CC Atual" value={active.saldo_cc} max={Math.max(active.saldo_cc, active.saldo_projetado_30d, active.entradas_30d)} color="bg-status-info-bg0" />
-                  <WaterfallBar label="Entradas" value={active.entradas_30d} max={Math.max(active.saldo_cc, active.saldo_projetado_30d, active.entradas_30d)} color="bg-status-success-bg0" />
-                  <WaterfallBar label="Saídas" value={active.saidas_30d} max={Math.max(active.saldo_cc, active.saldo_projetado_30d, active.entradas_30d)} color="bg-status-error-bg0" />
+                  <WaterfallBar label="CC Atual" value={active.saldo_cc} max={Math.max(active.saldo_cc, active.saldo_projetado_30d, active.entradas_30d)} color="bg-status-info" />
+                  <WaterfallBar label="Entradas" value={active.entradas_30d} max={Math.max(active.saldo_cc, active.saldo_projetado_30d, active.entradas_30d)} color="bg-status-success" />
+                  <WaterfallBar label="Saídas" value={active.saidas_30d} max={Math.max(active.saldo_cc, active.saldo_projetado_30d, active.entradas_30d)} color="bg-status-error" />
                   <WaterfallBar label="Projetado" value={active.saldo_projetado_30d} max={Math.max(active.saldo_cc, active.saldo_projetado_30d, active.entradas_30d)} color={active.saldo_projetado_30d >= 0 ? 'bg-status-success' : 'bg-status-error'} />
                 </div>
 
@@ -351,7 +351,7 @@ const FinanceiroCapitalGiro = () => {
                     <div className="flex items-center gap-3">
                       <Progress
                         value={active.top5_cr_pct}
-                        className={`h-3 ${active.top5_cr_pct > 70 ? '[&>div]:bg-status-error-bg0' : active.top5_cr_pct > 50 ? '[&>div]:bg-status-warning-bg0' : '[&>div]:bg-status-success-bg0'}`}
+                        className={`h-3 ${active.top5_cr_pct > 70 ? '[&>div]:bg-status-error' : active.top5_cr_pct > 50 ? '[&>div]:bg-status-warning' : '[&>div]:bg-status-success'}`}
                       />
                       <span className="text-sm font-bold">{active.top5_cr_pct.toFixed(0)}%</span>
                     </div>
@@ -364,7 +364,7 @@ const FinanceiroCapitalGiro = () => {
                     <div className="flex items-center gap-3">
                       <Progress
                         value={active.top5_cp_pct}
-                        className={`h-3 ${active.top5_cp_pct > 70 ? '[&>div]:bg-status-warning-bg0' : '[&>div]:bg-status-info-bg0'}`}
+                        className={`h-3 ${active.top5_cp_pct > 70 ? '[&>div]:bg-status-warning' : '[&>div]:bg-status-info'}`}
                       />
                       <span className="text-sm font-bold">{active.top5_cp_pct.toFixed(0)}%</span>
                     </div>

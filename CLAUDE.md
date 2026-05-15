@@ -1,6 +1,6 @@
 # CLAUDE.md — Afiação (Sistema Operacional B2B Sardenberg)
 
-> Este arquivo orienta agentes de código (e humanos) trabalhando neste repositório. Última atualização: 2026-05-13 (auditoria UX completa, Fases 0-4 entregues e fix do `Bell` import aplicado — ver `docs/ux-audit/`).
+> Este arquivo orienta agentes de código (e humanos) trabalhando neste repositório. Última atualização: 2026-05-13 (auditoria UX Fases 0-4 + redesign visual v3 + telemetria PostHog + search global — tudo no branch `claude/jolly-austin-9b3100`, PR #4. Ver `docs/ux-audit/` e `docs/visual-direction/`).
 
 ---
 
@@ -46,17 +46,20 @@ Total: **119 páginas registradas** em `src/pages/`, com lazy-loading em `App.ts
 - **Estado servidor**: `@tanstack/react-query` 5.83.0 (`staleTime: 60s`, sem `refetchOnWindowFocus`, `retry: 2`)
 - **UI**: shadcn/ui (50+ componentes em `src/components/ui`) sobre Radix UI primitives
 - **Estilo**: Tailwind 3.4.17 + `tailwindcss-animate` + `@tailwindcss/typography`
-- **Animação**: `framer-motion` 12 (usado em `EmptyState`, `BottomNav`, alguns dialogs)
+- **Tema**: `next-themes` 0.3 — light/dark com toggle (`ThemeToggle` no topbar; default light). Tokens em `src/index.css` v3 (ver §4)
+- **Tipografia**: Geist Sans + Geist Mono (Vercel) como principais; Newsreader (display serif) em h1 de cockpits; Inter como fallback. Carregadas via Google Fonts em `index.html`
+- **Animação**: `framer-motion` 12 (usado em alguns dialogs); motion principal via CSS (`index.css` keyframes + easing Vercel `cubic-bezier(0.16,1,0.3,1)`)
 - **Forms**: `react-hook-form` 7.61 + `zod` 3.25 + `@hookform/resolvers`
 - **Backend**: Supabase (Postgres + Auth + Storage + Realtime), 164 migrations em `supabase/migrations`, 48 Edge Functions em `supabase/functions`
+- **Analytics**: `posthog-js` 1.226 — Product Analytics + Session Replay + Web Analytics. Wrapper em `src/lib/analytics.ts`, instrumentação em `src/components/shell/{PageViewTracker,AnalyticsIdentify}.tsx`. Eventos custom: `cmdk.opened`, `shortcut.triggered`, `theme.changed`, `company.changed`, `pedido.criado`, `picking.scanned`, `sidebar.favorite_*`. Env: `VITE_POSTHOG_KEY` / `VITE_POSTHOG_HOST`
 - **PWA**: `vite-plugin-pwa` com Workbox — `NetworkFirst` apenas para catálogo, `NetworkOnly` para `orders/profiles/sales_orders/order_items` (ver §5)
 - **OCR**: `tesseract.js` 5.0 (usado em `RecebimentoConferencia` / `LoteScannerOCR`)
 - **Mapas**: `leaflet` 1.9 + `@types/leaflet` (route planner)
 - **Charts**: `recharts` 2.15
-- **Comando**: `cmdk` 1.1.1 — **instalado mas NÃO usado como command palette global**, apenas o `Command` wrapper shadcn está disponível em `src/components/ui/command.tsx`
+- **Comando**: `cmdk` 1.1.1 — **command palette global ativo** (`Cmd+K`), montado em `AppShell` via `src/components/shell/CommandPalette.tsx` com busca global real (clientes/fórmulas/pedidos) + comandos contextuais + recentes
 - **Voz/IA**: `@elevenlabs/react` 0.14 (transcribe)
 - **Drag-and-drop**: `@hello-pangea/dnd` 17 (kanban)
-- **Toasts**: `sonner` 1.7 + Radix toast (dois sistemas coexistem — ver §10)
+- **Toasts**: `sonner` 1.7 — sistema único. `useToast` legado continua via wrapper de compat em `src/hooks/use-toast.ts`
 - **Hospedagem**: Lovable Cloud (componentTagger em dev)
 
 ### Scripts
@@ -120,45 +123,47 @@ docs/
 
 ---
 
-## 4. Design System (estado atual)
+## 4. Design System — v3 "fintech/SaaS premium" (Vercel/Mercury/Stripe Dashboard)
 
-### Tokens (`src/index.css`)
+> Reposicionamento visual completo executado. Direção e spec em `docs/visual-direction/` (01-direcao, 02-tokens, 03-validacao, 04-identidade, 05-revisao-skill).
 
-- Cores em HSL via CSS vars (`--primary`, `--surface-0..3`, `--status-success/warning/error/info/pending/progress/danger/purple/indigo`, `--sidebar-*`)
-- Modo dark via classe `.dark`
-- Tipografia: Inter (sans), JetBrains Mono (mono), Space Grotesk e Bebas Neue carregados em `index.html` (legado — usados em Header/EmptyState como `font-display`)
-- Escala de tamanho: 2xs(10) → xs(12) → sm(13) → **base(14, default body)** → md(15) → lg(16) → xl(18) → 2xl(20) → 3xl(24) → 4xl(30) → 5xl(36)
-- Espaçamento custom: 0.5(2) / 1(4) / 1.5(6) / 2(8) / 3(12) / 4(16) / 5(20) / 6(24) / 8(32) / 10(40) / 12(48) / 16(64) / 20(80) / 24(96), mais tokens semânticos `sidebar(240)`, `sidebar-collapsed(56)`, `topbar(48)`
-- Radius: `--radius: 0.5rem` (com lg/md/sm derivados)
-- Shadows: xs / sm / md / lg / xl / focus
-- Motion: `--duration-fast: 100ms`, `--duration-normal: 200ms`, `--duration-slow: 350ms`
-- Densidade: classes `.density-compact` (row 36/input 32/card 12/gap 4) e `.density-comfortable` (row 44/input 40/card 16/gap 8). **AppShell aplica `density-compact` globalmente** (`AppShell.tsx:552`).
+### Tokens (`src/index.css` — v3)
 
-### Inspirações declaradas (na página `DesignSystem.tsx:115`)
+- **Paleta quase-neutra** (low-fatigue pra uso 8h): primary preto/branco minimal, escala neutra warm-leaning, background off-white `0 0% 99%` (cards `#FFF` flutuam sutilmente)
+- **Status colors dessaturadas** — `--status-success/warning/error/info` (texto longo) + `--status-*-bold` (acentos curtos: badge "Live", dot). `--status-*-fg` + `--status-*-bg` pra pares de badge. Utilities `text-status-*`, `bg-status-*`, `text-status-*-bold` em `index.css`. **NÃO usar `text-emerald-600` etc. em código novo.**
+- **Identidade por empresa**: `--company-colacor/oben/sc` (monogramas no CompanySwitcher)
+- **Tipografia**: `font-sans` = Geist, `font-mono` = Geist Mono, `font-display` = Newsreader (serif, só h1 de cockpits). `tnum` global. h1 30px/500/-0.04em, h2 22px/500. Utilities `.kpi-value` (Geist Mono p/ KPIs grandes), `.kpi-delta`, `.font-tabular` (IDs/datas)
+- **Radius**: `--radius: 0.375rem` (6px)
+- **Shadows**: quase ausentes — profundidade via border 1px. Sombra só em overlay (`--shadow-md/lg`)
+- **Motion**: easing Vercel `cubic-bezier(0.16,1,0.3,1)`, durations 150/200/300/500ms. Utilities `.stagger-children` (reveal cascateado), `.animate-shimmer` (skeleton), `.animate-shake`/`.animate-ping-slow` (network indicator). Respeita `prefers-reduced-motion`
+- **Atmosphere**: `.bg-cockpit-hero` (gradient radial sutil) + `.noise` (grain SVG ~3%) em headers de cockpit
+- **Modo dark**: classe `.dark` via `next-themes`. `<ThemeToggle>` no topbar, default light
+- **Feature flag de rollback**: `useFeatureFlag('newVisual')` — quando `false`, `html.legacy-visual` reverte tokens críticos pros antigos. Toggle em `/settings`
+- **Densidade**: `.density-compact` aplicada globalmente pelo AppShell
 
-> "Tokens, componentes e padrões — HubSpot Canvas + Shopify Polaris + Gong"
+### Inspirações (atualizadas — `DesignPreview.tsx` showcase em `/design-preview`)
 
-> ⚠️ **Realinhar para o briefing oficial**: Linear (velocidade percebida) · Notion (cmd-k) · Carbon Design System / IBM (densidade B2B) · Shopify Polaris (operacional) · Retool (internal tools). HubSpot Canvas e Gong saem da régua. A interseção real do existente é apenas Polaris.
+> Vercel + Mercury + Stripe Dashboard. Anti-referências: Material Design 3, Bootstrap genérico, Stripe landing page consumer. (O `DesignSystem.tsx` legado em `/design-system` ainda cita HubSpot/Gong — descontinuar.)
 
 ### shadcn/ui — componentes presentes (`src/components/ui`)
 
-Todos os primitivos esperados: accordion, alert-dialog, alert, avatar, badge, breadcrumb, button, calendar, card, carousel, chart, checkbox, collapsible, command, context-menu, dialog, drawer, dropdown-menu, form, hover-card, input-otp, input, label, menubar, navigation-menu, pagination, popover, progress, radio-group, resizable, scroll-area, select, separator, sheet, sidebar, skeleton, slider, sonner, switch, table, tabs, textarea, toast, toaster, toggle-group, toggle, tooltip.
+Todos os primitivos esperados + adições: `page-skeleton` (variantes cockpit/list/form/detail), `bulk-actions-bar`. Button tem variantes `touch` (44px) e `balcao` (56px) pra operação mobile/touchscreen.
 
 ### Padrões de layout
 
-- **Desktop**: sidebar dark fixa à esquerda (colapsível, 240/56px) + topbar fixo no topo (48px) + main com `pt-topbar` e `lg:ml-sidebar`
-- **Mobile (<lg)**: sidebar dark vira drawer overlay (`MobileNav`), topbar mantido, sem bottom-nav ativa
-- **Bottom-nav legado** (`BottomNav.tsx`): existe mas é silenciada quando dentro de AppShell — só ativa em telas fora da Shell (rotas públicas)
-- **Densidade**: compact (32px input / 36px row) aplicada globalmente — ver §11
-- **Empty states**: `src/components/EmptyState.tsx` é "consumer-grade" (motion floating, ícone arredondado grande, descrição centralizada) — destoa do registro B2B do resto do shell
+- **Desktop**: sidebar **light** coerente com conteúdo (colapsível, 240/56px) + topbar fixo (48px) + main com `pt-topbar` e `lg:ml-sidebar`
+- **Mobile (<lg)**: sidebar vira drawer overlay (`MobileNav`), topbar mantido
+- **Sidebar**: seções secundárias (Performance, Inteligência, Automação, Documentação) colapsáveis e fechadas por padrão; estado persiste em localStorage. **Favoritos pinados** no topo via `useSidebarFavorites` (até 5, estrela em hover do item)
+- **Empty states**: `src/components/EmptyState.tsx` refatorado — `tone="operational"` (default B2B, denso, pattern de pontos sutil) e `tone="friendly"` (customer-facing). Adotado em SalesOrders, AdminCustomers, Recebimento
+- **Bottom-nav legado** (`BottomNav.tsx`): silenciado dentro de AppShell
 
-### Navegação (sidebar, `AppShell.tsx:38-127`)
+### Navegação (sidebar, `AppShell.tsx`)
 
-Seções: Principal · Afiação · Vendas · Estoque · Reposição · Produção · Performance · Inteligência · Financeiro · Tintométrico · Automação · Gestão · Documentação. Badges numéricos com contagem em tempo real (refetch 30–60s) em: alertas outlier, pedidos pendentes, aumentos ativos, oportunidades, negociação paralela, notificações, alertas críticos parâmetros, financeiro atrasados, tint erros.
+Seções: Principal · Afiação · Vendas · Estoque · Reposição · Produção · Performance · Inteligência · Financeiro · Tintométrico · Automação · Gestão · Documentação. Badges numéricos em tempo real (refetch 30–60s). Wordmark "Colacor" (peso 500, tracking -0.045em + ponto gradient como assinatura).
 
-### Topbar (`AppShell.tsx:434-481`)
+### Topbar (`AppShell.tsx`)
 
-Apenas: botão mobile menu (lg:hidden) · HelpDrawer · botão Bell (sem badge, sem onClick, **ornamental**) · dropdown User (Meu perfil / Sair). **Sem campo de busca global, sem command palette, sem trocador de empresa, sem indicador de online/offline, sem indicador de empresa ativa.**
+Mobile menu (lg:hidden) · **Cmd-K pill central** (`CommandPaletteTrigger`) · **CompanySwitcher** (monograma colorido por empresa) · **NetworkStatusIndicator** (some quando online+fila vazia; shake/pulse quando offline/slow) · **ThemeToggle** · HelpDrawer · dropdown User. O `Bell` ornamental foi removido.
 
 ---
 
@@ -241,14 +246,14 @@ As 5 personas operacionais não viram roles novos no banco — elas são **recor
 
 ---
 
-## 6. Princípios não-negociáveis (do briefing)
+## 6. Princípios não-negociáveis (do briefing) — status atualizado
 
-1. **Offline-first em picking e recebimento** — hoje não implementado
-2. **Latência percebida <100ms em scan de barcode** — hoje sem barcode
-3. **Densidade alta em telas operacionais (B2B, não consumer)** — `density-compact` global é direção correta
-4. **WCAG AA mínimo, AAA em críticas** — focus-visible OK; touch targets abaixo do mínimo
-5. **Mobile-first em chão de fábrica, desktop-first em telas analíticas** — Shell atual é desktop-first em ambos
-6. **Cmd-k global, atalhos consistentes (j/k navegação, esc cancela, e edit, / busca)** — hoje inexistente
+1. **Offline-first em picking e recebimento** — 🟡 scaffold: `lib/offline-queue.ts` + `useNetworkStatus` + indicador visual prontos; falta integrar nas mutações reais (`handleConfirmUnit`, `handleScan`, `submitOrder`) e migrar Workbox de `NetworkOnly`
+2. **Latência percebida <100ms em scan** — 🟡 `ScanBar` com detecção wedge HID + `useOptimisticMutation` helper prontos; optimistic aplicado parcialmente (deleteOrder); BarcodeDetector API ainda não
+3. **Densidade alta em telas operacionais** — ✅ `density-compact` global
+4. **WCAG AA mínimo, AAA em críticas** — 🟡 focus-visible OK; variantes `touch` (44px)/`balcao` (56px) criadas no Button; contraste dos tokens validado em `docs/visual-direction/03-validacao.md`; falta adoção sistemática das variantes touch
+5. **Mobile-first em chão de fábrica, desktop-first em analítico** — 🟡 `TouchPickingView` (`/admin/estoque/picking/mobile`) existe como scaffold; falta auto-detect mobile
+6. **Cmd-k global, atalhos consistentes** — ✅ `Cmd+K` montado com busca global real; `useRegisterShortcuts` + dialog `?`; atalhos do Cockpit migrados pro registry
 
 ---
 
@@ -313,23 +318,47 @@ Resultado da Fase 4 — usar nas próximas features:
 - **Não criar novos atalhos via listener `keydown` solto** — use `useRegisterShortcuts`.
 - **Não usar `<Loader2 spin />` centralizado** como fallback de página inteira — use `PageSkeleton`.
 - **Não montar novo Toaster** — só Sonner está ativo no AppShell.
+- **Não instrumentar evento via `posthog` direto** — use `track()` de `@/lib/analytics` com convenção `<area>.<action>`.
+- **Não usar `Inter`/fonte genérica em headings novos** — `font-display` (Newsreader) em h1 de telas-hero; `.kpi-value` em valores grandes.
+
+## 9b. Redesign visual + telemetria (entregue após a auditoria UX)
+
+Trabalho posterior à Fase 4, no mesmo branch. Artefatos em `docs/visual-direction/`:
+
+- ✅ **Direção visual** — reposicionamento "fintech/SaaS premium" (Vercel/Mercury/Stripe Dashboard). Tokens v3 em `src/index.css`, Geist + Newsreader, dark mode, sidebar light, paleta low-fatigue. Spec em `01-direcao.md` / `02-tokens.md`
+- ✅ **Validação** — contraste WCAG calculado (`03-validacao.md`), audit de cores hardcoded (19 telas migradas + sweep de resíduos de sed)
+- ✅ **Identidade** — wordmark Colacor, monogramas por empresa, sidebar enxuta (`04-identidade.md`)
+- ✅ **Polish via skill `frontend-design`** — 7 quick wins aplicados, 13 itens documentados em `05-revisao-skill.md` (todos implementados em rodada posterior: serif display, atmosphere em cockpits, status-bold, kpi-delta, favoritos, etc.)
+- ✅ **Search global no Cmd-K** — `useGlobalSearch` busca clientes/fórmulas/pedidos no Supabase; recentes em localStorage
+- ✅ **Telemetria PostHog** — ver §2. Dashboard "Afiação — Adoção UX" criado (project 423408)
+- 🟡 **Scaffolds pendentes de sprint próprio**: offline-queue integração real, TouchPickingView auto-detect, tint-cache Edge function, segmentos de cliente / histórico NF-e em schema (hoje localStorage)
+
+> ⚠️ Todo esse trabalho está num **único PR grande** (`claude/jolly-austin-9b3100`). Nunca passou por `npm run lint`/`build` — validação foi estática. **Rodar build local antes de mergear.**
 
 ---
 
-## 10. Bugs/contradições/débitos detectados (fora do escopo de UX)
+## 10. Bugs/contradições/débitos — status atualizado
 
-Levantados durante a Fase 0; **não consertar agora**, apenas registrar:
+Resolvidos no branch atual:
 
-- **Rename `Afiação Colacor` → `Colacor`** em `src/contexts/CompanyContext.tsx:13` — Colacor é hoje o nome-mãe, afiação virou módulo. Procurar referências em telas/badges também.
-- **Branding stale**: `index.html` ainda diz "Colacor - Afiação Profissional" e PWA manifest tem `name: "Colacor - Afiação Profissional"` (`vite.config.ts:27`). Atualizar para refletir o B2B-OS multi-empresa Colacor.
-- **Logo da sidebar**: `Scissors` (tesoura) + label "Central" (`AppShell.tsx:331-337`) — visualmente ainda alinhado ao escopo afiação original. Reavaliar identidade visual.
-- **Bell ornamental**: botão de notificações no topbar (`AppShell.tsx:458-460`) não tem `onClick`, não tem badge — é apenas decoração.
-- **BottomNav morta**: `BottomNav.tsx:34` faz `if (insideShell) return null;` — efetivamente desabilita a navegação inferior mobile.
-- **Dois sistemas de toast** montados simultaneamente (`Toaster` + `Sonner`) — inconsistência futura provável.
-- **`density-compact` global** com targets de 32px conflita com WCAG/uso com luva em telas mobile operacionais.
-- **Workbox `NetworkOnly` para picking e orders** contradiz o princípio offline-first declarado no briefing.
-- **`useUserRole.ts` duplica `AppRole` type** já exportado por `AuthContext.tsx` — manter como fonte única.
-- **`isCustomer` em useUserRole** considera `customer` mas `isStaff` lá ignora `master` (`useUserRole.ts:70-71`) — divergente da definição em AuthContext (que inclui master em isStaff). Pode ser bug sutil de permissão.
+- ✅ **Logo da sidebar** — `Scissors`+"Central" virou wordmark "Colacor" refinado
+- ✅ **Bell ornamental** — removido; topbar agora tem NetworkStatusIndicator + ThemeToggle + CompanySwitcher + Cmd-K pill
+- ✅ **Dois sistemas de toast** — só Sonner ativo; `useToast` legado via wrapper de compat
+- ✅ **Touch targets** — variantes `touch`/`balcao` criadas no Button (adoção sistemática ainda pendente)
+- ✅ **Logs silenciosos** — `cockpit_audit_log`, `fin_projecao_13_semanas`, `fin_confiabilidade` agora logam via `logger.warn`
+- ✅ **NfeReceipt** — título "OBEN" hardcoded virou dinâmico por empresa
+
+Ainda pendentes (decisão de produto ou sprint próprio):
+
+- **Rename `Afiação Colacor` → `Colacor`** em `src/contexts/CompanyContext.tsx:13` — ainda no código (UI já mostra "Colacor")
+- **Branding stale**: `index.html` title + PWA manifest `name` ainda dizem "Colacor - Afiação Profissional" — rename afeta cache PWA, precisa deploy coordenado
+- **BottomNav morta**: `BottomNav.tsx:34` `if (insideShell) return null;` — decisão: remover ou reativar pra rotas públicas
+- **Workbox `NetworkOnly` para picking e orders** — ainda contradiz offline-first; `offline-queue.ts` pronto mas não integrado
+- **`useUserRole.ts` duplica `AppRole`** já exportado por `AuthContext.tsx`
+- **`isCustomer` vs `isStaff` em useUserRole** (`:70-71`) — `isStaff` lá ignora `master`, divergente de AuthContext
+- **Discrepância Account/Empresa em SalesOrders** — `Account = 'oben'|'colacor'|'afiacao'|'all'` ≠ `CompanyContext` (`colacor_sc` não aparece no filtro)
+- **`SalesOrders` / `AdminCustomers` sem paginação** — carregam tudo; risco com volume alto
+- **`SalesOrders.deleteOrder` sem soft-delete** — exclusão direta no Omie; risco compliance
 
 ---
 

@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useState } from 'react';
+import { track } from '@/lib/analytics';
 
 /**
  * Favoritos pinados da sidebar — pattern Mercury "Pinned" / Linear "Favorites".
@@ -43,11 +44,19 @@ export function useSidebarFavorites() {
 
   const toggle = useCallback((path: string) => {
     setFavorites((prev) => {
-      const next = prev.includes(path)
+      const wasFavorite = prev.includes(path);
+      const next = wasFavorite
         ? prev.filter((p) => p !== path)
         : prev.length >= MAX_FAVORITES
           ? prev // limite atingido — silencioso (UI deve dar feedback)
           : [...prev, path];
+      const changed = next.length !== prev.length;
+      if (changed) {
+        track(wasFavorite ? 'sidebar.favorite_removed' : 'sidebar.favorite_added', {
+          path,
+          total: next.length,
+        });
+      }
       write(next);
       return next;
     });
