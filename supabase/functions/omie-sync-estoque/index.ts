@@ -266,18 +266,16 @@ Deno.serve(async (req) => {
       console.warn(`[omie-sync-estoque] ListarSaldoPendente falhou (não-fatal): ${msg}`);
     }
 
-    // 4) UPSERT em sku_estoque_atual
-    const upsertRows = Array.from(encontrados.entries()).map(([codigo, item]) => {
-      const fisico = Number(item.fisico ?? 0);
-      const reservado = Number(item.reservado ?? 0);
+    // 4) UPSERT em sku_estoque_atual (valores já agregados por SKU)
+    const upsertRows = Array.from(encontrados.entries()).map(([codigo, agg]) => {
       return {
         empresa,
         sku_codigo_omie: codigo,
-        estoque_fisico: fisico,
-        estoque_disponivel: fisico - reservado,
+        estoque_fisico: agg.fisico,
+        estoque_disponivel: agg.fisico - agg.reservado,
         estoque_pendente_entrada: pendenteEntrada.get(codigo) ?? 0,
         ultima_sincronizacao: new Date().toISOString(),
-        fonte_sync: "ListarPosEstoque",
+        fonte_sync: agg.locais > 1 ? `ListarPosEstoque(${agg.locais} locais)` : "ListarPosEstoque",
       };
     });
 
