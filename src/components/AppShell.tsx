@@ -81,10 +81,10 @@ const unifiedNavSections: { title: string; items: NavItem[] }[] = [
   {
     title: 'Reposição',
     items: [
-      { icon: LayoutDashboard, label: 'Cockpit de Compras', path: '/admin/reposicao/cockpit', managerOnly: true },
-      { icon: Settings, label: 'Parâmetros & Qualidade', path: '/admin/reposicao/parametros', managerOnly: true },
-      { icon: TrendingUp, label: 'Inteligência de Mercado', path: '/admin/reposicao/mercado', managerOnly: true },
-      { icon: Database, label: 'Cadastros & Config', path: '/admin/reposicao/cadastros', managerOnly: true },
+      { icon: LayoutDashboard, label: 'Cockpit', path: '/admin/reposicao/sessao', managerOnly: true },
+      { icon: TrendingUp, label: 'Mercado', path: '/admin/reposicao/sessao/mercado', managerOnly: true },
+      { icon: Settings, label: 'Parâmetros', path: '/admin/reposicao/sessao/parametros', managerOnly: true },
+      { icon: Database, label: 'Cadastros', path: '/admin/reposicao/cadastros', managerOnly: true },
     ],
   },
   {
@@ -476,7 +476,7 @@ function AppSidebar({ collapsed, onToggle }: { collapsed: boolean; onToggle: () 
         if (it.path === '/admin/notificacoes' && notificacoesPendentes) {
           return { ...it, badge: notificacoesPendentes, badgeVariant: 'destructive' as const };
         }
-        if (it.path === '/admin/reposicao/parametros' && alertasCriticos && alertasCriticos > 0) {
+        if (it.path === '/admin/reposicao/sessao/parametros' && alertasCriticos && alertasCriticos > 0) {
           return { ...it, badge: alertasCriticos, badgeVariant: 'destructive' as const };
         }
         if (it.path === '/financeiro/gestao' && financeiroAtrasados && financeiroAtrasados > 0) {
