@@ -217,6 +217,52 @@ function isSayerlackOben(pedido: PedidoRow): boolean {
 }
 
 /**
+ * PR8: aguarda um pedido sair do estado `enviando_portal` (background task
+ * de enviar-pedido-portal-sayerlack terminou). Usado pra serializar disparos
+ * de filhos Sayerlack/OBEN do mesmo split — evita burst de chamadas
+ * concorrentes no Browserless, que rejeita por concorrência e devolve
+ * "200 sem envelope" → indeterminado_requer_conciliacao indevido.
+ *
+ * Faz polling no banco. Retorna o status final encontrado ou null se
+ * estourou o timeout (caso em que seguimos pro próximo mesmo assim,
+ * pra não travar o loop).
+ *
+ * Estados que consideramos "terminou":
+ *   sucesso_portal, enviado_portal (legado), aceito_portal_sem_protocolo,
+ *   indeterminado_requer_conciliacao, erro_retentavel, erro_nao_retentavel,
+ *   falha_envio_portal (legado).
+ * Estado que ainda está rodando: enviando_portal.
+ */
+async function aguardarPortalTerminar(
+  db: any,
+  pedidoId: number,
+  timeoutMs: number,
+): Promise<string | null> {
+  const POLL_INTERVAL_MS = 3000;
+  const ESTADOS_FINAIS = new Set([
+    "sucesso_portal",
+    "enviado_portal",
+    "aceito_portal_sem_protocolo",
+    "indeterminado_requer_conciliacao",
+    "erro_retentavel",
+    "erro_nao_retentavel",
+    "falha_envio_portal",
+  ]);
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    const { data } = await db
+      .from("pedido_compra_sugerido")
+      .select("status_envio_portal")
+      .eq("id", pedidoId)
+      .maybeSingle();
+    const s = (data?.status_envio_portal ?? null) as string | null;
+    if (s && ESTADOS_FINAIS.has(s)) return s;
+    await new Promise((r) => setTimeout(r, POLL_INTERVAL_MS));
+  }
+  return null;
+}
+
+/**
  * PR5: divide pedidos Sayerlack/OBEN com mais de SPLIT_CHUNK_SIZE itens em
  * filhos menores. Cada filho cabe na janela de 60s do Browserless.
  *
@@ -940,6 +986,24 @@ Deno.serve(async (req: Request) => {
     const resultados: ProcessResult[] = [];
     for (const p of aprovados) {
       const r = await processarPedido(db, p, modo, creds);
+
+      // PR8: serializa filhos Sayerlack que foram enfileirados pro portal
+      // (status_final === aguardando_portal_sayerlack). Sem isso, N filhos
+      // de um split disparam N chamadas async em sucessão e o Browserless
+      // rejeita as excedentes por concorrência (200 sem envelope, gerando
+      // indeterminado_requer_conciliacao indevido).
+      //
+      // Espera até 90s pelo background task do enviar-pedido-portal-sayerlack
+      // terminar. Se estourar (raro), seguimos pro próximo mesmo assim — o
+      // pior caso é a próxima execução do cron pegar o resto.
+      if (r.status_final === "aguardando_portal_sayerlack" && isSayerlackOben(p)) {
+        const splitTag = p.split_parent_id ? `Lote ${p.split_lote ?? "?"}/${p.split_total ?? "?"} de #${p.split_parent_id}` : "individual";
+        console.log(`[disparar-pedidos] PR8: aguardando #${p.id} (${splitTag}) sair de enviando_portal antes do próximo...`);
+        const tWait = Date.now();
+        const finalStatus = await aguardarPortalTerminar(db, p.id, 90_000);
+        const waitMs = Date.now() - tWait;
+        console.log(`[disparar-pedidos] PR8: #${p.id} portal terminou em ${waitMs}ms com status_envio_portal=${finalStatus ?? "TIMEOUT"}`);
+      }
 
       // 5. Se produção e Omie OK: notificar fornecedor
       if (
