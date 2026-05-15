@@ -7,7 +7,6 @@ const Table = React.forwardRef<HTMLTableElement, React.HTMLAttributes<HTMLTableE
     const scrollRef = React.useRef<HTMLDivElement>(null);
     const phantomRef = React.useRef<HTMLDivElement>(null);
     const innerRef = React.useRef<HTMLDivElement>(null);
-    const syncing = React.useRef<"none" | "scroll" | "phantom">("none");
     const [width, setWidth] = React.useState(0);
     const [overflowing, setOverflowing] = React.useState(false);
 
@@ -25,18 +24,15 @@ const Table = React.forwardRef<HTMLTableElement, React.HTMLAttributes<HTMLTableE
       return () => ro.disconnect();
     }, []);
 
-    const onScrollMain = () => {
-      if (syncing.current === "phantom") { syncing.current = "none"; return; }
-      if (!scrollRef.current || !phantomRef.current) return;
-      syncing.current = "scroll";
-      phantomRef.current.scrollLeft = scrollRef.current.scrollLeft;
+    const syncScroll = (source: HTMLDivElement | null, target: HTMLDivElement | null) => {
+      if (!source || !target) return;
+      if (Math.abs(target.scrollLeft - source.scrollLeft) > 1) {
+        target.scrollLeft = source.scrollLeft;
+      }
     };
-    const onScrollPhantom = () => {
-      if (syncing.current === "scroll") { syncing.current = "none"; return; }
-      if (!scrollRef.current || !phantomRef.current) return;
-      syncing.current = "phantom";
-      scrollRef.current.scrollLeft = phantomRef.current.scrollLeft;
-    };
+
+    const onScrollMain = () => syncScroll(scrollRef.current, phantomRef.current);
+    const onScrollPhantom = () => syncScroll(phantomRef.current, scrollRef.current);
 
     return (
       <div className="relative w-full">
