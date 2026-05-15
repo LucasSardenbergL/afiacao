@@ -3,11 +3,61 @@ import * as React from "react";
 import { cn } from "@/lib/utils";
 
 const Table = React.forwardRef<HTMLTableElement, React.HTMLAttributes<HTMLTableElement>>(
-  ({ className, ...props }, ref) => (
-    <div className="relative w-full overflow-auto">
-      <table ref={ref} className={cn("w-full caption-bottom text-sm", className)} {...props} />
-    </div>
-  ),
+  ({ className, ...props }, ref) => {
+    const scrollRef = React.useRef<HTMLDivElement>(null);
+    const phantomRef = React.useRef<HTMLDivElement>(null);
+    const innerRef = React.useRef<HTMLDivElement>(null);
+    const syncing = React.useRef<"none" | "scroll" | "phantom">("none");
+    const [width, setWidth] = React.useState(0);
+    const [overflowing, setOverflowing] = React.useState(false);
+
+    React.useEffect(() => {
+      const el = scrollRef.current;
+      if (!el) return;
+      const update = () => {
+        setWidth(el.scrollWidth);
+        setOverflowing(el.scrollWidth > el.clientWidth + 1);
+      };
+      update();
+      const ro = new ResizeObserver(update);
+      ro.observe(el);
+      if (el.firstElementChild) ro.observe(el.firstElementChild as Element);
+      return () => ro.disconnect();
+    }, []);
+
+    const onScrollMain = () => {
+      if (syncing.current === "phantom") { syncing.current = "none"; return; }
+      if (!scrollRef.current || !phantomRef.current) return;
+      syncing.current = "scroll";
+      phantomRef.current.scrollLeft = scrollRef.current.scrollLeft;
+    };
+    const onScrollPhantom = () => {
+      if (syncing.current === "scroll") { syncing.current = "none"; return; }
+      if (!scrollRef.current || !phantomRef.current) return;
+      syncing.current = "phantom";
+      scrollRef.current.scrollLeft = phantomRef.current.scrollLeft;
+    };
+
+    return (
+      <div className="relative w-full">
+        {overflowing && (
+          <div
+            ref={phantomRef}
+            onScroll={onScrollPhantom}
+            className="sticky top-topbar z-20 overflow-x-auto overflow-y-hidden h-3 bg-background/80 backdrop-blur-sm"
+            aria-hidden="true"
+          >
+            <div style={{ width, height: 1 }} />
+          </div>
+        )}
+        <div ref={scrollRef} onScroll={onScrollMain} className="relative w-full overflow-auto">
+          <div ref={innerRef}>
+            <table ref={ref} className={cn("w-full caption-bottom text-sm", className)} {...props} />
+          </div>
+        </div>
+      </div>
+    );
+  },
 );
 Table.displayName = "Table";
 
