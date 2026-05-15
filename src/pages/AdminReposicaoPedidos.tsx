@@ -49,6 +49,11 @@ type StatusEnvioPortal =
   | 'pendente_envio_portal'
   | 'enviando_portal'
   | 'enviado_portal'
+  | 'sucesso_portal'
+  | 'aceito_portal_sem_protocolo'
+  | 'indeterminado_requer_conciliacao'
+  | 'erro_retentavel'
+  | 'erro_nao_retentavel'
   | 'falha_envio_portal';
 
 interface PedidoSugerido {
@@ -159,8 +164,13 @@ const portalStatusMeta: Record<StatusEnvioPortal, { label: string; className: st
   nao_aplicavel: { label: '—', className: 'bg-muted text-muted-foreground border-border' },
   pendente_envio_portal: { label: 'Aguardando envio', className: 'bg-status-info/15 text-status-info border-status-info/30' },
   enviando_portal: { label: 'Enviando…', className: 'bg-status-info/20 text-status-info border-status-info/40 animate-pulse' },
+  erro_retentavel: { label: 'Retentável', className: 'bg-status-info/15 text-status-info border-status-info/30' },
   enviado_portal: { label: '✓ Enviado', className: 'bg-status-success/15 text-status-success border-status-success/30' },
+  sucesso_portal: { label: '✓ Enviado', className: 'bg-status-success/15 text-status-success border-status-success/30' },
+  aceito_portal_sem_protocolo: { label: 'Sem protocolo', className: 'bg-status-warning/15 text-status-warning border-status-warning/30' },
+  indeterminado_requer_conciliacao: { label: 'Requer conciliação', className: 'bg-status-warning/15 text-status-warning border-status-warning/30' },
   falha_envio_portal: { label: 'Falha', className: 'bg-destructive/15 text-destructive border-destructive/30' },
+  erro_nao_retentavel: { label: 'Falha definitiva', className: 'bg-destructive/15 text-destructive border-destructive/30' },
 };
 
 function PortalBadge({
@@ -174,11 +184,15 @@ function PortalBadge({
   const meta = portalStatusMeta[status] ?? portalStatusMeta.nao_aplicavel;
 
   const tooltipText =
-    status === 'enviado_portal' && pedido.portal_protocolo
+    (status === 'enviado_portal' || status === 'sucesso_portal') && pedido.portal_protocolo
       ? `Protocolo: ${pedido.portal_protocolo}`
-      : status === 'falha_envio_portal' && pedido.portal_erro
+      : (status === 'falha_envio_portal' || status === 'erro_nao_retentavel') && pedido.portal_erro
         ? pedido.portal_erro
-        : null;
+        : (status === 'aceito_portal_sem_protocolo' || status === 'indeterminado_requer_conciliacao')
+          ? 'Portal pode ter recebido — verifique e concilie manualmente'
+          : status === 'erro_retentavel' && pedido.portal_erro
+            ? `Retentável: ${pedido.portal_erro}`
+            : null;
 
   const badge = (
     <button

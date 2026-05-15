@@ -118,17 +118,23 @@ export function PortalDetailDrawer({ pedidoId, open, onOpenChange, isAdmin }: Pr
   };
 
   const itemsSemMapeamento = (items ?? []).filter((i) => !i.sku_portal);
-  const isPendente = pedido?.status_envio_portal === 'pendente_envio_portal'
-    || pedido?.status_envio_portal === 'enviando_portal';
-  const isHistorico = pedido?.status_envio_portal === 'enviado_portal'
-    || pedido?.status_envio_portal === 'falha_envio_portal';
+  const statusPortal = pedido?.status_envio_portal as string | null | undefined;
+  const isPendente = statusPortal === 'pendente_envio_portal'
+    || statusPortal === 'enviando_portal'
+    || statusPortal === 'erro_retentavel';
+  const isHistorico = statusPortal === 'enviado_portal'
+    || statusPortal === 'sucesso_portal'
+    || statusPortal === 'falha_envio_portal'
+    || statusPortal === 'erro_nao_retentavel';
+  const isConciliacao = statusPortal === 'aceito_portal_sem_protocolo'
+    || statusPortal === 'indeterminado_requer_conciliacao';
 
   return (
     <Sheet open={open} onOpenChange={onOpenChange}>
       <SheetContent className="w-full sm:max-w-2xl overflow-y-auto">
         <SheetHeader>
           <SheetTitle>
-            {isHistorico ? 'Detalhes do envio' : 'Detalhes do pedido'} #{pedidoId}
+            {(isHistorico || isConciliacao) ? 'Detalhes do envio' : 'Detalhes do pedido'} #{pedidoId}
           </SheetTitle>
           <SheetDescription>
             Dados completos do envio ao portal Sayerlack.
