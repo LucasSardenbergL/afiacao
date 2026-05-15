@@ -541,13 +541,13 @@ export default function AdminReposicaoAlertas() {
                     </TableCell>
                     <TableCell>{sevBadge(r.severidade)}</TableCell>
                     <TableCell className="text-sm">{new Date(r.data_evento).toLocaleDateString("pt-BR")}</TableCell>
-                    <TableCell className="font-mono text-xs">{r.sku_codigo_omie}</TableCell>
-                    <TableCell className="text-sm max-w-[200px] truncate">{r.sku_descricao ?? "—"}</TableCell>
+                    <TableCell className="font-mono text-xs whitespace-nowrap">{r.sku_codigo_omie}</TableCell>
+                    <TableCell className="text-sm min-w-[260px] max-w-[360px] whitespace-normal break-words" title={r.sku_descricao ?? undefined}>{r.sku_descricao ?? "—"}</TableCell>
                     <TableCell><Badge variant="outline">{tipoLabel(r.tipo)}</Badge></TableCell>
                     <TableCell className="text-right font-mono text-sm">{fmt(r.valor_observado, 0)}</TableCell>
                     <TableCell className="text-right font-mono text-sm">{fmt(r.valor_esperado, 1)}</TableCell>
                     <TableCell className="text-right font-mono text-sm">{fmt(r.desvios_padrao, 1)}</TableCell>
-                    <TableCell className="text-xs max-w-[280px] truncate text-muted-foreground">{r.detalhes?.mensagem ?? "—"}</TableCell>
+                    <TableCell className="text-xs min-w-[280px] max-w-[420px] whitespace-normal break-words text-muted-foreground" title={r.detalhes?.mensagem ?? undefined}>{r.detalhes?.mensagem ?? "—"}</TableCell>
                     <TableCell>{statusBadge(r.status)}</TableCell>
                     <TableCell>
                       <Button size="sm" variant="ghost" onClick={() => setDrillEvento(r)}>Detalhes</Button>
