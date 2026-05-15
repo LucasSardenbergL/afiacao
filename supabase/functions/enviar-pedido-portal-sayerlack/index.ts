@@ -984,11 +984,45 @@ async function registrarPedidoOmieAposPortal(pedido: PedidoCandidato) {
   }
 }
 
+// PR1: grava uma linha de auditoria em pedidos_portal_tentativas.
+// Best-effort — uma falha aqui nunca aborta o processamento do pedido.
+async function gravarTentativa(
+  supabase: ReturnType<typeof createClient>,
+  pedidoId: number,
+  params: {
+    iniciadoEm: string;
+    statusResultado: string;
+    elapsedMs: number | null;
+    evidence: Record<string, unknown>;
+    browserlessResponseMs: number | null;
+    erro: string | null;
+  },
+): Promise<void> {
+  try {
+    const { error } = await supabase.from("pedidos_portal_tentativas").insert({
+      pedido_id: pedidoId,
+      iniciado_em: params.iniciadoEm,
+      concluido_em: new Date().toISOString(),
+      status_resultado: params.statusResultado,
+      elapsed_ms: params.elapsedMs,
+      evidence: params.evidence ?? {},
+      browserless_response_ms: params.browserlessResponseMs,
+      erro: params.erro,
+    });
+    if (error) {
+      console.error(`[envio-portal] Pedido #${pedidoId}: falha ao gravar tentativa de auditoria:`, error.message);
+    }
+  } catch (e: any) {
+    console.error(`[envio-portal] Pedido #${pedidoId}: excecao ao gravar tentativa de auditoria:`, e?.message ?? e);
+  }
+}
+
 async function processarPedido(
   supabase: ReturnType<typeof createClient>,
   pedido: PedidoCandidato,
 ): Promise<ProcessResult> {
   const t0 = Date.now();
+  const iniciadoEm = new Date(t0).toISOString();
   const result: ProcessResult = {
     pedido_id: pedido.id,
     status_inicial: pedido.status_envio_portal ?? "pendente_envio_portal",
@@ -1000,13 +1034,16 @@ async function processarPedido(
     duracao_ms: 0,
   };
 
-  // Idempotencia
+  // Idempotencia: pedido comprovadamente no portal nao e reprocessado.
+  // Cobre o estado legado (enviado_portal) e o novo (sucesso_portal), ambos
+  // exigem protocolo confirmado.
   if (
     pedido.portal_protocolo &&
-    pedido.status_envio_portal === "enviado_portal"
+    (pedido.status_envio_portal === "enviado_portal" ||
+      pedido.status_envio_portal === "sucesso_portal")
   ) {
     console.log(`[envio-portal] Pedido #${pedido.id}: ja enviado (protocolo=${pedido.portal_protocolo}), pulando`);
-    result.status_final = "enviado_portal";
+    result.status_final = pedido.status_envio_portal;
     result.protocolo = pedido.portal_protocolo;
     result.duracao_ms = Date.now() - t0;
     return result;
@@ -1039,15 +1076,25 @@ async function processarPedido(
       .eq("pedido_id", pedido.id)
       .order("id", { ascending: true });
     if (e2 || !itensDirect) {
-      result.status_final = "falha_envio_portal";
+      // Erro de banco ao buscar itens — transiente, nenhum POST foi enviado.
       result.erro = `Erro ao buscar itens: ${e2?.message ?? "desconhecido"}`;
       result.tentativas += 1;
+      const esgotado = result.tentativas >= MAX_TENTATIVAS;
+      result.status_final = esgotado ? "erro_nao_retentavel" : "erro_retentavel";
       await supabase.from("pedido_compra_sugerido").update({
-        status_envio_portal: "falha_envio_portal",
+        status_envio_portal: result.status_final,
         portal_tentativas: result.tentativas,
         portal_erro: result.erro,
-        portal_proximo_retry_em: null,
+        portal_proximo_retry_em: esgotado ? null : new Date(Date.now() + 15 * 60 * 1000).toISOString(),
       }).eq("id", pedido.id);
+      await gravarTentativa(supabase, pedido.id, {
+        iniciadoEm,
+        statusResultado: result.status_final,
+        elapsedMs: Date.now() - t0,
+        evidence: { phase: "pre_browserless", motivo: "erro_buscar_itens", requestSent: false },
+        browserlessResponseMs: null,
+        erro: result.erro,
+      });
       result.duracao_ms = Date.now() - t0;
       return result;
     }
@@ -1091,15 +1138,24 @@ async function processarPedido(
   }
 
   if (!itensList || itensList.length === 0) {
-    result.status_final = "falha_envio_portal";
+    // Erro logico — retentar nao resolve.
+    result.status_final = "erro_nao_retentavel";
     result.erro = "Pedido sem itens";
     result.tentativas += 1;
     await supabase.from("pedido_compra_sugerido").update({
-      status_envio_portal: "falha_envio_portal",
+      status_envio_portal: result.status_final,
       portal_tentativas: result.tentativas,
       portal_erro: result.erro,
       portal_proximo_retry_em: null,
     }).eq("id", pedido.id);
+    await gravarTentativa(supabase, pedido.id, {
+      iniciadoEm,
+      statusResultado: result.status_final,
+      elapsedMs: Date.now() - t0,
+      evidence: { phase: "pre_browserless", motivo: "pedido_sem_itens", requestSent: false },
+      browserlessResponseMs: null,
+      erro: result.erro,
+    });
     result.duracao_ms = Date.now() - t0;
     return result;
   }
@@ -1121,15 +1177,24 @@ async function processarPedido(
   );
   if (semMap.length > 0) {
     const lista = semMap.map((i) => `${i.sku_codigo_omie} (${i.sku_descricao})`).join("; ");
-    result.status_final = "falha_envio_portal";
+    // Erro logico — retentar nao resolve enquanto o mapeamento nao for corrigido.
+    result.status_final = "erro_nao_retentavel";
     result.erro = `SKUs sem mapeamento ativo: ${lista}`;
     result.tentativas += 1;
     await supabase.from("pedido_compra_sugerido").update({
-      status_envio_portal: "falha_envio_portal",
+      status_envio_portal: result.status_final,
       portal_tentativas: result.tentativas,
       portal_erro: result.erro,
       portal_proximo_retry_em: null,
     }).eq("id", pedido.id);
+    await gravarTentativa(supabase, pedido.id, {
+      iniciadoEm,
+      statusResultado: result.status_final,
+      elapsedMs: Date.now() - t0,
+      evidence: { phase: "pre_browserless", motivo: "skus_sem_mapeamento", skus: semMap.map((i) => i.sku_codigo_omie), requestSent: false },
+      browserlessResponseMs: null,
+      erro: result.erro,
+    });
     console.log(`[envio-portal] Pedido #${pedido.id}: falha SKUs sem mapeamento`);
     result.duracao_ms = Date.now() - t0;
     return result;
@@ -1191,15 +1256,28 @@ async function processarPedido(
   const browserlessMs = Date.now() - tBrowserless;
   console.log(`[envio-portal] Pedido #${pedido.id}: Browserless retornou em ${browserlessMs}ms — status=${httpStatus}`);
 
-  // 6. Tratar respostas HTTP
+  // 6. Tratar respostas HTTP do Browserless
   if (httpStatus === 401 || httpStatus === 403) {
-    // Token invalido — nao atualiza pedido, lanca pra fora
+    // Token invalido — o Browserless rejeitou a chamada na camada HTTP: nenhum
+    // browser subiu, nenhum POST saiu. Seguro retentar (erro_retentavel, nunca
+    // mais reverte cegamente para pendente_envio_portal). Lanca pra fora para o
+    // caller devolver 500 e o operador notar o problema do token.
     console.error(`[envio-portal] BROWSERLESS_TOKEN invalido (HTTP ${httpStatus})`);
-    // reverte estado
+    const erroToken = `BROWSERLESS_TOKEN invalido: HTTP ${httpStatus}`;
     await supabase.from("pedido_compra_sugerido").update({
-      status_envio_portal: "pendente_envio_portal",
+      status_envio_portal: "erro_retentavel",
+      portal_erro: erroToken,
+      portal_proximo_retry_em: new Date(Date.now() + 15 * 60 * 1000).toISOString(),
     }).eq("id", pedido.id);
-    throw new Error(`BROWSERLESS_TOKEN invalido: HTTP ${httpStatus}`);
+    await gravarTentativa(supabase, pedido.id, {
+      iniciadoEm,
+      statusResultado: "erro_retentavel",
+      elapsedMs: Date.now() - t0,
+      evidence: { phase: "browserless_http", httpStatus, motivo: "token_invalido", requestSent: false },
+      browserlessResponseMs: browserlessMs,
+      erro: erroToken,
+    });
+    throw new Error(erroToken);
   }
 
   const tempFail =
@@ -1208,20 +1286,21 @@ async function processarPedido(
     httpStatus === 0 ||
     (httpStatus >= 500 && httpStatus < 600);
 
-  // Extrair payload
-  const data = bResp?.data ?? bResp ?? {};
+  // Extrair envelope estruturado (PR1): o script sempre devolve
+  // { data: <envelope>, type, screenshot, preLoginScreenshot }.
+  const envelope = (bResp?.data ?? bResp ?? {}) as Record<string, any>;
   const screenshotB64: string | null = bResp?.screenshot ?? null;
   const preLoginScreenshotB64: string | null = bResp?.preLoginScreenshot ?? null;
+  const evidence = (envelope?.evidence ?? {}) as Record<string, any>;
+  const requestSent = evidence?.requestSent === true;
 
-  // 8. Upload screenshot se houver
+  // Upload de screenshots (instrumentacao — comportamento inalterado)
   if (screenshotB64) {
     result.screenshot_url = await uploadScreenshot(supabase, pedido.id, screenshotB64);
     if (result.screenshot_url) {
       console.log(`[envio-portal] Pedido #${pedido.id}: screenshot uploaded`);
     }
   }
-
-  // 8b. Upload pre-login screenshot (instrumentação para debug LOGIN_FAILED)
   if (preLoginScreenshotB64) {
     const preUrl = await uploadScreenshot(
       supabase,
@@ -1231,92 +1310,158 @@ async function processarPedido(
     );
     if (preUrl) {
       console.log(`[envio-portal] Pedido #${pedido.id}: pre_login_screenshot uploaded`);
-      (data as Record<string, unknown>).preLoginScreenshotUrl = preUrl;
+      envelope.preLoginScreenshotUrl = preUrl;
     }
   }
 
   const novasTentativas = result.tentativas + 1;
   result.tentativas = novasTentativas;
 
+  // Helper local: aplica a transicao de estado, grava a linha de auditoria
+  // e fecha o ProcessResult. Fonte unica de UPDATE em pedido_compra_sugerido
+  // pos-Browserless.
+  const aplicarTransicao = async (
+    statusFinal: string,
+    opts: {
+      erro: string | null;
+      protocolo?: string | null;
+      proximoRetryEm?: string | null;
+      enviadoPortalEm?: boolean;
+    },
+  ): Promise<ProcessResult> => {
+    result.status_final = statusFinal;
+    result.erro = opts.erro;
+    if (opts.protocolo !== undefined && opts.protocolo !== null) {
+      result.protocolo = opts.protocolo;
+    }
+    const update: Record<string, unknown> = {
+      status_envio_portal: statusFinal,
+      portal_screenshot_url: result.screenshot_url,
+      portal_tentativas: novasTentativas,
+      portal_erro: opts.erro,
+      portal_resposta: envelope,
+      portal_proximo_retry_em: opts.proximoRetryEm ?? null,
+    };
+    if (opts.protocolo !== undefined) update.portal_protocolo = opts.protocolo;
+    if (opts.enviadoPortalEm) update.enviado_portal_em = new Date().toISOString();
+    await supabase.from("pedido_compra_sugerido").update(update).eq("id", pedido.id);
+    await gravarTentativa(supabase, pedido.id, {
+      iniciadoEm,
+      statusResultado: statusFinal,
+      elapsedMs: typeof envelope?.elapsedMs === "number" ? envelope.elapsedMs : (Date.now() - t0),
+      evidence: {
+        ...evidence,
+        httpStatus,
+        envelopeStatus: envelope?.status ?? null,
+        ok: envelope?.ok ?? null,
+        protocolo: opts.protocolo ?? null,
+        statusFinal,
+      },
+      browserlessResponseMs: browserlessMs,
+      erro: opts.erro,
+    });
+    console.log(`[envio-portal] Pedido #${pedido.id}: enviando_portal -> ${statusFinal} (envelope=${envelope?.status ?? "?"})`);
+    result.duracao_ms = Date.now() - t0;
+    return result;
+  };
+
+  // tempFail: o Browserless nao entregou um envelope estruturado.
   if (tempFail) {
-    // Falha temporaria
     const erroMsg = httpErr ?? `HTTP ${httpStatus} do Browserless`;
-    const definitiva = novasTentativas >= MAX_TENTATIVAS;
-    result.status_final = definitiva ? "falha_envio_portal" : "pendente_envio_portal";
-    result.erro = erroMsg;
-    await supabase.from("pedido_compra_sugerido").update({
-      status_envio_portal: result.status_final,
-      portal_screenshot_url: result.screenshot_url,
-      portal_tentativas: novasTentativas,
-      portal_erro: erroMsg,
-      portal_resposta: data ?? null,
-      portal_proximo_retry_em: definitiva ? null : new Date(Date.now() + 15 * 60 * 1000).toISOString(),
-    }).eq("id", pedido.id);
-    console.log(`[envio-portal] Pedido #${pedido.id}: enviando_portal -> ${result.status_final} (temp fail)`);
-    result.duracao_ms = Date.now() - t0;
-    return result;
+    if (httpErr !== null) {
+      // fetch lancou (conexao caiu / abort): genuinamente ambiguo — nao da pra
+      // provar que nenhum POST saiu. Conciliacao.
+      return await aplicarTransicao("indeterminado_requer_conciliacao", {
+        erro: `Browserless sem resposta (ambiguo): ${erroMsg}`,
+      });
+    }
+    // Status HTTP de erro do Browserless (>=500 / 0 / 408): a camada HTTP
+    // respondeu erro, o script nao chegou a submeter. Retentavel.
+    const esgotado = novasTentativas >= MAX_TENTATIVAS;
+    return await aplicarTransicao(
+      esgotado ? "erro_nao_retentavel" : "erro_retentavel",
+      {
+        erro: erroMsg,
+        proximoRetryEm: esgotado ? null : new Date(Date.now() + 15 * 60 * 1000).toISOString(),
+      },
+    );
   }
 
-  if (data?.success === true) {
-    // SUCESSO
-    result.status_final = "enviado_portal";
-    result.protocolo = data.protocolo ?? null;
-    await supabase.from("pedido_compra_sugerido").update({
-      status_envio_portal: "enviado_portal",
-      portal_protocolo: result.protocolo,
-      portal_screenshot_url: result.screenshot_url,
-      enviado_portal_em: new Date().toISOString(),
-      portal_tentativas: novasTentativas,
-      portal_erro: null,
-      portal_resposta: data,
-      portal_proximo_retry_em: null,
-    }).eq("id", pedido.id);
-    console.log(`[envio-portal] Pedido #${pedido.id}: enviando_portal -> enviado_portal OK (protocolo=${result.protocolo})`);
-    await registrarPedidoOmieAposPortal(pedido);
-    result.duracao_ms = Date.now() - t0;
-    return result;
-  }
-
-  // Falha do automador
-  const erroTipo: string = data?.erroTipo ?? "UNKNOWN";
-  const erroMsg: string = data?.erro ?? "Falha desconhecida do automador";
-  const definitiva =
-    erroTipo === "LOGIN_FAILED" ||
-    erroTipo === "CLIENTE_NOT_FOUND" ||
-    erroTipo === "SKU_NOT_FOUND" ||
-    novasTentativas >= MAX_TENTATIVAS;
-
-  result.status_final = definitiva ? "falha_envio_portal" : "pendente_envio_portal";
-  result.erro = erroMsg;
-
-  await supabase.from("pedido_compra_sugerido").update({
-    status_envio_portal: result.status_final,
-    portal_screenshot_url: result.screenshot_url,
-    portal_tentativas: novasTentativas,
-    portal_erro: erroMsg,
-    portal_resposta: data,
-    portal_proximo_retry_em: definitiva ? null : new Date(Date.now() + 15 * 60 * 1000).toISOString(),
-  }).eq("id", pedido.id);
-
-  if (erroTipo === "LOGIN_FAILED") {
-    await supabase.from("fornecedor_alerta").insert({
-      empresa: "OBEN",
-      fornecedor_nome: "RENNER SAYERLACK S/A",
-      tipo: "outro",
-      severidade: "urgente",
-      titulo: "Senha do portal Sayerlack expirou",
-      mensagem:
-        `Login falhou no portal ${SAYERLACK_PORTAL_URL}. Provavel expiracao de senha. ` +
-        `ACAO: 1) Trocar senha no portal Sayerlack, 2) Atualizar SAYERLACK_PORTAL_PASS no Supabase Edge Functions Secrets, ` +
-        `3) Em /admin/reposicao/pedidos, clicar em "Forcar reenvio ao portal" no pedido afetado.`,
-      status: "pendente_notificacao",
-      metadata: { pedido_id: pedido.id, edge_function: "enviar-pedido-portal-sayerlack" },
+  // HTTP 200 mas sem envelope estruturado inteligivel — nao da pra descartar
+  // que um POST saiu. Conciliacao.
+  if (!envelope || typeof envelope.status !== "string") {
+    return await aplicarTransicao("indeterminado_requer_conciliacao", {
+      erro: "Browserless devolveu HTTP 200 sem envelope estruturado",
     });
   }
 
-  console.log(`[envio-portal] Pedido #${pedido.id}: enviando_portal -> ${result.status_final} (${erroTipo})`);
-  result.duracao_ms = Date.now() - t0;
-  return result;
+  // Rede de seguranca: se o recorder viu um POST sair, o pedido NUNCA pode
+  // terminar em estado retentavel, ainda que o envelope diga o contrario.
+  let envStatus: string = envelope.status;
+  if (requestSent && envStatus === "erro_retentavel") {
+    console.warn(`[envio-portal] Pedido #${pedido.id}: requestSent=true mas envelope=erro_retentavel — forcando indeterminado`);
+    envStatus = "indeterminado_requer_conciliacao";
+  }
+
+  // Maquina de estados guiada pelo envelope.
+  if (envStatus === "sucesso_portal") {
+    const r = await aplicarTransicao("sucesso_portal", {
+      erro: null,
+      protocolo: envelope.protocolo ?? null,
+      enviadoPortalEm: true,
+    });
+    await registrarPedidoOmieAposPortal(pedido);
+    return r;
+  }
+
+  if (envStatus === "aceito_portal_sem_protocolo") {
+    // Portal aceitou mas sem numero confirmado: NAO registra no Omie ainda —
+    // exige conciliacao para obter o protocolo.
+    return await aplicarTransicao("aceito_portal_sem_protocolo", {
+      erro: "Portal aceitou o pedido sem protocolo — requer conciliacao",
+      protocolo: envelope.protocolo ?? null,
+    });
+  }
+
+  if (envStatus === "indeterminado_requer_conciliacao") {
+    return await aplicarTransicao("indeterminado_requer_conciliacao", {
+      erro: evidence?.erro ?? "Resultado ambiguo — requer conciliacao manual",
+    });
+  }
+
+  if (envStatus === "erro_nao_retentavel") {
+    // Erro logico do automador (login / cliente / sku invalido).
+    const erroTipo: string = evidence?.erroTipo ?? "UNKNOWN";
+    const erroMsg: string = evidence?.erro ?? "Falha logica do automador";
+    const r = await aplicarTransicao("erro_nao_retentavel", { erro: erroMsg });
+    if (erroTipo === "LOGIN_FAILED") {
+      await supabase.from("fornecedor_alerta").insert({
+        empresa: "OBEN",
+        fornecedor_nome: "RENNER SAYERLACK S/A",
+        tipo: "outro",
+        severidade: "urgente",
+        titulo: "Senha do portal Sayerlack expirou",
+        mensagem:
+          `Login falhou no portal ${SAYERLACK_PORTAL_URL}. Provavel expiracao de senha. ` +
+          `ACAO: 1) Trocar senha no portal Sayerlack, 2) Atualizar SAYERLACK_PORTAL_PASS no Supabase Edge Functions Secrets, ` +
+          `3) Em /admin/reposicao/pedidos, clicar em "Forcar reenvio ao portal" no pedido afetado.`,
+        status: "pendente_notificacao",
+        metadata: { pedido_id: pedido.id, edge_function: "enviar-pedido-portal-sayerlack" },
+      });
+    }
+    return r;
+  }
+
+  // erro_retentavel (default): POST comprovadamente nunca saiu, seguro retentar.
+  const erroMsg: string = evidence?.erro ?? "Falha do automador (retentavel)";
+  const esgotado = novasTentativas >= MAX_TENTATIVAS;
+  return await aplicarTransicao(
+    esgotado ? "erro_nao_retentavel" : "erro_retentavel",
+    {
+      erro: erroMsg,
+      proximoRetryEm: esgotado ? null : new Date(Date.now() + 15 * 60 * 1000).toISOString(),
+    },
+  );
 }
 
 async function authorizeCronOrStaff(req: Request): Promise<boolean> {
@@ -1345,38 +1490,45 @@ async function authorizeCronOrStaff(req: Request): Promise<boolean> {
   } catch { return false; }
 }
 
-// Watchdog: libera pedidos travados em "enviando_portal" há mais de N minutos.
-// Útil quando o background task (EdgeRuntime.waitUntil) é interrompido.
+// Watchdog: trata pedidos travados em "enviando_portal" há mais de N minutos.
+// Acontece quando o background task (EdgeRuntime.waitUntil) é interrompido.
+// PR1: NUNCA reverte para pendente_envio_portal — um pedido travado em
+// enviando_portal pode ter submetido um POST antes de o task morrer. Sem
+// evidência, o destino seguro é conciliação manual.
 async function runWatchdog(supabase: any, minutos = 5) {
   const cutoff = new Date(Date.now() - minutos * 60 * 1000).toISOString();
-  // Estouro de tentativas → falha definitiva. Caso contrário → volta para pendente.
   const { data: stuck, error } = await supabase
     .from("pedido_compra_sugerido")
-    .select("id, portal_tentativas")
+    .select("id")
     .eq("empresa", "OBEN")
     .ilike("fornecedor_nome", "%SAYERLACK%")
     .eq("status_envio_portal", "enviando_portal")
     .lt("atualizado_em", cutoff);
   if (error) {
     console.error("[envio-portal][watchdog] erro:", error.message);
-    return { liberados: 0, falhados: 0, erro: error.message };
+    return { conciliacao: 0, erro: error.message };
   }
-  let liberados = 0;
-  let falhados = 0;
-  for (const p of (stuck ?? []) as Array<{ id: number; portal_tentativas: number | null }>) {
-    const tent = (p.portal_tentativas ?? 0) + 1;
-    const definitiva = tent >= MAX_TENTATIVAS;
+  let conciliacao = 0;
+  const agora = new Date().toISOString();
+  for (const p of (stuck ?? []) as Array<{ id: number }>) {
+    const erroMsg = `Watchdog: pedido travou em enviando_portal por mais de ${minutos}min — requer conciliacao`;
     await supabase.from("pedido_compra_sugerido").update({
-      status_envio_portal: definitiva ? "falha_envio_portal" : "pendente_envio_portal",
-      portal_erro: `Watchdog: pedido travou em enviando_portal por mais de ${minutos}min`,
-      portal_tentativas: tent,
-      portal_proximo_retry_em: definitiva ? null : new Date(Date.now() + 5 * 60 * 1000).toISOString(),
+      status_envio_portal: "indeterminado_requer_conciliacao",
+      portal_erro: erroMsg,
+      portal_proximo_retry_em: null,
     }).eq("id", p.id);
-    if (definitiva) falhados++;
-    else liberados++;
+    await gravarTentativa(supabase, p.id, {
+      iniciadoEm: agora,
+      statusResultado: "indeterminado_requer_conciliacao",
+      elapsedMs: null,
+      evidence: { phase: "watchdog", motivo: "travado_em_enviando_portal", minutos },
+      browserlessResponseMs: null,
+      erro: erroMsg,
+    });
+    conciliacao++;
   }
-  console.log(`[envio-portal][watchdog] cutoff=${minutos}min liberados=${liberados} falhados=${falhados}`);
-  return { liberados, falhados };
+  console.log(`[envio-portal][watchdog] cutoff=${minutos}min conciliacao=${conciliacao}`);
+  return { conciliacao };
 }
 
 // Processa lista de candidatos. Pode rodar em foreground (response síncrona)
@@ -1384,18 +1536,24 @@ async function runWatchdog(supabase: any, minutos = 5) {
 async function processCandidatos(
   supabase: any,
   candidatos: PedidoCandidato[],
-): Promise<{ detalhes: ProcessResult[]; sucesso: number; falhasDef: number; falhasTmp: number }> {
+): Promise<{ detalhes: ProcessResult[]; sucesso: number; falhasDef: number; falhasTmp: number; indeterminados: number }> {
   const detalhes: ProcessResult[] = [];
   let sucesso = 0;
   let falhasDef = 0;
   let falhasTmp = 0;
+  let indeterminados = 0;
   for (const p of candidatos) {
     try {
       const r = await processarPedido(supabase, p);
       detalhes.push(r);
-      if (r.status_final === "enviado_portal") sucesso++;
-      else if (r.status_final === "falha_envio_portal") falhasDef++;
-      else if (r.status_final === "pendente_envio_portal") falhasTmp++;
+      // sucesso_portal/enviado_portal (legado) = confirmado no portal.
+      if (r.status_final === "sucesso_portal" || r.status_final === "enviado_portal") sucesso++;
+      // erro_nao_retentavel/falha_envio_portal (legado) = falha definitiva.
+      else if (r.status_final === "erro_nao_retentavel" || r.status_final === "falha_envio_portal") falhasDef++;
+      // erro_retentavel/pendente_envio_portal (legado) = falha temporaria, volta pra fila.
+      else if (r.status_final === "erro_retentavel" || r.status_final === "pendente_envio_portal") falhasTmp++;
+      // aceito_portal_sem_protocolo/indeterminado = precisa conciliacao manual.
+      else if (r.status_final === "aceito_portal_sem_protocolo" || r.status_final === "indeterminado_requer_conciliacao") indeterminados++;
     } catch (e: any) {
       console.error(`[envio-portal] Excecao no pedido #${p.id}:`, e?.message ?? e);
       detalhes.push({
@@ -1410,7 +1568,7 @@ async function processCandidatos(
       });
     }
   }
-  return { detalhes, sucesso, falhasDef, falhasTmp };
+  return { detalhes, sucesso, falhasDef, falhasTmp, indeterminados };
 }
 
 Deno.serve(async (req) => {
@@ -1465,7 +1623,7 @@ Deno.serve(async (req) => {
       .from("pedido_compra_sugerido")
       .select("id", { count: "exact", head: true })
       .eq("status", "disparado")
-      .eq("status_envio_portal", "pendente_envio_portal")
+      .in("status_envio_portal", ["pendente_envio_portal", "erro_retentavel"])
       .lt("portal_tentativas", MAX_TENTATIVAS)
       .ilike("fornecedor_nome", "%SAYERLACK%")
       .eq("empresa", "OBEN");
@@ -1530,7 +1688,7 @@ Deno.serve(async (req) => {
         .from("pedido_compra_sugerido")
         .select("id, empresa, fornecedor_nome, status_envio_portal, portal_tentativas, portal_protocolo")
         .eq("status", "disparado")
-        .eq("status_envio_portal", "pendente_envio_portal")
+        .in("status_envio_portal", ["pendente_envio_portal", "erro_retentavel"])
         .lt("portal_tentativas", MAX_TENTATIVAS)
         .ilike("fornecedor_nome", "%SAYERLACK%")
         .eq("empresa", "OBEN")
@@ -1555,6 +1713,7 @@ Deno.serve(async (req) => {
         sucesso: 0,
         falhas_definitivas: 0,
         falhas_temporarias: 0,
+        indeterminados: 0,
         duracao_total_ms: Date.now() - tStart,
         detalhes: [],
       }),
@@ -1579,7 +1738,7 @@ Deno.serve(async (req) => {
     // Dispara em background. Erros vão para o log e o watchdog libera depois.
     const bgTask = processCandidatos(supabase, candidatos)
       .then((r) => {
-        console.log(`[envio-portal][async] OK processados=${r.detalhes.length} sucesso=${r.sucesso} falhas=${r.falhasDef + r.falhasTmp}`);
+        console.log(`[envio-portal][async] OK processados=${r.detalhes.length} sucesso=${r.sucesso} falhas=${r.falhasDef + r.falhasTmp} indeterminados=${r.indeterminados}`);
       })
       .catch((e) => {
         console.error("[envio-portal][async] Excecao geral:", e?.message ?? e);
@@ -1604,7 +1763,7 @@ Deno.serve(async (req) => {
   }
 
   // === MODO SÍNCRONO (legado, usado pelo cron disparar-pedidos-aprovados) ===
-  const { detalhes, sucesso, falhasDef, falhasTmp } = await processCandidatos(supabase, candidatos);
+  const { detalhes, sucesso, falhasDef, falhasTmp, indeterminados } = await processCandidatos(supabase, candidatos);
 
   // Se algum erro foi BROWSERLESS_TOKEN invalido, devolve 500
   const tokenInvalid = detalhes.find((d) => (d.erro ?? "").includes("BROWSERLESS_TOKEN invalido"));
@@ -1616,7 +1775,7 @@ Deno.serve(async (req) => {
   }
 
   const duracao = Date.now() - tStart;
-  console.log(`[envio-portal] === Sumario === processados=${detalhes.length} sucesso=${sucesso} falhas=${falhasDef + falhasTmp} duracao_total=${duracao}ms`);
+  console.log(`[envio-portal] === Sumario === processados=${detalhes.length} sucesso=${sucesso} falhas=${falhasDef + falhasTmp} indeterminados=${indeterminados} duracao_total=${duracao}ms`);
 
   return new Response(
     JSON.stringify({
@@ -1626,6 +1785,7 @@ Deno.serve(async (req) => {
       sucesso,
       falhas_definitivas: falhasDef,
       falhas_temporarias: falhasTmp,
+      indeterminados,
       duracao_total_ms: duracao,
       detalhes,
     }),

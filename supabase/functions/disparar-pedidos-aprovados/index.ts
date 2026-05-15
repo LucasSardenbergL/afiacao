@@ -190,7 +190,8 @@ interface ProcessResult {
 
 type PortalDispatchResult =
   | { state: "already_sent"; protocolo: string }
-  | { state: "queued"; accepted: boolean };
+  | { state: "queued"; accepted: boolean }
+  | { state: "needs_reconciliation"; status: string };
 
 function isSayerlackOben(pedido: PedidoRow): boolean {
   return (
@@ -216,9 +217,24 @@ async function iniciarEnvioPortalSayerlack(
     .select("status_envio_portal, portal_protocolo, portal_erro")
     .eq("id", pedidoId)
     .maybeSingle();
-  if (pre?.status_envio_portal === "enviado_portal" && pre?.portal_protocolo) {
+  const statusPortalAtual: string = pre?.status_envio_portal ?? "";
+  if (
+    (statusPortalAtual === "enviado_portal" || statusPortalAtual === "sucesso_portal") &&
+    pre?.portal_protocolo
+  ) {
     console.log(`[disparar-pedidos] Pedido ${pedidoId}: portal já enviado (protocolo=${pre.portal_protocolo})`);
     return { state: "already_sent", protocolo: String(pre.portal_protocolo) };
+  }
+
+  // Blindagem contra duplicidade (PR1): se o portal pode ter recebido o pedido
+  // (aceito sem protocolo) ou o resultado é ambíguo, NÃO reenvia — resetar para
+  // pendente aqui geraria pedido duplicado no portal. Exige conciliação.
+  if (
+    statusPortalAtual === "aceito_portal_sem_protocolo" ||
+    statusPortalAtual === "indeterminado_requer_conciliacao"
+  ) {
+    console.warn(`[disparar-pedidos] Pedido ${pedidoId}: status_envio_portal=${statusPortalAtual} — requer conciliacao, NÃO reenviado`);
+    return { state: "needs_reconciliation", status: statusPortalAtual };
   }
 
   // Inicia em pendente para o portal aceitar
@@ -342,6 +358,25 @@ async function processarPedido(
           })
           .eq("id", pedido.id);
         result.status_final = "aguardando_portal_sayerlack";
+        result.canal = "portal_sayerlack";
+        return result;
+      }
+      if (portal.state === "needs_reconciliation") {
+        // Portal pode ter recebido o pedido — NÃO cria o Omie nem reenvia.
+        await db
+          .from("pedido_compra_sugerido")
+          .update({
+            canal_usado: "portal_sayerlack",
+            resposta_canal: {
+              modo,
+              portal_async: false,
+              fornecedor_notificado: false,
+              mensagem: `Envio ao portal Sayerlack em estado '${portal.status}' — requer conciliacao manual antes de registrar no Omie.`,
+            },
+            atualizado_em: new Date().toISOString(),
+          })
+          .eq("id", pedido.id);
+        result.status_final = "portal_requer_conciliacao";
         result.canal = "portal_sayerlack";
         return result;
       }
