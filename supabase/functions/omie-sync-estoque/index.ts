@@ -203,8 +203,12 @@ Deno.serve(async (req) => {
     }
 
     // 2-3) Paginar Omie — ListarPosEstoque (físico + reservado)
+    // IMPORTANTE: o método retorna UMA LINHA POR LOCAL DE ESTOQUE.
+    // Se o mesmo nCodProd está em N locais (matriz, filial, depósito),
+    // precisamos SOMAR físico/reservado/pendente de todos os locais —
+    // sobrescrever (Map.set) gerava estoque menor que o do ME.
     const dataPosicao = ddmmyyyy(new Date());
-    const encontrados = new Map<string, OmiePosEstoqueItem>();
+    const encontrados = new Map<string, { fisico: number; reservado: number; pendente: number; locais: number }>();
 
     let page = 1;
     let totalPaginas = 1;
@@ -221,7 +225,13 @@ Deno.serve(async (req) => {
       for (const item of lista) {
         const codigo = String(item.nCodProd ?? "").trim();
         if (!codigo) continue;
-        if (habilitadoMap.has(codigo)) encontrados.set(codigo, item);
+        if (!habilitadoMap.has(codigo)) continue;
+        const acc = encontrados.get(codigo) ?? { fisico: 0, reservado: 0, pendente: 0, locais: 0 };
+        acc.fisico += Number(item.fisico ?? 0);
+        acc.reservado += Number(item.reservado ?? 0);
+        acc.pendente += Number(item.nPendente ?? 0);
+        acc.locais += 1;
+        encontrados.set(codigo, acc);
       }
       console.log(
         `[omie-sync-estoque] ListarPosEstoque pág ${page}/${totalPaginas} — ${lista.length} itens, ${encontrados.size}/${totalEsperado} casados.`,
