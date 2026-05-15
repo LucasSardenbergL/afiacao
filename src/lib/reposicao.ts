@@ -43,7 +43,7 @@ export async function logAudit(params: {
       user_id: params.userId ?? undefined,
       action: params.action,
       result: params.result,
-      metadata: params.metadata ?? {},
+      metadata: (params.metadata ?? {}) as never,
     }]);
   } catch (e) {
     // não bloqueia a UI, mas registra no logger pra não perder a auditoria silenciosamente
