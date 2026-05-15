@@ -7,14 +7,20 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Skeleton } from '@/components/ui/skeleton';
+import { Input } from '@/components/ui/input';
+import { Label } from '@/components/ui/label';
 import { PortalStatusBadge } from './PortalStatusBadge';
 import { DispararAgoraButton } from './DispararAgoraButton';
-import { AlertCircle, RefreshCw, ExternalLink } from 'lucide-react';
+import { AlertCircle, RefreshCw, ExternalLink, CheckCircle2 } from 'lucide-react';
 import {
   AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent,
   AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle,
   AlertDialogTrigger,
 } from '@/components/ui/alert-dialog';
+import {
+  Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader,
+  DialogTitle, DialogTrigger,
+} from '@/components/ui/dialog';
 import { toast } from 'sonner';
 import { useState } from 'react';
 
@@ -37,6 +43,9 @@ function fmtDateTime(iso: string | null | undefined) {
 export function PortalDetailDrawer({ pedidoId, open, onOpenChange, isAdmin }: Props) {
   const qc = useQueryClient();
   const [resetting, setResetting] = useState(false);
+  const [conciliarOpen, setConciliarOpen] = useState(false);
+  const [conciliarProtocolo, setConciliarProtocolo] = useState('');
+  const [conciliando, setConciliando] = useState(false);
 
   const { data: pedido, isLoading } = useQuery({
     queryKey: ['portal-sayerlack-detail', pedidoId],
@@ -90,6 +99,40 @@ export function PortalDetailDrawer({ pedidoId, open, onOpenChange, isAdmin }: Pr
     qc.invalidateQueries({ queryKey: ['portal-sayerlack-pendentes'] });
     qc.invalidateQueries({ queryKey: ['portal-sayerlack-historico'] });
     qc.invalidateQueries({ queryKey: ['portal-sayerlack-kpi'] });
+  };
+
+  const handleConciliar = async () => {
+    if (!pedidoId) return;
+    const protocolo = conciliarProtocolo.trim();
+    if (!/^\d{3,12}$/.test(protocolo)) {
+      toast.error('Protocolo deve ser numérico com 3 a 12 dígitos.');
+      return;
+    }
+    setConciliando(true);
+    try {
+      const { data, error } = await supabase.functions.invoke('conciliar-pedido-portal', {
+        body: { pedido_id: pedidoId, protocolo },
+      });
+      if (error) throw error;
+      const omieOk = data?.omie?.ok;
+      if (data?.already) {
+        toast.success(`Pedido #${pedidoId} já estava conciliado com protocolo ${protocolo}.`);
+      } else if (omieOk === false) {
+        toast.warning(
+          `Pedido #${pedidoId} marcado como enviado, mas o disparo do Omie devolveu HTTP ${data?.omie?.httpStatus}. Confira no Omie.`,
+        );
+      } else {
+        toast.success(`Pedido #${pedidoId} conciliado com protocolo ${protocolo}. Omie disparado.`);
+      }
+      setConciliarOpen(false);
+      setConciliarProtocolo('');
+      refetchAll();
+    } catch (err: any) {
+      const msg = err?.message ?? String(err);
+      toast.error(`Falha ao conciliar: ${msg}`);
+    } finally {
+      setConciliando(false);
+    }
   };
 
   const handleForceReset = async () => {
@@ -280,7 +323,23 @@ export function PortalDetailDrawer({ pedidoId, open, onOpenChange, isAdmin }: Pr
               </Card>
             )}
 
-            <div className="flex gap-2 pt-2">
+            {isConciliacao && (
+              <Card className="border-amber-300 bg-amber-50">
+                <CardContent className="flex items-start gap-2 pt-4 text-sm text-amber-900">
+                  <AlertCircle className="h-4 w-4 mt-0.5 shrink-0" />
+                  <div>
+                    <strong>Requer conciliação manual.</strong>{' '}
+                    O sistema detectou envio ao portal mas não conseguiu confirmar o
+                    protocolo automaticamente. Verifique no portal Sayerlack se o
+                    pedido foi recebido e, se sim, copie o número e clique em
+                    "Conciliar manualmente" abaixo. Isso vai marcar o pedido como
+                    enviado e registrar no Omie. Se NÃO foi recebido, use "Forçar reenvio".
+                  </div>
+                </CardContent>
+              </Card>
+            )}
+
+            <div className="flex flex-wrap gap-2 pt-2">
               {isPendente && (
                 <DispararAgoraButton
                   pedidoId={pedido.id}
@@ -288,7 +347,62 @@ export function PortalDetailDrawer({ pedidoId, open, onOpenChange, isAdmin }: Pr
                 />
               )}
 
-              {isHistorico && isAdmin && (
+              {isConciliacao && (
+                <Dialog open={conciliarOpen} onOpenChange={(o) => {
+                  setConciliarOpen(o);
+                  if (!o) setConciliarProtocolo('');
+                }}>
+                  <DialogTrigger asChild>
+                    <Button variant="default" className="bg-amber-600 hover:bg-amber-700">
+                      <CheckCircle2 className="h-4 w-4 mr-2" />
+                      Conciliar manualmente
+                    </Button>
+                  </DialogTrigger>
+                  <DialogContent>
+                    <DialogHeader>
+                      <DialogTitle>Conciliar pedido #{pedido.id}</DialogTitle>
+                      <DialogDescription>
+                        Informe o número do pedido como aparece no portal Sayerlack
+                        ("Pedido <strong>NNNNN</strong> criado com sucesso"). Após confirmar,
+                        o sistema marca como enviado e dispara o registro no Omie.
+                      </DialogDescription>
+                    </DialogHeader>
+                    <div className="space-y-2">
+                      <Label htmlFor="conciliar-protocolo">Número do protocolo</Label>
+                      <Input
+                        id="conciliar-protocolo"
+                        inputMode="numeric"
+                        pattern="\d*"
+                        placeholder="Ex.: 123456"
+                        value={conciliarProtocolo}
+                        onChange={(e) => setConciliarProtocolo(e.target.value.replace(/\D/g, ''))}
+                        disabled={conciliando}
+                        autoFocus
+                      />
+                      <p className="text-xs text-muted-foreground">
+                        Apenas dígitos, entre 3 e 12 caracteres.
+                      </p>
+                    </div>
+                    <DialogFooter>
+                      <Button
+                        variant="outline"
+                        onClick={() => setConciliarOpen(false)}
+                        disabled={conciliando}
+                      >
+                        Cancelar
+                      </Button>
+                      <Button
+                        onClick={handleConciliar}
+                        disabled={conciliando || !/^\d{3,12}$/.test(conciliarProtocolo.trim())}
+                      >
+                        {conciliando ? 'Conciliando…' : 'Confirmar e disparar Omie'}
+                      </Button>
+                    </DialogFooter>
+                  </DialogContent>
+                </Dialog>
+              )}
+
+              {(isHistorico || isConciliacao) && isAdmin && (
                 <AlertDialog>
                   <AlertDialogTrigger asChild>
                     <Button variant="outline" disabled={resetting}>
