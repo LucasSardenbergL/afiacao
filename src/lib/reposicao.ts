@@ -40,7 +40,7 @@ export async function logAudit(params: {
 }) {
   try {
     await supabase.from("cockpit_audit_log").insert({
-      user_id: params.userId,
+      user_id: params.userId ?? undefined,
       action: params.action,
       result: params.result,
       metadata: params.metadata ?? {},
