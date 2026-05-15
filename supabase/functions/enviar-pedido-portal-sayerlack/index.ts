@@ -165,36 +165,53 @@ export default async ({ page, context }) => {
   // Conservador por design: só extrai com padrões específicos (JSON com chave
   // conhecida ou texto "Pedido NNN criado"). Falso positivo geraria pedido
   // duplicado no Omie, então preferimos errar pra "indeterminado".
+  // Chaves conhecidas para extração de protocolo. Lista ordenada por
+  // confiabilidade (mais específicas e reais do Sayerlack primeiro).
+  // Capturado via DevTools real do portal Sayerlack (15/05/2026):
+  //   POST /order-creation/form/add → 200 JSON com nr_pedido (number),
+  //   nr_pedido_cliente (string), data.ordernum (number), data.ordercust (string).
+  const PROTOCOLO_KEYS_SAYERLACK = ['nr_pedido', 'nr_pedido_cliente', 'ordernum', 'ordercust'];
+  // Padrões genéricos para outros portais (mantidos pra futuro/defesa).
+  const PROTOCOLO_KEYS_GENERICOS = ['nNumPed', 'numero_pedido', 'numeroPedido', 'protocolo', 'cNumPed', 'numero', 'pedido', 'idPedido', 'id_pedido', 'codigoPedido', 'codigo_pedido'];
+
+  const tryExtractProtocoloFromObject = (obj) => {
+    if (!obj || typeof obj !== 'object') return null;
+    // Gate de sucesso: se o JSON tem success: false explicitamente, NÃO extrai —
+    // a resposta indica falha mesmo que contenha um número.
+    if (obj.success === false) return null;
+    const KEYS = PROTOCOLO_KEYS_SAYERLACK.concat(PROTOCOLO_KEYS_GENERICOS);
+    const isProtocolo = (v) => v != null && /^\\d{3,12}$/.test(String(v).trim());
+    const checkObj = (o) => {
+      for (const k of KEYS) {
+        if (o && Object.prototype.hasOwnProperty.call(o, k) && isProtocolo(o[k])) return String(o[k]).trim();
+      }
+      return null;
+    };
+    const top = checkObj(obj);
+    if (top) return top;
+    // 1 nível aninhado (resposta normalmente vem como { data: {...} } / { result: {...} }).
+    for (const k of Object.keys(obj)) {
+      const v = obj[k];
+      if (v && typeof v === 'object') {
+        const nested = checkObj(v);
+        if (nested) return nested;
+      }
+    }
+    return null;
+  };
+
   const tryExtractProtocolo = (body) => {
     if (typeof body !== 'string' || !body) return null;
-    // 1. JSON com campos conhecidos do portal Sayerlack / padrões Omie-like.
+    // 1. JSON estruturado (caminho principal do Sayerlack).
     try {
       const obj = JSON.parse(body);
-      if (obj && typeof obj === 'object') {
-        const KEYS = ['nNumPed', 'numero_pedido', 'numeroPedido', 'protocolo', 'cNumPed', 'numero', 'pedido', 'idPedido', 'id_pedido', 'codigoPedido', 'codigo_pedido'];
-        const isProtocolo = (v) => v != null && /^\\d{3,12}$/.test(String(v));
-        const checkObj = (o) => {
-          for (const k of KEYS) {
-            if (o && Object.prototype.hasOwnProperty.call(o, k) && isProtocolo(o[k])) return String(o[k]);
-          }
-          return null;
-        };
-        const top = checkObj(obj);
-        if (top) return top;
-        // 1 nível aninhado (resposta normalmente vem como { data: {...} } / { result: {...} })
-        for (const k of Object.keys(obj)) {
-          const v = obj[k];
-          if (v && typeof v === 'object') {
-            const nested = checkObj(v);
-            if (nested) return nested;
-          }
-        }
-      }
+      const fromJson = tryExtractProtocoloFromObject(obj);
+      if (fromJson) return fromJson;
     } catch (e) { /* não é JSON, segue pro fallback de texto */ }
-    // 2. Regex textual conservadora (HTML / texto puro).
+    // 2. Regex textual conservadora (HTML / texto puro / JSON mal formado).
     const PATTERNS = [
       /Pedido\\s+(\\d{3,12})\\s+(?:criado|cadastrado|salvo|registrado)/i,
-      /"(?:nNumPed|numero_pedido|numeroPedido|protocolo|cNumPed|codigoPedido)"\\s*:\\s*"?(\\d{3,12})"?/i,
+      /"(?:nr_pedido|nr_pedido_cliente|ordernum|ordercust|nNumPed|numero_pedido|numeroPedido|protocolo|cNumPed|codigoPedido)"\\s*:\\s*"?(\\d{3,12})"?/i,
     ];
     for (const re of PATTERNS) {
       const m = body.match(re);
