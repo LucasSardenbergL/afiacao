@@ -991,22 +991,29 @@ Deno.serve(async (req: Request) => {
     for (const p of aprovados) {
       const r = await processarPedido(db, p, modo, creds);
 
-      // PR8: serializa filhos Sayerlack que foram enfileirados pro portal
-      // (status_final === aguardando_portal_sayerlack). Sem isso, N filhos
-      // de um split disparam N chamadas async em sucessão e o Browserless
-      // rejeita as excedentes por concorrência (200 sem envelope, gerando
-      // indeterminado_requer_conciliacao indevido).
+      // PR8 (revisado em PR10): serializa apenas FILHOS de split. Pedidos
+      // únicos Sayerlack não precisam esperar — disparam async e seguimos.
       //
-      // Espera até 90s pelo background task do enviar-pedido-portal-sayerlack
-      // terminar. Se estourar (raro), seguimos pro próximo mesmo assim — o
-      // pior caso é a próxima execução do cron pegar o resto.
-      if (r.status_final === "aguardando_portal_sayerlack" && isSayerlackOben(p)) {
-        const splitTag = p.split_parent_id ? `Lote ${p.split_lote ?? "?"}/${p.split_total ?? "?"} de #${p.split_parent_id}` : "individual";
-        console.log(`[disparar-pedidos] PR8: aguardando #${p.id} (${splitTag}) sair de enviando_portal antes do próximo...`);
+      // Por quê: o objetivo original do PR8 era evitar que N filhos de um
+      // mesmo split chamassem Browserless em paralelo (free plan só aceitava
+      // 1 concorrente). Com upgrade pro Prototyping (10 concorrentes), pedido
+      // único não tem competição. E o await de 90s + overhead empurrava o
+      // disparar pro limite de 150s do Supabase Edge Function (IDLE_TIMEOUT).
+      //
+      // Resultado: pedido único Sayerlack passa direto (~1s no loop, fast);
+      // split filhos ainda esperam ~90s entre si pra evitar concorrência caso
+      // o usuário volte pro free no futuro.
+      if (
+        r.status_final === "aguardando_portal_sayerlack" &&
+        isSayerlackOben(p) &&
+        p.split_parent_id
+      ) {
+        const splitTag = `Lote ${p.split_lote ?? "?"}/${p.split_total ?? "?"} de #${p.split_parent_id}`;
+        console.log(`[disparar-pedidos] PR8/PR10: aguardando #${p.id} (${splitTag}) sair de enviando_portal antes do próximo filho...`);
         const tWait = Date.now();
         const finalStatus = await aguardarPortalTerminar(db, p.id, 90_000);
         const waitMs = Date.now() - tWait;
-        console.log(`[disparar-pedidos] PR8: #${p.id} portal terminou em ${waitMs}ms com status_envio_portal=${finalStatus ?? "TIMEOUT"}`);
+        console.log(`[disparar-pedidos] PR8/PR10: #${p.id} portal terminou em ${waitMs}ms com status_envio_portal=${finalStatus ?? "TIMEOUT"}`);
       }
 
       // 5. Se produção e Omie OK: notificar fornecedor
