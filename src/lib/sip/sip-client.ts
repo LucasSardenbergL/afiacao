@@ -15,6 +15,7 @@ export class SipClient {
       uri: `sip:${config.username}@${config.sipDomain}`,
       password: config.password,
       register: true,
+      // RFC 4028 session timers off — Nvoip server doesn't require them and they add re-INVITE churn
       session_timers: false,
     });
 
