@@ -8,26 +8,40 @@ import { AppShell } from './AppShell';
  * — bug conhecido quando o usuário muda de rota com overlay aberto ou
  * quando vários overlays se fecham fora de ordem.
  */
+function cleanupStuckScrollLock() {
+  const body = document.body;
+  const hasOpenOverlay = document.querySelector(
+    '[data-state="open"][role="dialog"], [data-state="open"][role="alertdialog"], [data-radix-popper-content-wrapper]'
+  );
+  if (!hasOpenOverlay) {
+    body.style.pointerEvents = '';
+    body.style.overflow = '';
+    body.style.removeProperty('margin-right');
+    body.removeAttribute('data-scroll-locked');
+  }
+}
+
 function useRadixScrollLockCleanup() {
   const location = useLocation();
+
+  // Cleanup ao trocar de rota
   useEffect(() => {
-    const cleanup = () => {
-      const body = document.body;
-      // Só limpa se não houver overlay Radix realmente aberto
-      const hasOpenOverlay = document.querySelector(
-        '[data-state="open"][role="dialog"], [data-state="open"][role="alertdialog"], [data-radix-popper-content-wrapper]'
-      );
-      if (!hasOpenOverlay) {
-        body.style.pointerEvents = '';
-        body.style.overflow = '';
-        body.style.removeProperty('margin-right');
-        body.removeAttribute('data-scroll-locked');
-      }
-    };
-    // Pequeno delay para deixar Radix terminar suas próprias animações de fechamento
-    const t = setTimeout(cleanup, 100);
+    const t = setTimeout(cleanupStuckScrollLock, 100);
     return () => clearTimeout(t);
   }, [location.pathname]);
+
+  // Observa o body — se algo setar data-scroll-locked sem overlay aberto, limpa
+  useEffect(() => {
+    const observer = new MutationObserver(() => {
+      // pequeno debounce para deixar Radix terminar
+      requestAnimationFrame(() => setTimeout(cleanupStuckScrollLock, 150));
+    });
+    observer.observe(document.body, {
+      attributes: true,
+      attributeFilter: ['data-scroll-locked', 'style'],
+    });
+    return () => observer.disconnect();
+  }, []);
 }
 
 export function AppShellLayout() {
