@@ -234,6 +234,58 @@ export default async ({ page, context }) => {
     return null;
   };
 
+  // === PR3: Wait composto pós-submit ===
+  // Promise.any de 4 sinais positivos. Vence o primeiro que cumprir; rejeições
+  // individuais são ignoradas (até todos rejeitarem). É a substituição do
+  // waitForFunction de banner único, frágil. Os 4 sinais são complementares:
+  //  - network:  POST de efetivação capturado (evidência primária + body).
+  //  - banner:   "Pedido NNN criado com sucesso" no DOM (fonte clássica).
+  //  - modal:    modal de sucesso (Bootstrap, SweetAlert, toast).
+  //  - url:      URL muda para /pedidos (navegação pós-submit comum).
+  const SUBMIT_SUSPECT_RE = /pedido|efetivar|salvar|criar|order|novo[-_]?pedido/i;
+  const waitForPositiveSubmitSignal = (pg, timeoutMs) => {
+    const networkSignal = pg.waitForResponse(
+      (r) => {
+        try {
+          return r.request().method() === 'POST' && SUBMIT_SUSPECT_RE.test(r.url());
+        } catch (e) { return false; }
+      },
+      { timeout: timeoutMs }
+    ).then((resp) => ({ kind: 'network', response: resp }));
+    const bannerSignal = pg.waitForFunction(
+      () => /Pedido\\s+\\d+\\s+criado/i.test(document.body && document.body.innerText || ''),
+      { timeout: timeoutMs }
+    ).then(() => ({ kind: 'banner' }));
+    const modalSignal = pg.waitForSelector(
+      '.modal.show .alert-success, .swal2-success, .toast.show.bg-success',
+      { timeout: timeoutMs }
+    ).then(() => ({ kind: 'modal' }));
+    const urlSignal = pg.waitForFunction(
+      () => /pedidos?\\/?($|\\?)/.test(location.pathname || ''),
+      { timeout: timeoutMs }
+    ).then(() => ({ kind: 'url' }));
+    return Promise.any([networkSignal, bannerSignal, modalSignal, urlSignal]);
+  };
+
+  // === PR3: leitura defensiva do corpo da resposta ===
+  // Puppeteer pode lançar ao ler body de resposta consumida / redirect / etc.
+  // Devolve sempre um envelope simples; nunca propaga exception.
+  const readResponseBodySafe = async (resp) => {
+    if (!resp) return { status: null, ok: false, contentType: null, body: null, parsed: null };
+    let status = null;
+    try { status = resp.status(); } catch (e) {}
+    const headers = (() => { try { return resp.headers() || {}; } catch (e) { return {}; } })();
+    const contentType = headers['content-type'] || null;
+    const ok = typeof status === 'number' && status >= 200 && status < 300;
+    let body = null;
+    try { body = await resp.text(); } catch (e) { body = null; }
+    let parsed = null;
+    if (body) {
+      try { parsed = JSON.parse(body); } catch (e) { parsed = null; }
+    }
+    return { status, ok, contentType, body, parsed };
+  };
+
   // === PR1: Envelope estruturado ===
   // Traduz o resultado bruto do runFlow (legado: { data: {...} }) + a evidência
   // do recorder na máquina de estados. Regra de ouro: requestSent === true
