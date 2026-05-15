@@ -808,8 +808,8 @@ export default async ({ page, context }) => {
       const btnEfetivar = document.querySelector('#btnSalvarNovoPedido');
       const efetivarHabilitado = btnEfetivar && !btnEfetivar.disabled;
       return !temValidando && efetivarHabilitado;
-    }, { timeout: 15000, polling: 250 });
-    trace.push({ step: 'validacao_data_entrega_ok_pre_efetivar', t: Date.now() - t0 });
+    }, { timeout: budgetFor('validacao-pre-efetivar', 15_000), polling: 250 });
+    trace.push({ step: 'validacao_data_entrega_ok_pre_efetivar', t: Date.now() - t0, remaining: remainingMs() });
 
     // Diagnóstico rico pré-click: estado do botão, contexto, hit-test, listeners jQuery
     const preClickDiag = await page.evaluate(function() {
@@ -957,13 +957,16 @@ export default async ({ page, context }) => {
     // os snapshots de 4s/8s consumiam a janela restante do Browserless antes da confirmação.
     await snapshotPosEfetivar('1s', 1000);
 
-    // Aguarda o texto de sucesso aparecer (Puppeteer suporta waitForFunction sem jsonValue)
+    // Aguarda o texto de sucesso aparecer. PR2: usa o que sobrou do budget,
+    // sem reservar mais nada (já estamos no submit). Se o banner não vier a
+    // tempo, o catch externo classifica via evidência do recorder (PR1) —
+    // se o POST saiu, vira indeterminado; se não, erro_retentavel.
     await page.waitForFunction(
       () => {
         const body = document.body.innerText;
         return /Pedido \\d+ criado com sucesso/.test(body);
       },
-      { timeout: 7000 }
+      { timeout: budgetFor('submit-pedido-banner', 10_000, { reserveSubmit: false, minMs: 2_000 }) }
     );
     // Extrai o texto via evaluate puro
     const successStr = await page.evaluate(() => {
