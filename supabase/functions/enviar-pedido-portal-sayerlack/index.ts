@@ -42,6 +42,60 @@ export default async ({ page, context }) => {
   // nunca lançar ReferenceError (que mascararia o envelope estruturado).
   let preLoginScreenshot = null;
 
+  // === PR2: Budget management (deadline global) ===
+  // O Browserless mata a função em ~60s. Em vez de esperar isso acontecer com
+  // um waitFor pendurado (cenário do bug original — "Waiting failed: 7000ms"
+  // mascarando o teto externo), morremos controlado dentro de 58s e devolvemos
+  // envelope estruturado. Todos os timeouts do script passam por budgetFor.
+  const HARD_CEILING_MS = 58_000;   // 2s margem abaixo dos 60s do Browserless
+  const RETURN_GUARD_MS = 2_000;    // tempo para Browserless serializar o JSON
+  const SUBMIT_RESERVED_MS = 8_000; // reservado para o click + sinal pós-submit
+  const ITEM_MIN_BUDGET_MS = 3_000; // tempo mínimo viável por item do loop
+  const deadline = t0 + HARD_CEILING_MS;
+
+  const remainingMs = () => Math.max(0, deadline - Date.now());
+
+  // budgetFor: calcula min(idealMs, restante - reserva); lança BUDGET_EXHAUSTED
+  // se o resultado for menor que minMs. NUNCA retorna fallback silencioso —
+  // preferimos abortar limpo a deixar um waitFor pendurado quando o teto chega.
+  const budgetFor = (label, idealMs, opts) => {
+    const reserveSubmit = !(opts && opts.reserveSubmit === false);
+    const minMs = (opts && typeof opts.minMs === 'number') ? opts.minMs : 500;
+    const reserved = (reserveSubmit ? SUBMIT_RESERVED_MS : 0) + RETURN_GUARD_MS;
+    const budget = Math.max(0, remainingMs() - reserved);
+    const allowed = Math.min(idealMs, budget);
+    if (allowed < minMs) {
+      const err = new Error(
+        'BUDGET_EXHAUSTED em "' + label + '": precisava de >=' + minMs +
+        'ms mas só restam ' + allowed + 'ms (deadline em ' + remainingMs() + 'ms)'
+      );
+      err.code = 'BUDGET_EXHAUSTED';
+      err.label = label;
+      throw err;
+    }
+    return allowed;
+  };
+
+  // Verificação antes de cada item: se o restante não comporta os itens que
+  // faltam + reserva de submit + return guard, aborta agora. Evita o pior
+  // cenário (montar 80% do pedido, chegar no submit com budget zero e gerar
+  // indeterminado por timeout do banner).
+  const assertEnoughTimeForRemainingItems = (currentIndex, totalItems) => {
+    const remainingItems = Math.max(0, totalItems - currentIndex);
+    const need = remainingItems * ITEM_MIN_BUDGET_MS + SUBMIT_RESERVED_MS + RETURN_GUARD_MS;
+    const rem = remainingMs();
+    if (rem < need) {
+      const err = new Error(
+        'BUDGET_EXHAUSTED: faltam ' + need + 'ms para completar ' + remainingItems +
+        ' itens + submit, mas só restam ' + rem + 'ms (item ' + currentIndex +
+        ' de ' + totalItems + ')'
+      );
+      err.code = 'BUDGET_EXHAUSTED';
+      err.label = 'remaining-items-' + currentIndex + '-of-' + totalItems;
+      throw err;
+    }
+  };
+
   // === PR1: Network Recorder ===
   // Listener global armado ANTES de qualquer navegação. Captura todo POST que
   // bate em endpoints suspeitos de efetivação. É a fonte primária de evidência
@@ -317,20 +371,25 @@ export default async ({ page, context }) => {
 
     await applyStealth();
     trace.push({ step: 'login_start', t: Date.now() - t0 });
-    await page.goto(portalUrl + '/login', { waitUntil: 'domcontentloaded', timeout: 30000 });
-    await page.waitForSelector('#user', { timeout: 10000 });
+    await page.goto(portalUrl + '/login', { waitUntil: 'domcontentloaded', timeout: budgetFor('login-goto', 30_000) });
+    await page.waitForSelector('#user', { timeout: budgetFor('login-form', 10_000) });
     await fillInput('#user', user);
     await fillInput('#password', pass);
 
-    const navPromise = page.waitForNavigation({ timeout: 15000 }).catch(() => null);
+    const navPromise = page.waitForNavigation({ timeout: budgetFor('login-nav', 15_000) }).catch(() => null);
     await clickButtonByText('Entrar');
     await navPromise;
 
     // Heuristica robusta: aguarda evidencia POSITIVA de login bem-sucedido
     // (URL mudou para fora de /login OU elemento exclusivo da area logada apareceu)
+    // PR2: budget único para os 3 caminhos da Promise.race. Computado FORA dos
+    // IIFEs para que um BUDGET_EXHAUSTED propague pelo catch externo em vez de
+    // virar primeiro-settle da race (que mataria os outros caminhos cedo).
+    const loginCheckMs = budgetFor('login-check', 15_000);
+    const loginCheckPolls = Math.max(2, Math.floor(loginCheckMs / 500));
     const loginCheck = await Promise.race([
       (async () => {
-        for (let i = 0; i < 30; i++) { // 30 * 500ms = 15s max
+        for (let i = 0; i < loginCheckPolls; i++) {
           const url = page.url();
           if (!url.includes('/login')) return { ok: true, via: 'url_changed', url };
           await sleep(500);
@@ -339,7 +398,7 @@ export default async ({ page, context }) => {
       })(),
       (async () => {
         try {
-          await page.waitForSelector('#sidebar, .app-sidebar', { timeout: 15000 });
+          await page.waitForSelector('#sidebar, .app-sidebar', { timeout: loginCheckMs });
           return { ok: true, via: 'sidebar_found', url: page.url() };
         } catch {
           return { ok: false, via: 'sidebar_not_found', url: page.url() };
@@ -352,7 +411,7 @@ export default async ({ page, context }) => {
               const userSpan = document.querySelector('.navbar-user .d-md-inline');
               return userSpan && userSpan.innerText.trim().length > 0;
             },
-            { timeout: 15000 }
+            { timeout: loginCheckMs }
           );
           return { ok: true, via: 'user_in_header', url: page.url() };
         } catch {
@@ -428,7 +487,7 @@ export default async ({ page, context }) => {
         const sidebarLinks = document.querySelectorAll('#sidebar .menu-link, .app-sidebar .menu-link');
         return sidebarLinks.length > 0;
       },
-      { timeout: 15000 }
+      { timeout: budgetFor('sidebar-links', 15_000) }
     ).catch(() => null);
 
     // Click em "Vendas" para expandir submenu
@@ -448,7 +507,7 @@ export default async ({ page, context }) => {
       return links.some(function(a) {
         return a.getAttribute('href') === '/order-creation' && a.offsetParent !== null;
       });
-    }, { timeout: 3000, polling: 100 });
+    }, { timeout: budgetFor('sidebar-pedidos-link', 3_000, { minMs: 300 }), polling: 100 });
 
     // Click em "Pedidos / Propostas" — esse SIM navega corretamente
     const clicou_pedidos = await page.evaluate(() => {
@@ -498,7 +557,7 @@ export default async ({ page, context }) => {
     // Aguarda navegação completar (URL muda para /order-creation)
     await page.waitForFunction(
       () => window.location.href.endsWith('/order-creation'),
-      { timeout: 15000 }
+      { timeout: budgetFor('nav-order-creation', 15_000) }
     ).catch(() => null);
     await sleep(2000); // dá tempo do DOM da página de pedidos estabilizar
 
@@ -506,14 +565,14 @@ export default async ({ page, context }) => {
     console.log('[DEBUG_AFTER_CLICK_PEDIDOS]', JSON.stringify({ url: urlAposClick, chegou_em_order_creation: urlAposClick.endsWith('/order-creation') }));
     trace.push({ step: 'after_click_pedidos', url: urlAposClick, t: Date.now() - t0 });
 
-    await page.waitForSelector('#btnNovoPedido', { timeout: 25000 });
+    await page.waitForSelector('#btnNovoPedido', { timeout: budgetFor('btn-novo-pedido', 25_000) });
     await page.click('#btnNovoPedido');
-    await page.waitForSelector('#select2-cliente-container', { timeout: 10000 });
+    await page.waitForSelector('#select2-cliente-container', { timeout: budgetFor('select2-cliente-container', 10_000) });
     trace.push({ step: 'novo_pedido_open', t: Date.now() - t0 });
 
     await page.click('#select2-cliente-container');
     await sleep(300);
-    await page.waitForSelector('.select2-search__field', { timeout: 5000 });
+    await page.waitForSelector('.select2-search__field', { timeout: budgetFor('select2-cliente-search', 5_000) });
     await fillInput('.select2-search__field', clienteCodigo);
     await sleep(2000);
     const clienteOption = await page.$('.select2-results__option:not(.select2-results__message)');
@@ -536,7 +595,11 @@ export default async ({ page, context }) => {
 
     for (let i = 0; i < items.length; i++) {
       const item = items[i];
-      trace.push({ step: 'item_' + i + '_start', sku: item.sku_portal, t: Date.now() - t0 });
+      // PR2: aborta cedo se não há janela para os itens restantes + submit.
+      // Evita o pior cenário (montar 80% do pedido, chegar no submit com
+      // budget zero e gerar indeterminado).
+      assertEnoughTimeForRemainingItems(i, items.length);
+      trace.push({ step: 'item_' + i + '_start', sku: item.sku_portal, t: Date.now() - t0, remaining: remainingMs() });
 
       // Aguardar fim da janela de validação assíncrona da data de entrega.
       // O portal Sayerlack substitui os botões "Incluir Item" por "Validando data de entrega"
@@ -552,7 +615,7 @@ export default async ({ page, context }) => {
           return (b.innerText || '').includes('Validando');
         });
         return temIncluirItem && !temValidando;
-      }, { timeout: 15000, polling: 250 });
+      }, { timeout: budgetFor('item-' + i + '-validacao-data', 15_000), polling: 250 });
       // Buffer mínimo pós-validação pra DOM estabilizar
       await sleep(300);
       trace.push({ step: 'validacao_data_entrega_ok_iter_' + i, t: Date.now() - t0 });
@@ -658,7 +721,7 @@ export default async ({ page, context }) => {
           trace.push({ step: 'select2_fallback_iter_' + i, sel: select2ContainerSel, t: Date.now() - t0 });
         }
       }
-      await page.waitForSelector(select2ContainerSel, { timeout: 12000 });
+      await page.waitForSelector(select2ContainerSel, { timeout: budgetFor('item-' + i + '-select2-container', 12_000) });
       const debugPosIncluir = await page.evaluate(() => {
         const allBtns = Array.from(document.querySelectorAll('#panel_novo_pedido button.btn-primary, #colSpanBtnIncluirItem button.btn-primary, tfoot button.btn-primary'));
         return {
@@ -671,7 +734,7 @@ export default async ({ page, context }) => {
       console.log('[DEBUG_POS_INCLUIR_ITEM]', JSON.stringify({ iteration: i, ...debugPosIncluir }));
       await page.click(select2ContainerSel);
       await sleep(300);
-      await page.waitForSelector('.select2-search__field', { timeout: 5000 });
+      await page.waitForSelector('.select2-search__field', { timeout: budgetFor('item-' + i + '-select2-search', 5_000) });
       await fillInput('.select2-search__field', item.sku_portal);
       await sleep(2000);
       const skuOption = await page.$('.select2-results__option:not(.select2-results__message)');
@@ -735,7 +798,7 @@ export default async ({ page, context }) => {
           const rows = document.querySelectorAll('#datatable_itens tbody tr');
           return rows.length === esperado;
         },
-        { timeout: 5000 },
+        { timeout: budgetFor('item-' + i + '-row-count', 5_000) },
         i + 1
       ).catch(() => null);
       await sleep(400); // buffer pos-render
@@ -754,8 +817,8 @@ export default async ({ page, context }) => {
       const btnEfetivar = document.querySelector('#btnSalvarNovoPedido');
       const efetivarHabilitado = btnEfetivar && !btnEfetivar.disabled;
       return !temValidando && efetivarHabilitado;
-    }, { timeout: 15000, polling: 250 });
-    trace.push({ step: 'validacao_data_entrega_ok_pre_efetivar', t: Date.now() - t0 });
+    }, { timeout: budgetFor('validacao-pre-efetivar', 15_000), polling: 250 });
+    trace.push({ step: 'validacao_data_entrega_ok_pre_efetivar', t: Date.now() - t0, remaining: remainingMs() });
 
     // Diagnóstico rico pré-click: estado do botão, contexto, hit-test, listeners jQuery
     const preClickDiag = await page.evaluate(function() {
@@ -903,13 +966,16 @@ export default async ({ page, context }) => {
     // os snapshots de 4s/8s consumiam a janela restante do Browserless antes da confirmação.
     await snapshotPosEfetivar('1s', 1000);
 
-    // Aguarda o texto de sucesso aparecer (Puppeteer suporta waitForFunction sem jsonValue)
+    // Aguarda o texto de sucesso aparecer. PR2: usa o que sobrou do budget,
+    // sem reservar mais nada (já estamos no submit). Se o banner não vier a
+    // tempo, o catch externo classifica via evidência do recorder (PR1) —
+    // se o POST saiu, vira indeterminado; se não, erro_retentavel.
     await page.waitForFunction(
       () => {
         const body = document.body.innerText;
         return /Pedido \\d+ criado com sucesso/.test(body);
       },
-      { timeout: 7000 }
+      { timeout: budgetFor('submit-pedido-banner', 10_000, { reserveSubmit: false, minMs: 2_000 }) }
     );
     // Extrai o texto via evaluate puro
     const successStr = await page.evaluate(() => {
@@ -935,11 +1001,15 @@ export default async ({ page, context }) => {
     };
   } catch (err) {
     const errorScreenshot = await page.screenshot({ type: 'png', encoding: 'base64' }).catch(() => null);
+    const erroTipo = (err && err.code === 'BUDGET_EXHAUSTED') ? 'BUDGET_EXHAUSTED' : 'EXCEPTION';
     return {
       data: {
         success: false,
         erro: (err && err.message) ? err.message : String(err),
-        erroTipo: 'EXCEPTION',
+        erroTipo,
+        budgetLabel: (err && err.label) || null,
+        elapsedMs: Date.now() - t0,
+        remainingMs: remainingMs(),
         trace,
       },
       type: 'application/json',
@@ -956,11 +1026,15 @@ export default async ({ page, context }) => {
   } catch (err) {
     // Rede de segurança: runFlow tem try/catch interno, mas qualquer escape
     // ainda devolve envelope estruturado (nunca um throw nu para o Browserless).
+    const erroTipo = (err && err.code === 'BUDGET_EXHAUSTED') ? 'BUDGET_EXHAUSTED' : 'EXCEPTION';
     raw = {
       data: {
         success: false,
         erro: (err && err.message) ? err.message : String(err),
-        erroTipo: 'EXCEPTION',
+        erroTipo,
+        budgetLabel: (err && err.label) || null,
+        elapsedMs: Date.now() - t0,
+        remainingMs: remainingMs(),
         trace,
       },
       type: 'application/json',
