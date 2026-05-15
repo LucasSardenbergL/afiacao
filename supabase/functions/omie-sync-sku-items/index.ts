@@ -21,11 +21,17 @@ const corsHeaders = {
 };
 
 const OMIE_ENDPOINT = "https://app.omie.com.br/api/v1/produtos/recebimentonfe/";
-const RATE_LIMIT_DELAY_MS = 1100;
+const RATE_LIMIT_DELAY_MS = 5000;
 const RETRY_DELAY_MS = 5000;
 const MAX_RETRIES = 3;
 const TIMEOUT_GUARD_MS = 50_000;
 const TIMEOUT_CHECK_EVERY_NFES = 5;
+
+function redundantWaitMs(faultstring: string): number | null {
+  const match = faultstring.match(/Aguarde\s+(\d+)\s+segundos/i);
+  if (!match) return null;
+  return (Number(match[1]) + 3) * 1000;
+}
 
 type Empresa = "OBEN" | "COLACOR";
 
@@ -90,14 +96,13 @@ async function callOmie(
     } catch {
       json = { raw: text };
     }
-    if (
-      res.status === 429 ||
-      (json?.faultstring && /rate limit/i.test(json.faultstring))
-    ) {
+    const faultstring = typeof json?.faultstring === "string" ? json.faultstring : "";
+    const waitMs = redundantWaitMs(faultstring) ?? RETRY_DELAY_MS;
+    if (res.status === 429 || /rate limit|redundant|consumo redundante/i.test(faultstring)) {
       console.warn(
-        `[sync-sku-items] ${call} rate limit (try ${attempt}/${MAX_RETRIES})`,
+        `[sync-sku-items] ${call} aguardando ${Math.round(waitMs / 1000)}s por limite Omie (try ${attempt}/${MAX_RETRIES})`,
       );
-      await sleep(RETRY_DELAY_MS);
+      await sleep(waitMs);
       continue;
     }
     if (!res.ok) {
