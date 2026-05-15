@@ -2,6 +2,8 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { mixPrerollWithMic } from './audio-preroll';
 
 describe('mixPrerollWithMic', () => {
+  // Test mock — typing the AudioContext mock shape exhaustively adds noise without value
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
   let audioContextMock: any;
   let destinationStream: MediaStream;
 

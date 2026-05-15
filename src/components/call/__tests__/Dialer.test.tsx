@@ -24,6 +24,7 @@ describe('Dialer dispatcher', () => {
   beforeEach(() => vi.clearAllMocks());
 
   it('renderiza NvoipDialer quando flag off (default)', () => {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
     (useFeatureFlag as any).mockReturnValue([false, vi.fn()]);
     render(<Dialer phoneNumber="37999998888" customerName="Cliente" />);
     expect(screen.getByTestId('nvoip-dialer')).toBeTruthy();
@@ -31,6 +32,7 @@ describe('Dialer dispatcher', () => {
   });
 
   it('renderiza NvoipFloatingDialer quando flag off + floating=true', () => {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
     (useFeatureFlag as any).mockReturnValue([false, vi.fn()]);
     render(<Dialer phoneNumber="37999998888" customerName="Cliente" floating />);
     expect(screen.getByTestId('nvoip-floating-dialer')).toBeTruthy();
@@ -38,6 +40,7 @@ describe('Dialer dispatcher', () => {
   });
 
   it('renderiza WebRTCDialer quando flag on', async () => {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
     (useFeatureFlag as any).mockReturnValue([true, vi.fn()]);
     render(<Dialer phoneNumber="37999998888" customerName="Cliente" />);
     // WebRTCDialer é lazy — espera resolver
@@ -46,6 +49,7 @@ describe('Dialer dispatcher', () => {
   });
 
   it('passa a feature flag corretamente', () => {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
     (useFeatureFlag as any).mockReturnValue([false, vi.fn()]);
     render(<Dialer phoneNumber="37999998888" customerName="Cliente" />);
     expect(useFeatureFlag).toHaveBeenCalledWith('useWebRTCCall', false);

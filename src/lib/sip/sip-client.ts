@@ -7,6 +7,8 @@ export class SipClient {
   private ua: JsSIP.UA;
   private state: SipCallState = 'idle';
   private listeners: { [K in EventName]?: Array<SipClientEvents[K]> } = {};
+  // JsSIP's RTCSession surface used here is narrow (on/terminate/connection.getReceivers); full type import isn't worth the coupling
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
   private currentSession: any = null;
   private callStartedAt: number | null = null;
   private currentLocalStream: MediaStream | null = null;
