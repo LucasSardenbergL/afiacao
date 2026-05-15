@@ -103,6 +103,66 @@ export default async ({ page, context }) => {
     };
   };
 
+  // === PR1.5: Extração automática de protocolo do corpo da resposta ===
+  // Quando o script morre por timeout (60s do Browserless) mas o portal já
+  // respondeu OK ao POST, o recorder captura o corpo da resposta. Se der pra
+  // extrair o número do protocolo, recuperamos o pedido como sucesso_portal
+  // automaticamente — sem precisar de conciliação manual.
+  // Conservador por design: só extrai com padrões específicos (JSON com chave
+  // conhecida ou texto "Pedido NNN criado"). Falso positivo geraria pedido
+  // duplicado no Omie, então preferimos errar pra "indeterminado".
+  const tryExtractProtocolo = (body) => {
+    if (typeof body !== 'string' || !body) return null;
+    // 1. JSON com campos conhecidos do portal Sayerlack / padrões Omie-like.
+    try {
+      const obj = JSON.parse(body);
+      if (obj && typeof obj === 'object') {
+        const KEYS = ['nNumPed', 'numero_pedido', 'numeroPedido', 'protocolo', 'cNumPed', 'numero', 'pedido', 'idPedido', 'id_pedido', 'codigoPedido', 'codigo_pedido'];
+        const isProtocolo = (v) => v != null && /^\\d{3,12}$/.test(String(v));
+        const checkObj = (o) => {
+          for (const k of KEYS) {
+            if (o && Object.prototype.hasOwnProperty.call(o, k) && isProtocolo(o[k])) return String(o[k]);
+          }
+          return null;
+        };
+        const top = checkObj(obj);
+        if (top) return top;
+        // 1 nível aninhado (resposta normalmente vem como { data: {...} } / { result: {...} })
+        for (const k of Object.keys(obj)) {
+          const v = obj[k];
+          if (v && typeof v === 'object') {
+            const nested = checkObj(v);
+            if (nested) return nested;
+          }
+        }
+      }
+    } catch (e) { /* não é JSON, segue pro fallback de texto */ }
+    // 2. Regex textual conservadora (HTML / texto puro).
+    const PATTERNS = [
+      /Pedido\\s+(\\d{3,12})\\s+(?:criado|cadastrado|salvo|registrado)/i,
+      /"(?:nNumPed|numero_pedido|numeroPedido|protocolo|cNumPed|codigoPedido)"\\s*:\\s*"?(\\d{3,12})"?/i,
+    ];
+    for (const re of PATTERNS) {
+      const m = body.match(re);
+      if (m && m[1]) return m[1];
+    }
+    return null;
+  };
+
+  const extractProtocoloFromEvidence = (evidence) => {
+    if (!evidence || !Array.isArray(evidence.events)) return null;
+    // Procura primeiro nas respostas OK; se nada bater, tenta qualquer resposta
+    // com body capturado (defensivo — alguns portais retornam 200 com erro embutido).
+    const okResponses = evidence.events.filter((e) =>
+      e.phase === 'response' && typeof e.status === 'number' && e.status >= 200 && e.status < 300
+    );
+    for (const ev of okResponses) {
+      const p = tryExtractProtocolo(ev.bodyPreview);
+      if (p) return { protocolo: p, source: 'response_ok', url: ev.url, status: ev.status };
+    }
+    return null;
+  };
+
   // === PR1: Envelope estruturado ===
   // Traduz o resultado bruto do runFlow (legado: { data: {...} }) + a evidência
   // do recorder na máquina de estados. Regra de ouro: requestSent === true
@@ -113,7 +173,17 @@ export default async ({ page, context }) => {
     const screenshot = raw ? (raw.screenshot || null) : null;
     const preLogin = raw ? (raw.preLoginScreenshot || null) : null;
     const requestSent = !!(evidence && evidence.requestSent);
-    const protocolo = data.protocolo || null;
+    let protocolo = data.protocolo || null;
+
+    // PR1.5: se a runFlow não capturou protocolo, tenta extrair do recorder.
+    let protocoloAutoExtraido = null;
+    if (!protocolo) {
+      const extracted = extractProtocoloFromEvidence(evidence);
+      if (extracted) {
+        protocolo = extracted.protocolo;
+        protocoloAutoExtraido = extracted;
+      }
+    }
 
     let status;
     let ok;
@@ -125,6 +195,14 @@ export default async ({ page, context }) => {
       status = protocolo ? 'sucesso_portal' : 'aceito_portal_sem_protocolo';
       safeToRetry = false;
       needsReconciliation = !protocolo;
+    } else if (protocoloAutoExtraido && requestSent) {
+      // PR1.5: recuperação automática. O script morreu (timeout do Browserless)
+      // mas o portal já respondeu OK ao POST e conseguimos extrair o protocolo
+      // do corpo. Trata como sucesso completo.
+      ok = true;
+      status = 'sucesso_portal';
+      safeToRetry = false;
+      needsReconciliation = false;
     } else {
       ok = false;
       const tipo = data.erroTipo || 'UNKNOWN';
@@ -164,6 +242,7 @@ export default async ({ page, context }) => {
           responseCount: evidence ? evidence.responseCount : 0,
           okResponse: evidence ? evidence.okResponse : null,
           network: evidence ? evidence.events : [],
+          protocoloAutoExtraido,
           erroTipo: data.erroTipo || null,
           erro: data.erro || null,
           successText: data.successText || null,

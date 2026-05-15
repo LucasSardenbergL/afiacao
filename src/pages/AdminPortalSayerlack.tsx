@@ -84,7 +84,8 @@ export default function AdminPortalSayerlack() {
   const [drawerOpen, setDrawerOpen] = useState(false);
 
   const [pendentesBusca, setPendentesBusca] = useState('');
-  const [histStatus, setHistStatus] = useState<'todos' | 'enviado_portal' | 'falha_envio_portal'>('todos');
+  const [histStatus, setHistStatus] = useState<'todos' | 'enviados' | 'falhas'>('todos');
+  const [conciliacaoBusca, setConciliacaoBusca] = useState('');
   const [histRange, setHistRange] = useState<'7' | '30' | '90'>('30');
   const [histBusca, setHistBusca] = useState('');
 
@@ -98,41 +99,53 @@ export default function AdminPortalSayerlack() {
         .eq('empresa', SAYERLACK_FILTER.empresa)
         .ilike('fornecedor_nome', SAYERLACK_FILTER.fornecedorIlike);
 
-      // Pendentes (status disparado + portal pendente)
+      // Pendentes (status disparado + portal aguardando: novo erro_retentavel
+      // entra na fila junto com pendente/enviando)
       const { count: pendentes } = await supabase
         .from('pedido_compra_sugerido')
         .select('*', { count: 'exact', head: true })
         .eq('empresa', SAYERLACK_FILTER.empresa)
         .ilike('fornecedor_nome', SAYERLACK_FILTER.fornecedorIlike)
         .eq('status', 'disparado')
-        .eq('status_envio_portal', 'pendente_envio_portal');
+        .in('status_envio_portal', ['pendente_envio_portal', 'enviando_portal', 'erro_retentavel']);
 
-      // Enviados últimos 7d
+      // Requer conciliação manual (estado novo introduzido pelo PR1)
+      const { count: conciliacao } = await supabase
+        .from('pedido_compra_sugerido')
+        .select('*', { count: 'exact', head: true })
+        .eq('empresa', SAYERLACK_FILTER.empresa)
+        .ilike('fornecedor_nome', SAYERLACK_FILTER.fornecedorIlike)
+        .in('status_envio_portal', ['aceito_portal_sem_protocolo', 'indeterminado_requer_conciliacao']);
+
+      // Enviados últimos 7d (legado enviado_portal + novo sucesso_portal)
       const seteDias = new Date(Date.now() - 7 * 86400000).toISOString();
       const { count: enviados7d } = await supabase
         .from('pedido_compra_sugerido')
         .select('*', { count: 'exact', head: true })
         .eq('empresa', SAYERLACK_FILTER.empresa)
         .ilike('fornecedor_nome', SAYERLACK_FILTER.fornecedorIlike)
-        .eq('status_envio_portal', 'enviado_portal')
+        .in('status_envio_portal', ['enviado_portal', 'sucesso_portal'])
         .gte('enviado_portal_em', seteDias);
 
-      // Taxa sucesso 30d
+      // Taxa sucesso 30d (sucessos: enviado_portal + sucesso_portal;
+      // falhas: falha_envio_portal + erro_nao_retentavel)
       const trintaDias = new Date(Date.now() - 30 * 86400000).toISOString();
       const { data: rows30d } = await supabase
         .from('pedido_compra_sugerido')
         .select('status_envio_portal, enviado_portal_em, criado_em')
         .eq('empresa', SAYERLACK_FILTER.empresa)
         .ilike('fornecedor_nome', SAYERLACK_FILTER.fornecedorIlike)
-        .in('status_envio_portal', ['enviado_portal', 'falha_envio_portal'])
+        .in('status_envio_portal', ['enviado_portal', 'sucesso_portal', 'falha_envio_portal', 'erro_nao_retentavel'])
         .gte('criado_em', trintaDias);
 
       const total = (rows30d ?? []).length;
-      const ok = (rows30d ?? []).filter((r) => r.status_envio_portal === 'enviado_portal').length;
+      const ok = (rows30d ?? []).filter(
+        (r) => r.status_envio_portal === 'enviado_portal' || r.status_envio_portal === 'sucesso_portal',
+      ).length;
       const taxa = total === 0 ? null : Math.round((ok / total) * 1000) / 10;
 
       void base;
-      return { pendentes: pendentes ?? 0, enviados7d: enviados7d ?? 0, taxa };
+      return { pendentes: pendentes ?? 0, conciliacao: conciliacao ?? 0, enviados7d: enviados7d ?? 0, taxa };
     },
     refetchInterval: 30_000,
   });
@@ -146,7 +159,7 @@ export default function AdminPortalSayerlack() {
         .select(PEDIDO_COLS)
         .eq('empresa', SAYERLACK_FILTER.empresa)
         .ilike('fornecedor_nome', SAYERLACK_FILTER.fornecedorIlike)
-        .in('status_envio_portal', ['pendente_envio_portal', 'enviando_portal'])
+        .in('status_envio_portal', ['pendente_envio_portal', 'enviando_portal', 'erro_retentavel'])
         .order('aprovado_em', { ascending: true })
         .limit(200);
       const { data, error } = await q;
@@ -160,6 +173,24 @@ export default function AdminPortalSayerlack() {
       const hasProcessing = rows.some((r) => r.status_envio_portal === 'enviando_portal');
       return hasProcessing ? 5_000 : 30_000;
     },
+  });
+
+  // ---------- Conciliação manual (PR1.5) ----------
+  const { data: conciliacao, isLoading: loadingConciliacao } = useQuery({
+    queryKey: ['portal-sayerlack-conciliacao'],
+    queryFn: async () => {
+      const { data, error } = await supabase
+        .from('pedido_compra_sugerido')
+        .select(PEDIDO_COLS)
+        .eq('empresa', SAYERLACK_FILTER.empresa)
+        .ilike('fornecedor_nome', SAYERLACK_FILTER.fornecedorIlike)
+        .in('status_envio_portal', ['aceito_portal_sem_protocolo', 'indeterminado_requer_conciliacao'])
+        .order('aprovado_em', { ascending: false })
+        .limit(200);
+      if (error) throw error;
+      return (data ?? []) as PedidoRow[];
+    },
+    refetchInterval: 30_000,
   });
 
   // ---------- Histórico ----------
@@ -177,10 +208,15 @@ export default function AdminPortalSayerlack() {
         .order('enviado_portal_em', { ascending: false, nullsFirst: false })
         .limit(500);
 
-      if (histStatus === 'todos') {
-        q = q.in('status_envio_portal', ['enviado_portal', 'falha_envio_portal']);
+      // Histórico = estados terminais (enviado_portal + sucesso_portal + falha_envio_portal + erro_nao_retentavel)
+      const HIST_SUCESSO = ['enviado_portal', 'sucesso_portal'];
+      const HIST_FALHA = ['falha_envio_portal', 'erro_nao_retentavel'];
+      if (histStatus === 'enviados') {
+        q = q.in('status_envio_portal', HIST_SUCESSO);
+      } else if (histStatus === 'falhas') {
+        q = q.in('status_envio_portal', HIST_FALHA);
       } else {
-        q = q.eq('status_envio_portal', histStatus);
+        q = q.in('status_envio_portal', [...HIST_SUCESSO, ...HIST_FALHA]);
       }
       const { data, error } = await q;
       if (error) throw error;
@@ -194,12 +230,14 @@ export default function AdminPortalSayerlack() {
     queryKey: ['portal-sayerlack-stats'],
     queryFn: async () => {
       const desde = new Date(Date.now() - 30 * 86400000).toISOString();
+      const SUCESSOS = new Set(['enviado_portal', 'sucesso_portal']);
+      const FALHAS = new Set(['falha_envio_portal', 'erro_nao_retentavel']);
       const { data: rows } = await supabase
         .from('pedido_compra_sugerido')
         .select('status_envio_portal, enviado_portal_em, aprovado_em, portal_erro, criado_em')
         .eq('empresa', SAYERLACK_FILTER.empresa)
         .ilike('fornecedor_nome', SAYERLACK_FILTER.fornecedorIlike)
-        .in('status_envio_portal', ['enviado_portal', 'falha_envio_portal'])
+        .in('status_envio_portal', [...SUCESSOS, ...FALHAS])
         .gte('criado_em', desde);
 
       // Por dia
@@ -209,18 +247,20 @@ export default function AdminPortalSayerlack() {
 
       for (const r of rows ?? []) {
         const refDate = r.enviado_portal_em ?? r.criado_em;
+        const ehSucesso = SUCESSOS.has(r.status_envio_portal as string);
+        const ehFalha = FALHAS.has(r.status_envio_portal as string);
         if (refDate) {
           const dia = new Date(refDate).toISOString().slice(0, 10);
           const cur = porDia.get(dia) ?? { dia, enviado: 0, falha: 0 };
-          if (r.status_envio_portal === 'enviado_portal') cur.enviado++;
-          else cur.falha++;
+          if (ehSucesso) cur.enviado++;
+          else if (ehFalha) cur.falha++;
           porDia.set(dia, cur);
         }
-        if (r.status_envio_portal === 'enviado_portal' && r.enviado_portal_em && r.aprovado_em) {
+        if (ehSucesso && r.enviado_portal_em && r.aprovado_em) {
           const min = (new Date(r.enviado_portal_em).getTime() - new Date(r.aprovado_em).getTime()) / 60000;
           if (min >= 0) tempos.push(min);
         }
-        if (r.status_envio_portal === 'falha_envio_portal' && r.portal_erro) {
+        if (ehFalha && r.portal_erro) {
           const key = r.portal_erro.slice(0, 100);
           const cur = erros.get(key) ?? { erro: key, count: 0, ultimo: r.criado_em };
           cur.count++;
@@ -268,6 +308,7 @@ export default function AdminPortalSayerlack() {
           if (payload?.new?.empresa === 'OBEN' && fn.includes('SAYERLACK')) {
             qc.invalidateQueries({ queryKey: ['portal-sayerlack-kpi'] });
             qc.invalidateQueries({ queryKey: ['portal-sayerlack-pendentes'] });
+            qc.invalidateQueries({ queryKey: ['portal-sayerlack-conciliacao'] });
             qc.invalidateQueries({ queryKey: ['portal-sayerlack-historico'] });
             qc.invalidateQueries({ queryKey: ['portal-sayerlack-stats'] });
           }
@@ -287,6 +328,7 @@ export default function AdminPortalSayerlack() {
   const refetchAll = () => {
     qc.invalidateQueries({ queryKey: ['portal-sayerlack-kpi'] });
     qc.invalidateQueries({ queryKey: ['portal-sayerlack-pendentes'] });
+    qc.invalidateQueries({ queryKey: ['portal-sayerlack-conciliacao'] });
     qc.invalidateQueries({ queryKey: ['portal-sayerlack-historico'] });
     qc.invalidateQueries({ queryKey: ['portal-sayerlack-stats'] });
   };
@@ -309,7 +351,7 @@ export default function AdminPortalSayerlack() {
       .select('id, data_ciclo, num_skus, valor_total, status_envio_portal, portal_protocolo, enviado_portal_em, portal_tentativas, portal_erro')
       .eq('empresa', SAYERLACK_FILTER.empresa)
       .ilike('fornecedor_nome', SAYERLACK_FILTER.fornecedorIlike)
-      .in('status_envio_portal', ['enviado_portal', 'falha_envio_portal'])
+      .in('status_envio_portal', ['enviado_portal', 'sucesso_portal', 'falha_envio_portal', 'erro_nao_retentavel'])
       .gte('criado_em', desde)
       .order('enviado_portal_em', { ascending: false });
 
@@ -344,6 +386,17 @@ export default function AdminPortalSayerlack() {
     return historico.filter((p) => String(p.id).includes(q) || (p.portal_protocolo ?? '').toLowerCase().includes(q));
   }, [historico, histBusca]);
 
+  const filteredConciliacao = useMemo(() => {
+    if (!conciliacao) return [];
+    const q = conciliacaoBusca.trim().toLowerCase();
+    if (!q) return conciliacao;
+    return conciliacao.filter((p) => String(p.id).includes(q));
+  }, [conciliacao, conciliacaoBusca]);
+
+  const concilCor = !kpis ? 'text-muted-foreground'
+    : kpis.conciliacao === 0 ? 'text-muted-foreground'
+    : 'text-amber-600';
+
   return (
     <div className="container mx-auto p-4 sm:p-6 space-y-6 max-w-7xl">
       <div className="flex flex-wrap items-start justify-between gap-3">
@@ -356,7 +409,7 @@ export default function AdminPortalSayerlack() {
         <DispararAgoraButton onSuccess={refetchAll} />
       </div>
 
-      <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
         <Card>
           <CardHeader className="pb-2"><CardTitle className="text-sm text-muted-foreground">Pendentes envio</CardTitle></CardHeader>
           <CardContent>
@@ -380,11 +433,26 @@ export default function AdminPortalSayerlack() {
             <div className="text-xs text-muted-foreground mt-1">enviados / (enviados+falhas)</div>
           </CardContent>
         </Card>
+        <Card>
+          <CardHeader className="pb-2"><CardTitle className="text-sm text-muted-foreground">Requer conciliação</CardTitle></CardHeader>
+          <CardContent>
+            <div className={`text-4xl font-bold ${concilCor}`}>{kpis?.conciliacao ?? '—'}</div>
+            <div className="text-xs text-muted-foreground mt-1">aceito sem protocolo / indeterminado</div>
+          </CardContent>
+        </Card>
       </div>
 
       <Tabs defaultValue="pendentes">
         <TabsList>
           <TabsTrigger value="pendentes">Pendentes</TabsTrigger>
+          <TabsTrigger value="conciliar">
+            Conciliar
+            {kpis?.conciliacao ? (
+              <span className="ml-1.5 inline-flex items-center justify-center rounded-full bg-amber-500/20 px-1.5 text-xs font-semibold text-amber-700">
+                {kpis.conciliacao}
+              </span>
+            ) : null}
+          </TabsTrigger>
           <TabsTrigger value="historico">Histórico</TabsTrigger>
           <TabsTrigger value="estatisticas">Estatísticas</TabsTrigger>
         </TabsList>
@@ -457,6 +525,74 @@ export default function AdminPortalSayerlack() {
           </Card>
         </TabsContent>
 
+        {/* ---------- CONCILIAR (PR1.5) ---------- */}
+        <TabsContent value="conciliar" className="space-y-3">
+          <div className="rounded-md border border-amber-200 bg-amber-50 p-3 text-sm text-amber-900">
+            <strong>Conciliação manual:</strong> pedidos abaixo podem ter sido recebidos pelo
+            portal Sayerlack mas o sistema não confirmou o protocolo. Abra o detalhe, verifique
+            no portal e informe o número do pedido para liberar o registro no Omie.
+          </div>
+          <div className="flex flex-wrap gap-2">
+            <Input
+              placeholder="Buscar por ID…"
+              value={conciliacaoBusca}
+              onChange={(e) => setConciliacaoBusca(e.target.value)}
+              className="max-w-xs"
+            />
+          </div>
+          <Card>
+            <CardContent className="p-0">
+              {loadingConciliacao ? (
+                <div className="p-4 space-y-2"><Skeleton className="h-8 w-full" /><Skeleton className="h-8 w-full" /></div>
+              ) : filteredConciliacao.length === 0 ? (
+                <div className="p-8 text-center text-muted-foreground">Nenhum pedido aguardando conciliação.</div>
+              ) : (
+                <Table>
+                  <TableHeader>
+                    <TableRow>
+                      <TableHead>Status</TableHead>
+                      <TableHead>ID</TableHead>
+                      <TableHead>Data ciclo</TableHead>
+                      <TableHead className="text-right">SKUs</TableHead>
+                      <TableHead className="text-right">Valor</TableHead>
+                      <TableHead>Aprovado</TableHead>
+                      <TableHead>Motivo</TableHead>
+                      <TableHead></TableHead>
+                    </TableRow>
+                  </TableHeader>
+                  <TableBody>
+                    {filteredConciliacao.map((p) => (
+                      <TableRow key={p.id}>
+                        <TableCell><PortalStatusBadge status={p.status_envio_portal} /></TableCell>
+                        <TableCell>
+                          <Link
+                            to={`/admin/reposicao/pedidos?pedido=${p.id}`}
+                            className="text-primary underline-offset-2 hover:underline"
+                          >
+                            #{p.id}
+                          </Link>
+                        </TableCell>
+                        <TableCell>{fmtDate(p.data_ciclo)}</TableCell>
+                        <TableCell className="text-right">{p.num_skus ?? '—'}</TableCell>
+                        <TableCell className="text-right">{fmtBRL(p.valor_total)}</TableCell>
+                        <TableCell title={fmtDateTime(p.aprovado_em)}>{relTime(p.aprovado_em)}</TableCell>
+                        <TableCell className="max-w-xs truncate text-xs text-muted-foreground" title={p.portal_erro ?? undefined}>
+                          {p.portal_erro ?? '—'}
+                        </TableCell>
+                        <TableCell>
+                          <Button size="sm" variant="default" onClick={() => openDrawer(p.id)}>
+                            Conciliar
+                          </Button>
+                        </TableCell>
+                      </TableRow>
+                    ))}
+                  </TableBody>
+                </Table>
+              )}
+            </CardContent>
+          </Card>
+        </TabsContent>
+
         {/* ---------- HISTÓRICO ---------- */}
         <TabsContent value="historico" className="space-y-3">
           <div className="flex flex-wrap gap-2">
@@ -464,8 +600,8 @@ export default function AdminPortalSayerlack() {
               <SelectTrigger className="w-44"><SelectValue /></SelectTrigger>
               <SelectContent>
                 <SelectItem value="todos">Todos</SelectItem>
-                <SelectItem value="enviado_portal">Enviados</SelectItem>
-                <SelectItem value="falha_envio_portal">Falhas</SelectItem>
+                <SelectItem value="enviados">Enviados</SelectItem>
+                <SelectItem value="falhas">Falhas</SelectItem>
               </SelectContent>
             </Select>
             <Select value={histRange} onValueChange={(v: any) => setHistRange(v)}>
