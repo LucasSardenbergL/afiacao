@@ -590,7 +590,11 @@ export default async ({ page, context }) => {
 
     for (let i = 0; i < items.length; i++) {
       const item = items[i];
-      trace.push({ step: 'item_' + i + '_start', sku: item.sku_portal, t: Date.now() - t0 });
+      // PR2: aborta cedo se não há janela para os itens restantes + submit.
+      // Evita o pior cenário (montar 80% do pedido, chegar no submit com
+      // budget zero e gerar indeterminado).
+      assertEnoughTimeForRemainingItems(i, items.length);
+      trace.push({ step: 'item_' + i + '_start', sku: item.sku_portal, t: Date.now() - t0, remaining: remainingMs() });
 
       // Aguardar fim da janela de validação assíncrona da data de entrega.
       // O portal Sayerlack substitui os botões "Incluir Item" por "Validando data de entrega"
@@ -606,7 +610,7 @@ export default async ({ page, context }) => {
           return (b.innerText || '').includes('Validando');
         });
         return temIncluirItem && !temValidando;
-      }, { timeout: 15000, polling: 250 });
+      }, { timeout: budgetFor('item-' + i + '-validacao-data', 15_000), polling: 250 });
       // Buffer mínimo pós-validação pra DOM estabilizar
       await sleep(300);
       trace.push({ step: 'validacao_data_entrega_ok_iter_' + i, t: Date.now() - t0 });
@@ -712,7 +716,7 @@ export default async ({ page, context }) => {
           trace.push({ step: 'select2_fallback_iter_' + i, sel: select2ContainerSel, t: Date.now() - t0 });
         }
       }
-      await page.waitForSelector(select2ContainerSel, { timeout: 12000 });
+      await page.waitForSelector(select2ContainerSel, { timeout: budgetFor('item-' + i + '-select2-container', 12_000) });
       const debugPosIncluir = await page.evaluate(() => {
         const allBtns = Array.from(document.querySelectorAll('#panel_novo_pedido button.btn-primary, #colSpanBtnIncluirItem button.btn-primary, tfoot button.btn-primary'));
         return {
@@ -725,7 +729,7 @@ export default async ({ page, context }) => {
       console.log('[DEBUG_POS_INCLUIR_ITEM]', JSON.stringify({ iteration: i, ...debugPosIncluir }));
       await page.click(select2ContainerSel);
       await sleep(300);
-      await page.waitForSelector('.select2-search__field', { timeout: 5000 });
+      await page.waitForSelector('.select2-search__field', { timeout: budgetFor('item-' + i + '-select2-search', 5_000) });
       await fillInput('.select2-search__field', item.sku_portal);
       await sleep(2000);
       const skuOption = await page.$('.select2-results__option:not(.select2-results__message)');
@@ -789,7 +793,7 @@ export default async ({ page, context }) => {
           const rows = document.querySelectorAll('#datatable_itens tbody tr');
           return rows.length === esperado;
         },
-        { timeout: 5000 },
+        { timeout: budgetFor('item-' + i + '-row-count', 5_000) },
         i + 1
       ).catch(() => null);
       await sleep(400); // buffer pos-render
