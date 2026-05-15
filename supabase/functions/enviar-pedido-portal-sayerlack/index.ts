@@ -42,6 +42,60 @@ export default async ({ page, context }) => {
   // nunca lançar ReferenceError (que mascararia o envelope estruturado).
   let preLoginScreenshot = null;
 
+  // === PR2: Budget management (deadline global) ===
+  // O Browserless mata a função em ~60s. Em vez de esperar isso acontecer com
+  // um waitFor pendurado (cenário do bug original — "Waiting failed: 7000ms"
+  // mascarando o teto externo), morremos controlado dentro de 58s e devolvemos
+  // envelope estruturado. Todos os timeouts do script passam por budgetFor.
+  const HARD_CEILING_MS = 58_000;   // 2s margem abaixo dos 60s do Browserless
+  const RETURN_GUARD_MS = 2_000;    // tempo para Browserless serializar o JSON
+  const SUBMIT_RESERVED_MS = 8_000; // reservado para o click + sinal pós-submit
+  const ITEM_MIN_BUDGET_MS = 3_000; // tempo mínimo viável por item do loop
+  const deadline = t0 + HARD_CEILING_MS;
+
+  const remainingMs = () => Math.max(0, deadline - Date.now());
+
+  // budgetFor: calcula min(idealMs, restante - reserva); lança BUDGET_EXHAUSTED
+  // se o resultado for menor que minMs. NUNCA retorna fallback silencioso —
+  // preferimos abortar limpo a deixar um waitFor pendurado quando o teto chega.
+  const budgetFor = (label, idealMs, opts) => {
+    const reserveSubmit = !(opts && opts.reserveSubmit === false);
+    const minMs = (opts && typeof opts.minMs === 'number') ? opts.minMs : 500;
+    const reserved = (reserveSubmit ? SUBMIT_RESERVED_MS : 0) + RETURN_GUARD_MS;
+    const budget = Math.max(0, remainingMs() - reserved);
+    const allowed = Math.min(idealMs, budget);
+    if (allowed < minMs) {
+      const err = new Error(
+        'BUDGET_EXHAUSTED em "' + label + '": precisava de >=' + minMs +
+        'ms mas só restam ' + allowed + 'ms (deadline em ' + remainingMs() + 'ms)'
+      );
+      err.code = 'BUDGET_EXHAUSTED';
+      err.label = label;
+      throw err;
+    }
+    return allowed;
+  };
+
+  // Verificação antes de cada item: se o restante não comporta os itens que
+  // faltam + reserva de submit + return guard, aborta agora. Evita o pior
+  // cenário (montar 80% do pedido, chegar no submit com budget zero e gerar
+  // indeterminado por timeout do banner).
+  const assertEnoughTimeForRemainingItems = (currentIndex, totalItems) => {
+    const remainingItems = Math.max(0, totalItems - currentIndex);
+    const need = remainingItems * ITEM_MIN_BUDGET_MS + SUBMIT_RESERVED_MS + RETURN_GUARD_MS;
+    const rem = remainingMs();
+    if (rem < need) {
+      const err = new Error(
+        'BUDGET_EXHAUSTED: faltam ' + need + 'ms para completar ' + remainingItems +
+        ' itens + submit, mas só restam ' + rem + 'ms (item ' + currentIndex +
+        ' de ' + totalItems + ')'
+      );
+      err.code = 'BUDGET_EXHAUSTED';
+      err.label = 'remaining-items-' + currentIndex + '-of-' + totalItems;
+      throw err;
+    }
+  };
+
   // === PR1: Network Recorder ===
   // Listener global armado ANTES de qualquer navegação. Captura todo POST que
   // bate em endpoints suspeitos de efetivação. É a fonte primária de evidência
@@ -935,11 +989,15 @@ export default async ({ page, context }) => {
     };
   } catch (err) {
     const errorScreenshot = await page.screenshot({ type: 'png', encoding: 'base64' }).catch(() => null);
+    const erroTipo = (err && err.code === 'BUDGET_EXHAUSTED') ? 'BUDGET_EXHAUSTED' : 'EXCEPTION';
     return {
       data: {
         success: false,
         erro: (err && err.message) ? err.message : String(err),
-        erroTipo: 'EXCEPTION',
+        erroTipo,
+        budgetLabel: (err && err.label) || null,
+        elapsedMs: Date.now() - t0,
+        remainingMs: remainingMs(),
         trace,
       },
       type: 'application/json',
@@ -956,11 +1014,15 @@ export default async ({ page, context }) => {
   } catch (err) {
     // Rede de segurança: runFlow tem try/catch interno, mas qualquer escape
     // ainda devolve envelope estruturado (nunca um throw nu para o Browserless).
+    const erroTipo = (err && err.code === 'BUDGET_EXHAUSTED') ? 'BUDGET_EXHAUSTED' : 'EXCEPTION';
     raw = {
       data: {
         success: false,
         erro: (err && err.message) ? err.message : String(err),
-        erroTipo: 'EXCEPTION',
+        erroTipo,
+        budgetLabel: (err && err.label) || null,
+        elapsedMs: Date.now() - t0,
+        remainingMs: remainingMs(),
         trace,
       },
       type: 'application/json',
