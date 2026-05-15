@@ -589,6 +589,7 @@ export default function AdminReposicaoRevisao() {
                 )}
               </TableBody>
             </Table>
+            </div>
           )}
 
           <div className="flex items-center justify-end gap-2 pt-4">
