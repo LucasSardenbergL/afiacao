@@ -1001,6 +1001,10 @@ export default async ({ page, context }) => {
     let protocoloSource = null;
     let responseInfo = null;
     let bodySuccessFalse = false;  // portal devolveu success:false explícito
+    // PR4: data_entrega devolvida pelo portal (campo top-level "data_entrega"
+    // do JSON em formato ISO YYYY-MM-DD; ex.: "2026-05-22"). Usada pelo
+    // disparar-pedidos-aprovados como base do dDtPrevisao do Omie (+ 2 dias).
+    let portalDataEntrega = null;
 
     if (firstSignal.kind === 'network' && firstSignal.response) {
       const r = await readResponseBodySafe(firstSignal.response);
@@ -1014,6 +1018,11 @@ export default async ({ page, context }) => {
       if (r.parsed && !bodySuccessFalse) {
         protocolo = tryExtractProtocoloFromObject(r.parsed);
         if (protocolo) protocoloSource = 'network_json';
+        // PR4: data_entrega top-level (ISO YYYY-MM-DD). Validação estrita
+        // para não persistir lixo no banco.
+        if (typeof r.parsed.data_entrega === 'string' && /^\\d{4}-\\d{2}-\\d{2}$/.test(r.parsed.data_entrega)) {
+          portalDataEntrega = r.parsed.data_entrega;
+        }
       }
       if (!protocolo && r.body && !bodySuccessFalse) {
         protocolo = tryExtractProtocolo(r.body);
@@ -1046,12 +1055,13 @@ export default async ({ page, context }) => {
       firstSignalKind: firstSignal.kind,
       protocolo,
       protocoloSource,
+      portalDataEntrega,
       responseInfo,
       bodySuccessFalse,
       t: Date.now() - t0
     });
     console.log('[DEBUG_SUBMIT_CLASSIFIED]', JSON.stringify({
-      firstSignalKind: firstSignal.kind, protocolo, protocoloSource, responseInfo, bodySuccessFalse
+      firstSignalKind: firstSignal.kind, protocolo, protocoloSource, portalDataEntrega, responseInfo, bodySuccessFalse
     }));
 
     const screenshot = await page.screenshot({ type: 'jpeg', quality: 70, fullPage: false, encoding: 'base64' }).catch(() => null);
@@ -1085,12 +1095,13 @@ export default async ({ page, context }) => {
 
     const positiveKinds = ['network', 'banner', 'modal'];
     if (positiveKinds.indexOf(firstSignal.kind) !== -1 || protocolo) {
-      trace.push({ step: 'success_detected', protocolo, source: protocoloSource, t: Date.now() - t0 });
+      trace.push({ step: 'success_detected', protocolo, source: protocoloSource, portalDataEntrega, t: Date.now() - t0 });
       return {
         data: {
           success: true,
           protocolo,
           protocoloSource,
+          portal_data_entrega: portalDataEntrega,
           firstSignal: { kind: firstSignal.kind },
           responseInfo,
           successText: protocolo ? ('Pedido ' + protocolo + ' criado com sucesso') : null,
