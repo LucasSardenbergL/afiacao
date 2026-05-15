@@ -221,6 +221,23 @@ As 5 personas operacionais não viram roles novos no banco — elas são **recor
 - Único scanner é OCR Tesseract para lote/validade no recebimento (`LoteScannerOCR`)
 - Briefing afirma "BarcodeDetector API" como integração — **aspiracional, não implementado**
 
+### Telefonia (WebRTC vs Nvoip click-to-call)
+
+Dois backends coexistem; o usuário escolhe via toggle em `/settings`:
+
+- **Default (`useFeatureFlag('useWebRTCCall', false)` → false)**: `useNvoipCall` (Edge Function `nvoip-calls` + polling de status). Click-to-call: a Nvoip liga primeiro pro ramal Nvoip do vendedor (que atende no painel web), depois conecta com o cliente.
+- **WebRTC opt-in (flag → true)**: `useWebRTCCall` (JsSIP + SIP over WebSocket). Vendedor liga **direto pelo navegador**, áudio bidirecional capturado como `localStream`/`remoteStream` (preparação pra transcrição ao vivo em PR2).
+
+**Dispatcher**: `<Dialer />` em `src/components/call/Dialer.tsx` escolhe baseado em `useFeatureFlag('useWebRTCCall', false)`. WebRTCDialer é lazy-loaded — JsSIP só entra no bundle quando a flag liga.
+
+**UI compartilhada**: ambos consomem `CallDialerView` em `src/components/call/CallDialerView.tsx`. Backend é identificado por badge "NVOIP" / "WEBRTC" no painel ativo.
+
+**Credenciais SIP**: nunca em `VITE_*` (vazaria no bundle público). Servidas pela Edge Function `nvoip-sip-creds` (auth + role employee/master via `authorizeCronOrStaff` shared helper). Env vars do server: `NVOIP_SIP_WSS`, `NVOIP_SIP_DOMAIN`, `NVOIP_SIP_USER`, `NVOIP_SIP_PASS`.
+
+**LGPD**: MP3 de aviso em `public/preroll/aviso-gravacao-lgpd.mp3` é mixado no `localStream` via `mixPrerollWithMic` (Web Audio API). URL configurada por `VITE_NVOIP_SIP_PREROLL_URL`. Caller é dono do AudioContext cleanup (`useWebRTCCall.endCall` libera).
+
+**Cleanup crítico**: `useWebRTCCall` guarda `rawMicRef` (da `getUserMedia`) e `prerollCloseRef` separadamente do `localStream` mixado. Em `endCall`/unmount, ambos são fechados antes de SipClient.hangUp para liberar o microfone físico (red dot apaga imediatamente).
+
 ### Touch targets
 
 - `index.css:228-230`: `button, a, [role="button"] { min-height: 32px; }` aplicado globalmente
