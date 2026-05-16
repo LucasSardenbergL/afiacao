@@ -1,7 +1,5 @@
 import { useState, useEffect, useRef, useMemo, useCallback } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Header } from '@/components/Header';
-import { BottomNav } from '@/components/BottomNav';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
@@ -1107,11 +1105,9 @@ const AdminRoutePlanner = () => {
   if (isLoading) {
     return (
       <div className="min-h-screen bg-background pb-24">
-        <Header title="Roteirizador" showBack />
         <div className="flex items-center justify-center pt-32">
           <Loader2 className="w-8 h-8 animate-spin text-primary" />
         </div>
-        <BottomNav />
       </div>
     );
   }
@@ -1120,7 +1116,6 @@ const AdminRoutePlanner = () => {
 
   return (
     <div className="min-h-screen bg-background pb-24">
-      <Header title="Roteirizador" showBack />
 
       <main className="pt-16 px-4 max-w-4xl mx-auto space-y-4">
         {/* Planning mode selector */}
@@ -1653,7 +1648,6 @@ const AdminRoutePlanner = () => {
         </DialogContent>
       </Dialog>
 
-      <BottomNav />
     </div>
   );
 };

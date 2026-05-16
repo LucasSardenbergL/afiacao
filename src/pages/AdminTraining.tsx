@@ -1,7 +1,5 @@
 import { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Header } from '@/components/Header';
-import { BottomNav } from '@/components/BottomNav';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -159,18 +157,15 @@ const AdminTraining = () => {
   if (authLoading || loading) {
     return (
       <div className="min-h-screen bg-background pb-24">
-        <Header title="Treinamentos" showBack />
         <div className="flex items-center justify-center pt-32">
           <Loader2 className="w-8 h-8 animate-spin text-primary" />
         </div>
-        <BottomNav />
       </div>
     );
   }
 
   return (
     <div className="min-h-screen bg-background pb-24">
-      <Header title="Gerenciar Treinamentos" showBack />
 
       <main className="pt-16 px-4 max-w-4xl mx-auto space-y-4">
         <div className="flex justify-between items-center">
@@ -303,7 +298,6 @@ const AdminTraining = () => {
         )}
       </main>
 
-      <BottomNav />
     </div>
   );
 };

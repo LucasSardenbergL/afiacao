@@ -1,7 +1,5 @@
 import { useState, useMemo } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Header } from '@/components/Header';
-import { BottomNav } from '@/components/BottomNav';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
@@ -114,11 +112,9 @@ const Tools = () => {
   if (loading) {
     return (
       <div className="min-h-screen bg-background pb-24">
-        <Header title="Minhas Ferramentas" showBack />
         <div className="flex items-center justify-center pt-32">
           <Loader2 className="w-8 h-8 animate-spin text-primary" />
         </div>
-        <BottomNav />
       </div>
     );
   }
@@ -126,7 +122,6 @@ const Tools = () => {
   if (isStaff) {
     return (
       <div className="min-h-screen bg-background pb-24">
-        <Header title="Ferramentas" showBack />
         <main className="pt-16 px-4 max-w-lg mx-auto">
           <div className="text-center py-12">
             <div className="w-20 h-20 bg-muted rounded-full flex items-center justify-center mx-auto mb-4">
@@ -148,7 +143,6 @@ const Tools = () => {
             </div>
           </div>
         </main>
-        <BottomNav />
       </div>
     );
   }
@@ -313,7 +307,6 @@ const Tools = () => {
         )}
       </main>
 
-      <BottomNav />
     </div>
   );
 };

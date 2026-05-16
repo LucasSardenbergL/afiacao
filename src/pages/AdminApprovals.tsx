@@ -1,7 +1,5 @@
 import { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Header } from '@/components/Header';
-import { BottomNav } from '@/components/BottomNav';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
@@ -239,7 +237,6 @@ const AdminApprovals = () => {
 
   return (
     <div className="min-h-screen bg-background pb-24">
-      <Header title="Aprovação de Cadastros" showBack />
 
       <main className="pt-16 px-4 max-w-4xl mx-auto">
         {pendingUsers.length === 0 ? (
@@ -327,7 +324,6 @@ const AdminApprovals = () => {
         )}
       </main>
 
-      <BottomNav />
     </div>
   );
 };

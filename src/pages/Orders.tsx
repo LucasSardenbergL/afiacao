@@ -1,7 +1,5 @@
 import { useState, useEffect, useCallback, useMemo } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Header } from '@/components/Header';
-import { BottomNav } from '@/components/BottomNav';
 import { OrderCard } from '@/components/OrderCard';
 import { cn } from '@/lib/utils';
 import { useAuth } from '@/contexts/AuthContext';
@@ -156,7 +154,6 @@ const Orders = () => {
 
   return (
     <div className="min-h-screen bg-background pb-24">
-      <Header title="Meus Pedidos" showBack showNotifications />
 
       <main className="pt-16 px-4 max-w-lg mx-auto">
         {/* New Order */}
@@ -252,7 +249,6 @@ const Orders = () => {
         </div>
       </main>
 
-      <BottomNav />
     </div>
   );
 };

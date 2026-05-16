@@ -1,6 +1,4 @@
 import { MessageCircle, Phone, Mail, HelpCircle, ChevronRight, ExternalLink, Package, ArrowRight } from 'lucide-react';
-import { Header } from '@/components/Header';
-import { BottomNav } from '@/components/BottomNav';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
@@ -86,7 +84,6 @@ const Support = () => {
 
   return (
     <div className="min-h-screen bg-background pb-24">
-      <Header title="Suporte" showBack />
 
       <main className="pt-16 px-4 max-w-lg mx-auto">
 
@@ -209,7 +206,6 @@ const Support = () => {
         </section>
       </main>
 
-      <BottomNav />
     </div>
   );
 };
