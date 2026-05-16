@@ -240,12 +240,15 @@ function MapeamentoStatusCell({
   item: ItemRow;
   onUpdate: (changes: Partial<ItemRow>) => void;
 }) {
+  const qc = useQueryClient();
   const [searchOpen, setSearchOpen] = useState(false);
   const [searchQuery, setSearchQuery] = useState("");
   const [searchResults, setSearchResults] = useState<
     Array<{ omie_codigo_produto: number; descricao: string; codigo: string }>
   >([]);
   const [searching, setSearching] = useState(false);
+  const [selectedSkus, setSelectedSkus] = useState<Record<number, { descricao: string; codigo: string }>>({});
+  const [salvando, setSalvando] = useState(false);
 
   // Busca debounced
   useEffect(() => {
