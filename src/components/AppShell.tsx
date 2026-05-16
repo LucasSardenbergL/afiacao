@@ -37,6 +37,7 @@ import { AnalyticsIdentify } from '@/components/shell/AnalyticsIdentify';
 import { useFeatureFlagBodyClass } from '@/hooks/useFeatureFlag';
 import { useSidebarFavorites } from '@/hooks/useSidebarFavorites';
 import { useSalesOnlyRestriction } from '@/hooks/useSalesOnlyRestriction';
+import { useRouteTracker } from '@/lib/dashboard/route-tracker';
 import { Star } from 'lucide-react';
 
 /* ─── Navigation config ─── */
@@ -694,6 +695,7 @@ function MobileNav({ open, onClose }: { open: boolean; onClose: () => void }) {
 
 /* ─── Main Shell ─── */
 export function AppShell({ children }: { children: React.ReactNode }) {
+  useRouteTracker();
   const [collapsed, setCollapsed] = useState(false);
   const [mobileOpen, setMobileOpen] = useState(false);
 
