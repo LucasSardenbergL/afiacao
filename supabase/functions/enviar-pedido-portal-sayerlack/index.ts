@@ -866,8 +866,54 @@ export default async ({ page, context }) => {
       trace.push({ step: 'debug_btn_gravar_iter_' + i, t: Date.now() - t0, debugGravarItem: debugGravarItem });
       console.log('[DEBUG_BTN_GRAVAR]', JSON.stringify({ iteration: i, ...debugGravarItem }));
 
+      // PR12: o portal Sayerlack às vezes ignora o click do #btnGravarItem
+      // silenciosamente — o POST /save-tab-preco-session não dispara e a row
+      // fica em modo edit no DOM. O script anterior achava que salvou
+      // (waitForFunction de row count passava porque a row já existe na UI),
+      // continuava pro próximo item, e a próxima iteração travava na validação
+      // (15s timeout em validacao_data_entrega) porque o portal estava em
+      // estado inconsistente.
+      //
+      // Correção: armar waitForResponse('save-tab-preco-session') ANTES do
+      // click. Se o POST não vier em 7s, retentamos o click uma vez.
+      const SAVE_TAB_RE = /save-tab-preco-session/i;
+      const armarSaveWait = (label) => page.waitForResponse(
+        (resp) => {
+          try {
+            return resp.request().method() === 'POST' && SAVE_TAB_RE.test(resp.url());
+          } catch (e) { return false; }
+        },
+        { timeout: budgetFor(label, 7_000, { minMs: 1_000 }) }
+      ).then((r) => ({ ok: true, status: r.status() })).catch(() => ({ ok: false }));
+
+      let saveConfirm = armarSaveWait('item-' + i + '-save-confirm');
       await page.click('#btnGravarItem');
-      // Aguarda a linha aparecer/atualizar no datatable
+      let saveResult = await saveConfirm;
+
+      if (!saveResult.ok) {
+        // Retry: portal ignorou o click. Tenta de novo.
+        console.warn('[DEBUG_ITEM_SAVE_RETRY]', JSON.stringify({ iteration: i, sku: item.sku_portal }));
+        trace.push({ step: 'item_' + i + '_save_retry', t: Date.now() - t0 });
+        saveConfirm = armarSaveWait('item-' + i + '-save-retry');
+        await page.click('#btnGravarItem');
+        saveResult = await saveConfirm;
+
+        if (!saveResult.ok) {
+          // Falhou 2x — POST do save nunca saiu. Aborta o pedido com erro
+          // específico pra ficar claro na auditoria que foi o save do item
+          // que travou (não outra coisa). Sem POST de submit ainda → vira
+          // erro_retentavel via buildEnvelope.
+          const errSave = new Error(
+            'Portal Sayerlack ignorou o click do Gravar Item duas vezes para o item ' +
+            i + ' (SKU ' + item.sku_portal + '). Save POST nunca disparou.'
+          );
+          errSave.code = 'ITEM_SAVE_NAO_CONFIRMADO';
+          throw errSave;
+        }
+      }
+      trace.push({ step: 'item_' + i + '_save_confirmed', t: Date.now() - t0, httpStatus: saveResult.status });
+
+      // Mantém o waitForFunction da row count como segunda checagem (defensivo).
       await page.waitForFunction(
         (esperado) => {
           const rows = document.querySelectorAll('#datatable_itens tbody tr');
@@ -1144,7 +1190,9 @@ export default async ({ page, context }) => {
     };
   } catch (err) {
     const errorScreenshot = await page.screenshot({ type: 'png', encoding: 'base64' }).catch(() => null);
-    const erroTipo = (err && err.code === 'BUDGET_EXHAUSTED') ? 'BUDGET_EXHAUSTED' : 'EXCEPTION';
+    // PR12: propaga qualquer err.code conhecido (BUDGET_EXHAUSTED, ITEM_SAVE_NAO_CONFIRMADO, ...)
+    // pra auditoria. Sem code → EXCEPTION genérico.
+    const erroTipo = (err && err.code) ? err.code : 'EXCEPTION';
     return {
       data: {
         success: false,
@@ -1169,7 +1217,9 @@ export default async ({ page, context }) => {
   } catch (err) {
     // Rede de segurança: runFlow tem try/catch interno, mas qualquer escape
     // ainda devolve envelope estruturado (nunca um throw nu para o Browserless).
-    const erroTipo = (err && err.code === 'BUDGET_EXHAUSTED') ? 'BUDGET_EXHAUSTED' : 'EXCEPTION';
+    // PR12: propaga qualquer err.code conhecido (BUDGET_EXHAUSTED, ITEM_SAVE_NAO_CONFIRMADO, ...)
+    // pra auditoria. Sem code → EXCEPTION genérico.
+    const erroTipo = (err && err.code) ? err.code : 'EXCEPTION';
     raw = {
       data: {
         success: false,
