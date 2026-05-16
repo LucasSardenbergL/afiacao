@@ -54,14 +54,21 @@ describe('WebRTCCallProvider', () => {
     expect(invokeMock).toHaveBeenCalledWith('nvoip-sip-creds', expect.anything());
   });
 
-  it('múltiplos consumers compartilham o MESMO SipClient', async () => {
-    const { result: hook1 } = renderHook(() => useWebRTCCallContext(), { wrapper });
+  it('múltiplos consumers sob o MESMO Provider compartilham SipClient e state', async () => {
+    const { result } = renderHook(
+      () => ({
+        a: useWebRTCCallContext(),
+        b: useWebRTCCallContext(),
+      }),
+      { wrapper }
+    );
+
     await waitFor(() => expect(SipClient).toHaveBeenCalledTimes(1));
 
-    const { result: hook2 } = renderHook(() => useWebRTCCallContext(), { wrapper });
-
-    expect(hook1.current).toBeDefined();
-    expect(hook2.current).toBeDefined();
+    // Same Provider value → same function references → same SipClient instance
+    expect(result.current.a.makeCall).toBe(result.current.b.makeCall);
+    expect(result.current.a.endCall).toBe(result.current.b.endCall);
+    expect(result.current.a.callState).toBe(result.current.b.callState);
   });
 
   it('useWebRTCCallContext lança erro quando usado fora do Provider', () => {
