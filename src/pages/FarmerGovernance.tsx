@@ -1,7 +1,5 @@
 import { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Header } from '@/components/Header';
-import { BottomNav } from '@/components/BottomNav';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
@@ -118,7 +116,6 @@ const FarmerGovernance = () => {
 
   return (
     <div className="min-h-screen bg-background pb-24">
-      <Header title="Governança" showBack />
 
       <main className="px-4 py-4 space-y-4 max-w-lg mx-auto">
         {isGovernor && (
@@ -263,7 +260,6 @@ const FarmerGovernance = () => {
         </DialogContent>
       </Dialog>
 
-      <BottomNav />
     </div>
   );
 };

@@ -1,6 +1,4 @@
 import { useState, useEffect } from 'react';
-import { Header } from '@/components/Header';
-import { BottomNav } from '@/components/BottomNav';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { supabase } from '@/integrations/supabase/client';
@@ -126,18 +124,15 @@ const AdminProductivity = () => {
   if (loading) {
     return (
       <div className="min-h-screen bg-background pb-24">
-        <Header title="Produtividade" showBack />
         <div className="flex items-center justify-center pt-32">
           <Loader2 className="w-8 h-8 animate-spin text-primary" />
         </div>
-        <BottomNav />
       </div>
     );
   }
 
   return (
     <div className="min-h-screen bg-background pb-24">
-      <Header title="Produtividade" showBack />
 
       <main className="pt-16 px-4 max-w-lg mx-auto">
         {/* Period selector */}
@@ -264,7 +259,6 @@ const AdminProductivity = () => {
         </Card>
       </main>
 
-      <BottomNav />
     </div>
   );
 };

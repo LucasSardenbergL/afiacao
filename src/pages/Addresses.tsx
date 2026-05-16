@@ -1,6 +1,4 @@
 import { useState, useEffect } from 'react';
-import { Header } from '@/components/Header';
-import { BottomNav } from '@/components/BottomNav';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
@@ -238,7 +236,6 @@ const Addresses = () => {
   return (
     <TooltipProvider>
     <div className="min-h-screen bg-background pb-24">
-      <Header title="Meus Endereços" showBack />
 
       <main className="pt-16 px-4 max-w-lg mx-auto">
         {addresses.length > 0 ? (
@@ -478,7 +475,6 @@ const Addresses = () => {
         </DialogContent>
       </Dialog>
 
-      <BottomNav />
     </div>
     </TooltipProvider>
   );
