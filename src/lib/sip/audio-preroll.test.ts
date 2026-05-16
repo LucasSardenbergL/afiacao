@@ -22,10 +22,8 @@ describe('mixPrerollWithMic', () => {
       destination: {},
       close: vi.fn().mockResolvedValue(undefined),
     };
-    // @ts-expect-error stub global
-    globalThis.AudioContext = vi.fn(() => audioContextMock);
-    // @ts-expect-error stub fetch
-    globalThis.fetch = vi.fn().mockResolvedValue({ arrayBuffer: () => Promise.resolve(new ArrayBuffer(8)) });
+    (globalThis as any).AudioContext = vi.fn(() => audioContextMock);
+    (globalThis as any).fetch = vi.fn().mockResolvedValue({ arrayBuffer: () => Promise.resolve(new ArrayBuffer(8)) });
   });
 
   it('retorna MediaStream mixado e baixa o MP3 fornecido', async () => {
