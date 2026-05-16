@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { Card, CardContent } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
@@ -30,6 +30,9 @@ export interface CallDialerViewProps {
   floating?: boolean;
   /** ID para identificar visualmente backend (ex.: badge "WebRTC" vs "Nvoip") */
   backendLabel?: 'Nvoip' | 'WebRTC';
+  /** Stream remoto do peer (cliente) — usado pra tocar áudio na chamada WebRTC.
+   *  Nvoip click-to-call passa null/undefined aqui (não tem stream local). */
+  remoteStream?: MediaStream | null;
 }
 
 const STATE_LABELS: Record<CallDialerCallState, string> = {
@@ -72,6 +75,16 @@ export function CallDialerView(props: CallDialerViewProps) {
   } = props;
 
   const [dismissed, setDismissed] = useState(false);
+  const remoteAudioRef = useRef<HTMLAudioElement>(null);
+
+  useEffect(() => {
+    if (remoteAudioRef.current && props.remoteStream) {
+      remoteAudioRef.current.srcObject = props.remoteStream;
+    } else if (remoteAudioRef.current && !props.remoteStream) {
+      remoteAudioRef.current.srcObject = null;
+    }
+  }, [props.remoteStream]);
+
   const displayPhone = formatBrPhone(phoneNumber);
   const hasValidPhone = normalizeBrPhone(phoneNumber).length >= 10;
 
@@ -185,29 +198,35 @@ export function CallDialerView(props: CallDialerViewProps) {
 
   if (floating) {
     return (
-      <div className="fixed bottom-20 left-4 right-4 z-50 md:left-auto md:right-6 md:max-w-sm">
-        <AnimatePresence>
-          <motion.div
-            initial={{ opacity: 0, y: 40, scale: 0.95 }}
-            animate={{ opacity: 1, y: 0, scale: 1 }}
-            exit={{ opacity: 0, y: 40, scale: 0.95 }}
-          >
-            {card}
-          </motion.div>
-        </AnimatePresence>
-      </div>
+      <>
+        <audio ref={remoteAudioRef} autoPlay playsInline style={{ display: 'none' }} />
+        <div className="fixed bottom-20 left-4 right-4 z-50 md:left-auto md:right-6 md:max-w-sm">
+          <AnimatePresence>
+            <motion.div
+              initial={{ opacity: 0, y: 40, scale: 0.95 }}
+              animate={{ opacity: 1, y: 0, scale: 1 }}
+              exit={{ opacity: 0, y: 40, scale: 0.95 }}
+            >
+              {card}
+            </motion.div>
+          </AnimatePresence>
+        </div>
+      </>
     );
   }
 
   return (
-    <AnimatePresence>
-      <motion.div
-        initial={{ opacity: 0, y: 20 }}
-        animate={{ opacity: 1, y: 0 }}
-        exit={{ opacity: 0, y: 20 }}
-      >
-        {card}
-      </motion.div>
-    </AnimatePresence>
+    <>
+      <audio ref={remoteAudioRef} autoPlay playsInline style={{ display: 'none' }} />
+      <AnimatePresence>
+        <motion.div
+          initial={{ opacity: 0, y: 20 }}
+          animate={{ opacity: 1, y: 0 }}
+          exit={{ opacity: 0, y: 20 }}
+        >
+          {card}
+        </motion.div>
+      </AnimatePresence>
+    </>
   );
 }

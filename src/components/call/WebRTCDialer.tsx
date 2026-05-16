@@ -20,6 +20,7 @@ export function WebRTCDialer(props: Props) {
       isFinished={call.isFinished}
       onMakeCall={call.makeCall}
       onEndCall={call.endCall}
+      remoteStream={call.remoteStream}
       backendLabel="WebRTC"
     />
   );
