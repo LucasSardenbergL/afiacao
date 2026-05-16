@@ -960,12 +960,15 @@ export default async ({ page, context }) => {
     // Arma os 4 sinais ANTES do click — qualquer um que cumpra ganha. Ignora
     // rejeições individuais via Promise.any. Substitui o waitForFunction de
     // banner único do PR1/PR2 (sinal frágil que perdia respostas atrasadas).
-    // PR6: 14s em vez de 10s. Calibrado pelo trace real (15/05/2026 trace
-    // do pedido #179): POST /order-creation/form/add às vezes leva >10s
-    // mesmo retornando OK. Com remaining médio de ~15s no click e
-    // RETURN_GUARD=2s, dá até 13s — usar 14s deixa a função reduzir pelo
-    // remaining real se necessário (min(idealMs, restante - reserva)).
-    const postSubmitBudget = budgetFor('submit-pedido', 14_000, { reserveSubmit: false, minMs: 2_000 });
+    // PR11: 60s em vez de 14s. Descoberta no trace do pedido #230 (20 SKUs):
+    // a resposta do POST /order-creation/form/add ESCALA COM O TAMANHO DO
+    // PEDIDO no Sayerlack:
+    //   4 SKUs  → ~9s   (era o que o PR6 calibrou)
+    //   20 SKUs → ~20s  (estoura os 14s do PR6 facilmente)
+    // Com HARD_CEILING_MS=280s do PR9 e ~118s sobrando no click típico,
+    // usar 60s aqui é confortável. budgetFor cai pra (restante - 2s) se
+    // o pedido for mais lento e chegar com menos folga.
+    const postSubmitBudget = budgetFor('submit-pedido', 60_000, { reserveSubmit: false, minMs: 2_000 });
     const signalPromise = waitForPositiveSubmitSignal(page, postSubmitBudget);
 
     await page.click('#btnSalvarNovoPedido');
