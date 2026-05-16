@@ -6,7 +6,6 @@ import { Badge } from '@/components/ui/badge';
 import { AddToolDialog } from '@/components/AddToolDialog';
 import { supabase } from '@/integrations/supabase/client';
 import { useAuth } from '@/contexts/AuthContext';
-import { useUserRole } from '@/hooks/useUserRole';
 import { useToast } from '@/hooks/use-toast';
 import { Loader2, Plus, Wrench, Calendar, Trash2, Hash, Users, AlertTriangle, ShieldCheck, Clock, HelpCircle } from 'lucide-react';
 import { differenceInDays, format } from 'date-fns';
@@ -69,8 +68,7 @@ function getCriticality(nextDue: string | null): Criticality {
 
 const Tools = () => {
   const navigate = useNavigate();
-  const { user } = useAuth();
-  const { isStaff } = useUserRole();
+  const { user, isStaff } = useAuth();
   const { toast } = useToast();
   const queryClient = useQueryClient();
 

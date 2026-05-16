@@ -3,7 +3,6 @@ import { useLocation, useNavigate } from 'react-router-dom';
 import { BookOpen, Lock, Calculator, FileText, Palette, Beaker, FileUp, Droplets, LayoutDashboard, Users, ShoppingCart, ShoppingBag, Phone, GraduationCap, BarChart3, Settings, ChevronLeft, ChevronRight, Search, Bell, User, LogOut, Package, TrendingUp, Headphones, Target, Menu, X, ClipboardList, PlusCircle, Shield, Wrench, Award, Scissors, DollarSign, Layers, Printer, UserCheck, FileCheck, Boxes, AlertTriangle, PlayCircle, Factory, Truck, Percent, Sparkles, Handshake, Link2, Globe2, Database } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { useAuth } from '@/contexts/AuthContext';
-import { useUserRole } from '@/hooks/useUserRole';
 import { AppShellProvider } from '@/contexts/AppShellContext';
 import { useQuery } from '@tanstack/react-query';
 import { supabase } from '@/integrations/supabase/client';
@@ -354,7 +353,7 @@ function SidebarItem({
 function AppSidebar({ collapsed, onToggle }: { collapsed: boolean; onToggle: () => void }) {
   const location = useLocation();
   const navigate = useNavigate();
-  const { isStaff } = useUserRole();
+  const { isStaff } = useAuth();
   const isSalesOnly = useSalesOnlyRestriction();
   const { favorites, isFavorite, toggle: toggleFavorite } = useSidebarFavorites();
 
@@ -659,7 +658,7 @@ function AppTopbar({ sidebarCollapsed, onMobileMenuToggle }: { sidebarCollapsed:
 function MobileNav({ open, onClose }: { open: boolean; onClose: () => void }) {
   const location = useLocation();
   const navigate = useNavigate();
-  const { isStaff } = useUserRole();
+  const { isStaff } = useAuth();
   const isSalesOnly = useSalesOnlyRestriction();
 
   if (!open) return null;

@@ -1,6 +1,5 @@
 import React, { useState } from 'react';
 import { useAuth } from '@/contexts/AuthContext';
-import { useUserRole } from '@/hooks/useUserRole';
 import { useCommercialRole, CommercialRole } from '@/hooks/useCommercialRole';
 import { supabase } from '@/integrations/supabase/client';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
@@ -27,8 +26,7 @@ const ROLE_COLORS: Record<string, string> = {
 };
 
 export default function GovernanceUsers() {
-  const { user } = useAuth();
-  const { isAdmin } = useUserRole();
+  const { user, isAdmin } = useAuth();
   const { isSuperAdmin } = useCommercialRole();
   const queryClient = useQueryClient();
 

@@ -17,7 +17,7 @@ import {
   Package, Phone, Award, Database, Webhook,
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
-import { useUserRole } from '@/hooks/useUserRole';
+import { useAuth } from '@/contexts/AuthContext';
 import { useFeatureFlag } from '@/hooks/useFeatureFlag';
 import { Sparkles, Undo2 } from 'lucide-react';
 
@@ -85,7 +85,7 @@ const permissions: PermissionConfig[] = [
 
 /* ─── Main Component ─── */
 const SettingsConfig = () => {
-  const { isAdmin } = useUserRole();
+  const { isAdmin } = useAuth();
   const [weights, setWeights] = useState(defaultWeights);
   const [activeTab, setActiveTab] = useState('recommendations');
   const [hasChanges, setHasChanges] = useState(false);

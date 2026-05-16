@@ -8,7 +8,6 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import { useAuth } from '@/contexts/AuthContext';
 import { useFarmerPerformance, type PerformanceScore } from '@/hooks/useFarmerPerformance';
 import { supabase } from '@/integrations/supabase/client';
-import { useUserRole } from '@/hooks/useUserRole';
 import {
   Loader2, TrendingUp, DollarSign, BarChart3, Users, ShieldCheck,
   RefreshCw, Layers, Target, Brain, Eye, FileText, Activity
@@ -24,8 +23,7 @@ const scoreBarColor = (v: number) =>
 
 const ExecutiveDashboard = () => {
   const navigate = useNavigate();
-  const { user } = useAuth();
-  const { role, loading: roleLoading } = useUserRole();
+  const { user, role, loading: roleLoading } = useAuth();
   const { scores, loading, calculating, loadScores, calculateScores } = useFarmerPerformance();
   const [farmers, setFarmers] = useState<{ id: string; name: string }[]>([]);
   const [selectedFarmer, setSelectedFarmer] = useState<string>('all');
