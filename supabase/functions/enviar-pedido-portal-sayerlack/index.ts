@@ -941,6 +941,18 @@ export default async ({ page, context }) => {
     }, { timeout: budgetFor('validacao-pre-efetivar', 15_000), polling: 250 });
     trace.push({ step: 'validacao_data_entrega_ok_pre_efetivar', t: Date.now() - t0, remaining: remainingMs() });
 
+    // PR13: scroll do botão "Efetivar Pedido" pra dentro da viewport ANTES do
+    // click. O navbar sticky do portal Sayerlack cobre o topo da página; quando
+    // há vários itens no formulário, a rolagem deixa o botão atrás do navbar
+    // (y negativo). O Puppeteer clica na coordenada certa mas o navbar
+    // intercepta — click some silenciosamente. Reproduzido em pedido de 6 SKUs
+    // (trace mostrou rect.y=-17, elementoNoCentro=div.navbar-nav).
+    await page.evaluate(() => {
+      const btn = document.querySelector('#btnSalvarNovoPedido');
+      if (btn) btn.scrollIntoView({ block: 'center' });
+    });
+    await sleep(300); // tempo do scroll completar e DOM estabilizar
+
     // Diagnóstico rico pré-click: estado do botão, contexto, hit-test, listeners jQuery
     const preClickDiag = await page.evaluate(function() {
       const btn = document.querySelector('#btnSalvarNovoPedido');
