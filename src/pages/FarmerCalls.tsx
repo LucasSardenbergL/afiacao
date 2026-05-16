@@ -514,6 +514,50 @@ const FarmerCalls = () => {
           </Button>
         </div>
 
+        {/* 🧪 WebRTC test bench — remover após validação */}
+        <Card className="border-2 border-dashed border-orange-400 bg-orange-50/40">
+          <CardContent className="p-4 space-y-3">
+            <div className="flex items-center justify-between flex-wrap gap-2">
+              <Badge className="bg-orange-500 hover:bg-orange-500 text-white">
+                🧪 MODO TESTE WEBRTC — remover após validação
+              </Badge>
+              <Badge variant="outline" className="font-mono text-xs">
+                state: {webrtcTest.callState}
+              </Badge>
+            </div>
+            <div className="flex gap-2 flex-wrap">
+              <Input
+                placeholder="Telefone com DDD (ex: 37999998888)"
+                value={testPhone}
+                onChange={(e) => setTestPhone(e.target.value)}
+                className="max-w-xs"
+                disabled={webrtcTest.isActive}
+              />
+              {!webrtcTest.isActive ? (
+                <Button
+                  onClick={() => webrtcTest.makeCall(testPhone)}
+                  disabled={!testPhone.trim()}
+                  className="bg-orange-600 hover:bg-orange-700"
+                >
+                  Ligar via WebRTC
+                </Button>
+              ) : (
+                <Button variant="destructive" onClick={() => webrtcTest.endCall()}>
+                  Encerrar
+                </Button>
+              )}
+            </div>
+            {webrtcTest.isActive && (
+              <div className="text-sm font-mono">
+                Em chamada: {testPhone} — {webrtcTest.callDuration}s
+              </div>
+            )}
+            {webrtcTest.error && (
+              <div className="text-sm text-red-600">⚠ {webrtcTest.error}</div>
+            )}
+          </CardContent>
+        </Card>
+
         {/* Today's stats */}
         <div className="grid grid-cols-3 gap-3">
           <Card><CardContent className="p-3 text-center">
