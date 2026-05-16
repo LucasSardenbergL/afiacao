@@ -36,6 +36,7 @@ import { PageViewTracker } from '@/components/shell/PageViewTracker';
 import { AnalyticsIdentify } from '@/components/shell/AnalyticsIdentify';
 import { useFeatureFlagBodyClass } from '@/hooks/useFeatureFlag';
 import { useSidebarFavorites } from '@/hooks/useSidebarFavorites';
+import { useSalesOnlyRestriction } from '@/hooks/useSalesOnlyRestriction';
 import { Star } from 'lucide-react';
 
 /* ─── Navigation config ─── */
@@ -147,40 +148,6 @@ const docNavSection: { title: string; items: NavItem[] } = {
     { icon: BookOpen, label: 'UX Rules', path: '/ux-rules' },
   ],
 };
-
-function useSalesOnlyRestriction() {
-  const { user } = useAuth();
-
-  const { data: salesOnlyCpfs } = useQuery({
-    queryKey: ['config', 'sales_only_cpfs'],
-    queryFn: async () => {
-      const { data } = await supabase
-        .from('company_config')
-        .select('value')
-        .eq('key', 'sales_only_cpfs')
-        .maybeSingle();
-      return data?.value ? JSON.parse(data.value) as string[] : [];
-    },
-    staleTime: 5 * 60 * 1000,
-  });
-
-  const { data: userDoc } = useQuery({
-    queryKey: ['profile', 'document', user?.id],
-    queryFn: async () => {
-      const { data } = await supabase
-        .from('profiles')
-        .select('document')
-        .eq('user_id', user!.id)
-        .maybeSingle();
-      return data?.document?.replace(/\D/g, '') || null;
-    },
-    enabled: !!user?.id,
-    staleTime: 5 * 60 * 1000,
-  });
-
-  if (!salesOnlyCpfs || !userDoc) return false;
-  return salesOnlyCpfs.includes(userDoc);
-}
 
 /* ─── Sidebar — seções secundárias colapsadas por padrão ─── */
 const SECONDARY_SECTIONS = ['Performance', 'Inteligência', 'Automação', 'Documentação'];
