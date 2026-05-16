@@ -206,6 +206,10 @@ const FarmerCalls = () => {
     error: nvoipError,
   } = useNvoipCall();
 
+  // 🧪 TEST: WebRTC direct call bench (remover após validação)
+  const webrtcTest = useWebRTCCall();
+  const [testPhone, setTestPhone] = useState('');
+
   const [isCallActive, setIsCallActive] = useState(false);
   const [isFollowUpActive, setIsFollowUpActive] = useState(false);
   const [callSeconds, setCallSeconds] = useState(0);
