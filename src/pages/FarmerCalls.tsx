@@ -18,6 +18,7 @@ import { useFarmerScoring } from '@/hooks/useFarmerScoring';
 import { cn } from '@/lib/utils';
 import { Dialer } from '@/components/call/Dialer';
 import { useNvoipCall, type NvoipCallState } from '@/hooks/useNvoipCall';
+import { useWebRTCCall } from '@/hooks/useWebRTCCall';
 import {
   Phone, PhoneOff, Play, Pause, Clock, User, Search,
   Plus, Timer, CheckCircle, XCircle, Loader2, BarChart3,
