@@ -23,9 +23,9 @@ export default defineConfig(({ mode }) => ({
       injectRegister: "script-defer",
       includeAssets: ["favicon.ico", "robots.txt"],
       manifest: {
-        name: "Colacor - Afiação Profissional",
+        name: "Colacor",
         short_name: "Colacor",
-        description: "Serviço profissional de afiação de ferramentas",
+        description: "Sistema operacional B2B do grupo Colacor",
         theme_color: "#1a1a2e",
         background_color: "#1a1a2e",
         display: "standalone",
