@@ -398,9 +398,27 @@ function MapeamentoStatusCell({
     );
   }
 
-  // ========== nao_encontrado (ou null) — busca manual ==========
+  // ========== nao_encontrado (ou null) — busca manual com sugestão automática ==========
+  // Pré-popula o campo com a descrição do fornecedor — 99% dos casos bate via ilike.
+  const sugestaoTermo = (() => {
+    const base = (item.descricao_produto_fornecedor || item.sku_codigo_fornecedor || "").trim();
+    if (!base) return "";
+    const palavras = base
+      .replace(/[^\w\sÀ-ÿ.]/g, " ")
+      .split(/\s+/)
+      .filter((w) => w.length >= 3)
+      .slice(0, 3);
+    return palavras.join(" ");
+  })();
+
   return (
-    <Popover open={searchOpen} onOpenChange={setSearchOpen}>
+    <Popover
+      open={searchOpen}
+      onOpenChange={(open) => {
+        setSearchOpen(open);
+        if (open && !searchQuery) setSearchQuery(sugestaoTermo);
+      }}
+    >
       <PopoverTrigger asChild>
         <Badge
           variant="outline"
