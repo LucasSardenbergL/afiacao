@@ -1,7 +1,7 @@
 import { useState, useCallback } from 'react';
 import { supabase } from '@/integrations/supabase/client';
 import { useAuth } from '@/contexts/AuthContext';
-import { useToast } from '@/hooks/use-toast';
+import { toast } from 'sonner';
 
 // ─── Types ───────────────────────────────────────────────────────────
 export interface AssociationRule {
@@ -66,7 +66,6 @@ const DEFAULT_CONFIG = {
 // ─── Main Hook ───────────────────────────────────────────────────────
 export const useBundleEngine = () => {
   const { user } = useAuth();
-  const { toast } = useToast();
   const [customerBundles, setCustomerBundles] = useState<CustomerBundles[]>([]);
   const [rules, setRules] = useState<AssociationRule[]>([]);
   const [loading, setLoading] = useState(false);
@@ -463,15 +462,15 @@ export const useBundleEngine = () => {
         }
       }
 
-      toast({ title: `${discoveredRules.length} regras e ${allCustomerBundles.reduce((s, c) => s + c.bundles.length, 0)} bundles gerados` });
+      toast.success(`${discoveredRules.length} regras e ${allCustomerBundles.reduce((s, c) => s + c.bundles.length, 0)} bundles gerados`);
     } catch (error) {
       console.error('Error calculating bundles:', error);
-      toast({ title: 'Erro ao calcular bundles', variant: 'destructive' });
+      toast.error('Erro ao calcular bundles');
     } finally {
       setCalculating(false);
       setLoading(false);
     }
-  }, [user?.id, toast]);
+  }, [user?.id]);
 
   // ─── Actions ─────────────────────────────────────────────────────────
   const markBundleOffered = useCallback(async (bundleId: string) => {
@@ -504,8 +503,8 @@ export const useBundleEngine = () => {
         await updateConversionStats(pid);
       }
     }
-    toast({ title: 'Bundle atualizado' });
-  }, [toast]);
+    toast.success('Bundle atualizado');
+  }, []);
 
   const markBundleRejected = useCallback(async (bundleId: string) => {
     await supabase.from('farmer_bundle_recommendations' as any)
