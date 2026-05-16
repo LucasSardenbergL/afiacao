@@ -36,22 +36,22 @@ export function useUserRole(): UseUserRoleReturn {
         .maybeSingle();
 
       if (error) {
-        logger.error('Failed to fetch user role (defaulting to customer)', {
+        logger.critical('Failed to fetch user role (fail-closed: role=null)', {
           stage: 'fetch_role',
           userId: user.id,
           error,
         });
-        setRole('customer');
+        setRole(null);
       } else {
         setRole((data?.role as AppRole) || 'customer');
       }
     } catch (error) {
-      logger.error('Unexpected error fetching user role (defaulting to customer)', {
+      logger.critical('Unexpected error fetching user role (fail-closed: role=null)', {
         stage: 'fetch_role',
         userId: user.id,
         error,
       });
-      setRole('customer');
+      setRole(null);
     } finally {
       setLoading(false);
     }
