@@ -255,12 +255,22 @@ function MapeamentoStatusCell({
     }
     const t = setTimeout(async () => {
       setSearching(true);
-      const { data, error } = await supabase
+      const term = searchQuery.trim();
+      // Busca por descrição OU código OU sku omie (numérico). account no banco é lowercase.
+      const isNumeric = /^\d+$/.test(term);
+      let query = supabase
         .from("omie_products" as any)
         .select("omie_codigo_produto, descricao, codigo")
-        .eq("account", EMPRESA)
-        .ilike("descricao", `%${searchQuery.trim()}%`)
-        .limit(20);
+        .eq("account", EMPRESA.toLowerCase())
+        .eq("ativo", true);
+      query = isNumeric
+        ? query.or(
+            `codigo.ilike.%${term}%,omie_codigo_produto.eq.${term}`,
+          )
+        : query.or(
+            `descricao.ilike.%${term}%,codigo.ilike.%${term}%`,
+          );
+      const { data, error } = await query.limit(20);
       setSearching(false);
       if (!error) setSearchResults((data as any) || []);
     }, 300);
