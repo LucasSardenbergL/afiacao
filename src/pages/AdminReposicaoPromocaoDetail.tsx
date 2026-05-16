@@ -416,7 +416,7 @@ function MapeamentoStatusCell({
             <div className="relative mt-1">
               <Search className="h-4 w-4 absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground" />
               <Input
-                placeholder="Digite parte da descrição…"
+                placeholder="Buscar por descrição, código ou SKU Omie…"
                 className="pl-9"
                 value={searchQuery}
                 onChange={(e) => setSearchQuery(e.target.value)}
