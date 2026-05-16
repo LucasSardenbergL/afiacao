@@ -79,4 +79,3 @@ export function ContinuarBanner({ currentStep }: Props) {
   );
 }
 
-export default ContinuarBanner;

@@ -156,4 +156,3 @@ export function SmartAlertsSection() {
   );
 }
 
-export default SmartAlertsSection;

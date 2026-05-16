@@ -166,4 +166,3 @@ export function EtapaChecklist({ step }: Props) {
   );
 }
 
-export default EtapaChecklist;

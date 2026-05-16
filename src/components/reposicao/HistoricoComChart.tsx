@@ -328,4 +328,3 @@ export function HistoricoComChart() {
   );
 }
 
-export default HistoricoComChart;
