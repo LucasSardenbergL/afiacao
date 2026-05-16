@@ -361,6 +361,22 @@
   .no-scrollbar::-webkit-scrollbar { display: none; }
   .no-scrollbar { -ms-overflow-style: none; scrollbar-width: none; }
 
+  /* ── Overscroll containment ──
+     Bloqueia o gesto swipe-back do navegador (macOS trackpad / iOS) quando
+     o usuário arrasta para a esquerda no início de um scroll horizontal.
+     Sem isso, o navegador interpreta o gesto como "voltar página" e
+     recarrega a página anterior. Aplica em qualquer container de scroll
+     da app — tabelas (shadcn <Table>), wrappers .overflow-x-auto legados,
+     ScrollArea, etc. */
+  [class*="overflow-auto"],
+  [class*="overflow-x-auto"],
+  [class*="overflow-x-scroll"],
+  [class*="overflow-y-auto"],
+  [class*="overflow-y-scroll"],
+  [class*="overflow-scroll"] {
+    overscroll-behavior: contain;
+  }
+
   /* ── Compact density ── */
   .density-compact {
     --table-row-height: 36px;
