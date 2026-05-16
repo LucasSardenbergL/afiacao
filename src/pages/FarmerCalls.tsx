@@ -17,7 +17,8 @@ import { useToast } from '@/hooks/use-toast';
 import { useFarmerScoring } from '@/hooks/useFarmerScoring';
 import { cn } from '@/lib/utils';
 import { Dialer } from '@/components/call/Dialer';
-import { useNvoipCall, type NvoipCallState } from '@/hooks/useNvoipCall';
+import type { NvoipCallState } from '@/hooks/useNvoipCall';
+import { useCallBackend } from '@/hooks/useCallBackend';
 import {
   Phone, PhoneOff, Play, Pause, Clock, User, Search,
   Plus, Timer, CheckCircle, XCircle, Loader2, BarChart3,
@@ -203,7 +204,7 @@ const FarmerCalls = () => {
     isRinging: nvoipIsRinging,
     isEstablished: nvoipIsEstablished,
     error: nvoipError,
-  } = useNvoipCall();
+  } = useCallBackend();
 
   const [isCallActive, setIsCallActive] = useState(false);
   const [isFollowUpActive, setIsFollowUpActive] = useState(false);
