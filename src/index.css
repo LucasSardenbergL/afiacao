@@ -361,6 +361,25 @@
   .no-scrollbar::-webkit-scrollbar { display: none; }
   .no-scrollbar { -ms-overflow-style: none; scrollbar-width: none; }
 
+  /* ── Body scroll guarantee ──
+     Defesa contra scroll-lock vazado por overlays Radix (Dialog/Sheet/etc.)
+     que setam `body { overflow: hidden }` inline e às vezes não limpam ao
+     fechar — sintoma: usuário não consegue rolar a página em /admin/customers
+     ou similares depois de abrir/fechar um modal. Esta regra GARANTE que body
+     fica scrollável sempre que NÃO houver Dialog/AlertDialog aberto, sobrepondo
+     qualquer overflow:hidden residual inline.
+
+     Funciona em conjunto com o cleanup JS em AppShellLayout.tsx — esta é a
+     defesa final, idempotente e sempre ativa. Quando uma Dialog está aberta
+     o seletor :has() casa, a regra NÃO se aplica, e o lock de Radix continua
+     válido (background não rola enquanto modal está em cima).
+
+     :has() suportado em todos browsers desde Chrome 105 / Safari 15.4 / FF 121
+     (final de 2023). */
+  body:not(:has([data-state="open"][role="dialog"], [data-state="open"][role="alertdialog"])) {
+    overflow: auto !important;
+  }
+
   /* ── Compact density ── */
   .density-compact {
     --table-row-height: 36px;

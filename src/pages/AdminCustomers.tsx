@@ -750,15 +750,28 @@ const AdminCustomers = () => {
 
       const employeeIds = new Set((employeeRoles || []).map(r => r.user_id));
 
-      const { data, error } = await supabase
-        .from('profiles')
-        .select('user_id, name, email, phone, document, customer_type, created_at, requires_po')
-        .eq('is_employee', false)
-        .order('name');
-      if (error) throw error;
+      // Supabase PostgREST limita a 1000 linhas por request (max-rows do servidor).
+      // Paginamos com .range() até a página vir incompleta ou bater um teto de segurança.
+      const PAGE_SIZE = 1000;
+      const MAX_PAGES = 50; // teto de segurança = 50.000 clientes
+      const all: Customer[] = [];
+      for (let page = 0; page < MAX_PAGES; page++) {
+        const from = page * PAGE_SIZE;
+        const to = from + PAGE_SIZE - 1;
+        const { data, error } = await supabase
+          .from('profiles')
+          .select('user_id, name, email, phone, document, customer_type, created_at, requires_po')
+          .eq('is_employee', false)
+          .order('name')
+          .range(from, to);
+        if (error) throw error;
+        if (!data || data.length === 0) break;
+        all.push(...(data as Customer[]));
+        if (data.length < PAGE_SIZE) break;
+      }
 
       // Filter out any staff users
-      const filtered = (data || []).filter(p => !employeeIds.has(p.user_id));
+      const filtered = all.filter(p => !employeeIds.has(p.user_id));
       setCustomers(filtered);
     } catch (error) {
       console.error('Error loading customers:', error);
@@ -770,15 +783,25 @@ const AdminCustomers = () => {
   const loadScores = async () => {
     if (!user?.id) return;
     try {
-      const { data } = await supabase
-        .from('farmer_client_scores')
-        .select('customer_user_id, health_score, health_class, churn_risk, expansion_score, priority_score, avg_monthly_spend_180d, days_since_last_purchase, category_count, gross_margin_pct, avg_repurchase_interval')
-        .eq('farmer_id', user.id);
-      if (data) {
-        const map = new Map<string, ClientScore>();
+      // Mesma estratégia de paginação — scores podem ser tantos quanto clientes.
+      const PAGE_SIZE = 1000;
+      const MAX_PAGES = 50;
+      const map = new Map<string, ClientScore>();
+      for (let page = 0; page < MAX_PAGES; page++) {
+        const from = page * PAGE_SIZE;
+        const to = from + PAGE_SIZE - 1;
+        const { data, error } = await supabase
+          .from('farmer_client_scores')
+          .select('customer_user_id, health_score, health_class, churn_risk, expansion_score, priority_score, avg_monthly_spend_180d, days_since_last_purchase, category_count, gross_margin_pct, avg_repurchase_interval')
+          .eq('farmer_id', user.id)
+          .range(from, to);
+        if (error) throw error;
+        if (!data || data.length === 0) break;
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
         data.forEach((s: any) => map.set(s.customer_user_id, s));
-        setScores(map);
+        if (data.length < PAGE_SIZE) break;
       }
+      setScores(map);
     } catch (e) {
       console.error('Error loading scores:', e);
     }
