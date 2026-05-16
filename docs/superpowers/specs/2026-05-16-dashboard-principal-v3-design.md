@@ -101,8 +101,9 @@ Cada `<*Zone />` é **componente isolado** com:
 
 | Persona | Definição via sinais |
 |---|---|
-| `vendedor` | `commercial_role = vendedor` **ou** CPF em `salesOnlyCpfs` |
-| `gestor` | `commercial_role = gestor` |
+| `vendedor` | `commercial_role = operacional` **ou** CPF em `salesOnlyCpfs` |
+| `gestor` | `commercial_role = gerencial` |
+| `estrategico` | `commercial_role = estrategico` ou `super_admin` (vê visão consolidada como `master`) |
 | `comprador` | heurística: ≥40% das visitas dos últimos 30d em `/admin/reposicao/*` |
 | `estoque` | heurística: ≥40% em `/admin/estoque/*` ou `/recebimento` |
 | `financeiro` | heurística: ≥40% em `/financeiro/*` |
@@ -115,7 +116,10 @@ Cada `<*Zone />` é **componente isolado** com:
 Ordem de prioridade:
 1. Override manual (`localStorage.dashboardPersonaOverride`) — sempre vence.
 2. CPF em `salesOnlyCpfs` → `vendedor`.
-3. `commercial_role` definido → `vendedor` ou `gestor`.
+3. `commercial_role` definido →
+   - `operacional` → `vendedor`
+   - `gerencial` → `gestor`
+   - `estrategico` ou `super_admin` → `master` (visão estratégica consolidada)
 4. Heurística de top prefixo (`≥40%`, mínimo 10 visitas no janela 30d) → uma das personas operacionais.
 5. Default: `master` se `role=master`, senão `geral`.
 
