@@ -1,7 +1,6 @@
 import { useState, useCallback } from 'react';
 import { supabase } from '@/integrations/supabase/client';
 import { useAuth } from '@/contexts/AuthContext';
-import { useUserRole } from '@/hooks/useUserRole';
 
 export interface RecommendationItem {
   product_id: string;
@@ -40,8 +39,7 @@ export interface RecommendationResult {
 }
 
 export function useRecommendationEngine() {
-  const { user } = useAuth();
-  const { isAdmin } = useUserRole();
+  const { user, isAdmin } = useAuth();
   const [result, setResult] = useState<RecommendationResult | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);

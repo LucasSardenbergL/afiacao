@@ -10,16 +10,14 @@ import { supabase } from '@/integrations/supabase/client';
 import { useToast } from '@/hooks/use-toast';
 import { cn } from '@/lib/utils';
 import { useBiometricAuth } from '@/hooks/useBiometricAuth';
-import { useUserRole } from '@/hooks/useUserRole';
 import { useProfile, useProfileStats } from '@/queries/useProfile';
 import { useQueryClient } from '@tanstack/react-query';
 
 
 const Profile = () => {
   const navigate = useNavigate();
-  const { user, signOut } = useAuth();
+  const { user, signOut, isStaff } = useAuth();
   const { toast } = useToast();
-  const { isStaff } = useUserRole();
   const fileInputRef = useRef<HTMLInputElement>(null);
   const queryClient = useQueryClient();
   

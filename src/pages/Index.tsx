@@ -11,7 +11,6 @@ import { Badge } from '@/components/ui/badge';
 
 import { CustomerDashboard } from '@/components/CustomerDashboard';
 import { useAuth } from '@/contexts/AuthContext';
-import { useUserRole } from '@/hooks/useUserRole';
 
 import { format } from 'date-fns';
 import { ptBR } from 'date-fns/locale';
@@ -38,8 +37,7 @@ const STATUS_LABELS: Record<string, { label: string; statusClass: string }> = {
 /* ─── Main Component ─── */
 const Index = () => {
   const navigate = useNavigate();
-  const { user, isMaster } = useAuth();
-  const { isStaff, isAdmin, loading: roleLoading } = useUserRole();
+  const { user, isMaster, isStaff, isAdmin, loading: roleLoading } = useAuth();
 
   // Data hooks
   const { data: profile, isLoading: profileLoading } = useBasicProfile(user?.id);
