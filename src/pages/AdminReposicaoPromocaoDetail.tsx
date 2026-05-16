@@ -28,6 +28,7 @@ import { Badge } from "@/components/ui/badge";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { Label } from "@/components/ui/label";
+import { Checkbox } from "@/components/ui/checkbox";
 import {
   Tabs,
   TabsContent,
@@ -240,12 +241,15 @@ function MapeamentoStatusCell({
   item: ItemRow;
   onUpdate: (changes: Partial<ItemRow>) => void;
 }) {
+  const qc = useQueryClient();
   const [searchOpen, setSearchOpen] = useState(false);
   const [searchQuery, setSearchQuery] = useState("");
   const [searchResults, setSearchResults] = useState<
     Array<{ omie_codigo_produto: number; descricao: string; codigo: string }>
   >([]);
   const [searching, setSearching] = useState(false);
+  const [selectedSkus, setSelectedSkus] = useState<Record<number, { descricao: string; codigo: string }>>({});
+  const [salvando, setSalvando] = useState(false);
 
   // Busca debounced
   useEffect(() => {
@@ -427,10 +431,14 @@ function MapeamentoStatusCell({
           {q === "nao_encontrado" ? "Não encontrado" : "Pendente"}
         </Badge>
       </PopoverTrigger>
-      <PopoverContent className="w-96">
+      <PopoverContent className="w-[420px]">
         <div className="space-y-3">
           <div>
             <Label className="text-xs">Buscar produto Omie</Label>
+            <p className="text-[11px] text-muted-foreground mb-1">
+              Selecione <strong>uma ou mais embalagens</strong> — útil quando o código fornecedor
+              (ex.: {item.sku_codigo_fornecedor}) cobre vários tamanhos (0,9L · 3,6L · 18L…).
+            </p>
             <div className="relative mt-1">
               <Search className="h-4 w-4 absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground" />
               <Input
@@ -453,26 +461,95 @@ function MapeamentoStatusCell({
                 Nenhum produto encontrado
               </div>
             )}
-            {searchResults.map((p) => (
-              <button
-                key={p.omie_codigo_produto}
-                className="w-full text-left p-2 rounded hover:bg-accent transition-colors"
-                onClick={() => {
+            {searchResults.map((p) => {
+              const checked = !!selectedSkus[p.omie_codigo_produto];
+              return (
+                <label
+                  key={p.omie_codigo_produto}
+                  className="flex items-start gap-2 w-full text-left p-2 rounded hover:bg-accent transition-colors cursor-pointer"
+                >
+                  <Checkbox
+                    checked={checked}
+                    onCheckedChange={(v) => {
+                      setSelectedSkus((prev) => {
+                        const next = { ...prev };
+                        if (v) next[p.omie_codigo_produto] = { descricao: p.descricao, codigo: p.codigo };
+                        else delete next[p.omie_codigo_produto];
+                        return next;
+                      });
+                    }}
+                    className="mt-0.5"
+                  />
+                  <div className="flex-1 min-w-0">
+                    <div className="text-xs font-mono text-muted-foreground">
+                      {p.codigo} · {p.omie_codigo_produto}
+                    </div>
+                    <div className="text-sm">{p.descricao}</div>
+                  </div>
+                </label>
+              );
+            })}
+          </div>
+          <div className="flex items-center justify-between border-t pt-2">
+            <span className="text-xs text-muted-foreground">
+              {Object.keys(selectedSkus).length} selecionado(s)
+            </span>
+            <Button
+              size="sm"
+              disabled={Object.keys(selectedSkus).length === 0 || salvando}
+              onClick={async () => {
+                const ids = Object.keys(selectedSkus).map(Number);
+                if (ids.length === 0) return;
+                setSalvando(true);
+                try {
+                  // Primeiro SKU → atualiza o item original (in-place)
+                  const primeiroId = ids[0];
+                  const primeiro = selectedSkus[primeiroId];
                   onUpdate({
-                    sku_codigo_omie: p.omie_codigo_produto,
-                    descricao_produto_fornecedor: p.descricao,
+                    sku_codigo_omie: primeiroId,
+                    descricao_produto_fornecedor: primeiro.descricao,
                     mapeamento_qualidade: "manual_confirmado",
                     confirmado: true,
                   });
+
+                  // Demais → inserir novos itens irmãos (mesmo desconto/volume).
+                  // Para escapar do unique (campanha_id, sku_codigo_fornecedor, volume_minimo),
+                  // sufixamos o código fornecedor com #omie<id>.
+                  const extras = ids.slice(1);
+                  if (extras.length > 0) {
+                    const payload = extras.map((omieId) => ({
+                      campanha_id: item.campanha_id,
+                      sku_codigo_fornecedor: `${item.sku_codigo_fornecedor}#omie${omieId}`,
+                      descricao_produto_fornecedor: selectedSkus[omieId].descricao,
+                      sku_codigo_omie: omieId,
+                      mapeamento_qualidade: "manual_confirmado",
+                      desconto_perc: item.desconto_perc,
+                      volume_minimo: item.volume_minimo,
+                      confirmado: true,
+                      ativo: true,
+                      observacoes: `Expandido manualmente a partir de ${item.sku_codigo_fornecedor}`,
+                    }));
+                    const { error } = await supabase
+                      .from("promocao_item" as any)
+                      .insert(payload as any);
+                    if (error) throw error;
+                    toast.success(`${ids.length} embalagens vinculadas`);
+                  } else {
+                    toast.success("Produto vinculado");
+                  }
+                  qc.invalidateQueries({ queryKey: ["promocao-itens", String(item.campanha_id)] });
+                  setSelectedSkus({});
                   setSearchOpen(false);
-                }}
-              >
-                <div className="text-xs font-mono text-muted-foreground">
-                  {p.codigo} · {p.omie_codigo_produto}
-                </div>
-                <div className="text-sm">{p.descricao}</div>
-              </button>
-            ))}
+                } catch (e: any) {
+                  toast.error(e?.message || "Erro ao vincular");
+                } finally {
+                  setSalvando(false);
+                }
+              }}
+            >
+              {salvando && <Loader2 className="h-3 w-3 animate-spin mr-1" />}
+              Confirmar
+            </Button>
           </div>
         </div>
       </PopoverContent>
