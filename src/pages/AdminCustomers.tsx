@@ -28,6 +28,7 @@ import { ptBR } from 'date-fns/locale';
 import { useUrlState } from '@/hooks/useUrlState';
 import { useCustomerSegments } from '@/hooks/useCustomerSegments';
 import { Save, Bookmark, X as XIcon } from 'lucide-react';
+import { decodeHtmlEntities } from '@/lib/format';
 
 /* ─── Types ─── */
 interface Customer {
@@ -298,7 +299,7 @@ function CustomerListView({
                           <User className="w-4 h-4 text-primary" />
                         </div>
                         <div className="min-w-0">
-                          <p className="font-medium truncate text-foreground">{customer.name}</p>
+                          <p className="font-medium truncate text-foreground">{decodeHtmlEntities(customer.name)}</p>
                           {customer.phone && (
                             <p className="text-xs text-muted-foreground">{customer.phone}</p>
                           )}
@@ -440,7 +441,7 @@ function Customer360View({
             <User className="w-6 h-6 text-primary" />
           </div>
           <div>
-            <h1 className="text-lg font-semibold text-foreground">{customer.name}</h1>
+            <h1 className="text-lg font-semibold text-foreground">{decodeHtmlEntities(customer.name)}</h1>
             <div className="flex items-center gap-2 mt-0.5">
               {customer.document && (
                 <span className="text-xs text-muted-foreground font-mono">{formatDocument(customer.document)}</span>
