@@ -209,6 +209,13 @@ const FarmerCalls = () => {
   // 🧪 TEST: WebRTC direct call bench (remover após validação)
   const webrtcTest = useWebRTCCall();
   const [testPhone, setTestPhone] = useState('');
+  const remoteAudioRef = useRef<HTMLAudioElement>(null);
+
+  useEffect(() => {
+    if (remoteAudioRef.current && webrtcTest.remoteStream) {
+      remoteAudioRef.current.srcObject = webrtcTest.remoteStream;
+    }
+  }, [webrtcTest.remoteStream]);
 
   const [isCallActive, setIsCallActive] = useState(false);
   const [isFollowUpActive, setIsFollowUpActive] = useState(false);
@@ -555,6 +562,7 @@ const FarmerCalls = () => {
             {webrtcTest.error && (
               <div className="text-sm text-red-600">⚠ {webrtcTest.error}</div>
             )}
+            <audio ref={remoteAudioRef} autoPlay playsInline />
           </CardContent>
         </Card>
 
