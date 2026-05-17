@@ -3,11 +3,13 @@ import { useQuery } from '@tanstack/react-query';
 import { supabase } from '@/integrations/supabase/client';
 import { Card } from '@/components/ui/card';
 import { KbStatusBadge } from '@/components/knowledge-base/KbStatusBadge';
+import { KbSpecsExtractButton } from '@/components/knowledge-base/KbSpecsExtractButton';
 import { Badge } from '@/components/ui/badge';
 import { format } from 'date-fns';
 import { ptBR } from 'date-fns/locale';
-import { Loader2 } from 'lucide-react';
+import { Loader2, Database, Sparkles } from 'lucide-react';
 import type { KbDocument } from '@/lib/knowledge-base/types';
+import { useKbProductSpecs } from '@/hooks/useKbProductSpecs';
 
 export default function AdminKnowledgeBaseDetail() {
   const { id } = useParams<{ id: string }>();
@@ -55,6 +57,12 @@ export default function AdminKnowledgeBaseDetail() {
     );
   }
 
+  return <DetailContent data={data} chunkCount={chunkCount} />;
+}
+
+function DetailContent({ data, chunkCount }: { data: KbDocument; chunkCount: number | undefined }) {
+  const { data: existingSpecs, refetch: refetchSpecs } = useKbProductSpecs(data.product_code);
+
   return (
     <div className="container mx-auto p-4 space-y-3 max-w-4xl">
       <div className="flex items-center justify-between flex-wrap gap-2">
@@ -84,6 +92,64 @@ export default function AdminKnowledgeBaseDetail() {
         </Card>
       )}
 
+      {/* Specs estruturados — só quando documento está ready e tem product_code */}
+      {data.status === 'ready' && data.product_code && (
+        <Card className="p-3 space-y-2">
+          <div className="flex items-center justify-between flex-wrap gap-2">
+            <div className="flex items-center gap-2">
+              <Database className="w-4 h-4 text-muted-foreground" />
+              <span className="text-sm font-medium">Specs estruturados</span>
+              {existingSpecs && (
+                <Badge variant="outline" className="text-2xs gap-1">
+                  <Sparkles className="w-2.5 h-2.5" />
+                  Aprovado
+                </Badge>
+              )}
+            </div>
+            <KbSpecsExtractButton
+              documentId={data.id}
+              documentTitle={data.title}
+              productCode={data.product_code}
+              onSaved={() => refetchSpecs()}
+            />
+          </div>
+
+          {existingSpecs ? (
+            <div className="grid grid-cols-2 md:grid-cols-3 gap-2 text-2xs pt-2 border-t border-border">
+              {existingSpecs.rendimento_m2_por_litro != null && (
+                <KpiCell label="Rendimento" value={`${existingSpecs.rendimento_m2_por_litro} m²/L`} />
+              )}
+              {existingSpecs.densidade_g_cm3 != null && (
+                <KpiCell label="Densidade" value={`${existingSpecs.densidade_g_cm3} g/cm³`} />
+              )}
+              {existingSpecs.solidos_pct != null && (
+                <KpiCell label="Sólidos" value={`${existingSpecs.solidos_pct}%`} />
+              )}
+              {existingSpecs.pot_life_horas != null && (
+                <KpiCell label="Pot life" value={`${existingSpecs.pot_life_horas}h`} />
+              )}
+              {existingSpecs.validade_dias != null && (
+                <KpiCell label="Validade" value={`${existingSpecs.validade_dias} dias`} />
+              )}
+              {existingSpecs.dureza && <KpiCell label="Dureza" value={existingSpecs.dureza} />}
+              {existingSpecs.catalisador_codigo && (
+                <KpiCell label="Catalisador" value={`${existingSpecs.catalisador_codigo}${existingSpecs.catalisador_proporcao_pct ? ` (${existingSpecs.catalisador_proporcao_pct}%)` : ''}`} />
+              )}
+              {existingSpecs.diluente_codigo && (
+                <KpiCell label="Diluente" value={existingSpecs.diluente_codigo} />
+              )}
+              {existingSpecs.demaos_recomendadas != null && (
+                <KpiCell label="Demãos" value={String(existingSpecs.demaos_recomendadas)} />
+              )}
+            </div>
+          ) : (
+            <div className="text-2xs text-muted-foreground">
+              Clique acima pra extrair specs automaticamente do texto via Claude.
+            </div>
+          )}
+        </Card>
+      )}
+
       {data.content_extracted && (
         <Card className="p-3">
           <div className="text-2xs uppercase tracking-wide text-muted-foreground mb-2">
@@ -94,6 +160,15 @@ export default function AdminKnowledgeBaseDetail() {
           </pre>
         </Card>
       )}
+    </div>
+  );
+}
+
+function KpiCell({ label, value }: { label: string; value: string }) {
+  return (
+    <div>
+      <div className="text-muted-foreground">{label}</div>
+      <div className="font-medium tabular-nums">{value}</div>
     </div>
   );
 }

@@ -154,6 +154,7 @@ const AdminKnowledgeBaseDetail = lazy(() => import("./pages/AdminKnowledgeBaseDe
 const AdminStandardProcesses = lazy(() => import("./pages/AdminStandardProcesses"));
 const AdminStandardProcessNew = lazy(() => import("./pages/AdminStandardProcessNew"));
 const AdminStandardProcessDetail = lazy(() => import("./pages/AdminStandardProcessDetail"));
+const AdminCalculadora = lazy(() => import("./pages/AdminCalculadora"));
 
 const PageLoader = () => <PageSkeleton variant="auto" />;
 
@@ -331,6 +332,7 @@ const App = () => (
               <Route path="admin/standard-processes" element={<AdminStandardProcesses />} />
               <Route path="admin/standard-processes/new" element={<AdminStandardProcessNew />} />
               <Route path="admin/standard-processes/:id" element={<AdminStandardProcessDetail />} />
+              <Route path="admin/calculadora" element={<AdminCalculadora />} />
             </Route>
 
             <Route path="*" element={<NotFound />} />
