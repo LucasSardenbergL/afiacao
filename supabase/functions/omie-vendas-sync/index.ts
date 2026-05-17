@@ -1,6 +1,174 @@
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
-import { createClient } from "npm:@supabase/supabase-js@2";
+import { createClient, type SupabaseClient } from "npm:@supabase/supabase-js@2";
 import { authorizeCronOrStaff } from "../_shared/auth.ts";
+
+type OmieGenericResponse = Record<string, unknown> & { faultstring?: string; codigo_status?: number | string; descricao_status?: string };
+
+interface OmieProdutoCadastro {
+  codigo_produto?: number;
+  codigo_produto_integracao?: string | null;
+  codigo?: string;
+  descricao?: string;
+  unidade?: string;
+  ncm?: string | null;
+  valor_unitario?: number;
+  quantidade_estoque?: number;
+  inativo?: string;
+  tipo?: string;
+  descricao_familia?: string;
+  imagens?: Array<{ url_imagem?: string }>;
+  marca?: string;
+  modelo?: string;
+  peso_bruto?: number;
+  peso_liq?: number;
+  cfop?: string;
+  recomendacoes_fiscais?: { tipo_produto?: string };
+}
+
+interface OmiePosEstoque {
+  nCodProd?: number;
+  nSaldo?: number;
+}
+
+interface OmieClienteCadastro {
+  codigo_cliente_omie?: number;
+  razao_social?: string;
+  nome_fantasia?: string;
+  cnpj_cpf?: string;
+  codigo_vendedor?: number | null;
+  recomendacoes?: { codigo_vendedor?: number | null };
+  endereco?: string;
+  endereco_numero?: string;
+  complemento?: string;
+  bairro?: string;
+  cidade?: string;
+  estado?: string;
+  cep?: string;
+  telefone1_ddd?: string;
+  telefone1_numero?: string;
+  contato?: string;
+  tags?: Array<{ tag?: string } | string>;
+  atividade?: string;
+  codigo_transportadora?: number | string;
+}
+
+interface OmieParcela {
+  cInativo?: string;
+  cCodigo?: string;
+  nCodigo?: number;
+  cDescricao?: string;
+  cDescParcela?: string;
+}
+
+interface OmieDetalheItem {
+  ide?: { codigo_item?: number; codigo_item_integracao?: number };
+  produto?: {
+    codigo_produto?: number;
+    descricao?: string;
+    quantidade?: number;
+    valor_unitario?: number;
+    desconto?: number;
+    cfop?: string;
+  };
+  imposto?: { cfop?: string };
+}
+
+interface OmiePedidoCabecalho {
+  codigo_cliente?: number;
+  codigo_pedido?: number;
+  numero_pedido?: number | string;
+  etapa?: string;
+  data_previsao?: string;
+  observacoes_pedido?: string;
+  codigo_parcela?: string;
+}
+
+interface OmiePedidoVendaProduto {
+  cabecalho?: OmiePedidoCabecalho;
+  det?: OmieDetalheItem[];
+  infoCadastro?: { dInc?: string };
+}
+
+interface OmieListarPedidosResponse {
+  pedido_venda_produto?: OmiePedidoVendaProduto[];
+  total_de_paginas?: number;
+}
+
+interface ProfileRow { user_id: string; document?: string | null }
+interface SalesOrderHashRow { hash_payload?: string | null }
+interface OmieClienteMapRow { omie_codigo_cliente: number; user_id: string | null }
+interface OmieProductMapRow { id: string; omie_codigo_produto: number }
+interface AdminProfileRow { user_id?: string }
+
+interface OrderItemPayload {
+  omie_codigo_produto?: number;
+  descricao?: string;
+  quantidade: number;
+  valor_unitario: number;
+  desconto?: number;
+}
+
+interface OrderBatchRow {
+  customer_user_id: string;
+  created_by: string;
+  items: OrderItemPayload[];
+  subtotal: number;
+  discount: number;
+  total: number;
+  status: string;
+  omie_pedido_id: number;
+  omie_numero_pedido: string;
+  account: Account;
+  hash_payload: string;
+  created_at: string;
+  notes: string | null;
+  customer_address: string | null;
+  customer_phone: string | null;
+}
+
+interface OrderItemBatchRow {
+  sales_order_id: string;
+  customer_user_id: string;
+  product_id: string | null;
+  omie_codigo_produto: number | null;
+  quantity: number;
+  unit_price: number;
+  discount: number;
+  hash_payload: string;
+}
+
+interface PriceHistoryBatchRow {
+  customer_user_id: string;
+  product_id: string;
+  unit_price: number;
+  sales_order_id: string;
+  created_at: string;
+}
+
+interface EditItemInput {
+  product_id?: string | null;
+  omie_codigo_produto?: number;
+  codigo?: string;
+  descricao?: string;
+  unidade?: string;
+  quantidade: number;
+  valor_unitario: number;
+  tint_cor_id?: string;
+  tint_nome_cor?: string;
+}
+
+interface OpItemInput {
+  product_id?: string | null;
+  omie_codigo_produto?: number;
+  codigo?: string;
+  descricao?: string;
+  quantidade: number;
+  unidade?: string;
+  assigned_to?: string | null;
+  ready_by_date?: string | null;
+}
+
+interface CreatedOP { id?: string; omie_ordem_id: number | null; omie_ordem_numero: string | null; descricao?: string }
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -30,7 +198,7 @@ async function callOmieVendasApi(
   call: string,
   params: Record<string, unknown>,
   account: Account = "oben"
-) {
+): Promise<OmieGenericResponse | null> {
   const { APP_KEY, APP_SECRET } = getCredentials(account);
 
   const body = {
@@ -50,7 +218,7 @@ async function callOmieVendasApi(
       body: JSON.stringify(body),
     });
 
-    const result = await response.json();
+    const result = (await response.json()) as OmieGenericResponse;
 
     if (result.faultstring) {
       const fs = String(result.faultstring);
@@ -100,6 +268,7 @@ async function callOmieVendasApi(
 
     return result;
   }
+  return null;
 }
 
 function getOmieItemIntegrationCode(index: number): number {
@@ -115,7 +284,7 @@ function getOmieItemIntegrationCode(index: number): number {
 }
 
 // Sincronizar todos os produtos da empresa de vendas
-async function syncProducts(supabase: any, startPage = 1, maxPages = 12, account: Account = "oben") {
+async function syncProducts(supabase: SupabaseClient, startPage = 1, maxPages = 12, account: Account = "oben") {
   let pagina = startPage;
   let totalPaginas = 1;
   let totalSynced = 0;
@@ -132,20 +301,20 @@ async function syncProducts(supabase: any, startPage = 1, maxPages = 12, account
         filtrar_apenas_omiepdv: "N",
       },
       account
-    ) as any;
+    );
 
     if (!result) {
       console.log(`[Omie Vendas][${account}] Products sync interrupted by rate limit at page ${pagina}`);
       break;
     }
 
-    totalPaginas = result.total_de_paginas || 1;
-    const produtos = result.produto_servico_cadastro || [];
+    totalPaginas = (result.total_de_paginas as number) || 1;
+    const produtos: OmieProdutoCadastro[] = (result.produto_servico_cadastro as OmieProdutoCadastro[] | undefined) || [];
 
     const EXCLUDED_FAMILIES = ['imobilizado', 'uso e consumo', 'matérias primas para conversão de cintas', 'jumbos de lixa para discos', 'material para tingimix'];
 
     const rows = produtos
-      .filter((prod: any) => {
+      .filter((prod) => {
         // Excluir produtos do tipo Kit (apenas Simples)
         if (prod.tipo && prod.tipo.toUpperCase() === "K") return false;
         const familia = (prod.descricao_familia || '').toLowerCase().trim();
@@ -154,7 +323,7 @@ async function syncProducts(supabase: any, startPage = 1, maxPages = 12, account
         if (desc.includes('810ml') || desc.includes('810 ml')) return false;
         return true;
       })
-      .map((prod: any) => ({
+      .map((prod) => ({
         omie_codigo_produto: prod.codigo_produto,
         omie_codigo_produto_integracao: prod.codigo_produto_integracao || null,
         codigo: prod.codigo || `PROD-${prod.codigo_produto}`,
@@ -198,7 +367,7 @@ async function syncProducts(supabase: any, startPage = 1, maxPages = 12, account
 }
 
 // Sincronizar estoque real dos produtos via ListarPosEstoque (paginado)
-async function syncEstoque(supabase: any, startPage = 1, maxPages = 3, account: Account = "oben") {
+async function syncEstoque(supabase: SupabaseClient, startPage = 1, maxPages = 3, account: Account = "oben") {
   let pagina = startPage;
   let totalPaginas = 1;
   let totalUpdated = 0;
@@ -214,19 +383,19 @@ async function syncEstoque(supabase: any, startPage = 1, maxPages = 3, account: 
         dDataPosicao: new Date().toLocaleDateString("pt-BR"),
       },
       account
-    ) as any;
+    );
 
     if (!result) {
       console.log(`[Omie Vendas][${account}] Estoque sync interrupted by rate limit at page ${pagina}`);
       break;
     }
 
-    totalPaginas = result.nTotPaginas || 1;
-    const produtos = Array.isArray(result.produtos) ? result.produtos : [];
+    totalPaginas = (result.nTotPaginas as number) || 1;
+    const produtos: OmiePosEstoque[] = Array.isArray(result.produtos) ? (result.produtos as OmiePosEstoque[]) : [];
     const updatedAt = new Date().toISOString();
 
     const productCodes = produtos
-      .map((prod: any) => Number(prod.nCodProd))
+      .map((prod) => Number(prod.nCodProd))
       .filter((code: number) => Number.isFinite(code));
 
     if (productCodes.length > 0) {
@@ -239,11 +408,12 @@ async function syncEstoque(supabase: any, startPage = 1, maxPages = 3, account: 
       if (existingError) {
         console.error(`[Omie Vendas][${account}] Erro buscando produtos para atualizar estoque na página ${pagina}:`, existingError);
       } else {
-        const existingMap = new Map(
-          ((existingProducts ?? []) as any[]).map((product: any) => [Number(product.omie_codigo_produto), product.id])
+        const existingMap = new Map<number, string>(
+          ((existingProducts ?? []) as OmieProductMapRow[]).map((product) => [Number(product.omie_codigo_produto), product.id])
         );
 
-        const stockRows = (produtos as any[]).reduce<Array<{ id: string; omie_codigo_produto: number; account: Account; estoque: number; updated_at: string }>>((rows: Array<{ id: string; omie_codigo_produto: number; account: Account; estoque: number; updated_at: string }>, prod: any) => {
+        type StockRow = { id: string; omie_codigo_produto: number; account: Account; estoque: number; updated_at: string };
+        const stockRows = produtos.reduce<StockRow[]>((rows, prod) => {
           const omieCodigoProduto = Number(prod.nCodProd);
           const existingId = existingMap.get(omieCodigoProduto);
 
@@ -330,12 +500,13 @@ async function listarClientesVendas(searchTerm: string, account: Account = "oben
         },
       },
       account
-    ) as any;
+    );
 
-    if (result.clientes_cadastro) {
-      for (const c of result.clientes_cadastro) {
+    const clientes = result?.clientes_cadastro as OmieClienteCadastro[] | undefined;
+    if (clientes) {
+      for (const c of clientes) {
             results.push({
-              codigo_cliente: c.codigo_cliente_omie,
+              codigo_cliente: c.codigo_cliente_omie ?? 0,
               razao_social: c.razao_social || "",
               nome_fantasia: c.nome_fantasia || "",
               cnpj_cpf: c.cnpj_cpf || "",
@@ -349,7 +520,7 @@ async function listarClientesVendas(searchTerm: string, account: Account = "oben
               cep: c.cep || "",
               telefone: c.telefone1_ddd && c.telefone1_numero ? `(${c.telefone1_ddd}) ${c.telefone1_numero}` : "",
               contato: c.contato || "",
-              tags: (c.tags || []).map((t: any) => t.tag || t),
+              tags: (c.tags || []).map((t) => typeof t === 'string' ? t : (t.tag ?? '')),
               atividade: c.atividade || "",
             });
       }
@@ -373,13 +544,14 @@ async function listarClientesVendas(searchTerm: string, account: Account = "oben
           },
         },
         account
-      ) as any;
+      );
 
-      if (result.clientes_cadastro) {
-        for (const c of result.clientes_cadastro) {
+      const clientes2 = result?.clientes_cadastro as OmieClienteCadastro[] | undefined;
+      if (clientes2) {
+        for (const c of clientes2) {
           if (!results.find(r => r.codigo_cliente === c.codigo_cliente_omie)) {
             results.push({
-              codigo_cliente: c.codigo_cliente_omie,
+              codigo_cliente: c.codigo_cliente_omie ?? 0,
               razao_social: c.razao_social || "",
               nome_fantasia: c.nome_fantasia || "",
               cnpj_cpf: c.cnpj_cpf || "",
@@ -393,7 +565,7 @@ async function listarClientesVendas(searchTerm: string, account: Account = "oben
               cep: c.cep || "",
               telefone: c.telefone1_ddd && c.telefone1_numero ? `(${c.telefone1_ddd}) ${c.telefone1_numero}` : "",
               contato: c.contato || "",
-              tags: (c.tags || []).map((t: any) => t.tag || t),
+              tags: (c.tags || []).map((t) => typeof t === 'string' ? t : (t.tag ?? '')),
               atividade: c.atividade || "",
             });
           }
@@ -420,13 +592,14 @@ async function buscarClienteVendas(document: string, account: Account = "oben") 
       clientesFiltro: { cnpj_cpf: documentClean },
     },
     account
-  ) as any;
+  );
 
-  if (!result || !result.clientes_cadastro?.[0]?.codigo_cliente_omie) {
+  const clientesArr = result?.clientes_cadastro as OmieClienteCadastro[] | undefined;
+  if (!result || !clientesArr?.[0]?.codigo_cliente_omie) {
     return null;
   }
 
-  const cliente = result.clientes_cadastro[0];
+  const cliente = clientesArr[0];
   const codigoVendedor = cliente.recomendacoes?.codigo_vendedor || cliente.codigo_vendedor || null;
   console.log(`[Omie Vendas][${account}] Cliente ${cliente.codigo_cliente_omie} vendedor: recomendacoes=${cliente.recomendacoes?.codigo_vendedor}, root=${cliente.codigo_vendedor}, resolved=${codigoVendedor}`);
   return {
@@ -449,10 +622,10 @@ async function buscarHistoricoPrecosOmie(codigoCliente: number, account: Account
         filtrar_apenas_inclusao: "N",
       },
       account
-    ) as any;
+    );
 
     const precos: Record<number, number> = {};
-    const pedidos = result?.pedido_venda_produto || [];
+    const pedidos: OmiePedidoVendaProduto[] = (result?.pedido_venda_produto as OmiePedidoVendaProduto[] | undefined) || [];
 
     // Percorrer pedidos do mais recente ao mais antigo
     for (const pedido of pedidos) {
@@ -488,7 +661,7 @@ async function listarFormasPagamento(account: Account = "oben") {
   ];
 
   try {
-    const allParcelas: any[] = [];
+    const allParcelas: OmieParcela[] = [];
     let pagina = 1;
     let totalPaginas = 1;
 
@@ -498,10 +671,14 @@ async function listarFormasPagamento(account: Account = "oben") {
         "ListarParcelas",
         { pagina, registros_por_pagina: 500 },
         account
-      ) as any;
+      );
 
-      const parcelas = result.cadastros || result.parcela_cadastro || result.lista_parcelas || [];
-      totalPaginas = result.total_de_paginas || 1;
+      const parcelas: OmieParcela[] =
+        (result?.cadastros as OmieParcela[] | undefined)
+        || (result?.parcela_cadastro as OmieParcela[] | undefined)
+        || (result?.lista_parcelas as OmieParcela[] | undefined)
+        || [];
+      totalPaginas = (result?.total_de_paginas as number) || 1;
       console.log(`[Omie Vendas][${account}] ListarParcelas página ${pagina}/${totalPaginas} retornou ${parcelas.length} parcelas.`);
       allParcelas.push(...parcelas);
       pagina++;
@@ -509,12 +686,12 @@ async function listarFormasPagamento(account: Account = "oben") {
 
     if (allParcelas.length > 0) {
       return allParcelas
-        .filter((f: any) => f.cInativo !== "S")
-        .map((f: any) => ({
+        .filter((f) => f.cInativo !== "S")
+        .map((f) => ({
           codigo: f.cCodigo || f.nCodigo?.toString() || '',
           descricao: f.cDescricao || f.cDescParcela || '',
         }))
-        .filter((f: any) => f.codigo && f.descricao);
+        .filter((f) => f.codigo && f.descricao);
     }
   } catch (error) {
     console.error(`[Omie Vendas][${account}] Erro ao buscar parcelas:`, error);
@@ -538,9 +715,9 @@ async function buscarUltimaParcela(codigoCliente: number, account: Account = "ob
         filtrar_apenas_inclusao: "N",
       },
       account
-    ) as any;
+    );
 
-    const pedidos = result?.pedido_venda_produto || [];
+    const pedidos: OmiePedidoVendaProduto[] = (result?.pedido_venda_produto as OmiePedidoVendaProduto[] | undefined) || [];
     const parcelaCount: Record<string, number> = {};
     let ultimaParcela: string | null = null;
 
@@ -566,7 +743,7 @@ async function buscarUltimaParcela(codigoCliente: number, account: Account = "ob
 
 // Sincronizar pedidos de venda do Omie para o banco local (OPTIMIZED)
 async function syncPedidos(
-  supabase: any,
+  supabase: SupabaseClient,
   startPage = 1,
   maxPages = 10,
   account: Account = "oben",
@@ -683,12 +860,16 @@ async function syncPedidos(
     if (clientCache.has(codigoCliente)) return clientCache.get(codigoCliente) || null;
     // Fallback: call Omie API only for clients NOT in omie_clientes table
     try {
-      const result = await callOmieVendasApi(
+      const result = (await callOmieVendasApi(
         "geral/clientes/",
         "ConsultarCliente",
         { codigo_cliente_omie: codigoCliente },
         account
-      ) as any;
+      )) as OmieClienteCadastro | null;
+      if (!result) {
+        clientCache.set(codigoCliente, null);
+        return null;
+      }
       const doc = (result.cnpj_cpf || '').replace(/\D/g, '');
       // Cache address/phone from ConsultarCliente result
       const addrParts = [result.endereco, result.endereco_numero, result.complemento, result.bairro, result.cidade, result.estado, result.cep].filter(Boolean);
@@ -711,12 +892,12 @@ async function syncPedidos(
   async function getClientAddressPhone(codigoCliente: number): Promise<{ address: string; phone: string }> {
     if (clientAddressCache.has(codigoCliente)) return clientAddressCache.get(codigoCliente)!;
     try {
-      const result = await callOmieVendasApi(
+      const result = (await callOmieVendasApi(
         "geral/clientes/",
         "ConsultarCliente",
         { codigo_cliente_omie: codigoCliente },
         account
-      ) as any;
+      )) as OmieClienteCadastro | null;
       if (result) {
         const addrParts = [
           result.endereco,
@@ -747,18 +928,18 @@ async function syncPedidos(
       "ListarPedidos",
       listParams,
       account
-    ) as any;
+    );
 
     if (!result) {
       console.log(`[sync_pedidos][${account}] Pedidos sync interrupted by rate limit at page ${pagina}`);
       break;
     }
 
-    totalPaginas = result.total_de_paginas || 1;
-    const pedidos = result.pedido_venda_produto || [];
+    totalPaginas = (result.total_de_paginas as number) || 1;
+    const pedidos: OmiePedidoVendaProduto[] = (result.pedido_venda_produto as OmiePedidoVendaProduto[] | undefined) || [];
 
     // Resolve only unknown client codes (most should be in cache from omie_clientes)
-    const uniqueClientCodes = [...new Set(pedidos.map((p: any) => p.cabecalho?.codigo_cliente).filter(Boolean))] as number[];
+    const uniqueClientCodes = [...new Set(pedidos.map((p) => p.cabecalho?.codigo_cliente).filter((c): c is number => Boolean(c)))];
     const unknownCodes = uniqueClientCodes.filter(c => !clientCache.has(c));
     if (unknownCodes.length > 0) {
       console.log(`[sync_pedidos][${account}] Resolving ${unknownCodes.length} unknown clients via API (concurrency=5)`);
@@ -781,8 +962,8 @@ async function syncPedidos(
     }
 
     // ── Prepare batch arrays ──
-    const orderBatch: any[] = [];
-    const orderMeta: Array<{ hashPayload: string; detalhes: any[]; customerUserId: string; createdAt: string }> = [];
+    const orderBatch: OrderBatchRow[] = [];
+    const orderMeta: Array<{ hashPayload: string; detalhes: OmieDetalheItem[]; customerUserId: string; createdAt: string }> = [];
 
     for (const pedido of pedidos) {
       const cab = pedido.cabecalho || {};
@@ -800,8 +981,8 @@ async function syncPedidos(
       if (existingHashes.has(hashPayload)) { skippedExisting++; continue; }
       existingHashes.add(hashPayload); // prevent duplicates within same run
 
-      const detalhes = pedido.det || [];
-      const itemsJson: any[] = [];
+      const detalhes: OmieDetalheItem[] = pedido.det || [];
+      const itemsJson: OrderItemPayload[] = [];
       let subtotal = 0;
 
       for (const det of detalhes) {
@@ -875,19 +1056,19 @@ async function syncPedidos(
             totalSynced++;
             // Insert items + prices for this order
             const meta = orderMeta[idx];
-            const itemRows = meta.detalhes.map((det: any) => {
+            const itemRows = meta.detalhes.map((det) => {
               const prod = det.produto || {};
               return {
                 sales_order_id: single.id,
                 customer_user_id: meta.customerUserId,
-                product_id: productMap.get(prod.codigo_produto) || null,
+                product_id: (prod.codigo_produto ? productMap.get(prod.codigo_produto) : null) || null,
                 omie_codigo_produto: prod.codigo_produto || null,
                 quantity: prod.quantidade || 1,
                 unit_price: prod.valor_unitario || 0,
                 discount: prod.desconto || 0,
                 hash_payload: `${meta.hashPayload}_${prod.codigo_produto}`,
               };
-            }).filter((i: any) => i.omie_codigo_produto);
+            }).filter((i) => i.omie_codigo_produto);
             if (itemRows.length > 0) {
               await supabase.from('order_items').insert(itemRows);
               totalItems += itemRows.length;
@@ -902,8 +1083,8 @@ async function syncPedidos(
         for (const o of insertedOrders) if (o.hash_payload) hashToId.set(o.hash_payload, o.id);
 
         // ── Batch insert order_items ──
-        const allItemRows: any[] = [];
-        const allPriceRows: any[] = [];
+        const allItemRows: OrderItemBatchRow[] = [];
+        const allPriceRows: PriceHistoryBatchRow[] = [];
 
         for (const meta of orderMeta) {
           const orderId = hashToId.get(meta.hashPayload);
@@ -974,10 +1155,10 @@ async function buscarTransportadoraPorNome(nomeTransportadora: string, account: 
         clientesFiltro: { razao_social: nomeTransportadora },
       },
       account
-    ) as any;
-    const clientes = result?.clientes_cadastro || [];
+    );
+    const clientes: OmieClienteCadastro[] = (result?.clientes_cadastro as OmieClienteCadastro[] | undefined) || [];
     if (clientes.length > 0) {
-      const codigo = clientes[0].codigo_cliente_omie;
+      const codigo = clientes[0].codigo_cliente_omie ?? null;
       console.log(`[Omie Vendas][${account}] Transportadora '${nomeTransportadora}' encontrada: ${codigo}`);
       return codigo;
     }
@@ -990,12 +1171,12 @@ async function buscarTransportadoraPorNome(nomeTransportadora: string, account: 
 // Buscar transportadora do cadastro do cliente
 async function buscarTransportadoraCliente(codigoCliente: number, account: Account): Promise<number | null> {
   try {
-    const result = await callOmieVendasApi(
+    const result = (await callOmieVendasApi(
       "geral/clientes/",
       "ConsultarCliente",
       { codigo_cliente_omie: codigoCliente },
       account
-    ) as any;
+    )) as OmieClienteCadastro | null;
     const codTransp = result?.codigo_transportadora;
     if (codTransp && Number(codTransp) > 0) {
       console.log(`[Omie Vendas][${account}] Cliente ${codigoCliente} tem transportadora: ${codTransp}`);
@@ -1036,7 +1217,7 @@ function getAccountConfig(account: Account) {
 
 // Criar pedido de venda no Omie
 async function criarPedidoVenda(
-  supabase: any,
+  supabase: SupabaseClient,
   salesOrderId: string,
   codigoCliente: number,
   codigoVendedor: number | null,
@@ -1069,7 +1250,7 @@ async function criarPedidoVenda(
     };
     // Add tint color info or ordem de compra to item observations + NF-e
     if (ordemCompra) {
-      (entry as any).inf_adic = {
+      entry.inf_adic = {
         dados_adicionais_item: ordemCompra,
         numero_pedido_compra: ordemCompra,
       };
@@ -1088,10 +1269,10 @@ async function criarPedidoVenda(
         if (embMatch) embTag = embMatch[1].replace(',', '.') + 'ML';
       }
       const corInfo = `Cor: ${corLabel}${embTag ? ` - ${embTag}` : ''}`;
-      (entry as any).inf_adic = {
+      entry.inf_adic = {
         dados_adicionais_item: corInfo,
       };
-      (entry as any).observacao = {
+      entry.observacao = {
         obs_item: corInfo,
       };
     }
@@ -1149,7 +1330,7 @@ async function criarPedidoVenda(
     "IncluirPedido",
     payload,
     account
-  ) as any;
+  );
 
   if (!result) {
     throw new Error(
@@ -1157,8 +1338,8 @@ async function criarPedidoVenda(
     );
   }
 
-  const omie_pedido_id = result.codigo_pedido || null;
-  const omie_numero_pedido = result.numero_pedido || cCodIntPed;
+  const omie_pedido_id = (result.codigo_pedido as number | undefined) || null;
+  const omie_numero_pedido = (result.numero_pedido as string | number | undefined) || cCodIntPed;
 
   // Atualizar sales_order com dados do Omie
   await supabase
@@ -1268,10 +1449,11 @@ serve(async (req) => {
         if (telefone) clienteParams.telefone1_numero = telefone;
         if (contato) clienteParams.contato = contato;
         console.log(`[Omie Vendas][${account}] Criando cliente: ${razao_social} (${docClean})`);
-        const createRes = await callOmieVendasApi("geral/clientes/", "IncluirCliente", clienteParams, account) as any;
+        const createRes = await callOmieVendasApi("geral/clientes/", "IncluirCliente", clienteParams, account);
+        const createResTyped = createRes as { codigo_cliente_omie?: number; nCodCli?: number } | null;
         result = {
           success: true,
-          codigo_cliente: createRes.codigo_cliente_omie || createRes.nCodCli,
+          codigo_cliente: createResTyped?.codigo_cliente_omie ?? createResTyped?.nCodCli ?? null,
           razao_social,
           codigo_vendedor: null,
           created: true,
@@ -1346,7 +1528,8 @@ serve(async (req) => {
         const editConfig = getAccountConfig(editAccount);
 
         // Build updated items payload for local DB
-        const updatedItemsPayload = editItems.map((item: any) => ({
+        const editItemsTyped: EditItemInput[] = editItems;
+        const updatedItemsPayload = editItemsTyped.map((item) => ({
           product_id: item.product_id,
           omie_codigo_produto: item.omie_codigo_produto,
           codigo: item.codigo,
@@ -1357,16 +1540,19 @@ serve(async (req) => {
           valor_total: item.quantidade * item.valor_unitario,
           ...(item.tint_cor_id ? { tint_cor_id: item.tint_cor_id, tint_nome_cor: item.tint_nome_cor } : {}),
         }));
-        const updatedSubtotal = updatedItemsPayload.reduce((s: number, i: any) => s + i.valor_total, 0);
+        const updatedSubtotal = updatedItemsPayload.reduce((s: number, i) => s + i.valor_total, 0);
 
         // Build Omie payload
-        const origPayload = existingOrder.omie_payload as any;
+        const origPayload = existingOrder.omie_payload as {
+          informacoes_adicionais?: { codVend?: number };
+          frete?: { codigo_transportadora?: number };
+        } | null;
         const codigoPedido = Number(existingOrder.omie_pedido_id);
-        const buildExpectedSignature = (items: any[]) => items
+        const buildExpectedSignature = (items: EditItemInput[]) => items
           .map((item) => `${Number(item.omie_codigo_produto)}:${Number(item.quantidade)}:${Number(item.valor_unitario).toFixed(4)}`)
           .sort()
           .join("|");
-        const buildOmieSignature = (items: any[]) => items
+        const buildOmieSignature = (items: OmieDetalheItem[]) => items
           .map((item) => {
             const prod = item?.produto || {};
             return `${Number(prod.codigo_produto)}:${Number(prod.quantidade)}:${Number(prod.valor_unitario).toFixed(4)}`;
@@ -1375,21 +1561,22 @@ serve(async (req) => {
           .join("|");
 
         // Step 1: Consult the real order in Omie to get actual item codes
-        let omieCurrentItems: any[] = [];
+        let omieCurrentItems: OmieDetalheItem[] = [];
         try {
-          const consultResult = await callOmieVendasApi(
+          const consultResult = (await callOmieVendasApi(
             "produtos/pedido/",
             "ConsultarPedido",
             { codigo_pedido: codigoPedido },
             editAccount
-          ) as any;
+          )) as { pedido_venda_produto?: { det?: OmieDetalheItem[] }; det?: OmieDetalheItem[] } | null;
           // Omie returns items under pedido_venda_produto.det
           omieCurrentItems = consultResult?.pedido_venda_produto?.det
             || consultResult?.det
             || [];
           console.log(`[Omie Vendas][${editAccount}] Pedido consultado: ${omieCurrentItems.length} itens no Omie`);
-        } catch (consultErr: any) {
-          console.warn(`[Omie Vendas][${editAccount}] Erro ao consultar pedido: ${consultErr.message}`);
+        } catch (consultErr) {
+          const msg = consultErr instanceof Error ? consultErr.message : String(consultErr);
+          console.warn(`[Omie Vendas][${editAccount}] Erro ao consultar pedido: ${msg}`);
         }
 
         // Step 2: Delete all existing items
@@ -1409,14 +1596,15 @@ serve(async (req) => {
                 editAccount
               );
               console.log(`[Omie Vendas][${editAccount}] Item ${codItemInt || codItem} excluído`);
-            } catch (delErr: any) {
-              throw new Error(`Falha ao excluir item existente do pedido no Omie: ${delErr.message}`);
+            } catch (delErr) {
+              const msg = delErr instanceof Error ? delErr.message : String(delErr);
+              throw new Error(`Falha ao excluir item existente do pedido no Omie: ${msg}`);
             }
           }
         }
 
         // Step 3: Add each new item individually
-        const newDetForPayload: any[] = [];
+        const newDetForPayload: Array<{ ide: { codigo_item_integracao: number }; produto: { codigo_produto: number; quantidade: number; valor_unitario: number } }> = [];
 
         // Extract default CFOP from existing items (before deletion)
         const defaultCfop = (() => {
@@ -1459,8 +1647,9 @@ serve(async (req) => {
           try {
             await callOmieVendasApi("produtos/pedidovenda/", "IncluirItemPedido", inclPayload, editAccount);
             console.log(`[Omie Vendas][${editAccount}] Item ${index + 1} incluído: ${item.descricao}`);
-          } catch (inclErr: any) {
-            throw new Error(`Falha ao incluir item ${index + 1} no Omie: ${inclErr.message}`);
+          } catch (inclErr) {
+            const msg = inclErr instanceof Error ? inclErr.message : String(inclErr);
+            throw new Error(`Falha ao incluir item ${index + 1} no Omie: ${msg}`);
           }
 
           newDetForPayload.push({
@@ -1497,8 +1686,9 @@ serve(async (req) => {
           await callOmieVendasApi("produtos/pedido/", "AlterarPedidoVenda",
             { cabecalho: editCabecalho, frete: editFrete, observacoes: { obs_venda: editObs || editConfig.obs_prefix }, informacoes_adicionais: editInfoAdic },
             editAccount);
-        } catch (headerErr: any) {
-          throw new Error(`Falha ao atualizar cabeçalho do pedido no Omie: ${headerErr.message}`);
+        } catch (headerErr) {
+          const msg = headerErr instanceof Error ? headerErr.message : String(headerErr);
+          throw new Error(`Falha ao atualizar cabeçalho do pedido no Omie: ${msg}`);
         }
 
         await callOmieVendasApi(
@@ -1508,13 +1698,13 @@ serve(async (req) => {
           editAccount,
         );
 
-        const finalConsultResult = await callOmieVendasApi(
+        const finalConsultResult = (await callOmieVendasApi(
           "produtos/pedido/",
           "ConsultarPedido",
           { codigo_pedido: codigoPedido },
           editAccount,
-        ) as any;
-        const finalOmieItems = finalConsultResult?.pedido_venda_produto?.det
+        )) as { pedido_venda_produto?: { det?: OmieDetalheItem[] }; det?: OmieDetalheItem[] } | null;
+        const finalOmieItems: OmieDetalheItem[] = finalConsultResult?.pedido_venda_produto?.det
           || finalConsultResult?.det
           || [];
         const expectedSignature = buildExpectedSignature(editItems);
@@ -1585,8 +1775,9 @@ serve(async (req) => {
               orderAccount
             );
             console.log(`[Omie Vendas][${orderAccount}] Pedido ${pedidoId} cancelado no Omie`);
-          } catch (omieErr: any) {
-            console.warn(`[Omie Vendas][${orderAccount}] Erro ao cancelar no Omie (continuando exclusão local):`, omieErr.message);
+          } catch (omieErr) {
+            const msg = omieErr instanceof Error ? omieErr.message : String(omieErr);
+            console.warn(`[Omie Vendas][${orderAccount}] Erro ao cancelar no Omie (continuando exclusão local):`, msg);
           }
         }
 
@@ -1726,8 +1917,9 @@ serve(async (req) => {
         const { sales_order_id: opSalesId, items: opItems } = params;
         if (!opSalesId || !opItems?.length) throw new Error("Dados insuficientes para criar ordem de produção");
 
-        const createdOPs: any[] = [];
-        for (const opItem of opItems) {
+        const opItemsTyped: OpItemInput[] = opItems;
+        const createdOPs: CreatedOP[] = [];
+        for (const opItem of opItemsTyped) {
           // Create production order in Omie
           const opPayload = {
             cCodIntOP: `OP_${opSalesId.substring(0, 8)}_${opItem.omie_codigo_produto}_${Date.now()}`,
@@ -1740,17 +1932,18 @@ serve(async (req) => {
           let omieOrdemId: number | null = null;
           let omieOrdemNumero: string | null = null;
           try {
-            const opResult = await callOmieVendasApi(
+            const opResult = (await callOmieVendasApi(
               "manufatura/ordemproducao/",
               "IncluirOrdemProducao",
               opPayload,
               account
-            ) as any;
+            )) as { nCodOP?: number; cNumOP?: string } | null;
             omieOrdemId = opResult?.nCodOP || null;
             omieOrdemNumero = opResult?.cNumOP || String(omieOrdemId);
             console.log(`[Omie Vendas][${account}] OP criada: ${omieOrdemNumero}`);
-          } catch (opErr: any) {
-            console.error(`[Omie Vendas][${account}] Erro ao criar OP:`, opErr.message);
+          } catch (opErr) {
+            const msg = opErr instanceof Error ? opErr.message : String(opErr);
+            console.error(`[Omie Vendas][${account}] Erro ao criar OP:`, msg);
           }
 
           // Save to local DB
@@ -1768,7 +1961,7 @@ serve(async (req) => {
             ready_by_date: opItem.ready_by_date || null,
             account,
             created_by: userId,
-          } as any).select('id').single();
+          }).select('id').single();
 
           createdOPs.push({ id: insertedOP?.id, omie_ordem_id: omieOrdemId, omie_ordem_numero: omieOrdemNumero, descricao: opItem.descricao });
         }
@@ -1781,36 +1974,38 @@ serve(async (req) => {
         const { production_order_id } = params;
         if (!production_order_id) throw new Error("ID da ordem de produção é obrigatório");
 
-        const { data: po } = await supabaseAdmin
+        const { data: poData } = await supabaseAdmin
           .from("production_orders")
           .select("*")
           .eq("id", production_order_id)
           .single();
-        if (!po) throw new Error("Ordem de produção não encontrada");
+        if (!poData) throw new Error("Ordem de produção não encontrada");
 
-        const poAccount: Account = (po as any).account === "colacor" ? "colacor" : "oben";
+        const po = poData as { account?: string; omie_ordem_producao_id?: number | null; omie_ordem_numero?: string | null };
+        const poAccount: Account = po.account === "colacor" ? "colacor" : "oben";
 
         // Finalize in Omie if it has an Omie ID
-        if ((po as any).omie_ordem_producao_id) {
+        if (po.omie_ordem_producao_id) {
           try {
             await callOmieVendasApi(
               "manufatura/ordemproducao/",
               "AlterarOrdemProducao",
               {
-                nCodOP: (po as any).omie_ordem_producao_id,
+                nCodOP: po.omie_ordem_producao_id,
                 cEtapa: "50", // Encerrada
               },
               poAccount
             );
-            console.log(`[Omie Vendas][${poAccount}] OP ${(po as any).omie_ordem_numero} finalizada no Omie`);
-          } catch (omieErr: any) {
-            console.warn(`[Omie Vendas][${poAccount}] Erro ao finalizar OP no Omie:`, omieErr.message);
+            console.log(`[Omie Vendas][${poAccount}] OP ${po.omie_ordem_numero} finalizada no Omie`);
+          } catch (omieErr) {
+            const msg = omieErr instanceof Error ? omieErr.message : String(omieErr);
+            console.warn(`[Omie Vendas][${poAccount}] Erro ao finalizar OP no Omie:`, msg);
           }
         }
 
         await supabaseAdmin
           .from("production_orders")
-          .update({ status: "completed", completed_at: new Date().toISOString() } as any)
+          .update({ status: "completed", completed_at: new Date().toISOString() })
           .eq("id", production_order_id);
 
         result = { success: true };

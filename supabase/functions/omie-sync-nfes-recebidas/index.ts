@@ -21,7 +21,7 @@
 // Body opcional:
 //   { "empresa": "OBEN" | "COLACOR" | "ALL", "dias": 30, "fornecedor_codigo_omie": 8689681266 }
 
-import { createClient } from "https://esm.sh/@supabase/supabase-js@2.45.0";
+import { createClient, type SupabaseClient } from "https://esm.sh/@supabase/supabase-js@2.45.0";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -70,6 +70,76 @@ interface EmpresaSummary {
 
 const TIMEOUT_GUARD_MS = 130_000;
 
+// Tipos minimos pra responses da Omie (campos opcionais — Omie nem sempre devolve tudo)
+interface OmieNFeCabec {
+  nIdReceb?: number;
+  cChaveNFe?: string;
+  cChaveNfe?: string;
+  nIdFornecedor?: number;
+  cRazaoSocial?: string;
+  cNome?: string;
+  cCNPJ_CPF?: string;
+  cNumeroNFe?: string;
+  cSerieNFe?: string;
+  dEmissaoNFe?: string;
+  transporte?: OmieNFeTransporte;
+}
+
+interface OmieNFeInfoCadastro {
+  cCancelada?: string;
+  cRecebido?: string;
+  cFaturado?: string;
+  dRec?: string;
+  hRec?: string;
+}
+
+interface OmieNFeTransporte {
+  cCnpjCpfTransp?: string;
+  cRazaoTransp?: string;
+  cNomeTransp?: string;
+}
+
+interface OmieNFeListItem {
+  cabec?: OmieNFeCabec;
+  infoCadastro?: OmieNFeInfoCadastro;
+  transporte?: OmieNFeTransporte;
+}
+
+interface OmieListRecebimentosResponse {
+  nTotalPaginas?: number;
+  recebimentos?: OmieNFeListItem[];
+  faultstring?: string;
+}
+
+interface OmieItensInfoAdic {
+  nNumPedCompra?: string | number;
+}
+
+interface OmieItemRecebimento {
+  itensInfoAdic?: OmieItensInfoAdic;
+}
+
+interface OmieConsultarRecebimentoResponse extends OmieNFeListItem {
+  itensRecebimento?: OmieItemRecebimento[];
+  faultstring?: string;
+}
+
+type OmieGenericResponse =
+  | OmieListRecebimentosResponse
+  | OmieConsultarRecebimentoResponse
+  | { faultstring?: string; raw?: string };
+
+interface PurchaseOrderTrackingRow {
+  id: string;
+  status?: string | null;
+  t2_data_faturamento?: string | null;
+  t4_data_recebimento?: string | null;
+  nfe_chave_acesso?: string | null;
+  raw_data?: Record<string, unknown> | null;
+  transportadora_nome?: string | null;
+  transportadora_cnpj?: string | null;
+}
+
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
 function formatDateBR(d: Date): string {
@@ -108,7 +178,7 @@ async function callOmie(
   app_secret: string,
   call: "ListarRecebimentos" | "ConsultarRecebimento",
   param: Record<string, unknown>,
-): Promise<any> {
+): Promise<OmieGenericResponse> {
   const body = { call, app_key, app_secret, param: [param] };
 
   let attempt = 0;
@@ -120,8 +190,8 @@ async function callOmie(
       body: JSON.stringify(body),
     });
     const text = await res.text();
-    let json: any;
-    try { json = JSON.parse(text); } catch { json = { raw: text }; }
+    let json: OmieGenericResponse;
+    try { json = JSON.parse(text) as OmieGenericResponse; } catch { json = { raw: text }; }
 
     if (res.status === 429 || (json?.faultstring && /rate limit/i.test(json.faultstring))) {
       console.warn(`[sync-nfes] ${call} rate limit (try ${attempt}/${MAX_RETRIES}) wait ${RETRY_DELAY_MS}ms`);
@@ -153,10 +223,10 @@ interface MappedNFe {
   transp_nome: string | null;
 }
 
-function mapNFe(nfe: any): MappedNFe {
-  const cab = nfe?.cabec ?? {};
-  const info = nfe?.infoCadastro ?? {};
-  const transp = cab?.transporte ?? nfe?.transporte ?? {};
+function mapNFe(nfe: OmieNFeListItem | OmieConsultarRecebimentoResponse): MappedNFe {
+  const cab: OmieNFeCabec = nfe?.cabec ?? {};
+  const info: OmieNFeInfoCadastro = nfe?.infoCadastro ?? {};
+  const transp: OmieNFeTransporte = cab?.transporte ?? nfe?.transporte ?? {};
 
   const cancelada = String(info?.cCancelada ?? "N").toUpperCase() === "S";
   const recebida = String(info?.cRecebido ?? "N").toUpperCase() === "S";
@@ -191,11 +261,11 @@ function mapNFe(nfe: any): MappedNFe {
  * Extrai a lista deduplicada de nNumPedCompra (CNUMERO do pedido de compra)
  * a partir de itensRecebimento[].itensInfoAdic.nNumPedCompra do detalhe da NFe.
  */
-function extractPedidosFromDetalhe(detalhe: any): string[] {
-  const itens: any[] = Array.isArray(detalhe?.itensRecebimento) ? detalhe.itensRecebimento : [];
+function extractPedidosFromDetalhe(detalhe: OmieConsultarRecebimentoResponse | null): string[] {
+  const itens: OmieItemRecebimento[] = Array.isArray(detalhe?.itensRecebimento) ? detalhe.itensRecebimento : [];
   const set = new Set<string>();
   for (const it of itens) {
-    const adic = it?.itensInfoAdic ?? {};
+    const adic: OmieItensInfoAdic = it?.itensInfoAdic ?? {};
     const num = adic?.nNumPedCompra;
     if (num !== undefined && num !== null && String(num).trim() !== "" && String(num).trim() !== "0") {
       set.add(String(num).trim());
@@ -209,7 +279,7 @@ function extractPedidosFromDetalhe(detalhe: any): string[] {
  * com os dados da NFe. Retorna quantas linhas foram atualizadas.
  */
 async function updateLinhasDoPedido(
-  supabase: any,
+  supabase: SupabaseClient,
   empresa: Empresa,
   numeroContrato: string,
   fornecedorCodigo: number | null,
@@ -223,19 +293,20 @@ async function updateLinhasDoPedido(
   if (fornecedorCodigo) {
     q = q.eq("fornecedor_codigo_omie", fornecedorCodigo);
   }
-  const { data: linhas, error: selErr } = await q;
+  const { data, error: selErr } = await q;
   if (selErr) throw selErr;
-  if (!linhas || linhas.length === 0) return 0;
+  const linhas = (data ?? []) as PurchaseOrderTrackingRow[];
+  if (linhas.length === 0) return 0;
 
   let atualizadas = 0;
   for (const linha of linhas) {
-    const currentStatus = String((linha as any).status ?? "");
+    const currentStatus = String(linha.status ?? "");
     let finalStatus: "FATURADO" | "RECEBIDO" | "CANCELADO" = m.status;
     if (currentStatus === "CANCELADO") finalStatus = "CANCELADO";
     else if (currentStatus === "RECEBIDO" && m.status === "FATURADO") finalStatus = "RECEBIDO";
 
     const updateRow: Record<string, unknown> = {
-      t2_data_faturamento: (linha as any).t2_data_faturamento ?? m.data_emissao_iso,
+      t2_data_faturamento: linha.t2_data_faturamento ?? m.data_emissao_iso,
       nfe_chave_acesso: m.chave,
       nfe_numero: m.numero,
       nfe_serie: m.serie,
@@ -243,7 +314,7 @@ async function updateLinhasDoPedido(
       updated_at: new Date().toISOString(),
     };
     if (m.recebida && m.data_recebimento_iso) {
-      updateRow.t4_data_recebimento = (linha as any).t4_data_recebimento ?? m.data_recebimento_iso;
+      updateRow.t4_data_recebimento = linha.t4_data_recebimento ?? m.data_recebimento_iso;
     }
     if (m.transp_cnpj) updateRow.transportadora_cnpj = m.transp_cnpj;
     if (m.transp_nome) updateRow.transportadora_nome = m.transp_nome;
@@ -253,7 +324,7 @@ async function updateLinhasDoPedido(
     const { error: updErr } = await supabase
       .from("purchase_orders_tracking")
       .update(updateRow)
-      .eq("id", (linha as any).id);
+      .eq("id", linha.id);
     if (updErr) throw updErr;
     atualizadas++;
   }
@@ -261,9 +332,9 @@ async function updateLinhasDoPedido(
 }
 
 async function insertOrfa(
-  supabase: any,
+  supabase: SupabaseClient,
   empresa: Empresa,
-  nfe: any,
+  nfe: OmieNFeListItem,
   m: MappedNFe,
   nIdReceb: number,
 ): Promise<void> {
@@ -311,7 +382,7 @@ async function insertOrfa(
 }
 
 async function syncEmpresa(
-  supabase: any,
+  supabase: SupabaseClient,
   empresa: Empresa,
   dias: number,
   fornecedorCodigo: number | undefined,
@@ -352,7 +423,7 @@ async function syncEmpresa(
   let totalPaginas = 1;
 
   while (pagina <= totalPaginas) {
-    let resp: any;
+    let resp: OmieListRecebimentosResponse;
     try {
       const param: Record<string, unknown> = {
         nPagina: pagina,
@@ -364,7 +435,7 @@ async function syncEmpresa(
         cEtapa: "",
       };
       if (fornecedorCodigo) param.nIdFornecedor = fornecedorCodigo;
-      resp = await callOmie(app_key, app_secret, "ListarRecebimentos", param);
+      resp = (await callOmie(app_key, app_secret, "ListarRecebimentos", param)) as OmieListRecebimentosResponse;
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
       console.error(`[sync-nfes] ${empresa} pag=${pagina} ListarRecebimentos erro: ${msg}`);
@@ -384,7 +455,7 @@ async function syncEmpresa(
     }
 
     totalPaginas = Number(resp?.nTotalPaginas ?? 1);
-    const nfes: any[] = Array.isArray(resp?.recebimentos) ? resp.recebimentos : [];
+    const nfes: OmieNFeListItem[] = Array.isArray(resp?.recebimentos) ? resp.recebimentos : [];
     console.log(`[sync-nfes] ${empresa} pag=${pagina}/${totalPaginas} nfes=${nfes.length}`);
 
     for (const nfe of nfes) {
@@ -404,9 +475,9 @@ async function syncEmpresa(
 
         // ConsultarRecebimento → busca itens e nNumPedCompra
         await sleep(RATE_LIMIT_DELAY_MS);
-        let detalhe: any;
+        let detalhe: OmieConsultarRecebimentoResponse | null;
         try {
-          detalhe = await callOmie(app_key, app_secret, "ConsultarRecebimento", { nIdReceb });
+          detalhe = (await callOmie(app_key, app_secret, "ConsultarRecebimento", { nIdReceb })) as OmieConsultarRecebimentoResponse;
           summary.consultas_detalhadas++;
         } catch (errDet) {
           const msgDet = errDet instanceof Error ? errDet.message : String(errDet);
@@ -471,7 +542,7 @@ async function syncEmpresa(
  * chama ConsultarRecebimento(cChaveNFe) e atualiza raw_data + campos NULL.
  */
 async function backfillRawData(
-  supabase: any,
+  supabase: SupabaseClient,
   empresa: Empresa,
   fornecedorCodigo: number | undefined,
   t0: number,
@@ -499,8 +570,9 @@ async function backfillRawData(
     return out;
   }
 
-  const incompletos = (linhas ?? []).filter((l: any) => {
-    const rd = l.raw_data;
+  const linhasTyped = (linhas ?? []) as PurchaseOrderTrackingRow[];
+  const incompletos = linhasTyped.filter((l) => {
+    const rd = l.raw_data as { cabec?: { nIdReceb?: number } } | null | undefined;
     if (!rd || typeof rd !== "object") return true;
     const cab = rd.cabec;
     if (!cab || typeof cab !== "object") return true;
@@ -517,7 +589,7 @@ async function backfillRawData(
       break;
     }
 
-    const chave = String((linha as any).nfe_chave_acesso ?? "").replace(/\D/g, "").slice(0, 44);
+    const chave = String(linha.nfe_chave_acesso ?? "").replace(/\D/g, "").slice(0, 44);
     if (chave.length !== 44) {
       out.erros++;
       continue;
@@ -525,7 +597,7 @@ async function backfillRawData(
 
     try {
       await sleep(RATE_LIMIT_DELAY_MS);
-      const detalhe = await callOmie(app_key, app_secret, "ConsultarRecebimento", { cChaveNFe: chave });
+      const detalhe = (await callOmie(app_key, app_secret, "ConsultarRecebimento", { cChaveNFe: chave })) as OmieConsultarRecebimentoResponse;
 
       if (!detalhe || detalhe?.faultstring) {
         const fs = String(detalhe?.faultstring ?? "vazio");
@@ -539,23 +611,23 @@ async function backfillRawData(
         raw_data: detalhe,
         updated_at: new Date().toISOString(),
       };
-      if (!(linha as any).t2_data_faturamento && m.data_emissao_iso) {
+      if (!linha.t2_data_faturamento && m.data_emissao_iso) {
         updateRow.t2_data_faturamento = m.data_emissao_iso;
       }
-      if (!(linha as any).t4_data_recebimento && m.recebida && m.data_recebimento_iso) {
+      if (!linha.t4_data_recebimento && m.recebida && m.data_recebimento_iso) {
         updateRow.t4_data_recebimento = m.data_recebimento_iso;
       }
-      if (!(linha as any).transportadora_nome && m.transp_nome) {
+      if (!linha.transportadora_nome && m.transp_nome) {
         updateRow.transportadora_nome = m.transp_nome;
       }
-      if (!(linha as any).transportadora_cnpj && m.transp_cnpj) {
+      if (!linha.transportadora_cnpj && m.transp_cnpj) {
         updateRow.transportadora_cnpj = m.transp_cnpj;
       }
 
       const { error: updErr } = await supabase
         .from("purchase_orders_tracking")
         .update(updateRow)
-        .eq("id", (linha as any).id);
+        .eq("id", linha.id);
       if (updErr) {
         console.error(`[backfill] ${empresa} chave=${chave} update erro: ${updErr.message}`);
         out.erros++;
