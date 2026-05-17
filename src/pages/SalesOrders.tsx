@@ -84,6 +84,9 @@ const SalesOrders = () => {
       const { data, error } = await supabase
         .from('sales_orders')
         .select('*')
+        // Filtra soft-deletes (deleted_at IS NOT NULL = pedido excluído).
+        // Usa partial index idx_sales_orders_active em deleted_at IS NULL.
+        .is('deleted_at', null)
         .order('created_at', { ascending: false })
         .range(start, start + PAGE_SIZE - 1);
       if (error) throw error;
@@ -170,7 +173,12 @@ const SalesOrders = () => {
 
   const loading = salesQuery.isLoading || afiacaoQuery.isLoading;
 
-  // Optimistic delete — atualiza cache de useInfiniteQuery, rollback em erro
+  // Soft-delete + Omie exclude. Fluxo:
+  // 1. Optimistic remove do cache (UI atualiza instantaneamente)
+  // 2. UPDATE sales_orders SET deleted_at = now() (audit trail compliance)
+  // 3. Call Omie excluir_pedido
+  // 4. Se Omie falhar: rollback do soft-delete + restaura cache
+  // 5. Se Supabase update falhar: rollback do cache, NÃO chama Omie
   const deleteOrder = async (order: SalesOrder) => {
     const snapshot = queryClient.getQueryData(['sales-orders-paginated']);
     queryClient.setQueryData(['sales-orders-paginated'], (old: any) => {
@@ -185,6 +193,21 @@ const SalesOrders = () => {
       next.delete(order.id);
       return next;
     });
+
+    // 1. Soft-delete local primeiro (audit trail antes do Omie)
+    const { error: softErr } = await supabase
+      .from('sales_orders')
+      .update({ deleted_at: new Date().toISOString() })
+      .eq('id', order.id);
+
+    if (softErr) {
+      console.error(softErr);
+      queryClient.setQueryData(['sales-orders-paginated'], snapshot);
+      toast.error('Erro ao excluir pedido', { description: softErr.message });
+      return;
+    }
+
+    // 2. Omie exclude — se falhar, rollback do soft-delete
     try {
       const { error } = await supabase.functions.invoke('omie-vendas-sync', {
         body: {
@@ -197,7 +220,12 @@ const SalesOrders = () => {
       toast.success('Pedido excluído');
     } catch (e: any) {
       console.error(e);
-      queryClient.setQueryData(['sales-orders-paginated'], snapshot); // rollback
+      // Rollback do soft-delete (deleted_at = null) — pedido volta a ser ativo
+      await supabase
+        .from('sales_orders')
+        .update({ deleted_at: null })
+        .eq('id', order.id);
+      queryClient.setQueryData(['sales-orders-paginated'], snapshot);
       toast.error('Erro ao excluir pedido', { description: e?.message });
     }
   };
@@ -217,8 +245,23 @@ const SalesOrders = () => {
     });
     setSelectedIds(new Set());
 
+    // 1. Soft-delete em batch (1 UPDATE com .in('id', ...))
+    const nowIso = new Date().toISOString();
+    const { error: softErr } = await supabase
+      .from('sales_orders')
+      .update({ deleted_at: nowIso })
+      .in('id', Array.from(deleteIds));
+
+    if (softErr) {
+      console.error(softErr);
+      queryClient.setQueryData(['sales-orders-paginated'], snapshot);
+      toast.error(`Erro ao excluir pedidos`, { description: softErr.message });
+      return;
+    }
+
+    // 2. Omie exclude sequencial (não floodar). Rollback do deleted_at em falhas.
+    const failedIds: string[] = [];
     let success = 0;
-    let failed = 0;
     for (const o of toDelete) {
       try {
         const { error } = await supabase.functions.invoke('omie-vendas-sync', {
@@ -231,9 +274,18 @@ const SalesOrders = () => {
         if (error) throw error;
         success++;
       } catch (e) {
-        failed++;
+        failedIds.push(o.id);
         console.error(e);
       }
+    }
+    const failed = failedIds.length;
+
+    // Rollback do soft-delete só pros que falharam no Omie
+    if (failedIds.length > 0) {
+      await supabase
+        .from('sales_orders')
+        .update({ deleted_at: null })
+        .in('id', failedIds);
     }
 
     if (failed === 0) {
@@ -242,7 +294,21 @@ const SalesOrders = () => {
       queryClient.setQueryData(['sales-orders-paginated'], snapshot); // rollback completo
       toast.error(`Falhou: ${failed} pedido(s) não puderam ser excluídos`);
     } else {
-      // Parcial — mantém o sucesso
+      // Parcial — restaura os que falharam no cache (já temos deleted_at=null no DB)
+      const failedSet = new Set(failedIds);
+      queryClient.setQueryData(['sales-orders-paginated'], (old: any) => {
+        if (!old || !snapshot) return old;
+        // Pega as rows que falharam do snapshot original e reinjeta na primeira página
+        const failedRows = (snapshot as any).pages
+          .flat()
+          .filter((o: SalesOrder) => failedSet.has(o.id));
+        return {
+          ...old,
+          pages: old.pages.map((page: SalesOrder[], i: number) =>
+            i === 0 ? [...failedRows, ...page] : page,
+          ),
+        };
+      });
       toast.warning(`${success} excluído(s), ${failed} falharam`);
     }
   };
