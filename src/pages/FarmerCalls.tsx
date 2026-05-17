@@ -204,6 +204,7 @@ const FarmerCalls = () => {
     isRinging: nvoipIsRinging,
     isEstablished: nvoipIsEstablished,
     error: nvoipError,
+    backend: callBackend,
   } = useCallBackend();
 
   const [isCallActive, setIsCallActive] = useState(false);
@@ -773,7 +774,7 @@ const FarmerCalls = () => {
                         {nvoipIsRinging && <><PhoneCall className="w-3 h-3 mr-1 animate-pulse" /> Tocando ramal/destino</>}
                         {nvoipIsEstablished && <><PhoneIncoming className="w-3 h-3 mr-1 text-emerald-600" /> Em chamada</>}
                         {!nvoipIsActive && !nvoipIsEstablished && (
-                          <>📞 Disca via Nvoip → {selectedCustomer.phone}</>
+                          <>📞 Disca via {callBackend === 'webrtc' ? 'WebRTC' : 'Nvoip'} → {selectedCustomer.phone}</>
                         )}
                       </Badge>
                     ) : (
