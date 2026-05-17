@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Skeleton } from '@/components/ui/skeleton';
 import { Badge } from '@/components/ui/badge';
@@ -35,6 +35,10 @@ export default function AdminDepartments() {
 
   const [search, setSearch] = useState('');
   const [filterDept, setFilterDept] = useState<Department | 'all' | 'none'>('all');
+
+  useEffect(() => {
+    track('department.page_viewed', {});
+  }, []);
 
   const filtered = useMemo(() => {
     if (!users) return [];
