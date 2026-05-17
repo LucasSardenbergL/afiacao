@@ -47,7 +47,10 @@ export default async ({ page, context }) => {
   // um waitFor pendurado (cenário do bug original — "Waiting failed: 7000ms"
   // mascarando o teto externo), morremos controlado dentro de 58s e devolvemos
   // envelope estruturado. Todos os timeouts do script passam por budgetFor.
-  const HARD_CEILING_MS = 58_000;   // 2s margem abaixo dos 60s do Browserless
+  // PR9: upgrade do Browserless Free (60s) -> Prototyping (15min). Subimos o
+  // deadline interno para 280s (4min40s) — cabe pedido de 30+ SKUs em uma única
+  // sessão. Mantém 20s de margem antes do timeout HTTP de 300s na URL.
+  const HARD_CEILING_MS = 280_000;
   const RETURN_GUARD_MS = 2_000;    // tempo para Browserless serializar o JSON
   const SUBMIT_RESERVED_MS = 8_000; // reservado para o click + sinal pós-submit
   const ITEM_MIN_BUDGET_MS = 3_000; // tempo mínimo viável por item do loop
@@ -863,8 +866,54 @@ export default async ({ page, context }) => {
       trace.push({ step: 'debug_btn_gravar_iter_' + i, t: Date.now() - t0, debugGravarItem: debugGravarItem });
       console.log('[DEBUG_BTN_GRAVAR]', JSON.stringify({ iteration: i, ...debugGravarItem }));
 
+      // PR12: o portal Sayerlack às vezes ignora o click do #btnGravarItem
+      // silenciosamente — o POST /save-tab-preco-session não dispara e a row
+      // fica em modo edit no DOM. O script anterior achava que salvou
+      // (waitForFunction de row count passava porque a row já existe na UI),
+      // continuava pro próximo item, e a próxima iteração travava na validação
+      // (15s timeout em validacao_data_entrega) porque o portal estava em
+      // estado inconsistente.
+      //
+      // Correção: armar waitForResponse('save-tab-preco-session') ANTES do
+      // click. Se o POST não vier em 7s, retentamos o click uma vez.
+      const SAVE_TAB_RE = /save-tab-preco-session/i;
+      const armarSaveWait = (label) => page.waitForResponse(
+        (resp) => {
+          try {
+            return resp.request().method() === 'POST' && SAVE_TAB_RE.test(resp.url());
+          } catch (e) { return false; }
+        },
+        { timeout: budgetFor(label, 7_000, { minMs: 1_000 }) }
+      ).then((r) => ({ ok: true, status: r.status() })).catch(() => ({ ok: false }));
+
+      let saveConfirm = armarSaveWait('item-' + i + '-save-confirm');
       await page.click('#btnGravarItem');
-      // Aguarda a linha aparecer/atualizar no datatable
+      let saveResult = await saveConfirm;
+
+      if (!saveResult.ok) {
+        // Retry: portal ignorou o click. Tenta de novo.
+        console.warn('[DEBUG_ITEM_SAVE_RETRY]', JSON.stringify({ iteration: i, sku: item.sku_portal }));
+        trace.push({ step: 'item_' + i + '_save_retry', t: Date.now() - t0 });
+        saveConfirm = armarSaveWait('item-' + i + '-save-retry');
+        await page.click('#btnGravarItem');
+        saveResult = await saveConfirm;
+
+        if (!saveResult.ok) {
+          // Falhou 2x — POST do save nunca saiu. Aborta o pedido com erro
+          // específico pra ficar claro na auditoria que foi o save do item
+          // que travou (não outra coisa). Sem POST de submit ainda → vira
+          // erro_retentavel via buildEnvelope.
+          const errSave = new Error(
+            'Portal Sayerlack ignorou o click do Gravar Item duas vezes para o item ' +
+            i + ' (SKU ' + item.sku_portal + '). Save POST nunca disparou.'
+          );
+          errSave.code = 'ITEM_SAVE_NAO_CONFIRMADO';
+          throw errSave;
+        }
+      }
+      trace.push({ step: 'item_' + i + '_save_confirmed', t: Date.now() - t0, httpStatus: saveResult.status });
+
+      // Mantém o waitForFunction da row count como segunda checagem (defensivo).
       await page.waitForFunction(
         (esperado) => {
           const rows = document.querySelectorAll('#datatable_itens tbody tr');
@@ -891,6 +940,18 @@ export default async ({ page, context }) => {
       return !temValidando && efetivarHabilitado;
     }, { timeout: budgetFor('validacao-pre-efetivar', 15_000), polling: 250 });
     trace.push({ step: 'validacao_data_entrega_ok_pre_efetivar', t: Date.now() - t0, remaining: remainingMs() });
+
+    // PR13: scroll do botão "Efetivar Pedido" pra dentro da viewport ANTES do
+    // click. O navbar sticky do portal Sayerlack cobre o topo da página; quando
+    // há vários itens no formulário, a rolagem deixa o botão atrás do navbar
+    // (y negativo). O Puppeteer clica na coordenada certa mas o navbar
+    // intercepta — click some silenciosamente. Reproduzido em pedido de 6 SKUs
+    // (trace mostrou rect.y=-17, elementoNoCentro=div.navbar-nav).
+    await page.evaluate(() => {
+      const btn = document.querySelector('#btnSalvarNovoPedido');
+      if (btn) btn.scrollIntoView({ block: 'center' });
+    });
+    await sleep(300); // tempo do scroll completar e DOM estabilizar
 
     // Diagnóstico rico pré-click: estado do botão, contexto, hit-test, listeners jQuery
     const preClickDiag = await page.evaluate(function() {
@@ -957,7 +1018,15 @@ export default async ({ page, context }) => {
     // Arma os 4 sinais ANTES do click — qualquer um que cumpra ganha. Ignora
     // rejeições individuais via Promise.any. Substitui o waitForFunction de
     // banner único do PR1/PR2 (sinal frágil que perdia respostas atrasadas).
-    const postSubmitBudget = budgetFor('submit-pedido', 10_000, { reserveSubmit: false, minMs: 2_000 });
+    // PR11: 60s em vez de 14s. Descoberta no trace do pedido #230 (20 SKUs):
+    // a resposta do POST /order-creation/form/add ESCALA COM O TAMANHO DO
+    // PEDIDO no Sayerlack:
+    //   4 SKUs  → ~9s   (era o que o PR6 calibrou)
+    //   20 SKUs → ~20s  (estoura os 14s do PR6 facilmente)
+    // Com HARD_CEILING_MS=280s do PR9 e ~118s sobrando no click típico,
+    // usar 60s aqui é confortável. budgetFor cai pra (restante - 2s) se
+    // o pedido for mais lento e chegar com menos folga.
+    const postSubmitBudget = budgetFor('submit-pedido', 60_000, { reserveSubmit: false, minMs: 2_000 });
     const signalPromise = waitForPositiveSubmitSignal(page, postSubmitBudget);
 
     await page.click('#btnSalvarNovoPedido');
@@ -1133,7 +1202,9 @@ export default async ({ page, context }) => {
     };
   } catch (err) {
     const errorScreenshot = await page.screenshot({ type: 'png', encoding: 'base64' }).catch(() => null);
-    const erroTipo = (err && err.code === 'BUDGET_EXHAUSTED') ? 'BUDGET_EXHAUSTED' : 'EXCEPTION';
+    // PR12: propaga qualquer err.code conhecido (BUDGET_EXHAUSTED, ITEM_SAVE_NAO_CONFIRMADO, ...)
+    // pra auditoria. Sem code → EXCEPTION genérico.
+    const erroTipo = (err && err.code) ? err.code : 'EXCEPTION';
     return {
       data: {
         success: false,
@@ -1158,7 +1229,9 @@ export default async ({ page, context }) => {
   } catch (err) {
     // Rede de segurança: runFlow tem try/catch interno, mas qualquer escape
     // ainda devolve envelope estruturado (nunca um throw nu para o Browserless).
-    const erroTipo = (err && err.code === 'BUDGET_EXHAUSTED') ? 'BUDGET_EXHAUSTED' : 'EXCEPTION';
+    // PR12: propaga qualquer err.code conhecido (BUDGET_EXHAUSTED, ITEM_SAVE_NAO_CONFIRMADO, ...)
+    // pra auditoria. Sem code → EXCEPTION genérico.
+    const erroTipo = (err && err.code) ? err.code : 'EXCEPTION';
     raw = {
       data: {
         success: false,
@@ -1508,9 +1581,11 @@ async function processarPedido(
 
   try {
     const ctrl = new AbortController();
-    const timeout = setTimeout(() => ctrl.abort(), 150000);
+    // PR9: 350s no abort do fetch (50s de margem após o ?timeout=300000 do
+    // Browserless Prototyping). Antes era 150s + ?timeout=60000.
+    const timeout = setTimeout(() => ctrl.abort(), 350_000);
     const resp = await fetch(
-      `https://chrome.browserless.io/function?token=${BROWSERLESS_TOKEN}&timeout=60000`,
+      `https://chrome.browserless.io/function?token=${BROWSERLESS_TOKEN}&timeout=300000`,
       {
         method: "POST",
         headers: { "Content-Type": "application/json" },

@@ -1,0 +1,57 @@
+# CI — roda em PRs + pushes pra main.
+#
+# Lição do PR #4 (visual redesign, mergeado em 2026-05-14): o PR mergeou com 66
+# classes Tailwind quebradas em produção (sed cego deixou `bg-status-*-bg0` em
+# vez de `bg-status-*-bg`). Build NUNCA rodou antes do merge. Este workflow
+# garante que isso não repita.
+#
+# Decisões de bloqueio:
+# - typecheck (tsc --noEmit): blocking — qualquer regressão de tipos quebra o PR
+# - test (vitest run): blocking — regressão de comportamento documentado
+# - build (vite build): blocking — pega Tailwind quebrado + import errors + PWA setup
+# - lint (eslint): informational — main hoje tem 1300 errors herdados (97%
+#   no-explicit-any). Bloqueá-lo pararia todo PR. Quando TypeScript strict mode
+#   roadmap zerar a dívida, virar blocking.
+
+name: CI
+
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main]
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
+
+      - name: Install deps
+        run: bun install --frozen-lockfile
+
+      # ─── Blocking checks ────────────────────────────────────────────
+      - name: Type check
+        run: bunx tsc --noEmit
+
+      - name: Tests
+        run: bun run test
+
+      - name: Build
+        run: bun run build
+        env:
+          # Build precisa do mesmo ambiente que Lovable produção.
+          # Se algum VITE_* for required no futuro, adicionar aqui.
+          NODE_ENV: production
+
+      # ─── Informational (não bloqueia merge) ─────────────────────────
+      - name: Lint (informational)
+        run: bun lint
+        continue-on-error: true

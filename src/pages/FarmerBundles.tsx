@@ -1,7 +1,5 @@
 import { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Header } from '@/components/Header';
-import { BottomNav } from '@/components/BottomNav';
 import { Card, CardContent } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
@@ -32,7 +30,6 @@ const FarmerBundles = () => {
 
   return (
     <div className="min-h-screen bg-background pb-24">
-      <Header title="Bundles Dinâmicos" showBack />
 
       <main className="px-4 py-4 space-y-4 max-w-lg mx-auto">
         <Card className="bg-gradient-to-br from-primary/10 to-primary/5 border-primary/20">
@@ -99,7 +96,6 @@ const FarmerBundles = () => {
           </TabsContent>
         </Tabs>
       </main>
-      <BottomNav />
     </div>
   );
 };

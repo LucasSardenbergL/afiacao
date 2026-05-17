@@ -23,3 +23,30 @@ export function maskDocument(doc: string | null | undefined): string {
   if (clean.length < 6) return '***';
   return clean.slice(0, 4) + '***' + clean.slice(-2);
 }
+
+/**
+ * Decodifica entidades HTML que vieram salvas em texto livre no banco
+ * (ex.: nomes de clientes importados de fontes que escaparam apóstrofos
+ * para `&apos;`, ampersand para `&amp;`, etc.). React por segurança não
+ * decoda entidades automaticamente — então sem essa função, um nome como
+ * `&apos;PALLET&apos;S EMBALAR&apos;` aparece literal na tela em vez de
+ * `'PALLET'S EMBALAR'`.
+ *
+ * Implementação usa o próprio parser do navegador (`textarea.innerHTML`),
+ * que cobre todas as ~2000 entidades HTML5 + numéricas (`&#39;`, `&#x27;`).
+ * Como é Set-then-Get em um elemento DESCONECTADO do DOM, não há risco de
+ * XSS — nenhum script é executado mesmo se a string tiver `<script>`.
+ *
+ * @example
+ *   decodeHtmlEntities('&apos;PALLET&apos;S EMBALAR&apos;') → "'PALLET'S EMBALAR'"
+ *   decodeHtmlEntities('Caf&eacute; &amp; Cia') → 'Café & Cia'
+ *   decodeHtmlEntities(null) → ''
+ */
+export function decodeHtmlEntities(text: string | null | undefined): string {
+  if (!text) return '';
+  if (typeof document === 'undefined') return text;
+  if (!text.includes('&')) return text;
+  const el = document.createElement('textarea');
+  el.innerHTML = text;
+  return el.value;
+}

@@ -52,10 +52,11 @@ export function initAnalytics(): void {
       },
       // Identificar usuários só após login (não criar perfil pra anônimo)
       person_profiles: 'identified_only',
-      // Não enviar em desenvolvimento por padrão (descomente se quiser testar local)
+      // Não enviar em desenvolvimento por padrão (opt-out explícito em DEV pra evitar
+      // poluir dashboard de produção). Pra testar local, comente o opt_out abaixo.
       loaded: (ph) => {
         if (import.meta.env.DEV) {
-          ph.opt_in_capturing();
+          ph.opt_out_capturing();
         }
       },
     });

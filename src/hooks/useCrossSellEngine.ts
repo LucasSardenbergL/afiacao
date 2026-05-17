@@ -368,24 +368,25 @@ export const useCrossSellEngine = () => {
 
       setRecommendations(allRecs);
 
-      // Persist recommendations
-      for (const cr of allRecs) {
-        for (const rec of [...cr.crossSell, ...cr.upSell]) {
-          await supabase.from('farmer_recommendations' as any).upsert({
-            farmer_id: user.id,
-            customer_user_id: rec.customerId,
-            recommendation_type: rec.type,
-            product_id: rec.productId,
-            current_product_id: rec.currentProductId || null,
-            p_ij: rec.pij,
-            m_ij: rec.mij,
-            lie: rec.lie,
-            complexity_factor: rec.complexityFactor,
-            cluster_volume_estimate: rec.clusterVolume,
-            status: 'pendente',
-            updated_at: new Date().toISOString(),
-          } as any);
-        }
+      // Persist recommendations (batch upsert único — antes era N×M serial)
+      const recRows = allRecs.flatMap((cr) =>
+        [...cr.crossSell, ...cr.upSell].map((rec) => ({
+          farmer_id: user.id,
+          customer_user_id: rec.customerId,
+          recommendation_type: rec.type,
+          product_id: rec.productId,
+          current_product_id: rec.currentProductId || null,
+          p_ij: rec.pij,
+          m_ij: rec.mij,
+          lie: rec.lie,
+          complexity_factor: rec.complexityFactor,
+          cluster_volume_estimate: rec.clusterVolume,
+          status: 'pendente',
+          updated_at: new Date().toISOString(),
+        })),
+      );
+      if (recRows.length > 0) {
+        await supabase.from('farmer_recommendations' as any).upsert(recRows as any);
       }
     } catch (error) {
       console.error('Error calculating recommendations:', error);

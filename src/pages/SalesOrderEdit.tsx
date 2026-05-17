@@ -1,9 +1,7 @@
 import { useState, useEffect, useMemo } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
-import { Header } from '@/components/Header';
 import { TintColorSelectDialog } from '@/components/TintColorSelectDialog';
 import type { Product } from '@/hooks/useUnifiedOrder';
-import { BottomNav } from '@/components/BottomNav';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -380,11 +378,9 @@ const SalesOrderEdit = () => {
   if (loading) {
     return (
       <div className="min-h-screen bg-background pb-24">
-        <Header title="Editar Pedido" showBack />
         <div className="flex items-center justify-center pt-32">
           <Loader2 className="w-8 h-8 animate-spin text-primary" />
         </div>
-        <BottomNav />
       </div>
     );
   }
@@ -392,18 +388,15 @@ const SalesOrderEdit = () => {
   if (!order) {
     return (
       <div className="min-h-screen bg-background pb-24">
-        <Header title="Pedido não encontrado" showBack />
         <div className="flex items-center justify-center pt-32">
           <p className="text-muted-foreground">Pedido não encontrado</p>
         </div>
-        <BottomNav />
       </div>
     );
   }
 
   return (
     <div className="min-h-screen bg-background pb-32">
-      <Header title="Editar Pedido" showBack />
 
       <main className="pt-16 px-4 max-w-lg mx-auto space-y-4">
         {/* Order Info */}
@@ -614,7 +607,6 @@ const SalesOrderEdit = () => {
         )}
       </main>
 
-      <BottomNav />
 
       {/* Tint Color Dialog */}
       {tintProductAsProduct && (

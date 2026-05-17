@@ -4,53 +4,9 @@ import { cn } from "@/lib/utils";
 
 const Table = React.forwardRef<HTMLTableElement, React.HTMLAttributes<HTMLTableElement>>(
   ({ className, ...props }, ref) => {
-    const scrollRef = React.useRef<HTMLDivElement>(null);
-    const phantomRef = React.useRef<HTMLDivElement>(null);
-    const innerRef = React.useRef<HTMLDivElement>(null);
-    const [width, setWidth] = React.useState(0);
-    const [overflowing, setOverflowing] = React.useState(false);
-
-    React.useEffect(() => {
-      const el = scrollRef.current;
-      if (!el) return;
-      const update = () => {
-        setWidth(el.scrollWidth);
-        setOverflowing(el.scrollWidth > el.clientWidth + 1);
-      };
-      update();
-      const ro = new ResizeObserver(update);
-      ro.observe(el);
-      if (el.firstElementChild) ro.observe(el.firstElementChild as Element);
-      return () => ro.disconnect();
-    }, []);
-
-    const syncScroll = (source: HTMLDivElement | null, target: HTMLDivElement | null) => {
-      if (!source || !target) return;
-      if (Math.abs(target.scrollLeft - source.scrollLeft) > 1) {
-        target.scrollLeft = source.scrollLeft;
-      }
-    };
-
-    const onScrollMain = () => syncScroll(scrollRef.current, phantomRef.current);
-    const onScrollPhantom = () => syncScroll(phantomRef.current, scrollRef.current);
-
     return (
-      <div className="relative w-full">
-        <div ref={scrollRef} onScroll={onScrollMain} className="relative w-full overflow-auto">
-          <div ref={innerRef}>
-            <table ref={ref} className={cn("w-full caption-bottom text-sm", className)} {...props} />
-          </div>
-        </div>
-        {overflowing && (
-          <div
-            ref={phantomRef}
-            onScroll={onScrollPhantom}
-            className="sticky bottom-2 z-20 overflow-x-auto overflow-y-hidden h-3 bg-background/90 backdrop-blur-sm rounded-full shadow-md border border-border/50 mt-1"
-            aria-hidden="true"
-          >
-            <div style={{ width, height: 1 }} />
-          </div>
-        )}
+      <div className="relative w-full overflow-auto overscroll-contain rounded-md">
+        <table ref={ref} className={cn("w-full caption-bottom text-sm", className)} {...props} />
       </div>
     );
   },

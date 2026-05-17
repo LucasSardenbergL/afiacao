@@ -128,4 +128,3 @@ export function AuditLogSection() {
   );
 }
 
-export default AuditLogSection;

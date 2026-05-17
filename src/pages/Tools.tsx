@@ -1,14 +1,11 @@
 import { useState, useMemo } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Header } from '@/components/Header';
-import { BottomNav } from '@/components/BottomNav';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { AddToolDialog } from '@/components/AddToolDialog';
 import { supabase } from '@/integrations/supabase/client';
 import { useAuth } from '@/contexts/AuthContext';
-import { useUserRole } from '@/hooks/useUserRole';
 import { useToast } from '@/hooks/use-toast';
 import { Loader2, Plus, Wrench, Calendar, Trash2, Hash, Users, AlertTriangle, ShieldCheck, Clock, HelpCircle } from 'lucide-react';
 import { differenceInDays, format } from 'date-fns';
@@ -71,8 +68,7 @@ function getCriticality(nextDue: string | null): Criticality {
 
 const Tools = () => {
   const navigate = useNavigate();
-  const { user } = useAuth();
-  const { isStaff } = useUserRole();
+  const { user, isStaff } = useAuth();
   const { toast } = useToast();
   const queryClient = useQueryClient();
 
@@ -114,11 +110,9 @@ const Tools = () => {
   if (loading) {
     return (
       <div className="min-h-screen bg-background pb-24">
-        <Header title="Minhas Ferramentas" showBack />
         <div className="flex items-center justify-center pt-32">
           <Loader2 className="w-8 h-8 animate-spin text-primary" />
         </div>
-        <BottomNav />
       </div>
     );
   }
@@ -126,7 +120,6 @@ const Tools = () => {
   if (isStaff) {
     return (
       <div className="min-h-screen bg-background pb-24">
-        <Header title="Ferramentas" showBack />
         <main className="pt-16 px-4 max-w-lg mx-auto">
           <div className="text-center py-12">
             <div className="w-20 h-20 bg-muted rounded-full flex items-center justify-center mx-auto mb-4">
@@ -148,7 +141,6 @@ const Tools = () => {
             </div>
           </div>
         </main>
-        <BottomNav />
       </div>
     );
   }
@@ -313,7 +305,6 @@ const Tools = () => {
         )}
       </main>
 
-      <BottomNav />
     </div>
   );
 };

@@ -1,6 +1,6 @@
 # CLAUDE.md — Afiação (Sistema Operacional B2B Sardenberg)
 
-> Este arquivo orienta agentes de código (e humanos) trabalhando neste repositório. Última atualização: 2026-05-13 (auditoria UX Fases 0-4 + redesign visual v3 + telemetria PostHog + search global — tudo no branch `claude/jolly-austin-9b3100`, PR #4. Ver `docs/ux-audit/` e `docs/visual-direction/`).
+> Este arquivo orienta agentes de código (e humanos) trabalhando neste repositório. Última atualização: 2026-05-17 (auditoria de código completa — PRs #24-33 entregues: hotfixes de segurança, cleanup -2200 LoC, useUserRole consolidado, codemod sonner em engines IA, infinite scroll, perf gate em polls. Histórico anterior: auditoria UX 2026-05-13 em `docs/ux-audit/` + redesign visual v3 em `docs/visual-direction/`, ambos mergeados via PR #4).
 
 ---
 
@@ -211,9 +211,10 @@ As 5 personas operacionais não viram roles novos no banco — elas são **recor
 
 ### Atalhos de teclado
 
-- `src/hooks/useKeyboardShortcuts.ts` — hook básico (sem modifiers, sem composição, sem registry, sem help overlay)
-- Usado em apenas 1 página em produção: `AdminReposicaoCockpit.tsx`
-- **Sem cmd-k global, sem `/` para busca, sem `j/k` navegação, sem `?` para help, sem `esc` cancela global**
+- `useRegisterShortcuts({ keys, label, group, handler })` — padrão canônico (registry global)
+- `?` abre dialog com todos os atalhos registrados (auto-descoberta)
+- `Cmd+K` (`useGlobalSearch`) montado em AppShell para busca global
+- O hook legado `useKeyboardShortcuts.ts` foi deletado em PR #25 (zero consumidores)
 
 ### Barcode scanning
 
@@ -246,8 +247,9 @@ Dois backends coexistem; o usuário escolhe via toggle em `/settings`:
 
 ### Toast / feedback
 
-- Dois sistemas coexistem: `Toaster` (Radix-shadcn) em `components/ui/toaster.tsx` e `Sonner` em `components/ui/sonner.tsx`, ambos montados em `App.tsx:160-161`
-- Auditar inconsistência de invocação (`toast()` de sonner vs `useToast()` de radix-shadcn)
+- **Sonner é o único sistema ativo.** `ui/toaster.tsx` + `ui/toast.tsx` + `@radix-ui/react-toast` foram deletados em PR #25.
+- `use-toast.ts` permanece como **wrapper de compat (@deprecated)** delegando pra Sonner — preserva os ~100 callsites legados sem refactor imediato.
+- Engines IA novos (`useBundleEngine`, `useTacticalPlan`, `useFarmerExperiments`, `useFarmerPerformance`) já migrados pra `import { toast } from 'sonner'` direto (PR #29). Convenção pra código novo: usar sonner direto.
 
 ### Logger
 
@@ -265,8 +267,8 @@ Dois backends coexistem; o usuário escolhe via toggle em `/settings`:
 
 ## 6. Princípios não-negociáveis (do briefing) — status atualizado
 
-1. **Offline-first em picking e recebimento** — 🟡 scaffold: `lib/offline-queue.ts` + `useNetworkStatus` + indicador visual prontos; falta integrar nas mutações reais (`handleConfirmUnit`, `handleScan`, `submitOrder`) e migrar Workbox de `NetworkOnly`
-2. **Latência percebida <100ms em scan** — 🟡 `ScanBar` com detecção wedge HID + `useOptimisticMutation` helper prontos; optimistic aplicado parcialmente (deleteOrder); BarcodeDetector API ainda não
+1. **Offline-first em picking e recebimento** — 🟡 `lib/offline-queue.ts` + `useNetworkStatus` + `NetworkStatusIndicator` montados (apenas leitura: `getOfflineQueueDepth`/`subscribeToOfflineQueue`). Falta integrar `enqueue`/`flush` nas mutações reais (`handleConfirmUnit`, `handleScan`, `handleReportDivergencia`, `submitOrder`) e migrar Workbox de `NetworkOnly`. `useOptimisticMutation` foi deletado em PR #25 (era scaffold sem consumidor) — quando voltar pra integração de optimistic, criar pattern equivalente direto via `useMutation({ onMutate, onError })` (ver SalesOrders deleteOrder como referência inline).
+2. **Latência percebida <100ms em scan** — 🟡 `ScanBar` com detecção wedge HID. Optimistic UI pattern aplicado em `SalesOrders.deleteOrder` (cache de `useInfiniteQuery` + rollback). BarcodeDetector API ainda não implementada.
 3. **Densidade alta em telas operacionais** — ✅ `density-compact` global
 4. **WCAG AA mínimo, AAA em críticas** — 🟡 focus-visible OK; variantes `touch` (44px)/`balcao` (56px) criadas no Button; contraste dos tokens validado em `docs/visual-direction/03-validacao.md`; falta adoção sistemática das variantes touch
 5. **Mobile-first em chão de fábrica, desktop-first em analítico** — 🟡 `TouchPickingView` (`/admin/estoque/picking/mobile`) existe como scaffold; falta auto-detect mobile
@@ -319,14 +321,15 @@ Resultado da Fase 4 — usar nas próximas features:
 - **Atalhos**: `useRegisterShortcuts({ keys, label, group, handler })` em qualquer página. Dialog `?` global no shell mostra automaticamente.
 - **Cmd-K**: `useRegisterCommands([{ id, label, group, perform }])` para contribuir comandos contextuais à palette.
 - **Filtros sharable**: `useUrlState({ search: '', status: 'all' })` substitui useState com sync URL (replace, sem PII).
-- **Optimistic UI**: `useOptimisticMutation({ queryKey, optimisticUpdate, successToast, errorToast })` em vez de useMutation cru para latência <100ms.
+- **Paginação infinita**: `useInfiniteScroll(onLoadMore, enabled)` + `useInfiniteQuery` do React Query para listas grandes (referência: SalesOrders + AdminCustomers em PR #30).
+- **Optimistic UI**: padrão `useMutation({ onMutate, onError })` direto (helper genérico `useOptimisticMutation` foi removido em PR #25 — re-criar se for ter consumidor real). Referência viva: `SalesOrders.deleteOrder` (cache de `useInfiniteQuery` + rollback).
 - **Touch-friendly**: `<Button size="touch" />` (44px) ou `size="balcao"` (56px) em telas mobile/touchscreen.
 - **Empty states**: `<EmptyState tone="operational" />` é o default B2B; `tone="friendly"` para customer-facing.
 - **Skeletons**: `<PageSkeleton variant="cockpit | list | form | detail" />` em vez de spinner.
 - **Status colors**: classes `text-status-success/warning/error/info` em vez de `text-emerald-600` etc.
-- **Toast**: `import { toast } from 'sonner'` é o canônico; `useToast` antigo continua via wrapper (legado).
-- **Network**: `useNetworkStatus()` e `<NetworkStatusIndicator />` (montado no shell). Para fila offline: `enqueue()`/`flush()` de `@/lib/offline-queue`.
-- **Bulk**: `useBulkSelection(orderedIds)` + `<BulkActionsBar count actions />` para tabelas com seleção múltipla.
+- **Toast**: `import { toast } from 'sonner'` é o canônico; `useToast` antigo continua via wrapper (`@deprecated`).
+- **Network**: `useNetworkStatus()` e `<NetworkStatusIndicator />` (montado no shell). `lib/offline-queue.ts` expõe `getOfflineQueueDepth`/`subscribeToOfflineQueue` (em uso) + `enqueue`/`flush`/`clearOfflineQueue` (definidos, sem consumidor — aguardam integração).
+- **Bulk**: `<BulkActionsBar count actions />` (em uso em SalesOrders). O hook companion `useBulkSelection` foi removido em PR #25 (zero consumers); estados de seleção atualmente vivem em `useState<Set<string>>` direto na page.
 
 ### Convenções pós-auditoria
 
@@ -348,34 +351,46 @@ Trabalho posterior à Fase 4, no mesmo branch. Artefatos em `docs/visual-directi
 - ✅ **Polish via skill `frontend-design`** — 7 quick wins aplicados, 13 itens documentados em `05-revisao-skill.md` (todos implementados em rodada posterior: serif display, atmosphere em cockpits, status-bold, kpi-delta, favoritos, etc.)
 - ✅ **Search global no Cmd-K** — `useGlobalSearch` busca clientes/fórmulas/pedidos no Supabase; recentes em localStorage
 - ✅ **Telemetria PostHog** — ver §2. Dashboard "Afiação — Adoção UX" criado (project 423408)
-- 🟡 **Scaffolds pendentes de sprint próprio**: offline-queue integração real, TouchPickingView auto-detect, tint-cache Edge function, segmentos de cliente / histórico NF-e em schema (hoje localStorage)
+- 🟡 **Scaffolds pendentes de sprint próprio**: offline-queue integração real (handleConfirmUnit/handleScan/submitOrder), TouchPickingView auto-detect mobile, segmentos de cliente / histórico NF-e em schema (hoje localStorage). Scaffolds órfãos (`useBulkSelection`, `useOptimisticMutation`, `useKeyboardShortcuts`, `tint-cache`) foram deletados em PR #25 — re-criar quando voltarem a ter consumidor real.
 
-> ⚠️ Todo esse trabalho está num **único PR grande** (`claude/jolly-austin-9b3100`). Nunca passou por `npm run lint`/`build` — validação foi estática. **Rodar build local antes de mergear.**
+> PR #4 foi mergeado em 2026-05-14. Auditoria pós-merge (PRs #24-33) capturou 4 issues bloqueantes que o PR #4 introduziu (SQL injection em useGlobalSearch, exposição de profiles sem gate, 66 classes Tailwind quebradas, PostHog DEV pollution) — todos corrigidos. **Lição operacional**: `bun lint && bun build` precisa virar required check no GitHub.
 
 ---
 
 ## 10. Bugs/contradições/débitos — status atualizado
 
-Resolvidos no branch atual:
+Resolvidos (auditoria 2026-05-13 e auditoria de código 2026-05-16/17):
 
 - ✅ **Logo da sidebar** — `Scissors`+"Central" virou wordmark "Colacor" refinado
 - ✅ **Bell ornamental** — removido; topbar agora tem NetworkStatusIndicator + ThemeToggle + CompanySwitcher + Cmd-K pill
-- ✅ **Dois sistemas de toast** — só Sonner ativo; `useToast` legado via wrapper de compat
+- ✅ **Dois sistemas de toast** — só Sonner ativo; Toaster Radix infra deletada em PR #25; `use-toast.ts` é wrapper `@deprecated` (PR #29)
 - ✅ **Touch targets** — variantes `touch`/`balcao` criadas no Button (adoção sistemática ainda pendente)
 - ✅ **Logs silenciosos** — `cockpit_audit_log`, `fin_projecao_13_semanas`, `fin_confiabilidade` agora logam via `logger.warn`
 - ✅ **NfeReceipt** — título "OBEN" hardcoded virou dinâmico por empresa
+- ✅ **Rename `Afiação Colacor` → `Colacor`** — PR #27 (CompanyContext + index.html + manifest PWA)
+- ✅ **BottomNav + Header mortos** — deletados em PR #26 (sempre `return null` dentro do shell, 67 mounts removidos)
+- ✅ **`useUserRole.ts` duplicado + `isStaff` divergente** — consolidado em `useAuth()` (PR #28); 19 callsites migrados; `isCustomer` adicionado ao AuthContextType
+- ✅ **`useUserRole` fail-OPEN** — corrigido pra fail-CLOSED (PR #24) antes da consolidação; depois o hook foi deletado
+- ✅ **Discrepância Account/Empresa em SalesOrders** — `colacor_sc` adicionado ao tipo + Tab no filtro (PR #33)
+- ✅ **`SalesOrders` / `AdminCustomers` sem paginação** — infinite scroll com `useInfiniteQuery` + IntersectionObserver (PR #30)
+- ✅ **SQL injection em `useGlobalSearch.or()`** + **exposição de profiles sem gate isStaff** — corrigidos em PR #24 (escape PostgREST + gate)
+- ✅ **PostHog DEV pollution** — `opt_in_capturing()` invertido pra `opt_out_capturing()` (PR #24)
+- ✅ **`aumentos-ativos` polava pra customer** — gate `isStaff && !isSalesOnly` (PR #32)
+- ✅ **Charts Recharts sem memo** — 3 components com `React.memo` (PR #32)
+- ✅ **Cleanup dead code geral** — 18 arquivos órfãos + 13 deps + 12 default exports redundantes + re-exports inchados em orderSubmission/index.ts deletados em PR #25 (-2200 LoC total)
 
 Ainda pendentes (decisão de produto ou sprint próprio):
 
-- **Rename `Afiação Colacor` → `Colacor`** em `src/contexts/CompanyContext.tsx:13` — ainda no código (UI já mostra "Colacor")
-- **Branding stale**: `index.html` title + PWA manifest `name` ainda dizem "Colacor - Afiação Profissional" — rename afeta cache PWA, precisa deploy coordenado
-- **BottomNav morta**: `BottomNav.tsx:34` `if (insideShell) return null;` — decisão: remover ou reativar pra rotas públicas
-- **Workbox `NetworkOnly` para picking e orders** — ainda contradiz offline-first; `offline-queue.ts` pronto mas não integrado
-- **`useUserRole.ts` duplica `AppRole`** já exportado por `AuthContext.tsx`
-- **`isCustomer` vs `isStaff` em useUserRole** (`:70-71`) — `isStaff` lá ignora `master`, divergente de AuthContext
-- **Discrepância Account/Empresa em SalesOrders** — `Account = 'oben'|'colacor'|'afiacao'|'all'` ≠ `CompanyContext` (`colacor_sc` não aparece no filtro)
-- **`SalesOrders` / `AdminCustomers` sem paginação** — carregam tudo; risco com volume alto
-- **`SalesOrders.deleteOrder` sem soft-delete** — exclusão direta no Omie; risco compliance
+- **Workbox `NetworkOnly` para picking e orders** — contradiz offline-first; `offline-queue.ts` exposto mas não integrado nas mutações reais
+- **`SalesOrders.deleteOrder` sem soft-delete** — exclusão direta no Omie; risco compliance. Precisa migration SQL (coluna `deleted_at`) + flag UI
+- **TypeScript strict mode** — `tsconfig.app.json` tem `strict: false`, `noImplicitAny: false`. Resolve raiz de 1300 lint errors (97% `no-explicit-any`). Caminho: ligar `noImplicitAny` por arquivo, top-down a partir dos 6 hooks de engine
+- **7 god-components da Reposição** (>1000 LoC cada: AdminReposicaoPromocaoDetail 1691L, AdminRoutePlanner 1661L, AdminReposicaoPedidos 1572L, AdminReposicaoAumentoDetail 1465L, FinanceiroDashboard 1242L, AdminReposicaoNegociacaoParalela 1201L, AdminReposicaoRevisao 1099L) — quebrar em subcomponentes em `src/components/reposicao/`
+- **N+1 patterns em engines IA**: `useCrossSellEngine.ts:372-389` (500 round-trips serializados), `useFarmerExperiments.ts:68-79,195-208`, Edge Functions `omie-vendas-sync:765,772` + `omie-sync:1182-1196`
+- **~100 callsites de `useToast` legados** — migrar gradualmente pra `import { toast } from 'sonner'`
+- **41 cores hardcoded** (`text-emerald-600` etc.) — sweep pra `text-status-*`. Top 5: Admin (21×), des/PosicaoAtualTab (12×), des/SimuladorTab (11×), AdminPortalSayerlack (10×), AdminRoutePlanner (9×)
+- **Adoção `useUrlState`** — hoje 5/119 páginas; migrar `useState` de filtros conforme arquivos forem tocados
+- **119 lazy chunks sem agrupação** em App.tsx — agrupar peers (ex: 20 telas de Reposição = 1 chunk via `manualChunks`)
+- **`bun lint && bun build` como required check no GitHub** — operacional; PR #4 provou que sem isso o time mergeia código quebrado (66 classes Tailwind quebradas em prod)
 
 ---
 

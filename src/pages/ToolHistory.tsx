@@ -1,7 +1,5 @@
 import { useState, useEffect, useRef, useMemo } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
-import { Header } from '@/components/Header';
-import { BottomNav } from '@/components/BottomNav';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
@@ -216,9 +214,7 @@ function escapeHtml(s: string | undefined | null): string {
   if (loading) {
     return (
       <div className="min-h-screen bg-background pb-24">
-        <Header title="Histórico" showBack />
         <div className="flex items-center justify-center pt-32"><Loader2 className="w-8 h-8 animate-spin text-primary" /></div>
-        <BottomNav />
       </div>
     );
   }
@@ -226,12 +222,10 @@ function escapeHtml(s: string | undefined | null): string {
   if (!tool || !healthMetrics) {
     return (
       <div className="min-h-screen bg-background pb-24">
-        <Header title="Ferramenta" showBack />
         <div className="text-center py-20">
           <Wrench className="w-12 h-12 text-muted-foreground mx-auto mb-4" />
           <p className="text-muted-foreground">Ferramenta não encontrada</p>
         </div>
-        <BottomNav />
       </div>
     );
   }
@@ -435,7 +429,6 @@ function escapeHtml(s: string | undefined | null): string {
         </Card>
       </main>
 
-      <BottomNav />
     </div>
   );
 };

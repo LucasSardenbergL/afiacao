@@ -1,7 +1,5 @@
 import { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Header } from '@/components/Header';
-import { BottomNav } from '@/components/BottomNav';
 import { Card, CardContent } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
@@ -203,11 +201,9 @@ const AdminDemandForecast = () => {
   if (authLoading || loading) {
     return (
       <div className="min-h-screen bg-background pb-24">
-        <Header title="Previsão de Demanda" showBack />
         <div className="flex items-center justify-center pt-32">
           <Loader2 className="w-8 h-8 animate-spin text-primary" />
         </div>
-        <BottomNav />
       </div>
     );
   }
@@ -218,7 +214,6 @@ const AdminDemandForecast = () => {
 
   return (
     <div className="min-h-screen bg-background pb-24">
-      <Header title="Previsão de Demanda" showBack />
 
       <main className="pt-16 px-4 max-w-lg mx-auto">
         {/* Stats */}
@@ -305,7 +300,6 @@ const AdminDemandForecast = () => {
         </Tabs>
       </main>
 
-      <BottomNav />
     </div>
   );
 };

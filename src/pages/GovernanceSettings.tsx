@@ -1,5 +1,5 @@
 import { useState, useEffect, useMemo } from 'react';
-import { useUserRole } from '@/hooks/useUserRole';
+import { useAuth } from '@/contexts/AuthContext';
 import { useCommercialRole } from '@/hooks/useCommercialRole';
 import { supabase } from '@/integrations/supabase/client';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
@@ -13,7 +13,7 @@ import { Settings, Factory, ShieldAlert } from 'lucide-react';
 const CONFIG_KEY = 'default_production_assignee_id';
 
 export default function GovernanceSettings() {
-  const { isAdmin } = useUserRole();
+  const { isAdmin } = useAuth();
   const { isSuperAdmin } = useCommercialRole();
   const queryClient = useQueryClient();
   const allowed = isAdmin || isSuperAdmin;

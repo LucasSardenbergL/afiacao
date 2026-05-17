@@ -6,7 +6,6 @@ import { Input } from '@/components/ui/input';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { useCrossSellEngine, type CustomerRecommendations, type Recommendation } from '@/hooks/useCrossSellEngine';
 import { useAuth } from '@/contexts/AuthContext';
-import { useUserRole } from '@/hooks/useUserRole';
 import { useNavigate } from 'react-router-dom';
 import {
   Loader2, RefreshCw, TrendingUp, ShoppingCart, ArrowUpRight,
@@ -28,8 +27,7 @@ const StockBadge = ({ estoque }: { estoque: number | null }) => {
 
 const FarmerRecommendations = () => {
   const navigate = useNavigate();
-  const { isStaff, loading: authLoading } = useAuth();
-  const { isAdmin } = useUserRole();
+  const { isStaff, isAdmin, loading: authLoading } = useAuth();
   const {
     recommendations, loading, calculating, calculateRecommendations,
   } = useCrossSellEngine();
