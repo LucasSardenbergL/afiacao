@@ -1,5 +1,194 @@
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
-import { createClient } from "npm:@supabase/supabase-js@2";
+import { createClient, type SupabaseClient } from "npm:@supabase/supabase-js@2";
+
+type OmieGenericResponse = Record<string, unknown> & { faultstring?: string };
+
+interface OmieListResponse<T> {
+  total_de_paginas?: number;
+  nTotPaginas?: number;
+  faultstring?: string;
+  [key: string]: T[] | number | string | undefined;
+}
+
+interface OmieCategoria {
+  codigo?: string;
+  descricao?: string;
+  tipo_categoria?: string;
+  codigo_conta_pai?: string | null;
+  nivel?: number;
+  conta_totalizadora?: string;
+  conta_inativa?: string;
+}
+
+interface OmieContaCorrente {
+  nCodCC?: number;
+  descricao?: string;
+  cDescricao?: string;
+  codigo_banco?: string;
+  cNomeBanco?: string;
+  banco?: string;
+  codigo_agencia?: string;
+  cAgencia?: string;
+  agencia?: string;
+  numero_conta_corrente?: string;
+  cNumeroConta?: string;
+  numero_conta?: string;
+  tipo_conta_corrente?: string;
+  tipo?: string;
+  cTipo?: string;
+  inativo?: string;
+  cInativa?: string;
+}
+
+interface OmieResumirContaCorrenteResponse {
+  nSaldo?: number;
+  nSaldoAtual?: number;
+}
+
+interface OmieContaPagar {
+  codigo_lancamento_omie?: number;
+  nCodTitulo?: number;
+  codigo_lancamento?: number;
+  codigo_cliente_fornecedor_integracao?: string | null;
+  codigo_cliente_fornecedor?: number;
+  nome_cliente_fornecedor?: string;
+  nome_fornecedor?: string;
+  cnpj_cpf?: string;
+  numero_documento?: string;
+  cNumDocumento?: string;
+  numero_documento_fiscal?: string | null;
+  data_emissao?: string;
+  dDtEmissao?: string;
+  data_vencimento?: string;
+  dDtVenc?: string;
+  data_pagamento?: string;
+  dDtPagamento?: string;
+  data_previsao?: string;
+  dDtPreworst?: string;
+  valor_documento?: number;
+  nValorTitulo?: number;
+  valor_pago?: number;
+  nValorPago?: number;
+  valor_desconto?: number;
+  valor_juros?: number;
+  valor_multa?: number;
+  status_titulo?: string;
+  codigo_categoria?: string;
+  cCodCateg?: string;
+  descricao_categoria?: string;
+  departamento?: string | null;
+  centro_custo?: string | null;
+  observacao?: string | null;
+  nCodCC?: number | null;
+  codigo_barras?: string | null;
+  tipo_documento?: string | null;
+  id_origem?: string | null;
+  parcela?: number;
+  total_parcelas?: number;
+  baixa_obs?: string;
+}
+
+interface OmieContaReceber {
+  codigo_lancamento_omie?: number;
+  nCodTitulo?: number;
+  codigo_lancamento?: number;
+  codigo_cliente_fornecedor?: number;
+  codigo_cliente_fornecedor_integracao?: string | null;
+  nome_cliente_fornecedor?: string;
+  nome_cliente?: string;
+  cnpj_cpf?: string;
+  numero_documento?: string;
+  numero_documento_fiscal?: string | null;
+  numero_pedido?: string | null;
+  data_emissao?: string;
+  dDtEmissao?: string;
+  data_vencimento?: string;
+  dDtVenc?: string;
+  data_recebimento?: string;
+  dDtPagamento?: string;
+  data_previsao?: string;
+  valor_documento?: number;
+  nValorTitulo?: number;
+  valor_recebido?: number;
+  nValorPago?: number;
+  valor_desconto?: number;
+  valor_juros?: number;
+  valor_multa?: number;
+  status_titulo?: string;
+  codigo_categoria?: string;
+  cCodCateg?: string;
+  descricao_categoria?: string;
+  departamento?: string | null;
+  centro_custo?: string | null;
+  observacao?: string | null;
+  nCodCC?: number | null;
+  nCodVend?: number | null;
+  tipo_documento?: string | null;
+  id_origem?: string | null;
+  parcela?: number;
+  total_parcelas?: number;
+}
+
+interface OmieMovimentoDetalhes {
+  nCodTitulo?: number;
+  nCodCC?: number | null;
+  cGrupo?: string;
+  cNatureza?: string;
+  cOrigem?: string;
+  cStatus?: string;
+  cNumDocFiscal?: string;
+  cNumTitulo?: string;
+  cNumOS?: string;
+  cNumParcela?: string;
+  cCodCateg?: string;
+  dDtPagamento?: string;
+  dDtRegistro?: string;
+  dDtPrevisao?: string;
+  dDtVenc?: string;
+  dDtEmissao?: string;
+  nValorTitulo?: number;
+}
+
+interface OmieMovimentoResumo {
+  nValPago?: number;
+  nValLiquido?: number;
+  nDesconto?: number;
+  nJuros?: number;
+  nMulta?: number;
+}
+
+interface OmieMovimento {
+  detalhes?: OmieMovimentoDetalhes;
+  resumo?: OmieMovimentoResumo;
+}
+
+interface MovimentoRow {
+  company: Company;
+  omie_ncodmov: string;
+  omie_ncodcc: number | null;
+  data_movimento: string;
+  tipo: string;
+  valor: number;
+  descricao: string;
+  categoria_codigo: string;
+  categoria_descricao: string;
+  conciliado: boolean;
+  omie_codigo_lancamento: number | null;
+  natureza: string | null;
+  metadata: { detalhes: OmieMovimentoDetalhes; resumo: OmieMovimentoResumo };
+  updated_at: string;
+}
+
+interface ContaSaldoRow {
+  saldo?: number | null;
+  saldo_atual?: number | null;
+}
+
+interface CategoriaDreMappingRow {
+  omie_codigo: string;
+  dre_linha: string;
+  company: string;
+}
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -46,7 +235,7 @@ async function callOmie(
   endpoint: string,
   call: string,
   params: Record<string, unknown>
-) {
+): Promise<OmieGenericResponse | null> {
   const creds = getCredentials(company);
   if (!creds.key || !creds.secret)
     throw new Error(`Credenciais Omie (${company}) não configuradas`);
@@ -66,7 +255,7 @@ async function callOmie(
       body: JSON.stringify(body),
     });
     apiCallCount++;
-    const result = await res.json();
+    const result = (await res.json()) as OmieGenericResponse;
 
     if (result.faultstring) {
       const fs = String(result.faultstring);
@@ -93,7 +282,7 @@ async function callOmie(
 
 // ═══════════════ SYNC CATEGORIAS ═══════════════
 async function syncCategorias(
-  db: any,
+  db: SupabaseClient,
   company: Company
 ) {
   let pagina = 1;
@@ -101,18 +290,18 @@ async function syncCategorias(
   let totalSynced = 0;
 
   while (pagina <= totalPaginas) {
-    const result = (await callOmie(
+    const result = await callOmie(
       company,
       "geral/categorias/",
       "ListarCategorias",
       { pagina, registros_por_pagina: 500 }
-    )) as any;
+    );
     if (!result) break;
 
-    totalPaginas = result.total_de_paginas || 1;
-    const categorias = result.categoria_cadastro || [];
+    totalPaginas = (result.total_de_paginas as number) || 1;
+    const categorias = (result.categoria_cadastro as OmieCategoria[] | undefined) || [];
 
-    const rows = categorias.map((c: any) => ({
+    const rows = categorias.map((c) => ({
       company,
       omie_codigo: c.codigo,
       descricao: c.descricao,
@@ -140,7 +329,7 @@ async function syncCategorias(
 
 // ═══════════════ SYNC CONTAS CORRENTES ═══════════════
 async function syncContasCorrentes(
-  db: any,
+  db: SupabaseClient,
   company: Company
 ) {
   let pagina = 1;
@@ -148,16 +337,18 @@ async function syncContasCorrentes(
   let totalSynced = 0;
 
   while (pagina <= totalPaginas) {
-    const result = (await callOmie(
+    const result = await callOmie(
       company,
       "geral/contacorrente/",
       "ListarContasCorrentes",
       { pagina, registros_por_pagina: 50 }
-    )) as any;
+    );
     if (!result) break;
 
-    totalPaginas = result.nTotPaginas || 1;
-    const contas = result.ListarContasCorrentes || result.conta_corrente_lista || [];
+    totalPaginas = (result.nTotPaginas as number) || 1;
+    const contas = (result.ListarContasCorrentes as OmieContaCorrente[] | undefined)
+      || (result.conta_corrente_lista as OmieContaCorrente[] | undefined)
+      || [];
 
     for (const c of contas) {
       // Buscar saldo real via ResumirContaCorrente
@@ -169,7 +360,7 @@ async function syncContasCorrentes(
           "geral/contacorrente/",
           "ResumirContaCorrente",
           { nCodCC: c.nCodCC }
-        )) as any;
+        )) as OmieResumirContaCorrenteResponse | null;
         if (saldoResult) {
           saldoAtual = saldoResult.nSaldo ?? saldoResult.nSaldoAtual ?? 0;
           saldoData = new Date().toISOString().split("T")[0];
@@ -207,7 +398,7 @@ async function syncContasCorrentes(
 
 // ═══════════════ SYNC CONTAS A PAGAR ═══════════════
 async function syncContasPagar(
-  db: any,
+  db: SupabaseClient,
   company: Company,
   filtroDataDe?: string,
   filtroDataAte?: string,
@@ -226,19 +417,21 @@ async function syncContasPagar(
     };
     // Omie lcpListarRequest não aceita filtros de data
 
-    const result = (await callOmie(
+    const result = await callOmie(
       company,
       "financas/contapagar/",
       "ListarContasPagar",
       params
-    )) as any;
+    );
     if (!result) break;
 
-    totalPaginas = result.total_de_paginas || 1;
-    const titulos =
-      result.conta_pagar_cadastro || result.titulosEncontrados || [];
+    totalPaginas = (result.total_de_paginas as number) || 1;
+    const titulos: OmieContaPagar[] =
+      (result.conta_pagar_cadastro as OmieContaPagar[] | undefined)
+      || (result.titulosEncontrados as OmieContaPagar[] | undefined)
+      || [];
 
-    const rows = titulos.map((t: any) => {
+    const rows = titulos.map((t) => {
       const statusMap: Record<string, string> = {
         LIQUIDADO: "PAGO",
         CANCELADO: "CANCELADO",
@@ -301,7 +494,7 @@ async function syncContasPagar(
     });
 
     // Filter out rows with null primary key (prevents upsert failure)
-    const validRows = rows.filter((r: any) => r.omie_codigo_lancamento != null);
+    const validRows = rows.filter((r) => r.omie_codigo_lancamento != null);
     const skipped = rows.length - validRows.length;
     if (skipped > 0) console.log(`[Fin][${company}] CP p${pagina}: ${skipped} títulos sem código, ignorados`);
 
@@ -336,7 +529,7 @@ async function syncContasPagar(
 
 // ═══════════════ SYNC CONTAS A RECEBER ═══════════════
 async function syncContasReceber(
-  db: any,
+  db: SupabaseClient,
   company: Company,
   filtroDataDe?: string,
   filtroDataAte?: string,
@@ -355,19 +548,21 @@ async function syncContasReceber(
     };
     // Omie lcrListarRequest não aceita filtros de data
 
-    const result = (await callOmie(
+    const result = await callOmie(
       company,
       "financas/contareceber/",
       "ListarContasReceber",
       params
-    )) as any;
+    );
     if (!result) break;
 
-    totalPaginas = result.total_de_paginas || 1;
-    const titulos =
-      result.conta_receber_cadastro || result.titulosEncontrados || [];
+    totalPaginas = (result.total_de_paginas as number) || 1;
+    const titulos: OmieContaReceber[] =
+      (result.conta_receber_cadastro as OmieContaReceber[] | undefined)
+      || (result.titulosEncontrados as OmieContaReceber[] | undefined)
+      || [];
 
-    const rows = titulos.map((t: any) => {
+    const rows = titulos.map((t) => {
       let status = t.status_titulo || "ABERTO";
       if (status === "LIQUIDADO") status = "RECEBIDO";
       if (
@@ -418,7 +613,7 @@ async function syncContasReceber(
       };
     });
 
-    const validRows = rows.filter((r: any) => r.omie_codigo_lancamento != null);
+    const validRows = rows.filter((r) => r.omie_codigo_lancamento != null);
     const skipped = rows.length - validRows.length;
     if (skipped > 0) console.log(`[Fin][${company}] CR p${pagina}: ${skipped} títulos sem código, ignorados`);
 
@@ -452,7 +647,7 @@ async function syncContasReceber(
 }
 
 // ═══════════════ SYNC MOVIMENTAÇÕES FINANCEIRAS ═══════════════
-function buildSyntheticMovementId(company: Company, detalhes: Record<string, any>, resumo: Record<string, any>) {
+function buildSyntheticMovementId(company: Company, detalhes: OmieMovimentoDetalhes, resumo: OmieMovimentoResumo) {
   const source = [
     company,
     detalhes.nCodTitulo ?? "",
@@ -490,7 +685,7 @@ function buildSyntheticMovementId(company: Company, detalhes: Record<string, any
   return hash.toString();
 }
 
-function resolveMovementDate(detalhes: Record<string, any>) {
+function resolveMovementDate(detalhes: OmieMovimentoDetalhes) {
   return parseOmieDate(
     detalhes.dDtPagamento ||
       detalhes.dDtRegistro ||
@@ -500,7 +695,7 @@ function resolveMovementDate(detalhes: Record<string, any>) {
   );
 }
 
-function resolveMovementType(detalhes: Record<string, any>) {
+function resolveMovementType(detalhes: OmieMovimentoDetalhes) {
   const natureza = String(detalhes.cNatureza || "").toUpperCase();
   const grupo = String(detalhes.cGrupo || "").toUpperCase();
 
@@ -516,7 +711,7 @@ function resolveMovementType(detalhes: Record<string, any>) {
   return "S";
 }
 
-function resolveMovementDescription(detalhes: Record<string, any>) {
+function resolveMovementDescription(detalhes: OmieMovimentoDetalhes) {
   const parts = [
     detalhes.cGrupo,
     detalhes.cNumDocFiscal || detalhes.cNumTitulo || detalhes.cNumOS,
@@ -527,7 +722,7 @@ function resolveMovementDescription(detalhes: Record<string, any>) {
 }
 
 async function syncMovimentacoes(
-  db: any,
+  db: SupabaseClient,
   company: Company,
   filtroDataDe?: string,
   filtroDataAte?: string,
@@ -542,34 +737,34 @@ async function syncMovimentacoes(
   let pagesProcessed = 0;
   let consecutiveEmptyPages = 0;
 
-  const firstPage = (await callOmie(
+  const firstPage = await callOmie(
     company,
     "financas/mf/",
     "ListarMovimentos",
     { nPagina: 1, nRegPorPagina: 100 }
-  )) as any;
+  );
 
   if (!firstPage) {
     return { totalSynced: 0, complete: true, nextPage: null, timedOut: false };
   }
 
-  totalPaginas = firstPage.nTotPaginas || 1;
+  totalPaginas = (firstPage.nTotPaginas as number) || 1;
   // Start from the last page (most recent data) and go backwards
   pagina = totalPaginas;
 
   while (pagina >= 1 && pagesProcessed < maxPages && !isTimeBudgetExhausted()) {
-    const result = (await callOmie(
+    const result = await callOmie(
       company,
       "financas/mf/",
       "ListarMovimentos",
       { nPagina: pagina, nRegPorPagina: 100 }
-    )) as any;
+    );
     if (!result) break;
 
-    const movs = result.movimentos || [];
+    const movs: OmieMovimento[] = (result.movimentos as OmieMovimento[] | undefined) || [];
 
     const rows = movs
-      .map((mov: any) => {
+      .map((mov): MovimentoRow | null => {
         const detalhes = mov?.detalhes || {};
         const resumo = mov?.resumo || {};
         const dataMovimento = resolveMovementDate(detalhes);
@@ -600,7 +795,7 @@ async function syncMovimentacoes(
           updated_at: new Date().toISOString(),
         };
       })
-      .filter(Boolean) as Array<Record<string, any>>;
+      .filter((r): r is MovimentoRow => r !== null);
 
     const filteredRows = rows.filter((row) => {
       if (dataInicioIso && row.data_movimento < dataInicioIso) return false;
@@ -653,7 +848,7 @@ async function syncMovimentacoes(
 
 // ═══════════════ CALCULAR DRE SNAPSHOT ═══════════════
 async function calcularDRE(
-  db: any,
+  db: SupabaseClient,
   company: Company,
   ano: number,
   mes: number
@@ -691,9 +886,10 @@ async function calcularDRE(
 
   // Montar mapa de categorias → linha DRE (empresa-específico ganha)
   const catToDre = new Map<string, string>();
-  for (const m of (mappings || []).sort((a: any, b: any) =>
+  const sortedMappings = ((mappings ?? []) as CategoriaDreMappingRow[]).slice().sort((a, b) =>
     a.company === "_default" ? -1 : 1
-  )) {
+  );
+  for (const m of sortedMappings) {
     catToDre.set(m.omie_codigo, m.dre_linha);
   }
 
@@ -840,10 +1036,10 @@ async function calcularDRE(
 
 // ═══════════════ RESUMO RÁPIDO (sem sync, direto do DB) ═══════════════
 async function getResumoFinanceiro(
-  db: any,
+  db: SupabaseClient,
   companies: Company[]
 ) {
-  const resumo: Record<string, any> = {};
+  const resumo: Record<string, unknown> = {};
 
   for (const company of companies) {
     // Saldo total de contas correntes
@@ -881,13 +1077,13 @@ async function getResumoFinanceiro(
       .eq("company", company)
       .eq("status_titulo", "VENCIDO");
 
-    const sum = (arr: any[] | null) =>
-      (arr || []).reduce((s: number, r: any) => s + (r.saldo || 0), 0);
+    const sum = (arr: ContaSaldoRow[] | null) =>
+      (arr || []).reduce((s: number, r) => s + (r.saldo || 0), 0);
 
     resumo[company] = {
       contas_correntes: contas || [],
-      saldo_total_cc: (contas || []).reduce(
-        (s: number, c: any) => s + (c.saldo_atual || 0),
+      saldo_total_cc: ((contas as Array<{ saldo_atual?: number | null }> | null) || []).reduce(
+        (s: number, c) => s + (c.saldo_atual || 0),
         0
       ),
       total_a_receber: sum(crAberto),
@@ -923,7 +1119,7 @@ function formatOmieDate(d: Date): string {
 // ═══════════════ AUTH HELPER ═══════════════
 async function validateCaller(
   req: Request,
-  db: any
+  db: SupabaseClient
 ): Promise<{ authorized: boolean; userId?: string; error?: string }> {
   const authHeader = req.headers.get("authorization");
   if (!authHeader?.startsWith("Bearer ")) {
@@ -966,7 +1162,7 @@ async function validateCaller(
 // ═══════════════ SYNC LOG ═══════════════
 
 async function logSync(
-  db: any,
+  db: SupabaseClient,
   action: string,
   companies: string[],
   triggeredBy: string
@@ -986,9 +1182,9 @@ async function logSync(
 }
 
 async function completeSync(
-  db: any,
+  db: SupabaseClient,
   logId: string,
-  results: any,
+  results: Record<string, unknown> | null,
   errorMsg?: string,
   startTime?: number
 ) {
@@ -1056,7 +1252,7 @@ serve(async (req) => {
     rateLimitHits = 0;
     const logId = await logSync(supabase, action, targetCompanies, auth.userId || "unknown");
 
-    let result: any = {};
+    let result: Record<string, unknown> = {};
 
     switch (action) {
       case "sync_all": {
@@ -1176,7 +1372,7 @@ serve(async (req) => {
 
       // Debug: retorna JSON raw do Omie sem transformação (para validação Onda 1)
       case "debug_raw": {
-        const endpoints: Record<string, { endpoint: string; call: string; params: any }> = {
+        const endpoints: Record<string, { endpoint: string; call: string; params: Record<string, unknown> }> = {
           categorias: { endpoint: "geral/categorias/", call: "ListarCategorias", params: { pagina: 1, registros_por_pagina: 2 } },
           contas_correntes: { endpoint: "geral/contacorrente/", call: "ListarContasCorrentes", params: { pagina: 1, registros_por_pagina: 2 } },
           contas_pagar: { endpoint: "financas/contapagar/", call: "ListarContasPagar", params: { pagina: 1, registros_por_pagina: 2 } },

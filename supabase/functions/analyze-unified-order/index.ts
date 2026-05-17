@@ -11,6 +11,104 @@ const corsHeaders = {
   "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type, x-supabase-client-platform, x-supabase-client-platform-version, x-supabase-client-runtime, x-supabase-client-runtime-version",
 };
 
+interface CustomerCandidate {
+  user_id?: string;
+  nome?: string;
+  nome_fantasia?: string;
+  razao_social?: string;
+  cnpj_cpf?: string;
+  documento?: string;
+  cidade?: string;
+  estado?: string;
+  codigo_cliente?: number | null;
+}
+
+interface ProdutoCatalogo {
+  id: string;
+  codigo: string;
+  descricao: string;
+  account?: string | null;
+  valor_unitario?: number | null;
+  estoque?: number | null;
+}
+
+interface UserToolRow {
+  id: string;
+  generated_name?: string | null;
+  custom_name?: string | null;
+  quantity?: number | null;
+  tool_categories?: { name?: string | null } | null;
+}
+
+interface AIProduct {
+  product_id?: string;
+  codigo?: string;
+  descricao?: string;
+  quantity?: number;
+  account?: string;
+  unit_price?: number;
+  notes?: string;
+}
+
+interface AIService {
+  userToolId: string;
+  omie_codigo_servico: number;
+  servico_descricao: string;
+  quantity: number;
+  notes?: string;
+}
+
+interface AISuggestion {
+  type: "product" | "service";
+  product_id?: string;
+  codigo?: string;
+  descricao: string;
+  quantity?: number;
+  account?: string;
+  unit_price?: number;
+  reason: string;
+  userToolId?: string;
+  omie_codigo_servico?: number;
+  servico_descricao?: string;
+}
+
+interface AIChatMessage {
+  role: "system" | "user" | "assistant";
+  content: string | Array<{ type: string; text?: string; image_url?: { url: string } }>;
+}
+
+interface ToolPropertySchema {
+  type: string | string[];
+  description?: string;
+  items?: unknown;
+  properties?: Record<string, unknown>;
+  required?: string[];
+  enum?: string[];
+}
+
+interface OmieProdutoPedidoItem {
+  produto?: { codigo_produto?: number; valor_unitario?: number };
+}
+
+interface OmiePedidoVendaProduto {
+  det?: OmieProdutoPedidoItem[];
+}
+
+interface OmieListarPedidosResponse {
+  pedido_venda_produto?: OmiePedidoVendaProduto[];
+}
+
+interface OmieClienteCadastroResponse {
+  clientes_cadastro?: Array<{
+    codigo_cliente_omie?: number;
+    nome_fantasia?: string;
+    razao_social?: string;
+    cnpj_cpf?: string;
+    cidade?: string;
+    estado?: string;
+  }>;
+}
+
 serve(async (req) => {
   if (req.method === "OPTIONS") {
     return new Response(null, { headers: corsHeaders });
@@ -37,7 +135,7 @@ serve(async (req) => {
         status: 401, headers: { ...corsHeaders, "Content-Type": "application/json" },
       });
     }
-    const loggedInUserId = (data.claims as any).sub || "";
+    const loggedInUserId = (data.claims as { sub?: string }).sub || "";
 
     // SECURITY: staff-only — prevents customer PII enumeration via
     // searchCustomer + service_role profile bulk-fetch.
@@ -80,7 +178,7 @@ serve(async (req) => {
 
     // ─── Customer search ───
     let customerSection = "";
-    let customerCandidates: any[] = [];
+    const customerCandidates: CustomerCandidate[] = [];
 
     if (searchCustomer && (text || allImages.length > 0)) {
       // Extract potential customer names/cities from text
@@ -183,7 +281,7 @@ serve(async (req) => {
               }),
             });
             if (omieRes.ok) {
-              const omieData = await omieRes.json();
+              const omieData = (await omieRes.json()) as OmieClienteCadastroResponse;
               if (omieData.clientes_cadastro) {
                 for (const c of omieData.clientes_cadastro) {
                   const key = `omie_${c.codigo_cliente_omie}`;
@@ -209,7 +307,7 @@ serve(async (req) => {
 
       if (customerCandidates.length > 0) {
         customerSection = "\n\nCLIENTES ENCONTRADOS NA BASE (para identificação):\n" +
-          customerCandidates.map((c: any, i: number) => {
+          customerCandidates.map((c, i) => {
             if (c.nome_fantasia !== undefined) {
               return `- [${i}] NomeFantasia:${c.nome_fantasia} | RazãoSocial:${c.razao_social} | CNPJ/CPF:${c.cnpj_cpf} | Cidade:${c.cidade || 'N/A'} | Estado:${c.estado || 'N/A'} | CódigoCliente:${c.codigo_cliente}`;
             }
@@ -228,7 +326,7 @@ serve(async (req) => {
     const servicosLista = (servicos || []).map(s => `- CódigoServiço:${s.omie_codigo_servico} | ${s.descricao}`).join("\n");
 
     // Build product list
-    let prodList: any[] = [];
+    let prodList: ProdutoCatalogo[] = [];
     const prodIds = new Set<string>();
 
     if (allImages.length > 0 && !text) {
@@ -391,14 +489,14 @@ serve(async (req) => {
 
     console.log(`[analyze-unified-order] Total products: ${prodList.length}, customer candidates: ${customerCandidates.length}, searchCustomer: ${searchCustomer}`);
 
-    const produtosLista = prodList.map((p: any) =>
+    const produtosLista = prodList.map((p) =>
       `- ID:${p.id} | Código:${p.codigo} | ${p.descricao} | Conta:${p.account || 'oben'} | Preço:${p.valor_unitario} | Estoque:${p.estoque ?? 0}`
     ).join("\n");
 
     // Format user tools
-    const tools = (userTools || []);
+    const tools: UserToolRow[] = (userTools || []);
     const ferramentasLista = tools.length > 0
-      ? tools.map((t: any) => {
+      ? tools.map((t) => {
           const nome = t.generated_name || t.custom_name || t.tool_categories?.name || "Ferramenta";
           return `- ToolID:${t.id} | Nome:${nome} | Categoria:${t.tool_categories?.name || ''} | Qtd:${t.quantity || 1}`;
         }).join("\n")
@@ -425,11 +523,11 @@ serve(async (req) => {
         if (recentItems && recentItems.length > 0) {
           const productCounts: Record<string, { descricao: string; codigo: string; account: string; totalQty: number; count: number }> = {};
           for (const item of recentItems) {
-            const prod = item.omie_products as any;
+            const prod = item.omie_products as { descricao?: string; codigo?: string; account?: string } | null;
             if (!prod) continue;
-            const key = item.product_id || prod.codigo;
+            const key = item.product_id || prod.codigo || '';
             if (!productCounts[key]) {
-              productCounts[key] = { descricao: prod.descricao, codigo: prod.codigo, account: prod.account || 'oben', totalQty: 0, count: 0 };
+              productCounts[key] = { descricao: prod.descricao ?? '', codigo: prod.codigo ?? '', account: prod.account || 'oben', totalQty: 0, count: 0 };
             }
             productCounts[key].totalQty += item.quantity;
             productCounts[key].count += 1;
@@ -444,7 +542,7 @@ serve(async (req) => {
           for (const order of recentOrders) {
             if (order.service_type) serviceTypes.add(order.service_type);
             if (order.items && Array.isArray(order.items)) {
-              for (const item of order.items as any[]) {
+              for (const item of order.items as Array<{ category?: string }>) {
                 if (item.category) serviceTypes.add(item.category);
               }
             }
@@ -556,12 +654,12 @@ REGRAS DE IDENTIFICAÇÃO DE CLIENTE (CRÍTICAS):
 ` : ""}
 Responda SEMPRE usando a função identify_order_items.`;
 
-    const messages: any[] = [
+    const messages: AIChatMessage[] = [
       { role: "system", content: systemPrompt },
     ];
 
     if (allImages.length > 0) {
-      const content: any[] = [
+      const content: Array<{ type: string; text?: string; image_url?: { url: string } }> = [
         { type: "text", text: text || "Identifique os produtos, ferramentas e cliente nestas imagens e sugira os itens para o pedido:" },
       ];
       for (const img of allImages) {
@@ -573,7 +671,7 @@ Responda SEMPRE usando a função identify_order_items.`;
     }
 
     // Build tool schema
-    const toolProperties: any = {
+    const toolProperties: Record<string, ToolPropertySchema> = {
       products: {
         type: "array",
         description: "Produtos do catálogo identificados com certeza",
@@ -706,9 +804,9 @@ Responda SEMPRE usando a função identify_order_items.`;
     const result = JSON.parse(toolCall.function.arguments);
 
     // Validate product IDs - rescue invalid ones by fuzzy matching
-    const validProductIds = new Set(prodList.map((p: any) => p.id));
-    const aiProducts = result.products || [];
-    let validProducts: any[] = [];
+    const validProductIds = new Set(prodList.map((p) => p.id));
+    const aiProducts: AIProduct[] = result.products || [];
+    let validProducts: AIProduct[] = [];
     
     for (const ap of aiProducts) {
       if (validProductIds.has(ap.product_id)) {
@@ -745,7 +843,7 @@ Responda SEMPRE usando a função identify_order_items.`;
 
         // 1. Exact codigo match (stripped)
         if (apCodigo) {
-          const match = prodList.find((p: any) => {
+          const match = prodList.find((p) => {
             const pDesc = p.descricao.replace(/[.\-\s]/g, '').toLowerCase();
             const pCodigo = p.codigo.replace(/[.\-\s]/g, '').toLowerCase();
             return pCodigo === apCodigo || pDesc.includes(apCodigo);
@@ -761,12 +859,12 @@ Responda SEMPRE usando a função identify_order_items.`;
         if (!rescued && allNumericCodes.size > 0) {
           for (const nc of allNumericCodes) {
             // Find all products containing this numeric code
-            const candidates = prodList.filter((p: any) => p.descricao.includes(nc));
+            const candidates = prodList.filter((p) => p.descricao.includes(nc));
             if (candidates.length === 0) continue;
-            
+
             // If we have prefix and suffix, find best match
             if (alphaPrefix && packSuffix) {
-              const bestMatch = candidates.find((p: any) => {
+              const bestMatch = candidates.find((p) => {
                 const desc = p.descricao.toUpperCase();
                 return desc.includes(alphaPrefix) && desc.includes(packSuffix);
               });
@@ -779,7 +877,7 @@ Responda SEMPRE usando a função identify_order_items.`;
             }
             // Try prefix only
             if (!rescued && alphaPrefix) {
-              const prefixMatch = candidates.find((p: any) => p.descricao.toUpperCase().includes(alphaPrefix));
+              const prefixMatch = candidates.find((p) => p.descricao.toUpperCase().includes(alphaPrefix));
               if (prefixMatch) {
                 console.log(`[analyze-unified-order] Rescued by prefix+numeric: ${ap.codigo}/${ap.descricao} → ${prefixMatch.descricao}`);
                 validProducts.push({ ...ap, product_id: prefixMatch.id, codigo: prefixMatch.codigo, descricao: prefixMatch.descricao, account: prefixMatch.account, unit_price: ap.unit_price || prefixMatch.valor_unitario });
@@ -789,7 +887,7 @@ Responda SEMPRE usando a função identify_order_items.`;
             }
             // Try suffix only
             if (!rescued && packSuffix) {
-              const suffMatch = candidates.find((p: any) => p.descricao.toUpperCase().includes(packSuffix));
+              const suffMatch = candidates.find((p) => p.descricao.toUpperCase().includes(packSuffix));
               if (suffMatch) {
                 console.log(`[analyze-unified-order] Rescued by numeric+suffix: ${ap.codigo}/${ap.descricao} → ${suffMatch.descricao}`);
                 validProducts.push({ ...ap, product_id: suffMatch.id, codigo: suffMatch.codigo, descricao: suffMatch.descricao, account: suffMatch.account, unit_price: ap.unit_price || suffMatch.valor_unitario });
@@ -861,9 +959,9 @@ Responda SEMPRE usando a função identify_order_items.`;
     const inputContext = (text || '').toUpperCase() + ' ' + (result.message || '').toUpperCase();
     
     // Group validProducts by their base numeric code (e.g., "6673")
-    const variantGroups = new Map<string, any[]>();
+    const variantGroups = new Map<string, Array<{ vp: AIProduct; prod: ProdutoCatalogo }>>();
     for (const vp of validProducts) {
-      const prod = prodList.find((p: any) => p.id === vp.product_id);
+      const prod = prodList.find((p) => p.id === vp.product_id);
       if (!prod) { continue; }
       // Extract numeric code from descricao (e.g., "6673" from "FL.6673.00LT")
       const numMatch = prod.descricao.match(/(\d{4,})/);
@@ -882,7 +980,7 @@ Responda SEMPRE usando a função identify_order_items.`;
     for (const [baseNum, group] of variantGroups) {
       if (group.length <= 1) continue;
       
-      console.log(`[analyze-unified-order] Variant dedup: ${baseNum} has ${group.length} variants: ${group.map((g: any) => g.prod.descricao).join(', ')}`);
+      console.log(`[analyze-unified-order] Variant dedup: ${baseNum} has ${group.length} variants: ${group.map((g) => g.prod.descricao).join(', ')}`);
       
       // Score each variant by context clues
       let bestIdx = 0;
@@ -913,13 +1011,13 @@ Responda SEMPRE usando a função identify_order_items.`;
     }
     
     if (removedProductIds.size > 0) {
-      validProducts = validProducts.filter((vp: any) => !removedProductIds.has(vp.product_id));
+      validProducts = validProducts.filter((vp) => !removedProductIds.has(vp.product_id ?? ''));
     }
 
     // ─── Multi-account optimization: for each product, find equivalent in both accounts ───
     // Pick the account with LESS stock (to clear smaller batches first)
-    const prodMap = new Map(prodList.map((p: any) => [p.id, p]));
-    const optimizedProducts: any[] = [];
+    const prodMap = new Map<string, ProdutoCatalogo>(prodList.map((p) => [p.id, p]));
+    const optimizedProducts: AIProduct[] = [];
     const processedCodes = new Set<string>();
 
     for (const vp of validProducts) {
@@ -934,7 +1032,7 @@ Responda SEMPRE usando a função identify_order_items.`;
 
       // Find equivalent product in the other account by matching codigo
       const otherAccount = prod.account === 'oben' ? 'colacor' : 'oben';
-      const equivalent = prodList.find((p: any) => 
+      const equivalent = prodList.find((p) =>
         p.codigo === baseCode && p.account === otherAccount
       );
 
@@ -962,12 +1060,12 @@ Responda SEMPRE usando a função identify_order_items.`;
     validProducts = optimizedProducts;
 
     // Validate tool IDs
-    const validToolIds = new Set(tools.map((t: any) => t.id));
-    const validServices = (result.services || []).filter((s: any) => validToolIds.has(s.userToolId));
+    const validToolIds = new Set(tools.map((t) => t.id));
+    const validServices = ((result.services || []) as AIService[]).filter((s) => validToolIds.has(s.userToolId));
 
     // Validate suggestions — also DEDUP: remove suggestions that are already in validProducts
-    const validProductIdSet = new Set(validProducts.map((vp: any) => vp.product_id));
-    const validSuggestions = (result.suggestions || []).filter((s: any) => {
+    const validProductIdSet = new Set(validProducts.map((vp) => vp.product_id));
+    const validSuggestions = ((result.suggestions || []) as AISuggestion[]).filter((s) => {
       if (s.type === 'product') {
         // Remove if this product is already in the confirmed products list
         if (s.product_id && s.product_id !== '' && validProductIdSet.has(s.product_id)) return false;
@@ -1018,7 +1116,7 @@ Responda SEMPRE usando a função identify_order_items.`;
 
       // Check if this customer actually exists in our candidates
       // IMPORTANT: Do NOT trust AI's user_id — only match by name, document, or codigo_cliente
-      const matchedCandidate = customerCandidates.find((c: any) => {
+      const matchedCandidate = customerCandidates.find((c) => {
         // Match by codigo_cliente
         if (c.codigo_cliente && result.customer.codigo_cliente && c.codigo_cliente === result.customer.codigo_cliente) return true;
         // Match by document
@@ -1057,7 +1155,7 @@ Responda SEMPRE usando a função identify_order_items.`;
           console.log(`[analyze-unified-order] Candidate: "${cn}"`);
         }
         
-        const bestMatch = customerCandidates.find((c: any) => {
+        const bestMatch = customerCandidates.find((c) => {
           const name = stripAccents((c.nome_fantasia || c.nome || '').toLowerCase());
           const aiName = stripAccents((result.customer.nome_fantasia || '').toLowerCase());
           if (!name || !aiName) return false;
@@ -1124,8 +1222,8 @@ Responda SEMPRE usando a função identify_order_items.`;
           try {
             // Collect all product IDs we need prices for
             const allProductIds = [
-              ...validProducts.map((vp: any) => vp.product_id),
-              ...validSuggestions.filter((vs: any) => vs.product_id).map((vs: any) => vs.product_id),
+              ...validProducts.map((vp) => vp.product_id),
+              ...validSuggestions.filter((vs) => vs.product_id).map((vs) => vs.product_id),
             ].filter(Boolean);
 
             // Get omie_codigo_produto mapping for identified products
