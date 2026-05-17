@@ -594,3 +594,27 @@ Cada fatia pode virar PR separado. Ordem sugerida acima maximiza valor increment
   - Aprovar fechamento e ser bloqueado se houver categoria não-mapeada
   - Ver fila IC com divergências reais entre as 3 empresas
 - Documentação `docs/FINANCEIRO_CONFIABILIDADE.md` atualizada — itens migrados de "❌ Não implementado" pra "✅ MVP operacional"
+
+---
+
+## 11. Errata — Schema Real (verificado pré-plano)
+
+Durante a preparação do plano, conferi o schema real e fiz as seguintes correções terminológicas que valem pra todo o spec acima:
+
+| Nome no spec (pseudocódigo) | Nome real no schema | Tabelas |
+|---|---|---|
+| `empresa_id` | `company` | `fin_contas_receber`, `fin_contas_pagar`, `fin_movimentacoes`, `fin_orcamento`, `fin_fechamentos`, `fin_categoria_dre_mapping`, `fin_dre_snapshots` |
+| `data_movimentacao` | `data_movimento` | `fin_movimentacoes` |
+| `fin_fechamentos.periodo` (date) | `fin_fechamentos.ano` (int) + `mes` (int) | — |
+| `fin_fechamentos.status = 'aprovado'` | `status = 'fechado' AND aprovado_em IS NOT NULL` | Workflow real: `aberto → em_revisao → fechado` (status), depois `aprovado_em/aprovado_por` são preenchidos |
+| `fin_categoria_dre_mapping.categoria_id` | `omie_codigo` | — |
+| `fin_orcamento.competencia` | `ano` + `mes` + `dre_linha` | — |
+| `fin_eliminacoes_intercompany.empresa_id` | `empresa_origem` + `empresa_destino` | (mesma convenção será adotada em `fin_ic_matches`) |
+
+**Confirmações:**
+- `fin_dre_snapshots.regime text DEFAULT 'caixa' CHECK (regime IN ('caixa','competencia'))` **já existe** (migration `20260328200300`) — passa a ser **usado** (era declarado e ignorado).
+- `fin_dre_snapshots` UNIQUE atual é `(company, ano, mes)` — precisa ALTER pra `(company, ano, mes, regime)`.
+- Edge functions já têm helper compartilhado `supabase/functions/_shared/auth.ts` com `authorizeCronOrStaff()`.
+- `pg_cron` extension já habilitada (migration `20260221210049`).
+
+O plano de implementação usa os nomes reais. O texto conceitual do spec acima usa nomes mais legíveis pra design — a equivalência está nesta tabela.
