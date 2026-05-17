@@ -5,6 +5,7 @@ import { supabase } from '@/integrations/supabase/client';
 import { useDashboardCompany } from '@/hooks/useDashboardCompany';
 import { useCockpitChannel } from '@/hooks/dashboard/useCockpitChannel';
 import { variantFromScore, type PriorityCandidate } from '@/lib/dashboard/priority-rules';
+import { formatCount } from '@/lib/dashboard/format';
 import type { KpiSpec } from '@/components/dashboard/cockpit/CockpitKpiRow';
 import type { TopListItem } from '@/components/dashboard/cockpit/CockpitTopList';
 
@@ -81,9 +82,9 @@ export function useReposicaoZone() {
   const kpis: KpiSpec[] = useMemo(() => {
     if (!data) return [];
     return [
-      { label: 'Sugeridos prontos', value: String(data.sugeridosProntos) },
-      { label: 'Alertas ativos', value: String(data.alertasAtivos) },
-      { label: 'Aumentos 7d', value: String(data.aumentos7d) },
+      { label: 'Sugeridos prontos', value: formatCount(data.sugeridosProntos) },
+      { label: 'Alertas ativos', value: formatCount(data.alertasAtivos) },
+      { label: 'Aumentos 7d', value: formatCount(data.aumentos7d) },
     ];
   }, [data]);
 

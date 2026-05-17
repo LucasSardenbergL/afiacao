@@ -5,6 +5,7 @@ import { supabase } from '@/integrations/supabase/client';
 import { useDashboardCompany } from '@/hooks/useDashboardCompany';
 import { useCockpitChannel } from '@/hooks/dashboard/useCockpitChannel';
 import { variantFromScore, type PriorityCandidate } from '@/lib/dashboard/priority-rules';
+import { formatCount } from '@/lib/dashboard/format';
 import type { KpiSpec } from '@/components/dashboard/cockpit/CockpitKpiRow';
 import type { TopListItem } from '@/components/dashboard/cockpit/CockpitTopList';
 
@@ -116,8 +117,8 @@ export function useVendasZone() {
     if (!data) return [];
     return [
       { label: 'Faturado hoje', value: fmtBRL(data.faturadoHoje), deltaPct: data.deltaPct },
-      { label: 'Pedidos hoje', value: String(data.pedidosHoje) },
-      { label: 'Aguardando', value: String(data.orcamentosAguardando) },
+      { label: 'Pedidos hoje', value: formatCount(data.pedidosHoje) },
+      { label: 'Aguardando', value: formatCount(data.orcamentosAguardando) },
     ];
   }, [data]);
 

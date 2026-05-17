@@ -5,6 +5,7 @@ import { supabase } from '@/integrations/supabase/client';
 import { useDashboardCompany } from '@/hooks/useDashboardCompany';
 import { useCockpitChannel } from '@/hooks/dashboard/useCockpitChannel';
 import { variantFromScore, type PriorityCandidate } from '@/lib/dashboard/priority-rules';
+import { formatCount } from '@/lib/dashboard/format';
 import type { KpiSpec } from '@/components/dashboard/cockpit/CockpitKpiRow';
 import type { TopListItem } from '@/components/dashboard/cockpit/CockpitTopList';
 
@@ -116,9 +117,9 @@ export function useEstoqueZone() {
   const kpis: KpiSpec[] = useMemo(() => {
     if (!data) return [];
     return [
-      { label: 'NF pendentes', value: String(data.nfPendentes) },
-      { label: 'Picking abertos', value: String(data.pickingAbertos) },
-      { label: 'Recebidos hoje', value: String(data.recebimentosHoje) },
+      { label: 'NF pendentes', value: formatCount(data.nfPendentes) },
+      { label: 'Picking abertos', value: formatCount(data.pickingAbertos) },
+      { label: 'Recebidos hoje', value: formatCount(data.recebimentosHoje) },
     ];
   }, [data]);
 

@@ -2,20 +2,17 @@ import { useQuery } from '@tanstack/react-query';
 import { useMemo } from 'react';
 import { UserCheck } from 'lucide-react';
 import { supabase } from '@/integrations/supabase/client';
-import { useCockpitChannel } from '@/hooks/dashboard/useCockpitChannel';
 import { variantFromScore, type PriorityCandidate } from '@/lib/dashboard/priority-rules';
+import { formatCount } from '@/lib/dashboard/format';
 import type { KpiSpec } from '@/components/dashboard/cockpit/CockpitKpiRow';
 import type { TopListItem } from '@/components/dashboard/cockpit/CockpitTopList';
 
 export function useSistemaZone() {
   const queryKey = ['dashboard', 'sistema'];
 
-  const { isLive } = useCockpitChannel({
-    zone: 'sistema',
-    table: 'profiles',
-    filter: 'is_approved=eq.false',
-    queryKeys: [queryKey],
-  });
+  // Sem Realtime channel intencional: tabela `profiles` é barulhenta demais pra
+  // streamar (qualquer login atualiza). Refetch 60s cobre o caso de uso.
+  const isLive = false;
 
   const { data, isLoading, isError, refetch } = useQuery({
     queryKey,
@@ -84,7 +81,7 @@ export function useSistemaZone() {
   const kpis: KpiSpec[] = useMemo(() => {
     if (!data) return [];
     return [
-      { label: 'Aprovações', value: String(data.aprovacoesPendentes) },
+      { label: 'Aprovações', value: formatCount(data.aprovacoesPendentes) },
       { label: 'Sync Omie', value: data.syncOmie ?? '—' },
       { label: 'Sync Sayerlack', value: data.syncSayerlack ?? '—' },
     ];
