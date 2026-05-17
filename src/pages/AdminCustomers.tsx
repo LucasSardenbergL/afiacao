@@ -35,6 +35,8 @@ import { Save, Bookmark, X as XIcon } from 'lucide-react';
 import { decodeHtmlEntities } from '@/lib/format';
 import { CustomerProfile360Summary } from '@/components/customer/CustomerProfile360Summary';
 import { CustomerCallsTab } from '@/components/customer/CustomerCallsTab';
+import { CustomerProcessTab } from '@/components/customer/CustomerProcessTab';
+import { Factory } from 'lucide-react';
 
 /* ─── Types ─── */
 interface Customer {
@@ -590,6 +592,9 @@ function Customer360View({
           <TabsTrigger value="calls" className="gap-1.5">
             <Phone className="w-3.5 h-3.5" /> Chamadas
           </TabsTrigger>
+          <TabsTrigger value="process" className="gap-1.5">
+            <Factory className="w-3.5 h-3.5" /> Processo
+          </TabsTrigger>
         </TabsList>
 
         <TabsContent value="orders" className="mt-3">
@@ -697,6 +702,10 @@ function Customer360View({
 
         <TabsContent value="calls" className="mt-3">
           <CustomerCallsTab customerId={customer.user_id} />
+        </TabsContent>
+
+        <TabsContent value="process" className="mt-3">
+          <CustomerProcessTab customerId={customer.user_id} />
         </TabsContent>
       </Tabs>
     </div>
