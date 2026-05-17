@@ -26,6 +26,7 @@ import LoteScannerOCR from '@/components/recebimento/LoteScannerOCR';
 import { useOfflineMutation } from '@/hooks/useOfflineMutation';
 import { registerOfflineHandler } from '@/hooks/useOfflineFlush';
 import { confirmUnit, type ConfirmUnitVars } from '@/services/recebimento-confirm';
+import { reportDivergencia, type ReportDivergenciaVars } from '@/services/recebimento-divergencia';
 
 type ItemStatus = 'pendente' | 'em_conferencia' | 'conferido' | 'divergencia';
 
@@ -116,10 +117,23 @@ export default function RecebimentoConferencia() {
     mutationFn: confirmUnit,
   });
 
+  // Offline-aware mutation pra handleReportDivergencia
+  const divergenciaMutation = useOfflineMutation<{ ok: true }, ReportDivergenciaVars>({
+    kind: 'recebimento.report-divergencia',
+    mutationFn: reportDivergencia,
+  });
+
   // Registra handler pra processar items enfileirados quando reconectar
   useEffect(() => {
     return registerOfflineHandler<ConfirmUnitVars>('recebimento.confirm-unit', async (vars) => {
       await confirmUnit(vars);
+      return true;
+    });
+  }, []);
+
+  useEffect(() => {
+    return registerOfflineHandler<ReportDivergenciaVars>('recebimento.report-divergencia', async (vars) => {
+      await reportDivergencia(vars);
       return true;
     });
   }, []);
@@ -239,20 +253,26 @@ export default function RecebimentoConferencia() {
 
   // Report divergence
   const handleReportDivergencia = async () => {
-    if (!divergenciaItemId || !divergenciaText.trim()) return;
+    if (!divergenciaItemId || !divergenciaText.trim() || !id) return;
     setSaving(true);
     try {
-      await supabase
-        .from('nfe_recebimento_itens')
-        .update({ status_item: 'divergencia', observacao: divergenciaText.trim() })
-        .eq('id', divergenciaItemId);
+      const vars: ReportDivergenciaVars = {
+        itemId: divergenciaItemId,
+        nfeId: id,
+        observacao: divergenciaText.trim(),
+      };
 
-      await supabase.from('nfe_recebimentos').update({ status: 'divergencia' }).eq('id', id!);
+      await divergenciaMutation.mutateAsync(vars);
 
-      toast.success('Divergência registrada');
       setDivergenciaItemId(null);
       setDivergenciaText('');
       queryClient.invalidateQueries({ queryKey: ['nfe_conferencia', id] });
+
+      if (divergenciaMutation.queued) {
+        toast.info('Salvo offline — sincroniza quando reconectar');
+      } else {
+        toast.success('Divergência registrada');
+      }
     } catch (err: any) {
       toast.error('Erro: ' + err.message);
     } finally {
