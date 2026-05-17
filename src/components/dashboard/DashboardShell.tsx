@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
 import { usePersona } from '@/hooks/usePersona';
 import { DashboardPersonaProvider, useDashboardPersonaContext } from '@/contexts/DashboardPersonaContext';
+import { DashboardEditModeProvider } from '@/contexts/DashboardEditModeContext';
 import { useRegisterShortcuts } from '@/components/shell/ShortcutsRegistry';
 import { useNavigate } from 'react-router-dom';
 import { track } from '@/lib/analytics';
@@ -24,7 +25,9 @@ export function DashboardShell() {
   const resolved = usePersona();
   return (
     <DashboardPersonaProvider resolved={resolved}>
-      <DashboardBody />
+      <DashboardEditModeProvider>
+        <DashboardBody />
+      </DashboardEditModeProvider>
     </DashboardPersonaProvider>
   );
 }
