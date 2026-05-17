@@ -261,6 +261,27 @@ Dois backends coexistem; o usuário escolhe via toggle em `/settings`:
 
 - `src/lib/logger.ts` — wrapper estruturado com níveis (info/error/critical), usado consistente em AuthContext
 
+### Migrations Supabase — ⚠️ aplicação manual obrigatória
+
+**Lovable Cloud NÃO aplica automaticamente** migrations que você commita em `supabase/migrations/`. Confirmado experimentalmente em 2026-05-17:
+
+- Migrations geradas pelo Lovable (formato `_UUID.sql`, ex: `_868822bb-e38c-4fcf-8879-c64e48bd7630.sql`) rodam quando você usa o builder visual dele
+- Migrations com nome custom (`_user_departments.sql`, `_dashboard_visits.sql`, `_enable_realtime_dashboard_v3.sql`) commitadas via PR **ficam só no repo** e não tocam o banco
+
+**Workflow obrigatório quando criar migration custom**:
+
+1. Cria o arquivo em `supabase/migrations/YYYYMMDDHHMMSS_<nome>.sql`
+2. Mergeia o PR normal (commit fica no histórico do código)
+3. **Aplica manualmente**: Supabase Dashboard (via Lovable Cloud) → SQL Editor → New query → cola conteúdo → Run
+4. Valida com query tipo `SELECT EXISTS(SELECT 1 FROM pg_tables WHERE tablename = '<nova_tabela>')`
+
+**Migrations já criadas e que precisaram aplicação manual** (referência):
+- `20260517100000_enable_realtime_dashboard_v3.sql` — Realtime publication pras 4 tabelas Dashboard V3
+- `20260517120000_user_departments.sql` — schema `user_departments`
+- `20260517140000_dashboard_visits.sql` — schema `dashboard_visits`
+
+**Sempre que adicionar migration nova**: avisar no PR description "**ATENÇÃO: migration manual necessária**" e idealmente colar o SQL no body do PR pra facilitar.
+
 ### Convenções de código
 
 - Pages em PascalCase (`AdminReposicaoCockpit.tsx`)
