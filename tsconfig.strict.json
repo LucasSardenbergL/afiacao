@@ -1,0 +1,32 @@
+{
+  "//": [
+    "TypeScript strict mode incremental — caminho documentado em CLAUDE.md §10.",
+    "Este config liga strict flags (noImplicitAny, strictNullChecks etc) APENAS pra",
+    "files explicitamente listados em `include` abaixo. Outros files continuam com",
+    "tsconfig.app.json (strict: false).",
+    "",
+    "Adicione files novos / migrados aqui conforme forem ficando strict-clean.",
+    "Roda via `bun run typecheck:strict`. Quando 100% do src estiver listado, mover",
+    "os flags pra tsconfig.app.json e deletar este arquivo."
+  ],
+  "extends": "./tsconfig.app.json",
+  "compilerOptions": {
+    "noImplicitAny": true,
+    "strictNullChecks": true,
+    "strict": true,
+    "noFallthroughCasesInSwitch": true,
+    "noUnusedLocals": true,
+    "noUnusedParameters": true
+  },
+  "include": [
+    "src/vite-env.d.ts",
+    "src/lib/logger.ts",
+    "src/lib/format.ts",
+    "src/lib/phone.ts",
+    "src/lib/agruparPorMes.ts",
+    "src/lib/help-utils.ts",
+    "src/hooks/useNetworkStatus.ts",
+    "src/hooks/useInfiniteScroll.ts",
+    "src/hooks/useBarcodeDetector.ts"
+  ]
+}
