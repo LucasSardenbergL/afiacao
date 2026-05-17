@@ -31,6 +31,51 @@ import { addCte, type AddCteVars } from '@/services/recebimento-cte';
 
 type ItemStatus = 'pendente' | 'em_conferencia' | 'conferido' | 'divergencia';
 
+interface NfeItem {
+  id: string;
+  codigo_produto?: string | null;
+  descricao_produto?: string | null;
+  quantidade_esperada?: number | null;
+  quantidade_conferida?: number | null;
+  quantidade_nfe?: number | null;
+  quantidade_convertida?: number | null;
+  unidade_estoque?: string | null;
+  unidade_nfe?: string | null;
+  status_item?: ItemStatus | null;
+  [k: string]: unknown;
+}
+
+interface NfeLoteEscaneado {
+  id: string;
+  nfe_recebimento_item_id: string;
+  numero_lote: string;
+  data_fabricacao: string | null;
+  data_validade: string | null;
+  [k: string]: unknown;
+}
+
+interface CteAssociado {
+  id: string;
+  numero_cte?: string | null;
+  chave_acesso_cte?: string | null;
+  razao_social_transportadora?: string | null;
+  valor_frete?: number | null;
+  status?: string | null;
+  [k: string]: unknown;
+}
+
+interface NfeRecebimento {
+  id: string;
+  numero_nfe: string;
+  razao_social_emitente: string | null;
+  data_emissao: string | null;
+  valor_total: number | null;
+  status: string;
+  nfe_recebimento_itens?: NfeItem[];
+  cte_associados?: CteAssociado[];
+  [k: string]: unknown;
+}
+
 const STATUS_COLORS: Record<ItemStatus, string> = {
   pendente: 'bg-muted text-muted-foreground',
   em_conferencia: 'bg-status-info-bg text-status-info-foreground',
@@ -99,13 +144,16 @@ export default function RecebimentoConferencia() {
   });
 
   // Fetch scanned lotes grouped
-  const { data: lotes } = useQuery({
+  const { data: lotes } = useQuery<NfeLoteEscaneado[]>({
     queryKey: ['nfe_lotes', id],
     queryFn: async () => {
-      const { data, error } = await (supabase
-        .from('nfe_lotes_escaneados' as any)
-        .select('*')
-        .eq('nfe_recebimento_id', id!) as any);
+      // `select('*').eq(...)` em `nfe_lotes_escaneados` dispara "Type instantiation
+      // is excessively deep" — usar `as unknown as ...` para curto-circuitar inferência.
+      type LoteQueryResult = { data: NfeLoteEscaneado[] | null; error: { message: string } | null };
+      const builder = supabase.from('nfe_lotes_escaneados').select('*') as unknown as {
+        eq: (col: string, val: string) => Promise<LoteQueryResult>;
+      };
+      const { data, error } = await builder.eq('nfe_recebimento_id', id!);
       if (error) throw error;
       return data ?? [];
     },
@@ -155,7 +203,7 @@ export default function RecebimentoConferencia() {
   // Group lotes by item
   const lotesPerItem = useMemo(() => {
     const map = new Map<string, Map<string, { count: number; fab: string | null; val: string | null }>>();
-    (lotes ?? []).forEach((l: any) => {
+    ((lotes ?? []) as NfeLoteEscaneado[]).forEach((l) => {
       if (!map.has(l.nfe_recebimento_item_id)) map.set(l.nfe_recebimento_item_id, new Map());
       const itemMap = map.get(l.nfe_recebimento_item_id)!;
       const existing = itemMap.get(l.numero_lote);
@@ -169,17 +217,18 @@ export default function RecebimentoConferencia() {
   }, [lotes]);
 
   // Compute globals
-  const items = (nfe?.nfe_recebimento_itens ?? []) as any[];
-  const totalEsperada = items.reduce((s: number, i: any) => s + (i.quantidade_esperada ?? 0), 0);
-  const totalConferida = items.reduce((s: number, i: any) => s + (i.quantidade_conferida ?? 0), 0);
+  const nfeTyped = nfe as NfeRecebimento | undefined;
+  const items = (nfeTyped?.nfe_recebimento_itens ?? []) as NfeItem[];
+  const totalEsperada = items.reduce((s: number, i) => s + (i.quantidade_esperada ?? 0), 0);
+  const totalConferida = items.reduce((s: number, i) => s + (i.quantidade_conferida ?? 0), 0);
   const progressPct = totalEsperada > 0 ? Math.round((totalConferida / totalEsperada) * 100) : 0;
 
-  const allConferido = items.length > 0 && items.every((i: any) => i.status_item === 'conferido');
-  const hasDivergencia = items.some((i: any) => i.status_item === 'divergencia');
+  const allConferido = items.length > 0 && items.every((i) => i.status_item === 'conferido');
+  const hasDivergencia = items.some((i) => i.status_item === 'divergencia');
   const canFinalize = allConferido || hasDivergencia;
 
   // Active item
-  const activeItem = items.find((i: any) => i.id === activeItemId);
+  const activeItem = items.find((i) => i.id === activeItemId);
   const activeConferida = activeItem?.quantidade_conferida ?? 0;
   const activeEsperada = activeItem?.quantidade_esperada ?? 0;
   const currentUnit = activeConferida + 1;
@@ -239,7 +288,7 @@ export default function RecebimentoConferencia() {
         metodoLeitura: metodo,
         newConferida,
         newStatusItem: newStatus,
-        updateNfeStatusToEmConferencia: (nfe as any)?.status === 'pendente',
+        updateNfeStatusToEmConferencia: nfeTyped?.status === 'pendente',
       };
 
       await confirmMutation.mutateAsync(vars);
@@ -258,8 +307,9 @@ export default function RecebimentoConferencia() {
         resetScanForm();
         setManualMode(false);
       }
-    } catch (err: any) {
-      toast.error('Erro ao salvar: ' + (err.message ?? 'Tente novamente'));
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : 'Tente novamente';
+      toast.error('Erro ao salvar: ' + msg);
     } finally {
       setSaving(false);
     }
@@ -287,8 +337,8 @@ export default function RecebimentoConferencia() {
       } else {
         toast.success('Divergência registrada');
       }
-    } catch (err: any) {
-      toast.error('Erro: ' + err.message);
+    } catch (err) {
+      toast.error('Erro: ' + (err instanceof Error ? err.message : String(err)));
     } finally {
       setSaving(false);
     }
@@ -322,8 +372,8 @@ export default function RecebimentoConferencia() {
       } else {
         toast.success('CT-e vinculado');
       }
-    } catch (err: any) {
-      toast.error('Erro: ' + err.message);
+    } catch (err) {
+      toast.error('Erro: ' + (err instanceof Error ? err.message : String(err)));
     } finally {
       setCteSaving(false);
     }
@@ -355,15 +405,16 @@ export default function RecebimentoConferencia() {
         });
         if (res.error) throw res.error;
 
-        const totalLotes = new Set((lotes ?? []).map((l: any) => l.numero_lote)).size;
-        toast.success(`NF-e ${(nfe as any)?.numero_nfe} efetivada — ${totalConferida} unidades, ${totalLotes} lotes registrados`);
+        const totalLotes = new Set(((lotes ?? []) as NfeLoteEscaneado[]).map((l) => l.numero_lote)).size;
+        toast.success(`NF-e ${nfeTyped?.numero_nfe} efetivada — ${totalConferida} unidades, ${totalLotes} lotes registrados`);
       } else {
         toast.warning('Conferência finalizada com divergências. Aguardando resolução.');
       }
 
       navigate('/recebimento');
-    } catch (err: any) {
-      toast.error('Erro ao finalizar: ' + (err.message ?? 'Tente novamente'));
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : 'Tente novamente';
+      toast.error('Erro ao finalizar: ' + msg);
     } finally {
       setFinalizing(false);
     }
@@ -393,7 +444,7 @@ export default function RecebimentoConferencia() {
     );
   }
 
-  const ctes = (nfe as any).cte_associados ?? [];
+  const ctes = (nfeTyped?.cte_associados ?? []) as CteAssociado[];
 
   // Scanner full-screen overlay
   if (scannerOpen) {
@@ -415,10 +466,10 @@ export default function RecebimentoConferencia() {
           </Button>
           <div className="flex-1 min-w-0">
             <h1 className="text-lg font-bold text-foreground truncate">
-              NF-e {(nfe as any).numero_nfe}
+              NF-e {nfeTyped?.numero_nfe}
             </h1>
             <p className="text-xs text-muted-foreground truncate">
-              {decodeHtmlEntities((nfe as any).razao_social_emitente)} · {formatDate((nfe as any).data_emissao)} · {formatCurrency((nfe as any).valor_total)}
+              {decodeHtmlEntities(nfeTyped?.razao_social_emitente ?? '')} · {formatDate(nfeTyped?.data_emissao ?? null)} · {formatCurrency(nfeTyped?.valor_total ?? null)}
             </p>
           </div>
         </div>
@@ -439,7 +490,7 @@ export default function RecebimentoConferencia() {
           <h2 className="text-sm font-semibold text-muted-foreground mb-2">Transporte</h2>
           {ctes.length > 0 ? (
             <div className="space-y-2">
-              {ctes.map((cte: any) => (
+              {ctes.map((cte) => (
                 <Card key={cte.id}>
                   <CardContent className="p-3 flex items-center gap-3">
                     <Truck className="h-5 w-5 text-muted-foreground shrink-0" />
@@ -471,7 +522,7 @@ export default function RecebimentoConferencia() {
             Itens ({items.length})
           </h2>
           <div className="space-y-3">
-            {items.map((item: any) => {
+            {items.map((item) => {
               const esperada = item.quantidade_esperada ?? 0;
               const conferida = item.quantidade_conferida ?? 0;
               const pct = esperada > 0 ? Math.round((conferida / esperada) * 100) : 0;
