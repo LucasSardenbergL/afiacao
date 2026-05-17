@@ -39,6 +39,14 @@ vi.mock('@/hooks/useTranscription', () => ({
   }),
 }));
 
+vi.mock('@/hooks/useSpinAnalysis', () => ({
+  useSpinAnalysis: () => ({
+    status: 'idle' as const,
+    analysis: null,
+    error: null,
+  }),
+}));
+
 import { WebRTCCallProvider, useWebRTCCallContext } from '../WebRTCCallContext';
 import { SipClient } from '@/lib/sip/sip-client';
 
@@ -112,5 +120,14 @@ describe('WebRTCCallProvider', () => {
     expect(result.current.transcriptionTurns).toEqual([]);
     expect(result.current.transcriptionError).toBeNull();
     expect(result.current.vendorMicStream).toBeNull();
+  });
+
+  it('expõe campos de SPIN analysis (inicialmente idle/null)', async () => {
+    const { result } = renderHook(() => useWebRTCCallContext(), { wrapper });
+    await waitFor(() => expect(SipClient).toHaveBeenCalled());
+
+    expect(result.current.spinAnalysisStatus).toBe('idle');
+    expect(result.current.spinAnalysis).toBeNull();
+    expect(result.current.spinAnalysisError).toBeNull();
   });
 });

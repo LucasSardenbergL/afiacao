@@ -5,6 +5,8 @@ import { cn } from '@/lib/utils';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import type { TranscriptTurn, TranscriptionStatus } from '@/lib/transcription/types';
+import type { SpinAnalysis, SpinAnalysisStatus } from '@/lib/spin/types';
+import { SpinSuggestionCard } from './SpinSuggestionCard';
 
 interface TranscriptionPanelProps {
   status: TranscriptionStatus;
@@ -12,6 +14,9 @@ interface TranscriptionPanelProps {
   error: string | null;
   open: boolean;
   onClose: () => void;
+  spinAnalysis?: SpinAnalysis | null;
+  spinStatus?: SpinAnalysisStatus;
+  spinError?: string | null;
 }
 
 /**
@@ -19,7 +24,16 @@ interface TranscriptionPanelProps {
  * Bolhas alternadas estilo chat: vendedor (direita) vs cliente (esquerda).
  * Interim turns aparecem com opacidade reduzida + "digitando...".
  */
-export function TranscriptionPanel({ status, turns, error, open, onClose }: TranscriptionPanelProps) {
+export function TranscriptionPanel({
+  status,
+  turns,
+  error,
+  open,
+  onClose,
+  spinAnalysis,
+  spinStatus,
+  spinError,
+}: TranscriptionPanelProps) {
   const scrollRef = useRef<HTMLDivElement>(null);
 
   // Auto-scroll pro final quando turns mudam
@@ -77,10 +91,20 @@ export function TranscriptionPanel({ status, turns, error, open, onClose }: Tran
             ))}
           </div>
 
-          {/* Footer */}
-          <footer className="p-3 border-t border-border text-2xs text-muted-foreground text-center shrink-0">
-            Transcrição via Deepgram Nova-3. Não armazenada (PR6 vai persistir).
-          </footer>
+          {/* Footer: SpinSuggestionCard when spin props provided, fallback otherwise */}
+          {spinStatus !== undefined ? (
+            <div className="shrink-0">
+              <SpinSuggestionCard
+                status={spinStatus}
+                analysis={spinAnalysis ?? null}
+                error={spinError ?? null}
+              />
+            </div>
+          ) : (
+            <footer className="p-3 border-t border-border text-2xs text-muted-foreground text-center shrink-0">
+              Transcrição via Deepgram Nova-3. Não armazenada (PR6 vai persistir).
+            </footer>
+          )}
         </motion.aside>
       )}
     </AnimatePresence>

@@ -7,6 +7,8 @@ import { normalizeBrPhone, formatBrPhone } from '@/lib/phone';
 import { mixPrerollWithMic } from '@/lib/sip/audio-preroll';
 import { useTranscription } from '@/hooks/useTranscription';
 import type { TranscriptTurn, TranscriptionStatus } from '@/lib/transcription/types';
+import { useSpinAnalysis } from '@/hooks/useSpinAnalysis';
+import type { SpinAnalysis, SpinAnalysisStatus } from '@/lib/spin/types';
 
 export type WebRTCCallState =
   | 'idle' | 'connecting' | 'calling_origin' | 'calling_destination'
@@ -56,6 +58,10 @@ export interface WebRTCCallContextValue {
   transcriptionTurns: TranscriptTurn[];
   /** Mensagem de erro da transcrição, se houver */
   transcriptionError: string | null;
+  /** Análise SPIN ao vivo da conversa atual. null se ainda não rodou. */
+  spinAnalysis: SpinAnalysis | null;
+  spinAnalysisStatus: SpinAnalysisStatus;
+  spinAnalysisError: string | null;
 }
 
 const WebRTCCallContext = createContext<WebRTCCallContextValue | null>(null);
@@ -256,6 +262,11 @@ export function WebRTCCallProvider({ children }: ProviderProps) {
     enabled: callState === 'established',
   });
 
+  const spin = useSpinAnalysis({
+    turns: transcription.turns,
+    enabled: callState === 'established',
+  });
+
   const value: WebRTCCallContextValue = {
     callState,
     callId: null,
@@ -275,6 +286,9 @@ export function WebRTCCallProvider({ children }: ProviderProps) {
     transcriptionStatus: transcription.status,
     transcriptionTurns: transcription.turns,
     transcriptionError: transcription.error,
+    spinAnalysis: spin.analysis,
+    spinAnalysisStatus: spin.status,
+    spinAnalysisError: spin.error,
   };
 
   return <WebRTCCallContext.Provider value={value}>{children}</WebRTCCallContext.Provider>;
