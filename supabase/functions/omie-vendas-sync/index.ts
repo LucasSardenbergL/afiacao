@@ -761,15 +761,23 @@ async function syncPedidos(
     const uniqueClientCodes = [...new Set(pedidos.map((p: any) => p.cabecalho?.codigo_cliente).filter(Boolean))] as number[];
     const unknownCodes = uniqueClientCodes.filter(c => !clientCache.has(c));
     if (unknownCodes.length > 0) {
-      console.log(`[sync_pedidos][${account}] Resolving ${unknownCodes.length} unknown clients via API`);
-      for (const code of unknownCodes) await resolveClientUserId(code);
+      console.log(`[sync_pedidos][${account}] Resolving ${unknownCodes.length} unknown clients via API (concurrency=5)`);
+      // Antes: for of await (serial). Agora: chunks de 5 em paralelo pra acelerar
+      // sem floodar API Omie (rate limits Omie não documentados; 5 é conservador).
+      const CHUNK = 5;
+      for (let i = 0; i < unknownCodes.length; i += CHUNK) {
+        await Promise.all(unknownCodes.slice(i, i + CHUNK).map(c => resolveClientUserId(c)));
+      }
     }
 
     // Pre-fetch address/phone for all clients on this page that aren't cached yet
     const codesNeedingAddress = uniqueClientCodes.filter(c => !clientAddressCache.has(c) && clientCache.has(c) && clientCache.get(c));
     if (codesNeedingAddress.length > 0) {
-      console.log(`[sync_pedidos][${account}] Fetching address/phone for ${codesNeedingAddress.length} clients`);
-      for (const code of codesNeedingAddress) await getClientAddressPhone(code);
+      console.log(`[sync_pedidos][${account}] Fetching address/phone for ${codesNeedingAddress.length} clients (concurrency=5)`);
+      const CHUNK = 5;
+      for (let i = 0; i < codesNeedingAddress.length; i += CHUNK) {
+        await Promise.all(codesNeedingAddress.slice(i, i + CHUNK).map(c => getClientAddressPhone(c)));
+      }
     }
 
     // ── Prepare batch arrays ──
