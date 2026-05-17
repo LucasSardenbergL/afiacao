@@ -6,6 +6,10 @@
  * @param micStream MediaStream do microfone do vendedor (de getUserMedia)
  * @returns Objeto com:
  *   - `stream`: MediaStream mixado, pronto pra passar pro JsSIP.UA.call
+ *   - `play`: dispara o áudio do pre-roll. **DEVE ser chamado APENAS quando o cliente
+ *      atender** (evento `'established'` do SIP). Se chamado antes, o áudio toca pra
+ *      ninguém — RTP só flui após o 200 OK, então frames produzidos durante o ringing
+ *      são perdidos. Idempotente: chamadas adicionais são noop.
  *   - `close`: callback pra fechar o AudioContext ao final da chamada
  *
  * **Importante**: o caller é responsável por chamar `close()` quando a chamada terminar.
@@ -16,7 +20,7 @@
 export async function mixPrerollWithMic(
   prerollUrl: string,
   micStream: MediaStream
-): Promise<{ stream: MediaStream; close: () => void }> {
+): Promise<{ stream: MediaStream; play: () => void; close: () => void }> {
   const ctx = new AudioContext();
 
   const micSource = ctx.createMediaStreamSource(micStream);
@@ -30,10 +34,16 @@ export async function mixPrerollWithMic(
   const prerollSource = ctx.createBufferSource();
   prerollSource.buffer = audioBuffer;
   prerollSource.connect(destination);
-  prerollSource.start();
+
+  let played = false;
 
   return {
     stream: destination.stream,
+    play: () => {
+      if (played) return;
+      played = true;
+      prerollSource.start();
+    },
     close: () => {
       // ctx.close() retorna Promise — não esperamos pra não bloquear hangUp
       void ctx.close();

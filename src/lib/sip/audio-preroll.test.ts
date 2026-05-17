@@ -35,12 +35,30 @@ describe('mixPrerollWithMic', () => {
     expect(result.stream).toBe(destinationStream);
   });
 
-  it('inicia o source do pre-roll', async () => {
+  it('NÃO inicia o source até play() ser chamado (timing fix)', async () => {
     const micStream = new MediaStream();
-    await mixPrerollWithMic('/preroll/aviso.mp3', micStream);
+    const result = await mixPrerollWithMic('/preroll/aviso.mp3', micStream);
 
     const source = audioContextMock.createBufferSource.mock.results[0].value;
-    expect(source.start).toHaveBeenCalled();
+    // Antes de play(): source NÃO foi iniciado
+    expect(source.start).not.toHaveBeenCalled();
+
+    // Após play(): source inicia
+    result.play();
+    expect(source.start).toHaveBeenCalledTimes(1);
+  });
+
+  it('play() é idempotente — múltiplas chamadas só disparam start uma vez', async () => {
+    const micStream = new MediaStream();
+    const result = await mixPrerollWithMic('/preroll/aviso.mp3', micStream);
+
+    const source = audioContextMock.createBufferSource.mock.results[0].value;
+
+    result.play();
+    result.play();
+    result.play();
+
+    expect(source.start).toHaveBeenCalledTimes(1);
   });
 
   it('expõe close() que invoca AudioContext.close', async () => {
