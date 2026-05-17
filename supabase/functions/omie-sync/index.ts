@@ -1179,33 +1179,42 @@ serve(async (req) => {
 
         let deletedCount = 0;
         
-        for (const os of (allOs || [])) {
-          try {
-            const consultaResult = await callOmieApi("servicos/os/", "ConsultarOS", {
-              nCodOS: os.omie_codigo_os,
-            }) as any;
-            
-            if (consultaResult.faultstring) {
-              console.log(`[Omie] OS ${os.omie_numero_os} não existe mais no Omie, excluindo localmente...`);
-              // Hard delete
-              await supabaseAdmin.from("omie_ordens_servico").delete().eq("order_id", os.order_id);
-              await supabaseAdmin.from("order_messages").delete().eq("order_id", os.order_id);
-              await supabaseAdmin.from("order_reviews").delete().eq("order_id", os.order_id);
-              await supabaseAdmin.from("loyalty_points").delete().eq("order_id", os.order_id);
-              await supabaseAdmin.from("sending_quality_logs").delete().eq("order_id", os.order_id);
-              await supabaseAdmin.from("orders").delete().eq("id", os.order_id);
+        // Helper: deleta a OS de todas as 6 tabelas em paralelo (independentes)
+        // Antes: 6 awaits sequenciais — O(6 round-trips) por OS. Agora: Promise.all =
+        // 1 round-trip (6 paralelos), reduz tempo total ~6×.
+        const deleteOrphanOs = async (orderId: string) => {
+          await Promise.all([
+            supabaseAdmin.from("omie_ordens_servico").delete().eq("order_id", orderId),
+            supabaseAdmin.from("order_messages").delete().eq("order_id", orderId),
+            supabaseAdmin.from("order_reviews").delete().eq("order_id", orderId),
+            supabaseAdmin.from("loyalty_points").delete().eq("order_id", orderId),
+            supabaseAdmin.from("sending_quality_logs").delete().eq("order_id", orderId),
+            supabaseAdmin.from("orders").delete().eq("id", orderId),
+          ]);
+        };
+
+        // Outer loop também paraleliza (chunks de 5) pra não floodar API Omie.
+        // ConsultarOS chama API externa; manter concorrência conservadora.
+        const CHUNK = 5;
+        for (let i = 0; i < (allOs || []).length; i += CHUNK) {
+          const chunk = (allOs || []).slice(i, i + CHUNK);
+          await Promise.all(chunk.map(async (os) => {
+            try {
+              const consultaResult = await callOmieApi("servicos/os/", "ConsultarOS", {
+                nCodOS: os.omie_codigo_os,
+              }) as any;
+
+              if (consultaResult.faultstring) {
+                console.log(`[Omie] OS ${os.omie_numero_os} não existe mais no Omie, excluindo localmente...`);
+                await deleteOrphanOs(os.order_id);
+                deletedCount++;
+              }
+            } catch {
+              console.log(`[Omie] OS ${os.omie_numero_os} possivelmente excluída, removendo...`);
+              await deleteOrphanOs(os.order_id);
               deletedCount++;
             }
-          } catch {
-            console.log(`[Omie] OS ${os.omie_numero_os} possivelmente excluída, removendo...`);
-            await supabaseAdmin.from("omie_ordens_servico").delete().eq("order_id", os.order_id);
-            await supabaseAdmin.from("order_messages").delete().eq("order_id", os.order_id);
-            await supabaseAdmin.from("order_reviews").delete().eq("order_id", os.order_id);
-            await supabaseAdmin.from("loyalty_points").delete().eq("order_id", os.order_id);
-            await supabaseAdmin.from("sending_quality_logs").delete().eq("order_id", os.order_id);
-            await supabaseAdmin.from("orders").delete().eq("id", os.order_id);
-            deletedCount++;
-          }
+          }));
         }
 
         console.log(`[Omie] Sincronização de exclusões concluída: ${deletedCount} pedidos removidos`);
