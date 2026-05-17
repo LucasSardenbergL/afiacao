@@ -96,13 +96,48 @@ export default defineConfig(({ mode }) => ({
   build: {
     rollupOptions: {
       output: {
-        manualChunks: {
-          'vendor-react': ['react', 'react-dom', 'react-router-dom'],
-          'vendor-query': ['@tanstack/react-query'],
-          'vendor-ui': ['@radix-ui/react-dialog', '@radix-ui/react-popover', '@radix-ui/react-select', '@radix-ui/react-tabs', '@radix-ui/react-tooltip', '@radix-ui/react-dropdown-menu'],
-          'vendor-supabase': ['@supabase/supabase-js'],
-          'vendor-charts': ['recharts'],
-          'vendor-motion': ['framer-motion'],
+        // Function-form pra agrupar lazy pages por módulo + manter vendors split.
+        // Antes: 119 chunks separados (1 por lazy page) → TTFB extra por navegação.
+        // Agora: peers de um mesmo módulo no mesmo chunk (ex: 22 pages de Reposição = 1 chunk).
+        // Vendors continuam separados (cacheable, raramente mudam).
+        manualChunks(id) {
+          // ─── Vendors ──────────────────────────────────────────────────
+          if (id.includes('node_modules')) {
+            if (/[\\/](react|react-dom|react-router-dom|scheduler)[\\/]/.test(id)) return 'vendor-react';
+            if (id.includes('@tanstack/react-query')) return 'vendor-query';
+            if (id.includes('@supabase/supabase-js')) return 'vendor-supabase';
+            if (id.includes('recharts') || id.includes('d3-')) return 'vendor-charts';
+            if (id.includes('framer-motion')) return 'vendor-motion';
+            if (id.includes('@radix-ui/')) return 'vendor-ui';
+            if (id.includes('lucide-react')) return 'vendor-icons';
+            if (id.includes('date-fns')) return 'vendor-dates';
+            return; // resto: deixar Rollup decidir
+          }
+
+          // ─── Feature chunks (agrupa lazy pages do mesmo módulo) ──────
+          // ORDEM IMPORTA: AdminReposicao deve vir ANTES de Admin (catchall)
+          if (id.includes('/src/pages/')) {
+            if (id.includes('/AdminReposicao')) return 'feature-reposicao';
+            if (id.includes('/Farmer')) return 'feature-farmer';
+            if (id.includes('/Financeiro')) return 'feature-financeiro';
+            if (id.includes('/Tint') || id.includes('/AdminTint')) return 'feature-tintometrico';
+            if (id.includes('/Governance')) return 'feature-governance';
+            if (id.includes('/Sales')) return 'feature-sales';
+            if (id.includes('/Recebimento')) return 'feature-estoque';
+            if (id.includes('/picking/')) return 'feature-estoque';
+            // Docs internos: baixo uso, cabe num bundle único
+            if (
+              id.includes('/DesignSystem') ||
+              id.includes('/DesignPreview') ||
+              id.includes('/UXRules') ||
+              id.includes('/TechnicalDocs') ||
+              id.includes('/TintApiContract')
+            ) return 'feature-docs';
+            // Admin (catchall depois de AdminReposicao + AdminTint)
+            if (id.includes('/Admin')) return 'feature-admin';
+            // Restantes (~15 pages cliente: Orders, Tools, Profile, etc.) ficam
+            // no chunk principal pra navegação inicial rápida do customer
+          }
         },
       },
     },
