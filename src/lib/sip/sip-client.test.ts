@@ -245,3 +245,89 @@ describe('SipClient — hangUp cleanup', () => {
     expect(() => client.hangUp()).not.toThrow();
   });
 });
+
+describe('SipClient — mute control', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    uaMock.isRegistered.mockReturnValue(true);
+  });
+
+  it('mute() desabilita todas as audio tracks do localStream', () => {
+    const session = { on: vi.fn(), terminate: vi.fn(), connection: { getReceivers: () => [] } };
+    uaMock.call.mockReturnValue(session);
+
+    const client = new SipClient({
+      wsUri: 'wss://app.nvoip.com.br:7443',
+      sipDomain: '54.233.253.44',
+      username: '137973001',
+      password: 'pw',
+    });
+    client.connect();
+
+    const track1 = { kind: 'audio', enabled: true };
+    const track2 = { kind: 'audio', enabled: true };
+    const micStream = { getTracks: () => [track1, track2] } as unknown as MediaStream;
+
+    client.makeCall('3799', micStream);
+    expect(client.isMuted()).toBe(false);
+
+    client.mute();
+    expect(track1.enabled).toBe(false);
+    expect(track2.enabled).toBe(false);
+    expect(client.isMuted()).toBe(true);
+  });
+
+  it('unmute() reabilita todas as audio tracks', () => {
+    const session = { on: vi.fn(), terminate: vi.fn(), connection: { getReceivers: () => [] } };
+    uaMock.call.mockReturnValue(session);
+
+    const client = new SipClient({
+      wsUri: 'wss://app.nvoip.com.br:7443',
+      sipDomain: '54.233.253.44',
+      username: '137973001',
+      password: 'pw',
+    });
+    client.connect();
+
+    const track = { kind: 'audio', enabled: true };
+    const micStream = { getTracks: () => [track] } as unknown as MediaStream;
+    client.makeCall('3799', micStream);
+    client.mute();
+
+    client.unmute();
+    expect(track.enabled).toBe(true);
+    expect(client.isMuted()).toBe(false);
+  });
+
+  it('mute() sem chamada ativa é noop seguro', () => {
+    const client = new SipClient({
+      wsUri: 'wss://app.nvoip.com.br:7443',
+      sipDomain: '54.233.253.44',
+      username: '137973001',
+      password: 'pw',
+    });
+    expect(() => client.mute()).not.toThrow();
+    expect(client.isMuted()).toBe(false);
+  });
+
+  it('hangUp() reseta muted pra false', () => {
+    const session = { on: vi.fn(), terminate: vi.fn(), connection: { getReceivers: () => [] } };
+    uaMock.call.mockReturnValue(session);
+
+    const client = new SipClient({
+      wsUri: 'wss://app.nvoip.com.br:7443',
+      sipDomain: '54.233.253.44',
+      username: '137973001',
+      password: 'pw',
+    });
+    client.connect();
+    const track = { kind: 'audio', enabled: true, stop: vi.fn() };
+    const micStream = { getTracks: () => [track] } as unknown as MediaStream;
+    client.makeCall('3799', micStream);
+    client.mute();
+    expect(client.isMuted()).toBe(true);
+
+    client.hangUp();
+    expect(client.isMuted()).toBe(false);
+  });
+});

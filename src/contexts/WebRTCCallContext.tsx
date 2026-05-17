@@ -38,6 +38,13 @@ export interface WebRTCCallContextValue {
   error: string | null;
   localStream: MediaStream | null;
   remoteStream: MediaStream | null;
+  // NEW in PR1.6:
+  isMuted: boolean;
+  toggleMute: () => void;
+  /** true durante reprodução do pre-roll LGPD; false antes/depois */
+  prerollPlaying: boolean;
+  /** timestamp (Date.now()) em que o preroll termina; null se sem preroll */
+  prerollEndsAt: number | null;
 }
 
 const WebRTCCallContext = createContext<WebRTCCallContextValue | null>(null);
@@ -53,12 +60,17 @@ export function WebRTCCallProvider({ children }: ProviderProps) {
   const [localStream, setLocalStream] = useState<MediaStream | null>(null);
   const [remoteStream, setRemoteStream] = useState<MediaStream | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [isMuted, setIsMuted] = useState(false);
+  const [prerollPlaying, setPrerollPlaying] = useState(false);
+  const [prerollEndsAt, setPrerollEndsAt] = useState<number | null>(null);
 
   const clientRef = useRef<SipClient | null>(null);
   const durationTimerRef = useRef<number | null>(null);
   const rawMicRef = useRef<MediaStream | null>(null);
   const prerollCloseRef = useRef<(() => void) | null>(null);
   const prerollPlayRef = useRef<(() => void) | null>(null);
+  const prerollDurationRef = useRef<number | null>(null);
+  const prerollFinishTimerRef = useRef<number | null>(null);
   const prerollUrl = (import.meta.env.VITE_NVOIP_SIP_PREROLL_URL as string | undefined);
 
   useEffect(() => {
@@ -119,11 +131,31 @@ export function WebRTCCallProvider({ children }: ProviderProps) {
   useEffect(() => {
     if (callState === 'established' && prerollPlayRef.current) {
       prerollPlayRef.current();
-      prerollPlayRef.current = null; // libera ref após disparo
+      prerollPlayRef.current = null;
+
+      const duration = prerollDurationRef.current;
+      if (duration && duration > 0) {
+        setPrerollPlaying(true);
+        setPrerollEndsAt(Date.now() + duration * 1000);
+
+        // Auto-encerrar UI feedback quando termina
+        prerollFinishTimerRef.current = window.setTimeout(() => {
+          setPrerollPlaying(false);
+          setPrerollEndsAt(null);
+          prerollFinishTimerRef.current = null;
+        }, duration * 1000);
+      }
     }
   }, [callState]);
 
   function cleanupAudioResources() {
+    if (prerollFinishTimerRef.current) {
+      clearTimeout(prerollFinishTimerRef.current);
+      prerollFinishTimerRef.current = null;
+    }
+    setPrerollPlaying(false);
+    setPrerollEndsAt(null);
+    prerollDurationRef.current = null;
     prerollPlayRef.current = null;
     if (prerollCloseRef.current) {
       try { prerollCloseRef.current(); } catch { /* noop */ }
@@ -167,6 +199,7 @@ export function WebRTCCallProvider({ children }: ProviderProps) {
         // play() é disparado pelo useEffect ao detectar callState === 'established'
         prerollPlayRef.current = mix.play;
         prerollCloseRef.current = mix.close;
+        prerollDurationRef.current = mix.durationSeconds;
       }
 
       clientRef.current.makeCall(normalized, streamForCall);
@@ -182,8 +215,20 @@ export function WebRTCCallProvider({ children }: ProviderProps) {
   const endCall = useCallback(async () => {
     clientRef.current?.hangUp();
     cleanupAudioResources();
+    setIsMuted(false);
     toast({ title: 'Chamada encerrada' });
   }, [toast]);
+
+  const toggleMute = useCallback(() => {
+    if (!clientRef.current) return;
+    if (clientRef.current.isMuted()) {
+      clientRef.current.unmute();
+      setIsMuted(false);
+    } else {
+      clientRef.current.mute();
+      setIsMuted(true);
+    }
+  }, []);
 
   const isActive = !['idle', 'finished', 'noanswer', 'busy', 'failed', 'error'].includes(callState);
   const isConnecting = callState === 'connecting';
@@ -202,6 +247,10 @@ export function WebRTCCallProvider({ children }: ProviderProps) {
     error,
     localStream,
     remoteStream,
+    isMuted,
+    toggleMute,
+    prerollPlaying,
+    prerollEndsAt,
   };
 
   return <WebRTCCallContext.Provider value={value}>{children}</WebRTCCallContext.Provider>;

@@ -21,6 +21,10 @@ export function WebRTCDialer(props: Props) {
       onMakeCall={call.makeCall}
       onEndCall={call.endCall}
       remoteStream={call.remoteStream}
+      isMuted={call.isMuted}
+      onToggleMute={call.toggleMute}
+      prerollPlaying={call.prerollPlaying}
+      prerollEndsAt={call.prerollEndsAt}
       backendLabel="WebRTC"
     />
   );
