@@ -1,43 +1,81 @@
 import { useEffect, useRef, useState } from 'react';
+import { useQuery } from '@tanstack/react-query';
+import { useAuth } from '@/contexts/AuthContext';
+import { supabase } from '@/integrations/supabase/client';
 
 const STORAGE_KEY = 'dashboardLastVisit';
-const MIN_SESSION_MS = 5 * 60 * 1000; // 5min
+const MIN_SESSION_MS = 5 * 60 * 1000; // 5min — evita F5 anular deltas
 
 export interface UseLastVisitReturn {
-  /** Timestamp ISO da última visita, ou null se nunca visitou. */
   lastVisitIso: string | null;
-  /** Idade em minutos desde a última visita (null se primeira visita). */
   minutesSinceLastVisit: number | null;
 }
 
 /**
- * Lê a última visita salva, e ao desmontar atualiza o storage com `now` —
- * mas APENAS se a sessão durou ≥ 5min. Sem esse threshold, F5 ou navegação
- * curta apagaria os deltas (próximo mount leria o `now` que acabou de
- * escrever e `shouldHideStrip(< 30min)` esconderia a strip pra sempre).
+ * Híbrido:
+ * 1. Query server `dashboard_visits` pegando 2ª visita mais recente (antes da atual)
+ * 2. localStorage como fallback offline / pre-deploy / sem auth
+ * 3. Server wins quando ambos disponíveis (cross-device confiável)
  *
- * O refresh no unmount (não no mount) garante que o usuário SEMPRE vê os
- * deltas dele mesmo na próxima abertura.
+ * Escreve nova visita no unmount: server (best-effort) + local (sempre).
+ * Só escreve se sessão durou ≥ 5min (F5 não apaga deltas).
  */
 export function useLastVisit(): UseLastVisitReturn {
-  const [snapshot] = useState<string | null>(() => {
+  const { user } = useAuth();
+  const [localSnapshot] = useState<string | null>(() => {
     if (typeof window === 'undefined') return null;
     return localStorage.getItem(STORAGE_KEY);
   });
   const mountedAtRef = useRef<number>(Date.now());
 
+  const { data: serverIso } = useQuery({
+    queryKey: ['dashboard', 'previous-visit', user?.id],
+    queryFn: async (): Promise<string | null> => {
+      if (!user?.id) return null;
+      const { data } = await supabase
+        .from('dashboard_visits')
+        .select('visited_at')
+        .eq('user_id', user.id)
+        .order('visited_at', { ascending: false })
+        .range(1, 1) // segunda mais recente
+        .maybeSingle();
+      const row = data as { visited_at?: string } | null;
+      return row?.visited_at ?? null;
+    },
+    enabled: !!user?.id,
+    staleTime: Infinity, // só roda no mount
+  });
+
+  // Escreve no unmount se sessão duradoura
   useEffect(() => {
     return () => {
       if (typeof window === 'undefined') return;
       const sessionDuration = Date.now() - mountedAtRef.current;
       if (sessionDuration < MIN_SESSION_MS) return;
-      localStorage.setItem(STORAGE_KEY, new Date().toISOString());
-    };
-  }, []);
 
-  const minutesSinceLastVisit = snapshot
-    ? Math.floor((Date.now() - new Date(snapshot).getTime()) / 60_000)
+      const now = new Date().toISOString();
+      const sessionMinutes = Math.floor(sessionDuration / 60_000);
+
+      // local (sempre)
+      localStorage.setItem(STORAGE_KEY, now);
+
+      // server (best-effort, não bloqueia)
+      if (user?.id) {
+        void supabase
+          .from('dashboard_visits')
+          .insert({
+            user_id: user.id,
+            visited_at: now,
+            session_minutes: sessionMinutes,
+          });
+      }
+    };
+  }, [user?.id]);
+
+  const lastVisitIso = serverIso ?? localSnapshot;
+  const minutesSinceLastVisit = lastVisitIso
+    ? Math.floor((Date.now() - new Date(lastVisitIso).getTime()) / 60_000)
     : null;
 
-  return { lastVisitIso: snapshot, minutesSinceLastVisit };
+  return { lastVisitIso, minutesSinceLastVisit };
 }
