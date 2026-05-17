@@ -69,9 +69,15 @@ bun dev       # vite dev server (porta 8080)
 bun build     # vite build (PWA gerado em production)
 bun build:dev # build em modo dev (sem PWA)
 bun lint      # eslint
-bun test      # vitest run
+bun run test  # vitest run — CANÔNICO, 241/241 passando, é o que roda em CI
+bun test      # bun runner nativo — fast path local (~280ms vs ~3.9s do vitest);
+              # cobertura parcial (não suporta vi.hoisted/vi.mocked/vi.importActual nem DOM completo).
+              # bunfig.toml + src/test/bun-setup.ts polifillam localStorage/MediaStream/matchMedia.
 bun preview   # vite preview
 ```
+
+> ⚠️ **`bun test` ≠ `bun run test`**. `bun test` invoca o runner nativo do bun (não usa vitest.config.ts).
+> Use pra loop rápido de TDD em tests que não dependem de DOM/React renderização. Resultado oficial é só do vitest.
 
 ---
 
