@@ -12,6 +12,7 @@ interface AuthContextType {
   role: AppRole | null;
   isAdmin: boolean;
   isEmployee: boolean;
+  isCustomer: boolean;
   isMaster: boolean;
   isStaff: boolean;
   isApproved: boolean;
@@ -258,21 +259,23 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
   const isAdmin = role === 'master';
   const isEmployee = role === 'employee';
   const isMaster = role === 'master';
+  const isCustomer = role === 'customer';
   const isStaff = isAdmin || isEmployee || isMaster;
 
   return (
-    <AuthContext.Provider value={{ 
-      user, 
-      session, 
-      loading, 
+    <AuthContext.Provider value={{
+      user,
+      session,
+      loading,
       role,
       isAdmin,
       isEmployee,
+      isCustomer,
       isMaster,
       isStaff,
       isApproved,
-      signUp, 
-      signIn, 
+      signUp,
+      signIn,
       signOut,
       refetchRole,
     }}>

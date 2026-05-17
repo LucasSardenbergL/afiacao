@@ -124,4 +124,3 @@ export function EtapasGrid() {
   );
 }
 
-export default EtapasGrid;

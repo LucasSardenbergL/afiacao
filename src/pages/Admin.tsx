@@ -1,7 +1,5 @@
 import { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Header } from '@/components/Header';
-import { BottomNav } from '@/components/BottomNav';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent } from '@/components/ui/card';
 import { KanbanBoard } from '@/components/KanbanBoard';
@@ -126,11 +124,9 @@ const Admin = () => {
   if (authLoading || loading) {
     return (
       <div className="min-h-screen bg-background pb-24">
-        <Header title="Painel Admin" showBack />
         <div className="flex items-center justify-center pt-32">
           <Loader2 className="w-8 h-8 animate-spin text-primary" />
         </div>
-        <BottomNav />
       </div>
     );
   }
@@ -141,11 +137,6 @@ const Admin = () => {
 
   return (
     <div className="min-h-screen bg-background pb-24">
-      <Header 
-        title={isAdmin ? 'Painel Admin' : 'Painel Funcionário'}
-        showBack 
-      />
-
       <main className="pt-16 px-4 max-w-4xl mx-auto">
         {/* Quick actions */}
         <div className="space-y-2 mb-6">
@@ -328,7 +319,6 @@ const Admin = () => {
         />
       </main>
 
-      <BottomNav />
     </div>
   );
 };

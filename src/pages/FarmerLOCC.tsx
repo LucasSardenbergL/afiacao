@@ -1,7 +1,5 @@
 import { useState, useCallback, memo } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Header } from '@/components/Header';
-import { BottomNav } from '@/components/BottomNav';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
@@ -98,7 +96,6 @@ const FarmerLOCC = () => {
 
   return (
     <div className="min-h-screen bg-background pb-24">
-      <Header title="LOCC" showBack />
 
       <main className="px-4 py-4 space-y-4 max-w-lg mx-auto">
         {/* Header Card */}
@@ -187,7 +184,6 @@ const FarmerLOCC = () => {
           </TabsContent>
         </Tabs>
       </main>
-      <BottomNav />
     </div>
   );
 };

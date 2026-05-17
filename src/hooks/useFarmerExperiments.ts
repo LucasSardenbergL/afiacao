@@ -1,7 +1,7 @@
 import { useState, useEffect, useCallback } from 'react';
 import { supabase } from '@/integrations/supabase/client';
 import { useAuth } from '@/contexts/AuthContext';
-import { useToast } from '@/hooks/use-toast';
+import { toast } from 'sonner';
 
 export interface Experiment {
   id: string;
@@ -49,7 +49,6 @@ const METRIC_LABELS: Record<string, string> = {
 
 export const useFarmerExperiments = () => {
   const { user } = useAuth();
-  const { toast } = useToast();
   const [experiments, setExperiments] = useState<Experiment[]>([]);
   const [loading, setLoading] = useState(true);
 
@@ -64,19 +63,28 @@ export const useFarmerExperiments = () => {
         .order('created_at', { ascending: false }) as any;
 
       if (data) {
-        // Load client counts per experiment
-        const enriched = await Promise.all(data.map(async (exp: any) => {
-          const { data: clients } = await supabase
-            .from('farmer_experiment_clients' as any)
-            .select('group_type')
-            .eq('experiment_id', exp.id) as any;
+        // Load client counts em 1 query (antes era N+1: 1 select por experimento)
+        const expIds = data.map((e: any) => e.id);
+        const { data: allClients } = expIds.length > 0
+          ? await supabase
+              .from('farmer_experiment_clients' as any)
+              .select('experiment_id, group_type')
+              .in('experiment_id', expIds) as any
+          : { data: [] };
 
-          return {
-            ...exp,
-            control_count: (clients || []).filter((c: any) => c.group_type === 'controle').length,
-            test_count: (clients || []).filter((c: any) => c.group_type === 'teste').length,
-          };
-        }));
+        // Agrupa client-side: experiment_id → { controle, teste }
+        const counts = new Map<string, { controle: number; teste: number }>();
+        for (const c of (allClients || []) as Array<{ experiment_id: string; group_type: string }>) {
+          const existing = counts.get(c.experiment_id) || { controle: 0, teste: 0 };
+          if (c.group_type === 'controle') existing.controle++;
+          else if (c.group_type === 'teste') existing.teste++;
+          counts.set(c.experiment_id, existing);
+        }
+
+        const enriched = data.map((exp: any) => {
+          const c = counts.get(exp.id) || { controle: 0, teste: 0 };
+          return { ...exp, control_count: c.controle, test_count: c.teste };
+        });
         setExperiments(enriched);
       }
     } catch (e) {
@@ -104,12 +112,12 @@ export const useFarmerExperiments = () => {
       ...input,
     } as any);
     if (error) {
-      toast({ title: 'Erro ao criar experimento', variant: 'destructive' });
+      toast.error('Erro ao criar experimento');
       return;
     }
-    toast({ title: 'Experimento criado' });
+    toast.success('Experimento criado');
     loadExperiments();
-  }, [user?.id, loadExperiments, toast]);
+  }, [user?.id, loadExperiments]);
 
   const startExperiment = useCallback(async (experimentId: string) => {
     if (!user?.id) return;
@@ -121,7 +129,7 @@ export const useFarmerExperiments = () => {
       .eq('farmer_id', user.id) as any;
 
     if (!clients || clients.length < 2) {
-      toast({ title: 'Não há clientes suficientes para o experimento', variant: 'destructive' });
+      toast.error('Não há clientes suficientes para o experimento');
       return;
     }
 
@@ -140,7 +148,7 @@ export const useFarmerExperiments = () => {
 
     if (assignError) {
       console.error('Assignment error:', assignError);
-      toast({ title: 'Erro ao distribuir clientes', variant: 'destructive' });
+      toast.error('Erro ao distribuir clientes');
       return;
     }
 
@@ -149,9 +157,9 @@ export const useFarmerExperiments = () => {
       .update({ status: 'ativo', started_at: new Date().toISOString() } as any)
       .eq('id', experimentId);
 
-    toast({ title: 'Experimento iniciado com ' + assignments.length + ' clientes' });
+    toast.success('Experimento iniciado com ' + assignments.length + ' clientes');
     loadExperiments();
-  }, [user?.id, loadExperiments, toast]);
+  }, [user?.id, loadExperiments]);
 
   const measureExperiment = useCallback(async (experimentId: string) => {
     // Load experiment
@@ -191,21 +199,25 @@ export const useFarmerExperiments = () => {
       clientMetrics.set(call.customer_user_id, existing);
     }
 
-    // Update experiment clients
-    for (const ec of expClients) {
-      const m = clientMetrics.get(ec.customer_user_id);
-      if (m) {
-        await supabase.from('farmer_experiment_clients' as any)
-          .update({
-            revenue_generated: m.revenue,
-            margin_generated: m.margin,
-            calls_count: m.calls,
-            total_time_seconds: m.time,
-            metric_value: computeMetric(exp.primary_metric, m),
-            updated_at: new Date().toISOString(),
-          } as any)
-          .eq('id', ec.id);
-      }
+    // Update experiment clients (batch upsert único — antes era N updates sequenciais)
+    const updateRows = expClients
+      .map((ec: any) => {
+        const m = clientMetrics.get(ec.customer_user_id);
+        if (!m) return null;
+        return {
+          id: ec.id,
+          revenue_generated: m.revenue,
+          margin_generated: m.margin,
+          calls_count: m.calls,
+          total_time_seconds: m.time,
+          metric_value: computeMetric(exp.primary_metric, m),
+          updated_at: new Date().toISOString(),
+        };
+      })
+      .filter((r): r is NonNullable<typeof r> => r !== null);
+
+    if (updateRows.length > 0) {
+      await supabase.from('farmer_experiment_clients' as any).upsert(updateRows as any);
     }
 
     // Reload clients after update
@@ -265,17 +277,17 @@ export const useFarmerExperiments = () => {
       } as any)
       .eq('id', experimentId);
 
-    toast({ title: newStatus === 'concluido' ? `Experimento concluído: ${winner}` : 'Métricas atualizadas' });
+    toast.success(newStatus === 'concluido' ? `Experimento concluído: ${winner}` : 'Métricas atualizadas');
     loadExperiments();
-  }, [loadExperiments, toast]);
+  }, [loadExperiments]);
 
   const cancelExperiment = useCallback(async (experimentId: string) => {
     await supabase.from('farmer_experiments' as any)
       .update({ status: 'cancelado', ended_at: new Date().toISOString() } as any)
       .eq('id', experimentId);
-    toast({ title: 'Experimento cancelado' });
+    toast.success('Experimento cancelado');
     loadExperiments();
-  }, [loadExperiments, toast]);
+  }, [loadExperiments]);
 
   const loadExperimentClients = useCallback(async (experimentId: string): Promise<ExperimentClient[]> => {
     const { data } = await supabase

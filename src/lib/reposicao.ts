@@ -39,12 +39,12 @@ export async function logAudit(params: {
   metadata?: Record<string, unknown>;
 }) {
   try {
-    await supabase.from("cockpit_audit_log").insert({
-      user_id: params.userId,
+    await supabase.from("cockpit_audit_log").insert([{
+      user_id: params.userId ?? undefined,
       action: params.action,
       result: params.result,
-      metadata: params.metadata ?? {},
-    });
+      metadata: (params.metadata ?? {}) as never,
+    }]);
   } catch (e) {
     // não bloqueia a UI, mas registra no logger pra não perder a auditoria silenciosamente
     logger.warn("Falha ao gravar cockpit_audit_log", {

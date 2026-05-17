@@ -1,7 +1,5 @@
 import { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Header } from '@/components/Header';
-import { BottomNav } from '@/components/BottomNav';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
 import { Button } from '@/components/ui/button';
@@ -141,11 +139,9 @@ const AdminPriceTable = () => {
   if (authLoading || loading) {
     return (
       <div className="min-h-screen bg-background pb-24">
-        <Header title="Tabela de Preços" showBack />
         <div className="flex items-center justify-center pt-32">
           <Loader2 className="w-8 h-8 animate-spin text-primary" />
         </div>
-        <BottomNav />
       </div>
     );
   }
@@ -193,7 +189,6 @@ const AdminPriceTable = () => {
 
   return (
     <div className="min-h-screen bg-background pb-32">
-      <Header title="Tabela de Preços" showBack />
 
       <main className="pt-16 px-4 max-w-lg mx-auto">
         <div className="flex items-center gap-2 mb-4">
@@ -288,7 +283,6 @@ const AdminPriceTable = () => {
         )}
       </main>
 
-      <BottomNav />
     </div>
   );
 };

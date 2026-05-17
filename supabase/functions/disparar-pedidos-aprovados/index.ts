@@ -36,9 +36,25 @@ interface PedidoRow {
   nome_contato?: string | null;
   // PR4: data de entrega confirmada pelo portal Sayerlack (ISO YYYY-MM-DD).
   // Quando presente em pedido Sayerlack/OBEN, vira base do dDtPrevisao do
-  // Omie (+ 2 dias corridos). Quando ausente, cai no fallback de lead time.
+  // Omie (+ 2 dias úteis). Quando ausente, cai no fallback de lead time.
   portal_data_entrega?: string | null;
+  // PR5: split de pedidos grandes em filhos com <= 4 itens cada.
+  // Preenchidos só nos filhos (e split_total também no pai). Quando um filho
+  // chega no fluxo, é tratado como pedido independente — segue caminho normal.
+  split_parent_id?: number | null;
+  split_lote?: number | null;
+  split_total?: number | null;
 }
+
+// PR5: tamanho máximo de cada chunk no split. Calibração:
+//   Free (60s sessão):       4 itens  — split agressivo
+//   Prototyping (15min):    20 itens  — split só pra pedidos absurdamente grandes
+//
+// PR9: subimos pra 20 com upgrade pro Prototyping. Pedidos de até ~30 SKUs
+// cabem em uma sessão única (login 12s + 30×7.5s + submit 14s ≈ 251s,
+// abaixo do HARD_CEILING_MS=280s). Acima de 20, split ainda atua como
+// proteção (ex: pedido de 40 SKUs vira 2 filhos de 20).
+const SPLIT_CHUNK_SIZE = 20;
 
 interface ItemRow {
   sku_codigo_omie: string;
@@ -202,6 +218,149 @@ function isSayerlackOben(pedido: PedidoRow): boolean {
     (pedido.empresa ?? "").toUpperCase() === "OBEN" &&
     /sayerlack/i.test(pedido.fornecedor_nome ?? "")
   );
+}
+
+/**
+ * PR8: aguarda um pedido sair do estado `enviando_portal` (background task
+ * de enviar-pedido-portal-sayerlack terminou). Usado pra serializar disparos
+ * de filhos Sayerlack/OBEN do mesmo split — evita burst de chamadas
+ * concorrentes no Browserless, que rejeita por concorrência e devolve
+ * "200 sem envelope" → indeterminado_requer_conciliacao indevido.
+ *
+ * Faz polling no banco. Retorna o status final encontrado ou null se
+ * estourou o timeout (caso em que seguimos pro próximo mesmo assim,
+ * pra não travar o loop).
+ *
+ * Estados que consideramos "terminou":
+ *   sucesso_portal, enviado_portal (legado), aceito_portal_sem_protocolo,
+ *   indeterminado_requer_conciliacao, erro_retentavel, erro_nao_retentavel,
+ *   falha_envio_portal (legado).
+ * Estado que ainda está rodando: enviando_portal.
+ */
+async function aguardarPortalTerminar(
+  db: any,
+  pedidoId: number,
+  timeoutMs: number,
+): Promise<string | null> {
+  const POLL_INTERVAL_MS = 3000;
+  const ESTADOS_FINAIS = new Set([
+    "sucesso_portal",
+    "enviado_portal",
+    "aceito_portal_sem_protocolo",
+    "indeterminado_requer_conciliacao",
+    "erro_retentavel",
+    "erro_nao_retentavel",
+    "falha_envio_portal",
+  ]);
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    const { data } = await db
+      .from("pedido_compra_sugerido")
+      .select("status_envio_portal")
+      .eq("id", pedidoId)
+      .maybeSingle();
+    const s = (data?.status_envio_portal ?? null) as string | null;
+    if (s && ESTADOS_FINAIS.has(s)) return s;
+    await new Promise((r) => setTimeout(r, POLL_INTERVAL_MS));
+  }
+  return null;
+}
+
+/**
+ * PR5: divide pedidos Sayerlack/OBEN com mais de SPLIT_CHUNK_SIZE itens em
+ * filhos menores. Cada filho cabe na janela de 60s do Browserless.
+ *
+ * Só atua em modo "producao" — dry_run não toca o banco. Só atua em pedidos
+ * Sayerlack/OBEN, e nunca em pedidos que já são filhos de um split anterior.
+ *
+ * Retorna a lista expandida: pedidos não-Sayerlack ou pequenos passam direto;
+ * pedidos grandes são substituídos pelos seus filhos. Se a RPC falhar, deixa
+ * o pedido original na lista (vai bater o teto do Browserless e ser tratado
+ * pelo PR2/PR3 — degradação suave).
+ */
+async function dividirPedidosGrandesSayerlack(
+  db: any,
+  aprovados: PedidoRow[],
+  modo: "dry_run" | "producao",
+): Promise<PedidoRow[]> {
+  if (modo !== "producao") return aprovados;
+
+  const expandido: PedidoRow[] = [];
+  for (const pedido of aprovados) {
+    if (pedido.split_parent_id) {
+      // Já é filho — não redivide.
+      expandido.push(pedido);
+      continue;
+    }
+    if (!isSayerlackOben(pedido)) {
+      expandido.push(pedido);
+      continue;
+    }
+
+    const { count: itensCount, error: countErr } = await db
+      .from("pedido_compra_item")
+      .select("id", { count: "exact", head: true })
+      .eq("pedido_id", pedido.id);
+
+    if (countErr) {
+      console.error(`[disparar-pedidos] Falha ao contar itens do pedido ${pedido.id}: ${countErr.message}`);
+      expandido.push(pedido);
+      continue;
+    }
+    if (!itensCount || itensCount <= SPLIT_CHUNK_SIZE) {
+      expandido.push(pedido);
+      continue;
+    }
+
+    console.log(`[disparar-pedidos] Pedido ${pedido.id} tem ${itensCount} itens — dividindo em chunks de ${SPLIT_CHUNK_SIZE}`);
+
+    const { data: filhos, error: splitErr } = await db.rpc("pedido_compra_split", {
+      p_pedido_id: pedido.id,
+      p_chunk_size: SPLIT_CHUNK_SIZE,
+    });
+
+    if (splitErr) {
+      console.error(`[disparar-pedidos] Falha no RPC pedido_compra_split para ${pedido.id}: ${splitErr.message}`);
+      // RPC é atômica: se falhou, o pai está intocado. Cai no fallback.
+      expandido.push(pedido);
+      continue;
+    }
+
+    const filhoIds = ((filhos ?? []) as Array<{ filho_id: number }>).map((f) => Number(f.filho_id));
+    if (filhoIds.length === 0) {
+      console.warn(`[disparar-pedidos] RPC retornou 0 filhos para ${pedido.id} (count=${itensCount}) — processando original`);
+      expandido.push(pedido);
+      continue;
+    }
+
+    const { data: filhoRows, error: fetchErr } = await db
+      .from("pedido_compra_sugerido")
+      .select("id, empresa, fornecedor_nome, grupo_codigo, data_ciclo, valor_total, num_skus, status, condicao_pagamento_codigo, condicao_pagamento_descricao, num_parcelas, portal_data_entrega, split_parent_id, split_lote, split_total")
+      .in("id", filhoIds)
+      .order("split_lote", { ascending: true });
+
+    if (fetchErr || !filhoRows) {
+      console.error(`[disparar-pedidos] Falha ao carregar filhos do split do pedido ${pedido.id}: ${fetchErr?.message ?? "sem dados"}`);
+      // Filhos existem no banco mas não conseguimos carregar agora — vão ser
+      // pegos no próximo run normal do cron (ficaram aprovado_aguardando_disparo).
+      continue;
+    }
+
+    // Replica enrichment de fornecedor que o caller faz nos aprovados originais.
+    for (const fr of filhoRows as PedidoRow[]) {
+      const { data: fh } = await db
+        .from("fornecedor_habilitado_reposicao")
+        .select("canal_pedido, email_pedido, whatsapp_pedido, observacoes_pedido, nome_contato")
+        .eq("empresa", fr.empresa)
+        .eq("fornecedor_nome", fr.fornecedor_nome)
+        .maybeSingle();
+      if (fh) Object.assign(fr, fh);
+    }
+
+    console.log(`[disparar-pedidos] Pedido ${pedido.id} → ${filhoIds.length} filhos: [${filhoIds.join(", ")}]`);
+    expandido.push(...(filhoRows as PedidoRow[]));
+  }
+  return expandido;
 }
 
 /**
@@ -780,7 +939,7 @@ Deno.serve(async (req: Request) => {
     // 2. Pedidos aprovados (com dados do fornecedor)
     let aprovadosQuery = db
       .from("pedido_compra_sugerido")
-      .select("id, empresa, fornecedor_nome, grupo_codigo, data_ciclo, valor_total, num_skus, status, condicao_pagamento_codigo, condicao_pagamento_descricao, num_parcelas, portal_data_entrega")
+      .select("id, empresa, fornecedor_nome, grupo_codigo, data_ciclo, valor_total, num_skus, status, condicao_pagamento_codigo, condicao_pagamento_descricao, num_parcelas, portal_data_entrega, split_parent_id, split_lote, split_total")
       .eq("empresa", empresa);
 
     aprovadosQuery = pedidoId
@@ -789,7 +948,7 @@ Deno.serve(async (req: Request) => {
 
     const { data: aprovadosRaw, error: aprErr } = await aprovadosQuery;
     if (aprErr) throw new Error(`Aprovados: ${aprErr.message}`);
-    const aprovados = (aprovadosRaw ?? []) as PedidoRow[];
+    let aprovados = (aprovadosRaw ?? []) as PedidoRow[];
     if (pedidoId && aprovados[0]?.data_ciclo) dataCiclo = aprovados[0].data_ciclo;
 
     // Enrich com dados do fornecedor
@@ -802,6 +961,11 @@ Deno.serve(async (req: Request) => {
         .maybeSingle();
       if (fh) Object.assign(p, fh);
     }
+
+    // PR5: divide pedidos Sayerlack/OBEN com >4 itens em filhos menores que
+    // caibam na janela de 60s do Browserless. Cada filho vira um pedido
+    // independente no banco e segue o caminho normal (portal → Omie).
+    aprovados = await dividirPedidosGrandesSayerlack(db, aprovados, modo);
 
     // 3. Expirar não aprovados
     let expirados = 0;
@@ -826,6 +990,31 @@ Deno.serve(async (req: Request) => {
     const resultados: ProcessResult[] = [];
     for (const p of aprovados) {
       const r = await processarPedido(db, p, modo, creds);
+
+      // PR8 (revisado em PR10): serializa apenas FILHOS de split. Pedidos
+      // únicos Sayerlack não precisam esperar — disparam async e seguimos.
+      //
+      // Por quê: o objetivo original do PR8 era evitar que N filhos de um
+      // mesmo split chamassem Browserless em paralelo (free plan só aceitava
+      // 1 concorrente). Com upgrade pro Prototyping (10 concorrentes), pedido
+      // único não tem competição. E o await de 90s + overhead empurrava o
+      // disparar pro limite de 150s do Supabase Edge Function (IDLE_TIMEOUT).
+      //
+      // Resultado: pedido único Sayerlack passa direto (~1s no loop, fast);
+      // split filhos ainda esperam ~90s entre si pra evitar concorrência caso
+      // o usuário volte pro free no futuro.
+      if (
+        r.status_final === "aguardando_portal_sayerlack" &&
+        isSayerlackOben(p) &&
+        p.split_parent_id
+      ) {
+        const splitTag = `Lote ${p.split_lote ?? "?"}/${p.split_total ?? "?"} de #${p.split_parent_id}`;
+        console.log(`[disparar-pedidos] PR8/PR10: aguardando #${p.id} (${splitTag}) sair de enviando_portal antes do próximo filho...`);
+        const tWait = Date.now();
+        const finalStatus = await aguardarPortalTerminar(db, p.id, 90_000);
+        const waitMs = Date.now() - tWait;
+        console.log(`[disparar-pedidos] PR8/PR10: #${p.id} portal terminou em ${waitMs}ms com status_envio_portal=${finalStatus ?? "TIMEOUT"}`);
+      }
 
       // 5. Se produção e Omie OK: notificar fornecedor
       if (

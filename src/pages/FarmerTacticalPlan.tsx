@@ -1,7 +1,5 @@
 import { useState, useEffect, useCallback } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Header } from '@/components/Header';
-import { BottomNav } from '@/components/BottomNav';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
@@ -114,7 +112,6 @@ const FarmerTacticalPlan = () => {
 
   return (
     <div className="min-h-screen bg-background pb-24">
-      <Header title="Plano Tático Pré-Ligação" showBack />
 
       <main className="px-4 py-4 space-y-3 max-w-lg mx-auto">
         {/* Header */}
@@ -239,7 +236,6 @@ const FarmerTacticalPlan = () => {
         )}
       </main>
 
-      <BottomNav />
     </div>
   );
 };

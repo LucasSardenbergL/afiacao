@@ -1,7 +1,5 @@
 import { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Header } from '@/components/Header';
-import { BottomNav } from '@/components/BottomNav';
 import { Card, CardContent } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
@@ -208,11 +206,9 @@ export default function AdminLoyalty() {
   if (authLoading || loading) {
     return (
       <div className="min-h-screen bg-background pb-24">
-        <Header title="Fidelidade - Admin" showBack />
         <div className="flex items-center justify-center pt-32">
           <Loader2 className="w-8 h-8 animate-spin text-primary" />
         </div>
-        <BottomNav />
       </div>
     );
   }
@@ -222,7 +218,6 @@ export default function AdminLoyalty() {
     const tier = getTier(selectedCustomer.balance);
     return (
       <div className="min-h-screen bg-background pb-24">
-        <Header title={selectedCustomer.name} showBack />
         <main className="pt-16 px-4 max-w-lg mx-auto space-y-4">
           <Card>
             <CardContent className="p-5">
@@ -293,7 +288,6 @@ export default function AdminLoyalty() {
             ← Voltar à lista
           </Button>
         </main>
-        <BottomNav />
 
         {/* Adjust Dialog */}
         <AdjustDialog
@@ -313,7 +307,6 @@ export default function AdminLoyalty() {
 
   return (
     <div className="min-h-screen bg-background pb-24">
-      <Header title="Fidelidade - Admin" showBack />
 
       <main className="pt-16 px-4 max-w-lg mx-auto space-y-4">
         {/* Stats */}
@@ -473,7 +466,6 @@ export default function AdminLoyalty() {
         </div>
       </main>
 
-      <BottomNav />
 
       {/* Adjust Dialog */}
       <AdjustDialog

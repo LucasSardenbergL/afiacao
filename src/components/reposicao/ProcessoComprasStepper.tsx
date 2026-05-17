@@ -163,4 +163,3 @@ export function ProcessoComprasStepper({
   );
 }
 
-export default ProcessoComprasStepper;

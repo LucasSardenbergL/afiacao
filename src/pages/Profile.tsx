@@ -1,8 +1,6 @@
 import { useState, useEffect, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { MapPin, Phone, Mail, ChevronRight, LogOut, HelpCircle, Loader2, Wrench, Camera, Pencil, Fingerprint, Scan, Check, X, Plus, Clock } from 'lucide-react';
-import { Header } from '@/components/Header';
-import { BottomNav } from '@/components/BottomNav';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
@@ -12,16 +10,14 @@ import { supabase } from '@/integrations/supabase/client';
 import { useToast } from '@/hooks/use-toast';
 import { cn } from '@/lib/utils';
 import { useBiometricAuth } from '@/hooks/useBiometricAuth';
-import { useUserRole } from '@/hooks/useUserRole';
 import { useProfile, useProfileStats } from '@/queries/useProfile';
 import { useQueryClient } from '@tanstack/react-query';
 
 
 const Profile = () => {
   const navigate = useNavigate();
-  const { user, signOut } = useAuth();
+  const { user, signOut, isStaff } = useAuth();
   const { toast } = useToast();
-  const { isStaff } = useUserRole();
   const fileInputRef = useRef<HTMLInputElement>(null);
   const queryClient = useQueryClient();
   
@@ -235,18 +231,15 @@ const Profile = () => {
   if (loading) {
     return (
       <div className="min-h-screen bg-background pb-24">
-        <Header title="Meu Perfil" showBack showNotifications />
         <div className="flex items-center justify-center pt-32">
           <Loader2 className="w-8 h-8 animate-spin text-primary" />
         </div>
-        <BottomNav />
       </div>
     );
   }
 
   return (
     <div className="min-h-screen bg-background pb-24">
-      <Header title="Meu Perfil" showBack showNotifications />
 
       <main className="pt-16 px-4 max-w-lg mx-auto">
         {/* Profile card */}
@@ -469,7 +462,6 @@ const Profile = () => {
         </p>
       </main>
 
-      <BottomNav />
     </div>
   );
 };

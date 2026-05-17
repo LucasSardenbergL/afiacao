@@ -1,7 +1,7 @@
 import { useState, useCallback } from 'react';
 import { supabase } from '@/integrations/supabase/client';
 import { useAuth } from '@/contexts/AuthContext';
-import { useToast } from '@/hooks/use-toast';
+import { toast } from 'sonner';
 
 // ─── Types ───────────────────────────────────────────────────────────
 export type PlanType = 'essencial' | 'estrategico';
@@ -94,7 +94,6 @@ const PROFIT_PER_HOUR_THRESHOLD = 50; // R$/h configurable threshold
 
 export const useTacticalPlan = () => {
   const { user } = useAuth();
-  const { toast } = useToast();
   const [plans, setPlans] = useState<TacticalPlan[]>([]);
   const [loading, setLoading] = useState(false);
   const [generating, setGenerating] = useState<string | null>(null);
@@ -221,7 +220,7 @@ export const useTacticalPlan = () => {
       ]);
 
       if (!score) {
-        toast({ variant: 'destructive', title: 'Cliente sem score calculado' });
+        toast.error('Cliente sem score calculado');
         return;
       }
 
@@ -343,15 +342,15 @@ export const useTacticalPlan = () => {
         .select('id')
         .single() as any;
 
-      toast({ title: `Plano ${planType === 'estrategico' ? 'estratégico' : 'essencial'} gerado com sucesso` });
+      toast.success(`Plano ${planType === 'estrategico' ? 'estratégico' : 'essencial'} gerado com sucesso`);
       await loadPlans();
     } catch (err: any) {
       console.error('Error generating plan:', err);
-      toast({ variant: 'destructive', title: 'Erro ao gerar plano', description: err.message });
+      toast.error('Erro ao gerar plano', { description: err.message });
     } finally {
       setGenerating(null);
     }
-  }, [user, toast, loadPlans]);
+  }, [user, loadPlans]);
 
   // Get latest active plan for a customer (used by Copilot integration)
   const getActivePlan = useCallback(async (customerId: string): Promise<TacticalPlan | null> => {
@@ -402,12 +401,12 @@ export const useTacticalPlan = () => {
         } as any)
         .eq('id', planId);
 
-      toast({ title: 'Resultado registrado' });
+      toast.success('Resultado registrado');
       await loadPlans();
     } catch (err) {
       console.error('Error recording result:', err);
     }
-  }, [toast, loadPlans]);
+  }, [loadPlans]);
 
   // Get effectiveness stats
   const getEffectivenessStats = useCallback(async () => {

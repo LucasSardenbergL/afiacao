@@ -1,4 +1,8 @@
 import { useState, useEffect, useMemo } from 'react';
+import { useInfiniteQuery } from '@tanstack/react-query';
+import { useInfiniteScroll } from '@/hooks/useInfiniteScroll';
+
+const PAGE_SIZE = 100;
 import { RecommendationsPanel } from '@/components/RecommendationsPanel';
 import { useNavigate, useParams } from 'react-router-dom';
 
@@ -28,6 +32,7 @@ import { ptBR } from 'date-fns/locale';
 import { useUrlState } from '@/hooks/useUrlState';
 import { useCustomerSegments } from '@/hooks/useCustomerSegments';
 import { Save, Bookmark, X as XIcon } from 'lucide-react';
+import { decodeHtmlEntities } from '@/lib/format';
 
 /* ─── Types ─── */
 interface Customer {
@@ -91,12 +96,19 @@ function CustomerListView({
   scores,
   loading,
   onSelect,
+  hasNextPage,
+  isFetchingNextPage,
+  onLoadMore,
 }: {
   customers: Customer[];
   scores: Map<string, ClientScore>;
   loading: boolean;
   onSelect: (c: Customer) => void;
+  hasNextPage: boolean;
+  isFetchingNextPage: boolean;
+  onLoadMore: () => void;
 }) {
+  const sentinelRef = useInfiniteScroll(onLoadMore, hasNextPage && !isFetchingNextPage);
   // Filtros sincronizados com URL (compartilhável, sobrevive a F5)
   const [urlState, setUrlState] = useUrlState({ search: '', health: 'all' });
   const searchQuery = urlState.search;
@@ -298,7 +310,7 @@ function CustomerListView({
                           <User className="w-4 h-4 text-primary" />
                         </div>
                         <div className="min-w-0">
-                          <p className="font-medium truncate text-foreground">{customer.name}</p>
+                          <p className="font-medium truncate text-foreground">{decodeHtmlEntities(customer.name)}</p>
                           {customer.phone && (
                             <p className="text-xs text-muted-foreground">{customer.phone}</p>
                           )}
@@ -359,6 +371,24 @@ function CustomerListView({
             actionLabel={searchQuery || filterHealth !== 'all' ? 'Limpar filtros' : undefined}
             onAction={searchQuery || filterHealth !== 'all' ? () => setUrlState({ search: '', health: 'all' }) : undefined}
           />
+        )}
+
+        {/* Infinite scroll sentinel + fallback botão */}
+        {hasNextPage && (
+          <div ref={sentinelRef} className="py-4 flex justify-center border-t">
+            {isFetchingNextPage ? (
+              <Loader2 className="w-5 h-5 animate-spin text-muted-foreground" />
+            ) : (
+              <Button variant="outline" size="sm" onClick={onLoadMore}>
+                Carregar mais
+              </Button>
+            )}
+          </div>
+        )}
+        {!hasNextPage && customers.length > 0 && (
+          <p className="text-center text-xs text-muted-foreground py-4 border-t">
+            Todos os clientes carregados ({customers.length})
+          </p>
         )}
       </Card>
     </div>
@@ -440,7 +470,7 @@ function Customer360View({
             <User className="w-6 h-6 text-primary" />
           </div>
           <div>
-            <h1 className="text-lg font-semibold text-foreground">{customer.name}</h1>
+            <h1 className="text-lg font-semibold text-foreground">{decodeHtmlEntities(customer.name)}</h1>
             <div className="flex items-center gap-2 mt-0.5">
               {customer.document && (
                 <span className="text-xs text-muted-foreground font-mono">{formatDocument(customer.document)}</span>
@@ -700,13 +730,11 @@ const AdminCustomers = () => {
   const { user, isStaff, loading: authLoading } = useAuth();
   const { toast } = useToast();
 
-  const [customers, setCustomers] = useState<Customer[]>([]);
   const [selectedCustomer, setSelectedCustomer] = useState<Customer | null>(null);
   const [customerTools, setCustomerTools] = useState<UserTool[]>([]);
   const [categories, setCategories] = useState<ToolCategory[]>([]);
   const [scores, setScores] = useState<Map<string, ClientScore>>(new Map());
   const [orders, setOrders] = useState<SalesOrder[]>([]);
-  const [loading, setLoading] = useState(true);
   const [loadingTools, setLoadingTools] = useState(false);
   const [loadingOrders, setLoadingOrders] = useState(false);
   const [addToolDialogOpen, setAddToolDialogOpen] = useState(false);
@@ -715,9 +743,55 @@ const AdminCustomers = () => {
     if (!authLoading && !isStaff) navigate('/', { replace: true });
   }, [authLoading, isStaff, navigate]);
 
+  /* ─── Customers: infinite query (100 por página) ─── */
+  // Buscamos employee_ids 1× pra filtrar client-side (defensivo — eq('is_employee', false)
+  // já filtra no DB, mas mantemos a verificação contra user_roles caso o flag esteja stale)
+  const employeeIdsQuery = useInfiniteQuery({
+    queryKey: ['admin-customers-employee-ids'],
+    enabled: isStaff,
+    staleTime: 5 * 60_000,
+    initialPageParam: 0,
+    queryFn: async () => {
+      const { data } = await supabase
+        .from('user_roles')
+        .select('user_id')
+        .in('role', ['master', 'employee']);
+      return new Set((data || []).map((r: any) => r.user_id));
+    },
+    getNextPageParam: () => undefined,
+  });
+  const employeeIds = employeeIdsQuery.data?.pages[0] || new Set<string>();
+
+  const customersQuery = useInfiniteQuery({
+    queryKey: ['admin-customers-paginated'],
+    enabled: isStaff,
+    initialPageParam: 0,
+    queryFn: async ({ pageParam }) => {
+      const start = (pageParam as number) * PAGE_SIZE;
+      const { data, error } = await supabase
+        .from('profiles')
+        .select('user_id, name, email, phone, document, customer_type, created_at, requires_po')
+        .eq('is_employee', false)
+        .order('name')
+        .range(start, start + PAGE_SIZE - 1);
+      if (error) throw error;
+      return (data || []) as Customer[];
+    },
+    getNextPageParam: (lastPage, allPages) =>
+      lastPage.length === PAGE_SIZE ? allPages.length : undefined,
+  });
+
+  // Customers visíveis (filter defensivo de employees depois do fetch — pode reduzir
+  // tamanho da page mas não afeta getNextPageParam que olha o raw 100)
+  const customers = useMemo<Customer[]>(() => {
+    const raw = customersQuery.data?.pages.flat() || [];
+    return raw.filter((p) => !employeeIds.has(p.user_id));
+  }, [customersQuery.data, employeeIds]);
+
+  const loading = customersQuery.isLoading;
+
   useEffect(() => {
     if (user && isStaff) {
-      loadCustomers();
       loadCategories();
       loadScores();
     }
@@ -737,33 +811,6 @@ const AdminCustomers = () => {
   const loadCategories = async () => {
     const { data } = await supabase.from('tool_categories').select('*').order('name');
     if (data) setCategories(data);
-  };
-
-  const loadCustomers = async () => {
-    try {
-      // Get employee user_ids to exclude them
-      const { data: employeeRoles } = await supabase
-        .from('user_roles')
-        .select('user_id')
-        .in('role', ['master', 'employee']);
-
-      const employeeIds = new Set((employeeRoles || []).map(r => r.user_id));
-
-      const { data, error } = await supabase
-        .from('profiles')
-        .select('user_id, name, email, phone, document, customer_type, created_at, requires_po')
-        .eq('is_employee', false)
-        .order('name');
-      if (error) throw error;
-
-      // Filter out any staff users
-      const filtered = (data || []).filter(p => !employeeIds.has(p.user_id));
-      setCustomers(filtered);
-    } catch (error) {
-      console.error('Error loading customers:', error);
-    } finally {
-      setLoading(false);
-    }
   };
 
   const loadScores = async () => {
@@ -876,6 +923,9 @@ const AdminCustomers = () => {
           scores={scores}
           loading={loading}
           onSelect={handleSelectCustomer}
+          hasNextPage={!!customersQuery.hasNextPage}
+          isFetchingNextPage={customersQuery.isFetchingNextPage}
+          onLoadMore={() => customersQuery.fetchNextPage()}
         />
       )}
     </>

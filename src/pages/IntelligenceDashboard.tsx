@@ -1,6 +1,5 @@
 import React, { useState } from 'react';
 import { useAuth } from '@/contexts/AuthContext';
-import { useUserRole } from '@/hooks/useUserRole';
 import { useCommercialRole } from '@/hooks/useCommercialRole';
 import { supabase } from '@/integrations/supabase/client';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
@@ -16,8 +15,7 @@ import { IntelligenceStrategicTab } from '@/components/intelligence/Intelligence
 import { IntelligenceUserSimulator } from '@/components/intelligence/IntelligenceUserSimulator';
 
 export default function IntelligenceDashboard() {
-  const { user } = useAuth();
-  const { isAdmin } = useUserRole();
+  const { user, isAdmin } = useAuth();
   const { commercialRole, canViewManagerial, canViewStrategic, isSuperAdmin, loading } = useCommercialRole();
   const [simulatingAs, setSimulatingAs] = useState<string | null>(null);
 

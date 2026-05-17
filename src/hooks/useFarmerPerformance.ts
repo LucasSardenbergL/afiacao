@@ -1,7 +1,7 @@
 import { useState, useCallback } from 'react';
 import { supabase } from '@/integrations/supabase/client';
 import { useAuth } from '@/contexts/AuthContext';
-import { useToast } from '@/hooks/use-toast';
+import { toast } from 'sonner';
 
 export interface PerformanceScore {
   id: string;
@@ -36,7 +36,6 @@ export interface PerformanceScore {
 
 export const useFarmerPerformance = () => {
   const { user } = useAuth();
-  const { toast } = useToast();
   const [scores, setScores] = useState<PerformanceScore[]>([]);
   const [loading, setLoading] = useState(false);
   const [calculating, setCalculating] = useState(false);
@@ -255,15 +254,15 @@ export const useFarmerPerformance = () => {
         .from('farmer_performance_scores' as any)
         .insert(scoreData as any);
 
-      toast({ title: 'Índices calculados com sucesso' });
+      toast.success('Índices calculados com sucesso');
       await loadScores(farmerId);
     } catch (err: any) {
       console.error('Error calculating scores:', err);
-      toast({ variant: 'destructive', title: 'Erro ao calcular índices', description: err.message });
+      toast.error('Erro ao calcular índices', { description: err.message });
     } finally {
       setCalculating(false);
     }
-  }, [user, toast, loadScores]);
+  }, [user, loadScores]);
 
   // Get latest score for current user (IPF only view)
   const getMyLatestScore = useCallback((): PerformanceScore | null => {

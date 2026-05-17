@@ -53,4 +53,3 @@ export function MetricsStrip({ items }: { items: PedidoItem[] }) {
   );
 }
 
-export default MetricsStrip;
