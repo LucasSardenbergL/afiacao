@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
-import { BookOpen, Lock, Calculator, FileText, Palette, Beaker, FileUp, Droplets, LayoutDashboard, Users, ShoppingCart, ShoppingBag, Phone, GraduationCap, BarChart3, Settings, ChevronLeft, ChevronRight, Search, Bell, User, LogOut, Package, TrendingUp, Headphones, Target, Menu, X, ClipboardList, PlusCircle, Shield, Wrench, Award, Scissors, DollarSign, Layers, Printer, UserCheck, FileCheck, Boxes, AlertTriangle, PlayCircle, Factory, Truck, Percent, Sparkles, Handshake, Link2, Globe2, Database } from 'lucide-react';
+import { BookOpen, Lock, Calculator, FileText, Palette, Beaker, FileUp, Droplets, LayoutDashboard, Users, ShoppingCart, ShoppingBag, Phone, GraduationCap, BarChart3, Settings, ChevronLeft, ChevronRight, Search, Bell, User, LogOut, Package, TrendingUp, Headphones, Target, Menu, X, ClipboardList, PlusCircle, Shield, Wrench, Award, Scissors, DollarSign, Layers, Printer, UserCheck, FileCheck, Boxes, AlertTriangle, PlayCircle, Factory, Truck, Percent, Sparkles, Handshake, Link2, Globe2, Database, Library } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { useAuth } from '@/contexts/AuthContext';
 import { AppShellProvider } from '@/contexts/AppShellContext';
@@ -137,6 +137,7 @@ const unifiedNavSections: { title: string; items: NavItem[] }[] = [
     items: [
       { icon: UserCheck, label: 'Liberar Acessos', path: '/admin/approvals', managerOnly: true },
       { icon: Users, label: 'Departamentos', path: '/admin/departments', managerOnly: true },
+      { icon: Library, label: 'Base de conhecimento', path: '/admin/knowledge-base', managerOnly: true },
       { icon: Shield, label: 'Admin & Relatórios', path: '/gestao/admin', managerOnly: true },
       { icon: Lock, label: 'Governança', path: '/gestao/governanca', managerOnly: true },
     ],

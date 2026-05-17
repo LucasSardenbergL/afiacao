@@ -4520,6 +4520,107 @@ export type Database = {
           },
         ]
       }
+      kb_chunks: {
+        Row: {
+          char_end: number | null
+          char_start: number | null
+          chunk_index: number
+          content: string
+          created_at: string
+          document_id: string
+          embedding: unknown
+          id: string
+          token_count: number | null
+        }
+        Insert: {
+          char_end?: number | null
+          char_start?: number | null
+          chunk_index: number
+          content: string
+          created_at?: string
+          document_id: string
+          embedding?: unknown
+          id?: string
+          token_count?: number | null
+        }
+        Update: {
+          char_end?: number | null
+          char_start?: number | null
+          chunk_index?: number
+          content?: string
+          created_at?: string
+          document_id?: string
+          embedding?: unknown
+          id?: string
+          token_count?: number | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "kb_chunks_document_id_fkey"
+            columns: ["document_id"]
+            isOneToOne: false
+            referencedRelation: "kb_documents"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      kb_documents: {
+        Row: {
+          content_extracted: string | null
+          created_at: string
+          created_by: string
+          file_size_bytes: number | null
+          file_url: string
+          id: string
+          parent_id: string | null
+          product_code: string | null
+          status: string
+          status_error: string | null
+          supplier: string | null
+          tags: string[]
+          title: string
+          type: string
+          updated_at: string
+          version: number
+        }
+        Insert: {
+          content_extracted?: string | null
+          created_at?: string
+          created_by: string
+          file_size_bytes?: number | null
+          file_url: string
+          id?: string
+          parent_id?: string | null
+          product_code?: string | null
+          status?: string
+          status_error?: string | null
+          supplier?: string | null
+          tags?: string[]
+          title: string
+          type: string
+          updated_at?: string
+          version?: number
+        }
+        Update: {
+          content_extracted?: string | null
+          created_at?: string
+          created_by?: string
+          file_size_bytes?: number | null
+          file_url?: string
+          id?: string
+          parent_id?: string | null
+          product_code?: string | null
+          status?: string
+          status_error?: string | null
+          supplier?: string | null
+          tags?: string[]
+          title?: string
+          type?: string
+          updated_at?: string
+          version?: number
+        }
+        Relationships: []
+      }
       loyalty_points: {
         Row: {
           created_at: string
