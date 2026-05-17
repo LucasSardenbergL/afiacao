@@ -20,7 +20,12 @@
 export async function mixPrerollWithMic(
   prerollUrl: string,
   micStream: MediaStream
-): Promise<{ stream: MediaStream; play: () => void; close: () => void }> {
+): Promise<{
+  stream: MediaStream;
+  durationSeconds: number;
+  play: () => void;
+  close: () => void;
+}> {
   const ctx = new AudioContext();
 
   const micSource = ctx.createMediaStreamSource(micStream);
@@ -39,6 +44,7 @@ export async function mixPrerollWithMic(
 
   return {
     stream: destination.stream,
+    durationSeconds: audioBuffer.duration,
     play: () => {
       if (played) return;
       played = true;

@@ -71,4 +71,12 @@ describe('mixPrerollWithMic', () => {
 
     expect(audioContextMock.close).toHaveBeenCalled();
   });
+
+  it('retorna durationSeconds do MP3 decodificado (para UI countdown)', async () => {
+    audioContextMock.decodeAudioData.mockResolvedValue({ duration: 4.8 });
+    const micStream = new MediaStream();
+    const result = await mixPrerollWithMic('/preroll/aviso.mp3', micStream);
+
+    expect(result.durationSeconds).toBe(4.8);
+  });
 });
