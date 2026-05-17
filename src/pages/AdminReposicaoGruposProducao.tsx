@@ -59,6 +59,18 @@ type SkuRow = {
   grupo_codigo: string | null;
 };
 
+type SkuGrupoRow = {
+  sku_codigo_omie: string | number;
+  grupo_codigo: string;
+};
+
+type SkuParametroRow = {
+  empresa: string;
+  sku_codigo_omie: string | number;
+  sku_descricao: string | null;
+  fornecedor_nome: string | null;
+};
+
 const emptyGrupo = (): Partial<Grupo> => ({
   empresa: EMPRESA,
   fornecedor_nome: "",
@@ -90,7 +102,7 @@ export default function AdminReposicaoGruposProducao() {
     queryKey: ["fornecedor-grupos", EMPRESA],
     queryFn: async () => {
       const { data, error } = await supabase
-        .from("fornecedor_grupo_producao" as any)
+        .from("fornecedor_grupo_producao" as never)
         .select("*")
         .eq("empresa", EMPRESA)
         .order("fornecedor_nome")
@@ -104,12 +116,12 @@ export default function AdminReposicaoGruposProducao() {
     queryKey: ["sku-grupo-contagens", EMPRESA],
     queryFn: async () => {
       const { data, error } = await supabase
-        .from("sku_grupo_producao" as any)
+        .from("sku_grupo_producao" as never)
         .select("grupo_codigo")
         .eq("empresa", EMPRESA);
       if (error) throw error;
       const counts: Record<string, number> = {};
-      ((data || []) as any[]).forEach((r) => {
+      ((data || []) as SkuGrupoRow[]).forEach((r) => {
         counts[r.grupo_codigo] = (counts[r.grupo_codigo] || 0) + 1;
       });
       return counts;
@@ -137,20 +149,21 @@ export default function AdminReposicaoGruposProducao() {
       if (error) throw error;
 
       // Buscar associações para esses SKUs
-      const skuCodes = (data || []).map((r: any) => String(r.sku_codigo_omie));
-      let assocMap: Record<string, string> = {};
+      const rawRows = (data || []) as SkuParametroRow[];
+      const skuCodes = rawRows.map((r) => String(r.sku_codigo_omie));
+      const assocMap: Record<string, string> = {};
       if (skuCodes.length > 0) {
         const { data: assoc } = await supabase
-          .from("sku_grupo_producao" as any)
+          .from("sku_grupo_producao" as never)
           .select("sku_codigo_omie, grupo_codigo")
           .eq("empresa", EMPRESA)
           .in("sku_codigo_omie", skuCodes);
-        ((assoc || []) as any[]).forEach((a) => {
+        ((assoc || []) as SkuGrupoRow[]).forEach((a) => {
           assocMap[String(a.sku_codigo_omie)] = a.grupo_codigo;
         });
       }
 
-      const rows: SkuRow[] = (data || []).map((r: any) => ({
+      const rows: SkuRow[] = rawRows.map((r) => ({
         empresa: r.empresa,
         sku_codigo_omie: Number(r.sku_codigo_omie),
         sku_descricao: r.sku_descricao,
@@ -191,9 +204,9 @@ export default function AdminReposicaoGruposProducao() {
 
   // ============ MUTATIONS ============
   const recalcular = async () => {
-    const { error } = await supabase.rpc("atualizar_parametros_numericos_skus" as any, {
+    const { error } = await supabase.rpc("atualizar_parametros_numericos_skus" as never, {
       p_empresa: EMPRESA,
-    });
+    } as never);
     if (error) {
       toast.error("Erro ao recalcular parâmetros: " + error.message);
       return false;
@@ -219,14 +232,14 @@ export default function AdminReposicaoGruposProducao() {
       }
       if (g.id) {
         const { error } = await supabase
-          .from("fornecedor_grupo_producao" as any)
+          .from("fornecedor_grupo_producao" as never)
           .update(payload)
           .eq("id", g.id);
         if (error) throw error;
       } else {
         const { error } = await supabase
-          .from("fornecedor_grupo_producao" as any)
-          .insert(payload as any);
+          .from("fornecedor_grupo_producao" as never)
+          .insert(payload as never);
         if (error) throw error;
       }
     },
@@ -235,7 +248,7 @@ export default function AdminReposicaoGruposProducao() {
       qc.invalidateQueries({ queryKey: ["fornecedor-grupos"] });
       setEditing(null);
     },
-    onError: (e: any) => toast.error(e.message || "Erro ao salvar"),
+    onError: (e: Error) => toast.error(e.message || "Erro ao salvar"),
   });
 
   const moverSku = useMutation({
@@ -243,21 +256,21 @@ export default function AdminReposicaoGruposProducao() {
       const { sku, novoGrupo } = params;
       if (!novoGrupo) {
         const { error } = await supabase
-          .from("sku_grupo_producao" as any)
+          .from("sku_grupo_producao" as never)
           .delete()
           .eq("empresa", EMPRESA)
           .eq("sku_codigo_omie", String(sku));
         if (error) throw error;
       } else {
         const { error } = await supabase
-          .from("sku_grupo_producao" as any)
+          .from("sku_grupo_producao" as never)
           .upsert(
             {
               empresa: EMPRESA,
               sku_codigo_omie: String(sku),
               grupo_codigo: novoGrupo,
               atualizado_em: new Date().toISOString(),
-            } as any,
+            } as never,
             { onConflict: "empresa,sku_codigo_omie" },
           );
         if (error) throw error;
@@ -268,7 +281,7 @@ export default function AdminReposicaoGruposProducao() {
       qc.invalidateQueries({ queryKey: ["sku-grupo-contagens"] });
       await recalcular();
     },
-    onError: (e: any) => toast.error(e.message || "Erro ao mover SKU"),
+    onError: (e: Error) => toast.error(e.message || "Erro ao mover SKU"),
   });
 
   const moverLote = useMutation({
@@ -281,8 +294,8 @@ export default function AdminReposicaoGruposProducao() {
         atualizado_em: new Date().toISOString(),
       }));
       const { error } = await supabase
-        .from("sku_grupo_producao" as any)
-        .upsert(rows as any, { onConflict: "empresa,sku_codigo_omie" });
+        .from("sku_grupo_producao" as never)
+        .upsert(rows as never, { onConflict: "empresa,sku_codigo_omie" });
       if (error) throw error;
     },
     onSuccess: async (_, vars) => {
@@ -293,7 +306,7 @@ export default function AdminReposicaoGruposProducao() {
       qc.invalidateQueries({ queryKey: ["sku-grupo-contagens"] });
       await recalcular();
     },
-    onError: (e: any) => toast.error(e.message || "Erro no lote"),
+    onError: (e: Error) => toast.error(e.message || "Erro no lote"),
   });
 
   // ============ UI helpers ============

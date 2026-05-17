@@ -25,6 +25,46 @@ function getChunkSize(tipo: string): number {
   return CHUNK_SIZE_DEFAULT;
 }
 
+interface TintImportChunkResult {
+  registros_importados?: number;
+  registros_atualizados?: number;
+  registros_erro?: number;
+  status?: string;
+  message?: string;
+  importacao_id?: string;
+  erros?: Array<{ linha: number | string; motivo: string }>;
+  [k: string]: unknown;
+}
+
+interface TintSyncResult {
+  total_sincronizado?: number;
+  totalSynced?: number;
+  [k: string]: unknown;
+}
+
+interface TintImportacaoRow {
+  id: string;
+  tipo: string;
+  arquivo_nome: string;
+  status: string;
+  total_registros: number | null;
+  registros_importados: number | null;
+  registros_atualizados: number | null;
+  registros_erro: number | null;
+  created_at: string;
+  [k: string]: unknown;
+}
+
+interface TintImportFileResult extends TintImportChunkResult {
+  name: string;
+  imported?: number;
+  updated?: number;
+  errors?: number;
+  total_registros?: number;
+  failed_chunks?: number;
+  error?: string | null;
+}
+
 const TIPO_OPTIONS = [
   { value: 'dados_corantes', label: 'Dados auxiliares — Corantes' },
   { value: 'dados_produto_base_embalagem', label: 'Dados auxiliares — Produto/Base/Embalagem' },
@@ -87,14 +127,14 @@ async function sendChunkWithRetry(
   body: Record<string, unknown>,
   chunkIndex: number,
   totalChunks: number,
-): Promise<any> {
+): Promise<TintImportChunkResult> {
   for (let attempt = 1; attempt <= MAX_RETRIES; attempt++) {
     try {
       console.log(`Chunk ${chunkIndex + 1}/${totalChunks}: enviando... (tentativa ${attempt}/${MAX_RETRIES})`);
-      const res = await invokeFunction<any>('tint-import', body);
+      const res = await invokeFunction<TintImportChunkResult>('tint-import', body);
       console.log(`Chunk ${chunkIndex + 1}/${totalChunks}: sucesso, ${res.registros_importados ?? 0} importados, ${res.registros_atualizados ?? 0} atualizados`);
       return res;
-    } catch (err: any) {
+    } catch (err) {
       console.error(`Chunk ${chunkIndex + 1}/${totalChunks}: falhou tentativa ${attempt}/${MAX_RETRIES}`, err);
       if (attempt < MAX_RETRIES) {
         await sleep(RETRY_DELAY_MS);
@@ -103,6 +143,7 @@ async function sendChunkWithRetry(
       }
     }
   }
+  throw new Error(`sendChunkWithRetry exhausted retries for chunk ${chunkIndex + 1}`);
 }
 
 export default function TintImport() {
@@ -112,7 +153,7 @@ export default function TintImport() {
   const [importing, setImporting] = useState(false);
   const [resumingId, setResumingId] = useState<string | null>(null);
   const [chunkProgress, setChunkProgress] = useState({ currentFile: 0, totalFiles: 0, fileName: '', currentChunk: 0, totalChunks: 0 });
-  const [results, setResults] = useState<any[]>([]);
+  const [results, setResults] = useState<TintImportFileResult[]>([]);
   const [importMode, setImportMode] = useState<'auto' | 'edge' | 'direct' | 'rpc'>('auto');
   const queryClient = useQueryClient();
   const { data: history, isLoading: histLoading } = useImportHistory();
@@ -136,13 +177,13 @@ export default function TintImport() {
   const handleSync = async () => {
     setSyncing(true);
     try {
-      const res = await invokeFunction<any>('tint-omie-sync', { action: 'sync_tint_products' });
+      const res = await invokeFunction<TintSyncResult>('tint-omie-sync', { action: 'sync_tint_products' });
       const total = res.total_sincronizado ?? res.totalSynced ?? 0;
       toast.success(`${total} produtos tintométricos sincronizados`);
       queryClient.invalidateQueries({ queryKey: ['tint'] });
       queryClient.invalidateQueries({ queryKey: ['tint-product-counts'] });
-    } catch (err: any) {
-      toast.error(err.message || 'Erro ao sincronizar');
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : 'Erro ao sincronizar');
     } finally {
       setSyncing(false);
     }
@@ -160,15 +201,15 @@ export default function TintImport() {
     if (files.length === 0) { toast.error('Selecione ao menos um arquivo'); return; }
     const noneDirect = files.every(f => !shouldUseDirect(f.rawText));
     if (noneDirect) { await handleImport(); return; }
-    const allResults: any[] = [];
+    const allResults: TintImportFileResult[] = [];
     for (const f of files) {
       if (shouldUseDirect(f.rawText)) {
         try {
           const useRpc = importMode === 'rpc' || (importMode === 'auto' && (tipo === 'formulas_padrao' || tipo === 'formulas_personalizadas'));
           const result = await runDirectImport(f.rawText, f.name, tipo, useRpc);
           allResults.push({ name: f.name, status: result.status, imported: result.imported, updated: result.updated, errors: result.errors });
-        } catch (err: any) {
-          allResults.push({ name: f.name, status: 'erro', error: err.message });
+        } catch (err) {
+          allResults.push({ name: f.name, status: 'erro', error: err instanceof Error ? err.message : String(err) });
         }
       } else {
         const formData = new FormData();
@@ -176,10 +217,10 @@ export default function TintImport() {
         formData.append('tipo', tipo);
         formData.append('account', ACCOUNT);
         try {
-          const res = await invokeFunction<any>('tint-import', formData);
+          const res = await invokeFunction<TintImportChunkResult>('tint-import', formData);
           allResults.push({ name: f.name, ...res });
-        } catch (err: any) {
-          allResults.push({ name: f.name, status: 'erro', error: err.message });
+        } catch (err) {
+          allResults.push({ name: f.name, status: 'erro', error: err instanceof Error ? err.message : String(err) });
         }
       }
     }
@@ -210,7 +251,7 @@ export default function TintImport() {
     if (files.length === 0) { toast.error('Selecione ao menos um arquivo'); return; }
 
     setImporting(true);
-    const allResults: any[] = [];
+    const allResults: TintImportFileResult[] = [];
 
     for (let fi = 0; fi < files.length; fi++) {
       const f = files[fi];
@@ -238,10 +279,10 @@ export default function TintImport() {
         formData.append('tipo', tipo);
         formData.append('account', ACCOUNT);
         try {
-          const res = await invokeFunction<any>('tint-import', formData);
+          const res = await invokeFunction<TintImportChunkResult>('tint-import', formData);
           allResults.push({ name: f.name, ...res });
-        } catch (err: any) {
-          allResults.push({ name: f.name, status: 'erro', error: err.message });
+        } catch (err) {
+          allResults.push({ name: f.name, status: 'erro', error: err instanceof Error ? err.message : String(err) });
         }
         continue;
       }
@@ -265,7 +306,7 @@ export default function TintImport() {
       try {
         setChunkProgress({ currentFile: fi + 1, totalFiles: files.length, fileName: f.name, currentChunk: 0, totalChunks });
         console.log(`Creating import record for ${f.name} (${totalRows} rows, ${totalChunks} chunks)`);
-        const createRes = await invokeFunction<any>('tint-import', {
+        const createRes = await invokeFunction<TintImportChunkResult>('tint-import', {
           action: 'create_import',
           tipo,
           account: ACCOUNT,
@@ -280,10 +321,11 @@ export default function TintImport() {
           continue;
         }
 
-        importacaoId = createRes.importacao_id;
+        importacaoId = createRes.importacao_id ?? null;
         console.log(`Import record created: ${importacaoId}`);
-      } catch (err: any) {
-        allResults.push({ name: f.name, status: 'erro', error: `Falha ao criar importação: ${err.message}` });
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        allResults.push({ name: f.name, status: 'erro', error: `Falha ao criar importação: ${msg}` });
         continue;
       }
 
@@ -311,8 +353,8 @@ export default function TintImport() {
           totalImported += res.registros_importados ?? 0;
           totalUpdated += res.registros_atualizados ?? 0;
           totalErrors += res.registros_erro ?? 0;
-        } catch (err: any) {
-          lastError = err.message;
+        } catch (err) {
+          lastError = err instanceof Error ? err.message : String(err);
           failedChunks++;
           totalErrors += chunks[ci].length;
           console.error(`Chunk ${ci + 1}/${totalChunks}: ABANDONADO após ${MAX_RETRIES} tentativas`);
@@ -347,7 +389,7 @@ export default function TintImport() {
     toast.success('Importação finalizada');
   };
 
-  const handleResume = async (imp: any) => {
+  const handleResume = async (imp: TintImportacaoRow) => {
     if (!imp.tipo || !imp.id) return;
     setResumingId(imp.id);
 
@@ -422,7 +464,7 @@ export default function TintImport() {
         totalImported += res.registros_importados ?? 0;
         totalUpdated += res.registros_atualizados ?? 0;
         totalErrors += res.registros_erro ?? 0;
-      } catch (err: any) {
+      } catch {
         failedChunks++;
         totalErrors += chunks[ci].length;
         console.error(`Chunk ${ci + 1}/${totalChunks}: ABANDONADO após ${MAX_RETRIES} tentativas`);
@@ -613,7 +655,7 @@ export default function TintImport() {
                     </p>
                     {r.erros && r.erros.length > 0 && (
                       <ul className="text-xs text-destructive mt-1">
-                        {r.erros.slice(0, 5).map((e: any, j: number) => <li key={j}>Linha {e.linha}: {e.motivo}</li>)}
+                        {r.erros.slice(0, 5).map((e, j: number) => <li key={j}>Linha {e.linha}: {e.motivo}</li>)}
                       </ul>
                     )}
                     {r.error && <p className="text-xs text-destructive">{r.error}</p>}
@@ -651,7 +693,7 @@ export default function TintImport() {
             <TableBody>
               {histLoading ? (
                 <TableRow><TableCell colSpan={6}><Skeleton className="h-6 w-full" /></TableCell></TableRow>
-              ) : (history ?? []).map((imp: any) => (
+              ) : (history ?? []).map((imp) => (
                 <TableRow key={imp.id}>
                   <TableCell className="text-sm">{new Date(imp.created_at).toLocaleDateString('pt-BR')}</TableCell>
                   <TableCell className="text-sm">{imp.tipo}</TableCell>

@@ -52,6 +52,14 @@ import {
 
 const PAGE_SIZE = 25;
 
+type BadgeVariant = "default" | "secondary" | "destructive" | "outline" | "success" | "warning" | "info" | "danger" | "purple" | "indigo";
+
+interface OutlierDetalhes {
+  fornecedor?: string;
+  mensagem?: string;
+  [k: string]: unknown;
+}
+
 type EventoOutlier = {
   id: number;
   empresa: string;
@@ -63,7 +71,7 @@ type EventoOutlier = {
   valor_observado: number | null;
   valor_esperado: number | null;
   desvios_padrao: number | null;
-  detalhes: any;
+  detalhes: OutlierDetalhes | null;
   status: string;
   decidido_em: string | null;
   decidido_por: string | null;
@@ -72,23 +80,23 @@ type EventoOutlier = {
 };
 
 const sevBadge = (sev: string) => {
-  const map: Record<string, { variant: any; label: string }> = {
+  const map: Record<string, { variant: BadgeVariant; label: string }> = {
     critico: { variant: "destructive", label: "Crítico" },
     atencao: { variant: "warning", label: "Atenção" },
     info: { variant: "secondary", label: "Info" },
   };
-  const cfg = map[sev] ?? { variant: "outline", label: sev };
+  const cfg = map[sev] ?? { variant: "outline" as BadgeVariant, label: sev };
   return <Badge variant={cfg.variant}>{cfg.label}</Badge>;
 };
 
 const statusBadge = (status: string) => {
-  const map: Record<string, { variant: any; label: string }> = {
+  const map: Record<string, { variant: BadgeVariant; label: string }> = {
     pendente: { variant: "warning", label: "Pendente" },
     aceito: { variant: "success", label: "Aceito" },
     excluido: { variant: "destructive", label: "Excluído" },
     ignorado: { variant: "secondary", label: "Ignorado" },
   };
-  const cfg = map[status] ?? { variant: "outline", label: status };
+  const cfg = map[status] ?? { variant: "outline" as BadgeVariant, label: status };
   return <Badge variant={cfg.variant}>{cfg.label}</Badge>;
 };
 
@@ -182,14 +190,14 @@ export default function AdminReposicaoAlertas() {
         const { data, error } = await supabase
           .from("venda_items_history")
           .select("data_emissao, quantidade, nfe_chave_acesso")
-          .eq("empresa", drillEvento.empresa as any)
+          .eq("empresa", drillEvento.empresa)
           .eq("sku_codigo_omie", Number(drillEvento.sku_codigo_omie))
           .gte("data_emissao", desde.toISOString())
           .order("data_emissao", { ascending: true });
         if (error) throw error;
         // Agrega por dia
         const porDia = new Map<string, number>();
-        (data ?? []).forEach((r: any) => {
+        (data ?? []).forEach((r) => {
           const dia = String(r.data_emissao).slice(0, 10);
           porDia.set(dia, (porDia.get(dia) ?? 0) + Number(r.quantidade));
         });
@@ -198,15 +206,20 @@ export default function AdminReposicaoAlertas() {
           .map(([dia, q]) => ({ dia, qtde: q, isOutlier: dia === outlierDay }))
           .sort((a, b) => a.dia.localeCompare(b.dia));
       } else {
-        const { data, error } = await (supabase as any)
+        // NOTE: schema generated em `types.ts` está desincronizado com a tabela
+        // real `sku_leadtime_history` (faltam `data_pedido`/`lt_bruto_dias_uteis`).
+        // Usamos cast pra row local até o schema ser regenerado.
+        type LeadtimeRow = { data_pedido: string; lt_bruto_dias_uteis: number };
+        const { data, error } = await supabase
           .from("sku_leadtime_history")
-          .select("data_pedido, lt_bruto_dias_uteis")
-          .eq("empresa", drillEvento.empresa)
-          .eq("sku_codigo_omie", drillEvento.sku_codigo_omie)
+          .select("data_pedido, lt_bruto_dias_uteis" as never)
+          .eq("empresa", drillEvento.empresa as never)
+          .eq("sku_codigo_omie", drillEvento.sku_codigo_omie as never)
           .order("data_pedido", { ascending: true });
         if (error) throw error;
         const outlierDay = drillEvento.data_evento.slice(0, 10);
-        return (data ?? []).map((r: any, i: number) => ({
+        const rows = (data ?? []) as unknown as LeadtimeRow[];
+        return rows.map((r, i: number) => ({
           idx: i + 1,
           dia: String(r.data_pedido).slice(0, 10),
           lt: Number(r.lt_bruto_dias_uteis),
@@ -217,32 +230,50 @@ export default function AdminReposicaoAlertas() {
   });
 
   // Dados do SKU (drill seção 2)
-  const { data: skuInfo } = useQuery({
+  type SkuInfo = {
+    classe_consolidada: string | null;
+    demanda_media_diaria: number | null;
+    demanda_sigma_diario: number | null;
+    lt_medio_dias_uteis: number | null;
+    preco_compra_real: number | null;
+  };
+  const { data: skuInfo } = useQuery<SkuInfo | null>({
     enabled: !!drillEvento,
     queryKey: ["outlier-sku", drillEvento?.sku_codigo_omie, drillEvento?.empresa],
     queryFn: async () => {
       if (!drillEvento) return null;
-      const { data } = await (supabase as any)
+      // NOTE: schema gerado parcial — usar cast pra row local
+      const { data } = await supabase
         .from("sku_parametros")
-        .select("classe_consolidada, demanda_media_diaria, demanda_sigma_diario, lt_medio_dias_uteis, preco_compra_real")
+        .select("classe_consolidada, demanda_media_diaria, demanda_sigma_diario, lt_medio_dias_uteis, preco_compra_real" as never)
         .eq("empresa", drillEvento.empresa)
         .eq("sku_codigo_omie", Number(drillEvento.sku_codigo_omie))
         .maybeSingle();
-      return data;
+      return (data ?? null) as unknown as SkuInfo | null;
     },
   });
 
   // Impacto previsto
-  const { data: impacto } = useQuery({
+  type ImpactoData = {
+    error?: string;
+    media_atual?: number | null;
+    media_sem?: number | null;
+    sigma_atual?: number | null;
+    sigma_sem?: number | null;
+    em_atual?: number | null;
+    em_sem?: number | null;
+    delta_em?: number;
+  } | null;
+  const { data: impacto } = useQuery<ImpactoData>({
     enabled: !!drillEvento && !isSemGrupo,
     queryKey: ["outlier-impacto", drillEvento?.id],
     queryFn: async () => {
       if (!drillEvento) return null;
-      const { data, error } = await (supabase as any).rpc("estimar_impacto_exclusao_outlier", {
+      const { data, error } = await supabase.rpc("estimar_impacto_exclusao_outlier", {
         p_evento_id: drillEvento.id,
       });
       if (error) throw error;
-      return data;
+      return (data ?? null) as unknown as ImpactoData;
     },
   });
 
@@ -252,14 +283,16 @@ export default function AdminReposicaoAlertas() {
     queryKey: ["grupos-fornecedor", drillEvento?.empresa, drillEvento?.detalhes?.fornecedor],
     queryFn: async () => {
       if (!drillEvento) return [];
-      const { data, error } = await (supabase as any)
+      // NOTE: `codigo_grupo` no schema gerado é `grupo_codigo`; cast pra row local.
+      type GrupoRow = { id: number; codigo_grupo: string; descricao: string | null; lt_producao_dias: number };
+      const { data, error } = await supabase
         .from("fornecedor_grupo_producao")
-        .select("id, codigo_grupo, descricao, lt_producao_dias")
+        .select("id, codigo_grupo, descricao, lt_producao_dias" as never)
         .eq("empresa", drillEvento.empresa)
-        .eq("fornecedor_nome", drillEvento.detalhes?.fornecedor)
-        .order("codigo_grupo");
+        .eq("fornecedor_nome", drillEvento.detalhes?.fornecedor ?? "")
+        .order("codigo_grupo" as never);
       if (error) throw error;
-      return data ?? [];
+      return (data ?? []) as unknown as GrupoRow[];
     },
   });
 
@@ -269,10 +302,10 @@ export default function AdminReposicaoAlertas() {
   const atribuirGrupoMut = useMutation({
     mutationFn: async () => {
       if (!drillEvento || !grupoEscolhido) throw new Error("Selecione um grupo");
-      const grupo = (gruposFornecedor ?? []).find((g: any) => g.id === grupoEscolhido);
+      const grupo = (gruposFornecedor ?? []).find((g) => g.id === (grupoEscolhido as unknown as number));
       if (!grupo) throw new Error("Grupo inválido");
-      // Insere associação
-      const { error: insErr } = await (supabase as any)
+      // Insere associação — payload diverge do schema gerado (fornecedor_grupo_id, codigo_grupo)
+      const { error: insErr } = await supabase
         .from("sku_grupo_producao")
         .insert({
           empresa: drillEvento.empresa,
@@ -280,10 +313,10 @@ export default function AdminReposicaoAlertas() {
           fornecedor_grupo_id: grupo.id,
           fornecedor_nome: drillEvento.detalhes?.fornecedor,
           codigo_grupo: grupo.codigo_grupo,
-        });
+        } as never);
       if (insErr) throw insErr;
       // Marca evento como aceito
-      const { error: resErr } = await (supabase as any).rpc("resolver_outlier", {
+      const { error: resErr } = await supabase.rpc("resolver_outlier", {
         p_evento_id: drillEvento.id,
         p_decisao: "aceitar",
         p_justificativa: `Atribuído ao grupo ${grupo.codigo_grupo} — ${grupo.descricao}`,
@@ -292,7 +325,7 @@ export default function AdminReposicaoAlertas() {
       if (resErr) throw resErr;
       // Recalcula parâmetros (LT mudou)
       try {
-        await (supabase as any).rpc("atualizar_parametros_numericos_skus", { p_empresa: drillEvento.empresa });
+        await supabase.rpc("atualizar_parametros_numericos_skus", { p_empresa: drillEvento.empresa });
       } catch (e) {
         console.warn("Recálculo falhou:", e);
       }
@@ -305,14 +338,14 @@ export default function AdminReposicaoAlertas() {
       setDrillEvento(null);
       setGrupoEscolhido("");
     },
-    onError: (err: any) => toast.error(err.message ?? "Erro ao atribuir grupo"),
+    onError: (err: Error) => toast.error(err.message ?? "Erro ao atribuir grupo"),
   });
 
   const resolverMut = useMutation({
     mutationFn: async ({ ids, decisao, just }: { ids: number[]; decisao: string; just: string }) => {
       const results = [];
       for (const id of ids) {
-        const { data, error } = await (supabase as any).rpc("resolver_outlier", {
+        const { data, error } = await supabase.rpc("resolver_outlier", {
           p_evento_id: id,
           p_decisao: decisao,
           p_justificativa: just || null,
@@ -324,7 +357,7 @@ export default function AdminReposicaoAlertas() {
       // Recálculo automático após exclusão
       if (decisao === "excluir") {
         try {
-          await (supabase as any).rpc("atualizar_parametros_numericos_skus", { p_empresa: empresa });
+          await supabase.rpc("atualizar_parametros_numericos_skus", { p_empresa: empresa });
         } catch (e) {
           console.warn("Recálculo falhou:", e);
         }
@@ -341,7 +374,7 @@ export default function AdminReposicaoAlertas() {
       setAcaoConfirm(null);
       setJustificativa("");
     },
-    onError: (err: any) => toast.error(err.message ?? "Erro ao resolver alerta"),
+    onError: (err: Error) => toast.error(err.message ?? "Erro ao resolver alerta"),
   });
 
   const todosSelecionavel = useMemo(
@@ -617,13 +650,13 @@ export default function AdminReposicaoAlertas() {
                       <div className="h-[220px]">
                         <ResponsiveContainer width="100%" height="100%">
                           {drillEvento.tipo === "venda_atipica" ? (
-                            <BarChart data={(historico as any[]) ?? []}>
+                            <BarChart data={(historico as Array<{ dia: string; qtde: number; isOutlier: boolean }> | null) ?? []}>
                               <CartesianGrid strokeDasharray="3 3" />
                               <XAxis dataKey="dia" tick={{ fontSize: 10 }} />
                               <YAxis tick={{ fontSize: 10 }} />
                               <ReTooltip />
                               <Bar dataKey="qtde">
-                                {((historico as any[]) ?? []).map((d, i) => (
+                                {((historico as Array<{ isOutlier: boolean }> | null) ?? []).map((d, i) => (
                                   <Cell key={i} fill={d.isOutlier ? "hsl(var(--destructive))" : "hsl(var(--primary))"} />
                                 ))}
                               </Bar>
@@ -637,8 +670,8 @@ export default function AdminReposicaoAlertas() {
                               {impacto?.media_atual != null && (
                                 <ReferenceLine y={impacto.media_atual} stroke="hsl(var(--muted-foreground))" strokeDasharray="3 3" />
                               )}
-                              <Scatter data={(historico as any[]) ?? []}>
-                                {((historico as any[]) ?? []).map((d, i) => (
+                              <Scatter data={(historico as Array<{ idx: number; lt: number; isOutlier: boolean }> | null) ?? []}>
+                                {((historico as Array<{ isOutlier: boolean }> | null) ?? []).map((d, i) => (
                                   <Cell key={i} fill={d.isOutlier ? "hsl(var(--destructive))" : "hsl(var(--primary))"} />
                                 ))}
                               </Scatter>
@@ -693,8 +726,9 @@ export default function AdminReposicaoAlertas() {
                             <SelectValue placeholder="Selecione o grupo" />
                           </SelectTrigger>
                           <SelectContent>
-                            {(gruposFornecedor ?? []).map((g: any) => (
-                              <SelectItem key={g.id} value={g.id}>
+                            {(gruposFornecedor ?? []).map((g) => (
+                              // SelectItem espera string, mas a lógica original passava o number — preservar via cast
+                              <SelectItem key={g.id} value={g.id as unknown as string}>
                                 {g.codigo_grupo} — {g.descricao} (LT {g.lt_producao_dias}d)
                               </SelectItem>
                             ))}

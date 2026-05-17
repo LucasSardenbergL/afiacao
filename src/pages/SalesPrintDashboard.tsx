@@ -31,10 +31,33 @@ const COMPANY_COLORS: Record<CompanyFilter, string> = {
   afiacao: 'bg-amber-100 text-amber-800 border-amber-300',
 };
 
+interface OrderItem {
+  codigo?: string;
+  omie_codigo?: string;
+  descricao?: string;
+  nome?: string;
+  quantidade?: number;
+  unidade?: string;
+  valor_unitario?: number;
+  valor_total?: number;
+  tint_cor_id?: string;
+  tint_nome_cor?: string;
+  [k: string]: unknown;
+}
+
+interface OmiePayload {
+  cabecalho?: {
+    codigo_parcela?: string;
+    codigo_cliente?: number;
+    [k: string]: unknown;
+  };
+  [k: string]: unknown;
+}
+
 interface SalesOrderRow {
   id: string;
   customer_user_id: string;
-  items: any[];
+  items: OrderItem[];
   subtotal: number;
   total: number;
   desconto?: number;
@@ -50,6 +73,32 @@ interface SalesOrderRow {
   customer_address?: string;
   vendedor_name?: string;
   cond_pagamento?: string;
+  user_id?: string;
+  omie_payload?: OmiePayload;
+}
+
+interface ProfileLite {
+  user_id: string;
+  name: string | null;
+  document: string | null;
+  phone: string | null;
+}
+
+interface AddressLite {
+  user_id: string;
+  street: string;
+  number: string;
+  complement: string | null;
+  neighborhood: string;
+  city: string;
+  state: string;
+  zip_code: string;
+  is_default: boolean | null;
+}
+
+interface FormaPagamento {
+  codigo: string;
+  descricao: string;
 }
 
 function getPeriod(dateStr: string): 'manha' | 'tarde' {
@@ -83,7 +132,7 @@ function buildPrintData(order: SalesOrderRow, company: CompanyFilter, logoUrls?:
   const c = companyMap[company];
 
   // Extract parcelaCode from omie_payload
-  const payload = (order as any).omie_payload;
+  const payload = order.omie_payload;
   const parcelaCode = payload?.cabecalho?.codigo_parcela || undefined;
 
   return {
@@ -101,7 +150,7 @@ function buildPrintData(order: SalesOrderRow, company: CompanyFilter, logoUrls?:
     vendedorName: order.vendedor_name,
     condPagamento: order.cond_pagamento,
     parcelaCode,
-    items: (order.items || []).map((it: any) => ({
+    items: (order.items || []).map((it) => ({
       codigo: it.codigo || it.omie_codigo || '-',
       descricao: it.descricao || it.nome || '',
       quantidade: it.quantidade || 1,
@@ -112,8 +161,8 @@ function buildPrintData(order: SalesOrderRow, company: CompanyFilter, logoUrls?:
       tintNomeCor: it.tint_nome_cor,
     })),
     subtotal: order.subtotal || 0,
-    desconto: (order as any).desconto || 0,
-    frete: (order as any).frete || 0,
+    desconto: order.desconto || 0,
+    frete: order.frete || 0,
     total: order.total || 0,
     observacoes: order.notes || undefined,
     isOben: isOben,
@@ -156,9 +205,8 @@ const SalesPrintDashboard = () => {
           const { data } = await supabase.functions.invoke('omie-vendas-sync', {
             body: { action: 'listar_formas_pagamento', account: acc },
           });
-          if (data?.formas) {
-            data.formas.forEach((f: any) => { result[f.codigo] = f.descricao; });
-          }
+          const formas = (data?.formas ?? []) as FormaPagamento[];
+          formas.forEach((f) => { result[f.codigo] = f.descricao; });
         } catch (_) { /* ignore */ }
       }
       return result;
@@ -193,11 +241,14 @@ const SalesPrintDashboard = () => {
         .neq('status', 'cancelado')
         .order('created_at', { ascending: true });
       if (error) throw error;
-      return (data || []).map((o: any) => ({
-        ...o,
-        account: 'afiacao',
-        subtotal: o.total || 0,
-      })) as SalesOrderRow[];
+      return (data || []).map((o) => {
+        const row = o as unknown as SalesOrderRow;
+        return {
+          ...row,
+          account: 'afiacao',
+          subtotal: row.total || 0,
+        };
+      }) as SalesOrderRow[];
     },
   });
 
@@ -219,7 +270,7 @@ const SalesPrintDashboard = () => {
     const ids = new Set<string>();
     allOrdersRaw.forEach(o => {
       if (o.customer_user_id) ids.add(o.customer_user_id);
-      if ((o as any).user_id) ids.add((o as any).user_id);
+      if (o.user_id) ids.add(o.user_id);
     });
     return [...ids];
   }, [allOrdersRaw]);
@@ -267,14 +318,14 @@ const SalesPrintDashboard = () => {
   });
 
   const profileMap = useMemo(() => {
-    const m = new Map<string, any>();
-    profiles.forEach(p => m.set(p.user_id, p));
+    const m = new Map<string, ProfileLite>();
+    (profiles as ProfileLite[]).forEach(p => m.set(p.user_id, p));
     return m;
   }, [profiles]);
 
   const localAddressMap = useMemo(() => {
-    const m = new Map<string, any>();
-    customerAddresses.forEach(a => {
+    const m = new Map<string, AddressLite>();
+    (customerAddresses as AddressLite[]).forEach(a => {
       if (!m.has(a.user_id)) m.set(a.user_id, a);
     });
     return m;
@@ -291,10 +342,9 @@ const SalesPrintDashboard = () => {
     omieClientes.forEach(oc => m.set(oc.user_id, oc.omie_codigo_cliente));
     // Fallback: extract codigo_cliente from order payloads for customers not in omie_clientes
     allOrdersRaw.forEach(o => {
-      const custId = o.customer_user_id || (o as any).user_id;
+      const custId = o.customer_user_id || o.user_id;
       if (custId && !m.has(custId)) {
-        const payload = (o as any).omie_payload;
-        const cc = payload?.cabecalho?.codigo_cliente;
+        const cc = o.omie_payload?.cabecalho?.codigo_cliente;
         if (cc) m.set(custId, cc);
       }
     });
@@ -353,7 +403,7 @@ const SalesPrintDashboard = () => {
   const addressMap = useMemo(() => {
     const m = new Map<string, string>();
     // First, local addresses
-    customerAddresses.forEach(a => {
+    (customerAddresses as AddressLite[]).forEach(a => {
       if (!m.has(a.user_id)) {
         m.set(a.user_id, `${a.street}, ${a.number}${a.complement ? ' - ' + a.complement : ''} – ${a.neighborhood}, ${a.city}/${a.state} – CEP: ${a.zip_code}`);
       }
@@ -374,24 +424,23 @@ const SalesPrintDashboard = () => {
         return getPeriod(o.created_at) === selectedPeriod;
       })
       .map(o => {
-        const custId = o.customer_user_id || (o as any).user_id;
+        const custId = o.customer_user_id || o.user_id || '';
         const profile = profileMap.get(custId);
         const addr = addressMap.get(custId);
-        const fullAddress = (o as any).customer_address || addr || '';
+        const fullAddress = o.customer_address || addr || '';
 
         // Extract cond_pagamento description from formas map
-        const payload = (o as any).omie_payload;
-        const parcelaCode = payload?.cabecalho?.codigo_parcela;
-        const condPagamento = (o as any).cond_pagamento
+        const parcelaCode = o.omie_payload?.cabecalho?.codigo_parcela;
+        const condPagamento = o.cond_pagamento
           || (parcelaCode && formasMap[parcelaCode])
           || parcelaCode
           || undefined;
 
         return {
           ...o,
-          customer_name: (o as any).customer_name || profile?.name || 'Cliente',
-          customer_document: (o as any).customer_document || profile?.document || '',
-          customer_phone: (o as any).customer_phone || profile?.phone || '',
+          customer_name: o.customer_name || profile?.name || 'Cliente',
+          customer_document: o.customer_document || profile?.document || '',
+          customer_phone: o.customer_phone || profile?.phone || '',
           customer_address: fullAddress,
           cond_pagamento: condPagamento,
         };
@@ -582,7 +631,7 @@ ${allPages.join('\n<div class="page-break"></div>\n')}
               </Popover>
 
               {/* Period filter */}
-              <Tabs value={selectedPeriod} onValueChange={v => setSelectedPeriod(v as any)}>
+              <Tabs value={selectedPeriod} onValueChange={v => setSelectedPeriod(v as 'all' | 'manha' | 'tarde')}>
                 <TabsList>
                   <TabsTrigger value="all">Todos</TabsTrigger>
                   <TabsTrigger value="manha" className="gap-1"><Sun className="h-3 w-3" />Manhã</TabsTrigger>

@@ -68,7 +68,7 @@ function KpiCards({ account }: { account: string }) {
   const { data: tasksAbertas } = useQuery({
     queryKey: ["pk-tasks-abertas", account],
     queryFn: async () => {
-      const { count } = await (supabase as any)
+      const { count } = await supabase
         .from("picking_tasks")
         .select("*", { count: "exact", head: true })
         .eq("account", account)
@@ -81,7 +81,7 @@ function KpiCards({ account }: { account: string }) {
   const { data: pedidosAguardando } = useQuery({
     queryKey: ["pk-pedidos-aguardando", account],
     queryFn: async () => {
-      const { count } = await (supabase as any)
+      const { count } = await supabase
         .from("picking_tasks")
         .select("*", { count: "exact", head: true })
         .eq("account", account)
@@ -94,7 +94,7 @@ function KpiCards({ account }: { account: string }) {
   const { data: skusCriticos } = useQuery({
     queryKey: ["pk-skus-criticos", account],
     queryFn: async () => {
-      const { count } = await (supabase as any)
+      const { count } = await supabase
         .from("inventory_position")
         .select("*", { count: "exact", head: true })
         .eq("account", account)
@@ -107,20 +107,20 @@ function KpiCards({ account }: { account: string }) {
   const { data: fefoCompliance } = useQuery({
     queryKey: ["pk-fefo-compliance", account],
     queryFn: async () => {
-      const { data: tasks } = await (supabase as any)
+      const { data: tasks } = await supabase
         .from("picking_tasks")
         .select("id")
         .eq("account", account);
-      const ids = (tasks ?? []).map((t: any) => t.id);
+      const ids = (tasks ?? []).map((t) => t.id);
       if (!ids.length) return { pct: 0, total: 0, ok: 0 };
-      const { data: items } = await (supabase as any)
+      const { data: items } = await supabase
         .from("picking_task_items")
         .select("lote_fefo, lote_separado")
         .in("picking_task_id", ids)
         .not("lote_separado", "is", null);
       const total = (items ?? []).length;
       const ok = (items ?? []).filter(
-        (i: any) => i.lote_fefo && i.lote_separado && i.lote_fefo === i.lote_separado,
+        (i) => i.lote_fefo && i.lote_separado && i.lote_fefo === i.lote_separado,
       ).length;
       return { pct: total ? (ok / total) * 100 : 0, total, ok };
     },
@@ -197,7 +197,7 @@ function PickingTab({ account }: { account: string }) {
   const { data, isLoading } = useQuery({
     queryKey: ["pk-picking-list", account],
     queryFn: async () => {
-      const { data } = await (supabase as any)
+      const { data } = await supabase
         .from("picking_tasks")
         .select("id, sales_order_id, status, assigned_to, created_at")
         .eq("account", account)
@@ -211,7 +211,7 @@ function PickingTab({ account }: { account: string }) {
     queryKey: ["pk-picking-items", expanded],
     enabled: !!expanded,
     queryFn: async () => {
-      const { data } = await (supabase as any)
+      const { data } = await supabase
         .from("picking_task_items")
         .select(
           "id, product_descricao, quantidade, quantidade_separada, status, lote_fefo, lote_separado",
@@ -269,7 +269,7 @@ function PickingTab({ account }: { account: string }) {
                 </TableCell>
               </TableRow>
             )}
-            {(data ?? []).map((t: any) => (
+            {(data ?? []).map((t) => (
               <Fragment key={t.id}>
                 <TableRow key={t.id}>
                   <TableCell>
@@ -312,7 +312,7 @@ function PickingTab({ account }: { account: string }) {
                             </TableRow>
                           </TableHeader>
                           <TableBody>
-                            {items.map((it: any) => (
+                            {items.map((it) => (
                               <TableRow key={it.id}>
                                 <TableCell className="text-xs">{it.product_descricao}</TableCell>
                                 <TableCell className="text-right text-xs">{it.quantidade}</TableCell>
@@ -351,7 +351,7 @@ function EstoqueTab({ account }: { account: string }) {
   const { data, isLoading } = useQuery({
     queryKey: ["pk-inventory", account],
     queryFn: async () => {
-      const { data } = await (supabase as any)
+      const { data } = await supabase
         .from("inventory_position")
         .select("omie_codigo_produto, saldo, cmc, preco_medio, synced_at")
         .eq("account", account)
@@ -364,7 +364,7 @@ function EstoqueTab({ account }: { account: string }) {
   const filtered = useMemo(() => {
     const q = search.trim().toLowerCase();
     if (!q) return data ?? [];
-    return (data ?? []).filter((r: any) =>
+    return (data ?? []).filter((r) =>
       String(r.omie_codigo_produto ?? "").toLowerCase().includes(q),
     );
   }, [data, search]);
@@ -404,7 +404,7 @@ function EstoqueTab({ account }: { account: string }) {
                   </TableCell>
                 </TableRow>
               )}
-              {filtered.map((r: any) => (
+              {filtered.map((r) => (
                 <TableRow key={r.omie_codigo_produto}>
                   <TableCell className="font-tabular text-xs">{r.omie_codigo_produto}</TableCell>
                   <TableCell className="text-right">
@@ -434,7 +434,7 @@ function MovimentacoesTab() {
   const { data, isLoading } = useQuery({
     queryKey: ["pk-events"],
     queryFn: async () => {
-      const { data } = await (supabase as any)
+      const { data } = await supabase
         .from("picking_events")
         .select("id, event_type, picking_task_id, lote_esperado, lote_informado, justificativa, created_at")
         .order("created_at", { ascending: false })
@@ -472,7 +472,7 @@ function MovimentacoesTab() {
                 </TableCell>
               </TableRow>
             )}
-            {(data ?? []).map((e: any) => (
+            {(data ?? []).map((e) => (
               <TableRow key={e.id}>
                 <TableCell className="text-xs"><Badge variant="outline">{e.event_type}</Badge></TableCell>
                 <TableCell className="font-tabular text-xs">{truncate(e.picking_task_id)}</TableCell>
@@ -500,17 +500,17 @@ function AuditoriaTab({ account }: { account: string }) {
   const { data, isLoading } = useQuery({
     queryKey: ["pk-auditoria", account],
     queryFn: async () => {
-      const { data: tasks } = await (supabase as any)
+      const { data: tasks } = await supabase
         .from("picking_tasks")
         .select("id, sales_order_id, completed_at, notes")
         .eq("account", account)
         .eq("status", "concluido")
         .order("completed_at", { ascending: false })
         .limit(200);
-      const ids = (tasks ?? []).map((t: any) => t.id);
-      let divCount: Record<string, number> = {};
+      const ids = (tasks ?? []).map((t) => t.id);
+      const divCount: Record<string, number> = {};
       if (ids.length) {
-        const { data: items } = await (supabase as any)
+        const { data: items } = await supabase
           .from("picking_task_items")
           .select("picking_task_id, lote_fefo, lote_separado, quantidade, quantidade_separada")
           .in("picking_task_id", ids);
@@ -523,7 +523,7 @@ function AuditoriaTab({ account }: { account: string }) {
           }
         }
       }
-      return (tasks ?? []).map((t: any) => ({ ...t, divergencias: divCount[t.id] ?? 0 }));
+      return (tasks ?? []).map((t) => ({ ...t, divergencias: divCount[t.id] ?? 0 }));
     },
   });
 
@@ -555,7 +555,7 @@ function AuditoriaTab({ account }: { account: string }) {
                 </TableCell>
               </TableRow>
             )}
-            {(data ?? []).map((t: any) => (
+            {(data ?? []).map((t) => (
               <TableRow key={t.id}>
                 <TableCell className="font-tabular text-xs">{truncate(t.id)}</TableCell>
                 <TableCell className="font-tabular text-xs">{truncate(t.sales_order_id)}</TableCell>

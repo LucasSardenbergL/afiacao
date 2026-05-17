@@ -111,7 +111,7 @@ type ItemRow = {
   descricao_produto_fornecedor: string | null;
   sku_codigo_omie: number | null;
   mapeamento_qualidade: string | null;
-  mapeamento_candidatos: any;
+  mapeamento_candidatos: unknown;
   desconto_perc: number;
   volume_minimo: number | null;
   confirmado: boolean;
@@ -262,8 +262,9 @@ function MapeamentoStatusCell({
       const term = searchQuery.trim();
       // Busca por descrição OU código OU sku omie (numérico). account no banco é lowercase.
       const isNumeric = /^\d+$/.test(term);
+      type OmieSearchRow = { omie_codigo_produto: number; descricao: string; codigo: string };
       let query = supabase
-        .from("omie_products" as any)
+        .from("omie_products")
         .select("omie_codigo_produto, descricao, codigo")
         .eq("account", EMPRESA.toLowerCase())
         .eq("ativo", true);
@@ -276,7 +277,7 @@ function MapeamentoStatusCell({
           );
       const { data, error } = await query.limit(20);
       setSearching(false);
-      if (!error) setSearchResults((data as any) || []);
+      if (!error) setSearchResults((data as unknown as OmieSearchRow[]) || []);
     }, 300);
     return () => clearTimeout(t);
   }, [searchQuery, searchOpen]);
@@ -530,8 +531,8 @@ function MapeamentoStatusCell({
                       observacoes: `Expandido manualmente a partir de ${item.sku_codigo_fornecedor}`,
                     }));
                     const { error } = await supabase
-                      .from("promocao_item" as any)
-                      .insert(payload as any);
+                      .from("promocao_item")
+                      .insert(payload as never);
                     if (error) throw error;
                     toast.success(`${ids.length} embalagens vinculadas`);
                   } else {
@@ -540,8 +541,8 @@ function MapeamentoStatusCell({
                   qc.invalidateQueries({ queryKey: ["promocao-itens", String(item.campanha_id)] });
                   setSelectedSkus({});
                   setSearchOpen(false);
-                } catch (e: any) {
-                  toast.error(e?.message || "Erro ao vincular");
+                } catch (e) {
+                  toast.error(e instanceof Error ? e.message : "Erro ao vincular");
                 } finally {
                   setSalvando(false);
                 }
@@ -699,7 +700,7 @@ export default function AdminReposicaoPromocaoDetail() {
     queryFn: async () => {
       if (isNew) return null;
       const { data, error } = await supabase
-        .from("promocao_campanha" as any)
+        .from("promocao_campanha")
         .select("*")
         .eq("id", Number(id))
         .single();
@@ -714,7 +715,7 @@ export default function AdminReposicaoPromocaoDetail() {
     queryFn: async () => {
       if (isNew) return [];
       const { data, error } = await supabase
-        .from("promocao_item" as any)
+        .from("promocao_item")
         .select("*")
         .eq("campanha_id", Number(id))
         .eq("ativo", true)
@@ -731,7 +732,7 @@ export default function AdminReposicaoPromocaoDetail() {
     queryFn: async () => {
       if (itemIds.length === 0) return [];
       const { data, error } = await supabase
-        .from("v_promocao_item_efetivo" as any)
+        .from("v_promocao_item_efetivo")
         .select("id, desconto_efetivo")
         .in("id", itemIds);
       if (error) throw error;
@@ -750,7 +751,7 @@ export default function AdminReposicaoPromocaoDetail() {
     queryFn: async () => {
       if (isNew) return [];
       const { data, error } = await supabase
-        .from("promocao_negociacao_evento" as any)
+        .from("promocao_negociacao_evento")
         .select("*")
         .eq("campanha_id", Number(id))
         .order("data_evento", { ascending: false });
@@ -812,7 +813,7 @@ export default function AdminReposicaoPromocaoDetail() {
         const estadoInicial =
           tipoNovo === "negociacao_cliente" ? "negociando" : "rascunho";
         const { data, error } = await supabase
-          .from("promocao_campanha" as any)
+          .from("promocao_campanha")
           .insert({
             empresa: EMPRESA,
             fornecedor_nome: FORNECEDOR_DEFAULT,
@@ -827,10 +828,10 @@ export default function AdminReposicaoPromocaoDetail() {
           .select("id")
           .single();
         if (error) throw error;
-        return (data as any).id as number;
+        return (data as { id: number }).id;
       } else {
         const { error } = await supabase
-          .from("promocao_campanha" as any)
+          .from("promocao_campanha")
           .update({
             nome: formNome.trim(),
             data_inicio: formInicio,
@@ -849,7 +850,7 @@ export default function AdminReposicaoPromocaoDetail() {
       qc.invalidateQueries({ queryKey: ["promocao-campanhas"] });
       if (isNew) navigate(`/admin/reposicao/promocoes/${newId}`);
     },
-    onError: (e: any) => toast.error(e.message || "Erro ao salvar"),
+    onError: (e: Error) => toast.error(e.message || "Erro ao salvar"),
   });
 
   const updateItemMut = useMutation({
@@ -861,8 +862,8 @@ export default function AdminReposicaoPromocaoDetail() {
       changes: Partial<ItemRow>;
     }) => {
       const { error } = await supabase
-        .from("promocao_item" as any)
-        .update(changes as any)
+        .from("promocao_item")
+        .update(changes as never)
         .eq("id", itemId);
       if (error) throw error;
     },
@@ -870,13 +871,13 @@ export default function AdminReposicaoPromocaoDetail() {
       qc.invalidateQueries({ queryKey: ["promocao-itens", id] });
       qc.invalidateQueries({ queryKey: ["promocao-itens-efetivos"] });
     },
-    onError: (e: any) => toast.error(e.message || "Erro ao atualizar item"),
+    onError: (e: Error) => toast.error(e.message || "Erro ao atualizar item"),
   });
 
   const deleteItemMut = useMutation({
     mutationFn: async (itemId: number) => {
       const { error } = await supabase
-        .from("promocao_item" as any)
+        .from("promocao_item")
         .update({ ativo: false })
         .eq("id", itemId);
       if (error) throw error;
@@ -885,12 +886,12 @@ export default function AdminReposicaoPromocaoDetail() {
       toast.success("Item removido");
       qc.invalidateQueries({ queryKey: ["promocao-itens", id] });
     },
-    onError: (e: any) => toast.error(e.message || "Erro ao remover"),
+    onError: (e: Error) => toast.error(e.message || "Erro ao remover"),
   });
 
   const transicionarEstadoMut = useMutation({
     mutationFn: async (novoEstado: string) => {
-      const updates: any = {
+      const updates: Record<string, string | null> = {
         estado: novoEstado,
         atualizado_por: userEmail,
       };
@@ -898,8 +899,8 @@ export default function AdminReposicaoPromocaoDetail() {
         updates.data_fim = new Date().toISOString().slice(0, 10);
       }
       const { error } = await supabase
-        .from("promocao_campanha" as any)
-        .update(updates)
+        .from("promocao_campanha")
+        .update(updates as never)
         .eq("id", Number(id));
       if (error) throw error;
       return novoEstado;
@@ -912,7 +913,7 @@ export default function AdminReposicaoPromocaoDetail() {
         qc.invalidateQueries({ queryKey: ["promocao-campanha", id] });
       }
     },
-    onError: (e: any) => toast.error(e.message || "Erro ao mudar estado"),
+    onError: (e: Error) => toast.error(e.message || "Erro ao mudar estado"),
   });
 
   // ============ ADD ITEM (inline row) ============
@@ -937,7 +938,7 @@ export default function AdminReposicaoPromocaoDetail() {
     setSavingNovoItem(true);
     try {
       const { data: inserted, error: insertErr } = await supabase
-        .from("promocao_item" as any)
+        .from("promocao_item")
         .insert({
           campanha_id: Number(id),
           sku_codigo_fornecedor: novoCodFornecedor.trim(),
@@ -950,11 +951,11 @@ export default function AdminReposicaoPromocaoDetail() {
         .single();
       if (insertErr) throw insertErr;
 
-      const novoId = (inserted as any).id;
+      const novoId = (inserted as { id: number }).id;
       // Chama RPC de expansão
       const { error: rpcErr } = await supabase.rpc(
-        "expandir_promocao_item" as any,
-        { p_item_id: novoId },
+        "expandir_promocao_item" as never,
+        { p_item_id: novoId } as never,
       );
       if (rpcErr) throw rpcErr;
 
@@ -964,8 +965,8 @@ export default function AdminReposicaoPromocaoDetail() {
       setNovoDesconto("");
       setNovoVolume("");
       qc.invalidateQueries({ queryKey: ["promocao-itens", id] });
-    } catch (e: any) {
-      toast.error(e.message || "Erro ao adicionar item");
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : "Erro ao adicionar item");
     } finally {
       setSavingNovoItem(false);
     }
@@ -992,7 +993,7 @@ export default function AdminReposicaoPromocaoDetail() {
         throw new Error("Desconto obrigatório para este tipo de evento");
       }
       const { error } = await supabase
-        .from("promocao_negociacao_evento" as any)
+        .from("promocao_negociacao_evento")
         .insert({
           campanha_id: Number(id),
           tipo_evento: tipo,
@@ -1022,7 +1023,7 @@ export default function AdminReposicaoPromocaoDetail() {
       });
       qc.invalidateQueries({ queryKey: ["promocao-eventos", id] });
     },
-    onError: (e: any) => toast.error(e.message || "Erro ao registrar"),
+    onError: (e: Error) => toast.error(e.message || "Erro ao registrar"),
   });
 
   // ============ COUNTERS ============

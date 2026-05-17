@@ -113,7 +113,7 @@ export default function AdminReposicaoCadeiaLogistica() {
   const { data: fornecedores, isLoading: loadingForn } = useQuery({
     queryKey: ["cadeia-fornecedores"],
     queryFn: async () => {
-      const { data, error } = await (supabase as any)
+      const { data, error } = await supabase
         .from("fornecedor_habilitado_reposicao")
         .select("empresa, fornecedor_nome, habilitado")
         .eq("habilitado", true)
@@ -127,7 +127,7 @@ export default function AdminReposicaoCadeiaLogistica() {
   const { data: etapas, isLoading: loadingEt } = useQuery({
     queryKey: ["cadeia-etapas"],
     queryFn: async () => {
-      const { data, error } = await (supabase as any)
+      const { data, error } = await supabase
         .from("fornecedor_cadeia_logistica")
         .select("*")
         .order("fornecedor_nome")
@@ -141,7 +141,7 @@ export default function AdminReposicaoCadeiaLogistica() {
   const { data: historico } = useQuery({
     queryKey: ["cadeia-historico"],
     queryFn: async () => {
-      const { data, error } = await (supabase as any)
+      const { data, error } = await supabase
         .from("fornecedor_cadeia_logistica_historico")
         .select("*")
         .order("criado_em", { ascending: false })
@@ -153,13 +153,13 @@ export default function AdminReposicaoCadeiaLogistica() {
 
   // Calcular LT total antes de mudança (para mensurar impacto)
   async function ltTotalAtualForn(fornecedor: string): Promise<number> {
-    const { data } = await (supabase as any)
+    const { data } = await supabase
       .from("fornecedor_cadeia_logistica")
       .select("lt_dias")
       .eq("empresa", EMPRESA)
       .eq("fornecedor_nome", fornecedor)
       .eq("ativo", true);
-    return ((data ?? []) as any[]).reduce(
+    return ((data ?? []) as Array<{ lt_dias: number | string | null }>).reduce(
       (s, r) => s + (Number(r.lt_dias) || 0),
       0,
     );
@@ -172,15 +172,15 @@ export default function AdminReposicaoCadeiaLogistica() {
     acao: string;
     descricao: string;
     etapa_codigo?: string | null;
-    valoresAnt?: any;
-    valoresNov?: any;
+    valoresAnt?: Record<string, unknown> | Etapa | null;
+    valoresNov?: Record<string, unknown> | Partial<Etapa> | null;
   }) {
     try {
       const ltDepois = await ltTotalAtualForn(args.fornecedor);
       const delta = ltDepois - args.ltAntes;
 
       // log histórico
-      await (supabase as any).from("fornecedor_cadeia_logistica_historico").insert({
+      await supabase.from("fornecedor_cadeia_logistica_historico").insert({
         empresa: EMPRESA,
         fornecedor_nome: args.fornecedor,
         etapa_codigo: args.etapa_codigo ?? null,
@@ -191,7 +191,7 @@ export default function AdminReposicaoCadeiaLogistica() {
       });
 
       // chamar recálculo (best-effort)
-      const { error: rpcErr } = await (supabase as any).rpc(
+      const { error: rpcErr } = await supabase.rpc(
         "atualizar_parametros_numericos_skus",
         { p_empresa: EMPRESA },
       );
@@ -205,8 +205,9 @@ export default function AdminReposicaoCadeiaLogistica() {
           ? "LT teórico inalterado."
           : `LT teórico recalculado (${sinal}${delta} dias úteis). Capital de giro pode variar proporcionalmente.`;
       toast.success(msg);
-    } catch (e: any) {
-      toast.warning(`Mudança salva mas recálculo falhou: ${e.message}`);
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e);
+      toast.warning(`Mudança salva mas recálculo falhou: ${msg}`);
     }
   }
 
@@ -230,7 +231,7 @@ export default function AdminReposicaoCadeiaLogistica() {
         const proxOrdem = ordensExist.length > 0 ? Math.max(...ordensExist) + 1 : 1;
         const codigo = `${payload.fornecedor.slice(0, 4).toUpperCase().replace(/\s/g, "")}_E${proxOrdem}_${Date.now().toString(36)}`;
 
-        const { error } = await (supabase as any)
+        const { error } = await supabase
           .from("fornecedor_cadeia_logistica")
           .insert({
             empresa: EMPRESA,
@@ -258,7 +259,7 @@ export default function AdminReposicaoCadeiaLogistica() {
         });
       } else if (payload.etapaOriginal) {
         const orig = payload.etapaOriginal;
-        const { error } = await (supabase as any)
+        const { error } = await supabase
           .from("fornecedor_cadeia_logistica")
           .update({
             descricao: payload.etapa.descricao,
@@ -290,14 +291,14 @@ export default function AdminReposicaoCadeiaLogistica() {
       setEditandoEtapa(null);
       setNovaEtapaForn(null);
     },
-    onError: (e: any) => toast.error(`Erro ao salvar: ${e.message}`),
+    onError: (e: Error) => toast.error(`Erro ao salvar: ${e.message}`),
   });
 
   // Desativar
   const desativarMut = useMutation({
     mutationFn: async (etapa: Etapa) => {
       const ltAntes = await ltTotalAtualForn(etapa.fornecedor_nome);
-      const { error } = await (supabase as any)
+      const { error } = await supabase
         .from("fornecedor_cadeia_logistica")
         .update({ ativo: false, valido_ate: new Date().toISOString().split("T")[0] })
         .eq("id", etapa.id);
@@ -315,7 +316,7 @@ export default function AdminReposicaoCadeiaLogistica() {
       qc.invalidateQueries({ queryKey: ["cadeia-etapas"] });
       qc.invalidateQueries({ queryKey: ["cadeia-historico"] });
     },
-    onError: (e: any) => toast.error(`Erro ao desativar: ${e.message}`),
+    onError: (e: Error) => toast.error(`Erro ao desativar: ${e.message}`),
   });
 
   // Trocar parceiro
@@ -331,7 +332,7 @@ export default function AdminReposicaoCadeiaLogistica() {
     }) => {
       const ltAntes = await ltTotalAtualForn(args.etapa.fornecedor_nome);
       // 1. Marca etapa atual como expirada
-      const { error: e1 } = await (supabase as any)
+      const { error: e1 } = await supabase
         .from("fornecedor_cadeia_logistica")
         .update({ ativo: false, valido_ate: args.dataTroca })
         .eq("id", args.etapa.id);
@@ -339,7 +340,7 @@ export default function AdminReposicaoCadeiaLogistica() {
 
       // 2. Cria nova etapa com mesma ordem e código novo
       const novoCodigo = `${args.etapa.etapa_codigo}_T${Date.now().toString(36)}`;
-      const { error: e2 } = await (supabase as any)
+      const { error: e2 } = await supabase
         .from("fornecedor_cadeia_logistica")
         .insert({
           empresa: args.etapa.empresa,
@@ -376,7 +377,7 @@ export default function AdminReposicaoCadeiaLogistica() {
       qc.invalidateQueries({ queryKey: ["cadeia-historico"] });
       setTrocandoParceiro(null);
     },
-    onError: (e: any) => toast.error(`Erro ao trocar: ${e.message}`),
+    onError: (e: Error) => toast.error(`Erro ao trocar: ${e.message}`),
   });
 
   // Reordenar (move up/down)
@@ -395,18 +396,18 @@ export default function AdminReposicaoCadeiaLogistica() {
       if (swapIdx < 0 || swapIdx >= lista.length) return;
       const outro = lista[swapIdx];
       // Swap ordens
-      const { error: e1 } = await (supabase as any)
+      const { error: e1 } = await supabase
         .from("fornecedor_cadeia_logistica")
         .update({ ordem: outro.ordem })
         .eq("id", args.etapa.id);
       if (e1) throw e1;
-      const { error: e2 } = await (supabase as any)
+      const { error: e2 } = await supabase
         .from("fornecedor_cadeia_logistica")
         .update({ ordem: args.etapa.ordem })
         .eq("id", outro.id);
       if (e2) throw e2;
 
-      await (supabase as any).from("fornecedor_cadeia_logistica_historico").insert({
+      await supabase.from("fornecedor_cadeia_logistica_historico").insert({
         empresa: EMPRESA,
         fornecedor_nome: args.etapa.fornecedor_nome,
         etapa_codigo: args.etapa.etapa_codigo,
@@ -418,7 +419,7 @@ export default function AdminReposicaoCadeiaLogistica() {
       qc.invalidateQueries({ queryKey: ["cadeia-etapas"] });
       qc.invalidateQueries({ queryKey: ["cadeia-historico"] });
     },
-    onError: (e: any) => toast.error(`Erro ao reordenar: ${e.message}`),
+    onError: (e: Error) => toast.error(`Erro ao reordenar: ${e.message}`),
   });
 
   // Agrupar etapas por fornecedor

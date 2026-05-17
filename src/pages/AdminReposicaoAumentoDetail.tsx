@@ -185,7 +185,7 @@ export default function AdminReposicaoAumentoDetail() {
     enabled: !isNew && aumentoId !== null,
     queryFn: async () => {
       const { data, error } = await supabase
-        .from("fornecedor_aumento_anunciado" as any)
+        .from("fornecedor_aumento_anunciado")
         .select("*")
         .eq("id", aumentoId!)
         .maybeSingle();
@@ -208,7 +208,7 @@ export default function AdminReposicaoAumentoDetail() {
     enabled: !isNew && aumentoId !== null,
     queryFn: async () => {
       const { data, error } = await supabase
-        .from("fornecedor_aumento_item" as any)
+        .from("fornecedor_aumento_item")
         .select("*")
         .eq("aumento_id", aumentoId!)
         .eq("ativo", true)
@@ -225,7 +225,7 @@ export default function AdminReposicaoAumentoDetail() {
       const ids = itens.map((i) => i.id);
       if (ids.length === 0) return [];
       const { data, error } = await supabase
-        .from("categoria_aumento_familia_mapeamento" as any)
+        .from("categoria_aumento_familia_mapeamento")
         .select("id, aumento_item_id, familia_omie, sku_codigo_omie_especifico")
         .in("aumento_item_id", ids);
       if (error) throw error;
@@ -238,7 +238,7 @@ export default function AdminReposicaoAumentoDetail() {
     enabled: !isNew && aumentoId !== null,
     queryFn: async () => {
       const { data, error } = await supabase
-        .from("v_sku_aumento_vigente" as any)
+        .from("v_sku_aumento_vigente")
         .select(
           "sku_codigo_omie, sku_descricao, familia, categoria_fornecedor, data_vigencia_efetiva, aumento_perc",
         )
@@ -296,7 +296,7 @@ export default function AdminReposicaoAumentoDetail() {
 
       if (isNew) {
         const { data, error } = await supabase
-          .from("fornecedor_aumento_anunciado" as any)
+          .from("fornecedor_aumento_anunciado")
           .insert({
             ...payload,
             estado: "rascunho",
@@ -305,10 +305,10 @@ export default function AdminReposicaoAumentoDetail() {
           .select("id")
           .single();
         if (error) throw error;
-        return (data as any).id as number;
+        return (data as { id: number }).id;
       }
       const { error } = await supabase
-        .from("fornecedor_aumento_anunciado" as any)
+        .from("fornecedor_aumento_anunciado")
         .update(payload)
         .eq("id", aumentoId!);
       if (error) throw error;
@@ -322,13 +322,13 @@ export default function AdminReposicaoAumentoDetail() {
         queryClient.invalidateQueries({ queryKey: ["aumento", aumentoId] });
       }
     },
-    onError: (err: any) => toast.error(err?.message || "Erro ao salvar"),
+    onError: (err: Error) => toast.error(err?.message || "Erro ao salvar"),
   });
 
   const updateEstado = useMutation({
     mutationFn: async (novoEstado: string) => {
       const { error } = await supabase
-        .from("fornecedor_aumento_anunciado" as any)
+        .from("fornecedor_aumento_anunciado")
         .update({
           estado: novoEstado,
           atualizado_por: user?.email ?? null,
@@ -344,13 +344,13 @@ export default function AdminReposicaoAumentoDetail() {
         queryClient.invalidateQueries({ queryKey: ["aumento", aumentoId] });
       }
     },
-    onError: (err: any) => toast.error(err?.message || "Erro ao alterar estado"),
+    onError: (err: Error) => toast.error(err?.message || "Erro ao alterar estado"),
   });
 
   const updateItem = useMutation({
     mutationFn: async (params: { id: number; patch: Partial<Item> }) => {
       const { error } = await supabase
-        .from("fornecedor_aumento_item" as any)
+        .from("fornecedor_aumento_item")
         .update(params.patch)
         .eq("id", params.id);
       if (error) throw error;
@@ -358,13 +358,13 @@ export default function AdminReposicaoAumentoDetail() {
     onSuccess: () => {
       refetchItens();
     },
-    onError: (err: any) => toast.error(err?.message || "Erro ao atualizar item"),
+    onError: (err: Error) => toast.error(err?.message || "Erro ao atualizar item"),
   });
 
   const deleteItem = useMutation({
     mutationFn: async (id: number) => {
       const { error } = await supabase
-        .from("fornecedor_aumento_item" as any)
+        .from("fornecedor_aumento_item")
         .update({ ativo: false })
         .eq("id", id);
       if (error) throw error;
@@ -373,13 +373,13 @@ export default function AdminReposicaoAumentoDetail() {
       toast.success("Categoria removida");
       refetchItens();
     },
-    onError: (err: any) => toast.error(err?.message || "Erro ao remover"),
+    onError: (err: Error) => toast.error(err?.message || "Erro ao remover"),
   });
 
   const addItem = useMutation({
     mutationFn: async () => {
       const { error } = await supabase
-        .from("fornecedor_aumento_item" as any)
+        .from("fornecedor_aumento_item")
         .insert({
           aumento_id: aumentoId!,
           categoria_fornecedor: "Nova categoria",
@@ -390,7 +390,7 @@ export default function AdminReposicaoAumentoDetail() {
       if (error) throw error;
     },
     onSuccess: () => refetchItens(),
-    onError: (err: any) => toast.error(err?.message || "Erro ao adicionar"),
+    onError: (err: Error) => toast.error(err?.message || "Erro ao adicionar"),
   });
 
   // ============ ARQUIVO ORIGINAL ============
@@ -402,8 +402,8 @@ export default function AdminReposicaoAumentoDetail() {
         .createSignedUrl(form.origem_arquivo_url, 600);
       if (error) throw error;
       window.open(data.signedUrl, "_blank");
-    } catch (e: any) {
-      toast.error(e?.message || "Falha ao abrir arquivo");
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : "Falha ao abrir arquivo");
     }
   };
 
@@ -1041,7 +1041,7 @@ function MapeamentoDialog({
         .limit(5000);
       if (error) throw error;
       const set = new Set<string>();
-      ((data || []) as any[]).forEach((r) => r.familia && set.add(r.familia));
+      ((data || []) as Array<{ familia: string | null }>).forEach((r) => r.familia && set.add(r.familia));
       return Array.from(set).sort();
     },
   });
@@ -1052,7 +1052,7 @@ function MapeamentoDialog({
     enabled: open,
     queryFn: async () => {
       const { data, error } = await supabase
-        .from("categoria_aumento_familia_mapeamento" as any)
+        .from("categoria_aumento_familia_mapeamento")
         .select("familia_omie, sku_codigo_omie_especifico")
         .eq("aumento_item_id", item.id);
       if (error) throw error;
@@ -1120,7 +1120,7 @@ function MapeamentoDialog({
     try {
       // DELETE existentes
       const { error: delErr } = await supabase
-        .from("categoria_aumento_familia_mapeamento" as any)
+        .from("categoria_aumento_familia_mapeamento")
         .delete()
         .eq("aumento_item_id", item.id);
       if (delErr) throw delErr;
@@ -1150,14 +1150,14 @@ function MapeamentoDialog({
       }
       if (inserts.length > 0) {
         const { error: insErr } = await supabase
-          .from("categoria_aumento_familia_mapeamento" as any)
+          .from("categoria_aumento_familia_mapeamento")
           .insert(inserts);
         if (insErr) throw insErr;
       }
       toast.success("Mapeamento salvo");
       onSaved();
-    } catch (e: any) {
-      toast.error(e?.message || "Erro ao salvar mapeamento");
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : "Erro ao salvar mapeamento");
     } finally {
       setSalvando(false);
     }
