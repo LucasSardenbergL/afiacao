@@ -1,5 +1,6 @@
 import { useState, useEffect, useMemo } from 'react';
 import { useNavigate } from 'react-router-dom';
+import { useInfiniteQuery, useQuery, useQueryClient } from '@tanstack/react-query';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
@@ -17,8 +18,11 @@ import { ptBR } from 'date-fns/locale';
 import { toast } from 'sonner';
 import { StatusBadgeSimple } from '@/components/StatusBadge';
 import { shareOrderViaWhatsApp } from '@/utils/whatsappShare';
+import { useInfiniteScroll } from '@/hooks/useInfiniteScroll';
 
 type Account = 'oben' | 'colacor' | 'afiacao' | 'all';
+
+const PAGE_SIZE = 50;
 
 const decodeHtml = (s: string): string =>
   s
@@ -57,41 +61,49 @@ const statusLabels: Record<string, { label: string; variant: 'default' | 'second
 
 const SalesOrders = () => {
   const navigate = useNavigate();
-  const { isStaff, loading: authLoading } = useAuth();
-  const [orders, setOrders] = useState<SalesOrder[]>([]);
-  const [profiles, setProfiles] = useState<Record<string, string>>({});
-  const [loading, setLoading] = useState(true);
+  const queryClient = useQueryClient();
+  const { isStaff, loading: authLoading, role } = useAuth();
   const [accountFilter, setAccountFilter] = useState<Account>('all');
   const [search, setSearch] = useState('');
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
-  const { role } = useAuth();
+
   useEffect(() => {
     if (!authLoading && role !== null && !isStaff) navigate('/', { replace: true });
   }, [authLoading, role, isStaff, navigate]);
 
-  useEffect(() => {
-    if (isStaff) loadOrders();
-  }, [isStaff]);
-
-  const loadOrders = async () => {
-    try {
-      // Load sales orders
-      const { data: salesData, error: salesError } = await supabase
+  /* ─── Sales orders: infinite query (50 por página) ─── */
+  const salesQuery = useInfiniteQuery({
+    queryKey: ['sales-orders-paginated'],
+    enabled: isStaff,
+    initialPageParam: 0,
+    queryFn: async ({ pageParam }) => {
+      const start = (pageParam as number) * PAGE_SIZE;
+      const { data, error } = await supabase
         .from('sales_orders')
         .select('*')
-        .order('created_at', { ascending: false });
+        .order('created_at', { ascending: false })
+        .range(start, start + PAGE_SIZE - 1);
+      if (error) throw error;
+      return (data || []).map((o: any) => ({ ...o, _source: 'sales' as const })) as SalesOrder[];
+    },
+    getNextPageParam: (lastPage, allPages) =>
+      lastPage.length === PAGE_SIZE ? allPages.length : undefined,
+  });
 
-      if (salesError) throw salesError;
-      const salesOrders = (salesData || []).map((o: any) => ({ ...o, _source: 'sales' as const })) as SalesOrder[];
-
-      // Load afiação orders
-      const { data: afiacaoData, error: afiacaoError } = await supabase
+  /* ─── Afiação orders: infinite query (50 por página) ─── */
+  const afiacaoQuery = useInfiniteQuery({
+    queryKey: ['afiacao-orders-paginated'],
+    enabled: isStaff,
+    initialPageParam: 0,
+    queryFn: async ({ pageParam }) => {
+      const start = (pageParam as number) * PAGE_SIZE;
+      const { data, error } = await supabase
         .from('orders')
         .select('*')
-        .order('created_at', { ascending: false });
-
-      if (afiacaoError) throw afiacaoError;
-      const afiacaoOrders = (afiacaoData || []).map((o: any) => ({
+        .order('created_at', { ascending: false })
+        .range(start, start + PAGE_SIZE - 1);
+      if (error) throw error;
+      return (data || []).map((o: any) => ({
         id: o.id,
         customer_user_id: o.user_id,
         items: Array.isArray(o.items) ? o.items.map((i: any) => ({
@@ -110,34 +122,61 @@ const SalesOrders = () => {
         account: 'afiacao',
         _source: 'afiacao' as const,
       })) as SalesOrder[];
+    },
+    getNextPageParam: (lastPage, allPages) =>
+      lastPage.length === PAGE_SIZE ? allPages.length : undefined,
+  });
 
-      const allOrders = [...salesOrders, ...afiacaoOrders].sort(
-        (a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime()
-      );
-      setOrders(allOrders);
+  /* ─── Lista mergeada ─── */
+  const orders = useMemo<SalesOrder[]>(() => {
+    const sales = salesQuery.data?.pages.flat() || [];
+    const afiacao = afiacaoQuery.data?.pages.flat() || [];
+    return [...sales, ...afiacao].sort(
+      (a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime(),
+    );
+  }, [salesQuery.data, afiacaoQuery.data]);
 
-      // Load customer names
-      const customerIds = [...new Set(allOrders.map((o) => o.customer_user_id))];
-      if (customerIds.length > 0) {
-        const { data: profs } = await supabase
-          .from('profiles')
-          .select('user_id, name')
-          .in('user_id', customerIds);
-        const map: Record<string, string> = {};
-        (profs || []).forEach((p: any) => { map[p.user_id] = p.name; });
-        setProfiles(map);
-      }
-    } catch (e) {
-      console.error(e);
-    } finally {
-      setLoading(false);
-    }
-  };
+  /* ─── Profiles (nomes dos clientes) ─── */
+  const customerIds = useMemo(() => [...new Set(orders.map((o) => o.customer_user_id))], [orders]);
+  const profilesQuery = useQuery({
+    queryKey: ['sales-orders-profiles', customerIds.sort().join(',')],
+    enabled: isStaff && customerIds.length > 0,
+    staleTime: 60_000,
+    queryFn: async () => {
+      const { data } = await supabase
+        .from('profiles')
+        .select('user_id, name')
+        .in('user_id', customerIds);
+      const map: Record<string, string> = {};
+      (data || []).forEach((p: any) => { map[p.user_id] = p.name; });
+      return map;
+    },
+  });
+  const profiles = profilesQuery.data || {};
 
-  // Optimistic delete — remove imediatamente da lista, restaura em caso de erro
+  /* ─── Infinite scroll: dispara fetchNextPage de quem ainda tem páginas ─── */
+  const hasNext = !!salesQuery.hasNextPage || !!afiacaoQuery.hasNextPage;
+  const isFetching = salesQuery.isFetchingNextPage || afiacaoQuery.isFetchingNextPage;
+  const sentinelRef = useInfiniteScroll(
+    () => {
+      if (salesQuery.hasNextPage && !salesQuery.isFetchingNextPage) salesQuery.fetchNextPage();
+      if (afiacaoQuery.hasNextPage && !afiacaoQuery.isFetchingNextPage) afiacaoQuery.fetchNextPage();
+    },
+    hasNext && !isFetching,
+  );
+
+  const loading = salesQuery.isLoading || afiacaoQuery.isLoading;
+
+  // Optimistic delete — atualiza cache de useInfiniteQuery, rollback em erro
   const deleteOrder = async (order: SalesOrder) => {
-    const snapshot = orders;
-    setOrders((prev) => prev.filter((o) => o.id !== order.id));
+    const snapshot = queryClient.getQueryData(['sales-orders-paginated']);
+    queryClient.setQueryData(['sales-orders-paginated'], (old: any) => {
+      if (!old) return old;
+      return {
+        ...old,
+        pages: old.pages.map((page: SalesOrder[]) => page.filter((o) => o.id !== order.id)),
+      };
+    });
     setSelectedIds((prev) => {
       const next = new Set(prev);
       next.delete(order.id);
@@ -155,7 +194,7 @@ const SalesOrders = () => {
       toast.success('Pedido excluído');
     } catch (e: any) {
       console.error(e);
-      setOrders(snapshot); // rollback
+      queryClient.setQueryData(['sales-orders-paginated'], snapshot); // rollback
       toast.error('Erro ao excluir pedido', { description: e?.message });
     }
   };
@@ -164,9 +203,15 @@ const SalesOrders = () => {
   const deleteSelected = async () => {
     if (selectedIds.size === 0) return;
     const toDelete = orders.filter((o) => selectedIds.has(o.id) && o._source === 'sales');
-    const snapshot = orders;
-    // Optimistic: remove tudo da lista de uma vez
-    setOrders((prev) => prev.filter((o) => !selectedIds.has(o.id)));
+    const snapshot = queryClient.getQueryData(['sales-orders-paginated']);
+    const deleteIds = new Set(toDelete.map((o) => o.id));
+    queryClient.setQueryData(['sales-orders-paginated'], (old: any) => {
+      if (!old) return old;
+      return {
+        ...old,
+        pages: old.pages.map((page: SalesOrder[]) => page.filter((o) => !deleteIds.has(o.id))),
+      };
+    });
     setSelectedIds(new Set());
 
     let success = 0;
@@ -191,7 +236,7 @@ const SalesOrders = () => {
     if (failed === 0) {
       toast.success(`${success} pedido(s) excluído(s)`);
     } else if (success === 0) {
-      setOrders(snapshot); // rollback completo
+      queryClient.setQueryData(['sales-orders-paginated'], snapshot); // rollback completo
       toast.error(`Falhou: ${failed} pedido(s) não puderam ser excluídos`);
     } else {
       // Parcial — mantém o sucesso
@@ -437,6 +482,31 @@ const SalesOrders = () => {
               </Card>
             );
           })}
+
+          {/* Infinite scroll sentinel + carregar mais fallback */}
+          {hasNext && (
+            <div ref={sentinelRef} className="py-4 flex justify-center">
+              {isFetching ? (
+                <Loader2 className="w-5 h-5 animate-spin text-muted-foreground" />
+              ) : (
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={() => {
+                    if (salesQuery.hasNextPage) salesQuery.fetchNextPage();
+                    if (afiacaoQuery.hasNextPage) afiacaoQuery.fetchNextPage();
+                  }}
+                >
+                  Carregar mais
+                </Button>
+              )}
+            </div>
+          )}
+          {!hasNext && orders.length >= PAGE_SIZE && (
+            <p className="text-center text-xs text-muted-foreground py-4">
+              Todos os pedidos carregados ({orders.length})
+            </p>
+          )}
         </div>
       )}
 
