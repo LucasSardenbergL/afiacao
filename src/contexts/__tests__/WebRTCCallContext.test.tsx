@@ -12,6 +12,9 @@ const { sipClientMock, invokeMock } = vi.hoisted(() => ({
     off: vi.fn(),
     getState: vi.fn(() => 'idle'),
     getCallDurationSeconds: vi.fn(() => 0),
+    mute: vi.fn(),
+    unmute: vi.fn(),
+    isMuted: vi.fn(() => false),
   },
   invokeMock: vi.fn(),
 }));
@@ -75,5 +78,21 @@ describe('WebRTCCallProvider', () => {
     expect(() => renderHook(() => useWebRTCCallContext())).toThrow(
       /must be used within.*WebRTCCallProvider/i
     );
+  });
+
+  it('expõe isMuted e toggleMute (inicialmente unmuted)', async () => {
+    const { result } = renderHook(() => useWebRTCCallContext(), { wrapper });
+    await waitFor(() => expect(SipClient).toHaveBeenCalled());
+
+    expect(result.current.isMuted).toBe(false);
+    expect(typeof result.current.toggleMute).toBe('function');
+  });
+
+  it('expõe prerollPlaying e prerollEndsAt (inicialmente off)', async () => {
+    const { result } = renderHook(() => useWebRTCCallContext(), { wrapper });
+    await waitFor(() => expect(SipClient).toHaveBeenCalled());
+
+    expect(result.current.prerollPlaying).toBe(false);
+    expect(result.current.prerollEndsAt).toBeNull();
   });
 });
