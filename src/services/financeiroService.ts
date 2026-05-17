@@ -61,6 +61,7 @@ export interface FinDRE {
   company: string;
   ano: number;
   mes: number;
+  regime: 'caixa' | 'competencia';
   receita_bruta: number;
   deducoes: number;
   receita_liquida: number;
@@ -292,13 +293,15 @@ export async function getAgingPagar(company: Company | 'all'): Promise<AgingData
 export async function getDRE(
   company: Company,
   ano: number,
-  meses?: number[]
+  meses?: number[],
+  regime: 'caixa' | 'competencia' = 'competencia'
 ): Promise<FinDRE[]> {
   let query = supabase
     .from("fin_dre_snapshots")
     .select("*")
     .eq("company", company)
     .eq("ano", ano)
+    .eq("regime", regime)
     .order("mes", { ascending: true });
 
   if (meses && meses.length > 0) {
@@ -313,11 +316,12 @@ export async function getDRE(
 export async function getDREConsolidado(
   companies: Company[],
   ano: number,
-  meses?: number[]
+  meses?: number[],
+  regime: 'caixa' | 'competencia' = 'competencia'
 ): Promise<Record<string, FinDRE[]>> {
   const result: Record<string, FinDRE[]> = {};
   for (const co of companies) {
-    result[co] = await getDRE(co, ano, meses);
+    result[co] = await getDRE(co, ano, meses, regime);
   }
   return result;
 }

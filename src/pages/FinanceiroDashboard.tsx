@@ -8,6 +8,7 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@
 import { Progress } from '@/components/ui/progress';
 import { Skeleton } from '@/components/ui/skeleton';
 import { useFinanceiro, type FinanceiroView } from '@/hooks/useFinanceiro';
+import { useFinanceiroRegime } from '@/hooks/useFinanceiroRegime';
 import { COMPANIES, ALL_COMPANIES, type Company } from '@/contexts/CompanyContext';
 import {
   exportContasPagarCSV, exportContasReceberCSV, exportDRECSV, downloadCSV,
@@ -21,6 +22,7 @@ import {
 import { AuditTrailDrawer } from '@/components/financeiro/AuditTrailDrawer';
 import { usePeriodLockHandler } from '@/components/financeiro/PeriodLockGuard';
 import { generateAlerts } from '@/utils/financeiroAlerts';
+import { RegimeToggle } from '@/components/financeiro/RegimeToggle';
 
 // ═══════════════ FORMATTERS ═══════════════
 
@@ -68,6 +70,7 @@ const FinanceiroDashboard = () => {
     syncAll, syncSpecific, calcularDRE, calcularDREAnual,
   } = useFinanceiro('all');
 
+  const { regime } = useFinanceiroRegime();
   const lockHandler = usePeriodLockHandler();
 
   const [tab, setTab] = useState('visao-geral');
@@ -126,8 +129,8 @@ const FinanceiroDashboard = () => {
         threeMonthsAhead.toISOString().slice(0, 10)
       );
     }
-    if (tab === 'dre') loadDRE(dreAno);
-  }, [tab, view, cpFilter, crFilter, dreAno, crDateFrom, crDateTo, cpDateFrom, cpDateTo]);
+    if (tab === 'dre') loadDRE(dreAno, undefined, regime);
+  }, [tab, view, cpFilter, crFilter, dreAno, regime, crDateFrom, crDateTo, cpDateFrom, cpDateTo, loadDRE]);
 
   return (
     <div className="space-y-4 pb-24">
@@ -144,7 +147,8 @@ const FinanceiroDashboard = () => {
             )}
           </p>
         </div>
-        <div className="flex items-center gap-2">
+        <div className="flex items-center gap-2 flex-wrap">
+          <RegimeToggle />
           <Select value={view} onValueChange={(v) => setView(v as FinanceiroView)}>
             <SelectTrigger className="w-[180px]">
               <Building2 className="w-4 h-4 mr-2" />
@@ -769,7 +773,7 @@ const FinanceiroDashboard = () => {
               <Button
                 variant="outline"
                 size="sm"
-                onClick={() => calcularDREAnual(dreAno)}
+                onClick={() => calcularDREAnual(dreAno, regime)}
                 disabled={syncing}
               >
                 {syncing ? <Loader2 className="w-4 h-4 animate-spin mr-1" /> : <RefreshCw className="w-4 h-4 mr-1" />}
@@ -780,7 +784,7 @@ const FinanceiroDashboard = () => {
                 size="sm"
                 onClick={() => {
                   const now = new Date();
-                  calcularDRE(now.getFullYear(), now.getMonth() + 1);
+                  calcularDRE(now.getFullYear(), now.getMonth() + 1, regime);
                 }}
                 disabled={syncing}
               >

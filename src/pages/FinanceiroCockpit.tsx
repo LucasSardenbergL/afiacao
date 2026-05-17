@@ -9,6 +9,8 @@ import { Skeleton } from '@/components/ui/skeleton';
 import { COMPANIES, ALL_COMPANIES, type Company } from '@/contexts/CompanyContext';
 import { supabase } from '@/integrations/supabase/client';
 import { getResumoFinanceiro, getAgingReceber, getDRE, getTopInadimplentes, type FinResumo, type AgingData, type FinDRE } from '@/services/financeiroService';
+import { useFinanceiroRegime } from '@/hooks/useFinanceiroRegime';
+import { RegimeToggle } from '@/components/financeiro/RegimeToggle';
 import {
   Building2, TrendingUp, TrendingDown, AlertTriangle, Wallet,
   ShieldCheck, Shield, BarChart3, Target, Clock, Eye, Lock,
@@ -79,10 +81,11 @@ const FinanceiroCockpit = () => {
   const [confiabilidade, setConfiabilidade] = useState<any[]>([]);
   const [drillDown, setDrillDown] = useState<DrillDownType>(null);
 
+  const { regime } = useFinanceiroRegime();
   const ano = new Date().getFullYear();
   const mes = new Date().getMonth() + 1;
 
-  useEffect(() => { loadAll(); }, []);
+  useEffect(() => { loadAll(); }, [regime]);
 
   const loadAll = async () => {
     setLoading(true);
@@ -90,7 +93,7 @@ const FinanceiroCockpit = () => {
       const [res, ag, dr, inad] = await Promise.all([
         getResumoFinanceiro(['oben', 'colacor', 'colacor_sc']),
         getAgingReceber('all'),
-        Promise.all(['oben', 'colacor', 'colacor_sc'].map(co => getDRE(co as Company, ano))).then(r => r.flat()),
+        Promise.all(['oben', 'colacor', 'colacor_sc'].map(co => getDRE(co as Company, ano, undefined, regime))).then(r => r.flat()),
         getTopInadimplentes('all', 5),
       ]);
       setResumo(res);
@@ -199,17 +202,20 @@ const FinanceiroCockpit = () => {
             {new Date().toLocaleDateString('pt-BR', { month: 'long', year: 'numeric' })}
           </p>
         </div>
-        {/* Global transparency */}
-        {confiabilidade.length > 0 && (
-          <div className="relative flex flex-col items-end gap-1">
-            {confiabilidade.map(c => (
-              <div key={c.company} className="flex items-center gap-2">
-                <span className="text-xs font-medium">{COMPANIES[c.company as Company]?.shortName}</span>
-                <TransparencyBadge conf={c} />
-              </div>
-            ))}
-          </div>
-        )}
+        {/* Global transparency + regime toggle */}
+        <div className="relative flex flex-col items-end gap-3">
+          <RegimeToggle />
+          {confiabilidade.length > 0 && (
+            <div className="flex flex-col items-end gap-1">
+              {confiabilidade.map(c => (
+                <div key={c.company} className="flex items-center gap-2">
+                  <span className="text-xs font-medium">{COMPANIES[c.company as Company]?.shortName}</span>
+                  <TransparencyBadge conf={c} />
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
       </div>
 
       {/* Row 1: Big 3 — staggered reveal pra page load orquestrado */}
