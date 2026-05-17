@@ -14,7 +14,8 @@ import { triggerFinanceiroSync } from '@/services/financeiroService';
 import { toast } from 'sonner';
 import { AuditTrailDrawer } from '@/components/financeiro/AuditTrailDrawer';
 import { parsePostgresFinanceiroError } from '@/lib/financeiro/error-handler';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate, Link } from 'react-router-dom';
+import { useIcMatches } from '@/hooks/useIcMatches';
 import {
   Loader2, Building2, Lock, Unlock, CheckCircle2, Clock,
   FileText, Eye, RotateCcw, Plus, History, ShieldCheck, AlertTriangle
@@ -40,6 +41,9 @@ const FinanceiroFechamento = () => {
   const [motivoReabertura, setMotivoReabertura] = useState('');
   const [auditTarget, setAuditTarget] = useState<{ table: string; id: string; title: string } | null>(null);
   const [mappingPendentes, setMappingPendentes] = useState<Array<{id: string; nome: string}>>([]);
+  const { data: icDiv } = useIcMatches('divergencia_valor');
+  const { data: icSem } = useIcMatches('sem_contrapartida');
+  const totalIc = (icDiv?.length ?? 0) + (icSem?.length ?? 0);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -99,6 +103,18 @@ const FinanceiroFechamento = () => {
 
   return (
     <div className="space-y-4 pb-24">
+      {totalIc > 0 && (
+        <div className="flex items-center gap-2 text-xs text-status-warning bg-status-warning-bg p-2 rounded-md">
+          <AlertTriangle className="h-3 w-3 flex-shrink-0" />
+          <span>{totalIc} pendências IC</span>
+          <Link
+            to="/financeiro/intercompany/fila"
+            className="font-medium underline hover:no-underline"
+          >
+            resolver
+          </Link>
+        </div>
+      )}
       <div className="flex items-center justify-between flex-wrap gap-3">
         <div>
           <h1 className="text-2xl font-bold tracking-tight">Fechamento Mensal</h1>
