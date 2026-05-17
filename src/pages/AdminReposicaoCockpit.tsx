@@ -82,6 +82,7 @@ import {
 } from "recharts";
 import { useRegisterShortcuts } from "@/components/shell/ShortcutsRegistry";
 import { logger } from "@/lib/logger";
+import { calcApprovalSuggestion } from "@/lib/reposicao/approvalSuggestion";
 
 const AdminReposicaoPedidos = lazy(() => import("./AdminReposicaoPedidos"));
 const AdminReposicaoAplicacao = lazy(() => import("./AdminReposicaoAplicacao"));
@@ -681,12 +682,7 @@ function inferConfianca(r: PedidoItem): { level: ConfLevel; reason: string } {
 }
 
 // Pure classifier lives in its own module so it stays testable.
-// See src/lib/reposicao/approvalSuggestion.ts
-import {
-  calcApprovalSuggestion,
-  type ApprovalSuggestion,
-} from "@/lib/reposicao/approvalSuggestion";
-export { calcApprovalSuggestion };
+// See src/lib/reposicao/approvalSuggestion.ts (importado no topo).
 
 // ============================================================================
 // Itens do ciclo (com filtros + batch review + ações inline + colunas)
