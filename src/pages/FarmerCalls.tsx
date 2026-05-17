@@ -213,6 +213,7 @@ const FarmerCalls = () => {
   const webrtc = useWebRTCCall();
   const [transcriptionPanelOpen, setTranscriptionPanelOpen] = useState(true);
 
+
   const [isCallActive, setIsCallActive] = useState(false);
   const [isFollowUpActive, setIsFollowUpActive] = useState(false);
   const [callSeconds, setCallSeconds] = useState(0);

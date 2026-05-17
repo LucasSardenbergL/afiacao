@@ -2,8 +2,6 @@ import { useParams, useNavigate } from 'react-router-dom';
 import { Phone, MessageCircle, Copy, Check, RefreshCw, Camera, Loader2, AlertTriangle, ExternalLink } from 'lucide-react';
 import { useState, useEffect } from 'react';
 import { OrderStatus } from '@/types';
-import { Header } from '@/components/Header';
-import { BottomNav } from '@/components/BottomNav';
 import { OrderTimeline } from '@/components/OrderTimeline';
 import { OrderChat } from '@/components/OrderChat';
 import { OrderReview } from '@/components/OrderReview';
@@ -141,7 +139,6 @@ const OrderDetail = () => {
 
   return (
     <div className="min-h-screen bg-background pb-24">
-      <Header title="Detalhes do Pedido" showBack />
 
       <main className="pt-16 px-4 max-w-lg mx-auto">
         {/* Order header */}
@@ -426,7 +423,6 @@ const OrderDetail = () => {
         </section>
       </main>
 
-      <BottomNav />
     </div>
   );
 };

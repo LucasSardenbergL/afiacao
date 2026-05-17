@@ -3,7 +3,6 @@ import { useLocation, useNavigate } from 'react-router-dom';
 import { BookOpen, Lock, Calculator, FileText, Palette, Beaker, FileUp, Droplets, LayoutDashboard, Users, ShoppingCart, ShoppingBag, Phone, GraduationCap, BarChart3, Settings, ChevronLeft, ChevronRight, Search, Bell, User, LogOut, Package, TrendingUp, Headphones, Target, Menu, X, ClipboardList, PlusCircle, Shield, Wrench, Award, Scissors, DollarSign, Layers, Printer, UserCheck, FileCheck, Boxes, AlertTriangle, PlayCircle, Factory, Truck, Percent, Sparkles, Handshake, Link2, Globe2, Database } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { useAuth } from '@/contexts/AuthContext';
-import { useUserRole } from '@/hooks/useUserRole';
 import { AppShellProvider } from '@/contexts/AppShellContext';
 import { useQuery } from '@tanstack/react-query';
 import { supabase } from '@/integrations/supabase/client';
@@ -36,6 +35,8 @@ import { PageViewTracker } from '@/components/shell/PageViewTracker';
 import { AnalyticsIdentify } from '@/components/shell/AnalyticsIdentify';
 import { useFeatureFlagBodyClass } from '@/hooks/useFeatureFlag';
 import { useSidebarFavorites } from '@/hooks/useSidebarFavorites';
+import { useSalesOnlyRestriction } from '@/hooks/useSalesOnlyRestriction';
+import { useRouteTracker } from '@/lib/dashboard/route-tracker';
 import { Star } from 'lucide-react';
 
 /* ─── Navigation config ─── */
@@ -147,40 +148,6 @@ const docNavSection: { title: string; items: NavItem[] } = {
     { icon: BookOpen, label: 'UX Rules', path: '/ux-rules' },
   ],
 };
-
-function useSalesOnlyRestriction() {
-  const { user } = useAuth();
-
-  const { data: salesOnlyCpfs } = useQuery({
-    queryKey: ['config', 'sales_only_cpfs'],
-    queryFn: async () => {
-      const { data } = await supabase
-        .from('company_config')
-        .select('value')
-        .eq('key', 'sales_only_cpfs')
-        .maybeSingle();
-      return data?.value ? JSON.parse(data.value) as string[] : [];
-    },
-    staleTime: 5 * 60 * 1000,
-  });
-
-  const { data: userDoc } = useQuery({
-    queryKey: ['profile', 'document', user?.id],
-    queryFn: async () => {
-      const { data } = await supabase
-        .from('profiles')
-        .select('document')
-        .eq('user_id', user!.id)
-        .maybeSingle();
-      return data?.document?.replace(/\D/g, '') || null;
-    },
-    enabled: !!user?.id,
-    staleTime: 5 * 60 * 1000,
-  });
-
-  if (!salesOnlyCpfs || !userDoc) return false;
-  return salesOnlyCpfs.includes(userDoc);
-}
 
 /* ─── Sidebar — seções secundárias colapsadas por padrão ─── */
 const SECONDARY_SECTIONS = ['Performance', 'Inteligência', 'Automação', 'Documentação'];
@@ -354,9 +321,17 @@ function SidebarItem({
 function AppSidebar({ collapsed, onToggle }: { collapsed: boolean; onToggle: () => void }) {
   const location = useLocation();
   const navigate = useNavigate();
-  const { isStaff } = useUserRole();
+  const { isStaff } = useAuth();
   const isSalesOnly = useSalesOnlyRestriction();
   const { favorites, isFavorite, toggle: toggleFavorite } = useSidebarFavorites();
+
+  // Os 6 contadores de badges abaixo são todos da seção Reposição. Não fazem
+  // sentido pra vendedor sales-only (que não acessa /admin/reposicao). Gate por
+  // `!isSalesOnly` evita ~6 req/min por usuário sales-only em idle.
+  // `refetchIntervalInBackground: false` (default do React Query) já pausa
+  // polls quando o tab está hidden — explicitado abaixo pra deixar a intenção
+  // clara e evitar mudança silenciosa se algum dia alguém ligar pra true.
+  const enableReposicaoPolls = isStaff && !isSalesOnly;
 
   // Contador de alertas de outlier pendentes (críticos + atenção)
   const { data: outlierPendentes } = useQuery({
@@ -369,8 +344,9 @@ function AppSidebar({ collapsed, onToggle }: { collapsed: boolean; onToggle: () 
         .in('severidade', ['critico', 'atencao']);
       return count ?? 0;
     },
-    enabled: isStaff,
+    enabled: enableReposicaoPolls,
     refetchInterval: 60000,
+    refetchIntervalInBackground: false,
     staleTime: 30000,
   });
 
@@ -386,12 +362,14 @@ function AppSidebar({ collapsed, onToggle }: { collapsed: boolean; onToggle: () 
         .in('status', ['pendente_aprovacao', 'bloqueado_guardrail']);
       return count ?? 0;
     },
-    enabled: isStaff,
+    enabled: enableReposicaoPolls,
     refetchInterval: 30000,
+    refetchIntervalInBackground: false,
     staleTime: 15000,
   });
 
   // Contador de aumentos ativos aguardando vigência
+  // (corrige bug: faltava `enabled` — antes polava pra customer também)
   const { data: aumentosAtivos } = useQuery({
     queryKey: ['aumentos-ativos-count'],
     queryFn: async () => {
@@ -401,7 +379,9 @@ function AppSidebar({ collapsed, onToggle }: { collapsed: boolean; onToggle: () 
         .eq('estado', 'ativo');
       return count ?? 0;
     },
+    enabled: enableReposicaoPolls,
     refetchInterval: 60000,
+    refetchIntervalInBackground: false,
   });
 
   // Contador de oportunidades econômicas ativas hoje (OBEN)
@@ -414,8 +394,9 @@ function AppSidebar({ collapsed, onToggle }: { collapsed: boolean; onToggle: () 
         .eq('empresa', 'OBEN');
       return count ?? 0;
     },
-    enabled: isStaff,
+    enabled: enableReposicaoPolls,
     refetchInterval: 60000,
+    refetchIntervalInBackground: false,
     staleTime: 30000,
   });
 
@@ -430,8 +411,9 @@ function AppSidebar({ collapsed, onToggle }: { collapsed: boolean; onToggle: () 
         .eq('status', 'nova');
       return count ?? 0;
     },
-    enabled: isStaff,
+    enabled: enableReposicaoPolls,
     refetchInterval: 60000,
+    refetchIntervalInBackground: false,
     staleTime: 30000,
   });
 
@@ -445,8 +427,9 @@ function AppSidebar({ collapsed, onToggle }: { collapsed: boolean; onToggle: () 
         .eq('status', 'pendente_notificacao');
       return count ?? 0;
     },
-    enabled: isStaff,
+    enabled: enableReposicaoPolls,
     refetchInterval: 60000,
+    refetchIntervalInBackground: false,
     staleTime: 30000,
   });
 
@@ -659,7 +642,7 @@ function AppTopbar({ sidebarCollapsed, onMobileMenuToggle }: { sidebarCollapsed:
 function MobileNav({ open, onClose }: { open: boolean; onClose: () => void }) {
   const location = useLocation();
   const navigate = useNavigate();
-  const { isStaff } = useUserRole();
+  const { isStaff } = useAuth();
   const isSalesOnly = useSalesOnlyRestriction();
 
   if (!open) return null;
@@ -727,6 +710,7 @@ function MobileNav({ open, onClose }: { open: boolean; onClose: () => void }) {
 
 /* ─── Main Shell ─── */
 export function AppShell({ children }: { children: React.ReactNode }) {
+  useRouteTracker();
   const [collapsed, setCollapsed] = useState(false);
   const [mobileOpen, setMobileOpen] = useState(false);
 

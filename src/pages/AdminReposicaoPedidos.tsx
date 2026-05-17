@@ -16,7 +16,6 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Sheet, SheetContent, SheetDescription, SheetHeader, SheetTitle, SheetFooter } from '@/components/ui/sheet';
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip';
 import { AlertTriangle, Ban, CheckCircle2, Clock, ExternalLink, Eye, Loader2, PlayCircle, RefreshCw, Trash2, XCircle, RotateCw, Zap } from 'lucide-react';
-import { useUserRole } from '@/hooks/useUserRole';
 import { formatDistanceToNow } from 'date-fns';
 import {
   AlertDialog,
@@ -93,6 +92,12 @@ interface PedidoSugerido {
   cancelado_por?: string | null;
   justificativa_cancelamento?: string | null;
   omie_registrado_em?: string | null;
+  // PR5: split de pedidos grandes Sayerlack. Pai tem split_total preenchido
+  // e status='split_em_filhos'. Filhos têm split_parent_id+split_lote+split_total
+  // e status normal (aprovado_aguardando_disparo / disparado / etc).
+  split_parent_id?: number | null;
+  split_lote?: number | null;
+  split_total?: number | null;
 }
 
 interface CondicaoPagamento {
@@ -135,6 +140,8 @@ const statusMeta: Record<string, { label: string; variant: 'default' | 'secondar
   cancelado: { label: 'Cancelado', variant: 'outline' },
   cancelado_humano: { label: 'Cancelado (vazio)', variant: 'outline' },
   expirado_sem_aprovacao: { label: 'Expirado sem aprovação', variant: 'secondary', className: 'bg-muted text-muted-foreground border-border' },
+  // PR5: pedido pai de um split — não tem mais itens próprios, foi dividido em filhos.
+  split_em_filhos: { label: 'Dividido', variant: 'secondary', className: 'bg-purple-100 text-purple-800 border-purple-300' },
 };
 
 function formatBRL(v: number | null | undefined) {
@@ -157,6 +164,32 @@ function StatusBadge({ status }: { status: Status }) {
       {meta.label}
     </Badge>
   );
+}
+
+// PR5: indica visualmente o split. Renderiza algo só quando o pedido
+// participa de um split (pai ou filho); senão é null e não polui a UI.
+function SplitInfo({ pedido }: { pedido: PedidoSugerido }) {
+  // Pai (status_em_filhos): mostra "em N partes"
+  if (pedido.status === 'split_em_filhos' && pedido.split_total) {
+    return (
+      <Badge variant="outline" className="bg-purple-50 text-purple-700 border-purple-200 ml-1">
+        em {pedido.split_total} partes
+      </Badge>
+    );
+  }
+  // Filho (split_parent_id preenchido): mostra "Lote X/N"
+  if (pedido.split_parent_id && pedido.split_lote && pedido.split_total) {
+    return (
+      <Badge
+        variant="outline"
+        className="bg-purple-50 text-purple-700 border-purple-200 ml-1"
+        title={`Filho do pedido #${pedido.split_parent_id}`}
+      >
+        Lote {pedido.split_lote}/{pedido.split_total}
+      </Badge>
+    );
+  }
+  return null;
 }
 
 /* ─── Portal B2B Badge + Drawer ─── */
@@ -231,7 +264,7 @@ function PortalDrawer({
   onOpenChange: (v: boolean) => void;
 }) {
   const queryClient = useQueryClient();
-  const { isAdmin } = useUserRole();
+  const { isAdmin } = useAuth();
   const [confirmReenvio, setConfirmReenvio] = useState(false);
 
   const reenviarMutation = useMutation({
@@ -807,9 +840,10 @@ function DetalhesModal({
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className="max-w-7xl xl:max-w-screen-2xl w-[95vw] max-h-[90vh] overflow-y-auto">
         <DialogHeader>
-          <DialogTitle className="flex items-center gap-3">
+          <DialogTitle className="flex items-center gap-3 flex-wrap">
             Pedido #{pedido.id} — {pedido.fornecedor_nome}
             <StatusBadge status={pedido.status} />
+            <SplitInfo pedido={pedido} />
           </DialogTitle>
         </DialogHeader>
 
@@ -1174,7 +1208,12 @@ function PedidoRow({
 
   return (
     <TableRow className={p.status === 'bloqueado_guardrail' ? 'bg-destructive/5' : ''}>
-      <TableCell><StatusBadge status={p.status} /></TableCell>
+      <TableCell>
+        <div className="flex flex-wrap items-center gap-1">
+          <StatusBadge status={p.status} />
+          <SplitInfo pedido={p} />
+        </div>
+      </TableCell>
       <TableCell>
         <div className="font-medium">{p.fornecedor_nome}</div>
         <div className="text-xs text-muted-foreground">{p.grupo_codigo ?? '—'}</div>

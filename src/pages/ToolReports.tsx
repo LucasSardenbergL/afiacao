@@ -1,7 +1,5 @@
 import { useState, useEffect, useMemo } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
-import { Header } from '@/components/Header';
-import { BottomNav } from '@/components/BottomNav';
 import { Card, CardContent } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
@@ -200,11 +198,9 @@ const ToolReports = () => {
   if (loading) {
     return (
       <div className="min-h-screen bg-background pb-24">
-        <Header title="Relatório" showBack />
         <div className="flex items-center justify-center pt-32">
           <Loader2 className="w-8 h-8 animate-spin text-primary" />
         </div>
-        <BottomNav />
       </div>
     );
   }
@@ -212,12 +208,10 @@ const ToolReports = () => {
   if (!tool || !analysis) {
     return (
       <div className="min-h-screen bg-background pb-24">
-        <Header title="Relatório" showBack />
         <div className="text-center py-20">
           <Wrench className="w-12 h-12 text-muted-foreground mx-auto mb-4" />
           <p className="text-muted-foreground">Ferramenta não encontrada</p>
         </div>
-        <BottomNav />
       </div>
     );
   }
@@ -229,7 +223,6 @@ const ToolReports = () => {
 
   return (
     <div className="min-h-screen bg-background pb-24">
-      <Header title="Relatório" showBack />
 
       <main className="pt-16 px-4 max-w-lg mx-auto space-y-6">
 
@@ -397,7 +390,6 @@ const ToolReports = () => {
         )}
       </main>
 
-      <BottomNav />
     </div>
   );
 };

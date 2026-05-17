@@ -274,4 +274,3 @@ function ResumoCard({
   );
 }
 
-export default ConfirmacaoPanel;

@@ -1,5 +1,5 @@
 import React, { useState, useMemo } from 'react';
-import { useUserRole } from '@/hooks/useUserRole';
+import { useAuth } from '@/contexts/AuthContext';
 import { useCommercialRole } from '@/hooks/useCommercialRole';
 import { supabase } from '@/integrations/supabase/client';
 import { useQuery } from '@tanstack/react-query';
@@ -82,7 +82,7 @@ function ParamsDiff({ before, after }: { before: Record<string, any> | null; aft
 
 /* ─── Main Component ─── */
 export default function GovernanceAudit() {
-  const { isAdmin } = useUserRole();
+  const { isAdmin } = useAuth();
   const { isSuperAdmin, canViewStrategic } = useCommercialRole();
 
   // Filters
