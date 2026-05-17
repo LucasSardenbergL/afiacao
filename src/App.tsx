@@ -151,6 +151,9 @@ const AdminPortalSayerlack = lazy(() => import("./pages/AdminPortalSayerlack"));
 const AdminVendorSipCredentials = lazy(() => import("./pages/AdminVendorSipCredentials"));
 const AdminKnowledgeBase = lazy(() => import("./pages/AdminKnowledgeBase"));
 const AdminKnowledgeBaseDetail = lazy(() => import("./pages/AdminKnowledgeBaseDetail"));
+const AdminStandardProcesses = lazy(() => import("./pages/AdminStandardProcesses"));
+const AdminStandardProcessNew = lazy(() => import("./pages/AdminStandardProcessNew"));
+const AdminStandardProcessDetail = lazy(() => import("./pages/AdminStandardProcessDetail"));
 
 const PageLoader = () => <PageSkeleton variant="auto" />;
 
@@ -325,6 +328,9 @@ const App = () => (
               <Route path="admin/sip-credentials" element={<AdminVendorSipCredentials />} />
               <Route path="admin/knowledge-base" element={<AdminKnowledgeBase />} />
               <Route path="admin/knowledge-base/:id" element={<AdminKnowledgeBaseDetail />} />
+              <Route path="admin/standard-processes" element={<AdminStandardProcesses />} />
+              <Route path="admin/standard-processes/new" element={<AdminStandardProcessNew />} />
+              <Route path="admin/standard-processes/:id" element={<AdminStandardProcessDetail />} />
             </Route>
 
             <Route path="*" element={<NotFound />} />
