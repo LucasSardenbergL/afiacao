@@ -52,6 +52,7 @@ describe('useCallBackend dispatcher', () => {
   beforeEach(() => vi.clearAllMocks());
 
   it('retorna useNvoipCall quando flag off', () => {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
     (useFeatureFlag as any).mockReturnValue([false, vi.fn()]);
     const { result } = renderHook(() => useCallBackend());
     expect(result.current.backend).toBe('nvoip');
@@ -59,6 +60,7 @@ describe('useCallBackend dispatcher', () => {
   });
 
   it('retorna useWebRTCCall quando flag on', () => {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
     (useFeatureFlag as any).mockReturnValue([true, vi.fn()]);
     const { result } = renderHook(() => useCallBackend());
     expect(result.current.backend).toBe('webrtc');
@@ -66,6 +68,7 @@ describe('useCallBackend dispatcher', () => {
   });
 
   it('consulta a flag com nome correto e default false', () => {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
     (useFeatureFlag as any).mockReturnValue([false, vi.fn()]);
     renderHook(() => useCallBackend());
     expect(useFeatureFlag).toHaveBeenCalledWith('useWebRTCCall', false);

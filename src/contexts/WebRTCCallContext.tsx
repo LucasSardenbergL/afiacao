@@ -207,6 +207,10 @@ export function WebRTCCallProvider({ children }: ProviderProps) {
   return <WebRTCCallContext.Provider value={value}>{children}</WebRTCCallContext.Provider>;
 }
 
+// Provider + hook colocados no mesmo arquivo por design (acoplamento forte:
+// hook só faz sentido com o Provider que define a shape). Splitting iria
+// adicionar indireção sem valor. Fast refresh ainda funciona pro Provider.
+// eslint-disable-next-line react-refresh/only-export-components
 export function useWebRTCCallContext(): WebRTCCallContextValue {
   const ctx = useContext(WebRTCCallContext);
   if (!ctx) {
