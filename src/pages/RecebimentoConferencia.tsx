@@ -27,6 +27,7 @@ import { useOfflineMutation } from '@/hooks/useOfflineMutation';
 import { registerOfflineHandler } from '@/hooks/useOfflineFlush';
 import { confirmUnit, type ConfirmUnitVars } from '@/services/recebimento-confirm';
 import { reportDivergencia, type ReportDivergenciaVars } from '@/services/recebimento-divergencia';
+import { addCte, type AddCteVars } from '@/services/recebimento-cte';
 
 type ItemStatus = 'pendente' | 'em_conferencia' | 'conferido' | 'divergencia';
 
@@ -123,6 +124,12 @@ export default function RecebimentoConferencia() {
     mutationFn: reportDivergencia,
   });
 
+  // Offline-aware mutation pra handleAddCte
+  const addCteMutation = useOfflineMutation<{ ok: true }, AddCteVars>({
+    kind: 'recebimento.add-cte',
+    mutationFn: addCte,
+  });
+
   // Registra handler pra processar items enfileirados quando reconectar
   useEffect(() => {
     return registerOfflineHandler<ConfirmUnitVars>('recebimento.confirm-unit', async (vars) => {
@@ -134,6 +141,13 @@ export default function RecebimentoConferencia() {
   useEffect(() => {
     return registerOfflineHandler<ReportDivergenciaVars>('recebimento.report-divergencia', async (vars) => {
       await reportDivergencia(vars);
+      return true;
+    });
+  }, []);
+
+  useEffect(() => {
+    return registerOfflineHandler<AddCteVars>('recebimento.add-cte', async (vars) => {
+      await addCte(vars);
       return true;
     });
   }, []);
@@ -287,19 +301,27 @@ export default function RecebimentoConferencia() {
       toast.error('Informe a chave de acesso (44 dígitos) ou o XML');
       return;
     }
+    if (!id) return;
     setCteSaving(true);
     try {
-      await supabase.from('cte_associados').insert({
-        nfe_recebimento_id: id!,
-        chave_acesso_cte: clean || `XML-${Date.now()}`,
-        xml_cte: cteXml.trim() || null,
-        status: 'pendente',
-      });
-      toast.success('CT-e vinculado');
+      const vars: AddCteVars = {
+        nfeId: id,
+        chaveAcesso: clean || `XML-${Date.now()}`,
+        xmlCte: cteXml.trim() || null,
+      };
+
+      await addCteMutation.mutateAsync(vars);
+
       setCteModalOpen(false);
       setCteChave('');
       setCteXml('');
       queryClient.invalidateQueries({ queryKey: ['nfe_conferencia', id] });
+
+      if (addCteMutation.queued) {
+        toast.info('Salvo offline — sincroniza quando reconectar');
+      } else {
+        toast.success('CT-e vinculado');
+      }
     } catch (err: any) {
       toast.error('Erro: ' + err.message);
     } finally {
