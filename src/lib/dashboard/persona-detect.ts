@@ -2,8 +2,9 @@ import type { Persona } from './persona-config';
 import type { RouteCounts } from './route-tracker';
 import type { CommercialRole } from '@/hooks/useCommercialRole';
 import type { AppRole } from '@/contexts/AuthContext';
+import type { Department } from '@/integrations/supabase/types-departments';
 
-export type PersonaSource = 'manual' | 'commercial_role' | 'sales_only' | 'inference' | 'default';
+export type PersonaSource = 'manual' | 'commercial_role' | 'sales_only' | 'inference' | 'default' | 'department';
 
 export interface PersonaSignals {
   override: Persona | null;
@@ -11,6 +12,7 @@ export interface PersonaSignals {
   commercialRole: CommercialRole | null;
   isSalesOnly: boolean;
   routeCounts: RouteCounts;
+  userDepartment: Department | null;
 }
 
 export interface InferPersonaResult {
@@ -30,18 +32,35 @@ const PREFIX_TO_PERSONA: Record<string, Persona> = {
   '/sales':           'vendedor',
 };
 
+const DEPARTMENT_TO_PERSONA: Record<Department, Persona> = {
+  vendas: 'vendedor',
+  gestao: 'gestor',
+  comprador: 'comprador',
+  separador: 'estoque',
+  conferente: 'estoque',
+  tintometrico: 'tintometrico',
+  financeiro: 'financeiro',
+  outro: 'geral',
+};
+
 export function inferPersona(signals: PersonaSignals): InferPersonaResult {
   // 1. Override manual sempre vence
   if (signals.override) {
     return { persona: signals.override, source: 'manual' };
   }
 
-  // 2. Sales-only CPF → vendedor (mais específico que commercial_role)
+  // 2. user_departments.primary_dept (persistência server > inferência)
+  if (signals.userDepartment) {
+    const persona = DEPARTMENT_TO_PERSONA[signals.userDepartment];
+    return { persona, source: 'department' };
+  }
+
+  // 3. Sales-only CPF → vendedor (mais específico que commercial_role)
   if (signals.isSalesOnly) {
     return { persona: 'vendedor', source: 'sales_only' };
   }
 
-  // 3. commercial_role
+  // 4. commercial_role
   switch (signals.commercialRole) {
     case 'operacional': return { persona: 'vendedor', source: 'commercial_role' };
     case 'gerencial':   return { persona: 'gestor', source: 'commercial_role' };
@@ -49,7 +68,7 @@ export function inferPersona(signals: PersonaSignals): InferPersonaResult {
     case 'super_admin': return { persona: 'master', source: 'commercial_role' };
   }
 
-  // 4. Heurística por prefixo de uso
+  // 5. Heurística por prefixo de uso
   const total = Object.values(signals.routeCounts).reduce((sum, e) => sum + e.count, 0);
   if (total >= HEURISTIC_MIN_VISITS) {
     // Agregar contagens por persona (estoque/recebimento contam pra mesma persona)
@@ -74,7 +93,7 @@ export function inferPersona(signals: PersonaSignals): InferPersonaResult {
     }
   }
 
-  // 5. Default
+  // 6. Default
   if (signals.role === 'master') return { persona: 'master', source: 'default' };
   return { persona: 'geral', source: 'default' };
 }
