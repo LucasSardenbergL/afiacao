@@ -16,6 +16,8 @@
  * quando offline; o flush manual é exposto pra ser disparado quando a conexão voltar.
  */
 
+import { track } from '@/lib/analytics';
+
 const STORAGE_KEY = 'offline_queue_v1';
 
 export interface QueuedMutation<TVars = unknown> {
@@ -72,6 +74,7 @@ export async function enqueue<TVars>(kind: string, variables: TVars): Promise<st
     attempts: 0,
   });
   writeQueue(items);
+  track('offline.queued', { kind, queue_depth: items.length });
   return id;
 }
 
@@ -110,10 +113,13 @@ export async function flush(
     }
   }
   writeQueue(remaining);
+  track('offline.flushed', { success, failed, remaining: remaining.length });
   return { success, failed };
 }
 
 export function clearOfflineQueue(): void {
+  const beforeDepth = readQueue().length;
+  if (beforeDepth > 0) track('offline.cleared', { depth: beforeDepth });
   writeQueue([]);
 }
 
