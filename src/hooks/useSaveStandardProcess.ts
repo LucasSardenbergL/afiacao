@@ -2,6 +2,7 @@ import { useMutation, useQueryClient } from '@tanstack/react-query';
 import { supabase } from '@/integrations/supabase/client';
 import { toast } from 'sonner';
 import { slugify } from '@/lib/standard-process/types';
+import { useReindexRag } from './useReindexRag';
 import type { StandardProcess, StandardProcessEtapa, StandardProcessStatus } from '@/lib/standard-process/types';
 
 interface SaveInput {
@@ -20,6 +21,7 @@ interface SaveInput {
 
 export function useSaveStandardProcess() {
   const qc = useQueryClient();
+  const reindex = useReindexRag();
   return useMutation({
     mutationFn: async (input: SaveInput): Promise<StandardProcess> => {
       const { data: { user } } = await supabase.auth.getUser();
@@ -56,6 +58,8 @@ export function useSaveStandardProcess() {
       qc.invalidateQueries({ queryKey: ['standard-processes'] });
       qc.invalidateQueries({ queryKey: ['standard-process', data.id] });
       toast.success('Processo salvo');
+      // Fire-and-forget reindex — edge fn detecta status≠published e remove chunks se for o caso
+      reindex.mutate({ source_table: 'standard_processes', source_id: data.id });
     },
     onError: (err) => toast.error('Erro ao salvar', { description: err instanceof Error ? err.message : '' }),
   });
