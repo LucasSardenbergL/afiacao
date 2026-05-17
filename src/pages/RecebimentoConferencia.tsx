@@ -23,6 +23,9 @@ import {
   Sheet, SheetContent, SheetHeader, SheetTitle,
 } from '@/components/ui/sheet';
 import LoteScannerOCR from '@/components/recebimento/LoteScannerOCR';
+import { useOfflineMutation } from '@/hooks/useOfflineMutation';
+import { registerOfflineHandler } from '@/hooks/useOfflineFlush';
+import { confirmUnit, type ConfirmUnitVars } from '@/services/recebimento-confirm';
 
 type ItemStatus = 'pendente' | 'em_conferencia' | 'conferido' | 'divergencia';
 
@@ -107,6 +110,20 @@ export default function RecebimentoConferencia() {
     enabled: !!id,
   });
 
+  // Offline-aware mutation pra handleConfirmUnit
+  const confirmMutation = useOfflineMutation<{ ok: true }, ConfirmUnitVars>({
+    kind: 'recebimento.confirm-unit',
+    mutationFn: confirmUnit,
+  });
+
+  // Registra handler pra processar items enfileirados quando reconectar
+  useEffect(() => {
+    return registerOfflineHandler<ConfirmUnitVars>('recebimento.confirm-unit', async (vars) => {
+      await confirmUnit(vars);
+      return true;
+    });
+  }, []);
+
   // Group lotes by item
   const lotesPerItem = useMemo(() => {
     const map = new Map<string, Map<string, { count: number; fab: string | null; val: string | null }>>();
@@ -181,47 +198,35 @@ export default function RecebimentoConferencia() {
     try {
       const { data: { user } } = await supabase.auth.getUser();
 
-      // Insert lote record
-      const { error: insertErr } = await supabase
-        .from('nfe_lotes_escaneados')
-        .insert({
-          nfe_recebimento_id: id,
-          nfe_recebimento_item_id: activeItemId,
-          numero_lote: lote.trim(),
-          data_fabricacao: fabricacao || null,
-          data_validade: validade,
-          metodo_leitura: metodo,
-          escaneado_por: user?.id ?? null,
-        });
-      if (insertErr) throw insertErr;
-
       const newConferida = activeConferida + 1;
       const newStatus: ItemStatus = newConferida >= activeEsperada ? 'conferido' : 'em_conferencia';
 
-      // Update item
-      const { error: updErr } = await supabase
-        .from('nfe_recebimento_itens')
-        .update({ quantidade_conferida: newConferida, status_item: newStatus })
-        .eq('id', activeItemId);
-      if (updErr) throw updErr;
+      const vars: ConfirmUnitVars = {
+        nfeId: id,
+        itemId: activeItemId,
+        userId: user?.id ?? null,
+        loteNumero: lote.trim(),
+        loteFabricacao: fabricacao || null,
+        loteValidade: validade,
+        metodoLeitura: metodo,
+        newConferida,
+        newStatusItem: newStatus,
+        updateNfeStatusToEmConferencia: (nfe as any)?.status === 'pendente',
+      };
 
-      // Update nfe status if needed
-      if ((nfe as any)?.status === 'pendente') {
-        await supabase.from('nfe_recebimentos').update({ status: 'em_conferencia' }).eq('id', id);
-      }
+      await confirmMutation.mutateAsync(vars);
 
-      // Remember last lote
+      // Side effects locais (sempre rodam, mesmo offline)
       setLastLote({ numero_lote: lote.trim(), data_fabricacao: fabricacao, data_validade: validade });
-
-      // Refresh
       await queryClient.invalidateQueries({ queryKey: ['nfe_conferencia', id] });
       await queryClient.invalidateQueries({ queryKey: ['nfe_lotes', id] });
 
-      if (newConferida >= activeEsperada) {
+      if (confirmMutation.queued) {
+        toast.info('Salvo offline — sincroniza quando reconectar');
+      } else if (newConferida >= activeEsperada) {
         toast.success(`Item conferido! ${newConferida}/${activeEsperada} unidades`);
         setActiveItemId(null);
       } else {
-        // Advance to next unit
         resetScanForm();
         setManualMode(false);
       }
