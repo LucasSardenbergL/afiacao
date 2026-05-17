@@ -2,6 +2,59 @@ import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { createClient } from "npm:@supabase/supabase-js@2";
 import { authorizeCronOrStaff } from "../_shared/auth.ts";
 
+// ── Omie NF-e (recebimento de NF-e) response types ──
+interface NfeCabec {
+  nIdReceb?: number;
+  cNumeroNFe?: string;
+  cChaveNfe?: string;
+  cNome?: string;
+  cRazaoSocial?: string;
+  cCodigoProduto?: string;
+  cIgnorarItem?: string;
+  nQtdeNFe?: number;
+  nFatorConversao?: number;
+  nFatorConv?: number;
+  nSequencia?: number;
+  nValorUnitario?: number;
+  nValorTotal?: number;
+  nIdProduto?: number;
+}
+
+interface NfeAjustes {
+  nFatorConversao?: number;
+  nFatorConv?: number;
+}
+
+interface NfeItemSubObj {
+  nFatorConversao?: number;
+}
+
+interface NfeItem {
+  itensCabec?: NfeCabec;
+  itensAjustes?: NfeAjustes;
+  itensConversao?: NfeItemSubObj;
+  itensNfe?: NfeItemSubObj;
+  [key: string]: unknown;
+}
+
+interface OmieListarRecebimentosResponse {
+  recebimentos?: Array<{ cabec?: NfeCabec }>;
+  nTotalRegistros?: number;
+}
+
+interface OmieConsultarRecebimentoResponse {
+  itensRecebimento?: NfeItem[];
+}
+
+interface OmieDepartamento {
+  codigo?: string;
+  descricao?: string;
+}
+
+interface OmieListarDepartamentosResponse {
+  departamentos?: OmieDepartamento[];
+}
+
 const ALLOWED_ORIGIN = Deno.env.get("ALLOWED_ORIGIN") || "*";
 
 const corsHeaders = {
@@ -32,7 +85,7 @@ function getCredentials(account: string): { key: string; secret: string } {
   }
 }
 
-async function callOmie(endpoint: string, call: string, params: Record<string, unknown>[], account = "oben") {
+async function callOmie(endpoint: string, call: string, params: Record<string, unknown>[], account = "oben"): Promise<Record<string, unknown>> {
   const creds = getCredentials(account);
   if (!creds.key || !creds.secret) throw new Error(`Credenciais Omie não configuradas para ${account}`);
 
@@ -52,14 +105,14 @@ async function callOmie(endpoint: string, call: string, params: Record<string, u
   });
 
   const text = await res.text();
-  let data;
+  let data: Record<string, unknown>;
   try {
     data = JSON.parse(text);
   } catch {
     throw new Error(`Resposta inválida da API Omie: ${text.substring(0, 300)}`);
   }
 
-  if (data.faultstring) {
+  if (typeof data.faultstring === "string") {
     throw new Error(`Omie: ${data.faultstring}`);
   }
 
@@ -117,10 +170,10 @@ serve(async (req) => {
 
       while (!found && pagina <= 30) {
         console.log(`[process-nfe] ListarRecebimentos página ${pagina}...`);
-        const listResult = await callOmie("produtos/recebimentonfe/", "ListarRecebimentos", [{
+        const listResult = (await callOmie("produtos/recebimentonfe/", "ListarRecebimentos", [{
           nPagina: pagina,
           nRegistrosPorPagina: 50,
-        }], account);
+        }], account)) as unknown as OmieListarRecebimentosResponse;
 
         const recebimentos = listResult.recebimentos || [];
         const totalRegistros = listResult.nTotalRegistros || 0;
@@ -128,7 +181,7 @@ serve(async (req) => {
 
         // Log sample for debugging
         if (pagina === 1 && recebimentos.length > 0) {
-          const samples = recebimentos.slice(0, 5).map((r: any) => ({
+          const samples = recebimentos.slice(0, 5).map((r) => ({
             nIdReceb: r.cabec?.nIdReceb,
             cNumeroNFe: r.cabec?.cNumeroNFe,
             cNome: r.cabec?.cNome,
@@ -167,21 +220,22 @@ serve(async (req) => {
       if (!found) {
         throw new Error(`NF ${nf_number} não encontrada no Omie (verificadas ${pagina} páginas, endpoint: produtos/recebimentonfe/)`);
       }
-    } catch (e: any) {
-      steps.push({ step: 1, description: `Buscar NF ${nf_number}`, status: "error", detail: e.message });
-      return new Response(JSON.stringify({ steps, error: e.message }), {
+    } catch (e) {
+      const message = e instanceof Error ? e.message : String(e);
+      steps.push({ step: 1, description: `Buscar NF ${nf_number}`, status: "error", detail: message });
+      return new Response(JSON.stringify({ steps, error: message }), {
         status: 200,
         headers: { ...corsHeaders, "Content-Type": "application/json" },
       });
     }
 
     // STEP 2 - Get full details via ConsultarRecebimento
-    let itens: any[] = [];
+    let itens: NfeItem[] = [];
     try {
       const consultaParams: Record<string, unknown> = { nIdReceb };
       if (cChaveNfe) consultaParams.cChaveNfe = cChaveNfe;
-      
-      const detail = await callOmie("produtos/recebimentonfe/", "ConsultarRecebimento", [consultaParams], account);
+
+      const detail = (await callOmie("produtos/recebimentonfe/", "ConsultarRecebimento", [consultaParams], account)) as unknown as OmieConsultarRecebimentoResponse;
       itens = detail.itensRecebimento || [];
       
       console.log(`[process-nfe] ConsultarRecebimento: ${itens.length} itens`);
@@ -221,9 +275,10 @@ serve(async (req) => {
           status: "success",
         });
       }
-    } catch (e: any) {
-      steps.push({ step: 2, description: "Consultar detalhes da NF", status: "error", detail: e.message });
-      return new Response(JSON.stringify({ steps, error: e.message }), {
+    } catch (e) {
+      const message = e instanceof Error ? e.message : String(e);
+      steps.push({ step: 2, description: "Consultar detalhes da NF", status: "error", detail: message });
+      return new Response(JSON.stringify({ steps, error: message }), {
         status: 200,
         headers: { ...corsHeaders, "Content-Type": "application/json" },
       });
@@ -231,7 +286,10 @@ serve(async (req) => {
 
     // STEP 3 - Update received quantities and departments via AlterarRecebimento
     try {
-      const itensEditar: any[] = [];
+      const itensEditar: Array<{
+        itensIde: { nSequencia: number; cAcao: string };
+        itensAjustes: { nQtdeRecebida: number };
+      }> = [];
       const itemResults: string[] = [];
 
       // Debug: log first item structure to find conversion factor field
@@ -291,22 +349,23 @@ serve(async (req) => {
       // Find department code
       let departmentCode = "";
       try {
-        const deptResult = await callOmie("geral/departamentos/", "ListarDepartamentos", [{
+        const deptResult = (await callOmie("geral/departamentos/", "ListarDepartamentos", [{
           pagina: 1,
           registros_por_pagina: 50,
-        }], account);
+        }], account)) as unknown as OmieListarDepartamentosResponse;
         const deptos = deptResult.departamentos || [];
-        console.log(`[process-nfe] Departamentos: ${deptos.map((d: any) => d.descricao || d.codigo).join(", ")}`);
-        const opsDept = deptos.find((d: any) => 
-          (d.descricao || "").toLowerCase().includes("opera") || 
+        console.log(`[process-nfe] Departamentos: ${deptos.map((d) => d.descricao || d.codigo).join(", ")}`);
+        const opsDept = deptos.find((d) =>
+          (d.descricao || "").toLowerCase().includes("opera") ||
           (d.codigo || "").toLowerCase().includes("opera")
         );
-        if (opsDept) {
+        if (opsDept && opsDept.codigo) {
           departmentCode = opsDept.codigo;
           console.log(`[process-nfe] Departamento Operações encontrado: ${departmentCode}`);
         }
-      } catch (e: any) {
-        console.log(`[process-nfe] Erro ao listar departamentos: ${e.message}`);
+      } catch (e) {
+        const message = e instanceof Error ? e.message : String(e);
+        console.log(`[process-nfe] Erro ao listar departamentos: ${message}`);
       }
 
       // Calculate total NF value for department distribution
@@ -350,10 +409,11 @@ serve(async (req) => {
         status: "success",
         detail: itemResults.join(" | ") + (departmentCode ? ` | Depto: ${departmentCode}` : ""),
       });
-    } catch (e: any) {
+    } catch (e) {
       // If alter fails, try step by step approach
-      steps.push({ step: 3, description: "Atualizar recebimento", status: "error", detail: e.message });
-      return new Response(JSON.stringify({ steps, error: e.message }), {
+      const message = e instanceof Error ? e.message : String(e);
+      steps.push({ step: 3, description: "Atualizar recebimento", status: "error", detail: message });
+      return new Response(JSON.stringify({ steps, error: message }), {
         status: 200,
         headers: { ...corsHeaders, "Content-Type": "application/json" },
       });
@@ -367,12 +427,13 @@ serve(async (req) => {
         cEtapa: "40", // Conferência / Pronto para concluir
       }], account);
       steps.push({ step: 4, description: "Etapa alterada para conferência", status: "success" });
-    } catch (e: any) {
-      if (e.message?.includes("já") || e.message?.includes("etapa")) {
-        steps.push({ step: 4, description: "Etapa já configurada", status: "warning", detail: e.message });
+    } catch (e) {
+      const message = e instanceof Error ? e.message : String(e);
+      if (message.includes("já") || message.includes("etapa")) {
+        steps.push({ step: 4, description: "Etapa já configurada", status: "warning", detail: message });
       } else {
-        steps.push({ step: 4, description: "Alterar etapa", status: "error", detail: e.message });
-        return new Response(JSON.stringify({ steps, error: e.message }), {
+        steps.push({ step: 4, description: "Alterar etapa", status: "error", detail: message });
+        return new Response(JSON.stringify({ steps, error: message }), {
           status: 200,
           headers: { ...corsHeaders, "Content-Type": "application/json" },
         });
@@ -386,9 +447,10 @@ serve(async (req) => {
         cChaveNfe: cChaveNfe || "",
       }], account);
       steps.push({ step: 5, description: "Recebimento concluído com sucesso", status: "success" });
-    } catch (e: any) {
-      steps.push({ step: 5, description: "Concluir recebimento", status: "error", detail: e.message });
-      return new Response(JSON.stringify({ steps, error: e.message }), {
+    } catch (e) {
+      const message = e instanceof Error ? e.message : String(e);
+      steps.push({ step: 5, description: "Concluir recebimento", status: "error", detail: message });
+      return new Response(JSON.stringify({ steps, error: message }), {
         status: 200,
         headers: { ...corsHeaders, "Content-Type": "application/json" },
       });
@@ -398,8 +460,9 @@ serve(async (req) => {
       status: 200,
       headers: { ...corsHeaders, "Content-Type": "application/json" },
     });
-  } catch (e: any) {
-    return new Response(JSON.stringify({ error: e.message }), {
+  } catch (e) {
+    const message = e instanceof Error ? e.message : String(e);
+    return new Response(JSON.stringify({ error: message }), {
       status: 500,
       headers: { ...corsHeaders, "Content-Type": "application/json" },
     });

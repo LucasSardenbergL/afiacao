@@ -7,6 +7,104 @@
 
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.45.0";
 
+// ─── Type definitions ───
+
+/** Resposta genérica de uma chamada à API Omie nfconsultar */
+interface OmieNfResponseData {
+  faultstring?: string;
+  faultcode?: string;
+  total_de_paginas?: number;
+  nfCadastro?: OmieNfRecord[];
+  [k: string]: unknown;
+}
+
+/** Bloco prod (produto) dentro de det */
+interface OmieNfProd {
+  CFOP?: string | number;
+  cfop?: string | number;
+  cProd?: string;
+  xProd?: string;
+  NCM?: string;
+  uCom?: string;
+  qCom?: string | number;
+  vUnCom?: string | number;
+  vProd?: string | number;
+}
+
+/** Bloco nfProdInt (chaves internas Omie do produto) */
+interface OmieNfProdInt {
+  nCodProd?: number | string;
+  cCodProdInt?: string;
+}
+
+/** Item det (detalhe) de uma NF-e */
+interface OmieNfDetItem {
+  prod?: OmieNfProd;
+  nfProdInt?: OmieNfProdInt;
+  [k: string]: unknown;
+}
+
+/** Bloco ide (identificação) da NF-e */
+interface OmieNfIde {
+  nNF?: string | number;
+  serie?: string | number;
+  dEmi?: string;
+  [k: string]: unknown;
+}
+
+/** Bloco compl (complementares) da NF-e */
+interface OmieNfCompl {
+  cChaveNFe?: string;
+  [k: string]: unknown;
+}
+
+/** Bloco destinatário (nfDestInt ou dest) */
+interface OmieNfDest {
+  nCodCli?: number | string;
+  cRazao?: string;
+  cnpj_cpf?: string;
+  [k: string]: unknown;
+}
+
+/** Registro de NF-e retornado por ListarNF */
+interface OmieNfRecord {
+  ide?: OmieNfIde;
+  compl?: OmieNfCompl;
+  nfDestInt?: OmieNfDest;
+  dest?: OmieNfDest;
+  det?: OmieNfDetItem[];
+  [k: string]: unknown;
+}
+
+/** Linha pronta para inserir em venda_items_history */
+interface VendaItemHistoryRow {
+  empresa: string;
+  nfe_chave_acesso: string;
+  nfe_numero: string | null;
+  nfe_serie: string | null;
+  data_emissao: string;
+  cliente_codigo_omie: number | null;
+  cliente_razao_social: string | null;
+  cliente_cnpj_cpf: string | null;
+  cliente_uf: string | null;
+  cliente_cidade: string | null;
+  sku_codigo_omie: number;
+  sku_codigo: string | null;
+  sku_descricao: string | null;
+  sku_ncm: string | null;
+  sku_unidade: string | null;
+  quantidade: number;
+  valor_unitario: number | null;
+  valor_total: number | null;
+  cfop: string | null;
+  raw_data: unknown;
+}
+
+/** Linha já existente em venda_items_history (apenas chave usada no incremental) */
+interface VendaItemKeyRow {
+  nfe_chave_acesso: string | null;
+}
+
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
   "Access-Control-Allow-Headers":
@@ -70,7 +168,7 @@ function getOmieCreds(empresa: string): { app_key: string; app_secret: string } 
 interface OmieCallResult {
   ok: boolean;
   status: number;
-  data?: any;
+  data?: OmieNfResponseData;
   error?: string;
   apiBlocked?: boolean;
 }
@@ -79,7 +177,7 @@ async function omieCall(
   app_key: string,
   app_secret: string,
   call: string,
-  param: any,
+  param: Record<string, unknown>,
 ): Promise<OmieCallResult> {
   for (let attempt = 0; attempt < MAX_RETRIES; attempt++) {
     try {
@@ -111,9 +209,9 @@ async function omieCall(
       }
 
       const text = await res.text();
-      let data: any;
+      let data: OmieNfResponseData;
       try {
-        data = JSON.parse(text);
+        data = JSON.parse(text) as OmieNfResponseData;
       } catch {
         return { ok: false, status: res.status, error: `invalid JSON: ${text.slice(0, 200)}` };
       }
@@ -207,9 +305,9 @@ Deno.serve(async (req) => {
       console.error("Erro ao carregar chaves existentes:", existingErr);
     }
     const chavesExistentes = new Set<string>(
-      (existingRows ?? [])
-        .map((r: any) => r.nfe_chave_acesso)
-        .filter((k: string | null): k is string => !!k),
+      ((existingRows ?? []) as unknown as VendaItemKeyRow[])
+        .map((r) => r.nfe_chave_acesso)
+        .filter((k): k is string => !!k),
     );
     console.log(`[${empresa}] Chaves já processadas: ${chavesExistentes.size}`);
 
@@ -268,9 +366,9 @@ Deno.serve(async (req) => {
         continue;
       }
 
-      const data = result.data ?? {};
+      const data: OmieNfResponseData = result.data ?? {};
       totalPaginas = Number(data.total_de_paginas ?? 1);
-      const nfes = Array.isArray(data.nfCadastro) ? data.nfCadastro : [];
+      const nfes: OmieNfRecord[] = Array.isArray(data.nfCadastro) ? data.nfCadastro : [];
       nfes_listadas += nfes.length;
 
       // Diagnóstico do primeiro payload (apenas página 1)
@@ -308,10 +406,10 @@ Deno.serve(async (req) => {
         }
 
         try {
-          const ide = nf?.ide ?? {};
-          const compl = nf?.compl ?? {};
-          const dest = nf?.nfDestInt ?? nf?.dest ?? {};
-          const det: any[] = Array.isArray(nf?.det) ? nf.det : [];
+          const ide: OmieNfIde = nf?.ide ?? {};
+          const compl: OmieNfCompl = nf?.compl ?? {};
+          const dest: OmieNfDest = nf?.nfDestInt ?? nf?.dest ?? {};
+          const det: OmieNfDetItem[] = Array.isArray(nf?.det) ? nf.det : [];
 
           const chave: string = String(compl?.cChaveNFe ?? "").trim();
           const numero: string = String(ide?.nNF ?? "").trim();
@@ -343,7 +441,7 @@ Deno.serve(async (req) => {
 
           if (clienteCodigo) clientesDistintos.add(clienteCodigo);
 
-          const rows: any[] = [];
+          const rows: VendaItemHistoryRow[] = [];
           let itensValidosNesta = 0;
 
           for (const it of det) {
@@ -397,7 +495,7 @@ Deno.serve(async (req) => {
 
           if (rows.length > 0) {
             // Consolidar duplicatas (mesmo SKU 2x na mesma NF) somando qtd e valor_total
-            const dedup = new Map<number, any>();
+            const dedup = new Map<number, VendaItemHistoryRow>();
             for (const r of rows) {
               const key = r.sku_codigo_omie;
               const existing = dedup.get(key);
@@ -429,9 +527,10 @@ Deno.serve(async (req) => {
             nfes_processadas++;
             chavesExistentes.add(chave);
           }
-        } catch (err: any) {
+        } catch (err) {
           erros++;
-          console.error("Erro processando NF:", err?.message ?? err);
+          const msg = err instanceof Error ? err.message : String(err);
+          console.error("Erro processando NF:", msg);
         }
       }
 
@@ -462,10 +561,11 @@ Deno.serve(async (req) => {
       }),
       { status: 200, headers: { ...corsHeaders, "Content-Type": "application/json" } },
     );
-  } catch (err: any) {
+  } catch (err) {
     console.error("Fatal error:", err);
+    const msg = err instanceof Error ? err.message : String(err);
     return new Response(
-      JSON.stringify({ ok: false, error: err?.message ?? String(err) }),
+      JSON.stringify({ ok: false, error: msg }),
       { status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" } },
     );
   }

@@ -494,3 +494,18 @@ Há muitas skills instaladas (gstack ~40 comandos, superpowers 14, catálogo de 
 **Colisão de nome conhecida:** existe `/review` do gstack e `review` do plugin oficial code-review. Tratamos o **`/review` do gstack como o canônico** para revisão de diff. Se o comando errado disparar, invocar explicitamente via gstack.
 
 Esta tabela é viva — ao instalar/remover skill, atualizar aqui.
+
+---
+
+## 13. Health Stack (usado por `/health`)
+
+Persistido em 2026-05-17 após primeira run completa do skill com sucesso.
+
+- **typecheck**: `bun run typecheck:strict` (incremental strict em `tsconfig.strict.json`) + `bunx tsc --noEmit` (baseline com `strict: false`)
+- **lint**: `bun lint` (eslint flat config)
+- **test**: `bun run test` (vitest run) — canônico, é o que CI executa. `bun test` (runner nativo) cobre só parte por causa de jsdom incompleto + `vi.hoisted/mocked/importActual` não suportados; bunfig.toml + src/test/bun-setup.ts polifillam localStorage/MediaStream/matchMedia mas alguns testes ainda falham. Sempre `bun run test` pra resultado oficial. Ver §2 pro detalhe.
+- **deadcode**: `bunx knip --reporter compact`. ⚠️ Ignorar a seção "Unlisted dependencies (38)" — são imports `npm:` das Edge Functions Deno, false-positive pro runtime Node.
+- **shell**: `shellcheck scripts/*.sh .claude/hooks/*.sh` (só 2 arquivos; `brew install shellcheck` se ainda não tiver).
+- **gbrain**: não configurado neste projeto.
+
+**Pre-flight**: worktrees novos precisam de `bun install` antes de `/health` (~3s pra extrair 955 packages).
