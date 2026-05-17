@@ -25,6 +25,15 @@ export interface SipConfig {
   iceServers?: RTCIceServer[];
 }
 
+export interface IncomingCallInfo {
+  /** Telefone normalizado (E.164 ou só dígitos) extraído do FROM */
+  phone: string;
+  /** Display name do FROM SIP, se houver */
+  displayName: string | null;
+  /** Timestamp em que chegou */
+  receivedAt: number;
+}
+
 export interface SipClientEvents {
   stateChange: (state: SipCallState) => void;
   /** stream do microfone do vendedor (ou stream mixado com pre-roll) */
@@ -32,4 +41,6 @@ export interface SipClientEvents {
   /** stream que chega do cliente — usado pra transcrição em PR2 */
   remoteStream: (stream: MediaStream) => void;
   error: (err: Error) => void;
+  /** Chamada inbound chegou — vendedor decide accept/reject. PR-INBOUND-CALLS. */
+  incomingCall: (info: IncomingCallInfo) => void;
 }
