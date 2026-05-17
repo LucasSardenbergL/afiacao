@@ -39,7 +39,7 @@ CREATE POLICY fin_audit_log_select_staff ON fin_audit_log
     EXISTS (
       SELECT 1 FROM user_roles
       WHERE user_id = auth.uid()
-        AND role IN ('master','employee','admin')
+        AND role IN ('employee','master')
     )
   );
 

@@ -237,7 +237,7 @@ CREATE POLICY fin_audit_log_select_staff ON fin_audit_log
     EXISTS (
       SELECT 1 FROM user_roles
       WHERE user_id = auth.uid()
-        AND role IN ('admin','employee','master')
+        AND role IN ('employee','master')
     )
   );
 
@@ -1156,7 +1156,7 @@ ALTER TABLE fin_period_overrides ENABLE ROW LEVEL SECURITY;
 CREATE POLICY fin_period_overrides_select_staff ON fin_period_overrides
   FOR SELECT USING (
     EXISTS (SELECT 1 FROM user_roles WHERE user_id = auth.uid()
-              AND role IN ('admin','employee','master'))
+              AND role IN ('employee','master'))
   );
 
 CREATE POLICY fin_period_overrides_insert_master ON fin_period_overrides
@@ -3210,12 +3210,12 @@ ALTER TABLE fin_ic_matches ENABLE ROW LEVEL SECURITY;
 
 CREATE POLICY fin_ic_matches_select_staff ON fin_ic_matches
   FOR SELECT USING (
-    EXISTS (SELECT 1 FROM user_roles WHERE user_id=auth.uid() AND role IN ('admin','employee','master'))
+    EXISTS (SELECT 1 FROM user_roles WHERE user_id=auth.uid() AND role IN ('employee','master'))
   );
 
 CREATE POLICY fin_ic_matches_update_staff ON fin_ic_matches
   FOR UPDATE USING (
-    EXISTS (SELECT 1 FROM user_roles WHERE user_id=auth.uid() AND role IN ('admin','employee','master'))
+    EXISTS (SELECT 1 FROM user_roles WHERE user_id=auth.uid() AND role IN ('employee','master'))
   );
 ```
 
