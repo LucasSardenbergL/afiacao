@@ -4,6 +4,7 @@ import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { Textarea } from '@/components/ui/textarea';
 import { useCustomerProcess, useSaveCustomerProcess, useStructureProcess } from '@/hooks/useCustomerProcess';
+import { ProcessComparisonPanel } from './ProcessComparisonPanel';
 import { Sparkles, Save, Loader2, AlertTriangle, Factory, Clock, Wrench } from 'lucide-react';
 import { formatDistanceToNow } from 'date-fns';
 import { ptBR } from 'date-fns/locale';
@@ -226,6 +227,11 @@ export function CustomerProcessTab({ customerId }: Props) {
         <div className="text-2xs text-muted-foreground text-center">
           Estruturado pela IA {formatDistanceToNow(new Date(current.ia_structured_at), { locale: ptBR, addSuffix: true })}
         </div>
+      )}
+
+      {/* PR-P3 — Comparação inteligente. Só renderiza quando já existe processo estruturado. */}
+      {current?.etapas && (
+        <ProcessComparisonPanel customerId={customerId} />
       )}
     </div>
   );
