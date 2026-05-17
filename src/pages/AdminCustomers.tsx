@@ -33,6 +33,8 @@ import { useUrlState } from '@/hooks/useUrlState';
 import { useCustomerSegments } from '@/hooks/useCustomerSegments';
 import { Save, Bookmark, X as XIcon } from 'lucide-react';
 import { decodeHtmlEntities } from '@/lib/format';
+import { CustomerProfile360Summary } from '@/components/customer/CustomerProfile360Summary';
+import { CustomerCallsTab } from '@/components/customer/CustomerCallsTab';
 
 /* ─── Types ─── */
 interface Customer {
@@ -569,7 +571,10 @@ function Customer360View({
         )}
       </div>
 
-      {/* Tabs: Pedidos / Ferramentas */}
+      {/* Perfil 360 v1 — sumário das chamadas (só aparece se cliente já tem call history) */}
+      <CustomerProfile360Summary customerId={customer.user_id} />
+
+      {/* Tabs: Pedidos / Ferramentas / Oportunidades / Chamadas */}
       <Tabs defaultValue="orders">
         <TabsList>
           <TabsTrigger value="orders" className="gap-1.5">
@@ -581,6 +586,9 @@ function Customer360View({
           </TabsTrigger>
           <TabsTrigger value="recommendations" className="gap-1.5">
             <TrendingUp className="w-3.5 h-3.5" /> Oportunidades
+          </TabsTrigger>
+          <TabsTrigger value="calls" className="gap-1.5">
+            <Phone className="w-3.5 h-3.5" /> Chamadas
           </TabsTrigger>
         </TabsList>
 
@@ -685,6 +693,10 @@ function Customer360View({
             customerId={customer.user_id}
             title="O que está faltando no mix"
           />
+        </TabsContent>
+
+        <TabsContent value="calls" className="mt-3">
+          <CustomerCallsTab customerId={customer.user_id} />
         </TabsContent>
       </Tabs>
     </div>
