@@ -2,6 +2,7 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { supabase } from '@/integrations/supabase/client';
 import { invokeFunction } from '@/lib/invoke-function';
 import { toast } from 'sonner';
+import { useReindexRag } from './useReindexRag';
 import type { CustomerProcess, StructuredProcessResponse } from '@/lib/customer-process/types';
 
 export function useCustomerProcess(customerId: string | null) {
@@ -32,6 +33,7 @@ interface SaveInput {
 
 export function useSaveCustomerProcess() {
   const qc = useQueryClient();
+  const reindex = useReindexRag();
   return useMutation({
     mutationFn: async (input: SaveInput): Promise<CustomerProcess> => {
       const { data: { user } } = await supabase.auth.getUser();
@@ -69,9 +71,11 @@ export function useSaveCustomerProcess() {
       if (error) throw error;
       return data as CustomerProcess;
     },
-    onSuccess: (_data, variables) => {
+    onSuccess: (data, variables) => {
       qc.invalidateQueries({ queryKey: ['customer-process', variables.customerId] });
       toast.success('Processo salvo');
+      // Fire-and-forget reindex pra RAG ficar atualizado pro PR-P3/P4
+      reindex.mutate({ source_table: 'customer_processes', source_id: data.id });
     },
     onError: (err) => {
       toast.error('Erro ao salvar processo', { description: err instanceof Error ? err.message : '' });
