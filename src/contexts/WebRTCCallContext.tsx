@@ -58,6 +58,7 @@ export function WebRTCCallProvider({ children }: ProviderProps) {
   const durationTimerRef = useRef<number | null>(null);
   const rawMicRef = useRef<MediaStream | null>(null);
   const prerollCloseRef = useRef<(() => void) | null>(null);
+  const prerollPlayRef = useRef<(() => void) | null>(null);
   const prerollUrl = (import.meta.env.VITE_NVOIP_SIP_PREROLL_URL as string | undefined);
 
   useEffect(() => {
@@ -109,7 +110,21 @@ export function WebRTCCallProvider({ children }: ProviderProps) {
     }
   }, [callState]);
 
+  /**
+   * Timing fix: dispara o pre-roll APENAS quando o cliente atende ('established').
+   * Se chamássemos play() em makeCall (antes do INVITE), o áudio tocaria durante
+   * a fase de ringing — quando RTP ainda não flui — e o cliente perderia o aviso.
+   * O play() é idempotente, então re-renders durante 'established' não duplicam.
+   */
+  useEffect(() => {
+    if (callState === 'established' && prerollPlayRef.current) {
+      prerollPlayRef.current();
+      prerollPlayRef.current = null; // libera ref após disparo
+    }
+  }, [callState]);
+
   function cleanupAudioResources() {
+    prerollPlayRef.current = null;
     if (prerollCloseRef.current) {
       try { prerollCloseRef.current(); } catch { /* noop */ }
       prerollCloseRef.current = null;
@@ -149,6 +164,8 @@ export function WebRTCCallProvider({ children }: ProviderProps) {
       if (prerollUrl) {
         const mix = await mixPrerollWithMic(prerollUrl, rawMic);
         streamForCall = mix.stream;
+        // play() é disparado pelo useEffect ao detectar callState === 'established'
+        prerollPlayRef.current = mix.play;
         prerollCloseRef.current = mix.close;
       }
 

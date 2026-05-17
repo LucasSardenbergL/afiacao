@@ -25,7 +25,7 @@ if [[ -z "${ELEVENLABS_API_KEY:-}" ]]; then
   exit 1
 fi
 
-TEXT="Esta chamada poderá ser gravada para fins de qualidade, treinamento e registro comercial, conforme nossa Política de Privacidade. Se preferir não ter sua ligação gravada, informe ao atendente."
+TEXT="Esta ligação pode ser gravada para qualidade. Se preferir não gravar, avise o atendente."
 
 VOICE_ID="EXAVITQu4vr4xnSDxMaL"  # Sara — PT-BR feminina
 OUTPUT_FILE="public/preroll/aviso-gravacao-lgpd.mp3"

@@ -6,9 +6,12 @@ informar gravação (Art. 7º, IX — base legal de legítimo interesse).
 
 ## Texto canônico
 
-> "Esta chamada poderá ser gravada para fins de qualidade, treinamento e
-> registro comercial, conforme nossa Política de Privacidade. Se preferir
-> não ter sua ligação gravada, informe ao atendente."
+> "Esta ligação pode ser gravada para qualidade. Se preferir não gravar,
+> avise o atendente."
+
+Texto compacto (~5s) que cobre os 3 requisitos LGPD mínimos: notificação,
+finalidade e direito de oposição (Art. 18 §2º). Versão anterior tinha ~13s
+e era longa demais — cliente perdia a paciência antes do vendedor falar.
 
 ## Como regenerar (ElevenLabs — recomendado)
 
@@ -34,7 +37,7 @@ https://elevenlabs.io/app/voice-library). Manter sempre PT-BR neutro.
 Se você não tem API key da ElevenLabs ou só quer um quick fallback:
 
 ```bash
-TEXT="Esta chamada poderá ser gravada para fins de qualidade, treinamento e registro comercial, conforme nossa Política de Privacidade. Se preferir não ter sua ligação gravada, informe ao atendente."
+TEXT="Esta ligação pode ser gravada para qualidade. Se preferir não gravar, avise o atendente."
 
 say -v "Luciana" "$TEXT" -o /tmp/aviso.aiff
 afconvert -f mp4f -d aac /tmp/aviso.aiff public/preroll/aviso-gravacao-lgpd.mp3
