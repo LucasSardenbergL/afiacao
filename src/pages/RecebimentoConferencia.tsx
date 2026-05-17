@@ -23,8 +23,79 @@ import {
   Sheet, SheetContent, SheetHeader, SheetTitle,
 } from '@/components/ui/sheet';
 import LoteScannerOCR from '@/components/recebimento/LoteScannerOCR';
+import {
+  enqueueForLater,
+  registerOfflineHandler,
+} from '@/lib/offline-flush-bus';
 
 type ItemStatus = 'pendente' | 'em_conferencia' | 'conferido' | 'divergencia';
+
+/* ─── Pure handlers (module-level pra registrar no offline-flush-bus) ─── */
+// Devem ser idempotentes — podem rodar 2× se conexão flapping.
+// Variables completas (sem closure de state) pra funcionarem em background flush.
+
+interface ConfirmUnitVars {
+  recebimentoId: string;
+  itemId: string;
+  numeroLote: string;
+  dataFabricacao: string | null;
+  dataValidade: string;
+  metodoLeitura: string;
+  escaneadoPor: string | null;
+  newConferida: number;
+  newStatus: ItemStatus;
+  shouldAdvanceNfeStatus: boolean;
+}
+
+async function executeConfirmUnit(vars: ConfirmUnitVars): Promise<void> {
+  const { error: insertErr } = await supabase.from('nfe_lotes_escaneados').insert({
+    nfe_recebimento_id: vars.recebimentoId,
+    nfe_recebimento_item_id: vars.itemId,
+    numero_lote: vars.numeroLote,
+    data_fabricacao: vars.dataFabricacao,
+    data_validade: vars.dataValidade,
+    metodo_leitura: vars.metodoLeitura,
+    escaneado_por: vars.escaneadoPor,
+  });
+  if (insertErr) throw insertErr;
+
+  const { error: updErr } = await supabase
+    .from('nfe_recebimento_itens')
+    .update({ quantidade_conferida: vars.newConferida, status_item: vars.newStatus })
+    .eq('id', vars.itemId);
+  if (updErr) throw updErr;
+
+  if (vars.shouldAdvanceNfeStatus) {
+    await supabase
+      .from('nfe_recebimentos')
+      .update({ status: 'em_conferencia' })
+      .eq('id', vars.recebimentoId);
+  }
+}
+
+interface ReportDivergenciaVars {
+  itemId: string;
+  text: string;
+  recebimentoId: string;
+}
+
+async function executeReportDivergencia(vars: ReportDivergenciaVars): Promise<void> {
+  const { error: itemErr } = await supabase
+    .from('nfe_recebimento_itens')
+    .update({ status_item: 'divergencia', observacao: vars.text })
+    .eq('id', vars.itemId);
+  if (itemErr) throw itemErr;
+
+  const { error: nfeErr } = await supabase
+    .from('nfe_recebimentos')
+    .update({ status: 'divergencia' })
+    .eq('id', vars.recebimentoId);
+  if (nfeErr) throw nfeErr;
+}
+
+// Registra handlers no bus 1× por module load (idempotente — pode chamar 2×)
+registerOfflineHandler('recebimento.confirm-unit', executeConfirmUnit);
+registerOfflineHandler('recebimento.report-divergencia', executeReportDivergencia);
 
 const STATUS_COLORS: Record<ItemStatus, string> = {
   pendente: 'bg-muted text-muted-foreground',
@@ -178,42 +249,35 @@ export default function RecebimentoConferencia() {
   const handleConfirmUnit = async () => {
     if (!lote.trim() || !validade || !activeItemId || !id) return;
     setSaving(true);
+
+    const newConferida = activeConferida + 1;
+    const newStatus: ItemStatus = newConferida >= activeEsperada ? 'conferido' : 'em_conferencia';
+
+    let escaneadoPor: string | null = null;
     try {
       const { data: { user } } = await supabase.auth.getUser();
+      escaneadoPor = user?.id ?? null;
+    } catch {
+      // se offline, getUser pode falhar — ok, escaneadoPor fica null
+    }
 
-      // Insert lote record
-      const { error: insertErr } = await supabase
-        .from('nfe_lotes_escaneados')
-        .insert({
-          nfe_recebimento_id: id,
-          nfe_recebimento_item_id: activeItemId,
-          numero_lote: lote.trim(),
-          data_fabricacao: fabricacao || null,
-          data_validade: validade,
-          metodo_leitura: metodo,
-          escaneado_por: user?.id ?? null,
-        });
-      if (insertErr) throw insertErr;
+    const vars: ConfirmUnitVars = {
+      recebimentoId: id,
+      itemId: activeItemId,
+      numeroLote: lote.trim(),
+      dataFabricacao: fabricacao || null,
+      dataValidade: validade,
+      metodoLeitura: metodo,
+      escaneadoPor,
+      newConferida,
+      newStatus,
+      shouldAdvanceNfeStatus: (nfe as any)?.status === 'pendente',
+    };
 
-      const newConferida = activeConferida + 1;
-      const newStatus: ItemStatus = newConferida >= activeEsperada ? 'conferido' : 'em_conferencia';
+    try {
+      await executeConfirmUnit(vars);
 
-      // Update item
-      const { error: updErr } = await supabase
-        .from('nfe_recebimento_itens')
-        .update({ quantidade_conferida: newConferida, status_item: newStatus })
-        .eq('id', activeItemId);
-      if (updErr) throw updErr;
-
-      // Update nfe status if needed
-      if ((nfe as any)?.status === 'pendente') {
-        await supabase.from('nfe_recebimentos').update({ status: 'em_conferencia' }).eq('id', id);
-      }
-
-      // Remember last lote
       setLastLote({ numero_lote: lote.trim(), data_fabricacao: fabricacao, data_validade: validade });
-
-      // Refresh
       await queryClient.invalidateQueries({ queryKey: ['nfe_conferencia', id] });
       await queryClient.invalidateQueries({ queryKey: ['nfe_lotes', id] });
 
@@ -221,12 +285,26 @@ export default function RecebimentoConferencia() {
         toast.success(`Item conferido! ${newConferida}/${activeEsperada} unidades`);
         setActiveItemId(null);
       } else {
-        // Advance to next unit
         resetScanForm();
         setManualMode(false);
       }
     } catch (err: any) {
-      toast.error('Erro ao salvar: ' + (err.message ?? 'Tente novamente'));
+      // Offline: enfileira pra processar quando voltar. UI sinaliza progresso.
+      if (typeof navigator !== 'undefined' && !navigator.onLine) {
+        await enqueueForLater<ConfirmUnitVars>('recebimento.confirm-unit', vars);
+        setLastLote({ numero_lote: lote.trim(), data_fabricacao: fabricacao, data_validade: validade });
+        toast.warning(
+          `Sem conexão — unidade ${newConferida}/${activeEsperada} será sincronizada quando voltar`,
+        );
+        if (newConferida >= activeEsperada) {
+          setActiveItemId(null);
+        } else {
+          resetScanForm();
+          setManualMode(false);
+        }
+      } else {
+        toast.error('Erro ao salvar: ' + (err.message ?? 'Tente novamente'));
+      }
     } finally {
       setSaving(false);
     }
@@ -236,20 +314,28 @@ export default function RecebimentoConferencia() {
   const handleReportDivergencia = async () => {
     if (!divergenciaItemId || !divergenciaText.trim()) return;
     setSaving(true);
+
+    const vars: ReportDivergenciaVars = {
+      itemId: divergenciaItemId,
+      text: divergenciaText.trim(),
+      recebimentoId: id!,
+    };
+
     try {
-      await supabase
-        .from('nfe_recebimento_itens')
-        .update({ status_item: 'divergencia', observacao: divergenciaText.trim() })
-        .eq('id', divergenciaItemId);
-
-      await supabase.from('nfe_recebimentos').update({ status: 'divergencia' }).eq('id', id!);
-
+      await executeReportDivergencia(vars);
       toast.success('Divergência registrada');
       setDivergenciaItemId(null);
       setDivergenciaText('');
       queryClient.invalidateQueries({ queryKey: ['nfe_conferencia', id] });
     } catch (err: any) {
-      toast.error('Erro: ' + err.message);
+      if (typeof navigator !== 'undefined' && !navigator.onLine) {
+        await enqueueForLater<ReportDivergenciaVars>('recebimento.report-divergencia', vars);
+        setDivergenciaItemId(null);
+        setDivergenciaText('');
+        toast.warning('Sem conexão — divergência será enviada quando voltar');
+      } else {
+        toast.error('Erro: ' + err.message);
+      }
     } finally {
       setSaving(false);
     }

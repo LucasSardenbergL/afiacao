@@ -30,6 +30,7 @@ import { CommandPalette } from '@/components/shell/CommandPalette';
 import { CommandPaletteTrigger } from '@/components/shell/CommandPaletteTrigger';
 import { CompanySwitcher } from '@/components/shell/CompanySwitcher';
 import { NetworkStatusIndicator } from '@/components/shell/NetworkStatusIndicator';
+import { OfflineFlusher } from '@/components/shell/OfflineFlusher';
 import { ThemeToggle } from '@/components/shell/ThemeToggle';
 import { PageViewTracker } from '@/components/shell/PageViewTracker';
 import { AnalyticsIdentify } from '@/components/shell/AnalyticsIdentify';
@@ -615,6 +616,7 @@ function AppTopbar({ sidebarCollapsed, onMobileMenuToggle }: { sidebarCollapsed:
       <div className="flex items-center gap-1">
         <CompanySwitcher />
         <NetworkStatusIndicator />
+        <OfflineFlusher />
         <ThemeToggle />
         <HelpDrawer />
 
