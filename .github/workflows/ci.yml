@@ -41,6 +41,9 @@ jobs:
       - name: Type check
         run: bunx tsc --noEmit
 
+      - name: Type check (strict mode — files migrados, ver tsconfig.strict.json)
+        run: bun run typecheck:strict
+
       - name: Tests
         run: bun run test
 
