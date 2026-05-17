@@ -2,6 +2,7 @@ import { useMemo } from 'react';
 import { useAuth } from '@/contexts/AuthContext';
 import { useCommercialRole } from '@/hooks/useCommercialRole';
 import { useSalesOnlyRestriction } from '@/hooks/useSalesOnlyRestriction';
+import { useUserDepartment } from '@/hooks/useUserDepartment';
 import { getRouteCounts } from '@/lib/dashboard/route-tracker';
 import { inferPersona, type InferPersonaResult } from '@/lib/dashboard/persona-detect';
 import type { Persona } from '@/lib/dashboard/persona-config';
@@ -23,6 +24,7 @@ export function usePersona(): InferPersonaResult {
   const { role } = useAuth();
   const { commercialRole } = useCommercialRole();
   const isSalesOnly = useSalesOnlyRestriction();
+  const { department } = useUserDepartment();
 
   return useMemo(() => {
     return inferPersona({
@@ -31,7 +33,7 @@ export function usePersona(): InferPersonaResult {
       commercialRole,
       isSalesOnly,
       routeCounts: getRouteCounts(),
+      userDepartment: department,
     });
-    // Re-resolve quando sinais mudam. routeCounts é lido fresh do storage a cada call.
-  }, [role, commercialRole, isSalesOnly]);
+  }, [role, commercialRole, isSalesOnly, department]);
 }
