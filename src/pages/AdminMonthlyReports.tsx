@@ -6,7 +6,7 @@ import { Badge } from '@/components/ui/badge';
 import { Separator } from '@/components/ui/separator';
 import { supabase } from '@/integrations/supabase/client';
 import { useAuth } from '@/contexts/AuthContext';
-import { useToast } from '@/hooks/use-toast';
+import { toast } from 'sonner';
 import { 
   Loader2, Send, MessageCircle, Mail, Users, 
   AlertTriangle, CheckCircle, Wrench, Eye, ExternalLink 
@@ -40,7 +40,6 @@ interface CustomerReport {
 const AdminMonthlyReports = () => {
   const navigate = useNavigate();
   const { isStaff } = useAuth();
-  const { toast } = useToast();
 
   const [reports, setReports] = useState<CustomerReport[]>([]);
   const [loading, setLoading] = useState(false);
@@ -68,17 +67,14 @@ const AdminMonthlyReports = () => {
       setReports(data.reports || []);
       
       if (sendEmail) {
-        toast({
-          title: 'E-mails enviados!',
+        toast.success('E-mails enviados!', {
           description: `Relatórios enviados para ${data.reports_count} cliente(s)`,
         });
       }
     } catch (error: any) {
       console.error('Error:', error);
-      toast({
-        title: 'Erro',
+      toast.error('Erro', {
         description: error.message || 'Falha ao gerar relatórios',
-        variant: 'destructive',
       });
     } finally {
       setLoading(false);

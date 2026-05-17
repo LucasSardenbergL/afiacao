@@ -3,7 +3,7 @@ import { Mic, Send, Loader2, Sparkles, X, Square, Camera, Package, Wrench, Image
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { cn, decodeHtmlEntities } from '@/lib/utils';
-import { useToast } from '@/hooks/use-toast';
+import { toast } from 'sonner';
 import { invokeFunction } from '@/lib/invoke-function';
 
 export interface AIProduct {
@@ -91,7 +91,6 @@ interface UnifiedAIAssistantProps {
 const fmt = (v: number) => v.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' });
 
 export function UnifiedAIAssistant({ products, userTools, onItemsIdentified, onCustomerIdentified, customerUserId, hasCustomerSelected = false, isLoading = false }: UnifiedAIAssistantProps) {
-  const { toast } = useToast();
   const [text, setText] = useState('');
   const [isRecording, setIsRecording] = useState(false);
   const [isTranscribing, setIsTranscribing] = useState(false);
@@ -146,7 +145,7 @@ export function UnifiedAIAssistant({ products, userTools, onItemsIdentified, onC
         }
       };
       mr.onerror = () => {
-        toast({ title: 'Erro na gravação', variant: 'destructive' });
+        toast.error('Erro na gravação');
         stopRecording();
       };
 
@@ -156,12 +155,12 @@ export function UnifiedAIAssistant({ products, userTools, onItemsIdentified, onC
       timerRef.current = window.setInterval(() => setRecordingDuration(p => p + 1), 1000);
     } catch (err: any) {
       if (err.name === 'NotAllowedError') {
-        toast({ title: 'Permissão negada', description: 'Permita o acesso ao microfone.', variant: 'destructive' });
+        toast.error('Permissão negada', { description: 'Permita o acesso ao microfone.' });
       } else {
-        toast({ title: 'Erro ao gravar', description: err.message, variant: 'destructive' });
+        toast.error('Erro ao gravar', { description: err.message });
       }
     }
-  }, [toast]);
+  }, []);
 
   const stopRecording = useCallback(() => {
     if (timerRef.current) { clearInterval(timerRef.current); timerRef.current = null; }
@@ -185,12 +184,12 @@ export function UnifiedAIAssistant({ products, userTools, onItemsIdentified, onC
       const result = await invokeFunction<{ text?: string }>('elevenlabs-transcribe', fd as any);
       if (result.text) {
         setText(prev => prev + (prev ? ' ' : '') + result.text);
-        toast({ title: 'Transcrição concluída' });
+        toast.success('Transcrição concluída');
       } else {
-        toast({ title: 'Nenhum texto detectado', variant: 'destructive' });
+        toast.error('Nenhum texto detectado');
       }
     } catch (e: any) {
-      toast({ title: 'Erro na transcrição', description: e.message, variant: 'destructive' });
+      toast.error('Erro na transcrição', { description: e.message });
     } finally {
       setIsTranscribing(false);
     }
@@ -204,11 +203,11 @@ export function UnifiedAIAssistant({ products, userTools, onItemsIdentified, onC
     for (let i = 0; i < files.length; i++) {
       const file = files[i];
       if (!file.type.startsWith('audio/')) {
-        toast({ title: `"${file.name}" não é um áudio`, variant: 'destructive' });
+        toast.error(`"${file.name}" não é um áudio`);
         continue;
       }
       if (file.size > 10 * 1024 * 1024) {
-        toast({ title: `"${file.name}" muito grande (máx 10MB)`, variant: 'destructive' });
+        toast.error(`"${file.name}" muito grande (máx 10MB)`);
         continue;
       }
       await transcribeAudio(file);
@@ -224,9 +223,9 @@ export function UnifiedAIAssistant({ products, userTools, onItemsIdentified, onC
 
     for (let i = 0; i < files.length; i++) {
       const file = files[i];
-      if (!file.type.startsWith('image/')) { toast({ title: 'Selecione uma imagem', variant: 'destructive' }); continue; }
-      if (file.size > 5 * 1024 * 1024) { toast({ title: `"${file.name}" muito grande (máx 5MB)`, variant: 'destructive' }); continue; }
-      if (images.length >= 5) { toast({ title: 'Máximo de 5 fotos', variant: 'destructive' }); break; }
+      if (!file.type.startsWith('image/')) { toast.error('Selecione uma imagem'); continue; }
+      if (file.size > 5 * 1024 * 1024) { toast.error(`"${file.name}" muito grande (máx 5MB)`); continue; }
+      if (images.length >= 5) { toast.error('Máximo de 5 fotos'); break; }
 
       const preview = URL.createObjectURL(file);
       const b64 = await new Promise<string>((resolve) => {
@@ -254,7 +253,7 @@ export function UnifiedAIAssistant({ products, userTools, onItemsIdentified, onC
 
   const analyze = async () => {
     if (!text.trim() && images.length === 0) {
-      toast({ title: 'Digite, grave, anexe áudio ou tire uma foto', variant: 'destructive' });
+      toast.error('Digite, grave, anexe áudio ou tire uma foto');
       return;
     }
     if (isRecording) stopRecording();
@@ -312,8 +311,7 @@ export function UnifiedAIAssistant({ products, userTools, onItemsIdentified, onC
       console.error('[UnifiedOrder AI] Falha ao analisar pedido:', e);
       setAiFallbackActive(true);
       setAiMessage('A análise inteligente está indisponível no momento. Você pode continuar montando o pedido manualmente.');
-      toast({
-        title: 'Análise indisponível',
+      toast.success('Análise indisponível', {
         description: 'Continue montando o pedido manualmente. Você pode tentar novamente depois.',
       });
     } finally {
@@ -331,14 +329,14 @@ export function UnifiedAIAssistant({ products, userTools, onItemsIdentified, onC
     setIdentifiedCustomer(null);
     clearImages();
     const total = identifiedProducts.length + identifiedServices.length;
-    toast({ title: 'Itens adicionados!', description: `${total} item(ns) adicionado(s) ao pedido.` });
+    toast.success('Itens adicionados!', { description: `${total} item(ns) adicionado(s) ao pedido.` });
   };
 
   const confirmCustomer = () => {
     if (identifiedCustomer && onCustomerIdentified) {
       onCustomerIdentified(identifiedCustomer);
       setIdentifiedCustomer(null);
-      toast({ title: 'Cliente selecionado!', description: decodeHtmlEntities(identifiedCustomer.nome_fantasia || identifiedCustomer.razao_social) });
+      toast.success('Cliente selecionado!', { description: decodeHtmlEntities(identifiedCustomer.nome_fantasia || identifiedCustomer.razao_social) });
       // Note: we intentionally do NOT clear identifiedProducts/suggestions
       // so the user can add them after customer is set
     }
@@ -355,7 +353,7 @@ export function UnifiedAIAssistant({ products, userTools, onItemsIdentified, onC
         unit_price: suggestion.unit_price,
       };
       onItemsIdentified({ products: [prod], services: [] });
-      toast({ title: 'Produto adicionado!', description: suggestion.descricao });
+      toast.success('Produto adicionado!', { description: suggestion.descricao });
     } else if (suggestion.type === 'product' && (!suggestion.product_id || suggestion.product_id === '')) {
       // Suggestion without exact product_id - try to find it in products list
       const matchProd = products.find(p => 
@@ -372,9 +370,9 @@ export function UnifiedAIAssistant({ products, userTools, onItemsIdentified, onC
           unit_price: suggestion.unit_price,
         };
         onItemsIdentified({ products: [prod], services: [] });
-        toast({ title: 'Produto adicionado!', description: matchProd.descricao });
+        toast.success('Produto adicionado!', { description: matchProd.descricao });
       } else {
-        toast({ title: 'Produto não encontrado', description: 'Busque manualmente no catálogo.', variant: 'destructive' });
+        toast.error('Produto não encontrado', { description: 'Busque manualmente no catálogo.' });
       }
     } else if (suggestion.type === 'service' && suggestion.userToolId && suggestion.omie_codigo_servico) {
       const svc: AIService = {
@@ -384,7 +382,7 @@ export function UnifiedAIAssistant({ products, userTools, onItemsIdentified, onC
         quantity: suggestion.quantity || 1,
       };
       onItemsIdentified({ products: [], services: [svc] });
-      toast({ title: 'Serviço adicionado!', description: suggestion.descricao });
+      toast.success('Serviço adicionado!', { description: suggestion.descricao });
     }
     setSuggestions(prev => prev.filter(s => s !== suggestion));
   };

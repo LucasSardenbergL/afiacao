@@ -3,7 +3,7 @@ import { invokeFunction } from '@/lib/invoke-function';
 import { Mic, Send, Loader2, Sparkles, X, Square, Wrench } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { cn } from '@/lib/utils';
-import { useToast } from '@/hooks/use-toast';
+import { toast } from 'sonner';
 import { logger } from '@/lib/logger';
 
 interface UserTool {
@@ -32,7 +32,6 @@ interface VoiceServiceInputProps {
 }
 
 export function VoiceServiceInput({ userTools, onItemsIdentified, isLoading = false }: VoiceServiceInputProps) {
-  const { toast } = useToast();
   const [text, setText] = useState('');
   const [isRecording, setIsRecording] = useState(false);
   const [isTranscribing, setIsTranscribing] = useState(false);
@@ -108,10 +107,8 @@ export function VoiceServiceInput({ userTools, onItemsIdentified, isLoading = fa
 
       mediaRecorder.onerror = (event) => {
         logger.error('MediaRecorder runtime error', { stage: 'start_recording', event });
-        toast({
-          title: 'Erro na gravação',
+        toast.error('Erro na gravação', {
           description: 'Ocorreu um erro ao gravar o áudio.',
-          variant: 'destructive',
         });
         stopRecording();
       };
@@ -133,26 +130,20 @@ export function VoiceServiceInput({ userTools, onItemsIdentified, isLoading = fa
         logger.error('Failed to start voice recording', { stage: 'request_mic_permission', errorName: err.name, error });
       }
       if (err.name === 'NotAllowedError') {
-        toast({
-          title: 'Permissão negada',
+        toast.error('Permissão negada', {
           description: 'Permita o acesso ao microfone nas configurações do navegador.',
-          variant: 'destructive',
         });
       } else if (err.name === 'NotFoundError') {
-        toast({
-          title: 'Microfone não encontrado',
+        toast.error('Microfone não encontrado', {
           description: 'Verifique se um microfone está conectado ao dispositivo.',
-          variant: 'destructive',
         });
       } else {
-        toast({
-          title: 'Erro ao iniciar gravação',
+        toast.error('Erro ao iniciar gravação', {
           description: err.message || 'Não foi possível acessar o microfone.',
-          variant: 'destructive',
         });
       }
     }
-  }, [toast]);
+  }, []);
 
   const stopRecording = useCallback(() => {
     if (timerRef.current) {
@@ -190,23 +181,18 @@ export function VoiceServiceInput({ userTools, onItemsIdentified, isLoading = fa
 
       if (result.text) {
         setText(prev => prev + (prev ? ' ' : '') + result.text);
-        toast({
-          title: 'Transcrição concluída',
+        toast.success('Transcrição concluída', {
           description: 'O áudio foi convertido em texto.',
         });
       } else {
-        toast({
-          title: 'Nenhum texto detectado',
+        toast.error('Nenhum texto detectado', {
           description: 'Não foi possível identificar fala no áudio.',
-          variant: 'destructive',
         });
       }
     } catch (error) {
       logger.error('Audio transcription failed', { stage: 'transcribe', error });
-      toast({
-        title: 'Erro na transcrição',
+      toast.error('Erro na transcrição', {
         description: error instanceof Error ? error.message : 'Tente novamente.',
-        variant: 'destructive',
       });
     } finally {
       setIsTranscribing(false);
@@ -229,19 +215,15 @@ export function VoiceServiceInput({ userTools, onItemsIdentified, isLoading = fa
 
   const analyzeText = async () => {
     if (!text.trim()) {
-      toast({
-        title: 'Texto vazio',
+      toast.error('Texto vazio', {
         description: 'Digite ou grave o que você precisa.',
-        variant: 'destructive',
       });
       return;
     }
 
     if (userTools.length === 0) {
-      toast({
-        title: 'Nenhuma ferramenta cadastrada',
+      toast.error('Nenhuma ferramenta cadastrada', {
         description: 'Cadastre suas ferramentas antes de usar o assistente por voz.',
-        variant: 'destructive',
       });
       return;
     }
@@ -274,10 +256,8 @@ export function VoiceServiceInput({ userTools, onItemsIdentified, isLoading = fa
       }
     } catch (error) {
       logger.error('Voice service analysis failed', { stage: 'parse_items', textLength: text.trim().length, error });
-      toast({
-        title: 'Erro na análise',
+      toast.error('Erro na análise', {
         description: error instanceof Error ? error.message : 'Tente novamente.',
-        variant: 'destructive',
       });
     } finally {
       setIsAnalyzing(false);
@@ -289,8 +269,7 @@ export function VoiceServiceInput({ userTools, onItemsIdentified, isLoading = fa
     setText('');
     setAiMessage(null);
     setIdentifiedItems([]);
-    toast({
-      title: 'Itens adicionados!',
+    toast.success('Itens adicionados!', {
       description: `${identifiedItems.length} item(ns) adicionado(s) ao pedido. Adicione fotos se desejar.`,
     });
   };

@@ -1,6 +1,6 @@
 import { useState, useCallback } from 'react';
 import { supabase } from '@/integrations/supabase/client';
-import { useToast } from '@/hooks/use-toast';
+import { toast } from 'sonner';
 
 export interface BundleArgument {
   diagnostico: string;
@@ -38,7 +38,6 @@ export const profileLabels: Record<CustomerProfile, { label: string; emoji: stri
 };
 
 export const useBundleArguments = () => {
-  const { toast } = useToast();
   const [arguments_, setArguments] = useState<Record<string, BundleArgument>>({});
   const [generating, setGenerating] = useState<Record<string, boolean>>({});
 
@@ -72,7 +71,7 @@ export const useBundleArguments = () => {
       if (error) throw error;
 
       if (data?.error) {
-        toast({ title: data.error, variant: 'destructive' });
+        toast.error(data.error);
         return null;
       }
 
@@ -81,12 +80,12 @@ export const useBundleArguments = () => {
       return argument;
     } catch (error) {
       console.error('Error generating argument:', error);
-      toast({ title: 'Erro ao gerar argumentação', variant: 'destructive' });
+      toast.error('Erro ao gerar argumentação');
       return null;
     } finally {
       setGenerating(prev => ({ ...prev, [bundleKey]: false }));
     }
-  }, [toast]);
+  }, []);
 
   const saveArgumentToBundle = useCallback(async (
     bundleId: string,

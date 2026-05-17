@@ -1,7 +1,7 @@
 import { useState, useEffect, useCallback } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { supabase } from '@/integrations/supabase/client';
-import { useToast } from '@/hooks/use-toast';
+import { toast } from 'sonner';
 import { logger } from '@/lib/logger';
 import { maskDocument } from '@/lib/format';
 import type {
@@ -36,7 +36,6 @@ export function useCustomerSelection({
   onLocalUserResolved,
   reloadPriceHistory,
 }: UseCustomerSelectionArgs = {}) {
-  const { toast } = useToast();
   const queryClient = useQueryClient();
 
   /* ─── State ─── */
@@ -436,8 +435,7 @@ export function useCustomerSelection({
       const afiacaoClientResult = getResult(6);
 
       if (failedParts.length > 0) {
-        toast({
-          title: 'Alguns dados do cliente não foram carregados',
+        toast.success('Alguns dados do cliente não foram carregados', {
           description: `Falharam: ${failedParts.join(', ')}. Você pode continuar, mas preços/parcelas podem não refletir o contrato.`,
         });
       }
@@ -497,7 +495,7 @@ export function useCustomerSelection({
       if (parcelaColacor.data?.ultima_parcela) setSelectedParcelaColacor(parcelaColacor.data.ultima_parcela);
       if (parcelaColacor.data?.parcela_ranking) setCustomerParcelaRankingColacor(parcelaColacor.data.parcela_ranking.map((r: any) => r.codigo));
     } catch (error: any) {
-      toast({ title: 'Erro', description: error.message, variant: 'destructive' });
+      toast.error('Erro', { description: error.message });
     } finally {
       setLoadingCustomer(false);
     }
@@ -524,7 +522,7 @@ export function useCustomerSelection({
     }
   }, [
     resolveLocalUserId, autoCreateInMissingAccounts, resolveLocalPricesByOmieCode,
-    onLocalUserResolved, reloadPriceHistory, toast,
+    onLocalUserResolved, reloadPriceHistory,
   ]);
 
   const clearCustomer = useCallback(() => {

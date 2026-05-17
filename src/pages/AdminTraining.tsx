@@ -10,7 +10,7 @@ import { Badge } from '@/components/ui/badge';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from '@/components/ui/dialog';
 import { supabase } from '@/integrations/supabase/client';
 import { useAuth } from '@/contexts/AuthContext';
-import { useToast } from '@/hooks/use-toast';
+import { toast } from 'sonner';
 import { Loader2, Plus, Trash2, BookOpen, Edit, GripVertical } from 'lucide-react';
 
 interface QuizQuestion {
@@ -36,7 +36,6 @@ const emptyQuestion: QuizQuestion = { question: '', options: ['', '', '', ''], c
 const AdminTraining = () => {
   const navigate = useNavigate();
   const { isStaff, loading: authLoading, role } = useAuth();
-  const { toast } = useToast();
 
   const [modules, setModules] = useState<TrainingModule[]>([]);
   const [loading, setLoading] = useState(true);
@@ -95,12 +94,12 @@ const AdminTraining = () => {
 
   const handleSave = async () => {
     if (!title.trim()) {
-      toast({ title: 'Título obrigatório', variant: 'destructive' });
+      toast.error('Título obrigatório');
       return;
     }
     const validQuestions = questions.filter(q => q.question.trim() && q.options.some(o => o.trim()));
     if (validQuestions.length === 0) {
-      toast({ title: 'Adicione pelo menos uma pergunta válida', variant: 'destructive' });
+      toast.error('Adicione pelo menos uma pergunta válida');
       return;
     }
 
@@ -123,9 +122,9 @@ const AdminTraining = () => {
     }
 
     if (error) {
-      toast({ title: 'Erro ao salvar', description: error.message, variant: 'destructive' });
+      toast.error('Erro ao salvar', { description: error.message });
     } else {
-      toast({ title: editingId ? 'Módulo atualizado!' : 'Módulo criado!' });
+      toast.success(editingId ? 'Módulo atualizado!' : 'Módulo criado!');
       setDialogOpen(false);
       resetForm();
       loadModules();
@@ -136,7 +135,7 @@ const AdminTraining = () => {
   const deleteModule = async (id: string) => {
     const { error } = await supabase.from('training_modules').delete().eq('id', id);
     if (!error) {
-      toast({ title: 'Módulo excluído' });
+      toast.success('Módulo excluído');
       loadModules();
     }
   };

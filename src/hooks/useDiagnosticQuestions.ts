@@ -1,7 +1,7 @@
 import { useState, useCallback } from 'react';
 import { supabase } from '@/integrations/supabase/client';
 import { useAuth } from '@/contexts/AuthContext';
-import { useToast } from '@/hooks/use-toast';
+import { toast } from 'sonner';
 import type { CustomerProfile } from '@/hooks/useBundleArguments';
 
 export interface DiagnosticQuestion {
@@ -31,7 +31,6 @@ export { typeLabels };
 
 export const useDiagnosticQuestions = () => {
   const { user } = useAuth();
-  const { toast } = useToast();
   const [questions, setQuestions] = useState<Record<string, QuestionWithResponse[]>>({});
   const [generating, setGenerating] = useState<Record<string, boolean>>({});
 
@@ -63,7 +62,7 @@ export const useDiagnosticQuestions = () => {
 
       if (error) throw error;
       if (data?.error) {
-        toast({ title: data.error, variant: 'destructive' });
+        toast.error(data.error);
         return null;
       }
 
@@ -76,12 +75,12 @@ export const useDiagnosticQuestions = () => {
       return qs;
     } catch (error) {
       console.error('Error generating diagnostic questions:', error);
-      toast({ title: 'Erro ao gerar perguntas diagnósticas', variant: 'destructive' });
+      toast.error('Erro ao gerar perguntas diagnósticas');
       return null;
     } finally {
       setGenerating(prev => ({ ...prev, [bundleKey]: false }));
     }
-  }, [toast]);
+  }, []);
 
   const setResponse = useCallback((bundleKey: string, questionIndex: number, response: QuestionResponse, notes?: string) => {
     setQuestions(prev => {
@@ -135,12 +134,12 @@ export const useDiagnosticQuestions = () => {
           time_spent_seconds: timeSpentSeconds || 0,
         } as any);
       }
-      toast({ title: 'Respostas salvas com sucesso' });
+      toast.success('Respostas salvas com sucesso');
     } catch (error) {
       console.error('Error saving questions:', error);
-      toast({ title: 'Erro ao salvar respostas', variant: 'destructive' });
+      toast.error('Erro ao salvar respostas');
     }
-  }, [user?.id, questions, toast]);
+  }, [user?.id, questions]);
 
   const getEffectivenessStats = useCallback(async () => {
     if (!user?.id) return null;

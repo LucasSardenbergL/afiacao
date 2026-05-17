@@ -7,7 +7,7 @@ import { Progress } from '@/components/ui/progress';
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { supabase } from '@/integrations/supabase/client';
 import { useAuth } from '@/contexts/AuthContext';
-import { useToast } from '@/hooks/use-toast';
+import { toast } from 'sonner';
 import { Loader2, BookOpen, CheckCircle2, XCircle, PlayCircle, Award, Sparkles, ArrowRight, Trophy, Target } from 'lucide-react';
 
 interface QuizQuestion {
@@ -36,7 +36,6 @@ interface Completion {
 const Training = () => {
   const navigate = useNavigate();
   const { user } = useAuth();
-  const { toast } = useToast();
 
   const [modules, setModules] = useState<TrainingModule[]>([]);
   const [completions, setCompletions] = useState<Completion[]>([]);
@@ -93,12 +92,12 @@ const Training = () => {
     });
 
     if (error) {
-      toast({ title: 'Erro ao salvar resultado', variant: 'destructive' });
+      toast.error('Erro ao salvar resultado');
     } else {
       if (passed) {
-        toast({ title: `Parabéns! Você ganhou ${activeModule.points_reward} pontos de educação!`, description: `Nota: ${scorePercent}%` });
+        toast.success(`Parabéns! Você ganhou ${activeModule.points_reward} pontos de educação!`, { description: `Nota: ${scorePercent}%` });
       } else {
-        toast({ title: 'Não atingiu a nota mínima', description: `Nota: ${scorePercent}% (mínimo: ${activeModule.min_score}%)`, variant: 'destructive' });
+        toast.error('Não atingiu a nota mínima', { description: `Nota: ${scorePercent}% (mínimo: ${activeModule.min_score}%)` });
       }
       setCompletions(prev => [...prev, { module_id: activeModule.id, passed, quiz_score: scorePercent }]);
     }

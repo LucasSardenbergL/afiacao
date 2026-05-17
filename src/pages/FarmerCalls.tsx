@@ -13,7 +13,7 @@ import { Separator } from '@/components/ui/separator';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
 import { supabase } from '@/integrations/supabase/client';
 import { useAuth } from '@/contexts/AuthContext';
-import { useToast } from '@/hooks/use-toast';
+import { toast } from 'sonner';
 import { useFarmerScoring } from '@/hooks/useFarmerScoring';
 import { cn } from '@/lib/utils';
 import { Dialer } from '@/components/call/Dialer';
@@ -192,7 +192,6 @@ const AGENDA_TYPE_META: Record<string, { label: string; icon: typeof AlertTriang
 const FarmerCalls = () => {
   const navigate = useNavigate();
   const { user, isStaff, loading: authLoading } = useAuth();
-  const { toast } = useToast();
   const { agenda, clientScores, loading: agendaLoading } = useFarmerScoring();
 
   // Real Nvoip call integration for the dialog timer
@@ -447,10 +446,8 @@ const FarmerCalls = () => {
         if (mapping?.user_id) customerUserId = mapping.user_id;
       }
       if (!customerUserId) {
-        toast({
-          title: 'Cliente sem cadastro local',
+        toast.error('Cliente sem cadastro local', {
           description: 'Esse cliente Omie ainda não tem perfil no app. Crie um pedido primeiro para vinculá-lo.',
-          variant: 'destructive',
         });
         setSaving(false);
         return;
@@ -471,22 +468,20 @@ const FarmerCalls = () => {
       const noContactResults = ['sem_resposta', 'ocupado', 'caixa_postal', 'numero_errado'];
 
       if (noContactResults.includes(callResult)) {
-        toast({
-          title: 'Registrado — tente novamente',
+        toast.success('Registrado — tente novamente', {
           description: `Tentativa ${attemptNumber} anotada. Reagende para manter o contato ativo.`,
         });
       } else if (rev > 0) {
-        toast({
-          title: `🎯 Boa! ${rev.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' })} gerados`,
+        toast.success(`🎯 Boa! ${rev.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' })} gerados`, {
           description: 'Receita registrada com sucesso.',
         });
       } else {
-        toast({ title: 'Ligação registrada com sucesso' });
+        toast.success('Ligação registrada com sucesso');
       }
 
       resetForm(); setShowNewCall(false); loadCallLogs();
     } catch (error) {
-      toast({ title: 'Erro ao salvar ligação', variant: 'destructive' });
+      toast.error('Erro ao salvar ligação');
     } finally { setSaving(false); }
   };
 

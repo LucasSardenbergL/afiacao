@@ -5,7 +5,7 @@ import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { supabase } from '@/integrations/supabase/client';
 import { useAuth } from '@/contexts/AuthContext';
-import { useToast } from '@/hooks/use-toast';
+import { toast } from 'sonner';
 import { ClipboardCheck, Loader2, CheckCircle2, Package } from 'lucide-react';
 
 interface SendingQualityChecklistProps {
@@ -31,7 +31,6 @@ const CRITERIA = [
 
 export const SendingQualityChecklist = ({ orderId, userId }: SendingQualityChecklistProps) => {
   const { user } = useAuth();
-  const { toast } = useToast();
   const [existingLog, setExistingLog] = useState<QualityLog | null>(null);
   const [checks, setChecks] = useState({
     is_clean: false,
@@ -107,18 +106,15 @@ export const SendingQualityChecklist = ({ orderId, userId }: SendingQualityCheck
         if (error) throw error;
       }
 
-      toast({
-        title: 'Avaliação salva!',
+      toast.success('Avaliação salva!', {
         description: `Qualidade do envio: ${score}%`,
       });
 
       await loadExisting();
     } catch (err) {
       console.error('Error saving quality log:', err);
-      toast({
-        title: 'Erro',
+      toast.error('Erro', {
         description: 'Não foi possível salvar a avaliação',
-        variant: 'destructive',
       });
     } finally {
       setSaving(false);

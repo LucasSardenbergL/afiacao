@@ -6,7 +6,7 @@ import {
   Loader2, Plus, Minus, Trash2, Wrench, AlertCircle, MapPin, Clock, Check,
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
-import { useToast } from '@/hooks/use-toast';
+import { toast } from 'sonner';
 import { DELIVERY_OPTIONS, TIME_SLOTS, DeliveryOption } from '@/types';
 import type {
   UserTool, ServiceCartItem, CartItem, AddressData,
@@ -61,8 +61,6 @@ export function ServiceItemForm({
   onUpdateServiceServico, onUpdateServiceNotes, onUpdateServicePhotos,
   onVoiceItemsIdentified, getFilteredServicos, getServicePrice, setAddToolDialogOpen,
 }: ServiceItemFormProps) {
-  const { toast } = useToast();
-
   return (
     <Card>
       <CardHeader className="pb-2">
@@ -140,7 +138,7 @@ export function ServiceItemForm({
                           <Button size="sm" variant="outline" className="h-8 w-8 p-0" onClick={() => {
                             const maxQty = item.userTool.quantity || 1;
                             if (item.quantity >= maxQty) {
-                              toast({ title: 'Quantidade máxima atingida', description: `Esta ferramenta possui apenas ${maxQty} unidade(s).` });
+                              toast.success('Quantidade máxima atingida', { description: `Esta ferramenta possui apenas ${maxQty} unidade(s).` });
                               return;
                             }
                             onUpdateQuantity(cartIdx, 1);

@@ -7,7 +7,7 @@ import { Badge } from '@/components/ui/badge';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { supabase } from '@/integrations/supabase/client';
 import { useAuth } from '@/contexts/AuthContext';
-import { useToast } from '@/hooks/use-toast';
+import { toast } from 'sonner';
 import { Loader2, Save, DollarSign } from 'lucide-react';
 
 interface DefaultPrice {
@@ -27,7 +27,6 @@ interface ToolCategory {
 const AdminPriceTable = () => {
   const navigate = useNavigate();
   const { user, loading: authLoading } = useAuth();
-  const { toast } = useToast();
 
   const [prices, setPrices] = useState<DefaultPrice[]>([]);
   const [categories, setCategories] = useState<ToolCategory[]>([]);
@@ -104,18 +103,15 @@ const AdminPriceTable = () => {
         if (error) throw error;
       }
 
-      toast({
-        title: 'Tabela atualizada!',
+      toast.success('Tabela atualizada!', {
         description: `${updates.length} preço(s) alterado(s)`,
       });
 
       loadData();
     } catch (error) {
       console.error('Error saving prices:', error);
-      toast({
-        title: 'Erro ao salvar',
+      toast.error('Erro ao salvar', {
         description: 'Não foi possível atualizar os preços',
-        variant: 'destructive',
       });
     } finally {
       setSaving(false);

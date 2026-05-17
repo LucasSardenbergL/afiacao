@@ -1,5 +1,5 @@
 import { useState, useMemo, useCallback } from 'react';
-import { useToast } from '@/hooks/use-toast';
+import { toast } from 'sonner';
 import type { OmieServico } from '@/services/omieService';
 import type {
   Product,
@@ -19,8 +19,6 @@ interface UseCartArgs {
 }
 
 export function useCart({ getProductPrice, getServicePrice, servicos }: UseCartArgs) {
-  const { toast } = useToast();
-
   const [cart, setCart] = useState<CartItem[]>([]);
   const [tintPendingProduct, setTintPendingProduct] = useState<Product | null>(null);
   const [activeTab, setActiveTab] = useState('oben');
@@ -171,10 +169,10 @@ export function useCart({ getProductPrice, getServicePrice, servicos }: UseCartA
         ];
       });
       if (alreadyExists) {
-        toast({ title: 'Já adicionada', description: 'Esta ferramenta já está no carrinho.' });
+        toast.success('Já adicionada', { description: 'Esta ferramenta já está no carrinho.' });
       }
     },
-    [toast],
+    [],
   );
 
   const updateServiceServico = useCallback(
@@ -221,7 +219,7 @@ export function useCart({ getProductPrice, getServicePrice, servicos }: UseCartA
           if (c.type === 'service') {
             const maxQty = (c as ServiceCartItem).userTool.quantity || 1;
             if (newQty > maxQty) {
-              toast({ title: 'Quantidade máxima', description: `Máximo: ${maxQty} unidades.` });
+              toast.success('Quantidade máxima', { description: `Máximo: ${maxQty} unidades.` });
               return c;
             }
           }
@@ -229,7 +227,7 @@ export function useCart({ getProductPrice, getServicePrice, servicos }: UseCartA
         }),
       );
     },
-    [toast],
+    [],
   );
 
   const updateProductPrice = useCallback((index: number, price: number) => {

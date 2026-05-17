@@ -9,7 +9,7 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@
 import { COMPANIES, ALL_COMPANIES, type Company } from '@/contexts/CompanyContext';
 import { getDRE, DRE_LINHAS, type FinDRE } from '@/services/financeiroService';
 import { getOrcamento, upsertOrcamento, type OrcamentoLinha } from '@/services/financeiroV2Service';
-import { useToast } from '@/hooks/use-toast';
+import { toast } from 'sonner';
 import { Loader2, Save, Building2, Calendar, TrendingUp, TrendingDown, Target } from 'lucide-react';
 
 const fmt = (v: number) => v.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' });
@@ -24,7 +24,6 @@ const dreLinhas = DRE_LINHAS.map(l => l.value);
 const dreLabelMap = Object.fromEntries(DRE_LINHAS.map(l => [l.value, l.label]));
 
 const FinanceiroOrcamento = () => {
-  const { toast } = useToast();
   const [company, setCompany] = useState<Company>('oben');
   const [ano, setAno] = useState(new Date().getFullYear());
   const [orcamento, setOrcamento] = useState<OrcamentoLinha[]>([]);
@@ -49,7 +48,7 @@ const FinanceiroOrcamento = () => {
       for (const o of orc) d[`${o.mes}_${o.dre_linha}`] = o.valor_orcado;
       setDraft(d);
     } catch (e: any) {
-      toast({ title: 'Erro', description: e.message, variant: 'destructive' });
+      toast.error('Erro', { description: e.message });
     } finally {
       setLoading(false);
     }
@@ -67,11 +66,11 @@ const FinanceiroOrcamento = () => {
         linhas.push({ company, ano, mes: Number(mesStr), dre_linha: linha, valor_orcado: val });
       }
       await upsertOrcamento(linhas);
-      toast({ title: 'Orçamento salvo' });
+      toast.success('Orçamento salvo');
       setEditMode(false);
       load();
     } catch (e: any) {
-      toast({ title: 'Erro', description: e.message, variant: 'destructive' });
+      toast.error('Erro', { description: e.message });
     } finally {
       setSaving(false);
     }

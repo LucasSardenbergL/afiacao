@@ -4,7 +4,7 @@ import { Button } from '@/components/ui/button';
 import { Textarea } from '@/components/ui/textarea';
 import { supabase } from '@/integrations/supabase/client';
 import { useAuth } from '@/contexts/AuthContext';
-import { useToast } from '@/hooks/use-toast';
+import { toast } from 'sonner';
 import { Send, Loader2 } from 'lucide-react';
 import { format } from 'date-fns';
 import { ptBR } from 'date-fns/locale';
@@ -26,7 +26,6 @@ interface OrderChatProps {
 
 export function OrderChat({ orderId }: OrderChatProps) {
   const { user, isStaff } = useAuth();
-  const { toast } = useToast();
   const [messages, setMessages] = useState<Message[]>([]);
   const [newMessage, setNewMessage] = useState('');
   const [sending, setSending] = useState(false);
@@ -94,7 +93,7 @@ export function OrderChat({ orderId }: OrderChatProps) {
       setNewMessage('');
     } catch (error) {
       console.error('Error sending message:', error);
-      toast({ title: 'Erro ao enviar mensagem', variant: 'destructive' });
+      toast.error('Erro ao enviar mensagem');
     } finally {
       setSending(false);
     }

@@ -8,7 +8,7 @@ import { Checkbox } from '@/components/ui/checkbox';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from '@/components/ui/dialog';
 import { supabase } from '@/integrations/supabase/client';
 import { useAuth } from '@/contexts/AuthContext';
-import { useToast } from '@/hooks/use-toast';
+import { toast } from 'sonner';
 import { CalendarClock, Plus, Loader2, Trash2, Wrench, Pause, Play } from 'lucide-react';
 import { format, addDays } from 'date-fns';
 import { ptBR } from 'date-fns/locale';
@@ -51,7 +51,6 @@ const FREQUENCY_OPTIONS = [
 
 const RecurringSchedules = () => {
   const { user } = useAuth();
-  const { toast } = useToast();
   const [schedules, setSchedules] = useState<Schedule[]>([]);
   const [userTools, setUserTools] = useState<UserTool[]>([]);
   const [addresses, setAddresses] = useState<AddressData[]>([]);
@@ -122,13 +121,13 @@ const RecurringSchedules = () => {
         next_order_date: format(nextDate, 'yyyy-MM-dd'),
       });
       if (error) throw error;
-      toast({ title: 'Agendamento criado!', description: `Próximo pedido em ${format(nextDate, "dd 'de' MMMM", { locale: ptBR })}` });
+      toast.success('Agendamento criado!', { description: `Próximo pedido em ${format(nextDate, "dd 'de' MMMM", { locale: ptBR })}` });
       setDialogOpen(false);
       setSelectedTools([]);
       loadData();
     } catch (error) {
       console.error('Error creating schedule:', error);
-      toast({ title: 'Erro', description: 'Não foi possível criar o agendamento', variant: 'destructive' });
+      toast.error('Erro', { description: 'Não foi possível criar o agendamento' });
     } finally {
       setSaving(false);
     }
@@ -141,7 +140,7 @@ const RecurringSchedules = () => {
         .eq('id', scheduleId);
       if (error) throw error;
       setSchedules(prev => prev.map(s => s.id === scheduleId ? { ...s, is_active: !currentActive } : s));
-      toast({ title: !currentActive ? 'Agendamento ativado' : 'Agendamento pausado' });
+      toast.success(!currentActive ? 'Agendamento ativado' : 'Agendamento pausado');
     } catch (error) {
       console.error('Error toggling schedule:', error);
     }
@@ -152,7 +151,7 @@ const RecurringSchedules = () => {
       const { error } = await (supabase as any).from('recurring_schedules').delete().eq('id', scheduleId);
       if (error) throw error;
       setSchedules(prev => prev.filter(s => s.id !== scheduleId));
-      toast({ title: 'Agendamento removido' });
+      toast.success('Agendamento removido');
     } catch (error) {
       console.error('Error deleting schedule:', error);
     }

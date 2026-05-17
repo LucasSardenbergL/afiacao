@@ -7,7 +7,7 @@ import { Badge } from '@/components/ui/badge';
 import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { supabase } from '@/integrations/supabase/client';
 import { useAuth } from '@/contexts/AuthContext';
-import { useToast } from '@/hooks/use-toast';
+import { toast } from 'sonner';
 import { Loader2, Search, RefreshCw, Package, ShoppingCart, BarChart3, Building2, ChevronLeft } from 'lucide-react';
 
 type Account = 'oben' | 'colacor';
@@ -28,7 +28,6 @@ interface Product {
 const SalesProducts = () => {
   const navigate = useNavigate();
   const { isStaff, loading: authLoading } = useAuth();
-  const { toast } = useToast();
 
   const [account, setAccount] = useState<Account>('oben');
   const [products, setProducts] = useState<Product[]>([]);
@@ -87,18 +86,15 @@ const SalesProducts = () => {
         nextPage = data.nextPage || null;
       }
 
-      toast({
-        title: 'Sincronização concluída!',
+      toast.success('Sincronização concluída!', {
         description: `${totalSynced} produtos sincronizados (${account === 'oben' ? 'Oben' : 'Colacor'}).`,
       });
 
       await loadProducts();
     } catch (error: any) {
       console.error('Erro ao sincronizar:', error);
-      toast({
-        title: 'Erro na sincronização',
+      toast.error('Erro na sincronização', {
         description: error.message || 'Não foi possível sincronizar os produtos.',
-        variant: 'destructive',
       });
     } finally {
       setSyncing(false);
@@ -118,17 +114,14 @@ const SalesProducts = () => {
         totalUpdated += data.totalUpdated || 0;
         nextPage = data.nextPage || null;
       }
-      toast({
-        title: 'Estoque atualizado!',
+      toast.success('Estoque atualizado!', {
         description: `${totalUpdated} produtos com estoque atualizado (${account === 'oben' ? 'Oben' : 'Colacor'}).`,
       });
       await loadProducts();
     } catch (error: any) {
       console.error('Erro ao sincronizar estoque:', error);
-      toast({
-        title: 'Erro ao atualizar estoque',
+      toast.error('Erro ao atualizar estoque', {
         description: error.message || 'Não foi possível sincronizar o estoque.',
-        variant: 'destructive',
       });
     } finally {
       setSyncingStock(false);

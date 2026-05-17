@@ -17,7 +17,7 @@ import {
   Minus, AlertTriangle, Loader2, ChevronRight, Phone, FileText,
   ChevronDown, ChevronUp, Type, Send
 } from 'lucide-react';
-import { useToast } from '@/hooks/use-toast';
+import { toast } from 'sonner';
 import { cn } from '@/lib/utils';
 
 // ─── Helpers ───────────────────────────────────────────────────────
@@ -56,7 +56,6 @@ type InputMode = 'voice' | 'text';
 const FarmerCopilot = () => {
   const navigate = useNavigate();
   const { user, isStaff } = useAuth();
-  const { toast } = useToast();
   const copilot = useCopilotEngine();
   const { getActivePlan } = useTacticalPlan();
   const [selectedCustomer, setSelectedCustomer] = useState<string>('');
@@ -156,7 +155,7 @@ const FarmerCopilot = () => {
       if (plan) {
         setActivePlan(plan);
         setShowPlan(true);
-        toast({ title: 'PTPL carregado', description: `Plano ${plan.planType} ativo para ${plan.customerName}` });
+        toast.success('PTPL carregado', { description: `Plano ${plan.planType} ativo para ${plan.customerName}` });
         bundleContext = plan.topBundle;
         if (customerContext) {
           customerContext.activePlan = {
@@ -172,7 +171,7 @@ const FarmerCopilot = () => {
     }
 
     return { customerContext, customerName, bundleContext };
-  }, [selectedCustomer, user, getActivePlan, toast]);
+  }, [selectedCustomer, user, getActivePlan]);
 
   // Start voice recording
   const handleStartVoice = useCallback(async () => {
@@ -198,20 +197,18 @@ const FarmerCopilot = () => {
         },
       });
 
-      toast({ title: 'Copiloto ativado', description: 'Transcrição em tempo real iniciada' });
+      toast.success('Copiloto ativado', { description: 'Transcrição em tempo real iniciada' });
     } catch (err: any) {
       console.error('Start error:', err);
       // Auto-fallback to text mode
       setInputMode('text');
-      toast({
-        variant: 'destructive',
-        title: 'Voz indisponível',
+      toast.error('Voz indisponível', {
         description: 'Transcrição por voz falhou. Modo texto ativado automaticamente.',
       });
     } finally {
       setIsConnecting(false);
     }
-  }, [selectedCustomer, user, copilot, scribe, toast, prepareSessionContext]);
+  }, [selectedCustomer, user, copilot, scribe, prepareSessionContext]);
 
   // Start text mode session
   const handleStartText = useCallback(async () => {
@@ -226,14 +223,14 @@ const FarmerCopilot = () => {
         bundleContext,
       });
 
-      toast({ title: 'Copiloto ativado', description: 'Modo texto — cole ou digite trechos da conversa' });
+      toast.success('Copiloto ativado', { description: 'Modo texto — cole ou digite trechos da conversa' });
     } catch (err: any) {
       console.error('Start error:', err);
-      toast({ variant: 'destructive', title: 'Erro', description: err.message || 'Falha ao iniciar copiloto' });
+      toast.error('Erro', { description: err.message || 'Falha ao iniciar copiloto' });
     } finally {
       setIsConnecting(false);
     }
-  }, [selectedCustomer, copilot, toast, prepareSessionContext]);
+  }, [selectedCustomer, copilot, prepareSessionContext]);
 
   // Unified start handler
   const handleStart = useCallback(async () => {
@@ -247,7 +244,7 @@ const FarmerCopilot = () => {
   // Analyze manual text — reuses same pipeline
   const handleAnalyzeManualText = useCallback(async () => {
     if (!manualText.trim() || manualText.trim().length < 10) {
-      toast({ variant: 'destructive', title: 'Texto curto', description: 'Digite pelo menos 10 caracteres para análise.' });
+      toast.error('Texto curto', { description: 'Digite pelo menos 10 caracteres para análise.' });
       return;
     }
     setIsManualAnalyzing(true);
@@ -257,7 +254,7 @@ const FarmerCopilot = () => {
     await copilot.triggerAnalysis();
     setManualText('');
     setIsManualAnalyzing(false);
-  }, [manualText, copilot, toast]);
+  }, [manualText, copilot]);
 
   // Stop recording
   const handleStop = useCallback(async () => {
@@ -265,8 +262,8 @@ const FarmerCopilot = () => {
       scribe.disconnect();
     }
     await copilot.endSession();
-    toast({ title: 'Sessão encerrada' });
-  }, [scribe, copilot, toast, inputMode]);
+    toast.success('Sessão encerrada');
+  }, [scribe, copilot, inputMode]);
 
   // Copy suggestion
   const handleCopySuggestion = useCallback((text: string) => {

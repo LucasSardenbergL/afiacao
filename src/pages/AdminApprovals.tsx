@@ -5,7 +5,7 @@ import { Card, CardContent } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { supabase } from '@/integrations/supabase/client';
 import { useAuth } from '@/contexts/AuthContext';
-import { useToast } from '@/hooks/use-toast';
+import { toast } from 'sonner';
 import { Loader2, Check, X, UserCheck, Clock, Link2, AlertTriangle } from 'lucide-react';
 
 interface PendingUser {
@@ -22,7 +22,6 @@ interface PendingUser {
 const AdminApprovals = () => {
   const navigate = useNavigate();
   const { user, isStaff, loading: authLoading } = useAuth();
-  const { toast } = useToast();
   const [pendingUsers, setPendingUsers] = useState<PendingUser[]>([]);
   const [loading, setLoading] = useState(true);
   const [processing, setProcessing] = useState<string | null>(null);
@@ -146,43 +145,35 @@ const AdminApprovals = () => {
       // Step 3: Show feedback
       switch (omieResult) {
         case 'linked':
-          toast({
-            title: 'Aprovado e vinculado ao Omie ✓',
+          toast.success('Aprovado e vinculado ao Omie ✓', {
             description: `${pendingUser.name} foi aprovado e vinculado automaticamente.`,
           });
           break;
         case 'already_linked':
-          toast({
-            title: 'Usuário aprovado',
+          toast.success('Usuário aprovado', {
             description: 'Vínculo com Omie já existia.',
           });
           break;
         case 'not_found':
-          toast({
-            title: 'Aprovado — sem vínculo Omie',
+          toast.success('Aprovado — sem vínculo Omie', {
             description: 'Cliente não encontrado no Omie. Vincule manualmente se necessário.',
           });
           break;
         case 'no_data':
-          toast({
-            title: 'Usuário aprovado',
+          toast.success('Usuário aprovado', {
             description: 'Sem CPF/CNPJ para busca automática no Omie.',
           });
           break;
         case 'error':
-          toast({
-            title: 'Aprovado — erro no vínculo Omie',
+          toast.error('Aprovado — erro no vínculo Omie', {
             description: 'O usuário foi aprovado, mas a vinculação Omie falhou. Tente vincular manualmente.',
-            variant: 'destructive',
           });
           break;
       }
     } catch (error) {
       console.error('Error approving user:', error);
-      toast({
-        title: 'Erro',
+      toast.error('Erro', {
         description: 'Não foi possível aprovar o usuário.',
-        variant: 'destructive',
       });
     } finally {
       setProcessing(null);
@@ -200,16 +191,13 @@ const AdminApprovals = () => {
       if (error) throw error;
 
       setPendingUsers(prev => prev.filter(u => u.user_id !== profileUserId));
-      toast({
-        title: 'Cadastro rejeitado',
+      toast.success('Cadastro rejeitado', {
         description: 'O usuário foi removido.',
       });
     } catch (error) {
       console.error('Error rejecting user:', error);
-      toast({
-        title: 'Erro',
+      toast.error('Erro', {
         description: 'Não foi possível rejeitar o usuário.',
-        variant: 'destructive',
       });
     } finally {
       setProcessing(null);

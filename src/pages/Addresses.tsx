@@ -6,7 +6,7 @@ import { supabase } from '@/integrations/supabase/client';
 import { MapPin, Plus, Loader2, Home, Building, Trash2, Cloud, X, Truck, Info } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip';
-import { useToast } from '@/hooks/use-toast';
+import { toast } from 'sonner';
 import {
   Dialog,
   DialogContent,
@@ -45,7 +45,6 @@ const Addresses = () => {
   const [showAddDialog, setShowAddDialog] = useState(false);
   const [saving, setSaving] = useState(false);
   const [fetchingCep, setFetchingCep] = useState(false);
-  const { toast } = useToast();
 
   const [newAddress, setNewAddress] = useState({
     label: '',
@@ -68,7 +67,7 @@ const Addresses = () => {
       const data = await response.json();
       
       if (data.erro) {
-        toast({ title: 'CEP não encontrado', variant: 'destructive' });
+        toast.error('CEP não encontrado');
         return;
       }
 
@@ -133,9 +132,7 @@ const Addresses = () => {
       .update({ is_default: true })
       .eq('id', addressId);
 
-    toast({
-      title: 'Endereço padrão atualizado',
-    });
+    toast.success('Endereço padrão atualizado');
     
     loadAddresses();
   };
@@ -143,10 +140,8 @@ const Addresses = () => {
   const handleDelete = async (addressId: string) => {
     const address = addresses.find(a => a.id === addressId);
     if (address?.is_from_omie) {
-      toast({
-        title: 'Não é possível excluir',
+      toast.error('Não é possível excluir', {
         description: 'Este endereço está sincronizado com o Omie',
-        variant: 'destructive',
       });
       return;
     }
@@ -157,25 +152,17 @@ const Addresses = () => {
       .eq('id', addressId);
 
     if (!error) {
-      toast({
-        title: 'Endereço removido',
-      });
+      toast.success('Endereço removido');
       loadAddresses();
     } else {
-      toast({
-        title: 'Erro ao remover endereço',
-        variant: 'destructive',
-      });
+      toast.error('Erro ao remover endereço');
     }
   };
 
   const handleAddAddress = async () => {
     if (!newAddress.label || !newAddress.street || !newAddress.number || 
         !newAddress.neighborhood || !newAddress.city || !newAddress.state || !newAddress.zip_code) {
-      toast({
-        title: 'Preencha todos os campos obrigatórios',
-        variant: 'destructive',
-      });
+      toast.error('Preencha todos os campos obrigatórios');
       return;
     }
 
@@ -202,9 +189,7 @@ const Addresses = () => {
     setSaving(false);
 
     if (!error) {
-      toast({
-        title: 'Endereço adicionado',
-      });
+      toast.success('Endereço adicionado');
       setShowAddDialog(false);
       setNewAddress({
         label: '',
@@ -218,10 +203,7 @@ const Addresses = () => {
       });
       loadAddresses();
     } else {
-      toast({
-        title: 'Erro ao adicionar endereço',
-        variant: 'destructive',
-      });
+      toast.error('Erro ao adicionar endereço');
     }
   };
 

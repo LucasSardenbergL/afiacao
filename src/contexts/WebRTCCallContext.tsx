@@ -2,7 +2,7 @@ import { createContext, useContext, useEffect, useRef, useState, useCallback, ty
 import { SipClient } from '@/lib/sip/sip-client';
 import type { SipCallState } from '@/lib/sip/types';
 import { invokeFunction } from '@/lib/invoke-function';
-import { useToast } from '@/hooks/use-toast';
+import { toast } from 'sonner';
 import { normalizeBrPhone, formatBrPhone } from '@/lib/phone';
 import { mixPrerollWithMic } from '@/lib/sip/audio-preroll';
 import { useTranscription } from '@/hooks/useTranscription';
@@ -71,7 +71,6 @@ interface ProviderProps {
 }
 
 export function WebRTCCallProvider({ children }: ProviderProps) {
-  const { toast } = useToast();
   const [callState, setCallState] = useState<WebRTCCallState>('idle');
   const [callDuration, setCallDuration] = useState(0);
   const [localStream, setLocalStream] = useState<MediaStream | null>(null);
@@ -108,7 +107,7 @@ export function WebRTCCallProvider({ children }: ProviderProps) {
         client.on('remoteStream', (s) => setRemoteStream(s));
         client.on('error', (e) => {
           setError(e.message);
-          toast({ title: 'Erro WebRTC', description: e.message, variant: 'destructive' });
+          toast.error('Erro WebRTC', { description: e.message });
         });
 
         client.connect();
@@ -196,7 +195,7 @@ export function WebRTCCallProvider({ children }: ProviderProps) {
     if (normalized.length < 10) {
       const msg = 'Telefone inválido. É necessário DDD + número.';
       setError(msg);
-      toast({ title: 'Erro', description: msg, variant: 'destructive' });
+      toast.error('Erro', { description: msg });
       return;
     }
 
@@ -223,21 +222,21 @@ export function WebRTCCallProvider({ children }: ProviderProps) {
       }
 
       clientRef.current.makeCall(normalized, streamForCall);
-      toast({ title: '📞 Chamada iniciada', description: `Ligando para ${formatBrPhone(normalized)}...` });
+      toast.success('📞 Chamada iniciada', { description: `Ligando para ${formatBrPhone(normalized)}...` });
     } catch (err) {
       const msg = err instanceof Error ? err.message : 'Erro ao iniciar chamada';
       setError(msg);
       cleanupAudioResources();
-      toast({ title: 'Erro na chamada', description: msg, variant: 'destructive' });
+      toast.error('Erro na chamada', { description: msg });
     }
-  }, [toast, prerollUrl]);
+  }, [prerollUrl]);
 
   const endCall = useCallback(async () => {
     clientRef.current?.hangUp();
     cleanupAudioResources();
     setIsMuted(false);
-    toast({ title: 'Chamada encerrada' });
-  }, [toast]);
+    toast.success('Chamada encerrada');
+  }, []);
 
   const toggleMute = useCallback(() => {
     if (!clientRef.current) return;

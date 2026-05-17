@@ -6,7 +6,7 @@ import { Label } from '@/components/ui/label';
 import { cn } from '@/lib/utils';
 import { z } from 'zod';
 import { supabase } from '@/integrations/supabase/client';
-import { useToast } from '@/hooks/use-toast';
+import { toast } from 'sonner';
 import {
   documentSchema, signupSchema, BRAZILIAN_STATES,
   formatPhone, formatZipCode,
@@ -29,7 +29,6 @@ interface SignupFormProps {
 }
 
 export function SignupForm({ formData, onInputChange, isLoading, onFinalSubmit, onSwitchToLogin, toolCategories }: SignupFormProps) {
-  const { toast } = useToast();
   const [signupStep, setSignupStep] = useState<SignupStep>('document');
   const [isCheckingDocument, setIsCheckingDocument] = useState(false);
   const [showPassword, setShowPassword] = useState(false);
@@ -77,7 +76,7 @@ export function SignupForm({ formData, onInputChange, isLoading, onFinalSubmit, 
       const { data: existingProfile } = await supabase.from('profiles').select('id').eq('document', docLimpo).maybeSingle();
       if (existingProfile) {
         setExistingUserError(true);
-        toast({ title: 'Cadastro existente', description: 'Este documento já está cadastrado. Faça login com seu e-mail.', variant: 'destructive' });
+        toast.error('Cadastro existente', { description: 'Este documento já está cadastrado. Faça login com seu e-mail.' });
         setIsCheckingDocument(false);
         return;
       }
@@ -90,7 +89,7 @@ export function SignupForm({ formData, onInputChange, isLoading, onFinalSubmit, 
       setCnae(data.cnae || null);
       setCnaeDescricao(data.cnaeDescricao || null);
       if (data.isEmployee) {
-        toast({ title: 'Funcionário identificado!', description: 'Você terá acesso ao painel administrativo após o cadastro.' });
+        toast.success('Funcionário identificado!', { description: 'Você terá acesso ao painel administrativo após o cadastro.' });
       }
       if (data.cliente) {
         const cliente = data.cliente as OmieClienteData;
@@ -106,15 +105,15 @@ export function SignupForm({ formData, onInputChange, isLoading, onFinalSubmit, 
         onInputChange('city', cliente.cidade || '');
         onInputChange('state', cliente.estado || '');
         onInputChange('zipCode', cliente.cep ? formatZipCode(cliente.cep) : '');
-        toast({ title: data.found ? 'Cliente encontrado!' : 'Dados carregados', description: data.found ? 'Seus dados foram carregados do cadastro existente.' : 'Dados da empresa carregados. Complete o cadastro.' });
+        toast.success(data.found ? 'Cliente encontrado!' : 'Dados carregados', { description: data.found ? 'Seus dados foram carregados do cadastro existente.' : 'Dados da empresa carregados. Complete o cadastro.' });
       } else {
         setOmieCliente(null);
-        toast({ title: 'Novo cadastro', description: 'Preencha seus dados para criar uma conta.' });
+        toast.success('Novo cadastro', { description: 'Preencha seus dados para criar uma conta.' });
       }
       setSignupStep('form');
     } catch (error) {
       console.error('Erro ao verificar documento:', error);
-      toast({ title: 'Erro ao verificar documento', description: 'Não foi possível verificar o documento. Tente novamente.', variant: 'destructive' });
+      toast.error('Erro ao verificar documento', { description: 'Não foi possível verificar o documento. Tente novamente.' });
     } finally {
       setIsCheckingDocument(false);
     }

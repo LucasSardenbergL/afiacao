@@ -2,7 +2,7 @@ import { useState, useRef } from 'react';
 import { Camera, Loader2, X, CheckCircle, AlertCircle, Image } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { supabase } from '@/integrations/supabase/client';
-import { useToast } from '@/hooks/use-toast';
+import { toast } from 'sonner';
 import { cn } from '@/lib/utils';
 
 interface ToolCategory {
@@ -32,7 +32,6 @@ export function ToolImageIdentifier({ categories, onCategoryIdentified, onClose,
   const [preview, setPreview] = useState<string | null>(null);
   const [result, setResult] = useState<IdentificationResult | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
-  const { toast } = useToast();
 
   const handleFileSelect = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
@@ -40,13 +39,13 @@ export function ToolImageIdentifier({ categories, onCategoryIdentified, onClose,
 
     // Validate file type
     if (!file.type.startsWith('image/')) {
-      toast({ title: 'Selecione uma imagem', variant: 'destructive' });
+      toast.error('Selecione uma imagem');
       return;
     }
 
     // Validate file size (max 5MB)
     if (file.size > 5 * 1024 * 1024) {
-      toast({ title: 'Imagem muito grande', description: 'Máximo 5MB', variant: 'destructive' });
+      toast.error('Imagem muito grande', { description: 'Máximo 5MB' });
       return;
     }
 
@@ -84,10 +83,8 @@ export function ToolImageIdentifier({ categories, onCategoryIdentified, onClose,
       setResult(data as IdentificationResult);
     } catch (error) {
       console.error('Erro ao analisar imagem:', error);
-      toast({
-        title: 'Erro na análise',
+      toast.error('Erro na análise', {
         description: 'Não foi possível analisar a imagem. Tente novamente.',
-        variant: 'destructive',
       });
     } finally {
       setIsAnalyzing(false);
@@ -103,15 +100,12 @@ export function ToolImageIdentifier({ categories, onCategoryIdentified, onClose,
 
     if (matchedCategory) {
       onCategoryIdentified(matchedCategory.id, result.specs_detected || {});
-      toast({
-        title: 'Ferramenta identificada!',
+      toast.success('Ferramenta identificada!', {
         description: `${matchedCategory.name} selecionada`,
       });
     } else {
-      toast({
-        title: 'Categoria não encontrada',
+      toast.error('Categoria não encontrada', {
         description: `"${result.category_name}" não corresponde a nenhuma categoria cadastrada. Selecione manualmente.`,
-        variant: 'destructive',
       });
     }
   };

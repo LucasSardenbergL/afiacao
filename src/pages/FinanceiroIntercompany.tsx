@@ -8,13 +8,12 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@
 import { COMPANIES, ALL_COMPANIES, type Company } from '@/contexts/CompanyContext';
 import { getEliminacoes, upsertEliminacao, deleteEliminacao, type EliminacaoRegra } from '@/services/financeiroV2Service';
 import { supabase } from '@/integrations/supabase/client';
-import { useToast } from '@/hooks/use-toast';
+import { toast } from 'sonner';
 import { Loader2, Plus, Trash2, ArrowRight, Building2, Save, BarChart3 } from 'lucide-react';
 
 const fmt = (v: number) => v.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' });
 
 const FinanceiroIntercompany = () => {
-  const { toast } = useToast();
   const [regras, setRegras] = useState<EliminacaoRegra[]>([]);
   const [loading, setLoading] = useState(true);
   const [consolidado, setConsolidado] = useState<any[]>([]);
@@ -45,7 +44,7 @@ const FinanceiroIntercompany = () => {
         setConsolidado(cons || []);
       } catch { /* RPC may not exist */ }
     } catch (e: any) {
-      toast({ title: 'Erro', description: e.message, variant: 'destructive' });
+      toast.error('Erro', { description: e.message });
     } finally {
       setLoading(false);
     }
@@ -54,7 +53,7 @@ const FinanceiroIntercompany = () => {
   useEffect(() => { load(); }, [load]);
 
   const handleAdd = async () => {
-    if (!newRegra.descricao) return toast({ title: 'Preencha a descrição' });
+    if (!newRegra.descricao) { toast.success('Preencha a descrição'); return; }
     try {
       await upsertEliminacao({
         ...newRegra,
@@ -64,17 +63,17 @@ const FinanceiroIntercompany = () => {
         categoria_destino: null,
         ativo: true,
       } as any);
-      toast({ title: 'Regra criada' });
+      toast.success('Regra criada');
       setNewRegra(prev => ({ ...prev, descricao: '', cnpj_origem: '', cnpj_destino: '' }));
       load();
     } catch (e: any) {
-      toast({ title: 'Erro', description: e.message, variant: 'destructive' });
+      toast.error('Erro', { description: e.message });
     }
   };
 
   const handleDelete = async (id: string) => {
     await deleteEliminacao(id);
-    toast({ title: 'Regra removida' });
+    toast.success('Regra removida');
     load();
   };
 

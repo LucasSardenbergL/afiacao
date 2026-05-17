@@ -19,7 +19,7 @@ import {
   Plus, FileText, Brain, DollarSign, Clock, Zap, BarChart3,
   AlertCircle, Layers
 } from 'lucide-react';
-import { useToast } from '@/hooks/use-toast';
+import { toast } from 'sonner';
 
 // ─── Helpers ───────────────────────────────────────────────────────
 const fmt = (v: number) => v.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' });
@@ -42,7 +42,6 @@ const profileLabels: Record<string, string> = {
 const FarmerTacticalPlan = () => {
   const navigate = useNavigate();
   const { user, isStaff } = useAuth();
-  const { toast } = useToast();
   const { plans, loading, generating, loadPlans, generatePlan, checkEfficiency, recordResult } = useTacticalPlan();
   const [customers, setCustomers] = useState<{ id: string; name: string; healthScore: number; churnRisk: number }[]>([]);
   const [expandedPlan, setExpandedPlan] = useState<string | null>(null);
