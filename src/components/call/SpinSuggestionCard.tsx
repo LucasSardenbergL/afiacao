@@ -1,7 +1,24 @@
-import { Loader2, AlertCircle, Lightbulb, AlertTriangle, ShoppingCart } from 'lucide-react';
+import {
+  Loader2,
+  AlertCircle,
+  Lightbulb,
+  AlertTriangle,
+  ShoppingCart,
+  Search,
+  GraduationCap,
+  Target,
+  TrendingUp,
+} from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { Badge } from '@/components/ui/badge';
-import type { SpinAnalysis, SpinAnalysisStatus, SpinStage } from '@/lib/spin/types';
+import type {
+  SpinAnalysis,
+  SpinAnalysisStatus,
+  SpinStage,
+  CopilotPlaybook,
+  TicketLeverage,
+  DecisionPushTactic,
+} from '@/lib/spin/types';
 
 interface SpinSuggestionCardProps {
   status: SpinAnalysisStatus;
@@ -27,16 +44,52 @@ const STAGE_COLOR: Record<SpinStage, string> = {
   closing: 'bg-purple-100 text-purple-700 border-purple-200 dark:bg-purple-950/40 dark:text-purple-300',
 };
 
+const PLAYBOOK_LABEL: Record<CopilotPlaybook, string> = {
+  discovery: 'Descoberta',
+  teach: 'Ensine',
+  close: 'Feche',
+};
+
+const PLAYBOOK_ICON: Record<CopilotPlaybook, typeof Search> = {
+  discovery: Search,
+  teach: GraduationCap,
+  close: Target,
+};
+
+const PLAYBOOK_COLOR: Record<CopilotPlaybook, string> = {
+  discovery: 'bg-blue-100 text-blue-700 border-blue-200 dark:bg-blue-950/40 dark:text-blue-300',
+  teach: 'bg-amber-100 text-amber-700 border-amber-200 dark:bg-amber-950/40 dark:text-amber-300',
+  close: 'bg-emerald-100 text-emerald-700 border-emerald-200 dark:bg-emerald-950/40 dark:text-emerald-300',
+};
+
+const LEVERAGE_LABEL: Record<TicketLeverage, string> = {
+  anchor_premium: 'Apresente o premium primeiro',
+  bundle: 'Sugira o sistema completo',
+  reframe_cost: 'Vire pra custo por m²',
+  none: '',
+};
+
+const TACTIC_LABEL: Record<DecisionPushTactic, string> = {
+  recommendation: 'Recomende com convicção',
+  risk_reversal: 'Tire o risco da mesa',
+  simplification: 'Simplifique a decisão',
+};
+
 /**
- * Card sticky no rodapé do TranscriptionPanel mostrando a sugestão SPIN atual.
+ * Card sticky no rodapé do TranscriptionPanel mostrando a sugestão do copilot adaptativo.
  * Vendedor LÊ literalmente o `exactPhrasing` da próxima ação.
+ *
+ * Renderiza por playbook (discovery/teach/close) com elementos extras:
+ * - teach → bloco amber com commercialInsight (dataPoint + reframe)
+ * - close → badge verde com decisionPushTactic JOLT
+ * - qualquer → bloco laranja de ticketLeverage quando tactic !== 'none'
  */
 export function SpinSuggestionCard({ status, analysis, error }: SpinSuggestionCardProps) {
   if (status === 'idle') {
     return (
       <div className="border-t border-border p-3 bg-muted/30">
         <div className="text-2xs text-muted-foreground text-center">
-          Copilot SPIN aguardando a primeira fala do cliente…
+          Copilot aguardando a primeira fala do cliente…
         </div>
       </div>
     );
@@ -59,7 +112,7 @@ export function SpinSuggestionCard({ status, analysis, error }: SpinSuggestionCa
         <div className="flex items-start gap-2 text-xs">
           <AlertCircle className="w-3.5 h-3.5 text-status-error shrink-0 mt-0.5" />
           <div>
-            <div className="font-medium text-status-error">Erro no copilot SPIN</div>
+            <div className="font-medium text-status-error">Erro no copilot</div>
             {error && <div className="text-muted-foreground mt-0.5 font-mono text-[10px]">{error}</div>}
           </div>
         </div>
@@ -69,19 +122,22 @@ export function SpinSuggestionCard({ status, analysis, error }: SpinSuggestionCa
 
   if (!analysis) return null;
 
-  const { spinStage, confidence, nextBestAction, risks, crossSellTriggers } = analysis;
+  const { spinStage, confidence, playbook, nextBestAction, ticketLeverage, risks, crossSellTriggers } = analysis;
   const stageColor = STAGE_COLOR[spinStage];
   const stageLabel = STAGE_LABEL[spinStage];
+  const playbookColor = PLAYBOOK_COLOR[playbook];
+  const playbookLabel = PLAYBOOK_LABEL[playbook];
+  const PlaybookIcon = PLAYBOOK_ICON[playbook];
 
   return (
     <div className="border-t border-border bg-card p-3 space-y-3">
-      {/* Header: stage + confidence */}
+      {/* Header: playbook + stage + confidence */}
       <div className="flex items-center justify-between gap-2">
-        <div className="flex items-center gap-2">
-          <Lightbulb className="w-4 h-4 text-status-warning" />
-          <span className="text-2xs font-medium uppercase tracking-wide text-muted-foreground">
-            Sugestão Copilot
-          </span>
+        <div className="flex items-center gap-2 flex-wrap">
+          <Badge variant="outline" className={cn('text-2xs gap-1', playbookColor)}>
+            <PlaybookIcon className="w-3 h-3" />
+            {playbookLabel}
+          </Badge>
           <Badge variant="outline" className={cn('text-2xs', stageColor)}>
             {stageLabel}
           </Badge>
@@ -93,8 +149,9 @@ export function SpinSuggestionCard({ status, analysis, error }: SpinSuggestionCa
 
       {/* Próxima ação — destaque visual */}
       <div className="space-y-1">
-        <div className="text-2xs uppercase tracking-wide text-muted-foreground">
-          Próxima pergunta sugerida:
+        <div className="text-2xs uppercase tracking-wide text-muted-foreground flex items-center gap-1">
+          <Lightbulb className="w-3 h-3 text-status-warning" />
+          Próxima fala sugerida:
         </div>
         <blockquote className="text-sm font-medium text-foreground border-l-2 border-status-success pl-3 italic">
           "{nextBestAction.exactPhrasing}"
@@ -104,7 +161,42 @@ export function SpinSuggestionCard({ status, analysis, error }: SpinSuggestionCa
         </div>
       </div>
 
-      {/* Riscos (se houver) */}
+      {/* TEACH: commercial insight (só quando playbook=teach + tem dataPoint) */}
+      {playbook === 'teach' && nextBestAction.commercialInsight && (
+        <div className="rounded-md border border-amber-200 dark:border-amber-900/50 bg-amber-50/50 dark:bg-amber-950/20 p-2.5 space-y-1.5">
+          <div className="text-2xs uppercase tracking-wide text-amber-700 dark:text-amber-300 flex items-center gap-1">
+            <GraduationCap className="w-3 h-3" />
+            Insight pra ensinar
+          </div>
+          <div className="text-xs text-foreground">{nextBestAction.commercialInsight.dataPoint}</div>
+          <div className="text-2xs text-muted-foreground">
+            <span className="font-medium">Reframe:</span> {nextBestAction.commercialInsight.reframe}
+          </div>
+        </div>
+      )}
+
+      {/* CLOSE: decisionPushTactic (só quando playbook=close + tem tactic) */}
+      {playbook === 'close' && nextBestAction.decisionPushTactic && (
+        <div className="flex items-center gap-1.5">
+          <Target className="w-3 h-3 text-emerald-600 dark:text-emerald-400" />
+          <span className="text-2xs font-medium text-emerald-700 dark:text-emerald-300">
+            Tática JOLT: {TACTIC_LABEL[nextBestAction.decisionPushTactic]}
+          </span>
+        </div>
+      )}
+
+      {/* TICKET LEVERAGE: sempre, exceto quando tactic=none */}
+      {ticketLeverage.tactic !== 'none' && (
+        <div className="rounded-md border border-orange-200 dark:border-orange-900/50 bg-orange-50/50 dark:bg-orange-950/20 p-2.5 space-y-1">
+          <div className="text-2xs uppercase tracking-wide text-orange-700 dark:text-orange-300 flex items-center gap-1">
+            <TrendingUp className="w-3 h-3" />
+            Subir ticket — {LEVERAGE_LABEL[ticketLeverage.tactic]}
+          </div>
+          <div className="text-2xs text-foreground">{ticketLeverage.suggestion}</div>
+        </div>
+      )}
+
+      {/* Riscos */}
       {risks.length > 0 && (
         <div className="flex flex-wrap gap-1.5">
           {risks.map((risk, idx) => (
@@ -125,7 +217,7 @@ export function SpinSuggestionCard({ status, analysis, error }: SpinSuggestionCa
         </div>
       )}
 
-      {/* Cross-sell hints (PR4 vai consumir) */}
+      {/* Cross-sell hints (PR9 vai consumir KB pra resolver pra SKU real) */}
       {crossSellTriggers.length > 0 && (
         <div className="flex flex-wrap gap-1.5 pt-2 border-t border-border/50">
           <div className="text-2xs text-muted-foreground flex items-center gap-1">

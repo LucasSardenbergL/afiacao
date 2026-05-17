@@ -20,11 +20,30 @@ export type RiskType =
 
 export type RiskSeverity = 'low' | 'medium' | 'high';
 
+/** Qual playbook o copilot está executando agora */
+export type CopilotPlaybook = 'discovery' | 'teach' | 'close';
+
+/** Alavanca tática de aumento de ticket sugerida */
+export type TicketLeverage = 'anchor_premium' | 'bundle' | 'reframe_cost' | 'none';
+
+/** Tática específica quando playbook=close (JOLT) */
+export type DecisionPushTactic = 'recommendation' | 'risk_reversal' | 'simplification';
+
+/** Entidade econômica detectada na transcrição (concorrente, preço, etc) */
+export interface ExtractedEntity {
+  type: 'competitor' | 'price' | 'volume' | 'product' | 'timeline' | 'decision_maker';
+  value: string;
+  context: string;  // trecho original onde apareceu
+  confidence: number;  // 0-1
+}
+
 export interface SpinAnalysis {
   /** Estágio atual da conversa segundo SPIN */
   spinStage: SpinStage;
   /** Confiança da análise (0-1) */
   confidence: number;
+  /** NOVO: qual playbook o copilot escolheu acionar agora */
+  playbook: CopilotPlaybook;
   /** O que o cliente revelou até agora */
   whatClientRevealed: {
     situationFacts: string[];
@@ -41,6 +60,18 @@ export interface SpinAnalysis {
     exactPhrasing: string;
     /** Por que essa ação agora — uma frase curta */
     whyNow: string;
+    /** NOVO: insight comercial pronto pra falar (só preenche quando playbook=teach) */
+    commercialInsight?: {
+      dataPoint: string;
+      reframe: string;
+    };
+    /** NOVO: tática JOLT específica (só preenche quando playbook=close) */
+    decisionPushTactic?: DecisionPushTactic;
+  };
+  /** NOVO: alavanca de ticket sugerida (qualquer playbook, 'none' se sem oportunidade) */
+  ticketLeverage: {
+    tactic: TicketLeverage;
+    suggestion: string;
   };
   /** Riscos detectados na conversa */
   risks: Array<{
@@ -53,6 +84,8 @@ export interface SpinAnalysis {
     productHint: string;
     triggerPhrase: string;
   }>;
+  /** NOVO: entidades econômicas extraídas (PR4+ vai persistir no perfil 360) */
+  entitiesExtracted: ExtractedEntity[];
 }
 
 export type SpinAnalysisStatus = 'idle' | 'analyzing' | 'ready' | 'error';
