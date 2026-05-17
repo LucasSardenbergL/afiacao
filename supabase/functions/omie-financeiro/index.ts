@@ -860,11 +860,14 @@ async function syncMovimentacoes(
 }
 
 // ═══════════════ CALCULAR DRE SNAPSHOT ═══════════════
+type Regime = "caixa" | "competencia";
+
 async function calcularDRE(
   db: SupabaseClient,
   company: Company,
   ano: number,
-  mes: number
+  mes: number,
+  regime: Regime = "caixa"
 ) {
   const inicioMes = `${ano}-${String(mes).padStart(2, "0")}-01`;
   const fimMes =
@@ -872,24 +875,40 @@ async function calcularDRE(
       ? `${ano + 1}-01-01`
       : `${ano}-${String(mes + 1).padStart(2, "0")}-01`;
 
-  // Regime de competência: usa data_vencimento pois Omie não retorna data_pagamento/data_recebimento
-  // Receitas (contas a receber com vencimento no período e status pago/recebido)
-  const { data: receitas } = await db
+  // REGIME:
+  // - "caixa": agrupa por data_vencimento (proxy do recebimento/pagamento efetivo, já que
+  //   o Omie nem sempre retorna data_recebimento/data_pagamento), e considera só títulos
+  //   com status pago/recebido. É o que o código historicamente fazia (mesmo rotulado errado).
+  // - "competencia": agrupa por data_emissao (regime contábil) e inclui todos os títulos
+  //   exceto CANCELADO. Usa valor_documento integral pois o evento de competência é a emissão.
+  const dataColCR = regime === "caixa" ? "data_vencimento" : "data_emissao";
+  const dataColCP = regime === "caixa" ? "data_vencimento" : "data_emissao";
+
+  let receitasQuery = db
     .from("fin_contas_receber")
     .select("valor_documento, valor_recebido, categoria_codigo, categoria_descricao")
     .eq("company", company)
-    .gte("data_vencimento", inicioMes)
-    .lt("data_vencimento", fimMes)
-    .in("status_titulo", ["RECEBIDO", "PARCIAL", "LIQUIDADO"]);
+    .gte(dataColCR, inicioMes)
+    .lt(dataColCR, fimMes);
+  if (regime === "caixa") {
+    receitasQuery = receitasQuery.in("status_titulo", ["RECEBIDO", "PARCIAL", "LIQUIDADO"]);
+  } else {
+    receitasQuery = receitasQuery.neq("status_titulo", "CANCELADO");
+  }
+  const { data: receitas } = await receitasQuery;
 
-  // Despesas (contas a pagar com vencimento no período e status pago)
-  const { data: despesas } = await db
+  let despesasQuery = db
     .from("fin_contas_pagar")
     .select("valor_documento, valor_pago, categoria_codigo, categoria_descricao")
     .eq("company", company)
-    .gte("data_vencimento", inicioMes)
-    .lt("data_vencimento", fimMes)
-    .in("status_titulo", ["PAGO", "PARCIAL", "LIQUIDADO"]);
+    .gte(dataColCP, inicioMes)
+    .lt(dataColCP, fimMes);
+  if (regime === "caixa") {
+    despesasQuery = despesasQuery.in("status_titulo", ["PAGO", "PARCIAL", "LIQUIDADO"]);
+  } else {
+    despesasQuery = despesasQuery.neq("status_titulo", "CANCELADO");
+  }
+  const { data: despesas } = await despesasQuery;
 
   // Buscar mapeamento configurável: empresa-específico tem prioridade sobre _default
   const { data: mappings } = await db
@@ -941,8 +960,10 @@ async function calcularDRE(
   const categoriasNaoMapeadas: string[] = [];
 
   for (const r of receitas || []) {
-    // Omie não retorna valor_recebido; usar valor_documento para títulos liquidados
-    const val = r.valor_recebido || r.valor_documento || 0;
+    // Caixa: prefere valor_recebido (efetivo); Competência: usa valor_documento (faturado)
+    const val = regime === "competencia"
+      ? (r.valor_documento || 0)
+      : (r.valor_recebido || r.valor_documento || 0);
     const cod = r.categoria_codigo || "";
     const desc = r.categoria_descricao || cod || "Sem categoria";
     detalheReceitas[desc] = (detalheReceitas[desc] || 0) + val;
@@ -970,8 +991,10 @@ async function calcularDRE(
   const detalheDespesas: Record<string, number> = {};
 
   for (const d of despesas || []) {
-    // Omie não retorna valor_pago; usar valor_documento para títulos liquidados
-    const val = d.valor_pago || d.valor_documento || 0;
+    // Caixa: prefere valor_pago (efetivo); Competência: usa valor_documento (incurred)
+    const val = regime === "competencia"
+      ? (d.valor_documento || 0)
+      : (d.valor_pago || d.valor_documento || 0);
     const cod = d.categoria_codigo || "";
     const desc = d.categoria_descricao || cod || "Sem categoria";
     detalheDespesas[desc] = (detalheDespesas[desc] || 0) + val;
@@ -1013,7 +1036,7 @@ async function calcularDRE(
     company,
     ano,
     mes,
-    regime: "competencia", // Usa data_vencimento pois Omie não retorna data_pagamento
+    regime,
     receita_bruta: receitaBruta,
     deducoes,
     receita_liquida: receitaLiquida,
@@ -1041,8 +1064,8 @@ async function calcularDRE(
 
   const { error } = await db
     .from("fin_dre_snapshots")
-    .upsert(snapshot, { onConflict: "company,ano,mes" });
-  if (error) console.error(`[Fin][${company}] Erro DRE:`, error.message);
+    .upsert(snapshot, { onConflict: "company,ano,mes,regime" });
+  if (error) console.error(`[Fin][${company}] Erro DRE (${regime}):`, error.message);
 
   return snapshot;
 }
@@ -1256,7 +1279,7 @@ serve(async (req) => {
     // Marca origem no audit log para todas as mutações desta invocação
     await setAuditOrigem(supabase, 'omie_sync');
 
-    const { action, company, companies, filtro_data_de, filtro_data_ate, ano, mes, meses, maxPages, entidade, ncodcc } =
+    const { action, company, companies, filtro_data_de, filtro_data_ate, ano, mes, meses, maxPages, entidade, ncodcc, regime: requestedRegime } =
       await req.json();
 
     const targetCompanies: Company[] = companies || (company ? [company] : ["oben", "colacor", "colacor_sc"]);
@@ -1351,6 +1374,8 @@ serve(async (req) => {
       }
 
       // Ponto 8: contrato unificado — aceita `mes` (number) ou `meses` (number[])
+      // Phase 3 (Fundação): calcula ambos regimes (caixa + competência) por padrão.
+      // Aceita `regime` opcional ('caixa' | 'competencia' | 'ambos'). Default 'ambos'.
       case "calcular_dre": {
         const targetAno = ano || new Date().getFullYear();
         const targetMeses: number[] = meses
@@ -1358,11 +1383,19 @@ serve(async (req) => {
           : mes
             ? [mes]
             : [new Date().getMonth() + 1];
+        const regimesToRun: Regime[] = requestedRegime === "caixa"
+          ? ["caixa"]
+          : requestedRegime === "competencia"
+            ? ["competencia"]
+            : ["caixa", "competencia"];
 
         for (const co of targetCompanies) {
           result[co] = {};
           for (const m of targetMeses) {
-            result[co][`${m}`] = await calcularDRE(supabase, co, targetAno, m);
+            result[co][`${m}`] = {};
+            for (const reg of regimesToRun) {
+              result[co][`${m}`][reg] = await calcularDRE(supabase, co, targetAno, m, reg);
+            }
           }
         }
         break;
@@ -1372,10 +1405,14 @@ serve(async (req) => {
       case "calcular_dre_year": {
         const targetAno = ano || new Date().getFullYear();
         const currentMonth = new Date().getFullYear() === targetAno ? new Date().getMonth() + 1 : 12;
+        const regimesYear: Regime[] = ["caixa", "competencia"];
         for (const co of targetCompanies) {
           result[co] = {};
           for (let m = 1; m <= currentMonth; m++) {
-            result[co][`${m}`] = await calcularDRE(supabase, co, targetAno, m);
+            result[co][`${m}`] = {};
+            for (const reg of regimesYear) {
+              result[co][`${m}`][reg] = await calcularDRE(supabase, co, targetAno, m, reg);
+            }
           }
         }
         break;
