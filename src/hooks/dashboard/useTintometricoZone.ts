@@ -5,6 +5,7 @@ import { supabase } from '@/integrations/supabase/client';
 import { useDashboardCompany } from '@/hooks/useDashboardCompany';
 import { useCockpitChannel } from '@/hooks/dashboard/useCockpitChannel';
 import { variantFromScore, type PriorityCandidate } from '@/lib/dashboard/priority-rules';
+import { formatCount, formatImportStatus } from '@/lib/dashboard/format';
 import type { KpiSpec } from '@/components/dashboard/cockpit/CockpitKpiRow';
 import type { TopListItem } from '@/components/dashboard/cockpit/CockpitTopList';
 
@@ -110,10 +111,11 @@ export function useTintometricoZone() {
 
   const kpis: KpiSpec[] = useMemo(() => {
     if (!data) return [];
+    const lastImport = data.lastImport as { status?: string | null } | null;
     return [
-      { label: 'Fórmulas', value: String(data.totalFormulas) },
-      { label: 'SKUs mapeados', value: `${data.skusMapped}/${data.skusTotal}` },
-      { label: 'Última import.', value: data.lastImport?.status ?? '—' },
+      { label: 'Fórmulas', value: formatCount(data.totalFormulas) },
+      { label: 'SKUs mapeados', value: `${formatCount(data.skusMapped)}/${formatCount(data.skusTotal)}` },
+      { label: 'Última import.', value: formatImportStatus(lastImport?.status) },
     ];
   }, [data]);
 
