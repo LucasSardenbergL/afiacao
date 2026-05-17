@@ -16,10 +16,10 @@ import {
 const fmt = (v: number) => v.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' });
 
 const scoreColor = (v: number) =>
-  v >= 75 ? 'text-emerald-600' : v >= 50 ? 'text-amber-600' : 'text-red-600';
+  v >= 75 ? 'text-status-success' : v >= 50 ? 'text-status-warning' : 'text-status-error';
 
 const scoreBarColor = (v: number) =>
-  v >= 75 ? '[&>div]:bg-emerald-500' : v >= 50 ? '[&>div]:bg-amber-500' : '[&>div]:bg-red-500';
+  v >= 75 ? '[&>div]:bg-status-success' : v >= 50 ? '[&>div]:bg-status-warning' : '[&>div]:bg-status-error';
 
 const ExecutiveDashboard = () => {
   const navigate = useNavigate();

@@ -123,8 +123,8 @@ export function ToolImageIdentifier({ categories, onCategoryIdentified, onClose,
   };
 
   const confidenceColor = {
-    alta: 'text-emerald-600',
-    media: 'text-amber-600',
+    alta: 'text-status-success',
+    media: 'text-status-warning',
     baixa: 'text-destructive',
   };
 
@@ -188,7 +188,7 @@ export function ToolImageIdentifier({ categories, onCategoryIdentified, onClose,
               {result.identified ? (
                 <>
                   <div className="flex items-start gap-3">
-                    <CheckCircle className="w-5 h-5 text-emerald-600 mt-0.5 flex-shrink-0" />
+                    <CheckCircle className="w-5 h-5 text-status-success mt-0.5 flex-shrink-0" />
                     <div className="flex-1">
                       <p className="font-semibold text-foreground">{result.category_name}</p>
                       <p className="text-sm text-muted-foreground mt-0.5">{result.description}</p>

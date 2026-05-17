@@ -149,7 +149,7 @@ const SavingsDashboard = () => {
           </Card>
           <Card>
             <CardContent className="p-3 text-center">
-              <Leaf className="w-5 h-5 text-emerald-500 mx-auto mb-1" />
+              <Leaf className="w-5 h-5 text-status-success mx-auto mb-1" />
               <p className="text-lg font-bold">{totalTools}</p>
               <p className="text-xs text-muted-foreground">Ferramentas salvas</p>
             </CardContent>
@@ -223,12 +223,12 @@ const SavingsDashboard = () => {
         </Card>
 
         {/* Eco impact */}
-        <Card className="bg-emerald-50 dark:bg-emerald-950/30 border-emerald-200 dark:border-emerald-800">
+        <Card className="bg-status-success-bg border-status-success/40">
           <CardContent className="p-4 flex gap-3">
-            <Leaf className="w-5 h-5 text-emerald-600 flex-shrink-0 mt-0.5" />
+            <Leaf className="w-5 h-5 text-status-success flex-shrink-0 mt-0.5" />
             <div>
-              <p className="text-sm font-medium text-emerald-800 dark:text-emerald-200">Impacto Ambiental</p>
-              <p className="text-xs text-emerald-700 dark:text-emerald-300">
+              <p className="text-sm font-medium text-status-success-foreground">Impacto Ambiental</p>
+              <p className="text-xs text-status-success-foreground">
                 Ao afiar {totalTools} ferramenta{totalTools !== 1 ? 's' : ''} ao invés de descartá-la{totalTools !== 1 ? 's' : ''}, 
                 você evitou {(totalTools * 0.5).toFixed(1)} kg de resíduos metálicos.
               </p>

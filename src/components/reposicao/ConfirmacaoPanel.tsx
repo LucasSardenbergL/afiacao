@@ -125,9 +125,9 @@ export function ConfirmacaoPanel() {
           <div className="flex items-center justify-between flex-wrap gap-2">
             <CardTitle className="flex items-center gap-2 text-base">
               {concluido ? (
-                <CheckCircle2 className="h-5 w-5 text-emerald-500" />
+                <CheckCircle2 className="h-5 w-5 text-status-success" />
               ) : (
-                <Clock className="h-5 w-5 text-amber-500" />
+                <Clock className="h-5 w-5 text-status-warning" />
               )}
               Resumo do ciclo de hoje
             </CardTitle>
@@ -136,8 +136,8 @@ export function ConfirmacaoPanel() {
                 variant="outline"
                 className={
                   concluido
-                    ? "border-emerald-500/40 bg-emerald-500/10 text-emerald-700"
-                    : "border-amber-500/40 bg-amber-500/10 text-amber-700"
+                    ? "border-status-success/40 bg-status-success/10 text-status-success"
+                    : "border-status-warning/40 bg-status-warning/10 text-status-warning"
                 }
               >
                 {concluido ? "Ciclo concluído" : "Em andamento"}
@@ -185,17 +185,17 @@ export function ConfirmacaoPanel() {
               {resumo && (resumo.pendentes > 0 || resumo.bloqueados > 0 || resumo.aprovados > 0) && (
                 <div className="mt-4 flex items-center gap-2 flex-wrap text-xs">
                   {resumo.pendentes > 0 && (
-                    <Badge variant="outline" className="border-amber-400/40 bg-amber-100/40 text-amber-800">
+                    <Badge variant="outline" className="border-status-warning/40 bg-status-warning-bg text-status-warning">
                       {resumo.pendentes} pendente{resumo.pendentes > 1 ? "s" : ""} de aprovação
                     </Badge>
                   )}
                   {resumo.aprovados > 0 && (
-                    <Badge variant="outline" className="border-blue-400/40 bg-blue-100/40 text-blue-800">
+                    <Badge variant="outline" className="border-status-info/40 bg-status-info-bg text-status-info">
                       {resumo.aprovados} aguardando disparo
                     </Badge>
                   )}
                   {resumo.bloqueados > 0 && (
-                    <Badge variant="outline" className="border-red-400/40 bg-red-100/40 text-red-800">
+                    <Badge variant="outline" className="border-status-error/40 bg-status-error-bg text-status-error">
                       {resumo.bloqueados} bloqueado{resumo.bloqueados > 1 ? "s" : ""}
                     </Badge>
                   )}

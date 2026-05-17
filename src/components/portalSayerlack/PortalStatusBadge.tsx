@@ -27,7 +27,7 @@ export function PortalStatusBadge({ status, className }: Props) {
       return (
         <Badge
           variant="outline"
-          className={cn('border-blue-300 bg-blue-50 text-blue-700', className)}
+          className={cn('border-status-info/40 bg-status-info-bg text-status-info', className)}
         >
           Aguardando
         </Badge>
@@ -37,7 +37,7 @@ export function PortalStatusBadge({ status, className }: Props) {
         <Badge
           variant="outline"
           className={cn(
-            'border-blue-400 bg-blue-100 text-blue-800 animate-pulse',
+            'border-status-info/60 bg-status-info/15 text-status-info animate-pulse',
             className,
           )}
         >
@@ -48,7 +48,7 @@ export function PortalStatusBadge({ status, className }: Props) {
       return (
         <Badge
           variant="outline"
-          className={cn('border-blue-300 bg-blue-50 text-blue-700', className)}
+          className={cn('border-status-info/40 bg-status-info-bg text-status-info', className)}
         >
           Retentável
         </Badge>
@@ -58,7 +58,7 @@ export function PortalStatusBadge({ status, className }: Props) {
       return (
         <Badge
           variant="outline"
-          className={cn('border-green-300 bg-green-50 text-green-700', className)}
+          className={cn('border-status-success/40 bg-status-success-bg text-status-success', className)}
         >
           ✓ Enviado
         </Badge>
@@ -67,7 +67,7 @@ export function PortalStatusBadge({ status, className }: Props) {
       return (
         <Badge
           variant="outline"
-          className={cn('border-amber-300 bg-amber-50 text-amber-800', className)}
+          className={cn('border-status-warning/40 bg-status-warning-bg text-status-warning', className)}
           title="Portal aceitou o pedido mas sem protocolo confirmado — requer conciliação manual"
         >
           Sem protocolo
@@ -77,7 +77,7 @@ export function PortalStatusBadge({ status, className }: Props) {
       return (
         <Badge
           variant="outline"
-          className={cn('border-amber-300 bg-amber-50 text-amber-800', className)}
+          className={cn('border-status-warning/40 bg-status-warning-bg text-status-warning', className)}
           title="Resultado ambíguo — verifique o portal e confirme manualmente"
         >
           Requer conciliação
@@ -87,7 +87,7 @@ export function PortalStatusBadge({ status, className }: Props) {
       return (
         <Badge
           variant="outline"
-          className={cn('border-red-300 bg-red-50 text-red-700', className)}
+          className={cn('border-status-error/40 bg-status-error-bg text-status-error', className)}
           title="Falha definitiva — não será retentado automaticamente"
         >
           Falha definitiva
@@ -97,7 +97,7 @@ export function PortalStatusBadge({ status, className }: Props) {
       return (
         <Badge
           variant="outline"
-          className={cn('border-red-300 bg-red-50 text-red-700', className)}
+          className={cn('border-status-error/40 bg-status-error-bg text-status-error', className)}
         >
           Falhou
         </Badge>

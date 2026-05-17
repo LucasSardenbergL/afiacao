@@ -96,7 +96,7 @@ export function ProcessoComprasStepper({
                 className={cn(
                   "flex items-center gap-2 rounded-md px-3 py-2 w-full text-left transition-colors",
                   isCurrent && "bg-primary/10 text-primary border border-primary/30",
-                  isDone && "bg-emerald-500/5 text-foreground border border-emerald-500/20",
+                  isDone && "bg-status-success/5 text-foreground border border-status-success/20",
                   isFuture && !isLocked && "bg-muted/40 text-muted-foreground border border-transparent",
                   isLocked && "bg-muted/30 text-muted-foreground/70 border border-dashed border-muted-foreground/20 opacity-70",
                   !isCurrent && !isLocked && "hover:bg-muted hover:text-foreground cursor-pointer",
@@ -107,7 +107,7 @@ export function ProcessoComprasStepper({
                   className={cn(
                     "flex h-8 w-8 shrink-0 items-center justify-center rounded-full text-xs font-semibold",
                     isCurrent && "bg-primary text-primary-foreground",
-                    isDone && "bg-emerald-500 text-white",
+                    isDone && "bg-status-success text-white",
                     isFuture && !isLocked && "bg-muted text-foreground/70",
                     isLocked && "bg-muted text-muted-foreground/60",
                   )}
@@ -126,7 +126,7 @@ export function ProcessoComprasStepper({
                       Etapa {stepNum}
                     </span>
                     {isDone && (
-                      <Badge className="h-4 px-1.5 text-[9px] bg-emerald-500 hover:bg-emerald-500 text-white border-0">
+                      <Badge className="h-4 px-1.5 text-[9px] bg-status-success hover:bg-status-success text-white border-0">
                         ok
                       </Badge>
                     )}

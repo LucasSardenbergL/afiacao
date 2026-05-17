@@ -229,8 +229,8 @@ export function PortalDetailDrawer({ pedidoId, open, onOpenChange, isAdmin }: Pr
             </Card>
 
             {itemsSemMapeamento.length > 0 && (
-              <Card className="border-red-300 bg-red-50">
-                <CardContent className="flex items-start gap-2 pt-4 text-sm text-red-800">
+              <Card className="border-status-error/40 bg-status-error-bg">
+                <CardContent className="flex items-start gap-2 pt-4 text-sm text-status-error-foreground">
                   <AlertCircle className="h-4 w-4 mt-0.5" />
                   <div>
                     <strong>{itemsSemMapeamento.length} item(s) sem mapeamento ativo</strong> em
@@ -260,7 +260,7 @@ export function PortalDetailDrawer({ pedidoId, open, onOpenChange, isAdmin }: Pr
                         <tr key={it.id} className="border-b">
                           <td className="py-1 font-mono">{it.sku_codigo_omie}</td>
                           <td className="py-1 font-mono">
-                            {it.sku_portal ?? <span className="text-red-600">sem mapeamento</span>}
+                            {it.sku_portal ?? <span className="text-status-error">sem mapeamento</span>}
                           </td>
                           <td className="py-1">{it.sku_descricao}</td>
                           <td className="py-1 text-right">{it.qtde_final}</td>
@@ -311,12 +311,12 @@ export function PortalDetailDrawer({ pedidoId, open, onOpenChange, isAdmin }: Pr
             )}
 
             {pedido.portal_erro && (
-              <Card className="border-red-300 bg-red-50">
+              <Card className="border-status-error/40 bg-status-error-bg">
                 <CardHeader className="pb-2">
-                  <CardTitle className="text-base text-red-800">Erro</CardTitle>
+                  <CardTitle className="text-base text-status-error-foreground">Erro</CardTitle>
                 </CardHeader>
                 <CardContent>
-                  <pre className="text-xs whitespace-pre-wrap text-red-900">
+                  <pre className="text-xs whitespace-pre-wrap text-status-error-foreground">
                     {pedido.portal_erro}
                   </pre>
                 </CardContent>
@@ -324,8 +324,8 @@ export function PortalDetailDrawer({ pedidoId, open, onOpenChange, isAdmin }: Pr
             )}
 
             {isConciliacao && (
-              <Card className="border-amber-300 bg-amber-50">
-                <CardContent className="flex items-start gap-2 pt-4 text-sm text-amber-900">
+              <Card className="border-status-warning/40 bg-status-warning-bg">
+                <CardContent className="flex items-start gap-2 pt-4 text-sm text-status-warning-foreground">
                   <AlertCircle className="h-4 w-4 mt-0.5 shrink-0" />
                   <div>
                     <strong>Requer conciliação manual.</strong>{' '}
@@ -353,7 +353,7 @@ export function PortalDetailDrawer({ pedidoId, open, onOpenChange, isAdmin }: Pr
                   if (!o) setConciliarProtocolo('');
                 }}>
                   <DialogTrigger asChild>
-                    <Button variant="default" className="bg-amber-600 hover:bg-amber-700">
+                    <Button variant="default" className="bg-status-warning-bold hover:bg-status-warning-bold/90">
                       <CheckCircle2 className="h-4 w-4 mr-2" />
                       Conciliar manualmente
                     </Button>

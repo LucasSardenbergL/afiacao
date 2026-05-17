@@ -233,13 +233,13 @@ const AdminDemandForecast = () => {
           
           <Card className={cn(
             "text-center cursor-pointer transition-all",
-            selectedTab === 'soon' && "ring-2 ring-amber-500"
+            selectedTab === 'soon' && "ring-2 ring-status-warning"
           )} onClick={() => setSelectedTab('soon')}>
             <CardContent className="pt-4 pb-3">
-              <div className="w-8 h-8 rounded-full bg-amber-100 flex items-center justify-center mx-auto mb-2">
-                <Clock className="w-4 h-4 text-amber-600" />
+              <div className="w-8 h-8 rounded-full bg-status-warning-bg flex items-center justify-center mx-auto mb-2">
+                <Clock className="w-4 h-4 text-status-warning" />
               </div>
-              <p className="text-2xl font-bold text-amber-600">{dueSoonCount}</p>
+              <p className="text-2xl font-bold text-status-warning">{dueSoonCount}</p>
               <p className="text-xs text-muted-foreground">Em 7 dias</p>
             </CardContent>
           </Card>
@@ -322,9 +322,9 @@ const CustomerCard = ({ customer, onViewCustomer, onCreateOrder }: CustomerCardP
         };
       case 'soon':
         return {
-          border: 'border-amber-300',
-          bg: 'bg-amber-50',
-          badge: 'bg-amber-500 text-white',
+          border: 'border-status-warning/40',
+          bg: 'bg-status-warning-bg',
+          badge: 'bg-status-warning text-white',
           badgeText: 'Em breve',
         };
       default:

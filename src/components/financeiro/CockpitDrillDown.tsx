@@ -156,7 +156,7 @@ function CaixaTable({ data }: { data: any[] }) {
             <TableCell><Badge variant="outline">{r.company}</Badge></TableCell>
             <TableCell className="text-sm">{r.banco || '—'}</TableCell>
             <TableCell className="text-sm">{r.descricao || '—'}</TableCell>
-            <TableCell className={`text-right font-medium ${(r.saldo_atual || 0) >= 0 ? 'text-emerald-600' : 'text-red-600'}`}>
+            <TableCell className={`text-right font-medium ${(r.saldo_atual || 0) >= 0 ? 'text-status-success' : 'text-status-error'}`}>
               {fmt(r.saldo_atual || 0)}
             </TableCell>
           </TableRow>

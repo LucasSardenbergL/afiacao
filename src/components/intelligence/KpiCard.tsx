@@ -14,7 +14,7 @@ export interface KpiCardProps {
 
 export function KpiCard({ title, value, subtitle, icon: Icon, trend, trendValue, className }: KpiCardProps) {
   const TrendIcon = trend === 'up' ? ArrowUpRight : trend === 'down' ? ArrowDownRight : Minus;
-  const trendColor = trend === 'up' ? 'text-emerald-600' : trend === 'down' ? 'text-red-500' : 'text-muted-foreground';
+  const trendColor = trend === 'up' ? 'text-status-success' : trend === 'down' ? 'text-status-error' : 'text-muted-foreground';
 
   return (
     <Card className={className}>

@@ -19,10 +19,10 @@ import {
 const mesesNome = ['Janeiro','Fevereiro','Março','Abril','Maio','Junho','Julho','Agosto','Setembro','Outubro','Novembro','Dezembro'];
 
 const statusConfig: Record<string, { label: string; color: string; icon: any }> = {
-  aberto: { label: 'Aberto', color: 'bg-blue-100 text-blue-700', icon: Clock },
-  em_revisao: { label: 'Em Revisão', color: 'bg-amber-100 text-amber-700', icon: Eye },
-  fechado: { label: 'Fechado', color: 'bg-emerald-100 text-emerald-700', icon: Lock },
-  reaberto: { label: 'Reaberto', color: 'bg-red-100 text-red-700', icon: Unlock },
+  aberto: { label: 'Aberto', color: 'bg-status-info-bg text-status-info', icon: Clock },
+  em_revisao: { label: 'Em Revisão', color: 'bg-status-warning-bg text-status-warning', icon: Eye },
+  fechado: { label: 'Fechado', color: 'bg-status-success-bg text-status-success', icon: Lock },
+  reaberto: { label: 'Reaberto', color: 'bg-status-error-bg text-status-error', icon: Unlock },
 };
 
 const FinanceiroFechamento = () => {
@@ -151,7 +151,7 @@ const FinanceiroFechamento = () => {
                       key={mes}
                       className={`p-3 rounded-lg border text-center space-y-2 ${
                         isFuture ? 'opacity-40' : ''
-                      } ${fech?.status === 'fechado' ? 'border-emerald-200 bg-emerald-50/30' : ''}`}
+                      } ${fech?.status === 'fechado' ? 'border-status-success/40 bg-status-success-bg/30' : ''}`}
                     >
                       <p className="text-xs font-medium">{mesesNome[mes - 1].slice(0, 3)}</p>
 
@@ -184,7 +184,7 @@ const FinanceiroFechamento = () => {
                               </Button>
                             )}
                             {fech.status === 'fechado' && (
-                              <Button size="sm" variant="ghost" className="text-[10px] h-6 text-red-500"
+                              <Button size="sm" variant="ghost" className="text-[10px] h-6 text-status-error"
                                 onClick={() => {
                                   if (motivoReabertura || confirm('Confirma reabertura?')) {
                                     handleAcao(fech.id, 'reabrir', { motivo: motivoReabertura || 'Correção necessária' });

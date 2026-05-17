@@ -232,7 +232,7 @@ export function CartSummaryBar({
             </div>
           )}
           {serviceItems.some(s => !s.servico) && (
-            <p className="text-xs text-amber-600">
+            <p className="text-xs text-status-warning">
               <AlertCircle className="w-3 h-3 inline mr-1" />
               Selecione o serviço para cada ferramenta na aba Afiação.
             </p>

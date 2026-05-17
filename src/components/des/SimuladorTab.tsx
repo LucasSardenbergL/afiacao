@@ -201,15 +201,15 @@ function SimulationPanel({
       case "compensa":
         return {
           icon: ThumbsUp,
-          color: "text-green-700",
-          bg: "bg-green-500/10 border-green-500/40",
+          color: "text-status-success",
+          bg: "bg-status-success/10 border-status-success/40",
           label: "Compensa",
         };
       case "compensa_marginalmente":
         return {
           icon: AlertCircle,
-          color: "text-amber-700",
-          bg: "bg-amber-500/10 border-amber-500/40",
+          color: "text-status-warning",
+          bg: "bg-status-warning/10 border-status-warning/40",
           label: "Compensa marginalmente",
         };
       case "indiferente":
@@ -222,8 +222,8 @@ function SimulationPanel({
       case "nao_compensa":
         return {
           icon: ThumbsDown,
-          color: "text-red-700",
-          bg: "bg-red-500/10 border-red-500/40",
+          color: "text-status-error",
+          bg: "bg-status-error/10 border-status-error/40",
           label: "Não compensa",
         };
       default:
@@ -282,7 +282,7 @@ function SimulationPanel({
             {faltamProximaFaixa != null && faltamProximaFaixa > 0 && (
               <button
                 type="button"
-                className="inline-flex items-center text-xs px-2 py-1 rounded-md bg-amber-500/10 text-amber-700 border border-amber-500/30 hover:bg-amber-500/20 transition-colors"
+                className="inline-flex items-center text-xs px-2 py-1 rounded-md bg-status-warning/10 text-status-warning border border-status-warning/30 hover:bg-status-warning/20 transition-colors"
                 onClick={() => setValorExtra(Math.round(faltamProximaFaixa))}
               >
                 Faltam para próxima faixa: {fmtBRL(faltamProximaFaixa)}
@@ -374,28 +374,28 @@ function SimulationPanel({
           <>
             <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
               {/* Card 1 - Posição após puxar */}
-              <Card className="bg-blue-500/5 border-blue-500/30">
+              <Card className="bg-status-info/5 border-status-info/30">
                 <CardHeader className="pb-2">
                   <CardTitle className="text-xs text-muted-foreground uppercase tracking-wide">
                     Posição após puxar
                   </CardTitle>
                 </CardHeader>
                 <CardContent className="space-y-2">
-                  <p className="text-xl font-bold text-blue-700">
+                  <p className="text-xl font-bold text-status-info">
                     {fmtBRL(resultado.posicao?.com_extra)}
                   </p>
                   <p className="text-xs text-muted-foreground">
                     + {fmtBRL(resultado.posicao?.nominal_adicional_na_nf)}
                   </p>
                   {fator > 1 && (
-                    <Badge variant="outline" className="bg-amber-500/10 border-amber-500/40 text-amber-700 text-xs">
+                    <Badge variant="outline" className="bg-status-warning/10 border-status-warning/40 text-status-warning text-xs">
                       NF inflada em {fator.toFixed(2)}x pelo prazo
                     </Badge>
                   )}
                   <div className="pt-1">
                     {resultado.posicao?.mudou_faixa ? (
                       <div className="flex items-center gap-1.5">
-                        <Badge className="bg-green-500/10 border-green-500/40 text-green-700 text-xs" variant="outline">
+                        <Badge className="bg-status-success/10 border-status-success/40 text-status-success text-xs" variant="outline">
                           Sobe para {resultado.posicao.faixa_nova?.estrelas ?? 0}★
                         </Badge>
                         <StarsRow count={resultado.posicao.faixa_nova?.estrelas ?? 0} />
@@ -413,14 +413,14 @@ function SimulationPanel({
               </Card>
 
               {/* Card 2 - Ganho futuro */}
-              <Card className="bg-green-500/5 border-green-500/30">
+              <Card className="bg-status-success/5 border-status-success/30">
                 <CardHeader className="pb-2">
                   <CardTitle className="text-xs text-muted-foreground uppercase tracking-wide">
                     Ganho futuro
                   </CardTitle>
                 </CardHeader>
                 <CardContent className="space-y-2">
-                  <p className="text-xl font-bold text-green-700">
+                  <p className="text-xl font-bold text-status-success">
                     {fmtBRL(resultado.projecao?.ganho_futuro_rs)}
                   </p>
                   <p className="text-xs text-muted-foreground">
@@ -433,14 +433,14 @@ function SimulationPanel({
               </Card>
 
               {/* Card 3 - Perdas */}
-              <Card className="bg-red-500/5 border-red-500/30">
+              <Card className="bg-status-error/5 border-status-error/30">
                 <CardHeader className="pb-2">
                   <CardTitle className="text-xs text-muted-foreground uppercase tracking-wide">
                     Perdas no pedido atual
                   </CardTitle>
                 </CardHeader>
                 <CardContent className="space-y-2">
-                  <p className="text-xl font-bold text-red-700">
+                  <p className="text-xl font-bold text-status-error">
                     {fmtBRL(perdas.total_rs)}
                   </p>
                   <div className="space-y-0.5 text-xs">
@@ -611,10 +611,10 @@ export function SimuladorTab({ empresa, ano, trimestre }: Props) {
   return (
     <div className="space-y-6">
       {/* Card explicativo */}
-      <Card className="bg-blue-500/5 border-blue-500/30">
+      <Card className="bg-status-info/5 border-status-info/30">
         <CardContent className="pt-4 pb-4">
           <div className="flex items-start gap-3">
-            <Info className="h-4 w-4 text-blue-600 mt-0.5 shrink-0" />
+            <Info className="h-4 w-4 text-status-info mt-0.5 shrink-0" />
             <p className="text-xs text-foreground leading-relaxed">
               Simule o impacto financeiro de puxar volume extra no trimestre atual. Considera todos os custos
               (perda de antecipado, encargos, frete, custo de capital) e o ganho futuro de subir de faixa DES no

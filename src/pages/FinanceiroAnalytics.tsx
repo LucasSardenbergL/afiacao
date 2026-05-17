@@ -172,9 +172,9 @@ const FinanceiroAnalytics = () => {
             <p className="text-xs text-muted-foreground">Total Documento</p>
             <p className="text-sm font-bold">{fmtCompact(total)}</p>
           </div>
-          <div className={`p-3 rounded-lg text-center ${tipo === 'cr' ? 'bg-emerald-50' : 'bg-red-50'}`}>
+          <div className={`p-3 rounded-lg text-center ${tipo === 'cr' ? 'bg-status-success-bg' : 'bg-status-error-bg'}`}>
             <p className="text-xs text-muted-foreground">{tipo === 'cr' ? 'Recebido' : 'Pago'}</p>
-            <p className={`text-sm font-bold ${tipo === 'cr' ? 'text-emerald-600' : 'text-red-600'}`}>
+            <p className={`text-sm font-bold ${tipo === 'cr' ? 'text-status-success' : 'text-status-error'}`}>
               {fmtCompact(totalPagoRecebido)}
             </p>
           </div>
@@ -216,7 +216,7 @@ const FinanceiroAnalytics = () => {
                         </TableCell>
                         <TableCell className="text-right text-sm">{row.qtd_titulos}</TableCell>
                         <TableCell className="text-right text-sm font-medium">{fmtCompact(row.total_documento)}</TableCell>
-                        <TableCell className={`text-right text-sm ${tipo === 'cr' ? 'text-emerald-600' : 'text-red-600'}`}>
+                        <TableCell className={`text-right text-sm ${tipo === 'cr' ? 'text-status-success' : 'text-status-error'}`}>
                           {fmtCompact(row.total_pago_recebido)}
                         </TableCell>
                         <TableCell className="text-right text-sm font-bold">

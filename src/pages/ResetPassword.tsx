@@ -120,8 +120,8 @@ const ResetPassword = () => {
         
         <div className="flex-1 flex flex-col items-center justify-center px-4 py-8 relative z-10">
           <div className="w-full max-w-md text-center">
-            <div className="inline-flex items-center justify-center w-20 h-20 rounded-full bg-green-100 mb-6">
-              <CheckCircle className="w-10 h-10 text-green-600" />
+            <div className="inline-flex items-center justify-center w-20 h-20 rounded-full bg-status-success-bg mb-6">
+              <CheckCircle className="w-10 h-10 text-status-success" />
             </div>
             <h1 className="font-display font-bold text-2xl mb-2">Senha alterada!</h1>
             <p className="text-muted-foreground mb-6">

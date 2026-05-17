@@ -341,7 +341,7 @@ export default function AdminSkuMapeamento() {
                         <TableCell>{Number(m.fator_conversao)}</TableCell>
                         <TableCell>
                           {m.ativo
-                            ? <Badge className="bg-green-600">Ativo</Badge>
+                            ? <Badge className="bg-status-success">Ativo</Badge>
                             : <Badge variant="secondary">Inativo</Badge>}
                         </TableCell>
                         <TableCell className="text-xs max-w-[220px] truncate" title={m.observacoes ?? ''}>

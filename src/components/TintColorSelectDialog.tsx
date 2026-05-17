@@ -400,13 +400,13 @@ export function TintColorSelectDialog({ product, open, onClose, onConfirm, custo
               <>
                 {globalColorMatches && globalColorMatches.length > 0 ? (
                   <div className="space-y-3">
-                    <div className="flex items-start gap-2 p-3 rounded-md bg-amber-50 dark:bg-amber-950/30 border border-amber-200 dark:border-amber-800">
-                      <AlertTriangle className="w-5 h-5 text-amber-600 shrink-0 mt-0.5" />
+                    <div className="flex items-start gap-2 p-3 rounded-md bg-status-warning-bg border border-status-warning/30">
+                      <AlertTriangle className="w-5 h-5 text-status-warning shrink-0 mt-0.5" />
                       <div>
-                        <p className="text-sm font-semibold text-amber-800 dark:text-amber-300">
+                        <p className="text-sm font-semibold text-status-warning-foreground">
                           Esta cor não pode ser feita nesta base
                         </p>
-                        <p className="text-xs text-amber-700 dark:text-amber-400 mt-1">
+                        <p className="text-xs text-status-warning mt-1">
                           A cor pesquisada não está disponível em <strong>{product.descricao}</strong>. Veja abaixo as embalagens onde ela pode ser produzida:
                         </p>
                       </div>
@@ -485,7 +485,7 @@ export function TintColorSelectDialog({ product, open, onClose, onConfirm, custo
                       <div className="text-xs">
                         <span className="font-medium text-primary">Último preço cliente: {fmt(lastPracticedPrice.price)}</span>
                         {precoCsv > 0 && lastPracticedPrice.price < precoCsv && (
-                          <Badge variant="secondary" className="ml-1.5 text-[9px] px-1.5 py-0 text-orange-600 bg-orange-50 border-orange-200">
+                          <Badge variant="secondary" className="ml-1.5 text-[9px] px-1.5 py-0 text-status-warning-bold bg-status-warning-bg border-status-warning/30">
                             -{Math.round((1 - lastPracticedPrice.price / precoCsv) * 100)}% da tabela
                           </Badge>
                         )}

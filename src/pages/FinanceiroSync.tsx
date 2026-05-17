@@ -143,16 +143,16 @@ const FinanceiroSync = () => {
                             </Badge>
                             {!result && <span className="text-muted-foreground">—</span>}
                             {result?.status === 'running' && (
-                              <Loader2 className="w-3 h-3 animate-spin text-blue-500" />
+                              <Loader2 className="w-3 h-3 animate-spin text-status-info" />
                             )}
                             {result?.status === 'done' && (
-                              <span className="flex items-center gap-0.5 text-emerald-600">
+                              <span className="flex items-center gap-0.5 text-status-success">
                                 <CheckCircle2 className="w-3 h-3" />
                                 {result.total != null ? `${result.total}` : 'OK'}
                               </span>
                             )}
                             {result?.status === 'error' && (
-                              <span className="flex items-center gap-0.5 text-red-500" title={result.error}>
+                              <span className="flex items-center gap-0.5 text-status-error" title={result.error}>
                                 <XCircle className="w-3 h-3" />
                                 Erro
                               </span>
@@ -211,16 +211,16 @@ const FinanceiroSync = () => {
       </Card>
 
       {/* Env vars reminder */}
-      <Card className="border-amber-200 bg-amber-50/50">
+      <Card className="border-status-warning/40 bg-status-warning-bg/50">
         <CardContent className="p-4">
-          <p className="text-sm font-medium text-amber-800 flex items-center gap-2">
+          <p className="text-sm font-medium text-status-warning-foreground flex items-center gap-2">
             <Clock className="w-4 h-4" />
             Variáveis de ambiente necessárias no Supabase
           </p>
-          <div className="mt-2 text-xs text-amber-700 space-y-1">
-            <p>Oben: <code className="bg-amber-100 px-1 rounded">OMIE_VENDAS_APP_KEY</code> / <code className="bg-amber-100 px-1 rounded">OMIE_VENDAS_APP_SECRET</code></p>
-            <p>Colacor: <code className="bg-amber-100 px-1 rounded">OMIE_COLACOR_VENDAS_APP_KEY</code> / <code className="bg-amber-100 px-1 rounded">OMIE_COLACOR_VENDAS_APP_SECRET</code></p>
-            <p>Colacor SC: <code className="bg-amber-100 px-1 rounded">OMIE_COLACOR_SC_APP_KEY</code> / <code className="bg-amber-100 px-1 rounded">OMIE_COLACOR_SC_APP_SECRET</code></p>
+          <div className="mt-2 text-xs text-status-warning space-y-1">
+            <p>Oben: <code className="bg-status-warning/20 px-1 rounded">OMIE_VENDAS_APP_KEY</code> / <code className="bg-status-warning/20 px-1 rounded">OMIE_VENDAS_APP_SECRET</code></p>
+            <p>Colacor: <code className="bg-status-warning/20 px-1 rounded">OMIE_COLACOR_VENDAS_APP_KEY</code> / <code className="bg-status-warning/20 px-1 rounded">OMIE_COLACOR_VENDAS_APP_SECRET</code></p>
+            <p>Colacor SC: <code className="bg-status-warning/20 px-1 rounded">OMIE_COLACOR_SC_APP_KEY</code> / <code className="bg-status-warning/20 px-1 rounded">OMIE_COLACOR_SC_APP_SECRET</code></p>
           </div>
         </CardContent>
       </Card>

@@ -123,7 +123,7 @@ function IntelligenceManagerialTabImpl() {
                     <td className="text-center py-2">{fm.avgMargin.toFixed(1)}%</td>
                     <td className="text-center py-2">{fm.avgCategories.toFixed(1)}</td>
                     <td className="text-center py-2">
-                      <span className={fm.avgCategories < globalAvgCategories ? 'text-destructive' : 'text-emerald-600'}>
+                      <span className={fm.avgCategories < globalAvgCategories ? 'text-destructive' : 'text-status-success'}>
                         {(fm.avgCategories - globalAvgCategories).toFixed(1)}
                       </span>
                     </td>

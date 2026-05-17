@@ -181,7 +181,7 @@ function statusBadgeClass(status: StatusSugestao): string {
     case "visualizada":
       return "bg-status-info/15 text-status-info border-status-info/30";
     case "acao_tomada":
-      return "bg-orange-500/15 text-orange-700 dark:text-orange-400 border-orange-500/30";
+      return "bg-status-warning-bold/15 text-status-warning-bold border-status-warning-bold/30";
     default:
       return "bg-muted text-muted-foreground border-border";
   }

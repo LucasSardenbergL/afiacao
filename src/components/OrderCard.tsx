@@ -26,13 +26,13 @@ interface OrderCardProps {
 const STATUS_MAP: Record<string, { label: string; nextStep: string; className: string }> = {
   pedido_recebido: { label: 'Recebido', nextStep: 'Aguardando triagem', className: 'border-primary/30 bg-primary/5 text-primary' },
   aguardando_coleta: { label: 'Aguardando Coleta', nextStep: 'Coleta será agendada', className: 'border-status-warning/30 bg-status-warning-bg text-status-warning' },
-  em_triagem: { label: 'Em Triagem', nextStep: 'Orçamento em breve', className: 'border-purple-400/30 bg-purple-50 text-purple-700 dark:bg-purple-900/20 dark:text-purple-300' },
+  em_triagem: { label: 'Em Triagem', nextStep: 'Orçamento em breve', className: 'border-status-purple/30 bg-status-purple-bg text-status-purple' },
   orcamento_enviado: { label: 'Orçamento Enviado', nextStep: 'Aguardando sua aprovação', className: 'border-status-warning/40 bg-status-warning-bg text-status-warning' },
-  aprovado: { label: 'Aprovado', nextStep: 'Entrando na fila de afiação', className: 'border-emerald-400/30 bg-emerald-50 text-emerald-700 dark:bg-emerald-900/20 dark:text-emerald-300' },
+  aprovado: { label: 'Aprovado', nextStep: 'Entrando na fila de afiação', className: 'border-status-success/30 bg-status-success-bg text-status-success' },
   em_afiacao: { label: 'Em Afiação', nextStep: 'Ferramenta sendo afiada', className: 'border-primary/30 bg-primary/5 text-primary' },
-  controle_qualidade: { label: 'Qualidade', nextStep: 'Verificação final', className: 'border-indigo-400/30 bg-indigo-50 text-indigo-700 dark:bg-indigo-900/20 dark:text-indigo-300' },
-  pronto_entrega: { label: 'Pronto p/ Entrega', nextStep: 'Entrega será agendada', className: 'border-emerald-400/30 bg-emerald-50 text-emerald-700 dark:bg-emerald-900/20 dark:text-emerald-300' },
-  em_rota: { label: 'Em Rota', nextStep: 'A caminho do seu endereço', className: 'border-indigo-400/30 bg-indigo-50 text-indigo-700 dark:bg-indigo-900/20 dark:text-indigo-300' },
+  controle_qualidade: { label: 'Qualidade', nextStep: 'Verificação final', className: 'border-status-indigo/30 bg-status-indigo-bg text-status-indigo' },
+  pronto_entrega: { label: 'Pronto p/ Entrega', nextStep: 'Entrega será agendada', className: 'border-status-success/30 bg-status-success-bg text-status-success' },
+  em_rota: { label: 'Em Rota', nextStep: 'A caminho do seu endereço', className: 'border-status-indigo/30 bg-status-indigo-bg text-status-indigo' },
   entregue: { label: 'Entregue', nextStep: 'Pedido concluído', className: 'border-border bg-muted text-muted-foreground' },
 };
 

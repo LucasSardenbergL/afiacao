@@ -55,7 +55,7 @@ const CRITICALITY_CONFIG: Record<Criticality, {
 }> = {
   critical: { label: 'Crítica', icon: AlertTriangle, badgeClass: 'border-destructive/40 bg-destructive/10 text-destructive', iconClass: 'text-destructive', bgClass: 'bg-destructive/10' },
   attention: { label: 'Atenção', icon: Clock, badgeClass: 'border-status-warning/40 bg-status-warning-bg text-status-warning', iconClass: 'text-status-warning', bgClass: 'bg-status-warning-bg' },
-  healthy: { label: 'Saudável', icon: ShieldCheck, badgeClass: 'border-emerald-400/40 bg-emerald-50 text-emerald-700 dark:bg-emerald-900/20 dark:text-emerald-300', iconClass: 'text-emerald-600 dark:text-emerald-400', bgClass: 'bg-emerald-50 dark:bg-emerald-900/20' },
+  healthy: { label: 'Saudável', icon: ShieldCheck, badgeClass: 'border-status-success/40 bg-status-success-bg text-status-success', iconClass: 'text-status-success', bgClass: 'bg-status-success-bg' },
   unscheduled: { label: 'Não agendada', icon: HelpCircle, badgeClass: 'border-border bg-muted text-muted-foreground', iconClass: 'text-muted-foreground', bgClass: 'bg-muted' },
 };
 
@@ -72,7 +72,7 @@ function getCriticality(nextDue: string | null): Criticality {
 const EVENT_TYPE_CONFIG: Record<string, { label: string; icon: typeof Wrench; color: string; bg: string; sortWeight: number }> = {
   anomaly: { label: 'Anomalia', icon: AlertTriangle, color: 'text-destructive', bg: 'bg-destructive/10', sortWeight: 0 },
   sharpening: { label: 'Afiação', icon: Wrench, color: 'text-primary', bg: 'bg-primary/10', sortWeight: 1 },
-  inspection: { label: 'Inspeção', icon: CheckCircle, color: 'text-emerald-600 dark:text-emerald-400', bg: 'bg-emerald-50 dark:bg-emerald-900/20', sortWeight: 2 },
+  inspection: { label: 'Inspeção', icon: CheckCircle, color: 'text-status-success', bg: 'bg-status-success-bg', sortWeight: 2 },
   repair: { label: 'Reparo', icon: Settings, color: 'text-status-warning', bg: 'bg-status-warning-bg', sortWeight: 3 },
   note: { label: 'Observação', icon: FileText, color: 'text-muted-foreground', bg: 'bg-muted', sortWeight: 4 },
 };
@@ -116,7 +116,7 @@ const RECOMMENDATION_STYLES: Record<string, { border: string; bg: string; icon: 
   destructive: { border: 'border-destructive/40', bg: 'bg-destructive/5', icon: AlertTriangle, iconClass: 'text-destructive' },
   warning: { border: 'border-status-warning/40', bg: 'bg-status-warning-bg/50', icon: Clock, iconClass: 'text-status-warning' },
   info: { border: 'border-primary/30', bg: 'bg-primary/5', icon: TrendingUp, iconClass: 'text-primary' },
-  success: { border: 'border-emerald-400/30', bg: 'bg-emerald-50 dark:bg-emerald-900/10', icon: ShieldCheck, iconClass: 'text-emerald-600 dark:text-emerald-400' },
+  success: { border: 'border-status-success/30', bg: 'bg-status-success-bg', icon: ShieldCheck, iconClass: 'text-status-success' },
 };
 
 /* ═══════════════════════════════════════════════

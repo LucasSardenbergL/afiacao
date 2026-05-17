@@ -35,7 +35,7 @@ export function IntelligenceUserSimulator({ onSelect, currentSimulation }: UserS
         </SelectContent>
       </Select>
       {currentSimulation && (
-        <Badge variant="outline" className="text-2xs bg-amber-500/10 text-amber-700 border-amber-500/30">
+        <Badge variant="outline" className="text-2xs bg-status-warning/10 text-status-warning border-status-warning/30">
           <Eye className="w-3 h-3 mr-1" /> Simulando
         </Badge>
       )}

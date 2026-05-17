@@ -29,8 +29,8 @@ export const ProtectedRoute = ({ children }: ProtectedRouteProps) => {
       <div className="min-h-screen flex items-center justify-center bg-background p-4">
         <Card className="max-w-md w-full">
           <CardContent className="pt-6 text-center space-y-4">
-            <div className="mx-auto w-16 h-16 rounded-full bg-amber-100 flex items-center justify-center">
-              <Clock className="w-8 h-8 text-amber-600" />
+            <div className="mx-auto w-16 h-16 rounded-full bg-status-warning-bg flex items-center justify-center">
+              <Clock className="w-8 h-8 text-status-warning" />
             </div>
             <h2 className="text-xl font-bold">Cadastro Pendente de Aprovação</h2>
             <p className="text-muted-foreground">

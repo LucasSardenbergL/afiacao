@@ -81,7 +81,7 @@ export function ProductItemForm({
                           <Badge variant="secondary" className="text-[9px] px-1 py-0">Preço cliente</Badge>
                         )}
                         {lastOrderDate && (
-                          <span className="text-[9px] text-green-700 dark:text-green-400">
+                          <span className="text-[9px] text-status-success">
                             {formatDate(lastOrderDate)}
                           </span>
                         )}
