@@ -54,13 +54,14 @@ export function useFinanceiroZone() {
       } catch { /* */ }
 
       try {
-        const { data: proj } = await supabase
-          .from('fin_projecao_13_semanas')
-          .select('valor_projetado')
-          .limit(13);
-        if (proj) {
-          const rows = proj as Array<{ valor_projetado?: number | null }>;
-          projecao13Total = rows.reduce((s, r) => s + Number(r.valor_projetado ?? 0), 0);
+        // fin_projecao_13_semanas é function (RPC), não tabela. Retorna 13 linhas
+        // com saldo_projetado por semana — pegamos o último (semana 13 = saldo
+        // final projetado).
+        const rpcParams = mode === 'all' ? { p_company: null } : { p_company: primary };
+        const { data: proj } = await supabase.rpc('fin_projecao_13_semanas', rpcParams);
+        if (Array.isArray(proj) && proj.length > 0) {
+          const last = proj[proj.length - 1] as { saldo_projetado?: number | null };
+          projecao13Total = Number(last.saldo_projetado ?? 0);
         }
       } catch { /* */ }
 
