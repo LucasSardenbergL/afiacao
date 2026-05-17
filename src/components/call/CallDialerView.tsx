@@ -2,7 +2,10 @@ import { useState, useEffect, useRef } from 'react';
 import { Card, CardContent } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
-import { Phone, PhoneOff, PhoneCall, PhoneIncoming, Loader2, Volume2, AlertCircle, X } from 'lucide-react';
+import {
+  Phone, PhoneOff, PhoneCall, PhoneIncoming, Loader2, Volume2, AlertCircle, X,
+  Mic, MicOff,
+} from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { motion, AnimatePresence } from 'framer-motion';
 import { formatBrPhone, normalizeBrPhone } from '@/lib/phone';
@@ -33,6 +36,14 @@ export interface CallDialerViewProps {
   /** Stream remoto do peer (cliente) — usado pra tocar áudio na chamada WebRTC.
    *  Nvoip click-to-call passa null/undefined aqui (não tem stream local). */
   remoteStream?: MediaStream | null;
+  /** Estado do mic. Undefined em Nvoip (sem mute na UI). */
+  isMuted?: boolean;
+  /** Toggle do mic. Undefined em Nvoip. */
+  onToggleMute?: () => void;
+  /** True durante reprodução do pre-roll LGPD. */
+  prerollPlaying?: boolean;
+  /** Timestamp Date.now() em que o preroll termina. Pra countdown. */
+  prerollEndsAt?: number | null;
 }
 
 const STATE_LABELS: Record<CallDialerCallState, string> = {
@@ -76,6 +87,22 @@ export function CallDialerView(props: CallDialerViewProps) {
 
   const [dismissed, setDismissed] = useState(false);
   const remoteAudioRef = useRef<HTMLAudioElement>(null);
+
+  const [prerollRemainingSeconds, setPrerollRemainingSeconds] = useState(0);
+
+  useEffect(() => {
+    if (!props.prerollPlaying || !props.prerollEndsAt) {
+      setPrerollRemainingSeconds(0);
+      return;
+    }
+    const updateCountdown = () => {
+      const remaining = Math.max(0, Math.ceil((props.prerollEndsAt! - Date.now()) / 1000));
+      setPrerollRemainingSeconds(remaining);
+    };
+    updateCountdown();
+    const id = window.setInterval(updateCountdown, 200);
+    return () => clearInterval(id);
+  }, [props.prerollPlaying, props.prerollEndsAt]);
 
   useEffect(() => {
     if (remoteAudioRef.current && props.remoteStream) {
@@ -159,6 +186,15 @@ export function CallDialerView(props: CallDialerViewProps) {
         )}
       </div>
 
+      {props.prerollPlaying && (
+        <div className="mb-3 flex items-center gap-2 rounded-md border border-status-warning bg-status-warning-bg p-2 text-xs">
+          <Volume2 className="w-4 h-4 text-status-warning shrink-0 animate-pulse" />
+          <span className="font-medium text-status-warning">
+            🔇 Aviso de gravação LGPD tocando — espere {prerollRemainingSeconds}s antes de falar
+          </span>
+        </div>
+      )}
+
       <div className="flex items-center justify-between">
         <div className="flex items-center gap-2">
           <Badge variant="outline" className={cn('text-xs', STATE_COLORS[callState])}>
@@ -180,6 +216,17 @@ export function CallDialerView(props: CallDialerViewProps) {
               <a href={audioLink} target="_blank" rel="noopener noreferrer">
                 <Volume2 className="w-3 h-3" /> Ouvir
               </a>
+            </Button>
+          )}
+          {isActive && props.onToggleMute && (
+            <Button
+              size="sm"
+              variant={props.isMuted ? 'destructive' : 'outline'}
+              className="h-8 text-xs gap-1"
+              onClick={props.onToggleMute}
+              title={props.isMuted ? 'Desmutar microfone' : 'Mutar microfone'}
+            >
+              {props.isMuted ? <MicOff className="w-3 h-3" /> : <Mic className="w-3 h-3" />}
             </Button>
           )}
           {isActive && (
