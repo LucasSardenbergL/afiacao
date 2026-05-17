@@ -138,6 +138,7 @@ const unifiedNavSections: { title: string; items: NavItem[] }[] = [
       { icon: UserCheck, label: 'Liberar Acessos', path: '/admin/approvals', managerOnly: true },
       { icon: Users, label: 'Departamentos', path: '/admin/departments', managerOnly: true },
       { icon: Library, label: 'Base de conhecimento', path: '/admin/knowledge-base', managerOnly: true },
+      { icon: Calculator, label: 'Calculadora de rendimento', path: '/admin/calculadora' },
       { icon: Shield, label: 'Admin & Relatórios', path: '/gestao/admin', managerOnly: true },
       { icon: Lock, label: 'Governança', path: '/gestao/governanca', managerOnly: true },
     ],
