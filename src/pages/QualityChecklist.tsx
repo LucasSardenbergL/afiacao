@@ -1,7 +1,5 @@
 import { useState, useEffect } from 'react';
 import { useParams } from 'react-router-dom';
-import { Header } from '@/components/Header';
-import { BottomNav } from '@/components/BottomNav';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Checkbox } from '@/components/ui/checkbox';
@@ -190,18 +188,15 @@ const QualityChecklist = () => {
   if (loading) {
     return (
       <div className="min-h-screen bg-background pb-24">
-        <Header title="Controle de Qualidade" showBack />
         <div className="flex items-center justify-center pt-32">
           <Loader2 className="w-8 h-8 animate-spin text-primary" />
         </div>
-        <BottomNav />
       </div>
     );
   }
 
   return (
     <div className="min-h-screen bg-background pb-24">
-      <Header title="Controle de Qualidade" showBack />
       <main className="pt-16 px-4 max-w-lg mx-auto">
         <div className="flex items-center gap-2 mb-4">
           <Shield className="w-5 h-5 text-primary" />
@@ -318,7 +313,6 @@ const QualityChecklist = () => {
           </div>
         )}
       </main>
-      <BottomNav />
     </div>
   );
 };

@@ -1,5 +1,4 @@
 import { useAuth } from '@/contexts/AuthContext';
-import { useUserRole } from '@/hooks/useUserRole';
 import { Skeleton } from '@/components/ui/skeleton';
 
 import { CustomerDashboard } from '@/components/CustomerDashboard';
@@ -10,8 +9,7 @@ import { useCustomerPendingOrders } from '@/queries/useOrders';
 import { useUserToolsSummary } from '@/queries/useUserTools';
 
 const Index = () => {
-  const { user } = useAuth();
-  const { isStaff, loading: roleLoading } = useUserRole();
+  const { user, isStaff, loading: roleLoading } = useAuth();
 
   const { data: profile, isLoading: profileLoading } = useBasicProfile(user?.id);
   const { data: pendingOrders = [], isLoading: customerOrdersLoading } =

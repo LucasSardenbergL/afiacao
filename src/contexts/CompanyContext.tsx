@@ -11,7 +11,7 @@ interface CompanyInfo {
 }
 
 export const COMPANIES: Record<Company, CompanyInfo> = {
-  colacor: { id: 'colacor', name: 'Afiação Colacor', shortName: 'Colacor', regime: 'presumido' },
+  colacor: { id: 'colacor', name: 'Colacor', shortName: 'Colacor', regime: 'presumido' },
   oben: { id: 'oben', name: 'Oben Comercial', shortName: 'Oben', regime: 'presumido' },
   colacor_sc: { id: 'colacor_sc', name: 'Colacor SC', shortName: 'Colacor SC', regime: 'simples' },
 };

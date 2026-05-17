@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { memo, useMemo, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { Link } from "react-router-dom";
 import {
@@ -129,7 +129,7 @@ function quarterDates(ano: number, trimestre: number): { inicio: string; fim: st
   return { inicio: iso(inicio), fim: iso(fim) };
 }
 
-export function HistoricoTab({ empresa, ano: anoAtual, trimestre: trimestreAtual }: Props) {
+function HistoricoTabImpl({ empresa, ano: anoAtual, trimestre: trimestreAtual }: Props) {
   const [filtroAno, setFiltroAno] = useState<string>("__todos__");
   const [filtroStatus, setFiltroStatus] = useState<string>("todos");
   const [detalhesOpen, setDetalhesOpen] = useState<QuarterCard | null>(null);
@@ -580,3 +580,5 @@ export function HistoricoTab({ empresa, ano: anoAtual, trimestre: trimestreAtual
     </div>
   );
 }
+
+export const HistoricoTab = memo(HistoricoTabImpl);

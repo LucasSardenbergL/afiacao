@@ -16,7 +16,6 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Sheet, SheetContent, SheetDescription, SheetHeader, SheetTitle, SheetFooter } from '@/components/ui/sheet';
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip';
 import { AlertTriangle, Ban, CheckCircle2, Clock, ExternalLink, Eye, Loader2, PlayCircle, RefreshCw, Trash2, XCircle, RotateCw, Zap } from 'lucide-react';
-import { useUserRole } from '@/hooks/useUserRole';
 import { formatDistanceToNow } from 'date-fns';
 import {
   AlertDialog,
@@ -265,7 +264,7 @@ function PortalDrawer({
   onOpenChange: (v: boolean) => void;
 }) {
   const queryClient = useQueryClient();
-  const { isAdmin } = useUserRole();
+  const { isAdmin } = useAuth();
   const [confirmReenvio, setConfirmReenvio] = useState(false);
 
   const reenviarMutation = useMutation({

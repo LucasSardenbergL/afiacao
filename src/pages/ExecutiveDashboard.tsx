@@ -1,7 +1,5 @@
 import { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Header } from '@/components/Header';
-import { BottomNav } from '@/components/BottomNav';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
@@ -10,7 +8,6 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import { useAuth } from '@/contexts/AuthContext';
 import { useFarmerPerformance, type PerformanceScore } from '@/hooks/useFarmerPerformance';
 import { supabase } from '@/integrations/supabase/client';
-import { useUserRole } from '@/hooks/useUserRole';
 import {
   Loader2, TrendingUp, DollarSign, BarChart3, Users, ShieldCheck,
   RefreshCw, Layers, Target, Brain, Eye, FileText, Activity
@@ -26,8 +23,7 @@ const scoreBarColor = (v: number) =>
 
 const ExecutiveDashboard = () => {
   const navigate = useNavigate();
-  const { user } = useAuth();
-  const { role, loading: roleLoading } = useUserRole();
+  const { user, role, loading: roleLoading } = useAuth();
   const { scores, loading, calculating, loadScores, calculateScores } = useFarmerPerformance();
   const [farmers, setFarmers] = useState<{ id: string; name: string }[]>([]);
   const [selectedFarmer, setSelectedFarmer] = useState<string>('all');
@@ -98,7 +94,6 @@ const ExecutiveDashboard = () => {
 
   return (
     <div className="min-h-screen bg-background pb-24">
-      <Header title="Painel Executivo" showBack />
 
       <main className="px-4 py-4 space-y-3 max-w-lg mx-auto">
         {/* Header */}
@@ -315,7 +310,6 @@ const ExecutiveDashboard = () => {
         )}
       </main>
 
-      <BottomNav />
     </div>
   );
 };

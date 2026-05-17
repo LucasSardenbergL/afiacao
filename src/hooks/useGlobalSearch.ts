@@ -1,6 +1,18 @@
 import { useEffect, useMemo, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { supabase } from '@/integrations/supabase/client';
+import { useAuth } from '@/contexts/AuthContext';
+
+/**
+ * Sanitiza input pra uso em `.or()` do PostgREST.
+ * Além dos wildcards do ILIKE (% _), remove caracteres que quebram o parser
+ * do PostgREST e permitem injetar cláusulas extras: vírgula (separador),
+ * parênteses (agrupamento), barra invertida (escape), aspas duplas (delimitador).
+ * Sem isso, input tipo `foo,role.eq.master` quebra de uma .ilike e injeta filtro.
+ */
+function sanitizeForPostgrestOr(input: string): string {
+  return input.replace(/[%_,()\\"]/g, '');
+}
 
 /**
  * Busca global pra Cmd-K — pesquisa simultânea em 3 entidades:
@@ -51,9 +63,12 @@ function useDebouncedValue<T>(value: T, delay = 200): T {
 }
 
 export function useGlobalSearch(query: string, enabled = true) {
+  const { isStaff } = useAuth();
   const debouncedQuery = useDebouncedValue(query, 200);
   const trimmed = debouncedQuery.trim();
-  const isActive = enabled && trimmed.length >= 2;
+  // Gate por isStaff — busca expõe profiles (PII) e sales_orders. Customer não
+  // tem caso de uso pra essas entidades; gate evita enumeração + reduz custo.
+  const isActive = enabled && isStaff && trimmed.length >= 2;
 
   /* ─── Customers ─── */
   const customersQuery = useQuery<SearchResult[]>({
@@ -61,8 +76,8 @@ export function useGlobalSearch(query: string, enabled = true) {
     enabled: isActive,
     staleTime: 30_000,
     queryFn: async () => {
-      // Busca por nome OU document OU email — sanitiza pra evitar quebrar ilike
-      const q = trimmed.replace(/[%_]/g, '');
+      // Busca por nome OU document OU email — sanitiza pra evitar injeção PostgREST
+      const q = sanitizeForPostgrestOr(trimmed);
       const { data } = await supabase
         .from('profiles')
         .select('user_id, name, document, email')
@@ -84,7 +99,7 @@ export function useGlobalSearch(query: string, enabled = true) {
     enabled: isActive,
     staleTime: 60_000,
     queryFn: async () => {
-      const q = trimmed.replace(/[%_]/g, '');
+      const q = sanitizeForPostgrestOr(trimmed);
       const { data } = await supabase
         .from('tint_formulas')
         .select('id, cor_id, nome_cor')
@@ -108,6 +123,7 @@ export function useGlobalSearch(query: string, enabled = true) {
     enabled: isActive && isNumericQuery,
     staleTime: 30_000,
     queryFn: async () => {
+      // .ilike() único — só wildcards do ILIKE precisam ser strippados
       const q = trimmed.replace(/[%_]/g, '');
       const { data } = await supabase
         .from('sales_orders')

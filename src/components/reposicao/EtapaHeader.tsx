@@ -28,4 +28,3 @@ export function EtapaHeader({ step, icon: Icon, title, subtitle, actions }: Prop
   );
 }
 
-export default EtapaHeader;

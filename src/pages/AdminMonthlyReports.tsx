@@ -1,7 +1,5 @@
 import { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Header } from '@/components/Header';
-import { BottomNav } from '@/components/BottomNav';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
@@ -95,7 +93,6 @@ const AdminMonthlyReports = () => {
 
   return (
     <div className="min-h-screen bg-background pb-24">
-      <Header title="Relatório Mensal" showBack />
 
       <main className="pt-16 px-4 max-w-4xl mx-auto">
         {/* Actions */}
@@ -300,7 +297,6 @@ const AdminMonthlyReports = () => {
         )}
       </main>
 
-      <BottomNav />
     </div>
   );
 };

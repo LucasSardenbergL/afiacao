@@ -7,7 +7,7 @@ import { Label } from '@/components/ui/label';
 import { Skeleton } from '@/components/ui/skeleton';
 import { RecommendationCard } from '@/components/RecommendationCard';
 import { useRecommendationEngine, type RecommendationItem } from '@/hooks/useRecommendationEngine';
-import { useUserRole } from '@/hooks/useUserRole';
+import { useAuth } from '@/contexts/AuthContext';
 import { Sparkles, RefreshCw, Loader2, AlertCircle, Target } from 'lucide-react';
 import { toast } from 'sonner';
 
@@ -28,7 +28,7 @@ export function RecommendationsPanel({
   maxItems,
   title = 'Sugestões para este cliente',
 }: RecommendationsPanelProps) {
-  const { isAdmin } = useUserRole();
+  const { isAdmin } = useAuth();
   const {
     recommendations, meta, loading, error,
     fetchRecommendations, logAccept, logReject,

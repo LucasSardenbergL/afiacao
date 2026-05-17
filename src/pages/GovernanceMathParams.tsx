@@ -1,6 +1,5 @@
 import React, { useState, useEffect } from 'react';
 import { useAuth } from '@/contexts/AuthContext';
-import { useUserRole } from '@/hooks/useUserRole';
 import { useCommercialRole } from '@/hooks/useCommercialRole';
 import { supabase } from '@/integrations/supabase/client';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
@@ -82,8 +81,7 @@ function WeightEditor({ title, description, weights, values, onChange, locked }:
 }
 
 export default function GovernanceMathParams() {
-  const { user } = useAuth();
-  const { isAdmin } = useUserRole();
+  const { user, isAdmin } = useAuth();
   const { isSuperAdmin } = useCommercialRole();
   const queryClient = useQueryClient();
 

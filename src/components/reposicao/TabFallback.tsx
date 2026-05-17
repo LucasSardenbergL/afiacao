@@ -7,4 +7,3 @@ export const TabFallback = () => (
   </div>
 );
 
-export default TabFallback;

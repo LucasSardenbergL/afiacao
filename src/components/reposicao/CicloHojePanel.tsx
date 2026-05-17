@@ -726,4 +726,3 @@ export function CicloHojePanel({
   );
 }
 
-export default CicloHojePanel;

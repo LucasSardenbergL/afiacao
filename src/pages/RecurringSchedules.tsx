@@ -1,6 +1,4 @@
 import { useState, useEffect } from 'react';
-import { Header } from '@/components/Header';
-import { BottomNav } from '@/components/BottomNav';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent } from '@/components/ui/card';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
@@ -163,18 +161,15 @@ const RecurringSchedules = () => {
   if (loading) {
     return (
       <div className="min-h-screen bg-background pb-24">
-        <Header title="Agendamentos Recorrentes" showBack />
         <div className="flex items-center justify-center pt-32">
           <Loader2 className="w-8 h-8 animate-spin text-primary" />
         </div>
-        <BottomNav />
       </div>
     );
   }
 
   return (
     <div className="min-h-screen bg-background pb-24">
-      <Header title="Agendamentos Recorrentes" showBack />
       <main className="pt-16 px-4 max-w-lg mx-auto">
         <Card className="mb-4 border-primary/20 bg-primary/5">
           <CardContent className="p-4 flex gap-3">
@@ -321,7 +316,6 @@ const RecurringSchedules = () => {
           </div>
         )}
       </main>
-      <BottomNav />
     </div>
   );
 };

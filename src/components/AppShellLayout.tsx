@@ -7,13 +7,19 @@ import { AppShell } from './AppShell';
  * (Dialog/Sheet/DropdownMenu/Select) que não foram fechados corretamente
  * — bug conhecido quando o usuário muda de rota com overlay aberto ou
  * quando vários overlays se fecham fora de ordem.
+ *
+ * Só Dialog/AlertDialog/Sheet bloqueiam scroll do body — popovers, tooltips
+ * e dropdown menus não devem. Por isso só checamos role="dialog"/"alertdialog"
+ * abertos antes de limpar, sem incluir [data-radix-popper-content-wrapper]
+ * (que matchava tooltips em fade-out e fazia o cleanup ser pulado, deixando
+ * a página com `body { overflow: hidden }` travada).
  */
 function cleanupStuckScrollLock() {
   const body = document.body;
-  const hasOpenOverlay = document.querySelector(
-    '[data-state="open"][role="dialog"], [data-state="open"][role="alertdialog"], [data-radix-popper-content-wrapper]'
+  const hasOpenLockingOverlay = document.querySelector(
+    '[data-state="open"][role="dialog"], [data-state="open"][role="alertdialog"]'
   );
-  if (!hasOpenOverlay) {
+  if (!hasOpenLockingOverlay) {
     body.style.pointerEvents = '';
     body.style.overflow = '';
     body.style.removeProperty('margin-right');

@@ -18,7 +18,7 @@ import {
   LineChart, Line, BarChart, Bar, XAxis, YAxis, CartesianGrid,
   Tooltip as RTooltip, ResponsiveContainer, Legend,
 } from 'recharts';
-import { useUserRole } from '@/hooks/useUserRole';
+import { useAuth } from '@/contexts/AuthContext';
 import { PortalStatusBadge } from '@/components/portalSayerlack/PortalStatusBadge';
 import { DispararAgoraButton } from '@/components/portalSayerlack/DispararAgoraButton';
 import { PortalDetailDrawer } from '@/components/portalSayerlack/PortalDetailDrawer';
@@ -77,7 +77,7 @@ const PEDIDO_COLS =
   'id, empresa, fornecedor_nome, data_ciclo, num_skus, valor_total, status, status_envio_portal, aprovado_em, enviado_portal_em, portal_tentativas, portal_proximo_retry_em, portal_protocolo, portal_screenshot_url, portal_erro';
 
 export default function AdminPortalSayerlack() {
-  const { isAdmin, isMaster } = useUserRole();
+  const { isAdmin, isMaster } = useAuth();
   const qc = useQueryClient();
 
   const [selectedId, setSelectedId] = useState<number | null>(null);

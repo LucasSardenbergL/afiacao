@@ -1,7 +1,5 @@
 import { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Header } from '@/components/Header';
-import { BottomNav } from '@/components/BottomNav';
 import { Card, CardContent } from '@/components/ui/card';
 import { Progress } from '@/components/ui/progress';
 import { Badge } from '@/components/ui/badge';
@@ -96,11 +94,9 @@ const Gamification = () => {
   if (loading) {
     return (
       <div className="min-h-screen bg-background pb-24">
-        <Header title="Gamificação" showBack />
         <div className="flex items-center justify-center pt-32">
           <Loader2 className="w-8 h-8 animate-spin text-primary" />
         </div>
-        <BottomNav />
       </div>
     );
   }
@@ -111,7 +107,6 @@ const Gamification = () => {
 
   return (
     <div className="min-h-screen bg-background pb-24">
-      <Header title="Meu Desempenho" showBack />
 
       <main className="pt-16 px-4 max-w-lg mx-auto space-y-4">
         {/* Level Card */}
@@ -332,7 +327,6 @@ const Gamification = () => {
         </Card>
       </main>
 
-      <BottomNav />
     </div>
   );
 };
