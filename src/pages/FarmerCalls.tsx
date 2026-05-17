@@ -844,6 +844,9 @@ const FarmerCalls = () => {
           error={webrtc.transcriptionError}
           open={transcriptionPanelOpen}
           onClose={() => setTranscriptionPanelOpen(false)}
+          spinStatus={webrtc.spinAnalysisStatus}
+          spinAnalysis={webrtc.spinAnalysis}
+          spinError={webrtc.spinAnalysisError}
         />
       )}
 
