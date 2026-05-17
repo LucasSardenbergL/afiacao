@@ -1,12 +1,16 @@
 /**
- * Wrapper de compatibilidade — delega para Sonner.
+ * @deprecated Wrapper de compatibilidade — delega para Sonner.
  *
  * O sistema antigo (Radix toaster) foi descontinuado em favor de Sonner (uma fonte
  * só de feedback). Este wrapper preserva a API antiga (`useToast()` + `toast({title, description, variant})`)
- * para que os ~50 callsites existentes continuem funcionando sem refactor imediato.
+ * para que os callsites existentes continuem funcionando sem refactor imediato.
  *
- * Migração progressiva recomendada: trocar imports para `import { toast } from 'sonner'`
- * e usar `toast.success(title, { description })` / `toast.error(...)` diretamente.
+ * **Não usar em código novo.** Use `import { toast } from 'sonner'` direto:
+ *   - `toast.success(title, { description })` em vez de `toast({ title, description })`
+ *   - `toast.error(title, { description })` em vez de `toast({ title, variant: 'destructive', description })`
+ *
+ * Engines IA já migrados: useBundleEngine, useTacticalPlan, useFarmerExperiments, useFarmerPerformance.
+ * Migração dos ~100 callsites restantes pode ser feita gradualmente quando os arquivos forem tocados.
  */
 import { toast as sonnerToast } from 'sonner';
 import type { ReactNode } from 'react';
