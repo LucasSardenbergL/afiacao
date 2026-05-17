@@ -59,8 +59,8 @@ export default defineConfig(({ mode }) => ({
         cleanupOutdatedCaches: true,
         navigateFallbackDenylist: [/^\/~oauth/, /^\/__/],
         runtimeCaching: [
+          // ─── Catálogo: cacheable longo (raramente muda) ─────────────
           {
-            // Cache only catalog/config endpoints
             urlPattern: /^https:\/\/.*\.supabase\.co\/rest\/v1\/(tool_categories|default_prices|company_config|category_mappings)/i,
             handler: "NetworkFirst",
             options: {
@@ -71,13 +71,82 @@ export default defineConfig(({ mode }) => ({
               },
             },
           },
+          // ─── Picking + recebimento (offline-first per CLAUDE.md §6.1) ─
+          // Antes: rotas não cobertas → fetch direto sem fallback offline.
+          // Agora: NetworkFirst com TTL curto. PWA tenta rede primeiro
+          // (sempre fresco quando online); fallback pro cache quando offline.
+          // Workbox NetworkFirst só cacheia GET — POSTs/PATCHes/DELETEs
+          // sempre passam direto pra rede (semântica desejada).
           {
-            // No cache for frequently changing data
-            urlPattern: /^https:\/\/.*\.supabase\.co\/rest\/v1\/(orders|profiles|order_messages|user_tools|sales_orders|order_items)/i,
-            handler: "NetworkOnly",
+            urlPattern: /^https:\/\/.*\.supabase\.co\/rest\/v1\/(picking_tasks|picking_units|picking_lotes)/i,
+            handler: "NetworkFirst",
+            options: {
+              cacheName: "supabase-picking-cache",
+              networkTimeoutSeconds: 3,
+              expiration: {
+                maxEntries: 200,
+                maxAgeSeconds: 5 * 60, // 5min — turno de picking renova rápido
+              },
+            },
           },
           {
-            // No cache for auth and realtime
+            urlPattern: /^https:\/\/.*\.supabase\.co\/rest\/v1\/(nfe_recebimentos|nfe_recebimento_itens|cte_associados)/i,
+            handler: "NetworkFirst",
+            options: {
+              cacheName: "supabase-recebimento-cache",
+              networkTimeoutSeconds: 3,
+              expiration: {
+                maxEntries: 200,
+                maxAgeSeconds: 60, // 1min — conferência ativa
+              },
+            },
+          },
+          // ─── Pedidos: NetworkFirst com TTL muito curto ──────────────
+          // Era NetworkOnly (sem fallback offline). NetworkFirst dá fallback
+          // de leitura quando wifi cai durante navegação. TTL 30s garante
+          // dados frescos quando online.
+          {
+            urlPattern: /^https:\/\/.*\.supabase\.co\/rest\/v1\/(orders|sales_orders|order_items|order_messages)/i,
+            handler: "NetworkFirst",
+            options: {
+              cacheName: "supabase-orders-cache",
+              networkTimeoutSeconds: 3,
+              expiration: {
+                maxEntries: 500,
+                maxAgeSeconds: 30,
+              },
+            },
+          },
+          // ─── Profiles + user_tools: NetworkFirst (raramente mudam) ─
+          {
+            urlPattern: /^https:\/\/.*\.supabase\.co\/rest\/v1\/(profiles|user_tools)/i,
+            handler: "NetworkFirst",
+            options: {
+              cacheName: "supabase-profiles-cache",
+              networkTimeoutSeconds: 3,
+              expiration: {
+                maxEntries: 200,
+                maxAgeSeconds: 5 * 60, // 5min
+              },
+            },
+          },
+          // ─── Tintométrico + Farmer (analíticos): NetworkFirst longo ─
+          {
+            urlPattern: /^https:\/\/.*\.supabase\.co\/rest\/v1\/(tint_|farmer_)/i,
+            handler: "NetworkFirst",
+            options: {
+              cacheName: "supabase-analytics-cache",
+              networkTimeoutSeconds: 3,
+              expiration: {
+                maxEntries: 300,
+                maxAgeSeconds: 2 * 60, // 2min
+              },
+            },
+          },
+          // ─── Auth e realtime: SEMPRE network only ───────────────────
+          // Sessões/tokens não podem cachear (segurança); realtime é
+          // WebSocket que workbox não deve interceptar.
+          {
             urlPattern: /^https:\/\/.*\.supabase\.co\/(auth|realtime)/i,
             handler: "NetworkOnly",
           },
