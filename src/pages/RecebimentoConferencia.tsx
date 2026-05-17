@@ -331,6 +331,10 @@ export default function RecebimentoConferencia() {
 
   // Finalize
   const handleFinalize = async () => {
+    if (typeof navigator !== 'undefined' && !navigator.onLine) {
+      toast.error('Finalizar exige conexão (sincroniza com Omie). Conecte e tente novamente.');
+      return;
+    }
     setFinalizing(true);
     try {
       const { data: { user } } = await supabase.auth.getUser();
