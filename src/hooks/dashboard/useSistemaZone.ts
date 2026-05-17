@@ -7,6 +7,17 @@ import { formatCount } from '@/lib/dashboard/format';
 import type { KpiSpec } from '@/components/dashboard/cockpit/CockpitKpiRow';
 import type { TopListItem } from '@/components/dashboard/cockpit/CockpitTopList';
 
+function formatTimeSince(iso: string | null): string {
+  if (!iso) return '—';
+  const minutes = Math.floor((Date.now() - new Date(iso).getTime()) / 60_000);
+  if (minutes < 1) return 'agora';
+  if (minutes < 60) return `${minutes}min`;
+  const hours = Math.floor(minutes / 60);
+  if (hours < 24) return `${hours}h`;
+  const days = Math.floor(hours / 24);
+  return `${days}d`;
+}
+
 export function useSistemaZone() {
   const queryKey = ['dashboard', 'sistema'];
 
@@ -18,8 +29,8 @@ export function useSistemaZone() {
     queryKey,
     queryFn: async () => {
       let aprovacoesPendentes = 0;
-      let syncOmie: string | null = null;
-      let syncSayerlack: string | null = null;
+      let staffAtivos = 0;
+      let ultimaAtividadeIso: string | null = null;
       let topItems: TopListItem[] = [];
 
       try {
@@ -49,30 +60,33 @@ export function useSistemaZone() {
       } catch { /* */ }
 
       try {
-        const { data: lastOmie } = await supabase
-          .from('sync_logs')
-          .select('finished_at, status')
-          .eq('integration', 'omie')
-          .order('finished_at', { ascending: false })
-          .limit(1)
-          .maybeSingle();
-        const row = lastOmie as { finished_at?: string | null; status?: string | null } | null;
-        syncOmie = row?.status ?? null;
-      } catch { /* tabela ausente */ }
-
-      try {
-        const { data: lastSay } = await supabase
-          .from('sync_logs')
-          .select('finished_at, status')
-          .eq('integration', 'sayerlack')
-          .order('finished_at', { ascending: false })
-          .limit(1)
-          .maybeSingle();
-        const row = lastSay as { finished_at?: string | null; status?: string | null } | null;
-        syncSayerlack = row?.status ?? null;
+        // Staff aprovados (proxy de "quantas pessoas operam o sistema"). Conta
+        // profiles com role staff (não-customer) via user_roles join via RPC
+        // ou query simples. Aqui contamos profiles approved (qualquer role).
+        const { count } = await supabase
+          .from('profiles')
+          .select('user_id', { count: 'exact', head: true })
+          .eq('is_approved', true);
+        staffAtivos = count ?? 0;
       } catch { /* */ }
 
-      return { aprovacoesPendentes, syncOmie, syncSayerlack, topItems };
+      try {
+        // Última atividade: max(created_at) de orders OU sales_orders, o que
+        // for mais recente. Proxy "sistema vivo / fluindo dado".
+        const [ordersRes, salesRes] = await Promise.all([
+          supabase.from('orders').select('created_at').order('created_at', { ascending: false }).limit(1).maybeSingle(),
+          supabase.from('sales_orders').select('created_at').order('created_at', { ascending: false }).limit(1).maybeSingle(),
+        ]);
+        const o = (ordersRes.data as { created_at?: string | null } | null)?.created_at ?? null;
+        const s = (salesRes.data as { created_at?: string | null } | null)?.created_at ?? null;
+        if (o && s) {
+          ultimaAtividadeIso = new Date(o) > new Date(s) ? o : s;
+        } else {
+          ultimaAtividadeIso = o ?? s;
+        }
+      } catch { /* */ }
+
+      return { aprovacoesPendentes, staffAtivos, ultimaAtividadeIso, topItems };
     },
     staleTime: 60 * 1000,
     refetchInterval: 60 * 1000,
@@ -82,8 +96,8 @@ export function useSistemaZone() {
     if (!data) return [];
     return [
       { label: 'Aprovações', value: formatCount(data.aprovacoesPendentes) },
-      { label: 'Sync Omie', value: data.syncOmie ?? '—' },
-      { label: 'Sync Sayerlack', value: data.syncSayerlack ?? '—' },
+      { label: 'Staff ativos', value: formatCount(data.staffAtivos) },
+      { label: 'Última atividade', value: formatTimeSince(data.ultimaAtividadeIso) },
     ];
   }, [data]);
 
