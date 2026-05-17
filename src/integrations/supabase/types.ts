@@ -1403,13 +1403,16 @@ export type Database = {
       }
       farmer_calls: {
         Row: {
+          analyses: Json | null
           attempt_number: number | null
+          call_backend: string | null
           call_result: Database["public"]["Enums"]["farmer_call_result"]
           call_type: Database["public"]["Enums"]["farmer_call_type"]
           created_at: string
-          customer_user_id: string
+          customer_user_id: string | null
           duration_seconds: number | null
           ended_at: string | null
+          entities_extracted: Json | null
           farmer_id: string
           follow_up_duration_seconds: number | null
           id: string
@@ -1417,18 +1420,23 @@ export type Database = {
           linked_sales_order_id: string | null
           margin_generated: number | null
           notes: string | null
+          phone_dialed: string | null
           revenue_generated: number | null
           started_at: string
+          transcript: Json | null
           whatsapp_replied: boolean | null
         }
         Insert: {
+          analyses?: Json | null
           attempt_number?: number | null
+          call_backend?: string | null
           call_result?: Database["public"]["Enums"]["farmer_call_result"]
           call_type: Database["public"]["Enums"]["farmer_call_type"]
           created_at?: string
-          customer_user_id: string
+          customer_user_id?: string | null
           duration_seconds?: number | null
           ended_at?: string | null
+          entities_extracted?: Json | null
           farmer_id: string
           follow_up_duration_seconds?: number | null
           id?: string
@@ -1436,18 +1444,23 @@ export type Database = {
           linked_sales_order_id?: string | null
           margin_generated?: number | null
           notes?: string | null
+          phone_dialed?: string | null
           revenue_generated?: number | null
           started_at?: string
+          transcript?: Json | null
           whatsapp_replied?: boolean | null
         }
         Update: {
+          analyses?: Json | null
           attempt_number?: number | null
+          call_backend?: string | null
           call_result?: Database["public"]["Enums"]["farmer_call_result"]
           call_type?: Database["public"]["Enums"]["farmer_call_type"]
           created_at?: string
-          customer_user_id?: string
+          customer_user_id?: string | null
           duration_seconds?: number | null
           ended_at?: string | null
+          entities_extracted?: Json | null
           farmer_id?: string
           follow_up_duration_seconds?: number | null
           id?: string
@@ -1455,8 +1468,10 @@ export type Database = {
           linked_sales_order_id?: string | null
           margin_generated?: number | null
           notes?: string | null
+          phone_dialed?: string | null
           revenue_generated?: number | null
           started_at?: string
+          transcript?: Json | null
           whatsapp_replied?: boolean | null
         }
         Relationships: [

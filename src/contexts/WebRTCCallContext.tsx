@@ -2,6 +2,7 @@ import { createContext, useContext, useEffect, useRef, useState, useCallback, ty
 import { SipClient } from '@/lib/sip/sip-client';
 import type { SipCallState } from '@/lib/sip/types';
 import { invokeFunction } from '@/lib/invoke-function';
+import { supabase } from '@/integrations/supabase/client';
 import { toast } from 'sonner';
 import { normalizeBrPhone, formatBrPhone } from '@/lib/phone';
 import { mixPrerollWithMic } from '@/lib/sip/audio-preroll';
@@ -9,6 +10,8 @@ import { useTranscription } from '@/hooks/useTranscription';
 import type { TranscriptTurn, TranscriptionStatus } from '@/lib/transcription/types';
 import { useSpinAnalysis } from '@/hooks/useSpinAnalysis';
 import type { SpinAnalysis, SpinAnalysisStatus } from '@/lib/spin/types';
+import { resolveCustomerByPhone } from '@/lib/call-session/resolve-customer';
+import { buildSessionPayload } from '@/lib/call-session/build-session-payload';
 
 export type WebRTCCallState =
   | 'idle' | 'connecting' | 'calling_origin' | 'calling_destination'
@@ -66,6 +69,45 @@ export interface WebRTCCallContextValue {
 
 const WebRTCCallContext = createContext<WebRTCCallContextValue | null>(null);
 
+/**
+ * Persiste a sessão de chamada em `farmer_calls` ao final.
+ * Fire-and-forget: erros logam apenas, não interrompem o cleanup da chamada.
+ * Definido fora do Provider pra não ser recriado a cada render.
+ */
+async function persistCallSession(opts: {
+  startedAt: Date;
+  endedAt: Date;
+  turns: TranscriptTurn[];
+  analyses: SpinAnalysis[];
+  dialedPhone: string;
+}): Promise<void> {
+  try {
+    const { data: { user } } = await supabase.auth.getUser();
+    if (!user) return;
+
+    const { customerUserId, phoneDialed } = await resolveCustomerByPhone(opts.dialedPhone);
+
+    const payload = buildSessionPayload({
+      farmerId: user.id,
+      customerUserId,
+      phoneDialed,
+      callBackend: 'webrtc',
+      startedAt: opts.startedAt,
+      endedAt: opts.endedAt,
+      turns: opts.turns,
+      analyses: opts.analyses,
+    });
+
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const { error } = await supabase.from('farmer_calls').insert(payload as any);
+    if (error) {
+      console.error('[WebRTCCallContext] persistCallSession insert failed:', error);
+    }
+  } catch (err) {
+    console.error('[WebRTCCallContext] persistCallSession error:', err);
+  }
+}
+
 interface ProviderProps {
   children: ReactNode;
 }
@@ -89,6 +131,14 @@ export function WebRTCCallProvider({ children }: ProviderProps) {
   const prerollDurationRef = useRef<number | null>(null);
   const prerollFinishTimerRef = useRef<number | null>(null);
   const prerollUrl = (import.meta.env.VITE_NVOIP_SIP_PREROLL_URL as string | undefined);
+
+  // PR4 — Refs pra persistência da sessão de chamada
+  const analysisHistoryRef = useRef<SpinAnalysis[]>([]);
+  const dialedPhoneRef = useRef<string>('');
+  const callStartedAtRef = useRef<Date | null>(null);
+  // Ref atualizado por effect pra evitar problema de hoisting com transcription
+  // (transcription é declarado depois dos useCallbacks)
+  const turnsRef = useRef<TranscriptTurn[]>([]);
 
   useEffect(() => {
     let cancelled = false;
@@ -204,6 +254,11 @@ export function WebRTCCallProvider({ children }: ProviderProps) {
       return;
     }
 
+    // PR4 — Reset refs de sessão antes de iniciar nova chamada
+    analysisHistoryRef.current = [];
+    dialedPhoneRef.current = normalized;
+    callStartedAtRef.current = new Date();
+
     cleanupAudioResources();
 
     try {
@@ -232,10 +287,28 @@ export function WebRTCCallProvider({ children }: ProviderProps) {
   }, [prerollUrl]);
 
   const endCall = useCallback(async () => {
+    // PR4 — Capturar snapshot ANTES de cleanup (refs/state ainda válidos).
+    // Lê turns/analyses via refs pra evitar hoisting com `transcription` (declarado abaixo).
+    const startedAt = callStartedAtRef.current;
+    const turnsSnapshot = [...turnsRef.current];
+    const analysesSnapshot = [...analysisHistoryRef.current];
+    const dialedPhone = dialedPhoneRef.current;
+
     clientRef.current?.hangUp();
     cleanupAudioResources();
     setIsMuted(false);
     toast.success('Chamada encerrada');
+
+    // Fire-and-forget — não bloqueia UI. Só persiste se houve conteúdo útil.
+    if (startedAt && (turnsSnapshot.length > 0 || analysesSnapshot.length > 0)) {
+      void persistCallSession({
+        startedAt,
+        endedAt: new Date(),
+        turns: turnsSnapshot,
+        analyses: analysesSnapshot,
+        dialedPhone,
+      });
+    }
   }, []);
 
   const toggleMute = useCallback(() => {
@@ -265,6 +338,18 @@ export function WebRTCCallProvider({ children }: ProviderProps) {
     turns: transcription.turns,
     enabled: callState === 'established',
   });
+
+  // PR4 — Acumula cada nova análise SPIN ao longo da chamada (deduplica por ref)
+  useEffect(() => {
+    if (spin.analysis && !analysisHistoryRef.current.includes(spin.analysis)) {
+      analysisHistoryRef.current.push(spin.analysis);
+    }
+  }, [spin.analysis]);
+
+  // PR4 — Mantém ref de turns sincronizado pra endCall ler sem closure issues
+  useEffect(() => {
+    turnsRef.current = transcription.turns;
+  }, [transcription.turns]);
 
   const value: WebRTCCallContextValue = {
     callState,
