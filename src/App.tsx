@@ -65,6 +65,7 @@ const FarmerTacticalPlan = lazy(() => import("./pages/FarmerTacticalPlan"));
 const FarmerIPFDashboard = lazy(() => import("./pages/FarmerIPFDashboard"));
 const ExecutiveDashboard = lazy(() => import("./pages/ExecutiveDashboard"));
 const AdminApprovals = lazy(() => import("./pages/AdminApprovals"));
+const AdminDepartments = lazy(() => import("./pages/AdminDepartments"));
 const NotFound = lazy(() => import("./pages/NotFound"));
 const DesignSystem = lazy(() => import("./pages/DesignSystem"));
 const DesignPreview = lazy(() => import("./pages/DesignPreview"));
@@ -195,6 +196,7 @@ const App = () => (
               <Route path="support" element={<Support />} />
               <Route path="admin" element={<Admin />} />
               <Route path="admin/approvals" element={<AdminApprovals />} />
+              <Route path="admin/departments" element={<AdminDepartments />} />
               <Route path="admin/customers" element={<AdminCustomers />} />
               <Route path="admin/customers/:customerId" element={<AdminCustomers />} />
               <Route path="admin/orders/:id" element={<AdminOrderDetail />} />

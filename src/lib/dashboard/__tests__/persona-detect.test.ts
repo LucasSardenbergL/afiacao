@@ -7,6 +7,7 @@ const baseSignals: PersonaSignals = {
   commercialRole: null,
   isSalesOnly: false,
   routeCounts: {},
+  userDepartment: null,
 };
 
 describe('inferPersona', () => {
@@ -104,5 +105,37 @@ describe('inferPersona', () => {
     });
     expect(r.persona).toBe('geral');
     expect(r.source).toBe('default');
+  });
+
+  it('userDepartment → vendas → vendedor', () => {
+    const r = inferPersona({ ...baseSignals, userDepartment: 'vendas' });
+    expect(r.persona).toBe('vendedor');
+    expect(r.source).toBe('department');
+  });
+
+  it('userDepartment → separador → estoque', () => {
+    const r = inferPersona({ ...baseSignals, userDepartment: 'separador' });
+    expect(r.persona).toBe('estoque');
+    expect(r.source).toBe('department');
+  });
+
+  it('userDepartment trumps commercial_role', () => {
+    const r = inferPersona({
+      ...baseSignals,
+      userDepartment: 'tintometrico',
+      commercialRole: 'gerencial', // would normally → gestor
+    });
+    expect(r.persona).toBe('tintometrico');
+    expect(r.source).toBe('department');
+  });
+
+  it('override still beats userDepartment', () => {
+    const r = inferPersona({
+      ...baseSignals,
+      override: 'financeiro',
+      userDepartment: 'vendas',
+    });
+    expect(r.persona).toBe('financeiro');
+    expect(r.source).toBe('manual');
   });
 });
