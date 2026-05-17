@@ -26,6 +26,8 @@ import LoteScannerOCR from '@/components/recebimento/LoteScannerOCR';
 import { useOfflineMutation } from '@/hooks/useOfflineMutation';
 import { registerOfflineHandler } from '@/hooks/useOfflineFlush';
 import { confirmUnit, type ConfirmUnitVars } from '@/services/recebimento-confirm';
+import { reportDivergencia, type ReportDivergenciaVars } from '@/services/recebimento-divergencia';
+import { addCte, type AddCteVars } from '@/services/recebimento-cte';
 
 type ItemStatus = 'pendente' | 'em_conferencia' | 'conferido' | 'divergencia';
 
@@ -116,10 +118,36 @@ export default function RecebimentoConferencia() {
     mutationFn: confirmUnit,
   });
 
+  // Offline-aware mutation pra handleReportDivergencia
+  const divergenciaMutation = useOfflineMutation<{ ok: true }, ReportDivergenciaVars>({
+    kind: 'recebimento.report-divergencia',
+    mutationFn: reportDivergencia,
+  });
+
+  // Offline-aware mutation pra handleAddCte
+  const addCteMutation = useOfflineMutation<{ ok: true }, AddCteVars>({
+    kind: 'recebimento.add-cte',
+    mutationFn: addCte,
+  });
+
   // Registra handler pra processar items enfileirados quando reconectar
   useEffect(() => {
     return registerOfflineHandler<ConfirmUnitVars>('recebimento.confirm-unit', async (vars) => {
       await confirmUnit(vars);
+      return true;
+    });
+  }, []);
+
+  useEffect(() => {
+    return registerOfflineHandler<ReportDivergenciaVars>('recebimento.report-divergencia', async (vars) => {
+      await reportDivergencia(vars);
+      return true;
+    });
+  }, []);
+
+  useEffect(() => {
+    return registerOfflineHandler<AddCteVars>('recebimento.add-cte', async (vars) => {
+      await addCte(vars);
       return true;
     });
   }, []);
@@ -239,20 +267,26 @@ export default function RecebimentoConferencia() {
 
   // Report divergence
   const handleReportDivergencia = async () => {
-    if (!divergenciaItemId || !divergenciaText.trim()) return;
+    if (!divergenciaItemId || !divergenciaText.trim() || !id) return;
     setSaving(true);
     try {
-      await supabase
-        .from('nfe_recebimento_itens')
-        .update({ status_item: 'divergencia', observacao: divergenciaText.trim() })
-        .eq('id', divergenciaItemId);
+      const vars: ReportDivergenciaVars = {
+        itemId: divergenciaItemId,
+        nfeId: id,
+        observacao: divergenciaText.trim(),
+      };
 
-      await supabase.from('nfe_recebimentos').update({ status: 'divergencia' }).eq('id', id!);
+      await divergenciaMutation.mutateAsync(vars);
 
-      toast.success('Divergência registrada');
       setDivergenciaItemId(null);
       setDivergenciaText('');
       queryClient.invalidateQueries({ queryKey: ['nfe_conferencia', id] });
+
+      if (divergenciaMutation.queued) {
+        toast.info('Salvo offline — sincroniza quando reconectar');
+      } else {
+        toast.success('Divergência registrada');
+      }
     } catch (err: any) {
       toast.error('Erro: ' + err.message);
     } finally {
@@ -267,19 +301,27 @@ export default function RecebimentoConferencia() {
       toast.error('Informe a chave de acesso (44 dígitos) ou o XML');
       return;
     }
+    if (!id) return;
     setCteSaving(true);
     try {
-      await supabase.from('cte_associados').insert({
-        nfe_recebimento_id: id!,
-        chave_acesso_cte: clean || `XML-${Date.now()}`,
-        xml_cte: cteXml.trim() || null,
-        status: 'pendente',
-      });
-      toast.success('CT-e vinculado');
+      const vars: AddCteVars = {
+        nfeId: id,
+        chaveAcesso: clean || `XML-${Date.now()}`,
+        xmlCte: cteXml.trim() || null,
+      };
+
+      await addCteMutation.mutateAsync(vars);
+
       setCteModalOpen(false);
       setCteChave('');
       setCteXml('');
       queryClient.invalidateQueries({ queryKey: ['nfe_conferencia', id] });
+
+      if (addCteMutation.queued) {
+        toast.info('Salvo offline — sincroniza quando reconectar');
+      } else {
+        toast.success('CT-e vinculado');
+      }
     } catch (err: any) {
       toast.error('Erro: ' + err.message);
     } finally {
@@ -289,6 +331,10 @@ export default function RecebimentoConferencia() {
 
   // Finalize
   const handleFinalize = async () => {
+    if (typeof navigator !== 'undefined' && !navigator.onLine) {
+      toast.error('Finalizar exige conexão (sincroniza com Omie). Conecte e tente novamente.');
+      return;
+    }
     setFinalizing(true);
     try {
       const { data: { user } } = await supabase.auth.getUser();
