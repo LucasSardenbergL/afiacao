@@ -20,7 +20,10 @@ import { StatusBadgeSimple } from '@/components/StatusBadge';
 import { shareOrderViaWhatsApp } from '@/utils/whatsappShare';
 import { useInfiniteScroll } from '@/hooks/useInfiniteScroll';
 
-type Account = 'oben' | 'colacor' | 'afiacao' | 'all';
+// Inclui colacor_sc — antes ficava de fora da Tabs e os pedidos do SC só apareciam
+// na aba "Todos". 'afiacao' é virtual (representa o módulo Afiação, sem coluna
+// account na tabela orders) e não vem do CompanyContext.
+type Account = 'oben' | 'colacor' | 'colacor_sc' | 'afiacao' | 'all';
 
 const PAGE_SIZE = 50;
 
@@ -324,7 +327,7 @@ const SalesOrders = () => {
 
       {/* Account Filter */}
       <Tabs value={accountFilter} onValueChange={(v) => setAccountFilter(v as Account)}>
-         <TabsList className="w-full grid grid-cols-4">
+         <TabsList className="w-full grid grid-cols-5">
           <TabsTrigger value="all">Todos</TabsTrigger>
           <TabsTrigger value="oben" className="gap-1">
             <Building2 className="w-3 h-3" />
@@ -333,6 +336,10 @@ const SalesOrders = () => {
           <TabsTrigger value="colacor" className="gap-1">
             <Building2 className="w-3 h-3" />
             Colacor
+          </TabsTrigger>
+          <TabsTrigger value="colacor_sc" className="gap-1">
+            <Building2 className="w-3 h-3" />
+            Colacor SC
           </TabsTrigger>
           <TabsTrigger value="afiacao" className="gap-1">
             <Wrench className="w-3 h-3" />
@@ -377,7 +384,13 @@ const SalesOrders = () => {
             const status = statusLabels[order.status] || statusLabels.rascunho;
             const totalItems = order.items?.reduce((s, i) => s + (i.quantidade || 0), 0) || 0;
             const orderAccount = isAfiacao ? 'afiacao' : (order.account || 'oben');
-            const accountLabel = isAfiacao ? 'Afiação' : orderAccount === 'colacor' ? 'Colacor' : 'Oben';
+            const accountLabel = isAfiacao
+              ? 'Afiação'
+              : orderAccount === 'colacor_sc'
+                ? 'Colacor SC'
+                : orderAccount === 'colacor'
+                  ? 'Colacor'
+                  : 'Oben';
             const isSelectable = !isAfiacao; // só sales_orders são bulk-deletáveis
             const checked = selectedIds.has(order.id);
             return (
