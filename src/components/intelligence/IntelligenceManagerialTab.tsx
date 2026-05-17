@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { memo } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { supabase } from '@/integrations/supabase/client';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
@@ -8,7 +8,7 @@ import { Users, AlertTriangle, Layers } from 'lucide-react';
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip as RechartsTooltip, ResponsiveContainer } from 'recharts';
 import { KpiCard } from './KpiCard';
 
-export function IntelligenceManagerialTab() {
+function IntelligenceManagerialTabImpl() {
   const { data: allScores, isLoading } = useQuery({
     queryKey: ['intel-all-scores'],
     queryFn: async () => {
@@ -167,3 +167,5 @@ export function IntelligenceManagerialTab() {
     </div>
   );
 }
+
+export const IntelligenceManagerialTab = memo(IntelligenceManagerialTabImpl);

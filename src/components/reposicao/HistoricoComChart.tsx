@@ -1,4 +1,4 @@
-import { lazy, Suspense, useMemo, useState } from "react";
+import { lazy, memo, Suspense, useMemo, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { format, subDays } from "date-fns";
 import { toast } from "sonner";
@@ -261,7 +261,7 @@ function CompareCyclesSection({ cycles }: { cycles: string[] }) {
   );
 }
 
-export function HistoricoComChart() {
+function HistoricoComChartImpl() {
   const { data = [], isLoading } = useHistoricoChart();
   const cycles = useMemo(() => data.map((d) => d.data).reverse(), [data]);
   return (
@@ -328,3 +328,5 @@ export function HistoricoComChart() {
   );
 }
 
+
+export const HistoricoComChart = memo(HistoricoComChartImpl);
