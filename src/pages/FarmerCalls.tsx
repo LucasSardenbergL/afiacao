@@ -17,8 +17,10 @@ import { useToast } from '@/hooks/use-toast';
 import { useFarmerScoring } from '@/hooks/useFarmerScoring';
 import { cn } from '@/lib/utils';
 import { Dialer } from '@/components/call/Dialer';
+import { TranscriptionPanel } from '@/components/call/TranscriptionPanel';
 import type { NvoipCallState } from '@/hooks/useNvoipCall';
 import { useCallBackend } from '@/hooks/useCallBackend';
+import { useWebRTCCall } from '@/hooks/useWebRTCCall';
 import {
   Phone, PhoneOff, Play, Pause, Clock, User, Search,
   Plus, Timer, CheckCircle, XCircle, Loader2, BarChart3,
@@ -206,6 +208,11 @@ const FarmerCalls = () => {
     error: nvoipError,
     backend: callBackend,
   } = useCallBackend();
+
+  // Acesso direto ao WebRTCCallContext pra transcrição (só faz sentido em backend WebRTC)
+  const webrtc = useWebRTCCall();
+  const [transcriptionPanelOpen, setTranscriptionPanelOpen] = useState(true);
+
 
 
   const [isCallActive, setIsCallActive] = useState(false);
@@ -828,6 +835,29 @@ const FarmerCalls = () => {
           </DialogFooter>
         </DialogContent>
       </Dialog>
+
+      {/* Painel lateral de transcrição ao vivo — só renderiza em chamadas WebRTC ativas */}
+      {callBackend === 'webrtc' && webrtc.callState === 'established' && (
+        <TranscriptionPanel
+          status={webrtc.transcriptionStatus}
+          turns={webrtc.transcriptionTurns}
+          error={webrtc.transcriptionError}
+          open={transcriptionPanelOpen}
+          onClose={() => setTranscriptionPanelOpen(false)}
+        />
+      )}
+
+      {/* Botão pra reabrir o painel se vendedor fechou acidentalmente */}
+      {callBackend === 'webrtc' && webrtc.callState === 'established' && !transcriptionPanelOpen && (
+        <Button
+          size="sm"
+          variant="outline"
+          className="fixed right-4 top-20 z-30 gap-1.5"
+          onClick={() => setTranscriptionPanelOpen(true)}
+        >
+          Mostrar transcrição
+        </Button>
+      )}
     </>
   );
 };
