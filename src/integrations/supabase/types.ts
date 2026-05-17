@@ -4520,104 +4520,260 @@ export type Database = {
           },
         ]
       }
-      kb_chunks: {
+      kb_competitor_products: {
         Row: {
-          char_end: number | null
-          char_start: number | null
-          chunk_index: number
-          content: string
+          argumentos_comparativos: Json | null
+          category: string | null
+          competitor_id: string
           created_at: string
-          document_id: string
-          embedding: unknown
+          created_by: string | null
+          fonte_preco: string | null
           id: string
-          token_count: number | null
+          nosso_equivalente_product_code: string | null
+          pontos_fortes: string[] | null
+          pontos_fracos: string[] | null
+          pot_life_horas: number | null
+          preco_atualizado_em: string | null
+          preco_referencia_l: number | null
+          product_name: string
+          rendimento_m2_por_litro: number | null
+          solidos_pct: number | null
+          updated_at: string
+          validade_dias: number | null
         }
         Insert: {
-          char_end?: number | null
-          char_start?: number | null
-          chunk_index: number
-          content: string
+          argumentos_comparativos?: Json | null
+          category?: string | null
+          competitor_id: string
           created_at?: string
-          document_id: string
-          embedding?: unknown
+          created_by?: string | null
+          fonte_preco?: string | null
           id?: string
-          token_count?: number | null
+          nosso_equivalente_product_code?: string | null
+          pontos_fortes?: string[] | null
+          pontos_fracos?: string[] | null
+          pot_life_horas?: number | null
+          preco_atualizado_em?: string | null
+          preco_referencia_l?: number | null
+          product_name: string
+          rendimento_m2_por_litro?: number | null
+          solidos_pct?: number | null
+          updated_at?: string
+          validade_dias?: number | null
         }
         Update: {
-          char_end?: number | null
-          char_start?: number | null
-          chunk_index?: number
-          content?: string
+          argumentos_comparativos?: Json | null
+          category?: string | null
+          competitor_id?: string
           created_at?: string
-          document_id?: string
-          embedding?: unknown
+          created_by?: string | null
+          fonte_preco?: string | null
           id?: string
-          token_count?: number | null
+          nosso_equivalente_product_code?: string | null
+          pontos_fortes?: string[] | null
+          pontos_fracos?: string[] | null
+          pot_life_horas?: number | null
+          preco_atualizado_em?: string | null
+          preco_referencia_l?: number | null
+          product_name?: string
+          rendimento_m2_por_litro?: number | null
+          solidos_pct?: number | null
+          updated_at?: string
+          validade_dias?: number | null
         }
         Relationships: [
           {
-            foreignKeyName: "kb_chunks_document_id_fkey"
-            columns: ["document_id"]
+            foreignKeyName: "kb_competitor_products_competitor_id_fkey"
+            columns: ["competitor_id"]
             isOneToOne: false
-            referencedRelation: "kb_documents"
+            referencedRelation: "kb_competitors"
             referencedColumns: ["id"]
           },
         ]
       }
-      kb_documents: {
+      kb_competitors: {
         Row: {
-          content_extracted: string | null
           created_at: string
-          created_by: string
-          file_size_bytes: number | null
-          file_url: string
+          created_by: string | null
           id: string
-          parent_id: string | null
-          product_code: string | null
-          status: string
-          status_error: string | null
-          supplier: string | null
-          tags: string[]
-          title: string
-          type: string
+          name: string
+          notas_estrategicas: string | null
+          regiao_principal: string | null
+          segmento_atuacao: string[] | null
+          tipo: string | null
           updated_at: string
-          version: number
         }
         Insert: {
-          content_extracted?: string | null
           created_at?: string
-          created_by: string
-          file_size_bytes?: number | null
-          file_url: string
+          created_by?: string | null
           id?: string
-          parent_id?: string | null
-          product_code?: string | null
-          status?: string
-          status_error?: string | null
-          supplier?: string | null
-          tags?: string[]
-          title: string
-          type: string
+          name: string
+          notas_estrategicas?: string | null
+          regiao_principal?: string | null
+          segmento_atuacao?: string[] | null
+          tipo?: string | null
           updated_at?: string
-          version?: number
         }
         Update: {
-          content_extracted?: string | null
           created_at?: string
-          created_by?: string
-          file_size_bytes?: number | null
-          file_url?: string
+          created_by?: string | null
           id?: string
-          parent_id?: string | null
-          product_code?: string | null
-          status?: string
-          status_error?: string | null
-          supplier?: string | null
-          tags?: string[]
-          title?: string
-          type?: string
+          name?: string
+          notas_estrategicas?: string | null
+          regiao_principal?: string | null
+          segmento_atuacao?: string[] | null
+          tipo?: string | null
           updated_at?: string
-          version?: number
+        }
+        Relationships: []
+      }
+      kb_product_specs: {
+        Row: {
+          approved_at: string | null
+          approved_by: string | null
+          brilho_ub: number | null
+          catalisador_codigo: string | null
+          catalisador_proporcao_pct: number | null
+          certificacoes_aplicaveis: string[] | null
+          created_at: string
+          demaos_recomendadas: number | null
+          densidade_g_cm3: number | null
+          diferenciais_chave: string[] | null
+          diluente_codigo: string | null
+          document_id: string | null
+          dureza: string | null
+          equipamentos_aplicacao: string[] | null
+          extracted_by: string | null
+          extraction_confidence: number | null
+          extraction_gaps: string[] | null
+          gramatura_g_m2_max: number | null
+          gramatura_g_m2_min: number | null
+          id: string
+          isento_metais_pesados: string[] | null
+          isento_substancias: string[] | null
+          lixa_recomendada: string | null
+          pot_life_horas: number | null
+          product_category: string | null
+          product_code: string
+          product_line: string | null
+          product_name: string
+          publico_alvo: string | null
+          rendimento_m2_por_litro: number | null
+          secagem_empilhamento_h: number | null
+          secagem_manuseio_h: number | null
+          secagem_total_h: number | null
+          solidos_pct: number | null
+          substrato: string[] | null
+          supplier: string
+          temp_aplicacao_c_max: number | null
+          temp_aplicacao_c_min: number | null
+          temp_armazenamento_c_max: number | null
+          temp_armazenamento_c_min: number | null
+          umidade_aplicacao_pct_max: number | null
+          umidade_aplicacao_pct_min: number | null
+          updated_at: string
+          uso_recomendado: string | null
+          validade_dias: number | null
+          viscosidade_aplicacao_s: number | null
+          viscosidade_copo: string | null
+        }
+        Insert: {
+          approved_at?: string | null
+          approved_by?: string | null
+          brilho_ub?: number | null
+          catalisador_codigo?: string | null
+          catalisador_proporcao_pct?: number | null
+          certificacoes_aplicaveis?: string[] | null
+          created_at?: string
+          demaos_recomendadas?: number | null
+          densidade_g_cm3?: number | null
+          diferenciais_chave?: string[] | null
+          diluente_codigo?: string | null
+          document_id?: string | null
+          dureza?: string | null
+          equipamentos_aplicacao?: string[] | null
+          extracted_by?: string | null
+          extraction_confidence?: number | null
+          extraction_gaps?: string[] | null
+          gramatura_g_m2_max?: number | null
+          gramatura_g_m2_min?: number | null
+          id?: string
+          isento_metais_pesados?: string[] | null
+          isento_substancias?: string[] | null
+          lixa_recomendada?: string | null
+          pot_life_horas?: number | null
+          product_category?: string | null
+          product_code: string
+          product_line?: string | null
+          product_name: string
+          publico_alvo?: string | null
+          rendimento_m2_por_litro?: number | null
+          secagem_empilhamento_h?: number | null
+          secagem_manuseio_h?: number | null
+          secagem_total_h?: number | null
+          solidos_pct?: number | null
+          substrato?: string[] | null
+          supplier?: string
+          temp_aplicacao_c_max?: number | null
+          temp_aplicacao_c_min?: number | null
+          temp_armazenamento_c_max?: number | null
+          temp_armazenamento_c_min?: number | null
+          umidade_aplicacao_pct_max?: number | null
+          umidade_aplicacao_pct_min?: number | null
+          updated_at?: string
+          uso_recomendado?: string | null
+          validade_dias?: number | null
+          viscosidade_aplicacao_s?: number | null
+          viscosidade_copo?: string | null
+        }
+        Update: {
+          approved_at?: string | null
+          approved_by?: string | null
+          brilho_ub?: number | null
+          catalisador_codigo?: string | null
+          catalisador_proporcao_pct?: number | null
+          certificacoes_aplicaveis?: string[] | null
+          created_at?: string
+          demaos_recomendadas?: number | null
+          densidade_g_cm3?: number | null
+          diferenciais_chave?: string[] | null
+          diluente_codigo?: string | null
+          document_id?: string | null
+          dureza?: string | null
+          equipamentos_aplicacao?: string[] | null
+          extracted_by?: string | null
+          extraction_confidence?: number | null
+          extraction_gaps?: string[] | null
+          gramatura_g_m2_max?: number | null
+          gramatura_g_m2_min?: number | null
+          id?: string
+          isento_metais_pesados?: string[] | null
+          isento_substancias?: string[] | null
+          lixa_recomendada?: string | null
+          pot_life_horas?: number | null
+          product_category?: string | null
+          product_code?: string
+          product_line?: string | null
+          product_name?: string
+          publico_alvo?: string | null
+          rendimento_m2_por_litro?: number | null
+          secagem_empilhamento_h?: number | null
+          secagem_manuseio_h?: number | null
+          secagem_total_h?: number | null
+          solidos_pct?: number | null
+          substrato?: string[] | null
+          supplier?: string
+          temp_aplicacao_c_max?: number | null
+          temp_aplicacao_c_min?: number | null
+          temp_armazenamento_c_max?: number | null
+          temp_armazenamento_c_min?: number | null
+          umidade_aplicacao_pct_max?: number | null
+          umidade_aplicacao_pct_min?: number | null
+          updated_at?: string
+          uso_recomendado?: string | null
+          validade_dias?: number | null
+          viscosidade_aplicacao_s?: number | null
+          viscosidade_copo?: string | null
         }
         Relationships: []
       }

@@ -2,19 +2,20 @@ import { useQuery } from '@tanstack/react-query';
 import { supabase } from '@/integrations/supabase/client';
 import type { KbProductSpec } from '@/lib/knowledge-base/specs-types';
 
-export function useKbProductSpecsList() {
+export function useKbProductSpecs(productCode: string | undefined | null) {
   return useQuery({
-    queryKey: ['kb-product-specs-list'],
+    queryKey: ['kb-product-spec', productCode],
+    enabled: !!productCode,
     staleTime: 60_000,
-    queryFn: async (): Promise<KbProductSpec[]> => {
+    queryFn: async (): Promise<KbProductSpec | null> => {
+      if (!productCode) return null;
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       const { data, error } = await (supabase.from('kb_product_specs') as any)
         .select('*')
-        .not('approved_at', 'is', null)
-        .order('product_name', { ascending: true })
-        .limit(500);
+        .eq('product_code', productCode)
+        .maybeSingle();
       if (error) throw error;
-      return (data ?? []) as KbProductSpec[];
+      return (data as KbProductSpec) ?? null;
     },
   });
 }
