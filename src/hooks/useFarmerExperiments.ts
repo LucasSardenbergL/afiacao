@@ -47,6 +47,55 @@ const METRIC_LABELS: Record<string, string> = {
   receita_incremental: 'Receita Incremental',
 };
 
+// ─── Row types ─────────────────────────────────────────────────────
+interface ExperimentRow {
+  id: string;
+  farmer_id: string;
+  title: string;
+  hypothesis: string;
+  primary_metric: Experiment['primary_metric'];
+  min_duration_days: number;
+  min_sample_size: number;
+  min_significance: number;
+  status: Experiment['status'];
+  winner: Experiment['winner'];
+  control_description: string | null;
+  test_description: string | null;
+  control_metric_value: number;
+  test_metric_value: number;
+  lift_pct: number;
+  p_value: number | null;
+  started_at: string | null;
+  ended_at: string | null;
+  created_at: string;
+}
+
+interface ExperimentClientRow {
+  id: string;
+  experiment_id: string;
+  customer_user_id: string;
+  group_type: 'controle' | 'teste';
+  metric_value: number;
+  revenue_generated: number;
+  margin_generated: number;
+  calls_count: number;
+  total_time_seconds: number;
+}
+
+interface ClientScoreLite {
+  customer_user_id: string;
+  health_score: number | string | null;
+  priority_score: number | string | null;
+}
+
+interface FarmerCallLite {
+  customer_user_id: string;
+  revenue_generated: number | string | null;
+  margin_generated: number | string | null;
+  duration_seconds: number | string | null;
+  follow_up_duration_seconds: number | string | null;
+}
+
 export const useFarmerExperiments = () => {
   const { user } = useAuth();
   const [experiments, setExperiments] = useState<Experiment[]>([]);
@@ -56,32 +105,32 @@ export const useFarmerExperiments = () => {
     if (!user?.id) return;
     setLoading(true);
     try {
-      const { data } = await supabase
-        .from('farmer_experiments' as any)
+      const { data } = (await supabase
+        .from('farmer_experiments')
         .select('*')
         .eq('farmer_id', user.id)
-        .order('created_at', { ascending: false }) as any;
+        .order('created_at', { ascending: false })) as unknown as { data: ExperimentRow[] | null };
 
       if (data) {
         // Load client counts em 1 query (antes era N+1: 1 select por experimento)
-        const expIds = data.map((e: any) => e.id);
+        const expIds = data.map((e) => e.id);
         const { data: allClients } = expIds.length > 0
-          ? await supabase
-              .from('farmer_experiment_clients' as any)
+          ? ((await supabase
+              .from('farmer_experiment_clients')
               .select('experiment_id, group_type')
-              .in('experiment_id', expIds) as any
-          : { data: [] };
+              .in('experiment_id', expIds)) as unknown as { data: Array<{ experiment_id: string; group_type: string }> | null })
+          : { data: [] as Array<{ experiment_id: string; group_type: string }> };
 
         // Agrupa client-side: experiment_id → { controle, teste }
         const counts = new Map<string, { controle: number; teste: number }>();
-        for (const c of (allClients || []) as Array<{ experiment_id: string; group_type: string }>) {
+        for (const c of allClients || []) {
           const existing = counts.get(c.experiment_id) || { controle: 0, teste: 0 };
           if (c.group_type === 'controle') existing.controle++;
           else if (c.group_type === 'teste') existing.teste++;
           counts.set(c.experiment_id, existing);
         }
 
-        const enriched = data.map((exp: any) => {
+        const enriched: Experiment[] = data.map((exp) => {
           const c = counts.get(exp.id) || { controle: 0, teste: 0 };
           return { ...exp, control_count: c.controle, test_count: c.teste };
         });
@@ -107,10 +156,10 @@ export const useFarmerExperiments = () => {
     test_description: string;
   }) => {
     if (!user?.id) return;
-    const { error } = await supabase.from('farmer_experiments' as any).insert({
+    const { error } = await supabase.from('farmer_experiments').insert({
       farmer_id: user.id,
       ...input,
-    } as any);
+    });
     if (error) {
       toast.error('Erro ao criar experimento');
       return;
@@ -123,10 +172,10 @@ export const useFarmerExperiments = () => {
     if (!user?.id) return;
 
     // Load eligible clients from farmer_client_scores
-    const { data: clients } = await supabase
+    const { data: clients } = (await supabase
       .from('farmer_client_scores')
       .select('customer_user_id, health_score, priority_score')
-      .eq('farmer_id', user.id) as any;
+      .eq('farmer_id', user.id)) as unknown as { data: ClientScoreLite[] | null };
 
     if (!clients || clients.length < 2) {
       toast.error('Não há clientes suficientes para o experimento');
@@ -134,17 +183,17 @@ export const useFarmerExperiments = () => {
     }
 
     // Stratified random assignment: sort by health_score, alternate
-    const sorted = [...clients].sort((a: any, b: any) => Number(b.health_score) - Number(a.health_score));
-    const assignments = sorted.map((c: any, i: number) => ({
+    const sorted = [...clients].sort((a, b) => Number(b.health_score) - Number(a.health_score));
+    const assignments = sorted.map((c, i) => ({
       experiment_id: experimentId,
       customer_user_id: c.customer_user_id,
-      group_type: i % 2 === 0 ? 'controle' : 'teste',
+      group_type: (i % 2 === 0 ? 'controle' : 'teste') as 'controle' | 'teste',
     }));
 
     // Insert assignments
     const { error: assignError } = await supabase
-      .from('farmer_experiment_clients' as any)
-      .insert(assignments as any);
+      .from('farmer_experiment_clients')
+      .insert(assignments);
 
     if (assignError) {
       console.error('Assignment error:', assignError);
@@ -153,8 +202,8 @@ export const useFarmerExperiments = () => {
     }
 
     // Start experiment
-    await supabase.from('farmer_experiments' as any)
-      .update({ status: 'ativo', started_at: new Date().toISOString() } as any)
+    await supabase.from('farmer_experiments')
+      .update({ status: 'ativo', started_at: new Date().toISOString() })
       .eq('id', experimentId);
 
     toast.success('Experimento iniciado com ' + assignments.length + ' clientes');
@@ -163,34 +212,34 @@ export const useFarmerExperiments = () => {
 
   const measureExperiment = useCallback(async (experimentId: string) => {
     // Load experiment
-    const { data: exp } = await supabase
-      .from('farmer_experiments' as any)
+    const { data: exp } = (await supabase
+      .from('farmer_experiments')
       .select('*')
       .eq('id', experimentId)
-      .single() as any;
-    if (!exp) return;
+      .single()) as unknown as { data: ExperimentRow | null };
+    if (!exp || !exp.started_at) return;
 
     // Load experiment clients with their call data
-    const { data: expClients } = await supabase
-      .from('farmer_experiment_clients' as any)
+    const { data: expClients } = (await supabase
+      .from('farmer_experiment_clients')
       .select('*')
-      .eq('experiment_id', experimentId) as any;
+      .eq('experiment_id', experimentId)) as unknown as { data: ExperimentClientRow[] | null };
 
     if (!expClients?.length) return;
 
     const startDate = exp.started_at;
-    const clientIds = expClients.map((c: any) => c.customer_user_id);
+    const clientIds = expClients.map((c) => c.customer_user_id);
 
     // Load calls since experiment start
-    const { data: calls } = await supabase
+    const { data: calls } = (await supabase
       .from('farmer_calls')
       .select('*')
       .in('customer_user_id', clientIds)
-      .gte('created_at', startDate) as any;
+      .gte('created_at', startDate)) as unknown as { data: FarmerCallLite[] | null };
 
     // Aggregate per client
     const clientMetrics = new Map<string, { revenue: number; margin: number; calls: number; time: number }>();
-    for (const call of (calls || [])) {
+    for (const call of calls || []) {
       const existing = clientMetrics.get(call.customer_user_id) || { revenue: 0, margin: 0, calls: 0, time: 0 };
       existing.revenue += Number(call.revenue_generated || 0);
       existing.margin += Number(call.margin_generated || 0);
@@ -201,11 +250,14 @@ export const useFarmerExperiments = () => {
 
     // Update experiment clients (batch upsert único — antes era N updates sequenciais)
     const updateRows = expClients
-      .map((ec: any) => {
+      .map((ec) => {
         const m = clientMetrics.get(ec.customer_user_id);
         if (!m) return null;
         return {
           id: ec.id,
+          experiment_id: ec.experiment_id,
+          customer_user_id: ec.customer_user_id,
+          group_type: ec.group_type,
           revenue_generated: m.revenue,
           margin_generated: m.margin,
           calls_count: m.calls,
@@ -217,32 +269,32 @@ export const useFarmerExperiments = () => {
       .filter((r): r is NonNullable<typeof r> => r !== null);
 
     if (updateRows.length > 0) {
-      await supabase.from('farmer_experiment_clients' as any).upsert(updateRows as any);
+      await supabase.from('farmer_experiment_clients').upsert(updateRows);
     }
 
     // Reload clients after update
-    const { data: updatedClients } = await supabase
-      .from('farmer_experiment_clients' as any)
+    const { data: updatedClients } = (await supabase
+      .from('farmer_experiment_clients')
       .select('*')
-      .eq('experiment_id', experimentId) as any;
+      .eq('experiment_id', experimentId)) as unknown as { data: ExperimentClientRow[] | null };
 
     if (!updatedClients?.length) return;
 
-    const controlGroup = updatedClients.filter((c: any) => c.group_type === 'controle');
-    const testGroup = updatedClients.filter((c: any) => c.group_type === 'teste');
+    const controlGroup = updatedClients.filter((c) => c.group_type === 'controle');
+    const testGroup = updatedClients.filter((c) => c.group_type === 'teste');
 
     const controlAvg = controlGroup.length > 0
-      ? controlGroup.reduce((s: number, c: any) => s + Number(c.metric_value), 0) / controlGroup.length
+      ? controlGroup.reduce((s, c) => s + Number(c.metric_value), 0) / controlGroup.length
       : 0;
     const testAvg = testGroup.length > 0
-      ? testGroup.reduce((s: number, c: any) => s + Number(c.metric_value), 0) / testGroup.length
+      ? testGroup.reduce((s, c) => s + Number(c.metric_value), 0) / testGroup.length
       : 0;
 
     const liftPct = controlAvg > 0 ? ((testAvg - controlAvg) / controlAvg) * 100 : 0;
 
     // Simple Z-test for significance
-    const pValue = calculatePValue(controlGroup.map((c: any) => Number(c.metric_value)),
-      testGroup.map((c: any) => Number(c.metric_value)));
+    const pValue = calculatePValue(controlGroup.map((c) => Number(c.metric_value)),
+      testGroup.map((c) => Number(c.metric_value)));
 
     // Check completion criteria
     const daysSinceStart = Math.floor((Date.now() - new Date(startDate).getTime()) / (1000 * 60 * 60 * 24));
@@ -250,8 +302,8 @@ export const useFarmerExperiments = () => {
     const hasMinSample = controlGroup.length >= exp.min_sample_size && testGroup.length >= exp.min_sample_size;
     const isSignificant = pValue !== null && (1 - pValue) >= exp.min_significance;
 
-    let winner: string | null = null;
-    let newStatus = exp.status;
+    let winner: Experiment['winner'] = null;
+    let newStatus: Experiment['status'] = exp.status;
 
     if (hasMinDuration && hasMinSample) {
       if (isSignificant) {
@@ -264,7 +316,7 @@ export const useFarmerExperiments = () => {
       }
     }
 
-    await supabase.from('farmer_experiments' as any)
+    await supabase.from('farmer_experiments')
       .update({
         control_metric_value: Math.round(controlAvg * 100) / 100,
         test_metric_value: Math.round(testAvg * 100) / 100,
@@ -274,7 +326,7 @@ export const useFarmerExperiments = () => {
         status: newStatus,
         ended_at: newStatus === 'concluido' ? new Date().toISOString() : null,
         updated_at: new Date().toISOString(),
-      } as any)
+      })
       .eq('id', experimentId);
 
     toast.success(newStatus === 'concluido' ? `Experimento concluído: ${winner}` : 'Métricas atualizadas');
@@ -282,29 +334,29 @@ export const useFarmerExperiments = () => {
   }, [loadExperiments]);
 
   const cancelExperiment = useCallback(async (experimentId: string) => {
-    await supabase.from('farmer_experiments' as any)
-      .update({ status: 'cancelado', ended_at: new Date().toISOString() } as any)
+    await supabase.from('farmer_experiments')
+      .update({ status: 'cancelado', ended_at: new Date().toISOString() })
       .eq('id', experimentId);
     toast.success('Experimento cancelado');
     loadExperiments();
   }, [loadExperiments]);
 
   const loadExperimentClients = useCallback(async (experimentId: string): Promise<ExperimentClient[]> => {
-    const { data } = await supabase
-      .from('farmer_experiment_clients' as any)
+    const { data } = (await supabase
+      .from('farmer_experiment_clients')
       .select('*')
-      .eq('experiment_id', experimentId) as any;
+      .eq('experiment_id', experimentId)) as unknown as { data: ExperimentClientRow[] | null };
 
     if (!data) return [];
 
-    const clientIds = data.map((c: any) => c.customer_user_id);
+    const clientIds = data.map((c) => c.customer_user_id);
     const { data: profiles } = await supabase
       .from('profiles')
       .select('user_id, name')
       .in('user_id', clientIds);
-    const nameMap = new Map((profiles || []).map(p => [p.user_id, p.name]));
+    const nameMap = new Map<string, string | null>((profiles || []).map(p => [p.user_id, p.name]));
 
-    return data.map((c: any) => ({
+    return data.map((c) => ({
       ...c,
       customer_name: nameMap.get(c.customer_user_id) || 'Desconhecido',
     }));

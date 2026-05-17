@@ -1,17 +1,22 @@
 import { useState, useCallback } from 'react';
 import { supabase } from '@/integrations/supabase/client';
+import type { Json } from '@/integrations/supabase/types';
 import { useAuth } from '@/contexts/AuthContext';
 import { toast } from 'sonner';
 
 // ─── Types ───────────────────────────────────────────────────────────
 export type PlanType = 'essencial' | 'estrategico';
 
+// JSON shape stored in top_bundle / second_bundle columns — schema is dynamic
+// (varies by bundle engine version), so kept as Record.
+export type BundleSnapshot = Record<string, unknown>;
+
 export interface TacticalPlan {
   id: string;
   customerId: string;
   customerName: string;
   planType: PlanType;
-  
+
   // Diagnosis
   healthScore: number;
   churnRisk: number;
@@ -19,35 +24,35 @@ export interface TacticalPlan {
   currentMarginPct: number;
   clusterAvgMarginPct: number;
   expansionPotential: number;
-  
+
   // Strategy
   strategicObjective: string;
   customerProfile: string;
   approachStrategy: string;
   approachStrategyB: string;
-  
+
   // Bundle
-  topBundle: any;
-  secondBundle: any;
+  topBundle: BundleSnapshot;
+  secondBundle: BundleSnapshot;
   bundleLie: number;
   bundleProbability: number;
   bundleIncrementalMargin: number;
   bestIndividualLie: number;
-  
+
   // AI-generated content
   diagnosticQuestions: { question: string; purpose: string; expected_insight: string }[];
   implicationQuestion: string;
   offerTransition: string;
   probableObjections: { objection: string; technical_response: string; economic_response: string; probability: number }[];
-  
+
   // Strategic-only fields
   ltvProjection: { current_annual: number; projected_annual: number; growth_pct: number } | null;
   expectedResult: { best_case_margin: number; likely_margin: number; worst_case_margin: number } | null;
   operationalRisks: string[];
-  
+
   // Efficiency
   estimatedProfitPerHour: number;
-  
+
   // Tracking
   status: string;
   planFollowed?: boolean;
@@ -57,6 +62,105 @@ export interface TacticalPlan {
   objectionType?: string;
   notes?: string;
   generatedAt: string;
+}
+
+// ─── Row + helper types ────────────────────────────────────────────
+interface TacticalPlanRow {
+  id: string;
+  customer_user_id: string;
+  plan_type: PlanType | null;
+  health_score: number | string | null;
+  churn_risk: number | string | null;
+  mix_gap: number | string | null;
+  current_margin_pct: number | string | null;
+  cluster_avg_margin_pct: number | string | null;
+  expansion_potential: number | string | null;
+  strategic_objective: string;
+  customer_profile: string;
+  approach_strategy: string | null;
+  approach_strategy_b: string | null;
+  top_bundle: BundleSnapshot | null;
+  second_bundle: BundleSnapshot | null;
+  bundle_lie: number | string | null;
+  bundle_probability: number | string | null;
+  bundle_incremental_margin: number | string | null;
+  best_individual_lie: number | string | null;
+  diagnostic_questions: TacticalPlan['diagnosticQuestions'] | unknown;
+  implication_question: string | null;
+  offer_transition: string | null;
+  probable_objections: TacticalPlan['probableObjections'] | unknown;
+  ltv_projection: TacticalPlan['ltvProjection'] | unknown;
+  expected_result: TacticalPlan['expectedResult'] | unknown;
+  operational_risks: string[] | unknown;
+  status: string;
+  plan_followed?: boolean | null;
+  call_result?: string | null;
+  actual_margin?: number | string | null;
+  call_duration_seconds?: number | null;
+  objection_type?: string | null;
+  notes?: string | null;
+  generated_at: string;
+}
+
+interface ClientScoreFull {
+  health_score: number | string | null;
+  churn_risk: number | string | null;
+  avg_monthly_spend_180d: number | string | null;
+  gross_margin_pct: number | string | null;
+  category_count: number | string | null;
+  days_since_last_purchase: number | string | null;
+  expansion_score: number | string | null;
+  revenue_potential: number | string | null;
+}
+
+interface ProfileLite {
+  user_id?: string;
+  name: string | null;
+  customer_type?: string | null;
+  cnae?: string | null;
+}
+
+interface BundleRow {
+  id: string;
+  bundle_products: BundleSnapshot;
+  lie_bundle: number | string | null;
+  p_bundle: number | string | null;
+  m_bundle: number | string | null;
+}
+
+interface CopilotEventRow {
+  event_data: { intent?: string } | Record<string, unknown> | null;
+}
+
+interface EffectivenessRow {
+  strategic_objective: string;
+  plan_followed: boolean | null;
+  actual_margin: number | string | null;
+  call_duration_seconds: number | string | null;
+  plan_type: PlanType | null;
+}
+
+interface AiPlanResponse {
+  strategic_objective?: string;
+  diagnostic_questions?: TacticalPlan['diagnosticQuestions'];
+  implication_question?: string;
+  offer_transition?: string;
+  probable_objections?: TacticalPlan['probableObjections'];
+  approach_strategy?: string;
+  approach_strategy_b?: string;
+  ltv_projection?: TacticalPlan['ltvProjection'];
+  expected_result?: TacticalPlan['expectedResult'];
+  operational_risks?: string[];
+}
+
+interface DiagnosticData {
+  strategicObjective: string;
+  secondBundle?: {
+    products: BundleSnapshot;
+    lie: number | string | null;
+    probability: number | string | null;
+    margin: number | string | null;
+  };
 }
 
 export interface EfficiencyCheck {
@@ -98,11 +202,11 @@ export const useTacticalPlan = () => {
   const [loading, setLoading] = useState(false);
   const [generating, setGenerating] = useState<string | null>(null);
 
-  const parsePlan = (d: any, profileMap: Map<string, string>): TacticalPlan => {
-    const topBundle = d.top_bundle || {};
-    const secondBundle = d.second_bundle || {};
-    const ltvProjection = d.ltv_projection || null;
-    const expectedResult = d.expected_result || null;
+  const parsePlan = (d: TacticalPlanRow, profileMap: Map<string, string>): TacticalPlan => {
+    const topBundle: BundleSnapshot = d.top_bundle || {};
+    const secondBundle: BundleSnapshot = d.second_bundle || {};
+    const ltvProjection = d.ltv_projection;
+    const expectedResult = d.expected_result;
     const avgCallMinutes = 15;
     const bundleLie = Number(d.bundle_lie || 0);
     const estimatedProfitPerHour = bundleLie > 0 ? (bundleLie / (avgCallMinutes / 60)) : 0;
@@ -128,21 +232,29 @@ export const useTacticalPlan = () => {
       bundleProbability: Number(d.bundle_probability || 0),
       bundleIncrementalMargin: Number(d.bundle_incremental_margin || 0),
       bestIndividualLie: Number(d.best_individual_lie || 0),
-      diagnosticQuestions: Array.isArray(d.diagnostic_questions) ? d.diagnostic_questions : [],
+      diagnosticQuestions: Array.isArray(d.diagnostic_questions)
+        ? (d.diagnostic_questions as TacticalPlan['diagnosticQuestions'])
+        : [],
       implicationQuestion: d.implication_question || '',
       offerTransition: d.offer_transition || '',
-      probableObjections: Array.isArray(d.probable_objections) ? d.probable_objections : [],
-      ltvProjection: ltvProjection && typeof ltvProjection === 'object' ? ltvProjection : null,
-      expectedResult: expectedResult && typeof expectedResult === 'object' ? expectedResult : null,
-      operationalRisks: Array.isArray(d.operational_risks) ? d.operational_risks : [],
+      probableObjections: Array.isArray(d.probable_objections)
+        ? (d.probable_objections as TacticalPlan['probableObjections'])
+        : [],
+      ltvProjection: ltvProjection && typeof ltvProjection === 'object'
+        ? (ltvProjection as TacticalPlan['ltvProjection'])
+        : null,
+      expectedResult: expectedResult && typeof expectedResult === 'object'
+        ? (expectedResult as TacticalPlan['expectedResult'])
+        : null,
+      operationalRisks: Array.isArray(d.operational_risks) ? (d.operational_risks as string[]) : [],
       estimatedProfitPerHour,
       status: d.status,
-      planFollowed: d.plan_followed,
-      callResult: d.call_result,
+      planFollowed: d.plan_followed ?? undefined,
+      callResult: d.call_result ?? undefined,
       actualMargin: d.actual_margin ? Number(d.actual_margin) : undefined,
-      callDurationSeconds: d.call_duration_seconds,
-      objectionType: d.objection_type,
-      notes: d.notes,
+      callDurationSeconds: d.call_duration_seconds ?? undefined,
+      objectionType: d.objection_type ?? undefined,
+      notes: d.notes ?? undefined,
       generatedAt: d.generated_at,
     };
   };
@@ -152,25 +264,27 @@ export const useTacticalPlan = () => {
     if (!user?.id) return;
     setLoading(true);
     try {
-      const { data } = await supabase
-        .from('farmer_tactical_plans' as any)
+      const { data } = (await supabase
+        .from('farmer_tactical_plans')
         .select('*')
         .eq('farmer_id', user.id)
         .order('created_at', { ascending: false })
-        .limit(50) as any;
+        .limit(50)) as unknown as { data: TacticalPlanRow[] | null };
 
       if (!data) { setPlans([]); return; }
 
       const customerIdsSet = new Set<string>();
-      data.forEach((d: any) => customerIdsSet.add(String(d.customer_user_id)));
+      data.forEach((d) => customerIdsSet.add(String(d.customer_user_id)));
       const customerIds: string[] = Array.from(customerIdsSet);
-      const { data: profiles } = await supabase
+      const { data: profiles } = (await supabase
         .from('profiles')
         .select('user_id, name')
-        .in('user_id', customerIds) as any;
+        .in('user_id', customerIds)) as unknown as { data: ProfileLite[] | null };
 
-      const profileMap = new Map<string, string>((profiles || []).map((p: any) => [p.user_id, p.name]));
-      setPlans(data.map((d: any) => parsePlan(d, profileMap)));
+      const profileMap = new Map<string, string>(
+        (profiles || []).map((p) => [p.user_id ?? '', p.name ?? 'Cliente'])
+      );
+      setPlans(data.map((d) => parsePlan(d, profileMap)));
     } catch (err) {
       console.error('Error loading plans:', err);
     } finally {
@@ -182,12 +296,12 @@ export const useTacticalPlan = () => {
   const checkEfficiency = useCallback(async (customerId: string): Promise<EfficiencyCheck> => {
     if (!user?.id) return { estimatedProfitPerHour: 0, threshold: PROFIT_PER_HOUR_THRESHOLD, isAboveThreshold: false };
 
-    const { data: score } = await supabase
+    const { data: score } = (await supabase
       .from('farmer_client_scores')
       .select('revenue_potential, avg_monthly_spend_180d, gross_margin_pct')
       .eq('customer_user_id', customerId)
       .eq('farmer_id', user.id)
-      .single() as any;
+      .single()) as unknown as { data: Pick<ClientScoreFull, 'revenue_potential' | 'avg_monthly_spend_180d' | 'gross_margin_pct'> | null };
 
     const revPotential = Number(score?.revenue_potential || 0);
     const avgSpend = Number(score?.avg_monthly_spend_180d || 0);
@@ -214,9 +328,9 @@ export const useTacticalPlan = () => {
         { data: profile },
         { data: bundles },
       ] = await Promise.all([
-        supabase.from('farmer_client_scores').select('*').eq('customer_user_id', customerId).eq('farmer_id', user.id).single() as any,
-        supabase.from('profiles').select('name, customer_type, cnae').eq('user_id', customerId).single() as any,
-        supabase.from('farmer_bundle_recommendations' as any).select('*').eq('customer_user_id', customerId).eq('farmer_id', user.id).eq('status', 'pendente').order('lie_bundle', { ascending: false }).limit(2) as any,
+        supabase.from('farmer_client_scores').select('*').eq('customer_user_id', customerId).eq('farmer_id', user.id).single() as unknown as Promise<{ data: ClientScoreFull | null }>,
+        supabase.from('profiles').select('name, customer_type, cnae').eq('user_id', customerId).single() as unknown as Promise<{ data: ProfileLite | null }>,
+        supabase.from('farmer_bundle_recommendations').select('*').eq('customer_user_id', customerId).eq('farmer_id', user.id).eq('status', 'pendente').order('lie_bundle', { ascending: false }).limit(2) as unknown as Promise<{ data: BundleRow[] | null }>,
       ]);
 
       if (!score) {
@@ -233,13 +347,13 @@ export const useTacticalPlan = () => {
       const expansionPotential = Number(score.expansion_score || 0);
       const revenuePotential = Number(score.revenue_potential || 0);
 
-      const { data: allScores } = await supabase
+      const { data: allScores } = (await supabase
         .from('farmer_client_scores')
         .select('gross_margin_pct')
-        .eq('farmer_id', user.id) as any;
-      
+        .eq('farmer_id', user.id)) as unknown as { data: Pick<ClientScoreFull, 'gross_margin_pct'>[] | null };
+
       const clusterMargin = allScores?.length
-        ? allScores.reduce((s: number, r: any) => s + Number(r.gross_margin_pct || 0), 0) / allScores.length
+        ? allScores.reduce((s, r) => s + Number(r.gross_margin_pct || 0), 0) / allScores.length
         : 25;
 
       const mixGap = Math.max(0, 8 - categoryCount);
@@ -249,15 +363,18 @@ export const useTacticalPlan = () => {
       const topBundle = bundles?.[0] || null;
       const secondBundle = bundles?.[1] || null;
 
-      const { data: objectionEvents } = await supabase
-        .from('farmer_copilot_events' as any)
+      const { data: objectionEvents } = (await supabase
+        .from('farmer_copilot_events')
         .select('event_data')
         .eq('event_type', 'suggestion')
-        .limit(20) as any;
+        .limit(20)) as unknown as { data: CopilotEventRow[] | null };
 
       const historicalObjections = (objectionEvents || [])
-        .filter((e: any) => e.event_data?.intent?.startsWith('objecao'))
-        .map((e: any) => e.event_data.intent)
+        .filter((e): e is CopilotEventRow & { event_data: { intent: string } } => {
+          const intent = (e.event_data as { intent?: unknown } | null)?.intent;
+          return typeof intent === 'string' && intent.startsWith('objecao');
+        })
+        .map((e) => e.event_data.intent)
         .slice(0, 5);
 
       const bundleCtx = topBundle ? {
@@ -268,7 +385,7 @@ export const useTacticalPlan = () => {
       } : null;
 
       // For strategic plans, include second bundle for comparison
-      const diagnosticData: any = { strategicObjective };
+      const diagnosticData: DiagnosticData = { strategicObjective };
       if (planType === 'estrategico' && secondBundle) {
         diagnosticData.secondBundle = {
           products: secondBundle.bundle_products,
@@ -278,7 +395,7 @@ export const useTacticalPlan = () => {
         };
       }
 
-      const { data: aiPlan, error: aiError } = await supabase.functions.invoke('generate-tactical-plan', {
+      const { data: aiPlan, error: aiError } = await supabase.functions.invoke<AiPlanResponse>('generate-tactical-plan', {
         body: {
           customerContext: {
             name: profile?.name,
@@ -318,35 +435,36 @@ export const useTacticalPlan = () => {
         strategic_objective: aiPlan?.strategic_objective || strategicObjective,
         customer_profile: customerProfile,
         plan_type: planType,
-        top_bundle: topBundle ? topBundle.bundle_products : {},
-        second_bundle: secondBundle ? secondBundle.bundle_products : {},
+        top_bundle: (topBundle ? topBundle.bundle_products : {}) as Json,
+        second_bundle: (secondBundle ? secondBundle.bundle_products : {}) as Json,
         bundle_lie: topBundle ? Number(topBundle.lie_bundle) : 0,
         bundle_probability: topBundle ? Number(topBundle.p_bundle) : 0,
         bundle_incremental_margin: topBundle ? Number(topBundle.m_bundle) : 0,
         best_individual_lie: 0,
-        diagnostic_questions: aiPlan?.diagnostic_questions || [],
+        diagnostic_questions: (aiPlan?.diagnostic_questions || []) as unknown as Json,
         implication_question: aiPlan?.implication_question || '',
         offer_transition: aiPlan?.offer_transition || '',
-        probable_objections: aiPlan?.probable_objections || [],
+        probable_objections: (aiPlan?.probable_objections || []) as unknown as Json,
         approach_strategy: aiPlan?.approach_strategy || '',
         approach_strategy_b: aiPlan?.approach_strategy_b || '',
-        ltv_projection: aiPlan?.ltv_projection || null,
-        expected_result: aiPlan?.expected_result || null,
+        ltv_projection: (aiPlan?.ltv_projection || null) as unknown as Json,
+        expected_result: (aiPlan?.expected_result || null) as unknown as Json,
         operational_risks: aiPlan?.operational_risks || [],
         status: 'gerado',
       };
 
       await supabase
-        .from('farmer_tactical_plans' as any)
-        .insert(planData as any)
+        .from('farmer_tactical_plans')
+        .insert(planData)
         .select('id')
-        .single() as any;
+        .single();
 
       toast.success(`Plano ${planType === 'estrategico' ? 'estratégico' : 'essencial'} gerado com sucesso`);
       await loadPlans();
-    } catch (err: any) {
+    } catch (err) {
       console.error('Error generating plan:', err);
-      toast.error('Erro ao gerar plano', { description: err.message });
+      const message = err instanceof Error ? err.message : String(err);
+      toast.error('Erro ao gerar plano', { description: message });
     } finally {
       setGenerating(null);
     }
@@ -356,22 +474,22 @@ export const useTacticalPlan = () => {
   const getActivePlan = useCallback(async (customerId: string): Promise<TacticalPlan | null> => {
     if (!user?.id) return null;
 
-    const { data } = await supabase
-      .from('farmer_tactical_plans' as any)
+    const { data } = (await supabase
+      .from('farmer_tactical_plans')
       .select('*')
       .eq('farmer_id', user.id)
       .eq('customer_user_id', customerId)
       .eq('status', 'gerado')
       .order('created_at', { ascending: false })
-      .limit(1) as any;
+      .limit(1)) as unknown as { data: TacticalPlanRow[] | null };
 
     if (!data?.[0]) return null;
 
-    const { data: profile } = await supabase
+    const { data: profile } = (await supabase
       .from('profiles')
       .select('user_id, name')
       .eq('user_id', customerId)
-      .single() as any;
+      .single()) as unknown as { data: ProfileLite | null };
 
     const profileMap = new Map<string, string>([[customerId, profile?.name || 'Cliente']]);
     return parsePlan(data[0], profileMap);
@@ -388,7 +506,7 @@ export const useTacticalPlan = () => {
   }) => {
     try {
       await supabase
-        .from('farmer_tactical_plans' as any)
+        .from('farmer_tactical_plans')
         .update({
           plan_followed: result.planFollowed,
           call_result: result.callResult,
@@ -398,7 +516,7 @@ export const useTacticalPlan = () => {
           notes: result.notes || null,
           status: 'concluido',
           completed_at: new Date().toISOString(),
-        } as any)
+        })
         .eq('id', planId);
 
       toast.success('Resultado registrado');
@@ -412,11 +530,11 @@ export const useTacticalPlan = () => {
   const getEffectivenessStats = useCallback(async () => {
     if (!user?.id) return null;
 
-    const { data } = await supabase
-      .from('farmer_tactical_plans' as any)
+    const { data } = (await supabase
+      .from('farmer_tactical_plans')
       .select('strategic_objective, plan_followed, actual_margin, call_duration_seconds, plan_type')
       .eq('farmer_id', user.id)
-      .eq('status', 'concluido') as any;
+      .eq('status', 'concluido')) as unknown as { data: EffectivenessRow[] | null };
 
     if (!data?.length) return null;
 
@@ -427,7 +545,7 @@ export const useTacticalPlan = () => {
       const obj = d.strategic_objective;
       const pt = d.plan_type || 'essencial';
 
-      for (const [key, map] of [['obj_' + obj, byObjective], ['type_' + pt, byType]] as const) {
+      for (const [key] of [['obj_' + obj, byObjective], ['type_' + pt, byType]] as const) {
         const target = key.startsWith('obj_') ? byObjective : byType;
         const k = key.replace(/^(obj_|type_)/, '');
         if (!target[k]) target[k] = { count: 0, followed: 0, totalMargin: 0, totalTime: 0 };

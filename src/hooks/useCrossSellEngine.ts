@@ -29,6 +29,80 @@ export interface CustomerRecommendations {
   upSell: Recommendation[];
 }
 
+// ─── Row types ─────────────────────────────────────────────────────
+interface ClientScoreRow {
+  customer_user_id: string;
+  health_score: number | string | null;
+  answer_rate_60d: number | string | null;
+  whatsapp_reply_rate_60d: number | string | null;
+}
+
+interface ProductRow {
+  id: string;
+  codigo: string | null;
+  descricao: string;
+  valor_unitario: number | string | null;
+  metadata: unknown;
+  ativo: boolean | null;
+  omie_codigo_produto: number | string | null;
+  estoque: number | null;
+}
+
+interface ProductCostRow {
+  product_id: string;
+  cost_price: number | string | null;
+}
+
+interface SalesOrderItem {
+  product_id?: string;
+  omie_codigo_produto?: number | string;
+  quantity?: number | string;
+  quantidade?: number | string;
+  unit_price?: number | string;
+  valor_unitario?: number | string;
+}
+
+interface SalesOrderRow {
+  customer_user_id: string;
+  items: SalesOrderItem[] | unknown;
+  total: number | string | null;
+  created_at: string;
+}
+
+interface ConversionRow {
+  category_id: string;
+  conversion_rate: number | string | null;
+  complexity_factor: number | string | null;
+}
+
+interface AssocRuleRow {
+  antecedent_product_ids: string[] | null;
+  consequent_product_ids: string[] | null;
+  confidence: number | string | null;
+  lift: number | string | null;
+  support: number | string | null;
+}
+
+interface ProfileRow {
+  user_id: string;
+  name: string | null;
+  customer_type: string | null;
+  cnae: string | null;
+}
+
+interface RecommendationStatsRow {
+  status: string;
+  actual_margin: number | string | null;
+  time_spent_seconds: number | null;
+}
+
+interface RecommendationUpdate {
+  status: 'aceito';
+  accepted_at: string;
+  actual_margin?: number;
+  time_spent_seconds?: number;
+}
+
 const clamp = (v: number, lo: number, hi: number) => Math.max(lo, Math.min(hi, v));
 
 // ─── Main Hook ───────────────────────────────────────────────────────
@@ -45,15 +119,15 @@ export const useCrossSellEngine = () => {
 
     try {
       // 1. Load client scores with pagination
-      const fetchAllScores = async (filterFarmerId?: string) => {
-        const all: any[] = [];
+      const fetchAllScores = async (filterFarmerId?: string): Promise<ClientScoreRow[]> => {
+        const all: ClientScoreRow[] = [];
         let page = 0;
         const sz = 1000;
         let hasMore = true;
         while (hasMore) {
           let q = supabase.from('farmer_client_scores').select('*').range(page * sz, (page + 1) * sz - 1);
           if (filterFarmerId) q = q.eq('farmer_id', filterFarmerId);
-          const { data } = await q as any;
+          const { data } = (await q) as unknown as { data: ClientScoreRow[] | null };
           if (!data || data.length === 0) hasMore = false;
           else { all.push(...data); if (data.length < sz) hasMore = false; page++; }
         }
@@ -72,30 +146,30 @@ export const useCrossSellEngine = () => {
       }
 
       // 2. Load all products with costs
-      const { data: products } = await supabase
+      const { data: products } = (await supabase
         .from('omie_products')
         .select('id, codigo, descricao, valor_unitario, metadata, ativo, omie_codigo_produto, estoque')
-        .eq('ativo', true) as any;
+        .eq('ativo', true)) as unknown as { data: ProductRow[] | null };
 
-      const { data: productCosts } = await supabase
+      const { data: productCosts } = (await supabase
         .from('product_costs')
-        .select('product_id, cost_price') as any;
+        .select('product_id, cost_price')) as unknown as { data: ProductCostRow[] | null };
 
       const costMap = new Map<string, number>();
-      (productCosts || []).forEach((pc: any) => costMap.set(pc.product_id, Number(pc.cost_price)));
+      (productCosts || []).forEach((pc) => costMap.set(pc.product_id, Number(pc.cost_price)));
 
       // 3. Load ALL sales history (avoid huge .in() URL with 3598 IDs)
-      const fetchAllSalesOrders = async () => {
-        const all: any[] = [];
+      const fetchAllSalesOrders = async (): Promise<SalesOrderRow[]> => {
+        const all: SalesOrderRow[] = [];
         let page = 0;
         const sz = 1000;
         let hasMore = true;
         while (hasMore) {
-          const { data } = await supabase
+          const { data } = (await supabase
             .from('sales_orders')
             .select('customer_user_id, items, total, created_at')
             .in('status', ['confirmado', 'faturado', 'entregue'])
-            .range(page * sz, (page + 1) * sz - 1) as any;
+            .range(page * sz, (page + 1) * sz - 1)) as unknown as { data: SalesOrderRow[] | null };
           if (!data || data.length === 0) hasMore = false;
           else { all.push(...data); if (data.length < sz) hasMore = false; page++; }
         }
@@ -105,11 +179,11 @@ export const useCrossSellEngine = () => {
 
       // Build set of customer IDs that have orders
       const customerIdsWithOrders = new Set<string>();
-      (salesOrders || []).forEach((o: any) => customerIdsWithOrders.add(o.customer_user_id));
+      (salesOrders || []).forEach((o) => customerIdsWithOrders.add(o.customer_user_id));
 
       // Filter clientScores to only those with orders (avoid processing 3598 empty clients)
-      const activeClientScores = clientScores.filter((c: any) => customerIdsWithOrders.has(c.customer_user_id));
-      const customerIds = activeClientScores.map((c: any) => c.customer_user_id);
+      const activeClientScores = clientScores.filter((c) => customerIdsWithOrders.has(c.customer_user_id));
+      const customerIds = activeClientScores.map((c) => c.customer_user_id);
 
       if (!customerIds.length) {
         setRecommendations([]);
@@ -117,25 +191,25 @@ export const useCrossSellEngine = () => {
       }
 
       // 4. Load category conversion rates (learning data)
-      const { data: conversionData } = await supabase
+      const { data: conversionData } = (await supabase
         .from('farmer_category_conversion')
-        .select('*') as any;
-      const conversionMap = new Map<string, any>();
-      (conversionData || []).forEach((c: any) => conversionMap.set(c.category_id, c));
+        .select('*')) as unknown as { data: ConversionRow[] | null };
+      const conversionMap = new Map<string, ConversionRow>();
+      (conversionData || []).forEach((c) => conversionMap.set(c.category_id, c));
 
       // 4b. Load association rules for personalized recommendations
-      const { data: assocRules } = await supabase
+      const { data: assocRules } = (await supabase
         .from('farmer_association_rules')
         .select('antecedent_product_ids, consequent_product_ids, confidence, lift, support')
         .gte('confidence', 0.05)
-        .gte('lift', 1.0) as any;
+        .gte('lift', 1.0)) as unknown as { data: AssocRuleRow[] | null };
 
       // Build map: antecedent product -> consequent products with scores
       const assocMap = new Map<string, { productId: string; confidence: number; lift: number; support: number }[]>();
-      for (const rule of (assocRules || [])) {
-        for (const ant of (rule.antecedent_product_ids || [])) {
+      for (const rule of assocRules || []) {
+        for (const ant of rule.antecedent_product_ids || []) {
           if (!assocMap.has(ant)) assocMap.set(ant, []);
-          for (const cons of (rule.consequent_product_ids || [])) {
+          for (const cons of rule.consequent_product_ids || []) {
             assocMap.get(ant)!.push({
               productId: cons,
               confidence: Number(rule.confidence),
@@ -148,21 +222,21 @@ export const useCrossSellEngine = () => {
 
       // 5. Load customer profiles for active clients only
       // Split into batches of 100 to avoid URL limits
-      const allProfiles: any[] = [];
+      const allProfiles: ProfileRow[] = [];
       for (let i = 0; i < customerIds.length; i += 100) {
         const batch = customerIds.slice(i, i + 100);
-        const { data: batchProfiles } = await supabase
+        const { data: batchProfiles } = (await supabase
           .from('profiles')
           .select('user_id, name, customer_type, cnae')
-          .in('user_id', batch);
+          .in('user_id', batch)) as unknown as { data: ProfileRow[] | null };
         if (batchProfiles) allProfiles.push(...batchProfiles);
       }
-      const profileMap = new Map<string, any>();
-      allProfiles.forEach((p: any) => profileMap.set(p.user_id, p));
+      const profileMap = new Map<string, ProfileRow>();
+      allProfiles.forEach((p) => profileMap.set(p.user_id, p));
 
       // 6. Build omie_codigo_produto -> product UUID map
       const omieToProductId = new Map<number, string>();
-      (products || []).forEach((p: any) => {
+      (products || []).forEach((p) => {
         if (p.omie_codigo_produto) omieToProductId.set(Number(p.omie_codigo_produto), p.id);
       });
 
@@ -170,12 +244,12 @@ export const useCrossSellEngine = () => {
       const customerProducts = new Map<string, Map<string, { qty: number; price: number; cost: number }>>();
       const allProductPurchases = new Map<string, number>(); // product_id -> total customers who bought
 
-      for (const order of (salesOrders || [])) {
+      for (const order of salesOrders || []) {
         const cid = order.customer_user_id;
         if (!customerProducts.has(cid)) customerProducts.set(cid, new Map());
         const cp = customerProducts.get(cid)!;
 
-        const items = Array.isArray(order.items) ? order.items : [];
+        const items: SalesOrderItem[] = Array.isArray(order.items) ? (order.items as SalesOrderItem[]) : [];
         for (const item of items) {
           // Resolve product_id: use direct product_id or map from omie_codigo_produto
           let productId = item.product_id;
@@ -272,7 +346,7 @@ export const useCrossSellEngine = () => {
           if (lie > 0) {
             crossSellRecs.push({
               customerId: cid,
-              customerName: profile.name,
+              customerName: profile.name ?? '',
               type: 'cross_sell',
               productId: product.id,
               productName: product.descricao,
@@ -320,10 +394,10 @@ export const useCrossSellEngine = () => {
             const lie = pij * mij * complexityFactor;
 
             if (lie > 0) {
-              const currentProduct = productList.find((p: any) => p.id === purchasedId);
+              const currentProduct = productList.find((p) => p.id === purchasedId);
               upSellRecs.push({
                 customerId: cid,
-                customerName: profile.name,
+                customerName: profile.name ?? '',
                 type: 'up_sell',
                 productId: product.id,
                 productName: product.descricao,
@@ -351,7 +425,7 @@ export const useCrossSellEngine = () => {
         if (topCross.length > 0 || topUp.length > 0) {
           allRecs.push({
             customerId: cid,
-            customerName: profile.name,
+            customerName: profile.name ?? '',
             healthScore,
             crossSell: topCross,
             upSell: topUp,
@@ -386,7 +460,7 @@ export const useCrossSellEngine = () => {
         })),
       );
       if (recRows.length > 0) {
-        await supabase.from('farmer_recommendations' as any).upsert(recRows as any);
+        await supabase.from('farmer_recommendations').upsert(recRows);
       }
     } catch (error) {
       console.error('Error calculating recommendations:', error);
@@ -398,58 +472,58 @@ export const useCrossSellEngine = () => {
 
   // ─── Actions ─────────────────────────────────────────────────────────
   const markAsOffered = useCallback(async (recId: string) => {
-    await supabase.from('farmer_recommendations' as any)
-      .update({ status: 'ofertado', offered_at: new Date().toISOString() } as any)
+    await supabase.from('farmer_recommendations')
+      .update({ status: 'ofertado', offered_at: new Date().toISOString() })
       .eq('id', recId);
   }, []);
 
   const markAsAccepted = useCallback(async (recId: string, actualMargin?: number, timeSpent?: number) => {
-    const update: any = {
+    const update: RecommendationUpdate = {
       status: 'aceito',
       accepted_at: new Date().toISOString(),
     };
     if (actualMargin !== undefined) update.actual_margin = actualMargin;
     if (timeSpent !== undefined) update.time_spent_seconds = timeSpent;
 
-    await supabase.from('farmer_recommendations' as any).update(update).eq('id', recId);
+    await supabase.from('farmer_recommendations').update(update).eq('id', recId);
 
     // Update category conversion rates (learning)
     if (actualMargin !== undefined) {
-      const { data: rec } = await supabase.from('farmer_recommendations' as any)
-        .select('product_id').eq('id', recId).single();
+      const { data: rec } = (await supabase.from('farmer_recommendations')
+        .select('product_id').eq('id', recId).single()) as unknown as { data: { product_id: string } | null };
       if (rec) {
-        await updateConversionStats((rec as any).product_id);
+        await updateConversionStats(rec.product_id);
       }
     }
   }, []);
 
   const markAsRejected = useCallback(async (recId: string) => {
-    await supabase.from('farmer_recommendations' as any)
-      .update({ status: 'rejeitado', rejected_at: new Date().toISOString() } as any)
+    await supabase.from('farmer_recommendations')
+      .update({ status: 'rejeitado', rejected_at: new Date().toISOString() })
       .eq('id', recId);
   }, []);
 
   // Recalculate conversion stats from historical data
   const updateConversionStats = async (productId: string) => {
-    const { data: recs } = await supabase.from('farmer_recommendations' as any)
+    const { data: recs } = (await supabase.from('farmer_recommendations')
       .select('status, actual_margin, time_spent_seconds')
       .eq('product_id', productId)
-      .in('status', ['aceito', 'rejeitado', 'ofertado']) as any;
+      .in('status', ['aceito', 'rejeitado', 'ofertado'])) as unknown as { data: RecommendationStatsRow[] | null };
 
     if (!recs?.length) return;
 
-    const offered = recs.filter((r: any) => ['aceito', 'rejeitado', 'ofertado'].includes(r.status)).length;
-    const accepted = recs.filter((r: any) => r.status === 'aceito').length;
+    const offered = recs.filter((r) => ['aceito', 'rejeitado', 'ofertado'].includes(r.status)).length;
+    const accepted = recs.filter((r) => r.status === 'aceito').length;
     const rate = offered > 0 ? accepted / offered : 0;
 
-    const acceptedRecs = recs.filter((r: any) => r.status === 'aceito' && r.actual_margin != null);
+    const acceptedRecs = recs.filter((r) => r.status === 'aceito' && r.actual_margin != null);
     const avgMargin = acceptedRecs.length > 0
-      ? acceptedRecs.reduce((s: number, r: any) => s + Number(r.actual_margin), 0) / acceptedRecs.length
+      ? acceptedRecs.reduce((s, r) => s + Number(r.actual_margin), 0) / acceptedRecs.length
       : 0;
 
-    const withTime = acceptedRecs.filter((r: any) => r.time_spent_seconds != null);
+    const withTime = acceptedRecs.filter((r): r is RecommendationStatsRow & { time_spent_seconds: number } => r.time_spent_seconds != null);
     const avgTime = withTime.length > 0
-      ? Math.round(withTime.reduce((s: number, r: any) => s + r.time_spent_seconds, 0) / withTime.length)
+      ? Math.round(withTime.reduce((s, r) => s + r.time_spent_seconds, 0) / withTime.length)
       : 0;
 
     const profitPerHour = avgTime > 0 ? (avgMargin / (avgTime / 3600)) : 0;
@@ -457,7 +531,7 @@ export const useCrossSellEngine = () => {
     // Complexity factor: higher profit/hour = lower complexity (easier to sell)
     const complexity = profitPerHour > 0 ? clamp(1.0 / (1 + Math.log(1 + profitPerHour / 100)), 0.5, 1.5) : 1.0;
 
-    await supabase.from('farmer_category_conversion' as any).upsert({
+    await supabase.from('farmer_category_conversion').upsert({
       category_id: productId,
       total_offers: offered,
       total_accepts: accepted,
@@ -467,7 +541,7 @@ export const useCrossSellEngine = () => {
       profit_per_hour: Math.round(profitPerHour * 100) / 100,
       complexity_factor: Math.round(complexity * 1000) / 1000,
       updated_at: new Date().toISOString(),
-    } as any);
+    });
   };
 
   return {
