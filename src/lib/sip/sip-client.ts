@@ -12,6 +12,7 @@ export class SipClient {
   private currentSession: any = null;
   private callStartedAt: number | null = null;
   private currentLocalStream: MediaStream | null = null;
+  private muted = false;
 
   constructor(private config: SipConfig) {
     const socket = new JsSIP.WebSocketInterface(config.wsUri);
@@ -102,11 +103,36 @@ export class SipClient {
     if (this.state === 'calling' || this.state === 'ringing' || this.state === 'established') {
       this.setState('ended');
     }
+    this.muted = false; // reset pra próxima chamada
   }
 
   getCallDurationSeconds(): number {
     if (!this.callStartedAt) return 0;
     return Math.floor((Date.now() - this.callStartedAt) / 1000);
+  }
+
+  mute(): void {
+    if (!this.currentLocalStream) return;
+    for (const track of this.currentLocalStream.getTracks()) {
+      if (track.kind === 'audio') {
+        track.enabled = false;
+      }
+    }
+    this.muted = true;
+  }
+
+  unmute(): void {
+    if (!this.currentLocalStream) return;
+    for (const track of this.currentLocalStream.getTracks()) {
+      if (track.kind === 'audio') {
+        track.enabled = true;
+      }
+    }
+    this.muted = false;
+  }
+
+  isMuted(): boolean {
+    return this.muted;
   }
 
   private extractRemoteStream(): void {
