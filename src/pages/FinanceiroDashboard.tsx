@@ -16,8 +16,9 @@ import {
   Loader2, RefreshCw, DollarSign, TrendingUp, TrendingDown,
   AlertTriangle, Wallet, ArrowDownCircle, ArrowUpCircle,
   Building2, BarChart3, PieChart, Calendar, FileText,
-  ChevronDown, ChevronUp, Clock, Ban, Download, ShieldAlert
+  ChevronDown, ChevronUp, Clock, Ban, Download, ShieldAlert, History
 } from 'lucide-react';
+import { AuditTrailDrawer } from '@/components/financeiro/AuditTrailDrawer';
 import { generateAlerts } from '@/utils/financeiroAlerts';
 
 // ═══════════════ FORMATTERS ═══════════════
@@ -74,6 +75,7 @@ const FinanceiroDashboard = () => {
   const [crDateTo, setCrDateTo] = useState('');
   const [cpDateFrom, setCpDateFrom] = useState('');
   const [cpDateTo, setCpDateTo] = useState('');
+  const [auditTarget, setAuditTarget] = useState<{ table: string; id: string; title: string } | null>(null);
 
   // Financial alerts
   const alerts = useMemo(() => {
@@ -524,6 +526,7 @@ const FinanceiroDashboard = () => {
                       <TableHead className="text-right w-28">Saldo</TableHead>
                       <TableHead className="w-20">Status</TableHead>
                       <TableHead>Categoria</TableHead>
+                      <TableHead className="w-10" />
                     </TableRow>
                   </TableHeader>
                   <TableBody>
@@ -556,11 +559,29 @@ const FinanceiroDashboard = () => {
                         <TableCell className="text-xs text-muted-foreground truncate max-w-[120px]">
                           {cr.categoria_descricao || cr.categoria_codigo || '—'}
                         </TableCell>
+                        <TableCell>
+                          <Button
+                            size="icon"
+                            variant="ghost"
+                            className="h-7 w-7"
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              setAuditTarget({
+                                table: 'fin_contas_receber',
+                                id: cr.id,
+                                title: `CR ${cr.nome_cliente || cr.numero_documento || cr.id}`,
+                              });
+                            }}
+                            aria-label="Histórico"
+                          >
+                            <History className="h-3.5 w-3.5" />
+                          </Button>
+                        </TableCell>
                       </TableRow>
                     ))}
                     {contasReceber.length === 0 && !loading && (
                       <TableRow>
-                        <TableCell colSpan={view === 'all' ? 8 : 7} className="text-center py-8 text-muted-foreground">
+                        <TableCell colSpan={view === 'all' ? 9 : 8} className="text-center py-8 text-muted-foreground">
                           Nenhum título encontrado. Sincronize os dados primeiro.
                         </TableCell>
                       </TableRow>
@@ -655,6 +676,7 @@ const FinanceiroDashboard = () => {
                       <TableHead className="text-right w-28">Saldo</TableHead>
                       <TableHead className="w-20">Status</TableHead>
                       <TableHead>Categoria</TableHead>
+                      <TableHead className="w-10" />
                     </TableRow>
                   </TableHeader>
                   <TableBody>
@@ -687,11 +709,29 @@ const FinanceiroDashboard = () => {
                         <TableCell className="text-xs text-muted-foreground truncate max-w-[120px]">
                           {cp.categoria_descricao || cp.categoria_codigo || '—'}
                         </TableCell>
+                        <TableCell>
+                          <Button
+                            size="icon"
+                            variant="ghost"
+                            className="h-7 w-7"
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              setAuditTarget({
+                                table: 'fin_contas_pagar',
+                                id: cp.id,
+                                title: `CP ${cp.nome_fornecedor || cp.numero_documento || cp.id}`,
+                              });
+                            }}
+                            aria-label="Histórico"
+                          >
+                            <History className="h-3.5 w-3.5" />
+                          </Button>
+                        </TableCell>
                       </TableRow>
                     ))}
                     {contasPagar.length === 0 && !loading && (
                       <TableRow>
-                        <TableCell colSpan={view === 'all' ? 8 : 7} className="text-center py-8 text-muted-foreground">
+                        <TableCell colSpan={view === 'all' ? 9 : 8} className="text-center py-8 text-muted-foreground">
                           Nenhum título encontrado. Sincronize os dados primeiro.
                         </TableCell>
                       </TableRow>
@@ -773,6 +813,16 @@ const FinanceiroDashboard = () => {
           <Loader2 className="w-4 h-4 animate-spin" />
           Carregando...
         </div>
+      )}
+
+      {auditTarget && (
+        <AuditTrailDrawer
+          open
+          onOpenChange={(open) => !open && setAuditTarget(null)}
+          tableName={auditTarget.table}
+          rowId={auditTarget.id}
+          title={auditTarget.title}
+        />
       )}
     </div>
   );
