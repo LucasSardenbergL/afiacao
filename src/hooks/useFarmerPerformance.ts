@@ -34,13 +34,67 @@ export interface PerformanceScore {
   totalTimeSeconds: number;
 }
 
+interface PerformanceScoreRow {
+  id: string;
+  farmer_id: string;
+  calculated_at: string;
+  period_start: string;
+  period_end: string;
+  iee_ptpl_usage: number | string | null;
+  iee_objective_adherence: number | string | null;
+  iee_questions_usage: number | string | null;
+  iee_bundle_offered: number | string | null;
+  iee_post_call_registration: number | string | null;
+  iee_total: number | string | null;
+  ipf_incremental_margin: number | string | null;
+  ipf_margin_per_hour: number | string | null;
+  ipf_mix_expansion: number | string | null;
+  ipf_ltv_evolution: number | string | null;
+  ipf_churn_reduction: number | string | null;
+  ipf_total: number | string | null;
+  total_calls: number | string | null;
+  total_plans: number | string | null;
+  total_margin: number | string | null;
+  total_time_seconds: number | string | null;
+}
+
+interface ProfileNameRow {
+  user_id: string;
+  name: string | null;
+}
+
+interface TacticalPlanRow {
+  status: string | null;
+  plan_followed: boolean | null;
+  bundle_recommendation_id: string | null;
+  actual_margin: number | string | null;
+  call_duration_seconds: number | string | null;
+}
+
+interface FarmerCallRow {
+  margin_generated: number | string | null;
+  duration_seconds: number | string | null;
+}
+
+interface ClientScoreRow {
+  churn_risk: number | string | null;
+  category_count: number | string | null;
+  avg_monthly_spend_180d: number | string | null;
+  health_score: number | string | null;
+}
+
+interface CopilotSessionRow {
+  suggestions_shown: number | string | null;
+  suggestions_used: number | string | null;
+}
+
 export const useFarmerPerformance = () => {
   const { user } = useAuth();
   const [scores, setScores] = useState<PerformanceScore[]>([]);
   const [loading, setLoading] = useState(false);
   const [calculating, setCalculating] = useState(false);
 
-  const parseScore = (d: any, nameMap: Map<string, string>): PerformanceScore => ({
+  const parseScore = (d: PerformanceScoreRow, nameMap: Map<string, string>): PerformanceScore => ({
     id: d.id,
     farmerId: d.farmer_id,
     farmerName: nameMap.get(d.farmer_id) || 'Farmer',
@@ -71,7 +125,7 @@ export const useFarmerPerformance = () => {
     setLoading(true);
     try {
       let query = supabase
-        .from('farmer_performance_scores' as any)
+        .from('farmer_performance_scores')
         .select('*')
         .order('calculated_at', { ascending: false })
         .limit(100);
@@ -80,17 +134,17 @@ export const useFarmerPerformance = () => {
         query = query.eq('farmer_id', farmerId);
       }
 
-      const { data } = await query as any;
+      const { data } = (await query) as unknown as { data: PerformanceScoreRow[] | null };
       if (!data) { setScores([]); return; }
 
-      const farmerIds = [...new Set(data.map((d: any) => d.farmer_id))] as string[];
-      const { data: profiles } = await supabase
+      const farmerIds = [...new Set(data.map((d) => d.farmer_id))];
+      const { data: profiles } = (await supabase
         .from('profiles')
         .select('user_id, name')
-        .in('user_id', farmerIds) as any;
+        .in('user_id', farmerIds)) as unknown as { data: ProfileNameRow[] | null };
 
-      const nameMap = new Map<string, string>((profiles || []).map((p: any) => [p.user_id, p.name]));
-      setScores(data.map((d: any) => parseScore(d, nameMap)));
+      const nameMap = new Map<string, string>((profiles || []).map((p) => [p.user_id, p.name ?? 'Farmer']));
+      setScores(data.map((d) => parseScore(d, nameMap)));
     } catch (err) {
       console.error('Error loading scores:', err);
     } finally {
@@ -110,41 +164,41 @@ export const useFarmerPerformance = () => {
       const startStr = periodStart.toISOString();
 
       // Fetch tactical plans for the period
-      const { data: plans } = await supabase
-        .from('farmer_tactical_plans' as any)
+      const { data: plans } = (await supabase
+        .from('farmer_tactical_plans')
         .select('*')
         .eq('farmer_id', farmerId)
-        .gte('created_at', startStr) as any;
+        .gte('created_at', startStr)) as unknown as { data: TacticalPlanRow[] | null };
 
       // Fetch calls for the period
-      const { data: calls } = await supabase
+      const { data: calls } = (await supabase
         .from('farmer_calls')
         .select('*')
         .eq('farmer_id', farmerId)
-        .gte('created_at', startStr) as any;
+        .gte('created_at', startStr)) as unknown as { data: FarmerCallRow[] | null };
 
       // Fetch client scores (current snapshot)
-      const { data: clientScores } = await supabase
+      const { data: clientScores } = (await supabase
         .from('farmer_client_scores')
         .select('churn_risk, category_count, avg_monthly_spend_180d, health_score')
-        .eq('farmer_id', farmerId) as any;
+        .eq('farmer_id', farmerId)) as unknown as { data: ClientScoreRow[] | null };
 
       // Fetch copilot sessions
-      const { data: copilotSessions } = await supabase
-        .from('farmer_copilot_sessions' as any)
+      const { data: copilotSessions } = (await supabase
+        .from('farmer_copilot_sessions')
         .select('suggestions_shown, suggestions_used')
         .eq('farmer_id', farmerId)
-        .gte('created_at', startStr) as any;
+        .gte('created_at', startStr)) as unknown as { data: CopilotSessionRow[] | null };
 
-      const plansArr = plans || [];
-      const callsArr = calls || [];
-      const clientArr = clientScores || [];
-      const copilotArr = copilotSessions || [];
+      const plansArr: TacticalPlanRow[] = plans || [];
+      const callsArr: FarmerCallRow[] = calls || [];
+      const clientArr: ClientScoreRow[] = clientScores || [];
+      const copilotArr: CopilotSessionRow[] = copilotSessions || [];
 
       const totalCalls = callsArr.length;
       const totalPlans = plansArr.length;
-      const completedPlans = plansArr.filter((p: any) => p.status === 'concluido');
-      const plansFollowed = completedPlans.filter((p: any) => p.plan_followed === true);
+      const completedPlans = plansArr.filter((p) => p.status === 'concluido');
+      const plansFollowed = completedPlans.filter((p) => p.plan_followed === true);
 
       // ── IEE Calculation ──────────────────────────────────────
       // 1. PTPL Usage: % of calls that had a plan generated before
@@ -157,14 +211,14 @@ export const useFarmerPerformance = () => {
         : 0;
 
       // 3. Questions usage: based on copilot suggestions used ratio
-      const totalSugShown = copilotArr.reduce((s: number, c: any) => s + Number(c.suggestions_shown || 0), 0);
-      const totalSugUsed = copilotArr.reduce((s: number, c: any) => s + Number(c.suggestions_used || 0), 0);
+      const totalSugShown = copilotArr.reduce((s, c) => s + Number(c.suggestions_shown || 0), 0);
+      const totalSugUsed = copilotArr.reduce((s, c) => s + Number(c.suggestions_used || 0), 0);
       const ieeQuestionsUsage = totalSugShown > 0
         ? Math.round(Math.min(100, (totalSugUsed / totalSugShown) * 100))
         : 50; // neutral if no data
 
       // 4. Bundle offered: % of plans with bundle_recommendation_id
-      const plansWithBundle = plansArr.filter((p: any) => p.bundle_recommendation_id).length;
+      const plansWithBundle = plansArr.filter((p) => p.bundle_recommendation_id).length;
       const ieeBundleOffered = totalPlans > 0
         ? Math.round((plansWithBundle / totalPlans) * 100)
         : 0;
@@ -184,10 +238,10 @@ export const useFarmerPerformance = () => {
       );
 
       // ── IPF Calculation ──────────────────────────────────────
-      const totalMargin = completedPlans.reduce((s: number, p: any) => s + Number(p.actual_margin || 0), 0);
-      const totalTimeSeconds = completedPlans.reduce((s: number, p: any) => s + Number(p.call_duration_seconds || 0), 0);
-      const totalCallMargin = callsArr.reduce((s: number, c: any) => s + Number(c.margin_generated || 0), 0);
-      const totalCallTime = callsArr.reduce((s: number, c: any) => s + Number(c.duration_seconds || 0), 0);
+      const totalMargin = completedPlans.reduce((s, p) => s + Number(p.actual_margin || 0), 0);
+      const totalTimeSeconds = completedPlans.reduce((s, p) => s + Number(p.call_duration_seconds || 0), 0);
+      const totalCallMargin = callsArr.reduce((s, c) => s + Number(c.margin_generated || 0), 0);
+      const totalCallTime = callsArr.reduce((s, c) => s + Number(c.duration_seconds || 0), 0);
 
       const combinedMargin = totalMargin + totalCallMargin;
       const combinedTime = totalTimeSeconds + totalCallTime;
@@ -202,18 +256,18 @@ export const useFarmerPerformance = () => {
 
       // 3. Mix expansion: avg categories across clients (target 6+)
       const avgCategories = clientArr.length > 0
-        ? clientArr.reduce((s: number, c: any) => s + Number(c.category_count || 0), 0) / clientArr.length
+        ? clientArr.reduce((s, c) => s + Number(c.category_count || 0), 0) / clientArr.length
         : 0;
       const ipfMixExpansion = Math.round(Math.min(100, (avgCategories / 6) * 100));
 
       // 4. LTV evolution: avg monthly spend (target R$2000)
       const avgSpend = clientArr.length > 0
-        ? clientArr.reduce((s: number, c: any) => s + Number(c.avg_monthly_spend_180d || 0), 0) / clientArr.length
+        ? clientArr.reduce((s, c) => s + Number(c.avg_monthly_spend_180d || 0), 0) / clientArr.length
         : 0;
       const ipfLtvEvolution = Math.round(Math.min(100, (avgSpend / 2000) * 100));
 
       // 5. Churn reduction: % of clients with low churn risk (<30%)
-      const lowChurnClients = clientArr.filter((c: any) => Number(c.churn_risk || 100) < 30).length;
+      const lowChurnClients = clientArr.filter((c) => Number(c.churn_risk || 100) < 30).length;
       const ipfChurnReduction = clientArr.length > 0
         ? Math.round((lowChurnClients / clientArr.length) * 100)
         : 0;
@@ -251,14 +305,15 @@ export const useFarmerPerformance = () => {
       };
 
       await supabase
-        .from('farmer_performance_scores' as any)
-        .insert(scoreData as any);
+        .from('farmer_performance_scores')
+        .insert(scoreData);
 
       toast.success('Índices calculados com sucesso');
       await loadScores(farmerId);
-    } catch (err: any) {
+    } catch (err) {
       console.error('Error calculating scores:', err);
-      toast.error('Erro ao calcular índices', { description: err.message });
+      const message = err instanceof Error ? err.message : String(err);
+      toast.error('Erro ao calcular índices', { description: message });
     } finally {
       setCalculating(false);
     }

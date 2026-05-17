@@ -27,6 +27,11 @@
     "src/lib/help-utils.ts",
     "src/hooks/useNetworkStatus.ts",
     "src/hooks/useInfiniteScroll.ts",
-    "src/hooks/useBarcodeDetector.ts"
+    "src/hooks/useBarcodeDetector.ts",
+    "src/hooks/useFarmerPerformance.ts",
+    "src/hooks/useFarmerExperiments.ts",
+    "src/hooks/useTacticalPlan.ts",
+    "src/hooks/useCrossSellEngine.ts",
+    "src/hooks/useBundleEngine.ts"
   ]
 }

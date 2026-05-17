@@ -1,5 +1,6 @@
 import { useState, useCallback } from 'react';
 import { supabase } from '@/integrations/supabase/client';
+import type { Json } from '@/integrations/supabase/types';
 import { useAuth } from '@/contexts/AuthContext';
 import { toast } from 'sonner';
 
@@ -52,6 +53,82 @@ export interface CustomerBundles {
   recentProducts: string[];
 }
 
+// ─── Row types ─────────────────────────────────────────────────────
+interface ClientScoreRow {
+  customer_user_id: string;
+  health_score: number | string | null;
+  answer_rate_60d: number | string | null;
+  whatsapp_reply_rate_60d: number | string | null;
+  avg_monthly_spend_180d: number | string | null;
+  gross_margin_pct: number | string | null;
+  category_count: number | string | null;
+  days_since_last_purchase: number | string | null;
+}
+
+interface ProductRow {
+  id: string;
+  codigo: string | null;
+  descricao: string;
+  valor_unitario: number | string | null;
+  metadata: unknown;
+  ativo: boolean | null;
+  omie_codigo_produto: number | string | null;
+}
+
+interface ProductCostRow {
+  product_id: string;
+  cost_price: number | string | null;
+}
+
+interface ProfileRow {
+  user_id: string;
+  name: string | null;
+  customer_type: string | null;
+  cnae: string | null;
+}
+
+interface ConversionRow {
+  category_id: string;
+  complexity_factor: number | string | null;
+}
+
+interface SalesOrderItem {
+  product_id?: string;
+  omie_codigo_produto?: number | string;
+}
+
+interface SalesOrderRow {
+  customer_user_id: string;
+  items: SalesOrderItem[] | unknown;
+  total: number | string | null;
+  created_at: string;
+}
+
+interface ExistingRecRow {
+  product_id: string;
+  lie: number | string | null;
+  recommendation_type: 'cross_sell' | 'up_sell';
+}
+
+interface StatsRecRow {
+  status: string;
+  actual_margin: number | string | null;
+  time_spent_seconds: number | null;
+}
+
+interface BundleStatsRow extends StatsRecRow {
+  bundle_products: { id: string }[] | unknown;
+}
+
+interface BundleAcceptUpdate {
+  status: 'aceito_total' | 'aceito_parcial';
+  accepted_at: string;
+  updated_at: string;
+  accepted_products?: string[];
+  actual_margin?: number;
+  time_spent_seconds?: number;
+}
+
 const clamp = (v: number, lo: number, hi: number) => Math.max(lo, Math.min(hi, v));
 
 // ─── Configuration ──────────────────────────────────────────────────
@@ -78,15 +155,15 @@ export const useBundleEngine = () => {
 
     try {
       // 1. Load data with fallback for super_admin
-      const fetchAllScores = async (filterFarmerId?: string) => {
-        const all: any[] = [];
+      const fetchAllScores = async (filterFarmerId?: string): Promise<ClientScoreRow[]> => {
+        const all: ClientScoreRow[] = [];
         let page = 0;
         const sz = 1000;
         let hasMore = true;
         while (hasMore) {
           let q = supabase.from('farmer_client_scores').select('*').range(page * sz, (page + 1) * sz - 1);
           if (filterFarmerId) q = q.eq('farmer_id', filterFarmerId);
-          const { data } = await q as any;
+          const { data } = (await q) as unknown as { data: ClientScoreRow[] | null };
           if (!data || data.length === 0) hasMore = false;
           else { all.push(...data); if (data.length < sz) hasMore = false; page++; }
         }
@@ -102,26 +179,26 @@ export const useBundleEngine = () => {
         { data: profiles },
         { data: conversionData },
       ] = await Promise.all([
-        supabase.from('omie_products').select('id, codigo, descricao, valor_unitario, metadata, ativo, omie_codigo_produto').eq('ativo', true) as any,
-        supabase.from('product_costs').select('product_id, cost_price') as any,
-        supabase.from('profiles').select('user_id, name, customer_type, cnae') as any,
-        supabase.from('farmer_category_conversion').select('*') as any,
+        supabase.from('omie_products').select('id, codigo, descricao, valor_unitario, metadata, ativo, omie_codigo_produto').eq('ativo', true) as unknown as Promise<{ data: ProductRow[] | null }>,
+        supabase.from('product_costs').select('product_id, cost_price') as unknown as Promise<{ data: ProductCostRow[] | null }>,
+        supabase.from('profiles').select('user_id, name, customer_type, cnae') as unknown as Promise<{ data: ProfileRow[] | null }>,
+        supabase.from('farmer_category_conversion').select('*') as unknown as Promise<{ data: ConversionRow[] | null }>,
       ]);
 
       if (!clientScores?.length) { setCustomerBundles([]); return; }
 
       // Load ALL sales orders (avoid huge .in() URL)
-      const fetchAllSalesOrders = async () => {
-        const all: any[] = [];
+      const fetchAllSalesOrders = async (): Promise<SalesOrderRow[]> => {
+        const all: SalesOrderRow[] = [];
         let page = 0;
         const sz = 1000;
         let hasMore = true;
         while (hasMore) {
-          const { data } = await supabase
+          const { data } = (await supabase
             .from('sales_orders')
             .select('customer_user_id, items, total, created_at')
             .in('status', ['confirmado', 'faturado', 'entregue'])
-            .range(page * sz, (page + 1) * sz - 1) as any;
+            .range(page * sz, (page + 1) * sz - 1)) as unknown as { data: SalesOrderRow[] | null };
           if (!data || data.length === 0) hasMore = false;
           else { all.push(...data); if (data.length < sz) hasMore = false; page++; }
         }
@@ -131,38 +208,38 @@ export const useBundleEngine = () => {
 
       // Build maps
       const costMap = new Map<string, number>();
-      (productCosts || []).forEach((pc: any) => costMap.set(pc.product_id, Number(pc.cost_price)));
-      const productMap = new Map<string, any>();
-      (products || []).forEach((p: any) => productMap.set(p.id, p));
+      (productCosts || []).forEach((pc) => costMap.set(pc.product_id, Number(pc.cost_price)));
+      const productMap = new Map<string, ProductRow>();
+      (products || []).forEach((p) => productMap.set(p.id, p));
       const omieToProductId = new Map<number, string>();
-      (products || []).forEach((p: any) => {
+      (products || []).forEach((p) => {
         if (p.omie_codigo_produto) omieToProductId.set(Number(p.omie_codigo_produto), p.id);
       });
-      const profileMap = new Map<string, any>();
-      (profiles || []).forEach((p: any) => profileMap.set(p.user_id, p));
-      const conversionMap = new Map<string, any>();
-      (conversionData || []).forEach((c: any) => conversionMap.set(c.category_id, c));
+      const profileMap = new Map<string, ProfileRow>();
+      (profiles || []).forEach((p) => profileMap.set(p.user_id, p));
+      const conversionMap = new Map<string, ConversionRow>();
+      (conversionData || []).forEach((c) => conversionMap.set(c.category_id, c));
 
       // 2. Build transaction baskets per customer
       const baskets: string[][] = [];
       const customerBaskets = new Map<string, Set<string>>();
       const sequentialPurchases = new Map<string, { productId: string; date: Date }[]>();
 
-      for (const order of (salesOrders || [])) {
-        const items = Array.isArray(order.items) ? order.items : [];
-        const productIds = items.map((i: any) => {
+      for (const order of salesOrders || []) {
+        const items: SalesOrderItem[] = Array.isArray(order.items) ? (order.items as SalesOrderItem[]) : [];
+        const productIds = items.map((i) => {
           if (i.product_id) return i.product_id;
           if (i.omie_codigo_produto) return omieToProductId.get(Number(i.omie_codigo_produto));
           return null;
-        }).filter(Boolean) as string[];
+        }).filter((id): id is string => Boolean(id));
         if (productIds.length > 0) {
           baskets.push(productIds);
           if (!customerBaskets.has(order.customer_user_id)) customerBaskets.set(order.customer_user_id, new Set());
-          productIds.forEach((pid: string) => customerBaskets.get(order.customer_user_id)!.add(pid));
-          
+          productIds.forEach((pid) => customerBaskets.get(order.customer_user_id)!.add(pid));
+
           // Sequential tracking
           if (!sequentialPurchases.has(order.customer_user_id)) sequentialPurchases.set(order.customer_user_id, []);
-          productIds.forEach((pid: string) => {
+          productIds.forEach((pid) => {
             sequentialPurchases.get(order.customer_user_id)!.push({
               productId: pid,
               date: new Date(order.created_at),
@@ -259,7 +336,6 @@ export const useBundleEngine = () => {
             const daysDiff = (sorted[j].date.getTime() - sorted[i].date.getTime()) / (1000 * 60 * 60 * 24);
             if (daysDiff > config.sequentialWindowDays) break;
             if (sorted[i].productId === sorted[j].productId) continue;
-            const key = `${sorted[i].productId}→${sorted[j].productId}`;
             // Count in a temp map (simplified: we already have pair data)
             const existingRule = discoveredRules.find(
               r => r.antecedent[0] === sorted[i].productId && r.consequent[0] === sorted[j].productId
@@ -277,7 +353,7 @@ export const useBundleEngine = () => {
       setRules(discoveredRules.slice(0, 50)); // Keep top 50
 
       // Persist top rules
-      await supabase.from('farmer_association_rules' as any).delete().neq('id', '00000000-0000-0000-0000-000000000000');
+      await supabase.from('farmer_association_rules').delete().neq('id', '00000000-0000-0000-0000-000000000000');
       if (discoveredRules.length > 0) {
         const rulesToInsert = discoveredRules.slice(0, 50).map(r => ({
           antecedent_product_ids: r.antecedent,
@@ -288,7 +364,7 @@ export const useBundleEngine = () => {
           rule_type: r.type,
           sample_size: totalBaskets,
         }));
-        await supabase.from('farmer_association_rules' as any).insert(rulesToInsert as any);
+        await supabase.from('farmer_association_rules').insert(rulesToInsert);
       }
 
       // 5. Generate bundles per customer
@@ -369,7 +445,7 @@ export const useBundleEngine = () => {
                 if (lieBundle > 0) {
                   bundles.push({
                     customerId: cid,
-                    customerName: profile.name,
+                    customerName: profile.name ?? '',
                     products: [
                       { id: pid, name: product.descricao, price, cost, margin },
                       { id: relatedPid, name: relatedProduct.descricao, price: relatedPrice, cost: relatedCost, margin: relatedMargin },
@@ -395,14 +471,14 @@ export const useBundleEngine = () => {
 
         // Best individual product (from cross-sell engine data)
         let bestIndividual: IndividualComparison | null = null;
-        const { data: existingRecs } = await supabase
-          .from('farmer_recommendations' as any)
+        const { data: existingRecs } = (await supabase
+          .from('farmer_recommendations')
           .select('product_id, lie, recommendation_type')
           .eq('farmer_id', user.id)
           .eq('customer_user_id', cid)
           .eq('status', 'pendente')
           .order('lie', { ascending: false })
-          .limit(1) as any;
+          .limit(1)) as unknown as { data: ExistingRecRow[] | null };
 
         if (existingRecs?.length) {
           const rec = existingRecs[0];
@@ -416,10 +492,12 @@ export const useBundleEngine = () => {
         }
 
         if (topBundles.length > 0 || bestIndividual) {
-          const purchasedProducts = [...purchased].map(pid => productMap.get(pid)?.descricao).filter(Boolean);
+          const purchasedProducts = [...purchased]
+            .map((pid) => productMap.get(pid)?.descricao)
+            .filter((d): d is string => Boolean(d));
           allCustomerBundles.push({
             customerId: cid,
-            customerName: profile.name,
+            customerName: profile.name ?? '',
             healthScore,
             bundles: topBundles,
             bestIndividual,
@@ -446,10 +524,10 @@ export const useBundleEngine = () => {
       // Persist bundle recommendations
       for (const cb of allCustomerBundles) {
         for (const bundle of cb.bundles) {
-          await supabase.from('farmer_bundle_recommendations' as any).insert({
+          await supabase.from('farmer_bundle_recommendations').insert({
             farmer_id: user.id,
             customer_user_id: bundle.customerId,
-            bundle_products: bundle.products,
+            bundle_products: bundle.products as unknown as Json,
             support: bundle.support,
             confidence: bundle.confidence,
             lift: bundle.lift,
@@ -458,7 +536,7 @@ export const useBundleEngine = () => {
             lie_bundle: bundle.lieBundle,
             complexity_factor: bundle.complexityFactor,
             status: 'pendente',
-          } as any);
+          });
         }
       }
 
@@ -474,8 +552,8 @@ export const useBundleEngine = () => {
 
   // ─── Actions ─────────────────────────────────────────────────────────
   const markBundleOffered = useCallback(async (bundleId: string) => {
-    await supabase.from('farmer_bundle_recommendations' as any)
-      .update({ status: 'ofertado', offered_at: new Date().toISOString() } as any)
+    await supabase.from('farmer_bundle_recommendations')
+      .update({ status: 'ofertado', offered_at: new Date().toISOString() })
       .eq('id', bundleId);
   }, []);
 
@@ -486,7 +564,7 @@ export const useBundleEngine = () => {
     actualMargin?: number,
     timeSpent?: number
   ) => {
-    const update: any = {
+    const update: BundleAcceptUpdate = {
       status: acceptType === 'total' ? 'aceito_total' : 'aceito_parcial',
       accepted_at: new Date().toISOString(),
       updated_at: new Date().toISOString(),
@@ -495,7 +573,7 @@ export const useBundleEngine = () => {
     if (actualMargin !== undefined) update.actual_margin = actualMargin;
     if (timeSpent !== undefined) update.time_spent_seconds = timeSpent;
 
-    await supabase.from('farmer_bundle_recommendations' as any).update(update).eq('id', bundleId);
+    await supabase.from('farmer_bundle_recommendations').update(update).eq('id', bundleId);
 
     // Update conversion stats for each product
     if (acceptedProducts && actualMargin !== undefined) {
@@ -507,51 +585,51 @@ export const useBundleEngine = () => {
   }, []);
 
   const markBundleRejected = useCallback(async (bundleId: string) => {
-    await supabase.from('farmer_bundle_recommendations' as any)
-      .update({ status: 'rejeitado', rejected_at: new Date().toISOString() } as any)
+    await supabase.from('farmer_bundle_recommendations')
+      .update({ status: 'rejeitado', rejected_at: new Date().toISOString() })
       .eq('id', bundleId);
   }, []);
 
   const updateConversionStats = async (productId: string) => {
-    const { data: recs } = await supabase.from('farmer_recommendations' as any)
+    const { data: recs } = (await supabase.from('farmer_recommendations')
       .select('status, actual_margin, time_spent_seconds')
       .eq('product_id', productId)
-      .in('status', ['aceito', 'rejeitado', 'ofertado']) as any;
+      .in('status', ['aceito', 'rejeitado', 'ofertado'])) as unknown as { data: StatsRecRow[] | null };
 
-    const { data: bundleRecs } = await supabase.from('farmer_bundle_recommendations' as any)
+    const { data: bundleRecs } = (await supabase.from('farmer_bundle_recommendations')
       .select('status, actual_margin, time_spent_seconds, bundle_products')
-      .in('status', ['aceito_total', 'aceito_parcial', 'rejeitado', 'ofertado']) as any;
+      .in('status', ['aceito_total', 'aceito_parcial', 'rejeitado', 'ofertado'])) as unknown as { data: BundleStatsRow[] | null };
 
-    const allRecs = [
-      ...(recs || []).map((r: any) => ({ ...r, source: 'individual' })),
-      ...(bundleRecs || []).filter((b: any) => {
-        const prods = Array.isArray(b.bundle_products) ? b.bundle_products : [];
-        return prods.some((p: any) => p.id === productId);
-      }).map((r: any) => ({ ...r, source: 'bundle' })),
+    const allRecs: StatsRecRow[] = [
+      ...(recs || []),
+      ...(bundleRecs || []).filter((b) => {
+        const prods = Array.isArray(b.bundle_products) ? (b.bundle_products as { id: string }[]) : [];
+        return prods.some((p) => p.id === productId);
+      }),
     ];
 
     if (!allRecs.length) return;
 
     const offered = allRecs.length;
-    const accepted = allRecs.filter((r: any) =>
+    const accepted = allRecs.filter((r) =>
       ['aceito', 'aceito_total', 'aceito_parcial'].includes(r.status)
     ).length;
     const rate = offered > 0 ? accepted / offered : 0;
 
-    const withMargin = allRecs.filter((r: any) => r.actual_margin != null);
+    const withMargin = allRecs.filter((r) => r.actual_margin != null);
     const avgMargin = withMargin.length > 0
-      ? withMargin.reduce((s: number, r: any) => s + Number(r.actual_margin), 0) / withMargin.length
+      ? withMargin.reduce((s, r) => s + Number(r.actual_margin), 0) / withMargin.length
       : 0;
 
-    const withTime = allRecs.filter((r: any) => r.time_spent_seconds != null);
+    const withTime = allRecs.filter((r): r is StatsRecRow & { time_spent_seconds: number } => r.time_spent_seconds != null);
     const avgTime = withTime.length > 0
-      ? Math.round(withTime.reduce((s: number, r: any) => s + r.time_spent_seconds, 0) / withTime.length)
+      ? Math.round(withTime.reduce((s, r) => s + r.time_spent_seconds, 0) / withTime.length)
       : 0;
 
     const profitPerHour = avgTime > 0 ? (avgMargin / (avgTime / 3600)) : 0;
     const complexity = profitPerHour > 0 ? clamp(1.0 / (1 + Math.log(1 + profitPerHour / 100)), 0.5, 1.5) : 1.0;
 
-    await supabase.from('farmer_category_conversion' as any).upsert({
+    await supabase.from('farmer_category_conversion').upsert({
       category_id: productId,
       total_offers: offered,
       total_accepts: accepted,
@@ -561,7 +639,7 @@ export const useBundleEngine = () => {
       profit_per_hour: Math.round(profitPerHour * 100) / 100,
       complexity_factor: Math.round(complexity * 1000) / 1000,
       updated_at: new Date().toISOString(),
-    } as any);
+    });
   };
 
   return {
