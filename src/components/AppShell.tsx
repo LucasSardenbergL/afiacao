@@ -71,6 +71,7 @@ const unifiedNavSections: { title: string; items: NavItem[] }[] = [
       { icon: ShoppingCart, label: 'Pedidos', path: '/sales' },
       { icon: PlusCircle, label: 'Novo Pedido', path: '/sales/new' },
       { icon: Wrench, label: 'Ferramentas de Venda', path: '/vendas/ferramentas' },
+      { icon: Link2, label: 'Chamadas pendentes', path: '/farmer/calls/pending-link' },
     ],
   },
   {
