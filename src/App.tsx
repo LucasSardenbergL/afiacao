@@ -14,7 +14,6 @@ import { ProtectedRoute } from "@/components/ProtectedRoute";
 import { NotificationPrompt } from "@/components/NotificationPrompt";
 import { AppShellLayout } from "@/components/AppShellLayout";
 import { PageSkeleton } from "@/components/ui/page-skeleton";
-import { StaffDashboard } from "@/components/dashboard/StaffDashboard";
 
 // Lazy-loaded pages
 const Index = lazy(() => import("./pages/Index"));
@@ -182,7 +181,6 @@ const App = () => (
             {/* All authenticated routes inside AppShell */}
             <Route element={<ProtectedRoute><AppShellLayout /></ProtectedRoute>}>
               <Route index element={<Index />} />
-              <Route path="dashboard-v3" element={<StaffDashboard />} />
               <Route path="orders" element={<Orders />} />
               <Route path="orders/:id" element={<OrderDetail />} />
               <Route path="new-order" element={<UnifiedOrder />} />
