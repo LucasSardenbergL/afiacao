@@ -7,7 +7,7 @@ import { Input } from '@/components/ui/input';
 import { Textarea } from '@/components/ui/textarea';
 import { supabase } from '@/integrations/supabase/client';
 import { useAuth } from '@/contexts/AuthContext';
-import { useToast } from '@/hooks/use-toast';
+import { toast } from 'sonner';
 import { Loader2, Trophy, Search, Plus, Minus, Gift, Users, TrendingUp, DollarSign, BarChart3, Crown } from 'lucide-react';
 import { format } from 'date-fns';
 import { ptBR } from 'date-fns/locale';
@@ -67,7 +67,6 @@ function getTier(balance: number) {
 export default function AdminLoyalty() {
   const navigate = useNavigate();
   const { user, isStaff, loading: authLoading } = useAuth();
-  const { toast } = useToast();
 
   const [customers, setCustomers] = useState<CustomerPoints[]>([]);
   const [allPoints, setAllPoints] = useState<PointRecord[]>([]);
@@ -153,7 +152,7 @@ export default function AdminLoyalty() {
     try {
       const pts = parseInt(adjustPoints);
       if (isNaN(pts) || pts <= 0) {
-        toast({ title: 'Pontos inválidos', variant: 'destructive' });
+        toast.error('Pontos inválidos');
         return;
       }
 
@@ -166,14 +165,14 @@ export default function AdminLoyalty() {
 
       if (error) throw error;
 
-      toast({ title: adjustType === 'earn' ? 'Pontos adicionados!' : 'Resgate aprovado!' });
+      toast.success(adjustType === 'earn' ? 'Pontos adicionados!' : 'Resgate aprovado!');
       setAdjustOpen(false);
       setAdjustPoints('');
       setAdjustDescription('');
       loadData();
     } catch (err) {
       console.error('Error adjusting points:', err);
-      toast({ title: 'Erro ao ajustar pontos', variant: 'destructive' });
+      toast.error('Erro ao ajustar pontos');
     } finally {
       setAdjusting(false);
     }

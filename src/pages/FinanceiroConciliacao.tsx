@@ -8,7 +8,7 @@ import { Input } from '@/components/ui/input';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { COMPANIES, ALL_COMPANIES, type Company } from '@/contexts/CompanyContext';
 import { supabase } from '@/integrations/supabase/client';
-import { useToast } from '@/hooks/use-toast';
+import { toast } from 'sonner';
 import {
   Loader2, CheckCircle2, XCircle, AlertTriangle, ArrowLeftRight,
   Building2, Search, Filter, Ban, Eye
@@ -25,7 +25,6 @@ const statusConfig: Record<string, { label: string; color: string; icon: any }> 
 };
 
 const FinanceiroConciliacao = () => {
-  const { toast } = useToast();
   const [company, setCompany] = useState<Company>('oben');
   const [statusFilter, setStatusFilter] = useState('pendente');
   const [items, setItems] = useState<any[]>([]);
@@ -70,7 +69,7 @@ const FinanceiroConciliacao = () => {
       }
       setStats(s);
     } catch (e: any) {
-      toast({ title: 'Erro', description: e.message, variant: 'destructive' });
+      toast.error('Erro', { description: e.message });
     } finally {
       setLoading(false);
     }
@@ -90,12 +89,12 @@ const FinanceiroConciliacao = () => {
         updated_at: new Date().toISOString(),
       })
       .eq('id', id);
-    toast({ title: status === 'conciliado' ? 'Conciliado' : 'Ignorado' });
+    toast.success(status === 'conciliado' ? 'Conciliado' : 'Ignorado');
     load();
   };
 
   const gerarConciliacao = async () => {
-    toast({ title: 'Gerando fila de conciliação...' });
+    toast.success('Gerando fila de conciliação...');
     try {
       // Buscar movimentações não conciliadas
       const { data: movs } = await supabase
@@ -164,10 +163,10 @@ const FinanceiroConciliacao = () => {
 
         if (!error) criados++;
       }
-      toast({ title: `${criados} itens gerados na fila de conciliação` });
+      toast.success(`${criados} itens gerados na fila de conciliação`);
       load();
     } catch (e: any) {
-      toast({ title: 'Erro', description: e.message, variant: 'destructive' });
+      toast.error('Erro', { description: e.message });
     }
   };
 

@@ -6,7 +6,7 @@ import { Badge } from '@/components/ui/badge';
 import { AddToolDialog } from '@/components/AddToolDialog';
 import { supabase } from '@/integrations/supabase/client';
 import { useAuth } from '@/contexts/AuthContext';
-import { useToast } from '@/hooks/use-toast';
+import { toast } from 'sonner';
 import { Loader2, Plus, Wrench, Calendar, Trash2, Hash, Users, AlertTriangle, ShieldCheck, Clock, HelpCircle } from 'lucide-react';
 import { differenceInDays, format } from 'date-fns';
 import { ptBR } from 'date-fns/locale';
@@ -69,7 +69,6 @@ function getCriticality(nextDue: string | null): Criticality {
 const Tools = () => {
   const navigate = useNavigate();
   const { user, isStaff } = useAuth();
-  const { toast } = useToast();
   const queryClient = useQueryClient();
 
   const { data: tools = [], isLoading: loading } = useUserTools(user?.id);
@@ -95,10 +94,10 @@ const Tools = () => {
     try {
       const { error } = await supabase.from('user_tools').delete().eq('id', toolId);
       if (error) throw error;
-      toast({ title: 'Ferramenta removida' });
+      toast.success('Ferramenta removida');
       queryClient.invalidateQueries({ queryKey: ['user-tools', user?.id] });
     } catch {
-      toast({ title: 'Erro ao remover', variant: 'destructive' });
+      toast.error('Erro ao remover');
     }
   };
 

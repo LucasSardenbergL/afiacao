@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react';
 import { supabase } from '@/integrations/supabase/client';
 import { useAuth } from '@/contexts/AuthContext';
-import { useToast } from '@/hooks/use-toast';
+import { toast } from 'sonner';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
@@ -26,7 +26,6 @@ const ACCOUNT_LABEL: Record<string, string> = {
 export default function GovernanceCompanies() {
   const { user, role, loading: authLoading } = useAuth();
   const roleLoading = authLoading;
-  const { toast } = useToast();
   const [profiles, setProfiles] = useState<CompanyProfile[]>([]);
   const [loading, setLoading] = useState(true);
   const [savingId, setSavingId] = useState<string | null>(null);
@@ -41,13 +40,13 @@ export default function GovernanceCompanies() {
         .select('id, account, legal_name, cnpj, phone, address')
         .order('account');
       if (error) {
-        toast({ title: 'Erro ao carregar empresas', description: error.message, variant: 'destructive' });
+        toast.error('Erro ao carregar empresas', { description: error.message });
       } else {
         setProfiles((data || []) as CompanyProfile[]);
       }
       setLoading(false);
     })();
-  }, [user, toast]);
+  }, [user]);
 
   const updateField = (id: string, field: keyof CompanyProfile, value: string) => {
     setProfiles(prev => prev.map(p => (p.id === id ? { ...p, [field]: value } : p)));
@@ -66,9 +65,9 @@ export default function GovernanceCompanies() {
       .eq('id', profile.id);
     setSavingId(null);
     if (error) {
-      toast({ title: 'Erro ao salvar', description: error.message, variant: 'destructive' });
+      toast.error('Erro ao salvar', { description: error.message });
     } else {
-      toast({ title: 'Empresa atualizada' });
+      toast.success('Empresa atualizada');
     }
   };
 

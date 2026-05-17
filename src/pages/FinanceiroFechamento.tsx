@@ -10,7 +10,7 @@ import {
   type Fechamento, type FechamentoLog,
 } from '@/services/financeiroV2Service';
 import { triggerFinanceiroSync } from '@/services/financeiroService';
-import { useToast } from '@/hooks/use-toast';
+import { toast } from 'sonner';
 import {
   Loader2, Building2, Lock, Unlock, CheckCircle2, Clock,
   FileText, Eye, RotateCcw, Plus, History, ShieldCheck, AlertTriangle
@@ -26,7 +26,6 @@ const statusConfig: Record<string, { label: string; color: string; icon: any }> 
 };
 
 const FinanceiroFechamento = () => {
-  const { toast } = useToast();
   const [company, setCompany] = useState<Company | 'all'>('all');
   const [ano, setAno] = useState(new Date().getFullYear());
   const [fechamentos, setFechamentos] = useState<Fechamento[]>([]);
@@ -41,7 +40,7 @@ const FinanceiroFechamento = () => {
       const data = await getFechamentos(company, ano);
       setFechamentos(data);
     } catch (e: any) {
-      toast({ title: 'Erro', description: e.message, variant: 'destructive' });
+      toast.error('Erro', { description: e.message });
     } finally {
       setLoading(false);
     }
@@ -55,10 +54,10 @@ const FinanceiroFechamento = () => {
       // First recalculate DRE for this month
       await triggerFinanceiroSync('calcular_dre', [co], { ano, meses: [mes] });
       await criarFechamento(co, ano, mes);
-      toast({ title: `Fechamento ${mesesNome[mes - 1]}/${ano} criado para ${COMPANIES[co].shortName}` });
+      toast.success(`Fechamento ${mesesNome[mes - 1]}/${ano} criado para ${COMPANIES[co].shortName}`);
       await load();
     } catch (e: any) {
-      toast({ title: 'Erro', description: e.message, variant: 'destructive' });
+      toast.error('Erro', { description: e.message });
     } finally {
       setActing(false);
     }
@@ -68,10 +67,10 @@ const FinanceiroFechamento = () => {
     setActing(true);
     try {
       await atualizarFechamento(id, acao, detalhes);
-      toast({ title: `Ação "${acao}" executada com sucesso` });
+      toast.success(`Ação "${acao}" executada com sucesso`);
       await load();
     } catch (e: any) {
-      toast({ title: 'Erro', description: e.message, variant: 'destructive' });
+      toast.error('Erro', { description: e.message });
     } finally {
       setActing(false);
     }

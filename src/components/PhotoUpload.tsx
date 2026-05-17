@@ -1,7 +1,7 @@
 import { useState, useRef } from 'react';
 import { Button } from '@/components/ui/button';
 import { supabase } from '@/integrations/supabase/client';
-import { useToast } from '@/hooks/use-toast';
+import { toast } from 'sonner';
 import { logger } from '@/lib/logger';
 import { Camera, X, Loader2, Image as ImageIcon } from 'lucide-react';
 import { cn } from '@/lib/utils';
@@ -15,7 +15,6 @@ interface PhotoUploadProps {
 }
 
 export function PhotoUpload({ photos, onPhotosChange, userId, maxPhotos = 5, disabled = false }: PhotoUploadProps) {
-  const { toast } = useToast();
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [uploading, setUploading] = useState(false);
 
@@ -24,10 +23,8 @@ export function PhotoUpload({ photos, onPhotosChange, userId, maxPhotos = 5, dis
     if (!files || files.length === 0) return;
 
     if (photos.length + files.length > maxPhotos) {
-      toast({
-        title: 'Limite de fotos',
+      toast.error('Limite de fotos', {
         description: `Você pode adicionar no máximo ${maxPhotos} fotos`,
-        variant: 'destructive',
       });
       return;
     }
@@ -39,20 +36,16 @@ export function PhotoUpload({ photos, onPhotosChange, userId, maxPhotos = 5, dis
       for (const file of Array.from(files)) {
         // Validate file type
         if (!file.type.startsWith('image/')) {
-          toast({
-            title: 'Arquivo inválido',
+          toast.error('Arquivo inválido', {
             description: 'Apenas imagens são permitidas',
-            variant: 'destructive',
           });
           continue;
         }
 
         // Validate file size (max 5MB)
         if (file.size > 5 * 1024 * 1024) {
-          toast({
-            title: 'Arquivo muito grande',
+          toast.error('Arquivo muito grande', {
             description: 'O tamanho máximo é 5MB por foto',
-            variant: 'destructive',
           });
           continue;
         }
@@ -73,10 +66,8 @@ export function PhotoUpload({ photos, onPhotosChange, userId, maxPhotos = 5, dis
             fileType: file.type,
             error,
           });
-          toast({
-            title: 'Erro ao enviar foto',
+          toast.error('Erro ao enviar foto', {
             description: error.message,
-            variant: 'destructive',
           });
           continue;
         }
@@ -91,17 +82,14 @@ export function PhotoUpload({ photos, onPhotosChange, userId, maxPhotos = 5, dis
 
       if (newPhotos.length > 0) {
         onPhotosChange([...photos, ...newPhotos]);
-        toast({
-          title: 'Fotos adicionadas!',
+        toast.success('Fotos adicionadas!', {
           description: `${newPhotos.length} foto(s) enviada(s) com sucesso`,
         });
       }
     } catch (error) {
       logger.error('Unexpected error uploading photos', { stage: 'upload', error });
-      toast({
-        title: 'Erro ao enviar fotos',
+      toast.error('Erro ao enviar fotos', {
         description: 'Tente novamente',
-        variant: 'destructive',
       });
     } finally {
       setUploading(false);

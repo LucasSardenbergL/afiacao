@@ -8,7 +8,7 @@ import { Label } from '@/components/ui/label';
 import { Badge } from '@/components/ui/badge';
 import { supabase } from '@/integrations/supabase/client';
 import { useAuth } from '@/contexts/AuthContext';
-import { useToast } from '@/hooks/use-toast';
+import { toast } from 'sonner';
 import { Loader2, Camera, CheckCircle2, XCircle, Upload, Shield } from 'lucide-react';
 
 interface OrderItem {
@@ -41,7 +41,6 @@ const CRITERIA = [
 const QualityChecklist = () => {
   const { id: orderId } = useParams<{ id: string }>();
   const { user, isStaff } = useAuth();
-  const { toast } = useToast();
 
   const [orderItems, setOrderItems] = useState<OrderItem[]>([]);
   const [checklists, setChecklists] = useState<Map<number, Checklist>>(new Map());
@@ -127,10 +126,10 @@ const QualityChecklist = () => {
       const photoField = type === 'before' ? 'before_photos' : 'after_photos';
       const updatedPhotos = [...current[photoField], urlData.publicUrl];
       updateChecklistField(itemIndex, photoField, updatedPhotos);
-      toast({ title: 'Foto enviada!' });
+      toast.success('Foto enviada!');
     } catch (error) {
       console.error('Error uploading photo:', error);
-      toast({ title: 'Erro ao enviar foto', variant: 'destructive' });
+      toast.error('Erro ao enviar foto');
     } finally {
       setUploadingPhoto(null);
     }
@@ -145,7 +144,7 @@ const QualityChecklist = () => {
       const allOk = cl.sharpness_ok && cl.balance_ok && cl.finish_ok && cl.dimensions_ok;
 
       if (cl.after_photos.length === 0) {
-        toast({ title: 'Foto obrigatória', description: 'Adicione pelo menos uma foto "Depois"', variant: 'destructive' });
+        toast.error('Foto obrigatória', { description: 'Adicione pelo menos uma foto "Depois"' });
         setSaving(false);
         return;
       }
@@ -176,10 +175,10 @@ const QualityChecklist = () => {
         }
       }
 
-      toast({ title: allOk ? '✅ Item aprovado!' : '⚠️ Checklist salvo com pendências' });
+      toast.success(allOk ? '✅ Item aprovado!' : '⚠️ Checklist salvo com pendências');
     } catch (error) {
       console.error('Error saving checklist:', error);
-      toast({ title: 'Erro ao salvar', variant: 'destructive' });
+      toast.error('Erro ao salvar');
     } finally {
       setSaving(false);
     }

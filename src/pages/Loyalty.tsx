@@ -6,7 +6,7 @@ import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { supabase } from '@/integrations/supabase/client';
 import { useAuth } from '@/contexts/AuthContext';
-import { useToast } from '@/hooks/use-toast';
+import { toast } from 'sonner';
 import { format } from 'date-fns';
 import { ptBR } from 'date-fns/locale';
 
@@ -36,7 +36,6 @@ const REWARDS = [
 export default function Loyalty() {
   const navigate = useNavigate();
   const { user } = useAuth();
-  const { toast } = useToast();
   const [history, setHistory] = useState<LoyaltyPoint[]>([]);
   const [loading, setLoading] = useState(true);
   const [redeemingReward, setRedeemingReward] = useState<string | null>(null);
@@ -74,7 +73,7 @@ export default function Loyalty() {
   const handleRedeem = async (reward: typeof REWARDS[0]) => {
     if (!user || redeemingReward) return;
     if (balance < reward.points) {
-      toast({ title: 'Saldo insuficiente', description: `Você precisa de ${reward.points} pontos. Saldo atual: ${balance}.`, variant: 'destructive' });
+      toast.error('Saldo insuficiente', { description: `Você precisa de ${reward.points} pontos. Saldo atual: ${balance}.` });
       return;
     }
 
@@ -102,11 +101,11 @@ export default function Loyalty() {
         });
       if (pointsError) throw pointsError;
 
-      toast({ title: 'Resgate realizado!', description: `${reward.name} resgatado com sucesso. Aguarde processamento.` });
+      toast.success('Resgate realizado!', { description: `${reward.name} resgatado com sucesso. Aguarde processamento.` });
       await loadPoints();
     } catch (err: any) {
       console.error('[Loyalty] Erro ao resgatar:', err);
-      toast({ title: 'Erro no resgate', description: err.message || 'Tente novamente.', variant: 'destructive' });
+      toast.error('Erro no resgate', { description: err.message || 'Tente novamente.' });
     } finally {
       setRedeemingReward(null);
     }

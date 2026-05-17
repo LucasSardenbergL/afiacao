@@ -5,7 +5,7 @@ import { Loader2, Lock, Eye, EyeOff, Wrench, CheckCircle } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
-import { useToast } from '@/hooks/use-toast';
+import { toast } from 'sonner';
 import { supabase } from '@/integrations/supabase/client';
 import { cn } from '@/lib/utils';
 
@@ -20,8 +20,7 @@ const resetPasswordSchema = z.object({
 const ResetPassword = () => {
   const navigate = useNavigate();
   const [searchParams] = useSearchParams();
-  const { toast } = useToast();
-  
+
   const [isLoading, setIsLoading] = useState(false);
   const [isSuccess, setIsSuccess] = useState(false);
   const [showPassword, setShowPassword] = useState(false);
@@ -42,17 +41,15 @@ const ResetPassword = () => {
       const type = searchParams.get('type');
       
       if (!session && !accessToken && type !== 'recovery') {
-        toast({
-          title: 'Link inválido',
+        toast.error('Link inválido', {
           description: 'O link de recuperação expirou ou é inválido',
-          variant: 'destructive',
         });
         navigate('/auth');
       }
     };
-    
+
     checkSession();
-  }, [navigate, searchParams, toast]);
+  }, [navigate, searchParams]);
 
   const handleInputChange = (field: string, value: string) => {
     setFormData(prev => ({ ...prev, [field]: value }));
@@ -90,8 +87,7 @@ const ResetPassword = () => {
       if (error) throw error;
 
       setIsSuccess(true);
-      toast({
-        title: 'Senha alterada!',
+      toast.success('Senha alterada!', {
         description: 'Sua senha foi redefinida com sucesso',
       });
 
@@ -101,10 +97,8 @@ const ResetPassword = () => {
       }, 2000);
     } catch (error: any) {
       console.error('Error resetting password:', error);
-      toast({
-        title: 'Erro ao redefinir senha',
+      toast.error('Erro ao redefinir senha', {
         description: error.message || 'Tente novamente mais tarde',
-        variant: 'destructive',
       });
     } finally {
       setIsLoading(false);

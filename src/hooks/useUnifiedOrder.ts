@@ -3,7 +3,7 @@ import { useNavigate } from 'react-router-dom';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { supabase } from '@/integrations/supabase/client';
 import { useAuth } from '@/contexts/AuthContext';
-import { useToast } from '@/hooks/use-toast';
+import { toast } from 'sonner';
 import { OmieServico } from '@/services/omieService';
 import { usePricingEngine } from '@/hooks/usePricingEngine';
 import { usePriceHistory } from '@/hooks/usePriceHistory';
@@ -65,7 +65,6 @@ export const getToolName = (t: UserTool) => t.generated_name || t.custom_name ||
 export function useUnifiedOrder() {
   const navigate = useNavigate();
   const { user, isStaff, loading: authLoading } = useAuth();
-  const { toast } = useToast();
 
   // Company profiles (printing) — react-query, 1h stale
   const { data: companyProfiles = {} } = useQuery({
@@ -393,7 +392,7 @@ export function useUnifiedOrder() {
     );
 
     if (filteredNew.length === 0) {
-      toast({ title: 'Ferramentas já adicionadas', description: 'Todas as ferramentas identificadas já estão no pedido.' });
+      toast.success('Ferramentas já adicionadas', { description: 'Todas as ferramentas identificadas já estão no pedido.' });
       return;
     }
     setCart([...cart, ...filteredNew]);
@@ -410,10 +409,10 @@ export function useUnifiedOrder() {
         }
       });
       if (addedCount > 0) {
-        toast({ title: 'Ferramenta encontrada!', description: `${addedCount} ferramenta(s) adicionada(s) ao pedido` });
+        toast.success('Ferramenta encontrada!', { description: `${addedCount} ferramenta(s) adicionada(s) ao pedido` });
       }
     } else {
-      toast({ title: 'Ferramenta não cadastrada', description: 'Nenhuma ferramenta dessa categoria foi encontrada no cadastro.', variant: 'destructive' });
+      toast.error('Ferramenta não cadastrada', { description: 'Nenhuma ferramenta dessa categoria foi encontrada no cadastro.' });
     }
   };
 
@@ -547,7 +546,7 @@ export function useUnifiedOrder() {
       if (!localUserId) throw new Error('Falha ao criar perfil');
       setCustomerUserId(localUserId);
       setSelectedCustomer(prev => prev ? { ...prev, local_user_id: localUserId } : prev);
-      toast({ title: 'Perfil criado', description: 'Agora cadastre as ferramentas.' });
+      toast.success('Perfil criado', { description: 'Agora cadastre as ferramentas.' });
       setAddToolDialogOpen(true);
     } catch (e) {
       logger.error('Failed to prepare local profile for staff add-tool flow', {
@@ -557,7 +556,7 @@ export function useUnifiedOrder() {
         codigoCliente: selectedCustomer.codigo_cliente,
         error: e,
       });
-      toast({ title: 'Erro', description: 'Não foi possível preparar o cadastro.', variant: 'destructive' });
+      toast.error('Erro', { description: 'Não foi possível preparar o cadastro.' });
     } finally {
       setCreatingLocalProfile(false);
     }
@@ -582,15 +581,13 @@ export function useUnifiedOrder() {
         supabase,
       });
       if (result.success) {
-        toast({ title: 'Orçamento salvo', description: result.results.join(' | ') });
+        toast.success('Orçamento salvo', { description: result.results.join(' | ') });
         clearCart();
         setNotes('');
         navigate('/sales/quotes');
       } else {
-        toast({
-          title: 'Erro ao salvar orçamento',
+        toast.error('Erro ao salvar orçamento', {
           description: result.errors[0]?.message || 'Falha desconhecida',
-          variant: 'destructive',
         });
       }
     } finally {
@@ -600,7 +597,7 @@ export function useUnifiedOrder() {
     selectedCustomer, cart.length, user, customerUserId,
     obenProductItems, colacorProductItems, obenSubtotal, colacorProdSubtotal,
     deliveryOption, addresses, selectedAddress, notes,
-    clearCart, toast, navigate,
+    clearCart, navigate,
   ]);
 
   const submitOrder = useCallback(async () => {
@@ -637,20 +634,17 @@ export function useUnifiedOrder() {
         clearCart();
         setNotes('');
         if (result.errors.length > 0) {
-          toast({
-            title: 'Pedido criado com avisos',
+          toast.success('Pedido criado com avisos', {
             description: result.errors.map(e => e.message).join(' | '),
           });
         }
       } else {
-        toast({
-          title: 'Erro ao criar pedido',
+        toast.error('Erro ao criar pedido', {
           description: result.errors[0]?.message || 'Falha desconhecida',
-          variant: 'destructive',
         });
       }
     } catch (error: any) {
-      toast({ title: 'Erro ao criar pedido', description: error.message, variant: 'destructive' });
+      toast.error('Erro ao criar pedido', { description: error.message });
     } finally {
       setSubmitting(false);
     }
@@ -664,7 +658,7 @@ export function useUnifiedOrder() {
     deliveryOption, addresses, selectedAddress,
     notes, readyByDate, ordemCompra,
     companyProfiles, defaultProductionAssigneeId,
-    getServicePrice, clearCart, toast,
+    getServicePrice, clearCart,
   ]);
 
   // clearCustomer defined earlier (wraps useCustomerSelection.clearCustomer + clears cart/ordemCompra/userTools)

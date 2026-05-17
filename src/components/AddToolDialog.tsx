@@ -6,7 +6,7 @@ import { Input } from '@/components/ui/input';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { supabase } from '@/integrations/supabase/client';
 import { useAuth } from '@/contexts/AuthContext';
-import { useToast } from '@/hooks/use-toast';
+import { toast } from 'sonner';
 import { Loader2, Plus, ChevronRight, ChevronLeft, Search } from 'lucide-react';
 import { ToolImageIdentifier } from '@/components/ToolImageIdentifier';
 
@@ -37,8 +37,7 @@ interface AddToolDialogProps {
 
 export function AddToolDialog({ open, onOpenChange, onToolAdded, categories, targetUserId }: AddToolDialogProps) {
   const { user, isStaff } = useAuth();
-  const { toast } = useToast();
-  
+
   const [step, setStep] = useState<'category' | 'specs'>('category');
   const [selectedCategory, setSelectedCategory] = useState<string>('');
   const [specifications, setSpecifications] = useState<ToolSpecification[]>([]);
@@ -149,10 +148,8 @@ export function AddToolDialog({ open, onOpenChange, onToolAdded, categories, tar
   const validateSpecs = (): boolean => {
     for (const spec of specifications) {
       if (spec.is_required && !specValues[spec.spec_key]) {
-        toast({
-          title: 'Campo obrigatório',
+        toast.error('Campo obrigatório', {
           description: `Preencha o campo: ${spec.spec_label}`,
-          variant: 'destructive',
         });
         return false;
       }
@@ -180,8 +177,7 @@ export function AddToolDialog({ open, onOpenChange, onToolAdded, categories, tar
 
       if (error) throw error;
 
-      toast({
-        title: 'Ferramenta adicionada!',
+      toast.success('Ferramenta adicionada!', {
         description: generatedName,
       });
 
@@ -189,10 +185,8 @@ export function AddToolDialog({ open, onOpenChange, onToolAdded, categories, tar
       onToolAdded();
     } catch (error) {
       console.error('Error adding tool:', error);
-      toast({
-        title: 'Erro ao adicionar',
+      toast.error('Erro ao adicionar', {
         description: 'Não foi possível adicionar a ferramenta',
-        variant: 'destructive',
       });
     } finally {
       setIsLoading(false);

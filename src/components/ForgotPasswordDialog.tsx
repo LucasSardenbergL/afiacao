@@ -11,7 +11,7 @@ import {
   DialogHeader,
   DialogTitle,
 } from '@/components/ui/dialog';
-import { useToast } from '@/hooks/use-toast';
+import { toast } from 'sonner';
 import { supabase } from '@/integrations/supabase/client';
 import { cn } from '@/lib/utils';
 
@@ -23,7 +23,6 @@ interface ForgotPasswordDialogProps {
 }
 
 export const ForgotPasswordDialog = ({ open, onOpenChange }: ForgotPasswordDialogProps) => {
-  const { toast } = useToast();
   const [email, setEmail] = useState('');
   const [isLoading, setIsLoading] = useState(false);
   const [isSent, setIsSent] = useState(false);
@@ -52,16 +51,13 @@ export const ForgotPasswordDialog = ({ open, onOpenChange }: ForgotPasswordDialo
       if (error) throw error;
 
       setIsSent(true);
-      toast({
-        title: 'E-mail enviado!',
+      toast.success('E-mail enviado!', {
         description: 'Verifique sua caixa de entrada',
       });
     } catch (error: any) {
       console.error('Error sending reset email:', error);
-      toast({
-        title: 'Erro ao enviar e-mail',
+      toast.error('Erro ao enviar e-mail', {
         description: error.message || 'Tente novamente mais tarde',
-        variant: 'destructive',
       });
     } finally {
       setIsLoading(false);

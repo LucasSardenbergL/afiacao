@@ -4,7 +4,7 @@ import { Textarea } from '@/components/ui/textarea';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from '@/components/ui/dialog';
 import { supabase } from '@/integrations/supabase/client';
 import { useAuth } from '@/contexts/AuthContext';
-import { useToast } from '@/hooks/use-toast';
+import { toast } from 'sonner';
 import { Star, Loader2 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 
@@ -15,7 +15,6 @@ interface OrderReviewProps {
 
 export function OrderReview({ orderId, onReviewSubmitted }: OrderReviewProps) {
   const { user } = useAuth();
-  const { toast } = useToast();
   const [open, setOpen] = useState(false);
   const [rating, setRating] = useState(0);
   const [hoveredRating, setHoveredRating] = useState(0);
@@ -36,18 +35,18 @@ export function OrderReview({ orderId, onReviewSubmitted }: OrderReviewProps) {
 
       if (error) {
         if (error.code === '23505') {
-          toast({ title: 'Você já avaliou este pedido', variant: 'default' });
+          toast('Você já avaliou este pedido');
         } else {
           throw error;
         }
       } else {
-        toast({ title: '⭐ Obrigado pela avaliação!' });
+        toast.success('⭐ Obrigado pela avaliação!');
         onReviewSubmitted?.();
       }
       setOpen(false);
     } catch (error) {
       console.error('Error submitting review:', error);
-      toast({ title: 'Erro ao enviar avaliação', variant: 'destructive' });
+      toast.error('Erro ao enviar avaliação');
     } finally {
       setSubmitting(false);
     }

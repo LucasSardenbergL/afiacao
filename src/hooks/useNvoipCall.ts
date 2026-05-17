@@ -1,6 +1,6 @@
 import { useState, useRef, useCallback, useEffect } from 'react';
 import { invokeFunction } from '@/lib/invoke-function';
-import { useToast } from '@/hooks/use-toast';
+import { toast } from 'sonner';
 import { normalizeBrPhone, formatBrPhone } from '@/lib/phone';
 
 export type NvoipCallState =
@@ -37,7 +37,6 @@ interface UseNvoipCallReturn {
 }
 
 export function useNvoipCall(): UseNvoipCallReturn {
-  const { toast } = useToast();
   const [callState, setCallState] = useState<NvoipCallState>('idle');
   const [callId, setCallId] = useState<string | null>(null);
   const [callDuration, setCallDuration] = useState(0);
@@ -131,18 +130,16 @@ export function useNvoipCall(): UseNvoipCallReturn {
           pollCallStatus(data.callId);
         }, 2000);
 
-        toast({ title: '📞 Chamada iniciada', description: `Ligando para ${formatBrPhone(normalized)}...` });
+        toast.success('📞 Chamada iniciada', { description: `Ligando para ${formatBrPhone(normalized)}...` });
       } catch (err: any) {
         setCallState('error');
         setError(err.message || 'Erro ao realizar chamada');
-        toast({
-          title: 'Erro na chamada',
+        toast.error('Erro na chamada', {
           description: err.message || 'Não foi possível realizar a chamada',
-          variant: 'destructive',
         });
       }
     },
-    [pollCallStatus, toast]
+    [pollCallStatus]
   );
 
   const endCall = useCallback(async () => {
@@ -152,16 +149,14 @@ export function useNvoipCall(): UseNvoipCallReturn {
       await invokeFunction('nvoip-calls', { action: 'end_call', callId });
       setCallState('finished');
       stopPolling();
-      toast({ title: 'Chamada encerrada' });
+      toast.success('Chamada encerrada');
     } catch (err: any) {
       console.error('Error ending call:', err);
-      toast({
-        title: 'Erro ao encerrar',
+      toast.error('Erro ao encerrar', {
         description: err.message,
-        variant: 'destructive',
       });
     }
-  }, [callId, stopPolling, toast]);
+  }, [callId, stopPolling]);
 
   const isActive = !['idle', 'finished', 'noanswer', 'busy', 'failed', 'error'].includes(callState);
   const isConnecting = callState === 'connecting';

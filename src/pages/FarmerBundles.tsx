@@ -15,7 +15,7 @@ import {
   HelpCircle, ThumbsUp, ThumbsDown, Minus, RotateCcw, Save,
   ShoppingCart
 } from 'lucide-react';
-import { useToast } from '@/hooks/use-toast';
+import { toast } from 'sonner';
 
 const fmt = (v: number) => v.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' });
 
@@ -231,12 +231,11 @@ const BundleCardFull = ({
   const [argTab, setArgTab] = useState<'phone' | 'whatsapp' | 'tecnica'>('phone');
   const [activeSection, setActiveSection] = useState<'none' | 'args' | 'questions'>('none');
   const [copied, setCopied] = useState(false);
-  const { toast } = useToast();
 
   const copyText = (text: string) => {
     navigator.clipboard.writeText(text);
     setCopied(true);
-    toast({ title: 'Copiado!' });
+    toast.success('Copiado!');
     setTimeout(() => setCopied(false), 2000);
   };
 

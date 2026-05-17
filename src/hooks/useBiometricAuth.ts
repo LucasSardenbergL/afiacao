@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback } from 'react';
 import { supabase } from '@/integrations/supabase/client';
-import { useToast } from '@/hooks/use-toast';
+import { toast } from 'sonner';
 import { logger } from '@/lib/logger';
 
 interface BiometricAuthResult {
@@ -48,7 +48,6 @@ export const useBiometricAuth = (): BiometricAuthHook => {
   const [isSupported, setIsSupported] = useState(false);
   const [isRegistered, setIsRegistered] = useState(false);
   const [isLoading, setIsLoading] = useState(false);
-  const { toast } = useToast();
 
   // Check if WebAuthn is supported
   useEffect(() => {
@@ -88,10 +87,8 @@ export const useBiometricAuth = (): BiometricAuthHook => {
   // Register biometric credential
   const register = useCallback(async (): Promise<boolean> => {
     if (!isSupported) {
-      toast({
-        title: 'Não suportado',
+      toast.error('Não suportado', {
         description: 'Seu dispositivo não suporta autenticação biométrica',
-        variant: 'destructive',
       });
       return false;
     }
@@ -102,10 +99,8 @@ export const useBiometricAuth = (): BiometricAuthHook => {
       // Get current user
       const { data: { user } } = await supabase.auth.getUser();
       if (!user) {
-        toast({
-          title: 'Erro',
+        toast.error('Erro', {
           description: 'Você precisa estar logado para registrar biometria',
-          variant: 'destructive',
         });
         return false;
       }
@@ -171,8 +166,7 @@ export const useBiometricAuth = (): BiometricAuthHook => {
       localStorage.setItem('biometric_email', btoa(user.email || ''));
 
       setIsRegistered(true);
-      toast({
-        title: 'Biometria registrada!',
+      toast.success('Biometria registrada!', {
         description: 'Agora você pode fazer login com Face ID ou impressão digital',
       });
 
@@ -180,31 +174,25 @@ export const useBiometricAuth = (): BiometricAuthHook => {
     } catch (error: any) {
       logger.error('Biometric registration failed', { stage: 'register', errorName: error?.name, error });
       if (error.name === 'NotAllowedError') {
-        toast({
-          title: 'Acesso negado',
+        toast.error('Acesso negado', {
           description: 'Você precisa permitir o uso de biometria',
-          variant: 'destructive',
         });
       } else {
-        toast({
-          title: 'Erro ao registrar biometria',
+        toast.error('Erro ao registrar biometria', {
           description: error.message || 'Tente novamente mais tarde',
-          variant: 'destructive',
         });
       }
       return false;
     } finally {
       setIsLoading(false);
     }
-  }, [isSupported, toast]);
+  }, [isSupported]);
 
   // Authenticate with biometric
   const authenticate = useCallback(async (): Promise<BiometricAuthResult | null> => {
     if (!isSupported) {
-      toast({
-        title: 'Não suportado',
+      toast.error('Não suportado', {
         description: 'Seu dispositivo não suporta autenticação biométrica',
-        variant: 'destructive',
       });
       return null;
     }
@@ -250,23 +238,19 @@ export const useBiometricAuth = (): BiometricAuthHook => {
     } catch (error: any) {
       logger.warn('Biometric authentication failed', { stage: 'authenticate', errorName: error?.name, error });
       if (error.name === 'NotAllowedError') {
-        toast({
-          title: 'Acesso negado',
+        toast.error('Acesso negado', {
           description: 'Autenticação biométrica cancelada',
-          variant: 'destructive',
         });
       } else {
-        toast({
-          title: 'Erro na autenticação',
+        toast.error('Erro na autenticação', {
           description: 'Não foi possível autenticar com biometria',
-          variant: 'destructive',
         });
       }
       return null;
     } finally {
       setIsLoading(false);
     }
-  }, [isSupported, toast]);
+  }, [isSupported]);
 
   // Remove biometric credential
   const removeCredential = useCallback(async (): Promise<boolean> => {
@@ -286,24 +270,21 @@ export const useBiometricAuth = (): BiometricAuthHook => {
       localStorage.removeItem('biometric_email');
       setIsRegistered(false);
 
-      toast({
-        title: 'Biometria removida',
+      toast.success('Biometria removida', {
         description: 'Autenticação biométrica desativada',
       });
 
       return true;
     } catch (error) {
       logger.error('Failed to remove biometric credential', { stage: 'remove_credential', error });
-      toast({
-        title: 'Erro',
+      toast.error('Erro', {
         description: 'Não foi possível remover a biometria',
-        variant: 'destructive',
       });
       return false;
     } finally {
       setIsLoading(false);
     }
-  }, [toast]);
+  }, []);
 
   return {
     isSupported,

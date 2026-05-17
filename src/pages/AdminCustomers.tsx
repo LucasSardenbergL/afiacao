@@ -15,7 +15,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { AddToolDialog } from '@/components/AddToolDialog';
 import { supabase } from '@/integrations/supabase/client';
 import { useAuth } from '@/contexts/AuthContext';
-import { useToast } from '@/hooks/use-toast';
+import { toast } from 'sonner';
 import { cn } from '@/lib/utils';
 import {
   Loader2, Plus, Wrench, Trash2, Search, User, Phone, FileText,
@@ -397,7 +397,6 @@ function CustomerListView({
 
 /* ─── Customer 360 Profile View ─── */
 function RequiresPoToggle({ customer }: { customer: Customer }) {
-  const { toast } = useToast();
   const [checked, setChecked] = useState<boolean>(!!customer.requires_po);
   const [saving, setSaving] = useState(false);
 
@@ -412,10 +411,10 @@ function RequiresPoToggle({ customer }: { customer: Customer }) {
         .eq('user_id', customer.user_id);
       if (error) throw error;
       customer.requires_po = next;
-      toast({ title: next ? 'Cliente exige ordem de compra' : 'Ordem de compra desativada' });
+      toast.success(next ? 'Cliente exige ordem de compra' : 'Ordem de compra desativada');
     } catch (e: any) {
       setChecked(prev);
-      toast({ title: 'Erro ao salvar', description: e?.message, variant: 'destructive' });
+      toast.error('Erro ao salvar', { description: e?.message });
     } finally {
       setSaving(false);
     }
@@ -728,7 +727,6 @@ const AdminCustomers = () => {
   const navigate = useNavigate();
   const { customerId } = useParams<{ customerId?: string }>();
   const { user, isStaff, loading: authLoading } = useAuth();
-  const { toast } = useToast();
 
   const [selectedCustomer, setSelectedCustomer] = useState<Customer | null>(null);
   const [customerTools, setCustomerTools] = useState<UserTool[]>([]);
@@ -874,10 +872,10 @@ const AdminCustomers = () => {
     try {
       const { error } = await supabase.from('user_tools').delete().eq('id', toolId);
       if (error) throw error;
-      toast({ title: 'Ferramenta removida' });
+      toast.success('Ferramenta removida');
       setCustomerTools(prev => prev.filter(t => t.id !== toolId));
     } catch (error) {
-      toast({ title: 'Erro ao remover', variant: 'destructive' });
+      toast.error('Erro ao remover');
     }
   };
 

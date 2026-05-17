@@ -2,7 +2,7 @@ import { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { Loader2, Wrench } from 'lucide-react';
 import { useAuth } from '@/contexts/AuthContext';
-import { useToast } from '@/hooks/use-toast';
+import { toast } from 'sonner';
 import { supabase } from '@/integrations/supabase/client';
 import { cn } from '@/lib/utils';
 import { LoginForm } from '@/components/auth/LoginForm';
@@ -13,7 +13,6 @@ import type { AuthMode, AuthFormData, OmieClienteData, ToolCategory } from '@/co
 const Auth = () => {
   const navigate = useNavigate();
   const { user, loading: authLoading, signIn } = useAuth();
-  const { toast } = useToast();
 
   const [mode, setMode] = useState<AuthMode>('login');
   const [isLoading, setIsLoading] = useState(false);
@@ -43,15 +42,15 @@ const Auth = () => {
       const { error } = await signIn(email, password);
       if (error) {
         if (error.message.includes('Invalid login credentials')) {
-          toast({ title: 'Erro ao entrar', description: 'E-mail ou senha incorretos', variant: 'destructive' });
+          toast.error('Erro ao entrar', { description: 'E-mail ou senha incorretos' });
         } else if (error.message.includes('Email not confirmed')) {
-          toast({ title: 'E-mail não confirmado', description: 'Verifique sua caixa de entrada para confirmar seu e-mail', variant: 'destructive' });
+          toast.error('E-mail não confirmado', { description: 'Verifique sua caixa de entrada para confirmar seu e-mail' });
         } else {
-          toast({ title: 'Erro ao entrar', description: error.message, variant: 'destructive' });
+          toast.error('Erro ao entrar', { description: error.message });
         }
         return;
       }
-      toast({ title: 'Bem-vindo!', description: 'Login realizado com sucesso' });
+      toast.success('Bem-vindo!', { description: 'Login realizado com sucesso' });
       navigate('/', { replace: true });
     } finally {
       setIsLoading(false);
@@ -76,9 +75,9 @@ const Auth = () => {
 
       if (signUpError) {
         if (signUpError.message.includes('User already registered')) {
-          toast({ title: 'E-mail já cadastrado', description: 'Este e-mail já está em uso. Tente fazer login.', variant: 'destructive' });
+          toast.error('E-mail já cadastrado', { description: 'Este e-mail já está em uso. Tente fazer login.' });
         } else {
-          toast({ title: 'Erro ao cadastrar', description: signUpError.message, variant: 'destructive' });
+          toast.error('Erro ao cadastrar', { description: signUpError.message });
         }
         return;
       }
@@ -119,7 +118,7 @@ const Auth = () => {
         }
       }
 
-      toast({ title: 'Conta criada!', description: 'Verifique seu e-mail para confirmar o cadastro' });
+      toast.success('Conta criada!', { description: 'Verifique seu e-mail para confirmar o cadastro' });
       setMode('login');
     } finally {
       setIsLoading(false);

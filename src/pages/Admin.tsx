@@ -5,7 +5,7 @@ import { Card, CardContent } from '@/components/ui/card';
 import { KanbanBoard } from '@/components/KanbanBoard';
 import { supabase } from '@/integrations/supabase/client';
 import { useAuth } from '@/contexts/AuthContext';
-import { useToast } from '@/hooks/use-toast';
+import { toast } from 'sonner';
 import { Loader2, Users, ChevronRight, Clock, MapPin, Mail, BarChart3, Trophy, Gamepad2, BookOpen, DollarSign, Phone, FlaskConical } from 'lucide-react';
 
 interface OrderWithProfile {
@@ -27,8 +27,7 @@ interface OrderWithProfile {
 const Admin = () => {
   const navigate = useNavigate();
   const { user, isStaff, isAdmin, loading: authLoading } = useAuth();
-  const { toast } = useToast();
-  
+
   const [orders, setOrders] = useState<OrderWithProfile[]>([]);
   const [loading, setLoading] = useState(true);
   const [updatingOrder, setUpdatingOrder] = useState<string | null>(null);
@@ -102,18 +101,15 @@ const Admin = () => {
 
       if (error) throw error;
 
-      toast({
-        title: 'Status atualizado!',
+      toast.success('Status atualizado!', {
         description: `Status do pedido atualizado com sucesso`,
       });
 
       loadOrders();
     } catch (error) {
       console.error('Error updating order:', error);
-      toast({
-        title: 'Erro ao atualizar',
+      toast.error('Erro ao atualizar', {
         description: 'Não foi possível atualizar o status',
-        variant: 'destructive',
       });
     } finally {
       setUpdatingOrder(null);

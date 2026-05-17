@@ -13,7 +13,7 @@ import { Checkbox } from '@/components/ui/checkbox';
 import { supabase } from '@/integrations/supabase/client';
 import { useAuth } from '@/contexts/AuthContext';
 import { useFarmerScoring } from '@/hooks/useFarmerScoring';
-import { useToast } from '@/hooks/use-toast';
+import { toast } from 'sonner';
 import { Loader2, MapPin, Clock, Route, Filter, Navigation, ExternalLink, Truck, ShoppingBag, Wrench, Layers, Phone, ArrowUp, ArrowRight, ArrowDown, Search, CheckCircle2, XCircle, Users } from 'lucide-react';
 import L from 'leaflet';
 import 'leaflet/dist/leaflet.css';
@@ -158,7 +158,6 @@ const STOP_CONFIG: Record<StopType, { label: string; color: string; bgClass: str
 const AdminRoutePlanner = () => {
   const navigate = useNavigate();
   const { user, isStaff, loading: authLoading } = useAuth();
-  const { toast } = useToast();
   const mapRef = useRef<HTMLDivElement>(null);
   const leafletMap = useRef<L.Map | null>(null);
   const markersRef = useRef<L.LayerGroup | null>(null);
@@ -295,7 +294,7 @@ const AdminRoutePlanner = () => {
       setLogisticStops(stops);
     } catch (error) {
       console.error('Error loading logistic stops:', error);
-      toast({ title: 'Erro ao carregar pedidos', variant: 'destructive' });
+      toast.error('Erro ao carregar pedidos');
     } finally {
       setLoading(false);
     }
@@ -394,7 +393,7 @@ const AdminRoutePlanner = () => {
       setManualCustomers(customers);
     } catch (error) {
       console.error('Error loading manual customers:', error);
-      toast({ title: 'Erro ao carregar clientes', variant: 'destructive' });
+      toast.error('Erro ao carregar clientes');
     } finally {
       setLoadingManual(false);
     }
@@ -467,10 +466,10 @@ const AdminRoutePlanner = () => {
         }));
         
         await loadTodayVisits();
-        toast({ title: 'Check-in realizado!', description: `Visita iniciada: ${customer.name}` });
+        toast.success('Check-in realizado!', { description: `Visita iniciada: ${customer.name}` });
       } catch (err) {
         console.error('Check-in error:', err);
-        toast({ title: 'Erro ao fazer check-in', variant: 'destructive' });
+        toast.error('Erro ao fazer check-in');
       }
     };
     
@@ -514,14 +513,14 @@ const AdminRoutePlanner = () => {
       
       setCheckoutOpen(false);
       await loadTodayVisits();
-      toast({ title: 'Check-out realizado!', description: `Visita finalizada: ${customerName}` });
-      
+      toast.success('Check-out realizado!', { description: `Visita finalizada: ${customerName}` });
+
       if (result === 'pedido_fechado') {
         navigate(`/sales/new?customer=${userId}`);
       }
     } catch (err) {
       console.error('Check-out error:', err);
-      toast({ title: 'Erro ao fazer check-out', variant: 'destructive' });
+      toast.error('Erro ao fazer check-out');
     }
   };
   
@@ -568,9 +567,9 @@ const AdminRoutePlanner = () => {
         }));
         
         await loadTodayVisits();
-        toast({ title: 'Check-in realizado!', description: `Visita iniciada: ${stop.customerName}` });
+        toast.success('Check-in realizado!', { description: `Visita iniciada: ${stop.customerName}` });
       } catch (err) {
-        toast({ title: 'Erro ao fazer check-in', variant: 'destructive' });
+        toast.error('Erro ao fazer check-in');
       }
     };
     
@@ -1342,7 +1341,7 @@ const AdminRoutePlanner = () => {
                 const tooMany = optimizedRoute.filter(s => s.lat && s.lng).length > 25;
 
                 if (tooMany) {
-                  toast({ title: 'Google Maps suporta até 25 paradas', description: 'Mostrando as 25 de maior prioridade.' });
+                  toast.success('Google Maps suporta até 25 paradas', { description: 'Mostrando as 25 de maior prioridade.' });
                 }
 
                 const waypoints = stopsWithCoords.map(s => `${s.lat},${s.lng}`);

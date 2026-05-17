@@ -2,7 +2,7 @@ import { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { supabase } from '@/integrations/supabase/client';
 import { useAuth } from '@/contexts/AuthContext';
-import { useToast } from '@/hooks/use-toast';
+import { toast } from 'sonner';
 import { usePriceHistory } from '@/hooks/usePriceHistory';
 import { usePricingEngine } from '@/hooks/usePricingEngine';
 import { updateOrderInOmie, deleteOrderFromOmie, checkOsExistsInOmie } from '@/services/omieService';
@@ -12,7 +12,6 @@ import type { Order, OrderItem, Profile } from '@/components/admin-order/types';
 export function useAdminOrderDetail(id: string | undefined) {
   const navigate = useNavigate();
   const { user, isStaff, loading: authLoading, role } = useAuth();
-  const { toast } = useToast();
 
   const [order, setOrder] = useState<Order | null>(null);
   const [profile, setProfile] = useState<Profile | null>(null);
@@ -164,10 +163,8 @@ export function useAdminOrderDetail(id: string | undefined) {
 
       const osCheck = await checkOsExistsInOmie(data.id);
       if (!osCheck.exists) {
-        toast({
-          title: 'Pedido excluído no Omie',
+        toast.error('Pedido excluído no Omie', {
           description: 'Esta OS foi excluída no Omie. O pedido será removido.',
-          variant: 'destructive',
         });
         await deleteOrderFromOmie(data.id);
         navigate('/admin');
@@ -175,10 +172,8 @@ export function useAdminOrderDetail(id: string | undefined) {
       }
     } catch (error) {
       logger.error('Failed to load order', { stage: 'load_order', orderId: id, error });
-      toast({
-        title: 'Erro',
+      toast.error('Erro', {
         description: 'Não foi possível carregar o pedido',
-        variant: 'destructive',
       });
     } finally {
       setLoading(false);
@@ -189,7 +184,7 @@ export function useAdminOrderDetail(id: string | undefined) {
     const lastPrice = getLastPrice(item.userToolId, item.category);
     if (lastPrice !== null) {
       setItemPrices((prev) => ({ ...prev, [index]: lastPrice.toString() }));
-      toast({ title: 'Preço do histórico aplicado', description: `Último preço cobrado: R$ ${lastPrice.toFixed(2)}` });
+      toast.success('Preço do histórico aplicado', { description: `Último preço cobrado: R$ ${lastPrice.toFixed(2)}` });
       return;
     }
 
@@ -200,12 +195,12 @@ export function useAdminOrderDetail(id: string | undefined) {
       });
       if (tablePrice !== null) {
         setItemPrices((prev) => ({ ...prev, [index]: tablePrice.toString() }));
-        toast({ title: 'Preço da tabela aplicado', description: `Valor da tabela padrão: R$ ${tablePrice.toFixed(2)}` });
+        toast.success('Preço da tabela aplicado', { description: `Valor da tabela padrão: R$ ${tablePrice.toFixed(2)}` });
         return;
       }
     }
 
-    toast({ title: 'Sem preço sugerido', description: 'Nenhum preço encontrado no histórico ou tabela padrão' });
+    toast.success('Sem preço sugerido', { description: 'Nenhum preço encontrado no histórico ou tabela padrão' });
   };
 
   const hasAnySuggestedPrice = (item: OrderItem): boolean => {
@@ -277,15 +272,15 @@ export function useAdminOrderDetail(id: string | undefined) {
         });
 
         if (omieResult.success) {
-          toast({ title: 'Pedido sincronizado!', description: `OS ${omieResult.cNumOS} atualizada no Omie` });
+          toast.success('Pedido sincronizado!', { description: `OS ${omieResult.cNumOS} atualizada no Omie` });
         } else {
-          toast({ title: 'Erro ao sincronizar com Omie', description: omieResult.error || 'Tente novamente', variant: 'destructive' });
+          toast.error('Erro ao sincronizar com Omie', { description: omieResult.error || 'Tente novamente' });
           setSaving(false);
           setSyncingOmie(false);
           return;
         }
       } else {
-        toast({ title: 'Pedido atualizado!', description: 'Preços salvos localmente' });
+        toast.success('Pedido atualizado!', { description: 'Preços salvos localmente' });
       }
 
       navigate('/admin');
@@ -293,7 +288,7 @@ export function useAdminOrderDetail(id: string | undefined) {
       logger.critical('Failed to save order — possible data inconsistency', {
         stage: 'update_status', orderId: order.id, syncToOmie, error,
       });
-      toast({ title: 'Erro', description: 'Não foi possível salvar o pedido', variant: 'destructive' });
+      toast.error('Erro', { description: 'Não foi possível salvar o pedido' });
     } finally {
       setSaving(false);
       setSyncingOmie(false);
@@ -306,14 +301,14 @@ export function useAdminOrderDetail(id: string | undefined) {
     try {
       const result = await deleteOrderFromOmie(order.id);
       if (result.success) {
-        toast({ title: 'Pedido excluído', description: 'O pedido foi excluído do app e do Omie' });
+        toast.success('Pedido excluído', { description: 'O pedido foi excluído do app e do Omie' });
         navigate('/admin');
       } else {
-        toast({ title: 'Erro ao excluir', description: result.error, variant: 'destructive' });
+        toast.error('Erro ao excluir', { description: result.error });
       }
     } catch (error) {
       logger.error('Failed to delete order', { stage: 'delete_order', orderId: order.id, error });
-      toast({ title: 'Erro', description: 'Não foi possível excluir o pedido', variant: 'destructive' });
+      toast.error('Erro', { description: 'Não foi possível excluir o pedido' });
     } finally {
       setDeleting(false);
     }

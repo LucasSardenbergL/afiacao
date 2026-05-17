@@ -1,7 +1,7 @@
 import { useState, useEffect } from 'react';
 import { supabase } from '@/integrations/supabase/client';
 import { useAuth } from '@/contexts/AuthContext';
-import { useToast } from '@/hooks/use-toast';
+import { toast } from 'sonner';
 
 export interface GovernanceProposal {
   id: string;
@@ -26,7 +26,6 @@ export interface GovernanceProposal {
 
 export const useFarmerGovernance = () => {
   const { user } = useAuth();
-  const { toast } = useToast();
   const [proposals, setProposals] = useState<GovernanceProposal[]>([]);
   const [auditLogs, setAuditLogs] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
@@ -93,7 +92,7 @@ export const useFarmerGovernance = () => {
     } as any);
 
     if (error) {
-      toast({ title: 'Erro ao criar proposta', variant: 'destructive' });
+      toast.error('Erro ao criar proposta');
       return;
     }
 
@@ -112,13 +111,13 @@ export const useFarmerGovernance = () => {
       },
     } as any);
 
-    toast({ title: 'Proposta criada com sucesso' });
+    toast.success('Proposta criada com sucesso');
     loadData();
   };
 
   const approveProposal = async (proposalId: string) => {
     if (!user || !isGovernor) {
-      toast({ title: 'Apenas o governador pode aprovar propostas', variant: 'destructive' });
+      toast.error('Apenas o governador pode aprovar propostas');
       return;
     }
 
@@ -157,13 +156,13 @@ export const useFarmerGovernance = () => {
       },
     } as any);
 
-    toast({ title: 'Proposta aprovada e aplicada' });
+    toast.success('Proposta aprovada e aplicada');
     loadData();
   };
 
   const rejectProposal = async (proposalId: string, reason: string) => {
     if (!user || !isGovernor) {
-      toast({ title: 'Apenas o governador pode rejeitar propostas', variant: 'destructive' });
+      toast.error('Apenas o governador pode rejeitar propostas');
       return;
     }
 
@@ -182,7 +181,7 @@ export const useFarmerGovernance = () => {
       notes: reason,
     } as any);
 
-    toast({ title: 'Proposta rejeitada' });
+    toast.success('Proposta rejeitada');
     loadData();
   };
 

@@ -7,7 +7,7 @@ import { Label } from '@/components/ui/label';
 import { SharpeningSuggestions } from '@/components/SharpeningSuggestions';
 import { useAuth } from '@/contexts/AuthContext';
 import { supabase } from '@/integrations/supabase/client';
-import { useToast } from '@/hooks/use-toast';
+import { toast } from 'sonner';
 import { cn } from '@/lib/utils';
 import { useBiometricAuth } from '@/hooks/useBiometricAuth';
 import { useProfile, useProfileStats } from '@/queries/useProfile';
@@ -17,7 +17,6 @@ import { useQueryClient } from '@tanstack/react-query';
 const Profile = () => {
   const navigate = useNavigate();
   const { user, signOut, isStaff } = useAuth();
-  const { toast } = useToast();
   const fileInputRef = useRef<HTMLInputElement>(null);
   const queryClient = useQueryClient();
   
@@ -67,19 +66,15 @@ const Profile = () => {
     if (!file || !user) return;
 
     if (!file.type.startsWith('image/')) {
-      toast({
-        title: 'Arquivo inválido',
+      toast.error('Arquivo inválido', {
         description: 'Por favor, selecione uma imagem',
-        variant: 'destructive',
       });
       return;
     }
 
     if (file.size > 5 * 1024 * 1024) {
-      toast({
-        title: 'Arquivo muito grande',
+      toast.error('Arquivo muito grande', {
         description: 'A imagem deve ter no máximo 5MB',
-        variant: 'destructive',
       });
       return;
     }
@@ -109,16 +104,13 @@ const Profile = () => {
 
       queryClient.invalidateQueries({ queryKey: ['profile', user.id] });
 
-      toast({
-        title: 'Foto atualizada!',
+      toast.success('Foto atualizada!', {
         description: 'Sua foto de perfil foi alterada com sucesso',
       });
     } catch (error) {
       console.error('Error uploading avatar:', error);
-      toast({
-        title: 'Erro ao enviar foto',
+      toast.error('Erro ao enviar foto', {
         description: 'Tente novamente mais tarde',
-        variant: 'destructive',
       });
     } finally {
       setUploading(false);
@@ -128,15 +120,12 @@ const Profile = () => {
   const handleLogout = async () => {
     try {
       await signOut();
-      toast({
-        title: 'Até logo!',
+      toast.success('Até logo!', {
         description: 'Você saiu da sua conta',
       });
     } catch (error) {
-      toast({
-        title: 'Erro ao sair',
+      toast.error('Erro ao sair', {
         description: 'Tente novamente',
-        variant: 'destructive',
       });
     }
   };
@@ -177,19 +166,15 @@ const Profile = () => {
       // Validate delivery time against business hours and lunch
       if (editDeliveryTime && editBusinessOpen && editBusinessClose) {
         if (editDeliveryTime < editBusinessOpen || editDeliveryTime >= editBusinessClose) {
-          toast({
-            title: 'Horário inválido',
+          toast.error('Horário inválido', {
             description: `O horário de entrega deve ser entre ${editBusinessOpen} e ${editBusinessClose}`,
-            variant: 'destructive',
           });
           setSaving(false);
           return;
         }
         if (editLunchStart && editLunchEnd && editDeliveryTime >= editLunchStart && editDeliveryTime < editLunchEnd) {
-          toast({
-            title: 'Horário inválido',
+          toast.error('Horário inválido', {
             description: `O horário de entrega não pode ser durante o almoço (${editLunchStart} - ${editLunchEnd})`,
-            variant: 'destructive',
           });
           setSaving(false);
           return;
@@ -206,16 +191,13 @@ const Profile = () => {
       queryClient.invalidateQueries({ queryKey: ['profile', user.id] });
 
       setIsEditing(false);
-      toast({
-        title: 'Perfil atualizado!',
+      toast.success('Perfil atualizado!', {
         description: 'Suas informações foram salvas com sucesso',
       });
     } catch (error) {
       console.error('Error saving profile:', error);
-      toast({
-        title: 'Erro ao salvar',
+      toast.error('Erro ao salvar', {
         description: 'Tente novamente mais tarde',
-        variant: 'destructive',
       });
     } finally {
       setSaving(false);
