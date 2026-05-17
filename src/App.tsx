@@ -146,6 +146,7 @@ const AdminAjuda = lazy(() => import("./pages/AdminAjuda"));
 const AdminDesTrimestreAtual = lazy(() => import("./pages/AdminDesTrimestreAtual"));
 const AdminNotificacoes = lazy(() => import("./pages/AdminNotificacoes"));
 const AdminPortalSayerlack = lazy(() => import("./pages/AdminPortalSayerlack"));
+const AdminVendorSipCredentials = lazy(() => import("./pages/AdminVendorSipCredentials"));
 
 const PageLoader = () => <PageSkeleton variant="auto" />;
 
@@ -315,6 +316,7 @@ const App = () => (
               <Route path="admin/des/trimestre-atual" element={<AdminDesTrimestreAtual />} />
               <Route path="admin/notificacoes" element={<AdminNotificacoes />} />
               <Route path="admin/portal-sayerlack" element={<AdminPortalSayerlack />} />
+              <Route path="admin/sip-credentials" element={<AdminVendorSipCredentials />} />
             </Route>
 
             <Route path="*" element={<NotFound />} />
