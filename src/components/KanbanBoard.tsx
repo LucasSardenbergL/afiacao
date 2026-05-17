@@ -279,7 +279,7 @@ const KanbanCard = React.memo(function KanbanCard({ order, column, updatingOrder
         {urgency !== 'normal' && (
           <div className={cn(
             'text-[10px] font-medium px-2 py-0.5 rounded-full mb-2 inline-block',
-            urgency === 'urgent' ? 'bg-destructive/10 text-destructive' : 'bg-amber-100 text-amber-700 dark:bg-amber-900/30 dark:text-amber-400'
+            urgency === 'urgent' ? 'bg-destructive/10 text-destructive' : 'bg-status-warning-bg text-status-warning'
           )}>
             {urgency === 'urgent' ? '⚠️ Parado há mais de 48h' : '⏰ Parado há mais de 24h'}
           </div>

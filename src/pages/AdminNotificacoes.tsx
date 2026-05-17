@@ -68,12 +68,12 @@ function fmtDate(iso: string | null): string {
 
 function SeveridadeBadge({ s }: { s: Severidade }) {
   if (s === 'urgente') return <Badge className="bg-destructive text-destructive-foreground">urgente</Badge>;
-  if (s === 'atencao') return <Badge className="bg-yellow-500 text-white">atenção</Badge>;
+  if (s === 'atencao') return <Badge className="bg-status-warning text-white">atenção</Badge>;
   return <Badge variant="secondary">info</Badge>;
 }
 
 function StatusBadge({ s }: { s: string | null }) {
-  if (s === 'notificado') return <Badge className="bg-green-600 text-white">notificado</Badge>;
+  if (s === 'notificado') return <Badge className="bg-status-success text-white">notificado</Badge>;
   if (s === 'falha_notificacao') return <Badge variant="destructive">falha</Badge>;
   return <Badge variant="outline">{s ?? '—'}</Badge>;
 }

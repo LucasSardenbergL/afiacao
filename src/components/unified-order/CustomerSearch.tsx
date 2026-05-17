@@ -48,7 +48,7 @@ export function CustomerSearch({
                 {selectedCustomer.atividade && (
                   <p className="text-[10px] text-muted-foreground mt-0.5">Atividade: {selectedCustomer.atividade}</p>
                 )}
-                {!customerUserId && <p className="text-xs text-amber-600 mt-0.5">Sem cadastro no app</p>}
+                {!customerUserId && <p className="text-xs text-status-warning mt-0.5">Sem cadastro no app</p>}
               </div>
               <Button variant="ghost" size="sm" onClick={onClearCustomer}>Trocar</Button>
             </div>

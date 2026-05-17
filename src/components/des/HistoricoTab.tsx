@@ -402,7 +402,7 @@ function HistoricoTabImpl({ empresa, ano: anoAtual, trimestre: trimestreAtual }:
             c.meta > 0 ? Math.min((c.faturado / c.meta) * 100, 100) : 0;
           const atingiu = c.meta > 0 && c.faturado >= c.meta;
           return (
-            <Card key={`${c.ano}-${c.trimestre}`} className={cn(c.isAtual && "border-blue-500/40")}>
+            <Card key={`${c.ano}-${c.trimestre}`} className={cn(c.isAtual && "border-status-info/40")}>
               <CardHeader className="pb-3">
                 <div className="flex items-start justify-between gap-3 flex-wrap">
                   <div>
@@ -413,17 +413,17 @@ function HistoricoTabImpl({ empresa, ano: anoAtual, trimestre: trimestreAtual }:
                   </div>
                   <div className="flex items-center gap-2">
                     {c.isAtual && (
-                      <Badge variant="outline" className="bg-blue-500/10 border-blue-500/40 text-blue-700 text-xs">
+                      <Badge variant="outline" className="bg-status-info/10 border-status-info/40 text-status-info text-xs">
                         Em andamento
                       </Badge>
                     )}
                     {!c.isAtual && c.meta > 0 && (
                       atingiu ? (
-                        <Badge variant="outline" className="bg-green-500/10 border-green-500/40 text-green-700 text-xs">
+                        <Badge variant="outline" className="bg-status-success/10 border-status-success/40 text-status-success text-xs">
                           Meta atingida
                         </Badge>
                       ) : (
-                        <Badge variant="outline" className="bg-red-500/10 border-red-500/40 text-red-700 text-xs">
+                        <Badge variant="outline" className="bg-status-error/10 border-status-error/40 text-status-error text-xs">
                           Meta não atingida
                         </Badge>
                       )
@@ -441,7 +441,7 @@ function HistoricoTabImpl({ empresa, ano: anoAtual, trimestre: trimestreAtual }:
                     <p className="text-xs text-muted-foreground">
                       {c.isAtual ? "Faturado (ao vivo)" : "Faturado final"}
                     </p>
-                    <p className={cn("text-sm font-medium mt-1", atingiu ? "text-green-700" : "text-foreground")}>
+                    <p className={cn("text-sm font-medium mt-1", atingiu ? "text-status-success" : "text-foreground")}>
                       {fmtBRL(c.faturado)}
                     </p>
                   </div>
@@ -465,7 +465,7 @@ function HistoricoTabImpl({ empresa, ano: anoAtual, trimestre: trimestreAtual }:
                       <div
                         className={cn(
                           "h-full transition-all",
-                          progress >= 100 ? "bg-green-500" : progress >= 75 ? "bg-amber-500" : "bg-blue-500",
+                          progress >= 100 ? "bg-status-success" : progress >= 75 ? "bg-status-warning" : "bg-status-info",
                         )}
                         style={{ width: `${progress}%` }}
                       />

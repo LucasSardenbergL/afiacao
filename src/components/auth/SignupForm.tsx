@@ -206,7 +206,7 @@ export function SignupForm({ formData, onInputChange, isLoading, onFinalSubmit, 
             </div>
             {omieCliente && <p className="text-xs text-primary mt-1">✓ Cliente existente no Omie</p>}
             {cnaeDescricao && <p className="text-xs text-muted-foreground mt-1">CNAE: {cnae} - {cnaeDescricao}</p>}
-            <p className="text-xs text-emerald-600 mt-1">✓ Frete gratuito em todos os pedidos</p>
+            <p className="text-xs text-status-success mt-1">✓ Frete gratuito em todos os pedidos</p>
           </div>
 
           <div className="space-y-3">

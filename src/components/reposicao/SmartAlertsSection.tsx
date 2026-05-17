@@ -118,7 +118,7 @@ export function SmartAlertsSection() {
     l === "yellow"
       ? "border-status-warning/40 bg-status-warning-bg text-status-warning-fg"
       : l === "orange"
-        ? "border-orange-500/40 bg-orange-500/5 text-orange-900 dark:text-orange-200"
+        ? "border-status-warning-bold/40 bg-status-warning-bold/5 text-status-warning-bold"
         : "border-destructive/40 bg-destructive/5 text-destructive";
 
   const Icon = ({ l }: { l: SmartAlert["level"] }) =>

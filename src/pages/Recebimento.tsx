@@ -23,10 +23,10 @@ import {
 type NfeStatus = 'pendente' | 'em_conferencia' | 'divergencia' | 'conferido' | 'efetivado';
 
 const STATUS_CONFIG: Record<NfeStatus, { label: string; className: string }> = {
-  pendente: { label: 'Pendente', className: 'bg-amber-100 text-amber-800 dark:bg-amber-900 dark:text-amber-200' },
-  em_conferencia: { label: 'Em Conferência', className: 'bg-blue-100 text-blue-800 dark:bg-blue-900 dark:text-blue-200' },
-  divergencia: { label: 'Divergência', className: 'bg-red-100 text-red-800 dark:bg-red-900 dark:text-red-200' },
-  conferido: { label: 'Conferido', className: 'bg-green-100 text-green-800 dark:bg-green-900 dark:text-green-200' },
+  pendente: { label: 'Pendente', className: 'bg-status-warning-bg text-status-warning-foreground' },
+  em_conferencia: { label: 'Em Conferência', className: 'bg-status-info-bg text-status-info-foreground' },
+  divergencia: { label: 'Divergência', className: 'bg-status-error-bg text-status-error-foreground' },
+  conferido: { label: 'Conferido', className: 'bg-status-success-bg text-status-success-foreground' },
   efetivado: { label: 'Efetivado', className: 'bg-muted text-muted-foreground' },
 };
 
@@ -307,7 +307,7 @@ export default function Recebimento({ statusFilter }: { statusFilter?: string[] 
                         <span>{totalItens} {totalItens === 1 ? 'item' : 'itens'}</span>
                         {totalItens > 0 && (
                           <span className={cn(
-                            conferidos === totalItens ? 'text-green-600' : 'text-amber-600'
+                            conferidos === totalItens ? 'text-status-success' : 'text-status-warning'
                           )}>
                             {conferidos} de {totalItens} conferidos
                           </span>

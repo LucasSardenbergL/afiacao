@@ -92,9 +92,9 @@ function StarsDisplay({ count, max = 6 }: { count: number; max?: number }) {
 
 function ZonaConfiancaBadge({ zona }: { zona: string | null }) {
   const map: Record<string, { label: string; cls: string }> = {
-    verde: { label: "Segura", cls: "bg-green-500/10 text-green-700 border-green-500/30" },
-    amarelo: { label: "Atenção", cls: "bg-amber-500/10 text-amber-700 border-amber-500/30" },
-    vermelho: { label: "Risco", cls: "bg-red-500/10 text-red-700 border-red-500/30" },
+    verde: { label: "Segura", cls: "bg-status-success/10 text-status-success border-status-success/30" },
+    amarelo: { label: "Atenção", cls: "bg-status-warning/10 text-status-warning border-status-warning/30" },
+    vermelho: { label: "Risco", cls: "bg-status-error/10 text-status-error border-status-error/30" },
     fora_trimestre: { label: "Fora trimestre", cls: "bg-muted text-muted-foreground border-border" },
   };
   const cfg = map[zona ?? ""] ?? { label: zona ?? "—", cls: "bg-muted text-muted-foreground" };
@@ -198,7 +198,7 @@ export function PosicaoAtualTab({ empresa, ano, trimestre }: Props) {
   const meta = Number(pos.meta_pessoal ?? 0);
   const progress = meta > 0 ? Math.min((conserv / meta) * 100, 100) : 0;
   const progressColor =
-    progress >= 100 ? "bg-green-500" : progress >= 75 ? "bg-amber-500" : "bg-red-500";
+    progress >= 100 ? "bg-status-success" : progress >= 75 ? "bg-status-warning" : "bg-status-error";
 
   const faixaConserv = pos.faixa_conservadora?.estrelas ?? 0;
   const faixaOtim = pos.faixa_otimista?.estrelas ?? 0;
@@ -208,10 +208,10 @@ export function PosicaoAtualTab({ empresa, ano, trimestre }: Props) {
     dias < 10 ? "destructive" : dias < 20 ? "default" : "secondary";
   const diasCls =
     dias < 10
-      ? "bg-red-500/10 text-red-700 border-red-500/30"
+      ? "bg-status-error/10 text-status-error border-status-error/30"
       : dias < 20
-        ? "bg-amber-500/10 text-amber-700 border-amber-500/30"
-        : "bg-green-500/10 text-green-700 border-green-500/30";
+        ? "bg-status-warning/10 text-status-warning border-status-warning/30"
+        : "bg-status-success/10 text-status-success border-status-success/30";
 
   return (
     <TooltipProvider>
@@ -238,7 +238,7 @@ export function PosicaoAtualTab({ empresa, ano, trimestre }: Props) {
             </div>
           </CardHeader>
           <CardContent>
-            <p className="text-2xl font-bold text-green-600">{fmtBRL(conserv)}</p>
+            <p className="text-2xl font-bold text-status-success">{fmtBRL(conserv)}</p>
             <p className="text-xs text-muted-foreground mt-1.5">
               + {fmtBRL(pos.valor_em_transito_risco)} em pedidos de risco ={" "}
               <span className="font-medium text-foreground">{fmtBRL(otim)}</span> otimista
@@ -291,7 +291,7 @@ export function PosicaoAtualTab({ empresa, ano, trimestre }: Props) {
                 <p className="text-xs text-muted-foreground mt-1.5 cursor-help">
                   (Faixa conservadora){" "}
                   {faixaOtim !== faixaConserv && (
-                    <span className="text-amber-600 font-medium">· otim. {faixaOtim}★</span>
+                    <span className="text-status-warning font-medium">· otim. {faixaOtim}★</span>
                   )}
                 </p>
               </TooltipTrigger>
@@ -337,10 +337,10 @@ export function PosicaoAtualTab({ empresa, ano, trimestre }: Props) {
               <strong className="text-foreground">{fmtBRL(transitoStats.totalValor)}</strong>
             </span>
             <span>
-              · <strong className="text-green-700">{fmtBRL(transitoStats.seguro)}</strong> em zona segura
+              · <strong className="text-status-success">{fmtBRL(transitoStats.seguro)}</strong> em zona segura
             </span>
             <span>
-              · <strong className="text-amber-700">{fmtBRL(transitoStats.risco)}</strong> em zona de risco
+              · <strong className="text-status-warning">{fmtBRL(transitoStats.risco)}</strong> em zona de risco
             </span>
             <span>
               · <strong className="text-muted-foreground">{fmtBRL(transitoStats.foraTrimestre)}</strong>{" "}
@@ -426,7 +426,7 @@ export function PosicaoAtualTab({ empresa, ano, trimestre }: Props) {
               </div>
               <div>
                 <p className="text-xs text-muted-foreground">Fat. bruto confirmado</p>
-                <p className="text-sm font-medium text-green-700 mt-1">
+                <p className="text-sm font-medium text-status-success mt-1">
                   {fmtBRL(pos.fat_bruto_confirmado)}
                 </p>
               </div>

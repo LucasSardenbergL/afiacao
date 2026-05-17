@@ -151,10 +151,10 @@ export const SendingQualityChecklist = ({ orderId, userId }: SendingQualityCheck
               variant="secondary"
               className={
                 existingLog.score >= 75
-                  ? 'bg-emerald-100 text-emerald-700'
+                  ? 'bg-status-success-bg text-status-success'
                   : existingLog.score >= 50
-                  ? 'bg-amber-100 text-amber-700'
-                  : 'bg-red-100 text-red-700'
+                  ? 'bg-status-warning-bg text-status-warning'
+                  : 'bg-status-error-bg text-status-error'
               }
             >
               {existingLog.score}%
@@ -183,7 +183,7 @@ export const SendingQualityChecklist = ({ orderId, userId }: SendingQualityCheck
               <p className="text-xs text-muted-foreground">{description}</p>
             </div>
             {checks[key as keyof typeof checks] && (
-              <CheckCircle2 className="w-4 h-4 text-emerald-500 mt-0.5 shrink-0" />
+              <CheckCircle2 className="w-4 h-4 text-status-success mt-0.5 shrink-0" />
             )}
           </label>
         ))}

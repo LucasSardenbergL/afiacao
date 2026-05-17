@@ -336,12 +336,12 @@ export default function AdminPortalSayerlack() {
   // KPI colors
   const pendCor = !kpis ? 'text-muted-foreground'
     : kpis.pendentes === 0 ? 'text-muted-foreground'
-    : kpis.pendentes <= 2 ? 'text-blue-600'
-    : 'text-orange-600';
+    : kpis.pendentes <= 2 ? 'text-status-info'
+    : 'text-status-warning';
   const taxaCor = kpis?.taxa == null ? 'text-muted-foreground'
-    : kpis.taxa >= 95 ? 'text-green-600'
-    : kpis.taxa >= 80 ? 'text-yellow-600'
-    : 'text-red-600';
+    : kpis.taxa >= 95 ? 'text-status-success'
+    : kpis.taxa >= 80 ? 'text-status-warning'
+    : 'text-status-error';
 
   // CSV Export
   const handleExportCSV = async () => {
@@ -395,7 +395,7 @@ export default function AdminPortalSayerlack() {
 
   const concilCor = !kpis ? 'text-muted-foreground'
     : kpis.conciliacao === 0 ? 'text-muted-foreground'
-    : 'text-amber-600';
+    : 'text-status-warning';
 
   return (
     <div className="container mx-auto p-4 sm:p-6 space-y-6 max-w-7xl">
@@ -420,7 +420,7 @@ export default function AdminPortalSayerlack() {
         <Card>
           <CardHeader className="pb-2"><CardTitle className="text-sm text-muted-foreground">Enviados últimos 7d</CardTitle></CardHeader>
           <CardContent>
-            <div className="text-4xl font-bold text-green-600">{kpis?.enviados7d ?? '—'}</div>
+            <div className="text-4xl font-bold text-status-success">{kpis?.enviados7d ?? '—'}</div>
             <div className="text-xs text-muted-foreground mt-1">pedidos finalizados</div>
           </CardContent>
         </Card>
@@ -448,7 +448,7 @@ export default function AdminPortalSayerlack() {
           <TabsTrigger value="conciliar">
             Conciliar
             {kpis?.conciliacao ? (
-              <span className="ml-1.5 inline-flex items-center justify-center rounded-full bg-amber-500/20 px-1.5 text-xs font-semibold text-amber-700">
+              <span className="ml-1.5 inline-flex items-center justify-center rounded-full bg-status-warning/20 px-1.5 text-xs font-semibold text-status-warning">
                 {kpis.conciliacao}
               </span>
             ) : null}
@@ -491,7 +491,7 @@ export default function AdminPortalSayerlack() {
                   <TableBody>
                     {filteredPend.map((p) => {
                       const t = p.portal_tentativas ?? 0;
-                      const tCor = t <= 1 ? 'text-green-600' : t === 2 ? 'text-yellow-600' : 'text-red-600';
+                      const tCor = t <= 1 ? 'text-status-success' : t === 2 ? 'text-status-warning' : 'text-status-error';
                       const retryFut = p.portal_proximo_retry_em && new Date(p.portal_proximo_retry_em) > new Date();
                       return (
                         <TableRow key={p.id}>
@@ -527,7 +527,7 @@ export default function AdminPortalSayerlack() {
 
         {/* ---------- CONCILIAR (PR1.5) ---------- */}
         <TabsContent value="conciliar" className="space-y-3">
-          <div className="rounded-md border border-amber-200 bg-amber-50 p-3 text-sm text-amber-900">
+          <div className="rounded-md border border-status-warning/40 bg-status-warning-bg p-3 text-sm text-status-warning-foreground">
             <strong>Conciliação manual:</strong> pedidos abaixo podem ter sido recebidos pelo
             portal Sayerlack mas o sistema não confirmou o protocolo. Abra o detalhe, verifique
             no portal e informe o número do pedido para liberar o registro no Omie.

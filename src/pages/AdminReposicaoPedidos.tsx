@@ -141,7 +141,7 @@ const statusMeta: Record<string, { label: string; variant: 'default' | 'secondar
   cancelado_humano: { label: 'Cancelado (vazio)', variant: 'outline' },
   expirado_sem_aprovacao: { label: 'Expirado sem aprovação', variant: 'secondary', className: 'bg-muted text-muted-foreground border-border' },
   // PR5: pedido pai de um split — não tem mais itens próprios, foi dividido em filhos.
-  split_em_filhos: { label: 'Dividido', variant: 'secondary', className: 'bg-purple-100 text-purple-800 border-purple-300' },
+  split_em_filhos: { label: 'Dividido', variant: 'secondary', className: 'bg-status-purple-bg text-status-purple-foreground border-status-purple/30' },
 };
 
 function formatBRL(v: number | null | undefined) {
@@ -172,7 +172,7 @@ function SplitInfo({ pedido }: { pedido: PedidoSugerido }) {
   // Pai (status_em_filhos): mostra "em N partes"
   if (pedido.status === 'split_em_filhos' && pedido.split_total) {
     return (
-      <Badge variant="outline" className="bg-purple-50 text-purple-700 border-purple-200 ml-1">
+      <Badge variant="outline" className="bg-status-purple-bg text-status-purple border-status-purple/30 ml-1">
         em {pedido.split_total} partes
       </Badge>
     );
@@ -182,7 +182,7 @@ function SplitInfo({ pedido }: { pedido: PedidoSugerido }) {
     return (
       <Badge
         variant="outline"
-        className="bg-purple-50 text-purple-700 border-purple-200 ml-1"
+        className="bg-status-purple-bg text-status-purple border-status-purple/30 ml-1"
         title={`Filho do pedido #${pedido.split_parent_id}`}
       >
         Lote {pedido.split_lote}/{pedido.split_total}

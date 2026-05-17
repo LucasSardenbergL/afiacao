@@ -142,8 +142,8 @@ const STOP_DURATION_MIN: Record<StopType, number> = {
 };
 
 const PRIORITY_CONFIG: Record<RouteStop['priorityLabel'], { label: string; bgClass: string; icon: typeof ArrowUp }> = {
-  alta: { label: 'Alta', bgClass: 'bg-red-100 text-red-700 dark:bg-red-900 dark:text-red-300', icon: ArrowUp },
-  media: { label: 'Média', bgClass: 'bg-yellow-100 text-yellow-700 dark:bg-yellow-900 dark:text-yellow-300', icon: ArrowRight },
+  alta: { label: 'Alta', bgClass: 'bg-status-error-bg text-status-error', icon: ArrowUp },
+  media: { label: 'Média', bgClass: 'bg-status-warning-bg text-status-warning', icon: ArrowRight },
   baixa: { label: 'Baixa', bgClass: 'bg-muted text-muted-foreground', icon: ArrowDown },
 };
 
@@ -1418,7 +1418,7 @@ const AdminRoutePlanner = () => {
             optimizedRoute.map((stop, idx) => {
               const cfg = STOP_CONFIG[stop.stopType];
               return (
-                <Card key={stop.id} className={`hover:shadow-md transition-shadow ${visitStatuses.get(stop.customerUserId)?.isCheckedIn ? 'border-green-400 bg-green-50/40 dark:bg-green-950/20' : ''}`}>
+                <Card key={stop.id} className={`hover:shadow-md transition-shadow ${visitStatuses.get(stop.customerUserId)?.isCheckedIn ? 'border-status-success/60 bg-status-success-bg/40' : ''}`}>
                   <CardContent className="py-3 px-4">
                     <div className="flex items-start gap-3">
                       {/* Number circle colored by type */}
@@ -1486,7 +1486,7 @@ const AdminRoutePlanner = () => {
                               return (
                                 <Button
                                   size="sm" variant="outline"
-                                  className="h-7 text-xs gap-1 border-green-500 text-green-600 hover:bg-green-50 dark:hover:bg-green-950"
+                                  className="h-7 text-xs gap-1 border-status-success text-status-success hover:bg-status-success-bg"
                                   onClick={() => handleCheckInStop(stop)}
                                 >
                                   <CheckCircle2 className="w-3 h-3" /> Check-in
@@ -1495,12 +1495,12 @@ const AdminRoutePlanner = () => {
                             }
                             return (
                               <div className="flex items-center gap-1.5">
-                                <span className="text-xs font-mono text-green-600">
+                                <span className="text-xs font-mono text-status-success">
                                   {formatTimer(visitTimers.get(stop.customerUserId) ?? 0)}
                                 </span>
                                 <Button
                                   size="sm" variant="outline"
-                                  className="h-7 text-xs gap-1 border-orange-400 text-orange-600 hover:bg-orange-50 dark:hover:bg-orange-950"
+                                  className="h-7 text-xs gap-1 border-status-warning text-status-warning hover:bg-status-warning-bg"
                                   onClick={() => openCheckoutDialog(stop.customerUserId, stop.customerName)}
                                 >
                                   <XCircle className="w-3 h-3" /> Check-out
@@ -1556,10 +1556,10 @@ const AdminRoutePlanner = () => {
                 ? new Date(visit.check_in_at).toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' })
                 : '—';
               return (
-                <Card key={visit.id} className={isActive ? 'border-green-400' : ''}>
+                <Card key={visit.id} className={isActive ? 'border-status-success/60' : ''}>
                   <CardContent className="py-3 px-4">
                     <div className="flex items-center gap-3">
-                      <div className={`w-2.5 h-2.5 rounded-full flex-shrink-0 ${isActive ? 'bg-green-500 animate-pulse' : 'bg-muted-foreground'}`} />
+                      <div className={`w-2.5 h-2.5 rounded-full flex-shrink-0 ${isActive ? 'bg-status-success animate-pulse' : 'bg-muted-foreground'}`} />
                       <div className="flex-1 min-w-0">
                         <p className="text-sm font-medium">{visit.customerName}</p>
                         <p className="text-xs text-muted-foreground">

@@ -829,7 +829,7 @@ function AgingCard({ title, data, type }: { title: string; data: any; type: 'rec
   const bars = [
     { label: 'A vencer', value: data.a_vencer_valor, qtd: data.a_vencer_qtd, color: 'bg-status-info' },
     { label: '1-30 dias', value: data.vencido_1_30_valor, qtd: data.vencido_1_30_qtd, color: 'bg-status-warning' },
-    { label: '31-60 dias', value: data.vencido_31_60_valor, qtd: data.vencido_31_60_qtd, color: 'bg-orange-500' },
+    { label: '31-60 dias', value: data.vencido_31_60_valor, qtd: data.vencido_31_60_qtd, color: 'bg-status-warning-bold' },
     { label: '61-90 dias', value: data.vencido_61_90_valor, qtd: data.vencido_61_90_qtd, color: 'bg-status-error' },
     { label: '+90 dias', value: data.vencido_90_plus_valor, qtd: data.vencido_90_plus_qtd, color: 'bg-status-error' },
   ];

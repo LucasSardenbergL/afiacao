@@ -63,16 +63,16 @@ export const SharpeningSuggestions = React.forwardRef<HTMLDivElement, Sharpening
 
     if (hasDueSoon) {
       return (
-        <div className="bg-amber-50 border border-amber-200 rounded-xl p-4">
+        <div className="bg-status-warning-bg border border-status-warning/30 rounded-xl p-4">
           <div className="flex items-start gap-3">
-            <div className="w-10 h-10 rounded-full bg-amber-100 flex items-center justify-center flex-shrink-0">
-              <Bell className="w-5 h-5 text-amber-600" />
+            <div className="w-10 h-10 rounded-full bg-status-warning/15 flex items-center justify-center flex-shrink-0">
+              <Bell className="w-5 h-5 text-status-warning" />
             </div>
             <div className="flex-1">
-              <p className="font-semibold text-amber-900">
+              <p className="font-semibold text-status-warning-foreground">
                 {dueSoonTools.length} ferramenta(s) precisam de afiação em breve
               </p>
-              <p className="text-sm text-amber-700 mt-1">
+              <p className="text-sm text-status-warning mt-1">
                 {dueSoonTools.slice(0, 2).map(t => t.categoryName).join(', ')}
                 {dueSoonTools.length > 2 && ` e mais ${dueSoonTools.length - 2}`}
               </p>
@@ -119,8 +119,8 @@ export const SharpeningSuggestions = React.forwardRef<HTMLDivElement, Sharpening
 
       {/* Due Soon Tools */}
       {hasDueSoon && (
-        <div className="bg-amber-50 border border-amber-200 rounded-xl p-4">
-          <h3 className="font-semibold text-amber-900 flex items-center gap-2 mb-3">
+        <div className="bg-status-warning-bg border border-status-warning/30 rounded-xl p-4">
+          <h3 className="font-semibold text-status-warning-foreground flex items-center gap-2 mb-3">
             <Clock className="w-4 h-4" />
             Afiação em Breve
           </h3>
@@ -180,19 +180,19 @@ function ToolCard({ tool, variant }: ToolCardProps) {
     <div className={cn(
       'flex items-center gap-3 p-3 rounded-lg',
       variant === 'overdue' && 'bg-destructive/5',
-      variant === 'soon' && 'bg-amber-100/50',
+      variant === 'soon' && 'bg-status-warning/10',
       variant === 'upcoming' && 'bg-muted/50'
     )}>
       <div className={cn(
         'w-8 h-8 rounded-full flex items-center justify-center',
         variant === 'overdue' && 'bg-destructive/20',
-        variant === 'soon' && 'bg-amber-200',
+        variant === 'soon' && 'bg-status-warning/20',
         variant === 'upcoming' && 'bg-muted'
       )}>
         <Wrench className={cn(
           'w-4 h-4',
           variant === 'overdue' && 'text-destructive',
-          variant === 'soon' && 'text-amber-700',
+          variant === 'soon' && 'text-status-warning',
           variant === 'upcoming' && 'text-muted-foreground'
         )} />
       </div>
@@ -200,7 +200,7 @@ function ToolCard({ tool, variant }: ToolCardProps) {
         <p className={cn(
           'font-medium text-sm',
           variant === 'overdue' && 'text-destructive',
-          variant === 'soon' && 'text-amber-900',
+          variant === 'soon' && 'text-status-warning-foreground',
           variant === 'upcoming' && 'text-foreground'
         )}>
           {tool.categoryName}
@@ -208,7 +208,7 @@ function ToolCard({ tool, variant }: ToolCardProps) {
         <p className={cn(
           'text-xs',
           variant === 'overdue' && 'text-destructive/70',
-          variant === 'soon' && 'text-amber-700',
+          variant === 'soon' && 'text-status-warning',
           variant === 'upcoming' && 'text-muted-foreground'
         )}>
           {getDaysText()}
@@ -221,7 +221,7 @@ function ToolCard({ tool, variant }: ToolCardProps) {
         <span className={cn(
           'text-xs font-medium px-2 py-1 rounded-full',
           variant === 'overdue' && 'bg-destructive/20 text-destructive',
-          variant === 'soon' && 'bg-amber-200 text-amber-800',
+          variant === 'soon' && 'bg-status-warning/20 text-status-warning-foreground',
           variant === 'upcoming' && 'bg-muted text-muted-foreground'
         )}>
           {format(tool.nextSharpeningDue, "dd/MM")}

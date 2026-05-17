@@ -180,7 +180,7 @@ function cenarioIcon(cenario: Cenario) {
     case "promo_volume":
       return <Package className="h-4 w-4 text-status-info" />;
     case "promo_e_aumento":
-      return <Zap className="h-4 w-4 text-purple-500" />;
+      return <Zap className="h-4 w-4 text-status-purple" />;
     case "aumento_apenas":
       return <TrendingUp className="h-4 w-4 text-status-error" />;
   }

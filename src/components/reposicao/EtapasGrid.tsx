@@ -75,7 +75,7 @@ export function EtapasGrid() {
               className={cn(
                 "h-full transition-colors",
                 isCurrent && "border-primary/40 bg-primary/5",
-                isDone && "border-emerald-500/30 bg-emerald-500/5",
+                isDone && "border-status-success/30 bg-status-success/5",
                 isLocked && "border-dashed opacity-70",
                 !isCurrent && !isDone && !isLocked && "hover:bg-muted/40",
               )}
@@ -87,7 +87,7 @@ export function EtapasGrid() {
                       className={cn(
                         "flex h-7 w-7 items-center justify-center rounded-full text-xs font-semibold",
                         isCurrent && "bg-primary text-primary-foreground",
-                        isDone && "bg-emerald-500 text-white",
+                        isDone && "bg-status-success text-white",
                         !isCurrent && !isDone && "bg-muted text-foreground/70",
                       )}
                     >
@@ -103,7 +103,7 @@ export function EtapasGrid() {
                     </Badge>
                   )}
                   {isDone && (
-                    <Badge className="h-4 px-1.5 text-[9px] bg-emerald-500 text-white border-0">
+                    <Badge className="h-4 px-1.5 text-[9px] bg-status-success text-white border-0">
                       ok
                     </Badge>
                   )}

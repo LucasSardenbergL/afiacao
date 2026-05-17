@@ -43,9 +43,9 @@ const CRITICALITY_CONFIG: Record<Criticality, {
   healthy: {
     label: 'Saudável',
     icon: ShieldCheck,
-    badgeClass: 'border-emerald-400/40 bg-emerald-50 text-emerald-700 dark:bg-emerald-900/20 dark:text-emerald-300',
-    iconClass: 'text-emerald-600 dark:text-emerald-400',
-    bgClass: 'bg-emerald-50 dark:bg-emerald-900/20',
+    badgeClass: 'border-status-success/40 bg-status-success-bg text-status-success',
+    iconClass: 'text-status-success',
+    bgClass: 'bg-status-success-bg',
     sortOrder: 2,
   },
   unscheduled: {
@@ -201,7 +201,7 @@ const Tools = () => {
               <SummaryPill value={tools.length} label="Total" className="text-foreground" />
               <SummaryPill value={counts.critical} label="Críticas" className="text-destructive" />
               <SummaryPill value={counts.attention} label="Atenção" className="text-status-warning" />
-              <SummaryPill value={counts.healthy} label="Saudáveis" className="text-emerald-600 dark:text-emerald-400" />
+              <SummaryPill value={counts.healthy} label="Saudáveis" className="text-status-success" />
             </div>
 
             {/* ═══ TOOLS LIST ═══ */}

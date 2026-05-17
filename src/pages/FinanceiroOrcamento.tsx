@@ -171,7 +171,7 @@ const FinanceiroOrcamento = () => {
                       <TableCell className="sticky left-0 bg-background text-sm font-medium">{s.label}</TableCell>
                       <TableCell className="text-right text-sm">{fmtCompact(s.orcYtd)}</TableCell>
                       <TableCell className="text-right text-sm font-medium">{fmtCompact(s.realYtd)}</TableCell>
-                      <TableCell className={`text-right text-sm font-bold ${isGood ? 'text-emerald-600' : 'text-red-600'}`}>
+                      <TableCell className={`text-right text-sm font-bold ${isGood ? 'text-status-success' : 'text-status-error'}`}>
                         {s.variacao > 0 ? '+' : ''}{s.variacao.toFixed(1)}%
                       </TableCell>
                       <TableCell>
@@ -180,9 +180,9 @@ const FinanceiroOrcamento = () => {
                         ) : (
                           <div className="flex items-center gap-1">
                             {isGood
-                              ? <TrendingUp className="w-3.5 h-3.5 text-emerald-600" />
-                              : <TrendingDown className="w-3.5 h-3.5 text-red-600" />}
-                            <span className={`text-xs ${isGood ? 'text-emerald-600' : 'text-red-600'}`}>
+                              ? <TrendingUp className="w-3.5 h-3.5 text-status-success" />
+                              : <TrendingDown className="w-3.5 h-3.5 text-status-error" />}
+                            <span className={`text-xs ${isGood ? 'text-status-success' : 'text-status-error'}`}>
                               {isGood ? 'Favorável' : 'Desfavorável'}
                             </span>
                           </div>
@@ -247,7 +247,7 @@ const FinanceiroOrcamento = () => {
                           <div className="text-muted-foreground">{orc > 0 ? fmtCompact(orc) : '—'}</div>
                           <div className="font-medium">{real > 0 ? fmtCompact(real) : '—'}</div>
                           {orc > 0 && real > 0 && (
-                            <div className={`text-[10px] ${diff >= 0 ? 'text-emerald-600' : 'text-red-600'}`}>
+                            <div className={`text-[10px] ${diff >= 0 ? 'text-status-success' : 'text-status-error'}`}>
                               {diff > 0 ? '+' : ''}{fmtCompact(diff)}
                             </div>
                           )}

@@ -146,7 +146,7 @@ const AdminMonthlyReports = () => {
             </Card>
             <Card className="text-center">
               <CardContent className="pt-4 pb-3">
-                <p className="text-2xl font-bold text-amber-600">
+                <p className="text-2xl font-bold text-status-warning">
                   {reports.reduce((sum, r) => sum + r.due_soon_count, 0)}
                 </p>
                 <p className="text-xs text-muted-foreground">Vencem em breve</p>
@@ -186,7 +186,7 @@ const AdminMonthlyReports = () => {
                       </Badge>
                     )}
                     {report.due_soon_count > 0 && (
-                      <Badge className="text-xs bg-amber-100 text-amber-800 hover:bg-amber-100">
+                      <Badge className="text-xs bg-status-warning-bg text-status-warning-foreground hover:bg-status-warning-bg">
                         {report.due_soon_count} em breve
                       </Badge>
                     )}
@@ -211,9 +211,9 @@ const AdminMonthlyReports = () => {
                           {tool.is_overdue ? (
                             <AlertTriangle className="w-3.5 h-3.5 text-destructive" />
                           ) : tool.is_due_soon ? (
-                            <AlertTriangle className="w-3.5 h-3.5 text-amber-500" />
+                            <AlertTriangle className="w-3.5 h-3.5 text-status-warning" />
                           ) : (
-                            <CheckCircle className="w-3.5 h-3.5 text-emerald-500" />
+                            <CheckCircle className="w-3.5 h-3.5 text-status-success" />
                           )}
                           <span className="text-foreground">{tool.name}</span>
                           {tool.internal_code && (

@@ -208,8 +208,8 @@ export default function LoteScannerOCR({ onLoteCapturado, onCancelar }: LoteScan
         <div className={cn(
           'mx-4 mt-3 p-3 rounded-lg flex items-center gap-2 text-sm',
           ocrResult === 'success'
-            ? 'bg-green-50 text-green-800 dark:bg-green-950 dark:text-green-300'
-            : 'bg-amber-50 text-amber-800 dark:bg-amber-950 dark:text-amber-300'
+            ? 'bg-status-success-bg text-status-success-foreground'
+            : 'bg-status-warning-bg text-status-warning-foreground'
         )}>
           {ocrResult === 'success' ? (
             <>

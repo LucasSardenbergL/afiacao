@@ -131,11 +131,11 @@ const ESTADOS_LABEL: Record<string, string> = {
 function estadoBadgeClass(estado: string): string {
   switch (estado) {
     case "rascunho":
-      return "bg-amber-500/15 text-amber-700 dark:text-amber-400 border-amber-500/30";
+      return "bg-status-warning/15 text-status-warning border-status-warning/30";
     case "ativo":
-      return "bg-blue-500/15 text-blue-700 dark:text-blue-400 border-blue-500/30";
+      return "bg-status-info/15 text-status-info border-status-info/30";
     case "vigente":
-      return "bg-emerald-500/15 text-emerald-700 dark:text-emerald-400 border-emerald-500/30";
+      return "bg-status-success/15 text-status-success border-status-success/30";
     case "expirado":
       return "bg-muted text-muted-foreground border-border";
     case "cancelado":
@@ -149,8 +149,8 @@ function confiancaClass(c: number | null): string {
   if (c === null) return "";
   if (c < 0.5) return "bg-destructive/15 text-destructive border-destructive/30";
   if (c <= 0.8)
-    return "bg-amber-500/15 text-amber-700 dark:text-amber-400 border-amber-500/30";
-  return "bg-emerald-500/15 text-emerald-700 dark:text-emerald-400 border-emerald-500/30";
+    return "bg-status-warning/15 text-status-warning border-status-warning/30";
+  return "bg-status-success/15 text-status-success border-status-success/30";
 }
 
 function diasEntre(data: string): number {
@@ -766,7 +766,7 @@ export default function AdminReposicaoAumentoDetail() {
                         <span className="text-muted-foreground">Sem mapeamento</span>
                         <span
                           className={`font-medium tabular-nums ${
-                            itensSemMapeamento > 0 ? "text-amber-600" : ""
+                            itensSemMapeamento > 0 ? "text-status-warning" : ""
                           }`}
                         >
                           {itensSemMapeamento}

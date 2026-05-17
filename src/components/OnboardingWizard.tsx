@@ -111,7 +111,7 @@ export function OnboardingWizard({ hasTools, hasOrders }: OnboardingWizardProps)
               >
                 <div className={cn(
                   'w-10 h-10 rounded-xl flex items-center justify-center flex-shrink-0 transition-colors',
-                  isCompleted ? 'bg-emerald-100 text-emerald-600' : isCurrent ? 'bg-primary/10 text-primary' : 'bg-muted text-muted-foreground'
+                  isCompleted ? 'bg-status-success-bg text-status-success' : isCurrent ? 'bg-primary/10 text-primary' : 'bg-muted text-muted-foreground'
                 )}>
                   {isCompleted ? (
                     <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>

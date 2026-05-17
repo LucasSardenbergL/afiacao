@@ -658,13 +658,13 @@ export function UnifiedAIAssistant({ products, userTools, onItemsIdentified, onC
           )}
 
           {(identifiedProducts.length > 0 || identifiedServices.length > 0) && !hasCustomerSelected && !identifiedCustomer && (
-            <p className="text-xs text-amber-600 bg-amber-50 dark:bg-amber-950/20 p-2 rounded">
+            <p className="text-xs text-status-warning bg-status-warning-bg p-2 rounded">
               ⚠️ Selecione o cliente primeiro para adicionar os itens ao pedido.
             </p>
           )}
 
           {(identifiedProducts.length > 0 || identifiedServices.length > 0) && !hasCustomerSelected && identifiedCustomer && (
-            <p className="text-xs text-amber-600 bg-amber-50 dark:bg-amber-950/20 p-2 rounded">
+            <p className="text-xs text-status-warning bg-status-warning-bg p-2 rounded">
               ⚠️ Clique em "Selecionar" no cliente acima para depois adicionar os itens.
             </p>
           )}
@@ -672,7 +672,7 @@ export function UnifiedAIAssistant({ products, userTools, onItemsIdentified, onC
           {/* Suggestions */}
           {suggestions.length > 0 && (
             <div className="space-y-2 pt-2 border-t border-border">
-              <p className="text-xs font-medium text-amber-600 flex items-center gap-1.5">
+              <p className="text-xs font-medium text-status-warning flex items-center gap-1.5">
                 <Lightbulb className="w-3.5 h-3.5" /> Sugestões ({suggestions.length})
               </p>
               <p className="text-xs text-muted-foreground">
@@ -682,20 +682,20 @@ export function UnifiedAIAssistant({ products, userTools, onItemsIdentified, onC
                 const prod = sug.type === 'product' && sug.product_id ? products.find(p => p.id === sug.product_id) : null;
                 const tool = sug.type === 'service' && sug.userToolId ? userTools.find(t => t.id === sug.userToolId) : null;
                 return (
-                  <div key={idx} className="bg-amber-50 dark:bg-amber-950/20 rounded-lg p-3 border border-amber-200 dark:border-amber-800">
+                  <div key={idx} className="bg-status-warning-bg rounded-lg p-3 border border-status-warning/30">
                     <div className="flex justify-between items-start gap-2">
                       <div className="flex-1 min-w-0">
                         <div className="flex items-center gap-1.5">
                           {sug.type === 'product' ? (
-                            <Package className="w-3.5 h-3.5 text-amber-600 flex-shrink-0" />
+                            <Package className="w-3.5 h-3.5 text-status-warning flex-shrink-0" />
                           ) : (
-                            <Wrench className="w-3.5 h-3.5 text-amber-600 flex-shrink-0" />
+                            <Wrench className="w-3.5 h-3.5 text-status-warning flex-shrink-0" />
                           )}
                           <p className="font-medium text-sm truncate">
                             {prod?.descricao || (tool ? getToolName(tool) : sug.descricao)}
                           </p>
                         </div>
-                        <p className="text-xs text-amber-700 dark:text-amber-400 mt-1 italic">
+                        <p className="text-xs text-status-warning mt-1 italic">
                           💡 {sug.reason}
                         </p>
                         {sug.type === 'product' && (prod || sug.unit_price) && (
@@ -716,7 +716,7 @@ export function UnifiedAIAssistant({ products, userTools, onItemsIdentified, onC
                         <Button
                           size="sm"
                           variant="outline"
-                          className="flex-shrink-0 text-xs border-amber-300 hover:bg-amber-100 dark:hover:bg-amber-900/30"
+                          className="flex-shrink-0 text-xs border-status-warning/40 hover:bg-status-warning/10"
                           onClick={() => acceptSuggestion(sug)}
                         >
                           <Plus className="w-3 h-3 mr-1" />

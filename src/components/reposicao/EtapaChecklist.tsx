@@ -117,17 +117,17 @@ export function EtapaChecklist({ step }: Props) {
   const allDone = def.items.every((i) => i.done);
 
   return (
-    <Card className={cn(allDone && "border-emerald-500/30 bg-emerald-500/5")}>
+    <Card className={cn(allDone && "border-status-success/30 bg-status-success/5")}>
       <CardHeader className="pb-2">
         <CardTitle className="text-sm flex items-center gap-2">
           {allDone ? (
-            <CheckCircle2 className="h-4 w-4 text-emerald-500" />
+            <CheckCircle2 className="h-4 w-4 text-status-success" />
           ) : (
             <Circle className="h-4 w-4 text-muted-foreground" />
           )}
           {def.title}
           {allDone && (
-            <span className="text-xs font-normal text-emerald-700 ml-auto">
+            <span className="text-xs font-normal text-status-success ml-auto">
               tudo pronto
             </span>
           )}
@@ -139,7 +139,7 @@ export function EtapaChecklist({ step }: Props) {
             <li key={idx} className="flex items-center justify-between gap-2 text-sm">
               <div className="flex items-center gap-2 min-w-0">
                 {item.done ? (
-                  <CheckCircle2 className="h-4 w-4 text-emerald-500 shrink-0" />
+                  <CheckCircle2 className="h-4 w-4 text-status-success shrink-0" />
                 ) : (
                   <Circle className="h-4 w-4 text-muted-foreground shrink-0" />
                 )}

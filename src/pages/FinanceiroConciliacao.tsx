@@ -18,10 +18,10 @@ const fmt = (v: number) => v.toLocaleString('pt-BR', { style: 'currency', curren
 const fmtDate = (d: string | null) => d ? new Date(d + 'T00:00:00').toLocaleDateString('pt-BR') : '—';
 
 const statusConfig: Record<string, { label: string; color: string; icon: any }> = {
-  pendente: { label: 'Pendente', color: 'bg-amber-100 text-amber-700', icon: AlertTriangle },
-  conciliado: { label: 'Conciliado', color: 'bg-emerald-100 text-emerald-700', icon: CheckCircle2 },
-  divergencia: { label: 'Divergência', color: 'bg-red-100 text-red-700', icon: XCircle },
-  ignorado: { label: 'Ignorado', color: 'bg-gray-100 text-gray-500', icon: Ban },
+  pendente: { label: 'Pendente', color: 'bg-status-warning-bg text-status-warning', icon: AlertTriangle },
+  conciliado: { label: 'Conciliado', color: 'bg-status-success-bg text-status-success', icon: CheckCircle2 },
+  divergencia: { label: 'Divergência', color: 'bg-status-error-bg text-status-error', icon: XCircle },
+  ignorado: { label: 'Ignorado', color: 'bg-muted text-muted-foreground', icon: Ban },
 };
 
 const FinanceiroConciliacao = () => {
@@ -279,7 +279,7 @@ const FinanceiroConciliacao = () => {
                     const cfg = statusConfig[item.status] || statusConfig.pendente;
                     const Icon = cfg.icon;
                     return (
-                      <TableRow key={item.id} className={item.status === 'divergencia' ? 'bg-red-50/50' : ''}>
+                      <TableRow key={item.id} className={item.status === 'divergencia' ? 'bg-status-error-bg/50' : ''}>
                         <TableCell className="text-sm">{fmtDate(item.mov_data)}</TableCell>
                         <TableCell>
                           <p className="text-sm truncate max-w-[250px]">{item.mov_descricao || '—'}</p>
@@ -290,7 +290,7 @@ const FinanceiroConciliacao = () => {
                         <TableCell className="text-right text-sm font-medium">{fmt(item.mov_valor || 0)}</TableCell>
                         <TableCell className="text-right text-sm">{item.titulo_valor ? fmt(item.titulo_valor) : '—'}</TableCell>
                         <TableCell className={`text-right text-sm font-bold ${
-                          Math.abs(item.diferenca || 0) > 0.01 ? 'text-red-600' : 'text-emerald-600'
+                          Math.abs(item.diferenca || 0) > 0.01 ? 'text-status-error' : 'text-status-success'
                         }`}>
                           {item.diferenca != null ? fmt(item.diferenca) : '—'}
                         </TableCell>
@@ -307,7 +307,7 @@ const FinanceiroConciliacao = () => {
                         <TableCell>
                           {(item.status === 'pendente' || item.status === 'divergencia') && (
                             <div className="flex gap-1">
-                              <Button size="sm" variant="ghost" className="h-7 text-[10px] text-emerald-600"
+                              <Button size="sm" variant="ghost" className="h-7 text-[10px] text-status-success"
                                 onClick={() => resolver(item.id, 'conciliado')}>
                                 <CheckCircle2 className="w-3 h-3 mr-0.5" /> OK
                               </Button>

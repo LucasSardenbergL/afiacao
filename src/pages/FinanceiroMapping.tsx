@@ -104,10 +104,10 @@ const FinanceiroMapping = () => {
         </Select>
       </div>
 
-      <Card className="border-blue-200 bg-blue-50/30">
-        <CardContent className="p-4 text-sm text-blue-800">
+      <Card className="border-status-info/40 bg-status-info-bg/30">
+        <CardContent className="p-4 text-sm text-status-info-foreground">
           <p className="font-medium">Como funciona o mapeamento:</p>
-          <p className="mt-1 text-blue-700">
+          <p className="mt-1 text-status-info">
             Cada categoria do Omie (ex: "1.01.02 - Venda de produtos") precisa ser vinculada a uma linha da DRE.
             O mapeamento "Padrão" se aplica a todas as empresas. Mapeamentos por empresa têm prioridade sobre o padrão.
             Categorias sem mapeamento explícito usam heurística por nome — o ideal é mapear todas manualmente.
@@ -140,9 +140,9 @@ const FinanceiroMapping = () => {
 
       {/* Unmapped categories */}
       {showUnmapped && unmappedCategorias.length > 0 && (
-        <Card className="border-amber-200">
+        <Card className="border-status-warning/40">
           <CardHeader className="pb-3">
-            <CardTitle className="text-base flex items-center gap-2 text-amber-700">
+            <CardTitle className="text-base flex items-center gap-2 text-status-warning">
               <AlertTriangle className="w-4 h-4" />
               Categorias sem mapeamento
             </CardTitle>
@@ -222,7 +222,7 @@ const FinanceiroMapping = () => {
                           <SelectContent>
                             {DRE_LINHAS.map(l => (
                               <SelectItem key={l.value} value={l.value}>
-                                <span className={l.tipo === 'R' ? 'text-emerald-600' : 'text-red-600'}>
+                                <span className={l.tipo === 'R' ? 'text-status-success' : 'text-status-error'}>
                                   {l.label}
                                 </span>
                               </SelectItem>
@@ -235,7 +235,7 @@ const FinanceiroMapping = () => {
                           variant="ghost"
                           size="sm"
                           onClick={() => handleDelete(m.id)}
-                          className="text-red-500 hover:text-red-700"
+                          className="text-status-error hover:text-status-error/80"
                         >
                           <Trash2 className="w-3.5 h-3.5" />
                         </Button>
@@ -271,7 +271,7 @@ function UnmappedRow({ cat, saving, onSave }: {
       <TableCell className="font-mono text-sm">{cat.omie_codigo}</TableCell>
       <TableCell className="text-sm">{cat.descricao}</TableCell>
       <TableCell>
-        <Badge variant="outline" className={`text-xs ${cat.tipo === 'R' ? 'text-emerald-600' : 'text-red-600'}`}>
+        <Badge variant="outline" className={`text-xs ${cat.tipo === 'R' ? 'text-status-success' : 'text-status-error'}`}>
           {cat.tipo === 'R' ? 'Rec' : cat.tipo === 'D' ? 'Desp' : 'Trf'}
         </Badge>
       </TableCell>

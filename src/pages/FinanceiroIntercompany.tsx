@@ -139,12 +139,12 @@ const FinanceiroIntercompany = () => {
                   }>
                     <TableCell className="text-sm">{dreLabels[row.dre_linha] || row.dre_linha}</TableCell>
                     <TableCell className="text-right text-sm">{fmt(row.valor_bruto)}</TableCell>
-                    <TableCell className={`text-right text-sm ${row.eliminacoes !== 0 ? 'text-red-600 font-medium' : ''}`}>
+                    <TableCell className={`text-right text-sm ${row.eliminacoes !== 0 ? 'text-status-error font-medium' : ''}`}>
                       {row.eliminacoes !== 0 ? fmt(row.eliminacoes) : '—'}
                     </TableCell>
                     <TableCell className={`text-right text-sm font-medium ${
                       row.dre_linha === 'resultado_liquido'
-                        ? (row.valor_liquido >= 0 ? 'text-emerald-600' : 'text-red-600')
+                        ? (row.valor_liquido >= 0 ? 'text-status-success' : 'text-status-error')
                         : ''
                     }`}>{fmt(row.valor_liquido)}</TableCell>
                   </TableRow>
@@ -175,7 +175,7 @@ const FinanceiroIntercompany = () => {
                   <span>{r.descricao}</span>
                   <Badge variant="secondary" className="text-[9px]">{r.match_por}</Badge>
                 </div>
-                <Button variant="ghost" size="sm" className="text-red-500" onClick={() => handleDelete(r.id)}>
+                <Button variant="ghost" size="sm" className="text-status-error" onClick={() => handleDelete(r.id)}>
                   <Trash2 className="w-3.5 h-3.5" />
                 </Button>
               </div>

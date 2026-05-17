@@ -143,7 +143,7 @@ export function IntelligenceOperationalTab({ farmerId }: OperationalTabProps) {
         <Card>
           <CardHeader className="pb-2">
             <CardTitle className="text-sm font-semibold flex items-center gap-2">
-              <AlertTriangle className="w-4 h-4 text-amber-500" />
+              <AlertTriangle className="w-4 h-4 text-status-warning" />
               Clientes em Risco
             </CardTitle>
           </CardHeader>

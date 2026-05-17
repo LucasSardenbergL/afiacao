@@ -265,7 +265,7 @@ const OrderDetail = () => {
                           : `Item ${qd.item_index + 1}`}
                       </span>
                       {qd.approved && (
-                        <Badge variant="outline" className="text-[10px] ml-auto border-emerald-400 text-emerald-600 bg-emerald-50 dark:bg-emerald-900/20 dark:text-emerald-300">
+                        <Badge variant="outline" className="text-[10px] ml-auto border-status-success/60 text-status-success bg-status-success-bg">
                           ✓ Qualidade aprovada
                         </Badge>
                       )}
@@ -363,7 +363,7 @@ const OrderDetail = () => {
                 </div>
                 <div className="flex justify-between text-sm">
                   <span className="text-muted-foreground">Status</span>
-                  <span className={order.paymentStatus === 'paid' ? 'text-emerald-600' : 'text-status-warning'}>
+                  <span className={order.paymentStatus === 'paid' ? 'text-status-success' : 'text-status-warning'}>
                     {order.paymentStatus === 'paid' ? 'Pago' : 'Pendente'}
                   </span>
                 </div>

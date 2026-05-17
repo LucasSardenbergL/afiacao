@@ -28,9 +28,9 @@ type ItemStatus = 'pendente' | 'em_conferencia' | 'conferido' | 'divergencia';
 
 const STATUS_COLORS: Record<ItemStatus, string> = {
   pendente: 'bg-muted text-muted-foreground',
-  em_conferencia: 'bg-blue-100 text-blue-800 dark:bg-blue-900 dark:text-blue-200',
-  conferido: 'bg-green-100 text-green-800 dark:bg-green-900 dark:text-green-200',
-  divergencia: 'bg-red-100 text-red-800 dark:bg-red-900 dark:text-red-200',
+  em_conferencia: 'bg-status-info-bg text-status-info-foreground',
+  conferido: 'bg-status-success-bg text-status-success-foreground',
+  divergencia: 'bg-status-error-bg text-status-error-foreground',
 };
 
 const STATUS_LABELS: Record<ItemStatus, string> = {
@@ -400,7 +400,7 @@ export default function RecebimentoConferencia() {
                         {decodeHtmlEntities(cte.razao_social_transportadora) || 'Transportadora'} · {formatCurrency(cte.valor_frete)}
                       </p>
                     </div>
-                    <Badge className={cn('text-xs', cte.status === 'efetivado' ? 'bg-muted text-muted-foreground' : 'bg-amber-100 text-amber-800')}>
+                    <Badge className={cn('text-xs', cte.status === 'efetivado' ? 'bg-muted text-muted-foreground' : 'bg-status-warning-bg text-status-warning-foreground')}>
                       {cte.status}
                     </Badge>
                   </CardContent>
@@ -559,7 +559,7 @@ export default function RecebimentoConferencia() {
 
               {activeConferida >= activeEsperada ? (
                 <div className="text-center py-6">
-                  <CheckCircle2 className="h-16 w-16 text-green-500 mx-auto mb-3" />
+                  <CheckCircle2 className="h-16 w-16 text-status-success mx-auto mb-3" />
                   <p className="text-lg font-semibold text-foreground">Todas as unidades conferidas!</p>
                   <Button className="mt-4" onClick={() => setActiveItemId(null)}>Fechar</Button>
                 </div>
