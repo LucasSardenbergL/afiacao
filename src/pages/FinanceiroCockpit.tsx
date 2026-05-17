@@ -15,6 +15,7 @@ import {
   CheckCircle2, Info, XCircle
 } from 'lucide-react';
 import { CockpitDrillDown, type DrillDownType } from '@/components/financeiro/CockpitDrillDown';
+import { PeriodOverrideHistory } from '@/components/financeiro/PeriodOverrideHistory';
 import { logger } from '@/lib/logger';
 
 const fmt = (v: number) => v.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' });
@@ -395,6 +396,9 @@ const FinanceiroCockpit = () => {
           </CardContent>
         </Card>
       )}
+
+      {/* Period override history */}
+      <PeriodOverrideHistory />
 
       {/* Data basis footer */}
       <div className="text-xs text-muted-foreground bg-muted/30 p-3 rounded-lg space-y-1">

@@ -19,6 +19,7 @@ import {
   ChevronDown, ChevronUp, Clock, Ban, Download, ShieldAlert, History
 } from 'lucide-react';
 import { AuditTrailDrawer } from '@/components/financeiro/AuditTrailDrawer';
+import { usePeriodLockHandler } from '@/components/financeiro/PeriodLockGuard';
 import { generateAlerts } from '@/utils/financeiroAlerts';
 
 // ═══════════════ FORMATTERS ═══════════════
@@ -66,6 +67,8 @@ const FinanceiroDashboard = () => {
     loadAging, loadDRE, loadFluxoCaixa, loadInadimplentes,
     syncAll, syncSpecific, calcularDRE, calcularDREAnual,
   } = useFinanceiro('all');
+
+  const lockHandler = usePeriodLockHandler();
 
   const [tab, setTab] = useState('visao-geral');
   const [cpFilter, setCpFilter] = useState('ABERTO');
@@ -824,6 +827,8 @@ const FinanceiroDashboard = () => {
           title={auditTarget.title}
         />
       )}
+
+      {lockHandler.modal}
     </div>
   );
 };
