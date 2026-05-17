@@ -71,56 +71,40 @@ ALTER TABLE public.kb_documents ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.kb_chunks ENABLE ROW LEVEL SECURITY;
 
 -- 7a. kb_documents
--- Staff (employee/master) lê tudo
+-- Staff (employee/master) lê tudo. Usa public.has_role() helper (pattern do projeto
+-- pra evitar recursão de RLS). Role data está em user_roles, não em profiles.role.
 CREATE POLICY "kb_documents_select_staff" ON public.kb_documents
   FOR SELECT
   USING (
-    EXISTS (
-      SELECT 1 FROM public.profiles p
-      WHERE p.user_id = auth.uid()
-        AND p.role IN ('employee', 'master')
-    )
+    public.has_role(auth.uid(), 'employee'::app_role)
+    OR public.has_role(auth.uid(), 'master'::app_role)
   );
 
 -- Master pode insert/update/delete; employee pode insert (cria como draft) + update do que criou
 CREATE POLICY "kb_documents_insert_staff" ON public.kb_documents
   FOR INSERT
   WITH CHECK (
-    EXISTS (
-      SELECT 1 FROM public.profiles p
-      WHERE p.user_id = auth.uid()
-        AND p.role IN ('employee', 'master')
-    )
+    public.has_role(auth.uid(), 'employee'::app_role)
+    OR public.has_role(auth.uid(), 'master'::app_role)
   );
 
 CREATE POLICY "kb_documents_update_master" ON public.kb_documents
   FOR UPDATE
   USING (
-    EXISTS (
-      SELECT 1 FROM public.profiles p
-      WHERE p.user_id = auth.uid() AND p.role = 'master'
-    )
+    public.has_role(auth.uid(), 'master'::app_role)
     OR created_by = auth.uid()
   );
 
 CREATE POLICY "kb_documents_delete_master" ON public.kb_documents
   FOR DELETE
-  USING (
-    EXISTS (
-      SELECT 1 FROM public.profiles p
-      WHERE p.user_id = auth.uid() AND p.role = 'master'
-    )
-  );
+  USING (public.has_role(auth.uid(), 'master'::app_role));
 
 -- 7b. kb_chunks: staff lê tudo, edge function (service role) escreve
 CREATE POLICY "kb_chunks_select_staff" ON public.kb_chunks
   FOR SELECT
   USING (
-    EXISTS (
-      SELECT 1 FROM public.profiles p
-      WHERE p.user_id = auth.uid()
-        AND p.role IN ('employee', 'master')
-    )
+    public.has_role(auth.uid(), 'employee'::app_role)
+    OR public.has_role(auth.uid(), 'master'::app_role)
   );
 
 -- INSERT/DELETE de chunks só via edge function (service role bypassa RLS)
@@ -135,10 +119,9 @@ CREATE POLICY "kb_bucket_select_staff" ON storage.objects
   FOR SELECT
   USING (
     bucket_id = 'knowledge-base'
-    AND EXISTS (
-      SELECT 1 FROM public.profiles p
-      WHERE p.user_id = auth.uid()
-        AND p.role IN ('employee', 'master')
+    AND (
+      public.has_role(auth.uid(), 'employee'::app_role)
+      OR public.has_role(auth.uid(), 'master'::app_role)
     )
   );
 
@@ -146,10 +129,9 @@ CREATE POLICY "kb_bucket_insert_staff" ON storage.objects
   FOR INSERT
   WITH CHECK (
     bucket_id = 'knowledge-base'
-    AND EXISTS (
-      SELECT 1 FROM public.profiles p
-      WHERE p.user_id = auth.uid()
-        AND p.role IN ('employee', 'master')
+    AND (
+      public.has_role(auth.uid(), 'employee'::app_role)
+      OR public.has_role(auth.uid(), 'master'::app_role)
     )
   );
 
@@ -157,10 +139,7 @@ CREATE POLICY "kb_bucket_delete_master" ON storage.objects
   FOR DELETE
   USING (
     bucket_id = 'knowledge-base'
-    AND EXISTS (
-      SELECT 1 FROM public.profiles p
-      WHERE p.user_id = auth.uid() AND p.role = 'master'
-    )
+    AND public.has_role(auth.uid(), 'master'::app_role)
   );
 
 -- 9. Comentários
