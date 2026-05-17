@@ -31,6 +31,14 @@ vi.mock('@/hooks/use-toast', () => ({
   useToast: () => ({ toast: vi.fn() }),
 }));
 
+vi.mock('@/hooks/useTranscription', () => ({
+  useTranscription: () => ({
+    status: 'idle' as const,
+    turns: [],
+    error: null,
+  }),
+}));
+
 import { WebRTCCallProvider, useWebRTCCallContext } from '../WebRTCCallContext';
 import { SipClient } from '@/lib/sip/sip-client';
 
@@ -94,5 +102,15 @@ describe('WebRTCCallProvider', () => {
 
     expect(result.current.prerollPlaying).toBe(false);
     expect(result.current.prerollEndsAt).toBeNull();
+  });
+
+  it('expõe campos de transcrição (inicialmente idle/empty)', async () => {
+    const { result } = renderHook(() => useWebRTCCallContext(), { wrapper });
+    await waitFor(() => expect(SipClient).toHaveBeenCalled());
+
+    expect(result.current.transcriptionStatus).toBe('idle');
+    expect(result.current.transcriptionTurns).toEqual([]);
+    expect(result.current.transcriptionError).toBeNull();
+    expect(result.current.vendorMicStream).toBeNull();
   });
 });

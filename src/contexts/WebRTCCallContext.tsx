@@ -5,6 +5,8 @@ import { invokeFunction } from '@/lib/invoke-function';
 import { useToast } from '@/hooks/use-toast';
 import { normalizeBrPhone, formatBrPhone } from '@/lib/phone';
 import { mixPrerollWithMic } from '@/lib/sip/audio-preroll';
+import { useTranscription } from '@/hooks/useTranscription';
+import type { TranscriptTurn, TranscriptionStatus } from '@/lib/transcription/types';
 
 export type WebRTCCallState =
   | 'idle' | 'connecting' | 'calling_origin' | 'calling_destination'
@@ -45,6 +47,15 @@ export interface WebRTCCallContextValue {
   prerollPlaying: boolean;
   /** timestamp (Date.now()) em que o preroll termina; null se sem preroll */
   prerollEndsAt: number | null;
+  /** Stream raw do mic do vendedor (sem preroll mixado).
+   *  Exposto pra TranscriptionEngine usar como canal "vendedor". */
+  vendorMicStream: MediaStream | null;
+  /** Status da transcrição ao vivo (idle/connecting/active/error) */
+  transcriptionStatus: TranscriptionStatus;
+  /** Turnos de transcrição em ordem cronológica */
+  transcriptionTurns: TranscriptTurn[];
+  /** Mensagem de erro da transcrição, se houver */
+  transcriptionError: string | null;
 }
 
 const WebRTCCallContext = createContext<WebRTCCallContextValue | null>(null);
@@ -63,6 +74,7 @@ export function WebRTCCallProvider({ children }: ProviderProps) {
   const [isMuted, setIsMuted] = useState(false);
   const [prerollPlaying, setPrerollPlaying] = useState(false);
   const [prerollEndsAt, setPrerollEndsAt] = useState<number | null>(null);
+  const [vendorMicStream, setVendorMicStream] = useState<MediaStream | null>(null);
 
   const clientRef = useRef<SipClient | null>(null);
   const durationTimerRef = useRef<number | null>(null);
@@ -149,6 +161,7 @@ export function WebRTCCallProvider({ children }: ProviderProps) {
   }, [callState]);
 
   function cleanupAudioResources() {
+    setVendorMicStream(null);
     if (prerollFinishTimerRef.current) {
       clearTimeout(prerollFinishTimerRef.current);
       prerollFinishTimerRef.current = null;
@@ -191,6 +204,7 @@ export function WebRTCCallProvider({ children }: ProviderProps) {
     try {
       const rawMic = await navigator.mediaDevices.getUserMedia({ audio: true, video: false });
       rawMicRef.current = rawMic;
+      setVendorMicStream(rawMic);
 
       let streamForCall: MediaStream = rawMic;
       if (prerollUrl) {
@@ -236,6 +250,12 @@ export function WebRTCCallProvider({ children }: ProviderProps) {
   const isEstablished = callState === 'established';
   const isFinished = ['finished', 'noanswer', 'busy', 'failed'].includes(callState);
 
+  const transcription = useTranscription({
+    vendorStream: vendorMicStream,
+    clientStream: remoteStream,
+    enabled: callState === 'established',
+  });
+
   const value: WebRTCCallContextValue = {
     callState,
     callId: null,
@@ -251,6 +271,10 @@ export function WebRTCCallProvider({ children }: ProviderProps) {
     toggleMute,
     prerollPlaying,
     prerollEndsAt,
+    vendorMicStream,
+    transcriptionStatus: transcription.status,
+    transcriptionTurns: transcription.turns,
+    transcriptionError: transcription.error,
   };
 
   return <WebRTCCallContext.Provider value={value}>{children}</WebRTCCallContext.Provider>;
