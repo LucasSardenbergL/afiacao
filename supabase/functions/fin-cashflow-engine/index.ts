@@ -241,6 +241,36 @@ function calcularTaxasHistoricas(crs: CR[]): TaxasHistoricas {
   };
 }
 
+type PremissasAplicadas = {
+  inadimplencia_pct: number;
+  atraso_medio_dias: number;
+  overrides_cenario: Record<string, unknown>;
+};
+
+function aplicarCenario(
+  taxas: TaxasHistoricas,
+  cenario: Cenario,
+  config: Config,
+): PremissasAplicadas {
+  if (cenario === 'realista') {
+    return {
+      inadimplencia_pct: taxas.inadimplencia_observada_pct,
+      atraso_medio_dias: taxas.atraso_medio_dias,
+      overrides_cenario: {},
+    };
+  }
+
+  const overrides = config.overrides_cenario[cenario];
+  const inadAjustado = taxas.inadimplencia_observada_pct * (1 + overrides.inadimplencia_pct_delta / 100);
+  const atrasoAjustado = taxas.atraso_medio_dias * (1 - overrides.recebimento_no_prazo_pct_delta / 100);
+
+  return {
+    inadimplencia_pct: Math.max(0, inadAjustado),
+    atraso_medio_dias: Math.max(0, atrasoAjustado),
+    overrides_cenario: overrides as Record<string, unknown>,
+  };
+}
+
 // === Pipeline (será implementada nas próximas tasks) ===
 async function calcular(
   _supabase: ReturnType<typeof createClient>,
