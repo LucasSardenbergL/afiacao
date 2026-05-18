@@ -1,6 +1,6 @@
 import { createContext, useContext, useEffect, useRef, useState, useCallback, type ReactNode } from 'react';
 import { SipClient } from '@/lib/sip/sip-client';
-import type { SipCallState } from '@/lib/sip/types';
+import type { SipCallState, IncomingCallInfo } from '@/lib/sip/types';
 import { invokeFunction } from '@/lib/invoke-function';
 import { supabase } from '@/integrations/supabase/client';
 import { toast } from 'sonner';
@@ -65,6 +65,10 @@ export interface WebRTCCallContextValue {
   spinAnalysis: SpinAnalysis | null;
   spinAnalysisStatus: SpinAnalysisStatus;
   spinAnalysisError: string | null;
+  /** PR-INBOUND-CALLS: chamada inbound pendente esperando accept/reject */
+  incomingCall: IncomingCallInfo | null;
+  acceptIncoming: () => Promise<void>;
+  rejectIncoming: () => void;
 }
 
 const WebRTCCallContext = createContext<WebRTCCallContextValue | null>(null);
@@ -122,6 +126,8 @@ export function WebRTCCallProvider({ children }: ProviderProps) {
   const [prerollPlaying, setPrerollPlaying] = useState(false);
   const [prerollEndsAt, setPrerollEndsAt] = useState<number | null>(null);
   const [vendorMicStream, setVendorMicStream] = useState<MediaStream | null>(null);
+  // PR-INBOUND-CALLS
+  const [incomingCall, setIncomingCall] = useState<IncomingCallInfo | null>(null);
 
   const clientRef = useRef<SipClient | null>(null);
   const durationTimerRef = useRef<number | null>(null);
@@ -155,6 +161,8 @@ export function WebRTCCallProvider({ children }: ProviderProps) {
         client.on('stateChange', (s) => setCallState(SIP_TO_PUBLIC[s]));
         client.on('localStream', (s) => setLocalStream(s));
         client.on('remoteStream', (s) => setRemoteStream(s));
+        // PR-INBOUND-CALLS: emite quando chamada entra
+        client.on('incomingCall', (info) => setIncomingCall(info));
         client.on('error', (e) => {
           setError(e.message);
           toast.error('Erro WebRTC', { description: e.message });
@@ -322,6 +330,51 @@ export function WebRTCCallProvider({ children }: ProviderProps) {
     }
   }, []);
 
+  // PR-INBOUND-CALLS: atende chamada pendente. Mesmo setup de áudio do makeCall (mic + preroll).
+  const acceptIncoming = useCallback(async () => {
+    if (!incomingCall || !clientRef.current) return;
+
+    // Reset refs de sessão (mesma lógica do makeCall pro persist funcionar)
+    analysisHistoryRef.current = [];
+    dialedPhoneRef.current = incomingCall.phone;
+    callStartedAtRef.current = new Date();
+
+    cleanupAudioResources();
+
+    try {
+      const rawMic = await navigator.mediaDevices.getUserMedia({ audio: true, video: false });
+      rawMicRef.current = rawMic;
+      setVendorMicStream(rawMic);
+
+      let streamForCall: MediaStream = rawMic;
+      if (prerollUrl) {
+        const mix = await mixPrerollWithMic(prerollUrl, rawMic);
+        streamForCall = mix.stream;
+        prerollPlayRef.current = mix.play;
+        prerollCloseRef.current = mix.close;
+        prerollDurationRef.current = mix.durationSeconds;
+      }
+
+      clientRef.current.acceptIncoming(streamForCall);
+      const callerLabel = incomingCall.displayName ?? formatBrPhone(incomingCall.phone);
+      setIncomingCall(null);
+      toast.success('📞 Chamada atendida', { description: callerLabel });
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : 'Erro ao atender';
+      setError(msg);
+      cleanupAudioResources();
+      setIncomingCall(null);
+      toast.error('Erro ao atender chamada', { description: msg });
+    }
+  }, [incomingCall, prerollUrl]);
+
+  const rejectIncoming = useCallback(() => {
+    if (!clientRef.current) return;
+    clientRef.current.rejectIncoming();
+    setIncomingCall(null);
+    toast.info('Chamada rejeitada');
+  }, []);
+
   const isActive = !['idle', 'finished', 'noanswer', 'busy', 'failed', 'error'].includes(callState);
   const isConnecting = callState === 'connecting';
   const isRinging = callState === 'calling_origin' || callState === 'calling_destination';
@@ -373,6 +426,9 @@ export function WebRTCCallProvider({ children }: ProviderProps) {
     spinAnalysis: spin.analysis,
     spinAnalysisStatus: spin.status,
     spinAnalysisError: spin.error,
+    incomingCall,
+    acceptIncoming,
+    rejectIncoming,
   };
 
   return <WebRTCCallContext.Provider value={value}>{children}</WebRTCCallContext.Provider>;

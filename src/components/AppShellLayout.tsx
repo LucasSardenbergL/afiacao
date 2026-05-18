@@ -1,6 +1,7 @@
 import { useEffect } from 'react';
 import { Outlet, useLocation } from 'react-router-dom';
 import { AppShell } from './AppShell';
+import { IncomingCallModal } from './call/IncomingCallModal';
 
 /**
  * Limpa scroll-locks e pointer-events deixados por overlays Radix
@@ -55,6 +56,8 @@ export function AppShellLayout() {
   return (
     <AppShell>
       <Outlet />
+      {/* PR-INBOUND-CALLS: modal global pra chamadas inbound em qualquer tela autenticada */}
+      <IncomingCallModal />
     </AppShell>
   );
 }

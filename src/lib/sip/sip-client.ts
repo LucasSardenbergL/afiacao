@@ -10,6 +10,9 @@ export class SipClient {
   // JsSIP's RTCSession surface used here is narrow (on/terminate/connection.getReceivers); full type import isn't worth the coupling
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   private currentSession: any = null;
+  // PR-INBOUND-CALLS: sessão entrante aguardando answer pelo vendedor
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  private pendingIncoming: any = null;
   private callStartedAt: number | null = null;
   private currentLocalStream: MediaStream | null = null;
   private muted = false;
@@ -32,6 +35,41 @@ export class SipClient {
     this.ua.on('registrationFailed', (e: any) => {
       this.setState('register_failed');
       this.emit('error', new Error(`SIP registration failed: ${e.cause}`));
+    });
+
+    // PR-INBOUND-CALLS: handler de chamada inbound
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    this.ua.on('newRTCSession', (e: any) => {
+      const session = e.session;
+      if (e.originator !== 'remote') {
+        // Outbound — lifecycle já tratado em makeCall via this.currentSession
+        return;
+      }
+      // Ocupado? Auto-rejeita (busy)
+      if (this.currentSession || this.pendingIncoming) {
+        try { session.terminate({ status_code: 486, reason_phrase: 'Busy Here' }); } catch { /* noop */ }
+        return;
+      }
+
+      this.pendingIncoming = session;
+
+      const fromUri = session.remote_identity?.uri;
+      const displayName = session.remote_identity?.display_name ?? null;
+      const phone = fromUri?.user ?? 'desconhecido';
+
+      this.emit('incomingCall', {
+        phone,
+        displayName,
+        receivedAt: Date.now(),
+      });
+
+      // Caller cancelou antes do answer
+      session.on('failed', () => {
+        if (this.pendingIncoming === session) {
+          this.pendingIncoming = null;
+          this.emit('stateChange', 'idle');
+        }
+      });
     });
   }
 
@@ -83,6 +121,49 @@ export class SipClient {
     this.currentSession.on('ended', () => {
       this.setState('ended');
     });
+  }
+
+  /** PR-INBOUND-CALLS: atende chamada inbound pendente com mediaStream do vendedor (mic + preroll mixed) */
+  acceptIncoming(micStream: MediaStream): void {
+    if (!this.pendingIncoming) {
+      throw new Error('Nenhuma chamada inbound pendente');
+    }
+    const session = this.pendingIncoming;
+    this.pendingIncoming = null;
+    this.currentSession = session;
+    this.currentLocalStream = micStream;
+    this.setState('established');
+    this.emit('localStream', micStream);
+
+    session.answer({
+      mediaStream: micStream,
+      rtcOfferConstraints: { offerToReceiveAudio: true, offerToReceiveVideo: false },
+      pcConfig: {
+        iceServers: this.config.iceServers ?? [{ urls: 'stun:stun.l.google.com:19302' }],
+      },
+    });
+
+    this.callStartedAt = Date.now();
+
+    session.on('confirmed', () => this.extractRemoteStream());
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    session.on('failed', (e: any) => {
+      this.setState('failed');
+      this.emit('error', new Error(`Inbound call failed: ${e?.cause ?? 'unknown'}`));
+    });
+    session.on('ended', () => {
+      this.setState('ended');
+    });
+  }
+
+  /** PR-INBOUND-CALLS: rejeita chamada inbound pendente */
+  rejectIncoming(): void {
+    if (!this.pendingIncoming) return;
+    try {
+      this.pendingIncoming.terminate({ status_code: 603, reason_phrase: 'Decline' });
+    } catch { /* noop */ }
+    this.pendingIncoming = null;
+    this.setState('idle');
   }
 
   hangUp(): void {
