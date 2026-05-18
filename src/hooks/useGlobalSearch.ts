@@ -88,7 +88,8 @@ export function useGlobalSearch(query: string, enabled = true) {
         id: p.user_id,
         title: p.name ?? 'Sem nome',
         subtitle: p.document ?? p.email ?? undefined,
-        path: `/admin/customers/${p.user_id}`,
+        // Vai direto pro 360° (dashboard rico), não pra lista com modal genérico
+        path: `/admin/customers/${p.user_id}/360`,
       }));
     },
   });
