@@ -1,6 +1,6 @@
 import { useState, useEffect, useMemo } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { useInfiniteQuery, useQuery, useQueryClient } from '@tanstack/react-query';
+import { useInfiniteQuery, useQuery, useQueryClient, type InfiniteData } from '@tanstack/react-query';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
@@ -8,6 +8,7 @@ import { Input } from '@/components/ui/input';
 import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle, AlertDialogTrigger } from '@/components/ui/alert-dialog';
 import { supabase } from '@/integrations/supabase/client';
+import type { Tables } from '@/integrations/supabase/types';
 import { useAuth } from '@/contexts/AuthContext';
 import { Loader2, ShoppingCart, Plus, Package, Trash2, Building2, Wrench, Share2, Printer, Pencil, Search, ChevronLeft } from 'lucide-react';
 import { EmptyState } from '@/components/EmptyState';
@@ -17,8 +18,24 @@ import { format } from 'date-fns';
 import { ptBR } from 'date-fns/locale';
 import { toast } from 'sonner';
 import { StatusBadgeSimple } from '@/components/StatusBadge';
+import type { OrderStatus } from '@/types';
 import { shareOrderViaWhatsApp } from '@/utils/whatsappShare';
 import { useInfiniteScroll } from '@/hooks/useInfiniteScroll';
+
+type SalesOrderRow = Tables<'sales_orders'>;
+type AfiacaoOrderRow = Tables<'orders'>;
+type ProfileRow = Tables<'profiles'>;
+
+// Shape de cada item dentro de orders.items (jsonb). Só os campos consumidos aqui.
+interface AfiacaoItemRaw {
+  category?: string | null;
+  name?: string | null;
+  quantity?: number | null;
+  unitPrice?: number | null;
+}
+
+// Cache do useInfiniteQuery de sales_orders — usado nos rollbacks optimistic.
+type SalesOrdersInfiniteCache = InfiniteData<SalesOrder[]>;
 
 // Inclui colacor_sc — antes ficava de fora da Tabs e os pedidos do SC só apareciam
 // na aba "Todos". 'afiacao' é virtual (representa o módulo Afiação, sem coluna
@@ -90,7 +107,10 @@ const SalesOrders = () => {
         .order('created_at', { ascending: false })
         .range(start, start + PAGE_SIZE - 1);
       if (error) throw error;
-      return (data || []).map((o: any) => ({ ...o, _source: 'sales' as const })) as SalesOrder[];
+      return ((data || []) as SalesOrderRow[]).map((o) => ({
+        ...o,
+        _source: 'sales' as const,
+      })) as unknown as SalesOrder[];
     },
     getNextPageParam: (lastPage, allPages) =>
       lastPage.length === PAGE_SIZE ? allPages.length : undefined,
@@ -109,25 +129,28 @@ const SalesOrders = () => {
         .order('created_at', { ascending: false })
         .range(start, start + PAGE_SIZE - 1);
       if (error) throw error;
-      return (data || []).map((o: any) => ({
-        id: o.id,
-        customer_user_id: o.user_id,
-        items: Array.isArray(o.items) ? o.items.map((i: any) => ({
-          descricao: i.category || i.name || 'Afiação',
-          quantidade: i.quantity || 1,
-          valor_unitario: i.unitPrice || 0,
-          valor_total: (i.quantity || 1) * (i.unitPrice || 0),
-        })) : [],
-        subtotal: o.subtotal || o.total || 0,
-        total: o.total || 0,
-        status: o.status,
-        omie_numero_pedido: null,
-        omie_pedido_id: null,
-        created_at: o.created_at,
-        notes: o.notes,
-        account: 'afiacao',
-        _source: 'afiacao' as const,
-      })) as SalesOrder[];
+      return ((data || []) as AfiacaoOrderRow[]).map((o) => {
+        const rawItems = Array.isArray(o.items) ? (o.items as unknown as AfiacaoItemRaw[]) : [];
+        return {
+          id: o.id,
+          customer_user_id: o.user_id,
+          items: rawItems.map((i) => ({
+            descricao: i.category || i.name || 'Afiação',
+            quantidade: i.quantity || 1,
+            valor_unitario: i.unitPrice || 0,
+            valor_total: (i.quantity || 1) * (i.unitPrice || 0),
+          })),
+          subtotal: o.subtotal || o.total || 0,
+          total: o.total || 0,
+          status: o.status,
+          omie_numero_pedido: null,
+          omie_pedido_id: null,
+          created_at: o.created_at,
+          notes: o.notes,
+          account: 'afiacao',
+          _source: 'afiacao' as const,
+        };
+      }) as SalesOrder[];
     },
     getNextPageParam: (lastPage, allPages) =>
       lastPage.length === PAGE_SIZE ? allPages.length : undefined,
@@ -154,7 +177,9 @@ const SalesOrders = () => {
         .select('user_id, name')
         .in('user_id', customerIds);
       const map: Record<string, string> = {};
-      (data || []).forEach((p: any) => { map[p.user_id] = p.name; });
+      ((data || []) as Pick<ProfileRow, 'user_id' | 'name'>[]).forEach((p) => {
+        map[p.user_id] = p.name ?? '';
+      });
       return map;
     },
   });
@@ -180,12 +205,12 @@ const SalesOrders = () => {
   // 4. Se Omie falhar: rollback do soft-delete + restaura cache
   // 5. Se Supabase update falhar: rollback do cache, NÃO chama Omie
   const deleteOrder = async (order: SalesOrder) => {
-    const snapshot = queryClient.getQueryData(['sales-orders-paginated']);
-    queryClient.setQueryData(['sales-orders-paginated'], (old: any) => {
+    const snapshot = queryClient.getQueryData<SalesOrdersInfiniteCache>(['sales-orders-paginated']);
+    queryClient.setQueryData<SalesOrdersInfiniteCache>(['sales-orders-paginated'], (old) => {
       if (!old) return old;
       return {
         ...old,
-        pages: old.pages.map((page: SalesOrder[]) => page.filter((o) => o.id !== order.id)),
+        pages: old.pages.map((page) => page.filter((o) => o.id !== order.id)),
       };
     });
     setSelectedIds((prev) => {
@@ -218,7 +243,7 @@ const SalesOrders = () => {
       });
       if (error) throw error;
       toast.success('Pedido excluído');
-    } catch (e: any) {
+    } catch (e) {
       console.error(e);
       // Rollback do soft-delete (deleted_at = null) — pedido volta a ser ativo
       await supabase
@@ -226,7 +251,9 @@ const SalesOrders = () => {
         .update({ deleted_at: null })
         .eq('id', order.id);
       queryClient.setQueryData(['sales-orders-paginated'], snapshot);
-      toast.error('Erro ao excluir pedido', { description: e?.message });
+      toast.error('Erro ao excluir pedido', {
+        description: e instanceof Error ? e.message : String(e),
+      });
     }
   };
 
@@ -234,13 +261,13 @@ const SalesOrders = () => {
   const deleteSelected = async () => {
     if (selectedIds.size === 0) return;
     const toDelete = orders.filter((o) => selectedIds.has(o.id) && o._source === 'sales');
-    const snapshot = queryClient.getQueryData(['sales-orders-paginated']);
+    const snapshot = queryClient.getQueryData<SalesOrdersInfiniteCache>(['sales-orders-paginated']);
     const deleteIds = new Set(toDelete.map((o) => o.id));
-    queryClient.setQueryData(['sales-orders-paginated'], (old: any) => {
+    queryClient.setQueryData<SalesOrdersInfiniteCache>(['sales-orders-paginated'], (old) => {
       if (!old) return old;
       return {
         ...old,
-        pages: old.pages.map((page: SalesOrder[]) => page.filter((o) => !deleteIds.has(o.id))),
+        pages: old.pages.map((page) => page.filter((o) => !deleteIds.has(o.id))),
       };
     });
     setSelectedIds(new Set());
@@ -296,15 +323,15 @@ const SalesOrders = () => {
     } else {
       // Parcial — restaura os que falharam no cache (já temos deleted_at=null no DB)
       const failedSet = new Set(failedIds);
-      queryClient.setQueryData(['sales-orders-paginated'], (old: any) => {
+      queryClient.setQueryData<SalesOrdersInfiniteCache>(['sales-orders-paginated'], (old) => {
         if (!old || !snapshot) return old;
         // Pega as rows que falharam do snapshot original e reinjeta na primeira página
-        const failedRows = (snapshot as any).pages
+        const failedRows = snapshot.pages
           .flat()
-          .filter((o: SalesOrder) => failedSet.has(o.id));
+          .filter((o) => failedSet.has(o.id));
         return {
           ...old,
-          pages: old.pages.map((page: SalesOrder[], i: number) =>
+          pages: old.pages.map((page, i) =>
             i === 0 ? [...failedRows, ...page] : page,
           ),
         };
@@ -498,7 +525,7 @@ const SalesOrders = () => {
                     </div>
                     <div className="text-right shrink-0 space-y-1">
                       {isAfiacao ? (
-                        <StatusBadgeSimple status={order.status as any} size="sm" />
+                        <StatusBadgeSimple status={order.status as OrderStatus} size="sm" />
                       ) : (
                         <Badge variant={status.variant}>{status.label}</Badge>
                       )}
