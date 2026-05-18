@@ -60,6 +60,11 @@ export function PostCallProspectWizard() {
         tags: lastCallCapture.capture.tags_detectadas,
         origin_call_id: lastCallCapture.callId ?? undefined,
         source: 'chamada_inbound',
+        // PR-CAPTURE-B: passa pros sync Omie
+        cidade: cidade.trim() || undefined,
+        estado: estado.trim() || undefined,
+        endereco: lastCallCapture.capture.endereco ?? undefined,
+        sync_omie: true,
       },
       {
         onSuccess: (data) => {
