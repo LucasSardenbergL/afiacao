@@ -5,7 +5,7 @@
 // Método Omie usado: PesquisarPedCompra
 // Doc: https://app.omie.com.br/api/v1/produtos/pedidocompra/#PesquisarPedCompra
 
-import { createClient } from "https://esm.sh/@supabase/supabase-js@2.45.0";
+import { createClient, type SupabaseClient } from "https://esm.sh/@supabase/supabase-js@2.45.0";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -42,6 +42,41 @@ interface EmpresaSummary {
   total_paginas: number;
   pedidos_sincronizados: number;
   erros: number;
+}
+
+// ===== Omie API shapes (inline — Edge Function não pode importar de @/) =====
+interface OmiePedidoCabecalho {
+  nCodPed?: number | string | null;
+  cCodIntPed?: string | null;
+  dIncData?: string | null;
+  cIncHora?: string | null;
+  cEtapa?: string | null;
+  cNumero?: string | null;
+  cContrato?: string | null;
+  dDtPrevisao?: string | null;
+  nCodFor?: number | string | null;
+  cObs?: string | null;
+  cObsInt?: string | null;
+  [key: string]: unknown;
+}
+
+interface OmiePedido {
+  cabecalho?: OmiePedidoCabecalho;
+  cabecalho_consulta?: OmiePedidoCabecalho;
+  [key: string]: unknown;
+}
+
+interface OmieSearchResponse {
+  pedidos_pesquisa?: OmiePedido[];
+  pedido_compra_produto?: OmiePedido[];
+  pedidoCompraProduto?: OmiePedido[];
+  nTotalPaginas?: number;
+  nTotalRegistros?: number;
+  nPagina?: number;
+  faultstring?: string;
+  faultcode?: string;
+  raw?: string;
+  [key: string]: unknown;
 }
 
 // ===== Helpers =====
@@ -96,7 +131,7 @@ async function callOmie(
   pagina: number,
   dataDe: string,
   dataAte: string,
-): Promise<any> {
+): Promise<OmieSearchResponse> {
   // PesquisarPedCompra NÃO suporta filtro nativo por fornecedor.
   // Filtramos pós-resposta em syncEmpresa().
   const param: Record<string, unknown> = {
@@ -131,9 +166,9 @@ async function callOmie(
     });
 
     const text = await res.text();
-    let json: any;
+    let json: OmieSearchResponse;
     try {
-      json = JSON.parse(text);
+      json = JSON.parse(text) as OmieSearchResponse;
     } catch {
       json = { raw: text };
     }
@@ -188,7 +223,7 @@ const PRESERVE_FIELDS = new Set([
  *   "10"=Digitação, "20"=Aprovação, "50"=Aprovado, "60"=Faturado,
  *   "70"=Recebido, "80"=Encerrado, "90"=Cancelado
  */
-function mapPedidoToRow(empresa: Empresa, pedido: any): Record<string, unknown> {
+function mapPedidoToRow(empresa: Empresa, pedido: OmiePedido): Record<string, unknown> {
   // PesquisarPedCompra retorna o cabeçalho em "cabecalho_consulta" (não "cabecalho")
   const cab = pedido?.cabecalho_consulta ?? pedido?.cabecalho ?? {};
   const etapa = String(cab?.cEtapa ?? "").trim();
@@ -218,7 +253,7 @@ function mapPedidoToRow(empresa: Empresa, pedido: any): Record<string, unknown> 
 }
 
 async function upsertPedido(
-  supabase: any,
+  supabase: SupabaseClient,
   row: Record<string, unknown>,
 ): Promise<void> {
   if (!row.omie_codigo_pedido) {
@@ -254,7 +289,7 @@ async function upsertPedido(
 }
 
 async function syncEmpresa(
-  supabase: any,
+  supabase: SupabaseClient,
   empresa: Empresa,
   dias: number,
   fornecedorCodigo: number | undefined,
@@ -278,7 +313,7 @@ async function syncEmpresa(
   let totalPaginas = 1;
 
   while (pagina <= totalPaginas) {
-    let resp: any;
+    let resp: OmieSearchResponse;
     try {
       resp = await callOmie(app_key, app_secret, pagina, dataDe, dataAte);
     } catch (err) {
@@ -300,7 +335,7 @@ async function syncEmpresa(
     }
 
     totalPaginas = resp?.nTotalPaginas ?? 1;
-    let pedidos: any[] = resp?.pedidos_pesquisa ?? resp?.pedido_compra_produto ?? resp?.pedidoCompraProduto ?? [];
+    let pedidos: OmiePedido[] = resp?.pedidos_pesquisa ?? resp?.pedido_compra_produto ?? resp?.pedidoCompraProduto ?? [];
 
     // DEBUG: log shape do primeiro pedido (página 1) e top-level keys
     if (pagina === 1) {

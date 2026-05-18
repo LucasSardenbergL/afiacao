@@ -1,5 +1,5 @@
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
-import { createClient } from "npm:@supabase/supabase-js@2";
+import { createClient, type SupabaseClient } from "https://esm.sh/@supabase/supabase-js@2.45.0";
 import { authorizeCronOrStaff } from "../_shared/auth.ts";
 
 const corsHeaders = {
@@ -26,7 +26,7 @@ function parseCsv(content: string): string[][] {
   return lines.map((line) => line.split(";").map((c) => c.trim()));
 }
 
-type Supabase = any;
+type Supabase = SupabaseClient;
 
 const isFormulaImportType = (tipo: string) =>
   tipo === "formulas_padrao" || tipo === "formulas_personalizadas";
@@ -143,7 +143,7 @@ async function processDadosCorantes(supabase: Supabase, rows: string[][], accoun
       const { error } = await supabase.from("tint_corantes").upsert(row, { onConflict: "account,id_corante_sayersystem" });
       if (error) { errors++; errosDetalhe.push({ linha: i + 2, motivo: error.message }); }
       else if (existing) { updated++; } else { imported++; }
-    } catch (e: any) { errors++; errosDetalhe.push({ linha: i + 2, motivo: e.message }); }
+    } catch (e) { errors++; errosDetalhe.push({ linha: i + 2, motivo: e instanceof Error ? e.message : String(e) }); }
   }
   return { imported, updated, errors, errosDetalhe };
 }
@@ -165,7 +165,7 @@ async function processDadosProdutoBaseEmbalagem(supabase: Supabase, rows: string
       const embalagemId = await ensureEmbalagem(supabase, account, idEmbSayer, volumeMl, embalagem);
       await ensureSku(supabase, account, produtoId, baseId, embalagemId);
       imported++;
-    } catch (e: any) { errors++; errosDetalhe.push({ linha: i + 2, motivo: e.message }); }
+    } catch (e) { errors++; errosDetalhe.push({ linha: i + 2, motivo: e instanceof Error ? e.message : String(e) }); }
   }
   return { imported, updated, errors, errosDetalhe };
 }
@@ -256,7 +256,7 @@ async function processFormulas(supabase: Supabase, rows: string[][], account: st
         const { error: itemError } = await supabase.from("tint_formula_itens").insert(itemRows);
         if (itemError) console.error(`[tint-import] Erro inserindo itens formula ${formulaId}:`, itemError);
       }
-    } catch (e: any) { errors++; errosDetalhe.push({ linha: i + 2, motivo: e.message }); }
+    } catch (e) { errors++; errosDetalhe.push({ linha: i + 2, motivo: e instanceof Error ? e.message : String(e) }); }
   }
   return { imported, updated, errors, errosDetalhe };
 }
@@ -499,9 +499,10 @@ serve(async (req) => {
       }
       return await handleChunkMode(supabase, body);
     }
-  } catch (error: any) {
+  } catch (error) {
     console.error("[tint-import] Erro:", error);
-    return new Response(JSON.stringify({ error: error.message }), {
+    const message = error instanceof Error ? error.message : String(error);
+    return new Response(JSON.stringify({ error: message }), {
       status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" },
     });
   }
