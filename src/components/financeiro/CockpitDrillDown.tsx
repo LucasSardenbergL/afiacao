@@ -4,6 +4,13 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@
 import { Badge } from '@/components/ui/badge';
 import { Skeleton } from '@/components/ui/skeleton';
 import { supabase } from '@/integrations/supabase/client';
+import type {
+  FinContaCorrenteRow,
+  FinContaPagarRow,
+  FinContaReceberRow,
+} from '@/services/financeiroTypes';
+
+type DrillRow = FinContaCorrenteRow | FinContaPagarRow | FinContaReceberRow;
 
 const fmt = (v: number) => v.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' });
 const fmtDate = (d: string | null) => d ? new Date(d + 'T00:00:00').toLocaleDateString('pt-BR') : '—';
@@ -33,7 +40,7 @@ const TITLES: Record<string, string> = {
 
 export function CockpitDrillDown({ type, onClose }: Props) {
   const [loading, setLoading] = useState(true);
-  const [data, setData] = useState<any[]>([]);
+  const [data, setData] = useState<DrillRow[]>([]);
   const [total, setTotal] = useState(0);
 
   useEffect(() => {
@@ -66,11 +73,11 @@ export function CockpitDrillDown({ type, onClose }: Props) {
               {[1,2,3,4,5].map(i => <Skeleton key={i} className="h-10 w-full" />)}
             </div>
           ) : type === 'caixa' ? (
-            <CaixaTable data={data} />
+            <CaixaTable data={data as FinContaCorrenteRow[]} />
           ) : type === 'cr_aberto' || type === 'cr_vencido' || type === 'inadimplencia' || type === 'aging_critico' ? (
-            <CRTable data={data} />
+            <CRTable data={data as FinContaReceberRow[]} />
           ) : type === 'cp_aberto' ? (
-            <CPTable data={data} />
+            <CPTable data={data as FinContaPagarRow[]} />
           ) : null}
         </div>
       </SheetContent>
@@ -78,68 +85,68 @@ export function CockpitDrillDown({ type, onClose }: Props) {
   );
 }
 
-async function loadData(type: DrillDownType): Promise<{ rows: any[]; total: number }> {
+async function loadData(type: DrillDownType): Promise<{ rows: DrillRow[]; total: number }> {
   if (type === 'caixa') {
     const { data } = await supabase
-      .from('fin_contas_correntes' as any)
+      .from('fin_contas_correntes')
       .select('*')
       .eq('ativo', true)
       .order('company');
-    const rows = data || [];
-    return { rows, total: rows.reduce((s: number, r: any) => s + (r.saldo_atual || 0), 0) };
+    const rows = data ?? [];
+    return { rows, total: rows.reduce((s, r) => s + (r.saldo_atual || 0), 0) };
   }
 
   if (type === 'cr_aberto') {
     const { data } = await supabase
-      .from('fin_contas_receber' as any)
+      .from('fin_contas_receber')
       .select('*')
       .in('status_titulo', ['A VENCER', 'ATRASADO', 'VENCE HOJE'])
       .order('data_vencimento', { ascending: true })
       .limit(500);
-    const rows = data || [];
-    return { rows, total: rows.reduce((s: number, r: any) => s + ((r.valor_documento || 0) - (r.valor_recebido || 0)), 0) };
+    const rows = data ?? [];
+    return { rows, total: rows.reduce((s, r) => s + ((r.valor_documento || 0) - (r.valor_recebido || 0)), 0) };
   }
 
   if (type === 'cp_aberto') {
     const { data } = await supabase
-      .from('fin_contas_pagar' as any)
+      .from('fin_contas_pagar')
       .select('*')
       .in('status_titulo', ['A VENCER', 'ATRASADO', 'VENCE HOJE'])
       .order('data_vencimento', { ascending: true })
       .limit(500);
-    const rows = data || [];
-    return { rows, total: rows.reduce((s: number, r: any) => s + ((r.valor_documento || 0) - (r.valor_pago || 0)), 0) };
+    const rows = data ?? [];
+    return { rows, total: rows.reduce((s, r) => s + ((r.valor_documento || 0) - (r.valor_pago || 0)), 0) };
   }
 
   if (type === 'cr_vencido' || type === 'inadimplencia') {
     const { data } = await supabase
-      .from('fin_contas_receber' as any)
+      .from('fin_contas_receber')
       .select('*')
       .eq('status_titulo', 'ATRASADO')
       .order('data_vencimento', { ascending: true })
       .limit(500);
-    const rows = data || [];
-    return { rows, total: rows.reduce((s: number, r: any) => s + ((r.valor_documento || 0) - (r.valor_recebido || 0)), 0) };
+    const rows = data ?? [];
+    return { rows, total: rows.reduce((s, r) => s + ((r.valor_documento || 0) - (r.valor_recebido || 0)), 0) };
   }
 
   if (type === 'aging_critico') {
     const cutoff60 = new Date();
     cutoff60.setDate(cutoff60.getDate() - 60);
     const { data } = await supabase
-      .from('fin_contas_receber' as any)
+      .from('fin_contas_receber')
       .select('*')
       .eq('status_titulo', 'ATRASADO')
       .lt('data_vencimento', cutoff60.toISOString().split('T')[0])
       .order('data_vencimento', { ascending: true })
       .limit(500);
-    const rows = data || [];
-    return { rows, total: rows.reduce((s: number, r: any) => s + ((r.valor_documento || 0) - (r.valor_recebido || 0)), 0) };
+    const rows = data ?? [];
+    return { rows, total: rows.reduce((s, r) => s + ((r.valor_documento || 0) - (r.valor_recebido || 0)), 0) };
   }
 
   return { rows: [], total: 0 };
 }
 
-function CaixaTable({ data }: { data: any[] }) {
+function CaixaTable({ data }: { data: FinContaCorrenteRow[] }) {
   return (
     <Table>
       <TableHeader>
@@ -166,7 +173,7 @@ function CaixaTable({ data }: { data: any[] }) {
   );
 }
 
-function CRTable({ data }: { data: any[] }) {
+function CRTable({ data }: { data: FinContaReceberRow[] }) {
   return (
     <Table>
       <TableHeader>
@@ -206,7 +213,7 @@ function CRTable({ data }: { data: any[] }) {
   );
 }
 
-function CPTable({ data }: { data: any[] }) {
+function CPTable({ data }: { data: FinContaPagarRow[] }) {
   return (
     <Table>
       <TableHeader>

@@ -59,6 +59,9 @@ import {
 
 const EMPRESA = "OBEN";
 
+// Tipos locais — tabelas custom (fila_aplicacao_omie, sku_substituicao) e RPCs
+// (gerar_fila_aplicacao_omie, registrar_substituicao_sku) ainda não estão no
+// Database type gerado. Quando entrarem, podem ser substituídos por Tables<>.
 type FilaItem = {
   id: number;
   empresa: string;
@@ -74,10 +77,30 @@ type FilaItem = {
   mensagem_bloqueio: string | null;
   delta_max_perc: number | null;
   aplicado_em: string | null;
-  resposta_omie: any;
+  resposta_omie: Record<string, unknown> | null;
   erro_omie: string | null;
   criado_em: string;
 };
+
+interface FilaCounterRow {
+  status_validacao: string;
+  aplicado_em: string | null;
+}
+
+interface GerarFilaResult {
+  prontos?: number;
+  bloqueados_inativos?: number;
+  bloqueados_substituicao?: number;
+}
+
+interface RegistrarSubstResult {
+  error?: string;
+}
+
+interface SkuParametroOpcao {
+  sku_codigo_omie: number;
+  sku_descricao: string | null;
+}
 
 function deltaPct(novo: number | null, atual: number | null): number | null {
   if (novo == null) return null;
@@ -140,12 +163,13 @@ export default function AdminReposicaoAplicacao() {
   const { data: contadores } = useQuery({
     queryKey: ["fila-aplicacao-contadores", EMPRESA],
     queryFn: async () => {
-      const { data } = await (supabase as any)
-        .from("fila_aplicacao_omie")
+      const result = await supabase
+        .from("fila_aplicacao_omie" as never)
         .select("status_validacao, aplicado_em")
         .eq("empresa", EMPRESA);
+      const rows = (result.data ?? []) as unknown as FilaCounterRow[];
       const c = { pronto: 0, inativo: 0, substituicao: 0, aplicado: 0 };
-      (data ?? []).forEach((r: any) => {
+      rows.forEach((r) => {
         if (r.aplicado_em) c.aplicado++;
         else if (r.status_validacao === "pronto") c.pronto++;
         else if (r.status_validacao === "bloqueado_inativo") c.inativo++;
@@ -160,7 +184,11 @@ export default function AdminReposicaoAplicacao() {
   const { data: itens, isLoading } = useQuery({
     queryKey: ["fila-aplicacao", EMPRESA, tab],
     queryFn: async () => {
-      let q: any = (supabase as any).from("fila_aplicacao_omie").select("*").eq("empresa", EMPRESA);
+      // Builder genérico — tabela ainda fora do Database type, cast de retorno.
+      let q = supabase
+        .from("fila_aplicacao_omie" as never)
+        .select("*")
+        .eq("empresa", EMPRESA);
       if (tab === "pronto") q = q.eq("status_validacao", "pronto").is("aplicado_em", null);
       else if (tab === "inativo")
         q = q.eq("status_validacao", "bloqueado_inativo").is("aplicado_em", null);
@@ -173,7 +201,7 @@ export default function AdminReposicaoAplicacao() {
           .order("aplicado_em", { ascending: false });
       const { data, error } = await q;
       if (error) throw error;
-      return (data ?? []) as FilaItem[];
+      return (data ?? []) as unknown as FilaItem[];
     },
     refetchInterval: tab === "aplicado" ? 60000 : 15000,
   });
@@ -210,14 +238,14 @@ export default function AdminReposicaoAplicacao() {
   // Mutations
   const gerarFila = useMutation({
     mutationFn: async () => {
-      const { data, error } = await supabase.rpc("gerar_fila_aplicacao_omie" as any, {
+      const { data, error } = await supabase.rpc("gerar_fila_aplicacao_omie" as never, {
         p_empresa: EMPRESA,
       });
       if (error) throw error;
-      return data;
+      return data as unknown as GerarFilaResult | GerarFilaResult[];
     },
-    onSuccess: (data: any) => {
-      const r = Array.isArray(data) ? data[0] : data;
+    onSuccess: (data) => {
+      const r = (Array.isArray(data) ? data[0] : data) as GerarFilaResult | undefined;
       toast.success(
         `Fila gerada: ${r?.prontos ?? 0} prontos, ${r?.bloqueados_inativos ?? 0} inativos, ${
           r?.bloqueados_substituicao ?? 0
@@ -226,7 +254,7 @@ export default function AdminReposicaoAplicacao() {
       qc.invalidateQueries({ queryKey: ["fila-aplicacao"] });
       qc.invalidateQueries({ queryKey: ["fila-aplicacao-contadores"] });
     },
-    onError: (e: any) => toast.error("Falha ao gerar fila: " + e.message),
+    onError: (e: Error) => toast.error("Falha ao gerar fila: " + e.message),
   });
 
   const sincronizarOmie = useMutation({
@@ -241,7 +269,7 @@ export default function AdminReposicaoAplicacao() {
       toast.success("Sincronização Omie disparada");
       qc.invalidateQueries({ queryKey: ["sku-status-omie-ultimo-sync"] });
     },
-    onError: (e: any) => toast.error("Falha no sync: " + e.message),
+    onError: (e: Error) => toast.error("Falha no sync: " + e.message),
   });
 
   const aplicarIds = useMutation({
@@ -258,7 +286,7 @@ export default function AdminReposicaoAplicacao() {
       qc.invalidateQueries({ queryKey: ["fila-aplicacao"] });
       qc.invalidateQueries({ queryKey: ["fila-aplicacao-contadores"] });
     },
-    onError: (e: any) => toast.error("Falha ao aplicar: " + e.message),
+    onError: (e: Error) => toast.error("Falha ao aplicar: " + e.message),
   });
 
   const desativarSku = useMutation({
@@ -464,7 +492,8 @@ export default function AdminReposicaoAplicacao() {
                           checked={selected.has(it.id)}
                           onCheckedChange={(v) => {
                             const n = new Set(selected);
-                            v ? n.add(it.id) : n.delete(it.id);
+                            if (v) n.add(it.id);
+                            else n.delete(it.id);
                             setSelected(n);
                           }}
                         />
@@ -732,7 +761,7 @@ function SubstituicaoPendenteCard({
     mutationFn: async () => {
       const { error } = await supabase
         .from("sku_substituicao")
-        .update({ status: "cancelada" } as any)
+        .update({ status: "cancelada" } as never)
         .eq("id", subst!.id);
       if (error) throw error;
     },
@@ -746,7 +775,7 @@ function SubstituicaoPendenteCard({
     mutationFn: async () => {
       const { error } = await supabase
         .from("sku_substituicao")
-        .update({ status: "aplicada", aplicado_em: new Date().toISOString() } as any)
+        .update({ status: "aplicada", aplicado_em: new Date().toISOString() } as never)
         .eq("id", subst!.id);
       if (error) throw error;
     },
@@ -833,7 +862,7 @@ function SubstituicaoModal({
       if (!skuNovo) throw new Error("Selecione o SKU novo");
       if (!motivo.trim()) throw new Error("Motivo é obrigatório");
       const { data: { user } } = await supabase.auth.getUser();
-      const { data, error } = await supabase.rpc("registrar_substituicao_sku" as any, {
+      const { data, error } = await supabase.rpc("registrar_substituicao_sku" as never, {
         p_empresa: item.empresa,
         p_codigo_antigo: item.sku_codigo_omie,
         p_codigo_novo: skuNovo,
@@ -842,14 +871,15 @@ function SubstituicaoModal({
         p_usuario: user?.email ?? "sistema",
       });
       if (error) throw error;
-      if ((data as any)?.error) throw new Error((data as any).error);
+      const result = data as unknown as RegistrarSubstResult | null;
+      if (result?.error) throw new Error(result.error);
       return data;
     },
     onSuccess: () => {
       toast.success("Substituição registrada");
       onDone();
     },
-    onError: (e: any) => toast.error(e.message),
+    onError: (e: Error) => toast.error(e.message),
   });
 
   return (
@@ -872,7 +902,7 @@ function SubstituicaoModal({
             />
             {opcoes && opcoes.length > 0 && (
               <div className="mt-2 border rounded max-h-44 overflow-auto text-sm">
-                {opcoes.map((o: any) => (
+                {(opcoes as SkuParametroOpcao[]).map((o) => (
                   <button
                     key={o.sku_codigo_omie}
                     type="button"

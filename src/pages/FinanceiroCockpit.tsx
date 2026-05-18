@@ -16,6 +16,12 @@ import {
 } from 'lucide-react';
 import { CockpitDrillDown, type DrillDownType } from '@/components/financeiro/CockpitDrillDown';
 import { logger } from '@/lib/logger';
+import type { LucideIcon } from 'lucide-react';
+import type { Database } from '@/integrations/supabase/types';
+
+type FinConfiabilidadeRow = Database['public']['Tables']['fin_confiabilidade']['Row'];
+type FinProjecaoSemana = Database['public']['Functions']['fin_projecao_13_semanas']['Returns'][number];
+type InadimplenteRow = { nome: string; cnpj: string; total_vencido: number; qtd_titulos: number };
 
 const fmt = (v: number) => v.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' });
 const fmtCompact = (v: number) => {
@@ -25,7 +31,7 @@ const fmtCompact = (v: number) => {
 };
 
 // ═══════════════ TRANSPARENCY BADGE ═══════════════
-function TransparencyBadge({ conf }: { conf: any | null }) {
+function TransparencyBadge({ conf }: { conf: FinConfiabilidadeRow | null }) {
   if (!conf) return <Badge variant="outline" className="text-[9px]">Sem dados de confiabilidade</Badge>;
 
   const pctMap = conf.pct_valor_mapeado || 0;
@@ -73,9 +79,9 @@ const FinanceiroCockpit = () => {
   const [resumo, setResumo] = useState<Record<string, FinResumo>>({});
   const [aging, setAging] = useState<AgingData | null>(null);
   const [dre, setDre] = useState<FinDRE[]>([]);
-  const [inadimplentes, setInadimplentes] = useState<any[]>([]);
-  const [projecao13, setProjecao13] = useState<any[]>([]);
-  const [confiabilidade, setConfiabilidade] = useState<any[]>([]);
+  const [inadimplentes, setInadimplentes] = useState<InadimplenteRow[]>([]);
+  const [projecao13, setProjecao13] = useState<FinProjecaoSemana[]>([]);
+  const [confiabilidade, setConfiabilidade] = useState<FinConfiabilidadeRow[]>([]);
   const [drillDown, setDrillDown] = useState<DrillDownType>(null);
 
   const ano = new Date().getFullYear();
@@ -99,8 +105,8 @@ const FinanceiroCockpit = () => {
 
       // 13-week projection via RPC
       try {
-        const { data: proj } = await supabase.rpc('fin_projecao_13_semanas' as any, {}) as any;
-        setProjecao13(proj || []);
+        const { data: proj } = await supabase.rpc('fin_projecao_13_semanas', {});
+        setProjecao13(proj ?? []);
       } catch (e) {
         // RPC pode não existir ainda — registra para visibilidade em vez de falhar silencioso
         logger.warn('RPC fin_projecao_13_semanas indisponível', {
@@ -109,11 +115,11 @@ const FinanceiroCockpit = () => {
       }
 
       // Confiabilidade for current month per company
-      const confResults: any[] = [];
+      const confResults: FinConfiabilidadeRow[] = [];
       for (const co of ['oben', 'colacor', 'colacor_sc']) {
         try {
           const { data: conf } = await supabase
-            .from('fin_confiabilidade' as any)
+            .from('fin_confiabilidade')
             .select('*')
             .eq('company', co)
             .eq('ano', ano)
@@ -341,7 +347,7 @@ const FinanceiroCockpit = () => {
                   </TableRow>
                 </TableHeader>
                 <TableBody>
-                  {projecao13.map((w: any, i: number) => (
+                  {projecao13.map((w, i) => (
                     <TableRow key={i} className={w.saldo_projetado < 0 ? 'bg-status-error-bg' : ''}>
                       <TableCell className="text-xs">{w.semana_label}</TableCell>
                       <TableCell className="text-right text-sm text-status-success">{fmtCompact(w.entradas_previstas)}</TableCell>
@@ -358,12 +364,12 @@ const FinanceiroCockpit = () => {
                 </TableBody>
               </Table>
             </div>
-            {projecao13.some((w: any) => w.saldo_projetado < 0) && (
+            {projecao13.some((w) => w.saldo_projetado < 0) && (
               <div className="mt-3 p-3 rounded-lg bg-status-error-bg border border-status-error/20 flex items-start gap-2">
                 <AlertTriangle className="w-4 h-4 text-status-error mt-0.5 shrink-0" />
                 <p className="text-sm text-status-error-fg">
-                  Projeção indica saldo negativo em {projecao13.filter((w: any) => w.saldo_projetado < 0).length} semana(s).
-                  Ação necessária antes de {projecao13.find((w: any) => w.saldo_projetado < 0)?.semana_label}.
+                  Projeção indica saldo negativo em {projecao13.filter((w) => w.saldo_projetado < 0).length} semana(s).
+                  Ação necessária antes de {projecao13.find((w) => w.saldo_projetado < 0)?.semana_label}.
                 </p>
               </div>
             )}
@@ -411,7 +417,7 @@ const FinanceiroCockpit = () => {
 // ═══════════════ SUB-COMPONENTS ═══════════════
 
 function CockpitCard({ title, value, positive, icon: Icon, detail, detailColor, badge, onClick }: {
-  title: string; value: string; positive: boolean; icon: any;
+  title: string; value: string; positive: boolean; icon: LucideIcon;
   detail?: string; detailColor?: string; badge?: string; onClick?: () => void;
 }) {
   return (
