@@ -1,6 +1,7 @@
 import { useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
+import type { Tables } from "@/integrations/supabase/types";
 import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
@@ -9,6 +10,9 @@ import { Sheet, SheetContent, SheetHeader, SheetTitle } from "@/components/ui/sh
 import { History, CheckCircle, XCircle, Loader2, Clock } from "lucide-react";
 import { formatDistanceToNow } from "date-fns";
 import { ptBR } from "date-fns/locale";
+
+type TintSyncRun = Tables<"tint_sync_runs">;
+type TintSyncError = Tables<"tint_sync_errors">;
 
 const statusConfig: Record<string, { label: string; color: string; icon: typeof CheckCircle }> = {
   complete: { label: "Completo", color: "bg-green-100 text-green-800", icon: CheckCircle },
@@ -48,9 +52,9 @@ export default function TintSyncRuns() {
     },
   });
 
-  const stores = [...new Set(runs.map((r: any) => r.store_code))];
+  const stores = [...new Set(runs.map((r: TintSyncRun) => r.store_code))];
 
-  const filtered = runs.filter((r: any) => {
+  const filtered = runs.filter((r: TintSyncRun) => {
     if (storeFilter !== "all" && r.store_code !== storeFilter) return false;
     if (statusFilter !== "all" && r.status !== statusFilter) return false;
     return true;
@@ -69,8 +73,8 @@ export default function TintSyncRuns() {
       {/* Summary */}
       <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
         <Card><CardContent className="p-4 text-center"><p className="text-2xl font-bold">{runs.length}</p><p className="text-xs text-muted-foreground">Total</p></CardContent></Card>
-        <Card><CardContent className="p-4 text-center"><p className="text-2xl font-bold text-green-600">{runs.filter((r: any) => r.status === "complete").length}</p><p className="text-xs text-muted-foreground">Completos</p></CardContent></Card>
-        <Card><CardContent className="p-4 text-center"><p className="text-2xl font-bold text-destructive">{runs.filter((r: any) => r.status === "error").length}</p><p className="text-xs text-muted-foreground">Erros</p></CardContent></Card>
+        <Card><CardContent className="p-4 text-center"><p className="text-2xl font-bold text-green-600">{runs.filter((r: TintSyncRun) => r.status === "complete").length}</p><p className="text-xs text-muted-foreground">Completos</p></CardContent></Card>
+        <Card><CardContent className="p-4 text-center"><p className="text-2xl font-bold text-destructive">{runs.filter((r: TintSyncRun) => r.status === "error").length}</p><p className="text-xs text-muted-foreground">Erros</p></CardContent></Card>
         <Card><CardContent className="p-4 text-center"><p className="text-2xl font-bold">{stores.length}</p><p className="text-xs text-muted-foreground">Lojas</p></CardContent></Card>
       </div>
 
@@ -116,7 +120,7 @@ export default function TintSyncRuns() {
                 <TableRow><TableCell colSpan={9} className="text-center py-8">Carregando...</TableCell></TableRow>
               ) : filtered.length === 0 ? (
                 <TableRow><TableCell colSpan={9} className="text-center text-muted-foreground py-8">Nenhuma execução encontrada</TableCell></TableRow>
-              ) : filtered.map((r: any) => {
+              ) : filtered.map((r: TintSyncRun) => {
                 const sc = statusConfig[r.status] || statusConfig.running;
                 return (
                   <TableRow key={r.id} className="cursor-pointer hover:bg-muted/50" onClick={() => setSelectedRun(r.id)}>
@@ -155,7 +159,7 @@ export default function TintSyncRuns() {
                   </TableRow>
                 </TableHeader>
                 <TableBody>
-                  {errors.map((e: any) => (
+                  {errors.map((e: TintSyncError) => (
                     <TableRow key={e.id}>
                       <TableCell><Badge variant="outline">{e.entity_type}</Badge></TableCell>
                       <TableCell className="font-mono text-xs">{e.entity_id || "—"}</TableCell>
