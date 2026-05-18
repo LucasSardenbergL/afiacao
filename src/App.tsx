@@ -55,6 +55,7 @@ const UnifiedOrder = lazy(() => import("./pages/UnifiedOrder"));
 const SalesOrderEdit = lazy(() => import("./pages/SalesOrderEdit"));
 const SalesQuotes = lazy(() => import("./pages/SalesQuotes"));
 const FarmerDashboard = lazy(() => import("./pages/FarmerDashboard"));
+const MeuDia = lazy(() => import("./pages/MeuDia"));
 const FarmerCalls = lazy(() => import("./pages/FarmerCalls"));
 const FarmerCallsPendingLink = lazy(() => import("./pages/FarmerCallsPendingLink"));
 const FarmerGovernance = lazy(() => import("./pages/FarmerGovernance"));
@@ -230,6 +231,7 @@ const App = () => (
               <Route path="sales/edit/:id" element={<SalesOrderEdit />} />
               <Route path="unified-order" element={<Navigate to="/sales/new" replace />} />
               <Route path="farmer" element={<FarmerDashboard />} />
+              <Route path="meu-dia" element={<MeuDia />} />
               <Route path="farmer/calls" element={<FarmerCalls />} />
               <Route path="farmer/calls/pending-link" element={<FarmerCallsPendingLink />} />
               <Route path="farmer/governance" element={<FarmerGovernance />} />
