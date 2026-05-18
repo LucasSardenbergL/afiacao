@@ -1,10 +1,15 @@
 import { useState } from 'react';
+import { useNavigate } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
 import { supabase } from '@/integrations/supabase/client';
 import { useAuth } from '@/contexts/AuthContext';
 import { useLinkCallToCustomer } from '@/hooks/useLinkCallToCustomer';
+import { useCreateProspect } from '@/hooks/useCreateProspect';
 import { Card } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
+import { Input } from '@/components/ui/input';
+import { Label } from '@/components/ui/label';
+import { Loader2, UserPlus } from 'lucide-react';
 import {
   Command,
   CommandInput,
@@ -119,57 +124,178 @@ function PendingRow({
             ` · ${Math.floor(pending.duration_seconds / 60)}min`}
         </div>
       </div>
-      <Dialog open={open} onOpenChange={setOpen}>
-        <DialogTrigger asChild>
-          <Button size="sm" variant="outline">
-            Vincular cliente
-          </Button>
-        </DialogTrigger>
-        <DialogContent>
-          <DialogHeader>
-            <DialogTitle>Vincular a um cliente</DialogTitle>
-          </DialogHeader>
-          <Command shouldFilter={false}>
-            <CommandInput
-              placeholder="Busque por nome ou telefone…"
-              value={search}
-              onValueChange={setSearch}
-            />
-            <CommandList>
-              <CommandEmpty>
-                {search.length < 2
-                  ? 'Digite ao menos 2 caracteres'
-                  : 'Nenhum cliente encontrado'}
-              </CommandEmpty>
-              {(profiles ?? []).map((p) => (
-                <CommandItem
-                  key={p.user_id}
-                  value={p.user_id}
-                  onSelect={() => {
-                    link.mutate(
-                      { callId: pending.id, customerUserId: p.user_id },
-                      {
-                        onSuccess: () => {
-                          setOpen(false);
-                          setSearch('');
-                          onLinked();
+      <div className="flex items-center gap-1.5 shrink-0">
+        <CreateProspectButton
+          phone={pending.phone_dialed ?? ''}
+          callId={pending.id}
+          onCreated={onLinked}
+        />
+        <Dialog open={open} onOpenChange={setOpen}>
+          <DialogTrigger asChild>
+            <Button size="sm" variant="outline">
+              Vincular existente
+            </Button>
+          </DialogTrigger>
+          <DialogContent>
+            <DialogHeader>
+              <DialogTitle>Vincular a um cliente</DialogTitle>
+            </DialogHeader>
+            <Command shouldFilter={false}>
+              <CommandInput
+                placeholder="Busque por nome ou telefone…"
+                value={search}
+                onValueChange={setSearch}
+              />
+              <CommandList>
+                <CommandEmpty>
+                  {search.length < 2
+                    ? 'Digite ao menos 2 caracteres'
+                    : 'Nenhum cliente encontrado'}
+                </CommandEmpty>
+                {(profiles ?? []).map((p) => (
+                  <CommandItem
+                    key={p.user_id}
+                    value={p.user_id}
+                    onSelect={() => {
+                      link.mutate(
+                        { callId: pending.id, customerUserId: p.user_id },
+                        {
+                          onSuccess: () => {
+                            setOpen(false);
+                            setSearch('');
+                            onLinked();
+                          },
                         },
-                      },
-                    );
-                  }}
-                >
-                  <div>
-                    <div className="text-sm">{p.name}</div>
-                    <div className="text-2xs text-muted-foreground">
-                      {p.phone ?? '—'}
+                      );
+                    }}
+                  >
+                    <div>
+                      <div className="text-sm">{p.name}</div>
+                      <div className="text-2xs text-muted-foreground">
+                        {p.phone ?? '—'}
+                      </div>
                     </div>
-                  </div>
-                </CommandItem>
-              ))}
-            </CommandList>
-          </Command>
-        </DialogContent>
-      </Dialog>
+                  </CommandItem>
+                ))}
+              </CommandList>
+            </Command>
+          </DialogContent>
+        </Dialog>
+      </div>
     </Card>
+  );
+}
+
+function CreateProspectButton({
+  phone,
+  callId,
+  onCreated,
+}: {
+  phone: string;
+  callId: string;
+  onCreated: () => void;
+}) {
+  const navigate = useNavigate();
+  const create = useCreateProspect();
+  const [open, setOpen] = useState(false);
+  const [razaoSocial, setRazaoSocial] = useState('');
+  const [nomeContato, setNomeContato] = useState('');
+  const [email, setEmail] = useState('');
+  const [cnpj, setCnpj] = useState('');
+
+  const handleCreate = () => {
+    if (!razaoSocial.trim() || !phone) return;
+    create.mutate(
+      {
+        razao_social: razaoSocial.trim(),
+        phone,
+        nome_contato: nomeContato.trim() || undefined,
+        email: email.trim() || undefined,
+        cnpj: cnpj.trim() || undefined,
+        origin_call_id: callId,
+        source: 'chamada_inbound',
+      },
+      {
+        onSuccess: (data) => {
+          setOpen(false);
+          setRazaoSocial('');
+          setNomeContato('');
+          setEmail('');
+          setCnpj('');
+          onCreated();
+          // Redireciona pra ficha do novo cliente
+          navigate(`/admin/customers/${data.user_id}`);
+        },
+      },
+    );
+  };
+
+  return (
+    <Dialog open={open} onOpenChange={setOpen}>
+      <DialogTrigger asChild>
+        <Button size="sm" className="gap-1.5">
+          <UserPlus className="w-3.5 h-3.5" />
+          Criar cliente novo
+        </Button>
+      </DialogTrigger>
+      <DialogContent className="max-w-md">
+        <DialogHeader>
+          <DialogTitle>Cadastrar prospect a partir desta chamada</DialogTitle>
+        </DialogHeader>
+        <div className="space-y-3">
+          <div>
+            <Label className="text-xs">Razão social *</Label>
+            <Input
+              value={razaoSocial}
+              onChange={(e) => setRazaoSocial(e.target.value)}
+              placeholder="Marcenaria São José Ltda"
+              autoFocus
+            />
+          </div>
+          <div>
+            <Label className="text-xs">Nome do contato</Label>
+            <Input
+              value={nomeContato}
+              onChange={(e) => setNomeContato(e.target.value)}
+              placeholder="João Silva"
+            />
+          </div>
+          <div>
+            <Label className="text-xs">Telefone (da chamada)</Label>
+            <Input value={phone} readOnly className="bg-muted text-muted-foreground" />
+          </div>
+          <div className="grid grid-cols-2 gap-2">
+            <div>
+              <Label className="text-xs">Email</Label>
+              <Input
+                type="email"
+                value={email}
+                onChange={(e) => setEmail(e.target.value)}
+                placeholder="contato@empresa.com"
+              />
+            </div>
+            <div>
+              <Label className="text-xs">CNPJ</Label>
+              <Input
+                value={cnpj}
+                onChange={(e) => setCnpj(e.target.value)}
+                placeholder="00.000.000/0001-00"
+              />
+            </div>
+          </div>
+          <Button
+            onClick={handleCreate}
+            disabled={!razaoSocial.trim() || create.isPending}
+            className="w-full"
+          >
+            {create.isPending && <Loader2 className="w-3.5 h-3.5 animate-spin mr-2" />}
+            Criar e abrir ficha
+          </Button>
+          <p className="text-2xs text-muted-foreground text-center">
+            A chamada será vinculada automaticamente. Você pode completar dados depois.
+          </p>
+        </div>
+      </DialogContent>
+    </Dialog>
   );
 }

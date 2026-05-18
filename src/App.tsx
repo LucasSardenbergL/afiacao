@@ -150,6 +150,7 @@ const AdminNotificacoes = lazy(() => import("./pages/AdminNotificacoes"));
 const AdminPortalSayerlack = lazy(() => import("./pages/AdminPortalSayerlack"));
 const AdminVendorSipCredentials = lazy(() => import("./pages/AdminVendorSipCredentials"));
 const AdminKnowledgeBase = lazy(() => import("./pages/AdminKnowledgeBase"));
+const AdminProspects = lazy(() => import("./pages/AdminProspects"));
 const AdminKnowledgeBaseDetail = lazy(() => import("./pages/AdminKnowledgeBaseDetail"));
 const AdminStandardProcesses = lazy(() => import("./pages/AdminStandardProcesses"));
 const AdminStandardProcessNew = lazy(() => import("./pages/AdminStandardProcessNew"));
@@ -206,6 +207,7 @@ const App = () => (
               <Route path="admin/departments" element={<AdminDepartments />} />
               <Route path="admin/customers" element={<AdminCustomers />} />
               <Route path="admin/customers/:customerId" element={<AdminCustomers />} />
+              <Route path="admin/prospects" element={<AdminProspects />} />
               <Route path="admin/orders/:id" element={<AdminOrderDetail />} />
               <Route path="admin/orders/:id/quality" element={<QualityChecklist />} />
               <Route path="admin/demand-forecast" element={<AdminDemandForecast />} />
