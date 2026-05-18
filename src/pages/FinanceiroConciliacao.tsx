@@ -1,6 +1,5 @@
-// @ts-nocheck
 import { useState, useEffect, useCallback } from 'react';
-import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
+import { Card, CardContent } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
@@ -11,27 +10,43 @@ import { supabase } from '@/integrations/supabase/client';
 import { toast } from 'sonner';
 import {
   Loader2, CheckCircle2, XCircle, AlertTriangle, ArrowLeftRight,
-  Building2, Search, Filter, Ban, Eye
+  Building2, Search, Ban,
+  type LucideIcon,
 } from 'lucide-react';
+import type {
+  FinConciliacaoRow,
+  FinContaCorrenteRow,
+  FinMovimentacaoRow,
+} from '@/services/financeiroTypes';
 
 const fmt = (v: number) => v.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' });
 const fmtDate = (d: string | null) => d ? new Date(d + 'T00:00:00').toLocaleDateString('pt-BR') : '—';
 
-const statusConfig: Record<string, { label: string; color: string; icon: any }> = {
+type ConciliacaoStatus = 'pendente' | 'conciliado' | 'divergencia' | 'ignorado';
+
+const statusConfig: Record<ConciliacaoStatus, { label: string; color: string; icon: LucideIcon }> = {
   pendente: { label: 'Pendente', color: 'bg-status-warning-bg text-status-warning', icon: AlertTriangle },
   conciliado: { label: 'Conciliado', color: 'bg-status-success-bg text-status-success', icon: CheckCircle2 },
   divergencia: { label: 'Divergência', color: 'bg-status-error-bg text-status-error', icon: XCircle },
   ignorado: { label: 'Ignorado', color: 'bg-muted text-muted-foreground', icon: Ban },
 };
 
+type ContaCorrenteFiltro = Pick<FinContaCorrenteRow, 'omie_ncodcc' | 'descricao' | 'banco'>;
+type MovimentacaoMatch = Pick<
+  FinMovimentacaoRow,
+  'id' | 'omie_ncodcc' | 'data_movimento' | 'valor' | 'descricao' | 'tipo' | 'omie_codigo_lancamento' | 'conciliado'
+>;
+
 const FinanceiroConciliacao = () => {
   const [company, setCompany] = useState<Company>('oben');
-  const [statusFilter, setStatusFilter] = useState('pendente');
-  const [items, setItems] = useState<any[]>([]);
+  const [statusFilter, setStatusFilter] = useState<ConciliacaoStatus | 'todos'>('pendente');
+  const [items, setItems] = useState<FinConciliacaoRow[]>([]);
   const [loading, setLoading] = useState(true);
-  const [stats, setStats] = useState({ pendente: 0, conciliado: 0, divergencia: 0, ignorado: 0 });
+  const [stats, setStats] = useState<Record<ConciliacaoStatus, number>>({
+    pendente: 0, conciliado: 0, divergencia: 0, ignorado: 0,
+  });
   const [search, setSearch] = useState('');
-  const [contas, setContas] = useState<any[]>([]);
+  const [contas, setContas] = useState<ContaCorrenteFiltro[]>([]);
   const [selectedCC, setSelectedCC] = useState<string>('all');
 
   const load = useCallback(async () => {
@@ -39,14 +54,14 @@ const FinanceiroConciliacao = () => {
     try {
       // Load contas correntes for filter
       const { data: ccs } = await supabase
-        .from('fin_contas_correntes' as any)
+        .from('fin_contas_correntes')
         .select('omie_ncodcc, descricao, banco')
         .eq('company', company).eq('ativo', true);
       setContas(ccs || []);
 
       // Load conciliação items
       let query = supabase
-        .from('fin_conciliacao' as any)
+        .from('fin_conciliacao')
         .select('*')
         .eq('company', company)
         .order('mov_data', { ascending: false });
@@ -59,17 +74,19 @@ const FinanceiroConciliacao = () => {
 
       // Stats
       const { data: allItems } = await supabase
-        .from('fin_conciliacao' as any)
+        .from('fin_conciliacao')
         .select('status')
         .eq('company', company);
 
-      const s = { pendente: 0, conciliado: 0, divergencia: 0, ignorado: 0 };
+      const s: Record<ConciliacaoStatus, number> = { pendente: 0, conciliado: 0, divergencia: 0, ignorado: 0 };
       for (const item of allItems || []) {
-        if (s[item.status as keyof typeof s] !== undefined) s[item.status as keyof typeof s]++;
+        const key = item.status as ConciliacaoStatus;
+        if (s[key] !== undefined) s[key]++;
       }
       setStats(s);
-    } catch (e: any) {
-      toast.error('Erro', { description: e.message });
+    } catch (e) {
+      const message = e instanceof Error ? e.message : String(e);
+      toast.error('Erro', { description: message });
     } finally {
       setLoading(false);
     }
@@ -80,7 +97,7 @@ const FinanceiroConciliacao = () => {
   const resolver = async (id: string, status: 'conciliado' | 'ignorado', obs?: string) => {
     const userId = (await supabase.auth.getUser()).data.user?.id;
     await supabase
-      .from('fin_conciliacao' as any)
+      .from('fin_conciliacao')
       .update({
         status,
         resolvido_por: userId,
@@ -98,23 +115,23 @@ const FinanceiroConciliacao = () => {
     try {
       // Buscar movimentações não conciliadas
       const { data: movs } = await supabase
-        .from('fin_movimentacoes' as any)
+        .from('fin_movimentacoes')
         .select('id, omie_ncodcc, data_movimento, valor, descricao, tipo, omie_codigo_lancamento, conciliado')
         .eq('company', company)
         .eq('conciliado', false);
 
       let criados = 0;
-      for (const mov of movs || []) {
+      for (const mov of (movs || []) as MovimentacaoMatch[]) {
         // Tentar match automático por omie_codigo_lancamento
-        let tituloId = null;
-        let tituloValor = null;
-        let tipoTitulo = null;
+        let tituloId: string | null = null;
+        let tituloValor: number | null = null;
+        let tipoTitulo: 'CR' | 'CP' | null = null;
         let tipoMatch: string | null = null;
 
         if (mov.omie_codigo_lancamento) {
           // Buscar em CR
           const { data: cr } = await supabase
-            .from('fin_contas_receber' as any)
+            .from('fin_contas_receber')
             .select('id, valor_documento')
             .eq('company', company)
             .eq('omie_codigo_lancamento', mov.omie_codigo_lancamento)
@@ -127,7 +144,7 @@ const FinanceiroConciliacao = () => {
           } else {
             // Buscar em CP
             const { data: cp } = await supabase
-              .from('fin_contas_pagar' as any)
+              .from('fin_contas_pagar')
               .select('id, valor_documento')
               .eq('company', company)
               .eq('omie_codigo_lancamento', mov.omie_codigo_lancamento)
@@ -145,8 +162,10 @@ const FinanceiroConciliacao = () => {
           ? (Math.abs(mov.valor - (tituloValor || 0)) < 0.01 ? 'conciliado' : 'divergencia')
           : 'pendente';
 
+        if (mov.omie_ncodcc == null) continue;
+
         const { error } = await supabase
-          .from('fin_conciliacao' as any)
+          .from('fin_conciliacao')
           .upsert({
             company,
             omie_ncodcc: mov.omie_ncodcc,
@@ -165,8 +184,9 @@ const FinanceiroConciliacao = () => {
       }
       toast.success(`${criados} itens gerados na fila de conciliação`);
       load();
-    } catch (e: any) {
-      toast.error('Erro', { description: e.message });
+    } catch (e) {
+      const message = e instanceof Error ? e.message : String(e);
+      toast.error('Erro', { description: message });
     }
   };
 
