@@ -1,5 +1,5 @@
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
-import { createClient } from "npm:@supabase/supabase-js@2";
+import { createClient, type SupabaseClient } from "npm:@supabase/supabase-js@2";
 import { authorizeCronOrStaff } from "../_shared/auth.ts";
 
 const corsHeaders = {
@@ -11,6 +11,107 @@ const corsHeaders = {
 const OMIE_API_URL = "https://app.omie.com.br/api/v1";
 
 type OmieAccount = "vendas" | "servicos" | "colacor_vendas";
+
+interface OmieClienteCadastro {
+  codigo_cliente_omie?: number;
+  codigo_cliente_integracao?: string | null;
+  codigo_vendedor?: number | null;
+  cnpj_cpf?: string;
+}
+
+interface OmieListarClientesResponse {
+  clientes_cadastro?: OmieClienteCadastro[];
+  total_de_paginas?: number;
+  faultstring?: string;
+}
+
+interface OmieImagemProduto {
+  url_imagem?: string;
+}
+
+interface OmieProdutoCadastro {
+  codigo_produto?: number;
+  codigo_produto_integracao?: string | null;
+  codigo?: string;
+  descricao?: string;
+  unidade?: string;
+  ncm?: string | null;
+  valor_unitario?: number;
+  quantidade_estoque?: number;
+  inativo?: string;
+  imagens?: OmieImagemProduto[];
+  descricao_familia?: string | null;
+  descricao_subfamilia?: string | null;
+  marca?: string;
+  modelo?: string;
+  peso_bruto?: number;
+  peso_liq?: number;
+  cfop?: string;
+}
+
+interface OmieListarProdutosResponse {
+  produto_servico_cadastro?: OmieProdutoCadastro[];
+  total_de_paginas?: number;
+  faultstring?: string;
+}
+
+interface OmiePedidoCabecalho {
+  codigo_cliente?: number;
+  numero_pedido?: string;
+  codigo_pedido?: number;
+}
+
+interface OmiePedidoProduto {
+  codigo_produto?: number;
+  quantidade?: number;
+  valor_unitario?: number;
+}
+
+interface OmiePedidoDet {
+  produto?: OmiePedidoProduto;
+}
+
+interface OmiePedidoVendaProduto {
+  cabecalho?: OmiePedidoCabecalho;
+  det?: OmiePedidoDet[];
+}
+
+interface OmieListarPedidosResponse {
+  pedido_venda_produto?: OmiePedidoVendaProduto[];
+  total_de_paginas?: number;
+  faultstring?: string;
+}
+
+interface OmieEstoqueProduto {
+  nCodProd?: number;
+  nSaldo?: number;
+  nCMC?: number;
+  nPrecoMedio?: number;
+}
+
+interface OmieListarPosEstoqueResponse {
+  produtos?: OmieEstoqueProduto[];
+  nTotPaginas?: number;
+  faultstring?: string;
+}
+
+interface OmieApiResponseBase {
+  faultstring?: string;
+  faultcode?: string;
+}
+
+interface ProductCostRow {
+  id: string;
+  product_id: string;
+  cost_price?: number;
+  cmc?: number;
+}
+
+interface InventoryPositionRow {
+  product_id: string | null;
+  cmc?: number;
+  saldo?: number;
+}
 
 function getCredentials(account: OmieAccount) {
   if (account === "vendas") {
@@ -32,7 +133,7 @@ function getCredentials(account: OmieAccount) {
   };
 }
 
-async function callOmie(account: OmieAccount, endpoint: string, call: string, params: Record<string, unknown>) {
+async function callOmie(account: OmieAccount, endpoint: string, call: string, params: Record<string, unknown>): Promise<OmieApiResponseBase> {
   const creds = getCredentials(account);
   if (!creds.key || !creds.secret) throw new Error(`Credenciais Omie (${account}) não configuradas`);
 
@@ -42,14 +143,14 @@ async function callOmie(account: OmieAccount, endpoint: string, call: string, pa
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(body),
   });
-  const result = await res.json();
+  const result = (await res.json()) as OmieApiResponseBase;
   if (result.faultstring) throw new Error(`Omie (${account}): ${result.faultstring}`);
   return result;
 }
 
 // ======== SYNC STATE HELPERS ========
 
-async function getSyncState(db: any, entityType: string, account: string) {
+async function getSyncState(db: SupabaseClient, entityType: string, account: string) {
   const { data } = await db
     .from("sync_state")
     .select("*")
@@ -60,7 +161,7 @@ async function getSyncState(db: any, entityType: string, account: string) {
 }
 
 async function updateSyncState(
-  db: any,
+  db: SupabaseClient,
   entityType: string,
   account: string,
   updates: Record<string, unknown>
@@ -73,7 +174,7 @@ async function updateSyncState(
 
 // ======== SYNC CUSTOMERS ========
 
-async function syncCustomers(db: any, account: OmieAccount) {
+async function syncCustomers(db: SupabaseClient, account: OmieAccount) {
   await updateSyncState(db, "customers", account, { status: "running", error_message: null });
   let pagina = 1;
   let totalPaginas = 1;
@@ -81,11 +182,11 @@ async function syncCustomers(db: any, account: OmieAccount) {
 
   try {
     while (pagina <= totalPaginas) {
-      const result = await callOmie(account, "geral/clientes/", "ListarClientes", {
+      const result = (await callOmie(account, "geral/clientes/", "ListarClientes", {
         pagina,
         registros_por_pagina: 100,
         apenas_importado_api: "N",
-      }) as any;
+      })) as unknown as OmieListarClientesResponse;
 
       totalPaginas = result.total_de_paginas || 1;
       const clientes = result.clientes_cadastro || [];
@@ -148,7 +249,7 @@ async function syncCustomers(db: any, account: OmieAccount) {
 
 // ======== SYNC PRODUCTS ========
 
-async function syncProducts(db: any, account: OmieAccount, startPage = 1, maxPages = 10) {
+async function syncProducts(db: SupabaseClient, account: OmieAccount, startPage = 1, maxPages = 10) {
   await updateSyncState(db, "products", account, { status: "running", error_message: null });
   let pagina = startPage;
   let totalPaginas = startPage;
@@ -157,12 +258,12 @@ async function syncProducts(db: any, account: OmieAccount, startPage = 1, maxPag
 
   try {
     while (pagina <= totalPaginas && pagesProcessed < maxPages) {
-      const result = await callOmie(account, "geral/produtos/", "ListarProdutos", {
+      const result = (await callOmie(account, "geral/produtos/", "ListarProdutos", {
         pagina,
         registros_por_pagina: 100,
         apenas_importado_api: "N",
         filtrar_apenas_omiepdv: "N",
-      }) as any;
+      })) as unknown as OmieListarProdutosResponse;
 
       totalPaginas = result.total_de_paginas || 1;
       const produtos = result.produto_servico_cadastro || [];
@@ -170,7 +271,7 @@ async function syncProducts(db: any, account: OmieAccount, startPage = 1, maxPag
       if (account === "vendas" || account === "colacor_vendas") {
         // UPSERT — INCLUI inativos para refletir o flag `ativo` corretamente
         const acctValue = account === "colacor_vendas" ? "colacor" : "oben";
-        const rows = produtos.map((p: any) => ({
+        const rows = produtos.map((p) => ({
           omie_codigo_produto: p.codigo_produto,
           omie_codigo_produto_integracao: p.codigo_produto_integracao || null,
           codigo: p.codigo || `PROD-${p.codigo_produto}`,
@@ -232,7 +333,7 @@ async function syncProducts(db: any, account: OmieAccount, startPage = 1, maxPag
 
 // ======== SYNC ORDERS (INCREMENTAL) ========
 
-async function syncOrdersIncremental(db: any, account: OmieAccount) {
+async function syncOrdersIncremental(db: SupabaseClient, account: OmieAccount) {
   await updateSyncState(db, "orders", account, { status: "running", error_message: null });
 
   const state = await getSyncState(db, "orders", account);
@@ -262,7 +363,7 @@ async function syncOrdersIncremental(db: any, account: OmieAccount) {
         params.filtrar_por_data_ate = formatOmieDate(new Date());
       }
 
-      const result = await callOmie(account, "produtos/pedido/", "ListarPedidos", params) as any;
+      const result = (await callOmie(account, "produtos/pedido/", "ListarPedidos", params)) as unknown as OmieListarPedidosResponse;
       totalPaginas = result.total_de_paginas || 1;
       const pedidos = result.pedido_venda_produto || [];
 
@@ -350,7 +451,7 @@ async function syncOrdersIncremental(db: any, account: OmieAccount) {
 
 // ======== SYNC INVENTORY ========
 
-async function syncInventory(db: any, account: OmieAccount) {
+async function syncInventory(db: SupabaseClient, account: OmieAccount) {
   await updateSyncState(db, "inventory", account, { status: "running", error_message: null });
   let pagina = 1;
   let totalPaginas = 1;
@@ -358,11 +459,11 @@ async function syncInventory(db: any, account: OmieAccount) {
 
   try {
     while (pagina <= totalPaginas) {
-      const result = await callOmie(account, "estoque/consulta/", "ListarPosEstoque", {
+      const result = (await callOmie(account, "estoque/consulta/", "ListarPosEstoque", {
         nPagina: pagina,
         nRegPorPagina: 100,
         dDataPosicao: new Date().toLocaleDateString("pt-BR"),
-      }) as any;
+      })) as unknown as OmieListarPosEstoqueResponse;
 
       totalPaginas = result.nTotPaginas || 1;
       const produtos = result.produtos || [];
@@ -445,7 +546,7 @@ async function syncInventory(db: any, account: OmieAccount) {
 
 // ======== COMPUTE COSTS (Fallback Engine) ========
 
-async function computeCosts(db: any) {
+async function computeCosts(db: SupabaseClient) {
   // Load config
   const { data: configs } = await db.from("recommendation_config").select("key, value");
   const cfg: Record<string, number> = {};
@@ -461,14 +562,16 @@ async function computeCosts(db: any) {
   if (!products?.length) return { updated: 0 };
 
   // Get all product costs
-  const { data: costs } = await db.from("product_costs").select("*");
-  const costMap: Record<string, any> = {};
-  for (const c of costs || []) costMap[c.product_id] = c;
+  const { data: costsRaw } = await db.from("product_costs").select("*");
+  const costs = (costsRaw ?? []) as unknown as ProductCostRow[];
+  const costMap: Record<string, ProductCostRow> = {};
+  for (const c of costs) costMap[c.product_id] = c;
 
   // Get inventory for CMC
-  const { data: inventory } = await db.from("inventory_position").select("product_id, cmc, saldo");
-  const invMap: Record<string, any> = {};
-  for (const i of inventory || []) if (i.product_id) invMap[i.product_id] = i;
+  const { data: inventoryRaw } = await db.from("inventory_position").select("product_id, cmc, saldo");
+  const inventory = (inventoryRaw ?? []) as unknown as InventoryPositionRow[];
+  const invMap: Record<string, InventoryPositionRow> = {};
+  for (const i of inventory) if (i.product_id) invMap[i.product_id] = i;
 
   // Compute family average margins
   const familyMargins: Record<string, { totalMargin: number; count: number }> = {};
@@ -568,7 +671,7 @@ async function computeCosts(db: any) {
 
 // ======== COMPUTE ASSOCIATION RULES (Apriori-like) ========
 
-async function computeAssociationRules(db: any) {
+async function computeAssociationRules(db: SupabaseClient) {
   // Load config
   const { data: configs } = await db.from("recommendation_config").select("key, value");
   const cfg: Record<string, number> = {};

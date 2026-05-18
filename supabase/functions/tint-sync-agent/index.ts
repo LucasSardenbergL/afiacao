@@ -5,6 +5,74 @@ const corsHeaders = {
   "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type, x-sync-token, x-store-code, x-idempotency-key",
 };
 
+// ─── Type definitions ───
+
+/** Item bruto enviado pelo agente (catalogo: produtos, bases, embalagens, skus, corantes) */
+interface TintCatalogItem {
+  id?: string;
+  cod_produto?: string;
+  id_base?: string;
+  id_embalagem?: string;
+  id_base_sayersystem?: string;
+  id_embalagem_sayersystem?: string;
+  id_corante_sayersystem?: string;
+  descricao?: string;
+  volume_ml?: number;
+  preco_litro?: number;
+  [k: string]: unknown;
+}
+
+/** Item de fórmula (corante + ordem + qtd) */
+interface TintFormulaItem {
+  id_corante?: string;
+  ordem?: number;
+  qtd_ml?: number;
+}
+
+/** Fórmula bruta enviada pelo agente */
+interface TintFormulaPayload {
+  cor_id?: string;
+  nome_cor?: string;
+  cod_produto?: string;
+  id_base?: string;
+  id_embalagem?: string;
+  subcolecao?: string | null;
+  volume_final_ml?: number;
+  preco_final?: number;
+  personalizada?: boolean;
+  itens?: TintFormulaItem[];
+}
+
+/** Preparação (mistura de tinta concreta) bruta enviada pelo agente */
+interface TintPreparacaoPayload {
+  preparacao_id?: string;
+  cor_id?: string;
+  nome_cor?: string;
+  cod_produto?: string;
+  id_base?: string;
+  id_embalagem?: string;
+  volume_ml?: number;
+  preco?: number;
+  cliente?: string;
+  data_preparacao?: string;
+  personalizada?: boolean;
+  itens?: TintFormulaItem[];
+}
+
+/** Linha resultante do join tint_formulas + tint_produtos/bases/embalagens (modo simulate/real_data) */
+interface TintFormulaJoinRow {
+  cor_id: string;
+  nome_cor: string | null;
+  volume_final_ml: number | null;
+  preco_final_sayersystem: number | null;
+  produto_id: string;
+  base_id: string;
+  embalagem_id: string;
+  tint_produtos?: { cod_produto?: string } | null;
+  tint_bases?: { id_base_sayersystem?: string } | null;
+  tint_embalagens?: { id_embalagem_sayersystem?: string } | null;
+}
+
 function json(data: unknown, status = 200) {
   return new Response(JSON.stringify(data), { status, headers: { ...corsHeaders, "Content-Type": "application/json" } });
 }
@@ -206,7 +274,7 @@ Deno.serve(async (req) => {
 
       let received = 0;
       for (const [entityType, config] of Object.entries(stagingTables)) {
-        const items = body[entityType] || [];
+        const items: TintCatalogItem[] = (body[entityType] as TintCatalogItem[] | undefined) || [];
         received += items.length;
         for (const item of items) {
           try {
@@ -221,7 +289,8 @@ Deno.serve(async (req) => {
               if (k in row) continue;
               row[k] = v;
             }
-            row[config.keyField] = item[config.keyField] || item.id || "";
+            const entityKey = (item[config.keyField] as string | undefined) || item.id || "";
+            row[config.keyField] = entityKey;
             if (item.descricao) row.descricao = item.descricao;
             if (item.volume_ml !== undefined) row.volume_ml = item.volume_ml;
             if (item.preco_litro !== undefined) row.preco_litro = item.preco_litro;
@@ -231,15 +300,16 @@ Deno.serve(async (req) => {
             const { error } = await sb.from(config.table).insert(row);
             if (error) {
               errors++;
-              errorDetails.push({ entity_type: entityType, entity_id: item[config.keyField], message: error.message });
-              await logError(runId, entityType, item[config.keyField], error.message, error, item);
+              errorDetails.push({ entity_type: entityType, entity_id: entityKey, message: error.message });
+              await logError(runId, entityType, entityKey, error.message, error, item);
             } else {
               inserts++;
             }
-          } catch (e: any) {
+          } catch (e) {
             errors++;
-            errorDetails.push({ entity_type: entityType, entity_id: null, message: e.message });
-            await logError(runId, entityType, null, e.message, null, item);
+            const msg = e instanceof Error ? e.message : String(e);
+            errorDetails.push({ entity_type: entityType, entity_id: null, message: msg });
+            await logError(runId, entityType, null, msg, null, item);
           }
         }
       }
@@ -268,7 +338,7 @@ Deno.serve(async (req) => {
 
       let inserts = 0, errors = 0, ignored = 0;
       const errorDetails: { entity_type: string; entity_id: string | null; message: string }[] = [];
-      const formulas = body.formulas || [];
+      const formulas: TintFormulaPayload[] = (body.formulas as TintFormulaPayload[] | undefined) || [];
       const received = formulas.length;
 
       for (const f of formulas) {
@@ -305,7 +375,7 @@ Deno.serve(async (req) => {
             continue;
           }
 
-          const itens = f.itens || [];
+          const itens: TintFormulaItem[] = f.itens || [];
           for (const item of itens) {
             await sb.from("tint_staging_formula_itens").insert({
               sync_run_id: runId,
@@ -316,10 +386,11 @@ Deno.serve(async (req) => {
             });
           }
           inserts++;
-        } catch (e: any) {
+        } catch (e) {
           errors++;
-          errorDetails.push({ entity_type: "formula", entity_id: f.cor_id, message: e.message });
-          await logError(runId, "formula", f.cor_id, e.message, null, f);
+          const msg = e instanceof Error ? e.message : String(e);
+          errorDetails.push({ entity_type: "formula", entity_id: f.cor_id ?? null, message: msg });
+          await logError(runId, "formula", f.cor_id ?? null, msg, null, f);
         }
       }
 
@@ -347,7 +418,7 @@ Deno.serve(async (req) => {
 
       let inserts = 0, errors = 0, ignored = 0;
       const errorDetails: { entity_type: string; entity_id: string | null; message: string }[] = [];
-      const preps = body.preparacoes || [];
+      const preps: TintPreparacaoPayload[] = (body.preparacoes as TintPreparacaoPayload[] | undefined) || [];
       const received = preps.length;
 
       for (const p of preps) {
@@ -385,7 +456,7 @@ Deno.serve(async (req) => {
             continue;
           }
 
-          const itens = p.itens || [];
+          const itens: TintFormulaItem[] = p.itens || [];
           for (const item of itens) {
             await sb.from("tint_staging_preparacao_itens").insert({
               sync_run_id: runId,
@@ -396,10 +467,11 @@ Deno.serve(async (req) => {
             });
           }
           inserts++;
-        } catch (e: any) {
+        } catch (e) {
           errors++;
-          errorDetails.push({ entity_type: "preparacao", entity_id: p.preparacao_id, message: e.message });
-          await logError(runId, "preparacao", p.preparacao_id, e.message, null, p);
+          const msg = e instanceof Error ? e.message : String(e);
+          errorDetails.push({ entity_type: "preparacao", entity_id: p.preparacao_id ?? null, message: msg });
+          await logError(runId, "preparacao", p.preparacao_id ?? null, msg, null, p);
         }
       }
 
@@ -469,9 +541,9 @@ Deno.serve(async (req) => {
 
         debugLog.push(`Sampled ${realFormulas?.length || 0} formulas from official table`);
 
-        const formulaRows = realFormulas || [];
+        const formulaRows = (realFormulas || []) as unknown as TintFormulaJoinRow[];
         for (let i = 0; i < formulaRows.length; i++) {
-          const f = formulaRows[i] as any;
+          const f = formulaRows[i];
           const codProduto = f.tint_produtos?.cod_produto;
           const idBase = f.tint_bases?.id_base_sayersystem;
           const idEmbalagem = f.tint_embalagens?.id_embalagem_sayersystem;
@@ -574,8 +646,9 @@ Deno.serve(async (req) => {
     }
 
     return json({ ok: false, error: `Unknown endpoint: ${path}` }, 404);
-  } catch (e: any) {
+  } catch (e) {
     console.error("tint-sync-agent error:", e);
-    return json({ ok: false, error: e.message || "Internal error" }, 500);
+    const msg = e instanceof Error ? e.message : String(e);
+    return json({ ok: false, error: msg || "Internal error" }, 500);
   }
 });

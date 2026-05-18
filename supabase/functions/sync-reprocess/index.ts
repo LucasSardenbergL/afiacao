@@ -1,10 +1,79 @@
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
-import { createClient } from "npm:@supabase/supabase-js@2";
+import { createClient, type SupabaseClient } from "npm:@supabase/supabase-js@2";
 import { authorizeCron, corsHeaders } from "../_shared/auth.ts";
 
 const OMIE_API_URL = "https://app.omie.com.br/api/v1";
 
 type Account = "oben" | "colacor";
+
+// ── Omie response shapes ──
+interface OmieProdutoItem {
+  quantidade?: number;
+  valor_unitario?: number;
+  codigo_produto?: number | string;
+}
+
+interface OmiePedidoItem {
+  produto?: OmieProdutoItem;
+}
+
+interface OmiePedidoCabecalho {
+  codigo_cliente?: number;
+  numero_pedido?: string | number;
+  codigo_pedido?: string | number;
+  etapa?: string;
+}
+
+interface OmiePedidoVenda {
+  cabecalho?: OmiePedidoCabecalho;
+  det?: OmiePedidoItem[];
+}
+
+interface OmieListarPedidosResponse {
+  total_de_paginas?: number;
+  pedido_venda_produto?: OmiePedidoVenda[];
+}
+
+interface OmieProdutoImagem {
+  url_imagem?: string;
+}
+
+interface OmieProdutoCadastro {
+  codigo_produto?: number | string;
+  codigo_produto_integracao?: string | null;
+  codigo?: string;
+  descricao?: string;
+  unidade?: string;
+  ncm?: string | null;
+  valor_unitario?: number;
+  quantidade_estoque?: number;
+  descricao_familia?: string;
+  inativo?: string;
+  tipo?: string;
+  imagens?: OmieProdutoImagem[];
+  marca?: string;
+  modelo?: string;
+  peso_bruto?: number;
+  peso_liq?: number;
+  cfop?: string;
+}
+
+interface OmieListarProdutosResponse {
+  total_de_paginas?: number;
+  produto_servico_cadastro?: OmieProdutoCadastro[];
+}
+
+interface OmieEstoqueItem {
+  nCodProd?: number;
+  nSaldo?: number;
+  nCMC?: number;
+  nPrecoMedio?: number;
+}
+
+interface OmieListarPosEstoqueResponse {
+  nTotPaginas?: number;
+  produtos?: OmieEstoqueItem[];
+}
 
 function getVendasCredentials(account: Account) {
   if (account === "colacor") {
@@ -52,17 +121,18 @@ function formatOmieDate(d: Date): string {
 
 // ======== LOAD CONFIG ========
 
-async function loadReprocessConfig(db: any): Promise<Record<string, number>> {
+async function loadReprocessConfig(db: SupabaseClient): Promise<Record<string, number>> {
   const { data } = await db.from("sync_reprocess_config").select("key, value");
+  const rows = (data || []) as unknown as Array<{ key: string; value: number }>;
   const cfg: Record<string, number> = {};
-  for (const c of data || []) cfg[c.key] = c.value;
+  for (const c of rows) cfg[c.key] = c.value;
   return cfg;
 }
 
 // ======== LOG HELPERS ========
 
 async function createReprocessLog(
-  db: any,
+  db: SupabaseClient,
   entityType: string,
   account: string,
   reprocessType: string,
@@ -77,11 +147,11 @@ async function createReprocessLog(
     window_end: windowEnd.toISOString(),
     status: "running",
   }).select("id").single();
-  return data!.id;
+  return (data as unknown as { id: string }).id;
 }
 
 async function completeReprocessLog(
-  db: any,
+  db: SupabaseClient,
   logId: string,
   stats: {
     upserts_count: number;
@@ -107,7 +177,7 @@ async function completeReprocessLog(
 // ======== REPROCESS ORDERS ========
 
 async function reprocessOrders(
-  db: any,
+  db: SupabaseClient,
   account: Account,
   windowDays: number,
   reprocessType: string
@@ -126,13 +196,13 @@ async function reprocessOrders(
     let totalPaginas = 1;
 
     while (pagina <= totalPaginas) {
-      const result = await callOmie(account, "produtos/pedido/", "ListarPedidos", {
+      const result = (await callOmie(account, "produtos/pedido/", "ListarPedidos", {
         pagina,
         registros_por_pagina: 100,
         filtrar_apenas_inclusao: "N",
         filtrar_por_data_de: formatOmieDate(windowStart),
         filtrar_por_data_ate: formatOmieDate(windowEnd),
-      }) as any;
+      })) as unknown as OmieListarPedidosResponse;
 
       totalPaginas = result.total_de_paginas || 1;
       const pedidos = result.pedido_venda_produto || [];
@@ -173,7 +243,7 @@ async function reprocessOrders(
             "10": "rascunho", "20": "enviado", "50": "faturado", "60": "cancelado",
           };
 
-          const totalPedido = itens.reduce((sum: number, i: any) => {
+          const totalPedido = itens.reduce((sum: number, i: OmiePedidoItem) => {
             const prod = i.produto || {};
             return sum + (prod.quantidade || 1) * (prod.valor_unitario || 0);
           }, 0);
@@ -276,7 +346,7 @@ async function reprocessOrders(
 // ======== REPROCESS PRODUCTS ========
 
 async function reprocessProducts(
-  db: any,
+  db: SupabaseClient,
   account: Account,
   reprocessType: string
 ) {
@@ -294,12 +364,12 @@ async function reprocessProducts(
     let totalPaginas = 1;
 
     while (pagina <= totalPaginas) {
-      const result = await callOmie(account, "geral/produtos/", "ListarProdutos", {
+      const result = (await callOmie(account, "geral/produtos/", "ListarProdutos", {
         pagina,
         registros_por_pagina: 100,
         apenas_importado_api: "N",
         filtrar_apenas_omiepdv: "N",
-      }) as any;
+      })) as unknown as OmieListarProdutosResponse;
 
       totalPaginas = result.total_de_paginas || 1;
       const produtos = result.produto_servico_cadastro || [];
@@ -395,7 +465,7 @@ async function reprocessProducts(
 // ======== REPROCESS INVENTORY ========
 
 async function reprocessInventory(
-  db: any,
+  db: SupabaseClient,
   account: Account,
   reprocessType: string
 ) {
@@ -412,11 +482,11 @@ async function reprocessInventory(
     let totalPaginas = 1;
 
     while (pagina <= totalPaginas) {
-      const result = await callOmie(account, "estoque/consulta/", "ListarPosEstoque", {
+      const result = (await callOmie(account, "estoque/consulta/", "ListarPosEstoque", {
         nPagina: pagina,
         nRegPorPagina: 100,
         dDataPosicao: formatOmieDate(new Date()),
-      }) as any;
+      })) as unknown as OmieListarPosEstoqueResponse;
 
       totalPaginas = result.nTotPaginas || 1;
       const produtos = result.produtos || [];

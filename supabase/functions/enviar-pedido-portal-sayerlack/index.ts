@@ -2,7 +2,7 @@
 // Automatiza envio de pedidos aprovados (OBEN -> Sayerlack) via Browserless.io
 // Modos: ECO (validacao), lote (cron), individual (manual)
 
-import { createClient } from "npm:@supabase/supabase-js@2.45.0";
+import { createClient, type SupabaseClient } from "npm:@supabase/supabase-js@2.45.0";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -1281,8 +1281,46 @@ interface ProcessResult {
   duracao_ms: number;
 }
 
+interface PostgrestErrorLike {
+  message: string;
+  code?: string;
+  details?: string;
+}
+
+interface PedidoItemDireto {
+  id: number;
+  sku_codigo_omie: string;
+  sku_descricao: string;
+  qtde_final: number | string;
+}
+
+interface SkuFornecedorExternoRow {
+  sku_omie: string;
+  sku_portal: string | null;
+  unidade_portal: string | null;
+  fator_conversao: number | string | null;
+  ativo: boolean | null;
+}
+
+interface BrowserlessEnvelope {
+  evidence?: Record<string, unknown>;
+  elapsedMs?: number;
+  preLoginScreenshotUrl?: string | null;
+  portal_data_entrega?: string;
+  [key: string]: unknown;
+}
+
+interface BrowserlessResponse {
+  data?: BrowserlessEnvelope;
+  type?: string;
+  screenshot?: string | null;
+  preLoginScreenshot?: string | null;
+  raw?: string;
+  [key: string]: unknown;
+}
+
 async function uploadScreenshot(
-  supabase: ReturnType<typeof createClient>,
+  supabase: SupabaseClient,
   pedidoId: number,
   base64: string,
   suffix: string = "",
@@ -1337,15 +1375,15 @@ async function registrarPedidoOmieAposPortal(pedido: PedidoCandidato) {
       return;
     }
     console.log(`[envio-portal] Pedido #${pedido.id}: Omie acionado apos portal [${resp.status}] ${text.slice(0, 300)}`);
-  } catch (e: any) {
-    console.error(`[envio-portal] Pedido #${pedido.id}: excecao ao registrar Omie apos portal`, e?.message ?? e);
+  } catch (e) {
+    console.error(`[envio-portal] Pedido #${pedido.id}: excecao ao registrar Omie apos portal`, e instanceof Error ? e.message : String(e));
   }
 }
 
 // PR1: grava uma linha de auditoria em pedidos_portal_tentativas.
 // Best-effort — uma falha aqui nunca aborta o processamento do pedido.
 async function gravarTentativa(
-  supabase: ReturnType<typeof createClient>,
+  supabase: SupabaseClient,
   pedidoId: number,
   params: {
     iniciadoEm: string;
@@ -1370,13 +1408,13 @@ async function gravarTentativa(
     if (error) {
       console.error(`[envio-portal] Pedido #${pedidoId}: falha ao gravar tentativa de auditoria:`, error.message);
     }
-  } catch (e: any) {
-    console.error(`[envio-portal] Pedido #${pedidoId}: excecao ao gravar tentativa de auditoria:`, e?.message ?? e);
+  } catch (e) {
+    console.error(`[envio-portal] Pedido #${pedidoId}: excecao ao gravar tentativa de auditoria:`, e instanceof Error ? e.message : String(e));
   }
 }
 
 async function processarPedido(
-  supabase: ReturnType<typeof createClient>,
+  supabase: SupabaseClient,
   pedido: PedidoCandidato,
 ): Promise<ProcessResult> {
   const t0 = Date.now();
@@ -1411,7 +1449,7 @@ async function processarPedido(
   console.log("[DEBUG_RPC] tentando RPC envio_portal_itens_mapeados, pedido_id=", pedido.id);
   const { data: itens, error: itensErr } = await supabase.rpc("envio_portal_itens_mapeados", {
     p_pedido_id: pedido.id,
-  }).select("*") as unknown as { data: ItemMapeado[] | null; error: any };
+  }).select("*") as unknown as { data: ItemMapeado[] | null; error: PostgrestErrorLike | null };
 
   let itensList: ItemMapeado[] | null = itens;
   console.log("[DEBUG_RPC_RESULT]", JSON.stringify({
@@ -1423,7 +1461,7 @@ async function processarPedido(
   }));
   // Fallback: query direta caso RPC nao exista
   if (itensErr || !itensList) {
-    const { data: itensDirect, error: e2 } = await supabase
+    const { data: itensDirectRaw, error: e2 } = await supabase
       .from("pedido_compra_item")
       .select(`
         id,
@@ -1433,7 +1471,8 @@ async function processarPedido(
       `)
       .eq("pedido_id", pedido.id)
       .order("id", { ascending: true });
-    if (e2 || !itensDirect) {
+    const itensDirect = (itensDirectRaw ?? []) as unknown as PedidoItemDireto[];
+    if (e2 || !itensDirectRaw) {
       // Erro de banco ao buscar itens — transiente, nenhum POST foi enviado.
       result.erro = `Erro ao buscar itens: ${e2?.message ?? "desconhecido"}`;
       result.tentativas += 1;
@@ -1456,31 +1495,32 @@ async function processarPedido(
       result.duracao_ms = Date.now() - t0;
       return result;
     }
-    const skus = itensDirect.map((i: any) => i.sku_codigo_omie);
+    const skus = itensDirect.map((i) => i.sku_codigo_omie);
     console.log("[DEBUG_FALLBACK_ITENS]", JSON.stringify({
       pedido_id: pedido.id,
       pedido_empresa: pedido.empresa,
       itensDirect_count: itensDirect?.length ?? 0,
       skus_extraidos: skus,
     }));
-    const { data: maps, error: mapsErr } = await supabase
+    const { data: mapsRaw, error: mapsErr } = await supabase
       .from("sku_fornecedor_externo")
       .select("sku_omie, sku_portal, unidade_portal, fator_conversao, ativo")
       .eq("empresa", pedido.empresa)
       .ilike("fornecedor_nome", "%SAYERLACK%")
       .in("sku_omie", skus);
+    const maps = (mapsRaw ?? []) as unknown as SkuFornecedorExternoRow[];
     console.log("[DEBUG_FALLBACK_MAPS]", JSON.stringify({
       pedido_id: pedido.id,
       filtro_empresa: pedido.empresa,
       filtro_fornecedor_pattern: '%SAYERLACK%',
       filtro_skus: skus,
-      maps_count: maps?.length ?? 0,
-      maps_amostra: (maps ?? []).slice(0, 3).map((m: any) => ({ sku_omie: m.sku_omie, sku_portal: m.sku_portal, ativo: m.ativo })),
+      maps_count: maps.length,
+      maps_amostra: maps.slice(0, 3).map((m) => ({ sku_omie: m.sku_omie, sku_portal: m.sku_portal, ativo: m.ativo })),
       mapsErr: mapsErr ? { message: mapsErr.message, code: mapsErr.code } : null,
     }));
-    const mapByOmie = new Map<string, any>();
-    (maps ?? []).forEach((m: any) => mapByOmie.set(m.sku_omie, m));
-    itensList = itensDirect.map((i: any) => {
+    const mapByOmie = new Map<string, SkuFornecedorExternoRow>();
+    maps.forEach((m) => mapByOmie.set(m.sku_omie, m));
+    itensList = itensDirect.map((i) => {
       const m = mapByOmie.get(i.sku_codigo_omie);
       return {
         item_id: i.id,
@@ -1576,7 +1616,7 @@ async function processarPedido(
   // 5. Invocar Browserless
   const tBrowserless = Date.now();
   let httpStatus = 0;
-  let bResp: any = null;
+  let bResp: BrowserlessResponse | null = null;
   let httpErr: string | null = null;
 
   try {
@@ -1606,12 +1646,12 @@ async function processarPedido(
     httpStatus = resp.status;
     const txt = await resp.text();
     try {
-      bResp = JSON.parse(txt);
+      bResp = JSON.parse(txt) as BrowserlessResponse;
     } catch {
       bResp = { raw: txt };
     }
-  } catch (e: any) {
-    httpErr = e?.message ?? String(e);
+  } catch (e) {
+    httpErr = e instanceof Error ? e.message : String(e);
   }
   const browserlessMs = Date.now() - tBrowserless;
   console.log(`[envio-portal] Pedido #${pedido.id}: Browserless retornou em ${browserlessMs}ms — status=${httpStatus}`);
@@ -1648,10 +1688,10 @@ async function processarPedido(
 
   // Extrair envelope estruturado (PR1): o script sempre devolve
   // { data: <envelope>, type, screenshot, preLoginScreenshot }.
-  const envelope = (bResp?.data ?? bResp ?? {}) as Record<string, any>;
+  const envelope: BrowserlessEnvelope = (bResp?.data ?? (bResp as BrowserlessEnvelope | null) ?? {}) as BrowserlessEnvelope;
   const screenshotB64: string | null = bResp?.screenshot ?? null;
   const preLoginScreenshotB64: string | null = bResp?.preLoginScreenshot ?? null;
-  const evidence = (envelope?.evidence ?? {}) as Record<string, any>;
+  const evidence: Record<string, unknown> = (envelope?.evidence ?? {}) as Record<string, unknown>;
   const requestSent = evidence?.requestSent === true;
 
   // Upload de screenshots (instrumentacao — comportamento inalterado)
@@ -1707,7 +1747,7 @@ async function processarPedido(
     // PR4: persiste a data_entrega devolvida pelo portal (formato ISO YYYY-MM-DD).
     // Só grava se veio um valor válido — não sobrescreve com null em re-tentativas
     // que não capturaram a data (ex.: caminho PR1.5 do recorder fallback).
-    const portalDataEntrega = (envelope as any)?.portal_data_entrega;
+    const portalDataEntrega = envelope?.portal_data_entrega;
     if (typeof portalDataEntrega === "string" && /^\d{4}-\d{2}-\d{2}$/.test(portalDataEntrega)) {
       update.portal_data_entrega = portalDataEntrega;
     }
@@ -1862,7 +1902,7 @@ async function authorizeCronOrStaff(req: Request): Promise<boolean> {
 // PR1: NUNCA reverte para pendente_envio_portal — um pedido travado em
 // enviando_portal pode ter submetido um POST antes de o task morrer. Sem
 // evidência, o destino seguro é conciliação manual.
-async function runWatchdog(supabase: any, minutos = 5) {
+async function runWatchdog(supabase: SupabaseClient, minutos = 5) {
   const cutoff = new Date(Date.now() - minutos * 60 * 1000).toISOString();
   const { data: stuck, error } = await supabase
     .from("pedido_compra_sugerido")
@@ -1901,7 +1941,7 @@ async function runWatchdog(supabase: any, minutos = 5) {
 // Processa lista de candidatos. Pode rodar em foreground (response síncrona)
 // ou em background via EdgeRuntime.waitUntil (modo async).
 async function processCandidatos(
-  supabase: any,
+  supabase: SupabaseClient,
   candidatos: PedidoCandidato[],
 ): Promise<{ detalhes: ProcessResult[]; sucesso: number; falhasDef: number; falhasTmp: number; indeterminados: number }> {
   const detalhes: ProcessResult[] = [];
@@ -1921,15 +1961,16 @@ async function processCandidatos(
       else if (r.status_final === "erro_retentavel" || r.status_final === "pendente_envio_portal") falhasTmp++;
       // aceito_portal_sem_protocolo/indeterminado = precisa conciliacao manual.
       else if (r.status_final === "aceito_portal_sem_protocolo" || r.status_final === "indeterminado_requer_conciliacao") indeterminados++;
-    } catch (e: any) {
-      console.error(`[envio-portal] Excecao no pedido #${p.id}:`, e?.message ?? e);
+    } catch (e) {
+      const errMsg = e instanceof Error ? e.message : String(e);
+      console.error(`[envio-portal] Excecao no pedido #${p.id}:`, errMsg);
       detalhes.push({
         pedido_id: p.id,
         status_inicial: p.status_envio_portal ?? "pendente_envio_portal",
         status_final: "erro_excecao",
         protocolo: null,
         tentativas: p.portal_tentativas ?? 0,
-        erro: e?.message ?? String(e),
+        erro: errMsg,
         screenshot_url: null,
         duracao_ms: 0,
       });
@@ -1953,11 +1994,11 @@ Deno.serve(async (req) => {
   const tStart = Date.now();
   console.log("[envio-portal] === Iniciando ===");
 
-  let body: any = {};
+  let body: Record<string, unknown> = {};
   try {
     if (req.method === "POST") {
       const txt = await req.text();
-      body = txt ? JSON.parse(txt) : {};
+      body = txt ? (JSON.parse(txt) as Record<string, unknown>) : {};
     }
   } catch {
     body = {};
