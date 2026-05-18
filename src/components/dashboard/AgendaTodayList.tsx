@@ -8,6 +8,7 @@ import { Phone, AlertTriangle, TrendingUp, Clock, Loader2 } from 'lucide-react';
 import { useMyAgendaToday, type AgendaItem } from '@/hooks/useMyAgendaToday';
 import { useWebRTCCallContext } from '@/contexts/WebRTCCallContext';
 import { toast } from 'sonner';
+import { SignalModifierBadge } from './SignalModifierBadge';
 
 const AGENDA_META: Record<AgendaItem['agenda_type'], { label: string; icon: typeof Phone; color: string }> = {
   risco: { label: 'Risco', icon: AlertTriangle, color: 'text-status-error' },
@@ -85,6 +86,9 @@ export function AgendaTodayList() {
                 <Badge variant="outline" className="text-2xs">{meta.label}</Badge>
                 {item.health_class && <span>health: {item.health_class}</span>}
                 <span>priority: {Math.round(item.priority_score)}</span>
+                {item.topModifier && (
+                  <SignalModifierBadge modifier={item.topModifier} totalSignals={item.signalsCount} />
+                )}
               </div>
             </Link>
             <Button
