@@ -271,6 +271,155 @@ function aplicarCenario(
   };
 }
 
+type LinhaCashflow = {
+  origem: 'cr_omie' | 'cp_omie' | 'evento_recorrente' | 'evento_eventual';
+  desc: string;
+  data: string;
+  valor: number;
+  id_origem: string;
+};
+
+type Semana = {
+  inicio: string;
+  fim: string;
+  saldo_inicial: number;
+  entradas: LinhaCashflow[];
+  saidas: LinhaCashflow[];
+  total_entradas: number;
+  total_saidas: number;
+  saldo_final: number;
+};
+
+function inicioSemanaUTC(isoDate: string): string {
+  const d = new Date(isoDate + 'T00:00:00Z');
+  const day = d.getUTCDay();
+  const diff = day === 0 ? -6 : 1 - day;
+  d.setUTCDate(d.getUTCDate() + diff);
+  return d.toISOString().slice(0, 10);
+}
+
+function addDays(isoDate: string, days: number): string {
+  const d = new Date(isoDate + 'T00:00:00Z');
+  d.setUTCDate(d.getUTCDate() + days);
+  return d.toISOString().slice(0, 10);
+}
+
+function expandirRecorrenteDeno(
+  rec: EventoRecorrente,
+  de: string,
+  ate: string,
+): string[] {
+  const result: string[] = [];
+  const startBase = rec.inicio > de ? rec.inicio : de;
+  const start = new Date(startBase + 'T00:00:00Z');
+  const end = new Date(ate + 'T00:00:00Z');
+  const fim = rec.fim ? new Date(rec.fim + 'T00:00:00Z') : null;
+
+  let ano = start.getUTCFullYear();
+  let mes1 = start.getUTCMonth() + 1;
+  while (true) {
+    const ultimoDia = new Date(Date.UTC(ano, mes1, 0)).getUTCDate();
+    const dia = Math.min(rec.dia_do_mes, ultimoDia);
+    const candidato = new Date(Date.UTC(ano, mes1 - 1, dia));
+    if (candidato > end) break;
+    if (candidato >= start && (!fim || candidato <= fim)) {
+      result.push(candidato.toISOString().slice(0, 10));
+    }
+    mes1++;
+    if (mes1 > 12) { mes1 = 1; ano++; }
+  }
+  return result;
+}
+
+function gerarSemanas(
+  dados: DadosBase,
+  premissas: PremissasAplicadas,
+  horizon: number,
+): Semana[] {
+  const hoje = new Date().toISOString().slice(0, 10);
+  const semanaInicio = inicioSemanaUTC(hoje);
+
+  const semanas: Semana[] = [];
+  let saldoAtual = dados.saldo_cc;
+
+  for (let i = 0; i < horizon; i++) {
+    const inicio = addDays(semanaInicio, i * 7);
+    const fim = addDays(inicio, 6);
+
+    const entradas: LinhaCashflow[] = [];
+    const saidas: LinhaCashflow[] = [];
+
+    for (const cr of dados.crs) {
+      if (!cr.data_vencimento || cr.saldo <= 0) continue;
+      if (cr.data_vencimento < inicio || cr.data_vencimento > fim) continue;
+      const valorAjustado = cr.saldo * (1 - premissas.inadimplencia_pct / 100);
+      entradas.push({
+        origem: 'cr_omie',
+        desc: cr.nome_cliente || 'Cliente',
+        data: cr.data_vencimento,
+        valor: valorAjustado,
+        id_origem: cr.id,
+      });
+    }
+
+    for (const cp of dados.cps) {
+      if (!cp.data_vencimento || cp.saldo <= 0) continue;
+      if (cp.data_vencimento < inicio || cp.data_vencimento > fim) continue;
+      saidas.push({
+        origem: 'cp_omie',
+        desc: cp.categoria_codigo || 'Fornecedor',
+        data: cp.data_vencimento,
+        valor: cp.saldo,
+        id_origem: cp.id,
+      });
+    }
+
+    for (const rec of dados.eventos_rec) {
+      const ocorrencias = expandirRecorrenteDeno(rec, inicio, fim);
+      for (const dataOc of ocorrencias) {
+        const linha: LinhaCashflow = {
+          origem: 'evento_recorrente',
+          desc: rec.descricao,
+          data: dataOc,
+          valor: rec.valor,
+          id_origem: rec.id,
+        };
+        if (rec.tipo === 'entrada') entradas.push(linha);
+        else saidas.push(linha);
+      }
+    }
+
+    for (const ev of dados.eventos_ev) {
+      if (ev.data_prevista < inicio || ev.data_prevista > fim) continue;
+      const linha: LinhaCashflow = {
+        origem: 'evento_eventual',
+        desc: ev.descricao,
+        data: ev.data_prevista,
+        valor: ev.valor,
+        id_origem: ev.id,
+      };
+      if (ev.tipo === 'entrada') entradas.push(linha);
+      else saidas.push(linha);
+    }
+
+    const total_entradas = entradas.reduce((s, l) => s + l.valor, 0);
+    const total_saidas = saidas.reduce((s, l) => s + l.valor, 0);
+    const saldo_final = saldoAtual + total_entradas - total_saidas;
+
+    semanas.push({
+      inicio, fim,
+      saldo_inicial: saldoAtual,
+      entradas, saidas,
+      total_entradas, total_saidas,
+      saldo_final,
+    });
+
+    saldoAtual = saldo_final;
+  }
+
+  return semanas;
+}
+
 // === Pipeline (será implementada nas próximas tasks) ===
 async function calcular(
   _supabase: ReturnType<typeof createClient>,
