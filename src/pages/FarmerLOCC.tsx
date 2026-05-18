@@ -10,8 +10,8 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from '@/components/ui/dialog';
 import { Skeleton } from '@/components/ui/skeleton';
-import { useFarmerScoring } from '@/hooks/useFarmerScoring';
-import { useFarmerMetrics } from '@/hooks/useFarmerMetrics';
+import { useFarmerScoring, type AlgorithmConfig } from '@/hooks/useFarmerScoring';
+import { useFarmerMetrics, type FarmerMetrics } from '@/hooks/useFarmerMetrics';
 import { useFarmerExperiments, type Experiment } from '@/hooks/useFarmerExperiments';
 import { useFarmerGovernance } from '@/hooks/useFarmerGovernance';
 import { useCrossSellEngine } from '@/hooks/useCrossSellEngine';
@@ -51,6 +51,27 @@ const statusColors: Record<string, string> = {
 };
 
 type TabKey = 'overview' | 'experiments' | 'capacity' | 'adaptive';
+
+interface ScoringSummary {
+  totalClients: number;
+  avgHealth: number;
+  avgPriority: number;
+  saudavel: number;
+  estavel: number;
+  atencao: number;
+  critico: number;
+}
+
+interface NewExperimentInput {
+  title: string;
+  hypothesis: string;
+  primary_metric: string;
+  min_duration_days: number;
+  min_sample_size: number;
+  min_significance: number;
+  control_description: string;
+  test_description: string;
+}
 
 // ─── Skeleton placeholder for unvisited tabs ─────────────────────────
 const TabSkeleton = () => (
@@ -190,8 +211,8 @@ const FarmerLOCC = () => {
 
 // ─── OVERVIEW TAB (lightweight, uses parent data) ────────────────────
 const OverviewTab = memo(({ summary, metrics, scoringCalc, recalculate, navigate }: {
-  summary: any;
-  metrics: any;
+  summary: ScoringSummary;
+  metrics: FarmerMetrics;
   scoringCalc: boolean;
   recalculate: () => void;
   navigate: (path: string) => void;
@@ -316,7 +337,7 @@ const ExperimentsTab = memo(() => {
 ExperimentsTab.displayName = 'ExperimentsTab';
 
 // ─── CAPACITY TAB (uses parent metrics, no extra hooks) ──────────────
-const CapacityTab = memo(({ metrics }: { metrics: any }) => (
+const CapacityTab = memo(({ metrics }: { metrics: FarmerMetrics }) => (
   <>
     <Card>
       <CardHeader className="p-3 pb-2">
@@ -369,7 +390,7 @@ const CapacityTab = memo(({ metrics }: { metrics: any }) => (
 CapacityTab.displayName = 'CapacityTab';
 
 // ─── ADAPTIVE TAB (governance hook loaded here) ──────────────────────
-const AdaptiveTab = memo(({ config, metrics, navigate }: { config: any; metrics: any; navigate: (path: string) => void }) => (
+const AdaptiveTab = memo(({ config, metrics, navigate }: { config: AlgorithmConfig; metrics: FarmerMetrics; navigate: (path: string) => void }) => (
   <>
     <Card>
       <CardHeader className="p-3 pb-2">
@@ -574,7 +595,7 @@ const ExperimentCard = ({ experiment, onStart, onMeasure, onCancel }: {
   );
 };
 
-const NewExperimentDialog = ({ onCreate }: { onCreate: (input: any) => void }) => {
+const NewExperimentDialog = ({ onCreate }: { onCreate: (input: NewExperimentInput) => void }) => {
   const [open, setOpen] = useState(false);
   const [form, setForm] = useState({
     title: '',

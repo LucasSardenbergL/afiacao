@@ -62,6 +62,15 @@ type AumentoComAgg = Aumento & {
   perc_medio: number | null;
 };
 
+type FornecedorRow = { fornecedor_nome: string | null };
+
+type AumentoItemAgg = {
+  aumento_id: number;
+  aumento_perc: number | null;
+  ativo: boolean | null;
+  confirmado: boolean | null;
+};
+
 const ESTADOS: Array<{ value: string; label: string }> = [
   { value: "rascunho", label: "Rascunho" },
   { value: "ativo", label: "Ativo" },
@@ -111,13 +120,14 @@ export default function AdminReposicaoAumentos() {
     queryKey: ["aumentos-fornecedores"],
     queryFn: async () => {
       const { data, error } = await supabase
-        .from("fornecedor_aumento_anunciado" as any)
+        .from("fornecedor_aumento_anunciado" as never)
         .select("fornecedor_nome")
         .eq("empresa", EMPRESA);
       if (error) throw error;
+      const rows = (data || []) as unknown as FornecedorRow[];
       const uniq = Array.from(
-        new Set(((data as any[]) || []).map((r) => r.fornecedor_nome).filter(Boolean)),
-      ) as string[];
+        new Set(rows.map((r) => r.fornecedor_nome).filter((n): n is string => Boolean(n))),
+      );
       return uniq.sort();
     },
   });
@@ -126,7 +136,7 @@ export default function AdminReposicaoAumentos() {
     queryKey: ["aumentos", filtroFornecedor, filtroEstado, busca],
     queryFn: async () => {
       let q = supabase
-        .from("fornecedor_aumento_anunciado" as any)
+        .from("fornecedor_aumento_anunciado" as never)
         .select(
           "id, nome, fornecedor_nome, data_vigencia, data_anuncio, estado, extracao_confianca, criado_em",
         )
@@ -152,11 +162,11 @@ export default function AdminReposicaoAumentos() {
       const sums: Record<number, { sum: number; n: number }> = {};
       if (ids.length > 0) {
         const { data: itens } = await supabase
-          .from("fornecedor_aumento_item" as any)
+          .from("fornecedor_aumento_item" as never)
           .select("aumento_id, aumento_perc, ativo, confirmado")
           .in("aumento_id", ids)
           .eq("ativo", true);
-        ((itens || []) as any[]).forEach((it) => {
+        ((itens || []) as unknown as AumentoItemAgg[]).forEach((it) => {
           counts[it.aumento_id] = (counts[it.aumento_id] || 0) + 1;
           if (it.confirmado && typeof it.aumento_perc === "number") {
             const s = sums[it.aumento_id] || { sum: 0, n: 0 };
@@ -258,8 +268,9 @@ export default function AdminReposicaoAumentos() {
       if (data?.aumento_id) {
         navigate(`/admin/reposicao/aumentos/${data.aumento_id}`);
       }
-    } catch (e: any) {
-      toast.error(e?.message || "Erro ao extrair aumento");
+    } catch (e: unknown) {
+      const msg = e instanceof Error ? e.message : "Erro ao extrair aumento";
+      toast.error(msg);
     } finally {
       setExtraindo(false);
     }
