@@ -8,20 +8,28 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import { ScrollArea } from '@/components/ui/scroll-area';
 import { Textarea } from '@/components/ui/textarea';
 import { useAuth } from '@/contexts/AuthContext';
-import { useCopilotEngine, type CopilotDirection, type CopilotPhase, type CopilotIntent } from '@/hooks/useCopilotEngine';
+import {
+  useCopilotEngine,
+  type CopilotDirection,
+  type CopilotPhase,
+  type CopilotIntent,
+  type SuggestionType,
+  type CopilotContext,
+} from '@/hooks/useCopilotEngine';
 import { useTacticalPlan, getObjectiveLabel, type TacticalPlan } from '@/hooks/useTacticalPlan';
 import { supabase } from '@/integrations/supabase/client';
 import {
   Mic, MicOff, Radio, StopCircle, Lightbulb, Copy, Check,
   MessageSquare, Brain, Target, Shield, TrendingUp, TrendingDown,
   Minus, AlertTriangle, Loader2, ChevronRight, Phone, FileText,
-  ChevronDown, ChevronUp, Type, Send
+  ChevronDown, ChevronUp, Type, Send,
+  type LucideIcon,
 } from 'lucide-react';
 import { toast } from 'sonner';
 import { cn } from '@/lib/utils';
 
 // ─── Helpers ───────────────────────────────────────────────────────
-const directionConfig: Record<CopilotDirection, { color: string; bg: string; icon: any; label: string }> = {
+const directionConfig: Record<CopilotDirection, { color: string; bg: string; icon: LucideIcon; label: string }> = {
   positivo: { color: 'text-status-success', bg: 'bg-status-success-bg border-status-success/30', icon: TrendingUp, label: 'Positivo' },
   neutro: { color: 'text-status-warning', bg: 'bg-status-warning-bg border-status-warning/30', icon: Minus, label: 'Neutro' },
   risco: { color: 'text-status-error', bg: 'bg-status-error-bg border-status-error/30', icon: TrendingDown, label: 'Em Risco' },
@@ -44,7 +52,7 @@ const intentLabels: Record<CopilotIntent, { label: string; color: string }> = {
   indiferenca: { label: 'Indiferença', color: 'bg-muted text-muted-foreground' },
 };
 
-const suggestionTypeIcons: Record<string, any> = {
+const suggestionTypeIcons: Record<SuggestionType, LucideIcon> = {
   pergunta_diagnostica: MessageSquare,
   resposta_tecnica: Brain,
   argumento_economico: Target,
@@ -91,15 +99,15 @@ const FarmerCopilot = () => {
       const { data: scores } = await supabase
         .from('farmer_client_scores')
         .select('customer_user_id')
-        .eq('farmer_id', user.id) as any;
+        .eq('farmer_id', user.id);
       if (!scores?.length) return;
-      const ids = scores.map((s: any) => s.customer_user_id);
+      const ids = scores.map((s) => s.customer_user_id).filter((id): id is string => id !== null);
       const { data: profiles } = await supabase
         .from('profiles')
         .select('user_id, name')
-        .in('user_id', ids) as any;
+        .in('user_id', ids);
       if (profiles) {
-        setCustomers(profiles.map((p: any) => ({ id: p.user_id, name: p.name })));
+        setCustomers(profiles.map((p) => ({ id: p.user_id, name: p.name ?? '' })));
       }
     })();
   }, [user, isStaff]);
@@ -120,9 +128,9 @@ const FarmerCopilot = () => {
 
   // Shared session start logic (reused by both modes)
   const prepareSessionContext = useCallback(async () => {
-    let customerContext: any = null;
+    let customerContext: Record<string, unknown> | null = null;
     let customerName = '';
-    let bundleContext: any = null;
+    let bundleContext: CopilotContext | undefined = undefined;
 
     if (selectedCustomer) {
       const { data: score } = await supabase
@@ -130,13 +138,13 @@ const FarmerCopilot = () => {
         .select('*')
         .eq('customer_user_id', selectedCustomer)
         .eq('farmer_id', user!.id)
-        .single() as any;
+        .single();
 
       const { data: profile } = await supabase
         .from('profiles')
         .select('name, customer_type, cnae')
         .eq('user_id', selectedCustomer)
-        .single() as any;
+        .single();
 
       customerName = profile?.name || '';
       customerContext = {
@@ -198,7 +206,7 @@ const FarmerCopilot = () => {
       });
 
       toast.success('Copiloto ativado', { description: 'Transcrição em tempo real iniciada' });
-    } catch (err: any) {
+    } catch (err) {
       console.error('Start error:', err);
       // Auto-fallback to text mode
       setInputMode('text');
@@ -224,9 +232,10 @@ const FarmerCopilot = () => {
       });
 
       toast.success('Copiloto ativado', { description: 'Modo texto — cole ou digite trechos da conversa' });
-    } catch (err: any) {
+    } catch (err) {
       console.error('Start error:', err);
-      toast.error('Erro', { description: err.message || 'Falha ao iniciar copiloto' });
+      const message = err instanceof Error ? err.message : 'Falha ao iniciar copiloto';
+      toast.error('Erro', { description: message });
     } finally {
       setIsConnecting(false);
     }
