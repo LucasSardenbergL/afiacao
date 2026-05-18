@@ -294,11 +294,11 @@ export default function TintReconciliation() {
                 {csvVal && <ValueDisplay label="Tabela oficial (CSV)" value={csvVal} />}
                 {syncVal && <ValueDisplay label="Staging (Sync)" value={syncVal} />}
 
-                {detailItem.diff_fields?.length > 0 && (
+                {(detailItem.diff_fields?.length ?? 0) > 0 && (
                   <div>
                     <p className="text-xs text-muted-foreground mb-1 font-semibold">Campos divergentes</p>
                     <div className="space-y-1">
-                      {detailItem.diff_fields.map((field: string) => (
+                      {(detailItem.diff_fields ?? []).map((field: string) => (
                         <div key={field} className="text-sm bg-muted p-2 rounded">
                           <span className="font-semibold">{field}:</span>
                           <span className="ml-2 text-primary">CSV: {String(csvVal?.[field] ?? "—")}</span>
