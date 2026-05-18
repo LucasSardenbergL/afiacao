@@ -46,6 +46,11 @@
     "src/components/des/CheckinQualitativoTab.tsx",
     "src/pages/SalesOrders.tsx",
     "src/pages/TintReconciliation.tsx",
-    "src/pages/TintMapping.tsx"
+    "src/pages/TintMapping.tsx",
+    "src/pages/Recebimento.tsx",
+    "src/pages/AdminReposicaoPromocoes.tsx",
+    "src/pages/FarmerTacticalPlan.tsx",
+    "src/pages/AdminReposicaoOportunidades.tsx",
+    "src/components/UnifiedAIAssistant.tsx"
   ]
 }
