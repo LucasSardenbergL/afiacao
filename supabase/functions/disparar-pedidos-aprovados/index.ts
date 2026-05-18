@@ -2,7 +2,7 @@
 // Às 10:00 BRT (cron 0 13 * * *), processa pedidos aprovados do ciclo do dia.
 // - DRY-RUN: cria pedido no Omie via IncluirPedidoCompra, NÃO envia ao fornecedor
 // - PRODUÇÃO: cria no Omie + dispara notificação ao fornecedor pelo canal configurado
-import { createClient } from "https://esm.sh/@supabase/supabase-js@2.45.0";
+import { createClient, type SupabaseClient } from "https://esm.sh/@supabase/supabase-js@2.45.0";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -63,6 +63,31 @@ interface ItemRow {
   preco_unitario: number;
 }
 
+interface OmieGenericResponse {
+  faultstring?: string;
+  // IncluirPedCompra
+  nCodPed?: number | string;
+  codigo_pedido?: number | string;
+  cCodIntPed?: string;
+  cNumero?: string;
+  numero_pedido?: string;
+  // ListarClientes
+  clientes_cadastro?: OmieClienteCadastro[];
+  [key: string]: unknown;
+}
+
+interface OmieClienteCadastro {
+  codigo_cliente_omie?: number | string;
+  razao_social?: string;
+  cnpj_cpf?: string;
+  [key: string]: unknown;
+}
+
+interface PortalAsyncResponseBody {
+  accepted?: boolean;
+  [key: string]: unknown;
+}
+
 function fmtBRL(v: number): string {
   return new Intl.NumberFormat("pt-BR", {
     style: "currency",
@@ -99,7 +124,7 @@ async function omieCall(
   call: string,
   param: unknown,
   creds: { app_key: string; app_secret: string },
-): Promise<any> {
+): Promise<OmieGenericResponse> {
   const r = await fetch(url, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
@@ -111,9 +136,9 @@ async function omieCall(
     }),
   });
   const text = await r.text();
-  let json: any;
+  let json: OmieGenericResponse;
   try {
-    json = JSON.parse(text);
+    json = JSON.parse(text) as OmieGenericResponse;
   } catch {
     throw new Error(`Omie ${call} resposta não-JSON: ${text.slice(0, 300)}`);
   }
@@ -128,7 +153,7 @@ async function omieCall(
 }
 
 async function resolveCodigoFornecedor(
-  db: any,
+  db: SupabaseClient,
   empresa: string,
   fornecedorNome: string,
   creds: { app_key: string; app_secret: string },
@@ -160,7 +185,7 @@ async function resolveCodigoFornecedor(
     },
     creds,
   );
-  const lista: any[] = resp?.clientes_cadastro ?? [];
+  const lista: OmieClienteCadastro[] = resp?.clientes_cadastro ?? [];
   if (lista.length === 0) {
     throw new Error(
       `Fornecedor não encontrado no Omie pelo nome: "${fornecedorNome}"`,
@@ -238,7 +263,7 @@ function isSayerlackOben(pedido: PedidoRow): boolean {
  * Estado que ainda está rodando: enviando_portal.
  */
 async function aguardarPortalTerminar(
-  db: any,
+  db: SupabaseClient,
   pedidoId: number,
   timeoutMs: number,
 ): Promise<string | null> {
@@ -279,7 +304,7 @@ async function aguardarPortalTerminar(
  * pelo PR2/PR3 — degradação suave).
  */
 async function dividirPedidosGrandesSayerlack(
-  db: any,
+  db: SupabaseClient,
   aprovados: PedidoRow[],
   modo: "dry_run" | "producao",
 ): Promise<PedidoRow[]> {
@@ -371,7 +396,7 @@ async function dividirPedidosGrandesSayerlack(
  * Lança erro se o portal falhou (impede criação no Omie sem protocolo).
  */
 async function iniciarEnvioPortalSayerlack(
-  db: any,
+  db: SupabaseClient,
   pedidoId: number,
 ): Promise<PortalDispatchResult> {
   // Já enviado em execução anterior?
@@ -431,7 +456,7 @@ async function iniciarEnvioPortalSayerlack(
     clearTimeout(timeout);
   }
 
-  const body = await resp.json().catch(() => ({} as any));
+  const body = (await resp.json().catch(() => ({}))) as PortalAsyncResponseBody;
   if (!resp.ok) {
     throw new Error(
       `Portal Sayerlack retornou ${resp.status}: ${JSON.stringify(body).slice(0, 300)}`,
@@ -449,7 +474,7 @@ async function iniciarEnvioPortalSayerlack(
 }
 
 async function processarPedido(
-  db: any,
+  db: SupabaseClient,
   pedido: PedidoRow,
   modo: "dry_run" | "producao",
   creds: { app_key: string; app_secret: string },
