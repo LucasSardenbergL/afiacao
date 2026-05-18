@@ -1,6 +1,7 @@
 import { useQuery } from '@tanstack/react-query';
 import { supabase } from '@/integrations/supabase/client';
 import { useAuth } from '@/contexts/AuthContext';
+import type { ScoreAdjustment } from '@/lib/scoring/types';
 
 export interface CarteiraScoreRow {
   customer_user_id: string;
@@ -13,6 +14,8 @@ export interface CarteiraScoreRow {
   revenue_potential: number | null;
   days_since_last_purchase: number | null;
   avg_monthly_spend_180d: number | null;
+  signal_modifiers: ScoreAdjustment | null;
+  last_signal_recalc_at: string | null;
 }
 
 /**
@@ -29,7 +32,7 @@ export function useMyCarteiraScores() {
       if (!user) return [];
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       const { data, error } = await (supabase.from('farmer_client_scores') as any)
-        .select('customer_user_id, health_score, health_class, priority_score, churn_risk, expansion_score, recover_score, revenue_potential, days_since_last_purchase, avg_monthly_spend_180d')
+        .select('customer_user_id, health_score, health_class, priority_score, churn_risk, expansion_score, recover_score, revenue_potential, days_since_last_purchase, avg_monthly_spend_180d, signal_modifiers, last_signal_recalc_at')
         .eq('farmer_id', user.id)
         .order('priority_score', { ascending: false })
         .limit(200);
