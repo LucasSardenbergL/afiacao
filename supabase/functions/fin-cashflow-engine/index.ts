@@ -133,24 +133,24 @@ async function carregarDados(
   company: Company,
 ): Promise<DadosBase> {
   const [crsRes, cpsRes, ccRes, recRes, evRes, configRes] = await Promise.all([
-    // @ts-expect-error - fin_eventos_* tables not yet in supabase types
+    // @ts-expect-error - fin_contas_receber may not be in generated supabase types yet
     supabase.from('fin_contas_receber').select('id, saldo, valor_documento, valor_recebido, data_emissao, data_vencimento, data_recebimento, status_titulo, omie_codigo_cliente, nome_cliente, categoria_codigo')
       .eq('company', company)
       .neq('status_titulo', 'CANCELADO'),
-    // @ts-expect-error
+    // @ts-expect-error - fin_contas_pagar may not be in generated supabase types yet
     supabase.from('fin_contas_pagar').select('id, saldo, valor_documento, valor_pago, data_emissao, data_vencimento, data_pagamento, status_titulo, categoria_codigo')
       .eq('company', company)
       .neq('status_titulo', 'CANCELADO'),
-    // @ts-expect-error
+    // @ts-expect-error - fin_contas_correntes may not be in generated supabase types yet
     supabase.from('fin_contas_correntes').select('saldo_atual')
       .eq('company', company).eq('ativo', true),
-    // @ts-expect-error
+    // @ts-expect-error - fin_eventos_recorrentes not in generated supabase types yet (A1 table)
     supabase.from('fin_eventos_recorrentes').select('id, descricao, valor, tipo, categoria_dre, is_folha, dia_do_mes, inicio, fim')
       .eq('company', company).eq('ativo', true),
-    // @ts-expect-error
+    // @ts-expect-error - fin_eventos_eventuais not in generated supabase types yet (A1 table)
     supabase.from('fin_eventos_eventuais').select('id, descricao, valor, tipo, categoria_dre, data_prevista, status')
       .eq('company', company).in('status', ['previsto', 'confirmado']),
-    // @ts-expect-error
+    // @ts-expect-error - fin_config_cashflow not in generated supabase types yet (A1 table)
     supabase.from('fin_config_cashflow').select('overrides_cenario, thresholds, adiantamento_categorias_codigos')
       .eq('company', company).maybeSingle(),
   ]);
@@ -699,7 +699,7 @@ async function calcular(
   }
 
   if (save) {
-    // @ts-expect-error
+    // @ts-expect-error - fin_projecao_snapshots not in generated supabase types yet (A1 table)
     await supabase.from('fin_projecao_snapshots').insert({
       company,
       cenario,
