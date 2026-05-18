@@ -584,6 +584,71 @@ export type Database = {
         }
         Relationships: []
       }
+      customer_processes: {
+        Row: {
+          created_at: string
+          created_by: string
+          customer_user_id: string
+          descricao_livre: string
+          etapas: Json | null
+          ia_confidence: number | null
+          ia_gaps: string[] | null
+          ia_structured_at: string | null
+          id: string
+          is_current: boolean
+          parent_id: string | null
+          porte: string | null
+          segmento: string | null
+          tags: string[] | null
+          updated_at: string
+          version: number
+        }
+        Insert: {
+          created_at?: string
+          created_by: string
+          customer_user_id: string
+          descricao_livre: string
+          etapas?: Json | null
+          ia_confidence?: number | null
+          ia_gaps?: string[] | null
+          ia_structured_at?: string | null
+          id?: string
+          is_current?: boolean
+          parent_id?: string | null
+          porte?: string | null
+          segmento?: string | null
+          tags?: string[] | null
+          updated_at?: string
+          version?: number
+        }
+        Update: {
+          created_at?: string
+          created_by?: string
+          customer_user_id?: string
+          descricao_livre?: string
+          etapas?: Json | null
+          ia_confidence?: number | null
+          ia_gaps?: string[] | null
+          ia_structured_at?: string | null
+          id?: string
+          is_current?: boolean
+          parent_id?: string | null
+          porte?: string | null
+          segmento?: string | null
+          tags?: string[] | null
+          updated_at?: string
+          version?: number
+        }
+        Relationships: [
+          {
+            foreignKeyName: "customer_processes_parent_id_fkey"
+            columns: ["parent_id"]
+            isOneToOne: false
+            referencedRelation: "customer_processes"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       customer_segments: {
         Row: {
           account: string
@@ -614,6 +679,33 @@ export type Database = {
           segment?: string | null
           tags?: string[] | null
           updated_at?: string
+        }
+        Relationships: []
+      }
+      dashboard_visits: {
+        Row: {
+          company_selection: string | null
+          id: number
+          persona: string | null
+          session_minutes: number | null
+          user_id: string
+          visited_at: string
+        }
+        Insert: {
+          company_selection?: string | null
+          id?: number
+          persona?: string | null
+          session_minutes?: number | null
+          user_id: string
+          visited_at?: string
+        }
+        Update: {
+          company_selection?: string | null
+          id?: number
+          persona?: string | null
+          session_minutes?: number | null
+          user_id?: string
+          visited_at?: string
         }
         Relationships: []
       }
@@ -4520,6 +4612,50 @@ export type Database = {
           },
         ]
       }
+      kb_chunks: {
+        Row: {
+          char_end: number | null
+          char_start: number | null
+          chunk_index: number
+          content: string
+          created_at: string
+          document_id: string
+          embedding: string | null
+          id: string
+          token_count: number | null
+        }
+        Insert: {
+          char_end?: number | null
+          char_start?: number | null
+          chunk_index: number
+          content: string
+          created_at?: string
+          document_id: string
+          embedding?: string | null
+          id?: string
+          token_count?: number | null
+        }
+        Update: {
+          char_end?: number | null
+          char_start?: number | null
+          chunk_index?: number
+          content?: string
+          created_at?: string
+          document_id?: string
+          embedding?: string | null
+          id?: string
+          token_count?: number | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "kb_chunks_document_id_fkey"
+            columns: ["document_id"]
+            isOneToOne: false
+            referencedRelation: "kb_documents"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       kb_competitor_products: {
         Row: {
           argumentos_comparativos: Json | null
@@ -4626,6 +4762,71 @@ export type Database = {
           updated_at?: string
         }
         Relationships: []
+      }
+      kb_documents: {
+        Row: {
+          content_extracted: string | null
+          created_at: string
+          created_by: string
+          file_size_bytes: number | null
+          file_url: string
+          id: string
+          parent_id: string | null
+          product_code: string | null
+          status: string
+          status_error: string | null
+          supplier: string | null
+          tags: string[] | null
+          title: string
+          type: string
+          updated_at: string
+          version: number
+        }
+        Insert: {
+          content_extracted?: string | null
+          created_at?: string
+          created_by: string
+          file_size_bytes?: number | null
+          file_url: string
+          id?: string
+          parent_id?: string | null
+          product_code?: string | null
+          status?: string
+          status_error?: string | null
+          supplier?: string | null
+          tags?: string[] | null
+          title: string
+          type: string
+          updated_at?: string
+          version?: number
+        }
+        Update: {
+          content_extracted?: string | null
+          created_at?: string
+          created_by?: string
+          file_size_bytes?: number | null
+          file_url?: string
+          id?: string
+          parent_id?: string | null
+          product_code?: string | null
+          status?: string
+          status_error?: string | null
+          supplier?: string | null
+          tags?: string[] | null
+          title?: string
+          type?: string
+          updated_at?: string
+          version?: number
+        }
+        Relationships: [
+          {
+            foreignKeyName: "kb_documents_parent_id_fkey"
+            columns: ["parent_id"]
+            isOneToOne: false
+            referencedRelation: "kb_documents"
+            referencedColumns: ["id"]
+          },
+        ]
       }
       kb_product_specs: {
         Row: {
@@ -4775,7 +4976,15 @@ export type Database = {
           viscosidade_aplicacao_s?: number | null
           viscosidade_copo?: string | null
         }
-        Relationships: []
+        Relationships: [
+          {
+            foreignKeyName: "kb_product_specs_document_id_fkey"
+            columns: ["document_id"]
+            isOneToOne: false
+            referencedRelation: "kb_documents"
+            referencedColumns: ["id"]
+          },
+        ]
       }
       loyalty_points: {
         Row: {
@@ -6788,6 +6997,39 @@ export type Database = {
           transportadora_cnpj?: string | null
           transportadora_nome?: string | null
           updated_at?: string
+        }
+        Relationships: []
+      }
+      rag_chunks: {
+        Row: {
+          chunk_index: number
+          content: string
+          created_at: string
+          embedding: string | null
+          id: string
+          metadata: Json | null
+          source_id: string
+          source_table: string
+        }
+        Insert: {
+          chunk_index: number
+          content: string
+          created_at?: string
+          embedding?: string | null
+          id?: string
+          metadata?: Json | null
+          source_id: string
+          source_table: string
+        }
+        Update: {
+          chunk_index?: number
+          content?: string
+          created_at?: string
+          embedding?: string | null
+          id?: string
+          metadata?: Json | null
+          source_id?: string
+          source_table?: string
         }
         Relationships: []
       }
@@ -9717,6 +9959,33 @@ export type Database = {
         }
         Relationships: []
       }
+      user_departments: {
+        Row: {
+          created_at: string
+          created_by: string | null
+          department: Database["public"]["Enums"]["department"]
+          id: string
+          primary_dept: boolean
+          user_id: string
+        }
+        Insert: {
+          created_at?: string
+          created_by?: string | null
+          department: Database["public"]["Enums"]["department"]
+          id?: string
+          primary_dept?: boolean
+          user_id: string
+        }
+        Update: {
+          created_at?: string
+          created_by?: string | null
+          department?: Database["public"]["Enums"]["department"]
+          id?: string
+          primary_dept?: boolean
+          user_id?: string
+        }
+        Relationships: []
+      }
       user_roles: {
         Row: {
           created_at: string
@@ -9869,6 +10138,39 @@ export type Database = {
           sku_unidade?: string | null
           valor_total?: number | null
           valor_unitario?: number | null
+        }
+        Relationships: []
+      }
+      vendor_sip_credentials: {
+        Row: {
+          created_at: string
+          id: string
+          notes: string | null
+          sip_caller_id: string | null
+          sip_pass: string
+          sip_user: string
+          updated_at: string
+          user_id: string
+        }
+        Insert: {
+          created_at?: string
+          id?: string
+          notes?: string | null
+          sip_caller_id?: string | null
+          sip_pass: string
+          sip_user: string
+          updated_at?: string
+          user_id: string
+        }
+        Update: {
+          created_at?: string
+          id?: string
+          notes?: string | null
+          sip_caller_id?: string | null
+          sip_pass?: string
+          sip_user?: string
+          updated_at?: string
+          user_id?: string
         }
         Relationships: []
       }
@@ -11425,6 +11727,15 @@ export type Database = {
         | "gerencial"
         | "estrategico"
         | "super_admin"
+      department:
+        | "separador"
+        | "conferente"
+        | "comprador"
+        | "tintometrico"
+        | "financeiro"
+        | "vendas"
+        | "gestao"
+        | "outro"
       empresa_reposicao: "OBEN" | "COLACOR"
       farmer_call_result:
         | "contato_sucesso"
@@ -11584,6 +11895,16 @@ export const Constants = {
         "gerencial",
         "estrategico",
         "super_admin",
+      ],
+      department: [
+        "separador",
+        "conferente",
+        "comprador",
+        "tintometrico",
+        "financeiro",
+        "vendas",
+        "gestao",
+        "outro",
       ],
       empresa_reposicao: ["OBEN", "COLACOR"],
       farmer_call_result: [
