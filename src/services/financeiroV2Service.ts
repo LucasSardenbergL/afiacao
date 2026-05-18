@@ -242,7 +242,13 @@ export async function criarFechamento(company: Company, ano: number, mes: number
 export async function atualizarFechamento(
   id: string,
   acao: 'revisar' | 'fechar' | 'aprovar' | 'reabrir',
-  detalhes?: { motivo?: string; notas?: string; snapshot_dre_id?: string }
+  detalhes?: {
+    motivo?: string;
+    notas?: string;
+    snapshot_dre_id?: string;
+    snapshot_dre_caixa_id?: string;
+    snapshot_dre_competencia_id?: string;
+  }
 ): Promise<void> {
   const statusMap: Record<typeof acao, FechamentoStatus> = {
     revisar: 'em_revisao',
@@ -254,7 +260,10 @@ export async function atualizarFechamento(
   const userId = (await supabase.auth.getUser()).data.user?.id ?? null;
   const now = new Date().toISOString();
 
-  const updates: FinFechamentoUpdate = {
+  const updates: FinFechamentoUpdate & {
+    snapshot_dre_caixa_id?: string;
+    snapshot_dre_competencia_id?: string;
+  } = {
     status: statusMap[acao],
     updated_at: now,
   };
@@ -263,6 +272,37 @@ export async function atualizarFechamento(
     updates.fechado_por = userId;
     updates.fechado_em = now;
     if (detalhes?.snapshot_dre_id) updates.snapshot_dre_id = detalhes.snapshot_dre_id;
+    // Phase 3: salvar FKs duplos (caixa + competência) explicitamente ou auto-detectar
+    if (detalhes?.snapshot_dre_caixa_id) {
+      updates.snapshot_dre_caixa_id = detalhes.snapshot_dre_caixa_id;
+    }
+    if (detalhes?.snapshot_dre_competencia_id) {
+      updates.snapshot_dre_competencia_id = detalhes.snapshot_dre_competencia_id;
+    }
+    // Auto-detect: se caller não passou os FKs, query pelo company+ano+mes do fechamento
+    if (!detalhes?.snapshot_dre_caixa_id || !detalhes?.snapshot_dre_competencia_id) {
+      const { data: fech } = await supabase
+        .from('fin_fechamentos')
+        .select('company, ano, mes')
+        .eq('id', id)
+        .maybeSingle();
+      if (fech) {
+        const { data: snaps } = await supabase
+          .from('fin_dre_snapshots')
+          .select('id, regime')
+          .eq('company', fech.company)
+          .eq('ano', fech.ano)
+          .eq('mes', fech.mes);
+        for (const s of (snaps ?? []) as Array<{ id: string; regime: string }>) {
+          if (s.regime === 'caixa' && !updates.snapshot_dre_caixa_id) {
+            updates.snapshot_dre_caixa_id = s.id;
+          }
+          if (s.regime === 'competencia' && !updates.snapshot_dre_competencia_id) {
+            updates.snapshot_dre_competencia_id = s.id;
+          }
+        }
+      }
+    }
   }
   if (acao === 'aprovar') {
     updates.aprovado_por = userId;

@@ -85,6 +85,34 @@ interface CheckinAtualRow {
   observacao_criterio: string | null;
 }
 
+interface FaixaInfo {
+  faixa_id: number | null;
+  [key: string]: unknown;
+}
+
+interface PosicaoTrimestreRow {
+  faixa_conservadora: FaixaInfo | null;
+  faixa_otimista: FaixaInfo | null;
+}
+
+interface DescontoCheckinRow {
+  checkin_id: number;
+  data_avaliacao: string;
+  tipo: string;
+  faixa_numero: number | null;
+  estrelas: number | null;
+  desconto_padrao: number | null;
+  qualitativos_atingidos_perc: number | null;
+  bonus_atingido_perc: number | null;
+  desconto_total_projetado: number | null;
+  desconto_total_maximo: number | null;
+}
+
+interface CheckinQualitativoRow {
+  id: number;
+  avaliado_por: string | null;
+}
+
 const fmtPct = (v: number | null | undefined) =>
   v == null ? "—" : `${Number(v).toFixed(2).replace(".", ",")}%`;
 
@@ -117,19 +145,19 @@ export function CheckinQualitativoTab({ empresa, ano, trimestre }: Props) {
     queryKey: ["des-posicao-checkin", empresa, ano, trimestre],
     queryFn: async () => {
       const { data, error } = await supabase
-        .from("v_des_posicao_trimestre_ao_vivo" as any)
+        .from("v_des_posicao_trimestre_ao_vivo" as never)
         .select("faixa_conservadora, faixa_otimista")
         .eq("empresa", empresa)
         .eq("ano", ano)
         .eq("trimestre", trimestre)
         .maybeSingle();
       if (error) throw error;
-      return data as unknown as { faixa_conservadora: any; faixa_otimista: any } | null;
+      return data as unknown as PosicaoTrimestreRow | null;
     },
   });
 
   // Percentuais por critério para a faixa atual
-  const faixaConservId = (posicaoQuery.data?.faixa_conservadora as any)?.faixa_id ?? null;
+  const faixaConservId = posicaoQuery.data?.faixa_conservadora?.faixa_id ?? null;
 
   const percentuaisQuery = useQuery({
     queryKey: ["des-percentuais", faixaConservId],
@@ -149,7 +177,7 @@ export function CheckinQualitativoTab({ empresa, ano, trimestre }: Props) {
     queryKey: ["des-checkin-atual", empresa, ano, trimestre],
     queryFn: async () => {
       const { data, error } = await supabase
-        .from("v_des_checkin_atual" as any)
+        .from("v_des_checkin_atual" as never)
         .select("*")
         .eq("empresa", empresa)
         .eq("ano", ano)
@@ -164,7 +192,7 @@ export function CheckinQualitativoTab({ empresa, ano, trimestre }: Props) {
     queryKey: ["des-desconto", empresa, ano, trimestre],
     queryFn: async () => {
       const { data, error } = await supabase
-        .from("v_des_desconto_por_checkin" as any)
+        .from("v_des_desconto_por_checkin" as never)
         .select("*")
         .eq("empresa", empresa)
         .eq("ano", ano)
@@ -182,24 +210,26 @@ export function CheckinQualitativoTab({ empresa, ano, trimestre }: Props) {
     queryKey: ["des-checkin-historico", empresa, ano, trimestre],
     queryFn: async () => {
       const { data, error } = await supabase
-        .from("v_des_desconto_por_checkin" as any)
+        .from("v_des_desconto_por_checkin" as never)
         .select("*")
         .eq("empresa", empresa)
         .eq("ano", ano)
         .eq("trimestre", trimestre)
         .order("data_avaliacao", { ascending: false });
       if (error) throw error;
+      const rows = (data ?? []) as unknown as DescontoCheckinRow[];
       // join avaliado_por via des_checkin_qualitativo
-      const ids = (data ?? []).map((d: any) => d.checkin_id).filter(Boolean);
-      let porMap: Record<number, string | null> = {};
+      const ids = rows.map((d) => d.checkin_id).filter(Boolean);
+      const porMap: Record<number, string | null> = {};
       if (ids.length) {
         const { data: chs } = await supabase
           .from("des_checkin_qualitativo")
           .select("id, avaliado_por")
           .in("id", ids);
-        chs?.forEach((c: any) => { porMap[c.id] = c.avaliado_por; });
+        const chsRows = (chs ?? []) as unknown as CheckinQualitativoRow[];
+        chsRows.forEach((c) => { porMap[c.id] = c.avaliado_por; });
       }
-      return (data ?? []).map((d: any) => ({
+      return rows.map((d) => ({
         ...d,
         avaliado_por: porMap[d.checkin_id] ?? null,
       })) as DescontoCheckin[];
@@ -329,9 +359,10 @@ export function CheckinQualitativoTab({ empresa, ano, trimestre }: Props) {
       qc.invalidateQueries({ queryKey: ["des-checkin-atual", empresa, ano, trimestre] });
       qc.invalidateQueries({ queryKey: ["des-desconto", empresa, ano, trimestre] });
       qc.invalidateQueries({ queryKey: ["des-checkin-historico", empresa, ano, trimestre] });
-    } catch (err: any) {
+    } catch (err) {
       console.error(err);
-      toast.error("Erro ao salvar checkin: " + (err?.message ?? "desconhecido"));
+      const msg = err instanceof Error ? err.message : "desconhecido";
+      toast.error("Erro ao salvar checkin: " + msg);
     } finally {
       setSaving(false);
       setConfirmAndreOpen(false);

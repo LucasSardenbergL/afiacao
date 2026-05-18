@@ -86,7 +86,7 @@ interface Sugestao {
   sku_codigo_omie: string;
   sku_descricao: string | null;
   motivo: string | null;
-  motivo_detalhes: any;
+  motivo_detalhes: Record<string, unknown> | null;
   score_final: number | null;
   volume_financeiro_12m: number | null;
   preco_medio_unitario: number | null;
@@ -275,7 +275,7 @@ export default function AdminReposicaoNegociacaoParalela() {
     queryKey: ["negociacao-paralela-sugestoes", EMPRESA],
     queryFn: async () => {
       const { data, error } = await supabase
-        .from("v_sugestao_negociacao_ativa" as any)
+        .from("v_sugestao_negociacao_ativa" as never)
         .select("*")
         .eq("empresa", EMPRESA);
       if (error) throw error;
@@ -288,7 +288,7 @@ export default function AdminReposicaoNegociacaoParalela() {
     queryKey: ["negociacao-paralela-ranking", EMPRESA],
     queryFn: async () => {
       const { data, error } = await supabase
-        .from("mv_sku_ranking_negociacao_paralela" as any)
+        .from("mv_sku_ranking_negociacao_paralela" as never)
         .select("*")
         .eq("empresa", EMPRESA)
         .order("score_final", { ascending: false });
@@ -379,17 +379,18 @@ export default function AdminReposicaoNegociacaoParalela() {
   const handleGerarSugestoes = async () => {
     setGerando(true);
     try {
-      const { data, error } = await supabase.rpc("sugerir_negociacao_paralela_hoje" as any, {
+      const { data, error } = await supabase.rpc("sugerir_negociacao_paralela_hoje" as never, {
         p_empresa: EMPRESA,
         p_limite: 10,
-      });
+      } as never);
       if (error) throw error;
       const count = Array.isArray(data) ? data.length : 0;
       toast.success(`${count} sugest${count === 1 ? "ão criada" : "ões criadas"}.`);
       queryClient.invalidateQueries({ queryKey: ["negociacao-paralela-sugestoes"] });
       queryClient.invalidateQueries({ queryKey: ["negociacao-paralela-sugestoes-count"] });
-    } catch (err: any) {
-      toast.error("Erro ao gerar sugestões: " + (err?.message ?? "desconhecido"));
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      toast.error("Erro ao gerar sugestões: " + message);
     } finally {
       setGerando(false);
     }
@@ -398,21 +399,22 @@ export default function AdminReposicaoNegociacaoParalela() {
   const handleRefreshRanking = async () => {
     setRefreshing(true);
     try {
-      const { error } = await supabase.rpc("refresh_sku_ranking_negociacao" as any);
+      const { error } = await supabase.rpc("refresh_sku_ranking_negociacao" as never);
       if (error) throw error;
       toast.success("Ranking atualizado.");
       queryClient.invalidateQueries({ queryKey: ["negociacao-paralela-ranking"] });
-    } catch (err: any) {
-      toast.error("Erro ao atualizar ranking: " + (err?.message ?? "desconhecido"));
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      toast.error("Erro ao atualizar ranking: " + message);
     } finally {
       setRefreshing(false);
     }
   };
 
-  const updateStatus = async (id: number, novoStatus: StatusSugestao, extra: Record<string, any> = {}) => {
+  const updateStatus = async (id: number, novoStatus: StatusSugestao, extra: Record<string, unknown> = {}) => {
     const { error } = await supabase
-      .from("sugestao_negociacao_paralela" as any)
-      .update({ status: novoStatus, ...extra })
+      .from("sugestao_negociacao_paralela" as never)
+      .update({ status: novoStatus, ...extra } as never)
       .eq("id", id);
     if (error) {
       toast.error("Erro ao atualizar status: " + error.message);
@@ -482,7 +484,7 @@ export default function AdminReposicaoNegociacaoParalela() {
     }
     setConvertSubmitting(true);
     try {
-      const { data, error } = await supabase.rpc("converter_sugestao_em_campanha_flat" as any, {
+      const { data, error } = await supabase.rpc("converter_sugestao_em_campanha_flat" as never, {
         p_sugestao_id: convertTarget.id,
         p_desconto_perc: convertForm.desconto_perc,
         p_volume_minimo: convertForm.volume_minimo,
@@ -491,7 +493,7 @@ export default function AdminReposicaoNegociacaoParalela() {
         p_responsavel_nome: convertForm.responsavel || null,
         p_canal: convertForm.canal,
         p_observacoes: convertForm.observacoes || null,
-      });
+      } as never);
       if (error) throw error;
       toast.success("Sugestão convertida em campanha.");
       queryClient.invalidateQueries({ queryKey: ["negociacao-paralela-sugestoes"] });
@@ -499,8 +501,9 @@ export default function AdminReposicaoNegociacaoParalela() {
       if (campanhaId) navigate(`/admin/reposicao/promocoes/${campanhaId}`);
       else navigate(`/admin/reposicao/promocoes`);
       setConvertTarget(null);
-    } catch (err: any) {
-      toast.error("Erro ao converter: " + (err?.message ?? "desconhecido"));
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      toast.error("Erro ao converter: " + message);
     } finally {
       setConvertSubmitting(false);
     }
@@ -511,7 +514,7 @@ export default function AdminReposicaoNegociacaoParalela() {
       const dataGeracao = new Date().toISOString().slice(0, 10);
       const validoAte = new Date();
       validoAte.setDate(validoAte.getDate() + 14);
-      const { error } = await supabase.from("sugestao_negociacao_paralela" as any).insert({
+      const { error } = await supabase.from("sugestao_negociacao_paralela" as never).insert({
         empresa: r.empresa,
         sku_codigo_omie: r.sku_codigo_omie,
         sku_descricao: r.sku_descricao,
@@ -525,13 +528,14 @@ export default function AdminReposicaoNegociacaoParalela() {
         status: "nova",
         data_geracao: dataGeracao,
         valido_ate: validoAte.toISOString().slice(0, 10),
-      });
+      } as never);
       if (error) throw error;
       toast.success(`Sugestão criada para ${r.sku_codigo_omie}.`);
       queryClient.invalidateQueries({ queryKey: ["negociacao-paralela-sugestoes"] });
       queryClient.invalidateQueries({ queryKey: ["negociacao-paralela-sugestoes-count"] });
-    } catch (err: any) {
-      toast.error("Erro ao criar sugestão: " + (err?.message ?? "desconhecido"));
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      toast.error("Erro ao criar sugestão: " + message);
     }
   };
 
@@ -577,7 +581,7 @@ export default function AdminReposicaoNegociacaoParalela() {
 
           {s.motivo && (
             <p className="text-sm text-muted-foreground leading-relaxed">
-              {(s.motivo_detalhes && (s.motivo_detalhes as any).motivo_legivel) || s.motivo}
+              {(s.motivo_detalhes && (s.motivo_detalhes as Record<string, unknown>).motivo_legivel as string | undefined) || s.motivo}
             </p>
           )}
 
