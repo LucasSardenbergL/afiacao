@@ -32,6 +32,9 @@ Deno.serve(async (req) => {
   const clientUrl = `${Deno.env.get('SUPABASE_URL')!}/functions/v1/scoring-recalc-client`;
   // Internal cron-to-cron auth: pass the same CRON_SECRET the batch itself accepted.
   const cronSecret = Deno.env.get('CRON_SECRET') ?? '';
+  if (!cronSecret) {
+    console.warn('[scoring-recalc-batch] CRON_SECRET not set; downstream calls to scoring-recalc-client will be rejected');
+  }
 
   // 1. Drena fila pendente (chamadas inseridas hoje que ainda não recalcularam)
   const drainResp = await fetch(clientUrl, {
@@ -66,18 +69,33 @@ Deno.serve(async (req) => {
     unique.set(`${p.customer_user_id}::${p.farmer_id}`, p);
   }
 
-  const results = [];
-  for (const pair of unique.values()) {
-    const r = await fetch(clientUrl, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'x-cron-secret': cronSecret,
-      },
-      body: JSON.stringify(pair),
-    });
-    const j = await r.json().catch(() => ({}));
-    results.push({ ...pair, ok: r.ok, ...j });
+  // Process pairs in concurrent batches to fit within edge function 50s timeout.
+  // 10 concurrent × ~500ms each = ~5s per batch, so 200 pairs = ~10s total.
+  const CONCURRENCY = 10;
+  const allPairs = Array.from(unique.values());
+  const results: Array<{ customer_user_id: string; farmer_id: string; ok: boolean }> = [];
+
+  for (let i = 0; i < allPairs.length; i += CONCURRENCY) {
+    const chunk = allPairs.slice(i, i + CONCURRENCY);
+    const chunkResults = await Promise.all(
+      chunk.map(async (pair) => {
+        try {
+          const r = await fetch(clientUrl, {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+              'x-cron-secret': cronSecret,
+            },
+            body: JSON.stringify(pair),
+          });
+          const j = await r.json().catch(() => ({}));
+          return { ...pair, ok: r.ok, ...j };
+        } catch (err) {
+          return { ...pair, ok: false, error: String(err) };
+        }
+      }),
+    );
+    results.push(...chunkResults);
   }
 
   return new Response(JSON.stringify({
