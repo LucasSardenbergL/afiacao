@@ -5,15 +5,21 @@ export interface ResolvedCustomer {
   customerUserId: string | null;
   /** Telefone normalizado (dígitos apenas) — sempre preenchido pra fallback */
   phoneDialed: string;
+  /** Nome do contato (se identificado via customer_contacts) — PR-CONTACTS */
+  contactName?: string;
+  /** Cargo do contato (dono/gerente/comprador/etc) — PR-CONTACTS */
+  contactCargo?: string;
 }
 
 /**
- * Busca em `profiles` por telefone normalizado e retorna o `user_id` do cliente.
- * Se não houver match, retorna `customerUserId: null` mas sempre preserva o
- * `phoneDialed` normalizado pra salvar em `farmer_calls.phone_dialed`.
+ * Busca telefone primeiro em `customer_contacts` (PR-CONTACTS — mais específico,
+ * inclui nome+cargo do contato), depois fallback em `profiles.phone`.
+ *
+ * Se não houver match em nenhum, retorna `customerUserId: null` mas sempre
+ * preserva o `phoneDialed` normalizado pra salvar em `farmer_calls.phone_dialed`.
  *
  * Vinculação posterior (operador clica "vincular cliente" na UI) pode atualizar
- * o registro depois — implementação futura no PR5.
+ * o registro depois.
  */
 export async function resolveCustomerByPhone(rawPhone: string): Promise<ResolvedCustomer> {
   const phoneDialed = rawPhone.replace(/\D/g, '');
@@ -22,19 +28,39 @@ export async function resolveCustomerByPhone(rawPhone: string): Promise<Resolved
     return { customerUserId: null, phoneDialed: '' };
   }
 
+  const last8 = phoneDialed.slice(-8);
+
   try {
-    const { data, error } = await supabase
-      .from('profiles')
-      .select('user_id')
-      // Match em regex normalizado (cobre formatos diversos no banco)
-      .filter('phone', 'ilike', `%${phoneDialed.slice(-8)}%`)
+    // 1. Tenta customer_contacts primeiro (mais específico — tem nome+cargo)
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const { data: contact } = await (supabase.from('customer_contacts') as any)
+      .select('customer_user_id, nome, cargo')
+      .filter('phone', 'ilike', `%${last8}%`)
+      .order('is_primary', { ascending: false })
+      .limit(1)
       .maybeSingle();
 
-    if (error || !data) {
+    if (contact?.customer_user_id) {
+      return {
+        customerUserId: contact.customer_user_id,
+        phoneDialed,
+        contactName: contact.nome ?? undefined,
+        contactCargo: contact.cargo ?? undefined,
+      };
+    }
+
+    // 2. Fallback pra profiles.phone (legado pré-PR-CONTACTS)
+    const { data: profile, error } = await supabase
+      .from('profiles')
+      .select('user_id')
+      .filter('phone', 'ilike', `%${last8}%`)
+      .maybeSingle();
+
+    if (error || !profile) {
       return { customerUserId: null, phoneDialed };
     }
 
-    return { customerUserId: data.user_id, phoneDialed };
+    return { customerUserId: profile.user_id, phoneDialed };
   } catch {
     return { customerUserId: null, phoneDialed };
   }
