@@ -13,7 +13,6 @@ import {
   MoreVertical,
   Search,
   Info,
-  TrendingUp,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -147,12 +146,6 @@ function formatBRL(v: number | null | undefined): string {
 function formatPerc(v: number | null | undefined, digits = 1): string {
   if (v === null || v === undefined) return "—";
   return `${Number(v).toLocaleString("pt-BR", { minimumFractionDigits: digits, maximumFractionDigits: digits })}%`;
-}
-
-function formatDateBR(d: string | null | undefined): string {
-  if (!d) return "—";
-  const date = new Date(d);
-  return date.toLocaleDateString("pt-BR");
 }
 
 function categoriaBadgeClass(cat: Categoria | null | undefined): string {
@@ -384,7 +377,8 @@ export default function AdminReposicaoNegociacaoParalela() {
         p_limite: 10,
       } as never);
       if (error) throw error;
-      const count = Array.isArray(data) ? data.length : 0;
+      const arr = data as unknown as unknown[] | null;
+      const count = Array.isArray(arr) ? arr.length : 0;
       toast.success(`${count} sugest${count === 1 ? "ão criada" : "ões criadas"}.`);
       queryClient.invalidateQueries({ queryKey: ["negociacao-paralela-sugestoes"] });
       queryClient.invalidateQueries({ queryKey: ["negociacao-paralela-sugestoes-count"] });
