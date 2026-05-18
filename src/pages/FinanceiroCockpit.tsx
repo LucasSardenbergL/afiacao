@@ -6,12 +6,15 @@ import { Skeleton } from '@/components/ui/skeleton';
 import { COMPANIES, type Company } from '@/contexts/CompanyContext';
 import { supabase } from '@/integrations/supabase/client';
 import { getResumoFinanceiro, getAgingReceber, getDRE, getTopInadimplentes, type FinResumo, type AgingData, type FinDRE } from '@/services/financeiroService';
+import { useFinanceiroRegime } from '@/hooks/useFinanceiroRegime';
+import { RegimeToggle } from '@/components/financeiro/RegimeToggle';
 import {
   TrendingUp, TrendingDown, AlertTriangle, Wallet,
   BarChart3, Target, Clock, Eye, Lock,
   Info,
 } from 'lucide-react';
 import { CockpitDrillDown, type DrillDownType } from '@/components/financeiro/CockpitDrillDown';
+import { PeriodOverrideHistory } from '@/components/financeiro/PeriodOverrideHistory';
 import { logger } from '@/lib/logger';
 import type { LucideIcon } from 'lucide-react';
 import type { Database } from '@/integrations/supabase/types';
@@ -81,10 +84,11 @@ const FinanceiroCockpit = () => {
   const [confiabilidade, setConfiabilidade] = useState<FinConfiabilidadeRow[]>([]);
   const [drillDown, setDrillDown] = useState<DrillDownType>(null);
 
+  const { regime } = useFinanceiroRegime();
   const ano = new Date().getFullYear();
   const mes = new Date().getMonth() + 1;
 
-  useEffect(() => { loadAll(); }, []);
+  useEffect(() => { loadAll(); }, [regime]);
 
   const loadAll = async () => {
     setLoading(true);
@@ -92,7 +96,7 @@ const FinanceiroCockpit = () => {
       const [res, ag, dr, inad] = await Promise.all([
         getResumoFinanceiro(['oben', 'colacor', 'colacor_sc']),
         getAgingReceber('all'),
-        Promise.all(['oben', 'colacor', 'colacor_sc'].map(co => getDRE(co as Company, ano))).then(r => r.flat()),
+        Promise.all(['oben', 'colacor', 'colacor_sc'].map(co => getDRE(co as Company, ano, undefined, regime))).then(r => r.flat()),
         getTopInadimplentes('all', 5),
       ]);
       setResumo(res);
@@ -201,17 +205,20 @@ const FinanceiroCockpit = () => {
             {new Date().toLocaleDateString('pt-BR', { month: 'long', year: 'numeric' })}
           </p>
         </div>
-        {/* Global transparency */}
-        {confiabilidade.length > 0 && (
-          <div className="relative flex flex-col items-end gap-1">
-            {confiabilidade.map(c => (
-              <div key={c.company} className="flex items-center gap-2">
-                <span className="text-xs font-medium">{COMPANIES[c.company as Company]?.shortName}</span>
-                <TransparencyBadge conf={c} />
-              </div>
-            ))}
-          </div>
-        )}
+        {/* Global transparency + regime toggle */}
+        <div className="relative flex flex-col items-end gap-3">
+          <RegimeToggle />
+          {confiabilidade.length > 0 && (
+            <div className="flex flex-col items-end gap-1">
+              {confiabilidade.map(c => (
+                <div key={c.company} className="flex items-center gap-2">
+                  <span className="text-xs font-medium">{COMPANIES[c.company as Company]?.shortName}</span>
+                  <TransparencyBadge conf={c} />
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
       </div>
 
       {/* Row 1: Big 3 — staggered reveal pra page load orquestrado */}
@@ -397,6 +404,9 @@ const FinanceiroCockpit = () => {
           </CardContent>
         </Card>
       )}
+
+      {/* Period override history */}
+      <PeriodOverrideHistory />
 
       {/* Data basis footer */}
       <div className="text-xs text-muted-foreground bg-muted/30 p-3 rounded-lg space-y-1">

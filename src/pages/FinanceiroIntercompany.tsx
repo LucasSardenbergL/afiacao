@@ -9,7 +9,9 @@ import { COMPANIES, ALL_COMPANIES, type Company } from '@/contexts/CompanyContex
 import { getEliminacoes, upsertEliminacao, deleteEliminacao, type EliminacaoRegra } from '@/services/financeiroV2Service';
 import { supabase } from '@/integrations/supabase/client';
 import { toast } from 'sonner';
-import { Loader2, Plus, Trash2, ArrowRight, Building2, Save, BarChart3 } from 'lucide-react';
+import { Loader2, Plus, Trash2, ArrowRight, Building2, Save, BarChart3, AlertTriangle } from 'lucide-react';
+import { useIcMatches } from '@/hooks/useIcMatches';
+import { Link } from 'react-router-dom';
 
 const fmt = (v: number) => v.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' });
 
@@ -19,6 +21,9 @@ const FinanceiroIntercompany = () => {
   const [consolidado, setConsolidado] = useState<any[]>([]);
   const [ano, setAno] = useState(new Date().getFullYear());
   const [mes, setMes] = useState(new Date().getMonth() + 1);
+  const { data: icDiv } = useIcMatches('divergencia_valor');
+  const { data: icSem } = useIcMatches('sem_contrapartida');
+  const totalIc = (icDiv?.length ?? 0) + (icSem?.length ?? 0);
 
   // New rule form
   const [newRegra, setNewRegra] = useState({
@@ -89,6 +94,18 @@ const FinanceiroIntercompany = () => {
 
   return (
     <div className="space-y-4 pb-24">
+      {totalIc > 0 && (
+        <div className="flex items-center gap-2 text-xs text-status-warning bg-status-warning-bg p-2 rounded-md">
+          <AlertTriangle className="h-3 w-3 flex-shrink-0" />
+          <span>{totalIc} pendências IC</span>
+          <Link
+            to="/financeiro/intercompany/fila"
+            className="font-medium underline hover:no-underline"
+          >
+            resolver
+          </Link>
+        </div>
+      )}
       <div className="flex items-center justify-between flex-wrap gap-3">
         <div>
           <h1 className="text-2xl font-bold tracking-tight">Consolidação Intercompany</h1>

@@ -125,19 +125,19 @@ export function useFinanceiro(defaultCompany: FinanceiroView = 'all') {
     }
   }, [view]);
 
-  const loadDRE = useCallback(async (ano: number, meses?: number[]) => {
+  const loadDRE = useCallback(async (ano: number, meses?: number[], regime: 'caixa' | 'competencia' = 'competencia') => {
     try {
       setLoading(true);
       if (view === 'all') {
         // Para consolidado, carregar cada empresa e somar
         const allDres: FinDRE[] = [];
         for (const co of ['oben', 'colacor', 'colacor_sc'] as Company[]) {
-          const data = await getDRE(co, ano, meses);
+          const data = await getDRE(co, ano, meses, regime);
           allDres.push(...data);
         }
         setDre(allDres);
       } else {
-        const data = await getDRE(view as Company, ano, meses);
+        const data = await getDRE(view as Company, ano, meses, regime);
         setDre(data);
       }
     } catch (e) {
@@ -188,14 +188,14 @@ export function useFinanceiro(defaultCompany: FinanceiroView = 'all') {
     }
   }, [view, loadResumo]);
 
-  const calcularDRE = useCallback(async (ano: number, mes: number) => {
+  const calcularDRE = useCallback(async (ano: number, mes: number, regime: 'caixa' | 'competencia' = 'competencia') => {
     try {
       setSyncing(true);
-      const companies: Company[] = view === 'all' 
-        ? ['oben', 'colacor', 'colacor_sc'] 
+      const companies: Company[] = view === 'all'
+        ? ['oben', 'colacor', 'colacor_sc']
         : [view as Company];
       await triggerFinanceiroSync('calcular_dre', companies, { ano, meses: [mes] });
-      await loadDRE(ano, [mes]);
+      await loadDRE(ano, [mes], regime);
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
     } finally {
@@ -203,14 +203,14 @@ export function useFinanceiro(defaultCompany: FinanceiroView = 'all') {
     }
   }, [view, loadDRE]);
 
-  const calcularDREAnual = useCallback(async (ano: number) => {
+  const calcularDREAnual = useCallback(async (ano: number, regime: 'caixa' | 'competencia' = 'competencia') => {
     try {
       setSyncing(true);
-      const companies: Company[] = view === 'all' 
-        ? ['oben', 'colacor', 'colacor_sc'] 
+      const companies: Company[] = view === 'all'
+        ? ['oben', 'colacor', 'colacor_sc']
         : [view as Company];
       await triggerFinanceiroSync('calcular_dre_year', companies, { ano });
-      await loadDRE(ano);
+      await loadDRE(ano, undefined, regime);
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
     } finally {
