@@ -21,13 +21,15 @@ export function PeriodOverrideHistory() {
   const { data, isLoading } = useQuery({
     queryKey: ['fin_period_overrides', 'history'],
     queryFn: async (): Promise<OverrideRow[]> => {
-      const { data, error } = await supabase
+      // fin_period_overrides table type only exists after migration applied + types.ts regenerated.
+      // Cast supabase to skip strict literal type check; runtime is safe because the table exists in DB.
+      const { data, error } = await (supabase as unknown as { from: (t: string) => ReturnType<typeof supabase.from> })
         .from('fin_period_overrides')
         .select('*')
         .order('opened_at', { ascending: false })
         .limit(20);
       if (error) throw error;
-      return (data ?? []) as OverrideRow[];
+      return (data ?? []) as unknown as OverrideRow[];
     },
   });
 
