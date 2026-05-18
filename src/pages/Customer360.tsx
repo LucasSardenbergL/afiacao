@@ -26,7 +26,6 @@ import { useAuth } from '@/contexts/AuthContext';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
-import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar';
 import { Separator } from '@/components/ui/separator';
 import { PageSkeleton } from '@/components/ui/page-skeleton';
 import { EmptyState } from '@/components/EmptyState';
@@ -377,15 +376,12 @@ export default function Customer360() {
   if (!core.data) {
     return (
       <EmptyState
+        icon={AlertCircle}
         title="Cliente não encontrado"
         description="Pode ter sido removido ou o link está errado. Volte pra lista e tente de novo."
         tone="operational"
-        action={
-          <Button variant="outline" onClick={() => navigate('/admin/customers')}>
-            <ArrowLeft className="w-4 h-4 mr-2" />
-            Voltar para Clientes
-          </Button>
-        }
+        actionLabel="Voltar para Clientes"
+        onAction={() => navigate('/admin/customers')}
       />
     );
   }
@@ -423,12 +419,19 @@ export default function Customer360() {
         <header className="bg-cockpit-hero relative overflow-hidden rounded-lg border border-border p-6">
           <div className="noise" />
           <div className="relative flex flex-col md:flex-row md:items-start gap-4">
-            <Avatar className="w-16 h-16 border border-border">
-              {customer.avatar_url && <AvatarImage src={customer.avatar_url} alt={customer.name} />}
-              <AvatarFallback className="text-base font-medium tracking-tight">
-                {initials(customer.name)}
-              </AvatarFallback>
-            </Avatar>
+            <div className="w-16 h-16 rounded-full border border-border bg-muted flex items-center justify-center overflow-hidden shrink-0">
+              {customer.avatar_url ? (
+                <img
+                  src={customer.avatar_url}
+                  alt={customer.name}
+                  className="w-full h-full object-cover"
+                />
+              ) : (
+                <span className="text-base font-medium tracking-tight text-muted-foreground">
+                  {initials(customer.name)}
+                </span>
+              )}
+            </div>
             <div className="flex-1 min-w-0">
               <div className="flex items-center gap-2 flex-wrap">
                 <h1 className="font-display text-3xl font-medium tracking-[-0.04em] leading-tight truncate">
