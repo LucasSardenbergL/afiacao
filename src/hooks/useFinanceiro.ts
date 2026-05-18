@@ -1,4 +1,4 @@
-import { useState, useCallback, useEffect, useMemo } from 'react';
+import { useState, useCallback, useMemo } from 'react';
 import type { Company } from '@/contexts/CompanyContext';
 import {
   triggerFinanceiroSync,
@@ -70,8 +70,8 @@ export function useFinanceiro(defaultCompany: FinanceiroView = 'all') {
       ]);
       setResumo(prev => ({ ...prev, ...data }));
       setLastSync(syncTime);
-    } catch (e: any) {
-      setError(e.message);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
     } finally {
       setLoading(false);
     }
@@ -87,8 +87,8 @@ export function useFinanceiro(defaultCompany: FinanceiroView = 'all') {
       setLoading(true);
       const data = await getContasPagar(view === 'all' ? 'all' : view as Company, filtros);
       setContasPagar(data);
-    } catch (e: any) {
-      setError(e.message);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
     } finally {
       setLoading(false);
     }
@@ -104,8 +104,8 @@ export function useFinanceiro(defaultCompany: FinanceiroView = 'all') {
       setLoading(true);
       const data = await getContasReceber(view === 'all' ? 'all' : view as Company, filtros);
       setContasReceber(data);
-    } catch (e: any) {
-      setError(e.message);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
     } finally {
       setLoading(false);
     }
@@ -120,8 +120,8 @@ export function useFinanceiro(defaultCompany: FinanceiroView = 'all') {
       ]);
       setAgingReceber(ar);
       setAgingPagar(ap);
-    } catch (e: any) {
-      setError(e.message);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
     }
   }, [view]);
 
@@ -140,8 +140,8 @@ export function useFinanceiro(defaultCompany: FinanceiroView = 'all') {
         const data = await getDRE(view as Company, ano, meses);
         setDre(data);
       }
-    } catch (e: any) {
-      setError(e.message);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
     } finally {
       setLoading(false);
     }
@@ -153,8 +153,8 @@ export function useFinanceiro(defaultCompany: FinanceiroView = 'all') {
       const company = view === 'all' ? 'all' : view as Company;
       const data = await getFluxoCaixa(company, dataInicio, dataFim);
       setFluxoCaixa(data);
-    } catch (e: any) {
-      setError(e.message);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
     } finally {
       setLoading(false);
     }
@@ -165,8 +165,8 @@ export function useFinanceiro(defaultCompany: FinanceiroView = 'all') {
       const company = view === 'all' ? 'all' : view as Company;
       const data = await getTopInadimplentes(company, 15);
       setInadimplentes(data);
-    } catch (e: any) {
-      setError(e.message);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
     }
   }, [view]);
 
@@ -181,8 +181,8 @@ export function useFinanceiro(defaultCompany: FinanceiroView = 'all') {
       await triggerFinanceiroSync('sync_all', companies);
       // Reload local data after sync
       await loadResumo();
-    } catch (e: any) {
-      setError(e.message);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
     } finally {
       setSyncing(false);
     }
@@ -196,8 +196,8 @@ export function useFinanceiro(defaultCompany: FinanceiroView = 'all') {
         : [view as Company];
       await triggerFinanceiroSync('calcular_dre', companies, { ano, meses: [mes] });
       await loadDRE(ano, [mes]);
-    } catch (e: any) {
-      setError(e.message);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
     } finally {
       setSyncing(false);
     }
@@ -211,8 +211,8 @@ export function useFinanceiro(defaultCompany: FinanceiroView = 'all') {
         : [view as Company];
       await triggerFinanceiroSync('calcular_dre_year', companies, { ano });
       await loadDRE(ano);
-    } catch (e: any) {
-      setError(e.message);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
     } finally {
       setSyncing(false);
     }
@@ -229,24 +229,24 @@ export function useFinanceiro(defaultCompany: FinanceiroView = 'all') {
       // Heavy sync actions: call one company at a time to avoid 150s timeout
       const heavyActions = ['sync_contas_pagar', 'sync_contas_receber', 'sync_movimentacoes', 'sync_all', 'calcular_dre', 'calcular_dre_year'];
       if (heavyActions.includes(action)) {
-        const allResults: Record<string, any> = {};
+        const allResults: Record<string, unknown> = {};
         for (const co of companies) {
           try {
-            const result = await triggerFinanceiroSync(action, [co], options);
+            const result = (await triggerFinanceiroSync(action, [co], options)) as Record<string, unknown> | null | undefined;
             // Edge function returns { success, action, oben: {...} } — extract company key
             if (result?.[co]) {
               allResults[co] = result[co];
             }
-          } catch (e: any) {
-            allResults[co] = { error: e.message };
+          } catch (e) {
+            allResults[co] = { error: e instanceof Error ? e.message : String(e) };
           }
         }
         return { results: allResults };
       }
 
-      const result = await triggerFinanceiroSync(action, companies, options);
+      const result = (await triggerFinanceiroSync(action, companies, options)) as Record<string, unknown> | null | undefined;
       // Normalize: wrap company-keyed response into { results: {...} }
-      const allResults: Record<string, any> = {};
+      const allResults: Record<string, unknown> = {};
       for (const co of companies) {
         if (result?.[co]) {
           allResults[co] = result[co];
@@ -256,31 +256,31 @@ export function useFinanceiro(defaultCompany: FinanceiroView = 'all') {
         return { results: allResults };
       }
       return result;
-    } catch (e: any) {
-      setError(e.message);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
     } finally {
       setSyncing(false);
     }
   }, [view]);
 
   // Computed: DRE consolidado por mês (soma empresas quando view === 'all')
-  const dreConsolidado = useMemo(() => {
+  const dreConsolidado = useMemo<FinDRE[]>(() => {
     if (view !== 'all' || dre.length === 0) return dre;
-    const byMonth = new Map<number, any>();
+    const byMonth = new Map<number, FinDRE>();
     const numFields = [
       'receita_bruta', 'deducoes', 'receita_liquida', 'cmv', 'lucro_bruto',
       'despesas_operacionais', 'despesas_administrativas', 'despesas_comerciais',
       'despesas_financeiras', 'receitas_financeiras', 'resultado_operacional',
       'outras_receitas', 'outras_despesas', 'resultado_antes_impostos',
       'impostos', 'resultado_liquido'
-    ];
+    ] as const satisfies readonly (keyof FinDRE)[];
     for (const row of dre) {
       if (!byMonth.has(row.mes)) {
         byMonth.set(row.mes, { ...row, company: 'consolidado' });
       } else {
-        const c = byMonth.get(row.mes);
+        const c = byMonth.get(row.mes)!;
         for (const f of numFields) {
-          c[f] = (c[f] || 0) + ((row as any)[f] || 0);
+          (c[f] as number) = ((c[f] as number) || 0) + ((row[f] as number) || 0);
         }
       }
     }

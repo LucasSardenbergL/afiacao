@@ -2,6 +2,11 @@ import { useState, useEffect } from 'react';
 import { supabase } from '@/integrations/supabase/client';
 import { useAuth } from '@/contexts/AuthContext';
 import { toast } from 'sonner';
+import type { Tables, TablesInsert } from '@/integrations/supabase/types';
+
+type GovernanceProposalRow = Tables<'farmer_governance_proposals'>;
+type AuditLogRow = Tables<'farmer_audit_log'>;
+type ProfileRow = Pick<Tables<'profiles'>, 'user_id' | 'name'>;
 
 export interface GovernanceProposal {
   id: string;
@@ -27,7 +32,7 @@ export interface GovernanceProposal {
 export const useFarmerGovernance = () => {
   const { user } = useAuth();
   const [proposals, setProposals] = useState<GovernanceProposal[]>([]);
-  const [auditLogs, setAuditLogs] = useState<any[]>([]);
+  const [auditLogs, setAuditLogs] = useState<AuditLogRow[]>([]);
   const [loading, setLoading] = useState(true);
   const [isGovernor, setIsGovernor] = useState(false);
 
@@ -50,22 +55,42 @@ export const useFarmerGovernance = () => {
     try {
       const [proposalsRes, logsRes] = await Promise.all([
         supabase.from('farmer_governance_proposals')
-          .select('*').order('created_at', { ascending: false }) as any,
+          .select('*').order('created_at', { ascending: false }),
         supabase.from('farmer_audit_log')
-          .select('*').order('created_at', { ascending: false }).limit(50) as any,
+          .select('*').order('created_at', { ascending: false }).limit(50),
       ]);
 
       if (proposalsRes.data) {
+        const rows = proposalsRes.data as GovernanceProposalRow[];
         // Load proposer names
-        const proposerIds = [...new Set(proposalsRes.data.map((p: any) => p.proposed_by))] as string[];
+        const proposerIds = [...new Set(rows.map((p) => p.proposed_by))];
         const { data: profiles } = await supabase
           .from('profiles').select('user_id, name').in('user_id', proposerIds);
-        const nameMap = new Map((profiles || []).map((p: any) => [p.user_id, p.name]));
-        setProposals(proposalsRes.data.map((p: any) => ({
-          ...p, proposer_name: nameMap.get(p.proposed_by) || 'Desconhecido',
+        const nameMap = new Map(
+          ((profiles || []) as ProfileRow[]).map((p) => [p.user_id, p.name])
+        );
+        setProposals(rows.map((p) => ({
+          id: p.id,
+          proposed_by: p.proposed_by,
+          proposal_type: p.proposal_type,
+          title: p.title,
+          description: p.description,
+          current_params: (p.current_params ?? {}) as Record<string, number>,
+          proposed_params: (p.proposed_params ?? {}) as Record<string, number>,
+          impact_revenue_pct: p.impact_revenue_pct,
+          impact_margin_pct: p.impact_margin_pct,
+          impact_churn_pct: p.impact_churn_pct,
+          impact_margin_per_hour: p.impact_margin_per_hour,
+          status: p.status ?? 'pendente',
+          approved_by: p.approved_by,
+          approved_at: p.approved_at,
+          rejection_reason: p.rejection_reason,
+          algorithm_version: p.algorithm_version ?? 'v1.0',
+          created_at: p.created_at ?? '',
+          proposer_name: nameMap.get(p.proposed_by) || 'Desconhecido',
         })));
       }
-      if (logsRes.data) setAuditLogs(logsRes.data);
+      if (logsRes.data) setAuditLogs(logsRes.data as AuditLogRow[]);
     } catch (error) {
       console.error('Error loading governance data:', error);
     } finally {
@@ -85,11 +110,14 @@ export const useFarmerGovernance = () => {
     impact_margin_per_hour?: number;
   }) => {
     if (!user) return;
-    const { error } = await supabase.from('farmer_governance_proposals').insert({
+    const proposalInsert: TablesInsert<'farmer_governance_proposals'> = {
       ...proposal,
       proposed_by: user.id,
       algorithm_version: 'v1.0',
-    } as any);
+    };
+    const { error } = await supabase
+      .from('farmer_governance_proposals')
+      .insert(proposalInsert);
 
     if (error) {
       toast.error('Erro ao criar proposta');
@@ -97,7 +125,7 @@ export const useFarmerGovernance = () => {
     }
 
     // Audit log
-    await supabase.from('farmer_audit_log').insert({
+    const auditInsert: TablesInsert<'farmer_audit_log'> = {
       action: 'proposal_created',
       entity_type: 'governance_proposal',
       performed_by: user.id,
@@ -105,11 +133,12 @@ export const useFarmerGovernance = () => {
       previous_params: proposal.current_params,
       new_params: proposal.proposed_params,
       projection: {
-        revenue_pct: proposal.impact_revenue_pct,
-        margin_pct: proposal.impact_margin_pct,
-        churn_pct: proposal.impact_churn_pct,
+        revenue_pct: proposal.impact_revenue_pct ?? null,
+        margin_pct: proposal.impact_margin_pct ?? null,
+        churn_pct: proposal.impact_churn_pct ?? null,
       },
-    } as any);
+    };
+    await supabase.from('farmer_audit_log').insert(auditInsert);
 
     toast.success('Proposta criada com sucesso');
     loadData();
@@ -141,7 +170,7 @@ export const useFarmerGovernance = () => {
       }).eq('id', proposalId);
 
     // Audit log
-    await supabase.from('farmer_audit_log').insert({
+    const approveAudit: TablesInsert<'farmer_audit_log'> = {
       action: 'proposal_approved',
       entity_type: 'governance_proposal',
       entity_id: proposalId,
@@ -150,11 +179,12 @@ export const useFarmerGovernance = () => {
       previous_params: proposal.current_params,
       new_params: proposal.proposed_params,
       projection: {
-        revenue_pct: proposal.impact_revenue_pct,
-        margin_pct: proposal.impact_margin_pct,
-        churn_pct: proposal.impact_churn_pct,
+        revenue_pct: proposal.impact_revenue_pct ?? null,
+        margin_pct: proposal.impact_margin_pct ?? null,
+        churn_pct: proposal.impact_churn_pct ?? null,
       },
-    } as any);
+    };
+    await supabase.from('farmer_audit_log').insert(approveAudit);
 
     toast.success('Proposta aprovada e aplicada');
     loadData();
@@ -173,13 +203,14 @@ export const useFarmerGovernance = () => {
         updated_at: new Date().toISOString(),
       }).eq('id', proposalId);
 
-    await supabase.from('farmer_audit_log').insert({
+    const rejectAudit: TablesInsert<'farmer_audit_log'> = {
       action: 'proposal_rejected',
       entity_type: 'governance_proposal',
       entity_id: proposalId,
       performed_by: user.id,
       notes: reason,
-    } as any);
+    };
+    await supabase.from('farmer_audit_log').insert(rejectAudit);
 
     toast.success('Proposta rejeitada');
     loadData();

@@ -26,13 +26,25 @@ export interface TranscriptEntry {
   isPartial?: boolean;
 }
 
+export type CopilotContext = Record<string, unknown>;
+
 export interface CopilotSession {
   id: string;
   customerId?: string;
   customerName?: string;
   startedAt: Date;
-  bundleContext?: any;
-  customerContext?: any;
+  bundleContext?: CopilotContext;
+  customerContext?: CopilotContext;
+}
+
+interface CopilotAnalyzeResponse {
+  intent?: CopilotIntent;
+  phase?: CopilotPhase;
+  direction?: CopilotDirection;
+  direction_reasons?: string[];
+  suggestion?: string;
+  suggestion_type?: SuggestionType;
+  confidence?: number;
 }
 
 interface CopilotState {
@@ -70,21 +82,21 @@ export const useCopilotEngine = () => {
   const startSession = useCallback(async (params: {
     customerId?: string;
     customerName?: string;
-    bundleContext?: any;
-    customerContext?: any;
+    bundleContext?: CopilotContext;
+    customerContext?: CopilotContext;
   }) => {
     if (!user?.id) return;
 
     const { data } = await supabase
-      .from('farmer_copilot_sessions' as any)
+      .from('farmer_copilot_sessions')
       .insert({
         farmer_id: user.id,
         customer_user_id: params.customerId || null,
-      } as any)
+      })
       .select('id')
       .single();
 
-    const sessionId = (data as any)?.id || crypto.randomUUID();
+    const sessionId = data?.id || crypto.randomUUID();
     sessionIdRef.current = sessionId;
 
     const session: CopilotSession = {
@@ -125,7 +137,7 @@ export const useCopilotEngine = () => {
       const durationSeconds = Math.round((Date.now() - startTime.getTime()) / 1000);
 
       await supabase
-        .from('farmer_copilot_sessions' as any)
+        .from('farmer_copilot_sessions')
         .update({
           ended_at: new Date().toISOString(),
           duration_seconds: durationSeconds,
@@ -135,7 +147,7 @@ export const useCopilotEngine = () => {
           suggestions_shown: state.suggestionsShown,
           suggestions_used: state.suggestionsUsed,
           result: 'finalizado',
-        } as any)
+        })
         .eq('id', sessionIdRef.current);
     }
 
@@ -206,14 +218,15 @@ export const useCopilotEngine = () => {
 
           if (error || !data) throw error || new Error('No data');
 
+          const payload = data as CopilotAnalyzeResponse;
           const analysis: CopilotAnalysis = {
-            intent: data.intent || 'indiferenca',
-            phase: data.phase || 'abertura',
-            direction: data.direction || 'neutro',
-            directionReasons: data.direction_reasons || [],
-            suggestion: data.suggestion || '',
-            suggestionType: data.suggestion_type || 'pergunta_diagnostica',
-            confidence: data.confidence || 0,
+            intent: payload.intent || 'indiferenca',
+            phase: payload.phase || 'abertura',
+            direction: payload.direction || 'neutro',
+            directionReasons: payload.direction_reasons || [],
+            suggestion: payload.suggestion || '',
+            suggestionType: payload.suggestion_type || 'pergunta_diagnostica',
+            confidence: payload.confidence || 0,
           };
 
           setState(s => ({
@@ -226,7 +239,7 @@ export const useCopilotEngine = () => {
 
           // Log event
           if (sessionIdRef.current) {
-            await supabase.from('farmer_copilot_events' as any).insert({
+            await supabase.from('farmer_copilot_events').insert({
               session_id: sessionIdRef.current,
               event_type: 'suggestion',
               event_data: {
@@ -238,7 +251,7 @@ export const useCopilotEngine = () => {
               },
               transcript_snippet: fullText.slice(-200),
               suggestion_text: analysis.suggestion,
-            } as any);
+            });
           }
         } catch (err) {
           console.error('Analysis error:', err);
@@ -255,12 +268,12 @@ export const useCopilotEngine = () => {
     setState(prev => ({ ...prev, suggestionsUsed: prev.suggestionsUsed + 1 }));
 
     if (sessionIdRef.current) {
-      await supabase.from('farmer_copilot_events' as any).insert({
+      await supabase.from('farmer_copilot_events').insert({
         session_id: sessionIdRef.current,
         event_type: 'suggestion_used',
         suggestion_text: suggestionText,
         suggestion_used: true,
-      } as any);
+      });
     }
   }, []);
 
@@ -269,12 +282,12 @@ export const useCopilotEngine = () => {
     if (!sessionIdRef.current) return;
 
     await supabase
-      .from('farmer_copilot_sessions' as any)
+      .from('farmer_copilot_sessions')
       .update({
         result,
         revenue_generated: revenue,
         margin_generated: margin,
-      } as any)
+      })
       .eq('id', sessionIdRef.current);
   }, []);
 

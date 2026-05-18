@@ -32,6 +32,10 @@
     "src/hooks/useFarmerExperiments.ts",
     "src/hooks/useTacticalPlan.ts",
     "src/hooks/useCrossSellEngine.ts",
-    "src/hooks/useBundleEngine.ts"
+    "src/hooks/useBundleEngine.ts",
+    "src/hooks/useFinanceiro.ts",
+    "src/hooks/useCopilotEngine.ts",
+    "src/hooks/useFarmerGovernance.ts",
+    "src/hooks/useFarmerScoring.ts"
   ]
 }
