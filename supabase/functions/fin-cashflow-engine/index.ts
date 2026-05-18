@@ -53,6 +53,150 @@ function jsonResponse(body: unknown, status: number): Response {
   });
 }
 
+// === Tipos de domínio ===
+type CR = {
+  id: string;
+  saldo: number;
+  valor_documento: number;
+  valor_recebido: number;
+  data_emissao: string | null;
+  data_vencimento: string | null;
+  data_recebimento: string | null;
+  status_titulo: string;
+  cliente_id: string | null;
+  nome_cliente: string | null;
+  categoria_codigo: string | null;
+};
+
+type CP = {
+  id: string;
+  saldo: number;
+  valor_documento: number;
+  valor_pago: number;
+  data_emissao: string | null;
+  data_vencimento: string | null;
+  data_pagamento: string | null;
+  status_titulo: string;
+  categoria_codigo: string | null;
+};
+
+type EventoRecorrente = {
+  id: string;
+  descricao: string;
+  valor: number;
+  tipo: 'entrada' | 'saida';
+  categoria_dre: string | null;
+  is_folha: boolean;
+  dia_do_mes: number;
+  inicio: string;
+  fim: string | null;
+};
+
+type EventoEventual = {
+  id: string;
+  descricao: string;
+  valor: number;
+  tipo: 'entrada' | 'saida';
+  categoria_dre: string | null;
+  data_prevista: string;
+  status: 'previsto' | 'confirmado' | 'cancelado' | 'realizado';
+};
+
+type Config = {
+  overrides_cenario: {
+    otimista: { recebimento_no_prazo_pct_delta: number; inadimplencia_pct_delta: number };
+    pessimista: { recebimento_no_prazo_pct_delta: number; inadimplencia_pct_delta: number };
+  };
+  thresholds: {
+    caixa_negativo_semanas: number;
+    ncg_deficit_alerta: number;
+    dias_cobertura_min: number;
+    inadimplencia_max_pct: number;
+    concentracao_top1_max_pct: number;
+    pmr_crescimento_max_pct_90d: number;
+  };
+  adiantamento_categorias_codigos: string[];
+};
+
+type DadosBase = {
+  crs: CR[];
+  cps: CP[];
+  saldo_cc: number;
+  estoque_valor: number;
+  eventos_rec: EventoRecorrente[];
+  eventos_ev: EventoEventual[];
+  config: Config;
+};
+
+async function carregarDados(
+  supabase: ReturnType<typeof createClient>,
+  company: Company,
+): Promise<DadosBase> {
+  const [crsRes, cpsRes, ccRes, recRes, evRes, configRes] = await Promise.all([
+    // @ts-expect-error - fin_eventos_* tables not yet in supabase types
+    supabase.from('fin_contas_receber').select('id, saldo, valor_documento, valor_recebido, data_emissao, data_vencimento, data_recebimento, status_titulo, omie_codigo_cliente, nome_cliente, categoria_codigo')
+      .eq('company', company)
+      .neq('status_titulo', 'CANCELADO'),
+    // @ts-expect-error
+    supabase.from('fin_contas_pagar').select('id, saldo, valor_documento, valor_pago, data_emissao, data_vencimento, data_pagamento, status_titulo, categoria_codigo')
+      .eq('company', company)
+      .neq('status_titulo', 'CANCELADO'),
+    // @ts-expect-error
+    supabase.from('fin_contas_correntes').select('saldo_atual')
+      .eq('company', company).eq('ativo', true),
+    // @ts-expect-error
+    supabase.from('fin_eventos_recorrentes').select('id, descricao, valor, tipo, categoria_dre, is_folha, dia_do_mes, inicio, fim')
+      .eq('company', company).eq('ativo', true),
+    // @ts-expect-error
+    supabase.from('fin_eventos_eventuais').select('id, descricao, valor, tipo, categoria_dre, data_prevista, status')
+      .eq('company', company).in('status', ['previsto', 'confirmado']),
+    // @ts-expect-error
+    supabase.from('fin_config_cashflow').select('overrides_cenario, thresholds, adiantamento_categorias_codigos')
+      .eq('company', company).maybeSingle(),
+  ]);
+
+  const saldo_cc = ((ccRes.data ?? []) as Array<{ saldo_atual?: number | null }>)
+    .reduce((s: number, c) => s + Number(c.saldo_atual ?? 0), 0);
+
+  const estoque_valor = 0;
+
+  if (!configRes.data) {
+    throw new Error(`Config ausente pra ${company}. Aplique seed em fin_config_cashflow.`);
+  }
+
+  return {
+    crs: ((crsRes.data ?? []) as Array<Record<string, unknown>>).map((c) => ({
+      id: c.id as string,
+      saldo: Number(c.saldo ?? 0),
+      valor_documento: Number(c.valor_documento ?? 0),
+      valor_recebido: Number(c.valor_recebido ?? 0),
+      data_emissao: (c.data_emissao as string | null) ?? null,
+      data_vencimento: (c.data_vencimento as string | null) ?? null,
+      data_recebimento: (c.data_recebimento as string | null) ?? null,
+      status_titulo: c.status_titulo as string,
+      cliente_id: c.omie_codigo_cliente ? String(c.omie_codigo_cliente) : null,
+      nome_cliente: (c.nome_cliente as string | null) ?? null,
+      categoria_codigo: (c.categoria_codigo as string | null) ?? null,
+    })),
+    cps: ((cpsRes.data ?? []) as Array<Record<string, unknown>>).map((c) => ({
+      id: c.id as string,
+      saldo: Number(c.saldo ?? 0),
+      valor_documento: Number(c.valor_documento ?? 0),
+      valor_pago: Number(c.valor_pago ?? 0),
+      data_emissao: (c.data_emissao as string | null) ?? null,
+      data_vencimento: (c.data_vencimento as string | null) ?? null,
+      data_pagamento: (c.data_pagamento as string | null) ?? null,
+      status_titulo: c.status_titulo as string,
+      categoria_codigo: (c.categoria_codigo as string | null) ?? null,
+    })),
+    saldo_cc,
+    estoque_valor,
+    eventos_rec: (recRes.data ?? []) as unknown as EventoRecorrente[],
+    eventos_ev: (evRes.data ?? []) as unknown as EventoEventual[],
+    config: configRes.data as unknown as Config,
+  };
+}
+
 // === Pipeline (será implementada nas próximas tasks) ===
 async function calcular(
   _supabase: ReturnType<typeof createClient>,
