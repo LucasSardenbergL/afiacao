@@ -1,5 +1,5 @@
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
-import { createClient } from "npm:@supabase/supabase-js@2";
+import { createClient, type SupabaseClient } from "npm:@supabase/supabase-js@2";
 import { authorizeCronOrStaff } from "../_shared/auth.ts";
 // Resend usado via fetch direto à REST API (https://api.resend.com/emails) para evitar dep npm
 
@@ -20,6 +20,74 @@ interface OmieResponse {
   cCodIntCli?: string;
   nCodOS?: number;
   cNumOS?: string;
+}
+
+interface OmieClienteCadastro {
+  codigo_cliente_omie?: number;
+  codigo_cliente_integracao?: string | null;
+  razao_social?: string;
+  nome_fantasia?: string;
+  cnpj_cpf?: string;
+  email?: string;
+  telefone1_numero?: string;
+  codigo_vendedor?: number | null;
+  recomendacoes?: { codigo_vendedor?: number | null };
+}
+
+interface OmieListarClientesResponse {
+  clientes_cadastro?: OmieClienteCadastro[];
+  total_de_paginas?: number;
+  faultstring?: string;
+}
+
+interface OmieIncluirClienteResponse {
+  codigo_cliente_omie?: number;
+  nCodCli?: number;
+  faultstring?: string;
+}
+
+interface OmieServicoCadastro {
+  intListar?: { nCodServ?: number; cCodIntServ?: string };
+  descricao?: { cDescricao?: string; cDescrCompleta?: string };
+  cabecalho?: { cDescricao?: string; cIdTrib?: string; nValorUnit?: number; cUnidade?: string };
+  impostos?: { nCodServ?: string };
+  info?: { inativo?: string };
+}
+
+interface OmieListarServicosResponse {
+  cadastros?: OmieServicoCadastro[];
+  faultstring?: string;
+}
+
+interface OmieContaCorrente {
+  nCodCC?: number;
+  descricao?: string;
+  cDescricao?: string;
+  cCodCCInt?: string;
+  cNomeBanco?: string;
+  cAgencia?: string;
+  cNumeroConta?: string;
+  cTipo?: string;
+  tipo?: string;
+}
+
+interface OmieListarContasCorrentesResponse {
+  ListarContasCorrentes?: OmieContaCorrente[];
+  conta_corrente_lista?: OmieContaCorrente[];
+  faultstring?: string;
+}
+
+interface OmieConsultarOSResponse {
+  nCodOS?: number;
+  cNumOS?: string;
+  faultstring?: string;
+}
+
+interface ServicoLocalRow {
+  id: string;
+  omie_codigo_servico: number;
+  descricao: string;
+  inativo: boolean;
 }
 
 // Função para fazer chamadas à API do Omie
@@ -139,7 +207,7 @@ interface ClienteOmieResult {
 
 // Função para buscar cliente no Omie (apenas existentes)
 async function syncClienteOmie(
-  supabase: any,
+  supabase: SupabaseClient,
   userId: string,
   profile: {
     name: string;
@@ -185,15 +253,15 @@ async function syncClienteOmie(
   const searchResult = await callOmieApi(
     "geral/clientes/",
     "ListarClientes",
-    { 
-      pagina: 1, 
+    {
+      pagina: 1,
       registros_por_pagina: 1,
       clientesFiltro: {
         cnpj_cpf: documentClean
       }
     }
-  ) as any;
-  
+  ) as unknown as OmieListarClientesResponse;
+
   if (!searchResult.clientes_cadastro?.[0]?.codigo_cliente_omie) {
     // Cliente NÃO encontrado no Omie - não permitir criar pedido
     throw new Error(
@@ -226,7 +294,7 @@ async function syncClienteOmie(
 
 // Função para criar Ordem de Serviço no Omie
 async function criarOrdemServicoOmie(
-  supabase: any,
+  supabase: SupabaseClient,
   orderId: string,
   omieCodigoCliente: number,
   omieCodigoVendedor: number | undefined,
@@ -388,7 +456,7 @@ async function criarOrdemServicoOmie(
 
 // Função para alterar Ordem de Serviço no Omie
 async function alterarOrdemServicoOmie(
-  supabase: any,
+  supabase: SupabaseClient,
   orderId: string,
   order: {
     items: Array<{
@@ -598,7 +666,7 @@ serve(async (req) => {
                     codigo_cliente_omie: staffContext.customerOmieCode,
                   },
                 }
-              ) as any;
+              ) as unknown as OmieListarClientesResponse;
               const clienteOmie = searchResult.clientes_cadastro?.[0];
               omieCodigoVendedor = clienteOmie?.recomendacoes?.codigo_vendedor || clienteOmie?.codigo_vendedor || undefined;
             } catch (e) {
@@ -690,7 +758,7 @@ serve(async (req) => {
               registros_por_pagina: 1,
               clientesFiltro: { cnpj_cpf: documentClean },
             }
-          ) as any;
+          ) as unknown as OmieListarClientesResponse;
           const cliente = searchResult.clientes_cadastro?.[0];
           if (cliente) {
             result = {
@@ -724,7 +792,7 @@ serve(async (req) => {
             "geral/clientes/",
             "ListarClientes",
             { pagina: 1, registros_por_pagina: 1, clientesFiltro: { cnpj_cpf: docClean } }
-          ) as any;
+          ) as unknown as OmieListarClientesResponse;
           const existing = searchRes.clientes_cadastro?.[0];
           if (existing) {
             result = {
@@ -756,7 +824,7 @@ serve(async (req) => {
               "geral/clientes/",
               "IncluirCliente",
               clienteParams
-            ) as any;
+            ) as unknown as OmieIncluirClienteResponse;
             result = {
               success: true,
               codigo_cliente: createResult.codigo_cliente_omie || createResult.nCodCli,
@@ -764,9 +832,9 @@ serve(async (req) => {
               created: true,
             };
           }
-        } catch (e: any) {
+        } catch (e) {
           console.error("[Omie] Erro ao criar cliente na afiação:", e);
-          result = { success: false, error: e.message || "Erro ao criar cliente" };
+          result = { success: false, error: e instanceof Error ? e.message : "Erro ao criar cliente" };
         }
         break;
       }
@@ -793,17 +861,17 @@ serve(async (req) => {
           const omieResult = await callOmieApi(
             "servicos/servico/",
             "ListarCadastroServico",
-            { 
-              nPagina: 1, 
-              nRegPorPagina: 100 
+            {
+              nPagina: 1,
+              nRegPorPagina: 100
             }
-          ) as any;
+          ) as unknown as OmieListarServicosResponse;
 
           const servicos = omieResult.cadastros || [];
           console.log(`[Omie] ${servicos.length} serviços encontrados`);
 
           // Formatar para o app
-          const servicosFormatados = servicos.map((s: any) => ({
+          const servicosFormatados = servicos.map((s) => ({
             omie_codigo_servico: s.intListar?.nCodServ || 0,
             omie_codigo_integracao: s.intListar?.cCodIntServ || "",
             descricao: s.descricao?.cDescricao || s.cabecalho?.cDescricao || "Sem descrição",
@@ -836,18 +904,18 @@ serve(async (req) => {
           const omieResult = await callOmieApi(
             "geral/contacorrente/",
             "ListarContasCorrentes",
-            { 
-              pagina: 1, 
-              registros_por_pagina: 50 
+            {
+              pagina: 1,
+              registros_por_pagina: 50
             }
-          ) as any;
+          ) as unknown as OmieListarContasCorrentesResponse;
 
           const contas = omieResult.ListarContasCorrentes || omieResult.conta_corrente_lista || [];
           console.log(`[Omie] ${contas.length} contas correntes encontradas`);
           console.log("[Omie] Resposta completa:", JSON.stringify(omieResult, null, 2));
 
           // Formatar para o app
-          const contasFormatadas = contas.map((c: any) => ({
+          const contasFormatadas = contas.map((c) => ({
             nCodCC: c.nCodCC,
             cDescricao: c.descricao || c.cDescricao || "Sem descrição",
             cCodCCInt: c.cCodCCInt || "",
@@ -881,17 +949,17 @@ serve(async (req) => {
           const omieResult = await callOmieApi(
             "geral/clientes/",
             "ListarClientes",
-            { 
-              pagina: 1, 
-              registros_por_pagina: 20 
+            {
+              pagina: 1,
+              registros_por_pagina: 20
             }
-          ) as any;
+          ) as unknown as OmieListarClientesResponse;
 
           const clientes = omieResult.clientes_cadastro || [];
           console.log(`[Omie] ${clientes.length} clientes encontrados`);
 
           // Formatar para o app
-          const clientesFormatados = clientes.map((c: any) => ({
+          const clientesFormatados = clientes.map((c) => ({
             codigo_cliente_omie: c.codigo_cliente_omie,
             razao_social: c.razao_social,
             nome_fantasia: c.nome_fantasia,
@@ -961,22 +1029,24 @@ serve(async (req) => {
           const omieResult = await callOmieApi(
             "servicos/servico/",
             "ListarCadastroServico",
-            { 
-              nPagina: 1, 
+            {
+              nPagina: 1,
               nRegPorPagina: 500 // Buscar mais para garantir todos
             }
-          ) as any;
+          ) as unknown as OmieListarServicosResponse;
 
           const servicosOmie = omieResult.cadastros || [];
           console.log(`[Omie] ${servicosOmie.length} serviços encontrados no Omie`);
 
           // 2. Buscar serviços existentes no banco
-          const { data: servicosLocais } = await supabaseAdmin
+          const { data: servicosLocaisRaw } = await supabaseAdmin
             .from("omie_servicos")
             .select("id, omie_codigo_servico, descricao, inativo");
 
-          const servicosLocaisMap = new Map(
-            (servicosLocais || []).map((s: any) => [s.omie_codigo_servico, s])
+          const servicosLocais = (servicosLocaisRaw || []) as unknown as ServicoLocalRow[];
+
+          const servicosLocaisMap = new Map<number, ServicoLocalRow>(
+            servicosLocais.map((s) => [s.omie_codigo_servico, s])
           );
 
           let adicionados = 0;
@@ -1158,8 +1228,8 @@ serve(async (req) => {
         try {
           const consultaResult = await callOmieApi("servicos/os/", "ConsultarOS", {
             nCodOS: osCheck.omie_codigo_os,
-          }) as any;
-          
+          }) as unknown as OmieConsultarOSResponse;
+
           result = { exists: !consultaResult.faultstring };
         } catch {
           // If error contains "não encontrada" or similar, OS was deleted
@@ -1202,7 +1272,7 @@ serve(async (req) => {
             try {
               const consultaResult = await callOmieApi("servicos/os/", "ConsultarOS", {
                 nCodOS: os.omie_codigo_os,
-              }) as any;
+              }) as unknown as OmieConsultarOSResponse;
 
               if (consultaResult.faultstring) {
                 console.log(`[Omie] OS ${os.omie_numero_os} não existe mais no Omie, excluindo localmente...`);
