@@ -197,6 +197,50 @@ async function carregarDados(
   };
 }
 
+type TaxasHistoricas = {
+  atraso_medio_dias: number;
+  inadimplencia_observada_pct: number;
+  amostra_suficiente: boolean;
+  qtd_titulos: number;
+};
+
+function calcularTaxasHistoricas(crs: CR[]): TaxasHistoricas {
+  const agora = Date.now();
+  const noventa = 90 * 24 * 60 * 60 * 1000;
+  const cutoff = new Date(agora - 12 * 30 * 24 * 60 * 60 * 1000).toISOString().slice(0, 10);
+
+  const recentes = crs.filter(c =>
+    c.data_vencimento && c.data_vencimento >= cutoff
+  );
+
+  const liquidados = recentes.filter(c => c.data_recebimento && c.data_vencimento);
+  let somaAtraso = 0;
+  for (const c of liquidados) {
+    const venc = new Date(c.data_vencimento!).getTime();
+    const rec = new Date(c.data_recebimento!).getTime();
+    somaAtraso += Math.max(0, (rec - venc) / (24 * 60 * 60 * 1000));
+  }
+  const atraso_medio_dias = liquidados.length > 0 ? somaAtraso / liquidados.length : 0;
+
+  const vencidoLongo = recentes.filter(c =>
+    c.data_vencimento &&
+    c.saldo > 0 &&
+    (agora - new Date(c.data_vencimento).getTime()) > noventa
+  ).reduce((s, c) => s + c.saldo, 0);
+
+  const faturamento12m = recentes.reduce((s, c) => s + c.valor_documento, 0);
+  const inadimplencia_observada_pct = faturamento12m > 0
+    ? (vencidoLongo / faturamento12m) * 100
+    : 0;
+
+  return {
+    atraso_medio_dias,
+    inadimplencia_observada_pct,
+    amostra_suficiente: liquidados.length >= 30,
+    qtd_titulos: liquidados.length,
+  };
+}
+
 // === Pipeline (será implementada nas próximas tasks) ===
 async function calcular(
   _supabase: ReturnType<typeof createClient>,
