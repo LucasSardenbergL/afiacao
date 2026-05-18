@@ -560,6 +560,115 @@ function calcularIndicadores(
   };
 }
 
+type Alerta = {
+  tipo: string;
+  severidade: 'info' | 'aviso' | 'critico';
+  mensagem: string;
+  valor: number | null;
+  threshold: number | null;
+  contexto: Record<string, unknown>;
+};
+
+function avaliarAlertas(
+  semanas: Semana[],
+  ncg: NCG,
+  indicadores: Indicadores,
+  config: Config,
+): Alerta[] {
+  const alertas: Alerta[] = [];
+  const t = config.thresholds;
+
+  // 1. Caixa negativo em até N semanas
+  const semanaNeg = semanas.slice(0, t.caixa_negativo_semanas).findIndex(s => s.saldo_final < 0);
+  if (semanaNeg >= 0) {
+    const s = semanas[semanaNeg];
+    alertas.push({
+      tipo: 'caixa_negativo',
+      severidade: 'critico',
+      mensagem: `Caixa fica negativo em ${s.inicio} (semana ${semanaNeg + 1}): ${formatBRLSimple(s.saldo_final)}`,
+      valor: s.saldo_final,
+      threshold: 0,
+      contexto: { semana: semanaNeg + 1, inicio: s.inicio },
+    });
+  }
+
+  // 2. NCG > Capital Giro Próprio (déficit)
+  if (ncg.valor > indicadores.capital_giro_proprio) {
+    const gap = ncg.valor - indicadores.capital_giro_proprio;
+    alertas.push({
+      tipo: 'ncg_deficit',
+      severidade: 'aviso',
+      mensagem: `NCG ${formatBRLSimple(ncg.valor)} excede Capital Giro Próprio ${formatBRLSimple(indicadores.capital_giro_proprio)} em ${formatBRLSimple(gap)}. Risco de liquidez.`,
+      valor: gap,
+      threshold: 0,
+      contexto: { ncg: ncg.valor, cgp: indicadores.capital_giro_proprio },
+    });
+  }
+
+  // 3. Dias cobertura baixo
+  if (indicadores.dias_cobertura < t.dias_cobertura_min) {
+    alertas.push({
+      tipo: 'cobertura_baixa',
+      severidade: 'aviso',
+      mensagem: `Caixa cobre só ${indicadores.dias_cobertura.toFixed(1)} dias de operação (mín: ${t.dias_cobertura_min})`,
+      valor: indicadores.dias_cobertura,
+      threshold: t.dias_cobertura_min,
+      contexto: {},
+    });
+  }
+
+  // 4. Inadimplência alta
+  if (indicadores.inadimplencia_pct > t.inadimplencia_max_pct) {
+    alertas.push({
+      tipo: 'inadimplencia_alta',
+      severidade: 'aviso',
+      mensagem: `Inadimplência ${indicadores.inadimplencia_pct.toFixed(1)}% acima do limite de ${t.inadimplencia_max_pct}%`,
+      valor: indicadores.inadimplencia_pct,
+      threshold: t.inadimplencia_max_pct,
+      contexto: {},
+    });
+  }
+
+  // 5. Concentração top1
+  const top1 = indicadores.concentracao_top5_clientes[0];
+  if (top1 && top1.pct > t.concentracao_top1_max_pct) {
+    alertas.push({
+      tipo: 'concentracao_top1',
+      severidade: 'info',
+      mensagem: `Cliente "${top1.cliente}" representa ${top1.pct.toFixed(1)}% do CR aberto (limite: ${t.concentracao_top1_max_pct}%)`,
+      valor: top1.pct,
+      threshold: t.concentracao_top1_max_pct,
+      contexto: { cliente: top1.cliente, valor: top1.valor },
+    });
+  }
+
+  // NOTA: spec original lista 7 alertas — `pmr_subindo` (PMR cresceu >15% em 90d) é
+  // deferido pra próximo ciclo porque depende de snapshots históricos (precisa 90d de
+  // cron rodando pra ter base de comparação). Será adicionado quando dados existirem.
+
+  // 6. Próxima semana saída > entrada × 2
+  const s0 = semanas[0];
+  if (s0 && s0.total_entradas > 0 && s0.total_saidas > s0.total_entradas * 2) {
+    alertas.push({
+      tipo: 'saida_spike',
+      severidade: 'info',
+      mensagem: `Próxima semana: saídas ${formatBRLSimple(s0.total_saidas)} vs entradas ${formatBRLSimple(s0.total_entradas)}`,
+      valor: s0.total_saidas,
+      threshold: s0.total_entradas * 2,
+      contexto: { semana_inicio: s0.inicio },
+    });
+  }
+
+  return alertas;
+}
+
+function formatBRLSimple(value: number): string {
+  const sign = value < 0 ? '-' : '';
+  const abs = Math.abs(value);
+  const formatted = abs.toFixed(2).replace('.', ',').replace(/\B(?=(\d{3})+(?!\d))/g, '.');
+  return `${sign}R$ ${formatted}`;
+}
+
 // === Pipeline (será implementada nas próximas tasks) ===
 async function calcular(
   _supabase: ReturnType<typeof createClient>,
