@@ -166,7 +166,7 @@ export function CheckinQualitativoTab({ empresa, ano, trimestre }: Props) {
       const { data, error } = await supabase
         .from("des_criterio_percentual")
         .select("criterio_id, faixa_id, percentual")
-        .eq("faixa_id", faixaConservId);
+        .eq("faixa_id", faixaConservId as number);
       if (error) throw error;
       return (data ?? []) as CriterioPercentual[];
     },

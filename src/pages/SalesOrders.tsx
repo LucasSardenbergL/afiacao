@@ -220,9 +220,10 @@ const SalesOrders = () => {
     });
 
     // 1. Soft-delete local primeiro (audit trail antes do Omie)
+    // `deleted_at` existe no DB mas ainda não no generated Database type — cast as never
     const { error: softErr } = await supabase
       .from('sales_orders')
-      .update({ deleted_at: new Date().toISOString() })
+      .update({ deleted_at: new Date().toISOString() } as never)
       .eq('id', order.id);
 
     if (softErr) {
@@ -248,7 +249,7 @@ const SalesOrders = () => {
       // Rollback do soft-delete (deleted_at = null) — pedido volta a ser ativo
       await supabase
         .from('sales_orders')
-        .update({ deleted_at: null })
+        .update({ deleted_at: null } as never)
         .eq('id', order.id);
       queryClient.setQueryData(['sales-orders-paginated'], snapshot);
       toast.error('Erro ao excluir pedido', {
@@ -276,7 +277,7 @@ const SalesOrders = () => {
     const nowIso = new Date().toISOString();
     const { error: softErr } = await supabase
       .from('sales_orders')
-      .update({ deleted_at: nowIso })
+      .update({ deleted_at: nowIso } as never)
       .in('id', Array.from(deleteIds));
 
     if (softErr) {
@@ -311,7 +312,7 @@ const SalesOrders = () => {
     if (failedIds.length > 0) {
       await supabase
         .from('sales_orders')
-        .update({ deleted_at: null })
+        .update({ deleted_at: null } as never)
         .in('id', failedIds);
     }
 
