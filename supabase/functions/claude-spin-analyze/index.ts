@@ -77,6 +77,30 @@ Em QUALQUER playbook, se aparecer oportunidade, preencha \`ticketLeverage\` com 
 
 Se não há oportunidade clara, use \`tactic: "none"\` e \`suggestion: ""\`.
 
+# Customer Capture — Dados cadastrais do cliente novo (customerCapture)
+
+Quando o cliente fala dados que servem pra CADASTRAR ele na base (ex: cliente novo que ligou pela primeira vez), preencha \`customerCapture\` com TUDO que foi explicitamente revelado:
+
+- **razao_social**: nome da empresa ("Marcenaria São Pedro", "São Pedro Móveis Planejados")
+- **nome_contato**: nome da pessoa que falou ("aqui é o João", "fala com a Maria")
+- **cnpj**: se mencionado, formato XX.XXX.XXX/XXXX-XX
+- **email**: se ditado ou soletrado
+- **telefone_alternativo**: outro telefone além do que está sendo usado na chamada
+- **cidade / estado**: localização mencionada ("aqui em Belo Horizonte", "fica em Minas")
+- **endereco**: se cliente passou endereço completo
+- **segmento**: detecte pelo contexto — "marcenaria", "indústria moveleira", "oficina automotiva", "marcenaria pequena", "industrial"
+- **porte_estimado**: pelo volume mencionado — pequeno (<50L/mês), médio (50-500L), grande (>500L)
+- **volume_mensal_litros**: se citado consumo mensal
+- **produtos_interesse**: array dos tipos de tinta/produto que cliente mencionou ("PU 2K", "hidrossolúvel", "verniz fosco")
+- **tags_detectadas**: palavras-chave técnicas relevantes ("alto_padrão", "cabine_pressurizada", "lixamento_manual")
+- **observacoes**: contexto livre relevante pro cadastro futuro
+
+REGRAS:
+- Se cliente JÁ é conhecido (não é primeiro contato), preenche mesmo assim — pode atualizar dados existentes
+- Se cliente NÃO mencionou um dado, deixe null. NUNCA invente
+- Se nada relevante foi falado, retorne customerCapture com produtos_interesse=[] e tags_detectadas=[] (mas pode retornar null como objeto inteiro também se 0 dados)
+- Acumule progressivamente — primeira análise pode ter só razão social; análise posterior pode adicionar email + cidade
+
 # Extração de entidades econômicas (entitiesExtracted)
 
 Em CADA análise, popule \`entitiesExtracted\` com tudo que o cliente revelou que vai pro perfil 360 dele:
@@ -235,6 +259,27 @@ const SPIN_ANALYSIS_TOOL = {
           },
           required: ["type", "value", "context", "confidence"],
         },
+      },
+      customerCapture: {
+        type: ["object", "null"],
+        description: "Dados cadastrais do cliente extraídos da conversa (PR-CAPTURE-A). Preenche SÓ se cliente revelou explicitamente. Vendedor revisa antes de cadastrar.",
+        properties: {
+          razao_social: { type: ["string", "null"], description: "Razão social ou nome fantasia da empresa" },
+          nome_contato: { type: ["string", "null"], description: "Nome da pessoa que está falando" },
+          cnpj: { type: ["string", "null"], description: "CNPJ no formato XX.XXX.XXX/XXXX-XX se mencionado" },
+          email: { type: ["string", "null"], description: "Email do contato ou empresa" },
+          telefone_alternativo: { type: ["string", "null"], description: "Outro telefone mencionado (alternativo ao da chamada)" },
+          cidade: { type: ["string", "null"] },
+          estado: { type: ["string", "null"], description: "Sigla UF (ex: MG)" },
+          endereco: { type: ["string", "null"], description: "Endereço completo se mencionado" },
+          segmento: { type: ["string", "null"], description: "marcenaria, indústria moveleira, oficina automotiva, etc" },
+          porte_estimado: { type: ["string", "null"], enum: ["pequeno", "medio", "grande", null], description: "Baseado em volume mencionado" },
+          volume_mensal_litros: { type: ["number", "null"], description: "Consumo mensal de tinta mencionado em L" },
+          produtos_interesse: { type: "array", items: { type: "string" }, description: "Produtos/categorias que o cliente mencionou interesse" },
+          tags_detectadas: { type: "array", items: { type: "string" }, description: "Tags relevantes: pu_2k, hidrossolúvel, alto_padrão, etc" },
+          observacoes: { type: ["string", "null"], description: "Notas livres relevantes pro cadastro (preferências, peculiaridades)" },
+        },
+        required: ["produtos_interesse", "tags_detectadas"],
       },
     },
     required: [
