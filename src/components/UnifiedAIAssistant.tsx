@@ -1,5 +1,5 @@
 import { useState, useRef, useCallback, useEffect } from 'react';
-import { Mic, Send, Loader2, Sparkles, X, Square, Camera, Package, Wrench, Image, Check, Lightbulb, Plus, Paperclip, FileAudio, User, MapPin } from 'lucide-react';
+import { Mic, Loader2, Sparkles, X, Square, Camera, Package, Wrench, Check, Lightbulb, Plus, Paperclip, User, MapPin } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { cn, decodeHtmlEntities } from '@/lib/utils';
