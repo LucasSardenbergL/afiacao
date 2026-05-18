@@ -1,0 +1,34 @@
+-- ============================================================
+-- IC Reconciliation: Cron schedule para fin-ic-reconcile
+--
+-- Reconciliation automático diário às 6h BRT (9h UTC)
+-- que cruza CR ↔ CP por CNPJ, valor e data,
+-- populando fin_ic_matches com status auto_matched, divergencias, etc.
+--
+-- SETUP: Após aplicar esta migration, habilitar pg_cron no Dashboard
+-- (Database → Extensions → pg_cron), depois rodar o comando cron abaixo
+-- no SQL Editor.
+-- ============================================================
+
+-- CRON COMMAND (colar no SQL Editor após habilitar pg_cron):
+--
+-- SELECT cron.schedule(
+--   'fin-ic-reconcile-daily',
+--   '0 9 * * *',
+--   $$
+--   SELECT net.http_post(
+--     url := (SELECT value FROM vault.decrypted_secrets WHERE name = 'project_url') || '/functions/v1/fin-ic-reconcile',
+--     headers := jsonb_build_object(
+--       'Content-Type', 'application/json',
+--       'x-cron-secret', (SELECT value FROM vault.decrypted_secrets WHERE name = 'cron_secret')
+--     )
+--   );
+--   $$
+-- );
+--
+-- Verificar job: SELECT * FROM cron.job WHERE jobname = 'fin-ic-reconcile-daily';
+-- Remover: SELECT cron.unschedule('fin-ic-reconcile-daily');
+--
+-- Vault secrets necessários (executar uma vez no SQL Editor):
+-- SELECT vault.create_secret('https://SEU_PROJECT_ID.supabase.co', 'project_url');
+-- SELECT vault.create_secret('SEU_CRON_SECRET', 'cron_secret');

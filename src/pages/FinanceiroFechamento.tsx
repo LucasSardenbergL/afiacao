@@ -4,6 +4,7 @@ import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Input } from '@/components/ui/input';
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter } from '@/components/ui/dialog';
 import { COMPANIES, ALL_COMPANIES, type Company } from '@/contexts/CompanyContext';
 import {
   getFechamentos, criarFechamento, atualizarFechamento, getFechamentoLog,
@@ -12,6 +13,9 @@ import {
 import { triggerFinanceiroSync } from '@/services/financeiroService';
 import { toast } from 'sonner';
 import { AuditTrailDrawer } from '@/components/financeiro/AuditTrailDrawer';
+import { parsePostgresFinanceiroError } from '@/lib/financeiro/error-handler';
+import { useNavigate, Link } from 'react-router-dom';
+import { useIcMatches } from '@/hooks/useIcMatches';
 import {
   Loader2, Building2, Lock, Unlock, CheckCircle2, Clock,
   FileText, Eye, RotateCcw, Plus, History, ShieldCheck, AlertTriangle
@@ -27,6 +31,7 @@ const statusConfig: Record<string, { label: string; color: string; icon: any }> 
 };
 
 const FinanceiroFechamento = () => {
+  const navigate = useNavigate();
   const [company, setCompany] = useState<Company | 'all'>('all');
   const [ano, setAno] = useState(new Date().getFullYear());
   const [fechamentos, setFechamentos] = useState<Fechamento[]>([]);
@@ -35,6 +40,10 @@ const FinanceiroFechamento = () => {
   const [selectedLog, setSelectedLog] = useState<{ id: string; logs: FechamentoLog[] } | null>(null);
   const [motivoReabertura, setMotivoReabertura] = useState('');
   const [auditTarget, setAuditTarget] = useState<{ table: string; id: string; title: string } | null>(null);
+  const [mappingPendentes, setMappingPendentes] = useState<Array<{id: string; nome: string}>>([]);
+  const { data: icDiv } = useIcMatches('divergencia_valor');
+  const { data: icSem } = useIcMatches('sem_contrapartida');
+  const totalIc = (icDiv?.length ?? 0) + (icSem?.length ?? 0);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -72,7 +81,12 @@ const FinanceiroFechamento = () => {
       toast.success(`Ação "${acao}" executada com sucesso`);
       await load();
     } catch (e: any) {
-      toast.error('Erro', { description: e.message });
+      const parsed = parsePostgresFinanceiroError(e);
+      if (parsed.kind === 'mapping_incomplete') {
+        setMappingPendentes(parsed.pendentes);
+      } else {
+        toast.error('Erro', { description: e.message });
+      }
     } finally {
       setActing(false);
     }
@@ -89,6 +103,18 @@ const FinanceiroFechamento = () => {
 
   return (
     <div className="space-y-4 pb-24">
+      {totalIc > 0 && (
+        <div className="flex items-center gap-2 text-xs text-status-warning bg-status-warning-bg p-2 rounded-md">
+          <AlertTriangle className="h-3 w-3 flex-shrink-0" />
+          <span>{totalIc} pendências IC</span>
+          <Link
+            to="/financeiro/intercompany/fila"
+            className="font-medium underline hover:no-underline"
+          >
+            resolver
+          </Link>
+        </div>
+      )}
       <div className="flex items-center justify-between flex-wrap gap-3">
         <div>
           <h1 className="text-2xl font-bold tracking-tight">Fechamento Mensal</h1>
@@ -277,6 +303,27 @@ const FinanceiroFechamento = () => {
           title={auditTarget.title}
         />
       )}
+
+      {/* Mapping incomplete dialog */}
+      <Dialog open={mappingPendentes.length > 0} onOpenChange={(o) => !o && setMappingPendentes([])}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Não foi possível aprovar</DialogTitle>
+            <DialogDescription>
+              {mappingPendentes.length} categorias do período não têm mapeamento DRE. Resolva no Mapeamento antes de aprovar.
+            </DialogDescription>
+          </DialogHeader>
+          <ul className="max-h-64 overflow-y-auto text-sm space-y-1">
+            {mappingPendentes.map(p => (
+              <li key={p.id} className="font-mono text-xs text-muted-foreground">{p.id} — {p.nome}</li>
+            ))}
+          </ul>
+          <DialogFooter>
+            <Button variant="ghost" onClick={() => setMappingPendentes([])}>Cancelar</Button>
+            <Button onClick={() => navigate('/financeiro/mapping')}>Ir para Mapeamento</Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 };
