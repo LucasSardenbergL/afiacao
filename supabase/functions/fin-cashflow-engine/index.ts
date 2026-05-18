@@ -488,6 +488,78 @@ function calcularNCG(dados: DadosBase): NCG {
   return { aco, pco, valor, projecao_12m };
 }
 
+type Indicadores = {
+  dias_cobertura: number;
+  capital_giro_proprio: number;
+  saldo_tesouraria: number;
+  inadimplencia_pct: number;
+  concentracao_top5_clientes: Array<{ cliente: string; pct: number; valor: number }>;
+  prazo_medio_recebimento: number;
+  prazo_medio_pagamento: number;
+  cash_conversion_cycle: number;
+};
+
+function calcularIndicadores(
+  dados: DadosBase,
+  ncg: NCG,
+  taxas: TaxasHistoricas,
+): Indicadores {
+  const cutoff90 = new Date(Date.now() - 90 * 24 * 60 * 60 * 1000).toISOString().slice(0, 10);
+  const saidasUltimos90 = dados.cps
+    .filter(c => c.data_pagamento && c.data_pagamento >= cutoff90)
+    .reduce((s, c) => s + c.valor_pago, 0);
+  const saidaDiariaMedia = saidasUltimos90 / 90;
+  const dias_cobertura = saidaDiariaMedia > 0 ? dados.saldo_cc / saidaDiariaMedia : 999;
+
+  const capital_giro_proprio = dados.saldo_cc + ncg.aco.cr_aberto + ncg.aco.estoque - ncg.pco.total;
+  const saldo_tesouraria = dados.saldo_cc - ncg.pco.folha_30d;
+
+  const crsLiquidados = dados.crs.filter(c => c.data_recebimento && c.data_emissao);
+  const pmr = crsLiquidados.length > 0
+    ? crsLiquidados.reduce((s, c) => {
+        const dias = (new Date(c.data_recebimento!).getTime() - new Date(c.data_emissao!).getTime()) / (24 * 60 * 60 * 1000);
+        return s + dias;
+      }, 0) / crsLiquidados.length
+    : 0;
+
+  const cpsLiquidados = dados.cps.filter(c => c.data_pagamento && c.data_emissao);
+  const pmp = cpsLiquidados.length > 0
+    ? cpsLiquidados.reduce((s, c) => {
+        const dias = (new Date(c.data_pagamento!).getTime() - new Date(c.data_emissao!).getTime()) / (24 * 60 * 60 * 1000);
+        return s + dias;
+      }, 0) / cpsLiquidados.length
+    : 0;
+
+  const ccc = pmr - pmp;
+
+  const porCliente = new Map<string, number>();
+  for (const cr of dados.crs) {
+    if (cr.saldo <= 0) continue;
+    const key = cr.nome_cliente || cr.cliente_id || 'sem cliente';
+    porCliente.set(key, (porCliente.get(key) ?? 0) + cr.saldo);
+  }
+  const totalAberto = ncg.aco.cr_aberto;
+  const concentracao_top5_clientes = Array.from(porCliente.entries())
+    .sort((a, b) => b[1] - a[1])
+    .slice(0, 5)
+    .map(([cliente, valor]) => ({
+      cliente,
+      valor,
+      pct: totalAberto > 0 ? (valor / totalAberto) * 100 : 0,
+    }));
+
+  return {
+    dias_cobertura,
+    capital_giro_proprio,
+    saldo_tesouraria,
+    inadimplencia_pct: taxas.inadimplencia_observada_pct,
+    concentracao_top5_clientes,
+    prazo_medio_recebimento: pmr,
+    prazo_medio_pagamento: pmp,
+    cash_conversion_cycle: ccc,
+  };
+}
+
 // === Pipeline (será implementada nas próximas tasks) ===
 async function calcular(
   _supabase: ReturnType<typeof createClient>,
