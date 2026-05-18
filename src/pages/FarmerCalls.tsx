@@ -18,6 +18,7 @@ import { useFarmerScoring } from '@/hooks/useFarmerScoring';
 import { cn } from '@/lib/utils';
 import { Dialer } from '@/components/call/Dialer';
 import { TranscriptionPanel } from '@/components/call/TranscriptionPanel';
+import { CustomerCaptureSidebar } from '@/components/call/CustomerCaptureSidebar';
 import type { NvoipCallState } from '@/hooks/useNvoipCall';
 import { useCallBackend } from '@/hooks/useCallBackend';
 import { useWebRTCCall } from '@/hooks/useWebRTCCall';
@@ -843,6 +844,13 @@ const FarmerCalls = () => {
           spinAnalysis={webrtc.spinAnalysis}
           spinError={webrtc.spinAnalysisError}
         />
+      )}
+
+      {/* PR-CAPTURE-A: Sidebar de captura de dados cadastrais durante chamada WebRTC */}
+      {callBackend === 'webrtc' && webrtc.callState === 'established' && (
+        <div className="fixed left-4 bottom-4 z-30">
+          <CustomerCaptureSidebar />
+        </div>
       )}
 
       {/* Botão pra reabrir o painel se vendedor fechou acidentalmente */}

@@ -37,6 +37,28 @@ export interface ExtractedEntity {
   confidence: number;  // 0-1
 }
 
+/**
+ * Dados cadastrais do cliente extraídos da conversa (PR-CAPTURE-A).
+ * Acumula progressivamente ao longo das análises da chamada.
+ * Vendedor revisa no wizard pós-call antes de cadastrar.
+ */
+export interface CustomerCapture {
+  razao_social: string | null;
+  nome_contato: string | null;
+  cnpj: string | null;
+  email: string | null;
+  telefone_alternativo: string | null;
+  cidade: string | null;
+  estado: string | null;
+  endereco: string | null;
+  segmento: string | null;
+  porte_estimado: 'pequeno' | 'medio' | 'grande' | null;
+  volume_mensal_litros: number | null;
+  produtos_interesse: string[];
+  tags_detectadas: string[];
+  observacoes: string | null;
+}
+
 export interface SpinAnalysis {
   /** Estágio atual da conversa segundo SPIN */
   spinStage: SpinStage;
@@ -86,6 +108,8 @@ export interface SpinAnalysis {
   }>;
   /** NOVO: entidades econômicas extraídas (PR4+ vai persistir no perfil 360) */
   entitiesExtracted: ExtractedEntity[];
+  /** PR-CAPTURE-A: dados cadastrais do cliente (acumula progressivamente). null se nada relevante foi falado. */
+  customerCapture?: CustomerCapture | null;
 }
 
 export type SpinAnalysisStatus = 'idle' | 'analyzing' | 'ready' | 'error';

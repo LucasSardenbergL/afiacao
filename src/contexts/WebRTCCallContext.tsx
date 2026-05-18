@@ -9,9 +9,10 @@ import { mixPrerollWithMic } from '@/lib/sip/audio-preroll';
 import { useTranscription } from '@/hooks/useTranscription';
 import type { TranscriptTurn, TranscriptionStatus } from '@/lib/transcription/types';
 import { useSpinAnalysis } from '@/hooks/useSpinAnalysis';
-import type { SpinAnalysis, SpinAnalysisStatus } from '@/lib/spin/types';
+import type { SpinAnalysis, SpinAnalysisStatus, CustomerCapture } from '@/lib/spin/types';
 import { resolveCustomerByPhone } from '@/lib/call-session/resolve-customer';
 import { buildSessionPayload } from '@/lib/call-session/build-session-payload';
+import { emptyCapture, mergeCustomerCapture, captureFilledCount } from '@/lib/customer-capture/merge';
 
 export type WebRTCCallState =
   | 'idle' | 'connecting' | 'calling_origin' | 'calling_destination'
@@ -69,6 +70,15 @@ export interface WebRTCCallContextValue {
   incomingCall: IncomingCallInfo | null;
   acceptIncoming: () => Promise<void>;
   rejectIncoming: () => void;
+  /** PR-CAPTURE-A: dados cadastrais acumulados durante a chamada (Claude extrai) */
+  customerCaptureBuffer: CustomerCapture;
+  /** PR-CAPTURE-A: quantos campos significativos foram capturados (usado pra decidir wizard) */
+  customerCaptureFilledCount: number;
+  /** PR-CAPTURE-A: dados capturados da última chamada encerrada, pra wizard pós-call */
+  lastCallCapture: { capture: CustomerCapture; phoneDialed: string; callId: string | null } | null;
+  dismissLastCallCapture: () => void;
+  /** PR-CAPTURE-A: vendedor pode editar buffer durante a chamada (sidebar) */
+  updateCustomerCaptureBuffer: (patch: Partial<CustomerCapture>) => void;
 }
 
 const WebRTCCallContext = createContext<WebRTCCallContextValue | null>(null);
@@ -126,6 +136,13 @@ export function WebRTCCallProvider({ children }: ProviderProps) {
   const [prerollPlaying, setPrerollPlaying] = useState(false);
   const [prerollEndsAt, setPrerollEndsAt] = useState<number | null>(null);
   const [vendorMicStream, setVendorMicStream] = useState<MediaStream | null>(null);
+  // PR-CAPTURE-A: buffer acumulador de dados cadastrais durante chamada
+  const [customerCaptureBuffer, setCustomerCaptureBuffer] = useState<CustomerCapture>(emptyCapture);
+  const [lastCallCapture, setLastCallCapture] = useState<{
+    capture: CustomerCapture;
+    phoneDialed: string;
+    callId: string | null;
+  } | null>(null);
   // PR-INBOUND-CALLS
   const [incomingCall, setIncomingCall] = useState<IncomingCallInfo | null>(null);
 
@@ -264,6 +281,7 @@ export function WebRTCCallProvider({ children }: ProviderProps) {
 
     // PR4 — Reset refs de sessão antes de iniciar nova chamada
     analysisHistoryRef.current = [];
+    setCustomerCaptureBuffer(emptyCapture()); // PR-CAPTURE-A: reset buffer
     dialedPhoneRef.current = normalized;
     callStartedAtRef.current = new Date();
 
@@ -301,6 +319,8 @@ export function WebRTCCallProvider({ children }: ProviderProps) {
     const turnsSnapshot = [...turnsRef.current];
     const analysesSnapshot = [...analysisHistoryRef.current];
     const dialedPhone = dialedPhoneRef.current;
+    // PR-CAPTURE-A: snapshot do buffer pra wizard pós-call
+    const captureSnapshot = customerCaptureBuffer;
 
     clientRef.current?.hangUp();
     cleanupAudioResources();
@@ -317,7 +337,22 @@ export function WebRTCCallProvider({ children }: ProviderProps) {
         dialedPhone,
       });
     }
-  }, []);
+
+    // PR-CAPTURE-A: dispara wizard se cliente é novo (resolveCustomerByPhone retorna null)
+    // E houve captura significativa (>=2 campos preenchidos)
+    if (dialedPhone && captureFilledCount(captureSnapshot) >= 2) {
+      void (async () => {
+        const { customerUserId } = await resolveCustomerByPhone(dialedPhone);
+        if (!customerUserId) {
+          setLastCallCapture({
+            capture: captureSnapshot,
+            phoneDialed: dialedPhone,
+            callId: null, // farmer_calls.id ainda não temos (persist é fire-and-forget); UI sem callId vinculará via phone match na criação
+          });
+        }
+      })();
+    }
+  }, [customerCaptureBuffer]);
 
   const toggleMute = useCallback(() => {
     if (!clientRef.current) return;
@@ -396,6 +431,10 @@ export function WebRTCCallProvider({ children }: ProviderProps) {
   useEffect(() => {
     if (spin.analysis && !analysisHistoryRef.current.includes(spin.analysis)) {
       analysisHistoryRef.current.push(spin.analysis);
+      // PR-CAPTURE-A: merge customerCapture da nova análise no buffer
+      if (spin.analysis.customerCapture) {
+        setCustomerCaptureBuffer((prev) => mergeCustomerCapture(prev, spin.analysis!.customerCapture));
+      }
     }
   }, [spin.analysis]);
 
@@ -403,6 +442,13 @@ export function WebRTCCallProvider({ children }: ProviderProps) {
   useEffect(() => {
     turnsRef.current = transcription.turns;
   }, [transcription.turns]);
+
+  // PR-CAPTURE-A: vendedor edita campo manual no sidebar
+  const updateCustomerCaptureBuffer = useCallback((patch: Partial<CustomerCapture>) => {
+    setCustomerCaptureBuffer((prev) => ({ ...prev, ...patch }));
+  }, []);
+
+  const dismissLastCallCapture = useCallback(() => setLastCallCapture(null), []);
 
   const value: WebRTCCallContextValue = {
     callState,
@@ -429,6 +475,11 @@ export function WebRTCCallProvider({ children }: ProviderProps) {
     incomingCall,
     acceptIncoming,
     rejectIncoming,
+    customerCaptureBuffer,
+    customerCaptureFilledCount: captureFilledCount(customerCaptureBuffer),
+    lastCallCapture,
+    dismissLastCallCapture,
+    updateCustomerCaptureBuffer,
   };
 
   return <WebRTCCallContext.Provider value={value}>{children}</WebRTCCallContext.Provider>;
