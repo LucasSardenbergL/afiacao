@@ -11,6 +11,7 @@ import {
 } from '@/services/financeiroV2Service';
 import { triggerFinanceiroSync } from '@/services/financeiroService';
 import { toast } from 'sonner';
+import { AuditTrailDrawer } from '@/components/financeiro/AuditTrailDrawer';
 import {
   Loader2, Building2, Lock, Unlock, CheckCircle2, Clock,
   FileText, Eye, RotateCcw, Plus, History, ShieldCheck, AlertTriangle
@@ -33,6 +34,7 @@ const FinanceiroFechamento = () => {
   const [acting, setActing] = useState(false);
   const [selectedLog, setSelectedLog] = useState<{ id: string; logs: FechamentoLog[] } | null>(null);
   const [motivoReabertura, setMotivoReabertura] = useState('');
+  const [auditTarget, setAuditTarget] = useState<{ table: string; id: string; title: string } | null>(null);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -196,6 +198,17 @@ const FinanceiroFechamento = () => {
                               onClick={() => loadLog(fech.id)}>
                               <History className="w-3 h-3 mr-1" /> Log
                             </Button>
+                            <Button size="sm" variant="ghost" className="text-[10px] h-6"
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                setAuditTarget({
+                                  table: 'fin_fechamentos',
+                                  id: fech.id,
+                                  title: `Fechamento ${COMPANIES[co].shortName} ${ano}/${String(mes).padStart(2, '0')}`,
+                                });
+                              }}>
+                              <History className="w-3 h-3 mr-1" /> Audit
+                            </Button>
                           </div>
                         </>
                       ) : !isFuture ? (
@@ -253,6 +266,16 @@ const FinanceiroFechamento = () => {
             )}
           </CardContent>
         </Card>
+      )}
+
+      {auditTarget && (
+        <AuditTrailDrawer
+          open
+          onOpenChange={(open) => !open && setAuditTarget(null)}
+          tableName={auditTarget.table}
+          rowId={auditTarget.id}
+          title={auditTarget.title}
+        />
       )}
     </div>
   );
