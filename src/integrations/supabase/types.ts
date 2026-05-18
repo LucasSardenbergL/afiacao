@@ -423,6 +423,7 @@ export type Database = {
           address: string | null
           cnpj: string
           created_at: string
+          data_fundacao: string | null
           id: string
           legal_name: string
           phone: string | null
@@ -433,6 +434,7 @@ export type Database = {
           address?: string | null
           cnpj: string
           created_at?: string
+          data_fundacao?: string | null
           id?: string
           legal_name: string
           phone?: string | null
@@ -443,6 +445,7 @@ export type Database = {
           address?: string | null
           cnpj?: string
           created_at?: string
+          data_fundacao?: string | null
           id?: string
           legal_name?: string
           phone?: string | null
@@ -538,6 +541,60 @@ export type Database = {
             referencedColumns: ["id"]
           },
         ]
+      }
+      customer_contacts: {
+        Row: {
+          birthday: string | null
+          cargo: string | null
+          created_at: string
+          created_by: string | null
+          customer_user_id: string
+          email: string | null
+          id: string
+          is_decision_maker: boolean
+          is_primary: boolean
+          nome: string | null
+          notas: string | null
+          phone: string
+          source: string | null
+          updated_at: string
+          whatsapp_only: boolean
+        }
+        Insert: {
+          birthday?: string | null
+          cargo?: string | null
+          created_at?: string
+          created_by?: string | null
+          customer_user_id: string
+          email?: string | null
+          id?: string
+          is_decision_maker?: boolean
+          is_primary?: boolean
+          nome?: string | null
+          notas?: string | null
+          phone: string
+          source?: string | null
+          updated_at?: string
+          whatsapp_only?: boolean
+        }
+        Update: {
+          birthday?: string | null
+          cargo?: string | null
+          created_at?: string
+          created_by?: string | null
+          customer_user_id?: string
+          email?: string | null
+          id?: string
+          is_decision_maker?: boolean
+          is_primary?: boolean
+          nome?: string | null
+          notas?: string | null
+          phone?: string
+          source?: string | null
+          updated_at?: string
+          whatsapp_only?: boolean
+        }
+        Relationships: []
       }
       customer_preferred_items: {
         Row: {
@@ -5338,6 +5395,7 @@ export type Database = {
       omie_clientes: {
         Row: {
           created_at: string
+          empresa_omie: string
           id: string
           omie_codigo_cliente: number
           omie_codigo_cliente_integracao: string | null
@@ -5347,6 +5405,7 @@ export type Database = {
         }
         Insert: {
           created_at?: string
+          empresa_omie?: string
           id?: string
           omie_codigo_cliente: number
           omie_codigo_cliente_integracao?: string | null
@@ -5356,6 +5415,7 @@ export type Database = {
         }
         Update: {
           created_at?: string
+          empresa_omie?: string
           id?: string
           omie_codigo_cliente?: number
           omie_codigo_cliente_integracao?: string | null
@@ -6512,6 +6572,7 @@ export type Database = {
           business_hours_close: string | null
           business_hours_open: string | null
           cnae: string | null
+          cnpj: string | null
           created_at: string
           customer_type: string | null
           document: string | null
@@ -6520,11 +6581,15 @@ export type Database = {
           id: string
           is_approved: boolean
           is_employee: boolean | null
+          is_prospect: boolean
           lunch_end: string | null
           lunch_start: string | null
           name: string
           phone: string | null
           preferred_delivery_time: string | null
+          prospect_origin_call_id: string | null
+          prospect_source: string | null
+          razao_social: string | null
           requires_po: boolean
           updated_at: string
           user_id: string
@@ -6534,6 +6599,7 @@ export type Database = {
           business_hours_close?: string | null
           business_hours_open?: string | null
           cnae?: string | null
+          cnpj?: string | null
           created_at?: string
           customer_type?: string | null
           document?: string | null
@@ -6542,11 +6608,15 @@ export type Database = {
           id?: string
           is_approved?: boolean
           is_employee?: boolean | null
+          is_prospect?: boolean
           lunch_end?: string | null
           lunch_start?: string | null
           name: string
           phone?: string | null
           preferred_delivery_time?: string | null
+          prospect_origin_call_id?: string | null
+          prospect_source?: string | null
+          razao_social?: string | null
           requires_po?: boolean
           updated_at?: string
           user_id: string
@@ -6556,6 +6626,7 @@ export type Database = {
           business_hours_close?: string | null
           business_hours_open?: string | null
           cnae?: string | null
+          cnpj?: string | null
           created_at?: string
           customer_type?: string | null
           document?: string | null
@@ -6564,16 +6635,28 @@ export type Database = {
           id?: string
           is_approved?: boolean
           is_employee?: boolean | null
+          is_prospect?: boolean
           lunch_end?: string | null
           lunch_start?: string | null
           name?: string
           phone?: string | null
           preferred_delivery_time?: string | null
+          prospect_origin_call_id?: string | null
+          prospect_source?: string | null
+          razao_social?: string | null
           requires_po?: boolean
           updated_at?: string
           user_id?: string
         }
-        Relationships: []
+        Relationships: [
+          {
+            foreignKeyName: "profiles_prospect_origin_call_id_fkey"
+            columns: ["prospect_origin_call_id"]
+            isOneToOne: false
+            referencedRelation: "farmer_calls"
+            referencedColumns: ["id"]
+          },
+        ]
       }
       promocao_campanha: {
         Row: {
@@ -11727,6 +11810,10 @@ export type Database = {
         | "gerencial"
         | "estrategico"
         | "super_admin"
+        | "farmer"
+        | "hunter"
+        | "closer"
+        | "master"
       department:
         | "separador"
         | "conferente"
@@ -11895,6 +11982,10 @@ export const Constants = {
         "gerencial",
         "estrategico",
         "super_admin",
+        "farmer",
+        "hunter",
+        "closer",
+        "master",
       ],
       department: [
         "separador",
