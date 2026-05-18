@@ -15,7 +15,7 @@ import {
   Search,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Card, CardContent, CardHeader } from "@/components/ui/card";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Badge } from "@/components/ui/badge";
 import { Checkbox } from "@/components/ui/checkbox";
@@ -240,7 +240,7 @@ export default function AdminReposicaoAplicacao() {
     mutationFn: async () => {
       const { data, error } = await supabase.rpc("gerar_fila_aplicacao_omie" as never, {
         p_empresa: EMPRESA,
-      });
+      } as never);
       if (error) throw error;
       return data as unknown as GerarFilaResult | GerarFilaResult[];
     },
@@ -869,7 +869,7 @@ function SubstituicaoModal({
         p_acao_parametros: acao,
         p_motivo: motivo,
         p_usuario: user?.email ?? "sistema",
-      });
+      } as never);
       if (error) throw error;
       const result = data as unknown as RegistrarSubstResult | null;
       if (result?.error) throw new Error(result.error);

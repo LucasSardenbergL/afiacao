@@ -233,7 +233,7 @@ const FinanceiroConciliacao = () => {
           const Icon = cfg.icon;
           const count = stats[key as keyof typeof stats] || 0;
           return (
-            <button key={key} onClick={() => setStatusFilter(key)}
+            <button key={key} onClick={() => setStatusFilter(key as ConciliacaoStatus)}
               className={`p-3 rounded-lg text-center transition-all ${statusFilter === key ? 'ring-2 ring-primary' : ''} ${cfg.color.replace('text-', 'bg-').split(' ')[0]}/30`}>
               <p className="text-xs text-muted-foreground flex items-center justify-center gap-1">
                 <Icon className="w-3 h-3" />{cfg.label}
@@ -295,7 +295,7 @@ const FinanceiroConciliacao = () => {
                 </TableHeader>
                 <TableBody>
                   {filtered.slice(0, 200).map(item => {
-                    const cfg = statusConfig[item.status] || statusConfig.pendente;
+                    const cfg = statusConfig[item.status as ConciliacaoStatus] || statusConfig.pendente;
                     const Icon = cfg.icon;
                     return (
                       <TableRow key={item.id} className={item.status === 'divergencia' ? 'bg-status-error-bg/50' : ''}>
