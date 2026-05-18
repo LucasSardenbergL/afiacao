@@ -26,7 +26,62 @@
 // Body opcional:
 //   { "empresa": "OBEN" | "COLACOR" | "ALL", "dias": 30, "fornecedor_codigo_omie": 8689681266 }
 
-import { createClient } from "https://esm.sh/@supabase/supabase-js@2.45.0";
+import { createClient, type SupabaseClient } from "https://esm.sh/@supabase/supabase-js@2.45.0";
+
+interface OmieCabec {
+  nIdReceb?: number;
+  cChaveNFe?: string;
+  cChaveNfe?: string;
+  cNumeroNFe?: string;
+  cModeloNFe?: string;
+  dEmissaoNFe?: string;
+  nValorNFe?: number;
+}
+
+interface OmieTransporte {
+  cCnpjCpfTransp?: string;
+  cRazaoTransp?: string;
+  cNomeTransp?: string;
+}
+
+interface OmieRecebimentoItem {
+  infoCadastro?: { nIdReceb?: number };
+  cabec?: OmieCabec;
+  transporte?: OmieTransporte;
+}
+
+interface OmieRecebimentoDetalhe {
+  cabec?: OmieCabec;
+  transporte?: OmieTransporte;
+}
+
+interface OmieListarRecebimentosResponse {
+  recebimentos?: OmieRecebimentoItem[];
+  recebimentosCadastro?: OmieRecebimentoItem[];
+  nfCadastro?: OmieRecebimentoItem[];
+  cadastros?: OmieRecebimentoItem[];
+  nfes?: OmieRecebimentoItem[];
+  nTotPaginas?: number;
+  total_de_paginas?: number;
+  faultstring?: string;
+}
+
+interface OmieFaultResponse {
+  faultstring?: string;
+  raw?: string;
+}
+
+type OmieApiResponse =
+  | OmieListarRecebimentosResponse
+  | OmieRecebimentoDetalhe
+  | OmieFaultResponse;
+
+interface PurchaseOrderTrackingRow {
+  id: string;
+  numero_pedido: string | null;
+  t2_data_faturamento: string;
+  raw_data: { cabec?: { nValorNFe?: number } } | null;
+}
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -108,7 +163,7 @@ async function callOmie(
   app_secret: string,
   call: "ListarRecebimentos" | "ConsultarRecebimento",
   param: Record<string, unknown>,
-): Promise<any> {
+): Promise<OmieApiResponse> {
   const body = { call, app_key, app_secret, param: [param] };
   let attempt = 0;
   while (attempt < MAX_RETRIES) {
@@ -119,10 +174,11 @@ async function callOmie(
       body: JSON.stringify(body),
     });
     const text = await res.text();
-    let json: any;
-    try { json = JSON.parse(text); } catch { json = { raw: text }; }
+    let json: OmieApiResponse;
+    try { json = JSON.parse(text) as OmieApiResponse; } catch { json = { raw: text }; }
 
-    if (res.status === 429 || (json?.faultstring && /rate limit/i.test(json.faultstring))) {
+    const fault = (json as OmieFaultResponse).faultstring;
+    if (res.status === 429 || (fault && /rate limit/i.test(fault))) {
       console.warn(`[sync-ctes] ${call} rate limit (try ${attempt}/${MAX_RETRIES})`);
       await sleep(RETRY_DELAY_MS);
       continue;
@@ -146,10 +202,10 @@ interface MappedCte {
   transp_nome: string | null;
 }
 
-function mapCte(item: any, detalhe: any): MappedCte {
-  const cab = detalhe?.cabec ?? item?.cabec ?? {};
+function mapCte(item: OmieRecebimentoItem, detalhe: OmieRecebimentoDetalhe): MappedCte {
+  const cab: OmieCabec = detalhe?.cabec ?? item?.cabec ?? {};
   // Tag correta da transportadora: transporte.cRazaoTransp (não cabec).
-  const transp = detalhe?.transporte ?? item?.transporte ?? {};
+  const transp: OmieTransporte = detalhe?.transporte ?? item?.transporte ?? {};
 
   const dataIso = parseBRDateToISO(cab?.dEmissaoNFe, "00:00:00");
 
@@ -192,7 +248,7 @@ interface MatchResult {
 }
 
 async function buscarCandidatas(
-  supabase: any,
+  supabase: SupabaseClient,
   empresa: Empresa,
   fornecedorCodigo: number,
   cte: MappedCte,
@@ -217,7 +273,8 @@ async function buscarCandidatas(
     return [];
   }
 
-  return (data ?? []).map((row: any) => {
+  const rows = (data ?? []) as unknown as PurchaseOrderTrackingRow[];
+  return rows.map((row) => {
     const valorNfe = Number(row?.raw_data?.cabec?.nValorNFe ?? 0);
     return {
       id: row.id,
@@ -266,7 +323,7 @@ function matchConect(cte: MappedCte, candidatas: NFeCandidata[]): MatchResult | 
 }
 
 async function processarEmpresa(
-  supabase: any,
+  supabase: SupabaseClient,
   empresa: Empresa,
   dias: number,
   fornecedorCodigo: number,
@@ -293,7 +350,7 @@ async function processarEmpresa(
   console.log(`[sync-ctes] ${empresa} período ${dEmissaoDe} → ${dEmissaoAte} (modelo 57)`);
 
   // 1) Lista TODOS recebimentos do período. Filtra modelo 57 em memória.
-  const ctesBase: any[] = [];
+  const ctesBase: OmieRecebimentoItem[] = [];
   let pagina = 1;
   let totalPaginas = 1;
   do {
@@ -307,8 +364,8 @@ async function processarEmpresa(
       dtEmissaoAte: dEmissaoAte,
     };
 
-    const resp = await callOmie(app_key, app_secret, "ListarRecebimentos", param);
-    const lista: any[] =
+    const resp = (await callOmie(app_key, app_secret, "ListarRecebimentos", param)) as OmieListarRecebimentosResponse;
+    const lista: OmieRecebimentoItem[] =
       resp?.recebimentos ?? resp?.recebimentosCadastro ?? resp?.nfCadastro ?? resp?.cadastros ?? resp?.nfes ?? [];
     const apenasCtes = lista.filter((it) => String(it?.cabec?.cModeloNFe ?? "") === CTE_MODELO);
     ctesBase.push(...apenasCtes);
@@ -330,7 +387,7 @@ async function processarEmpresa(
         continue;
       }
 
-      const det = await callOmie(app_key, app_secret, "ConsultarRecebimento", { nIdReceb });
+      const det = (await callOmie(app_key, app_secret, "ConsultarRecebimento", { nIdReceb })) as OmieRecebimentoDetalhe;
       await sleep(RATE_LIMIT_DELAY_MS);
 
       const cte = mapCte(item, det);

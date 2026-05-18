@@ -17,6 +17,20 @@ const STATUS_CONCILIAVEIS = new Set([
   "erro_nao_retentavel",
 ]);
 
+interface ConciliarPedidoBody {
+  pedido_id?: number | string;
+  protocolo?: string;
+}
+
+interface PedidoCompraSugeridoRow {
+  id: number;
+  empresa: string;
+  fornecedor_nome: string | null;
+  status: string | null;
+  status_envio_portal: string | null;
+  portal_protocolo: string | null;
+}
+
 async function dispararOmie(empresa: string, pedidoId: number) {
   const resp = await fetch(`${SUPABASE_URL}/functions/v1/disparar-pedidos-aprovados`, {
     method: "POST",
@@ -38,9 +52,9 @@ Deno.serve(async (req: Request) => {
   const auth = await authorizeCronOrStaff(req);
   if (!auth.ok) return auth.response;
 
-  let body: any = {};
+  let body: ConciliarPedidoBody = {};
   try {
-    body = await req.json();
+    body = (await req.json()) as unknown as ConciliarPedidoBody;
   } catch {
     return new Response(JSON.stringify({ error: "Body JSON inválido" }), {
       status: 400,
@@ -69,24 +83,25 @@ Deno.serve(async (req: Request) => {
   });
 
   // 1. Buscar pedido e validar estado.
-  const { data: pedido, error: pErr } = await supabase
+  const { data: pedidoRaw, error: pErr } = await supabase
     .from("pedido_compra_sugerido")
     .select("id, empresa, fornecedor_nome, status, status_envio_portal, portal_protocolo")
     .eq("id", pedidoId)
     .maybeSingle();
 
-  if (pErr || !pedido) {
+  if (pErr || !pedidoRaw) {
     return new Response(JSON.stringify({ error: `Pedido ${pedidoId} não encontrado` }), {
       status: 404,
       headers: { ...corsHeaders, "Content-Type": "application/json" },
     });
   }
 
-  const statusAnterior = (pedido as any).status_envio_portal as string | null;
+  const pedido = pedidoRaw as unknown as PedidoCompraSugeridoRow;
+  const statusAnterior = pedido.status_envio_portal;
 
   // Já tem protocolo? Idempotência amigável: se o protocolo é o mesmo, retorna OK.
-  if ((pedido as any).portal_protocolo) {
-    if (String((pedido as any).portal_protocolo) === protocolo) {
+  if (pedido.portal_protocolo) {
+    if (String(pedido.portal_protocolo) === protocolo) {
       return new Response(
         JSON.stringify({
           ok: true,
@@ -100,7 +115,7 @@ Deno.serve(async (req: Request) => {
     }
     return new Response(
       JSON.stringify({
-        error: `Pedido ${pedidoId} já tem protocolo (${(pedido as any).portal_protocolo}) diferente do informado (${protocolo}). Resolva manualmente.`,
+        error: `Pedido ${pedidoId} já tem protocolo (${pedido.portal_protocolo}) diferente do informado (${protocolo}). Resolva manualmente.`,
       }),
       { status: 409, headers: { ...corsHeaders, "Content-Type": "application/json" } },
     );
@@ -148,8 +163,8 @@ Deno.serve(async (req: Request) => {
       phase: "conciliacao_manual",
       status_anterior: statusAnterior,
       protocolo,
-      operator_user_id: auth.ok && (auth as any).userId ? (auth as any).userId : null,
-      via: auth.ok ? (auth as any).via : null,
+      operator_user_id: auth.ok && auth.userId ? auth.userId : null,
+      via: auth.ok ? auth.via : null,
     },
     browserless_response_ms: null,
     erro: null,
@@ -157,7 +172,7 @@ Deno.serve(async (req: Request) => {
 
   // 4. Disparar Omie. disparar-pedidos-aprovados vê sucesso_portal + protocolo
   // como already_sent e cria o pedido de compra no Omie.
-  const omie = await dispararOmie((pedido as any).empresa, pedidoId);
+  const omie = await dispararOmie(pedido.empresa, pedidoId);
   const omieOk = omie.httpStatus >= 200 && omie.httpStatus < 300;
 
   return new Response(
