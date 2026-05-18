@@ -146,7 +146,7 @@ function formatDate(d: string | null | undefined): string {
 
 function formatDateLong(d: string | null | undefined): string {
   if (!d) return "—";
-  const [y, m, day] = d.split("-");
+  const [, m, day] = d.split("-");
   const meses = [
     "janeiro",
     "fevereiro",

@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
@@ -8,7 +8,6 @@ import { Textarea } from '@/components/ui/textarea';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Switch } from '@/components/ui/switch';
 import { Label } from '@/components/ui/label';
-import { ScrollArea } from '@/components/ui/scroll-area';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from '@/components/ui/dialog';
 import { useAuth } from '@/contexts/AuthContext';
 import { useTacticalPlan, getObjectiveLabel, type TacticalPlan, type PlanType } from '@/hooks/useTacticalPlan';
@@ -16,10 +15,9 @@ import { supabase } from '@/integrations/supabase/client';
 import {
   Loader2, Target, Heart, AlertTriangle, TrendingUp, Package,
   MessageSquare, Shield, Copy, Check, ChevronDown, ChevronUp,
-  Plus, FileText, Brain, DollarSign, Clock, Zap, BarChart3,
+  Plus, FileText, Brain, DollarSign, Zap, BarChart3,
   AlertCircle, Layers, type LucideIcon
 } from 'lucide-react';
-import { toast } from 'sonner';
 
 // ─── Local types ───────────────────────────────────────────────────
 interface FarmerClientScoreRow {
