@@ -30,6 +30,20 @@ import {
   type ViewStats,
 } from '@/lib/reposicao/sku-param';
 
+type BadgeVariant =
+  | 'default'
+  | 'secondary'
+  | 'destructive'
+  | 'outline'
+  | 'success'
+  | 'warning'
+  | 'info'
+  | 'danger'
+  | 'purple'
+  | 'indigo';
+
+type DemandaRow = { data_emissao: string; quantidade: number };
+
 /**
  * Drill-down lateral (Sheet) com detalhes do SKU em revisão.
  * Extraído de AdminReposicaoRevisao.tsx (1099 LoC → ~640 LoC) como proof-of-concept
@@ -73,7 +87,7 @@ function SkuDetailSheetImpl({
     queryFn: async () => {
       if (!sku) return null;
       const { data, error } = await supabase
-        .from('v_sku_parametros_sugeridos' as any)
+        .from('v_sku_parametros_sugeridos')
         .select(
           'pico_maximo_dia, p95_diario, p90_quando_vende, cobertura_alvo_dias, ' +
             'preco_compra_real, preco_venda_medio, preco_item_eoq, fonte_preco, n_compras, ' +
@@ -84,7 +98,7 @@ function SkuDetailSheetImpl({
         .eq('sku_codigo_omie', sku.sku_codigo_omie)
         .maybeSingle();
       if (error) return null;
-      return data as any;
+      return data as unknown as ViewStats;
     },
   });
 
@@ -111,7 +125,7 @@ function SkuDetailSheetImpl({
         const k = d.toISOString().slice(0, 10);
         buckets[k] = 0;
       }
-      (data ?? []).forEach((row: any) => {
+      (data ?? []).forEach((row: DemandaRow) => {
         const k = String(row.data_emissao).slice(0, 10);
         if (k in buckets) buckets[k] += Number(row.quantidade ?? 0);
       });
@@ -174,7 +188,7 @@ function SkuDetailSheetImpl({
                 #{sku.sku_codigo_omie}
               </span>
             </span>
-            <Badge variant={classBadge(sku.classe_consolidada) as any}>
+            <Badge variant={classBadge(sku.classe_consolidada) as BadgeVariant}>
               {sku.classe_consolidada}
             </Badge>
           </SheetTitle>
@@ -248,13 +262,13 @@ function SkuDetailSheetImpl({
               <dd>{fmtBRL(stats?.custo_pedido_aplicado)}</dd>
               <dt className="text-muted-foreground">Modo atual</dt>
               <dd>
-                <Badge variant={stats?.modo_pedido === 'api' ? ('info' as any) : 'outline'}>
+                <Badge variant={stats?.modo_pedido === 'api' ? ('info' as BadgeVariant) : 'outline'}>
                   {stats?.modo_pedido === 'api' ? 'API' : stats?.modo_pedido === 'manual' ? 'Manual' : '—'}
                 </Badge>
               </dd>
               <dt className="text-muted-foreground">Fonte do preço</dt>
               <dd>
-                <Badge variant={fonteBadgeVariant(stats?.fonte_preco) as any}>
+                <Badge variant={fonteBadgeVariant(stats?.fonte_preco) as BadgeVariant}>
                   {fonteBadgeLabel(stats?.fonte_preco)}
                 </Badge>
               </dd>
