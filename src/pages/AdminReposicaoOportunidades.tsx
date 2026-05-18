@@ -228,7 +228,7 @@ export default function AdminReposicaoOportunidades() {
     queryKey: ["negociacao-paralela-sugestoes-count"],
     queryFn: async () => {
       const { count } = await supabase
-        .from("v_sugestao_negociacao_ativa" as any)
+        .from("v_sugestao_negociacao_ativa" as never)
         .select("*", { count: "exact", head: true })
         .eq("empresa", EMPRESA)
         .eq("status", "nova");
@@ -242,7 +242,7 @@ export default function AdminReposicaoOportunidades() {
     queryKey: ["oportunidades-hoje", EMPRESA],
     queryFn: async () => {
       const { data, error } = await supabase
-        .from("v_oportunidade_economica_hoje" as any)
+        .from("v_oportunidade_economica_hoje" as never)
         .select("*")
         .eq("empresa", EMPRESA);
       if (error) throw error;
@@ -254,7 +254,7 @@ export default function AdminReposicaoOportunidades() {
     queryKey: ["sku-parametros-count", EMPRESA],
     queryFn: async () => {
       const { count, error } = await supabase
-        .from("sku_parametros" as any)
+        .from("sku_parametros" as never)
         .select("*", { count: "exact", head: true })
         .eq("empresa", EMPRESA)
         .eq("ativo", true);
@@ -271,13 +271,13 @@ export default function AdminReposicaoOportunidades() {
 
       const [promo, aumento] = await Promise.all([
         supabase
-          .from("promocao_campanha" as any)
+          .from("promocao_campanha" as never)
           .select("id", { count: "exact", head: true })
           .eq("empresa", EMPRESA)
           .eq("estado", "ativa")
           .eq("data_corte_pedido", today),
         supabase
-          .from("fornecedor_aumento_anunciado" as any)
+          .from("fornecedor_aumento_anunciado" as never)
           .select("id", { count: "exact", head: true })
           .eq("empresa", EMPRESA)
           .in("estado", ["ativo", "vigente"])
@@ -292,12 +292,12 @@ export default function AdminReposicaoOportunidades() {
   const { data: historicoPromocoes } = useQuery({
     queryKey: ["historico-promocoes-count", EMPRESA],
     queryFn: async () => {
-      const { data, error } = await (supabase as any)
-        .from("promocao_campanha")
+      const { data, error } = await supabase
+        .from("promocao_campanha" as never)
         .select("data_inicio")
         .eq("empresa", EMPRESA);
       if (error) throw error;
-      const rows = (data ?? []) as Array<{ data_inicio: string | null }>;
+      const rows = (data ?? []) as unknown as Array<{ data_inicio: string | null }>;
       const meses = new Set<string>();
       for (const r of rows) {
         const k = r.data_inicio?.slice(0, 7);
@@ -388,9 +388,9 @@ export default function AdminReposicaoOportunidades() {
   const handleGerarCiclo = async () => {
     setExecutandoCiclo(true);
     try {
-      const { data, error } = await supabase.rpc("ciclo_oportunidade_do_dia" as any, {
+      const { data, error } = await supabase.rpc("ciclo_oportunidade_do_dia" as never, {
         p_empresa: EMPRESA,
-      });
+      } as never);
       if (error) throw error;
 
       const result = (data ?? {}) as {
@@ -406,8 +406,8 @@ export default function AdminReposicaoOportunidades() {
       setConfirmCicloOpen(false);
       queryClient.invalidateQueries({ queryKey: ["oportunidades-hoje"] });
       queryClient.invalidateQueries({ queryKey: ["ciclo-hoje"] });
-    } catch (e: any) {
-      toast.error(e?.message || "Erro ao gerar ciclo de oportunidade");
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : "Erro ao gerar ciclo de oportunidade");
     } finally {
       setExecutandoCiclo(false);
     }
