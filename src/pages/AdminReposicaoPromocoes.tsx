@@ -156,7 +156,7 @@ export default function AdminReposicaoPromocoes() {
     queryKey: ["promocao-campanhas", filtroEstado, filtroFornecedor, busca],
     queryFn: async () => {
       let q = supabase
-        .from("promocao_campanha" as any)
+        .from("promocao_campanha")
         .select(
           "id, nome, fornecedor_nome, tipo_origem, data_inicio, data_fim, estado, extracao_confianca, criado_em",
         )
@@ -176,10 +176,10 @@ export default function AdminReposicaoPromocoes() {
       const counts: Record<number, number> = {};
       if (ids.length > 0) {
         const { data: itens } = await supabase
-          .from("promocao_item" as any)
+          .from("promocao_item")
           .select("campanha_id")
           .in("campanha_id", ids);
-        ((itens || []) as any[]).forEach((it) => {
+        ((itens || []) as Array<{ campanha_id: number }>).forEach((it) => {
           counts[it.campanha_id] = (counts[it.campanha_id] || 0) + 1;
         });
       }
@@ -195,12 +195,12 @@ export default function AdminReposicaoPromocoes() {
     queryKey: ["promocao-fornecedores", EMPRESA],
     queryFn: async () => {
       const { data, error } = await supabase
-        .from("promocao_campanha" as any)
+        .from("promocao_campanha")
         .select("fornecedor_nome")
         .eq("empresa", EMPRESA);
       if (error) throw error;
       const set = new Set<string>();
-      ((data || []) as any[]).forEach((r) => {
+      ((data || []) as Array<{ fornecedor_nome: string | null }>).forEach((r) => {
         if (r.fornecedor_nome) set.add(r.fornecedor_nome);
       });
       return Array.from(set).sort();
@@ -300,12 +300,13 @@ export default function AdminReposicaoPromocoes() {
         if (campanhaId) {
           for (let i = 0; i < 6; i++) {
             const { data: row } = await supabase
-              .from("promocao_campanha" as any)
+              .from("promocao_campanha")
               .select("nome")
               .eq("id", campanhaId)
               .maybeSingle();
-            if (row && (row as any).nome) {
-              nomeCampanha = (row as any).nome as string;
+            const typedRow = row as { nome: string | null } | null;
+            if (typedRow && typedRow.nome) {
+              nomeCampanha = typedRow.nome;
               break;
             }
             await new Promise((r) => setTimeout(r, 250));
@@ -319,10 +320,10 @@ export default function AdminReposicaoPromocoes() {
           itensExtraidos,
           confianca,
         });
-      } catch (e: any) {
+      } catch (e) {
         updateItem(item.id, {
           status: "erro",
-          erro: e?.message || "Falha desconhecida",
+          erro: e instanceof Error ? e.message : String(e),
         });
       }
     },
