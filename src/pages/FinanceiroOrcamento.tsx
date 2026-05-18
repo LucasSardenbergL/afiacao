@@ -10,7 +10,8 @@ import { COMPANIES, ALL_COMPANIES, type Company } from '@/contexts/CompanyContex
 import { getDRE, DRE_LINHAS, type FinDRE } from '@/services/financeiroService';
 import { getOrcamento, upsertOrcamento, type OrcamentoLinha } from '@/services/financeiroV2Service';
 import { toast } from 'sonner';
-import { Loader2, Save, Building2, Calendar, TrendingUp, TrendingDown, Target } from 'lucide-react';
+import { Loader2, Save, Building2, Calendar, TrendingUp, TrendingDown, Target, History } from 'lucide-react';
+import { AuditTrailDrawer } from '@/components/financeiro/AuditTrailDrawer';
 
 const fmt = (v: number) => v.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' });
 const fmtCompact = (v: number) => {
@@ -32,6 +33,7 @@ const FinanceiroOrcamento = () => {
   const [saving, setSaving] = useState(false);
   const [editMode, setEditMode] = useState(false);
   const [draft, setDraft] = useState<Record<string, number>>({});
+  const [auditTarget, setAuditTarget] = useState<{ table: string; id: string; title: string } | null>(null);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -213,6 +215,7 @@ const FinanceiroOrcamento = () => {
                       {!editMode && <div className="text-[9px] font-normal">Orç / Real</div>}
                     </TableHead>
                   ))}
+                  {!editMode && <TableHead className="w-10" />}
                 </TableRow>
               </TableHeader>
               <TableBody>
@@ -253,6 +256,30 @@ const FinanceiroOrcamento = () => {
                         </TableCell>
                       );
                     })}
+                    {!editMode && (() => {
+                      const rec = orcamento.find(o => o.dre_linha === linha && o.mes === currentMonth && o.id)
+                        || orcamento.find(o => o.dre_linha === linha && o.id);
+                      return rec?.id ? (
+                        <TableCell>
+                          <Button
+                            size="icon"
+                            variant="ghost"
+                            className="h-7 w-7"
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              setAuditTarget({
+                                table: 'fin_orcamento',
+                                id: rec.id!,
+                                title: `Orçamento ${rec.dre_linha} ${rec.ano}/${String(rec.mes).padStart(2, '0')}`,
+                              });
+                            }}
+                            aria-label="Histórico"
+                          >
+                            <History className="h-3.5 w-3.5" />
+                          </Button>
+                        </TableCell>
+                      ) : <TableCell />;
+                    })()}
                   </TableRow>
                 ))}
               </TableBody>
@@ -260,6 +287,16 @@ const FinanceiroOrcamento = () => {
           </div>
         </CardContent>
       </Card>
+
+      {auditTarget && (
+        <AuditTrailDrawer
+          open
+          onOpenChange={(open) => !open && setAuditTarget(null)}
+          tableName={auditTarget.table}
+          rowId={auditTarget.id}
+          title={auditTarget.title}
+        />
+      )}
     </div>
   );
 };

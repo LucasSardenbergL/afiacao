@@ -12,8 +12,9 @@ import {
   type FinCategoriaDREMapping,
 } from '@/services/financeiroService';
 import {
-  Loader2, Save, Trash2, Plus, Building2, Search, Layers, AlertTriangle
+  Loader2, Save, Trash2, Plus, Building2, Search, Layers, AlertTriangle, History
 } from 'lucide-react';
+import { AuditTrailDrawer } from '@/components/financeiro/AuditTrailDrawer';
 
 const dreLabelMap = Object.fromEntries(DRE_LINHAS.map(l => [l.value, l.label]));
 
@@ -25,6 +26,7 @@ const FinanceiroMapping = () => {
   const [saving, setSaving] = useState<string | null>(null);
   const [search, setSearch] = useState('');
   const [showUnmapped, setShowUnmapped] = useState(false);
+  const [auditTarget, setAuditTarget] = useState<{ table: string; id: string; title: string } | null>(null);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -199,6 +201,7 @@ const FinanceiroMapping = () => {
                     <TableHead className="w-16">Escopo</TableHead>
                     <TableHead className="w-52">Linha DRE</TableHead>
                     <TableHead className="w-20" />
+                    <TableHead className="w-10" />
                   </TableRow>
                 </TableHeader>
                 <TableBody>
@@ -240,11 +243,29 @@ const FinanceiroMapping = () => {
                           <Trash2 className="w-3.5 h-3.5" />
                         </Button>
                       </TableCell>
+                      <TableCell>
+                        <Button
+                          size="icon"
+                          variant="ghost"
+                          className="h-7 w-7"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            setAuditTarget({
+                              table: 'fin_categoria_dre_mapping',
+                              id: m.id,
+                              title: `Mapping ${m.omie_codigo}`,
+                            });
+                          }}
+                          aria-label="Histórico"
+                        >
+                          <History className="h-3.5 w-3.5" />
+                        </Button>
+                      </TableCell>
                     </TableRow>
                   ))}
                   {filteredMappings.length === 0 && (
                     <TableRow>
-                      <TableCell colSpan={5} className="text-center py-8 text-muted-foreground">
+                      <TableCell colSpan={6} className="text-center py-8 text-muted-foreground">
                         {search ? 'Nenhum mapeamento encontrado' : 'Nenhum mapeamento configurado. Sincronize as categorias e adicione mapeamentos.'}
                       </TableCell>
                     </TableRow>
@@ -255,6 +276,16 @@ const FinanceiroMapping = () => {
           )}
         </CardContent>
       </Card>
+
+      {auditTarget && (
+        <AuditTrailDrawer
+          open
+          onOpenChange={(open) => !open && setAuditTarget(null)}
+          tableName={auditTarget.table}
+          rowId={auditTarget.id}
+          title={auditTarget.title}
+        />
+      )}
     </div>
   );
 };

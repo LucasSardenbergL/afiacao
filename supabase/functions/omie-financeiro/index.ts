@@ -198,6 +198,19 @@ const corsHeaders = {
 
 const OMIE_API_URL = "https://app.omie.com.br/api/v1";
 
+async function setAuditOrigem(
+  supabase: ReturnType<typeof createClient>,
+  origem: 'omie_sync' | 'edge_fn' | 'cron',
+): Promise<void> {
+  // Wrapper RPC restrito ao namespace 'fin.'. Session-level (is_local=false)
+  // permite que mutações subsequentes nesta conexão herdem o valor.
+  await supabase.rpc('set_config', {
+    parameter: 'fin.origem',
+    value: origem,
+    is_local: false,
+  });
+}
+
 // Observability counters (reset per invocation)
 let apiCallCount = 0;
 let rateLimitHits = 0;
@@ -1239,6 +1252,9 @@ serve(async (req) => {
         { status: 403, headers: { ...corsHeaders, "Content-Type": "application/json" } }
       );
     }
+
+    // Marca origem no audit log para todas as mutações desta invocação
+    await setAuditOrigem(supabase, 'omie_sync');
 
     const { action, company, companies, filtro_data_de, filtro_data_ate, ano, mes, meses, maxPages, entidade, ncodcc } =
       await req.json();
