@@ -5,6 +5,7 @@ import { Button } from '@/components/ui/button';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { Input } from '@/components/ui/input';
+import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
 import { COMPANIES, ALL_COMPANIES, type Company } from '@/contexts/CompanyContext';
 import {
   getCategoryMappings, upsertCategoryMapping, deleteCategoryMapping,
@@ -15,6 +16,10 @@ import {
   Loader2, Save, Trash2, Plus, Building2, Search, Layers, AlertTriangle, History
 } from 'lucide-react';
 import { AuditTrailDrawer } from '@/components/financeiro/AuditTrailDrawer';
+import { useSuggestedMapping } from '@/hooks/useSuggestedMapping';
+import { useQueryClient } from '@tanstack/react-query';
+import { supabase } from '@/integrations/supabase/client';
+import { toast } from 'sonner';
 
 const dreLabelMap = Object.fromEntries(DRE_LINHAS.map(l => [l.value, l.label]));
 
@@ -27,6 +32,13 @@ const FinanceiroMapping = () => {
   const [search, setSearch] = useState('');
   const [showUnmapped, setShowUnmapped] = useState(false);
   const [auditTarget, setAuditTarget] = useState<{ table: string; id: string; title: string } | null>(null);
+
+  // Suggestions
+  const now = new Date();
+  const [targetAno] = useState(now.getFullYear());
+  const [targetMes] = useState(now.getMonth() + 1);
+  const { data: suggestions = [] } = useSuggestedMapping(company as Company, targetAno, targetMes);
+  const qc = useQueryClient();
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -75,6 +87,42 @@ const FinanceiroMapping = () => {
     }
   };
 
+  const aplicarSugestao = async (omie_codigo: string, dre_linha: string) => {
+    const { error } = await supabase.from('fin_categoria_dre_mapping').insert({
+      company: company === '_default' ? '_default' : company,
+      omie_codigo,
+      dre_linha,
+    });
+    if (error) {
+      toast.error(`Falha ao aplicar: ${error.message}`);
+    } else {
+      toast.success(`Mapping aplicado: ${omie_codigo} → ${dre_linha}`);
+      qc.invalidateQueries({ queryKey: ['fin_suggest_mapping'] });
+      qc.invalidateQueries({ queryKey: ['fin_categoria_dre_mapping'] });
+      await load();
+    }
+  };
+
+  const aplicarTodasAltaConfianca = async () => {
+    const alta = suggestions.filter(s => s.sugestao.confianca === 'alta' && s.sugestao.linha_dre);
+    if (alta.length === 0) return;
+    const { error } = await supabase.from('fin_categoria_dre_mapping').insert(
+      alta.map(s => ({
+        company: company === '_default' ? '_default' : company,
+        omie_codigo: s.omie_codigo,
+        dre_linha: s.sugestao.linha_dre!
+      }))
+    );
+    if (error) {
+      toast.error(`Falha em bulk: ${error.message}`);
+    } else {
+      toast.success(`${alta.length} mappings aplicados`);
+      qc.invalidateQueries({ queryKey: ['fin_suggest_mapping'] });
+      qc.invalidateQueries({ queryKey: ['fin_categoria_dre_mapping'] });
+      await load();
+    }
+  };
+
   const filteredMappings = mappings.filter(m => {
     if (!search) return true;
     const q = search.toLowerCase();
@@ -116,6 +164,23 @@ const FinanceiroMapping = () => {
           </p>
         </CardContent>
       </Card>
+
+      {/* Suggestions banner */}
+      {suggestions.length > 0 && (
+        <Alert variant="default" className="border-status-warning bg-status-warning-bg">
+          <AlertTriangle className="h-4 w-4" />
+          <AlertTitle>{suggestions.length} categorias sem mapeamento</AlertTitle>
+          <AlertDescription>
+            Afetam R$ {suggestions.reduce((s, x) => s + Number(x.valor_periodo), 0).toLocaleString('pt-BR', { minimumFractionDigits: 2 })} no período {String(targetMes).padStart(2,'0')}/{targetAno}.
+            <Button
+              variant="link" className="ml-2 h-auto p-0"
+              onClick={() => document.getElementById('suggestions-table')?.scrollIntoView()}
+            >
+              Ver sugestões →
+            </Button>
+          </AlertDescription>
+        </Alert>
+      )}
 
       {/* Search + filter */}
       <div className="flex items-center gap-3">
@@ -172,6 +237,63 @@ const FinanceiroMapping = () => {
                   ))}
                 </TableBody>
               </Table>
+            </div>
+          </CardContent>
+        </Card>
+      )}
+
+      {/* Suggestions table */}
+      {suggestions.length > 0 && (
+        <Card id="suggestions-table" className="border-status-warning/30">
+          <CardHeader className="pb-3">
+            <CardTitle className="text-base">Sugestões automáticas</CardTitle>
+          </CardHeader>
+          <CardContent className="p-0">
+            <div className="overflow-x-auto">
+              <Table>
+                <TableHeader>
+                  <TableRow>
+                    <TableHead>Categoria</TableHead>
+                    <TableHead>Valor no período</TableHead>
+                    <TableHead>Sugestão</TableHead>
+                    <TableHead>Confiança</TableHead>
+                    <TableHead>Ação</TableHead>
+                  </TableRow>
+                </TableHeader>
+                <TableBody>
+                  {suggestions.map(s => (
+                    <TableRow key={s.omie_codigo}>
+                      <TableCell className="font-mono text-xs">{s.omie_codigo} — {s.categoria_nome}</TableCell>
+                      <TableCell className="font-tabular">R$ {Number(s.valor_periodo).toLocaleString('pt-BR', { minimumFractionDigits: 2 })}</TableCell>
+                      <TableCell>{s.sugestao.linha_dre ?? <span className="text-muted-foreground">—</span>}</TableCell>
+                      <TableCell>
+                        <Badge variant={s.sugestao.confianca === 'alta' ? 'default' : 'outline'}>
+                          {s.sugestao.confianca}
+                        </Badge>
+                      </TableCell>
+                      <TableCell>
+                        {s.sugestao.linha_dre && (
+                          <Button
+                            size="sm" variant="outline"
+                            onClick={() => aplicarSugestao(s.omie_codigo, s.sugestao.linha_dre!)}
+                          >
+                            Aplicar
+                          </Button>
+                        )}
+                      </TableCell>
+                    </TableRow>
+                  ))}
+                </TableBody>
+              </Table>
+            </div>
+            <div className="border-t p-3">
+              <Button
+                className="w-full"
+                onClick={() => aplicarTodasAltaConfianca()}
+                disabled={!suggestions.some(s => s.sugestao.confianca === 'alta')}
+              >
+                Aplicar todas de alta confiança ({suggestions.filter(s => s.sugestao.confianca === 'alta').length})
+              </Button>
             </div>
           </CardContent>
         </Card>
