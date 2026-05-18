@@ -20,12 +20,18 @@ CREATE TABLE IF NOT EXISTS public.score_recalc_queue (
   source_call_id uuid REFERENCES public.farmer_calls(id) ON DELETE SET NULL,
   enqueued_at timestamptz NOT NULL DEFAULT now(),
   processed_at timestamptz,
-  error text,
-  UNIQUE (customer_user_id, farmer_id, processed_at) -- dedup mas só de não-processados
+  error text
 );
 
 CREATE INDEX IF NOT EXISTS idx_score_recalc_queue_pending
   ON public.score_recalc_queue (enqueued_at)
+  WHERE processed_at IS NULL;
+
+-- Partial unique: dedup APENAS pendentes; processados podem ter múltiplas linhas (histórico de recálculos).
+-- NULL != NULL em SQL padrão, então UNIQUE na tabela não deduplica NULLs — índice parcial é a solução correta.
+-- ON CONFLICT DO NOTHING no trigger resolve corretamente contra este índice.
+CREATE UNIQUE INDEX IF NOT EXISTS uniq_score_recalc_queue_pending
+  ON public.score_recalc_queue (customer_user_id, farmer_id)
   WHERE processed_at IS NULL;
 
 ALTER TABLE public.score_recalc_queue ENABLE ROW LEVEL SECURITY;
