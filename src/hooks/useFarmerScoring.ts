@@ -1,6 +1,25 @@
 import { useState, useEffect, useMemo, useCallback } from 'react';
 import { supabase } from '@/integrations/supabase/client';
 import { useAuth } from '@/contexts/AuthContext';
+import type { Tables, TablesInsert } from '@/integrations/supabase/types';
+
+type AlgorithmConfigRow = Pick<Tables<'farmer_algorithm_config'>, 'key' | 'value'>;
+type ProductCostRow = Pick<Tables<'product_costs'>, 'product_id' | 'cost_price'>;
+type FarmerCallRow = Pick<
+  Tables<'farmer_calls'>,
+  'customer_user_id' | 'call_result' | 'is_whatsapp' | 'whatsapp_replied' | 'created_at'
+>;
+type ProfileRow = Pick<Tables<'profiles'>, 'user_id' | 'name' | 'phone'>;
+type SalesOrderRow = Pick<
+  Tables<'sales_orders'>,
+  'id' | 'customer_user_id' | 'items' | 'total' | 'created_at' | 'status'
+>;
+
+interface SalesOrderItem {
+  product_id?: string;
+  quantity?: number | string;
+  unit_price?: number | string;
+}
 
 // ─── Types ───────────────────────────────────────────────────────────
 export interface AlgorithmConfig {
@@ -88,10 +107,11 @@ export const useFarmerScoring = (farmerId?: string) => {
   // Load algorithm config
   useEffect(() => {
     (async () => {
-      const { data } = await supabase.from('farmer_algorithm_config').select('key, value') as any;
-      if (data && data.length > 0) {
+      const { data } = await supabase.from('farmer_algorithm_config').select('key, value');
+      const rows = (data ?? []) as AlgorithmConfigRow[];
+      if (rows.length > 0) {
         const map: Record<string, number> = {};
-        data.forEach((r: any) => { map[r.key] = Number(r.value); });
+        rows.forEach((r) => { map[r.key] = Number(r.value); });
         setConfig(prev => ({ ...prev, ...map } as AlgorithmConfig));
       }
     })();
@@ -108,12 +128,13 @@ export const useFarmerScoring = (farmerId?: string) => {
 
     try {
       // 1. Load all customers with sales orders
-      const { data: salesOrders } = await supabase
+      const { data: salesOrdersData } = await supabase
         .from('sales_orders')
         .select('id, customer_user_id, items, total, created_at, status')
-        .in('status', ['confirmado', 'faturado', 'entregue']) as any;
+        .in('status', ['confirmado', 'faturado', 'entregue']);
+      const salesOrders = (salesOrdersData ?? []) as SalesOrderRow[];
 
-      if (!salesOrders || salesOrders.length === 0) {
+      if (salesOrders.length === 0) {
         setClientScores([]);
         setAgenda([]);
         setCalculating(false);
@@ -122,26 +143,29 @@ export const useFarmerScoring = (farmerId?: string) => {
       }
 
       // 2. Load product costs for margin calculation
-      const { data: productCosts } = await supabase
+      const { data: productCostsData } = await supabase
         .from('product_costs')
-        .select('product_id, cost_price') as any;
+        .select('product_id, cost_price');
+      const productCosts = (productCostsData ?? []) as ProductCostRow[];
       const costMap = new Map<string, number>();
-      (productCosts || []).forEach((pc: any) => costMap.set(pc.product_id, Number(pc.cost_price)));
+      productCosts.forEach((pc) => costMap.set(pc.product_id, Number(pc.cost_price)));
 
       // 3. Load farmer calls for contact rates
-      const { data: calls } = await supabase
+      const { data: callsData } = await supabase
         .from('farmer_calls')
         .select('customer_user_id, call_result, is_whatsapp, whatsapp_replied, created_at')
-        .eq('farmer_id', targetFarmerId) as any;
+        .eq('farmer_id', targetFarmerId);
+      const calls = (callsData ?? []) as FarmerCallRow[];
 
       // 4. Load customer profiles
-      const customerIds = [...new Set(salesOrders.map((o: any) => o.customer_user_id))] as string[];
-      const { data: profiles } = await supabase
+      const customerIds = [...new Set(salesOrders.map((o) => o.customer_user_id))];
+      const { data: profilesData } = await supabase
         .from('profiles')
         .select('user_id, name, phone')
         .in('user_id', customerIds);
+      const profiles = (profilesData ?? []) as ProfileRow[];
       const profileMap = new Map<string, { name: string; phone: string | null }>();
-      (profiles || []).forEach((p: any) => profileMap.set(p.user_id, { name: p.name, phone: p.phone }));
+      profiles.forEach((p) => profileMap.set(p.user_id, { name: p.name, phone: p.phone }));
 
       // 5. Aggregate per-customer data
       const now = Date.now();
@@ -182,7 +206,9 @@ export const useFarmerScoring = (farmerId?: string) => {
         if (orderTime >= sixMonthsAgo) cd.spend180d += Number(order.total || 0);
 
         // Parse items for categories and margin
-        const items = Array.isArray(order.items) ? order.items : [];
+        const items: SalesOrderItem[] = Array.isArray(order.items)
+          ? (order.items as unknown as SalesOrderItem[])
+          : [];
         for (const item of items) {
           if (item.product_id) {
             cd.categories.add(item.product_id);
@@ -196,8 +222,9 @@ export const useFarmerScoring = (farmerId?: string) => {
       }
 
       // Aggregate call data
-      for (const call of (calls || [])) {
+      for (const call of calls) {
         const cid = call.customer_user_id;
+        if (!cid) continue;
         const cd = customerMap.get(cid);
         if (!cd) continue;
         const callTime = new Date(call.created_at).getTime();
@@ -389,7 +416,7 @@ export const useFarmerScoring = (farmerId?: string) => {
 
       // 9. Persist scores to DB
       for (const s of scores) {
-        await supabase.from('farmer_client_scores').upsert({
+        const scoreUpsert: TablesInsert<'farmer_client_scores'> = {
           customer_user_id: s.customer_user_id,
           farmer_id: targetFarmerId,
           rf_score: s.rf, m_score: s.m, g_score: s.g, x_score: s.x, s_score: s.s,
@@ -410,7 +437,10 @@ export const useFarmerScoring = (farmerId?: string) => {
           revenue_potential: s.revenuePotential,
           calculated_at: new Date().toISOString(),
           updated_at: new Date().toISOString(),
-        } as any, { onConflict: 'customer_user_id,farmer_id' });
+        };
+        await supabase
+          .from('farmer_client_scores')
+          .upsert(scoreUpsert, { onConflict: 'customer_user_id,farmer_id' });
       }
 
     } catch (error) {
