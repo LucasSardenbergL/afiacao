@@ -19,9 +19,9 @@ import {
 import { useTacticalPlan, getObjectiveLabel, type TacticalPlan } from '@/hooks/useTacticalPlan';
 import { supabase } from '@/integrations/supabase/client';
 import {
-  Mic, MicOff, Radio, StopCircle, Lightbulb, Copy, Check,
+  Mic, Radio, StopCircle, Lightbulb, Copy, Check,
   MessageSquare, Brain, Target, Shield, TrendingUp, TrendingDown,
-  Minus, AlertTriangle, Loader2, ChevronRight, Phone, FileText,
+  Minus, AlertTriangle, Loader2, FileText,
   ChevronDown, ChevronUp, Type, Send,
   type LucideIcon,
 } from 'lucide-react';
@@ -193,7 +193,7 @@ const FarmerCopilot = () => {
       await copilot.startSession({
         customerId: selectedCustomer || undefined,
         customerName: customerName || undefined,
-        customerContext,
+        customerContext: customerContext ?? undefined,
         bundleContext,
       });
 
@@ -227,7 +227,7 @@ const FarmerCopilot = () => {
       await copilot.startSession({
         customerId: selectedCustomer || undefined,
         customerName: customerName || undefined,
-        customerContext,
+        customerContext: customerContext ?? undefined,
         bundleContext,
       });
 

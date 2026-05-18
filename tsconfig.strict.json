@@ -36,6 +36,11 @@
     "src/hooks/useFinanceiro.ts",
     "src/hooks/useCopilotEngine.ts",
     "src/hooks/useFarmerGovernance.ts",
-    "src/hooks/useFarmerScoring.ts"
+    "src/hooks/useFarmerScoring.ts",
+    "src/pages/FarmerCopilot.tsx",
+    "src/pages/FinanceiroConciliacao.tsx",
+    "src/components/financeiro/CockpitDrillDown.tsx",
+    "src/pages/FinanceiroCockpit.tsx",
+    "src/pages/AdminReposicaoAplicacao.tsx"
   ]
 }

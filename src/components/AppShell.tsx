@@ -56,6 +56,7 @@ const unifiedNavSections: { title: string; items: NavItem[] }[] = [
     title: 'Principal',
     items: [
       { icon: LayoutDashboard, label: 'Dashboard', path: '/' },
+      { icon: Target, label: 'Meu dia', path: '/meu-dia' },
       { icon: Users, label: 'Clientes', path: '/admin/customers' },
     ],
   },

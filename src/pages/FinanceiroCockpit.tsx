@@ -1,20 +1,17 @@
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect } from 'react';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
-import { Button } from '@/components/ui/button';
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
-import { Progress } from '@/components/ui/progress';
 import { Skeleton } from '@/components/ui/skeleton';
-import { COMPANIES, ALL_COMPANIES, type Company } from '@/contexts/CompanyContext';
+import { COMPANIES, type Company } from '@/contexts/CompanyContext';
 import { supabase } from '@/integrations/supabase/client';
 import { getResumoFinanceiro, getAgingReceber, getDRE, getTopInadimplentes, type FinResumo, type AgingData, type FinDRE } from '@/services/financeiroService';
 import { useFinanceiroRegime } from '@/hooks/useFinanceiroRegime';
 import { RegimeToggle } from '@/components/financeiro/RegimeToggle';
 import {
-  Building2, TrendingUp, TrendingDown, AlertTriangle, Wallet,
-  ShieldCheck, Shield, BarChart3, Target, Clock, Eye, Lock,
-  CheckCircle2, Info, XCircle
+  TrendingUp, TrendingDown, AlertTriangle, Wallet,
+  BarChart3, Target, Clock, Eye, Lock,
+  Info,
 } from 'lucide-react';
 import { CockpitDrillDown, type DrillDownType } from '@/components/financeiro/CockpitDrillDown';
 import { PeriodOverrideHistory } from '@/components/financeiro/PeriodOverrideHistory';
@@ -289,7 +286,6 @@ const FinanceiroCockpit = () => {
             <div className="space-y-3">
               {dreConsolidado.map(d => {
                 const mg = d.receita_liquida > 0 ? (d.lucro_bruto / d.receita_liquida) * 100 : 0;
-                const mo = d.receita_liquida > 0 ? (d.resultado_operacional / d.receita_liquida) * 100 : 0;
                 const conf = confiabilidade.find(c => c.company === d.company);
                 return (
                   <div key={d.company} className="flex items-center justify-between p-3 rounded-lg bg-muted/40">
