@@ -669,13 +669,60 @@ function formatBRLSimple(value: number): string {
   return `${sign}R$ ${formatted}`;
 }
 
-// === Pipeline (será implementada nas próximas tasks) ===
 async function calcular(
-  _supabase: ReturnType<typeof createClient>,
-  _company: Company,
-  _cenario: Cenario,
-  _horizon: number,
-  _save: boolean,
+  supabase: ReturnType<typeof createClient>,
+  company: Company,
+  cenario: Cenario,
+  horizon: number,
+  save: boolean,
 ) {
-  return { ok: true, todo: 'pipeline' };
+  const dados = await carregarDados(supabase, company);
+  const taxas = calcularTaxasHistoricas(dados.crs);
+  const premissas = aplicarCenario(taxas, cenario, dados.config);
+  const semanas = gerarSemanas(dados, premissas, horizon);
+  const ncg = calcularNCG(dados);
+  const indicadores = calcularIndicadores(dados, ncg, taxas);
+  const alertas = avaliarAlertas(semanas, ncg, indicadores, dados.config);
+
+  // Persistir alertas: insere novos (UNIQUE constraint evita duplicados ativos do mesmo tipo)
+  for (const a of alertas) {
+    // @ts-expect-error - fin_alertas not in supabase types yet
+    await supabase.from('fin_alertas').insert({
+      company,
+      tipo: a.tipo,
+      severidade: a.severidade,
+      mensagem: a.mensagem,
+      valor: a.valor,
+      threshold: a.threshold,
+      contexto: a.contexto,
+    }).select().maybeSingle();
+  }
+
+  if (save) {
+    // @ts-expect-error
+    await supabase.from('fin_projecao_snapshots').insert({
+      company,
+      cenario,
+      horizon_weeks: horizon,
+      dados: semanas as unknown as Record<string, unknown>,
+      ncg: ncg.valor,
+      capital_giro_proprio: indicadores.capital_giro_proprio,
+      saldo_tesouraria: indicadores.saldo_tesouraria,
+      dias_cobertura: indicadores.dias_cobertura,
+      premissas: premissas as unknown as Record<string, unknown>,
+    });
+  }
+
+  return {
+    semanas,
+    ncg,
+    indicadores,
+    alertas,
+    premissas_aplicadas: premissas,
+    metadados: {
+      cenario,
+      horizon,
+      amostra_taxas: { suficiente: taxas.amostra_suficiente, qtd_titulos: taxas.qtd_titulos },
+    },
+  };
 }
