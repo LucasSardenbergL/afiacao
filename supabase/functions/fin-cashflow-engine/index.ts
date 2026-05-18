@@ -420,6 +420,74 @@ function gerarSemanas(
   return semanas;
 }
 
+type NCG = {
+  aco: { cr_aberto: number; estoque: number; adiantamentos: number; total: number };
+  pco: { cp_fornecedor: number; folha_30d: number; tributos_a_pagar: number; total: number };
+  valor: number;
+  projecao_12m: Array<{ mes: string; valor: number }>;
+};
+
+function calcularNCG(dados: DadosBase): NCG {
+  const cr_aberto = dados.crs
+    .filter(c => ['ABERTO', 'PARCIAL', 'VENCIDO'].includes(c.status_titulo) && c.saldo > 0)
+    .reduce((s, c) => s + c.saldo, 0);
+  const adiantamentos = dados.cps
+    .filter(c =>
+      c.categoria_codigo &&
+      dados.config.adiantamento_categorias_codigos.includes(c.categoria_codigo) &&
+      ['ABERTO', 'PARCIAL'].includes(c.status_titulo) &&
+      c.saldo > 0
+    )
+    .reduce((s, c) => s + c.saldo, 0);
+  const aco = {
+    cr_aberto,
+    estoque: dados.estoque_valor,
+    adiantamentos,
+    total: cr_aberto + dados.estoque_valor + adiantamentos,
+  };
+
+  const cp_fornecedor = dados.cps
+    .filter(c =>
+      ['ABERTO', 'PARCIAL', 'VENCIDO'].includes(c.status_titulo) &&
+      c.saldo > 0 &&
+      (!c.categoria_codigo || !dados.config.adiantamento_categorias_codigos.includes(c.categoria_codigo))
+    )
+    .reduce((s, c) => s + c.saldo, 0);
+
+  const folha_30d = dados.eventos_rec
+    .filter(e => e.is_folha && e.tipo === 'saida')
+    .reduce((s, e) => s + e.valor, 0);
+
+  const tributos_a_pagar = dados.cps
+    .filter(c =>
+      ['ABERTO', 'PARCIAL', 'VENCIDO'].includes(c.status_titulo) &&
+      c.saldo > 0 &&
+      c.categoria_codigo && c.categoria_codigo.startsWith('3.99')
+    )
+    .reduce((s, c) => s + c.saldo, 0);
+
+  const pco = {
+    cp_fornecedor,
+    folha_30d,
+    tributos_a_pagar,
+    total: cp_fornecedor + folha_30d + tributos_a_pagar,
+  };
+
+  const valor = aco.total - pco.total;
+
+  const hoje = new Date();
+  const projecao_12m: Array<{ mes: string; valor: number }> = [];
+  for (let i = 0; i < 12; i++) {
+    const d = new Date(hoje.getFullYear(), hoje.getMonth() + i, 1);
+    projecao_12m.push({
+      mes: `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`,
+      valor,
+    });
+  }
+
+  return { aco, pco, valor, projecao_12m };
+}
+
 // === Pipeline (será implementada nas próximas tasks) ===
 async function calcular(
   _supabase: ReturnType<typeof createClient>,
