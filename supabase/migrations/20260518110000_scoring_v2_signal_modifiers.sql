@@ -44,8 +44,9 @@ CREATE POLICY "Staff can insert recalc queue" ON public.score_recalc_queue FOR I
 
 -- Service role (edge functions) bypass via service_role usage; sem policy update/delete pra users.
 
--- 3. Trigger pós-call: quando insere/atualiza farmer_calls com entities_extracted,
---    enfileira recálculo do par (customer_user_id, farmer_id).
+-- 3. Trigger pós-call: dispara em todo INSERT em farmer_calls e em UPDATE de
+--    entities_extracted. O guard interno (IS NOT NULL + jsonb_typeof + length)
+--    filtra os casos sem sinal real, então só enfileira quando tem entities.
 CREATE OR REPLACE FUNCTION public.enqueue_score_recalc_from_call()
 RETURNS TRIGGER
 LANGUAGE plpgsql
@@ -56,12 +57,13 @@ BEGIN
   -- Só enfileira se a chamada tem cliente vinculado E entities_extracted (sinal real)
   IF NEW.customer_user_id IS NOT NULL
      AND NEW.entities_extracted IS NOT NULL
+     AND jsonb_typeof(NEW.entities_extracted) = 'array'
      AND jsonb_array_length(NEW.entities_extracted) > 0 THEN
     INSERT INTO public.score_recalc_queue
       (customer_user_id, farmer_id, reason, source_call_id)
     VALUES
       (NEW.customer_user_id, NEW.farmer_id, 'call_inserted', NEW.id)
-    ON CONFLICT DO NOTHING;
+    ON CONFLICT (customer_user_id, farmer_id) WHERE processed_at IS NULL DO NOTHING;
   END IF;
   RETURN NEW;
 END;
