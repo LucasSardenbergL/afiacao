@@ -224,12 +224,17 @@ async function recalcOne(
   farmer_id: string,
 ): Promise<{ ok: boolean; error?: string; adjustment?: ScoreAdjustment }> {
   const cutoff = new Date(Date.now() - 30 * 24 * 3600 * 1000).toISOString();
+  // Safety cap: 200 calls in 30 days = ~7/day average. Beyond that, decay already
+  // makes older calls negligible. Order by most-recent first so the cap drops
+  // the lowest-weight calls.
   const { data: calls, error: cErr } = await supabase
     .from('farmer_calls')
     .select('id, started_at, entities_extracted, analyses')
     .eq('customer_user_id', customer_user_id)
     .eq('farmer_id', farmer_id)
-    .gte('started_at', cutoff);
+    .gte('started_at', cutoff)
+    .order('started_at', { ascending: false })
+    .limit(200);
 
   if (cErr) return { ok: false, error: `farmer_calls: ${cErr.message}` };
 
@@ -327,7 +332,13 @@ Deno.serve(async (req) => {
 
     const results = [];
     for (const item of (pending ?? []) as Array<{ id: string; customer_user_id: string; farmer_id: string }>) {
-      const r = await recalcOne(supabase, item.customer_user_id, item.farmer_id);
+      let r: { ok: boolean; error?: string; adjustment?: ScoreAdjustment };
+      try {
+        r = await recalcOne(supabase, item.customer_user_id, item.farmer_id);
+      } catch (err) {
+        r = { ok: false, error: `uncaught: ${err instanceof Error ? err.message : String(err)}` };
+      }
+      // Always mark processed, even on uncaught throw — prevents poison-pill rows from being retried forever.
       await supabase.from('score_recalc_queue').update({
         processed_at: new Date().toISOString(),
         error: r.error ?? null,
