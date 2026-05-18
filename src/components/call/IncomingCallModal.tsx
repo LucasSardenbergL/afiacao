@@ -13,6 +13,18 @@ import { formatBrPhone } from '@/lib/phone';
 import { supabase } from '@/integrations/supabase/client';
 import { resolveCustomerByPhone } from '@/lib/call-session/resolve-customer';
 
+// Label amigável pra cargo (PR-CONTACTS) — mantido inline pra evitar dep direta de types
+const CARGO_FRIENDLY: Record<string, string> = {
+  dono: 'Dono',
+  socio: 'Sócio',
+  gerente: 'Gerente',
+  comprador: 'Comprador',
+  secretaria: 'Secretaria',
+  aplicador: 'Aplicador',
+  tecnico: 'Técnico',
+  outro: 'Outro',
+};
+
 /**
  * Modal centralizado que aparece quando uma chamada inbound chega no ramal SIP
  * do vendedor (PR-INBOUND-CALLS).
@@ -25,27 +37,35 @@ import { resolveCustomerByPhone } from '@/lib/call-session/resolve-customer';
  */
 export function IncomingCallModal() {
   const { incomingCall, acceptIncoming, rejectIncoming } = useWebRTCCallContext();
-  const [resolvedName, setResolvedName] = useState<string | null>(null);
+  const [resolvedCompany, setResolvedCompany] = useState<string | null>(null);
+  const [contactName, setContactName] = useState<string | null>(null);
+  const [contactCargo, setContactCargo] = useState<string | null>(null);
   const [accepting, setAccepting] = useState(false);
 
-  // Tenta identificar cliente pelo telefone
+  // Tenta identificar cliente + contato pelo telefone
   useEffect(() => {
     if (!incomingCall) {
-      setResolvedName(null);
+      setResolvedCompany(null);
+      setContactName(null);
+      setContactCargo(null);
       return;
     }
     let cancelled = false;
     (async () => {
       try {
-        const { customerUserId } = await resolveCustomerByPhone(incomingCall.phone);
-        if (cancelled || !customerUserId) return;
+        const resolved = await resolveCustomerByPhone(incomingCall.phone);
+        if (cancelled) return;
+        // PR-CONTACTS: contactName + cargo vêm direto se identificou via customer_contacts
+        if (resolved.contactName) setContactName(resolved.contactName);
+        if (resolved.contactCargo) setContactCargo(resolved.contactCargo);
+        if (!resolved.customerUserId) return;
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
         const { data } = await (supabase.from('profiles') as any)
           .select('name, razao_social')
-          .eq('user_id', customerUserId)
+          .eq('user_id', resolved.customerUserId)
           .maybeSingle();
         if (!cancelled && data) {
-          setResolvedName(data.razao_social || data.name);
+          setResolvedCompany(data.razao_social || data.name);
         }
       } catch {
         // ignore — modal mostra só telefone
@@ -58,9 +78,14 @@ export function IncomingCallModal() {
 
   if (!incomingCall) return null;
 
-  const displayLabel = resolvedName
-    ?? incomingCall.displayName
-    ?? formatBrPhone(incomingCall.phone);
+  // Hierarquia de exibição:
+  // 1. Nome do contato + cargo (se identificado via customer_contacts) — PR-CONTACTS
+  // 2. Razão social da empresa (se cliente identificado em profiles)
+  // 3. Display name do SIP FROM
+  // 4. Telefone formatado
+  const primaryLabel = contactName ?? resolvedCompany ?? incomingCall.displayName ?? formatBrPhone(incomingCall.phone);
+  const secondaryLabel = contactName && resolvedCompany ? resolvedCompany : null;
+  const cargoLabel = contactCargo ? CARGO_FRIENDLY[contactCargo] ?? contactCargo : null;
 
   const handleAccept = async () => {
     setAccepting(true);
@@ -84,14 +109,22 @@ export function IncomingCallModal() {
           </DialogTitle>
           <DialogDescription className="space-y-2 pt-4">
             <span className="block text-2xl font-semibold text-foreground">
-              {displayLabel}
+              {primaryLabel}
+              {cargoLabel && (
+                <span className="ml-2 text-sm font-normal text-muted-foreground">
+                  ({cargoLabel})
+                </span>
+              )}
             </span>
-            {resolvedName && (
+            {secondaryLabel && (
+              <span className="block text-xs text-foreground/70">{secondaryLabel}</span>
+            )}
+            {(contactName || resolvedCompany) && (
               <span className="block text-xs text-muted-foreground">
                 {formatBrPhone(incomingCall.phone)}
               </span>
             )}
-            {!resolvedName && (
+            {!contactName && !resolvedCompany && (
               <span className="block text-2xs text-status-warning">
                 Cliente não identificado — após atender, cadastre novo prospect
               </span>
