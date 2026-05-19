@@ -21,6 +21,7 @@ import { Plus, Trash2, Pencil, History } from 'lucide-react';
 import { toast } from 'sonner';
 import { AuditTrailDrawer } from '@/components/financeiro/AuditTrailDrawer';
 import { formatBRL } from '@/lib/financeiro/cashflow-format';
+import { EventosOnboarding } from './EventosOnboarding';
 
 type Tab = 'recorrentes' | 'eventuais';
 
@@ -48,6 +49,7 @@ export function EventosManager() {
 
   return (
     <div className="space-y-4">
+      <EventosOnboarding />
       <div className="flex items-center gap-2">
         <Button variant={tab === 'recorrentes' ? 'default' : 'outline'} size="sm" onClick={() => setTab('recorrentes')}>
           Recorrentes ({recQ.data?.length ?? 0})
