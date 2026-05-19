@@ -4,6 +4,7 @@ import { PosicaoAgora } from '@/components/financeiro/cashflow/PosicaoAgora';
 import { EventosManager } from '@/components/financeiro/cashflow/EventosManager';
 import { Fluxo13Semanas } from '@/components/financeiro/cashflow/Fluxo13Semanas';
 import { NcgDecomposicao } from '@/components/financeiro/cashflow/NcgDecomposicao';
+import { ConfigCashflowDialog } from '@/components/financeiro/cashflow/ConfigCashflowDialog';
 import { Button } from '@/components/ui/button';
 import { Settings } from 'lucide-react';
 import { useAuth } from '@/contexts/AuthContext';
@@ -37,9 +38,7 @@ export default function FinanceiroCapitalGiro() {
         <TabsContent value="eventos"><EventosManager /></TabsContent>
       </Tabs>
 
-      {showConfig && isMaster && (
-        <div className="text-center text-muted-foreground py-4">Configuração — Phase 6</div>
-      )}
+      <ConfigCashflowDialog open={showConfig} onOpenChange={setShowConfig} />
     </div>
   );
 }
