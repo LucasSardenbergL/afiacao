@@ -55,11 +55,11 @@ export function useProductCatalog({
         try {
           let nextPage: number | null = 1;
           while (nextPage) {
-            const { data, error } = await supabase.functions.invoke('omie-vendas-sync', {
+            const result: { data: unknown; error: unknown } = await supabase.functions.invoke('omie-vendas-sync', {
               body: { action: 'sync_estoque', start_page: nextPage, account },
             });
-            if (error) break;
-            nextPage = data?.nextPage || null;
+            if (result.error) break;
+            nextPage = (result.data as { nextPage?: number | null } | null)?.nextPage ?? null;
           }
           const refreshed = await fetchProductsForAccount(account);
           if (refreshed.length > 0) setProds(refreshed);
@@ -88,12 +88,12 @@ export function useProductCatalog({
           try {
             let nextPage: number | null = 1;
             while (nextPage) {
-              const { data: syncResult, error: syncError } = await supabase.functions.invoke(
+              const syncRes: { data: unknown; error: unknown } = await supabase.functions.invoke(
                 'omie-vendas-sync',
                 { body: { action: 'sync_products', start_page: nextPage, account } },
               );
-              if (syncError) throw syncError;
-              nextPage = syncResult?.nextPage || null;
+              if (syncRes.error) throw syncRes.error;
+              nextPage = (syncRes.data as { nextPage?: number | null } | null)?.nextPage ?? null;
             }
             products = await fetchProductsForAccount(account);
           } catch (syncErr) {

@@ -62,6 +62,10 @@
     "src/pages/QualityChecklist.tsx",
     "src/pages/FarmerLOCC.tsx",
     "src/pages/AdminReposicaoAumentos.tsx",
-    "src/pages/TintPricing.tsx"
+    "src/pages/TintPricing.tsx",
+    "src/pages/FinanceiroIntercompany.tsx",
+    "src/pages/FinanceiroFechamento.tsx",
+    "src/pages/SalesOrderEdit.tsx",
+    "src/pages/AdminReposicaoCadastros.tsx"
   ]
 }

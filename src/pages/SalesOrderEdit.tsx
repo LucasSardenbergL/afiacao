@@ -128,7 +128,7 @@ function PaymentComboboxEdit({
 const SalesOrderEdit = () => {
   const { id } = useParams<{ id: string }>();
   const navigate = useNavigate();
-  const { isStaff } = useAuth();
+  useAuth(); // mantém o hook montado pra refresh de token; isStaff não é usado
 
   const [order, setOrder] = useState<SalesOrder | null>(null);
   const [customerName, setCustomerName] = useState('');
@@ -143,7 +143,6 @@ const SalesOrderEdit = () => {
   const [showAddProduct, setShowAddProduct] = useState(false);
   const [productSearch, setProductSearch] = useState('');
   const [catalogProducts, setCatalogProducts] = useState<OmieProduct[]>([]);
-  const [loadingProducts, setLoadingProducts] = useState(false);
   // Tint color dialog
   const [tintPendingProduct, setTintPendingProduct] = useState<OmieProduct | null>(null);
   const [customerUserId, setCustomerUserId] = useState<string | null>(null);
@@ -153,6 +152,7 @@ const SalesOrderEdit = () => {
   }, [id]);
 
   const loadOrder = async () => {
+    if (!id) return;
     try {
       const { data, error } = await supabase
         .from('sales_orders')
@@ -261,7 +261,7 @@ const SalesOrderEdit = () => {
     toast.success(`"${product.descricao}" adicionado`);
   };
 
-  const handleTintConfirm = (formulaId: string, corId: string, nomeCor: string, precoFinal: number, custoCorantes: number, alternativeProduct?: Product) => {
+  const handleTintConfirm = (_formulaId: string, corId: string, nomeCor: string, precoFinal: number, _custoCorantes: number, alternativeProduct?: Product) => {
     const product = alternativeProduct
       ? catalogProducts.find(p => p.id === alternativeProduct.id) || tintPendingProduct!
       : tintPendingProduct!;

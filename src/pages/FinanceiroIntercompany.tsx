@@ -9,7 +9,7 @@ import { COMPANIES, ALL_COMPANIES, type Company } from '@/contexts/CompanyContex
 import { getEliminacoes, upsertEliminacao, deleteEliminacao, type EliminacaoRegra } from '@/services/financeiroV2Service';
 import { supabase } from '@/integrations/supabase/client';
 import { toast } from 'sonner';
-import { Loader2, Plus, Trash2, ArrowRight, Building2, Save, BarChart3, AlertTriangle } from 'lucide-react';
+import { Plus, Trash2, ArrowRight, BarChart3, AlertTriangle } from 'lucide-react';
 import { useIcMatches } from '@/hooks/useIcMatches';
 import { Link } from 'react-router-dom';
 

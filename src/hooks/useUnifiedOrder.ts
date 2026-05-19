@@ -44,7 +44,6 @@ import type {
   OmieCustomer,
   FormaPagamento,
   CompanyProfile,
-  AddressData,
   ToolCategory,
   UserTool,
 } from '@/hooks/unifiedOrder/types';
@@ -193,8 +192,8 @@ export function useUnifiedOrder() {
     loadingCustomer,
     customerUserId, setCustomerUserId,
     requiresPo,
-    customerPricesOben, setCustomerPricesOben,
-    customerPricesColacor, setCustomerPricesColacor,
+    customerPricesOben,
+    customerPricesColacor,
     selectedParcelaOben, setSelectedParcelaOben,
     selectedParcelaColacor, setSelectedParcelaColacor,
     customerParcelaRankingOben,
@@ -272,7 +271,6 @@ export function useUnifiedOrder() {
     loadingObenProducts, loadingColacorProducts,
     productSearch, setProductSearch,
     filteredObenProducts, filteredColacorProducts,
-    isProductPreviouslyPurchased, getProductLastOrderDate,
   } = catalog;
 
   // Wrap clearCustomer to also clear cart + ordem de compra

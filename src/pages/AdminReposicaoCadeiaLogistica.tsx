@@ -179,7 +179,7 @@ export default function AdminReposicaoCadeiaLogistica() {
       const ltDepois = await ltTotalAtualForn(args.fornecedor);
       const delta = ltDepois - args.ltAntes;
 
-      // log histórico
+      // log histórico — coluna `empresa` existe no DB mas ainda não no generated type
       await supabase.from("fornecedor_cadeia_logistica_historico").insert({
         empresa: EMPRESA,
         fornecedor_nome: args.fornecedor,
@@ -188,7 +188,7 @@ export default function AdminReposicaoCadeiaLogistica() {
         descricao_mudanca: args.descricao,
         valores_anteriores: args.valoresAnt ?? null,
         valores_novos: args.valoresNov ?? null,
-      });
+      } as never);
 
       // chamar recálculo (best-effort)
       const { error: rpcErr } = await supabase.rpc(
@@ -231,6 +231,7 @@ export default function AdminReposicaoCadeiaLogistica() {
         const proxOrdem = ordensExist.length > 0 ? Math.max(...ordensExist) + 1 : 1;
         const codigo = `${payload.fornecedor.slice(0, 4).toUpperCase().replace(/\s/g, "")}_E${proxOrdem}_${Date.now().toString(36)}`;
 
+        // `empresa` field existe no DB mas ainda não no generated type
         const { error } = await supabase
           .from("fornecedor_cadeia_logistica")
           .insert({
@@ -246,7 +247,7 @@ export default function AdminReposicaoCadeiaLogistica() {
             parceiro_contato: payload.etapa.parceiro_contato ?? null,
             observacoes: payload.etapa.observacoes ?? null,
             ativo: true,
-          });
+          } as never);
         if (error) throw error;
 
         await recalcularComImpacto({
