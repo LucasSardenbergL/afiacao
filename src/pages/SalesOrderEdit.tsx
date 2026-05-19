@@ -8,6 +8,7 @@ import { Input } from '@/components/ui/input';
 import { Textarea } from '@/components/ui/textarea';
 import { Badge } from '@/components/ui/badge';
 import { supabase } from '@/integrations/supabase/client';
+import type { Tables, Json } from '@/integrations/supabase/types';
 import { useAuth } from '@/contexts/AuthContext';
 import { Loader2, Save, Trash2, Plus, AlertCircle, Search, X, ChevronsUpDown, Check } from 'lucide-react';
 import { toast } from 'sonner';
@@ -28,6 +29,14 @@ interface OrderItem {
   tint_nome_cor?: string;
 }
 
+interface OmiePayload {
+  cabecalho?: {
+    codigo_parcela?: string;
+    [key: string]: unknown;
+  };
+  [key: string]: unknown;
+}
+
 interface SalesOrder {
   id: string;
   customer_user_id: string;
@@ -39,8 +48,12 @@ interface SalesOrder {
   account: string;
   omie_pedido_id: number | null;
   omie_numero_pedido: string | null;
-  omie_payload: any;
+  omie_payload: OmiePayload | null;
   created_at: string;
+}
+
+interface FormasPagamentoResponse {
+  formas?: Array<{ codigo: string; descricao: string }>;
 }
 
 interface OmieProduct {
@@ -147,7 +160,21 @@ const SalesOrderEdit = () => {
         .eq('id', id)
         .single();
       if (error) throw error;
-      const o = data as any as SalesOrder;
+      const row = data as Tables<'sales_orders'>;
+      const o: SalesOrder = {
+        id: row.id,
+        customer_user_id: row.customer_user_id,
+        items: (row.items as unknown as OrderItem[]) || [],
+        subtotal: row.subtotal,
+        total: row.total,
+        status: row.status,
+        notes: row.notes,
+        account: row.account,
+        omie_pedido_id: row.omie_pedido_id,
+        omie_numero_pedido: row.omie_numero_pedido,
+        omie_payload: (row.omie_payload as unknown as OmiePayload | null) ?? null,
+        created_at: row.created_at,
+      };
       setOrder(o);
       setItems(o.items || []);
       setNotes(o.notes || '');
@@ -177,8 +204,9 @@ const SalesOrderEdit = () => {
           .limit(1000),
       ]);
 
-      if (formasRes.data?.formas) setFormas(formasRes.data.formas);
-      if (productsRes.data) setCatalogProducts(productsRes.data as OmieProduct[]);
+      const formasData = formasRes.data as FormasPagamentoResponse | null;
+      if (formasData?.formas) setFormas(formasData.formas);
+      if (productsRes.data) setCatalogProducts(productsRes.data as unknown as OmieProduct[]);
     } catch (e) {
       console.error(e);
       toast.error('Erro ao carregar pedido');
@@ -303,12 +331,12 @@ const SalesOrderEdit = () => {
         const { error: localErr } = await supabase
           .from('sales_orders')
           .update({
-            items: items as any,
+            items: items as unknown as Json,
             subtotal,
             total: subtotal,
             notes: notes || null,
-            omie_payload: updatedPayload,
-          } as any)
+            omie_payload: updatedPayload as unknown as Json,
+          })
           .eq('id', order.id);
         if (localErr) throw localErr;
 
@@ -355,20 +383,21 @@ const SalesOrderEdit = () => {
         const { error } = await supabase
           .from('sales_orders')
           .update({
-            items: items as any,
+            items: items as unknown as Json,
             subtotal,
             total: subtotal,
             notes: notes || null,
-            omie_payload: updatedPayloadLocal,
-          } as any)
+            omie_payload: updatedPayloadLocal as unknown as Json,
+          })
           .eq('id', order.id);
         if (error) throw error;
         toast.success('Pedido atualizado localmente');
         navigate('/sales');
       }
-    } catch (e: any) {
+    } catch (e) {
       console.error(e);
-      toast.error(e.message || 'Erro ao salvar pedido');
+      const message = e instanceof Error ? e.message : 'Erro ao salvar pedido';
+      toast.error(message);
       setSaving(false);
     }
   };

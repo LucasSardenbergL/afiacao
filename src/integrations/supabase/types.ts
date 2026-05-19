@@ -1691,12 +1691,14 @@ export type Database = {
           health_class: string | null
           health_score: number | null
           id: string
+          last_signal_recalc_at: string | null
           m_score: number | null
           priority_score: number | null
           recover_score: number | null
           revenue_potential: number | null
           rf_score: number | null
           s_score: number | null
+          signal_modifiers: Json | null
           updated_at: string | null
           whatsapp_reply_rate_60d: number | null
           x_score: number | null
@@ -1719,12 +1721,14 @@ export type Database = {
           health_class?: string | null
           health_score?: number | null
           id?: string
+          last_signal_recalc_at?: string | null
           m_score?: number | null
           priority_score?: number | null
           recover_score?: number | null
           revenue_potential?: number | null
           rf_score?: number | null
           s_score?: number | null
+          signal_modifiers?: Json | null
           updated_at?: string | null
           whatsapp_reply_rate_60d?: number | null
           x_score?: number | null
@@ -1747,12 +1751,14 @@ export type Database = {
           health_class?: string | null
           health_score?: number | null
           id?: string
+          last_signal_recalc_at?: string | null
           m_score?: number | null
           priority_score?: number | null
           recover_score?: number | null
           revenue_potential?: number | null
           rf_score?: number | null
           s_score?: number | null
+          signal_modifiers?: Json | null
           updated_at?: string | null
           whatsapp_reply_rate_60d?: number | null
           x_score?: number | null
@@ -7628,6 +7634,47 @@ export type Database = {
           },
         ]
       }
+      score_recalc_queue: {
+        Row: {
+          customer_user_id: string
+          enqueued_at: string
+          error: string | null
+          farmer_id: string
+          id: string
+          processed_at: string | null
+          reason: string
+          source_call_id: string | null
+        }
+        Insert: {
+          customer_user_id: string
+          enqueued_at?: string
+          error?: string | null
+          farmer_id: string
+          id?: string
+          processed_at?: string | null
+          reason: string
+          source_call_id?: string | null
+        }
+        Update: {
+          customer_user_id?: string
+          enqueued_at?: string
+          error?: string | null
+          farmer_id?: string
+          id?: string
+          processed_at?: string | null
+          reason?: string
+          source_call_id?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "score_recalc_queue_source_call_id_fkey"
+            columns: ["source_call_id"]
+            isOneToOne: false
+            referencedRelation: "farmer_calls"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       sending_quality_logs: {
         Row: {
           created_at: string
@@ -10513,6 +10560,47 @@ export type Database = {
           status?: string | null
         }
         Relationships: []
+      }
+      score_recalc_pending: {
+        Row: {
+          customer_user_id: string | null
+          enqueued_at: string | null
+          error: string | null
+          farmer_id: string | null
+          id: string | null
+          processed_at: string | null
+          reason: string | null
+          source_call_id: string | null
+        }
+        Insert: {
+          customer_user_id?: string | null
+          enqueued_at?: string | null
+          error?: string | null
+          farmer_id?: string | null
+          id?: string | null
+          processed_at?: string | null
+          reason?: string | null
+          source_call_id?: string | null
+        }
+        Update: {
+          customer_user_id?: string | null
+          enqueued_at?: string | null
+          error?: string | null
+          farmer_id?: string | null
+          id?: string | null
+          processed_at?: string | null
+          reason?: string | null
+          source_call_id?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "score_recalc_queue_source_call_id_fkey"
+            columns: ["source_call_id"]
+            isOneToOne: false
+            referencedRelation: "farmer_calls"
+            referencedColumns: ["id"]
+          },
+        ]
       }
       v_cron_jobs_falhas: {
         Row: {

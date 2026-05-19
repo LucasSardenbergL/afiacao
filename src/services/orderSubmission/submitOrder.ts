@@ -83,7 +83,8 @@ export async function submitOrder(params: SubmitOrderParams): Promise<SubmitOrde
         }).select('id').single();
       if (insertError) throw insertError;
       salesOrderId = salesOrder.id;
-    } catch (e: any) {
+    } catch (e: unknown) {
+      const message = e instanceof Error ? e.message : 'Erro ao inserir pedido Oben';
       logger.critical('Failed to insert sales_order in Supabase — aborting', {
         stage: 'supabase_insert',
         account: 'oben',
@@ -97,7 +98,7 @@ export async function submitOrder(params: SubmitOrderParams): Promise<SubmitOrde
         results,
         printDataList: [],
         lastOrderData: null,
-        errors: [{ step: 'insert_oben', message: e?.message || 'Erro ao inserir pedido Oben' }],
+        errors: [{ step: 'insert_oben', message }],
       };
     }
 
@@ -126,7 +127,8 @@ export async function submitOrder(params: SubmitOrderParams): Promise<SubmitOrde
         results.push('PV Oben (pendente ERP)');
         errors.push({ step: 'sync_oben_omie', message: omieError.message || 'Falha ao sincronizar Oben com Omie' });
       }
-    } catch (e: any) {
+    } catch (e: unknown) {
+      const message = e instanceof Error ? e.message : 'Falha ao sincronizar Oben com Omie';
       logger.error('Oben Omie sync exception', {
         stage: 'omie_sync',
         account: 'oben',
@@ -135,7 +137,7 @@ export async function submitOrder(params: SubmitOrderParams): Promise<SubmitOrde
         error: e,
       });
       results.push('PV Oben (pendente ERP)');
-      errors.push({ step: 'sync_oben_omie', message: e?.message || 'Falha ao sincronizar Oben com Omie' });
+      errors.push({ step: 'sync_oben_omie', message });
     }
   }
 
@@ -170,7 +172,8 @@ export async function submitOrder(params: SubmitOrderParams): Promise<SubmitOrde
         }).select('id').single();
       if (insertError) throw insertError;
       salesOrderId = salesOrder.id;
-    } catch (e: any) {
+    } catch (e: unknown) {
+      const message = e instanceof Error ? e.message : 'Erro ao inserir pedido Colacor';
       logger.critical('Failed to insert sales_order in Supabase — aborting', {
         stage: 'supabase_insert',
         account: 'colacor',
@@ -184,7 +187,7 @@ export async function submitOrder(params: SubmitOrderParams): Promise<SubmitOrde
         results,
         printDataList: [],
         lastOrderData: null,
-        errors: [...errors, { step: 'insert_colacor', message: e?.message || 'Erro ao inserir pedido Colacor' }],
+        errors: [...errors, { step: 'insert_colacor', message }],
       };
     }
 
@@ -247,7 +250,8 @@ export async function submitOrder(params: SubmitOrderParams): Promise<SubmitOrde
                 salesOrderId,
                 count: produtoAcabadoItems.length,
               });
-            } catch (opErr: any) {
+            } catch (opErr: unknown) {
+              const opMessage = opErr instanceof Error ? opErr.message : 'Falha ao criar OP';
               logger.critical('Failed to create production orders for produto acabado', {
                 stage: 'op_creation',
                 account: 'colacor',
@@ -256,7 +260,7 @@ export async function submitOrder(params: SubmitOrderParams): Promise<SubmitOrde
                 itemCount: produtoAcabadoItems.length,
                 error: opErr,
               });
-              errors.push({ step: 'create_production_order', message: opErr?.message || 'Falha ao criar OP' });
+              errors.push({ step: 'create_production_order', message: opMessage });
             }
           }
         }
@@ -264,7 +268,8 @@ export async function submitOrder(params: SubmitOrderParams): Promise<SubmitOrde
         results.push('PV Colacor (pendente ERP)');
         errors.push({ step: 'sync_colacor_omie', message: omieError.message || 'Falha ao sincronizar Colacor com Omie' });
       }
-    } catch (e: any) {
+    } catch (e: unknown) {
+      const message = e instanceof Error ? e.message : 'Falha ao sincronizar Colacor com Omie';
       logger.error('Colacor Omie sync exception', {
         stage: 'omie_sync',
         account: 'colacor',
@@ -273,7 +278,7 @@ export async function submitOrder(params: SubmitOrderParams): Promise<SubmitOrde
         error: e,
       });
       results.push('PV Colacor (pendente ERP)');
-      errors.push({ step: 'sync_colacor_omie', message: e?.message || 'Falha ao sincronizar Colacor com Omie' });
+      errors.push({ step: 'sync_colacor_omie', message });
     }
   }
 
@@ -328,7 +333,8 @@ export async function submitOrder(params: SubmitOrderParams): Promise<SubmitOrde
         results.push('OS Afiação (pendente ERP)');
         errors.push({ step: 'sync_os_omie', message: 'Falha ao sincronizar OS com Omie' });
       }
-    } catch (e: any) {
+    } catch (e: unknown) {
+      const message = e instanceof Error ? e.message : 'Falha ao sincronizar OS com Omie';
       logger.error('Afiação OS Omie sync exception', {
         stage: 'omie_sync',
         account: 'afiacao',
@@ -336,7 +342,7 @@ export async function submitOrder(params: SubmitOrderParams): Promise<SubmitOrde
         error: e,
       });
       results.push('OS Afiação (pendente ERP)');
-      errors.push({ step: 'sync_os_omie', message: e?.message || 'Falha ao sincronizar OS com Omie' });
+      errors.push({ step: 'sync_os_omie', message });
     }
   }
 

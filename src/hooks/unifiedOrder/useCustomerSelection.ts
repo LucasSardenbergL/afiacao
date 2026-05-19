@@ -24,6 +24,26 @@ interface SalesPriceHistoryRow {
   created_at: string;
 }
 
+/* Shapes returned by `supabase.functions.invoke()` calls used here. */
+interface FunctionInvokeResult<T = unknown> {
+  data: T | null;
+  error?: { message?: string } | null;
+}
+
+interface ParcelaRankingItem {
+  codigo: string;
+  count: number;
+}
+
+interface ParcelaResponse {
+  ultima_parcela?: string | null;
+  parcela_ranking?: ParcelaRankingItem[];
+}
+
+interface PrecosResponse {
+  precos?: Record<string, number>;
+}
+
 interface UseCustomerSelectionArgs {
   /** Called after a customer is selected and a local user id was resolved.
    *  The hook owner uses this to load tools, addresses, price history, etc. */
@@ -111,7 +131,7 @@ export function useCustomerSelection({
             .eq('customer_user_id', customerUserId)
             .order('created_at', { ascending: false })
         : Promise.resolve({ data: null });
-      const omiePromises: Promise<any>[] = [];
+      const omiePromises: Promise<FunctionInvokeResult<{ history?: Record<string, string> }>>[] = [];
       if (codigoOben) {
         omiePromises.push(supabase.functions.invoke('omie-vendas-sync', {
           body: { action: 'historico_produtos_cliente', codigo_cliente: codigoOben, account: 'oben' },
@@ -263,7 +283,7 @@ export function useCustomerSelection({
       contato: cust.contato,
     };
 
-    const promises: Promise<any>[] = [];
+    const promises: Promise<unknown>[] = [];
 
     if (!cust.codigo_cliente_colacor && cust.cnpj_cpf) {
       promises.push(
@@ -398,10 +418,10 @@ export function useCustomerSelection({
         'cliente Afiação',
       ];
       const failedParts: string[] = [];
-      const getResult = (idx: number): any => {
+      const getResult = <T = unknown>(idx: number): FunctionInvokeResult<T> => {
         const r = settledResults[idx];
         if (r.status === 'fulfilled') {
-          const val: any = r.value;
+          const val = r.value as FunctionInvokeResult<T> | null | undefined;
           if (val && val.error) {
             logger.warn('selectCustomer: settled call returned error (tolerated)', {
               stage: 'select_customer_settle',
@@ -426,13 +446,18 @@ export function useCustomerSelection({
         return { data: null };
       };
 
-      const priceOben = getResult(0);
-      const priceColacor = getResult(1);
-      const parcelaOben = getResult(2);
-      const parcelaColacor = getResult(3);
-      const localPriceResult = getResult(4);
-      const colacorClientResult = getResult(5);
-      const afiacaoClientResult = getResult(6);
+      const priceOben = getResult<PrecosResponse>(0);
+      const priceColacor = getResult<PrecosResponse>(1);
+      const parcelaOben = getResult<ParcelaResponse>(2);
+      const parcelaColacor = getResult<ParcelaResponse>(3);
+      const localPriceResult = getResult<Array<{ product_id: string; unit_price: number; created_at: string }>>(4);
+      const colacorClientResult = getResult<{
+        cliente?: { codigo_cliente?: number | null; codigo_vendedor?: number | null };
+      }>(5);
+      const afiacaoClientResult = getResult<{
+        codigo_cliente?: number | null;
+        codigo_vendedor?: number | null;
+      }>(6);
 
       if (failedParts.length > 0) {
         toast.success('Alguns dados do cliente não foram carregados', {
@@ -491,11 +516,12 @@ export function useCustomerSelection({
       setCustomerPricesColacor(mergedColacor);
 
       if (parcelaOben.data?.ultima_parcela) setSelectedParcelaOben(parcelaOben.data.ultima_parcela);
-      if (parcelaOben.data?.parcela_ranking) setCustomerParcelaRankingOben(parcelaOben.data.parcela_ranking.map((r: any) => r.codigo));
+      if (parcelaOben.data?.parcela_ranking) setCustomerParcelaRankingOben(parcelaOben.data.parcela_ranking.map((r: ParcelaRankingItem) => r.codigo));
       if (parcelaColacor.data?.ultima_parcela) setSelectedParcelaColacor(parcelaColacor.data.ultima_parcela);
-      if (parcelaColacor.data?.parcela_ranking) setCustomerParcelaRankingColacor(parcelaColacor.data.parcela_ranking.map((r: any) => r.codigo));
-    } catch (error: any) {
-      toast.error('Erro', { description: error.message });
+      if (parcelaColacor.data?.parcela_ranking) setCustomerParcelaRankingColacor(parcelaColacor.data.parcela_ranking.map((r: ParcelaRankingItem) => r.codigo));
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'Erro desconhecido';
+      toast.error('Erro', { description: message });
     } finally {
       setLoadingCustomer(false);
     }
