@@ -146,15 +146,12 @@ const Tools = () => {
 
   return (
     <div className="min-h-screen bg-background pb-24">
-      <Header
-        title="Minhas Ferramentas"
-        showBack
-        rightElement={
-          <Button size="icon" variant="ghost" className="rounded-full" onClick={() => setDialogOpen(true)}>
-            <Plus className="w-5 h-5" />
-          </Button>
-        }
-      />
+      <div className="flex items-center justify-between px-4 py-3 border-b">
+        <h1 className="text-lg font-semibold">Minhas Ferramentas</h1>
+        <Button size="icon" variant="ghost" className="rounded-full" onClick={() => setDialogOpen(true)}>
+          <Plus className="w-5 h-5" />
+        </Button>
+      </div>
 
       <AddToolDialog open={dialogOpen} onOpenChange={setDialogOpen} onToolAdded={handleToolAdded} categories={categories} />
 
