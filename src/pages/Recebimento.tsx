@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import { useState, useEffect } from 'react';
 import { decodeHtmlEntities } from '@/lib/utils';
 import { useNavigate } from 'react-router-dom';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
@@ -19,8 +19,28 @@ import {
   DialogTitle,
   DialogFooter,
 } from '@/components/ui/dialog';
+import type { Tables } from '@/integrations/supabase/types';
 
 type NfeStatus = 'pendente' | 'em_conferencia' | 'divergencia' | 'conferido' | 'efetivado';
+
+type Warehouse = Tables<'warehouses'>;
+type NfeRecebimento = Tables<'nfe_recebimentos'>;
+type NfeItem = Pick<
+  Tables<'nfe_recebimento_itens'>,
+  'id' | 'status_item' | 'quantidade_conferida' | 'quantidade_esperada'
+>;
+type CteAssociado = Pick<Tables<'cte_associados'>, 'id' | 'valor_frete'>;
+
+type NfeWithRelations = NfeRecebimento & {
+  nfe_recebimento_itens: NfeItem[] | null;
+  cte_associados: CteAssociado[] | null;
+};
+
+type NfePendingRow = Pick<NfeRecebimento, 'warehouse_id' | 'status'>;
+
+interface ImportWebhookResponse {
+  message?: string;
+}
 
 const STATUS_CONFIG: Record<NfeStatus, { label: string; className: string }> = {
   pendente: { label: 'Pendente', className: 'bg-status-warning-bg text-status-warning-foreground' },
@@ -89,7 +109,7 @@ export default function Recebimento({ statusFilter }: { statusFilter?: string[] 
       }
       const { data, error } = await query.order('data_emissao', { ascending: true });
       if (error) throw error;
-      return data ?? [];
+      return (data ?? []) as unknown as NfeWithRelations[];
     },
     enabled: !!selectedWarehouse,
   });
@@ -104,7 +124,7 @@ export default function Recebimento({ statusFilter }: { statusFilter?: string[] 
         .in('status', ['pendente', 'em_conferencia', 'divergencia']);
       if (error) throw error;
       const counts: Record<string, number> = {};
-      (data ?? []).forEach((r: any) => {
+      (data ?? []).forEach((r: NfePendingRow) => {
         counts[r.warehouse_id] = (counts[r.warehouse_id] || 0) + 1;
       });
       return counts;
@@ -124,7 +144,7 @@ export default function Recebimento({ statusFilter }: { statusFilter?: string[] 
     return () => { supabase.removeChannel(channel); };
   }, [queryClient]);
 
-  const handleCardClick = (nfe: any) => {
+  const handleCardClick = (nfe: NfeWithRelations) => {
     if (nfe.status === 'pendente' || nfe.status === 'em_conferencia') {
       navigate(`/recebimento/${nfe.id}`);
     }
@@ -142,8 +162,9 @@ export default function Recebimento({ statusFilter }: { statusFilter?: string[] 
       toast.success('NF-e efetivada com sucesso no Omie!');
       queryClient.invalidateQueries({ queryKey: ['nfe_recebimentos'] });
       queryClient.invalidateQueries({ queryKey: ['nfe_pending_counts'] });
-    } catch (err: any) {
-      toast.error('Erro ao efetivar: ' + (err.message || 'Tente novamente'));
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      toast.error('Erro ao efetivar: ' + (message || 'Tente novamente'));
     } finally {
       setEfetivando(null);
     }
@@ -161,7 +182,8 @@ export default function Recebimento({ statusFilter }: { statusFilter?: string[] 
         body: { chave_acesso: clean },
       });
       if (res.error) throw res.error;
-      if (res.data?.message === 'já importada') {
+      const responseData = res.data as ImportWebhookResponse | null;
+      if (responseData?.message === 'já importada') {
         toast.info('Esta NF-e já foi importada');
       } else {
         toast.success('NF-e importada com sucesso!');
@@ -170,8 +192,9 @@ export default function Recebimento({ statusFilter }: { statusFilter?: string[] 
       setChaveAcesso('');
       queryClient.invalidateQueries({ queryKey: ['nfe_recebimentos'] });
       queryClient.invalidateQueries({ queryKey: ['nfe_pending_counts'] });
-    } catch (err: any) {
-      toast.error('Erro ao importar: ' + (err.message || 'Verifique a chave'));
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      toast.error('Erro ao importar: ' + (message || 'Verifique a chave'));
     } finally {
       setImporting(false);
     }
@@ -197,8 +220,9 @@ export default function Recebimento({ statusFilter }: { statusFilter?: string[] 
               toast.success('Sincronização concluída!');
               queryClient.invalidateQueries({ queryKey: ['nfe_recebimentos'] });
               queryClient.invalidateQueries({ queryKey: ['nfe_pending_counts'] });
-            } catch (err: any) {
-              toast.error('Erro na sincronização: ' + (err.message || 'Tente novamente'));
+            } catch (err) {
+              const message = err instanceof Error ? err.message : String(err);
+              toast.error('Erro na sincronização: ' + (message || 'Tente novamente'));
             } finally {
               setSyncing(false);
             }
@@ -211,7 +235,7 @@ export default function Recebimento({ statusFilter }: { statusFilter?: string[] 
 
       {/* Warehouse selector */}
       <div className="flex gap-2">
-        {(warehouses ?? []).map((wh: any) => {
+        {(warehouses ?? []).map((wh: Warehouse) => {
           const count = pendingCounts?.[wh.id] ?? 0;
           const isSelected = selectedWarehouse === wh.id;
           return (
@@ -258,12 +282,12 @@ export default function Recebimento({ statusFilter }: { statusFilter?: string[] 
         </Card>
       ) : (
         <div className="space-y-3">
-          {nfes.map((nfe: any) => {
-            const itens = nfe.nfe_recebimento_itens ?? [];
+          {nfes.map((nfe: NfeWithRelations) => {
+            const itens: NfeItem[] = nfe.nfe_recebimento_itens ?? [];
             const totalItens = itens.length;
-            const conferidos = itens.filter((i: any) => i.status_item === 'conferido').length;
-            const ctes = nfe.cte_associados ?? [];
-            const totalFrete = ctes.reduce((s: number, c: any) => s + (c.valor_frete ?? 0), 0);
+            const conferidos = itens.filter((i: NfeItem) => i.status_item === 'conferido').length;
+            const ctes: CteAssociado[] = nfe.cte_associados ?? [];
+            const totalFrete = ctes.reduce((s: number, c: CteAssociado) => s + (c.valor_frete ?? 0), 0);
             const status = nfe.status as NfeStatus;
             const config = STATUS_CONFIG[status] ?? STATUS_CONFIG.pendente;
 

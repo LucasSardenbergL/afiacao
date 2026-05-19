@@ -1,6 +1,6 @@
 import { useState, useEffect, useMemo } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { useInfiniteQuery, useQuery, useQueryClient } from '@tanstack/react-query';
+import { useInfiniteQuery, useQuery, useQueryClient, type InfiniteData } from '@tanstack/react-query';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
@@ -8,8 +8,9 @@ import { Input } from '@/components/ui/input';
 import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle, AlertDialogTrigger } from '@/components/ui/alert-dialog';
 import { supabase } from '@/integrations/supabase/client';
+import type { Tables } from '@/integrations/supabase/types';
 import { useAuth } from '@/contexts/AuthContext';
-import { Loader2, ShoppingCart, Plus, Package, Trash2, Building2, Wrench, Share2, Printer, Pencil, Search, ChevronLeft } from 'lucide-react';
+import { Loader2, ShoppingCart, Plus, Package, Trash2, Building2, Share2, Printer, Pencil, Search, ChevronLeft } from 'lucide-react';
 import { EmptyState } from '@/components/EmptyState';
 import { Checkbox } from '@/components/ui/checkbox';
 import { BulkActionsBar } from '@/components/ui/bulk-actions-bar';
@@ -17,13 +18,31 @@ import { format } from 'date-fns';
 import { ptBR } from 'date-fns/locale';
 import { toast } from 'sonner';
 import { StatusBadgeSimple } from '@/components/StatusBadge';
+import type { OrderStatus } from '@/types';
 import { shareOrderViaWhatsApp } from '@/utils/whatsappShare';
 import { useInfiniteScroll } from '@/hooks/useInfiniteScroll';
 
-// Inclui colacor_sc — antes ficava de fora da Tabs e os pedidos do SC só apareciam
-// na aba "Todos". 'afiacao' é virtual (representa o módulo Afiação, sem coluna
-// account na tabela orders) e não vem do CompanyContext.
-type Account = 'oben' | 'colacor' | 'colacor_sc' | 'afiacao' | 'all';
+type SalesOrderRow = Tables<'sales_orders'>;
+type AfiacaoOrderRow = Tables<'orders'>;
+type ProfileRow = Tables<'profiles'>;
+
+// Shape de cada item dentro de orders.items (jsonb). Só os campos consumidos aqui.
+interface AfiacaoItemRaw {
+  category?: string | null;
+  name?: string | null;
+  quantity?: number | null;
+  unitPrice?: number | null;
+}
+
+// Cache do useInfiniteQuery de sales_orders — usado nos rollbacks optimistic.
+type SalesOrdersInfiniteCache = InfiniteData<SalesOrder[]>;
+
+// 3 empresas reais (oben, colacor, colacor_sc) + 'all'. Afiação NÃO é empresa,
+// é um módulo operando sob Colacor SC — pedidos da tabela `orders` (afiação)
+// aparecem dentro da aba "Colacor SC" junto com os pedidos comerciais
+// `sales_orders WHERE account='colacor_sc'`. Cada card mantém badge "Afiação"
+// quando _source='afiacao' pra preservar a distinção visual.
+type Account = 'oben' | 'colacor' | 'colacor_sc' | 'all';
 
 const PAGE_SIZE = 50;
 
@@ -90,7 +109,10 @@ const SalesOrders = () => {
         .order('created_at', { ascending: false })
         .range(start, start + PAGE_SIZE - 1);
       if (error) throw error;
-      return (data || []).map((o: any) => ({ ...o, _source: 'sales' as const })) as SalesOrder[];
+      return ((data || []) as SalesOrderRow[]).map((o) => ({
+        ...o,
+        _source: 'sales' as const,
+      })) as unknown as SalesOrder[];
     },
     getNextPageParam: (lastPage, allPages) =>
       lastPage.length === PAGE_SIZE ? allPages.length : undefined,
@@ -109,25 +131,28 @@ const SalesOrders = () => {
         .order('created_at', { ascending: false })
         .range(start, start + PAGE_SIZE - 1);
       if (error) throw error;
-      return (data || []).map((o: any) => ({
-        id: o.id,
-        customer_user_id: o.user_id,
-        items: Array.isArray(o.items) ? o.items.map((i: any) => ({
-          descricao: i.category || i.name || 'Afiação',
-          quantidade: i.quantity || 1,
-          valor_unitario: i.unitPrice || 0,
-          valor_total: (i.quantity || 1) * (i.unitPrice || 0),
-        })) : [],
-        subtotal: o.subtotal || o.total || 0,
-        total: o.total || 0,
-        status: o.status,
-        omie_numero_pedido: null,
-        omie_pedido_id: null,
-        created_at: o.created_at,
-        notes: o.notes,
-        account: 'afiacao',
-        _source: 'afiacao' as const,
-      })) as SalesOrder[];
+      return ((data || []) as AfiacaoOrderRow[]).map((o) => {
+        const rawItems = Array.isArray(o.items) ? (o.items as unknown as AfiacaoItemRaw[]) : [];
+        return {
+          id: o.id,
+          customer_user_id: o.user_id,
+          items: rawItems.map((i) => ({
+            descricao: i.category || i.name || 'Afiação',
+            quantidade: i.quantity || 1,
+            valor_unitario: i.unitPrice || 0,
+            valor_total: (i.quantity || 1) * (i.unitPrice || 0),
+          })),
+          subtotal: o.subtotal || o.total || 0,
+          total: o.total || 0,
+          status: o.status,
+          omie_numero_pedido: null,
+          omie_pedido_id: null,
+          created_at: o.created_at,
+          notes: o.notes,
+          account: 'afiacao',
+          _source: 'afiacao' as const,
+        };
+      }) as SalesOrder[];
     },
     getNextPageParam: (lastPage, allPages) =>
       lastPage.length === PAGE_SIZE ? allPages.length : undefined,
@@ -154,7 +179,9 @@ const SalesOrders = () => {
         .select('user_id, name')
         .in('user_id', customerIds);
       const map: Record<string, string> = {};
-      (data || []).forEach((p: any) => { map[p.user_id] = p.name; });
+      ((data || []) as Pick<ProfileRow, 'user_id' | 'name'>[]).forEach((p) => {
+        map[p.user_id] = p.name ?? '';
+      });
       return map;
     },
   });
@@ -180,12 +207,12 @@ const SalesOrders = () => {
   // 4. Se Omie falhar: rollback do soft-delete + restaura cache
   // 5. Se Supabase update falhar: rollback do cache, NÃO chama Omie
   const deleteOrder = async (order: SalesOrder) => {
-    const snapshot = queryClient.getQueryData(['sales-orders-paginated']);
-    queryClient.setQueryData(['sales-orders-paginated'], (old: any) => {
+    const snapshot = queryClient.getQueryData<SalesOrdersInfiniteCache>(['sales-orders-paginated']);
+    queryClient.setQueryData<SalesOrdersInfiniteCache>(['sales-orders-paginated'], (old) => {
       if (!old) return old;
       return {
         ...old,
-        pages: old.pages.map((page: SalesOrder[]) => page.filter((o) => o.id !== order.id)),
+        pages: old.pages.map((page) => page.filter((o) => o.id !== order.id)),
       };
     });
     setSelectedIds((prev) => {
@@ -195,9 +222,10 @@ const SalesOrders = () => {
     });
 
     // 1. Soft-delete local primeiro (audit trail antes do Omie)
+    // `deleted_at` existe no DB mas ainda não no generated Database type — cast as never
     const { error: softErr } = await supabase
       .from('sales_orders')
-      .update({ deleted_at: new Date().toISOString() })
+      .update({ deleted_at: new Date().toISOString() } as never)
       .eq('id', order.id);
 
     if (softErr) {
@@ -218,15 +246,17 @@ const SalesOrders = () => {
       });
       if (error) throw error;
       toast.success('Pedido excluído');
-    } catch (e: any) {
+    } catch (e) {
       console.error(e);
       // Rollback do soft-delete (deleted_at = null) — pedido volta a ser ativo
       await supabase
         .from('sales_orders')
-        .update({ deleted_at: null })
+        .update({ deleted_at: null } as never)
         .eq('id', order.id);
       queryClient.setQueryData(['sales-orders-paginated'], snapshot);
-      toast.error('Erro ao excluir pedido', { description: e?.message });
+      toast.error('Erro ao excluir pedido', {
+        description: e instanceof Error ? e.message : String(e),
+      });
     }
   };
 
@@ -234,13 +264,13 @@ const SalesOrders = () => {
   const deleteSelected = async () => {
     if (selectedIds.size === 0) return;
     const toDelete = orders.filter((o) => selectedIds.has(o.id) && o._source === 'sales');
-    const snapshot = queryClient.getQueryData(['sales-orders-paginated']);
+    const snapshot = queryClient.getQueryData<SalesOrdersInfiniteCache>(['sales-orders-paginated']);
     const deleteIds = new Set(toDelete.map((o) => o.id));
-    queryClient.setQueryData(['sales-orders-paginated'], (old: any) => {
+    queryClient.setQueryData<SalesOrdersInfiniteCache>(['sales-orders-paginated'], (old) => {
       if (!old) return old;
       return {
         ...old,
-        pages: old.pages.map((page: SalesOrder[]) => page.filter((o) => !deleteIds.has(o.id))),
+        pages: old.pages.map((page) => page.filter((o) => !deleteIds.has(o.id))),
       };
     });
     setSelectedIds(new Set());
@@ -249,7 +279,7 @@ const SalesOrders = () => {
     const nowIso = new Date().toISOString();
     const { error: softErr } = await supabase
       .from('sales_orders')
-      .update({ deleted_at: nowIso })
+      .update({ deleted_at: nowIso } as never)
       .in('id', Array.from(deleteIds));
 
     if (softErr) {
@@ -284,7 +314,7 @@ const SalesOrders = () => {
     if (failedIds.length > 0) {
       await supabase
         .from('sales_orders')
-        .update({ deleted_at: null })
+        .update({ deleted_at: null } as never)
         .in('id', failedIds);
     }
 
@@ -296,15 +326,15 @@ const SalesOrders = () => {
     } else {
       // Parcial — restaura os que falharam no cache (já temos deleted_at=null no DB)
       const failedSet = new Set(failedIds);
-      queryClient.setQueryData(['sales-orders-paginated'], (old: any) => {
+      queryClient.setQueryData<SalesOrdersInfiniteCache>(['sales-orders-paginated'], (old) => {
         if (!old || !snapshot) return old;
         // Pega as rows que falharam do snapshot original e reinjeta na primeira página
-        const failedRows = (snapshot as any).pages
+        const failedRows = snapshot.pages
           .flat()
-          .filter((o: SalesOrder) => failedSet.has(o.id));
+          .filter((o) => failedSet.has(o.id));
         return {
           ...old,
-          pages: old.pages.map((page: SalesOrder[], i: number) =>
+          pages: old.pages.map((page, i) =>
             i === 0 ? [...failedRows, ...page] : page,
           ),
         };
@@ -332,10 +362,13 @@ const SalesOrders = () => {
   };
 
   const filteredOrders = useMemo(() => {
+    // Colacor SC engloba: (a) pedidos comerciais com account='colacor_sc' E
+    // (b) pedidos de afiação (que operam sob a entidade SC). Afiação não é tab
+    // separada, é serviço da Colacor SC.
     let result = accountFilter === 'all'
       ? orders
-      : accountFilter === 'afiacao'
-        ? orders.filter(o => o._source === 'afiacao')
+      : accountFilter === 'colacor_sc'
+        ? orders.filter(o => o._source === 'afiacao' || (o._source === 'sales' && o.account === 'colacor_sc'))
         : orders.filter(o => o._source === 'sales' && (o.account || 'oben') === accountFilter);
 
     if (search.trim()) {
@@ -391,9 +424,11 @@ const SalesOrders = () => {
         </Button>
       </div>
 
-      {/* Account Filter */}
+      {/* Account Filter — 3 empresas reais + Todos. Afiação foi unificada
+          em Colacor SC (módulo, não empresa). Cada card preserva o badge
+          "Afiação" quando _source='afiacao' pra distinção visual. */}
       <Tabs value={accountFilter} onValueChange={(v) => setAccountFilter(v as Account)}>
-         <TabsList className="w-full grid grid-cols-5">
+        <TabsList className="w-full grid grid-cols-4">
           <TabsTrigger value="all">Todos</TabsTrigger>
           <TabsTrigger value="oben" className="gap-1">
             <Building2 className="w-3 h-3" />
@@ -406,10 +441,6 @@ const SalesOrders = () => {
           <TabsTrigger value="colacor_sc" className="gap-1">
             <Building2 className="w-3 h-3" />
             Colacor SC
-          </TabsTrigger>
-          <TabsTrigger value="afiacao" className="gap-1">
-            <Wrench className="w-3 h-3" />
-            Afiação
           </TabsTrigger>
         </TabsList>
       </Tabs>
@@ -449,14 +480,15 @@ const SalesOrders = () => {
             const isAfiacao = order._source === 'afiacao';
             const status = statusLabels[order.status] || statusLabels.rascunho;
             const totalItems = order.items?.reduce((s, i) => s + (i.quantidade || 0), 0) || 0;
-            const orderAccount = isAfiacao ? 'afiacao' : (order.account || 'oben');
-            const accountLabel = isAfiacao
-              ? 'Afiação'
-              : orderAccount === 'colacor_sc'
-                ? 'Colacor SC'
-                : orderAccount === 'colacor'
-                  ? 'Colacor'
-                  : 'Oben';
+            // Afiação opera sob Colacor SC. Card sempre mostra a empresa (Oben/Colacor/SC)
+            // e, quando for pedido de afiação, um badge secundário "Afiação" pra distinguir
+            // serviço de pedido comercial. Antes mostrava só "Afiação" e perdia a empresa.
+            const orderAccount = isAfiacao ? 'colacor_sc' : (order.account || 'oben');
+            const accountLabel = orderAccount === 'colacor_sc'
+              ? 'Colacor SC'
+              : orderAccount === 'colacor'
+                ? 'Colacor'
+                : 'Oben';
             const isSelectable = !isAfiacao; // só sales_orders são bulk-deletáveis
             const checked = selectedIds.has(order.id);
             return (
@@ -479,13 +511,19 @@ const SalesOrders = () => {
                       />
                     )}
                     <div className="flex-1 min-w-0">
-                      <div className="flex items-center gap-1.5">
+                      <div className="flex items-center gap-1.5 flex-wrap">
                         <p className="font-medium text-sm truncate">
                           {decodeHtml(profiles[order.customer_user_id] || 'Cliente')}
                         </p>
                         <Badge variant="outline" className="text-[9px] px-1 py-0 shrink-0">
                           {accountLabel}
                         </Badge>
+                        {/* Badge secundário pra distinguir serviço de afiação dentro de SC */}
+                        {isAfiacao && (
+                          <Badge variant="outline" className="text-[9px] px-1 py-0 shrink-0 bg-muted/50 text-muted-foreground border-dashed">
+                            Afiação
+                          </Badge>
+                        )}
                       </div>
                       <p className="text-xs text-muted-foreground mt-0.5">
                         {format(new Date(order.created_at), "dd/MM/yyyy 'às' HH:mm", { locale: ptBR })}
@@ -498,7 +536,7 @@ const SalesOrders = () => {
                     </div>
                     <div className="text-right shrink-0 space-y-1">
                       {isAfiacao ? (
-                        <StatusBadgeSimple status={order.status as any} size="sm" />
+                        <StatusBadgeSimple status={order.status as OrderStatus} size="sm" />
                       ) : (
                         <Badge variant={status.variant}>{status.label}</Badge>
                       )}

@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
@@ -8,7 +8,6 @@ import { Textarea } from '@/components/ui/textarea';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Switch } from '@/components/ui/switch';
 import { Label } from '@/components/ui/label';
-import { ScrollArea } from '@/components/ui/scroll-area';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from '@/components/ui/dialog';
 import { useAuth } from '@/contexts/AuthContext';
 import { useTacticalPlan, getObjectiveLabel, type TacticalPlan, type PlanType } from '@/hooks/useTacticalPlan';
@@ -16,10 +15,30 @@ import { supabase } from '@/integrations/supabase/client';
 import {
   Loader2, Target, Heart, AlertTriangle, TrendingUp, Package,
   MessageSquare, Shield, Copy, Check, ChevronDown, ChevronUp,
-  Plus, FileText, Brain, DollarSign, Clock, Zap, BarChart3,
-  AlertCircle, Layers
+  Plus, FileText, Brain, DollarSign, Zap, BarChart3,
+  AlertCircle, Layers, type LucideIcon
 } from 'lucide-react';
-import { toast } from 'sonner';
+
+// ─── Local types ───────────────────────────────────────────────────
+interface FarmerClientScoreRow {
+  customer_user_id: string;
+  health_score: number | null;
+  churn_risk: number | null;
+}
+
+interface ProfileRow {
+  user_id: string;
+  name: string | null;
+}
+
+interface RecordResultPayload {
+  planFollowed: boolean;
+  callResult: string;
+  actualMargin: number;
+  callDurationSeconds: number;
+  objectionType?: string;
+  notes?: string;
+}
 
 // ─── Helpers ───────────────────────────────────────────────────────
 const fmt = (v: number) => v.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' });
@@ -58,22 +77,24 @@ const FarmerTacticalPlan = () => {
 
   const loadCustomers = async () => {
     if (!user?.id) return;
-    const { data: scores } = await supabase
+    const { data: scoresData } = await supabase
       .from('farmer_client_scores')
       .select('customer_user_id, health_score, churn_risk')
       .eq('farmer_id', user.id)
-      .order('priority_score', { ascending: false }) as any;
-    if (!scores?.length) return;
+      .order('priority_score', { ascending: false });
+    const scores = (scoresData ?? []) as FarmerClientScoreRow[];
+    if (!scores.length) return;
 
-    const ids = scores.map((s: any) => s.customer_user_id);
-    const { data: profiles } = await supabase
+    const ids = scores.map((s) => s.customer_user_id);
+    const { data: profilesData } = await supabase
       .from('profiles')
       .select('user_id, name')
-      .in('user_id', ids) as any;
+      .in('user_id', ids);
+    const profiles = (profilesData ?? []) as ProfileRow[];
 
-    const profileMap = new Map((profiles || []).map((p: any) => [p.user_id, p.name]));
+    const profileMap = new Map(profiles.map((p) => [p.user_id, p.name]));
 
-    setCustomers(scores.map((s: any) => ({
+    setCustomers(scores.map((s) => ({
       id: s.customer_user_id,
       name: profileMap.get(s.customer_user_id) || 'Cliente',
       healthScore: Number(s.health_score || 0),
@@ -248,7 +269,7 @@ const PlanCard = ({
   onToggle: () => void;
   onCopy: (text: string) => void;
   copiedText: string | null;
-  onRecordResult: (planId: string, result: any) => Promise<void>;
+  onRecordResult: (planId: string, result: RecordResultPayload) => Promise<void>;
 }) => {
   return (
     <Card className={plan.status === 'concluido' ? 'opacity-70' : ''}>
@@ -455,7 +476,7 @@ const PlanCard = ({
 };
 
 // ─── Sub-components ─────────────────────────────────────────────────
-const Section = ({ title, icon: Icon, children }: { title: string; icon: any; children: React.ReactNode }) => (
+const Section = ({ title, icon: Icon, children }: { title: string; icon: LucideIcon; children: React.ReactNode }) => (
   <div className="space-y-1.5">
     <div className="flex items-center gap-1.5">
       <Icon className="w-3 h-3 text-primary" />
@@ -484,7 +505,7 @@ const RecordResultDialog = ({
   onRecord,
 }: {
   planId: string;
-  onRecord: (planId: string, result: any) => Promise<void>;
+  onRecord: (planId: string, result: RecordResultPayload) => Promise<void>;
 }) => {
   const [open, setOpen] = useState(false);
   const [planFollowed, setPlanFollowed] = useState(true);

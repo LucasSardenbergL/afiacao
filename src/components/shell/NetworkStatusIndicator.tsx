@@ -6,11 +6,14 @@ import { cn } from '@/lib/utils';
 import { getOfflineQueueDepth, subscribeToOfflineQueue } from '@/lib/offline-queue';
 
 /**
- * Indicador de rede com presença CONDICIONAL (Vercel/Linear pattern):
- *  - Online + queue vazia: NÃO renderiza nada (limpa o topbar)
- *  - Online + queue pendente: badge sutil com contador
- *  - Slow: ícone Cloud + ring expanding pulsante
- *  - Offline: ícone WifiOff + shake animation curta + estilo bold
+ * Indicador de rede sempre visível — sinal contínuo de saúde do sistema.
+ *
+ * Em B2B operacional, ver o status da conexão a qualquer momento é mais
+ * importante do que minimalismo visual. Por isso renderiza sempre:
+ *  - Online + queue vazia: ícone Wifi sutil em verde, sem ruído
+ *  - Online + queue pendente: ícone Wifi + badge com contador
+ *  - Slow: ícone Cloud em amarelo, ring expanding pulsante
+ *  - Offline: ícone WifiOff em vermelho, shake animation curta, estilo bold
  *
  * Hover: popover com detalhes de RTT, tipo, fila.
  */
@@ -30,15 +33,14 @@ export function NetworkStatusIndicator() {
     };
   }, []);
 
-  // Online + queue vazia = limpa visual (não renderiza nada)
-  if (status.quality === 'online' && queueDepth === 0) return null;
-
   const tone =
     status.quality === 'offline'
       ? { label: 'Offline', icon: WifiOff, tint: 'text-status-error-bold', ring: 'ring-status-error/20', dot: 'bg-status-error' }
       : status.quality === 'slow'
         ? { label: 'Conexão lenta', icon: Cloud, tint: 'text-status-warning-bold', ring: 'ring-status-warning/20', dot: 'bg-status-warning' }
-        : { label: 'Online · fila pendente', icon: Wifi, tint: 'text-status-info-bold', ring: 'ring-status-info/20', dot: 'bg-status-info' };
+        : queueDepth > 0
+          ? { label: 'Online · fila pendente', icon: Wifi, tint: 'text-status-info-bold', ring: 'ring-status-info/20', dot: 'bg-status-info' }
+          : { label: 'Online', icon: Wifi, tint: 'text-status-success opacity-70 hover:opacity-100', ring: 'ring-status-success/15', dot: 'bg-status-success' };
 
   const Icon = tone.icon;
 

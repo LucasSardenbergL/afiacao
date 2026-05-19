@@ -31,6 +31,21 @@ interface Checklist {
   approved: boolean;
 }
 
+interface ChecklistRow {
+  id: string;
+  item_index: number;
+  sharpness_ok: boolean;
+  balance_ok: boolean;
+  finish_ok: boolean;
+  dimensions_ok: boolean;
+  before_photos: string[] | null;
+  after_photos: string[] | null;
+  notes: string | null;
+  approved: boolean;
+}
+
+type ChecklistBooleanField = 'sharpness_ok' | 'balance_ok' | 'finish_ok' | 'dimensions_ok';
+
 const CRITERIA = [
   { key: 'sharpness_ok', label: 'Fio de Corte', description: 'Afiação uniforme e no ângulo correto' },
   { key: 'balance_ok', label: 'Balanceamento', description: 'Ferramenta balanceada sem vibrações' },
@@ -57,7 +72,7 @@ const QualityChecklist = () => {
     try {
       const [orderRes, checklistRes] = await Promise.all([
         supabase.from('orders').select('items').eq('id', orderId).single(),
-        (supabase as any).from('quality_checklists').select('*').eq('order_id', orderId),
+        supabase.from('quality_checklists' as never).select('*').eq('order_id' as never, orderId as never),
       ]);
 
       if (orderRes.data) {
@@ -75,7 +90,7 @@ const QualityChecklist = () => {
 
       if (checklistRes.data) {
         const map = new Map<number, Checklist>();
-        (checklistRes.data as any[]).forEach((cl) => {
+        (checklistRes.data as unknown as ChecklistRow[]).forEach((cl) => {
           map.set(cl.item_index, {
             ...cl,
             before_photos: cl.before_photos || [],
@@ -165,13 +180,13 @@ const QualityChecklist = () => {
       };
 
       if (cl.id) {
-        const { error } = await (supabase as any).from('quality_checklists').update(payload).eq('id', cl.id);
+        const { error } = await supabase.from('quality_checklists' as never).update(payload as never).eq('id' as never, cl.id as never);
         if (error) throw error;
       } else {
-        const { data: inserted, error } = await (supabase as any).from('quality_checklists').insert(payload).select().single();
+        const { data: inserted, error } = await supabase.from('quality_checklists' as never).insert(payload as never).select().single();
         if (error) throw error;
         if (inserted) {
-          setChecklists(prev => new Map(prev).set(itemIndex, { ...cl, id: (inserted as any).id, approved: allOk }));
+          setChecklists(prev => new Map(prev).set(itemIndex, { ...cl, id: (inserted as unknown as ChecklistRow).id, approved: allOk }));
         }
       }
 
@@ -270,7 +285,7 @@ const QualityChecklist = () => {
                   {CRITERIA.map(c => (
                     <label key={c.key} className="flex items-start gap-3 p-2 rounded-lg hover:bg-muted cursor-pointer">
                       <Checkbox
-                        checked={(cl as any)[c.key]}
+                        checked={cl[c.key as ChecklistBooleanField]}
                         onCheckedChange={v => updateChecklistField(index, c.key, v)}
                         className="mt-0.5"
                       />

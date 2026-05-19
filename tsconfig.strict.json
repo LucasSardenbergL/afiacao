@@ -41,6 +41,16 @@
     "src/pages/FinanceiroConciliacao.tsx",
     "src/components/financeiro/CockpitDrillDown.tsx",
     "src/pages/FinanceiroCockpit.tsx",
-    "src/pages/AdminReposicaoAplicacao.tsx"
+    "src/pages/AdminReposicaoAplicacao.tsx",
+    "src/pages/AdminReposicaoNegociacaoParalela.tsx",
+    "src/components/des/CheckinQualitativoTab.tsx",
+    "src/pages/SalesOrders.tsx",
+    "src/pages/TintReconciliation.tsx",
+    "src/pages/TintMapping.tsx",
+    "src/pages/Recebimento.tsx",
+    "src/pages/AdminReposicaoPromocoes.tsx",
+    "src/pages/FarmerTacticalPlan.tsx",
+    "src/pages/AdminReposicaoOportunidades.tsx",
+    "src/components/UnifiedAIAssistant.tsx"
   ]
 }

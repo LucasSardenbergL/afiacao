@@ -29,6 +29,7 @@ const Auth = lazy(() => import("./pages/Auth"));
 const ResetPassword = lazy(() => import("./pages/ResetPassword"));
 const Admin = lazy(() => import("./pages/Admin"));
 const AdminCustomers = lazy(() => import("./pages/AdminCustomers"));
+const Customer360 = lazy(() => import("./pages/Customer360"));
 const AdminOrderDetail = lazy(() => import("./pages/AdminOrderDetail"));
 const AdminDemandForecast = lazy(() => import("./pages/AdminDemandForecast"));
 const AdminRoutePlanner = lazy(() => import("./pages/AdminRoutePlanner"));
@@ -208,6 +209,7 @@ const App = () => (
               <Route path="admin/departments" element={<AdminDepartments />} />
               <Route path="admin/customers" element={<AdminCustomers />} />
               <Route path="admin/customers/:customerId" element={<AdminCustomers />} />
+              <Route path="admin/customers/:customerId/360" element={<Customer360 />} />
               <Route path="admin/orders/:id" element={<AdminOrderDetail />} />
               <Route path="admin/orders/:id/quality" element={<QualityChecklist />} />
               <Route path="admin/demand-forecast" element={<AdminDemandForecast />} />

@@ -1,5 +1,5 @@
 import { useState, useRef, useCallback, useEffect } from 'react';
-import { Mic, Send, Loader2, Sparkles, X, Square, Camera, Package, Wrench, Image, Check, Lightbulb, Plus, Paperclip, FileAudio, User, MapPin } from 'lucide-react';
+import { Mic, Loader2, Sparkles, X, Square, Camera, Package, Wrench, Check, Lightbulb, Plus, Paperclip, User, MapPin } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { cn, decodeHtmlEntities } from '@/lib/utils';
@@ -153,11 +153,13 @@ export function UnifiedAIAssistant({ products, userTools, onItemsIdentified, onC
       setIsRecording(true);
       setRecordingDuration(0);
       timerRef.current = window.setInterval(() => setRecordingDuration(p => p + 1), 1000);
-    } catch (err: any) {
-      if (err.name === 'NotAllowedError') {
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : String(err);
+      const name = err instanceof Error ? err.name : '';
+      if (name === 'NotAllowedError') {
         toast.error('Permissão negada', { description: 'Permita o acesso ao microfone.' });
       } else {
-        toast.error('Erro ao gravar', { description: err.message });
+        toast.error('Erro ao gravar', { description: msg });
       }
     }
   }, []);
@@ -181,15 +183,16 @@ export function UnifiedAIAssistant({ products, userTools, onItemsIdentified, onC
       const fd = new FormData();
       fd.append('audio', blob, `recording.${ext}`);
 
-      const result = await invokeFunction<{ text?: string }>('elevenlabs-transcribe', fd as any);
+      const result = await invokeFunction<{ text?: string }>('elevenlabs-transcribe', fd);
       if (result.text) {
         setText(prev => prev + (prev ? ' ' : '') + result.text);
         toast.success('Transcrição concluída');
       } else {
         toast.error('Nenhum texto detectado');
       }
-    } catch (e: any) {
-      toast.error('Erro na transcrição', { description: e.message });
+    } catch (e: unknown) {
+      const msg = e instanceof Error ? e.message : String(e);
+      toast.error('Erro na transcrição', { description: msg });
     } finally {
       setIsTranscribing(false);
     }
@@ -268,7 +271,11 @@ export function UnifiedAIAssistant({ products, userTools, onItemsIdentified, onC
 
     try {
       const result = await invokeFunction<{
-        products?: any[]; services?: any[]; suggestions?: any[]; customer?: any; message?: string;
+        products?: AIProduct[];
+        services?: AIService[];
+        suggestions?: AISuggestion[];
+        customer?: AICustomerMatch | null;
+        message?: string;
       }>('analyze-unified-order', {
         text: text.trim() || undefined,
         imageBase64: images.length === 1 ? images[0].base64 : undefined,
@@ -307,7 +314,7 @@ export function UnifiedAIAssistant({ products, userTools, onItemsIdentified, onC
       } else {
         setAiMessage(result.message || 'Não consegui identificar itens. Tente ser mais específico.');
       }
-    } catch (e: any) {
+    } catch (e: unknown) {
       console.error('[UnifiedOrder AI] Falha ao analisar pedido:', e);
       setAiFallbackActive(true);
       setAiMessage('A análise inteligente está indisponível no momento. Você pode continuar montando o pedido manualmente.');

@@ -8,6 +8,107 @@ const corsHeaders = {
   'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type, x-supabase-client-platform, x-supabase-client-platform-version, x-supabase-client-runtime, x-supabase-client-runtime-version',
 };
 
+// ── Inline row/payload types (Edge Function bundles independent of @/integrations/supabase/types) ──
+interface FarmerClientScoreRow {
+  id: string;
+  customer_user_id: string;
+  farmer_id: string;
+  health_score: number | null;
+  health_class: string | null;
+  churn_risk: number | null;
+  priority_score: number | null;
+  days_since_last_purchase: number | null;
+  avg_monthly_spend_180d: number | null;
+  category_count: number | null;
+  gross_margin_pct: number | null;
+  avg_repurchase_interval: number | null;
+  expansion_score: number | null;
+  recover_score: number | null;
+  revenue_potential: number | null;
+  rf_score: number | null;
+  m_score: number | null;
+  g_score: number | null;
+  s_score: number | null;
+  x_score: number | null;
+  eff_score: number | null;
+}
+
+interface OmieClienteRow {
+  user_id: string;
+  omie_codigo_vendedor: string | null;
+}
+
+interface CustomerSalesSummaryRow {
+  customer_user_id: string;
+  [key: string]: unknown;
+}
+
+interface OrderAggAccumulator {
+  total_revenue: number;
+  item_count: number;
+  last_purchase: string | null;
+  product_ids: Set<string>;
+}
+
+interface FarmerClientScoreSeed {
+  customer_user_id: string;
+  farmer_id: string;
+  health_score: number;
+  health_class: string;
+  churn_risk: number;
+  priority_score: number;
+  days_since_last_purchase: number;
+  avg_monthly_spend_180d: number;
+  category_count: number;
+  gross_margin_pct: number;
+  avg_repurchase_interval: number;
+  expansion_score: number;
+  recover_score: number;
+  revenue_potential: number;
+  rf_score: number;
+  m_score: number;
+  g_score: number;
+  s_score: number;
+  x_score: number;
+  eff_score: number;
+}
+
+interface ScoreUpdate {
+  id: string;
+  health_score: number;
+  health_class: string;
+  churn_risk: number;
+  priority_score: number;
+  rf_score: number;
+  m_score: number;
+  g_score: number;
+  calculated_at: string;
+  updated_at: string;
+}
+
+interface HealthHistoryRecord {
+  customer_user_id: string;
+  farmer_id: string;
+  health_score: number;
+  health_class: string;
+  rf_score: number;
+  m_score: number;
+  g_score: number;
+  x_score: number;
+  s_score: number;
+  churn_risk: number;
+}
+
+interface PriorityLogRecord {
+  customer_user_id: string;
+  farmer_id: string;
+  priority_score: number;
+  margin_potential_component: number;
+  churn_risk_component: number;
+  repurchase_component: number;
+  goal_proximity_component: number;
+}
+
 Deno.serve(async (req) => {
   if (req.method === 'OPTIONS') {
     return new Response(null, { headers: corsHeaders });
@@ -50,7 +151,7 @@ Deno.serve(async (req) => {
     };
 
     // Get all client scores with pagination
-    let clients: any[] = [];
+    let clients: FarmerClientScoreRow[] = [];
     {
       let pg = 0;
       const sz = 1000;
@@ -63,7 +164,7 @@ Deno.serve(async (req) => {
         if (bErr) throw bErr;
         if (!batch || batch.length === 0) { more = false; }
         else {
-          clients.push(...batch);
+          clients.push(...(batch as unknown as FarmerClientScoreRow[]));
           if (batch.length < sz) more = false;
           pg++;
         }
@@ -85,7 +186,7 @@ Deno.serve(async (req) => {
       const defaultFarmerId = employees?.[0]?.user_id || '414a9727-ad1d-4998-914e-9c6ccf26cf50';
 
       // Get all omie clients with pagination (bypass 1000 limit)
-      const allClients: any[] = [];
+      const allClients: OmieClienteRow[] = [];
       let page = 0;
       const pageSize = 1000;
       let hasMore = true;
@@ -95,12 +196,12 @@ Deno.serve(async (req) => {
           .from('omie_clientes')
           .select('user_id, omie_codigo_vendedor')
           .range(page * pageSize, (page + 1) * pageSize - 1);
-        
+
         if (bErr) throw bErr;
         if (!batch || batch.length === 0) {
           hasMore = false;
         } else {
-          allClients.push(...batch);
+          allClients.push(...(batch as unknown as OmieClienteRow[]));
           if (batch.length < pageSize) hasMore = false;
           page++;
         }
@@ -118,16 +219,16 @@ Deno.serve(async (req) => {
       }
 
       // Get sales data per customer if available
-      let salesAgg: any[] | null = null;
+      let salesAgg: CustomerSalesSummaryRow[] | null = null;
       try {
         const { data } = await supabase.rpc('get_customer_sales_summary');
-        salesAgg = data;
+        salesAgg = (data ?? null) as unknown as CustomerSalesSummaryRow[] | null;
       } catch (_e) {
         // RPC may not exist yet, skip
         salesAgg = null;
       }
 
-      const salesMap = new Map<string, any>();
+      const salesMap = new Map<string, CustomerSalesSummaryRow>();
       if (salesAgg && Array.isArray(salesAgg)) {
         for (const s of salesAgg) {
           salesMap.set(s.customer_user_id, s);
@@ -135,7 +236,7 @@ Deno.serve(async (req) => {
       }
 
       // Also try to get data from order_items
-      const orderDataMap = new Map<string, any>();
+      const orderDataMap = new Map<string, OrderAggAccumulator>();
       const { data: orderAgg } = await supabase
         .from('order_items')
         .select('customer_user_id, unit_price, quantity, created_at, product_id')
@@ -160,7 +261,7 @@ Deno.serve(async (req) => {
       }
 
       // Build seed records in batches
-      const seedRecords: any[] = [];
+      const seedRecords: FarmerClientScoreSeed[] = [];
       const now = new Date();
 
       for (const client of allClients) {
@@ -232,7 +333,7 @@ Deno.serve(async (req) => {
           if (rErr2) throw rErr2;
           if (!batch2 || batch2.length === 0) { more2 = false; }
           else {
-            clients.push(...batch2);
+            clients.push(...(batch2 as unknown as FarmerClientScoreRow[]));
             if (batch2.length < sz2) more2 = false;
             pg2++;
           }
@@ -257,9 +358,9 @@ Deno.serve(async (req) => {
     const maxCategories = Math.max(...clients.map(c => Number(c.category_count || 0)), 1);
     const maxRevPotential = Math.max(...clients.map(c => Number(c.revenue_potential || 0)), 1);
 
-    const healthHistoryRecords: any[] = [];
-    const priorityLogRecords: any[] = [];
-    const updates: any[] = [];
+    const healthHistoryRecords: HealthHistoryRecord[] = [];
+    const priorityLogRecords: PriorityLogRecord[] = [];
+    const updates: ScoreUpdate[] = [];
 
     for (const client of clients) {
       // --- Health Score ---

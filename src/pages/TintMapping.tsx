@@ -1,7 +1,6 @@
 import { useState } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { supabase } from '@/integrations/supabase/client';
-import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Input } from '@/components/ui/input';
 import { Button } from '@/components/ui/button';
@@ -15,6 +14,24 @@ import { Search, EyeOff, Eye } from 'lucide-react';
 import { toast } from 'sonner';
 
 const ACCOUNT = 'oben';
+
+interface SkuRow {
+  id: string;
+  omie_product_id: string | null;
+  ativo: boolean | null;
+  tint_produtos: { descricao: string | null; cod_produto: string | null } | null;
+  tint_bases: { descricao: string | null } | null;
+  tint_embalagens: { descricao: string | null; volume_ml: number | null } | null;
+}
+
+interface CoranteRow {
+  id: string;
+  descricao: string;
+  omie_product_id: string | null;
+  volume_total_ml: number;
+}
+
+type FilterStatus = 'all' | 'mapped' | 'pending';
 
 function useOmieProducts(tintType: string) {
   return useQuery({
@@ -87,7 +104,7 @@ function SkuTab() {
       queryClient.invalidateQueries({ queryKey: ['tint-dashboard-metrics'] });
       toast.success('SKU mapeado');
     },
-    onError: (e: any) => toast.error(e.message),
+    onError: (e: Error) => toast.error(e.message),
   });
 
   const toggleAtivoMutation = useMutation({
@@ -99,22 +116,22 @@ function SkuTab() {
       if (error) throw error;
     },
     onMutate: async ({ skuId, ativo }) => {
-      const previous = queryClient.getQueryData(['tint-skus-mapping']);
-      queryClient.setQueryData(['tint-skus-mapping'], (old: any) =>
-        old?.map((s: any) => s.id === skuId ? { ...s, ativo } : s)
+      const previous = queryClient.getQueryData<SkuRow[]>(['tint-skus-mapping']);
+      queryClient.setQueryData<SkuRow[]>(['tint-skus-mapping'], (old) =>
+        old?.map((s) => s.id === skuId ? { ...s, ativo } : s)
       );
       return { previous };
     },
     onSuccess: (_, vars) => {
       toast.success(vars.ativo ? 'SKU reativado' : 'SKU ocultado');
     },
-    onError: (e: any, _, context) => {
+    onError: (e: Error, _, context) => {
       if (context?.previous) queryClient.setQueryData(['tint-skus-mapping'], context.previous);
       toast.error(e.message);
     },
   });
 
-  const filtered = (skus ?? []).filter((s: any) => {
+  const filtered = ((skus ?? []) as SkuRow[]).filter((s) => {
     if (!showInactive && s.ativo === false) return false;
     if (filterStatus === 'mapped' && !s.omie_product_id) return false;
     if (filterStatus === 'pending' && s.omie_product_id) return false;
@@ -130,7 +147,7 @@ function SkuTab() {
   const omieMap = new Map((omieProducts ?? []).map(p => [p.id, p]));
 
   const totalSkus = skus?.length ?? 0;
-  const activeSkus = (skus ?? []).filter((s: any) => s.ativo !== false).length;
+  const activeSkus = ((skus ?? []) as SkuRow[]).filter((s) => s.ativo !== false).length;
   const inactiveSkus = totalSkus - activeSkus;
 
   if (isLoading) return <Skeleton className="h-40 w-full" />;
@@ -143,7 +160,7 @@ function SkuTab() {
           <Input placeholder="Buscar produto ou base..." value={search} onChange={e => setSearch(e.target.value)} className="pl-9" />
         </div>
 
-        <Select value={filterStatus} onValueChange={(v: any) => setFilterStatus(v)}>
+        <Select value={filterStatus} onValueChange={(v) => setFilterStatus(v as FilterStatus)}>
           <SelectTrigger className="w-[160px] h-9 text-sm">
             <SelectValue />
           </SelectTrigger>
@@ -180,7 +197,7 @@ function SkuTab() {
             </TableRow>
           </TableHeader>
           <TableBody>
-            {filtered.map((sku: any) => {
+            {filtered.map((sku) => {
               const linked = sku.omie_product_id ? omieMap.get(sku.omie_product_id) : null;
               const isInactive = sku.ativo === false;
               return (
@@ -256,7 +273,7 @@ function CoranteTab() {
       queryClient.invalidateQueries({ queryKey: ['tint-dashboard-metrics'] });
       toast.success('Corante mapeado');
     },
-    onError: (e: any) => toast.error(e.message),
+    onError: (e: Error) => toast.error(e.message),
   });
 
   const omieMap = new Map((omieProducts ?? []).map(p => [p.id, p]));
@@ -277,7 +294,7 @@ function CoranteTab() {
           </TableRow>
         </TableHeader>
         <TableBody>
-          {(corantes ?? []).map((c: any) => {
+          {((corantes ?? []) as CoranteRow[]).map((c) => {
             const linked = c.omie_product_id ? omieMap.get(c.omie_product_id) : null;
             const custoMl = linked && c.volume_total_ml > 0 ? linked.valor_unitario / c.volume_total_ml : null;
             return (

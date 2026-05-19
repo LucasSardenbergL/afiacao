@@ -1,6 +1,7 @@
 import { useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
+import type { Tables } from "@/integrations/supabase/types";
 import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
@@ -13,13 +14,17 @@ import { GitCompare, AlertTriangle, CheckCircle, MinusCircle, FlaskConical } fro
 
 const SYNTHETIC_PREFIXES = ["SIM-", "MOCK-", "TEST-", "FAKE-"];
 
-function isSyntheticRecord(item: any): boolean {
+type ReconciliationRun = Tables<"tint_reconciliation_runs">;
+type ReconciliationItem = Tables<"tint_reconciliation_items">;
+type ClassifiedItem = ReconciliationItem & { _isSynthetic: boolean };
+
+function isSyntheticRecord(item: Pick<ReconciliationItem, "entity_key" | "sync_value">): boolean {
   const key = (item.entity_key || "").toUpperCase();
   if (SYNTHETIC_PREFIXES.some((p) => key.includes(p))) return true;
   const syncVal = item.sync_value;
   if (syncVal) {
     const obj = typeof syncVal === "string" ? JSON.parse(syncVal) : syncVal;
-    const vals = Object.values(obj).map((v) => String(v ?? "").toUpperCase());
+    const vals = Object.values(obj as Record<string, unknown>).map((v) => String(v ?? "").toUpperCase());
     if (vals.some((v) => SYNTHETIC_PREFIXES.some((p) => v.includes(p)))) return true;
   }
   return false;
@@ -50,7 +55,7 @@ export default function TintReconciliation() {
   const [entityFilter, setEntityFilter] = useState<string>("all");
   const [diffFilter, setDiffFilter] = useState<string>("all");
   const [search, setSearch] = useState("");
-  const [detailItem, setDetailItem] = useState<any>(null);
+  const [detailItem, setDetailItem] = useState<ClassifiedItem | null>(null);
   const [hideSynthetic, setHideSynthetic] = useState(true);
 
   const { data: runs = [] } = useQuery({
@@ -80,11 +85,11 @@ export default function TintReconciliation() {
   });
 
   // Classify items
-  const classifiedItems = items.map((i: any) => ({ ...i, _isSynthetic: isSyntheticRecord(i) }));
-  const syntheticCount = classifiedItems.filter((i: any) => i._isSynthetic).length;
+  const classifiedItems: ClassifiedItem[] = items.map((i) => ({ ...i, _isSynthetic: isSyntheticRecord(i) }));
+  const syntheticCount = classifiedItems.filter((i) => i._isSynthetic).length;
   const realCount = classifiedItems.length - syntheticCount;
 
-  const filtered = classifiedItems.filter((i: any) => {
+  const filtered = classifiedItems.filter((i) => {
     if (hideSynthetic && i._isSynthetic) return false;
     if (entityFilter !== "all" && i.entity_type !== entityFilter) return false;
     if (diffFilter !== "all" && i.diff_type !== diffFilter) return false;
@@ -92,14 +97,14 @@ export default function TintReconciliation() {
     return true;
   });
 
-  const entityTypes = [...new Set(items.map((i: any) => i.entity_type))];
+  const entityTypes = [...new Set(items.map((i) => i.entity_type))];
 
   // Counts for visible items only
-  const visibleItems = classifiedItems.filter((i: any) => !(hideSynthetic && i._isSynthetic));
-  const counts = visibleItems.reduce((acc: Record<string, number>, i: any) => {
+  const visibleItems = classifiedItems.filter((i) => !(hideSynthetic && i._isSynthetic));
+  const counts = visibleItems.reduce<Record<string, number>>((acc, i) => {
     acc[i.diff_type] = (acc[i.diff_type] || 0) + 1;
     return acc;
-  }, {} as Record<string, number>);
+  }, {});
 
   return (
     <div className="space-y-6">
@@ -150,7 +155,7 @@ export default function TintReconciliation() {
         <Select value={selectedRun || ""} onValueChange={setSelectedRun}>
           <SelectTrigger className="w-72"><SelectValue placeholder="Selecione uma execução" /></SelectTrigger>
           <SelectContent>
-            {runs.map((r: any) => (
+            {runs.map((r: ReconciliationRun) => (
               <SelectItem key={r.id} value={r.id}>
                 {r.store_code} — {new Date(r.started_at).toLocaleDateString("pt-BR")} ({r.status})
               </SelectItem>
@@ -200,10 +205,10 @@ export default function TintReconciliation() {
               <TableBody>
                 {filtered.length === 0 ? (
                   <TableRow><TableCell colSpan={7} className="text-center text-muted-foreground py-8">Nenhum item encontrado</TableCell></TableRow>
-                ) : filtered.map((item: any) => {
+                ) : filtered.map((item) => {
                   const dt = diffTypeLabels[item.diff_type] || diffTypeLabels.divergence;
-                  const csvVal = item.csv_value ? (typeof item.csv_value === "string" ? JSON.parse(item.csv_value) : item.csv_value) : null;
-                  const syncVal = item.sync_value ? (typeof item.sync_value === "string" ? JSON.parse(item.sync_value) : item.sync_value) : null;
+                  const csvVal = item.csv_value ? (typeof item.csv_value === "string" ? JSON.parse(item.csv_value) : item.csv_value) as Record<string, unknown> : null;
+                  const syncVal = item.sync_value ? (typeof item.sync_value === "string" ? JSON.parse(item.sync_value) : item.sync_value) as Record<string, unknown> : null;
                   return (
                     <TableRow key={item.id} className={`cursor-pointer hover:bg-muted/50 ${item._isSynthetic ? "opacity-60" : ""}`} onClick={() => setDetailItem(item)}>
                       <TableCell><Badge variant="outline">{item.entity_type}</Badge></TableCell>
@@ -242,8 +247,8 @@ export default function TintReconciliation() {
           </DialogHeader>
           {detailItem && (() => {
             const dt = diffTypeLabels[detailItem.diff_type] || diffTypeLabels.divergence;
-            const csvVal = detailItem.csv_value ? (typeof detailItem.csv_value === "string" ? JSON.parse(detailItem.csv_value) : detailItem.csv_value) : null;
-            const syncVal = detailItem.sync_value ? (typeof detailItem.sync_value === "string" ? JSON.parse(detailItem.sync_value) : detailItem.sync_value) : null;
+            const csvVal = detailItem.csv_value ? (typeof detailItem.csv_value === "string" ? JSON.parse(detailItem.csv_value) : detailItem.csv_value) as Record<string, unknown> : null;
+            const syncVal = detailItem.sync_value ? (typeof detailItem.sync_value === "string" ? JSON.parse(detailItem.sync_value) : detailItem.sync_value) as Record<string, unknown> : null;
             const synthetic = isSyntheticRecord(detailItem);
             
             let reason = "";
@@ -289,15 +294,15 @@ export default function TintReconciliation() {
                 {csvVal && <ValueDisplay label="Tabela oficial (CSV)" value={csvVal} />}
                 {syncVal && <ValueDisplay label="Staging (Sync)" value={syncVal} />}
 
-                {detailItem.diff_fields?.length > 0 && (
+                {(detailItem.diff_fields?.length ?? 0) > 0 && (
                   <div>
                     <p className="text-xs text-muted-foreground mb-1 font-semibold">Campos divergentes</p>
                     <div className="space-y-1">
-                      {detailItem.diff_fields.map((field: string) => (
+                      {(detailItem.diff_fields ?? []).map((field: string) => (
                         <div key={field} className="text-sm bg-muted p-2 rounded">
                           <span className="font-semibold">{field}:</span>
-                          <span className="ml-2 text-primary">CSV: {csvVal?.[field] ?? "—"}</span>
-                          <span className="ml-2 text-accent-foreground">Sync: {syncVal?.[field] ?? "—"}</span>
+                          <span className="ml-2 text-primary">CSV: {String(csvVal?.[field] ?? "—")}</span>
+                          <span className="ml-2 text-accent-foreground">Sync: {String(syncVal?.[field] ?? "—")}</span>
                         </div>
                       ))}
                     </div>

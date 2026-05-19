@@ -21,7 +21,7 @@ import {
   Loader2, Plus, Wrench, Trash2, Search, User, Phone, FileText,
   ChevronLeft, Mail, Building2, ShoppingCart, TrendingUp, ArrowUpRight,
   BarChart3, Clock, AlertTriangle, ChevronRight, Filter, MoreHorizontal,
-  MessageSquare, Calendar, DollarSign, Package, Activity, Users,
+  MessageSquare, Calendar, DollarSign, Package, Activity, Users, Sparkles,
 } from 'lucide-react';
 import { EmptyState } from '@/components/EmptyState';
 import {
@@ -489,6 +489,12 @@ function Customer360View({
         </div>
 
         <div className="flex items-center gap-1.5">
+          <Button size="sm" variant="default" className="gap-1.5 h-8"
+            onClick={() => navigate(`/admin/customers/${customer.user_id}/360`)}
+          >
+            <Sparkles className="w-3.5 h-3.5" />
+            Ver 360°
+          </Button>
           <Button size="sm" variant="outline" className="gap-1.5 h-8"
             onClick={() => navigate(`/sales/new`)}
           >

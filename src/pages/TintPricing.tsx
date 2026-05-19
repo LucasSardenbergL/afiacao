@@ -12,6 +12,50 @@ import { toast } from 'sonner';
 
 const ACCOUNT = 'oben';
 
+interface TintSkuRow {
+  id: string;
+  omie_product_id: string | null;
+  imposto_pct: number | null;
+  margem_pct: number | null;
+  tint_produtos?: { descricao: string | null } | null;
+  tint_bases?: { descricao: string | null } | null;
+  tint_embalagens?: { descricao: string | null; volume_ml: number | null } | null;
+  omie_products?: { valor_unitario: number | null } | null;
+}
+
+interface TintCoranteRow {
+  id: string;
+  descricao: string | null;
+  omie_product_id: string | null;
+  volume_total_ml: number;
+}
+
+interface TintFormulaItemRow {
+  qtd_ml: number;
+  ordem: number;
+  tint_corantes: TintCoranteRow | null;
+}
+
+interface TintFormulaSkuRow {
+  id: string;
+  omie_product_id: string | null;
+  imposto_pct: number | null;
+  margem_pct: number | null;
+}
+
+interface TintFormulaRow {
+  id: string;
+  cor_id: string;
+  nome_cor: string | null;
+  volume_final_ml: number | null;
+  preco_final_sayersystem: number | null;
+  tint_produtos?: { descricao: string | null } | null;
+  tint_bases?: { descricao: string | null } | null;
+  tint_embalagens?: { descricao: string | null; volume_ml: number | null } | null;
+  tint_skus?: TintFormulaSkuRow | null;
+  tint_formula_itens?: TintFormulaItemRow[] | null;
+}
+
 function useMappedSkus() {
   return useQuery({
     queryKey: ['tint-skus-pricing'],
@@ -96,7 +140,7 @@ export default function TintPricing() {
       queryClient.invalidateQueries({ queryKey: ['tint-skus-pricing'] });
       toast.success('Preços salvos');
     },
-    onError: (e: any) => toast.error(e.message),
+    onError: (e: Error) => toast.error(e.message),
   });
 
   const handleSaveAll = () => {
@@ -105,7 +149,7 @@ export default function TintPricing() {
     saveMutation.mutate(updates);
   };
 
-  const getEdit = (skuId: string, sku: any) => {
+  const getEdit = (skuId: string, sku: TintSkuRow) => {
     return edits[skuId] || { imposto_pct: sku.imposto_pct ?? 0, margem_pct: sku.margem_pct ?? 0 };
   };
 
@@ -141,7 +185,7 @@ export default function TintPricing() {
                   </TableRow>
                 </TableHeader>
                 <TableBody>
-                  {(skus ?? []).map((sku: any) => {
+                  {((skus ?? []) as unknown as TintSkuRow[]).map((sku) => {
                     const custo = sku.omie_products?.valor_unitario ?? 0;
                     const e = getEdit(sku.id, sku);
                     const preco = calcPrice(custo, e.imposto_pct, e.margem_pct);
@@ -189,7 +233,7 @@ export default function TintPricing() {
 
           {searchResults && searchResults.length > 0 && (
             <div className="space-y-4">
-              {searchResults.map((f: any) => {
+              {(searchResults as unknown as TintFormulaRow[]).map((f) => {
                 const baseCusto = f.tint_skus?.omie_product_id && omieMap ? (omieMap.get(f.tint_skus.omie_product_id) ?? 0) : 0;
                 const impostoP = f.tint_skus?.imposto_pct ?? 0;
                 const margemP = f.tint_skus?.margem_pct ?? 0;
@@ -228,7 +272,7 @@ export default function TintPricing() {
                     </div>
                     {itens.length > 0 && (
                       <div className="text-xs text-muted-foreground">
-                        Corantes: {itens.map((it: any) => `${it.tint_corantes?.descricao?.split(' - ')[0]} (${it.qtd_ml}ml)`).join(', ')}
+                        Corantes: {itens.map((it: TintFormulaItemRow) => `${it.tint_corantes?.descricao?.split(' - ')[0]} (${it.qtd_ml}ml)`).join(', ')}
                       </div>
                     )}
                   </div>

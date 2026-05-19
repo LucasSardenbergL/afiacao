@@ -2,6 +2,7 @@ import { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { supabase } from '@/integrations/supabase/client';
+import type { Tables } from '@/integrations/supabase/types';
 import { useAuth } from '@/contexts/AuthContext';
 import { Card, CardContent } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
@@ -17,6 +18,17 @@ import { format } from 'date-fns';
 import { ptBR } from 'date-fns/locale';
 
 const fmt = (v: number) => v.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' });
+
+type SalesOrder = Tables<'sales_orders'>;
+
+interface QuoteItem {
+  omie_codigo_produto?: string;
+  quantidade: number;
+  valor_unitario: number;
+  descricao: string;
+  tint_cor_id?: string;
+  tint_nome_cor?: string;
+}
 
 const SalesQuotes = () => {
   const { user } = useAuth();
@@ -64,10 +76,10 @@ const SalesQuotes = () => {
       queryClient.invalidateQueries({ queryKey: ['sales-quotes'] });
       toast.success('Orçamento excluído');
     },
-    onError: (e: any) => toast.error('Erro ao excluir: ' + e.message),
+    onError: (e: Error) => toast.error('Erro ao excluir: ' + e.message),
   });
 
-  const convertToOrder = async (quote: any) => {
+  const convertToOrder = async (quote: SalesOrder) => {
     setConverting(quote.id);
     try {
       // Get omie_clientes mapping
@@ -92,7 +104,7 @@ const SalesQuotes = () => {
       if (updateError) throw updateError;
 
       // Send to Omie in background
-      const items = ((quote.items as any[]) || []).map((i: any) => ({
+      const items = ((quote.items as unknown as QuoteItem[]) || []).map((i: QuoteItem) => ({
         omie_codigo_produto: i.omie_codigo_produto,
         quantidade: i.quantidade,
         valor_unitario: i.valor_unitario,
@@ -123,8 +135,9 @@ const SalesQuotes = () => {
 
       queryClient.invalidateQueries({ queryKey: ['sales-quotes'] });
       toast.success('Orçamento convertido em pedido!');
-    } catch (e: any) {
-      toast.error('Erro ao converter: ' + e.message);
+    } catch (e) {
+      const message = e instanceof Error ? e.message : String(e);
+      toast.error('Erro ao converter: ' + message);
     } finally {
       setConverting(null);
     }
@@ -159,7 +172,7 @@ const SalesQuotes = () => {
       ) : (
         <div className="space-y-3">
           {quotes.map(q => {
-            const items = (q.items as any[]) || [];
+            const items = (q.items as unknown as QuoteItem[]) || [];
             const itemCount = items.length;
             return (
               <Card key={q.id}>
@@ -177,7 +190,7 @@ const SalesQuotes = () => {
                         {' · '}{itemCount} {itemCount === 1 ? 'item' : 'itens'}
                       </p>
                       <div className="mt-1 text-xs text-muted-foreground space-y-0.5">
-                        {items.slice(0, 3).map((item: any, idx: number) => (
+                        {items.slice(0, 3).map((item: QuoteItem, idx: number) => (
                           <div key={idx} className="truncate">
                             {item.quantidade}x {item.descricao} – {fmt(item.valor_unitario)}
                           </div>
