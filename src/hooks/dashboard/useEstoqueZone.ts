@@ -79,7 +79,7 @@ export function useEstoqueZone() {
           .not('validade', 'is', null)
           .lt('validade', today.toISOString());
         if (fefo) {
-          const rows = fefo as Array<{
+          const rows = fefo as unknown as Array<{
             id: string;
             sku_descricao?: string | null;
             validade?: string | null;
