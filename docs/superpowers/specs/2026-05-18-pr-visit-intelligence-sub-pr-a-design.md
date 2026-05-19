@@ -95,7 +95,7 @@ Give the Closer/Hunter/Master (Lucas) a daily, data-driven list of customers wor
 
 ## Data Model
 
-### Migration `20260518xxxxxx_visit_intelligence_v1.sql`
+### Migration `20260518120000_visit_intelligence_v1.sql`
 
 ```sql
 -- PR-VISIT-INTELLIGENCE Sub-PR A: visit scoring + 4 missões
@@ -422,7 +422,27 @@ async function recalcOne(supabase, customer_user_id, farmer_id) {
     state: addressRes.data?.state,
     last_visit_at: visitsRes.data?.[0]?.check_in_at,
     days_since_last_visit: computeDays(visitsRes.data?.[0]?.check_in_at),
-    score_breakdown: { /* inputs + intermediate values for tooltip */ },
+    score_breakdown: {
+      inputs: {
+        churn_risk: inputs.churn_risk,
+        expansion_score: inputs.expansion_score,
+        health_score: inputs.health_score,
+        recover_score: inputs.recover_score,
+        days_since_last_purchase: inputs.days_since_last_purchase,
+        days_since_last_visit: inputs.days_since_last_visit,
+        sales_orders_count: inputs.sales_orders_count,
+        is_prospect: inputs.is_prospect,
+        revenue_potential: inputs.revenue_potential,
+        avg_monthly_spend_180d: inputs.avg_monthly_spend_180d,
+      },
+      signal_modifiers_summary: {
+        churn_count: inputs.signal_modifiers?.breakdown.churn?.length ?? 0,
+        expansion_count: inputs.signal_modifiers?.breakdown.expansion?.length ?? 0,
+        churn_delta: inputs.signal_modifiers?.churn_delta ?? 0,
+        expansion_delta: inputs.signal_modifiers?.expansion_delta ?? 0,
+      },
+      mission_scores: result.scores,
+    },
     calculated_at: new Date().toISOString(),
     updated_at: new Date().toISOString(),
   }, { onConflict: 'customer_user_id,farmer_id' });
@@ -508,7 +528,7 @@ Default city = primeira da lista (cidade com mais candidatos).
   - Nome do cliente (link pra `/admin/customers/:id/360`)
   - Badges: label da missão + visit_score + bairro + days since last visit ("nunca visitado" se null)
   - Botão "Planejar" linkando pra `/admin/route-planner?customer=:id`
-- Tooltip on hover: `score_breakdown` mostrando quais signals contribuíram
+- Tooltip on hover: `score_breakdown` mostrando inputs (churn_risk, expansion_score, etc) + sumário de signal_modifiers (quantos signals churn/expansion contribuíram) + os 4 mission_scores (pra ver qual ganhou e por que)
 
 ### Integration in `/meu-dia`
 
