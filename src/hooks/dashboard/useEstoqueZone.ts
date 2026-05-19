@@ -39,7 +39,7 @@ export function useEstoqueZone() {
           .select('id, fornecedor_nome, created_at, status')
           .eq('status', 'pendente');
         if (nf) {
-          const rows = nf as Array<{
+          const rows = nf as unknown as Array<{
             id: string;
             fornecedor_nome?: string | null;
             created_at: string;
@@ -79,7 +79,7 @@ export function useEstoqueZone() {
           .not('validade', 'is', null)
           .lt('validade', today.toISOString());
         if (fefo) {
-          const rows = fefo as Array<{
+          const rows = fefo as unknown as Array<{
             id: string;
             sku_descricao?: string | null;
             validade?: string | null;

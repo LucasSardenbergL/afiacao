@@ -101,7 +101,7 @@ export function KbSpecsForm({ initialValues, documentId, onSaved }: Props) {
     handleSubmit,
     formState: { errors },
   } = useForm<FormValues>({
-    resolver: zodResolver(schema),
+    resolver: zodResolver(schema) as unknown as import('react-hook-form').Resolver<FormValues>,
     defaultValues: {
       product_code: initialValues.product_code ?? '',
       product_name: initialValues.product_name ?? '',

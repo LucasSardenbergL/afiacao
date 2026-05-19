@@ -45,7 +45,7 @@ export function useReposicaoZone() {
           .limit(5);
         alertasAtivos = count ?? 0;
         if (alerts) {
-          const rows = alerts as Array<{
+          const rows = alerts as unknown as Array<{
             id: string;
             tipo?: string | null;
             descricao?: string | null;

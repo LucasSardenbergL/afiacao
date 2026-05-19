@@ -221,16 +221,22 @@ export const useCrossSellEngine = () => {
       }
 
       // 5. Load customer profiles for active clients only
-      // Split into batches of 100 to avoid URL limits
-      const allProfiles: ProfileRow[] = [];
+      // Split into batches of 100 (URL-limit safety) e dispara TODAS em paralelo.
+      // Antes era sequencial: com 3598 clientes ativos = 36 roundtrips serial = 5–15s
+      // bloqueando a thread de cálculo. Promise.all → 1 RTT efetivo (Supabase paraleliza).
+      const batches: string[][] = [];
       for (let i = 0; i < customerIds.length; i += 100) {
-        const batch = customerIds.slice(i, i + 100);
-        const { data: batchProfiles } = (await supabase
-          .from('profiles')
-          .select('user_id, name, customer_type, cnae')
-          .in('user_id', batch)) as unknown as { data: ProfileRow[] | null };
-        if (batchProfiles) allProfiles.push(...batchProfiles);
+        batches.push(customerIds.slice(i, i + 100));
       }
+      const batchResults = await Promise.all(
+        batches.map((batch) =>
+          supabase
+            .from('profiles')
+            .select('user_id, name, customer_type, cnae')
+            .in('user_id', batch) as unknown as Promise<{ data: ProfileRow[] | null }>,
+        ),
+      );
+      const allProfiles: ProfileRow[] = batchResults.flatMap((r) => r.data || []);
       const profileMap = new Map<string, ProfileRow>();
       allProfiles.forEach((p) => profileMap.set(p.user_id, p));
 
