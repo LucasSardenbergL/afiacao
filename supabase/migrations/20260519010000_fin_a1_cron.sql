@@ -1,0 +1,42 @@
+-- ============================================================
+-- A1 — Cron schedule para snapshot diário da projeção
+--
+-- SETUP (após habilitar pg_cron + configurar vault secrets):
+--
+-- Para cada empresa × cada cenário, gera 1 snapshot por dia às 7h BRT (10h UTC).
+-- Permite trend de "projeção mudou nas últimas 4 semanas?".
+--
+-- Vault secrets necessários (rodar uma vez no SQL Editor):
+--   SELECT vault.create_secret('https://SEU_PROJECT.supabase.co', 'project_url');
+--   SELECT vault.create_secret('SEU_CRON_SECRET', 'cron_secret');
+--
+-- Cron command (rodar no SQL Editor após vault):
+--
+-- DO $$
+-- DECLARE
+--   c text;
+--   cen text;
+-- BEGIN
+--   FOR c IN SELECT unnest(ARRAY['oben','colacor','colacor_sc']) LOOP
+--     FOR cen IN SELECT unnest(ARRAY['realista','otimista','pessimista']) LOOP
+--       PERFORM cron.schedule(
+--         format('fin-cashflow-snapshot-%s-%s', c, cen),
+--         '0 10 * * *',
+--         format(
+--           $cmd$SELECT net.http_post(
+--             url := (SELECT value FROM vault.decrypted_secrets WHERE name = 'project_url') || '/functions/v1/fin-cashflow-engine',
+--             headers := jsonb_build_object('Content-Type', 'application/json', 'x-cron-secret', (SELECT value FROM vault.decrypted_secrets WHERE name = 'cron_secret')),
+--             body := jsonb_build_object('company', '%s', 'cenario', '%s', 'save_snapshot', true)
+--           );$cmd$,
+--           c, cen
+--         )
+--       );
+--     END LOOP;
+--   END LOOP;
+-- END $$;
+--
+-- Verificar: SELECT jobname FROM cron.job WHERE jobname LIKE 'fin-cashflow%';
+-- ============================================================
+
+-- Placeholder pra registrar a migration na timeline (não cria nada)
+SELECT 'fin_a1_cron migration: ver instruções no comentário acima' AS info;

@@ -10,6 +10,10 @@
 -- não regras genéricas. Mais preciso, menos manual.
 -- ============================================================
 
+-- Drop primeiro: a versão antiga da função tem RETURNS TABLE diferente,
+-- e Postgres não deixa CREATE OR REPLACE mudar o tipo de retorno.
+DROP FUNCTION IF EXISTS public.fin_consolidado_intercompany(integer, integer);
+
 CREATE OR REPLACE FUNCTION public.fin_consolidado_intercompany(
   p_ano integer,
   p_mes integer
