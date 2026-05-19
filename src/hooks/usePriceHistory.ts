@@ -2,12 +2,6 @@ import { useState, useCallback } from 'react';
 import { supabase } from '@/integrations/supabase/client';
 import { logger } from '@/lib/logger';
 
-interface PriceHistoryEntry {
-  user_tool_id: string;
-  service_type: string;
-  unit_price: number;
-}
-
 interface PriceHistory {
   [key: string]: number; // key = `${userToolId}_${serviceType}` or `${serviceType}`
 }

@@ -233,8 +233,8 @@ export default function AdminReposicaoGruposProducao() {
       if (g.id) {
         const { error } = await supabase
           .from("fornecedor_grupo_producao" as never)
-          .update(payload)
-          .eq("id", g.id);
+          .update(payload as never)
+          .eq("id" as never, g.id as never);
         if (error) throw error;
       } else {
         const { error } = await supabase

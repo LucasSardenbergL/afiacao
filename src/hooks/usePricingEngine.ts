@@ -3,7 +3,7 @@ import { supabase } from '@/integrations/supabase/client';
 
 interface DefaultPrice {
   id: string;
-  tool_category_id: string;
+  tool_category_id: string | null;
   spec_filter: Record<string, string>;
   price: number;
   description: string | null;

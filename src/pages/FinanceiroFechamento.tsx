@@ -3,7 +3,6 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
-import { Input } from '@/components/ui/input';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter } from '@/components/ui/dialog';
 import { COMPANIES, ALL_COMPANIES, type Company } from '@/contexts/CompanyContext';
 import {
@@ -17,8 +16,8 @@ import { parsePostgresFinanceiroError } from '@/lib/financeiro/error-handler';
 import { useNavigate, Link } from 'react-router-dom';
 import { useIcMatches } from '@/hooks/useIcMatches';
 import {
-  Loader2, Building2, Lock, Unlock, CheckCircle2, Clock,
-  FileText, Eye, RotateCcw, Plus, History, ShieldCheck, AlertTriangle,
+  Loader2, Building2, Lock, Unlock, Clock,
+  Eye, RotateCcw, Plus, History, ShieldCheck, AlertTriangle,
   type LucideIcon,
 } from 'lucide-react';
 
@@ -44,10 +43,10 @@ const FinanceiroFechamento = () => {
   const [company, setCompany] = useState<Company | 'all'>('all');
   const [ano, setAno] = useState(new Date().getFullYear());
   const [fechamentos, setFechamentos] = useState<Fechamento[]>([]);
-  const [loading, setLoading] = useState(true);
+  const [, setLoading] = useState(true);
   const [acting, setActing] = useState(false);
   const [selectedLog, setSelectedLog] = useState<{ id: string; logs: FechamentoLog[] } | null>(null);
-  const [motivoReabertura, setMotivoReabertura] = useState('');
+  const [motivoReabertura] = useState('');
   const [auditTarget, setAuditTarget] = useState<{ table: string; id: string; title: string } | null>(null);
   const [mappingPendentes, setMappingPendentes] = useState<Array<{id: string; nome: string}>>([]);
   const { data: icDiv } = useIcMatches('divergencia_valor');
