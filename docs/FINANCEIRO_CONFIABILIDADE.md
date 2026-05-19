@@ -1,5 +1,33 @@
 # Módulo Financeiro — Classificação de Confiabilidade
 
+## ✅ A1 — Inteligência de Caixa (CFO mode) — entregue (2026-05-19)
+
+| Funcionalidade | O que mostra | Como usar |
+|---|---|---|
+| **Fluxo 13 semanas** | Projeção semanal com entradas/saídas/saldo, em 3 cenários (realista/otimista/pessimista). Inclui CR/CP vencendo + eventos recorrentes + eventos eventuais. Aplicação de inadimplência observada (taxa histórica 12m). | Tab "Fluxo 13s" em /financeiro/capital-giro. Toggle de cenário no header. Alertas de caixa negativo aparecem no topo. |
+| **NCG decomposta** | ACO (CR aberto + estoque + adiantamentos) − PCO (CP fornecedor + folha 30d + tributos). Projeção 12m. CCC com PMR/PMP. Comparação com Capital Giro Próprio. | Tab "NCG". Indicador visual quando NCG > CGP (déficit de liquidez). |
+| **Eventos recorrentes** | Folha, aluguel, pró-labore, etc. Repete mensalmente no dia configurado. Clamp pra último dia em fevereiro. Flag `is_folha` separa pra cálculo de PCO. | Tab "Eventos" → sub-aba Recorrentes. Onboarding sugere 5 eventos comuns na primeira visita. |
+| **Eventos eventuais** | Aportes, compras de imobilizado, empréstimos. Status: previsto → confirmado → realizado (ou cancelado). | Tab "Eventos" → sub-aba Eventuais. |
+| **Alertas configuráveis** | 6 tipos: caixa negativo, NCG déficit, cobertura baixa, inadimplência alta, concentração top1, saída spike. Thresholds editáveis por empresa. Snooze 7d / dismiss permanente. UNIQUE constraint evita spam. | Card stack no topo da tab Fluxo. Engine avalia a cada chamada. Cron diário registra histórico. |
+| **Snapshots diários** | Projeção persiste 1× ao dia (cron) por empresa × cenário. Permite trend "projeção piorou nas últimas 4 semanas?". | Cron `fin-cashflow-snapshot-diario`. Visível em tabela `fin_projecao_snapshots`. |
+
+### Configurações necessárias (one-time, pós-deploy A1)
+
+1. Founder cadastra eventos recorrentes existentes (folha, aluguel, etc.) via Tab Eventos
+2. Master ajusta thresholds default em Configuração (gear icon)
+3. Master define códigos Omie de adiantamentos em Configuração
+4. Cron `fin-cashflow-snapshot-diario` agendado via SQL Editor (template em 20260519010000_fin_a1_cron.sql)
+
+### Não cobrindo ainda (próximos ciclos)
+
+- **A2** — WACC, ROIC, EVA, spread sobre WACC
+- **A3** — DuPont, Altman Z-score, Beneish M-score
+- Integração estoque com valoração real (atualmente assume estoque_valor=0 — founder pode preencher manual)
+- DRE competência growth rate aplicado na projeção NCG 12m (atualmente linear)
+- Alerta `pmr_subindo` (precisa 90 dias de snapshots históricos antes de ativar)
+
+---
+
 ## ✅ MVP Operacional (pode usar agora para gestão diária)
 
 Estes dados vêm direto do Omie sem transformação opinativa.
