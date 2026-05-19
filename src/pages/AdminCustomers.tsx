@@ -31,7 +31,7 @@ import { format } from 'date-fns';
 import { ptBR } from 'date-fns/locale';
 import { useUrlState } from '@/hooks/useUrlState';
 import { useCustomerSegments } from '@/hooks/useCustomerSegments';
-import { Save, Bookmark, X as XIcon } from 'lucide-react';
+import { Save, Bookmark, X as XIcon, type LucideIcon } from 'lucide-react';
 import { decodeHtmlEntities } from '@/lib/format';
 import { CustomerProfile360Summary } from '@/components/customer/CustomerProfile360Summary';
 import { CustomerCallsTab } from '@/components/customer/CustomerCallsTab';
@@ -84,7 +84,7 @@ interface SalesOrder {
   total: number;
   status: string;
   created_at: string;
-  items: any;
+  items: unknown;
 }
 
 const fmt = (v: number) => v.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' });
@@ -417,9 +417,9 @@ function RequiresPoToggle({ customer }: { customer: Customer }) {
       if (error) throw error;
       customer.requires_po = next;
       toast.success(next ? 'Cliente exige ordem de compra' : 'Ordem de compra desativada');
-    } catch (e: any) {
+    } catch (e) {
       setChecked(prev);
-      toast.error('Erro ao salvar', { description: e?.message });
+      toast.error('Erro ao salvar', { description: e instanceof Error ? e.message : String(e) });
     } finally {
       setSaving(false);
     }
@@ -727,7 +727,7 @@ function Customer360View({
 }
 
 /* ─── Helper Components ─── */
-function MetricCard({ icon: Icon, label, value, danger }: { icon: any; label: string; value: string; danger?: boolean }) {
+function MetricCard({ icon: Icon, label, value, danger }: { icon: LucideIcon; label: string; value: string; danger?: boolean }) {
   return (
     <Card>
       <CardContent className="p-3">
@@ -789,7 +789,7 @@ const AdminCustomers = () => {
         .from('user_roles')
         .select('user_id')
         .in('role', ['master', 'employee']);
-      return new Set((data || []).map((r: any) => r.user_id));
+      return new Set((data || []).map((r: { user_id: string }) => r.user_id));
     },
     getNextPageParam: () => undefined,
   });
@@ -855,7 +855,7 @@ const AdminCustomers = () => {
         .eq('farmer_id', user.id);
       if (data) {
         const map = new Map<string, ClientScore>();
-        data.forEach((s: any) => map.set(s.customer_user_id, s));
+        data.forEach((s: ClientScore) => map.set(s.customer_user_id, s));
         setScores(map);
       }
     } catch (e) {

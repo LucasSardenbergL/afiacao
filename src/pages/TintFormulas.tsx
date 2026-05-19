@@ -40,11 +40,12 @@ function useBases(produtoId: string) {
         .eq('account', ACCOUNT)
         .eq('produto_id', produtoId);
       const seen = new Set<string>();
-      return (data ?? []).filter((d: any) => {
+      type BaseRow = { base_id: string; tint_bases: { id: string; descricao: string | null } | null };
+      return ((data ?? []) as unknown as BaseRow[]).filter((d) => {
         if (seen.has(d.base_id)) return false;
         seen.add(d.base_id);
         return true;
-      }).map((d: any) => ({ id: d.base_id, descricao: d.tint_bases?.descricao }));
+      }).map((d) => ({ id: d.base_id, descricao: d.tint_bases?.descricao }));
     },
   });
 }
@@ -184,7 +185,7 @@ export default function TintFormulas() {
                   <SelectTrigger className="h-9 text-sm"><SelectValue placeholder="Base" /></SelectTrigger>
                   <SelectContent>
                     <SelectItem value="__all__">Todas</SelectItem>
-                    {(bases ?? []).map((b: any) => <SelectItem key={b.id} value={b.id}>{b.descricao}</SelectItem>)}
+                    {(bases ?? []).map((b: { id: string; descricao: string | null | undefined }) => <SelectItem key={b.id} value={b.id}>{b.descricao}</SelectItem>)}
                   </SelectContent>
                 </Select>
               </div>
@@ -218,7 +219,17 @@ export default function TintFormulas() {
                   </TableRow>
                 </TableHeader>
                 <TableBody>
-                  {(data?.rows ?? []).map((f: any) => (
+                  {((data?.rows ?? []) as unknown as Array<{
+                    id: string;
+                    cor_id: string;
+                    nome_cor: string | null;
+                    volume_final_ml: number | null;
+                    preco_final_sayersystem: number | null;
+                    personalizada: boolean | null;
+                    tint_produtos: { descricao: string | null } | null;
+                    tint_bases: { descricao: string | null } | null;
+                    tint_embalagens: { descricao: string | null; volume_ml: number | null } | null;
+                  }>).map((f) => (
                     <>
                       <TableRow key={f.id} className="cursor-pointer hover:bg-muted/50" onClick={() => handleExpand(f)}>
                         <TableCell>
@@ -274,10 +285,14 @@ export default function TintFormulas() {
                                   </TableRow>
                                 </TableHeader>
                                 <TableBody>
-                                  {expandedDetail.map((it: any, idx: number) => {
+                                  {((expandedDetail ?? []) as unknown as Array<{
+                                    qtd_ml: number;
+                                    ordem: number;
+                                    tint_corantes: { id: string; descricao: string | null; omie_product_id: string | null; volume_total_ml: number } | null;
+                                  }>).map((it, idx: number) => {
                                     const cor = it.tint_corantes;
                                     const custoConc = cor?.omie_product_id && omieMap ? (omieMap.get(cor.omie_product_id) ?? 0) : 0;
-                                    const custoMl = cor?.volume_total_ml > 0 ? custoConc / cor.volume_total_ml : 0;
+                                    const custoMl = cor && cor.volume_total_ml > 0 ? custoConc / cor.volume_total_ml : 0;
                                     const custoItem = custoMl * it.qtd_ml;
                                     return (
                                       <TableRow key={idx}>

@@ -41,13 +41,13 @@ function KpiCards({ empresa }: { empresa: string }) {
   const { data: receber } = useQuery({
     queryKey: ["fin-gestao-receber", empresa],
     queryFn: async () => {
-      const { data } = await (supabase as any)
+      const { data } = await supabase
         .from("fin_contas_receber")
         .select("saldo, valor_documento, status_titulo")
         .eq("company", empresa.toLowerCase())
         .neq("status_titulo", "PAGO");
       return (data ?? []).reduce(
-        (acc: number, r: any) =>
+        (acc: number, r: { saldo: number | null; valor_documento: number | null }) =>
           acc + Number(r.saldo ?? r.valor_documento ?? 0),
         0,
       );
@@ -58,13 +58,13 @@ function KpiCards({ empresa }: { empresa: string }) {
   const { data: pagar } = useQuery({
     queryKey: ["fin-gestao-pagar", empresa],
     queryFn: async () => {
-      const { data } = await (supabase as any)
+      const { data } = await supabase
         .from("fin_contas_pagar")
         .select("saldo, valor_documento, status_titulo")
         .eq("company", empresa.toLowerCase())
         .neq("status_titulo", "PAGO");
       return (data ?? []).reduce(
-        (acc: number, r: any) =>
+        (acc: number, r: { saldo: number | null; valor_documento: number | null }) =>
           acc + Number(r.saldo ?? r.valor_documento ?? 0),
         0,
       );
@@ -78,7 +78,7 @@ function KpiCards({ empresa }: { empresa: string }) {
   const { data: inadimplencia } = useQuery({
     queryKey: ["fin-gestao-inadimp", empresa],
     queryFn: async () => {
-      const { data } = await (supabase as any)
+      const { data } = await supabase
         .from("fin_aging_receber")
         .select("*")
         .eq("company", empresa.toLowerCase())

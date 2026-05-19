@@ -50,7 +50,7 @@ const ENTITY_LABELS: Record<string, string> = {
 };
 
 /* ─── Diff viewer for before/after params ─── */
-function ParamsDiff({ before, after }: { before: Record<string, any> | null; after: Record<string, any> | null }) {
+function ParamsDiff({ before, after }: { before: Record<string, unknown> | null; after: Record<string, unknown> | null }) {
   const [expanded, setExpanded] = useState(false);
   if (!before && !after) return null;
 
@@ -330,8 +330,8 @@ export default function GovernanceAudit() {
                         <div className="pt-1">
                           <p className="text-2xs font-medium text-muted-foreground mb-1">Alterações nos parâmetros:</p>
                           <ParamsDiff
-                            before={log.previous_params as Record<string, any> | null}
-                            after={log.new_params as Record<string, any> | null}
+                            before={log.previous_params as Record<string, unknown> | null}
+                            after={log.new_params as Record<string, unknown> | null}
                           />
                         </div>
                       )}
@@ -339,7 +339,7 @@ export default function GovernanceAudit() {
                       {/* Projection */}
                       {log.projection && typeof log.projection === 'object' && (
                         <div className="flex gap-3 pt-1">
-                          {Object.entries(log.projection as Record<string, any>).filter(([, v]) => v != null).map(([k, v]) => (
+                          {Object.entries(log.projection as Record<string, unknown>).filter(([, v]) => v != null).map(([k, v]) => (
                             <span key={k} className="text-2xs">
                               <span className="text-muted-foreground">{k.replace(/_/g, ' ')}:</span>{' '}
                               <span className="font-medium">{typeof v === 'number' ? `${v > 0 ? '+' : ''}${v.toFixed(1)}%` : String(v)}</span>
