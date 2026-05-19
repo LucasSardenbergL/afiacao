@@ -261,6 +261,20 @@ Dois backends coexistem; o usuário escolhe via toggle em `/settings`:
 
 - `src/lib/logger.ts` — wrapper estruturado com níveis (info/error/critical), usado consistente em AuthContext
 
+### ⛔ Acesso ao banco — SOMENTE via Lovable (sem terminal, sem curl, sem CLI)
+
+**O Lucas NÃO tem acesso a terminal/curl/Supabase CLI pro backend.** Todo acesso ao banco e edge functions é feito **exclusivamente pela UI do Lovable** (o SQL Editor do Lovable em `lovable.dev/projects/.../view=cloud&section=sql`, ou o chat AI do Lovable). Confirmado em 2026-05-19.
+
+**NUNCA sugerir ao usuário:**
+- ❌ comandos `curl` (ele não tem `$SUPABASE_URL`/`$CRON_SECRET` no shell — falha com "No host part in the URL")
+- ❌ `supabase` CLI, `psql`, ou qualquer ferramenta de terminal
+- ❌ acessar o Supabase Dashboard direto em `supabase.com/dashboard` — o projeto real (`fzvklzpomgnyikkfkzai`) é gerenciado pela org do Lovable e o Lucas recebe "You do not have access". O projeto `lkotrsfdvnwxqyevhffh` que aparece na conta dele é um projeto-teste vazio, NÃO o de produção.
+
+**Como o usuário roda QUALQUER coisa no backend:**
+- **SQL (DDL/DML/migrations/queries)** → cola no SQL Editor dentro do Lovable → Run
+- **Invocar edge function** → pedir pro chat do Lovable invocar, OU via `net.http_post` no SQL Editor (se pg_net + auth configurados), OU acontece automático via triggers/cron
+- Pra dar instrução de SQL, sempre rotular: "🟣 Lovable → SQL Editor → cola → Run"
+
 ### Migrations Supabase — ⚠️ aplicação manual obrigatória
 
 **Lovable Cloud NÃO aplica automaticamente** migrations que você commita em `supabase/migrations/`. Confirmado experimentalmente em 2026-05-17:

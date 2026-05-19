@@ -1,6 +1,7 @@
 import { Card } from '@/components/ui/card';
 import { Construction, BarChart3, Users, Briefcase } from 'lucide-react';
 import { KpisToday } from './KpisToday';
+import { VisitSuggestionsCard } from './VisitSuggestionsCard';
 
 /**
  * Dashboard Master (CEO) — visão consolidada do time + KPIs próprios (você
@@ -16,6 +17,9 @@ export function MasterDashboard() {
           Visão consolidada do time. KPIs agregados, ranking de vendedores, alertas estratégicos.
         </p>
       </div>
+
+      {/* Sugestões de visita — PR-VISIT-INTELLIGENCE Sub-PR A */}
+      <VisitSuggestionsCard />
 
       <Card className="p-4 border-dashed border-2 border-status-warning/30 bg-status-warning-bg/20">
         <div className="flex items-center gap-2 mb-2">
