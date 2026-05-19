@@ -68,6 +68,7 @@ interface UserTool {
 }
 
 interface ClientScore {
+  customer_user_id: string;
   health_score: number;
   health_class: string;
   churn_risk: number;
@@ -77,6 +78,7 @@ interface ClientScore {
   days_since_last_purchase: number;
   category_count: number;
   gross_margin_pct: number;
+  avg_repurchase_interval?: number | null;
 }
 
 interface SalesOrder {
