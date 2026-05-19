@@ -13,12 +13,11 @@ import { Skeleton } from '@/components/ui/skeleton';
 import { useFarmerScoring } from '@/hooks/useFarmerScoring';
 import { useFarmerMetrics } from '@/hooks/useFarmerMetrics';
 import { useFarmerExperiments, type Experiment } from '@/hooks/useFarmerExperiments';
-import { useFarmerGovernance } from '@/hooks/useFarmerGovernance';
 import { useCrossSellEngine } from '@/hooks/useCrossSellEngine';
 import { useAuth } from '@/contexts/AuthContext';
 import {
   Loader2, Heart, Users, Target, Brain, Shield, FlaskConical, Activity,
-  TrendingUp, Phone, RefreshCw, Plus, Play, BarChart3, Package, Radio,
+  Phone, RefreshCw, Plus, Play, BarChart3, Package, Radio,
   CheckCircle, XCircle, Clock, Zap, DollarSign, ChevronRight
 } from 'lucide-react';
 
@@ -67,7 +66,7 @@ const FarmerLOCC = () => {
   const { isStaff, loading: authLoading } = useAuth();
 
   // Only overview-critical hooks at page level
-  const { clientScores, summary, loading: scoringLoading, calculating: scoringCalc, recalculate, config } = useFarmerScoring();
+  const { summary, loading: scoringLoading, calculating: scoringCalc, recalculate, config } = useFarmerScoring();
   const { metrics, loading: metricsLoading } = useFarmerMetrics();
 
   // Track which tabs have been visited (overview is always visited)

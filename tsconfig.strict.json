@@ -51,6 +51,17 @@
     "src/pages/AdminReposicaoPromocoes.tsx",
     "src/pages/FarmerTacticalPlan.tsx",
     "src/pages/AdminReposicaoOportunidades.tsx",
-    "src/components/UnifiedAIAssistant.tsx"
+    "src/components/UnifiedAIAssistant.tsx",
+    "src/pages/SalesQuotes.tsx",
+    "src/pages/AdminReposicaoRevisao.tsx",
+    "src/hooks/unifiedOrder/useCustomerSelection.ts",
+    "src/pages/picking/TouchPickingView.tsx",
+    "src/services/orderSubmission/submitOrder.ts",
+    "src/components/reposicao/SkuDetailSheet.tsx",
+    "src/pages/TintSyncRuns.tsx",
+    "src/pages/QualityChecklist.tsx",
+    "src/pages/FarmerLOCC.tsx",
+    "src/pages/AdminReposicaoAumentos.tsx",
+    "src/pages/TintPricing.tsx"
   ]
 }
