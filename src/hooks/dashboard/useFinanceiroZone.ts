@@ -28,7 +28,7 @@ export function useFinanceiroZone() {
 
       try {
         const aging = await getAgingReceber('all');
-        const agingRec = aging as Record<string, unknown>;
+        const agingRec = aging as unknown as Record<string, unknown>;
         aging90 = Number(agingRec?.faixa_90_mais ?? agingRec?.['90+'] ?? 0);
       } catch { /* */ }
 
