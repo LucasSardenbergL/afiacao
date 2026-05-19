@@ -118,7 +118,7 @@ export const useDiagnosticQuestions = () => {
 
     try {
       for (const q of qs) {
-        await supabase.from('farmer_diagnostic_questions' as any).insert({
+        await supabase.from('farmer_diagnostic_questions' as never).insert({
           bundle_recommendation_id: bundleRecommendationId || null,
           farmer_id: user.id,
           customer_user_id: customerId,
@@ -132,7 +132,7 @@ export const useDiagnosticQuestions = () => {
           bundle_result: bundleResult || null,
           margin_generated: marginGenerated || 0,
           time_spent_seconds: timeSpentSeconds || 0,
-        } as any);
+        } as never);
       }
       toast.success('Respostas salvas com sucesso');
     } catch (error) {
@@ -145,21 +145,28 @@ export const useDiagnosticQuestions = () => {
     if (!user?.id) return null;
 
     const { data } = await supabase
-      .from('farmer_diagnostic_questions' as any)
+      .from('farmer_diagnostic_questions' as never)
       .select('question_type, response_type, was_bundle_offered, bundle_result, margin_generated')
-      .eq('farmer_id', user.id) as any;
+      .eq('farmer_id' as never, user.id as never);
 
-    if (!data?.length) return null;
+    const rows = (data ?? []) as unknown as Array<{
+      question_type: string;
+      response_type: string | null;
+      was_bundle_offered: boolean | null;
+      bundle_result: string | null;
+      margin_generated: number | null;
+    }>;
+    if (!rows.length) return null;
 
     const stats: Record<string, { total: number; interesse: number; offered: number; accepted: number; totalMargin: number }> = {};
 
-    for (const row of data) {
+    for (const row of rows) {
       const type = row.question_type;
       if (!stats[type]) stats[type] = { total: 0, interesse: 0, offered: 0, accepted: 0, totalMargin: 0 };
       stats[type].total++;
       if (row.response_type === 'interesse') stats[type].interesse++;
       if (row.was_bundle_offered) stats[type].offered++;
-      if (['aceito_total', 'aceito_parcial'].includes(row.bundle_result)) stats[type].accepted++;
+      if (row.bundle_result && ['aceito_total', 'aceito_parcial'].includes(row.bundle_result)) stats[type].accepted++;
       stats[type].totalMargin += Number(row.margin_generated || 0);
     }
 
