@@ -238,15 +238,12 @@ function escapeHtml(s: string | undefined | null): string {
 
   return (
     <div className="min-h-screen bg-background pb-24">
-      <Header
-        title={tool.internal_code || 'Ferramenta'}
-        showBack
-        rightElement={
-          <Button size="icon" variant="ghost" onClick={() => setShowQR(!showQR)}>
-            <QrCode className="w-5 h-5" />
-          </Button>
-        }
-      />
+      <div className="flex items-center justify-between px-4 py-3 border-b">
+        <h1 className="text-lg font-semibold">{tool.internal_code || 'Ferramenta'}</h1>
+        <Button size="icon" variant="ghost" onClick={() => setShowQR(!showQR)}>
+          <QrCode className="w-5 h-5" />
+        </Button>
+      </div>
 
       <main className="pt-16 px-4 max-w-lg mx-auto space-y-4">
 
