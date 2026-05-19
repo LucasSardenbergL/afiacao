@@ -282,6 +282,12 @@ Dois backends coexistem; o usuário escolhe via toggle em `/settings`:
 
 **Sempre que adicionar migration nova**: avisar no PR description "**ATENÇÃO: migration manual necessária**" e idealmente colar o SQL no body do PR pra facilitar.
 
+**Auditoria de quais custom migrations estão aplicadas no banco**:
+
+- Inventário completo em [`docs/migrations-audit.md`](docs/migrations-audit.md) (38 custom migrations, 262 objetos esperados — tables, indexes, functions, triggers, cron jobs, enum values, RLS policies)
+- Script SQL pronto pra colar no Supabase SQL Editor em [`scripts/audit-custom-migrations.sql`](scripts/audit-custom-migrations.sql) — read-only, retorna duas tabelas: (a) `supabase_migrations.schema_migrations` cross-reference, (b) existência objeto-a-objeto via `pg_catalog`/`information_schema`. Linha com `❌` = precisa apply manual
+- Regenerar quando adicionar migration nova: `bun run audit:migrations` (parser regex em `scripts/audit-custom-migrations.ts`, idempotente)
+
 ### Convenções de código
 
 - Pages em PascalCase (`AdminReposicaoCockpit.tsx`)
@@ -412,7 +418,7 @@ Ainda pendentes (decisão de produto ou sprint próprio):
 - **`SalesOrders.deleteOrder` sem soft-delete** — exclusão direta no Omie; risco compliance. Precisa migration SQL (coluna `deleted_at`) + flag UI
 - **TypeScript strict mode** — `tsconfig.app.json` tem `strict: false`, `noImplicitAny: false`. Resolve raiz de 1300 lint errors (97% `no-explicit-any`). **Infra incremental pronta**: `tsconfig.strict.json` lista files que passam strict (`strict: true` + `noImplicitAny` + `strictNullChecks` + `noUnusedLocals/Parameters`). Rodar via `bun run typecheck:strict`. CI bloqueia se regressão nos files migrados. Pra migrar mais files: garantir 0 `any` + tipos explícitos + adicionar ao `include` de `tsconfig.strict.json`. Convergência: quando 100% do `src/` estiver em strict, mover flags pra `tsconfig.app.json` e deletar `tsconfig.strict.json`. Caminho top-down: hooks de engine (`useBundleEngine`, `useTacticalPlan`, `useFarmerExperiments`, `useFarmerPerformance`, `useCrossSellEngine`, `useCopilotEngine`) concentram ~250 errors.
 - **7 god-components da Reposição** (>1000 LoC cada: AdminReposicaoPromocaoDetail 1691L, AdminRoutePlanner 1661L, AdminReposicaoPedidos 1572L, AdminReposicaoAumentoDetail 1465L, FinanceiroDashboard 1242L, AdminReposicaoNegociacaoParalela 1201L, AdminReposicaoRevisao 1099L) — quebrar em subcomponentes em `src/components/reposicao/`
-- **N+1 patterns em engines IA**: `useCrossSellEngine.ts:372-389` (500 round-trips serializados), `useFarmerExperiments.ts:68-79,195-208`, Edge Functions `omie-vendas-sync:765,772` + `omie-sync:1182-1196`
+- **N+1 patterns remanescentes**: `omie-vendas-sync:765` (pagination sequencial de profiles, ~4 RTT por sync — não crítico) + `omie-sync:1180-1196` (6 deletes serial por order delete — manual path, não crítico). Frontend `useCrossSellEngine.ts:226-233` (profile batching, ~36 RTT em 3598 clientes) ✅ resolvido em PR de profile-fetch paralelo. `useFarmerExperiments.ts:108-122,251-272` ✅ resolvidos em PRs anteriores (comments "antes era N+1" no código).
 - **~100 callsites de `useToast` legados** — migrar gradualmente pra `import { toast } from 'sonner'`
 - **41 cores hardcoded** (`text-emerald-600` etc.) — sweep pra `text-status-*`. Top 5: Admin (21×), des/PosicaoAtualTab (12×), des/SimuladorTab (11×), AdminPortalSayerlack (10×), AdminRoutePlanner (9×)
 - **Adoção `useUrlState`** — hoje 5/119 páginas; migrar `useState` de filtros conforme arquivos forem tocados

@@ -78,6 +78,7 @@ interface ClientScore {
   days_since_last_purchase: number;
   category_count: number;
   gross_margin_pct: number;
+  avg_repurchase_interval?: number | null;
 }
 
 interface SalesOrder {
