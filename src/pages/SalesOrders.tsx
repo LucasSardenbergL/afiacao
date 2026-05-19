@@ -10,7 +10,7 @@ import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, 
 import { supabase } from '@/integrations/supabase/client';
 import type { Tables } from '@/integrations/supabase/types';
 import { useAuth } from '@/contexts/AuthContext';
-import { Loader2, ShoppingCart, Plus, Package, Trash2, Building2, Wrench, Share2, Printer, Pencil, Search, ChevronLeft } from 'lucide-react';
+import { Loader2, ShoppingCart, Plus, Package, Trash2, Building2, Share2, Printer, Pencil, Search, ChevronLeft } from 'lucide-react';
 import { EmptyState } from '@/components/EmptyState';
 import { Checkbox } from '@/components/ui/checkbox';
 import { BulkActionsBar } from '@/components/ui/bulk-actions-bar';
@@ -37,10 +37,12 @@ interface AfiacaoItemRaw {
 // Cache do useInfiniteQuery de sales_orders — usado nos rollbacks optimistic.
 type SalesOrdersInfiniteCache = InfiniteData<SalesOrder[]>;
 
-// Inclui colacor_sc — antes ficava de fora da Tabs e os pedidos do SC só apareciam
-// na aba "Todos". 'afiacao' é virtual (representa o módulo Afiação, sem coluna
-// account na tabela orders) e não vem do CompanyContext.
-type Account = 'oben' | 'colacor' | 'colacor_sc' | 'afiacao' | 'all';
+// 3 empresas reais (oben, colacor, colacor_sc) + 'all'. Afiação NÃO é empresa,
+// é um módulo operando sob Colacor SC — pedidos da tabela `orders` (afiação)
+// aparecem dentro da aba "Colacor SC" junto com os pedidos comerciais
+// `sales_orders WHERE account='colacor_sc'`. Cada card mantém badge "Afiação"
+// quando _source='afiacao' pra preservar a distinção visual.
+type Account = 'oben' | 'colacor' | 'colacor_sc' | 'all';
 
 const PAGE_SIZE = 50;
 
@@ -360,10 +362,13 @@ const SalesOrders = () => {
   };
 
   const filteredOrders = useMemo(() => {
+    // Colacor SC engloba: (a) pedidos comerciais com account='colacor_sc' E
+    // (b) pedidos de afiação (que operam sob a entidade SC). Afiação não é tab
+    // separada, é serviço da Colacor SC.
     let result = accountFilter === 'all'
       ? orders
-      : accountFilter === 'afiacao'
-        ? orders.filter(o => o._source === 'afiacao')
+      : accountFilter === 'colacor_sc'
+        ? orders.filter(o => o._source === 'afiacao' || (o._source === 'sales' && o.account === 'colacor_sc'))
         : orders.filter(o => o._source === 'sales' && (o.account || 'oben') === accountFilter);
 
     if (search.trim()) {
@@ -419,9 +424,11 @@ const SalesOrders = () => {
         </Button>
       </div>
 
-      {/* Account Filter */}
+      {/* Account Filter — 3 empresas reais + Todos. Afiação foi unificada
+          em Colacor SC (módulo, não empresa). Cada card preserva o badge
+          "Afiação" quando _source='afiacao' pra distinção visual. */}
       <Tabs value={accountFilter} onValueChange={(v) => setAccountFilter(v as Account)}>
-         <TabsList className="w-full grid grid-cols-5">
+        <TabsList className="w-full grid grid-cols-4">
           <TabsTrigger value="all">Todos</TabsTrigger>
           <TabsTrigger value="oben" className="gap-1">
             <Building2 className="w-3 h-3" />
@@ -434,10 +441,6 @@ const SalesOrders = () => {
           <TabsTrigger value="colacor_sc" className="gap-1">
             <Building2 className="w-3 h-3" />
             Colacor SC
-          </TabsTrigger>
-          <TabsTrigger value="afiacao" className="gap-1">
-            <Wrench className="w-3 h-3" />
-            Afiação
           </TabsTrigger>
         </TabsList>
       </Tabs>
@@ -477,14 +480,15 @@ const SalesOrders = () => {
             const isAfiacao = order._source === 'afiacao';
             const status = statusLabels[order.status] || statusLabels.rascunho;
             const totalItems = order.items?.reduce((s, i) => s + (i.quantidade || 0), 0) || 0;
-            const orderAccount = isAfiacao ? 'afiacao' : (order.account || 'oben');
-            const accountLabel = isAfiacao
-              ? 'Afiação'
-              : orderAccount === 'colacor_sc'
-                ? 'Colacor SC'
-                : orderAccount === 'colacor'
-                  ? 'Colacor'
-                  : 'Oben';
+            // Afiação opera sob Colacor SC. Card sempre mostra a empresa (Oben/Colacor/SC)
+            // e, quando for pedido de afiação, um badge secundário "Afiação" pra distinguir
+            // serviço de pedido comercial. Antes mostrava só "Afiação" e perdia a empresa.
+            const orderAccount = isAfiacao ? 'colacor_sc' : (order.account || 'oben');
+            const accountLabel = orderAccount === 'colacor_sc'
+              ? 'Colacor SC'
+              : orderAccount === 'colacor'
+                ? 'Colacor'
+                : 'Oben';
             const isSelectable = !isAfiacao; // só sales_orders são bulk-deletáveis
             const checked = selectedIds.has(order.id);
             return (
@@ -507,13 +511,19 @@ const SalesOrders = () => {
                       />
                     )}
                     <div className="flex-1 min-w-0">
-                      <div className="flex items-center gap-1.5">
+                      <div className="flex items-center gap-1.5 flex-wrap">
                         <p className="font-medium text-sm truncate">
                           {decodeHtml(profiles[order.customer_user_id] || 'Cliente')}
                         </p>
                         <Badge variant="outline" className="text-[9px] px-1 py-0 shrink-0">
                           {accountLabel}
                         </Badge>
+                        {/* Badge secundário pra distinguir serviço de afiação dentro de SC */}
+                        {isAfiacao && (
+                          <Badge variant="outline" className="text-[9px] px-1 py-0 shrink-0 bg-muted/50 text-muted-foreground border-dashed">
+                            Afiação
+                          </Badge>
+                        )}
                       </div>
                       <p className="text-xs text-muted-foreground mt-0.5">
                         {format(new Date(order.created_at), "dd/MM/yyyy 'às' HH:mm", { locale: ptBR })}

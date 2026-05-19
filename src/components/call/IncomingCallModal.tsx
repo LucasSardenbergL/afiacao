@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { useWebRTCCallContext } from '@/contexts/WebRTCCallContext';
+import { useWebRTCCallContextOptional } from '@/contexts/WebRTCCallContext';
 import {
   Dialog,
   DialogContent,
@@ -36,7 +36,10 @@ const CARGO_FRIENDLY: Record<string, string> = {
  * - persistência em farmer_calls automática
  */
 export function IncomingCallModal() {
-  const { incomingCall, acceptIncoming, rejectIncoming } = useWebRTCCallContext();
+  const ctx = useWebRTCCallContextOptional();
+  const incomingCall = ctx?.incomingCall ?? null;
+  const acceptIncoming = ctx?.acceptIncoming;
+  const rejectIncoming = ctx?.rejectIncoming;
   const [resolvedCompany, setResolvedCompany] = useState<string | null>(null);
   const [contactName, setContactName] = useState<string | null>(null);
   const [contactCargo, setContactCargo] = useState<string | null>(null);
