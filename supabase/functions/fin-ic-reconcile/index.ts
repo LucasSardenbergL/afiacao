@@ -1,9 +1,72 @@
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { createClient } from "npm:@supabase/supabase-js@2";
-import { authorizeCronOrStaff, corsHeaders } from "../_shared/auth.ts";
 
+// =============================================================
+// Helper de autorização inlineado (de _shared/auth.ts)
+// =============================================================
 const SUPABASE_URL = Deno.env.get("SUPABASE_URL")!;
 const SERVICE_ROLE = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
+
+const corsHeaders = {
+  "Access-Control-Allow-Origin": "*",
+  "Access-Control-Allow-Headers":
+    "authorization, x-client-info, apikey, content-type, x-cron-secret",
+};
+
+function unauthorized(message = "Unauthorized"): Response {
+  return new Response(JSON.stringify({ error: message }), {
+    status: 401,
+    headers: { ...corsHeaders, "Content-Type": "application/json" },
+  });
+}
+
+type AuthResult =
+  | { ok: true; via: "cron" | "service_role" | "staff"; userId?: string }
+  | { ok: false; response: Response };
+
+async function authorizeCronOrStaff(req: Request): Promise<AuthResult> {
+  const expected = Deno.env.get("CRON_SECRET");
+  const cronSecret = req.headers.get("x-cron-secret");
+  if (expected && cronSecret && cronSecret === expected) {
+    return { ok: true, via: "cron" };
+  }
+
+  const authHeader = req.headers.get("Authorization");
+  if (!authHeader?.startsWith("Bearer ")) {
+    return { ok: false, response: unauthorized() };
+  }
+  const token = authHeader.slice(7);
+  if (token === SERVICE_ROLE) {
+    return { ok: true, via: "service_role" };
+  }
+
+  try {
+    const userRes = await fetch(`${SUPABASE_URL}/auth/v1/user`, {
+      headers: { Authorization: authHeader, apikey: SERVICE_ROLE },
+    });
+    if (!userRes.ok) return { ok: false, response: unauthorized() };
+    const user = await userRes.json();
+    if (!user?.id) return { ok: false, response: unauthorized() };
+
+    const roleRes = await fetch(
+      `${SUPABASE_URL}/rest/v1/user_roles?user_id=eq.${user.id}&select=role`,
+      { headers: { apikey: SERVICE_ROLE, Authorization: `Bearer ${SERVICE_ROLE}` } },
+    );
+    if (!roleRes.ok) return { ok: false, response: unauthorized() };
+    const roles = (await roleRes.json()) as Array<{ role: string }>;
+    const allowed = new Set(["employee", "master"]);
+    if (roles.some((r) => allowed.has(r.role))) {
+      return { ok: true, via: "staff", userId: user.id };
+    }
+    return { ok: false, response: unauthorized("Forbidden") };
+  } catch {
+    return { ok: false, response: unauthorized() };
+  }
+}
+
+// =============================================================
+// Edge function: reconciliação intercompany automática
+// =============================================================
 const VALOR_TOLERANCIA = 0.01;
 const DATA_TOLERANCIA_DIAS = 5;
 
@@ -45,22 +108,14 @@ serve(async (req: Request) => {
 
   const supabase = createClient(SUPABASE_URL, SERVICE_ROLE);
 
-  // 1. Fetch company_cnpjs to map company → CNPJ
   const { data: cnpjs } = await supabase
     .from("company_cnpjs")
     .select("company, cnpj_normalized");
 
   if (!cnpjs || cnpjs.length === 0) {
     return new Response(
-      JSON.stringify({
-        ok: true,
-        msg: "sem CNPJs configurados",
-        matches: 0,
-      }),
-      {
-        status: 200,
-        headers: { ...corsHeaders, "Content-Type": "application/json" },
-      }
+      JSON.stringify({ ok: true, msg: "sem CNPJs configurados", matches: 0 }),
+      { status: 200, headers: { ...corsHeaders, "Content-Type": "application/json" } }
     );
   }
 
@@ -70,27 +125,20 @@ serve(async (req: Request) => {
   }
   const groupCnpjs = Array.from(cnpjToCompany.keys());
 
-  // 2. Fetch CR (Contas a Receber) with CNPJs from group
   const { data: crsRaw } = await supabase
     .from("fin_contas_receber")
     .select("id, company, cnpj_cpf, valor_documento, data_emissao");
 
   const crs = (crsRaw ?? []) as CR[];
-  const crsIC = crs.filter((c) =>
-    groupCnpjs.includes(normalizeCnpj(c.cnpj_cpf))
-  );
+  const crsIC = crs.filter((c) => groupCnpjs.includes(normalizeCnpj(c.cnpj_cpf)));
 
-  // 3. Fetch CP (Contas a Pagar) with CNPJs from group
   const { data: cpsRaw } = await supabase
     .from("fin_contas_pagar")
     .select("id, company, cnpj_cpf, valor_documento, data_emissao");
 
   const cps = (cpsRaw ?? []) as CP[];
-  const cpsIC = cps.filter((p) =>
-    groupCnpjs.includes(normalizeCnpj(p.cnpj_cpf))
-  );
+  const cpsIC = cps.filter((p) => groupCnpjs.includes(normalizeCnpj(p.cnpj_cpf)));
 
-  // 4. Bucket CP by (empresa_origem_da_CR : empresa_destino_que_eh_empresa_do_CP)
   type CPKey = string;
   const cpsByKey = new Map<CPKey, CP[]>();
   for (const cp of cpsIC) {
@@ -103,7 +151,6 @@ serve(async (req: Request) => {
 
   const upserts: Array<Record<string, unknown>> = [];
 
-  // 5. Match CRs to CPs
   for (const cr of crsIC) {
     const empresaDestino = cnpjToCompany.get(normalizeCnpj(cr.cnpj_cpf));
     if (!empresaDestino) continue;
@@ -111,7 +158,6 @@ serve(async (req: Request) => {
     const key = `${cr.company}:${empresaDestino}`;
     const candidates = cpsByKey.get(key) ?? [];
 
-    // Try exact match: valor within tolerance + data within tolerance
     const exact = candidates.filter(
       (cp) =>
         Math.abs(cp.valor_documento - cr.valor_documento) <= VALOR_TOLERANCIA &&
@@ -135,7 +181,6 @@ serve(async (req: Request) => {
         status: "auto_matched",
       });
     } else if (exact.length > 1) {
-      // Multiple candidates with exact match
       upserts.push({
         empresa_origem: cr.company,
         empresa_destino: empresaDestino,
@@ -145,12 +190,9 @@ serve(async (req: Request) => {
         observacao: `${exact.length} CPs candidatos`,
       });
     } else {
-      // No exact match, try loose valor (±5%) + data ok
       const looseValor = candidates.filter(
         (cp) =>
-          Math.abs(cp.valor_documento - cr.valor_documento) /
-            cr.valor_documento <=
-            0.05 &&
+          Math.abs(cp.valor_documento - cr.valor_documento) / cr.valor_documento <= 0.05 &&
           cr.data_emissao &&
           cp.data_emissao &&
           daysBetween(cr.data_emissao, cp.data_emissao) <= DATA_TOLERANCIA_DIAS
@@ -172,7 +214,6 @@ serve(async (req: Request) => {
         continue;
       }
 
-      // Try loose data (6-30d) + valor ok
       const looseData = candidates.filter(
         (cp) =>
           Math.abs(cp.valor_documento - cr.valor_documento) <= VALOR_TOLERANCIA &&
@@ -198,7 +239,6 @@ serve(async (req: Request) => {
         continue;
       }
 
-      // No candidate match at all
       upserts.push({
         empresa_origem: cr.company,
         empresa_destino: empresaDestino,
@@ -209,7 +249,6 @@ serve(async (req: Request) => {
     }
   }
 
-  // 6. Find orphan CPs (not matched)
   const usedCpIds = new Set(upserts.map((u) => u.cp_id).filter(Boolean));
   for (const cp of cpsIC) {
     if (usedCpIds.has(cp.id)) continue;
@@ -224,7 +263,6 @@ serve(async (req: Request) => {
     });
   }
 
-  // 7. Idempotency: delete auto-generated status, keep manual_matched + desconsiderado
   await supabase
     .from("fin_ic_matches")
     .delete()
@@ -236,7 +274,6 @@ serve(async (req: Request) => {
       "duplicidade_possivel",
     ]);
 
-  // 8. Insert new matches
   if (upserts.length > 0) {
     const { error: insErr } = await supabase
       .from("fin_ic_matches")
@@ -251,9 +288,6 @@ serve(async (req: Request) => {
 
   return new Response(
     JSON.stringify({ ok: true, total_matches: upserts.length }),
-    {
-      status: 200,
-      headers: { ...corsHeaders, "Content-Type": "application/json" },
-    }
+    { status: 200, headers: { ...corsHeaders, "Content-Type": "application/json" } }
   );
 });
