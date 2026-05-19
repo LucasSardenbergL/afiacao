@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { supabase } from '@/integrations/supabase/client';
-import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
+import { Card, CardContent } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Input } from '@/components/ui/input';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
@@ -77,7 +77,7 @@ export default function TintFormulas() {
   const { data: bases } = useBases(produtoFilter);
   const { data: omieMap } = useOmieMap();
 
-  const handleExpand = (formula: { id: string; cor_id: string; nome_cor: string; tint_produtos?: { descricao?: string }; tint_bases?: { descricao?: string } }) => {
+  const handleExpand = (formula: { id: string; cor_id: string; nome_cor: string | null; tint_produtos?: { descricao?: string | null } | null; tint_bases?: { descricao?: string | null } | null }) => {
     const isOpening = expanded !== formula.id;
     setExpanded(isOpening ? formula.id : null);
     // ao expandir uma fórmula, registrar como "consultada"
@@ -85,9 +85,9 @@ export default function TintFormulas() {
       pushRecent({
         id: formula.id,
         cor_id: formula.cor_id,
-        nome_cor: formula.nome_cor,
-        produto_descricao: formula.tint_produtos?.descricao,
-        base_descricao: formula.tint_bases?.descricao,
+        nome_cor: formula.nome_cor ?? '',
+        produto_descricao: formula.tint_produtos?.descricao ?? undefined,
+        base_descricao: formula.tint_bases?.descricao ?? undefined,
       });
     }
   };
@@ -240,9 +240,9 @@ export default function TintFormulas() {
                               toggleFavorite({
                                 id: f.id,
                                 cor_id: f.cor_id,
-                                nome_cor: f.nome_cor,
-                                produto_descricao: f.tint_produtos?.descricao,
-                                base_descricao: f.tint_bases?.descricao,
+                                nome_cor: f.nome_cor ?? '',
+                                produto_descricao: f.tint_produtos?.descricao ?? undefined,
+                                base_descricao: f.tint_bases?.descricao ?? undefined,
                               });
                             }}
                             className="text-muted-foreground hover:text-status-warning transition-colors"

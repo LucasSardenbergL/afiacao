@@ -23,8 +23,8 @@ interface ToolSpecification {
   spec_label: string;
   spec_type: string;
   options: string[] | null;
-  is_required: boolean;
-  display_order: number;
+  is_required: boolean | null;
+  display_order: number | null;
 }
 
 interface AddToolDialogProps {
@@ -36,7 +36,7 @@ interface AddToolDialogProps {
 }
 
 export function AddToolDialog({ open, onOpenChange, onToolAdded, categories, targetUserId }: AddToolDialogProps) {
-  const { user, isStaff } = useAuth();
+  const { user } = useAuth();
 
   const [step, setStep] = useState<'category' | 'specs'>('category');
   const [selectedCategory, setSelectedCategory] = useState<string>('');
