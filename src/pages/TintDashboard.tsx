@@ -131,17 +131,17 @@ export default function TintDashboard() {
           </CardHeader>
           <CardContent>
             <div className="space-y-3">
-              {errors.map((imp: any) => (
+              {errors.map((imp) => (
                 <div key={imp.id} className="border rounded-md p-3">
                   <div className="flex items-center gap-2 mb-1">
                     <span className="text-sm font-medium">{imp.arquivo_nome}</span>
-                    <Badge variant="outline" className={statusColor[imp.status] || ''}>{imp.tipo}</Badge>
+                    <Badge variant="outline">{imp.tipo}</Badge>
                     <span className="text-xs text-muted-foreground">{new Date(imp.created_at).toLocaleDateString('pt-BR')}</span>
                   </div>
                   <p className="text-xs text-destructive">{imp.registros_erro} erro(s)</p>
                   {imp.erros_detalhe && Array.isArray(imp.erros_detalhe) && (
                     <ul className="text-xs text-muted-foreground mt-1 space-y-0.5">
-                      {(imp.erros_detalhe as any[]).slice(0, 3).map((e: any, i: number) => (
+                      {(imp.erros_detalhe as Array<{ linha?: number; motivo?: string }>).slice(0, 3).map((e, i: number) => (
                         <li key={i}>Linha {e.linha}: {e.motivo}</li>
                       ))}
                     </ul>
