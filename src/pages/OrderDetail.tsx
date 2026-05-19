@@ -1,6 +1,17 @@
 import { useParams, useNavigate } from 'react-router-dom';
 import { Phone, MessageCircle, Copy, Check, RefreshCw, Camera, Loader2, AlertTriangle, ExternalLink } from 'lucide-react';
 import { useState, useEffect } from 'react';
+
+// Shape de cada item do pedido (jsonb em orders.items). Só campos consumidos no UI.
+interface OrderItemShape {
+  id?: string;
+  category?: string;
+  brandModel?: string;
+  quantity?: number;
+  unitPrice?: number;
+  serviceType?: string;
+  wearLevel?: string;
+}
 import { OrderStatus } from '@/types';
 import { OrderTimeline } from '@/components/OrderTimeline';
 import { OrderChat } from '@/components/OrderChat';
@@ -67,7 +78,7 @@ const OrderDetail = () => {
         id: data.id,
         orderNumber: data.id.slice(0, 8).toUpperCase(),
         userId: data.user_id,
-        items: (data.items as any[]) || [],
+        items: (data.items as unknown as OrderItemShape[]) || [],
         status: data.status as string,
         deliveryOption: data.delivery_option,
         timeSlot: data.time_slot,
@@ -96,8 +107,8 @@ const OrderDetail = () => {
   const loadQualityData = async () => {
     if (!id) return;
     try {
-      const { data } = await (supabase as any)
-        .from('quality_checklists')
+      const { data } = await supabase
+        .from('quality_checklists' as never)
         .select('item_index, before_photos, after_photos, approved')
         .eq('order_id', id);
       if (data) setQualityData(data as QualityData[]);
@@ -213,7 +224,7 @@ const OrderDetail = () => {
         <section className="mb-6">
           <h3 className="font-display font-bold mb-3">Itens do Pedido</h3>
           <div className="space-y-3">
-            {order.items.map((item: any, idx: number) => (
+            {order.items.map((item: OrderItemShape, idx: number) => (
               <div
                 key={item.id || idx}
                 className="bg-card rounded-xl p-4 shadow-soft border border-border"
@@ -376,7 +387,7 @@ const OrderDetail = () => {
         <section className="mb-6">
           <h3 className="font-display font-bold mb-3">Acompanhamento</h3>
           <div className="bg-card rounded-xl p-4 shadow-soft border border-border">
-            <OrderTimeline statusHistory={order.statusHistory as any} currentStatus={order.status as OrderStatus} />
+            <OrderTimeline statusHistory={order.statusHistory} currentStatus={order.status as OrderStatus} />
           </div>
         </section>
 
