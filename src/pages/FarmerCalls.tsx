@@ -291,12 +291,12 @@ const FarmerCalls = () => {
         .limit(100);
 
       if (data) {
-        const customerIds = [...new Set(data.map((c: any) => c.customer_user_id))];
+        const customerIds = [...new Set(data.map((c: { customer_user_id: string }) => c.customer_user_id))];
         const { data: profiles } = await supabase
           .from('profiles')
           .select('user_id, name')
           .in('user_id', customerIds);
-        const nameMap = new Map(profiles?.map((p: any) => [p.user_id, p.name]) || []);
+        const nameMap = new Map(profiles?.map((p: { user_id: string; name: string | null }) => [p.user_id, p.name]) || []);
         setCallLogs(
           (data as CallLog[]).map(c => ({ ...c, customer_name: nameMap.get(c.customer_user_id) || 'Cliente' }))
         );
@@ -455,13 +455,14 @@ const FarmerCalls = () => {
 
       const { error } = await supabase.from('farmer_calls').insert({
         farmer_id: user.id, customer_user_id: customerUserId,
-        call_type: callType as any, call_result: callResult as any,
+        call_type: callType,
+        call_result: callResult,
         started_at: callStartRef.current?.toISOString() || new Date().toISOString(),
         ended_at: new Date().toISOString(),
         duration_seconds: callSeconds, follow_up_duration_seconds: followUpSeconds,
         attempt_number: attemptNumber, notes: notes || null,
         revenue_generated: parseFloat(revenue) || 0, margin_generated: parseFloat(margin) || 0,
-      } as any);
+      } as never);
       if (error) throw error;
 
       const rev = parseFloat(revenue) || 0;
