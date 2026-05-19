@@ -21,6 +21,10 @@ import {
   Heart,
   User,
   Inbox,
+  Users,
+  Star,
+  Award,
+  Cake,
 } from 'lucide-react';
 import { supabase } from '@/integrations/supabase/client';
 import { useAuth } from '@/contexts/AuthContext';
@@ -32,6 +36,8 @@ import { PageSkeleton } from '@/components/ui/page-skeleton';
 import { EmptyState } from '@/components/EmptyState';
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip';
 import { cn } from '@/lib/utils';
+import { useCustomerContacts } from '@/hooks/useCustomerContacts';
+import { CARGO_LABEL } from '@/lib/customer-contact/types';
 
 /**
  * Customer 360 — dashboard executivo do cliente.
@@ -408,6 +414,10 @@ export default function Customer360() {
   const preferred = useCustomerPreferredItems(customerId);
   const orders = useCustomerOrders(customerId);
   const interactions = useCustomerInteractions(customerId);
+  // Contatos extras (PR-CONTACTS): múltiplos contatos por cliente (dono, gerente,
+  // comprador, etc). Edição completa fica em /admin/customers detail tab — aqui
+  // mostro só leitura compacta pra contexto operacional.
+  const contacts = useCustomerContacts(customerId ?? null);
 
   // Lifetime + 12m derivados dos pedidos
   const revenueDerived = useMemo(() => {
@@ -714,6 +724,56 @@ export default function Customer360() {
                   label="Tipo"
                   value={formatCustomerType(customer.customer_type) || (isPj ? 'PJ' : 'PF')}
                 />
+              </CardContent>
+            </Card>
+
+            {/* Contatos extras (PR-CONTACTS) — dono, gerente, comprador, etc.
+                Edição completa em /admin/customers detail. Aqui é leitura compacta. */}
+            <Card>
+              <CardHeader className="pb-3 flex flex-row items-center gap-2 space-y-0">
+                <Users className="w-4 h-4 text-muted-foreground" />
+                <CardTitle className="text-sm font-medium flex-1">
+                  Contatos extras
+                </CardTitle>
+                <Badge variant="outline" className="text-[10px] uppercase font-tabular">
+                  {contacts.data?.length ?? 0}
+                </Badge>
+              </CardHeader>
+              <CardContent className="space-y-2.5 text-sm">
+                {contacts.isLoading ? (
+                  <div className="space-y-2">
+                    {[1, 2].map((i) => (
+                      <div key={i} className="h-10 bg-muted/40 rounded animate-pulse" />
+                    ))}
+                  </div>
+                ) : contacts.data && contacts.data.length > 0 ? (
+                  <>
+                    <ul className="space-y-2.5 divide-y divide-border -my-1">
+                      {contacts.data.slice(0, 5).map((c) => (
+                        <ContactRow key={c.id} contact={c} />
+                      ))}
+                    </ul>
+                    <Separator className="my-2" />
+                    <div className="text-right">
+                      <Button asChild variant="ghost" size="sm" className="h-7 text-xs">
+                        <Link to={`/admin/customers/${customerId}`}>
+                          Gerenciar contatos
+                        </Link>
+                      </Button>
+                    </div>
+                  </>
+                ) : (
+                  <div className="text-center py-4 space-y-2">
+                    <p className="text-xs text-muted-foreground">
+                      Nenhum contato extra cadastrado.
+                    </p>
+                    <Button asChild variant="outline" size="sm" className="h-7 text-xs">
+                      <Link to={`/admin/customers/${customerId}`}>
+                        Adicionar contato
+                      </Link>
+                    </Button>
+                  </div>
+                )}
               </CardContent>
             </Card>
 
@@ -1030,6 +1090,112 @@ function DataRow({
         {hint && <div className="text-xs text-muted-foreground mt-0.5">{hint}</div>}
       </div>
     </div>
+  );
+}
+
+/**
+ * Linha compacta de contato extra (dono / gerente / comprador / etc).
+ * Mostra nome + cargo, telefone clicável + WhatsApp, badges (primary, decisão,
+ * só WhatsApp, aniversário). Edição completa fica em /admin/customers detail
+ * tab — aqui é só leitura pra contexto operacional rápido.
+ */
+function ContactRow({
+  contact,
+}: {
+  contact: import('@/lib/customer-contact/types').CustomerContact;
+}) {
+  const displayName = contact.nome ?? formatPhone(contact.phone);
+  const cargoLabel = contact.cargo ? CARGO_LABEL[contact.cargo] : null;
+  const cleanPhone = contact.phone.replace(/\D/g, '');
+  // Aniversário esse mês? Destaque sutil pra lembrar de mandar mensagem.
+  const isBirthdayMonth = (() => {
+    if (!contact.birthday) return false;
+    try {
+      const d = parseISO(contact.birthday);
+      return d.getMonth() === new Date().getMonth();
+    } catch {
+      return false;
+    }
+  })();
+  return (
+    <li className="pt-2 first:pt-0 space-y-1">
+      <div className="flex items-start justify-between gap-2 min-w-0">
+        <div className="min-w-0 flex-1">
+          <div className="flex items-center gap-1.5 flex-wrap">
+            <span className="font-medium text-sm truncate">{displayName}</span>
+            {cargoLabel && (
+              <Badge variant="outline" className="text-[9px] px-1 py-0">
+                {cargoLabel}
+              </Badge>
+            )}
+            {contact.is_primary && (
+              <Tooltip>
+                <TooltipTrigger>
+                  <Star className="w-3 h-3 text-status-warning-bold fill-status-warning-bold" />
+                </TooltipTrigger>
+                <TooltipContent>Contato principal</TooltipContent>
+              </Tooltip>
+            )}
+            {contact.is_decision_maker && (
+              <Tooltip>
+                <TooltipTrigger>
+                  <Award className="w-3 h-3 text-status-info-bold" />
+                </TooltipTrigger>
+                <TooltipContent>Decision maker (quem decide a compra)</TooltipContent>
+              </Tooltip>
+            )}
+            {isBirthdayMonth && (
+              <Tooltip>
+                <TooltipTrigger>
+                  <Cake className="w-3 h-3 text-status-success-bold" />
+                </TooltipTrigger>
+                <TooltipContent>
+                  Aniversário em {format(parseISO(contact.birthday!), "dd 'de' MMM", { locale: ptBR })}
+                </TooltipContent>
+              </Tooltip>
+            )}
+          </div>
+          <div className="flex items-center gap-2 text-xs text-muted-foreground mt-0.5">
+            {contact.whatsapp_only ? (
+              <a
+                href={`https://wa.me/${cleanPhone}`}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="hover:underline hover:text-foreground transition-colors"
+              >
+                {formatPhone(contact.phone)} · só WhatsApp
+              </a>
+            ) : (
+              <a
+                href={`tel:${contact.phone}`}
+                className="hover:underline hover:text-foreground transition-colors"
+              >
+                {formatPhone(contact.phone)}
+              </a>
+            )}
+          </div>
+          {contact.email && (
+            <a
+              href={`mailto:${contact.email}`}
+              className="text-xs text-muted-foreground hover:underline hover:text-foreground transition-colors truncate block mt-0.5"
+            >
+              {contact.email}
+            </a>
+          )}
+        </div>
+        {!contact.whatsapp_only && (
+          <a
+            href={`https://wa.me/${cleanPhone}`}
+            target="_blank"
+            rel="noopener noreferrer"
+            className="text-muted-foreground hover:text-status-success-bold transition-colors shrink-0 mt-0.5"
+            aria-label="Enviar WhatsApp"
+          >
+            <MessageSquare className="w-3.5 h-3.5" />
+          </a>
+        )}
+      </div>
+    </li>
   );
 }
 
