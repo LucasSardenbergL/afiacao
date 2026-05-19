@@ -21,7 +21,6 @@ export function useEventosEventuais(company: string, periodo?: { de: string; ate
     queryKey: ['fin_eventos_eventuais', company, periodo?.de, periodo?.ate],
     enabled: Boolean(company),
     queryFn: async (): Promise<EventoEventual[]> => {
-      // @ts-expect-error - fin_eventos_eventuais não está em types.ts (regenera após migration apply)
       let q = supabase
         .from('fin_eventos_eventuais')
         .select('*')
@@ -42,7 +41,6 @@ export function useCreateEventoEventual() {
   return useMutation({
     mutationFn: async (input: EventoEventualInput) => {
       const userId = (await supabase.auth.getUser()).data.user?.id;
-      // @ts-expect-error - fin_eventos_eventuais não está em types.ts (regenera após migration apply)
       const { data, error } = await supabase
         .from('fin_eventos_eventuais')
         .insert({ ...input, criado_por: userId })
@@ -62,7 +60,6 @@ export function useUpdateEventoEventual() {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: async (input: { id: string; patch: Partial<EventoEventualInput> }) => {
-      // @ts-expect-error - fin_eventos_eventuais não está em types.ts (regenera após migration apply)
       const { error } = await supabase
         .from('fin_eventos_eventuais')
         .update({ ...input.patch, updated_at: new Date().toISOString() })
@@ -80,7 +77,6 @@ export function useDeleteEventoEventual() {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: async (id: string) => {
-      // @ts-expect-error - fin_eventos_eventuais não está em types.ts (regenera após migration apply)
       const { error } = await supabase.from('fin_eventos_eventuais').delete().eq('id', id);
       if (error) throw error;
     },

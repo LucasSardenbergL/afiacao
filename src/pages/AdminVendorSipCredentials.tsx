@@ -42,7 +42,6 @@ export default function AdminVendorSipCredentials() {
     (async () => {
       try {
         const [credsRes, profilesRes] = await Promise.all([
-          // @ts-expect-error vendor_sip_credentials added in PR1.6, types pending regeneration
           supabase.from('vendor_sip_credentials').select('*'),
           supabase.from('profiles').select('user_id, name, email'),
         ]);
@@ -83,7 +82,6 @@ export default function AdminVendorSipCredentials() {
     }
     setSaving(true);
     try {
-      // @ts-expect-error vendor_sip_credentials added in PR1.6, types pending regeneration
       const { data, error } = await supabase
         .from('vendor_sip_credentials')
         .insert({
@@ -117,7 +115,6 @@ export default function AdminVendorSipCredentials() {
   async function handleDelete(id: string) {
     if (!confirm('Remover essa credencial SIP? O vendedor cairá no fallback (env vars).')) return;
     try {
-      // @ts-expect-error vendor_sip_credentials added in PR1.6, types pending regeneration
       const { error } = await supabase.from('vendor_sip_credentials').delete().eq('id', id);
       if (error) throw error;
       setCreds((prev) => prev.filter((c) => c.id !== id));

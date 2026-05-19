@@ -23,7 +23,6 @@ export function useCashflowConfig(company: string) {
     queryKey: ['fin_config_cashflow', company],
     enabled: Boolean(company),
     queryFn: async (): Promise<CashflowConfig | null> => {
-      // @ts-expect-error - fin_config_cashflow não está em types.ts (regenera após migration apply)
       const { data, error } = await supabase
         .from('fin_config_cashflow')
         .select('*')
@@ -40,7 +39,6 @@ export function useUpdateCashflowConfig() {
   return useMutation({
     mutationFn: async (input: { company: string; patch: Partial<Omit<CashflowConfig, 'company'>> }) => {
       const userId = (await supabase.auth.getUser()).data.user?.id;
-      // @ts-expect-error - fin_config_cashflow não está em types.ts (regenera após migration apply)
       const { error } = await supabase
         .from('fin_config_cashflow')
         .update({ ...input.patch, updated_at: new Date().toISOString(), updated_by: userId })
