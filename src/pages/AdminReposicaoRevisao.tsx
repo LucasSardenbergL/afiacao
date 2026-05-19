@@ -108,7 +108,7 @@ export default function AdminReposicaoRevisao() {
 
         const priced: RowWithPrice[] = ((vdata ?? []) as SkuSugeridoView[]).map((v) => ({
           id: `view-${v.sku_codigo_omie}`,
-          empresa: v.empresa,
+          empresa: v.empresa ?? empresa,
           sku_codigo_omie: Number(v.sku_codigo_omie),
           sku_descricao: v.sku_descricao,
           fornecedor_nome: v.fornecedor_nome,
