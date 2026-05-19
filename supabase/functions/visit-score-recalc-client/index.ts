@@ -160,7 +160,7 @@ async function recalcOne(
   const [scoresRes, visitsRes, ordersRes, addressRes, profileRes] = await Promise.all([
     supabase.from('farmer_client_scores').select('churn_risk, expansion_score, health_score, recover_score, revenue_potential, avg_monthly_spend_180d, days_since_last_purchase, signal_modifiers').eq('customer_user_id', customer_user_id).eq('farmer_id', farmer_id).maybeSingle(),
     supabase.from('route_visits').select('check_in_at').eq('customer_user_id', customer_user_id).order('check_in_at', { ascending: false }).limit(1),
-    supabase.from('sales_orders').select('id').eq('user_id', customer_user_id),
+    supabase.from('sales_orders').select('id').eq('customer_user_id', customer_user_id),
     supabase.from('addresses').select('city, neighborhood, state').eq('user_id', customer_user_id).eq('is_default', true).maybeSingle(),
     supabase.from('profiles').select('created_at, is_prospect').eq('user_id', customer_user_id).maybeSingle(),
   ]);
