@@ -7,7 +7,7 @@ describe('parsePostgresFinanceiroError', () => {
       code: 'P0001',
       message: 'PERIOD_LOCKED: Período 03/2026 da empresa colacor está fechado em 2026-03-31. Use override de emergência.',
     };
-    const parsed = parsePostgresFinanceiroError(err);
+    const parsed = parsePostgresFinanceiroError(err) as any;
     expect(parsed.kind).toBe('period_locked');
     expect(parsed.empresa).toBe('colacor');
     expect(parsed.periodo).toBe('03/2026');
@@ -18,7 +18,7 @@ describe('parsePostgresFinanceiroError', () => {
       code: 'P0002',
       message: 'MAPPING_INCOMPLETE: 3 categorias sem mapeamento DRE: [{"id":"123","nome":"Honorários"}]',
     };
-    const parsed = parsePostgresFinanceiroError(err);
+    const parsed = parsePostgresFinanceiroError(err) as any;
     expect(parsed.kind).toBe('mapping_incomplete');
     expect(parsed.count).toBe(3);
     expect(parsed.pendentes).toEqual([{ id: '123', nome: 'Honorários' }]);
