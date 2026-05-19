@@ -48,7 +48,7 @@ export class DeepgramClient {
     ws.onopen = () => {
       this.isOpen = true;
       for (const chunk of this.pendingAudio) {
-        ws.send(chunk);
+        ws.send(chunk as ArrayBuffer | Blob);
       }
       this.pendingAudio = [];
     };
