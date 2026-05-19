@@ -72,16 +72,16 @@ export function inferPersona(signals: PersonaSignals): InferPersonaResult {
   const total = Object.values(signals.routeCounts).reduce((sum, e) => sum + e.count, 0);
   if (total >= HEURISTIC_MIN_VISITS) {
     // Agregar contagens por persona (estoque/recebimento contam pra mesma persona)
-    const byPersona = new Map<string, number>();
+    const byPersona = {} as Record<string, number>;
     for (const [prefix, entry] of Object.entries(signals.routeCounts)) {
       const persona = PREFIX_TO_PERSONA[prefix];
       if (!persona) continue;
-      byPersona.set(persona, (byPersona.get(persona) ?? 0) + entry.count);
+      (byPersona as Record<string, number>)[persona] = ((byPersona as Record<string, number>)[persona] ?? 0) + entry.count;
     }
 
     let topPersona: Persona | null = null;
     let topCount = 0;
-    for (const [persona, count] of byPersona.entries()) {
+    for (const [persona, count] of Object.entries(byPersona) as Array<[string, number]>) {
       if (count > topCount) {
         topPersona = persona as Persona;
         topCount = count;
