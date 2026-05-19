@@ -336,7 +336,7 @@ function useCustomerInteractions(customerId: string | undefined) {
           at: c.started_at,
           title: c.is_whatsapp ? 'WhatsApp enviado' : 'Ligação',
           subtitle: [c.call_result, c.notes].filter(Boolean).join(' · ').slice(0, 140) || c.call_type,
-          tone: c.call_result === 'success' || c.call_result === 'pedido_gerado'
+          tone: c.call_result === 'contato_sucesso'
             ? 'text-status-success-bold'
             : c.call_result === 'sem_resposta'
               ? 'text-muted-foreground'
