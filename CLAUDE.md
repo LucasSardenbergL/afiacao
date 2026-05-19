@@ -261,7 +261,9 @@ Dois backends coexistem; o usuário escolhe via toggle em `/settings`:
 
 - `src/lib/logger.ts` — wrapper estruturado com níveis (info/error/critical), usado consistente em AuthContext
 
-### Migrations Supabase — ⚠️ aplicação manual obrigatória
+### Migrations & DB ops — preferência do founder (confirmado 2026-05-19)
+
+> 🔴 **REGRA**: o founder acessa o banco via **SQL Editor (Lovable / Supabase Cloud)** — **NÃO** menciona "Supabase CLI", "Supabase Dashboard separado" ou "supabase db push" como caminho default. Toda migration / SQL custom é entregue pra **colar e clicar Run no SQL Editor**.
 
 **Lovable Cloud NÃO aplica automaticamente** migrations que você commita em `supabase/migrations/`. Confirmado experimentalmente em 2026-05-17:
 
@@ -272,15 +274,22 @@ Dois backends coexistem; o usuário escolhe via toggle em `/settings`:
 
 1. Cria o arquivo em `supabase/migrations/YYYYMMDDHHMMSS_<nome>.sql`
 2. Mergeia o PR normal (commit fica no histórico do código)
-3. **Aplica manualmente**: Supabase Dashboard (via Lovable Cloud) → SQL Editor → New query → cola conteúdo → Run
-4. Valida com query tipo `SELECT EXISTS(SELECT 1 FROM pg_tables WHERE tablename = '<nova_tabela>')`
+3. **Entrega o SQL inline na conversa** em blocos separados (1 bloco por migration), prontos pra colar no **SQL Editor** (não fica enviando o founder pro arquivo no GitHub Raw ou pedindo `bunx supabase db push`)
+4. Founder cola cada bloco no SQL Editor → Run → confirma "Success"
+5. **Valida no final** com uma query de checagem (count de tabelas/triggers/funções criados) também pra colar no SQL Editor
 
-**Migrations já criadas e que precisaram aplicação manual** (referência):
-- `20260517100000_enable_realtime_dashboard_v3.sql` — Realtime publication pras 4 tabelas Dashboard V3
-- `20260517120000_user_departments.sql` — schema `user_departments`
-- `20260517140000_dashboard_visits.sql` — schema `dashboard_visits`
+**Migrations já entregues por este workflow** (referência):
+- Fundação Tier 1 (15 migrations, 2026-05-17 → 18) — todas coladas via SQL Editor
+- A1 Inteligência de Caixa (4 migrations, 2026-05-19) — idem
+- `20260517100000_enable_realtime_dashboard_v3.sql`, `20260517120000_user_departments.sql`, `20260517140000_dashboard_visits.sql`
 
-**Sempre que adicionar migration nova**: avisar no PR description "**ATENÇÃO: migration manual necessária**" e idealmente colar o SQL no body do PR pra facilitar.
+**Sempre que adicionar migration nova**: avisar no PR description "**ATENÇÃO: migration manual necessária**" e colar o SQL no body do PR + entregar inline na conversa.
+
+### Edge functions — preferência do founder
+
+> 🟡 **REGRA**: edge functions Supabase **podem** ser deployadas via `supabase functions deploy` (CLI). O founder já tem CLI instalada (`brew install supabase/tap/supabase`) e linkada (`supabase link --project-ref ...` já feito em 2026-05-18). Mas, dado que ele prefere o caminho "colar e clicar", **avisar antes** que edge fn precisa do terminal — não assumir que rodar `supabase functions deploy` é trivial.
+
+Caminho normal: `cd ~/Projetos/afiacao && git pull && supabase functions deploy <nome>`. Entregar como bloco copiável.
 
 ### Convenções de código
 
