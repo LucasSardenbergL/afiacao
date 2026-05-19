@@ -18,12 +18,21 @@ import { useNavigate, Link } from 'react-router-dom';
 import { useIcMatches } from '@/hooks/useIcMatches';
 import {
   Loader2, Building2, Lock, Unlock, CheckCircle2, Clock,
-  FileText, Eye, RotateCcw, Plus, History, ShieldCheck, AlertTriangle
+  FileText, Eye, RotateCcw, Plus, History, ShieldCheck, AlertTriangle,
+  type LucideIcon,
 } from 'lucide-react';
 
 const mesesNome = ['Janeiro','Fevereiro','Março','Abril','Maio','Junho','Julho','Agosto','Setembro','Outubro','Novembro','Dezembro'];
 
-const statusConfig: Record<string, { label: string; color: string; icon: any }> = {
+type FechamentoAcaoDetalhes = {
+  motivo?: string;
+  notas?: string;
+  snapshot_dre_id?: string;
+  snapshot_dre_caixa_id?: string;
+  snapshot_dre_competencia_id?: string;
+};
+
+const statusConfig: Record<string, { label: string; color: string; icon: LucideIcon }> = {
   aberto: { label: 'Aberto', color: 'bg-status-info-bg text-status-info', icon: Clock },
   em_revisao: { label: 'Em Revisão', color: 'bg-status-warning-bg text-status-warning', icon: Eye },
   fechado: { label: 'Fechado', color: 'bg-status-success-bg text-status-success', icon: Lock },
@@ -50,8 +59,9 @@ const FinanceiroFechamento = () => {
     try {
       const data = await getFechamentos(company, ano);
       setFechamentos(data);
-    } catch (e: any) {
-      toast.error('Erro', { description: e.message });
+    } catch (e) {
+      const message = e instanceof Error ? e.message : 'Erro desconhecido';
+      toast.error('Erro', { description: message });
     } finally {
       setLoading(false);
     }
@@ -67,25 +77,27 @@ const FinanceiroFechamento = () => {
       await criarFechamento(co, ano, mes);
       toast.success(`Fechamento ${mesesNome[mes - 1]}/${ano} criado para ${COMPANIES[co].shortName}`);
       await load();
-    } catch (e: any) {
-      toast.error('Erro', { description: e.message });
+    } catch (e) {
+      const message = e instanceof Error ? e.message : 'Erro desconhecido';
+      toast.error('Erro', { description: message });
     } finally {
       setActing(false);
     }
   };
 
-  const handleAcao = async (id: string, acao: 'revisar' | 'fechar' | 'aprovar' | 'reabrir', detalhes?: any) => {
+  const handleAcao = async (id: string, acao: 'revisar' | 'fechar' | 'aprovar' | 'reabrir', detalhes?: FechamentoAcaoDetalhes) => {
     setActing(true);
     try {
       await atualizarFechamento(id, acao, detalhes);
       toast.success(`Ação "${acao}" executada com sucesso`);
       await load();
-    } catch (e: any) {
+    } catch (e) {
       const parsed = parsePostgresFinanceiroError(e);
       if (parsed.kind === 'mapping_incomplete') {
         setMappingPendentes(parsed.pendentes);
       } else {
-        toast.error('Erro', { description: e.message });
+        const message = e instanceof Error ? e.message : 'Erro desconhecido';
+        toast.error('Erro', { description: message });
       }
     } finally {
       setActing(false);
@@ -133,7 +145,7 @@ const FinanceiroFechamento = () => {
               ))}
             </SelectContent>
           </Select>
-          <Select value={company} onValueChange={v => setCompany(v as any)}>
+          <Select value={company} onValueChange={v => setCompany(v as Company | 'all')}>
             <SelectTrigger className="w-[180px]">
               <Building2 className="w-4 h-4 mr-2" />
               <SelectValue />

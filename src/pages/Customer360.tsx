@@ -487,7 +487,10 @@ export default function Customer360() {
             </div>
             <div className="flex-1 min-w-0">
               <div className="flex items-center gap-2 flex-wrap">
-                <h1 className="font-display text-3xl font-medium tracking-[-0.04em] leading-tight truncate">
+                {/* Nome do cliente: line-clamp-2 em vez de truncate, p/ acomodar razao
+                    social longa em viewport estreito (Lovable preview split, mobile).
+                    Em viewport wide cabe em 1 linha; em estreito quebra sem truncar. */}
+                <h1 className="font-display text-3xl font-medium tracking-[-0.04em] leading-tight line-clamp-2 break-words min-w-0">
                   {customer.name}
                 </h1>
                 {isPj && (

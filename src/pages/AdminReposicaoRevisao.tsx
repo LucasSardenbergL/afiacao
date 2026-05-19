@@ -2,6 +2,12 @@ import { useState, useMemo } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { Link } from "react-router-dom";
 import { supabase } from "@/integrations/supabase/client";
+import type { Database } from "@/integrations/supabase/types";
+import type { VariantProps } from "class-variance-authority";
+import { badgeVariants } from "@/components/ui/badge";
+
+type SkuSugeridoView = Database["public"]["Views"]["v_sku_parametros_sugeridos"]["Row"];
+type BadgeVariant = NonNullable<VariantProps<typeof badgeVariants>["variant"]>;
 import { useAuth } from "@/contexts/AuthContext";
 import { useReposicaoEmpresa } from "@/contexts/ReposicaoEmpresaContext";
 import { toast } from "sonner";
@@ -79,7 +85,7 @@ export default function AdminReposicaoRevisao() {
       // Caso especial: SKUs aguardando habilitação de fornecedor vêm da view
       if (statusFilter === "aguardando_fornecedor") {
         let q = supabase
-          .from("v_sku_parametros_sugeridos" as any)
+          .from("v_sku_parametros_sugeridos")
           .select("*", { count: "exact" })
           .eq("empresa", empresa)
           .eq("status_sugestao", "AGUARDANDO_HABILITACAO_FORNECEDOR");
@@ -100,7 +106,7 @@ export default function AdminReposicaoRevisao() {
         const { data: vdata, error, count } = await q;
         if (error) throw error;
 
-        const priced: RowWithPrice[] = ((vdata ?? []) as any[]).map((v) => ({
+        const priced: RowWithPrice[] = ((vdata ?? []) as SkuSugeridoView[]).map((v) => ({
           id: `view-${v.sku_codigo_omie}`,
           empresa: v.empresa,
           sku_codigo_omie: Number(v.sku_codigo_omie),
@@ -180,13 +186,17 @@ export default function AdminReposicaoRevisao() {
       if (baseRows.length > 0) {
         const codes = baseRows.map((r) => r.sku_codigo_omie);
         const { data: vrows } = await supabase
-          .from("v_sku_parametros_sugeridos" as any)
+          .from("v_sku_parametros_sugeridos")
           .select("sku_codigo_omie, preco_compra_real, preco_venda_medio, fonte_preco, fornecedor_habilitado, status_sugestao")
           .eq("empresa", empresa)
           .in("sku_codigo_omie", codes);
 
-        const map = new Map<number, any>();
-        (vrows ?? []).forEach((row: any) => map.set(Number(row.sku_codigo_omie), row));
+        type SkuPriceRow = Pick<
+          SkuSugeridoView,
+          "sku_codigo_omie" | "preco_compra_real" | "preco_venda_medio" | "fonte_preco" | "fornecedor_habilitado" | "status_sugestao"
+        >;
+        const map = new Map<number, SkuPriceRow>();
+        ((vrows ?? []) as SkuPriceRow[]).forEach((row) => map.set(Number(row.sku_codigo_omie), row));
         priced = baseRows.map((r) => {
           const v = map.get(Number(r.sku_codigo_omie));
           return {
@@ -444,7 +454,7 @@ export default function AdminReposicaoRevisao() {
                       )}
                     </TableCell>
                     <TableCell>
-                      <Badge variant={classBadge(r.classe_consolidada) as any}>
+                      <Badge variant={classBadge(r.classe_consolidada) as BadgeVariant}>
                         {r.classe_consolidada}
                       </Badge>
                     </TableCell>
@@ -452,7 +462,7 @@ export default function AdminReposicaoRevisao() {
                     <TableCell className="text-right">{fmtBRL(r.preco_compra_real)}</TableCell>
                     <TableCell className="text-right">{fmtBRL(r.preco_venda_medio)}</TableCell>
                     <TableCell>
-                      <Badge variant={fonteBadgeVariant(r.fonte_preco) as any}>
+                      <Badge variant={fonteBadgeVariant(r.fonte_preco) as BadgeVariant}>
                         {fonteBadgeLabel(r.fonte_preco)}
                       </Badge>
                     </TableCell>
