@@ -3,7 +3,7 @@ import { Card, CardContent } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
-import { Plus, Info, TrendingUp, Package, ArrowUpRight, Sparkles } from 'lucide-react';
+import { Plus, TrendingUp, Package, ArrowUpRight, Sparkles } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import type { RecommendationItem } from '@/hooks/useRecommendationEngine';
 

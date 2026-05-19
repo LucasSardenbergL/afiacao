@@ -43,7 +43,7 @@ function KpiCards({ empresa }: { empresa: string }) {
   const { data: pendentes } = useQuery({
     queryKey: ["estoque-receb-pendentes", warehouseId],
     queryFn: async () => {
-      const { count } = await (supabase as any)
+      const { count } = await supabase
         .from("nfe_recebimentos")
         .select("*", { count: "exact", head: true })
         .eq("warehouse_id", warehouseId)
@@ -56,7 +56,7 @@ function KpiCards({ empresa }: { empresa: string }) {
   const { data: divergencias } = useQuery({
     queryKey: ["estoque-receb-divergencias", warehouseId],
     queryFn: async () => {
-      const { count } = await (supabase as any)
+      const { count } = await supabase
         .from("nfe_recebimentos")
         .select("*", { count: "exact", head: true })
         .eq("warehouse_id", warehouseId)
@@ -69,13 +69,13 @@ function KpiCards({ empresa }: { empresa: string }) {
   const { data: valorTransito } = useQuery({
     queryKey: ["estoque-receb-valor-transito", warehouseId],
     queryFn: async () => {
-      const { data } = await (supabase as any)
+      const { data } = await supabase
         .from("nfe_recebimentos")
         .select("valor_total")
         .eq("warehouse_id", warehouseId)
         .in("status", ["pendente", "em_conferencia", "divergencia"]);
       return (data ?? []).reduce(
-        (acc: number, r: any) => acc + Number(r.valor_total ?? 0),
+        (acc: number, r: { valor_total: number | null }) => acc + Number(r.valor_total ?? 0),
         0,
       );
     },
@@ -85,7 +85,7 @@ function KpiCards({ empresa }: { empresa: string }) {
   const { data: efetivadasHoje } = useQuery({
     queryKey: ["estoque-receb-efetivadas-hoje", warehouseId, today],
     queryFn: async () => {
-      const { count } = await (supabase as any)
+      const { count } = await supabase
         .from("nfe_recebimentos")
         .select("*", { count: "exact", head: true })
         .eq("warehouse_id", warehouseId)

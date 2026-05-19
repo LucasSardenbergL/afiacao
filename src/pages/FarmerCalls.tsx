@@ -8,7 +8,6 @@ import { Input } from '@/components/ui/input';
 import { Textarea } from '@/components/ui/textarea';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '@/components/ui/dialog';
-import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Separator } from '@/components/ui/separator';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
 import { supabase } from '@/integrations/supabase/client';
@@ -22,10 +21,10 @@ import type { NvoipCallState } from '@/hooks/useNvoipCall';
 import { useCallBackend } from '@/hooks/useCallBackend';
 import { useWebRTCCall } from '@/hooks/useWebRTCCall';
 import {
-  Phone, PhoneOff, Play, Pause, Clock, User, Search,
-  Plus, Timer, CheckCircle, XCircle, Loader2, BarChart3,
-  ArrowUpRight, DollarSign, Activity, Filter, FileText,
-  Mic, StopCircle, MessageSquare, ChevronRight,
+  Phone, PhoneOff, Play, Pause, Clock, Search,
+  Plus, Timer, CheckCircle, XCircle, Loader2,
+  ArrowUpRight, DollarSign, Filter, FileText,
+  Mic, ChevronRight,
   PhoneCall, PhoneIncoming, AlertTriangle, TrendingUp, RotateCcw,
 } from 'lucide-react';
 import { format } from 'date-fns';
@@ -77,7 +76,7 @@ const CALL_RESULTS = [
 const fmt = (v: number) => v.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' });
 
 /* ─── Call Detail Panel (Gong-inspired) ─── */
-function CallDetailPanel({ call, onClose }: { call: CallLog; onClose: () => void }) {
+function CallDetailPanel({ call }: { call: CallLog; onClose: () => void }) {
   const typeInfo = CALL_TYPES.find(t => t.value === call.call_type);
   const resultInfo = CALL_RESULTS.find(r => r.value === call.call_result);
   
@@ -282,16 +281,17 @@ const FarmerCalls = () => {
   }, [nvoipState]);
 
   const loadCallLogs = async () => {
+    if (!user?.id) return;
     try {
       const { data } = await supabase
         .from('farmer_calls')
         .select('*')
-        .eq('farmer_id', user?.id)
+        .eq('farmer_id', user.id)
         .order('created_at', { ascending: false })
         .limit(100);
 
       if (data) {
-        const customerIds = [...new Set(data.map((c: { customer_user_id: string }) => c.customer_user_id))];
+        const customerIds = [...new Set(data.map((c) => c.customer_user_id).filter((id): id is string => Boolean(id)))];
         const { data: profiles } = await supabase
           .from('profiles')
           .select('user_id, name')

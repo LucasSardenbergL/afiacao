@@ -72,7 +72,7 @@ const RecurringSchedules = () => {
     if (!user) return;
     try {
       const [schedulesRes, toolsRes, addressesRes] = await Promise.all([
-        (supabase as any).from('recurring_schedules')
+        supabase.from('recurring_schedules' as never)
           .select('*')
           .eq('user_id', user.id)
           .order('created_at', { ascending: false }),
@@ -111,7 +111,7 @@ const RecurringSchedules = () => {
     setSaving(true);
     try {
       const nextDate = addDays(new Date(), frequency);
-      const { error } = await (supabase as any).from('recurring_schedules').insert({
+      const { error } = await supabase.from('recurring_schedules' as never).insert({
         user_id: user.id,
         tool_ids: selectedTools,
         frequency_days: frequency,
@@ -135,7 +135,7 @@ const RecurringSchedules = () => {
 
   const toggleActive = async (scheduleId: string, currentActive: boolean) => {
     try {
-      const { error } = await (supabase as any).from('recurring_schedules')
+      const { error } = await supabase.from('recurring_schedules' as never)
         .update({ is_active: !currentActive, updated_at: new Date().toISOString() })
         .eq('id', scheduleId);
       if (error) throw error;
@@ -148,7 +148,7 @@ const RecurringSchedules = () => {
 
   const deleteSchedule = async (scheduleId: string) => {
     try {
-      const { error } = await (supabase as any).from('recurring_schedules').delete().eq('id', scheduleId);
+      const { error } = await supabase.from('recurring_schedules' as never).delete().eq('id', scheduleId);
       if (error) throw error;
       setSchedules(prev => prev.filter(s => s.id !== scheduleId));
       toast.success('Agendamento removido');
