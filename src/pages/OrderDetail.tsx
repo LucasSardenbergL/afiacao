@@ -11,6 +11,7 @@ interface OrderItemShape {
   unitPrice?: number;
   serviceType?: string;
   wearLevel?: string;
+  notes?: string;
 }
 import { OrderStatus } from '@/types';
 import { OrderTimeline } from '@/components/OrderTimeline';
@@ -25,7 +26,6 @@ import { supabase } from '@/integrations/supabase/client';
 import { useQuery } from '@tanstack/react-query';
 import { format } from 'date-fns';
 import { ptBR } from 'date-fns/locale';
-import { cn } from '@/lib/utils';
 
 const WHATSAPP_NUMBER = '553732221035';
 

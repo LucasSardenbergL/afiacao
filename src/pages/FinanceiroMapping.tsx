@@ -13,7 +13,7 @@ import {
   type FinCategoriaDREMapping,
 } from '@/services/financeiroService';
 import {
-  Loader2, Save, Trash2, Plus, Building2, Search, Layers, AlertTriangle, History
+  Loader2, Save, Trash2, Building2, Search, Layers, AlertTriangle, History
 } from 'lucide-react';
 import { AuditTrailDrawer } from '@/components/financeiro/AuditTrailDrawer';
 import { useSuggestedMapping } from '@/hooks/useSuggestedMapping';
