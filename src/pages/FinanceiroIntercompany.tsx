@@ -15,10 +15,17 @@ import { Link } from 'react-router-dom';
 
 const fmt = (v: number) => v.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' });
 
+interface ConsolidadoRow {
+  dre_linha: string;
+  valor_bruto: number;
+  eliminacoes: number;
+  valor_liquido: number;
+}
+
 const FinanceiroIntercompany = () => {
   const [regras, setRegras] = useState<EliminacaoRegra[]>([]);
   const [loading, setLoading] = useState(true);
-  const [consolidado, setConsolidado] = useState<any[]>([]);
+  const [consolidado, setConsolidado] = useState<ConsolidadoRow[]>([]);
   const [ano, setAno] = useState(new Date().getFullYear());
   const [mes, setMes] = useState(new Date().getMonth() + 1);
   const { data: icDiv } = useIcMatches('divergencia_valor');
@@ -43,13 +50,15 @@ const FinanceiroIntercompany = () => {
       setRegras(data);
       // Load consolidado via RPC
       try {
-        const { data: cons } = await supabase.rpc('fin_consolidado_intercompany' as any, {
-          p_ano: ano, p_mes: mes,
-        }) as any;
-        setConsolidado(cons || []);
+        const { data: cons } = await supabase.rpc(
+          'fin_consolidado_intercompany' as never,
+          { p_ano: ano, p_mes: mes } as never,
+        );
+        setConsolidado((cons as unknown as ConsolidadoRow[]) || []);
       } catch { /* RPC may not exist */ }
-    } catch (e: any) {
-      toast.error('Erro', { description: e.message });
+    } catch (e) {
+      const message = e instanceof Error ? e.message : String(e);
+      toast.error('Erro', { description: message });
     } finally {
       setLoading(false);
     }
@@ -64,15 +73,14 @@ const FinanceiroIntercompany = () => {
         ...newRegra,
         cnpj_origem: newRegra.cnpj_origem || null,
         cnpj_destino: newRegra.cnpj_destino || null,
-        categoria_origem: null,
-        categoria_destino: null,
         ativo: true,
-      } as any);
+      });
       toast.success('Regra criada');
       setNewRegra(prev => ({ ...prev, descricao: '', cnpj_origem: '', cnpj_destino: '' }));
       load();
-    } catch (e: any) {
-      toast.error('Erro', { description: e.message });
+    } catch (e) {
+      const message = e instanceof Error ? e.message : String(e);
+      toast.error('Erro', { description: message });
     }
   };
 
@@ -149,7 +157,7 @@ const FinanceiroIntercompany = () => {
                 </TableRow>
               </TableHeader>
               <TableBody>
-                {consolidado.map((row: any) => (
+                {consolidado.map((row) => (
                   <TableRow key={row.dre_linha} className={
                     ['lucro_bruto', 'resultado_operacional', 'resultado_liquido'].includes(row.dre_linha) ? 'bg-muted/30 font-bold' : ''
                   }>
