@@ -445,3 +445,10 @@ export function useWebRTCCallContext(): WebRTCCallContextValue {
   }
   return ctx;
 }
+
+// Safe variant — retorna null se não houver Provider (ex: customer, ou enquanto
+// o ConditionalWebRTCProvider ainda está carregando via Suspense).
+// eslint-disable-next-line react-refresh/only-export-components
+export function useWebRTCCallContextOptional(): WebRTCCallContextValue | null {
+  return useContext(WebRTCCallContext);
+}

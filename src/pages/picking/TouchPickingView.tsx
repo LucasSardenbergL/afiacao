@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { supabase } from '@/integrations/supabase/client';
+import type { Tables } from '@/integrations/supabase/types';
 import { Card, CardContent } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
@@ -9,6 +10,12 @@ import { ScanBar, type ScanResult } from '@/components/picking/ScanBar';
 import { Loader2, ChevronRight, Check, AlertTriangle, Package } from 'lucide-react';
 import { toast } from 'sonner';
 import { cn } from '@/lib/utils';
+
+type PickingTaskRow = Pick<Tables<'picking_tasks'>, 'id' | 'sales_order_id' | 'status' | 'created_at'>;
+type PickingTaskItemRow = Pick<
+  Tables<'picking_task_items'>,
+  'id' | 'product_descricao' | 'quantidade' | 'quantidade_separada' | 'status' | 'lote_fefo' | 'lote_separado'
+>;
 
 /**
  * Visão mobile dedicada do picking — separador no chão, com luva, sinal ruim.
@@ -34,15 +41,15 @@ export default function TouchPickingView() {
 
   const { data: tasks, isLoading } = useQuery({
     queryKey: ['touch-pk-tasks', ACCOUNT_DEFAULT],
-    queryFn: async () => {
-      const { data } = await (supabase as any)
+    queryFn: async (): Promise<PickingTaskRow[]> => {
+      const { data } = await supabase
         .from('picking_tasks')
         .select('id, sales_order_id, status, created_at')
         .eq('account', ACCOUNT_DEFAULT)
         .in('status', ['pendente', 'em_andamento'])
         .order('created_at', { ascending: true })
         .limit(20);
-      return data ?? [];
+      return (data ?? []) as PickingTaskRow[];
     },
     refetchInterval: 30000,
   });
@@ -79,7 +86,7 @@ export default function TouchPickingView() {
           </div>
         ) : (
           <ul className="space-y-2">
-            {(tasks ?? []).map((t: any) => (
+            {(tasks ?? []).map((t) => (
               <li key={t.id}>
                 <button
                   type="button"
@@ -118,18 +125,18 @@ function ActiveTaskView({
 }) {
   const { data: items, isLoading } = useQuery({
     queryKey: ['touch-pk-items', taskId],
-    queryFn: async () => {
-      const { data } = await (supabase as any)
+    queryFn: async (): Promise<PickingTaskItemRow[]> => {
+      const { data } = await supabase
         .from('picking_task_items')
         .select('id, product_descricao, quantidade, quantidade_separada, status, lote_fefo, lote_separado')
         .eq('picking_task_id', taskId)
         .order('id');
-      return data ?? [];
+      return (data ?? []) as PickingTaskItemRow[];
     },
   });
 
-  const total = (items ?? []).reduce((s: number, i: any) => s + (i.quantidade ?? 0), 0);
-  const done = (items ?? []).reduce((s: number, i: any) => s + (i.quantidade_separada ?? 0), 0);
+  const total = (items ?? []).reduce((s: number, i) => s + (i.quantidade ?? 0), 0);
+  const done = (items ?? []).reduce((s: number, i) => s + (i.quantidade_separada ?? 0), 0);
   const pct = total > 0 ? Math.round((done / total) * 100) : 0;
 
   if (isLoading) {
@@ -156,7 +163,7 @@ function ActiveTaskView({
         </div>
       </div>
       <ul className="space-y-2 px-1">
-        {(items ?? []).map((it: any) => {
+        {(items ?? []).map((it) => {
           const ok = it.status === 'concluido' || (it.quantidade_separada ?? 0) >= it.quantidade;
           const divergente = it.lote_separado && it.lote_fefo && it.lote_separado !== it.lote_fefo;
           return (

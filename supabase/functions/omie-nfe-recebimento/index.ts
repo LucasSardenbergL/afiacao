@@ -6,6 +6,63 @@ const corsHeaders = {
     "authorization, x-client-info, apikey, content-type",
 };
 
+// ── Local interfaces (Edge Functions bundle independently — no shared types) ──
+
+interface OmieCallSuccess {
+  error: false;
+  data: unknown;
+}
+
+interface OmieCallError {
+  error: true;
+  status?: number;
+  data: unknown;
+}
+
+type OmieCallResult = OmieCallSuccess | OmieCallError;
+
+interface OmieImportarNFeResponse {
+  nIdNfe?: number;
+  faultstring?: string;
+}
+
+interface WarehouseJoin {
+  id?: string;
+  code?: string;
+  name?: string;
+}
+
+interface NfeRecebimentoItemRow {
+  id: string;
+  sequencia: number;
+  produto_omie_id: number | null;
+  quantidade_convertida: number | null;
+  quantidade_nfe: number | null;
+  unidade_nfe: string | null;
+  unidade_estoque: string | null;
+}
+
+interface NfeLoteEscaneadoRow {
+  nfe_recebimento_item_id: string;
+  numero_lote: string;
+  data_fabricacao: string | null;
+  data_validade: string | null;
+}
+
+interface LoteValidadeEntry {
+  cNumLote: string;
+  nQtdLote: number;
+  dDataFab: string;
+  dDataVal: string;
+}
+
+interface OperationResult {
+  step: string;
+  error: boolean;
+  status?: number;
+  data: unknown;
+}
+
 function jsonRes(body: Record<string, unknown>, status = 200) {
   return new Response(JSON.stringify(body), {
     status,
@@ -18,7 +75,7 @@ async function omieCall(
   url: string,
   payload: Record<string, unknown>,
   maxRetries = 3,
-): Promise<any> {
+): Promise<OmieCallResult> {
   for (let attempt = 1; attempt <= maxRetries; attempt++) {
     try {
       const res = await fetch(url, {
@@ -27,7 +84,7 @@ async function omieCall(
         body: JSON.stringify(payload),
       });
       const text = await res.text();
-      let data: any;
+      let data: unknown;
       try {
         data = JSON.parse(text);
       } catch {
@@ -54,6 +111,8 @@ async function omieCall(
       return { error: true, data: { message: String(err) } };
     }
   }
+  // Unreachable — loop always returns inside; satisfies TS control flow analysis.
+  return { error: true, data: { message: "exhausted retries" } };
 }
 
 function formatDateBR(isoDate: string | null): string | null {
@@ -112,7 +171,7 @@ Deno.serve(async (req) => {
 
   // SECURITY: staff-only — fixes privilege escalation that allowed any
   // authenticated user to finalize NF-e receiving via service_role.
-  const callerUserId = (claimsData.claims as any).sub as string | undefined;
+  const callerUserId = (claimsData.claims as { sub?: string }).sub;
   if (!callerUserId) return jsonRes({ error: "Unauthorized" }, 401);
   const { data: callerRoles } = await supabase
     .from("user_roles")
@@ -152,7 +211,7 @@ Deno.serve(async (req) => {
       return jsonRes({ error: "omie_id_receb ausente — NF-e não importada pelo Omie" }, 400);
     }
 
-    const warehouseCode = (nfe.warehouses as any)?.code ?? "OB";
+    const warehouseCode = (nfe.warehouses as WarehouseJoin | null)?.code ?? "OB";
     const creds = getOmieCredentials(warehouseCode);
 
     if (!creds.appKey || !creds.appSecret) {
@@ -160,21 +219,23 @@ Deno.serve(async (req) => {
     }
 
     // ── Fetch items ──
-    const { data: itens } = await supabase
+    const { data: itensData } = await supabase
       .from("nfe_recebimento_itens")
       .select("*")
       .eq("nfe_recebimento_id", nfeRecebimentoId)
       .order("sequencia");
 
+    const itens = (itensData ?? []) as unknown as NfeRecebimentoItemRow[];
+
     // ── Fetch all scanned lots ──
-    const itemIds = (itens ?? []).map((i: any) => i.id);
-    let lotes: any[] = [];
+    const itemIds = itens.map((i) => i.id);
+    let lotes: NfeLoteEscaneadoRow[] = [];
     if (itemIds.length > 0) {
       const { data: lotesData } = await supabase
         .from("nfe_lotes_escaneados")
         .select("*")
         .in("nfe_recebimento_item_id", itemIds);
-      lotes = lotesData ?? [];
+      lotes = (lotesData ?? []) as unknown as NfeLoteEscaneadoRow[];
     }
 
     // ── 2. Aggregate lots per item ──
@@ -194,7 +255,7 @@ Deno.serve(async (req) => {
       if (l.data_validade) entry.val = l.data_validade;
     }
 
-    function buildLoteValidade(itemId: string): any[] {
+    function buildLoteValidade(itemId: string): LoteValidadeEntry[] {
       const map = lotesPerItem.get(itemId);
       if (!map) return [];
       return Array.from(map.entries()).map(([lote, info]) => ({
@@ -205,7 +266,7 @@ Deno.serve(async (req) => {
       }));
     }
 
-    const results: any[] = [];
+    const results: OperationResult[] = [];
 
     // ── 3. Check if supplier has unit conversions (Sayerlack case) ──
     const cnpjEmClean = (nfe.cnpj_emitente ?? "").replace(/\D/g, "");
@@ -219,7 +280,7 @@ Deno.serve(async (req) => {
     const hasConversion = (conversoes ?? []).length > 0;
 
     // ── 4. AlterarRecebimento — efetivar NF-e no Omie ──
-    const recebItens = (itens ?? []).map((item: any) => ({
+    const recebItens = itens.map((item) => ({
       nItem: item.sequencia,
       nCodProd: item.produto_omie_id,
       lote_validade: buildLoteValidade(item.id),
@@ -255,7 +316,7 @@ Deno.serve(async (req) => {
     // ── 5. Stock adjustments for converted items (Sayerlack) ──
     if (hasConversion) {
       console.log("[omie-nfe-recebimento] Fornecedor com conversão — ajustando estoque...");
-      for (const item of (itens ?? [])) {
+      for (const item of itens) {
         if (item.quantidade_convertida && item.produto_omie_id) {
           const loteVal = buildLoteValidade(item.id);
           const ajustePayload = {
@@ -316,9 +377,10 @@ Deno.serve(async (req) => {
       results.push({ step: `ImportarCTe_${cte.numero_cte}`, ...cteRes });
 
       if (!cteRes.error) {
+        const ctePayload = cteRes.data as OmieImportarNFeResponse | null;
         await supabase
           .from("cte_associados")
-          .update({ status: "efetivado", omie_cte_id: cteRes.data?.nIdNfe ?? null })
+          .update({ status: "efetivado", omie_cte_id: ctePayload?.nIdNfe ?? null })
           .eq("id", cte.id);
       } else {
         console.error(`[omie-nfe-recebimento] Erro CT-e ${cte.numero_cte}:`, cteRes.data);
