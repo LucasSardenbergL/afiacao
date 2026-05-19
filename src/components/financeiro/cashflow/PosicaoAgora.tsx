@@ -1,7 +1,6 @@
 import { useState, useEffect } from 'react';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
-import { Button } from '@/components/ui/button';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { Progress } from '@/components/ui/progress';
@@ -10,7 +9,7 @@ import { COMPANIES, ALL_COMPANIES, type Company } from '@/contexts/CompanyContex
 import { getCapitalDeGiro, type CapitalDeGiro } from '@/services/financeiroService';
 import {
   Building2, TrendingUp, TrendingDown, Clock,
-  AlertTriangle, Wallet, ArrowDownCircle, ArrowUpCircle,
+  AlertTriangle, Wallet,
   BarChart3, Target, ShieldCheck
 } from 'lucide-react';
 
@@ -430,7 +429,7 @@ function WaterfallBar({ label, value, max, color }: {
   );
 }
 
-function StressTest({ saldoCC, entradas30, saidas30, totalCR, pmr }: {
+function StressTest({ saldoCC, entradas30, saidas30, pmr }: {
   saldoCC: number; entradas30: number; saidas30: number; totalCR: number; pmr: number;
 }) {
   const scenarios = [
