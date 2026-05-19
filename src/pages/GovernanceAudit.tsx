@@ -1,4 +1,4 @@
-import React, { useState, useMemo } from 'react';
+import { useState, useMemo } from 'react';
 import { useAuth } from '@/contexts/AuthContext';
 import { useCommercialRole } from '@/hooks/useCommercialRole';
 import { supabase } from '@/integrations/supabase/client';
@@ -9,7 +9,6 @@ import { Skeleton } from '@/components/ui/skeleton';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Input } from '@/components/ui/input';
-import { Separator } from '@/components/ui/separator';
 import {
   FileText, Shield, History, AlertTriangle, User, Calendar,
   ArrowRight, ChevronDown, ChevronUp, Filter, Search,

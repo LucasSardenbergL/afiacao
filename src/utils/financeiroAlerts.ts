@@ -13,7 +13,7 @@ export interface FinAlert {
 export function generateAlerts(
   resumo: Record<string, FinResumo>,
   agingReceber?: AgingData | null,
-  agingPagar?: AgingData | null,
+  _agingPagar?: AgingData | null,
 ): FinAlert[] {
   const alerts: FinAlert[] = [];
 
