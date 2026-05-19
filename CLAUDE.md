@@ -263,7 +263,15 @@ Dois backends coexistem; o usuário escolhe via toggle em `/settings`:
 
 ### Migrations & DB ops — preferência do founder (confirmado 2026-05-19)
 
-> 🔴 **REGRA**: o founder acessa o banco via **SQL Editor (Lovable / Supabase Cloud)** — **NÃO** menciona "Supabase CLI", "Supabase Dashboard separado" ou "supabase db push" como caminho default. Toda migration / SQL custom é entregue pra **colar e clicar Run no SQL Editor**.
+> 🔴 **REGRA 1**: o founder acessa o banco via **SQL Editor do Lovable** — **NÃO** menciona "Supabase CLI", "Supabase Dashboard separado" ou "supabase db push" como caminho default. Toda migration / SQL custom é entregue pra **colar e clicar Run no SQL Editor**.
+>
+> 🔴 **REGRA 2 (cuidado SEVERO — lição aprendida 2026-05-19)**: **EXISTEM 2 SUPABASES**:
+>   1. **Supabase do Lovable** (o que o app de produção usa) — único que importa. Acessível pelo SQL Editor dentro da UI do Lovable.
+>   2. **Supabase "standalone"** (project ref `lkotrsfdvnwxqyevhffh`) — outro projeto, que NÃO é usado pelo app. Foi linkado via `supabase link` em 2026-05-18 por engano.
+>
+> Aplicar SQL no Supabase standalone (CLI ou Dashboard separado) **NÃO TEM EFEITO no app**. As 15 migrations da Fundação foram aplicadas erroneamente lá (perdidas, precisaram ser re-coladas no Lovable). As 4 edge functions também foram deployadas no standalone (mesmo problema).
+>
+> **Nunca mais sugira `supabase db push`, `supabase functions deploy --project-ref <X>`, nem dê ao founder qualquer link com `lkotrsfdvnwxqyevhffh`**. Edge functions tem que ser criadas/editadas via UI do Lovable (existe seção "Edge Functions" dentro do Lovable, sob o módulo Cloud/Backend). Se o founder pedir CLI, OK, mas confirmar antes que ele tem acesso ao mesmo Supabase que o Lovable usa.
 
 **Lovable Cloud NÃO aplica automaticamente** migrations que você commita em `supabase/migrations/`. Confirmado experimentalmente em 2026-05-17:
 
