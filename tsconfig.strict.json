@@ -72,6 +72,16 @@
     "src/pages/TintIntegrations.tsx",
     "src/pages/AdminCustomers.tsx",
     "src/pages/FarmerCalls.tsx",
-    "src/pages/TintFormulas.tsx"
+    "src/pages/TintFormulas.tsx",
+    "src/pages/AdminReposicaoSlaFornecedor.tsx",
+    "src/pages/AdminEstoqueRecebimento.tsx",
+    "src/pages/RecurringSchedules.tsx",
+    "src/pages/OrderDetail.tsx",
+    "src/pages/FinanceiroMapping.tsx",
+    "src/pages/ExecutiveDashboard.tsx",
+    "src/pages/AdminReposicaoMercado.tsx",
+    "src/hooks/useDiagnosticQuestions.ts",
+    "src/components/des/SimuladorTab.tsx",
+    "src/pages/TintDashboard.tsx"
   ]
 }
