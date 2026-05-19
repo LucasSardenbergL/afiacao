@@ -20,7 +20,6 @@ export function useCashflowAlertas(company: string) {
     queryKey: ['fin_alertas', 'ativos', company],
     enabled: Boolean(company),
     queryFn: async (): Promise<Alerta[]> => {
-      // @ts-expect-error - fin_alertas não está em types.ts (regenera após migration apply)
       const { data, error } = await supabase
         .from('fin_alertas')
         .select('*')
@@ -42,7 +41,6 @@ export function useDismissAlerta() {
         ? new Date(Date.now() + input.snoozeDays * 24 * 60 * 60 * 1000).toISOString()
         : null;
       const userId = (await supabase.auth.getUser()).data.user?.id;
-      // @ts-expect-error - fin_alertas não está em types.ts (regenera após migration apply)
       const { error } = await supabase.from('fin_alertas').update({
         dismissed_at,
         dismissed_until,
