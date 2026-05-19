@@ -3,6 +3,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { PosicaoAgora } from '@/components/financeiro/cashflow/PosicaoAgora';
 import { EventosManager } from '@/components/financeiro/cashflow/EventosManager';
 import { Fluxo13Semanas } from '@/components/financeiro/cashflow/Fluxo13Semanas';
+import { NcgDecomposicao } from '@/components/financeiro/cashflow/NcgDecomposicao';
 import { Button } from '@/components/ui/button';
 import { Settings } from 'lucide-react';
 import { useAuth } from '@/contexts/AuthContext';
@@ -32,9 +33,7 @@ export default function FinanceiroCapitalGiro() {
 
         <TabsContent value="posicao"><PosicaoAgora /></TabsContent>
         <TabsContent value="fluxo"><Fluxo13Semanas /></TabsContent>
-        <TabsContent value="ncg">
-          <div className="text-center text-muted-foreground py-12">NCG — disponível na Phase 5</div>
-        </TabsContent>
+        <TabsContent value="ncg"><NcgDecomposicao /></TabsContent>
         <TabsContent value="eventos"><EventosManager /></TabsContent>
       </Tabs>
 
