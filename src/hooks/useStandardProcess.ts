@@ -9,7 +9,7 @@ export function useStandardProcess(id: string | null) {
     queryFn: async (): Promise<StandardProcess | null> => {
       if (!id) return null;
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      const { data, error } = await (supabase.from('standard_processes') as any)
+      const { data, error } = await (supabase as any).from('standard_processes')
         .select('*').eq('id', id).maybeSingle();
       if (error) throw error;
       return (data as StandardProcess) ?? null;

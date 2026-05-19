@@ -43,13 +43,13 @@ export function useSaveStandardProcess() {
 
       if (input.id) {
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        const { data, error } = await (supabase.from('standard_processes') as any)
+        const { data, error } = await (supabase as any).from('standard_processes')
           .update(payload).eq('id', input.id).select().single();
         if (error) throw error;
         return data as StandardProcess;
       }
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      const { data, error } = await (supabase.from('standard_processes') as any)
+      const { data, error } = await (supabase as any).from('standard_processes')
         .insert({ ...payload, created_by: user.id }).select().single();
       if (error) throw error;
       return data as StandardProcess;
