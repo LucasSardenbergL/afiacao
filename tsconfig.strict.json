@@ -69,6 +69,9 @@
     "src/pages/AdminReposicaoCadastros.tsx",
     "src/pages/FinanceiroGestao.tsx",
     "src/pages/GovernanceAudit.tsx",
-    "src/pages/TintIntegrations.tsx"
+    "src/pages/TintIntegrations.tsx",
+    "src/pages/AdminCustomers.tsx",
+    "src/pages/FarmerCalls.tsx",
+    "src/pages/TintFormulas.tsx"
   ]
 }

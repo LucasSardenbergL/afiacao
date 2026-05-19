@@ -19,8 +19,8 @@ import { toast } from 'sonner';
 import { cn } from '@/lib/utils';
 import {
   Loader2, Plus, Wrench, Trash2, Search, User, Phone, FileText,
-  ChevronLeft, Mail, Building2, ShoppingCart, TrendingUp, ArrowUpRight,
-  BarChart3, Clock, AlertTriangle, ChevronRight, Filter, MoreHorizontal,
+  ChevronLeft, Mail, ShoppingCart, TrendingUp,
+  AlertTriangle, ChevronRight, Filter, MoreHorizontal,
   MessageSquare, Calendar, DollarSign, Package, Activity, Users, Sparkles,
 } from 'lucide-react';
 import { EmptyState } from '@/components/EmptyState';
@@ -440,7 +440,7 @@ function Customer360View({
   score,
   tools,
   orders,
-  categories,
+  categories: _categories,
   loadingTools,
   loadingOrders,
   onBack,
@@ -857,7 +857,19 @@ const AdminCustomers = () => {
         .eq('farmer_id', user.id);
       if (data) {
         const map = new Map<string, ClientScore>();
-        data.forEach((s: ClientScore) => map.set(s.customer_user_id, s));
+        // Database row tem fields nullable; normaliza pra non-null com defaults
+        data.forEach((s) => map.set(s.customer_user_id, {
+          customer_user_id: s.customer_user_id,
+          health_score: s.health_score ?? 0,
+          health_class: s.health_class ?? 'critico',
+          churn_risk: s.churn_risk ?? 0,
+          expansion_score: s.expansion_score ?? 0,
+          priority_score: s.priority_score ?? 0,
+          avg_monthly_spend_180d: s.avg_monthly_spend_180d ?? 0,
+          days_since_last_purchase: s.days_since_last_purchase ?? 0,
+          category_count: s.category_count ?? 0,
+          gross_margin_pct: s.gross_margin_pct ?? 0,
+        }));
         setScores(map);
       }
     } catch (e) {
