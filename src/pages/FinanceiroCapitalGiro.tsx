@@ -2,6 +2,7 @@ import { useState } from 'react';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { PosicaoAgora } from '@/components/financeiro/cashflow/PosicaoAgora';
 import { EventosManager } from '@/components/financeiro/cashflow/EventosManager';
+import { Fluxo13Semanas } from '@/components/financeiro/cashflow/Fluxo13Semanas';
 import { Button } from '@/components/ui/button';
 import { Settings } from 'lucide-react';
 import { useAuth } from '@/contexts/AuthContext';
@@ -30,9 +31,7 @@ export default function FinanceiroCapitalGiro() {
         </TabsList>
 
         <TabsContent value="posicao"><PosicaoAgora /></TabsContent>
-        <TabsContent value="fluxo">
-          <div className="text-center text-muted-foreground py-12">Fluxo 13s — disponível na Phase 4</div>
-        </TabsContent>
+        <TabsContent value="fluxo"><Fluxo13Semanas /></TabsContent>
         <TabsContent value="ncg">
           <div className="text-center text-muted-foreground py-12">NCG — disponível na Phase 5</div>
         </TabsContent>
