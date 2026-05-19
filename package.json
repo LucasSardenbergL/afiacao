@@ -10,7 +10,8 @@
     "lint": "eslint .",
     "preview": "vite preview",
     "test": "vitest run",
-    "typecheck:strict": "tsc --noEmit -p tsconfig.strict.json"
+    "typecheck:strict": "tsc --noEmit -p tsconfig.strict.json",
+    "audit:migrations": "bun scripts/audit-custom-migrations.ts"
   },
   "dependencies": {
     "@elevenlabs/react": "^0.14.0",
