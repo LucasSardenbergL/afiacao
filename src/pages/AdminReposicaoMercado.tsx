@@ -40,7 +40,7 @@ function KpiCards() {
     queryKey: ["mercado-oportunidades", empresa],
     queryFn: async () => {
       try {
-        const { count, error } = await (supabase as any)
+        const { count, error } = await supabase
           .from("v_oportunidade_economica_hoje")
           .select("*", { count: "exact", head: true })
           .eq("empresa", empresa)
@@ -60,7 +60,7 @@ function KpiCards() {
     queryKey: ["mercado-promocoes-vigentes"],
     queryFn: async () => {
       const today = new Date().toISOString().slice(0, 10);
-      const { count, error } = await (supabase as any)
+      const { count, error } = await supabase
         .from("promocao_campanha")
         .select("*", { count: "exact", head: true })
         .lte("data_inicio", today)
@@ -82,7 +82,7 @@ function KpiCards() {
         const in30 = new Date(today.getTime() + 30 * 24 * 60 * 60 * 1000);
         const todayISO = today.toISOString().slice(0, 10);
         const in30ISO = in30.toISOString().slice(0, 10);
-        const { count, error } = await (supabase as any)
+        const { count, error } = await supabase
           .from("fornecedor_aumento_anunciado")
           .select("*", { count: "exact", head: true })
           .gte("data_vigencia", todayISO)
@@ -102,7 +102,7 @@ function KpiCards() {
     queryKey: ["mercado-negociacoes-ativas", empresa],
     queryFn: async () => {
       try {
-        const { count, error } = await (supabase as any)
+        const { count, error } = await supabase
           .from("v_sugestao_negociacao_ativa")
           .select("*", { count: "exact", head: true })
           .eq("empresa", empresa);

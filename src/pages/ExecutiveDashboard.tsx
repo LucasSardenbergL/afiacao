@@ -40,17 +40,17 @@ const ExecutiveDashboard = () => {
     const { data: roles } = await supabase
       .from('user_roles')
       .select('user_id')
-      .in('role', ['employee', 'master']) as any;
+      .in('role', ['employee', 'master']);
 
     if (!roles?.length) return;
-    const ids = roles.map((r: any) => r.user_id);
+    const ids = roles.map((r) => r.user_id).filter((id): id is string => Boolean(id));
     const { data: profiles } = await supabase
       .from('profiles')
       .select('user_id, name')
-      .in('user_id', ids) as any;
+      .in('user_id', ids);
 
     if (profiles) {
-      setFarmers(profiles.map((p: any) => ({ id: p.user_id, name: p.name })));
+      setFarmers(profiles.map((p) => ({ id: p.user_id, name: p.name })));
     }
   };
 

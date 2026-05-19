@@ -174,7 +174,7 @@ function SimulationPanel({
     setLoading(true);
     try {
       const { data, error } = await supabase.rpc(
-        "simular_puxar_volume_trimestre" as any,
+        "simular_puxar_volume_trimestre" as never,
         {
           p_empresa: empresa,
           p_ano: ano,
@@ -182,14 +182,14 @@ function SimulationPanel({
           p_valor_extra: valorExtra,
           p_prazo_pagamento_codigo: prazoCodigo,
           p_dias_estoque_extra: diasEstoque,
-        } as any,
+        } as never,
       );
       if (error) throw error;
       setResultado(data as unknown as SimResult);
       toast.success("Cenário simulado");
-    } catch (err: any) {
+    } catch (err) {
       console.error(err);
-      toast.error("Erro ao simular: " + (err?.message ?? "desconhecido"));
+      toast.error("Erro ao simular: " + (err instanceof Error ? err.message : "desconhecido"));
     } finally {
       setLoading(false);
     }
@@ -547,11 +547,11 @@ export function SimuladorTab({ empresa, ano, trimestre }: Props) {
     queryKey: ["des-posicao-sim", empresa, ano, trimestre],
     queryFn: async () => {
       const { data, error } = await supabase
-        .from("v_des_posicao_trimestre_ao_vivo" as any)
+        .from("v_des_posicao_trimestre_ao_vivo" as never)
         .select("posicao_ao_vivo_conservadora, faixa_conservadora")
-        .eq("empresa", empresa)
-        .eq("ano", ano)
-        .eq("trimestre", trimestre)
+        .eq("empresa" as never, empresa as never)
+        .eq("ano" as never, ano as never)
+        .eq("trimestre" as never, trimestre as never)
         .maybeSingle();
       if (error) throw error;
       return data as unknown as {
