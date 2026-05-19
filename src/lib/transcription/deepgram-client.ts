@@ -82,7 +82,7 @@ export class DeepgramClient {
 
   sendAudio(chunk: ArrayBufferLike | Blob): void {
     if (this.isOpen && this.ws) {
-      this.ws.send(chunk);
+      this.ws.send(chunk as ArrayBuffer | Blob);
     } else {
       this.pendingAudio.push(chunk);
     }
