@@ -7,6 +7,76 @@ const corsHeaders = {
     "authorization, x-client-info, apikey, content-type, x-cron-secret",
 };
 
+// ── Local interfaces (Edge Functions bundle independently — no shared types) ──
+
+interface OmieCallParams {
+  nPagina?: number;
+  nRegistrosPorPagina?: number;
+  dtEmissaoDe?: string;
+  nIdReceb?: number | string;
+  [key: string]: unknown;
+}
+
+interface OmieRecebimentoCabec {
+  nIdReceb?: number | string;
+  nIdNfe?: number | string;
+  cNumeroNFe?: number | string;
+  cSerieNFe?: string | null;
+  cCNPJ_CPF?: string;
+  cRazaoSocial?: string | null;
+  cNome?: string | null;
+  dEmissaoNFe?: string | null;
+  nValorNFe?: number | string | null;
+  cChaveNFe?: string | null;
+  cChaveNfe?: string | null;
+}
+
+interface OmieRecebimentoInfoCadastro {
+  cCancelada?: string;
+}
+
+interface OmieRecebimentoListItem {
+  cabec?: OmieRecebimentoCabec;
+  nIdReceb?: number | string;
+  infoCadastro?: OmieRecebimentoInfoCadastro;
+}
+
+interface OmieListarRecebimentosResponse {
+  recebimentos?: OmieRecebimentoListItem[];
+  nTotalPaginas?: number;
+}
+
+interface OmieItemCabec {
+  nSequencia?: number;
+  cCodigoProduto?: string | null;
+  cDescricaoProduto?: string | null;
+  cNCM?: string | null;
+  cEAN?: string | null;
+  cUnidadeNfe?: string | null;
+  nQtdeNFe?: number | string | null;
+  nPrecoUnit?: number | string | null;
+  vTotalItem?: number | string | null;
+  nIdProduto?: number | string | null;
+}
+
+interface OmieRecebimentoItem {
+  itensCabec?: OmieItemCabec;
+  [key: string]: unknown;
+}
+
+interface OmieConsultarRecebimentoResponse {
+  cabec?: OmieRecebimentoCabec;
+  itensRecebimento?: OmieRecebimentoItem[];
+}
+
+interface WarehouseRow {
+  id: string;
+}
+
+interface NfeRecebimentoExistingRow {
+  omie_id_receb: number | null;
+}
+
 function jsonResponse(body: Record<string, unknown>, status = 200) {
   return new Response(JSON.stringify(body), {
     status,
@@ -51,7 +121,13 @@ function getCredentials(): OmieCredentials[] {
   return creds;
 }
 
-async function omieCall(appKey: string, appSecret: string, endpoint: string, method: string, params: any) {
+async function omieCall(
+  appKey: string,
+  appSecret: string,
+  endpoint: string,
+  method: string,
+  params: OmieCallParams,
+): Promise<unknown> {
   const res = await fetch(`https://app.omie.com.br/api/v1/${endpoint}`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
@@ -96,12 +172,13 @@ Deno.serve(async (req) => {
     try {
       console.log(`[sync] Buscando recebimentos no Omie para warehouse ${cred.warehouseCode}...`);
 
-      const { data: warehouse } = await supabase
+      const { data: warehouseData } = await supabase
         .from("warehouses")
         .select("id")
         .eq("code", cred.warehouseCode)
         .maybeSingle();
 
+      const warehouse = warehouseData as unknown as WarehouseRow | null;
       if (!warehouse) {
         console.log(`[sync] Warehouse ${cred.warehouseCode} não encontrado, pulando`);
         continue;
@@ -114,8 +191,9 @@ Deno.serve(async (req) => {
         .eq("warehouse_id", warehouse.id)
         .not("omie_id_receb", "is", null);
 
+      const existingRecebRows = (existingRecebimentos ?? []) as unknown as NfeRecebimentoExistingRow[];
       const existingIds = new Set(
-        (existingRecebimentos ?? []).map((r: any) => r.omie_id_receb)
+        existingRecebRows.map((r) => r.omie_id_receb)
       );
 
       // Filter last 30 days to get recent NF-es with cChaveNfe
@@ -123,14 +201,14 @@ Deno.serve(async (req) => {
       const thirtyDaysAgo = new Date(now.getTime() - 30 * 24 * 60 * 60 * 1000);
       const dtDe = `${String(thirtyDaysAgo.getDate()).padStart(2,'0')}/${String(thirtyDaysAgo.getMonth()+1).padStart(2,'0')}/${thirtyDaysAgo.getFullYear()}`;
 
-      const allRecebimentos: any[] = [];
+      const allRecebimentos: OmieRecebimentoListItem[] = [];
       let page = 1;
       const maxPages = 3;
       let hasMore = true;
 
       while (hasMore && page <= maxPages) {
         try {
-          const pageResult = await omieCall(
+          const pageResult = (await omieCall(
             cred.appKey,
             cred.appSecret,
             "produtos/recebimentonfe/",
@@ -140,15 +218,16 @@ Deno.serve(async (req) => {
               nRegistrosPorPagina: 50,
               dtEmissaoDe: dtDe,
             },
-          );
+          )) as unknown as OmieListarRecebimentosResponse;
           const recs = pageResult.recebimentos ?? [];
           allRecebimentos.push(...recs);
           const totalPages = pageResult.nTotalPaginas ?? 1;
           console.log(`[sync] Página ${page}/${totalPages}, ${recs.length} registros`);
           hasMore = page < totalPages;
           page++;
-        } catch (pgErr: any) {
-          console.warn(`[sync] Erro na página ${page}: ${pgErr.message}`);
+        } catch (pgErr) {
+          const msg = pgErr instanceof Error ? pgErr.message : String(pgErr);
+          console.warn(`[sync] Erro na página ${page}: ${msg}`);
           break;
         }
       }
@@ -179,17 +258,18 @@ Deno.serve(async (req) => {
 
         // Need to fetch detail for chave_acesso and items
         detailCalls++;
-        let detail: any;
+        let detail: OmieConsultarRecebimentoResponse;
         try {
-          detail = await omieCall(
+          detail = (await omieCall(
             cred.appKey,
             cred.appSecret,
             "produtos/recebimentonfe/",
             "ConsultarRecebimento",
             { nIdReceb },
-          );
-        } catch (detErr: any) {
-          console.warn(`[sync] Erro ao consultar recebimento ${nIdReceb}: ${detErr.message}`);
+          )) as unknown as OmieConsultarRecebimentoResponse;
+        } catch (detErr) {
+          const msg = detErr instanceof Error ? detErr.message : String(detErr);
+          console.warn(`[sync] Erro ao consultar recebimento ${nIdReceb}: ${msg}`);
           continue;
         }
 
@@ -252,8 +332,8 @@ Deno.serve(async (req) => {
         // Parse items from itensRecebimento
         const rawItems = detail.itensRecebimento ?? [];
         if (rawItems.length > 0) {
-          const itens = rawItems.map((item: any, idx: number) => {
-            const iCabec = item.itensCabec ?? item;
+          const itens = rawItems.map((item: OmieRecebimentoItem, idx: number) => {
+            const iCabec: OmieItemCabec = item.itensCabec ?? (item as unknown as OmieItemCabec);
             const quantidadeNfe = parseFloat(String(iCabec.nQtdeNFe ?? 0));
             return {
               nfe_recebimento_id: newNfe.id,
@@ -291,9 +371,10 @@ Deno.serve(async (req) => {
       if (detailCalls >= MAX_DETAIL_CALLS) {
         console.log(`[sync] Limite de ${MAX_DETAIL_CALLS} consultas de detalhe atingido para ${cred.warehouseCode}. Execute novamente para mais.`);
       }
-    } catch (credErr: any) {
+    } catch (credErr) {
+      const msg = credErr instanceof Error ? credErr.message : String(credErr);
       console.error(`[sync] Erro na conta ${cred.warehouseCode}:`, credErr);
-      errors.push(`${cred.warehouseCode}: ${credErr.message}`);
+      errors.push(`${cred.warehouseCode}: ${msg}`);
     }
   }
 

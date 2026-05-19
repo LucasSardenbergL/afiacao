@@ -40,7 +40,7 @@ function KpiCards() {
   const { data: pedidosAbertos } = useQuery({
     queryKey: ["cadastros-pedidos-abertos", empresa],
     queryFn: async () => {
-      const { count, error } = await (supabase as any)
+      const { count, error } = await supabase
         .from("pedido_compra_sugerido")
         .select("*", { count: "exact", head: true })
         .eq("empresa", empresa)
@@ -56,20 +56,22 @@ function KpiCards() {
   const { data: skusSemCadeia } = useQuery({
     queryKey: ["cadastros-skus-sem-cadeia", empresa],
     queryFn: async () => {
-      const { data: comGrupo, error: e1 } = await (supabase as any)
-        .from("sku_grupo_producao")
+      const { data: comGrupo, error: e1 } = await supabase
+        .from("sku_grupo_producao" as never)
         .select("sku_codigo");
       if (e1) return 0;
-      const setComGrupo = new Set((comGrupo ?? []).map((r: any) => r.sku_codigo));
+      const grupoRows = (comGrupo ?? []) as unknown as Array<{ sku_codigo: string | null }>;
+      const setComGrupo = new Set(grupoRows.map((r) => r.sku_codigo));
 
       const { data: ativos, error: e2 } = await supabase
-        .from("sku_parametros")
+        .from("sku_parametros" as never)
         .select("sku_codigo")
         .eq("empresa", empresa)
         .eq("ativo", true);
       if (e2) return 0;
 
-      return (ativos ?? []).filter((r: any) => !setComGrupo.has(r.sku_codigo)).length;
+      const ativosRows = (ativos ?? []) as unknown as Array<{ sku_codigo: string | null }>;
+      return ativosRows.filter((r) => !setComGrupo.has(r.sku_codigo)).length;
     },
     refetchInterval: 60000,
     staleTime: 30000,
@@ -79,8 +81,8 @@ function KpiCards() {
   const { data: filaPendente } = useQuery({
     queryKey: ["cadastros-fila-pendente", empresa],
     queryFn: async () => {
-      const { count, error } = await (supabase as any)
-        .from("fila_aplicacao_omie")
+      const { count, error } = await supabase
+        .from("fila_aplicacao_omie" as never)
         .select("*", { count: "exact", head: true })
         .eq("empresa", empresa)
         .eq("status", "pendente");
@@ -95,7 +97,7 @@ function KpiCards() {
   const { data: gruposAtivos } = useQuery({
     queryKey: ["cadastros-grupos-ativos", empresa],
     queryFn: async () => {
-      const { count, error } = await (supabase as any)
+      const { count, error } = await supabase
         .from("fornecedor_grupo_producao")
         .select("*", { count: "exact", head: true })
         .eq("empresa", empresa);
@@ -278,8 +280,8 @@ function HistoricoPedidosCiclos() {
   const { data, isLoading } = useQuery({
     queryKey: ["historico-ciclos", empresa, de, ate],
     queryFn: async (): Promise<CicloRow[]> => {
-      const { data, error } = await (supabase as any)
-        .from("pedido_compra_sugerido")
+      const { data, error } = await supabase
+        .from("pedido_compra_sugerido" as never)
         .select("data_ciclo, fornecedor_grupo, status, valor_total, n_skus")
         .eq("empresa", empresa)
         .gte("data_ciclo", de)
@@ -287,7 +289,7 @@ function HistoricoPedidosCiclos() {
         .order("data_ciclo", { ascending: false })
         .limit(2000);
       if (error) return [];
-      return (data ?? []) as CicloRow[];
+      return (data ?? []) as unknown as CicloRow[];
     },
     staleTime: 30000,
   });

@@ -13,6 +13,49 @@
 
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.45.0";
 
+interface OmieItemCabec {
+  nIdProduto?: number | string;
+  cCodigoProduto?: string;
+  cDescricaoProduto?: string;
+  cUnidadeNfe?: string;
+  cNCM?: string;
+  nQtdeNFe?: number | string;
+  nPrecoUnit?: number | string;
+  vTotalItem?: number | string;
+}
+
+interface OmieItemInfoAdic {
+  nNumPedCompra?: number | string;
+}
+
+interface OmieItemAjustes {
+  nQtdeRecebida?: number | string;
+}
+
+interface OmieRecebimentoItem {
+  itensCabec?: OmieItemCabec;
+  itensInfoAdic?: OmieItemInfoAdic;
+  itensAjustes?: OmieItemAjustes;
+}
+
+interface OmieConsultarRecebimentoResponse {
+  itensRecebimento?: OmieRecebimentoItem[];
+  faultstring?: string;
+  raw?: string;
+}
+
+interface NFeRawData {
+  cabec?: { nIdReceb?: number | string };
+}
+
+interface PedidoTrackingMatchRow {
+  id: string;
+  t1_data_pedido: string;
+  numero_pedido: string | null;
+  grupo_leadtime: string | null;
+  fornecedor_nome: string | null;
+}
+
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
   "Access-Control-Allow-Headers":
@@ -79,7 +122,7 @@ async function callOmie(
   app_secret: string,
   call: "ConsultarRecebimento",
   param: Record<string, unknown>,
-): Promise<any> {
+): Promise<OmieConsultarRecebimentoResponse> {
   const body = { call, app_key, app_secret, param: [param] };
   let attempt = 0;
   while (attempt < MAX_RETRIES) {
@@ -90,9 +133,9 @@ async function callOmie(
       body: JSON.stringify(body),
     });
     const text = await res.text();
-    let json: any;
+    let json: OmieConsultarRecebimentoResponse;
     try {
-      json = JSON.parse(text);
+      json = JSON.parse(text) as OmieConsultarRecebimentoResponse;
     } catch {
       json = { raw: text };
     }
@@ -158,7 +201,7 @@ interface NFeRow {
   t4_data_recebimento: string | null;
   fornecedor_codigo_omie: number;
   fornecedor_nome: string | null;
-  raw_data: any;
+  raw_data: NFeRawData | null;
 }
 
 async function authorizeCronOrStaff(req: Request): Promise<boolean> {
@@ -273,7 +316,7 @@ Deno.serve(async (req) => {
         continue;
       }
 
-      let detalhe: any;
+      let detalhe: OmieConsultarRecebimentoResponse;
       try {
         await sleep(RATE_LIMIT_DELAY_MS);
         detalhe = await callOmie(app_key, app_secret, "ConsultarRecebimento", {
@@ -288,7 +331,7 @@ Deno.serve(async (req) => {
         continue;
       }
 
-      const itens: any[] = Array.isArray(detalhe?.itensRecebimento)
+      const itens: OmieRecebimentoItem[] = Array.isArray(detalhe?.itensRecebimento)
         ? detalhe.itensRecebimento
         : [];
 
@@ -305,13 +348,7 @@ Deno.serve(async (req) => {
         const nNumPedCompra = toStr(adic?.nNumPedCompra);
 
         // Tentar mapear o pedido específico via numero_contrato_fornecedor
-        let pedidoMatch: {
-          id: string;
-          t1_data_pedido: string;
-          numero_pedido: string | null;
-          grupo_leadtime: string | null;
-          fornecedor_nome: string | null;
-        } | null = null;
+        let pedidoMatch: PedidoTrackingMatchRow | null = null;
         if (nNumPedCompra && nNumPedCompra !== "0") {
           const { data: pedidoRows, error: pedErr } = await supabase
             .from("purchase_orders_tracking")
@@ -323,7 +360,7 @@ Deno.serve(async (req) => {
             .eq("numero_contrato_fornecedor", nNumPedCompra)
             .limit(1);
           if (!pedErr && pedidoRows && pedidoRows.length > 0) {
-            pedidoMatch = pedidoRows[0] as any;
+            pedidoMatch = pedidoRows[0] as unknown as PedidoTrackingMatchRow;
           }
         }
 
