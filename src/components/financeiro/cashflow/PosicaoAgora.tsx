@@ -310,7 +310,7 @@ export function PosicaoAgora() {
                             {line.label}
                           </TableCell>
                           {data.map(d => {
-                            const val = (d as Record<string, unknown>)[line.field] as number || 0;
+                            const val = (d as unknown as Record<string, unknown>)[line.field] as number || 0;
                             const isResult = ['capital_giro', 'capital_giro_liquido', 'saldo_projetado_30d'].includes(line.field);
                             const color = isResult ? (val >= 0 ? 'text-status-success' : 'text-status-error') : '';
                             let display = '';
