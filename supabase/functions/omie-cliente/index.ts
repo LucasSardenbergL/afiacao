@@ -1,5 +1,5 @@
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
-import { createClient } from "npm:@supabase/supabase-js@2";
+import { createClient, type SupabaseClient } from "npm:@supabase/supabase-js@2";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -259,7 +259,7 @@ async function validarVendedorMultiOmie(cnpjCpf: string): Promise<{
 }
 
 async function upsertAddressFromOmie(
-  adminClient: any,
+  adminClient: SupabaseClient,
   userId: string,
   cliente: OmieCliente
 ): Promise<boolean> {
@@ -893,7 +893,8 @@ serve(async (req) => {
             .select("user_id")
             .range(addrOffset, addrOffset + 999);
           if (!addrPage || addrPage.length === 0) break;
-          allAddressUserIds = allAddressUserIds.concat(addrPage.map((a: any) => a.user_id));
+          const addrRows = addrPage as unknown as Array<{ user_id: string }>;
+          allAddressUserIds = allAddressUserIds.concat(addrRows.map((a) => a.user_id));
           if (addrPage.length < 1000) break;
           addrOffset += 1000;
         }
@@ -921,7 +922,7 @@ serve(async (req) => {
         }
 
         // Filter to those without addresses
-        const clientsNeedingAddress = allMappings.filter((m: any) => !usersWithAddress.has(m.user_id));
+        const clientsNeedingAddress = allMappings.filter((m) => !usersWithAddress.has(m.user_id));
         const totalNeeding = clientsNeedingAddress.length;
 
         // Always take from the beginning since the list shrinks as addresses are created
