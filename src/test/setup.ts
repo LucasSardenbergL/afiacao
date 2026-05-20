@@ -1,13 +1,24 @@
 import "@testing-library/jest-dom";
 
-// jsdom com origin opaca (about:blank) não expõe localStorage de forma confiável.
-// Testes de hooks/libs que dependem de localStorage (useLastVisit, route-tracker,
-// useFinanceiroRegime) quebram com "Cannot read properties of undefined (reading
-// 'clear')" no beforeEach. Espelha o shim do bun-setup.ts pra garantir localStorage
-// sempre presente, independente de ordem de execução dos arquivos de teste.
-if (typeof globalThis.localStorage === "undefined") {
+// Newer Node (22+) ships an experimental global `localStorage` that is
+// non-functional without `--localstorage-file`, and it can shadow jsdom's
+// implementation under vitest. The supabase client references `localStorage`
+// at module top-level, so any test importing it crashes. Install a working
+// in-memory Storage shim whenever the ambient storage is missing OR broken
+// (a `typeof === "undefined"` guard is insufficient: Node's is defined-but-broken).
+function installStorageShim(name: "localStorage" | "sessionStorage") {
+  try {
+    const existing = (globalThis as unknown as Record<string, Storage | undefined>)[name];
+    if (existing) {
+      existing.setItem("__probe__", "1");
+      existing.removeItem("__probe__");
+      return; // already functional — leave it alone
+    }
+  } catch {
+    // fall through and install the shim
+  }
   const store = new Map<string, string>();
-  const localStorageShim: Storage = {
+  const shim: Storage = {
     get length() {
       return store.size;
     },
@@ -21,12 +32,14 @@ if (typeof globalThis.localStorage === "undefined") {
       store.set(key, String(value));
     },
   };
-  Object.defineProperty(globalThis, "localStorage", {
-    value: localStorageShim,
+  Object.defineProperty(globalThis, name, {
+    value: shim,
     writable: true,
     configurable: true,
   });
 }
+installStorageShim("localStorage");
+installStorageShim("sessionStorage");
 
 // jsdom doesn't ship WebRTC primitives — polyfill bare-minimum constructors
 // so SipClient tests can `new MediaStream()` without pulling in a heavy mock lib.
