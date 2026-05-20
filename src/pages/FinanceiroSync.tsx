@@ -4,7 +4,7 @@ import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { COMPANIES, ALL_COMPANIES, type Company } from '@/contexts/CompanyContext';
-import { useFinanceiro } from '@/hooks/useFinanceiro';
+import { useFinanceiro, type FinanceiroView } from '@/hooks/useFinanceiro';
 import {
   Loader2, RefreshCw, Database, FolderSync, Building2,
   ArrowDownCircle, ArrowUpCircle, Layers, BarChart3, Wallet,
@@ -48,7 +48,7 @@ const FinanceiroSync = () => {
     try {
       const result = await syncSpecific(action);
       if (result?.results) {
-        for (const [co, data] of Object.entries(result.results as Record<string, any>)) {
+        for (const [co, data] of Object.entries(result.results as Record<string, { error?: string; totalSynced?: number; total?: number }>)) {
           setResults(prev => [
             ...prev.filter(r => !(r.entity === action && r.company === co)),
             {
@@ -61,11 +61,12 @@ const FinanceiroSync = () => {
           ]);
         }
       }
-    } catch (e: any) {
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e);
       for (const co of targetCompanies) {
         setResults(prev => [
           ...prev.filter(r => !(r.entity === action && r.company === co)),
-          { entity: action, company: co, status: 'error', error: e.message },
+          { entity: action, company: co, status: 'error', error: msg },
         ]);
       }
     }
@@ -92,7 +93,7 @@ const FinanceiroSync = () => {
           </p>
         </div>
         <div className="flex items-center gap-2">
-          <Select value={view} onValueChange={v => setView(v as any)}>
+          <Select value={view} onValueChange={v => setView(v as FinanceiroView)}>
             <SelectTrigger className="w-[180px]">
               <Building2 className="w-4 h-4 mr-2" />
               <SelectValue />
