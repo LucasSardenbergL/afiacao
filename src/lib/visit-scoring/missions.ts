@@ -23,7 +23,7 @@ export function scoreRecuperacao(c: CustomerScoreInputs): number {
   const churnBoost = c.churn_risk * 0.5;
   const recoverBoost = c.recover_score * 0.3;
   const recencyPenalty = Math.max(0, 100 - c.days_since_last_purchase) * -0.1;
-  const signalsBoost = (c.signal_modifiers?.breakdown.churn ?? [])
+  const signalsBoost = (c.signal_modifiers?.breakdown?.churn ?? [])
     .reduce((s, m) => s + m.delta * m.decayedWeight, 0) * 0.1;
   return clamp(churnBoost + recoverBoost + recencyPenalty + signalsBoost, 0, 100);
 }
@@ -35,7 +35,7 @@ export function scoreRecuperacao(c: CustomerScoreInputs): number {
 export function scoreExpansao(c: CustomerScoreInputs): number {
   const expansionBase = c.expansion_score * 0.6;
   const revenueBoost = normalizeRevenue(c.revenue_potential) * 20;
-  const signalsBoost = (c.signal_modifiers?.breakdown.expansion ?? [])
+  const signalsBoost = (c.signal_modifiers?.breakdown?.expansion ?? [])
     .reduce((s, m) => s + m.delta * m.decayedWeight, 0) * 0.2;
   return clamp(expansionBase + revenueBoost + signalsBoost, 0, 100);
 }
@@ -43,9 +43,13 @@ export function scoreExpansao(c: CustomerScoreInputs): number {
 /**
  * RELACIONAMENTO — cliente VIP saudável precisando manutenção.
  * High health + revenue + days_since_visit, baixo churn = alto.
+ *
+ * NOTA DE ESCALA: health_score é 0..100 (vem de calculate-scores:
+ * round(componentes 0..100); churn_risk = 100 - health). health * 0.5
+ * mapeia 0..100 → contribuição 0..50. (Era * 50 assumindo 0..1, errado.)
  */
 export function scoreRelacionamento(c: CustomerScoreInputs): number {
-  const healthBoost = c.health_score * 50;
+  const healthBoost = c.health_score * 0.5;
   const revenueBoost = normalizeRevenue(c.avg_monthly_spend_180d) * 30;
   // null = nunca visitado: fallback conservador (30d) para não inflar score de relacionamento
   // sem histórico de visita real

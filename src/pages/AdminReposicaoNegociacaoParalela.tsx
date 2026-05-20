@@ -407,7 +407,7 @@ export default function AdminReposicaoNegociacaoParalela() {
 
   const updateStatus = async (id: number, novoStatus: StatusSugestao, extra: Record<string, unknown> = {}) => {
     const { error } = await supabase
-      .from("sugestao_negociacao_paralela" as never)
+      .from("sugestao_negociacao_paralela")
       .update({ status: novoStatus, ...extra } as never)
       .eq("id", id);
     if (error) {
@@ -508,7 +508,7 @@ export default function AdminReposicaoNegociacaoParalela() {
       const dataGeracao = new Date().toISOString().slice(0, 10);
       const validoAte = new Date();
       validoAte.setDate(validoAte.getDate() + 14);
-      const { error } = await supabase.from("sugestao_negociacao_paralela" as never).insert({
+      const { error } = await supabase.from("sugestao_negociacao_paralela").insert({
         empresa: r.empresa,
         sku_codigo_omie: r.sku_codigo_omie,
         sku_descricao: r.sku_descricao,
@@ -522,7 +522,7 @@ export default function AdminReposicaoNegociacaoParalela() {
         status: "nova",
         data_geracao: dataGeracao,
         valido_ate: validoAte.toISOString().slice(0, 10),
-      } as never);
+      });
       if (error) throw error;
       toast.success(`Sugestão criada para ${r.sku_codigo_omie}.`);
       queryClient.invalidateQueries({ queryKey: ["negociacao-paralela-sugestoes"] });

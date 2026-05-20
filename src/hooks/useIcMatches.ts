@@ -27,13 +27,12 @@ export function useIcMatches(filterStatus?: IcMatch['status']) {
   return useQuery({
     queryKey: ['fin_ic_matches', filterStatus ?? 'all'],
     queryFn: async (): Promise<IcMatch[]> => {
-      // `fin_ic_matches` existe no DB (migration 20260518) mas ainda não no generated Database type
       let q = supabase
-        .from('fin_ic_matches' as never)
+        .from('fin_ic_matches')
         .select('*')
         .order('matched_at', { ascending: false })
         .limit(500);
-      if (filterStatus) q = q.eq('status' as never, filterStatus as never);
+      if (filterStatus) q = q.eq('status', filterStatus);
       const { data, error } = await q;
       if (error) throw error;
       return (data ?? []) as unknown as IcMatch[];
@@ -51,14 +50,14 @@ export function useResolveIcMatch() {
     }) => {
       const user = await supabase.auth.getUser();
       const { error } = await supabase
-        .from('fin_ic_matches' as never)
+        .from('fin_ic_matches')
         .update({
           status: input.status,
           observacao: input.observacao ?? null,
           resolvido_por: user.data.user?.id,
           resolvido_em: new Date().toISOString(),
-        } as never)
-        .eq('id' as never, input.id as never);
+        })
+        .eq('id', input.id);
       if (error) throw error;
     },
     onSuccess: () => qc.invalidateQueries({ queryKey: ['fin_ic_matches'] }),

@@ -120,7 +120,7 @@ export default function AdminReposicaoAumentos() {
     queryKey: ["aumentos-fornecedores"],
     queryFn: async () => {
       const { data, error } = await supabase
-        .from("fornecedor_aumento_anunciado" as never)
+        .from("fornecedor_aumento_anunciado")
         .select("fornecedor_nome")
         .eq("empresa", EMPRESA);
       if (error) throw error;
@@ -136,7 +136,7 @@ export default function AdminReposicaoAumentos() {
     queryKey: ["aumentos", filtroFornecedor, filtroEstado, busca],
     queryFn: async () => {
       let q = supabase
-        .from("fornecedor_aumento_anunciado" as never)
+        .from("fornecedor_aumento_anunciado")
         .select(
           "id, nome, fornecedor_nome, data_vigencia, data_anuncio, estado, extracao_confianca, criado_em",
         )
@@ -162,7 +162,7 @@ export default function AdminReposicaoAumentos() {
       const sums: Record<number, { sum: number; n: number }> = {};
       if (ids.length > 0) {
         const { data: itens } = await supabase
-          .from("fornecedor_aumento_item" as never)
+          .from("fornecedor_aumento_item")
           .select("aumento_id, aumento_perc, ativo, confirmado")
           .in("aumento_id", ids)
           .eq("ativo", true);

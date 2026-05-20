@@ -21,12 +21,11 @@ export function useAuditTrail(params: { tableName: string; rowId: string; limit?
     queryKey: ['fin_audit_log', tableName, rowId, limit],
     enabled: Boolean(tableName) && Boolean(rowId),
     queryFn: async (): Promise<AuditEntry[]> => {
-      // `fin_audit_log` existe no DB (migration 20260518) mas ainda não no generated Database type
       const { data, error } = await supabase
-        .from('fin_audit_log' as never)
+        .from('fin_audit_log')
         .select('*')
-        .eq('table_name' as never, tableName as never)
-        .eq('row_id' as never, rowId as never)
+        .eq('table_name', tableName)
+        .eq('row_id', rowId)
         .order('changed_at', { ascending: false })
         .limit(limit);
       if (error) throw error;
