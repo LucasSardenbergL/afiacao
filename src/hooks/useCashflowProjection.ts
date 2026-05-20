@@ -45,6 +45,18 @@ export type CashflowResult = {
   };
   alertas: Array<{ tipo: string; severidade: string; mensagem: string; valor: number | null; threshold: number | null; contexto: Record<string, unknown> }>;
   premissas_aplicadas: Record<string, unknown>;
+  // Onda 2: ponte de horizonte + curvas de aging calibradas (timing + confiança)
+  apos_horizonte?: number;
+  ar_impaired?: number;
+  curvas_aging?: Record<string, {
+    taxa_recebimento: number;
+    lag_dias: number;
+    lag_mediana: number;
+    exposicao: number;
+    pago: number;
+    aberto: number;
+    confianca: 'alta' | 'baixa';
+  }>;
 };
 
 export function useCashflowProjection(company: string, cenario: Cenario = 'realista', horizonWeeks = 13) {

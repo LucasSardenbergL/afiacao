@@ -86,7 +86,7 @@ export function calibrarCurvas(
     topValor: number; lags: Array<{ valor: number; peso: number }>; lagsRaw: number[];
   }> = Object.fromEntries(
     FAIXAS.map(f => [f, { exposicao: 0, pago: 0, aberto: 0, count: 0, topValor: 0, lags: [], lagsRaw: [] }]),
-  ) as Record<Faixa, {
+  ) as unknown as Record<Faixa, {
     exposicao: number; pago: number; aberto: number; count: number;
     topValor: number; lags: Array<{ valor: number; peso: number }>; lagsRaw: number[];
   }>;
