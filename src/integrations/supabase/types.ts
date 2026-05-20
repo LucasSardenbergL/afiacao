@@ -8767,6 +8767,83 @@ export type Database = {
         }
         Relationships: []
       }
+      standard_processes: {
+        Row: {
+          created_at: string
+          created_by: string
+          description: string | null
+          etapas: Json
+          expected_outcomes: string[] | null
+          id: string
+          name: string
+          parent_id: string | null
+          porte_alvo: string[] | null
+          prerequisites: string[] | null
+          reviewed_at: string | null
+          reviewed_by: string | null
+          segmento: string
+          slug: string | null
+          status: string
+          status_notes: string | null
+          tags: string[] | null
+          target_audience: string | null
+          updated_at: string
+          version: number
+        }
+        Insert: {
+          created_at?: string
+          created_by: string
+          description?: string | null
+          etapas: Json
+          expected_outcomes?: string[] | null
+          id?: string
+          name: string
+          parent_id?: string | null
+          porte_alvo?: string[] | null
+          prerequisites?: string[] | null
+          reviewed_at?: string | null
+          reviewed_by?: string | null
+          segmento: string
+          slug?: string | null
+          status?: string
+          status_notes?: string | null
+          tags?: string[] | null
+          target_audience?: string | null
+          updated_at?: string
+          version?: number
+        }
+        Update: {
+          created_at?: string
+          created_by?: string
+          description?: string | null
+          etapas?: Json
+          expected_outcomes?: string[] | null
+          id?: string
+          name?: string
+          parent_id?: string | null
+          porte_alvo?: string[] | null
+          prerequisites?: string[] | null
+          reviewed_at?: string | null
+          reviewed_by?: string | null
+          segmento?: string
+          slug?: string | null
+          status?: string
+          status_notes?: string | null
+          tags?: string[] | null
+          target_audience?: string | null
+          updated_at?: string
+          version?: number
+        }
+        Relationships: [
+          {
+            foreignKeyName: "standard_processes_parent_id_fkey"
+            columns: ["parent_id"]
+            isOneToOne: false
+            referencedRelation: "standard_processes"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       sugestao_negociacao_paralela: {
         Row: {
           atualizado_em: string | null
