@@ -2907,6 +2907,7 @@ export type Database = {
         Row: {
           adiantamento_categorias_codigos: string[]
           company: string
+          folha_categorias_codigos: string[]
           overrides_cenario: Json
           thresholds: Json
           updated_at: string
@@ -2915,6 +2916,7 @@ export type Database = {
         Insert: {
           adiantamento_categorias_codigos?: string[]
           company: string
+          folha_categorias_codigos?: string[]
           overrides_cenario?: Json
           thresholds?: Json
           updated_at?: string
@@ -2923,6 +2925,7 @@ export type Database = {
         Update: {
           adiantamento_categorias_codigos?: string[]
           company?: string
+          folha_categorias_codigos?: string[]
           overrides_cenario?: Json
           thresholds?: Json
           updated_at?: string
