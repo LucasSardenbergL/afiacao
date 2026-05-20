@@ -3,7 +3,7 @@
 -- ========================================================================
 --
 -- Gerado por: scripts/audit-custom-migrations.ts
--- Total de custom migrations: 38
+-- Total de custom migrations: 40
 --
 -- Como usar:
 --   1. Abra o Supabase SQL Editor (via Lovable Cloud → Backend → SQL Editor)
@@ -54,10 +54,12 @@ WITH expected (version, slug, filename) AS (VALUES
   ('20260518004300', 'fin_consolidado_v2', '20260518004300_fin_consolidado_v2.sql'),
   ('20260518100000', 'commercial_role_add_values', '20260518100000_commercial_role_add_values.sql'),
   ('20260518110000', 'scoring_v2_signal_modifiers', '20260518110000_scoring_v2_signal_modifiers.sql'),
+  ('20260518120000', 'visit_intelligence_v1', '20260518120000_visit_intelligence_v1.sql'),
   ('20260519000000', 'fin_a1_eventos', '20260519000000_fin_a1_eventos.sql'),
   ('20260519000100', 'fin_a1_snapshots_alertas_config', '20260519000100_fin_a1_snapshots_alertas_config.sql'),
   ('20260519000200', 'fin_a1_audit_lock_attach', '20260519000200_fin_a1_audit_lock_attach.sql'),
-  ('20260519010000', 'fin_a1_cron', '20260519010000_fin_a1_cron.sql')
+  ('20260519010000', 'fin_a1_cron', '20260519010000_fin_a1_cron.sql'),
+  ('20260520010000', 'scoring_visit_p1_fixes', '20260520010000_scoring_visit_p1_fixes.sql')
 )
 SELECT
   e.version,
@@ -309,6 +311,16 @@ WITH expected_objects (migration, kind, schema_name, object_name, parent_name) A
   ('scoring_v2_signal_modifiers', 'index', 'public', 'uniq_score_recalc_queue_pending', 'score_recalc_queue'),
   ('scoring_v2_signal_modifiers', 'function', 'public', 'enqueue_score_recalc_from_call', ''),
   ('scoring_v2_signal_modifiers', 'trigger', 'public', 'trg_farmer_calls_enqueue_recalc', 'farmer_calls'),
+  ('visit_intelligence_v1', 'table', 'public', 'customer_visit_scores', ''),
+  ('visit_intelligence_v1', 'table', 'public', 'visit_score_recalc_queue', ''),
+  ('visit_intelligence_v1', 'index', 'public', 'idx_visit_scores_farmer_priority', 'customer_visit_scores'),
+  ('visit_intelligence_v1', 'index', 'public', 'idx_visit_scores_farmer_city', 'customer_visit_scores'),
+  ('visit_intelligence_v1', 'index', 'public', 'idx_visit_score_queue_pending', 'visit_score_recalc_queue'),
+  ('visit_intelligence_v1', 'index', 'public', 'uniq_visit_score_queue_pending', 'visit_score_recalc_queue'),
+  ('visit_intelligence_v1', 'function', 'public', 'enqueue_visit_score_recalc_from_visit', ''),
+  ('visit_intelligence_v1', 'function', 'public', 'enqueue_visit_score_recalc_from_client_score', ''),
+  ('visit_intelligence_v1', 'trigger', 'public', 'trg_route_visits_enqueue_visit_recalc', 'route_visits'),
+  ('visit_intelligence_v1', 'trigger', 'public', 'trg_farmer_client_scores_enqueue_visit_recalc', 'farmer_client_scores'),
   ('fin_a1_eventos', 'table', 'public', 'fin_eventos_recorrentes', ''),
   ('fin_a1_eventos', 'table', 'public', 'fin_eventos_eventuais', ''),
   ('fin_a1_eventos', 'index', 'public', 'fin_eventos_rec_company_ativo_idx', 'fin_eventos_recorrentes'),
@@ -337,7 +349,9 @@ WITH expected_objects (migration, kind, schema_name, object_name, parent_name) A
   ('fin_a1_audit_lock_attach', 'trigger', 'public', 'trg_audit', 'fin_alertas'),
   ('fin_a1_audit_lock_attach', 'trigger', 'public', 'trg_audit', 'fin_config_cashflow'),
   ('fin_a1_audit_lock_attach', 'trigger', 'public', 'trg_period_lock', 'fin_eventos_recorrentes'),
-  ('fin_a1_audit_lock_attach', 'trigger', 'public', 'trg_period_lock', 'fin_eventos_eventuais')
+  ('fin_a1_audit_lock_attach', 'trigger', 'public', 'trg_period_lock', 'fin_eventos_eventuais'),
+  ('scoring_visit_p1_fixes', 'function', 'public', 'enqueue_visit_score_recalc_from_visit', ''),
+  ('scoring_visit_p1_fixes', 'function', 'public', 'enqueue_visit_score_recalc_from_client_score', '')
 )
 SELECT
   e.migration,
