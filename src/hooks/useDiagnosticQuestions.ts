@@ -118,7 +118,7 @@ export const useDiagnosticQuestions = () => {
 
     try {
       for (const q of qs) {
-        await supabase.from('farmer_diagnostic_questions' as never).insert({
+        await supabase.from('farmer_diagnostic_questions').insert({
           bundle_recommendation_id: bundleRecommendationId || null,
           farmer_id: user.id,
           customer_user_id: customerId,
@@ -132,7 +132,7 @@ export const useDiagnosticQuestions = () => {
           bundle_result: bundleResult || null,
           margin_generated: marginGenerated || 0,
           time_spent_seconds: timeSpentSeconds || 0,
-        } as never);
+        });
       }
       toast.success('Respostas salvas com sucesso');
     } catch (error) {
@@ -145,9 +145,9 @@ export const useDiagnosticQuestions = () => {
     if (!user?.id) return null;
 
     const { data } = await supabase
-      .from('farmer_diagnostic_questions' as never)
+      .from('farmer_diagnostic_questions')
       .select('question_type, response_type, was_bundle_offered, bundle_result, margin_generated')
-      .eq('farmer_id' as never, user.id as never);
+      .eq('farmer_id', user.id);
 
     const rows = (data ?? []) as unknown as Array<{
       question_type: string;
