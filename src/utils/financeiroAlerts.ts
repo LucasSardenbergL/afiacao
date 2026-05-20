@@ -1,13 +1,13 @@
 import type { FinResumo, AgingData } from '@/services/financeiroService';
 import { COMPANIES, type Company } from '@/contexts/CompanyContext';
-import { AlertTriangle, TrendingDown, Clock, ShieldAlert } from 'lucide-react';
+import { AlertTriangle, TrendingDown, Clock, ShieldAlert, type LucideIcon } from 'lucide-react';
 
 export interface FinAlert {
   severity: 'critical' | 'warning' | 'info';
   company: string;
   message: string;
   metric?: string;
-  icon: any;
+  icon: LucideIcon;
 }
 
 export function generateAlerts(

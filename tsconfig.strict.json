@@ -228,6 +228,13 @@
     "src/components/reposicao/promocaoDetail/types.ts",
     "src/components/reposicao/promocaoDetail/helpers.tsx",
     "src/components/reposicao/promocaoDetail/MapeamentoStatusCell.tsx",
-    "src/components/reposicao/promocaoDetail/DescontoExtraCell.tsx"
+    "src/components/reposicao/promocaoDetail/DescontoExtraCell.tsx",
+    "src/queries/useOrders.ts",
+    "src/utils/financeiroAlerts.ts",
+    "src/components/OrderCard.tsx",
+    "src/components/OrderReview.tsx",
+    "src/hooks/useGlobalSearch.ts",
+    "src/components/KanbanBoard.tsx",
+    "src/hooks/useUnifiedOrder.ts"
   ]
 }

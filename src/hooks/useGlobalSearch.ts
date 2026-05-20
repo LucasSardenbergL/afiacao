@@ -131,7 +131,7 @@ export function useGlobalSearch(query: string, enabled = true) {
         .select('id, omie_numero_pedido, total, customer_user_id')
         .ilike('omie_numero_pedido', `%${q}%`)
         .limit(5);
-      return (data ?? []).map((o: any): SearchResult => ({
+      return (data ?? []).map((o: { id: string; omie_numero_pedido: string | null; total: number | null }): SearchResult => ({
         kind: 'sales-order',
         id: o.id,
         title: `PV ${(o.omie_numero_pedido ?? '').replace(/^0+/, '') || o.id.slice(0, 8)}`,
