@@ -1,5 +1,6 @@
 import { Card } from '@/components/ui/card';
 import { Construction, MapPin, Target, TrendingUp } from 'lucide-react';
+import { VisitSuggestionsCard } from './VisitSuggestionsCard';
 
 /**
  * Dashboard Closer — placeholder rico até PR-VISIT-INTELLIGENCE implementar
@@ -14,6 +15,9 @@ export function CloserDashboard() {
           Foco em visitas de alto valor — fechar deals complexos pro Hunter, expansão pra Farmer, recovery de churn, relationship pra clientes VIP.
         </p>
       </div>
+
+      {/* Sugestões de visita — PR-VISIT-INTELLIGENCE Sub-PR A */}
+      <VisitSuggestionsCard />
 
       <Card className="p-4 border-dashed border-2 border-status-warning/30 bg-status-warning-bg/20">
         <div className="flex items-center gap-2 mb-2">

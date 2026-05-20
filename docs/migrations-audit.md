@@ -2,6 +2,16 @@
 
 > Gerado por `scripts/audit-custom-migrations.ts`. Re-rodar quando custom migrations forem adicionadas: `bun scripts/audit-custom-migrations.ts`.
 
+## Histórico de auditorias
+
+| Data | Objetos checados | Gaps `❌` | Remediação |
+| --- | --- | --- | --- |
+| 2026-05-19 | 262 | 2 | `scripts/apply-missing-migrations-2026-05-19.sql` (aplicado, verificado ok=true) |
+
+**Gaps de 2026-05-19 (fechados):**
+1. `standard_processes` (migration `20260517200000`) — tabela inteira nunca aplicada (tabela + 3 índices + 4 RLS policies + 1 trigger).
+2. `idx_customer_contacts_birthday` (migration `20260517220000`) — único objeto faltando (partial-apply; resto da migration OK). App filtra aniversários client-side, então o índice estava sem uso — recriado pro roadmap PR-BIRTHDAYS.
+
 ## Contexto
 
 Per CLAUDE.md §5, **Lovable Cloud NÃO aplica automaticamente** migrations com nome custom (não-UUID) em `supabase/migrations/`. UUID-format (ex: `_868822bb-e38c-4fcf-8879-c64e48bd7630.sql`) são geradas pelo builder visual do Lovable e auto-rodam. Custom (ex: `_user_departments.sql`) ficam no repo mas precisam apply manual via Supabase SQL Editor.
