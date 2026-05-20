@@ -3355,6 +3355,42 @@ export type Database = {
           },
         ]
       }
+      fin_estoque_valor: {
+        Row: {
+          cobertura_pct: number | null
+          company: string
+          created_at: string
+          criado_por: string | null
+          data_ref: string
+          fonte: string
+          id: string
+          observacao: string | null
+          valor: number
+        }
+        Insert: {
+          cobertura_pct?: number | null
+          company: string
+          created_at?: string
+          criado_por?: string | null
+          data_ref: string
+          fonte?: string
+          id?: string
+          observacao?: string | null
+          valor: number
+        }
+        Update: {
+          cobertura_pct?: number | null
+          company?: string
+          created_at?: string
+          criado_por?: string | null
+          data_ref?: string
+          fonte?: string
+          id?: string
+          observacao?: string | null
+          valor?: number
+        }
+        Relationships: []
+      }
       fin_eventos_eventuais: {
         Row: {
           categoria_dre: string | null
@@ -3963,39 +3999,39 @@ export type Database = {
       }
       fin_projecao_snapshots: {
         Row: {
-          capital_giro_proprio: number | null
           cenario: string
           company: string
           dados: Json
           dias_cobertura: number | null
           horizon_weeks: number
           id: string
+          liquidez_operacional_liquida: number | null
           ncg: number | null
           premissas: Json
           saldo_tesouraria: number | null
           snapshot_at: string
         }
         Insert: {
-          capital_giro_proprio?: number | null
           cenario: string
           company: string
           dados: Json
           dias_cobertura?: number | null
           horizon_weeks?: number
           id?: string
+          liquidez_operacional_liquida?: number | null
           ncg?: number | null
           premissas: Json
           saldo_tesouraria?: number | null
           snapshot_at?: string
         }
         Update: {
-          capital_giro_proprio?: number | null
           cenario?: string
           company?: string
           dados?: Json
           dias_cobertura?: number | null
           horizon_weeks?: number
           id?: string
+          liquidez_operacional_liquida?: number | null
           ncg?: number | null
           premissas?: Json
           saldo_tesouraria?: number | null
@@ -12224,6 +12260,15 @@ export type Database = {
           eliminacoes: number
           total_bruto: number
           total_consolidado: number
+        }[]
+      }
+      fin_estimar_estoque_omie: {
+        Args: { p_company: string }
+        Returns: {
+          cobertura_pct: number
+          skus_com_custo: number
+          skus_total: number
+          valor_estimado: number
         }[]
       }
       fin_projecao_13_semanas: {
