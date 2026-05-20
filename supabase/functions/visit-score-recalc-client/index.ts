@@ -77,7 +77,7 @@ function scoreRecuperacao(c: CustomerScoreInputs): number {
   const churnBoost = c.churn_risk * 0.5;
   const recoverBoost = c.recover_score * 0.3;
   const recencyPenalty = Math.max(0, 100 - c.days_since_last_purchase) * -0.1;
-  const signalsBoost = (c.signal_modifiers?.breakdown.churn ?? [])
+  const signalsBoost = (c.signal_modifiers?.breakdown?.churn ?? [])
     .reduce((s, m) => s + m.delta * m.decayedWeight, 0) * 0.1;
   return clamp(churnBoost + recoverBoost + recencyPenalty + signalsBoost, 0, 100);
 }
@@ -85,13 +85,14 @@ function scoreRecuperacao(c: CustomerScoreInputs): number {
 function scoreExpansao(c: CustomerScoreInputs): number {
   const expansionBase = c.expansion_score * 0.6;
   const revenueBoost = normalizeRevenue(c.revenue_potential) * 20;
-  const signalsBoost = (c.signal_modifiers?.breakdown.expansion ?? [])
+  const signalsBoost = (c.signal_modifiers?.breakdown?.expansion ?? [])
     .reduce((s, m) => s + m.delta * m.decayedWeight, 0) * 0.2;
   return clamp(expansionBase + revenueBoost + signalsBoost, 0, 100);
 }
 
 function scoreRelacionamento(c: CustomerScoreInputs): number {
-  const healthBoost = c.health_score * 50;
+  // health_score é 0..100 (calculate-scores). * 0.5 → contribuição 0..50.
+  const healthBoost = c.health_score * 0.5;
   const revenueBoost = normalizeRevenue(c.avg_monthly_spend_180d) * 30;
   // ?? 30 (não 365) — null = sem histórico de visita = sem relacionamento estabelecido.
   // Mesma decisão de src/lib/visit-scoring/missions.ts.
@@ -210,8 +211,8 @@ async function recalcOne(
       avg_monthly_spend_180d: inputs.avg_monthly_spend_180d,
     },
     signal_modifiers_summary: {
-      churn_count: inputs.signal_modifiers?.breakdown.churn?.length ?? 0,
-      expansion_count: inputs.signal_modifiers?.breakdown.expansion?.length ?? 0,
+      churn_count: inputs.signal_modifiers?.breakdown?.churn?.length ?? 0,
+      expansion_count: inputs.signal_modifiers?.breakdown?.expansion?.length ?? 0,
       source_call_count: inputs.signal_modifiers?.source_call_count ?? 0,
     },
     mission_scores: result.scores,
