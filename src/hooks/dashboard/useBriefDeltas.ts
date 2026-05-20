@@ -24,7 +24,7 @@ export interface BriefDelta extends DeltaSpec {
  *
  * Tabelas que não existirem (em ambientes de dev) caem pra count=0 silenciosamente.
  */
-export function useBriefDeltas(persona: Persona): { deltas: BriefDelta[]; isLoading: boolean; isEmpty: boolean } {
+export function useBriefDeltas(_persona: Persona): { deltas: BriefDelta[]; isLoading: boolean; isEmpty: boolean } {
   const { companies, mode } = useDashboardCompany();
   const { lastVisitIso } = useLastVisit();
 
