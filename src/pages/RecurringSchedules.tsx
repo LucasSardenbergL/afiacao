@@ -38,7 +38,6 @@ interface Schedule {
   time_slot: string | null;
   next_order_date: string;
   is_active: boolean;
-  notes: string | null;
 }
 
 const FREQUENCY_OPTIONS = [
@@ -72,7 +71,7 @@ const RecurringSchedules = () => {
     if (!user) return;
     try {
       const [schedulesRes, toolsRes, addressesRes] = await Promise.all([
-        supabase.from('recurring_schedules' as never)
+        supabase.from('recurring_schedules')
           .select('*')
           .eq('user_id', user.id)
           .order('created_at', { ascending: false }),
@@ -111,7 +110,7 @@ const RecurringSchedules = () => {
     setSaving(true);
     try {
       const nextDate = addDays(new Date(), frequency);
-      const { error } = await supabase.from('recurring_schedules' as never).insert({
+      const { error } = await supabase.from('recurring_schedules').insert({
         user_id: user.id,
         tool_ids: selectedTools,
         frequency_days: frequency,
@@ -119,7 +118,7 @@ const RecurringSchedules = () => {
         address_id: selectedAddress || null,
         time_slot: timeSlot || null,
         next_order_date: format(nextDate, 'yyyy-MM-dd'),
-      } as never);
+      });
       if (error) throw error;
       toast.success('Agendamento criado!', { description: `Próximo pedido em ${format(nextDate, "dd 'de' MMMM", { locale: ptBR })}` });
       setDialogOpen(false);
@@ -135,9 +134,9 @@ const RecurringSchedules = () => {
 
   const toggleActive = async (scheduleId: string, currentActive: boolean) => {
     try {
-      const { error } = await supabase.from('recurring_schedules' as never)
-        .update({ is_active: !currentActive, updated_at: new Date().toISOString() } as never)
-        .eq('id' as never, scheduleId as never);
+      const { error } = await supabase.from('recurring_schedules')
+        .update({ is_active: !currentActive, updated_at: new Date().toISOString() })
+        .eq('id', scheduleId);
       if (error) throw error;
       setSchedules(prev => prev.map(s => s.id === scheduleId ? { ...s, is_active: !currentActive } : s));
       toast.success(!currentActive ? 'Agendamento ativado' : 'Agendamento pausado');
@@ -148,7 +147,7 @@ const RecurringSchedules = () => {
 
   const deleteSchedule = async (scheduleId: string) => {
     try {
-      const { error } = await supabase.from('recurring_schedules' as never).delete().eq('id', scheduleId);
+      const { error } = await supabase.from('recurring_schedules').delete().eq('id', scheduleId);
       if (error) throw error;
       setSchedules(prev => prev.filter(s => s.id !== scheduleId));
       toast.success('Agendamento removido');
