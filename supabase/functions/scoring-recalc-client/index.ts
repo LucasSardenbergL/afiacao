@@ -198,10 +198,6 @@ function round2(n: number): number {
 }
 
 // --- Helpers ---
-function clamp(n: number, min: number, max: number): number {
-  return Math.max(min, Math.min(max, n));
-}
-
 function jsonError(msg: string, status: number) {
   return new Response(JSON.stringify({ error: msg }), {
     status,
@@ -262,40 +258,24 @@ async function recalcOne(
 
   const adjustment = aggregateModifiers(allMods, now);
 
-  // Read existing scores to apply delta on top
-  const { data: existing } = await supabase
-    .from('farmer_client_scores')
-    .select('churn_risk, expansion_score, health_score, eff_score, priority_score')
-    .eq('customer_user_id', customer_user_id)
-    .eq('farmer_id', farmer_id)
-    .maybeSingle();
-
-  const base = existing as {
-    churn_risk?: number;
-    expansion_score?: number;
-    health_score?: number;
-    eff_score?: number;
-  } | null;
-
-  // Clamp boundaries per spec:
-  // health_score: 0..1 (different scale)
-  // all others: 0..100
-  const newChurn    = clamp((base?.churn_risk ?? 0) + adjustment.churn_delta, 0, 100);
-  const newExpansion = clamp((base?.expansion_score ?? 0) + adjustment.expansion_delta, 0, 100);
-  const newHealth   = clamp((base?.health_score ?? 0) + adjustment.health_delta, 0, 1);
-  const newEff      = clamp((base?.eff_score ?? 0) + adjustment.eff_delta, 0, 100);
-
-  // priority_score = newChurn * 0.5 + newExpansion * 0.5 + newEff * 0.3 (clamped 0..100)
-  const newPriority = clamp(newChurn * 0.5 + newExpansion * 0.5 + newEff * 0.3, 0, 100);
-
+  // PR-SCORING-V2.1 (fix idempotência): gravar SÓ signal_modifiers.
+  //
+  // ANTES: lia churn_risk/expansion_score/eff_score/health_score atuais e
+  // gravava base + delta de volta nas MESMAS colunas. Isso causava:
+  //   1. compounding — o recalc lia o próprio output da run anterior e somava
+  //      o mesmo delta de novo (expansion_score/eff_score nunca eram resetados
+  //      pelo calculate-scores → inflavam até o clamp);
+  //   2. corrupção de health_score — clampava 0..1 sobre dado que é 0..100;
+  //   3. briga de fórmulas — sobrescrevia priority_score (do calculate-scores,
+  //      rico: margin/churn/repurchase/goal) por uma fórmula mais pobre.
+  //
+  // AGORA: signal_modifiers (jsonb) é função PURA das calls dos últimos 30d →
+  // idempotente. As colunas-base continuam de propriedade do calculate-scores.
+  // A prioridade efetiva (base + nudge dos sinais) é computada em read-time
+  // (src/lib/scoring/agenda.ts → signalPriorityNudge / effectivePriority).
   const { error: uErr } = await supabase.from('farmer_client_scores').upsert({
     customer_user_id,
     farmer_id,
-    churn_risk: newChurn,
-    expansion_score: newExpansion,
-    health_score: newHealth,
-    eff_score: newEff,
-    priority_score: newPriority,
     signal_modifiers: adjustment,
     last_signal_recalc_at: now.toISOString(),
     updated_at: now.toISOString(),

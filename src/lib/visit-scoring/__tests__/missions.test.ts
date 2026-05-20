@@ -14,7 +14,7 @@ function mkInput(overrides: Partial<CustomerScoreInputs> = {}): CustomerScoreInp
     farmer_id: 'f1',
     churn_risk: 0,
     expansion_score: 0,
-    health_score: 0.5,
+    health_score: 50,
     recover_score: 0,
     revenue_potential: 0,
     avg_monthly_spend_180d: 0,
@@ -122,9 +122,9 @@ describe('scoreExpansao', () => {
 });
 
 describe('scoreRelacionamento', () => {
-  it('cliente health=1.0, revenue alto, 120d sem visita, baixo churn → score alto', () => {
+  it('cliente health=100, revenue alto, 120d sem visita, baixo churn → score alto', () => {
     const score = scoreRelacionamento(mkInput({
-      health_score: 1.0,
+      health_score: 100,
       avg_monthly_spend_180d: 8000,
       days_since_last_visit: 120,
       churn_risk: 10,
@@ -134,13 +134,13 @@ describe('scoreRelacionamento', () => {
 
   it('cliente em risco alto (churn=80) → relacionamento penalizado', () => {
     const withRisk = scoreRelacionamento(mkInput({
-      health_score: 0.8,
+      health_score: 80,
       avg_monthly_spend_180d: 5000,
       days_since_last_visit: 60,
       churn_risk: 80,
     }));
     const withoutRisk = scoreRelacionamento(mkInput({
-      health_score: 0.8,
+      health_score: 80,
       avg_monthly_spend_180d: 5000,
       days_since_last_visit: 60,
       churn_risk: 0,
@@ -148,14 +148,25 @@ describe('scoreRelacionamento', () => {
     expect(withRisk).toBeLessThan(withoutRisk);
   });
 
-  it('cliente nunca visitado (days_since_last_visit=null) → usa fallback 365', () => {
+  it('cliente nunca visitado (days_since_last_visit=null) → usa fallback 30', () => {
     const score = scoreRelacionamento(mkInput({
-      health_score: 0.8,
+      health_score: 80,
       avg_monthly_spend_180d: 5000,
       days_since_last_visit: null,
       churn_risk: 10,
     }));
     expect(score).toBeGreaterThan(50);
+  });
+
+  it('escala 0..100: health=80 sozinho contribui ~40 (health * 0.5), não estoura o teto', () => {
+    const score = scoreRelacionamento(mkInput({
+      health_score: 80,
+      avg_monthly_spend_180d: 0,
+      days_since_last_visit: 0,
+      churn_risk: 0,
+    }));
+    // healthBoost = 80 * 0.5 = 40; revenue 0; daysVisitBoost = min(40, 0*0.3)=0; sem penalty
+    expect(score).toBeCloseTo(40, 0);
   });
 });
 
@@ -187,6 +198,28 @@ describe('scoreProspeccao', () => {
   });
 });
 
+describe('signal_modifiers = {} (DEFAULT vazio, linha nunca recalculada)', () => {
+  // As 3900 linhas existentes têm signal_modifiers = '{}'::jsonb (default da migration).
+  // {} é truthy mas não tem .breakdown — acesso direto a .breakdown.churn quebra (TypeError).
+  const emptyMods = {} as unknown as CustomerScoreInputs['signal_modifiers'];
+
+  it('scoreRecuperacao não quebra com {} e trata como sem sinal', () => {
+    const withEmpty = scoreRecuperacao(mkInput({ churn_risk: 50, recover_score: 30, days_since_last_purchase: 60, signal_modifiers: emptyMods }));
+    const withNull = scoreRecuperacao(mkInput({ churn_risk: 50, recover_score: 30, days_since_last_purchase: 60, signal_modifiers: null }));
+    expect(withEmpty).toBe(withNull);
+  });
+
+  it('scoreExpansao não quebra com {}', () => {
+    const withEmpty = scoreExpansao(mkInput({ expansion_score: 50, revenue_potential: 3000, signal_modifiers: emptyMods }));
+    const withNull = scoreExpansao(mkInput({ expansion_score: 50, revenue_potential: 3000, signal_modifiers: null }));
+    expect(withEmpty).toBe(withNull);
+  });
+
+  it('computeVisitScore não quebra com {}', () => {
+    expect(() => computeVisitScore(mkInput({ churn_risk: 40, signal_modifiers: emptyMods }))).not.toThrow();
+  });
+});
+
 describe('computeVisitScore', () => {
   it('retorna max dos 4 e primary_mission correspondente', () => {
     const result = computeVisitScore(mkInput({
@@ -194,7 +227,7 @@ describe('computeVisitScore', () => {
       recover_score: 70,
       days_since_last_purchase: 90,
       sales_orders_count: 5,
-      health_score: 0.3,
+      health_score: 30,
     }));
     expect(result.primary_mission).toBe('recuperacao');
     expect(result.visit_score).toBe(result.scores.recuperacao);
