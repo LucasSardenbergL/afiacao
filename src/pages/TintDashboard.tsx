@@ -108,9 +108,9 @@ export default function TintDashboard() {
               <>
                 <p className="text-sm font-medium">{m.lastImport.tipo}</p>
                 <p className="text-xs text-muted-foreground">
-                  {new Date(m.lastImport.created_at).toLocaleDateString('pt-BR')} — {m.lastImport.registros_importados ?? 0} importados
+                  {m.lastImport.created_at ? new Date(m.lastImport.created_at).toLocaleDateString('pt-BR') : '—'} — {m.lastImport.registros_importados ?? 0} importados
                 </p>
-                <Badge variant="outline" className={statusColor[m.lastImport.status] || ''}>
+                <Badge variant="outline" className={(m.lastImport.status && statusColor[m.lastImport.status]) || ''}>
                   {m.lastImport.status}
                 </Badge>
               </>
@@ -136,7 +136,7 @@ export default function TintDashboard() {
                   <div className="flex items-center gap-2 mb-1">
                     <span className="text-sm font-medium">{imp.arquivo_nome}</span>
                     <Badge variant="outline">{imp.tipo}</Badge>
-                    <span className="text-xs text-muted-foreground">{new Date(imp.created_at).toLocaleDateString('pt-BR')}</span>
+                    <span className="text-xs text-muted-foreground">{imp.created_at ? new Date(imp.created_at).toLocaleDateString('pt-BR') : '—'}</span>
                   </div>
                   <p className="text-xs text-destructive">{imp.registros_erro} erro(s)</p>
                   {imp.erros_detalhe && Array.isArray(imp.erros_detalhe) && (

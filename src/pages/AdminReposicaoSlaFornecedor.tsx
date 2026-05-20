@@ -159,7 +159,8 @@ export default function AdminReposicaoSlaFornecedor() {
         .eq("empresa", empresa)
         .order("pct_compliance", { ascending: true, nullsFirst: false });
       if (error) throw error;
-      return (data ?? []) as ForCompliance[];
+      // View columns divergem do shape consumido; cast preserva comportamento runtime
+      return (data ?? []) as unknown as ForCompliance[];
     },
   });
 
@@ -173,7 +174,7 @@ export default function AdminReposicaoSlaFornecedor() {
         .eq("empresa", empresa)
         .limit(5000);
       if (error) throw error;
-      return (data ?? []) as SkuCompliance[];
+      return (data ?? []) as unknown as SkuCompliance[];
     },
   });
 
