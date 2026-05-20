@@ -254,7 +254,7 @@ export default function AdminReposicaoOportunidades() {
     queryKey: ["sku-parametros-count", EMPRESA],
     queryFn: async () => {
       const { count, error } = await supabase
-        .from("sku_parametros" as never)
+        .from("sku_parametros")
         .select("*", { count: "exact", head: true })
         .eq("empresa", EMPRESA)
         .eq("ativo", true);
@@ -271,13 +271,13 @@ export default function AdminReposicaoOportunidades() {
 
       const [promo, aumento] = await Promise.all([
         supabase
-          .from("promocao_campanha" as never)
+          .from("promocao_campanha")
           .select("id", { count: "exact", head: true })
           .eq("empresa", EMPRESA)
           .eq("estado", "ativa")
           .eq("data_corte_pedido", today),
         supabase
-          .from("fornecedor_aumento_anunciado" as never)
+          .from("fornecedor_aumento_anunciado")
           .select("id", { count: "exact", head: true })
           .eq("empresa", EMPRESA)
           .in("estado", ["ativo", "vigente"])
@@ -293,7 +293,7 @@ export default function AdminReposicaoOportunidades() {
     queryKey: ["historico-promocoes-count", EMPRESA],
     queryFn: async () => {
       const { data, error } = await supabase
-        .from("promocao_campanha" as never)
+        .from("promocao_campanha")
         .select("data_inicio")
         .eq("empresa", EMPRESA);
       if (error) throw error;
