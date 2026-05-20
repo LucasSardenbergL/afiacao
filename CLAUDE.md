@@ -286,18 +286,46 @@ Dois backends coexistem; o usuário escolhe via toggle em `/settings`:
 4. Founder cola cada bloco no SQL Editor → Run → confirma "Success"
 5. **Valida no final** com uma query de checagem (count de tabelas/triggers/funções criados) também pra colar no SQL Editor
 
+**Formatação de blocos SQL na conversa** (preferência do founder, registrada 2026-05-19):
+
+- Sempre usar fenced code block com ```` ```sql ```` — assim o app de chat renderiza o botão de copiar no canto superior do bloco.
+- **Cada bloco SQL deve terminar com a tag de fechamento ```` ``` ```` numa linha sozinha**, sem texto ou explicação encostada nela. Texto após `\`\`\`` fora do bloco. Isso garante que o botão "Copy" do app cubra a área visível inteira e funcione mesmo quando o bloco é longo (founder rola até o fim e quer poder copiar dali também sem voltar pro topo).
+- Quando entregar múltiplos blocos sequenciais (A→B→C→D), **um bloco SQL por mensagem**, com label "BLOCO A/B/C/D" antes e a query de validação (`SELECT 'BLOCO X OK' AS status, ...`) no final do bloco. Founder cola, vê "Success" + a contagem esperada, confirma, e aí mando o próximo.
+
 **Migrations já entregues por este workflow** (referência):
 - Fundação Tier 1 (15 migrations, 2026-05-17 → 18) — todas coladas via SQL Editor
 - A1 Inteligência de Caixa (4 migrations, 2026-05-19) — idem
 - `20260517100000_enable_realtime_dashboard_v3.sql`, `20260517120000_user_departments.sql`, `20260517140000_dashboard_visits.sql`
 
+**RECOVERY no Supabase do Lovable (concluída 2026-05-19)**: como Fundação + A1 tinham sido aplicados por engano no Supabase standalone, foi feita re-aplicação completa no Supabase do Lovable via SQL Editor (5 blocos A→B→C→D→E idempotentes) + re-deploy das 5 edge functions via chat do Lovable. Estado final validado: **9/9 tabelas, 6/6 funções, 18/18 triggers anexados, ambas colunas (regime + snapshot_dre_caixa_id), unique constraint com regime, seed config 3 empresas, 3 CNPJs**. Edge functions Active no Lovable: `omie-financeiro` (EDIT, 1493 linhas, lida do repo), `fin-period-override`, `fin-suggest-mapping`, `fin-ic-reconcile`, `fin-cashflow-engine` (4 novas). **2 crons agendados e ativos** (BLOCO E): `fin-cashflow-snapshot-diario` (`0 10 * * *`, snapshot 13s por empresa×cenário) e `fin-ic-reconcile-daily` (`0 9 * * *`). **Módulo financeiro 100% completo e automatizado no Supabase de produção.**
+
+**Padrão de cron descoberto no Supabase do Lovable (2026-05-19, referência pra futuros crons)**:
+- `pg_cron` + `pg_net` já habilitados.
+- **Project URL (Supabase do Lovable):** `https://fzvklzpomgnyikkfkzai.supabase.co` — confirma a identidade do Supabase correto (NÃO confundir com o standalone `lkotrsfdvnwxqyevhffh`).
+- **Auth canônico de cron** (usado por ~25 crons que já rodam): header `'x-cron-secret', (SELECT decrypted_secret FROM vault.decrypted_secrets WHERE name='CRON_SECRET' LIMIT 1)`. O secret `CRON_SECRET` já está no Cofre (Vault) — não precisa criar nem rotacionar. Coluna é `decrypted_secret` (não `value`); nome do secret é `CRON_SECRET` (maiúsculo).
+- `cron.schedule(nome, schedule, comando)` faz **upsert por nome** → idempotente, pode rerodar.
+- ✅ **Crons legados corrigidos (2026-05-19, BLOCO F+G)**: 3 crons da Reposição estavam com `x-cron-secret` placeholder (`<<COLE_O_CRON_SECRET_AQUI>>` / `<<48>>`) → falhavam 401. `gerar-pedidos-diario-oben` (9h15) e `disparar-pedidos-aprovados-oben` (13h) foram corrigidos pro padrão vault. `omie-cron-diario-oben` (diário 7h) era redundante com `afiacao_omie_oben_sync_incremental_2h` (mesma função/body, roda a cada 2h) → **deletado** via `cron.unschedule`. Lição: ao herdar crons de outro contexto, conferir se o `x-cron-secret` é placeholder antes de assumir que rodam.
+
 **Sempre que adicionar migration nova**: avisar no PR description "**ATENÇÃO: migration manual necessária**" e colar o SQL no body do PR + entregar inline na conversa.
 
-### Edge functions — preferência do founder
+### Edge functions — caminho oficial Lovable (confirmado via docs.lovable.dev 2026-05-19)
 
-> 🟡 **REGRA**: edge functions Supabase **podem** ser deployadas via `supabase functions deploy` (CLI). O founder já tem CLI instalada (`brew install supabase/tap/supabase`) e linkada (`supabase link --project-ref ...` já feito em 2026-05-18). Mas, dado que ele prefere o caminho "colar e clicar", **avisar antes** que edge fn precisa do terminal — não assumir que rodar `supabase functions deploy` é trivial.
+> 🔴 **REGRA**: Edge functions no Lovable Cloud são **criadas e editadas pelo chat do Lovable**, NÃO pela UI de "Edge functions" do Cloud. A UI Cloud → Edge functions é **só pra visualizar logs, status e invocations**. Não há botão de "Create function" / "New function" ali.
 
-Caminho normal: `cd ~/Projetos/afiacao && git pull && supabase functions deploy <nome>`. Entregar como bloco copiável.
+> 🟢 **CAPACIDADE CONFIRMADA (2026-05-19, descoberta durante deploy de omie-financeiro)**: o Lovable AI **CONSEGUE ler arquivos do diretório `supabase/functions/<nome>/index.ts`** no repo do projeto. Inicialmente o founder achou que não — mas o próprio Lovable AI confirmou capacidade quando precisou montar a função após truncamento do histórico de chat. Caminho preferencial para edge function GRANDE (>500 linhas) ou EDIT de função existente: instruir Lovable AI a ler `supabase/functions/<nome>/index.ts` do repo e fazer deploy verbatim, em vez de pastear código no chat (que pode truncar). Para edge function nova pequena (<300 linhas) ou quando o arquivo ainda não existe no repo, continuar pastando código no chat.
+>
+> Doc oficial: `https://docs.lovable.dev/integrations/cloud` diz: *"Edge Functions: Easy to create — just describe the function you need in Lovable chat."*
+>
+> **Workflow correto pra entregar edge function nova ou edit**:
+> 1. Eu monto um **prompt para o chat do Lovable** com:
+>    - Instrução clara (ex: "Create a new Supabase edge function named `fin-period-override`" OU "Edit the existing edge function `omie-financeiro` and replace its code with the following:")
+>    - Código completo do `index.ts` em fenced block, self-contained (com helpers inlineados se necessário — UI do Lovable parece não suportar convention `_shared/`)
+>    - Lembrete pra NÃO modificar/reinterpretar o código (Lovable AI tende a "melhorar" — não queremos)
+> 2. Founder cola o prompt no chat do Lovable
+> 3. Lovable AI cria/edita a function
+> 4. Verificar no Cloud → Edge functions se aparece "Active"
+>
+> **Não sugerir mais**: `supabase functions deploy` via CLI (mesmo com CLI já instalada — o founder ainda perderia tempo confirmando project ref e o standalone supabase ainda paira como armadilha). Mesmo que CLI funcione tecnicamente, o caminho oficial Lovable é via chat — e o founder prefere "colar e clicar".
 
 ### Convenções de código
 
@@ -511,6 +539,12 @@ Há muitas skills instaladas (gstack ~40 comandos, superpowers 14, catálogo de 
 **Colisão de nome conhecida:** existe `/review` do gstack e `review` do plugin oficial code-review. Tratamos o **`/review` do gstack como o canônico** para revisão de diff. Se o comando errado disparar, invocar explicitamente via gstack.
 
 Esta tabela é viva — ao instalar/remover skill, atualizar aqui.
+
+### Preferência do founder — segunda opinião de IA no brainstorming (registrada 2026-05-19)
+
+> 🟢 **Toda vez que estivermos em brainstorming**, se fizer sentido pro tema (decisão de arquitetura, metodologia, trade-off não-óbvio), **proponho proativamente uma "discussão" com uma segunda IA** pra melhorar o produto final — e **eu mesmo conduzo via skill `/codex` (consult mode)**, sem fazer o founder copiar/colar pro ChatGPT manualmente (isso desgasta ele com idas e vindas). Fluxo: eu monto o brief, rodo `/codex` consult, leio a resposta, e incorporo o que faz sentido no design — só trago pro founder o resumo do que mudou e por quê. Se o founder preferir explicitamente levar pro ChatGPT dele numa ocasião, tudo bem, mas o default é eu resolver a segunda opinião in-tool via codex.
+>
+> **Status do codex (2026-05-19):** instalado via Homebrew cask (`codex` 0.130.0, em `/opt/homebrew/bin/codex`) e **autenticado** (`~/.codex/auth.json` existe). `npm` NÃO está no PATH desta máquina — se precisar reinstalar/atualizar, usar `brew upgrade codex`, não npm. Consult roda direto: `codex exec "<prompt>" -C <repo> -s read-only -c 'model_reasoning_effort="medium"' --enable web_search_cached --json`. Primeira consulta (A2 metodologia financeira) pegou furos reais de regime tributário — vale o investimento.
 
 ---
 
