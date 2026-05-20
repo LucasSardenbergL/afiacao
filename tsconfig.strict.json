@@ -224,6 +224,10 @@
     "src/hooks/useWebRTCCall.ts",
     "src/hooks/dashboard/useBriefDeltas.ts",
     "src/hooks/dashboard/useFinanceiroZone.ts",
-    "src/hooks/dashboard/useVendasZone.ts"
+    "src/hooks/dashboard/useVendasZone.ts",
+    "src/components/reposicao/promocaoDetail/types.ts",
+    "src/components/reposicao/promocaoDetail/helpers.tsx",
+    "src/components/reposicao/promocaoDetail/MapeamentoStatusCell.tsx",
+    "src/components/reposicao/promocaoDetail/DescontoExtraCell.tsx"
   ]
 }
