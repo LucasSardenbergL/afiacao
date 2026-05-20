@@ -101,13 +101,24 @@ const FarmerBundles = () => {
 };
 
 // ─── Customer Bundle Card ────────────────────────────────────────────
+interface CustomerCtx {
+  name: string;
+  healthScore: number;
+  avgMonthlySpend: number | null;
+  categoryCount: number | null;
+  daysSinceLastPurchase: number | null;
+  cnae: string | null;
+  customerType: string | null;
+  recentProducts: string[] | null;
+}
+
 interface CustomerBundleCardProps {
   data: CustomerBundles;
   expanded: boolean;
   onToggle: () => void;
   bundleArgs: Record<string, BundleArgument>;
   argGenerating: Record<string, boolean>;
-  onGenerateArgument: (key: string, bundle: any, customer: any, profile: CustomerProfile) => void;
+  onGenerateArgument: (key: string, bundle: BundleRecommendation, customer: CustomerCtx, profile: CustomerProfile) => void;
   diagHook: ReturnType<typeof useDiagnosticQuestions>;
 }
 
@@ -210,7 +221,7 @@ interface BundleCardFullProps {
   rank: number;
   bundleKey: string;
   customerId: string;
-  customerCtx: any;
+  customerCtx: CustomerCtx;
   profile: CustomerProfile;
   argument?: BundleArgument;
   isArgGenerating: boolean;

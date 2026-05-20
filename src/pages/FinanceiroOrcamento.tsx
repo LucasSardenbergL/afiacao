@@ -49,8 +49,8 @@ const FinanceiroOrcamento = () => {
       const d: Record<string, number> = {};
       for (const o of orc) d[`${o.mes}_${o.dre_linha}`] = o.valor_orcado;
       setDraft(d);
-    } catch (e: any) {
-      toast.error('Erro', { description: e.message });
+    } catch (e) {
+      toast.error('Erro', { description: e instanceof Error ? e.message : String(e) });
     } finally {
       setLoading(false);
     }
@@ -71,8 +71,8 @@ const FinanceiroOrcamento = () => {
       toast.success('Orçamento salvo');
       setEditMode(false);
       load();
-    } catch (e: any) {
-      toast.error('Erro', { description: e.message });
+    } catch (e) {
+      toast.error('Erro', { description: e instanceof Error ? e.message : String(e) });
     } finally {
       setSaving(false);
     }
@@ -84,7 +84,7 @@ const FinanceiroOrcamento = () => {
 
   const getReal = (linha: string, mes: number): number => {
     const d = dre.find(r => r.mes === mes);
-    return d ? ((d as any)[linha] || 0) : 0;
+    return d ? ((d as unknown as Record<string, number>)[linha] || 0) : 0;
   };
 
   const getOrc = (linha: string, mes: number): number => {
