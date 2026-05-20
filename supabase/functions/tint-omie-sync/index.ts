@@ -2,6 +2,34 @@ import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { createClient } from "npm:@supabase/supabase-js@2";
 import { authorizeCronOrStaff } from "../_shared/auth.ts";
 
+interface OmieProdutoImagem {
+  url_imagem?: string;
+}
+
+interface OmieProdutoCadastro {
+  codigo_produto?: number | string;
+  codigo_produto_integracao?: string;
+  codigo?: string;
+  descricao?: string;
+  descricao_familia?: string;
+  unidade?: string;
+  ncm?: string;
+  valor_unitario?: number;
+  quantidade_estoque?: number;
+  inativo?: string;
+  marca?: string;
+  modelo?: string;
+  peso_bruto?: number;
+  peso_liq?: number;
+  imagens?: OmieProdutoImagem[];
+}
+
+interface OmieListarProdutosResponse {
+  faultstring?: string;
+  total_de_paginas?: number;
+  produto_servico_cadastro?: OmieProdutoCadastro[];
+}
+
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
   "Access-Control-Allow-Headers":
@@ -41,7 +69,7 @@ async function callOmieApi(
       body: JSON.stringify(body),
     });
 
-    const result = await response.json();
+    const result = (await response.json()) as unknown as OmieListarProdutosResponse;
 
     if (result.faultstring) {
       const fs = String(result.faultstring);
@@ -98,12 +126,12 @@ serve(async (req) => {
     let pagesProcessed = 0;
 
     while (pagina <= totalPaginas && pagesProcessed < maxPages) {
-      const result = (await callOmieApi("geral/produtos/", "ListarProdutos", {
+      const result = await callOmieApi("geral/produtos/", "ListarProdutos", {
         pagina,
         registros_por_pagina: 100,
         apenas_importado_api: "N",
         filtrar_apenas_omiepdv: "N",
-      })) as any;
+      });
 
       if (!result) {
         console.log(`[tint-omie-sync] Sync interrupted by rate limit at page ${pagina}`);
@@ -114,12 +142,12 @@ serve(async (req) => {
       const produtos = result.produto_servico_cadastro || [];
 
       const rows = produtos
-        .filter((prod: any) => {
+        .filter((prod: OmieProdutoCadastro) => {
           if (prod.inativo === "S") return false;
           const familia = (prod.descricao_familia || "").toLowerCase().trim();
           return Object.keys(TINT_FAMILIES).some((f) => familia === f);
         })
-        .map((prod: any) => {
+        .map((prod: OmieProdutoCadastro) => {
           const familia = (prod.descricao_familia || "").toLowerCase().trim();
           const tintType = TINT_FAMILIES[familia] || null;
           return {
@@ -176,9 +204,10 @@ serve(async (req) => {
       }),
       { headers: { ...corsHeaders, "Content-Type": "application/json" } },
     );
-  } catch (error: any) {
+  } catch (error) {
     console.error("[tint-omie-sync] Erro:", error);
-    return new Response(JSON.stringify({ error: error.message }), {
+    const message = error instanceof Error ? error.message : String(error);
+    return new Response(JSON.stringify({ error: message }), {
       status: 500,
       headers: { ...corsHeaders, "Content-Type": "application/json" },
     });
