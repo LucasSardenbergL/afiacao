@@ -123,6 +123,8 @@ type DadosBase = {
   cps: CP[];
   saldo_cc: number;
   estoque_valor: number;
+  estoque_data_ref: string | null;
+  cmv_ttm: number;
   eventos_rec: EventoRecorrente[];
   eventos_ev: EventoEventual[];
   config: Config;
@@ -132,7 +134,7 @@ async function carregarDados(
   supabase: ReturnType<typeof createClient>,
   company: Company,
 ): Promise<DadosBase> {
-  const [crsRes, cpsRes, ccRes, recRes, evRes, configRes] = await Promise.all([
+  const [crsRes, cpsRes, ccRes, recRes, evRes, configRes, estoqueRes, dreRes] = await Promise.all([
     // @ts-expect-error - fin_contas_receber may not be in generated supabase types yet
     supabase.from('fin_contas_receber').select('id, saldo, valor_documento, valor_recebido, data_emissao, data_vencimento, data_recebimento, status_titulo, omie_codigo_cliente, nome_cliente, categoria_codigo')
       .eq('company', company)
@@ -153,12 +155,26 @@ async function carregarDados(
     // @ts-expect-error - fin_config_cashflow not in generated supabase types yet (A1 table)
     supabase.from('fin_config_cashflow').select('overrides_cenario, thresholds, adiantamento_categorias_codigos')
       .eq('company', company).maybeSingle(),
+    // @ts-expect-error - fin_estoque_valor (Onda 1) não está nos types gerados
+    supabase.from('fin_estoque_valor').select('valor, data_ref')
+      .eq('company', company).order('data_ref', { ascending: false }).limit(1).maybeSingle(),
+    // @ts-expect-error - fin_dre_snapshots não está nos types gerados
+    supabase.from('fin_dre_snapshots').select('cmv, ano, mes')
+      .eq('company', company).eq('regime', 'competencia'),
   ]);
 
   const saldo_cc = ((ccRes.data ?? []) as Array<{ saldo_atual?: number | null }>)
     .reduce((s: number, c) => s + Number(c.saldo_atual ?? 0), 0);
 
-  const estoque_valor = 0;
+  const estoque_valor = Number((estoqueRes.data as { valor?: number } | null)?.valor ?? 0);
+  const estoque_data_ref = (estoqueRes.data as { data_ref?: string } | null)?.data_ref ?? null;
+
+  // CMV TTM: soma dos últimos 12 meses de DRE competência
+  const _hojeTtm = new Date();
+  const _cutoffMesIdx = (_hojeTtm.getFullYear() * 12 + (_hojeTtm.getMonth() + 1)) - 12;
+  const cmv_ttm = ((dreRes.data ?? []) as Array<{ cmv?: number; ano: number; mes: number }>)
+    .filter((d) => (d.ano * 12 + d.mes) > _cutoffMesIdx)
+    .reduce((s, d) => s + Number(d.cmv ?? 0), 0);
 
   if (!configRes.data) {
     throw new Error(`Config ausente pra ${company}. Aplique seed em fin_config_cashflow.`);
@@ -191,6 +207,8 @@ async function carregarDados(
     })),
     saldo_cc,
     estoque_valor,
+    estoque_data_ref,
+    cmv_ttm,
     eventos_rec: (recRes.data ?? []) as unknown as EventoRecorrente[],
     eventos_ev: (evRes.data ?? []) as unknown as EventoEventual[],
     config: configRes.data as unknown as Config,
@@ -450,7 +468,8 @@ function calcularNCG(dados: DadosBase): NCG {
     .filter(c =>
       ['ABERTO', 'PARCIAL', 'VENCIDO'].includes(c.status_titulo) &&
       c.saldo > 0 &&
-      (!c.categoria_codigo || !dados.config.adiantamento_categorias_codigos.includes(c.categoria_codigo))
+      (!c.categoria_codigo || !dados.config.adiantamento_categorias_codigos.includes(c.categoria_codigo)) &&
+      !(c.categoria_codigo && c.categoria_codigo.startsWith('3.99'))
     )
     .reduce((s, c) => s + c.saldo, 0);
 
@@ -490,12 +509,13 @@ function calcularNCG(dados: DadosBase): NCG {
 
 type Indicadores = {
   dias_cobertura: number;
-  capital_giro_proprio: number;
+  liquidez_operacional_liquida: number;
   saldo_tesouraria: number;
   inadimplencia_pct: number;
   concentracao_top5_clientes: Array<{ cliente: string; pct: number; valor: number }>;
   prazo_medio_recebimento: number;
   prazo_medio_pagamento: number;
+  prazo_medio_estoque: number;
   cash_conversion_cycle: number;
 };
 
@@ -511,7 +531,7 @@ function calcularIndicadores(
   const saidaDiariaMedia = saidasUltimos90 / 90;
   const dias_cobertura = saidaDiariaMedia > 0 ? dados.saldo_cc / saidaDiariaMedia : 999;
 
-  const capital_giro_proprio = dados.saldo_cc + ncg.aco.cr_aberto + ncg.aco.estoque - ncg.pco.total;
+  const liquidez_operacional_liquida = dados.saldo_cc + ncg.aco.cr_aberto + ncg.aco.estoque - ncg.pco.total;
   const saldo_tesouraria = dados.saldo_cc - ncg.pco.folha_30d;
 
   const crsLiquidados = dados.crs.filter(c => c.data_recebimento && c.data_emissao);
@@ -530,7 +550,8 @@ function calcularIndicadores(
       }, 0) / cpsLiquidados.length
     : 0;
 
-  const ccc = pmr - pmp;
+  const pme = dados.cmv_ttm > 0 ? (dados.estoque_valor / dados.cmv_ttm) * 365 : 0;
+  const ccc = pmr + pme - pmp;
 
   const porCliente = new Map<string, number>();
   for (const cr of dados.crs) {
@@ -550,12 +571,13 @@ function calcularIndicadores(
 
   return {
     dias_cobertura,
-    capital_giro_proprio,
+    liquidez_operacional_liquida,
     saldo_tesouraria,
     inadimplencia_pct: taxas.inadimplencia_observada_pct,
     concentracao_top5_clientes,
     prazo_medio_recebimento: pmr,
     prazo_medio_pagamento: pmp,
+    prazo_medio_estoque: pme,
     cash_conversion_cycle: ccc,
   };
 }
@@ -592,16 +614,16 @@ function avaliarAlertas(
     });
   }
 
-  // 2. NCG > Capital Giro Próprio (déficit)
-  if (ncg.valor > indicadores.capital_giro_proprio) {
-    const gap = ncg.valor - indicadores.capital_giro_proprio;
+  // 2. NCG > Liquidez Operacional Líquida (déficit)
+  if (ncg.valor > indicadores.liquidez_operacional_liquida) {
+    const gap = ncg.valor - indicadores.liquidez_operacional_liquida;
     alertas.push({
       tipo: 'ncg_deficit',
       severidade: 'aviso',
-      mensagem: `NCG ${formatBRLSimple(ncg.valor)} excede Capital Giro Próprio ${formatBRLSimple(indicadores.capital_giro_proprio)} em ${formatBRLSimple(gap)}. Risco de liquidez.`,
+      mensagem: `NCG ${formatBRLSimple(ncg.valor)} excede Liquidez Operacional Líquida ${formatBRLSimple(indicadores.liquidez_operacional_liquida)} em ${formatBRLSimple(gap)}. Risco de liquidez.`,
       valor: gap,
       threshold: 0,
-      contexto: { ncg: ncg.valor, cgp: indicadores.capital_giro_proprio },
+      contexto: { ncg: ncg.valor, cgp: indicadores.liquidez_operacional_liquida },
     });
   }
 
@@ -706,7 +728,7 @@ async function calcular(
       horizon_weeks: horizon,
       dados: semanas as unknown as Record<string, unknown>,
       ncg: ncg.valor,
-      capital_giro_proprio: indicadores.capital_giro_proprio,
+      liquidez_operacional_liquida: indicadores.liquidez_operacional_liquida,
       saldo_tesouraria: indicadores.saldo_tesouraria,
       dias_cobertura: indicadores.dias_cobertura,
       premissas: premissas as unknown as Record<string, unknown>,

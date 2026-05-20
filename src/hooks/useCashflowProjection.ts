@@ -34,12 +34,13 @@ export type CashflowResult = {
   ncg: NCGData;
   indicadores: {
     dias_cobertura: number;
-    capital_giro_proprio: number;
+    liquidez_operacional_liquida: number;
     saldo_tesouraria: number;
     inadimplencia_pct: number;
     concentracao_top5_clientes: Array<{ cliente: string; pct: number; valor: number }>;
     prazo_medio_recebimento: number;
     prazo_medio_pagamento: number;
+    prazo_medio_estoque: number;
     cash_conversion_cycle: number;
   };
   alertas: Array<{ tipo: string; severidade: string; mensagem: string; valor: number | null; threshold: number | null; contexto: Record<string, unknown> }>;
