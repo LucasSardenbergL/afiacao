@@ -303,7 +303,7 @@ export default function AdminPortalSayerlack() {
           schema: 'public',
           table: 'pedido_compra_sugerido',
         },
-        (payload: any) => {
+        (payload: { new?: { fornecedor_nome?: string; empresa?: string } }) => {
           const fn = (payload?.new?.fornecedor_nome ?? '').toString().toUpperCase();
           if (payload?.new?.empresa === 'OBEN' && fn.includes('SAYERLACK')) {
             qc.invalidateQueries({ queryKey: ['portal-sayerlack-kpi'] });
@@ -596,7 +596,7 @@ export default function AdminPortalSayerlack() {
         {/* ---------- HISTÓRICO ---------- */}
         <TabsContent value="historico" className="space-y-3">
           <div className="flex flex-wrap gap-2">
-            <Select value={histStatus} onValueChange={(v: any) => setHistStatus(v)}>
+            <Select value={histStatus} onValueChange={(v) => setHistStatus(v as 'todos' | 'enviados' | 'falhas')}>
               <SelectTrigger className="w-44"><SelectValue /></SelectTrigger>
               <SelectContent>
                 <SelectItem value="todos">Todos</SelectItem>
@@ -604,7 +604,7 @@ export default function AdminPortalSayerlack() {
                 <SelectItem value="falhas">Falhas</SelectItem>
               </SelectContent>
             </Select>
-            <Select value={histRange} onValueChange={(v: any) => setHistRange(v)}>
+            <Select value={histRange} onValueChange={(v) => setHistRange(v as '7' | '30' | '90')}>
               <SelectTrigger className="w-44"><SelectValue /></SelectTrigger>
               <SelectContent>
                 <SelectItem value="7">Últimos 7 dias</SelectItem>
