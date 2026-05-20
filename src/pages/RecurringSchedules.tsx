@@ -119,7 +119,7 @@ const RecurringSchedules = () => {
         address_id: selectedAddress || null,
         time_slot: timeSlot || null,
         next_order_date: format(nextDate, 'yyyy-MM-dd'),
-      });
+      } as never);
       if (error) throw error;
       toast.success('Agendamento criado!', { description: `Próximo pedido em ${format(nextDate, "dd 'de' MMMM", { locale: ptBR })}` });
       setDialogOpen(false);
@@ -136,8 +136,8 @@ const RecurringSchedules = () => {
   const toggleActive = async (scheduleId: string, currentActive: boolean) => {
     try {
       const { error } = await supabase.from('recurring_schedules' as never)
-        .update({ is_active: !currentActive, updated_at: new Date().toISOString() })
-        .eq('id', scheduleId);
+        .update({ is_active: !currentActive, updated_at: new Date().toISOString() } as never)
+        .eq('id' as never, scheduleId as never);
       if (error) throw error;
       setSchedules(prev => prev.map(s => s.id === scheduleId ? { ...s, is_active: !currentActive } : s));
       toast.success(!currentActive ? 'Agendamento ativado' : 'Agendamento pausado');
