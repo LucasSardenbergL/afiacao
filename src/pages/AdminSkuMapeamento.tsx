@@ -151,7 +151,7 @@ export default function AdminSkuMapeamento() {
       setEditing(null);
       setForm(EMPTY_FORM);
     },
-    onError: (e: any) => toast.error(e?.message ?? 'Erro ao salvar'),
+    onError: (e: Error) => toast.error(e.message ?? 'Erro ao salvar'),
   });
 
   const handleEdit = (m: Mapeamento) => {
@@ -188,7 +188,7 @@ export default function AdminSkuMapeamento() {
       if (e1) throw e1;
 
       const skusUnicos = new Map<string, string>();
-      (itens as any[] | null)?.forEach((i) => {
+      (itens as Array<{ sku_codigo_omie: string; sku_descricao: string }> | null)?.forEach((i) => {
         if (!skusUnicos.has(i.sku_codigo_omie)) skusUnicos.set(i.sku_codigo_omie, i.sku_descricao);
       });
 
@@ -229,8 +229,8 @@ export default function AdminSkuMapeamento() {
         automaticos,
         manuais,
       });
-    } catch (e: any) {
-      toast.error(e?.message ?? 'Erro ao validar');
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : 'Erro ao validar');
     } finally {
       setValidando(false);
     }

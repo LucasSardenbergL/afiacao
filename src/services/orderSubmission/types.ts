@@ -1,4 +1,5 @@
 import type { SupabaseClient, User } from '@supabase/supabase-js';
+import type { Database } from '@/integrations/supabase/types';
 import type { PrintOrderData } from '@/components/OrderPrintLayout';
 import type {
   OmieCustomer,
@@ -10,7 +11,7 @@ import type {
 } from '@/hooks/unifiedOrder/types';
 import type { DeliveryOption } from '@/types';
 
-export type SubmitClient = SupabaseClient<any, any, any>;
+export type SubmitClient = SupabaseClient<Database>;
 
 export interface SubmitCart {
   obenProductItems: ProductCartItem[];
