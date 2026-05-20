@@ -55,7 +55,7 @@ const ProductionOrders = () => {
       .from('production_orders')
       .select('*')
       .order('created_at', { ascending: false });
-    if (!error && data) setOrders(data as any);
+    if (!error && data) setOrders(data as unknown as ProductionOrder[]);
     setLoading(false);
   };
 
@@ -73,8 +73,8 @@ const ProductionOrders = () => {
       if (error) throw error;
       toast.success('Ordem de produção finalizada!');
       loadOrders();
-    } catch (err: any) {
-      toast.error(err.message || 'Erro ao finalizar');
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : 'Erro ao finalizar');
     } finally {
       setFinalizingId(null);
     }
@@ -83,7 +83,7 @@ const ProductionOrders = () => {
   const handleStartProduction = async (orderId: string) => {
     await supabase
       .from('production_orders')
-      .update({ status: 'in_progress' } as any)
+      .update({ status: 'in_progress' } as never)
       .eq('id', orderId);
     toast.success('Produção iniciada!');
     loadOrders();

@@ -382,7 +382,7 @@ function AppSidebar({ collapsed, onToggle }: { collapsed: boolean; onToggle: () 
     queryKey: ['aumentos-ativos-count'],
     queryFn: async () => {
       const { count } = await supabase
-        .from('fornecedor_aumento_anunciado' as any)
+        .from('fornecedor_aumento_anunciado')
         .select('*', { count: 'exact', head: true })
         .eq('estado', 'ativo');
       return count ?? 0;
@@ -397,7 +397,7 @@ function AppSidebar({ collapsed, onToggle }: { collapsed: boolean; onToggle: () 
     queryKey: ['oportunidades-ativas-count'],
     queryFn: async () => {
       const { count } = await supabase
-        .from('v_oportunidade_economica_hoje' as any)
+        .from('v_oportunidade_economica_hoje')
         .select('*', { count: 'exact', head: true })
         .eq('empresa', 'OBEN');
       return count ?? 0;
@@ -413,7 +413,7 @@ function AppSidebar({ collapsed, onToggle }: { collapsed: boolean; onToggle: () 
     queryKey: ['negociacao-paralela-sugestoes-count'],
     queryFn: async () => {
       const { count } = await supabase
-        .from('v_sugestao_negociacao_ativa' as any)
+        .from('v_sugestao_negociacao_ativa')
         .select('*', { count: 'exact', head: true })
         .eq('empresa', 'OBEN')
         .eq('status', 'nova');
