@@ -641,8 +641,8 @@ export function useUnifiedOrder() {
           description: result.errors[0]?.message || 'Falha desconhecida',
         });
       }
-    } catch (error: any) {
-      toast.error('Erro ao criar pedido', { description: error.message });
+    } catch (error) {
+      toast.error('Erro ao criar pedido', { description: error instanceof Error ? error.message : String(error) });
     } finally {
       setSubmitting(false);
     }

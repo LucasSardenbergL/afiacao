@@ -17,7 +17,7 @@ interface OrderCardProps {
   order: {
     id: string;
     status: string;
-    items: OrderItem[] | any;
+    items: OrderItem[] | string | unknown;
     total: number;
     created_at: string;
   };
