@@ -13,8 +13,6 @@ import {
   Mail,
   Plus,
   Trash2,
-  Check,
-  X,
   Sparkles,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
@@ -38,37 +36,6 @@ import {
   TableRow,
 } from "@/components/ui/table";
 import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from "@/components/ui/select";
-import {
-  Tooltip,
-  TooltipContent,
-  TooltipProvider,
-  TooltipTrigger,
-} from "@/components/ui/tooltip";
-import {
-  Dialog,
-  DialogContent,
-  DialogDescription,
-  DialogFooter,
-  DialogHeader,
-  DialogTitle,
-} from "@/components/ui/dialog";
-import {
-  AlertDialog,
-  AlertDialogAction,
-  AlertDialogCancel,
-  AlertDialogContent,
-  AlertDialogDescription,
-  AlertDialogFooter,
-  AlertDialogHeader,
-  AlertDialogTitle,
-} from "@/components/ui/alert-dialog";
-import {
   EMPRESA,
   FORNECEDOR_DEFAULT,
   ESTADO_LABEL,
@@ -77,16 +44,19 @@ import {
   type ItemRow,
   type ItemEfetivo,
   type Evento,
+  type NovoEventoForm,
 } from "@/components/reposicao/promocaoDetail/types";
 import {
   tipoEventoIcon,
-  estadoBadgeClass,
   confiancaBadge,
   formatDateTimeBR,
   formatRelative,
 } from "@/components/reposicao/promocaoDetail/helpers";
 import { MapeamentoStatusCell } from "@/components/reposicao/promocaoDetail/MapeamentoStatusCell";
 import { DescontoExtraCell } from "@/components/reposicao/promocaoDetail/DescontoExtraCell";
+import { CancelCampanhaDialog } from "@/components/reposicao/promocaoDetail/CancelCampanhaDialog";
+import { EventoDialog } from "@/components/reposicao/promocaoDetail/EventoDialog";
+import { EstadoAcoesSidebar } from "@/components/reposicao/promocaoDetail/EstadoAcoesSidebar";
 
 // ========== PÁGINA PRINCIPAL ==========
 export default function AdminReposicaoPromocaoDetail() {
@@ -382,7 +352,7 @@ export default function AdminReposicaoPromocaoDetail() {
 
   // ============ EVENTO MODAL ============
   const [eventoOpen, setEventoOpen] = useState(false);
-  const [novoEvento, setNovoEvento] = useState({
+  const [novoEvento, setNovoEvento] = useState<NovoEventoForm>({
     tipo_evento: "nota",
     desconto_perc_proposto: "",
     volume_minimo_proposto: "",
@@ -977,229 +947,40 @@ export default function AdminReposicaoPromocaoDetail() {
 
         {/* ========== SIDEBAR DIREITA ========== */}
         <div>
-          <Card className="lg:sticky lg:top-4">
-            <CardHeader>
-              <CardTitle className="text-base">Estado e ações</CardTitle>
-            </CardHeader>
-            <CardContent className="space-y-4">
-              <div className="flex justify-center">
-                <Badge
-                  variant="outline"
-                  className={`${estadoBadgeClass(estado)} text-sm py-1.5 px-3`}
-                >
-                  {ESTADO_LABEL[estado] || estado}
-                </Badge>
-              </div>
-
-              {!isNew && (
-                <div className="text-center text-sm text-muted-foreground">
-                  <span className="font-medium text-foreground">
-                    {itensAtivos}
-                  </span>{" "}
-                  {itensAtivos === 1 ? "item ativo" : "itens ativos"},{" "}
-                  <span className="font-medium text-foreground">
-                    {itensConfirmados}
-                  </span>{" "}
-                  confirmados
-                </div>
-              )}
-
-              {!isNew && (
-                <div className="space-y-2 pt-2 border-t">
-                  {(estado === "rascunho" || estado === "negociando") && (
-                    <TooltipProvider>
-                      <Tooltip>
-                        <TooltipTrigger asChild>
-                          <div>
-                            <Button
-                              className="w-full"
-                              disabled={
-                                !podeAtivar ||
-                                transicionarEstadoMut.isPending
-                              }
-                              onClick={() =>
-                                transicionarEstadoMut.mutate("ativa")
-                              }
-                            >
-                              <Check className="h-4 w-4" /> Ativar campanha
-                            </Button>
-                          </div>
-                        </TooltipTrigger>
-                        {!podeAtivar && (
-                          <TooltipContent>
-                            Confirme todos os itens antes de ativar
-                          </TooltipContent>
-                        )}
-                      </Tooltip>
-                    </TooltipProvider>
-                  )}
-
-                  {podeEncerrar && (
-                    <Button
-                      className="w-full"
-                      variant="outline"
-                      onClick={() => transicionarEstadoMut.mutate("encerrada")}
-                      disabled={transicionarEstadoMut.isPending}
-                    >
-                      Encerrar agora
-                    </Button>
-                  )}
-
-                  {podeCancelar && (
-                    <Button
-                      className="w-full"
-                      variant="destructive"
-                      onClick={() => setCancelOpen(true)}
-                      disabled={transicionarEstadoMut.isPending}
-                    >
-                      <X className="h-4 w-4" /> Cancelar campanha
-                    </Button>
-                  )}
-                </div>
-              )}
-            </CardContent>
-          </Card>
+          <EstadoAcoesSidebar
+            estado={estado}
+            isNew={isNew}
+            itensAtivos={itensAtivos}
+            itensConfirmados={itensConfirmados}
+            podeAtivar={podeAtivar}
+            podeCancelar={podeCancelar}
+            podeEncerrar={podeEncerrar}
+            transitioning={transicionarEstadoMut.isPending}
+            onTransition={(novoEstado) =>
+              transicionarEstadoMut.mutate(novoEstado)
+            }
+            onOpenCancel={() => setCancelOpen(true)}
+          />
         </div>
       </div>
 
       {/* ========== DIALOG NOVO EVENTO ========== */}
-      <Dialog open={eventoOpen} onOpenChange={setEventoOpen}>
-        <DialogContent>
-          <DialogHeader>
-            <DialogTitle>Registrar evento de negociação</DialogTitle>
-            <DialogDescription>
-              Adicione um marco da negociação ao histórico da campanha.
-            </DialogDescription>
-          </DialogHeader>
-          <div className="space-y-3">
-            <div>
-              <Label>Tipo de evento</Label>
-              <Select
-                value={novoEvento.tipo_evento}
-                onValueChange={(v) =>
-                  setNovoEvento({ ...novoEvento, tipo_evento: v })
-                }
-              >
-                <SelectTrigger>
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  {Object.entries(TIPO_EVENTO_LABELS).map(([k, v]) => (
-                    <SelectItem key={k} value={k}>
-                      {v}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-            </div>
-            <div className="grid grid-cols-2 gap-3">
-              <div>
-                <Label>Desconto proposto %</Label>
-                <Input
-                  type="number"
-                  step="0.1"
-                  value={novoEvento.desconto_perc_proposto}
-                  onChange={(e) =>
-                    setNovoEvento({
-                      ...novoEvento,
-                      desconto_perc_proposto: e.target.value,
-                    })
-                  }
-                  placeholder="Ex: 25"
-                />
-              </div>
-              <div>
-                <Label>Volume mínimo</Label>
-                <Input
-                  type="number"
-                  step="1"
-                  value={novoEvento.volume_minimo_proposto}
-                  onChange={(e) =>
-                    setNovoEvento({
-                      ...novoEvento,
-                      volume_minimo_proposto: e.target.value,
-                    })
-                  }
-                  placeholder="Opcional"
-                />
-              </div>
-            </div>
-            <div>
-              <Label>Data do evento</Label>
-              <Input
-                type="datetime-local"
-                value={novoEvento.data_evento}
-                onChange={(e) =>
-                  setNovoEvento({ ...novoEvento, data_evento: e.target.value })
-                }
-              />
-            </div>
-            <div>
-              <Label>Referência de email</Label>
-              <Input
-                value={novoEvento.email_referencia}
-                onChange={(e) =>
-                  setNovoEvento({
-                    ...novoEvento,
-                    email_referencia: e.target.value,
-                  })
-                }
-                placeholder="Assunto ou link (opcional)"
-              />
-            </div>
-            <div>
-              <Label>Conteúdo</Label>
-              <Textarea
-                value={novoEvento.conteudo}
-                onChange={(e) =>
-                  setNovoEvento({ ...novoEvento, conteudo: e.target.value })
-                }
-                rows={4}
-                placeholder="Descreva o evento, condições propostas, etc."
-              />
-            </div>
-            <div className="text-xs text-muted-foreground">
-              Será registrado por: {userEmail}
-            </div>
-          </div>
-          <DialogFooter>
-            <Button variant="ghost" onClick={() => setEventoOpen(false)}>
-              Cancelar
-            </Button>
-            <Button
-              onClick={() => addEventoMut.mutate()}
-              disabled={addEventoMut.isPending}
-            >
-              {addEventoMut.isPending && (
-                <Loader2 className="h-4 w-4 animate-spin" />
-              )}
-              Registrar
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
+      <EventoDialog
+        open={eventoOpen}
+        onOpenChange={setEventoOpen}
+        value={novoEvento}
+        onChange={setNovoEvento}
+        userEmail={userEmail}
+        onSubmit={() => addEventoMut.mutate()}
+        submitting={addEventoMut.isPending}
+      />
 
       {/* ========== ALERT DIALOG CANCELAR ========== */}
-      <AlertDialog open={cancelOpen} onOpenChange={setCancelOpen}>
-        <AlertDialogContent>
-          <AlertDialogHeader>
-            <AlertDialogTitle>Cancelar campanha?</AlertDialogTitle>
-            <AlertDialogDescription>
-              Esta ação não pode ser desfeita. A campanha será marcada como
-              cancelada e não será mais aplicada nos pedidos de reposição.
-            </AlertDialogDescription>
-          </AlertDialogHeader>
-          <AlertDialogFooter>
-            <AlertDialogCancel>Voltar</AlertDialogCancel>
-            <AlertDialogAction
-              onClick={() => transicionarEstadoMut.mutate("cancelada")}
-              className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
-            >
-              Sim, cancelar
-            </AlertDialogAction>
-          </AlertDialogFooter>
-        </AlertDialogContent>
-      </AlertDialog>
+      <CancelCampanhaDialog
+        open={cancelOpen}
+        onOpenChange={setCancelOpen}
+        onConfirm={() => transicionarEstadoMut.mutate("cancelada")}
+      />
     </div>
   );
 }
