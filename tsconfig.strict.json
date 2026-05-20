@@ -235,6 +235,14 @@
     "src/components/OrderReview.tsx",
     "src/hooks/useGlobalSearch.ts",
     "src/components/KanbanBoard.tsx",
-    "src/hooks/useUnifiedOrder.ts"
+    "src/hooks/useUnifiedOrder.ts",
+    "src/pages/GovernanceCompanies.tsx",
+    "src/pages/GovernanceMathParams.tsx",
+    "src/pages/GovernancePermissions.tsx",
+    "src/pages/GovernanceSettings.tsx",
+    "src/pages/GovernanceUsers.tsx",
+    "src/pages/GestaoGovernanca.tsx",
+    "src/pages/FarmerGovernance.tsx",
+    "src/pages/SettingsConfig.tsx"
   ]
 }
