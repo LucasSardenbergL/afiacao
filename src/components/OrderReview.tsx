@@ -26,7 +26,7 @@ export function OrderReview({ orderId, onReviewSubmitted }: OrderReviewProps) {
     setSubmitting(true);
 
     try {
-      const { error } = await (supabase as any).from('order_reviews').insert({
+      const { error } = await supabase.from('order_reviews').insert({
         order_id: orderId,
         user_id: user.id,
         rating,

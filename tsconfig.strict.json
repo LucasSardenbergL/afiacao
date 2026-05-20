@@ -116,6 +116,13 @@
     "src/lib/call-session/resolve-customer.ts",
     "src/queries/useProfile.ts",
     "src/services/orderSubmission/helpers.ts",
-    "src/lib/dashboard/persona-config.ts"
+    "src/lib/dashboard/persona-config.ts",
+    "src/queries/useOrders.ts",
+    "src/utils/financeiroAlerts.ts",
+    "src/components/OrderCard.tsx",
+    "src/components/OrderReview.tsx",
+    "src/hooks/useGlobalSearch.ts",
+    "src/components/KanbanBoard.tsx",
+    "src/hooks/useUnifiedOrder.ts"
   ]
 }
