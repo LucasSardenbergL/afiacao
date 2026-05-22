@@ -35,7 +35,7 @@ export function ItensTab({
   onUpdateItem,
   onDeleteItem,
 }: {
-  campanhaId: string;
+  campanhaId: string | undefined;
   itens: ItemRow[];
   efetivoMap: Record<number, number>;
   loadingItens: boolean;

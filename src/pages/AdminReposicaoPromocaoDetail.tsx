@@ -583,7 +583,7 @@ export default function AdminReposicaoPromocaoDetail() {
             {/* ========== TAB ITENS ========== */}
             <TabsContent value="itens" className="space-y-4">
               <ItensTab
-                campanhaId={id ?? ""}
+                campanhaId={id}
                 itens={itens}
                 efetivoMap={efetivoMap}
                 loadingItens={loadingItens}
