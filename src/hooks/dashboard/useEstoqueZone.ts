@@ -36,12 +36,12 @@ export function useEstoqueZone() {
       try {
         const { data: nf } = await supabase
           .from('nfe_recebimentos')
-          .select('id, fornecedor_nome, created_at, status')
+          .select('id, razao_social_emitente, created_at, status')
           .eq('status', 'pendente');
         if (nf) {
           const rows = nf as unknown as Array<{
             id: string;
-            fornecedor_nome?: string | null;
+            razao_social_emitente?: string | null;
             created_at: string;
             status?: string | null;
           }>;
@@ -51,7 +51,7 @@ export function useEstoqueZone() {
             topItems.push({
               id: r.id,
               icon: FileCheck,
-              title: r.fornecedor_nome ?? 'Fornecedor',
+              title: r.razao_social_emitente ?? 'Fornecedor',
               subtitle: 'NF aguardando conferência',
               path: `/admin/estoque/recebimento`,
               itemType: 'nfe_pendente',
