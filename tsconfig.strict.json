@@ -361,6 +361,9 @@
     "src/pages/Loyalty.tsx",
     "src/pages/AdminLoyalty.tsx",
     "src/pages/Gamification.tsx",
-    "src/components/GamificationCertificate.tsx"
+    "src/components/GamificationCertificate.tsx",
+    "src/components/reposicao/routePlanner/types.ts",
+    "src/components/reposicao/routePlanner/priority.ts",
+    "src/components/reposicao/routePlanner/constants.ts"
   ]
 }
