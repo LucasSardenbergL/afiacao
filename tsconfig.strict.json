@@ -349,6 +349,7 @@
     "src/hooks/useUnreadMessages.ts",
     "src/hooks/useUploadKbDocument.ts",
     "src/hooks/useUrlState.ts",
-    "src/queries/useUserTools.ts"
+    "src/queries/useUserTools.ts",
+    "src/components/reposicao/promocaoDetail/ItensTab.tsx"
   ]
 }
