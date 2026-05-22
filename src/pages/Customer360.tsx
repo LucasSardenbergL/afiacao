@@ -34,6 +34,7 @@ import { Button } from '@/components/ui/button';
 import { Separator } from '@/components/ui/separator';
 import { PageSkeleton } from '@/components/ui/page-skeleton';
 import { EmptyState } from '@/components/EmptyState';
+import { CallButton } from '@/components/call/CallButton';
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip';
 import { cn } from '@/lib/utils';
 import { useCustomerContacts } from '@/hooks/useCustomerContacts';
@@ -585,12 +586,7 @@ export default function Customer360() {
             {/* Ações rápidas */}
             <div className="flex flex-wrap gap-2">
               {customer.phone && (
-                <Button asChild variant="outline" size="sm">
-                  <a href={`tel:${customer.phone}`}>
-                    <Phone className="w-3.5 h-3.5 mr-1.5" />
-                    Ligar
-                  </a>
-                </Button>
+                <CallButton phone={customer.phone} customerName={customer.name} />
               )}
               {customer.phone && (
                 <Button asChild variant="outline" size="sm">
@@ -715,7 +711,6 @@ export default function Customer360() {
                   icon={Phone}
                   label="Telefone"
                   value={customer.phone ? formatPhone(customer.phone) : null}
-                  href={customer.phone ? `tel:${customer.phone}` : undefined}
                 />
                 {/* F9: icon contextual ao tipo (PJ vs PF) em vez de Sparkles decorativo.
                     F3: customer_type traduzido pra rótulo humano. */}
@@ -1166,12 +1161,10 @@ function ContactRow({
                 {formatPhone(contact.phone)} · só WhatsApp
               </a>
             ) : (
-              <a
-                href={`tel:${contact.phone}`}
-                className="hover:underline hover:text-foreground transition-colors"
-              >
+              <span className="inline-flex items-center gap-1">
                 {formatPhone(contact.phone)}
-              </a>
+                <CallButton phone={contact.phone} customerName={contact.nome ?? customer.name} variant="icon" />
+              </span>
             )}
           </div>
           {contact.email && (

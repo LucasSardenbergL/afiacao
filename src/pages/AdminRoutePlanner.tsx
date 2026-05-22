@@ -14,7 +14,8 @@ import { supabase } from '@/integrations/supabase/client';
 import { useAuth } from '@/contexts/AuthContext';
 import { useFarmerScoring } from '@/hooks/useFarmerScoring';
 import { toast } from 'sonner';
-import { Loader2, MapPin, Clock, Route, Filter, Navigation, ExternalLink, Truck, ShoppingBag, Wrench, Layers, Phone, ArrowUp, ArrowRight, ArrowDown, Search, CheckCircle2, XCircle, Users } from 'lucide-react';
+import { CallButton } from '@/components/call/CallButton';
+import { Loader2, MapPin, Clock, Route, Filter, Navigation, ExternalLink, Truck, ShoppingBag, Wrench, Layers, ArrowUp, ArrowRight, ArrowDown, Search, CheckCircle2, XCircle, Users } from 'lucide-react';
 import L from 'leaflet';
 import 'leaflet/dist/leaflet.css';
 
@@ -1473,11 +1474,7 @@ const AdminRoutePlanner = () => {
                             {getCTALabel(stop)}
                           </Button>
                           {stop.phone && (
-                            <Button size="sm" variant="ghost" className="h-7 text-xs gap-1" asChild>
-                              <a href={`tel:${stop.phone}`}>
-                                <Phone className="w-3 h-3" /> Ligar
-                              </a>
-                            </Button>
+                            <CallButton phone={stop.phone} customerName={stop.customerName} variant="full" />
                           )}
                           {(() => {
                             const vs = visitStatuses.get(stop.customerUserId);
