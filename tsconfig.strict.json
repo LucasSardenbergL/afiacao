@@ -357,6 +357,9 @@
     "src/pages/GovernanceUsers.tsx",
     "src/pages/GestaoGovernanca.tsx",
     "src/pages/FarmerGovernance.tsx",
-    "src/pages/SettingsConfig.tsx"
+    "src/pages/SettingsConfig.tsx",
+    "src/components/reposicao/routePlanner/types.ts",
+    "src/components/reposicao/routePlanner/priority.ts",
+    "src/components/reposicao/routePlanner/constants.ts"
   ]
 }
