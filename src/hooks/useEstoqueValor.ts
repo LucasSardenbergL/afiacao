@@ -8,7 +8,6 @@ export function useEstoqueValor(company: string) {
     queryKey: ['fin_estoque_valor', company],
     enabled: Boolean(company),
     queryFn: async (): Promise<EstoqueValor | null> => {
-      // @ts-expect-error - fin_estoque_valor não está nos types gerados (Onda 1)
       const { data, error } = await supabase.from('fin_estoque_valor')
         .select('valor, data_ref, fonte, cobertura_pct')
         .eq('company', company).order('data_ref', { ascending: false }).limit(1).maybeSingle();
@@ -22,7 +21,6 @@ export function useSalvarEstoque(company: string) {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: async (input: { valor: number; data_ref: string; fonte?: string; cobertura_pct?: number; observacao?: string }) => {
-      // @ts-expect-error - fin_estoque_valor não está nos types gerados (Onda 1)
       const { error } = await supabase.from('fin_estoque_valor').insert({
         company, valor: input.valor, data_ref: input.data_ref,
         fonte: input.fonte ?? 'manual', cobertura_pct: input.cobertura_pct ?? null,
@@ -35,7 +33,6 @@ export function useSalvarEstoque(company: string) {
 }
 
 export async function estimarEstoqueOmie(company: string) {
-  // @ts-expect-error - RPC não está nos types gerados (Onda 1)
   const { data, error } = await supabase.rpc('fin_estimar_estoque_omie', { p_company: company });
   if (error) throw error;
   const row = Array.isArray(data) ? data[0] : data;
