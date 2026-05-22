@@ -22,7 +22,7 @@ export function useUnreadMessages() {
           table: 'order_messages',
         },
         (payload) => {
-          const msg = payload.new as any;
+          const msg = payload.new as { sender_id?: string };
           // If the message is not from us, increment
           if (msg.sender_id !== user.id) {
             setUnreadCount(prev => prev + 1);
@@ -60,7 +60,7 @@ export function useUnreadMessages() {
       const orderIds = orders.map(o => o.id);
 
       // Count unread messages (not sent by us, not read)
-      const { count, error } = await (supabase as any)
+      const { count, error } = await supabase
         .from('order_messages')
         .select('*', { count: 'exact', head: true })
         .in('order_id', orderIds)

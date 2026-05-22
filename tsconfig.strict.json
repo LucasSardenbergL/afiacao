@@ -369,6 +369,13 @@
     "src/components/des/HistoricoTab.tsx",
     "src/pages/FinanceiroAnalytics.tsx",
     "src/pages/FinanceiroTributario.tsx",
-    "src/pages/FinanceiroSync.tsx"
+    "src/pages/FinanceiroSync.tsx",
+    "src/components/reposicao/negociacaoParalela/types.ts",
+    "src/components/reposicao/negociacaoParalela/helpers.ts",
+    "src/components/reposicao/negociacaoParalela/SugestaoCard.tsx",
+    "src/pages/AdminMonthlyReports.tsx",
+    "src/pages/NfeReceipt.tsx",
+    "src/pages/ResetPassword.tsx",
+    "src/components/portalSayerlack/PortalDetailDrawer.tsx"
   ]
 }
