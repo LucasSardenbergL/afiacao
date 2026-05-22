@@ -2,16 +2,6 @@
 
 > Gerado por `scripts/audit-custom-migrations.ts`. Re-rodar quando custom migrations forem adicionadas: `bun scripts/audit-custom-migrations.ts`.
 
-## Histórico de auditorias
-
-| Data | Objetos checados | Gaps `❌` | Remediação |
-| --- | --- | --- | --- |
-| 2026-05-19 | 262 | 2 | `scripts/apply-missing-migrations-2026-05-19.sql` (aplicado, verificado ok=true) |
-
-**Gaps de 2026-05-19 (fechados):**
-1. `standard_processes` (migration `20260517200000`) — tabela inteira nunca aplicada (tabela + 3 índices + 4 RLS policies + 1 trigger).
-2. `idx_customer_contacts_birthday` (migration `20260517220000`) — único objeto faltando (partial-apply; resto da migration OK). App filtra aniversários client-side, então o índice estava sem uso — recriado pro roadmap PR-BIRTHDAYS.
-
 ## Contexto
 
 Per CLAUDE.md §5, **Lovable Cloud NÃO aplica automaticamente** migrations com nome custom (não-UUID) em `supabase/migrations/`. UUID-format (ex: `_868822bb-e38c-4fcf-8879-c64e48bd7630.sql`) são geradas pelo builder visual do Lovable e auto-rodam. Custom (ex: `_user_departments.sql`) ficam no repo mas precisam apply manual via Supabase SQL Editor.
@@ -31,14 +21,14 @@ Este audit valida **quais custom migrations estão de fato aplicadas no banco**.
 
 ## Resumo
 
-- **38** custom migrations totais
-- **262** objetos esperados (criados por estas migrations)
+- **40** custom migrations totais
+- **274** objetos esperados (criados por estas migrations)
 - Quebra por tipo:
   - `rls_policy`: 98
-  - `index`: 76
-  - `table`: 41
-  - `trigger`: 27
-  - `function`: 16
+  - `index`: 80
+  - `table`: 43
+  - `trigger`: 29
+  - `function`: 20
   - `enum_value`: 4
 
 ## Inventário por migration
@@ -443,6 +433,21 @@ Lista canônica do que cada migration *deveria* criar (extraído via regex de `C
 | `function` | `public.enqueue_score_recalc_from_call` | — |
 | `trigger` | `public.trg_farmer_calls_enqueue_recalc` | `farmer_calls` |
 
+### `20260518120000_visit_intelligence_v1.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `table` | `public.customer_visit_scores` | — |
+| `table` | `public.visit_score_recalc_queue` | — |
+| `index` | `public.idx_visit_scores_farmer_priority` | `customer_visit_scores` |
+| `index` | `public.idx_visit_scores_farmer_city` | `customer_visit_scores` |
+| `index` | `public.idx_visit_score_queue_pending` | `visit_score_recalc_queue` |
+| `index` | `public.uniq_visit_score_queue_pending` | `visit_score_recalc_queue` |
+| `function` | `public.enqueue_visit_score_recalc_from_visit` | — |
+| `function` | `public.enqueue_visit_score_recalc_from_client_score` | — |
+| `trigger` | `public.trg_route_visits_enqueue_visit_recalc` | `route_visits` |
+| `trigger` | `public.trg_farmer_client_scores_enqueue_visit_recalc` | `farmer_client_scores` |
+
 ### `20260519000000_fin_a1_eventos.sql`
 
 | Tipo | Objeto | Parent |
@@ -490,6 +495,13 @@ Lista canônica do que cada migration *deveria* criar (extraído via regex de `C
 ### `20260519010000_fin_a1_cron.sql`
 
 > _Nenhum objeto extraído via regex._ Migration provavelmente é `ALTER TABLE` / `UPDATE` / `INSERT` / RLS-only. Validar manualmente.
+
+### `20260520010000_scoring_visit_p1_fixes.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `function` | `public.enqueue_visit_score_recalc_from_visit` | — |
+| `function` | `public.enqueue_visit_score_recalc_from_client_score` | — |
 
 ## Próximos passos quando algo der `❌`
 

@@ -28,3 +28,6 @@ dist-ssr
 .codex/
 AGENTS.md
 
+
+# Serena MCP local project cache
+.serena/

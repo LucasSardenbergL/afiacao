@@ -28,6 +28,53 @@
 
 ---
 
+## 🔧 Onda 1 — Correção do NCG (2026-05-19)
+
+Revisão de metodologia via Codex (consult) pegou 4 problemas no NCG/indicadores do `fin-cashflow-engine`. Corrigidos:
+
+| Correção | O que mudou |
+|---|---|
+| **PCO não duplica tributo** | Antes, impostos (categoria `3.99…`) entravam em `cp_fornecedor` E em `tributos_a_pagar` → PCO/NCG inflados. Agora os baldes são mutuamente exclusivos (imposto só em `tributos_a_pagar`). |
+| **Estoque real no NCG** | Antes `estoque_valor = 0` (hardcoded) → NCG e CCC subestimavam capital de giro de Colacor/Oben. Agora vem do balancete via tabela `fin_estoque_valor` (input manual em Configuração), com botão "Estimar do Omie" (Σ físico×custo, best-effort com score de cobertura). |
+| **"Capital de Giro Próprio" → "Liquidez Operacional Líquida"** | O número (caixa + CR + estoque − PCO) não era CGP de verdade. Renomeado pra parar de enganar. CGP verdadeiro (PL + PNC − ANC) chega no A2 (que introduz patrimônio + imobilizado). |
+| **CCC ganha PME** | Antes `CCC = PMR − PMP` (ignorava dias de estoque). Agora `CCC = PMR + PME − PMP`, com PME = estoque ÷ CMV(TTM) × 365. Colacor SC (serviços) cai pra PME ≈ 0. |
+
+### Regra de ouro da Onda 1
+**Sem o valor de estoque do balancete informado em Configuração, NCG e CCC ficam subestimados.** Atualize trimestralmente (o app avisa quando o último valor tem mais de 90 dias ou está ausente). PME usa o estoque pontual como proxy do estoque médio até haver série histórica.
+
+### Ainda direcional (próximas ondas)
+- DRE "caixa" por `data_vencimento` (não por recebimento real) + linha de imposto agregada (Simples vs presumido): **Onda 3**.
+- Detecção de imposto pelo prefixo `'3.99'` ainda é frágil — passa a usar o mapping DRE na **Onda 3**.
+
+---
+
+## 🔧 Onda 2 — Timing da projeção 13s (2026-05-20)
+
+Substituímos o modelo de QUANDO o caixa entra na projeção 13 semanas. Antes: cada recebível caía na data de vencimento, com haircut fixo de inadimplência, o `atraso_medio_dias` calculado era ignorado, e títulos já vencidos **sumiam** da projeção. Agora: **curvas de cobrança por faixa de aging**, calibradas sem viés. Lógica testada em `src/lib/financeiro/aging-helpers.ts` (vitest) e espelhada verbatim no engine Deno.
+
+| Mudança | O que passou a valer |
+|---|---|
+| **Curvas por faixa de aging** | Faixas `a_vencer / 1-30 / 31-60 / 61-90 / +90` (dias de atraso). Cada faixa tem `taxa_recebimento` e `lag_dias`. |
+| **Calibração por exposição (sem viés)** | `taxa = pago ÷ exposição`, onde exposição = R$ que **entrou** na faixa (liquidados **+** abertos não-pagos). Abertos censurados puxam a taxa pra baixo — remove o viés otimista de calibrar só com "quem já pagou". |
+| **Lag ponderado por R$** | `lag_dias` = média do atraso (recebimento − vencimento) **ponderada por valor** (+ mediana guardada). Um título grande lento pesa mais que N pequenos rápidos. |
+| **Vencidos reagendados (não somem)** | `a_vencer` → recebe em `vencimento + lag`; vencido → `hoje + lag restante` (ou residual). Nunca mais desaparece da projeção. |
+| **Ponte "após horizonte" + AR impaired** | Recebimento esperado para **depois das 13 semanas** vai pra linha "esperado após horizonte" (não entra no caixa projetado). A parte não-recebível (`1 − taxa`) vira **AR impaired** (perda esperada). Exclusão deliberada e reportada — ≠ o bug antigo de sumir com vencido. |
+| **Inadimplência = taxa de perda ponderada** | `inadimplencia_pct` = média ponderada por R$ de `(1 − taxa_recebimento[faixa])` sobre o CR aberto. Para de misturar estoque (saldo >90) com fluxo (receita 12m). O alerta `inadimplencia_alta` usa esse número. |
+| **Cenários com clamp** | otimista sobe taxa / encurta lag; pessimista o oposto. Clamps: `taxa ∈ [0,1]`, `lag ∈ [0, lag_max[faixa]]`. Cenário não move +90 pra "caixa fantasia". |
+| **PMR/PMP ponderado por R$** | Antes média simples por título; agora ponderado por valor. |
+| **Guard de folha por janela** | Se houver CP de categoria de folha vencendo em ≤30d, o ERP já registra a folha — não soma o evento recorrente em cima (`folha_30d = max(CP folha na janela, recorrente)`, e os CPs de folha saem de `cp_fornecedor`). Ativa quando `fin_config_cashflow.folha_categorias_codigos` está preenchido; sem isso fica inerte (comportamento atual preservado). |
+| **Confiança por R$ + concentração** | Faixa só é "alta" com ≥20 títulos **E** volume ≥ R$ 50k **E** top-1 ≤ 60% da exposição. Senão usa default editável + flag `confianca: 'baixa'` (mostrado na UI). |
+
+### Regra de ouro da Onda 2
+**Materialmente melhor, mas ainda direcional.** As curvas tratam o portfólio como um todo por faixa — não segmentam por cliente, ticket ou instrumento de pagamento (boleto/PIX/cheque), e não aceitam overrides manuais de tesouraria ("cliente prometeu pra sexta"). Esses refinamentos, mais flags de disputado/protestado/jurídico e cheques pré-datados, ficam **deferidos** (evolução futura). O guard de folha só atua depois de configurar as categorias de folha no `fin_config_cashflow` (coluna opcional `folha_categorias_codigos`).
+
+### Ainda direcional (próximas ondas)
+- Segmentação por cliente / faixa de ticket / instrumento de pagamento; overrides manuais de tesouraria: **deferidos**.
+- Timing de pagáveis (CP segue na data de vencimento): simetria deferida.
+- DRE "caixa" + linha de imposto por regime: **Onda 3**.
+
+---
+
 ## ✅ MVP Operacional (pode usar agora para gestão diária)
 
 Estes dados vêm direto do Omie sem transformação opinativa.
