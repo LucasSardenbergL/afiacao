@@ -367,6 +367,9 @@
     "src/components/reposicao/routePlanner/constants.ts",
     "src/components/des/PosicaoAtualTab.tsx",
     "src/components/des/HistoricoTab.tsx",
+    "src/pages/FinanceiroAnalytics.tsx",
+    "src/pages/FinanceiroTributario.tsx",
+    "src/pages/FinanceiroSync.tsx",
     "src/components/reposicao/negociacaoParalela/types.ts",
     "src/components/reposicao/negociacaoParalela/helpers.ts"
   ]
