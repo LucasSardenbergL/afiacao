@@ -7,7 +7,7 @@
 //  - Manual: POST { empresa: "OBEN" }
 
 import { createClient } from "npm:@supabase/supabase-js@2";
-import { authorizeCron, corsHeaders as sharedCors } from "../_shared/auth.ts";
+import { authorizeCronOrStaff, corsHeaders as sharedCors } from "../_shared/auth.ts";
 
 const corsHeaders = {
   ...sharedCors,
