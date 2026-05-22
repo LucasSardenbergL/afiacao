@@ -112,8 +112,8 @@ export function IntelligenceStrategicTab() {
       const { error } = await supabase.functions.invoke('algorithm-a-audit');
       if (error) throw error;
       toast.success('Algoritmo A executado com sucesso');
-    } catch (e: any) {
-      toast.error('Erro: ' + e.message);
+    } catch (e) {
+      toast.error('Erro: ' + (e instanceof Error ? e.message : String(e)));
     } finally {
       setRunningAlgoA(false);
     }
