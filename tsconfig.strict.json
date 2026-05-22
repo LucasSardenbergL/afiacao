@@ -349,6 +349,14 @@
     "src/hooks/useUnreadMessages.ts",
     "src/hooks/useUploadKbDocument.ts",
     "src/hooks/useUrlState.ts",
-    "src/queries/useUserTools.ts"
+    "src/queries/useUserTools.ts",
+    "src/pages/GovernanceCompanies.tsx",
+    "src/pages/GovernanceMathParams.tsx",
+    "src/pages/GovernancePermissions.tsx",
+    "src/pages/GovernanceSettings.tsx",
+    "src/pages/GovernanceUsers.tsx",
+    "src/pages/GestaoGovernanca.tsx",
+    "src/pages/FarmerGovernance.tsx",
+    "src/pages/SettingsConfig.tsx"
   ]
 }

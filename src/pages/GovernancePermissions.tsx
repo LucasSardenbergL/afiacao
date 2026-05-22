@@ -112,7 +112,7 @@ export default function GovernancePermissions() {
       queryClient.invalidateQueries({ queryKey: ['gov-perm-overrides'] });
       toast.success('Permissão atualizada');
     },
-    onError: (e: any) => toast.error('Erro: ' + e.message),
+    onError: (e) => toast.error('Erro: ' + e.message),
   });
 
   const getOverrideValue = (userId: string, permKey: string): boolean | null => {
