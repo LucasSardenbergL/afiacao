@@ -8,7 +8,7 @@ import { Textarea } from '@/components/ui/textarea';
 import { supabase } from '@/integrations/supabase/client';
 import { useAuth } from '@/contexts/AuthContext';
 import { toast } from 'sonner';
-import { Loader2, Trophy, Search, Plus, Minus, Gift, Users, TrendingUp, DollarSign, BarChart3, Crown } from 'lucide-react';
+import { Loader2, Search, Plus, Minus, Gift, Users, TrendingUp, DollarSign, BarChart3, Crown } from 'lucide-react';
 import { format } from 'date-fns';
 import { ptBR } from 'date-fns/locale';
 import {
@@ -16,15 +16,7 @@ import {
   DialogContent,
   DialogHeader,
   DialogTitle,
-  DialogTrigger,
 } from '@/components/ui/dialog';
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from '@/components/ui/select';
 
 interface CustomerPoints {
   user_id: string;
@@ -99,7 +91,7 @@ export default function AdminLoyalty() {
   const loadData = async () => {
     try {
       const [pointsRes, profilesRes, redemptionsRes] = await Promise.all([
-        (supabase as any).from('loyalty_points').select('*').order('created_at', { ascending: false }),
+        supabase.from('loyalty_points').select('*').order('created_at', { ascending: false }),
         supabase.from('profiles').select('user_id, name'),
         supabase.from('loyalty_redemptions').select('*').order('created_at', { ascending: false }),
       ]);
@@ -156,7 +148,7 @@ export default function AdminLoyalty() {
         return;
       }
 
-      const { error } = await (supabase as any).from('loyalty_points').insert({
+      const { error } = await supabase.from('loyalty_points').insert({
         user_id: adjustUserId,
         points: adjustType === 'redeem' ? -pts : pts,
         type: adjustType,
