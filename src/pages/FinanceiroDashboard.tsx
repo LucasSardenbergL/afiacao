@@ -11,12 +11,13 @@ import { useFinanceiroRegime } from '@/hooks/useFinanceiroRegime';
 import { COMPANIES, ALL_COMPANIES, type Company } from '@/contexts/CompanyContext';
 import {
   exportContasPagarCSV, exportContasReceberCSV, exportDRECSV, downloadCSV,
+  type FinDRE, type AgingData, type FluxoCaixaDiario,
 } from '@/services/financeiroService';
 import {
   Loader2, RefreshCw, DollarSign, TrendingUp, TrendingDown,
   AlertTriangle, Wallet, ArrowDownCircle, ArrowUpCircle,
   Building2, BarChart3, PieChart, Calendar, FileText,
-  Clock, Download, History
+  Clock, Download, History, type LucideIcon
 } from 'lucide-react';
 import { AuditTrailDrawer } from '@/components/financeiro/AuditTrailDrawer';
 import { usePeriodLockHandler } from '@/components/financeiro/PeriodLockGuard';
@@ -841,7 +842,7 @@ const FinanceiroDashboard = () => {
 function KpiCard({ title, value, icon: Icon, color, bgColor, subtitle, subtitleColor }: {
   title: string;
   value: number;
-  icon: any;
+  icon: LucideIcon;
   color: string;
   bgColor: string;
   subtitle?: string;
@@ -867,7 +868,7 @@ function KpiCard({ title, value, icon: Icon, color, bgColor, subtitle, subtitleC
   );
 }
 
-function AgingCard({ title, data }: { title: string; data: any; type: 'receber' | 'pagar' }) {
+function AgingCard({ title, data }: { title: string; data: AgingData | null; type: 'receber' | 'pagar' }) {
   if (!data) return (
     <Card>
       <CardHeader className="pb-3">
@@ -918,7 +919,7 @@ function AgingCard({ title, data }: { title: string; data: any; type: 'receber' 
   );
 }
 
-function FluxoCaixaTab({ data, loading, saldoCC }: { data: any[]; loading: boolean; saldoCC?: number }) {
+function FluxoCaixaTab({ data, loading, saldoCC }: { data: FluxoCaixaDiario[]; loading: boolean; saldoCC?: number }) {
   if (loading) return <Skeleton className="h-60" />;
   if (!data || data.length === 0) {
     return (
@@ -1039,7 +1040,7 @@ function FluxoCaixaTab({ data, loading, saldoCC }: { data: any[]; loading: boole
   );
 }
 
-function DRETab({ data, view, ano }: { data: any[]; view: FinanceiroView; ano: number }) {
+function DRETab({ data, view, ano }: { data: FinDRE[]; view: FinanceiroView; ano: number }) {
   if (!data || data.length === 0) {
     return (
       <Card>
@@ -1052,17 +1053,17 @@ function DRETab({ data, view, ano }: { data: any[]; view: FinanceiroView; ano: n
   }
 
   // Data already comes consolidated from hook (dreConsolidado) — no re-consolidation needed
-  const rows = [...data].sort((a: any, b: any) => a.mes - b.mes);
+  const rows = [...data].sort((a, b) => a.mes - b.mes);
 
   // Ponto 5: check for unmapped categories
-  const unmappedCats = rows.flatMap((r: any) =>
+  const unmappedCats = rows.flatMap((r) =>
     r.detalhamento?.categorias_nao_mapeadas || []
   );
   const uniqueUnmapped = [...new Set(unmappedCats)];
 
   const meses = ['Jan', 'Fev', 'Mar', 'Abr', 'Mai', 'Jun', 'Jul', 'Ago', 'Set', 'Out', 'Nov', 'Dez'];
 
-  const dreLines = [
+  const dreLines: { label: string; field: keyof FinDRE & ('receita_bruta' | 'deducoes' | 'receita_liquida' | 'cmv' | 'lucro_bruto' | 'despesas_operacionais' | 'despesas_administrativas' | 'despesas_comerciais' | 'despesas_financeiras' | 'receitas_financeiras' | 'resultado_operacional' | 'impostos' | 'resultado_liquido'); bold: boolean; color: string }[] = [
     { label: 'Receita Bruta', field: 'receita_bruta', bold: true, color: '' },
     { label: '(-) Deduções', field: 'deducoes', bold: false, color: 'text-status-error' },
     { label: '= Receita Líquida', field: 'receita_liquida', bold: true, color: '' },
@@ -1113,7 +1114,7 @@ function DRETab({ data, view, ano }: { data: any[]; view: FinanceiroView; ano: n
             <TableHeader>
               <TableRow>
                 <TableHead className="sticky left-0 bg-background min-w-[180px]">Linha</TableHead>
-                {rows.map((r: any) => (
+                {rows.map((r) => (
                   <TableHead key={r.mes} className="text-right min-w-[100px]">
                     {meses[r.mes - 1]}
                   </TableHead>
@@ -1126,7 +1127,7 @@ function DRETab({ data, view, ano }: { data: any[]; view: FinanceiroView; ano: n
                   <TableCell className={`sticky left-0 bg-background text-sm ${line.bold ? 'font-bold' : ''}`}>
                     {line.label}
                   </TableCell>
-                  {rows.map((r: any) => {
+                  {rows.map((r) => {
                     const val = r[line.field] || 0;
                     const colorClass = line.color || (line.bold && line.field.includes('resultado')
                       ? (val >= 0 ? 'text-status-success' : 'text-status-error')
@@ -1144,7 +1145,7 @@ function DRETab({ data, view, ano }: { data: any[]; view: FinanceiroView; ano: n
                 <TableCell className="sticky left-0 bg-background text-sm font-medium text-muted-foreground">
                   Margem Bruta %
                 </TableCell>
-                {rows.map((r: any) => {
+                {rows.map((r) => {
                   const pct = r.receita_liquida > 0 ? (r.lucro_bruto / r.receita_liquida) * 100 : 0;
                   return (
                     <TableCell key={r.mes} className="text-right text-sm text-muted-foreground">
@@ -1158,7 +1159,7 @@ function DRETab({ data, view, ano }: { data: any[]; view: FinanceiroView; ano: n
                 <TableCell className="sticky left-0 bg-background text-sm font-medium text-muted-foreground">
                   Margem Líquida %
                 </TableCell>
-                {rows.map((r: any) => {
+                {rows.map((r) => {
                   const pct = r.receita_liquida > 0 ? (r.resultado_liquido / r.receita_liquida) * 100 : 0;
                   return (
                     <TableCell key={r.mes} className={`text-right text-sm font-medium ${pct >= 0 ? 'text-status-success' : 'text-status-error'}`}>
@@ -1178,7 +1179,7 @@ function DRETab({ data, view, ano }: { data: any[]; view: FinanceiroView; ano: n
 
 // ═══════════════ HELPERS ═══════════════
 
-function DREComparativo({ data, ano }: { data: Record<string, any[]>; ano: number }) {
+function DREComparativo({ data, ano }: { data: Record<string, FinDRE[]>; ano: number }) {
   const companies = Object.keys(data);
   if (companies.length < 2) return null;
 
@@ -1200,7 +1201,7 @@ function DREComparativo({ data, ano }: { data: Record<string, any[]>; ano: numbe
     return { company: co, ...total, margemBruta, margemLiquida };
   });
 
-  const lines: { label: string; field: string; format: 'currency' | 'pct' }[] = [
+  const lines: { label: string; field: 'receita_liquida' | 'lucro_bruto' | 'margemBruta' | 'resultado_operacional' | 'impostos' | 'resultado_liquido' | 'margemLiquida'; format: 'currency' | 'pct' }[] = [
     { label: 'Receita Líquida', field: 'receita_liquida', format: 'currency' },
     { label: 'Lucro Bruto', field: 'lucro_bruto', format: 'currency' },
     { label: 'Margem Bruta', field: 'margemBruta', format: 'pct' },
@@ -1243,7 +1244,7 @@ function DREComparativo({ data, ano }: { data: Record<string, any[]>; ano: numbe
                     {line.label}
                   </TableCell>
                   {annualTotals.map(t => {
-                    const val = (t as any)[line.field] || 0;
+                    const val = t[line.field] || 0;
                     const isResult = line.field.includes('resultado') || line.field === 'margemLiquida';
                     const colorClass = isResult
                       ? val >= 0 ? 'text-status-success' : 'text-status-error'
