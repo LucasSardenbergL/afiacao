@@ -5,15 +5,11 @@ import { supabase } from "@/integrations/supabase/client";
 import { toast } from "sonner";
 import {
   Sparkles,
-  Package,
-  Zap,
-  TrendingUp,
   Loader2,
   RefreshCw,
   PlayCircle,
   ChevronRight,
   MoreVertical,
-  ExternalLink,
   EyeOff,
   ArrowRight,
   Handshake,
@@ -54,9 +50,6 @@ import {
 import {
   Sheet,
   SheetContent,
-  SheetHeader,
-  SheetTitle,
-  SheetDescription,
 } from "@/components/ui/sheet";
 import {
   AlertDialog,
@@ -72,138 +65,22 @@ import {
   DropdownMenuCheckboxItem,
 } from "@/components/ui/dropdown-menu";
 
-const EMPRESA = "OBEN";
-const ALL = "__all__";
-
-type Cenario = "promo_flat" | "promo_volume" | "promo_e_aumento" | "aumento_apenas";
-
-const CENARIOS: Array<{ value: Cenario; label: string }> = [
-  { value: "promo_flat", label: "Promoção flat" },
-  { value: "promo_volume", label: "Promoção volume" },
-  { value: "promo_e_aumento", label: "Promo + aumento" },
-  { value: "aumento_apenas", label: "Aumento apenas" },
-];
-
-type AumentoRef = {
-  aumento_id: number;
-  aumento_nome?: string;
-  data_vigencia?: string;
-  categoria?: string;
-  aumento_perc?: number;
-};
-
-type Oportunidade = {
-  empresa: string;
-  sku_codigo_omie: number;
-  sku_descricao: string | null;
-  fornecedor_nome: string | null;
-  cenario: Cenario;
-  desconto_total_perc: number | null;
-  desconto_promo_perc: number | null;
-  aumento_evitado_perc: number | null;
-  tem_negociacao_extra: boolean | null;
-  campanha_id: number | null;
-  campanha_nome: string | null;
-  promo_item_id: number | null;
-  modo_promo: string | null;
-  promo_data_corte_pedido: string | null;
-  promo_data_corte_faturamento: string | null;
-  proxima_vigencia_aumento: string | null;
-  aumentos_json: AumentoRef[] | null;
-  data_limite_acao: string | null;
-  dias_ate_limite: number | null;
-  demanda_diaria: number | null;
-  qtde_base: number | null;
-  qtde_oportunidade: number | null;
-  preco_item_eoq: number | null;
-  economia_bruta_estimada: number | null;
-  custo_capital_efetivo_perc: number | null;
-};
-
-type OrdemKey = "economia" | "data_limite" | "desconto" | "sku";
-
-function formatBRL(v: number | null | undefined): string {
-  if (v === null || v === undefined) return "—";
-  return new Intl.NumberFormat("pt-BR", {
-    style: "currency",
-    currency: "BRL",
-  }).format(Number(v));
-}
-
-function formatNumber(v: number | null | undefined, digits = 2): string {
-  if (v === null || v === undefined) return "—";
-  return Number(v).toLocaleString("pt-BR", {
-    minimumFractionDigits: digits,
-    maximumFractionDigits: digits,
-  });
-}
-
-function formatDate(d: string | null | undefined): string {
-  if (!d) return "—";
-  const [y, m, day] = d.split("-");
-  return `${day}/${m}/${y}`;
-}
-
-function formatDateLong(d: string | null | undefined): string {
-  if (!d) return "—";
-  const [, m, day] = d.split("-");
-  const meses = [
-    "janeiro",
-    "fevereiro",
-    "março",
-    "abril",
-    "maio",
-    "junho",
-    "julho",
-    "agosto",
-    "setembro",
-    "outubro",
-    "novembro",
-    "dezembro",
-  ];
-  return `${parseInt(day, 10)} de ${meses[parseInt(m, 10) - 1]}`;
-}
-
-function diasEntre(dateStr: string | null | undefined): number | null {
-  if (!dateStr) return null;
-  const [y, m, d] = dateStr.split("-").map(Number);
-  const target = new Date(y, m - 1, d).getTime();
-  const now = new Date();
-  now.setHours(0, 0, 0, 0);
-  return Math.round((target - now.getTime()) / (1000 * 60 * 60 * 24));
-}
-
-function cenarioIcon(cenario: Cenario) {
-  switch (cenario) {
-    case "promo_flat":
-      return <Sparkles className="h-4 w-4 text-status-warning" />;
-    case "promo_volume":
-      return <Package className="h-4 w-4 text-status-info" />;
-    case "promo_e_aumento":
-      return <Zap className="h-4 w-4 text-status-purple" />;
-    case "aumento_apenas":
-      return <TrendingUp className="h-4 w-4 text-status-error" />;
-  }
-}
-
-function cenarioLabel(cenario: Cenario): string {
-  return CENARIOS.find((c) => c.value === cenario)?.label ?? cenario;
-}
-
-function descontoBadgeClass(p: number | null | undefined): string {
-  const v = Number(p ?? 0);
-  if (v >= 15) return "bg-status-success/15 text-status-success border-status-success/30";
-  if (v >= 7) return "bg-status-info/15 text-status-info border-status-info/30";
-  if (v > 0) return "bg-status-warning/15 text-status-warning border-status-warning/30";
-  return "bg-muted text-muted-foreground border-border";
-}
-
-function diasBadge(dias: number | null | undefined) {
-  const d = dias ?? 999;
-  if (d < 3) return "bg-destructive/15 text-destructive border-destructive/30";
-  if (d < 7) return "bg-status-warning/15 text-status-warning border-status-warning/30";
-  return "bg-muted text-muted-foreground border-border";
-}
+import { Cenario, Oportunidade, OrdemKey } from "@/components/reposicao/oportunidades/types";
+import {
+  EMPRESA,
+  ALL,
+  CENARIOS,
+  formatBRL,
+  formatNumber,
+  formatDate,
+  formatDateLong,
+  diasEntre,
+  cenarioIcon,
+  cenarioLabel,
+  descontoBadgeClass,
+  diasBadge,
+} from "@/components/reposicao/oportunidades/shared";
+import { EstadoVazio, DrawerConteudo } from "@/components/reposicao/oportunidades/components";
 
 export default function AdminReposicaoOportunidades() {
   const navigate = useNavigate();
@@ -864,230 +741,5 @@ export default function AdminReposicaoOportunidades() {
         </AlertDialog>
       </div>
     </TooltipProvider>
-  );
-}
-
-// ============ SUBCOMPONENTES ============
-
-function EstadoVazio({ navigate }: { navigate: ReturnType<typeof useNavigate> }) {
-  return (
-    <div className="flex flex-col items-center justify-center py-16 text-center">
-      <TrendingUp className="h-16 w-16 text-muted-foreground/40 mb-4" />
-      <h3 className="text-xl font-semibold">Nenhuma oportunidade ativa</h3>
-      <p className="text-sm text-muted-foreground mt-2 max-w-md">
-        Não há promoções ou aumentos ativos que afetem seus SKUs no momento.
-        Cadastre promoções ou aumentos para começar.
-      </p>
-      <div className="flex gap-2 mt-6">
-        <Button
-          variant="outline"
-          onClick={() => navigate("/admin/reposicao/promocoes")}
-        >
-          Ver promoções
-        </Button>
-        <Button
-          variant="outline"
-          onClick={() => navigate("/admin/reposicao/aumentos")}
-        >
-          Ver aumentos
-        </Button>
-      </div>
-    </div>
-  );
-}
-
-function DrawerConteudo({
-  o,
-  navigate,
-}: {
-  o: Oportunidade;
-  navigate: ReturnType<typeof useNavigate>;
-}) {
-  const incluiPromo = o.cenario.startsWith("promo");
-  const incluiAumento =
-    o.cenario === "aumento_apenas" || o.cenario === "promo_e_aumento";
-  const aumentos = (o.aumentos_json ?? []) as AumentoRef[];
-
-  return (
-    <>
-      <SheetHeader>
-        <div className="flex items-center gap-2">
-          {cenarioIcon(o.cenario)}
-          <Badge variant="outline">{cenarioLabel(o.cenario)}</Badge>
-        </div>
-        <SheetTitle className="text-left">
-          {o.sku_descricao ?? "Sem descrição"}
-        </SheetTitle>
-        <SheetDescription className="text-left tabular-nums">
-          SKU {o.sku_codigo_omie} · {o.fornecedor_nome ?? "—"}
-        </SheetDescription>
-      </SheetHeader>
-
-      <div className="mt-6 space-y-5">
-        {/* Parâmetros */}
-        <Card>
-          <CardHeader className="pb-2">
-            <CardTitle className="text-sm">Parâmetros operacionais</CardTitle>
-          </CardHeader>
-          <CardContent className="space-y-2 text-sm">
-            <Linha label="Demanda diária" value={formatNumber(o.demanda_diaria, 2)} />
-            <Linha label="Preço EOQ" value={formatBRL(o.preco_item_eoq)} />
-            <Linha
-              label="Custo de capital"
-              value={`${formatNumber(o.custo_capital_efetivo_perc, 2)}%`}
-            />
-            <Linha label="Quantidade base (EOQ)" value={formatNumber(o.qtde_base, 0)} />
-            <Linha
-              label="Quantidade sugerida"
-              value={formatNumber(o.qtde_oportunidade, 0)}
-              highlight
-            />
-          </CardContent>
-        </Card>
-
-        {/* Promoção */}
-        {incluiPromo && o.campanha_id && (
-          <Card className="border-status-warning/30 bg-status-warning/5">
-            <CardHeader className="pb-2">
-              <CardTitle className="text-sm flex items-center gap-2">
-                <Sparkles className="h-4 w-4 text-status-warning" />
-                Promoção ativa
-              </CardTitle>
-            </CardHeader>
-            <CardContent className="space-y-2 text-sm">
-              <div className="font-medium">{o.campanha_nome}</div>
-              <Linha
-                label="Modo"
-                value={o.modo_promo === "volume" ? "Volume" : "Flat"}
-              />
-              <Linha
-                label="Desconto base"
-                value={`${formatNumber(o.desconto_promo_perc, 2)}%`}
-              />
-              {o.tem_negociacao_extra && (
-                <Linha label="Negociação extra" value="Sim" />
-              )}
-              <Linha
-                label="Corte do pedido"
-                value={formatDate(o.promo_data_corte_pedido)}
-              />
-              <Linha
-                label="Corte do faturamento"
-                value={formatDate(o.promo_data_corte_faturamento)}
-              />
-              <Button
-                variant="outline"
-                size="sm"
-                className="w-full mt-2"
-                onClick={() => navigate(`/admin/reposicao/promocoes/${o.campanha_id}`)}
-              >
-                <ExternalLink className="h-3 w-3 mr-2" />
-                Ver campanha
-              </Button>
-            </CardContent>
-          </Card>
-        )}
-
-        {/* Aumentos */}
-        {incluiAumento && aumentos.length > 0 && (
-          <Card className="border-status-error/30 bg-status-error/5">
-            <CardHeader className="pb-2">
-              <CardTitle className="text-sm flex items-center gap-2">
-                <TrendingUp className="h-4 w-4 text-status-error" />
-                {aumentos.length === 1
-                  ? "Aumento afetando este SKU"
-                  : `${aumentos.length} aumentos afetando este SKU`}
-              </CardTitle>
-            </CardHeader>
-            <CardContent className="space-y-3">
-              {aumentos.map((a, i) => (
-                <div
-                  key={`${a.aumento_id}-${i}`}
-                  className="space-y-1.5 pb-3 border-b last:border-0 last:pb-0 text-sm"
-                >
-                  <div className="font-medium">{a.aumento_nome ?? "Aumento"}</div>
-                  {a.categoria && (
-                    <div className="text-xs text-muted-foreground">
-                      Categoria: {a.categoria}
-                    </div>
-                  )}
-                  <div className="flex justify-between">
-                    <span className="text-muted-foreground">Vigência</span>
-                    <span className="tabular-nums">{formatDate(a.data_vigencia)}</span>
-                  </div>
-                  {typeof a.aumento_perc === "number" && (
-                    <div className="flex justify-between">
-                      <span className="text-muted-foreground">% aumento</span>
-                      <span className="font-medium tabular-nums text-status-error">
-                        +{formatNumber(a.aumento_perc, 2)}%
-                      </span>
-                    </div>
-                  )}
-                  <Button
-                    variant="outline"
-                    size="sm"
-                    className="w-full mt-1"
-                    onClick={() => navigate(`/admin/reposicao/aumentos/${a.aumento_id}`)}
-                  >
-                    <ExternalLink className="h-3 w-3 mr-2" />
-                    Ver aumento
-                  </Button>
-                </div>
-              ))}
-            </CardContent>
-          </Card>
-        )}
-
-        {/* Cálculo */}
-        <Card className="border-status-success/30 bg-status-success/5">
-          <CardHeader className="pb-2">
-            <CardTitle className="text-sm">Cálculo da economia</CardTitle>
-          </CardHeader>
-          <CardContent className="text-sm leading-relaxed">
-            Comprando{" "}
-            <strong>{formatNumber(o.qtde_oportunidade, 0)} unidades</strong> nos
-            próximos{" "}
-            <strong>
-              {o.dias_ate_limite ?? "—"}{" "}
-              {o.dias_ate_limite === 1 ? "dia" : "dias"}
-            </strong>{" "}
-            você captura{" "}
-            <strong>{formatNumber(o.desconto_total_perc, 2)}%</strong> de
-            benefício total, economizando{" "}
-            <strong className="text-status-success">
-              {formatBRL(o.economia_bruta_estimada)}
-            </strong>{" "}
-            bruto.
-          </CardContent>
-        </Card>
-
-        <Button
-          className="w-full"
-          onClick={() => navigate(`/admin/reposicao/skus/${o.sku_codigo_omie}`)}
-        >
-          <ArrowRight className="h-4 w-4 mr-2" />
-          Ir para SKU em reposição
-        </Button>
-      </div>
-    </>
-  );
-}
-
-function Linha({
-  label,
-  value,
-  highlight,
-}: {
-  label: string;
-  value: string;
-  highlight?: boolean;
-}) {
-  return (
-    <div className="flex justify-between">
-      <span className="text-muted-foreground">{label}</span>
-      <span className={`tabular-nums ${highlight ? "font-semibold" : ""}`}>
-        {value}
-      </span>
-    </div>
   );
 }
