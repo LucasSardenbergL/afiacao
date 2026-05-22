@@ -14,9 +14,24 @@ import { supabase } from '@/integrations/supabase/client';
 import { useAuth } from '@/contexts/AuthContext';
 import { useFarmerScoring } from '@/hooks/useFarmerScoring';
 import { toast } from 'sonner';
-import { Loader2, MapPin, Clock, Route, Filter, Navigation, ExternalLink, Truck, ShoppingBag, Wrench, Layers, Phone, ArrowUp, ArrowRight, ArrowDown, Search, CheckCircle2, XCircle, Users } from 'lucide-react';
+import { Loader2, MapPin, Clock, Route, Filter, Navigation, ExternalLink, Truck, ShoppingBag, Wrench, Layers, Phone, Search, CheckCircle2, XCircle, Users } from 'lucide-react';
 import L from 'leaflet';
 import 'leaflet/dist/leaflet.css';
+import type {
+  StopType,
+  PlanningMode,
+  FilterPeriod,
+  ManualFilter,
+  ManualCustomer,
+  VisitStatus,
+  RouteStop,
+} from '@/components/reposicao/routePlanner/types';
+import { enrichWithPriority } from '@/components/reposicao/routePlanner/priority';
+import {
+  STOP_DURATION_MIN,
+  PRIORITY_CONFIG,
+  STOP_CONFIG,
+} from '@/components/reposicao/routePlanner/constants';
 
 // Fix default marker icons for Leaflet + bundlers
 delete (L.Icon.Default.prototype as any)._getIconUrl;
@@ -26,134 +41,6 @@ L.Icon.Default.mergeOptions({
   shadowUrl: 'https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/images/marker-shadow.png',
 });
 
-type StopType = 'pickup_tools' | 'deliver_tools' | 'sales_visit' | 'hybrid_visit' | 'manual_visit';
-type PlanningMode = 'logistica' | 'comercial' | 'hibrido' | 'manual';
-type FilterPeriod = 'all' | 'manha' | 'tarde';
-type ManualFilter = 'todos' | 'nunca_visitados' | 'sem_compra_30d';
-
-interface ManualCustomer {
-  user_id: string;
-  name: string;
-  phone: string | null;
-  city: string;
-  neighborhood: string;
-  hasAddress: boolean;
-  address: {
-    street: string;
-    number: string;
-    neighborhood: string;
-    city: string;
-    state: string;
-    zip_code: string;
-    complement?: string;
-  };
-  lastVisitDate: string | null;
-  lastOrderDate: string | null;
-  daysSinceLastVisit: number | null;
-  daysSinceLastOrder: number | null;
-}
-
-interface VisitStatus {
-  stopId: string;
-  visitId: string | null;
-  checkInAt: string | null;
-  isCheckedIn: boolean;
-}
-
-interface RouteStop {
-  id: string;
-  stopType: StopType;
-  customerUserId: string;
-  customerName: string;
-  phone: string | null;
-  address: {
-    street: string;
-    number: string;
-    neighborhood: string;
-    city: string;
-    state: string;
-    zip_code: string;
-    complement?: string;
-  };
-  timeSlot: string | null;
-  businessHoursOpen: string | null;
-  businessHoursClose: string | null;
-  status: string;
-  visitReason: string;
-  orderId?: string;
-  lat?: number;
-  lng?: number;
-  total?: number;
-  priorityScore: number;
-  priorityLabel: 'alta' | 'media' | 'baixa';
-  priorityFactors: string[];
-}
-
-// ─── Priority scoring ────────────────────────────────────────────────
-function computeStopPriority(stop: Omit<RouteStop, 'priorityScore' | 'priorityLabel' | 'priorityFactors'>): Pick<RouteStop, 'priorityScore' | 'priorityLabel' | 'priorityFactors'> {
-  let score = 0;
-  const factors: string[] = [];
-
-  // Logistic urgency
-  if (stop.stopType === 'pickup_tools') {
-    score += 40; factors.push('+40 coleta pendente');
-  } else if (stop.stopType === 'deliver_tools') {
-    score += 35; factors.push('+35 entrega pronta');
-  }
-
-  // Overdue tools
-  if (stop.visitReason.includes('afiação vencida')) {
-    score += 25; factors.push('+25 ferramenta vencida');
-  }
-
-  // Commercial opportunity from agenda
-  if (stop.visitReason.includes('Risco')) {
-    score += 20; factors.push('+20 risco de churn');
-  } else if (stop.visitReason.includes('Expansão')) {
-    score += 15; factors.push('+15 expansão cross-sell');
-  } else if (stop.visitReason.includes('Follow-up')) {
-    score += 10; factors.push('+10 follow-up');
-  }
-
-  // Hybrid gets a bonus (multiple reasons to visit)
-  if (stop.stopType === 'hybrid_visit') {
-    score += 15; factors.push('+15 visita híbrida');
-  }
-
-  // Higher-value orders
-  if (stop.total && stop.total > 200) {
-    score += 10; factors.push('+10 pedido alto valor');
-  }
-
-  const label: RouteStop['priorityLabel'] = score > 50 ? 'alta' : score >= 25 ? 'media' : 'baixa';
-  return { priorityScore: score, priorityLabel: label, priorityFactors: factors };
-}
-
-function enrichWithPriority(stop: Omit<RouteStop, 'priorityScore' | 'priorityLabel' | 'priorityFactors'>): RouteStop {
-  return { ...stop, ...computeStopPriority(stop) } as RouteStop;
-}
-
-const STOP_DURATION_MIN: Record<StopType, number> = {
-  pickup_tools: 10,
-  deliver_tools: 8,
-  sales_visit: 20,
-  hybrid_visit: 30,
-  manual_visit: 15,
-};
-
-const PRIORITY_CONFIG: Record<RouteStop['priorityLabel'], { label: string; bgClass: string; icon: typeof ArrowUp }> = {
-  alta: { label: 'Alta', bgClass: 'bg-status-error-bg text-status-error', icon: ArrowUp },
-  media: { label: 'Média', bgClass: 'bg-status-warning-bg text-status-warning', icon: ArrowRight },
-  baixa: { label: 'Baixa', bgClass: 'bg-muted text-muted-foreground', icon: ArrowDown },
-};
-
-const STOP_CONFIG: Record<StopType, { label: string; color: string; bgClass: string; textClass: string; markerColor: string }> = {
-  pickup_tools: { label: 'Coleta', color: 'hsl(210, 80%, 50%)', bgClass: 'bg-blue-100 text-blue-800 dark:bg-blue-900 dark:text-blue-200', textClass: 'text-blue-600', markerColor: '#3b82f6' },
-  deliver_tools: { label: 'Entrega', color: 'hsl(142, 70%, 40%)', bgClass: 'bg-green-100 text-green-800 dark:bg-green-900 dark:text-green-200', textClass: 'text-green-600', markerColor: '#22c55e' },
-  sales_visit: { label: 'Comercial', color: 'hsl(30, 90%, 50%)', bgClass: 'bg-orange-100 text-orange-800 dark:bg-orange-900 dark:text-orange-200', textClass: 'text-orange-600', markerColor: '#f97316' },
-  hybrid_visit: { label: 'Híbrido', color: 'hsl(270, 70%, 55%)', bgClass: 'bg-purple-100 text-purple-800 dark:bg-purple-900 dark:text-purple-200', textClass: 'text-purple-600', markerColor: '#a855f7' },
-  manual_visit: { label: 'Manual', color: 'hsl(180, 70%, 45%)', bgClass: 'bg-cyan-100 text-cyan-800 dark:bg-cyan-900 dark:text-cyan-200', textClass: 'text-cyan-600', markerColor: '#06b6d4' },
-};
 
 const AdminRoutePlanner = () => {
   const navigate = useNavigate();
