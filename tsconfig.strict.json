@@ -361,6 +361,8 @@
     "src/pages/Loyalty.tsx",
     "src/pages/AdminLoyalty.tsx",
     "src/pages/Gamification.tsx",
-    "src/components/GamificationCertificate.tsx"
+    "src/components/GamificationCertificate.tsx",
+    "src/components/des/PosicaoAtualTab.tsx",
+    "src/components/des/HistoricoTab.tsx"
   ]
 }

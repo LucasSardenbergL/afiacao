@@ -168,7 +168,7 @@ function HistoricoTabImpl({ empresa, ano: anoAtual, trimestre: trimestreAtual }:
     queryKey: ["des-historico-checkins", empresa],
     queryFn: async () => {
       const { data, error } = await supabase
-        .from("v_des_desconto_por_checkin" as any)
+        .from("v_des_desconto_por_checkin")
         .select("*")
         .eq("empresa", empresa)
         .order("data_avaliacao", { ascending: false });
@@ -182,7 +182,7 @@ function HistoricoTabImpl({ empresa, ano: anoAtual, trimestre: trimestreAtual }:
     queryKey: ["des-historico-poslive", empresa, anoAtual, trimestreAtual],
     queryFn: async () => {
       const { data, error } = await supabase
-        .from("v_des_posicao_trimestre_ao_vivo" as any)
+        .from("v_des_posicao_trimestre_ao_vivo")
         .select("ano, trimestre, posicao_ao_vivo_conservadora, faixa_conservadora, meta_pessoal, inicio_trimestre, fim_trimestre")
         .eq("empresa", empresa)
         .eq("ano", anoAtual)
