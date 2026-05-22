@@ -357,6 +357,10 @@
     "src/pages/GovernanceUsers.tsx",
     "src/pages/GestaoGovernanca.tsx",
     "src/pages/FarmerGovernance.tsx",
-    "src/pages/SettingsConfig.tsx"
+    "src/pages/SettingsConfig.tsx",
+    "src/pages/Loyalty.tsx",
+    "src/pages/AdminLoyalty.tsx",
+    "src/pages/Gamification.tsx",
+    "src/components/GamificationCertificate.tsx"
   ]
 }
