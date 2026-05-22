@@ -4,47 +4,21 @@ import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
 import { useAuth } from "@/contexts/AuthContext";
 import { toast } from "sonner";
-import {
-  ArrowLeft,
-  Loader2,
-  Save,
-  ExternalLink,
-  Plus,
-  CheckCircle2,
-  TrendingUp,
-  Sparkles,
-  Mail,
-} from "lucide-react";
+import { ArrowLeft, Loader2, TrendingUp } from "lucide-react";
 import { Button } from "@/components/ui/button";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { Badge } from "@/components/ui/badge";
-import { Input } from "@/components/ui/input";
-import { Label } from "@/components/ui/label";
-import { Textarea } from "@/components/ui/textarea";
 import {
   Tabs,
   TabsContent,
   TabsList,
   TabsTrigger,
 } from "@/components/ui/tabs";
-import {
-  Table,
-  TableBody,
-  TableCell,
-  TableHead,
-  TableHeader,
-  TableRow,
-} from "@/components/ui/table";
-import {
-  Tooltip,
-  TooltipContent,
-  TooltipProvider,
-  TooltipTrigger,
-} from "@/components/ui/tooltip";
+import { TooltipProvider } from "@/components/ui/tooltip";
 import { Aumento, Item, Mapeamento, SkuAfetado } from "@/components/reposicao/aumentoDetail/types";
-import { EMPRESA, ESTADOS_LABEL, estadoBadgeClass, confiancaClass, diasEntre } from "@/components/reposicao/aumentoDetail/shared";
-import { CancelarButton } from "@/components/reposicao/aumentoDetail/CancelarButton";
-import { ItemRow } from "@/components/reposicao/aumentoDetail/ItemRow";
+import { EMPRESA, ESTADOS_LABEL, diasEntre } from "@/components/reposicao/aumentoDetail/shared";
+import { DetalhesTab } from "@/components/reposicao/aumentoDetail/DetalhesTab";
+import { CategoriasTab } from "@/components/reposicao/aumentoDetail/CategoriasTab";
+import { SkusAfetadosTab } from "@/components/reposicao/aumentoDetail/SkusAfetadosTab";
+import { EstadoAcoesSidebar } from "@/components/reposicao/aumentoDetail/EstadoAcoesSidebar";
 
 export default function AdminReposicaoAumentoDetail() {
   const { id: idParam } = useParams<{ id: string }>();
@@ -360,376 +334,51 @@ export default function AdminReposicaoAumentoDetail() {
 
               {/* TAB DETALHES */}
               <TabsContent value="detalhes" className="space-y-4">
-                {form.origem_arquivo_url && (
-                  <Card className="border-primary/30 bg-primary/5">
-                    <CardContent className="pt-6 space-y-3">
-                      <div className="flex items-start gap-3">
-                        <Sparkles className="h-5 w-5 text-primary shrink-0 mt-0.5" />
-                        <div className="flex-1 min-w-0 space-y-2">
-                          <div className="flex flex-wrap items-center gap-2">
-                            <span className="text-sm font-medium">
-                              Extraído via Vision
-                            </span>
-                            {form.extracao_confianca !== null &&
-                              form.extracao_confianca !== undefined && (
-                                <Badge
-                                  variant="outline"
-                                  className={confiancaClass(
-                                    form.extracao_confianca,
-                                  )}
-                                >
-                                  Confiança {Math.round(form.extracao_confianca * 100)}%
-                                </Badge>
-                              )}
-                            <Button
-                              variant="outline"
-                              size="sm"
-                              onClick={openOriginalFile}
-                            >
-                              <ExternalLink className="h-4 w-4" /> Ver arquivo original
-                            </Button>
-                          </div>
-                          {form.extracao_observacoes && (
-                            <p className="text-sm italic text-muted-foreground">
-                              {form.extracao_observacoes}
-                            </p>
-                          )}
-                          {form.origem_email_remetente && (
-                            <div className="flex items-center gap-2 text-xs text-muted-foreground">
-                              <Mail className="h-3 w-3" />
-                              <span>
-                                De: {form.origem_email_remetente}
-                                {form.origem_email_assunto &&
-                                  ` · Assunto: ${form.origem_email_assunto}`}
-                                {form.origem_email_data &&
-                                  ` · Recebido: ${new Date(form.origem_email_data).toLocaleDateString("pt-BR")}`}
-                              </span>
-                            </div>
-                          )}
-                        </div>
-                      </div>
-                    </CardContent>
-                  </Card>
-                )}
-
-                <Card>
-                  <CardHeader>
-                    <CardTitle className="text-base">Dados do anúncio</CardTitle>
-                  </CardHeader>
-                  <CardContent className="space-y-4">
-                    <div>
-                      <Label htmlFor="nome">Nome *</Label>
-                      <Input
-                        id="nome"
-                        value={form.nome ?? ""}
-                        onChange={(e) =>
-                          setForm({ ...form, nome: e.target.value })
-                        }
-                        placeholder="Ex: Reajuste de Preços Maio 2026"
-                      />
-                    </div>
-
-                    <div>
-                      <Label htmlFor="fornecedor">Fornecedor</Label>
-                      <Input
-                        id="fornecedor"
-                        value={form.fornecedor_nome ?? ""}
-                        readOnly={!!form.origem_arquivo_url}
-                        onChange={(e) =>
-                          setForm({ ...form, fornecedor_nome: e.target.value })
-                        }
-                      />
-                    </div>
-
-                    <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                      <div>
-                        <Label htmlFor="data_vigencia">Data de vigência *</Label>
-                        <Input
-                          id="data_vigencia"
-                          type="date"
-                          value={form.data_vigencia ?? ""}
-                          onChange={(e) =>
-                            setForm({ ...form, data_vigencia: e.target.value })
-                          }
-                        />
-                      </div>
-                      <div>
-                        <Label htmlFor="data_anuncio">Data do anúncio</Label>
-                        <Input
-                          id="data_anuncio"
-                          type="date"
-                          value={form.data_anuncio ?? ""}
-                          onChange={(e) =>
-                            setForm({
-                              ...form,
-                              data_anuncio: e.target.value || null,
-                            })
-                          }
-                        />
-                      </div>
-                    </div>
-
-                    <div>
-                      <Label htmlFor="observacoes">Observações</Label>
-                      <Textarea
-                        id="observacoes"
-                        rows={3}
-                        value={form.observacoes ?? ""}
-                        onChange={(e) =>
-                          setForm({ ...form, observacoes: e.target.value })
-                        }
-                      />
-                    </div>
-
-                    <Button
-                      onClick={() => saveDetalhes.mutate()}
-                      disabled={saveDetalhes.isPending}
-                    >
-                      {saveDetalhes.isPending ? (
-                        <Loader2 className="h-4 w-4 animate-spin" />
-                      ) : (
-                        <Save className="h-4 w-4" />
-                      )}
-                      Salvar alterações
-                    </Button>
-                  </CardContent>
-                </Card>
+                <DetalhesTab
+                  form={form}
+                  setForm={setForm}
+                  onOpenOriginalFile={openOriginalFile}
+                  onSave={() => saveDetalhes.mutate()}
+                  saving={saveDetalhes.isPending}
+                />
               </TabsContent>
 
               {/* TAB CATEGORIAS */}
               <TabsContent value="categorias" className="space-y-4">
-                <Card>
-                  <CardHeader className="flex flex-row items-center justify-between gap-2">
-                    <CardTitle className="text-base">
-                      Categorias do fornecedor
-                    </CardTitle>
-                    <Button size="sm" onClick={() => addItem.mutate()}>
-                      <Plus className="h-4 w-4" /> Adicionar categoria
-                    </Button>
-                  </CardHeader>
-                  <CardContent>
-                    <div className="overflow-x-auto">
-                      <Table>
-                        <TableHeader>
-                          <TableRow>
-                            <TableHead>Categoria</TableHead>
-                            <TableHead className="w-[100px]">% aumento</TableHead>
-                            <TableHead className="w-[150px]">Vig. específica</TableHead>
-                            <TableHead className="w-[160px]">Mapeamento</TableHead>
-                            <TableHead className="w-[100px] text-center">
-                              Confirmado
-                            </TableHead>
-                            <TableHead className="w-[60px]"></TableHead>
-                          </TableRow>
-                        </TableHeader>
-                        <TableBody>
-                          {itens.length === 0 && (
-                            <TableRow>
-                              <TableCell
-                                colSpan={6}
-                                className="text-center text-muted-foreground py-8"
-                              >
-                                Nenhuma categoria. Clique em "Adicionar
-                                categoria".
-                              </TableCell>
-                            </TableRow>
-                          )}
-                          {itens.map((item) => (
-                            <ItemRow
-                              key={item.id}
-                              item={item}
-                              numFamilias={familiasUnicasPorItem(item.id)}
-                              onUpdate={(patch) =>
-                                updateItem.mutate({ id: item.id, patch })
-                              }
-                              onDelete={() => deleteItem.mutate(item.id)}
-                              onMapeamentoChanged={() => {
-                                refetchMaps();
-                              }}
-                            />
-                          ))}
-                        </TableBody>
-                      </Table>
-                    </div>
-                  </CardContent>
-                </Card>
+                <CategoriasTab
+                  itens={itens}
+                  familiasUnicasPorItem={familiasUnicasPorItem}
+                  onAddItem={() => addItem.mutate()}
+                  onUpdateItem={(id, patch) => updateItem.mutate({ id, patch })}
+                  onDeleteItem={(id) => deleteItem.mutate(id)}
+                  onMapeamentoChanged={() => refetchMaps()}
+                />
               </TabsContent>
 
               {/* TAB SKUS */}
               <TabsContent value="skus" className="space-y-4">
-                <Card>
-                  <CardHeader>
-                    <CardTitle className="text-base">
-                      SKUs afetados ({skusAfetados.length})
-                    </CardTitle>
-                  </CardHeader>
-                  <CardContent>
-                    <div className="overflow-x-auto">
-                      <Table>
-                        <TableHeader>
-                          <TableRow>
-                            <TableHead>SKU</TableHead>
-                            <TableHead>Descrição</TableHead>
-                            <TableHead>Família</TableHead>
-                            <TableHead>Categoria</TableHead>
-                            <TableHead>Vigência</TableHead>
-                            <TableHead className="text-right">% aumento</TableHead>
-                          </TableRow>
-                        </TableHeader>
-                        <TableBody>
-                          {skusAfetados.length === 0 && (
-                            <TableRow>
-                              <TableCell
-                                colSpan={6}
-                                className="text-center text-muted-foreground py-8"
-                              >
-                                Nenhum SKU afetado. Configure mapeamentos na aba
-                                anterior.
-                              </TableCell>
-                            </TableRow>
-                          )}
-                          {skusAfetados.map((sku) => (
-                            <TableRow key={sku.sku_codigo_omie}>
-                              <TableCell className="font-mono text-xs">
-                                {sku.sku_codigo_omie}
-                              </TableCell>
-                              <TableCell className="text-sm">
-                                {sku.sku_descricao}
-                              </TableCell>
-                              <TableCell className="text-sm text-muted-foreground">
-                                {sku.familia}
-                              </TableCell>
-                              <TableCell className="text-sm text-muted-foreground">
-                                {sku.categoria_fornecedor}
-                              </TableCell>
-                              <TableCell className="tabular-nums text-sm">
-                                {sku.data_vigencia_efetiva}
-                              </TableCell>
-                              <TableCell className="text-right tabular-nums font-medium">
-                                {Number(sku.aumento_perc).toFixed(2)}%
-                              </TableCell>
-                            </TableRow>
-                          ))}
-                        </TableBody>
-                      </Table>
-                    </div>
-                  </CardContent>
-                </Card>
+                <SkusAfetadosTab skusAfetados={skusAfetados} />
               </TabsContent>
             </Tabs>
           </div>
 
           {/* Sidebar direita */}
           <div className="lg:sticky lg:top-4 self-start space-y-4">
-            <Card>
-              <CardHeader>
-                <CardTitle className="text-base">Estado e ações</CardTitle>
-              </CardHeader>
-              <CardContent className="space-y-4">
-                <div>
-                  <Badge
-                    variant="outline"
-                    className={`text-base px-3 py-1 ${estadoBadgeClass(estadoAtual)}`}
-                  >
-                    {ESTADOS_LABEL[estadoAtual] ?? estadoAtual}
-                  </Badge>
-                </div>
-
-                {!isNew && (
-                  <>
-                    <div className="text-sm space-y-1 border-t pt-3">
-                      <div className="flex justify-between">
-                        <span className="text-muted-foreground">Categorias ativas</span>
-                        <span className="font-medium tabular-nums">{itensAtivos}</span>
-                      </div>
-                      <div className="flex justify-between">
-                        <span className="text-muted-foreground">Confirmadas</span>
-                        <span className="font-medium tabular-nums">
-                          {itensConfirmados}
-                        </span>
-                      </div>
-                      <div className="flex justify-between">
-                        <span className="text-muted-foreground">Sem mapeamento</span>
-                        <span
-                          className={`font-medium tabular-nums ${
-                            itensSemMapeamento > 0 ? "text-status-warning" : ""
-                          }`}
-                        >
-                          {itensSemMapeamento}
-                        </span>
-                      </div>
-                      <div className="flex justify-between border-t pt-2 mt-2">
-                        <span className="text-muted-foreground">SKUs afetados</span>
-                        <Badge variant="outline" className="tabular-nums">
-                          {skusAfetados.length}
-                        </Badge>
-                      </div>
-                    </div>
-
-                    {diasParaVigencia !== null && (
-                      <p className="text-xs text-muted-foreground italic">
-                        {diasParaVigencia >= 0
-                          ? `Entra em vigência em ${diasParaVigencia} dia${diasParaVigencia === 1 ? "" : "s"}`
-                          : `Vigência iniciada há ${-diasParaVigencia} dia${-diasParaVigencia === 1 ? "" : "s"}`}
-                      </p>
-                    )}
-                    {diasEmVigencia !== null && diasEmVigencia >= 0 && (
-                      <p className="text-xs text-muted-foreground italic">
-                        Em vigência há {diasEmVigencia} dia
-                        {diasEmVigencia === 1 ? "" : "s"}
-                      </p>
-                    )}
-
-                    <div className="space-y-2 border-t pt-3">
-                      {estadoAtual === "rascunho" && (
-                        <>
-                          <Tooltip>
-                            <TooltipTrigger asChild>
-                              <span className="block">
-                                <Button
-                                  className="w-full"
-                                  disabled={!podeAtivar || updateEstado.isPending}
-                                  onClick={() => updateEstado.mutate("ativo")}
-                                >
-                                  <CheckCircle2 className="h-4 w-4" /> Ativar anúncio
-                                </Button>
-                              </span>
-                            </TooltipTrigger>
-                            {!podeAtivar && (
-                              <TooltipContent>
-                                {itensAtivos === 0
-                                  ? "Adicione ao menos uma categoria"
-                                  : itensConfirmados < itensAtivos
-                                    ? "Confirme todas as categorias"
-                                    : "Mapeie ao menos uma família"}
-                              </TooltipContent>
-                            )}
-                          </Tooltip>
-                          <CancelarButton
-                            onConfirm={() => updateEstado.mutate("cancelado")}
-                          />
-                        </>
-                      )}
-                      {estadoAtual === "ativo" && (
-                        <CancelarButton
-                          onConfirm={() => updateEstado.mutate("cancelado")}
-                        />
-                      )}
-                      {estadoAtual === "vigente" && (
-                        <Button
-                          variant="outline"
-                          className="w-full"
-                          onClick={() => updateEstado.mutate("expirado")}
-                          disabled={updateEstado.isPending}
-                        >
-                          Marcar como expirado
-                        </Button>
-                      )}
-                    </div>
-                  </>
-                )}
-              </CardContent>
-            </Card>
+            <EstadoAcoesSidebar
+              isNew={isNew}
+              estadoAtual={estadoAtual}
+              itensAtivos={itensAtivos}
+              itensConfirmados={itensConfirmados}
+              itensSemMapeamento={itensSemMapeamento}
+              skusAfetadosCount={skusAfetados.length}
+              diasParaVigencia={diasParaVigencia}
+              diasEmVigencia={diasEmVigencia}
+              podeAtivar={podeAtivar}
+              updating={updateEstado.isPending}
+              onAtivar={() => updateEstado.mutate("ativo")}
+              onCancelar={() => updateEstado.mutate("cancelado")}
+              onExpirar={() => updateEstado.mutate("expirado")}
+            />
           </div>
         </div>
       </div>
