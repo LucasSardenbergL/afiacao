@@ -4,89 +4,24 @@ import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
 import { useAuth } from "@/contexts/AuthContext";
 import { toast } from "sonner";
-import {
-  Loader2,
-  Save,
-  ChevronRight,
-  FileText,
-  ExternalLink,
-  Mail,
-  Plus,
-  Trash2,
-  Check,
-  X,
-  Sparkles,
-} from "lucide-react";
-import { Button } from "@/components/ui/button";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { Badge } from "@/components/ui/badge";
-import { Input } from "@/components/ui/input";
-import { Textarea } from "@/components/ui/textarea";
-import { Label } from "@/components/ui/label";
-import {
-  Tabs,
-  TabsContent,
-  TabsList,
-  TabsTrigger,
-} from "@/components/ui/tabs";
-import {
-  Table,
-  TableBody,
-  TableCell,
-  TableHead,
-  TableHeader,
-  TableRow,
-} from "@/components/ui/table";
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from "@/components/ui/select";
-import {
-  Tooltip,
-  TooltipContent,
-  TooltipProvider,
-  TooltipTrigger,
-} from "@/components/ui/tooltip";
-import {
-  Dialog,
-  DialogContent,
-  DialogDescription,
-  DialogFooter,
-  DialogHeader,
-  DialogTitle,
-} from "@/components/ui/dialog";
-import {
-  AlertDialog,
-  AlertDialogAction,
-  AlertDialogCancel,
-  AlertDialogContent,
-  AlertDialogDescription,
-  AlertDialogFooter,
-  AlertDialogHeader,
-  AlertDialogTitle,
-} from "@/components/ui/alert-dialog";
+import { Loader2, ChevronRight } from "lucide-react";
+import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import {
   EMPRESA,
   FORNECEDOR_DEFAULT,
   ESTADO_LABEL,
-  TIPO_EVENTO_LABELS,
   type Campanha,
   type ItemRow,
   type ItemEfetivo,
   type Evento,
+  type NovoEventoForm,
 } from "@/components/reposicao/promocaoDetail/types";
-import {
-  tipoEventoIcon,
-  estadoBadgeClass,
-  confiancaBadge,
-  formatDateTimeBR,
-  formatRelative,
-} from "@/components/reposicao/promocaoDetail/helpers";
-import { MapeamentoStatusCell } from "@/components/reposicao/promocaoDetail/MapeamentoStatusCell";
-import { DescontoExtraCell } from "@/components/reposicao/promocaoDetail/DescontoExtraCell";
+import { CancelCampanhaDialog } from "@/components/reposicao/promocaoDetail/CancelCampanhaDialog";
+import { EventoDialog } from "@/components/reposicao/promocaoDetail/EventoDialog";
+import { EstadoAcoesSidebar } from "@/components/reposicao/promocaoDetail/EstadoAcoesSidebar";
+import { NegociacaoTab } from "@/components/reposicao/promocaoDetail/NegociacaoTab";
+import { DetalhesTab } from "@/components/reposicao/promocaoDetail/DetalhesTab";
+import { ItensTab } from "@/components/reposicao/promocaoDetail/ItensTab";
 
 // ========== PÁGINA PRINCIPAL ==========
 export default function AdminReposicaoPromocaoDetail() {
@@ -382,7 +317,7 @@ export default function AdminReposicaoPromocaoDetail() {
 
   // ============ EVENTO MODAL ============
   const [eventoOpen, setEventoOpen] = useState(false);
-  const [novoEvento, setNovoEvento] = useState({
+  const [novoEvento, setNovoEvento] = useState<NovoEventoForm>({
     tipo_evento: "nota",
     desconto_perc_proposto: "",
     volume_minimo_proposto: "",
@@ -505,701 +440,95 @@ export default function AdminReposicaoPromocaoDetail() {
             </TabsList>
 
             {/* ========== TAB DETALHES ========== */}
-            <TabsContent value="detalhes" className="space-y-4">
-              {/* Painel de extração Vision */}
-              {campanha?.origem_arquivo_url && (
-                <Card className="border-primary/30 bg-primary/5">
-                  <CardHeader>
-                    <CardTitle className="text-base flex items-center gap-2">
-                      <Sparkles className="h-4 w-4 text-primary" />
-                      Extração via IA
-                    </CardTitle>
-                  </CardHeader>
-                  <CardContent className="space-y-3">
-                    <div className="flex flex-wrap items-center gap-2">
-                      {confiancaBadge(campanha.extracao_confianca)}
-                      {campanha.extraido_em && (
-                        <span className="text-xs text-muted-foreground">
-                          {formatDateTimeBR(campanha.extraido_em)}
-                        </span>
-                      )}
-                    </div>
-                    {campanha.extracao_observacoes && (
-                      <p className="text-sm italic text-muted-foreground">
-                        {campanha.extracao_observacoes}
-                      </p>
-                    )}
-                    {campanha.origem_email_remetente && (
-                      <div className="flex items-start gap-2 text-xs text-muted-foreground">
-                        <Mail className="h-3 w-3 mt-0.5 shrink-0" />
-                        <div>
-                          De: {campanha.origem_email_remetente}
-                          {campanha.origem_email_assunto && (
-                            <>
-                              {" "}
-                              · Assunto:{" "}
-                              <span className="italic">
-                                {campanha.origem_email_assunto}
-                              </span>
-                            </>
-                          )}
-                        </div>
-                      </div>
-                    )}
-                    {signedUrl && (
-                      <Button
-                        variant="outline"
-                        size="sm"
-                        asChild
-                      >
-                        <a
-                          href={signedUrl}
-                          target="_blank"
-                          rel="noopener noreferrer"
-                        >
-                          <FileText className="h-4 w-4" /> Ver arquivo original
-                          <ExternalLink className="h-3 w-3" />
-                        </a>
-                      </Button>
-                    )}
-                  </CardContent>
-                </Card>
-              )}
-
-              {/* Formulário */}
-              <Card>
-                <CardHeader>
-                  <CardTitle className="text-base">Dados da campanha</CardTitle>
-                </CardHeader>
-                <CardContent className="space-y-4">
-                  <div>
-                    <Label>Nome</Label>
-                    <Input
-                      value={formNome}
-                      onChange={(e) => setFormNome(e.target.value)}
-                      placeholder="Ex: DES Promo Abril 2ª Quinzena 2026"
-                    />
-                  </div>
-                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                    <div>
-                      <Label>Fornecedor</Label>
-                      <Input
-                        value="Renner Sayerlack S/A"
-                        disabled
-                        className="bg-muted"
-                      />
-                    </div>
-                    <div>
-                      <Label>Tipo de origem</Label>
-                      <div className="h-10 flex items-center">
-                        {tipoOrigem === "negociacao_cliente" ? (
-                          <Badge
-                            variant="outline"
-                            className="bg-status-info/15 text-status-info border-status-info/30"
-                          >
-                            Negociação
-                          </Badge>
-                        ) : (
-                          <Badge variant="outline">Fornecedor</Badge>
-                        )}
-                      </div>
-                    </div>
-                  </div>
-                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                    <div>
-                      <Label>Data início</Label>
-                      <Input
-                        type="date"
-                        value={formInicio}
-                        onChange={(e) => setFormInicio(e.target.value)}
-                      />
-                    </div>
-                    <div>
-                      <Label>Data fim</Label>
-                      <Input
-                        type="date"
-                        value={formFim}
-                        onChange={(e) => setFormFim(e.target.value)}
-                      />
-                    </div>
-                  </div>
-                  <div>
-                    <Label>Observações</Label>
-                    <Textarea
-                      value={formObs}
-                      onChange={(e) => setFormObs(e.target.value)}
-                      rows={3}
-                    />
-                  </div>
-                  <Button
-                    onClick={() => saveCampanhaMut.mutate()}
-                    disabled={saveCampanhaMut.isPending}
-                  >
-                    {saveCampanhaMut.isPending && (
-                      <Loader2 className="h-4 w-4 animate-spin" />
-                    )}
-                    <Save className="h-4 w-4" />{" "}
-                    {isNew ? "Criar campanha" : "Salvar alterações"}
-                  </Button>
-                </CardContent>
-              </Card>
-            </TabsContent>
+            <DetalhesTab
+              campanha={campanha}
+              signedUrl={signedUrl}
+              formNome={formNome}
+              setFormNome={setFormNome}
+              formInicio={formInicio}
+              setFormInicio={setFormInicio}
+              formFim={formFim}
+              setFormFim={setFormFim}
+              formObs={formObs}
+              setFormObs={setFormObs}
+              tipoOrigem={tipoOrigem}
+              isNew={isNew}
+              onSave={() => saveCampanhaMut.mutate()}
+              saving={saveCampanhaMut.isPending}
+            />
 
             {/* ========== TAB ITENS ========== */}
-            <TabsContent value="itens" className="space-y-4">
-              <Card>
-                <CardHeader className="flex flex-row items-center justify-between">
-                  <CardTitle className="text-base">
-                    Itens da campanha
-                  </CardTitle>
-                  <Button
-                    size="sm"
-                    onClick={() => setAddingItem(true)}
-                    disabled={addingItem}
-                  >
-                    <Plus className="h-4 w-4" /> Adicionar item
-                  </Button>
-                </CardHeader>
-                <CardContent>
-                  {loadingItens ? (
-                    <div className="flex items-center gap-2 text-sm text-muted-foreground py-6">
-                      <Loader2 className="h-4 w-4 animate-spin" /> Carregando…
-                    </div>
-                  ) : (
-                    <div className="overflow-x-auto">
-                      <Table>
-                        <TableHeader>
-                          <TableRow>
-                            <TableHead>Cód. fornecedor</TableHead>
-                            <TableHead>Descrição</TableHead>
-                            <TableHead className="text-right">Desc.%</TableHead>
-                            <TableHead>Extra</TableHead>
-                            <TableHead className="text-right">
-                              Vol. mín.
-                            </TableHead>
-                            <TableHead>SKU Omie</TableHead>
-                            <TableHead className="w-12"></TableHead>
-                          </TableRow>
-                        </TableHeader>
-                        <TableBody>
-                          {itens.length === 0 && !addingItem && (
-                            <TableRow>
-                              <TableCell
-                                colSpan={7}
-                                className="text-center text-muted-foreground py-8"
-                              >
-                                Nenhum item nesta campanha.
-                              </TableCell>
-                            </TableRow>
-                          )}
-                          {itens.map((item) => {
-                            const efetivo = efetivoMap[item.id];
-                            return (
-                              <TableRow key={item.id}>
-                                <TableCell>
-                                  {item.confirmado ? (
-                                    <span className="font-mono text-sm">
-                                      {item.sku_codigo_fornecedor}
-                                    </span>
-                                  ) : (
-                                    <Input
-                                      className="h-8 font-mono text-sm"
-                                      defaultValue={item.sku_codigo_fornecedor}
-                                      onBlur={(e) => {
-                                        if (
-                                          e.target.value !==
-                                          item.sku_codigo_fornecedor
-                                        ) {
-                                          updateItemMut.mutate({
-                                            itemId: item.id,
-                                            changes: {
-                                              sku_codigo_fornecedor:
-                                                e.target.value,
-                                            },
-                                          });
-                                        }
-                                      }}
-                                    />
-                                  )}
-                                </TableCell>
-                                <TableCell className="text-sm text-muted-foreground max-w-xs truncate">
-                                  {item.descricao_produto_fornecedor || "—"}
-                                </TableCell>
-                                <TableCell className="text-right">
-                                  <Input
-                                    type="number"
-                                    step="0.1"
-                                    className="h-8 w-20 text-right tabular-nums"
-                                    defaultValue={item.desconto_perc}
-                                    onBlur={(e) => {
-                                      const v = parseFloat(e.target.value);
-                                      if (!isNaN(v) && v !== item.desconto_perc) {
-                                        updateItemMut.mutate({
-                                          itemId: item.id,
-                                          changes: { desconto_perc: v },
-                                        });
-                                      }
-                                    }}
-                                  />
-                                </TableCell>
-                                <TableCell>
-                                  <div className="flex flex-col gap-0.5">
-                                    <DescontoExtraCell
-                                      item={item}
-                                      userEmail={userEmail}
-                                      onSave={(changes) =>
-                                        updateItemMut.mutate({
-                                          itemId: item.id,
-                                          changes,
-                                        })
-                                      }
-                                    />
-                                    {efetivo !== undefined && (
-                                      <span className="text-[10px] text-muted-foreground">
-                                        Efetivo: {efetivo}%
-                                      </span>
-                                    )}
-                                  </div>
-                                </TableCell>
-                                <TableCell className="text-right">
-                                  <Input
-                                    type="number"
-                                    step="1"
-                                    className="h-8 w-20 text-right tabular-nums"
-                                    defaultValue={item.volume_minimo ?? ""}
-                                    placeholder="—"
-                                    onBlur={(e) => {
-                                      const v = e.target.value.trim()
-                                        ? parseFloat(e.target.value)
-                                        : null;
-                                      if (v !== item.volume_minimo) {
-                                        updateItemMut.mutate({
-                                          itemId: item.id,
-                                          changes: { volume_minimo: v },
-                                        });
-                                      }
-                                    }}
-                                  />
-                                </TableCell>
-                                <TableCell>
-                                  <MapeamentoStatusCell
-                                    item={item}
-                                    onUpdate={(changes) =>
-                                      updateItemMut.mutate({
-                                        itemId: item.id,
-                                        changes,
-                                      })
-                                    }
-                                  />
-                                </TableCell>
-                                <TableCell>
-                                  <Button
-                                    size="sm"
-                                    variant="ghost"
-                                    onClick={() => {
-                                      if (confirm("Remover este item?")) {
-                                        deleteItemMut.mutate(item.id);
-                                      }
-                                    }}
-                                  >
-                                    <Trash2 className="h-4 w-4 text-destructive" />
-                                  </Button>
-                                </TableCell>
-                              </TableRow>
-                            );
-                          })}
-                          {addingItem && (
-                            <TableRow className="bg-accent/30">
-                              <TableCell>
-                                <Input
-                                  className="h-8 font-mono text-sm"
-                                  placeholder="DR.4403"
-                                  value={novoCodFornecedor}
-                                  onChange={(e) =>
-                                    setNovoCodFornecedor(e.target.value)
-                                  }
-                                  autoFocus
-                                />
-                              </TableCell>
-                              <TableCell className="text-xs text-muted-foreground">
-                                (auto)
-                              </TableCell>
-                              <TableCell>
-                                <Input
-                                  type="number"
-                                  step="0.1"
-                                  className="h-8 w-20 text-right"
-                                  placeholder="20"
-                                  value={novoDesconto}
-                                  onChange={(e) =>
-                                    setNovoDesconto(e.target.value)
-                                  }
-                                />
-                              </TableCell>
-                              <TableCell></TableCell>
-                              <TableCell>
-                                <Input
-                                  type="number"
-                                  step="1"
-                                  className="h-8 w-20 text-right"
-                                  placeholder="—"
-                                  value={novoVolume}
-                                  onChange={(e) =>
-                                    setNovoVolume(e.target.value)
-                                  }
-                                />
-                              </TableCell>
-                              <TableCell colSpan={2}>
-                                <div className="flex gap-1 justify-end">
-                                  <Button
-                                    size="sm"
-                                    onClick={handleAddItem}
-                                    disabled={savingNovoItem}
-                                  >
-                                    {savingNovoItem && (
-                                      <Loader2 className="h-3 w-3 animate-spin" />
-                                    )}
-                                    Salvar
-                                  </Button>
-                                  <Button
-                                    size="sm"
-                                    variant="ghost"
-                                    onClick={() => {
-                                      setAddingItem(false);
-                                      setNovoCodFornecedor("");
-                                      setNovoDesconto("");
-                                      setNovoVolume("");
-                                    }}
-                                    disabled={savingNovoItem}
-                                  >
-                                    Cancelar
-                                  </Button>
-                                </div>
-                              </TableCell>
-                            </TableRow>
-                          )}
-                        </TableBody>
-                      </Table>
-                    </div>
-                  )}
-                </CardContent>
-              </Card>
-            </TabsContent>
+            <ItensTab
+              itens={itens}
+              loadingItens={loadingItens}
+              efetivoMap={efetivoMap}
+              userEmail={userEmail}
+              addingItem={addingItem}
+              setAddingItem={setAddingItem}
+              novoCodFornecedor={novoCodFornecedor}
+              setNovoCodFornecedor={setNovoCodFornecedor}
+              novoDesconto={novoDesconto}
+              setNovoDesconto={setNovoDesconto}
+              novoVolume={novoVolume}
+              setNovoVolume={setNovoVolume}
+              savingNovoItem={savingNovoItem}
+              onAddItem={handleAddItem}
+              onUpdateItem={(args) => updateItemMut.mutate(args)}
+              onDeleteItem={(itemId) => deleteItemMut.mutate(itemId)}
+              onCancelAdd={() => {
+                setAddingItem(false);
+                setNovoCodFornecedor("");
+                setNovoDesconto("");
+                setNovoVolume("");
+              }}
+            />
 
             {/* ========== TAB NEGOCIAÇÃO ========== */}
             {tipoOrigem === "negociacao_cliente" && (
-              <TabsContent value="negociacao" className="space-y-4">
-                <Card>
-                  <CardHeader className="flex flex-row items-center justify-between">
-                    <CardTitle className="text-base">
-                      Histórico de negociação
-                    </CardTitle>
-                    <Button size="sm" onClick={() => setEventoOpen(true)}>
-                      <Plus className="h-4 w-4" /> Registrar evento
-                    </Button>
-                  </CardHeader>
-                  <CardContent>
-                    {eventos.length === 0 ? (
-                      <p className="text-sm text-muted-foreground py-6 text-center">
-                        Nenhum evento registrado ainda.
-                      </p>
-                    ) : (
-                      <div className="space-y-3">
-                        {eventos.map((ev) => {
-                          const Icon = tipoEventoIcon(ev.tipo_evento);
-                          return (
-                            <div
-                              key={ev.id}
-                              className="flex gap-3 p-3 rounded-md border bg-card"
-                            >
-                              <div className="shrink-0 h-8 w-8 rounded-full bg-primary/10 flex items-center justify-center">
-                                <Icon className="h-4 w-4 text-primary" />
-                              </div>
-                              <div className="flex-1 min-w-0 space-y-1">
-                                <div className="flex items-center justify-between gap-2 flex-wrap">
-                                  <div className="font-medium text-sm">
-                                    {TIPO_EVENTO_LABELS[ev.tipo_evento]}
-                                  </div>
-                                  <div className="text-xs text-muted-foreground">
-                                    {formatRelative(ev.data_evento)} ·{" "}
-                                    {formatDateTimeBR(ev.data_evento)}
-                                  </div>
-                                </div>
-                                {(ev.desconto_perc_proposto !== null ||
-                                  ev.volume_minimo_proposto !== null) && (
-                                  <div className="flex gap-2 flex-wrap">
-                                    {ev.desconto_perc_proposto !== null && (
-                                      <Badge variant="secondary">
-                                        {ev.desconto_perc_proposto}% desconto
-                                      </Badge>
-                                    )}
-                                    {ev.volume_minimo_proposto !== null && (
-                                      <Badge variant="secondary">
-                                        Vol. mín. {ev.volume_minimo_proposto}
-                                      </Badge>
-                                    )}
-                                  </div>
-                                )}
-                                {ev.conteudo && (
-                                  <p className="text-sm whitespace-pre-wrap">
-                                    {ev.conteudo}
-                                  </p>
-                                )}
-                                <div className="text-xs text-muted-foreground flex items-center gap-2 flex-wrap">
-                                  <span>Por: {ev.registrado_por || "—"}</span>
-                                  {ev.email_referencia && (
-                                    <button
-                                      className="hover:text-foreground transition-colors flex items-center gap-1"
-                                      onClick={() => {
-                                        navigator.clipboard.writeText(
-                                          ev.email_referencia!,
-                                        );
-                                        toast.success("Copiado");
-                                      }}
-                                    >
-                                      <Mail className="h-3 w-3" />
-                                      {ev.email_referencia}
-                                    </button>
-                                  )}
-                                </div>
-                              </div>
-                            </div>
-                          );
-                        })}
-                      </div>
-                    )}
-                  </CardContent>
-                </Card>
-              </TabsContent>
+              <NegociacaoTab
+                eventos={eventos}
+                onOpenEvento={() => setEventoOpen(true)}
+              />
             )}
           </Tabs>
         </div>
 
         {/* ========== SIDEBAR DIREITA ========== */}
         <div>
-          <Card className="lg:sticky lg:top-4">
-            <CardHeader>
-              <CardTitle className="text-base">Estado e ações</CardTitle>
-            </CardHeader>
-            <CardContent className="space-y-4">
-              <div className="flex justify-center">
-                <Badge
-                  variant="outline"
-                  className={`${estadoBadgeClass(estado)} text-sm py-1.5 px-3`}
-                >
-                  {ESTADO_LABEL[estado] || estado}
-                </Badge>
-              </div>
-
-              {!isNew && (
-                <div className="text-center text-sm text-muted-foreground">
-                  <span className="font-medium text-foreground">
-                    {itensAtivos}
-                  </span>{" "}
-                  {itensAtivos === 1 ? "item ativo" : "itens ativos"},{" "}
-                  <span className="font-medium text-foreground">
-                    {itensConfirmados}
-                  </span>{" "}
-                  confirmados
-                </div>
-              )}
-
-              {!isNew && (
-                <div className="space-y-2 pt-2 border-t">
-                  {(estado === "rascunho" || estado === "negociando") && (
-                    <TooltipProvider>
-                      <Tooltip>
-                        <TooltipTrigger asChild>
-                          <div>
-                            <Button
-                              className="w-full"
-                              disabled={
-                                !podeAtivar ||
-                                transicionarEstadoMut.isPending
-                              }
-                              onClick={() =>
-                                transicionarEstadoMut.mutate("ativa")
-                              }
-                            >
-                              <Check className="h-4 w-4" /> Ativar campanha
-                            </Button>
-                          </div>
-                        </TooltipTrigger>
-                        {!podeAtivar && (
-                          <TooltipContent>
-                            Confirme todos os itens antes de ativar
-                          </TooltipContent>
-                        )}
-                      </Tooltip>
-                    </TooltipProvider>
-                  )}
-
-                  {podeEncerrar && (
-                    <Button
-                      className="w-full"
-                      variant="outline"
-                      onClick={() => transicionarEstadoMut.mutate("encerrada")}
-                      disabled={transicionarEstadoMut.isPending}
-                    >
-                      Encerrar agora
-                    </Button>
-                  )}
-
-                  {podeCancelar && (
-                    <Button
-                      className="w-full"
-                      variant="destructive"
-                      onClick={() => setCancelOpen(true)}
-                      disabled={transicionarEstadoMut.isPending}
-                    >
-                      <X className="h-4 w-4" /> Cancelar campanha
-                    </Button>
-                  )}
-                </div>
-              )}
-            </CardContent>
-          </Card>
+          <EstadoAcoesSidebar
+            estado={estado}
+            isNew={isNew}
+            itensAtivos={itensAtivos}
+            itensConfirmados={itensConfirmados}
+            podeAtivar={podeAtivar}
+            podeCancelar={podeCancelar}
+            podeEncerrar={podeEncerrar}
+            transitioning={transicionarEstadoMut.isPending}
+            onTransition={(novoEstado) =>
+              transicionarEstadoMut.mutate(novoEstado)
+            }
+            onOpenCancel={() => setCancelOpen(true)}
+          />
         </div>
       </div>
 
       {/* ========== DIALOG NOVO EVENTO ========== */}
-      <Dialog open={eventoOpen} onOpenChange={setEventoOpen}>
-        <DialogContent>
-          <DialogHeader>
-            <DialogTitle>Registrar evento de negociação</DialogTitle>
-            <DialogDescription>
-              Adicione um marco da negociação ao histórico da campanha.
-            </DialogDescription>
-          </DialogHeader>
-          <div className="space-y-3">
-            <div>
-              <Label>Tipo de evento</Label>
-              <Select
-                value={novoEvento.tipo_evento}
-                onValueChange={(v) =>
-                  setNovoEvento({ ...novoEvento, tipo_evento: v })
-                }
-              >
-                <SelectTrigger>
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  {Object.entries(TIPO_EVENTO_LABELS).map(([k, v]) => (
-                    <SelectItem key={k} value={k}>
-                      {v}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-            </div>
-            <div className="grid grid-cols-2 gap-3">
-              <div>
-                <Label>Desconto proposto %</Label>
-                <Input
-                  type="number"
-                  step="0.1"
-                  value={novoEvento.desconto_perc_proposto}
-                  onChange={(e) =>
-                    setNovoEvento({
-                      ...novoEvento,
-                      desconto_perc_proposto: e.target.value,
-                    })
-                  }
-                  placeholder="Ex: 25"
-                />
-              </div>
-              <div>
-                <Label>Volume mínimo</Label>
-                <Input
-                  type="number"
-                  step="1"
-                  value={novoEvento.volume_minimo_proposto}
-                  onChange={(e) =>
-                    setNovoEvento({
-                      ...novoEvento,
-                      volume_minimo_proposto: e.target.value,
-                    })
-                  }
-                  placeholder="Opcional"
-                />
-              </div>
-            </div>
-            <div>
-              <Label>Data do evento</Label>
-              <Input
-                type="datetime-local"
-                value={novoEvento.data_evento}
-                onChange={(e) =>
-                  setNovoEvento({ ...novoEvento, data_evento: e.target.value })
-                }
-              />
-            </div>
-            <div>
-              <Label>Referência de email</Label>
-              <Input
-                value={novoEvento.email_referencia}
-                onChange={(e) =>
-                  setNovoEvento({
-                    ...novoEvento,
-                    email_referencia: e.target.value,
-                  })
-                }
-                placeholder="Assunto ou link (opcional)"
-              />
-            </div>
-            <div>
-              <Label>Conteúdo</Label>
-              <Textarea
-                value={novoEvento.conteudo}
-                onChange={(e) =>
-                  setNovoEvento({ ...novoEvento, conteudo: e.target.value })
-                }
-                rows={4}
-                placeholder="Descreva o evento, condições propostas, etc."
-              />
-            </div>
-            <div className="text-xs text-muted-foreground">
-              Será registrado por: {userEmail}
-            </div>
-          </div>
-          <DialogFooter>
-            <Button variant="ghost" onClick={() => setEventoOpen(false)}>
-              Cancelar
-            </Button>
-            <Button
-              onClick={() => addEventoMut.mutate()}
-              disabled={addEventoMut.isPending}
-            >
-              {addEventoMut.isPending && (
-                <Loader2 className="h-4 w-4 animate-spin" />
-              )}
-              Registrar
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
+      <EventoDialog
+        open={eventoOpen}
+        onOpenChange={setEventoOpen}
+        value={novoEvento}
+        onChange={setNovoEvento}
+        userEmail={userEmail}
+        onSubmit={() => addEventoMut.mutate()}
+        submitting={addEventoMut.isPending}
+      />
 
       {/* ========== ALERT DIALOG CANCELAR ========== */}
-      <AlertDialog open={cancelOpen} onOpenChange={setCancelOpen}>
-        <AlertDialogContent>
-          <AlertDialogHeader>
-            <AlertDialogTitle>Cancelar campanha?</AlertDialogTitle>
-            <AlertDialogDescription>
-              Esta ação não pode ser desfeita. A campanha será marcada como
-              cancelada e não será mais aplicada nos pedidos de reposição.
-            </AlertDialogDescription>
-          </AlertDialogHeader>
-          <AlertDialogFooter>
-            <AlertDialogCancel>Voltar</AlertDialogCancel>
-            <AlertDialogAction
-              onClick={() => transicionarEstadoMut.mutate("cancelada")}
-              className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
-            >
-              Sim, cancelar
-            </AlertDialogAction>
-          </AlertDialogFooter>
-        </AlertDialogContent>
-      </AlertDialog>
+      <CancelCampanhaDialog
+        open={cancelOpen}
+        onOpenChange={setCancelOpen}
+        onConfirm={() => transicionarEstadoMut.mutate("cancelada")}
+      />
     </div>
   );
 }
