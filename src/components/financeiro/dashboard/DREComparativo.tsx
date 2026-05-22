@@ -6,8 +6,9 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@
 import { PieChart } from 'lucide-react';
 import { COMPANIES, type Company } from '@/contexts/CompanyContext';
 import { fmtCompact } from '@/components/financeiro/dashboard/format';
+import type { FinDRE } from '@/services/financeiroService';
 
-export function DREComparativo({ data, ano }: { data: Record<string, any[]>; ano: number }) {
+export function DREComparativo({ data, ano }: { data: Record<string, FinDRE[]>; ano: number }) {
   const companies = Object.keys(data);
   if (companies.length < 2) return null;
 
@@ -29,7 +30,7 @@ export function DREComparativo({ data, ano }: { data: Record<string, any[]>; ano
     return { company: co, ...total, margemBruta, margemLiquida };
   });
 
-  const lines: { label: string; field: string; format: 'currency' | 'pct' }[] = [
+  const lines: { label: string; field: 'receita_liquida' | 'lucro_bruto' | 'margemBruta' | 'resultado_operacional' | 'impostos' | 'resultado_liquido' | 'margemLiquida'; format: 'currency' | 'pct' }[] = [
     { label: 'Receita Líquida', field: 'receita_liquida', format: 'currency' },
     { label: 'Lucro Bruto', field: 'lucro_bruto', format: 'currency' },
     { label: 'Margem Bruta', field: 'margemBruta', format: 'pct' },
@@ -72,7 +73,7 @@ export function DREComparativo({ data, ano }: { data: Record<string, any[]>; ano
                     {line.label}
                   </TableCell>
                   {annualTotals.map(t => {
-                    const val = (t as any)[line.field] || 0;
+                    const val = t[line.field] || 0;
                     const isResult = line.field.includes('resultado') || line.field === 'margemLiquida';
                     const colorClass = isResult
                       ? val >= 0 ? 'text-status-success' : 'text-status-error'

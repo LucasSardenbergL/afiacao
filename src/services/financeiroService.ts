@@ -81,6 +81,7 @@ export interface FinDRE {
   detalhamento: {
     receitas: Record<string, number>;
     despesas: Record<string, number>;
+    categorias_nao_mapeadas?: string[];
   };
 }
 
