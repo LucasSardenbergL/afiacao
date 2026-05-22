@@ -364,6 +364,7 @@
     "src/components/GamificationCertificate.tsx",
     "src/components/reposicao/routePlanner/types.ts",
     "src/components/reposicao/routePlanner/priority.ts",
-    "src/components/reposicao/routePlanner/constants.ts"
+    "src/components/reposicao/routePlanner/constants.ts",
+    "src/components/reposicao/routePlanner/renderHelpers.tsx"
   ]
 }
