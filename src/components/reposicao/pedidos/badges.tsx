@@ -1,0 +1,88 @@
+import { Badge } from '@/components/ui/badge';
+import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip';
+import { cn } from '@/lib/utils';
+import { Status, StatusEnvioPortal, PedidoSugerido } from './types';
+import { statusMeta, portalStatusMeta } from './shared';
+
+export function StatusBadge({ status }: { status: Status }) {
+  const meta = statusMeta[status] ?? { label: status, variant: 'outline' as const };
+  return (
+    <Badge variant={meta.variant} className={meta.className}>
+      {meta.label}
+    </Badge>
+  );
+}
+
+// PR5: indica visualmente o split. Renderiza algo só quando o pedido
+// participa de um split (pai ou filho); senão é null e não polui a UI.
+export function SplitInfo({ pedido }: { pedido: PedidoSugerido }) {
+  // Pai (status_em_filhos): mostra "em N partes"
+  if (pedido.status === 'split_em_filhos' && pedido.split_total) {
+    return (
+      <Badge variant="outline" className="bg-status-purple-bg text-status-purple border-status-purple/30 ml-1">
+        em {pedido.split_total} partes
+      </Badge>
+    );
+  }
+  // Filho (split_parent_id preenchido): mostra "Lote X/N"
+  if (pedido.split_parent_id && pedido.split_lote && pedido.split_total) {
+    return (
+      <Badge
+        variant="outline"
+        className="bg-status-purple-bg text-status-purple border-status-purple/30 ml-1"
+        title={`Filho do pedido #${pedido.split_parent_id}`}
+      >
+        Lote {pedido.split_lote}/{pedido.split_total}
+      </Badge>
+    );
+  }
+  return null;
+}
+
+export function PortalBadge({
+  pedido,
+  onClick,
+}: {
+  pedido: PedidoSugerido;
+  onClick: () => void;
+}) {
+  const status = (pedido.status_envio_portal ?? 'nao_aplicavel') as StatusEnvioPortal;
+  const meta = portalStatusMeta[status] ?? portalStatusMeta.nao_aplicavel;
+
+  const tooltipText =
+    (status === 'enviado_portal' || status === 'sucesso_portal') && pedido.portal_protocolo
+      ? `Protocolo: ${pedido.portal_protocolo}`
+      : (status === 'falha_envio_portal' || status === 'erro_nao_retentavel') && pedido.portal_erro
+        ? pedido.portal_erro
+        : (status === 'aceito_portal_sem_protocolo' || status === 'indeterminado_requer_conciliacao')
+          ? 'Portal pode ter recebido — verifique e concilie manualmente'
+          : status === 'erro_retentavel' && pedido.portal_erro
+            ? `Retentável: ${pedido.portal_erro}`
+            : null;
+
+  const badge = (
+    <button
+      type="button"
+      onClick={onClick}
+      disabled={status === 'nao_aplicavel'}
+      className={cn(
+        'inline-flex items-center rounded-full border px-2.5 py-0.5 text-xs font-semibold transition-colors',
+        meta.className,
+        status === 'nao_aplicavel' ? 'cursor-default' : 'cursor-pointer hover:opacity-80',
+      )}
+    >
+      {meta.label}
+    </button>
+  );
+
+  if (!tooltipText) return badge;
+
+  return (
+    <TooltipProvider>
+      <Tooltip>
+        <TooltipTrigger asChild>{badge}</TooltipTrigger>
+        <TooltipContent className="max-w-xs whitespace-pre-wrap break-words">{tooltipText}</TooltipContent>
+      </Tooltip>
+    </TooltipProvider>
+  );
+}
