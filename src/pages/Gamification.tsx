@@ -181,7 +181,7 @@ const Gamification = () => {
         {score && (() => {
           const pillars = PILLAR_CONFIG.map(p => ({
             ...p,
-            value: (score as any)[p.key] as number,
+            value: score[p.key as keyof typeof score] as number,
           }));
           const weakest = pillars.reduce((min, p) => p.value < min.value ? p : min, pillars[0]);
           const action = PILLAR_ACTIONS[weakest.key];
@@ -225,7 +225,7 @@ const Gamification = () => {
 
           <div className="space-y-3">
             {PILLAR_CONFIG.map(pillar => {
-              const value = score ? (score as any)[pillar.key] : 0;
+              const value = score ? (score[pillar.key as keyof typeof score] as number) : 0;
               const Icon = pillar.icon;
               return (
                 <Card key={pillar.key} className="cursor-pointer hover:ring-1 hover:ring-primary/20 transition-all" onClick={() => navigate(pillar.route)}>
@@ -258,7 +258,7 @@ const Gamification = () => {
         <div>
           <h3 className="font-display font-bold text-lg text-foreground mb-3">Jornada de Níveis</h3>
           <div className="space-y-2">
-            {LEVEL_CONFIG.map((lvl, idx) => {
+            {LEVEL_CONFIG.map((lvl) => {
               const isActive = (score?.level || 1) >= lvl.level;
               const isCurrent = (score?.level || 1) === lvl.level;
               const Icon = lvl.icon;

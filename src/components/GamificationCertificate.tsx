@@ -1,7 +1,7 @@
 import { useRef } from 'react';
 import { Button } from '@/components/ui/button';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from '@/components/ui/dialog';
-import { Download, Award, Star, Trophy, Shield } from 'lucide-react';
+import { Download } from 'lucide-react';
 import { format } from 'date-fns';
 import { ptBR } from 'date-fns/locale';
 
@@ -12,14 +12,6 @@ interface CertificateProps {
   totalScore: number;
   date?: string;
 }
-
-const LEVEL_ICONS: Record<number, typeof Award> = {
-  1: Shield,
-  2: Shield,
-  3: Award,
-  4: Star,
-  5: Trophy,
-};
 
 export function GamificationCertificate({ userName, levelName, level, totalScore, date }: CertificateProps) {
   const certRef = useRef<HTMLDivElement>(null);
