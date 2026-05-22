@@ -1,20 +1,14 @@
-import { useState, useEffect, useRef, useMemo, useCallback } from 'react';
+import { useState, useEffect, useRef, useMemo } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
-import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from '@/components/ui/dropdown-menu';
-import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '@/components/ui/dialog';
 import { Input } from '@/components/ui/input';
-import { Label } from '@/components/ui/label';
-import { Textarea } from '@/components/ui/textarea';
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
-import { Checkbox } from '@/components/ui/checkbox';
 import { supabase } from '@/integrations/supabase/client';
 import { useAuth } from '@/contexts/AuthContext';
 import { useFarmerScoring } from '@/hooks/useFarmerScoring';
 import { toast } from 'sonner';
-import { Loader2, MapPin, Clock, Route, Filter, Navigation, ExternalLink, Truck, ShoppingBag, Wrench, Layers, Phone, Search, CheckCircle2, XCircle, Users } from 'lucide-react';
+import { Loader2, Route, Filter, Navigation, ExternalLink, Truck, ShoppingBag, Layers, Search, CheckCircle2, Users } from 'lucide-react';
 import L from 'leaflet';
 import 'leaflet/dist/leaflet.css';
 import type {
@@ -30,9 +24,13 @@ import { enrichWithPriority } from '@/components/reposicao/routePlanner/priority
 import { formatDuration } from '@/components/reposicao/routePlanner/renderHelpers';
 import {
   STOP_DURATION_MIN,
-  PRIORITY_CONFIG,
   STOP_CONFIG,
 } from '@/components/reposicao/routePlanner/constants';
+import { StatsStrip } from '@/components/reposicao/routePlanner/StatsStrip';
+import { RouteStopCard } from '@/components/reposicao/routePlanner/RouteStopCard';
+import { ManualCustomerRow } from '@/components/reposicao/routePlanner/ManualCustomerRow';
+import { TodayVisitCard } from '@/components/reposicao/routePlanner/TodayVisitCard';
+import { CheckoutDialog } from '@/components/reposicao/routePlanner/CheckoutDialog';
 
 // Fix default marker icons for Leaflet + bundlers
 delete (L.Icon.Default.prototype as any)._getIconUrl;
@@ -862,42 +860,6 @@ const AdminRoutePlanner = () => {
     }
   };
 
-  const getStopIcon = (type: StopType) => {
-    switch (type) {
-      case 'pickup_tools': return <Truck className="w-3.5 h-3.5" />;
-      case 'deliver_tools': return <Truck className="w-3.5 h-3.5" />;
-      case 'sales_visit': return <ShoppingBag className="w-3.5 h-3.5" />;
-      case 'hybrid_visit': return <Layers className="w-3.5 h-3.5" />;
-      case 'manual_visit': return <Users className="w-3.5 h-3.5" />;
-    }
-  };
-  
-  const getVisitBadge = (customer: ManualCustomer) => {
-    if (customer.daysSinceLastVisit === null) {
-      return <Badge variant="danger" className="text-xs">Nunca visitado</Badge>;
-    }
-    if (customer.daysSinceLastVisit > 30) {
-      return <Badge variant="warning" className="text-xs">Última visita há {customer.daysSinceLastVisit} dias</Badge>;
-    }
-    return null;
-  };
-  
-  const getOrderBadge = (customer: ManualCustomer) => {
-    if (customer.daysSinceLastOrder === null) {
-      return null;
-    }
-    if (customer.daysSinceLastOrder > 90) {
-      return <Badge variant="danger" className="text-xs">Sem compra há {customer.daysSinceLastOrder} dias</Badge>;
-    }
-    if (customer.daysSinceLastOrder > 30) {
-      return <Badge variant="warning" className="text-xs">Comprou há {customer.daysSinceLastOrder} dias</Badge>;
-    }
-    if (customer.daysSinceLastOrder <= 30) {
-      return <Badge variant="success" className="text-xs">Comprou recentemente</Badge>;
-    }
-    return null;
-  };
-  
   const filteredManualCustomers = useMemo(() => {
     let filtered = manualCustomers;
     
@@ -945,12 +907,6 @@ const AdminRoutePlanner = () => {
     } else {
       navigate(`/sales/new?customer=${stop.customerUserId}`);
     }
-  };
-
-  const getCTALabel = (stop: RouteStop) => {
-    if (stop.orderId) return 'Ver pedido';
-    if (stop.visitReason.includes('afiação vencida')) return 'Criar pedido de afiação';
-    return 'Criar pedido';
   };
 
   // Stats
@@ -1065,86 +1021,19 @@ const AdminRoutePlanner = () => {
                 </div>
               ) : (
                 <div className="space-y-2 max-h-96 overflow-y-auto">
-                  {filteredManualCustomers.map(customer => {
-                    const isSelected = selectedCustomerIds.has(customer.user_id);
-                    const visitStatus = visitStatuses.get(customer.user_id);
-                    
-                    return (
-                      <div
-                        key={customer.user_id}
-                        className={`p-3 border rounded-lg hover:bg-muted/50 transition-colors ${isSelected ? 'bg-primary/5 border-primary' : ''}`}
-                      >
-                        <div className="flex items-start gap-3">
-                          <Checkbox
-                            checked={isSelected}
-                            onCheckedChange={() => toggleCustomerSelection(customer.user_id)}
-                            className="mt-0.5"
-                          />
-                          <div className="flex-1 min-w-0">
-                            <div className="flex items-center gap-2 flex-wrap mb-1">
-                              <p className="font-medium text-sm">{customer.name}</p>
-                              {!customer.hasAddress && (
-                                <Badge variant="outline" className="text-xs text-muted-foreground">
-                                  <MapPin className="w-3 h-3 mr-1" />
-                                  Sem endereço
-                                </Badge>
-                              )}
-                              {getVisitBadge(customer)}
-                              {getOrderBadge(customer)}
-                              {visitStatus?.isCheckedIn && (
-                                <Badge variant="success" className="text-xs gap-1">
-                                  <CheckCircle2 className="w-3 h-3" />
-                                  Em visita · {formatTimer(visitTimers.get(customer.user_id) ?? 0)}
-                                </Badge>
-                              )}
-                            </div>
-                            {customer.hasAddress ? (
-                              <>
-                                <p className="text-xs text-muted-foreground">
-                                  {customer.neighborhood}, {customer.city}
-                                </p>
-                                <p className="text-xs text-muted-foreground">
-                                  {customer.address.street}, {customer.address.number}
-                                </p>
-                              </>
-                            ) : (
-                              <p className="text-xs text-muted-foreground italic">
-                                Endereço não cadastrado — sincronize via Painel de Sync
-                              </p>
-                            )}
-                            
-                            {/* Check-in/Check-out buttons */}
-                            {isSelected && (
-                              <div className="mt-2 flex gap-2">
-                                {!visitStatus?.isCheckedIn ? (
-                                  <Button
-                                    size="sm"
-                                    variant="outline"
-                                    onClick={() => handleCheckIn(customer)}
-                                    className="text-xs h-7"
-                                  >
-                                    <CheckCircle2 className="w-3 h-3 mr-1" />
-                                    Check-in
-                                  </Button>
-                                ) : (
-                                  <Button
-                                    size="sm"
-                                    variant="outline"
-                                    onClick={() => openCheckoutDialog(customer.user_id, customer.name)}
-                                    className="text-xs h-7"
-                                  >
-                                    <XCircle className="w-3 h-3 mr-1" />
-                                    Check-out
-                                  </Button>
-                                )}
-                              </div>
-                            )}
-                          </div>
-                        </div>
-                      </div>
-                    );
-                  })}
-                  
+                  {filteredManualCustomers.map(customer => (
+                    <ManualCustomerRow
+                      key={customer.user_id}
+                      customer={customer}
+                      isSelected={selectedCustomerIds.has(customer.user_id)}
+                      isCheckedIn={!!visitStatuses.get(customer.user_id)?.isCheckedIn}
+                      timerLabel={formatTimer(visitTimers.get(customer.user_id) ?? 0)}
+                      onToggle={() => toggleCustomerSelection(customer.user_id)}
+                      onCheckIn={() => handleCheckIn(customer)}
+                      onCheckout={() => openCheckoutDialog(customer.user_id, customer.name)}
+                    />
+                  ))}
+
                   {filteredManualCustomers.length === 0 && (
                     <div className="text-center py-8 text-muted-foreground text-sm">
                       Nenhum cliente encontrado
@@ -1173,33 +1062,7 @@ const AdminRoutePlanner = () => {
         </div>
 
         {/* Stats */}
-        <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
-          {([
-            { type: 'pickup_tools' as StopType, icon: Truck },
-            { type: 'deliver_tools' as StopType, icon: Truck },
-            { type: 'sales_visit' as StopType, icon: ShoppingBag },
-            { type: 'hybrid_visit' as StopType, icon: Layers },
-          ]).filter(s => {
-            if (planningMode === 'logistica') return s.type === 'pickup_tools' || s.type === 'deliver_tools';
-            if (planningMode === 'comercial') return s.type === 'sales_visit' || s.type === 'hybrid_visit';
-            return true;
-          }).map(s => {
-            const cfg = STOP_CONFIG[s.type];
-            return (
-              <Card key={s.type}>
-                <CardContent className="pt-3 pb-2 px-3 flex items-center gap-2">
-                  <div className={`p-1.5 rounded-md ${cfg.bgClass}`}>
-                    <s.icon className="w-4 h-4" />
-                  </div>
-                  <div>
-                    <p className="text-lg font-bold text-foreground">{stopCounts[s.type]}</p>
-                    <p className="text-[10px] text-muted-foreground leading-tight">{cfg.label}</p>
-                  </div>
-                </CardContent>
-              </Card>
-            );
-          })}
-        </div>
+        <StatsStrip planningMode={planningMode} stopCounts={stopCounts} />
 
         {/* Map */}
         <Card className="overflow-hidden">
@@ -1295,117 +1158,20 @@ const AdminRoutePlanner = () => {
               </CardContent>
             </Card>
           ) : optimizedRoute.length > 0 ? (
-            optimizedRoute.map((stop, idx) => {
-              const cfg = STOP_CONFIG[stop.stopType];
-              return (
-                <Card key={stop.id} className={`hover:shadow-md transition-shadow ${visitStatuses.get(stop.customerUserId)?.isCheckedIn ? 'border-status-success/60 bg-status-success-bg/40' : ''}`}>
-                  <CardContent className="py-3 px-4">
-                    <div className="flex items-start gap-3">
-                      {/* Number circle colored by type */}
-                      <div
-                        className="flex-shrink-0 w-8 h-8 rounded-full flex items-center justify-center font-bold text-sm text-white"
-                        style={{ backgroundColor: cfg.markerColor }}
-                      >
-                        {idx + 1}
-                      </div>
-                      <div className="flex-1 min-w-0">
-                        <div className="flex items-center gap-2 mb-1">
-                          <p className="font-semibold text-foreground truncate">{stop.customerName}</p>
-                          <Badge className={`text-[10px] px-1.5 py-0 ${cfg.bgClass} border-0`}>
-                            {getStopIcon(stop.stopType)}
-                            <span className="ml-1">{cfg.label}</span>
-                          </Badge>
-                          {(() => {
-                            const pCfg = PRIORITY_CONFIG[stop.priorityLabel];
-                            const PIcon = pCfg.icon;
-                            return (
-                              <Badge className={`text-[10px] px-1.5 py-0 ${pCfg.bgClass} border-0 gap-0.5`} title={stop.priorityFactors.join(', ')}>
-                                <PIcon className="w-3 h-3" />
-                                {pCfg.label}
-                              </Badge>
-                            );
-                          })()}
-                        </div>
-                        <p className="text-sm text-muted-foreground truncate">
-                          {stop.address.street}, {stop.address.number} - {stop.address.neighborhood}
-                        </p>
-                        <p className="text-xs text-muted-foreground/80 mt-0.5 line-clamp-2">
-                          {stop.visitReason}
-                        </p>
-                        <div className="flex items-center gap-3 mt-1.5 text-xs text-muted-foreground flex-wrap">
-                          <span className="flex items-center gap-1">
-                            <Clock className="w-3 h-3" />
-                            ~{STOP_DURATION_MIN[stop.stopType]}min
-                          </span>
-                          {stop.timeSlot && (
-                            <span className="flex items-center gap-1">
-                              <Clock className="w-3 h-3" />
-                              {stop.timeSlot === 'manha' ? 'Manhã' : 'Tarde'}
-                            </span>
-                          )}
-                          {stop.businessHoursOpen && (
-                            <span>Funciona: {stop.businessHoursOpen} - {stop.businessHoursClose || '?'}</span>
-                          )}
-                          {!stop.lat && <span className="text-destructive">Sem coordenadas</span>}
-                        </div>
-                        {/* CTAs */}
-                        <div className="flex items-center gap-2 mt-2 flex-wrap">
-                          <Button size="sm" variant="outline" className="h-7 text-xs" onClick={() => handleStopCTA(stop)}>
-                            {getCTALabel(stop)}
-                          </Button>
-                          {stop.phone && (
-                            <Button size="sm" variant="ghost" className="h-7 text-xs gap-1" asChild>
-                              <a href={`tel:${stop.phone}`}>
-                                <Phone className="w-3 h-3" /> Ligar
-                              </a>
-                            </Button>
-                          )}
-                          {(() => {
-                            const vs = visitStatuses.get(stop.customerUserId);
-                            if (!vs?.isCheckedIn) {
-                              return (
-                                <Button
-                                  size="sm" variant="outline"
-                                  className="h-7 text-xs gap-1 border-status-success text-status-success hover:bg-status-success-bg"
-                                  onClick={() => handleCheckInStop(stop)}
-                                >
-                                  <CheckCircle2 className="w-3 h-3" /> Check-in
-                                </Button>
-                              );
-                            }
-                            return (
-                              <div className="flex items-center gap-1.5">
-                                <span className="text-xs font-mono text-status-success">
-                                  {formatTimer(visitTimers.get(stop.customerUserId) ?? 0)}
-                                </span>
-                                <Button
-                                  size="sm" variant="outline"
-                                  className="h-7 text-xs gap-1 border-status-warning text-status-warning hover:bg-status-warning-bg"
-                                  onClick={() => openCheckoutDialog(stop.customerUserId, stop.customerName)}
-                                >
-                                  <XCircle className="w-3 h-3" /> Check-out
-                                </Button>
-                              </div>
-                            );
-                          })()}
-                        </div>
-                      </div>
-                      <DropdownMenu>
-                        <DropdownMenuTrigger asChild>
-                          <Button size="icon" variant="outline" className="flex-shrink-0 h-9 w-9">
-                            <ExternalLink className="w-4 h-4" />
-                          </Button>
-                        </DropdownMenuTrigger>
-                        <DropdownMenuContent align="end">
-                          <DropdownMenuItem onClick={() => openInWaze(stop)}>Abrir no Waze</DropdownMenuItem>
-                          <DropdownMenuItem onClick={() => openInGoogleMaps(stop)}>Abrir no Google Maps</DropdownMenuItem>
-                        </DropdownMenuContent>
-                      </DropdownMenu>
-                    </div>
-                  </CardContent>
-                </Card>
-              );
-            })
+            optimizedRoute.map((stop, idx) => (
+              <RouteStopCard
+                key={stop.id}
+                stop={stop}
+                idx={idx}
+                isCheckedIn={!!visitStatuses.get(stop.customerUserId)?.isCheckedIn}
+                timerLabel={formatTimer(visitTimers.get(stop.customerUserId) ?? 0)}
+                onStopCTA={() => handleStopCTA(stop)}
+                onCheckIn={() => handleCheckInStop(stop)}
+                onCheckout={() => openCheckoutDialog(stop.customerUserId, stop.customerName)}
+                onOpenWaze={() => openInWaze(stop)}
+                onOpenGoogleMaps={() => openInGoogleMaps(stop)}
+              />
+            ))
           ) : null}
         </div>
         {/* Visitas Realizadas Hoje */}
@@ -1427,106 +1193,26 @@ const AdminRoutePlanner = () => {
               if (!a.check_out_at && b.check_out_at) return -1;
               if (a.check_out_at && !b.check_out_at) return 1;
               return 0;
-            }).map((visit: any) => {
-              const isActive = !visit.check_out_at;
-              const duration = visit.check_out_at && visit.check_in_at
-                ? Math.floor((new Date(visit.check_out_at).getTime() - new Date(visit.check_in_at).getTime()) / 60000)
-                : null;
-              const checkInTime = visit.check_in_at
-                ? new Date(visit.check_in_at).toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' })
-                : '—';
-              return (
-                <Card key={visit.id} className={isActive ? 'border-status-success/60' : ''}>
-                  <CardContent className="py-3 px-4">
-                    <div className="flex items-center gap-3">
-                      <div className={`w-2.5 h-2.5 rounded-full flex-shrink-0 ${isActive ? 'bg-status-success animate-pulse' : 'bg-muted-foreground'}`} />
-                      <div className="flex-1 min-w-0">
-                        <p className="text-sm font-medium">{visit.customerName}</p>
-                        <p className="text-xs text-muted-foreground">
-                          Check-in: {checkInTime}
-                          {duration !== null && ` · ${duration}min`}
-                        </p>
-                      </div>
-                      <div className="flex items-center gap-2 flex-shrink-0">
-                        {isActive ? (
-                          <Badge variant="success" className="text-xs">Em visita</Badge>
-                        ) : visit.result ? (
-                          <Badge variant={visit.result === 'pedido_fechado' ? 'success' : 'outline'} className="text-xs">
-                            {visit.result === 'pedido_fechado' ? 'Pedido fechado'
-                              : visit.result === 'interesse' ? 'Interesse'
-                              : visit.result === 'sem_interesse' ? 'Sem interesse'
-                              : visit.result === 'ausente' ? 'Ausente'
-                              : visit.result === 'reagendar' ? 'Reagendar'
-                              : visit.result}
-                          </Badge>
-                        ) : null}
-                      </div>
-                    </div>
-                  </CardContent>
-                </Card>
-              );
-            })
+            }).map((visit: any) => (
+              <TodayVisitCard key={visit.id} visit={visit} />
+            ))
           )}
         </div>
       </main>
 
       {/* Checkout Dialog */}
-      <Dialog open={checkoutOpen} onOpenChange={setCheckoutOpen}>
-        <DialogContent className="max-w-sm">
-          <DialogHeader>
-            <DialogTitle>Check-out — {checkoutTarget?.name}</DialogTitle>
-          </DialogHeader>
-          <div className="space-y-4 py-2">
-            <div>
-              <Label>Resultado da visita *</Label>
-              <Select value={checkoutResult} onValueChange={setCheckoutResult}>
-                <SelectTrigger className="mt-1.5">
-                  <SelectValue placeholder="Selecione o resultado..." />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="pedido_fechado">✅ Pedido fechado</SelectItem>
-                  <SelectItem value="interesse">🤔 Interesse</SelectItem>
-                  <SelectItem value="sem_interesse">❌ Sem interesse</SelectItem>
-                  <SelectItem value="ausente">🚫 Ausente</SelectItem>
-                  <SelectItem value="reagendar">📅 Reagendar</SelectItem>
-                </SelectContent>
-              </Select>
-            </div>
-            
-            {checkoutResult === 'pedido_fechado' && (
-              <div>
-                <Label>Receita gerada (R$)</Label>
-                <Input
-                  type="number"
-                  min="0"
-                  step="0.01"
-                  placeholder="0,00"
-                  value={checkoutRevenue}
-                  onChange={e => setCheckoutRevenue(e.target.value)}
-                  className="mt-1.5"
-                />
-              </div>
-            )}
-            
-            <div>
-              <Label>Observações (opcional)</Label>
-              <Textarea
-                placeholder="Notas sobre a visita..."
-                value={checkoutNotes}
-                onChange={e => setCheckoutNotes(e.target.value)}
-                className="mt-1.5 resize-none"
-                rows={3}
-              />
-            </div>
-          </div>
-          <DialogFooter className="gap-2">
-            <Button variant="outline" onClick={() => setCheckoutOpen(false)}>Cancelar</Button>
-            <Button disabled={!checkoutResult} onClick={confirmCheckout}>
-              Confirmar Check-out
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
+      <CheckoutDialog
+        open={checkoutOpen}
+        onOpenChange={setCheckoutOpen}
+        targetName={checkoutTarget?.name}
+        result={checkoutResult}
+        onResultChange={setCheckoutResult}
+        revenue={checkoutRevenue}
+        onRevenueChange={setCheckoutRevenue}
+        notes={checkoutNotes}
+        onNotesChange={setCheckoutNotes}
+        onConfirm={confirmCheckout}
+      />
 
     </div>
   );
