@@ -73,153 +73,27 @@ import {
 } from "@/components/ui/breadcrumb";
 import { cn } from "@/lib/utils";
 import { HelpDrawer } from "@/components/help/HelpDrawer";
-
-const EMPRESA = "OBEN";
-
-type StatusSugestao = "nova" | "visualizada" | "acao_tomada" | "ignorada" | "fechada_sem_acordo" | "convertida";
-type Categoria = "prioritario" | "forte" | "moderado" | "fraco";
-
-interface Sugestao {
-  id: number;
-  empresa: string;
-  sku_codigo_omie: string;
-  sku_descricao: string | null;
-  motivo: string | null;
-  motivo_detalhes: Record<string, unknown> | null;
-  score_final: number | null;
-  volume_financeiro_12m: number | null;
-  preco_medio_unitario: number | null;
-  promocoes_12m: number | null;
-  perc_meses_com_promo: number | null;
-  status: StatusSugestao;
-  data_geracao: string | null;
-  valido_ate: string | null;
-  dias_ate_expirar: number | null;
-  campanha_id_gerada: number | null;
-  categoria: Categoria | null;
-  fornecedor_nome: string | null;
-  ponto_pedido: number | null;
-  estoque_maximo: number | null;
-  estoque_efetivo: number | null;
-}
-
-interface RankingRow {
-  empresa: string;
-  sku_codigo_omie: string;
-  sku_descricao: string | null;
-  fornecedor_nome: string | null;
-  volume_financeiro_12m: number | null;
-  num_compras_12m: number | null;
-  meses_com_compra: number | null;
-  preco_medio_unitario: number | null;
-  coef_variacao: number | null;
-  ultima_compra: string | null;
-  promocoes_12m: number | null;
-  perc_meses_com_promo: number | null;
-  score_volume: number | null;
-  score_consistencia: number | null;
-  score_preco: number | null;
-  score_ausencia_promo: number | null;
-  score_final: number | null;
-  categoria: Categoria | null;
-  atualizado_em: string | null;
-}
-
-const CATEGORIAS: Array<{ value: Categoria; label: string }> = [
-  { value: "prioritario", label: "Prioritário" },
-  { value: "forte", label: "Forte" },
-  { value: "moderado", label: "Moderado" },
-  { value: "fraco", label: "Fraco" },
-];
-
-const STATUS_LIST: Array<{ value: StatusSugestao; label: string }> = [
-  { value: "nova", label: "Nova" },
-  { value: "visualizada", label: "Visualizada" },
-  { value: "acao_tomada", label: "Em andamento" },
-];
-
-function formatBRL(v: number | null | undefined): string {
-  if (v === null || v === undefined) return "—";
-  return new Intl.NumberFormat("pt-BR", { style: "currency", currency: "BRL" }).format(Number(v));
-}
-
-function formatPerc(v: number | null | undefined, digits = 1): string {
-  if (v === null || v === undefined) return "—";
-  return `${Number(v).toLocaleString("pt-BR", { minimumFractionDigits: digits, maximumFractionDigits: digits })}%`;
-}
-
-function categoriaBadgeClass(cat: Categoria | null | undefined): string {
-  switch (cat) {
-    case "prioritario":
-      return "bg-status-warning/15 text-status-warning border-status-warning/30";
-    case "forte":
-      return "bg-status-info/15 text-status-info border-status-info/30";
-    case "moderado":
-      return "bg-muted text-muted-foreground border-border";
-    case "fraco":
-      return "bg-muted/50 text-muted-foreground border-border";
-    default:
-      return "bg-muted text-muted-foreground border-border";
-  }
-}
-
-function categoriaLabel(cat: Categoria | null | undefined): string {
-  return CATEGORIAS.find((c) => c.value === cat)?.label ?? "—";
-}
-
-function statusBadgeClass(status: StatusSugestao): string {
-  switch (status) {
-    case "nova":
-      return "bg-status-success/15 text-status-success border-status-success/30";
-    case "visualizada":
-      return "bg-status-info/15 text-status-info border-status-info/30";
-    case "acao_tomada":
-      return "bg-status-warning-bold/15 text-status-warning-bold border-status-warning-bold/30";
-    default:
-      return "bg-muted text-muted-foreground border-border";
-  }
-}
-
-function statusLabel(status: StatusSugestao): string {
-  switch (status) {
-    case "nova":
-      return "Nova";
-    case "visualizada":
-      return "Visualizada";
-    case "acao_tomada":
-      return "Em andamento";
-    case "ignorada":
-      return "Ignorada";
-    case "fechada_sem_acordo":
-      return "Fechada sem acordo";
-    case "convertida":
-      return "Convertida";
-    default:
-      return status;
-  }
-}
-
-function percPromoBadgeClass(p: number | null | undefined): string {
-  const v = Number(p ?? 0);
-  if (v === 0) return "bg-status-success/15 text-status-success border-status-success/30";
-  if (v <= 30) return "bg-status-warning/15 text-status-warning border-status-warning/30";
-  return "bg-destructive/15 text-destructive border-destructive/30";
-}
-
-type OrdenacaoKey = "score" | "volume" | "preco" | "expirando";
-
-const ORDENACOES: Array<{ value: OrdenacaoKey; label: string }> = [
-  { value: "score", label: "Maior score" },
-  { value: "volume", label: "Maior volume" },
-  { value: "preco", label: "Maior preço unitário" },
-  { value: "expirando", label: "Expirando primeiro" },
-];
-
-function lastDayOfNextMonth(): string {
-  const now = new Date();
-  const d = new Date(now.getFullYear(), now.getMonth() + 2, 0);
-  return d.toISOString().slice(0, 10);
-}
+import {
+  EMPRESA,
+  CATEGORIAS,
+  STATUS_LIST,
+  ORDENACOES,
+  type StatusSugestao,
+  type Categoria,
+  type OrdenacaoKey,
+  type Sugestao,
+  type RankingRow,
+} from "@/components/reposicao/negociacaoParalela/types";
+import {
+  formatBRL,
+  formatPerc,
+  categoriaBadgeClass,
+  categoriaLabel,
+  statusBadgeClass,
+  statusLabel,
+  percPromoBadgeClass,
+  lastDayOfNextMonth,
+} from "@/components/reposicao/negociacaoParalela/helpers";
 
 export default function AdminReposicaoNegociacaoParalela() {
   const navigate = useNavigate();
