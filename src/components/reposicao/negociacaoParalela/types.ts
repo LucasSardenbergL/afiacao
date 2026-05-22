@@ -78,3 +78,16 @@ export const ORDENACOES: Array<{ value: OrdenacaoKey; label: string }> = [
   { value: "preco", label: "Maior preço unitário" },
   { value: "expirando", label: "Expirando primeiro" },
 ];
+
+export type VolumeUnidade = "unidades" | "reais" | "kg" | "litros";
+export type CanalNegociacao = "email" | "whatsapp" | "ligacao" | "visita_presencial" | "outro";
+
+export interface ConvertForm {
+  desconto_perc: number;
+  volume_minimo: number;
+  volume_unidade: VolumeUnidade;
+  data_fim: string;
+  responsavel: string;
+  canal: CanalNegociacao;
+  observacoes: string;
+}
