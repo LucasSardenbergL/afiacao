@@ -27,6 +27,7 @@ import type {
   RouteStop,
 } from '@/components/reposicao/routePlanner/types';
 import { enrichWithPriority } from '@/components/reposicao/routePlanner/priority';
+import { formatDuration } from '@/components/reposicao/routePlanner/renderHelpers';
 import {
   STOP_DURATION_MIN,
   PRIORITY_CONFIG,
@@ -978,13 +979,6 @@ const AdminRoutePlanner = () => {
     }
     return { stopMin, travelMin, totalMin: stopMin + travelMin };
   }, [optimizedRoute]);
-
-  const formatDuration = (min: number) => {
-    if (min < 60) return `${min}min`;
-    const h = Math.floor(min / 60);
-    const m = min % h;
-    return m > 0 ? `${h}h${String(m).padStart(2, '0')}` : `${h}h`;
-  };
 
   const isLoading = authLoading || loading;
 
