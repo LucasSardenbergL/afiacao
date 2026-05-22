@@ -8,6 +8,7 @@ import { Star, Award, Cake, MessageSquare } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { CARGO_LABEL, type CustomerContact } from '@/lib/customer-contact/types';
 import { formatPhone } from './format';
+import { CallButton } from '@/components/call/CallButton';
 
 export function KpiCard({
   label,
@@ -154,12 +155,10 @@ export function ContactRow({
                 {formatPhone(contact.phone)} · só WhatsApp
               </a>
             ) : (
-              <a
-                href={`tel:${contact.phone}`}
-                className="hover:underline hover:text-foreground transition-colors"
-              >
+              <span className="inline-flex items-center gap-1">
                 {formatPhone(contact.phone)}
-              </a>
+                <CallButton phone={contact.phone} customerName={displayName} variant="icon" />
+              </span>
             )}
           </div>
           {contact.email && (
