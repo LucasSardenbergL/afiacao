@@ -88,7 +88,7 @@ export default function GovernanceSettings() {
       toast.success('Responsável padrão de produção atualizado');
       queryClient.invalidateQueries({ queryKey: ['governance-settings', CONFIG_KEY] });
     },
-    onError: (e: any) => toast.error(e?.message || 'Falha ao salvar'),
+    onError: (e) => toast.error(e?.message || 'Falha ao salvar'),
   });
 
   if (!allowed) {
