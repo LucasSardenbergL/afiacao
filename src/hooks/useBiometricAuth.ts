@@ -172,15 +172,17 @@ export const useBiometricAuth = (): BiometricAuthHook => {
 
       return true;
     } catch (error) {
-      const name = error instanceof Error ? error.name : undefined;
-      logger.error('Biometric registration failed', { stage: 'register', errorName: name, error });
-      if (name === 'NotAllowedError') {
+      // WebAuthn rejeita com DOMException, que nem sempre é instanceof Error —
+      // leitura estrutural preserva name/message (ex: NotAllowedError) sem usar any.
+      const err = error as { name?: string; message?: string };
+      logger.error('Biometric registration failed', { stage: 'register', errorName: err?.name, error });
+      if (err?.name === 'NotAllowedError') {
         toast.error('Acesso negado', {
           description: 'Você precisa permitir o uso de biometria',
         });
       } else {
         toast.error('Erro ao registrar biometria', {
-          description: error instanceof Error ? error.message : 'Tente novamente mais tarde',
+          description: err?.message || 'Tente novamente mais tarde',
         });
       }
       return false;
@@ -237,9 +239,9 @@ export const useBiometricAuth = (): BiometricAuthHook => {
         email: data.email,
       };
     } catch (error) {
-      const name = error instanceof Error ? error.name : undefined;
-      logger.warn('Biometric authentication failed', { stage: 'authenticate', errorName: name, error });
-      if (name === 'NotAllowedError') {
+      const err = error as { name?: string; message?: string };
+      logger.warn('Biometric authentication failed', { stage: 'authenticate', errorName: err?.name, error });
+      if (err?.name === 'NotAllowedError') {
         toast.error('Acesso negado', {
           description: 'Autenticação biométrica cancelada',
         });

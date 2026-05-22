@@ -33,9 +33,8 @@ export function useCustomerCalls(customerId: string | null) {
     gcTime: 5 * 60_000,
     queryFn: async (): Promise<CustomerCallRow[]> => {
       if (!customerId) return [];
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      const { data, error } = await (supabase
-        .from('farmer_calls') as any)
+      const { data, error } = await supabase
+        .from('farmer_calls')
         .select(`
           id, farmer_id, customer_user_id, phone_dialed, call_backend,
           started_at, ended_at, duration_seconds,
