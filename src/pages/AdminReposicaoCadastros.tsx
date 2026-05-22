@@ -58,20 +58,21 @@ function KpiCards() {
     queryFn: async () => {
       const { data: comGrupo, error: e1 } = await supabase
         .from("sku_grupo_producao")
-        .select("sku_codigo");
+        .select("sku_codigo_omie")
+        .eq("empresa", empresa);
       if (e1) return 0;
-      const grupoRows = (comGrupo ?? []) as unknown as Array<{ sku_codigo: string | null }>;
-      const setComGrupo = new Set(grupoRows.map((r) => r.sku_codigo));
+      const grupoRows = (comGrupo ?? []) as unknown as Array<{ sku_codigo_omie: string | number | null }>;
+      const setComGrupo = new Set(grupoRows.map((r) => String(r.sku_codigo_omie)));
 
       const { data: ativos, error: e2 } = await supabase
         .from("sku_parametros")
-        .select("sku_codigo")
+        .select("sku_codigo_omie")
         .eq("empresa", empresa)
         .eq("ativo", true);
       if (e2) return 0;
 
-      const ativosRows = (ativos ?? []) as unknown as Array<{ sku_codigo: string | null }>;
-      return ativosRows.filter((r) => !setComGrupo.has(r.sku_codigo)).length;
+      const ativosRows = (ativos ?? []) as unknown as Array<{ sku_codigo_omie: string | number | null }>;
+      return ativosRows.filter((r) => !setComGrupo.has(String(r.sku_codigo_omie))).length;
     },
     refetchInterval: 60000,
     staleTime: 30000,
