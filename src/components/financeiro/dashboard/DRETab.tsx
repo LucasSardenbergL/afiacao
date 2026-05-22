@@ -5,9 +5,14 @@ import { Badge } from '@/components/ui/badge';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { AlertTriangle, FileText } from 'lucide-react';
 import { type FinanceiroView } from '@/hooks/useFinanceiro';
+import type { FinDRE } from '@/services/financeiroService';
 import { fmtCompact } from '@/components/financeiro/dashboard/format';
 
-export function DRETab({ data, view, ano }: { data: any[]; view: FinanceiroView; ano: number }) {
+type FinDRENumericField = {
+  [K in keyof FinDRE]: FinDRE[K] extends number ? K : never;
+}[keyof FinDRE];
+
+export function DRETab({ data, view, ano }: { data: FinDRE[]; view: FinanceiroView; ano: number }) {
   if (!data || data.length === 0) {
     return (
       <Card>
@@ -20,17 +25,17 @@ export function DRETab({ data, view, ano }: { data: any[]; view: FinanceiroView;
   }
 
   // Data already comes consolidated from hook (dreConsolidado) — no re-consolidation needed
-  const rows = [...data].sort((a: any, b: any) => a.mes - b.mes);
+  const rows = [...data].sort((a, b) => a.mes - b.mes);
 
   // Ponto 5: check for unmapped categories
-  const unmappedCats = rows.flatMap((r: any) =>
+  const unmappedCats = rows.flatMap((r) =>
     r.detalhamento?.categorias_nao_mapeadas || []
   );
   const uniqueUnmapped = [...new Set(unmappedCats)];
 
   const meses = ['Jan', 'Fev', 'Mar', 'Abr', 'Mai', 'Jun', 'Jul', 'Ago', 'Set', 'Out', 'Nov', 'Dez'];
 
-  const dreLines = [
+  const dreLines: { label: string; field: FinDRENumericField; bold: boolean; color: string }[] = [
     { label: 'Receita Bruta', field: 'receita_bruta', bold: true, color: '' },
     { label: '(-) Deduções', field: 'deducoes', bold: false, color: 'text-status-error' },
     { label: '= Receita Líquida', field: 'receita_liquida', bold: true, color: '' },
@@ -81,7 +86,7 @@ export function DRETab({ data, view, ano }: { data: any[]; view: FinanceiroView;
             <TableHeader>
               <TableRow>
                 <TableHead className="sticky left-0 bg-background min-w-[180px]">Linha</TableHead>
-                {rows.map((r: any) => (
+                {rows.map((r) => (
                   <TableHead key={r.mes} className="text-right min-w-[100px]">
                     {meses[r.mes - 1]}
                   </TableHead>
@@ -94,7 +99,7 @@ export function DRETab({ data, view, ano }: { data: any[]; view: FinanceiroView;
                   <TableCell className={`sticky left-0 bg-background text-sm ${line.bold ? 'font-bold' : ''}`}>
                     {line.label}
                   </TableCell>
-                  {rows.map((r: any) => {
+                  {rows.map((r) => {
                     const val = r[line.field] || 0;
                     const colorClass = line.color || (line.bold && line.field.includes('resultado')
                       ? (val >= 0 ? 'text-status-success' : 'text-status-error')
@@ -112,7 +117,7 @@ export function DRETab({ data, view, ano }: { data: any[]; view: FinanceiroView;
                 <TableCell className="sticky left-0 bg-background text-sm font-medium text-muted-foreground">
                   Margem Bruta %
                 </TableCell>
-                {rows.map((r: any) => {
+                {rows.map((r) => {
                   const pct = r.receita_liquida > 0 ? (r.lucro_bruto / r.receita_liquida) * 100 : 0;
                   return (
                     <TableCell key={r.mes} className="text-right text-sm text-muted-foreground">
@@ -126,7 +131,7 @@ export function DRETab({ data, view, ano }: { data: any[]; view: FinanceiroView;
                 <TableCell className="sticky left-0 bg-background text-sm font-medium text-muted-foreground">
                   Margem Líquida %
                 </TableCell>
-                {rows.map((r: any) => {
+                {rows.map((r) => {
                   const pct = r.receita_liquida > 0 ? (r.resultado_liquido / r.receita_liquida) * 100 : 0;
                   return (
                     <TableCell key={r.mes} className={`text-right text-sm font-medium ${pct >= 0 ? 'text-status-success' : 'text-status-error'}`}>

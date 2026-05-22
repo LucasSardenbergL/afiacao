@@ -1,10 +1,11 @@
 // Card de aging (faixas de vencimento) do dashboard financeiro.
 // Extraído de src/pages/FinanceiroDashboard.tsx (god-component split).
+import type { AgingData } from '@/services/financeiroService';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Skeleton } from '@/components/ui/skeleton';
 import { fmt, fmtCompact } from '@/components/financeiro/dashboard/format';
 
-export function AgingCard({ title, data }: { title: string; data: any; type: 'receber' | 'pagar' }) {
+export function AgingCard({ title, data }: { title: string; data: AgingData | null; type: 'receber' | 'pagar' }) {
   if (!data) return (
     <Card>
       <CardHeader className="pb-3">

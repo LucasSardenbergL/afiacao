@@ -1,11 +1,12 @@
 // Tab de Fluxo de Caixa (visão semanal) do dashboard financeiro.
 // Extraído de src/pages/FinanceiroDashboard.tsx (god-component split).
+import type { FluxoCaixaDiario } from '@/services/financeiroService';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Skeleton } from '@/components/ui/skeleton';
 import { BarChart3 } from 'lucide-react';
 import { fmtCompact, getWeekLabel } from '@/components/financeiro/dashboard/format';
 
-export function FluxoCaixaTab({ data, loading, saldoCC }: { data: any[]; loading: boolean; saldoCC?: number }) {
+export function FluxoCaixaTab({ data, loading, saldoCC }: { data: FluxoCaixaDiario[]; loading: boolean; saldoCC?: number }) {
   if (loading) return <Skeleton className="h-60" />;
   if (!data || data.length === 0) {
     return (

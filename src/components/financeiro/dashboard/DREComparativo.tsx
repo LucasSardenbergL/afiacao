@@ -5,14 +5,27 @@ import { Badge } from '@/components/ui/badge';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { PieChart } from 'lucide-react';
 import { COMPANIES, type Company } from '@/contexts/CompanyContext';
+import type { FinDRE } from '@/services/financeiroService';
 import { fmtCompact } from '@/components/financeiro/dashboard/format';
 
-export function DREComparativo({ data, ano }: { data: Record<string, any[]>; ano: number }) {
+type DRETotais = {
+  company: string;
+  receita_liquida: number;
+  lucro_bruto: number;
+  resultado_operacional: number;
+  resultado_liquido: number;
+  impostos: number;
+  margemBruta: number;
+  margemLiquida: number;
+};
+type DRETotaisField = Exclude<keyof DRETotais, 'company'>;
+
+export function DREComparativo({ data, ano }: { data: Record<string, FinDRE[]>; ano: number }) {
   const companies = Object.keys(data);
   if (companies.length < 2) return null;
 
   // Calculate annual totals per company
-  const annualTotals = companies.map(co => {
+  const annualTotals: DRETotais[] = companies.map(co => {
     const rows = data[co] || [];
     const total = rows.reduce(
       (acc, r) => ({
@@ -29,7 +42,7 @@ export function DREComparativo({ data, ano }: { data: Record<string, any[]>; ano
     return { company: co, ...total, margemBruta, margemLiquida };
   });
 
-  const lines: { label: string; field: string; format: 'currency' | 'pct' }[] = [
+  const lines: { label: string; field: DRETotaisField; format: 'currency' | 'pct' }[] = [
     { label: 'Receita Líquida', field: 'receita_liquida', format: 'currency' },
     { label: 'Lucro Bruto', field: 'lucro_bruto', format: 'currency' },
     { label: 'Margem Bruta', field: 'margemBruta', format: 'pct' },
@@ -72,7 +85,7 @@ export function DREComparativo({ data, ano }: { data: Record<string, any[]>; ano
                     {line.label}
                   </TableCell>
                   {annualTotals.map(t => {
-                    const val = (t as any)[line.field] || 0;
+                    const val = t[line.field] || 0;
                     const isResult = line.field.includes('resultado') || line.field === 'margemLiquida';
                     const colorClass = isResult
                       ? val >= 0 ? 'text-status-success' : 'text-status-error'
