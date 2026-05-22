@@ -11,28 +11,29 @@ vi.mock('../Dialer', () => ({
   ),
 }));
 
-// Mock useIsMobile — controla o branch desktop vs mobile.
-const mockIsMobile = vi.fn();
-vi.mock('@/hooks/use-mobile', () => ({
-  useIsMobile: () => mockIsMobile(),
+// Mock a detecção de dispositivo touch — controla o branch desktop/notebook vs celular.
+const mockIsTouch = vi.fn();
+vi.mock('@/hooks/useIsTouchDevice', () => ({
+  useIsTouchDevice: () => mockIsTouch(),
 }));
 
 describe('CallButton', () => {
   beforeEach(() => {
-    mockIsMobile.mockReset();
+    mockIsTouch.mockReset();
   });
 
-  it('DESKTOP: renderiza o dialer in-app e NÃO um link tel: (a regressão do bug)', () => {
-    mockIsMobile.mockReturnValue(false);
+  it('DESKTOP/NOTEBOOK (touch=false): renderiza o dialer in-app e NÃO um link tel: (regressão do bug)', () => {
+    mockIsTouch.mockReturnValue(false);
     const { container } = render(<CallButton phone="37999998888" customerName="Cliente X" />);
 
     expect(screen.getByTestId('inapp-dialer')).toBeInTheDocument();
-    // O bug era abrir o app Telefone do Mac via href=tel: — não pode existir no desktop.
+    // O bug era abrir o app Telefone do Mac via href=tel:. Notebook (mesmo janela
+    // estreita) tem touch=false → nunca pode ter link tel:.
     expect(container.querySelector('a[href^="tel:"]')).toBeNull();
   });
 
-  it('MOBILE: renderiza link tel: (discador nativo do celular) e NÃO o dialer in-app', () => {
-    mockIsMobile.mockReturnValue(true);
+  it('CELULAR/TABLET (touch=true): renderiza link tel: (discador nativo) e NÃO o dialer in-app', () => {
+    mockIsTouch.mockReturnValue(true);
     const { container } = render(<CallButton phone="37999998888" customerName="Cliente X" />);
 
     const telLink = container.querySelector('a[href^="tel:"]');
@@ -42,7 +43,7 @@ describe('CallButton', () => {
   });
 
   it('variant="icon" no desktop passa compact=true pro Dialer', () => {
-    mockIsMobile.mockReturnValue(false);
+    mockIsTouch.mockReturnValue(false);
     render(<CallButton phone="37999998888" customerName="Cliente X" variant="icon" />);
     expect(screen.getByTestId('inapp-dialer').getAttribute('data-compact')).toBe('true');
   });

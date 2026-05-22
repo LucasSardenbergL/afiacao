@@ -1,7 +1,7 @@
 import { Phone } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { cn } from '@/lib/utils';
-import { useIsMobile } from '@/hooks/use-mobile';
+import { useIsTouchDevice } from '@/hooks/useIsTouchDevice';
 import { Dialer } from './Dialer';
 
 interface CallButtonProps {
@@ -13,20 +13,21 @@ interface CallButtonProps {
 }
 
 /**
- * Botão de ligar que escolhe o backend certo por dispositivo:
- * - DESKTOP: dialer in-app <Dialer> (Nvoip click-to-call ou WebRTC, conforme a
- *   feature flag useWebRTCCall). Inicia a chamada DENTRO do app.
- * - MOBILE/TOUCH: link tel: nativo (o celular disca pela operadora) — o vendedor
- *   externo no celular continua usando o discador do aparelho.
+ * Botão de ligar que escolhe o backend certo por TIPO DE DISPOSITIVO (não por
+ * largura de tela — notebook em janela estreita NÃO é "mobile"):
+ * - DESKTOP/NOTEBOOK: dialer in-app <Dialer> (Nvoip click-to-call ou WebRTC,
+ *   conforme a feature flag useWebRTCCall). Inicia a chamada DENTRO do app.
+ * - CELULAR/TABLET (touch-primário): link tel: nativo (disca pela operadora) —
+ *   o vendedor externo no celular continua usando o discador do aparelho.
  *
  * Substitui os <a href="tel:..."> espalhados nas páginas de cliente, que no
  * desktop entregavam a chamada pro SO (macOS abria o app Telefone / erro WPC)
  * em vez de usar a telefonia in-app. Ver DEBUG report 2026-05-20.
  */
 export function CallButton({ phone, customerName, variant = 'full', className }: CallButtonProps) {
-  const isMobile = useIsMobile();
+  const isTouchDevice = useIsTouchDevice();
 
-  if (isMobile) {
+  if (isTouchDevice) {
     if (variant === 'icon') {
       return (
         <Button asChild variant="ghost" size="icon" className={cn('h-8 w-8 text-status-success', className)}>
