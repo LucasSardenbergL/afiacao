@@ -371,6 +371,7 @@
     "src/pages/FinanceiroTributario.tsx",
     "src/pages/FinanceiroSync.tsx",
     "src/components/reposicao/negociacaoParalela/types.ts",
-    "src/components/reposicao/negociacaoParalela/helpers.ts"
+    "src/components/reposicao/negociacaoParalela/helpers.ts",
+    "src/components/reposicao/negociacaoParalela/SugestaoCard.tsx"
   ]
 }

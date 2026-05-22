@@ -9,13 +9,11 @@ import {
   RefreshCw,
   Sparkles,
   ClipboardList,
-  Eye,
-  MoreVertical,
   Search,
   Info,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -39,7 +37,6 @@ import {
 import {
   DropdownMenu,
   DropdownMenuContent,
-  DropdownMenuItem,
   DropdownMenuTrigger,
   DropdownMenuCheckboxItem,
   DropdownMenuLabel,
@@ -89,11 +86,10 @@ import {
   formatPerc,
   categoriaBadgeClass,
   categoriaLabel,
-  statusBadgeClass,
-  statusLabel,
   percPromoBadgeClass,
   lastDayOfNextMonth,
 } from "@/components/reposicao/negociacaoParalela/helpers";
+import { SugestaoCard } from "@/components/reposicao/negociacaoParalela/SugestaoCard";
 
 export default function AdminReposicaoNegociacaoParalela() {
   const navigate = useNavigate();
@@ -414,125 +410,6 @@ export default function AdminReposicaoNegociacaoParalela() {
     return next;
   };
 
-  // Render helpers
-  const renderSugestaoCard = (s: Sugestao) => {
-    const rankingExtra = rankingMap.get(s.sku_codigo_omie);
-    const numCompras = rankingExtra?.num_compras_12m ?? null;
-    const mesesCompra = rankingExtra?.meses_com_compra ?? null;
-    const score = Number(s.score_final ?? 0);
-    return (
-      <Card key={s.id} className="flex flex-col">
-        <CardHeader className="pb-3">
-          <div className="flex items-start justify-between gap-2">
-            {s.categoria && s.categoria !== "fraco" ? (
-              <Badge variant="outline" className={cn("uppercase text-[10px] tracking-wide", categoriaBadgeClass(s.categoria))}>
-                {categoriaLabel(s.categoria)}
-              </Badge>
-            ) : <span />}
-            <Badge variant="outline" className={cn("text-[10px]", statusBadgeClass(s.status))}>
-              {statusLabel(s.status)}
-            </Badge>
-          </div>
-          <CardTitle className="text-base leading-snug mt-2 break-words">
-            {s.sku_descricao ?? "Sem descrição"}
-          </CardTitle>
-          <p className="text-xs font-mono text-muted-foreground">{s.sku_codigo_omie}</p>
-        </CardHeader>
-        <CardContent className="flex-1 flex flex-col gap-4 pt-0">
-          <div>
-            <div className="flex items-center justify-between text-xs mb-1.5">
-              <span className="font-medium">Score</span>
-              <span className="font-semibold">{score.toFixed(1)}</span>
-            </div>
-            <Progress value={score} className="h-2" />
-          </div>
-
-          {s.motivo && (
-            <p className="text-sm text-muted-foreground leading-relaxed">
-              {(s.motivo_detalhes && (s.motivo_detalhes as Record<string, unknown>).motivo_legivel as string | undefined) || s.motivo}
-            </p>
-          )}
-
-          <div className="grid grid-cols-2 gap-3 text-xs">
-            <div>
-              <p className="text-muted-foreground">Volume 12m</p>
-              <p className="font-semibold">{formatBRL(s.volume_financeiro_12m)}</p>
-            </div>
-            <div>
-              <p className="text-muted-foreground">Preço médio</p>
-              <p className="font-semibold">{formatBRL(s.preco_medio_unitario)}</p>
-            </div>
-            <div>
-              <p className="text-muted-foreground">Compras 12m</p>
-              <p className="font-semibold">
-                {numCompras ?? "—"}
-                {mesesCompra !== null && (
-                  <span className="text-muted-foreground font-normal"> em {mesesCompra} meses</span>
-                )}
-              </p>
-            </div>
-            <div>
-              <p className="text-muted-foreground">% meses com promo</p>
-              <p className="font-semibold">{formatPerc(s.perc_meses_com_promo)}</p>
-            </div>
-          </div>
-
-          <div className="flex items-center justify-between text-xs px-3 py-2 bg-muted/40 rounded-md border border-border">
-            <span className="text-muted-foreground">
-              Estoque: <span className="font-semibold text-foreground">{s.estoque_efetivo ?? 0}</span>
-            </span>
-            <span className="text-muted-foreground">
-              PP: <span className="font-semibold text-foreground">{s.ponto_pedido ?? "—"}</span>
-            </span>
-          </div>
-
-          <p className="text-xs text-muted-foreground">
-            Expira em {s.dias_ate_expirar ?? "—"} dia{(s.dias_ate_expirar ?? 0) === 1 ? "" : "s"}
-          </p>
-
-          <div className="flex flex-wrap items-center gap-2 pt-2 border-t border-border">
-            <Button
-              variant="outline"
-              size="sm"
-              disabled={s.status !== "nova"}
-              onClick={() => handleMarcarVisualizada(s)}
-            >
-              <Eye className="h-3.5 w-3.5 mr-1.5" />
-              Marcar visualizada
-            </Button>
-            <DropdownMenu>
-              <DropdownMenuTrigger asChild>
-                <Button variant="outline" size="sm">
-                  <MoreVertical className="h-3.5 w-3.5 mr-1.5" />
-                  Ações
-                </Button>
-              </DropdownMenuTrigger>
-              <DropdownMenuContent align="end">
-                <DropdownMenuItem onClick={() => handleIrAoRanking(s)}>Ir ao ranking</DropdownMenuItem>
-                <DropdownMenuItem onClick={() => handleMarcarEmAndamento(s)}>
-                  Marcar como em andamento
-                </DropdownMenuItem>
-                <DropdownMenuSeparator />
-                <DropdownMenuItem onClick={() => setIgnoreTarget(s)}>Ignorar</DropdownMenuItem>
-                <DropdownMenuItem onClick={() => setFecharSemAcordoTarget(s)}>
-                  Fechar sem acordo
-                </DropdownMenuItem>
-              </DropdownMenuContent>
-            </DropdownMenu>
-            <Button
-              size="sm"
-              className="ml-auto bg-status-success hover:bg-status-success/90 text-white"
-              onClick={() => openConvertDialog(s)}
-            >
-              <Handshake className="h-3.5 w-3.5 mr-1.5" />
-              Registrar desconto fechado
-            </Button>
-          </div>
-        </CardContent>
-      </Card>
-    );
-  };
-
   return (
     <div className="container mx-auto py-6 space-y-6 max-w-screen-2xl">
       {/* Breadcrumb + título */}
@@ -668,7 +545,19 @@ export default function AdminReposicaoNegociacaoParalela() {
           </Card>
         ) : (
           <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
-            {sugestoesFiltradas.map(renderSugestaoCard)}
+            {sugestoesFiltradas.map((s) => (
+              <SugestaoCard
+                key={s.id}
+                s={s}
+                rankingExtra={rankingMap.get(s.sku_codigo_omie)}
+                onMarcarVisualizada={handleMarcarVisualizada}
+                onIrAoRanking={handleIrAoRanking}
+                onMarcarEmAndamento={handleMarcarEmAndamento}
+                onIgnorar={setIgnoreTarget}
+                onFecharSemAcordo={setFecharSemAcordoTarget}
+                onConverter={openConvertDialog}
+              />
+            ))}
           </div>
         )}
       </section>
