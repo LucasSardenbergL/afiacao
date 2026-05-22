@@ -372,6 +372,7 @@
     "src/pages/FinanceiroSync.tsx",
     "src/components/reposicao/negociacaoParalela/types.ts",
     "src/components/reposicao/negociacaoParalela/helpers.ts",
+    "src/components/reposicao/negociacaoParalela/SugestaoCard.tsx",
     "src/pages/AdminMonthlyReports.tsx",
     "src/pages/NfeReceipt.tsx",
     "src/pages/ResetPassword.tsx",
