@@ -97,8 +97,8 @@ export default function NfeReceipt() {
           steps_count: resultSteps.length,
         }),
       );
-    } catch (e: any) {
-      const resultSteps = [{ step: 0, description: "Erro inesperado", status: "error" as const, detail: e.message }];
+    } catch (e) {
+      const resultSteps = [{ step: 0, description: "Erro inesperado", status: "error" as const, detail: e instanceof Error ? e.message : String(e) }];
       setSteps(resultSteps);
       setFinalStatus("error");
       setHistory(
