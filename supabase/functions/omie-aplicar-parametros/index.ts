@@ -22,7 +22,7 @@ async function omieAlterarProduto(
   estoqueMinimo: number,
   pontoPedido: number,
   attempt = 1
-): Promise<any> {
+): Promise<{ __ok?: boolean; __error?: boolean; mensagem?: string; raw?: unknown }> {
   try {
     const res = await fetch(OMIE_URL, {
       method: "POST",
@@ -47,9 +47,9 @@ async function omieAlterarProduto(
     }
 
     const text = await res.text();
-    let json: any = null;
+    let json: { faultstring?: string; raw?: string } | null = null;
     try {
-      json = JSON.parse(text);
+      json = JSON.parse(text) as { faultstring?: string; raw?: string };
     } catch {
       json = { raw: text };
     }
@@ -105,7 +105,7 @@ Deno.serve(async (req) => {
   try {
     const body = await req.json();
     if (body?.empresa) empresa = String(body.empresa).toUpperCase();
-    if (Array.isArray(body?.ids)) ids = body.ids.map((x: any) => Number(x)).filter(Boolean);
+    if (Array.isArray(body?.ids)) ids = body.ids.map((x: unknown) => Number(x)).filter(Boolean);
   } catch (_) {}
 
   if (ids.length === 0) {
@@ -140,7 +140,7 @@ Deno.serve(async (req) => {
     });
   }
 
-  const results: any[] = [];
+  const results: Array<{ id: number; sku: number; ok: boolean; mensagem?: string }> = [];
   let sucessos = 0;
   let falhas = 0;
 
@@ -154,7 +154,7 @@ Deno.serve(async (req) => {
     );
 
     const isErr = !!resp?.__error;
-    const updateRow: any = {
+    const updateRow: Record<string, unknown> = {
       aplicado_em: isErr ? null : new Date().toISOString(),
       resposta_omie: resp,
       erro_omie: isErr ? String(resp.mensagem ?? "Erro desconhecido").slice(0, 1000) : null,

@@ -1,6 +1,6 @@
 import React, { useCallback } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { DragDropContext, Droppable, Draggable, DropResult } from '@hello-pangea/dnd';
+import { DragDropContext, Droppable, Draggable, DropResult, DraggableProvidedDragHandleProps } from '@hello-pangea/dnd';
 import { Card, CardContent } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
@@ -99,10 +99,6 @@ function getUrgencyLevel(order: OrderWithProfile): 'normal' | 'warning' | 'urgen
   if (hours >= 48) return 'urgent';
   if (hours >= 24) return 'warning';
   return 'normal';
-}
-
-function findColumnForOrder(order: OrderWithProfile) {
-  return KANBAN_COLUMNS.find((col) => col.statuses.includes(order.status));
 }
 
 export function KanbanBoard({ orders, onStatusChange, updatingOrder }: KanbanBoardProps) {
@@ -213,7 +209,7 @@ interface KanbanCardProps {
   updatingOrder: string | null;
   onStatusChange: (orderId: string, status: string) => Promise<void>;
   onNavigate: () => void;
-  dragHandleProps: any;
+  dragHandleProps: DraggableProvidedDragHandleProps | null | undefined;
   isDragging: boolean;
 }
 

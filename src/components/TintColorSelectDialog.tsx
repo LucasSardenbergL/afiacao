@@ -164,9 +164,7 @@ export function TintColorSelectDialog({ product, open, onClose, onConfirm, custo
             .map(b => b.id)
         );
         
-        // Remove SKUs with non-matching bases
-        const filteredSkuIds = new Set(skus.filter(s => validBaseIds.has(s.base_id)).map(s => s.id));
-        // Also filter the skus array in-place for later use
+        // Remove SKUs with non-matching bases — filtra skus in-place
         const filteredSkus = skus.filter(s => validBaseIds.has(s.base_id));
         if (filteredSkus.length === 0) return [];
         // Replace skus reference
@@ -210,7 +208,7 @@ export function TintColorSelectDialog({ product, open, onClose, onConfirm, custo
   });
 
   // Pricing breakdown for selected formula (for informational display)
-  const { data: pricing, isLoading: loadingPricing } = useTintPricing(selectedFormula?.id || null);
+  const { data: pricing } = useTintPricing(selectedFormula?.id || null);
 
   // Last practiced price for this color+base for the customer
   const { data: lastPracticedPrice, isLoading: loadingLastPrice } = useQuery({

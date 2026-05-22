@@ -57,14 +57,14 @@ function KpiCards() {
     queryKey: ["cadastros-skus-sem-cadeia", empresa],
     queryFn: async () => {
       const { data: comGrupo, error: e1 } = await supabase
-        .from("sku_grupo_producao" as never)
+        .from("sku_grupo_producao")
         .select("sku_codigo");
       if (e1) return 0;
       const grupoRows = (comGrupo ?? []) as unknown as Array<{ sku_codigo: string | null }>;
       const setComGrupo = new Set(grupoRows.map((r) => r.sku_codigo));
 
       const { data: ativos, error: e2 } = await supabase
-        .from("sku_parametros" as never)
+        .from("sku_parametros")
         .select("sku_codigo")
         .eq("empresa", empresa)
         .eq("ativo", true);
@@ -281,7 +281,7 @@ function HistoricoPedidosCiclos() {
     queryKey: ["historico-ciclos", empresa, de, ate],
     queryFn: async (): Promise<CicloRow[]> => {
       const { data, error } = await supabase
-        .from("pedido_compra_sugerido" as never)
+        .from("pedido_compra_sugerido")
         .select("data_ciclo, fornecedor_grupo, status, valor_total, n_skus")
         .eq("empresa", empresa)
         .gte("data_ciclo", de)

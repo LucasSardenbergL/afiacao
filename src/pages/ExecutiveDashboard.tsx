@@ -9,8 +9,8 @@ import { useAuth } from '@/contexts/AuthContext';
 import { useFarmerPerformance, type PerformanceScore } from '@/hooks/useFarmerPerformance';
 import { supabase } from '@/integrations/supabase/client';
 import {
-  Loader2, TrendingUp, DollarSign, BarChart3, Users, ShieldCheck,
-  RefreshCw, Layers, Target, Brain, Eye, FileText, Activity
+  Loader2, TrendingUp, DollarSign, BarChart3, Users,
+  RefreshCw, Brain, Eye, Activity
 } from 'lucide-react';
 
 const fmt = (v: number) => v.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' });
@@ -23,7 +23,7 @@ const scoreBarColor = (v: number) =>
 
 const ExecutiveDashboard = () => {
   const navigate = useNavigate();
-  const { user, role, loading: roleLoading } = useAuth();
+  const { role, loading: roleLoading } = useAuth();
   const { scores, loading, calculating, loadScores, calculateScores } = useFarmerPerformance();
   const [farmers, setFarmers] = useState<{ id: string; name: string }[]>([]);
   const [selectedFarmer, setSelectedFarmer] = useState<string>('all');
@@ -40,17 +40,17 @@ const ExecutiveDashboard = () => {
     const { data: roles } = await supabase
       .from('user_roles')
       .select('user_id')
-      .in('role', ['employee', 'master']) as any;
+      .in('role', ['employee', 'master']);
 
     if (!roles?.length) return;
-    const ids = roles.map((r: any) => r.user_id);
+    const ids = roles.map((r) => r.user_id).filter((id): id is string => Boolean(id));
     const { data: profiles } = await supabase
       .from('profiles')
       .select('user_id, name')
-      .in('user_id', ids) as any;
+      .in('user_id', ids);
 
     if (profiles) {
-      setFarmers(profiles.map((p: any) => ({ id: p.user_id, name: p.name })));
+      setFarmers(profiles.map((p) => ({ id: p.user_id, name: p.name })));
     }
   };
 

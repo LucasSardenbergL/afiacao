@@ -1,29 +1,45 @@
 import "@testing-library/jest-dom";
 
-// jsdom não expõe localStorage/sessionStorage quando a origem do documento é opaca
-// (sem URL com origem real). Polyfill in-memory equivalente ao browser, pra os testes
-// que usam Storage (route-tracker, useLastVisit, useFinanceiroRegime) rodarem determinístico.
-// Guardado: se o ambiente já tem Storage (jsdom com origem real), não sobrescreve.
-class MemoryStorage implements Storage {
-  private store = new Map<string, string>();
-  get length() { return this.store.size; }
-  clear() { this.store.clear(); }
-  getItem(key: string) { return this.store.has(key) ? this.store.get(key)! : null; }
-  key(index: number) { return Array.from(this.store.keys())[index] ?? null; }
-  removeItem(key: string) { this.store.delete(key); }
-  setItem(key: string, value: string) { this.store.set(key, String(value)); }
-}
-for (const prop of ["localStorage", "sessionStorage"] as const) {
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const g = globalThis as any;
-  if (!g[prop]) {
-    const storage = new MemoryStorage();
-    Object.defineProperty(globalThis, prop, { writable: true, configurable: true, value: storage });
-    if (typeof g.window === "object" && g.window) {
-      Object.defineProperty(g.window, prop, { writable: true, configurable: true, value: storage });
+// Newer Node (22+) ships an experimental global `localStorage` that is
+// non-functional without `--localstorage-file`, and it can shadow jsdom's
+// implementation under vitest. The supabase client references `localStorage`
+// at module top-level, so any test importing it crashes. Install a working
+// in-memory Storage shim whenever the ambient storage is missing OR broken
+// (a `typeof === "undefined"` guard is insufficient: Node's is defined-but-broken).
+function installStorageShim(name: "localStorage" | "sessionStorage") {
+  try {
+    const existing = (globalThis as unknown as Record<string, Storage | undefined>)[name];
+    if (existing) {
+      existing.setItem("__probe__", "1");
+      existing.removeItem("__probe__");
+      return; // already functional — leave it alone
     }
+  } catch {
+    // fall through and install the shim
   }
+  const store = new Map<string, string>();
+  const shim: Storage = {
+    get length() {
+      return store.size;
+    },
+    clear: () => store.clear(),
+    getItem: (key) => (store.has(key) ? store.get(key)! : null),
+    key: (index) => Array.from(store.keys())[index] ?? null,
+    removeItem: (key) => {
+      store.delete(key);
+    },
+    setItem: (key, value) => {
+      store.set(key, String(value));
+    },
+  };
+  Object.defineProperty(globalThis, name, {
+    value: shim,
+    writable: true,
+    configurable: true,
+  });
 }
+installStorageShim("localStorage");
+installStorageShim("sessionStorage");
 
 // jsdom doesn't ship WebRTC primitives — polyfill bare-minimum constructors
 // so SipClient tests can `new MediaStream()` without pulling in a heavy mock lib.

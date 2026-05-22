@@ -1,10 +1,72 @@
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { createClient } from "npm:@supabase/supabase-js@2";
-import { authorizeCronOrStaff, corsHeaders } from "../_shared/auth.ts";
 
+// =============================================================
+// Helper de autorização inlineado (de _shared/auth.ts)
+// =============================================================
 const SUPABASE_URL = Deno.env.get("SUPABASE_URL")!;
 const SERVICE_ROLE = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
 
+const corsHeaders = {
+  "Access-Control-Allow-Origin": "*",
+  "Access-Control-Allow-Headers":
+    "authorization, x-client-info, apikey, content-type, x-cron-secret",
+};
+
+function unauthorized(message = "Unauthorized"): Response {
+  return new Response(JSON.stringify({ error: message }), {
+    status: 401,
+    headers: { ...corsHeaders, "Content-Type": "application/json" },
+  });
+}
+
+type AuthResult =
+  | { ok: true; via: "cron" | "service_role" | "staff"; userId?: string }
+  | { ok: false; response: Response };
+
+async function authorizeCronOrStaff(req: Request): Promise<AuthResult> {
+  const expected = Deno.env.get("CRON_SECRET");
+  const cronSecret = req.headers.get("x-cron-secret");
+  if (expected && cronSecret && cronSecret === expected) {
+    return { ok: true, via: "cron" };
+  }
+
+  const authHeader = req.headers.get("Authorization");
+  if (!authHeader?.startsWith("Bearer ")) {
+    return { ok: false, response: unauthorized() };
+  }
+  const token = authHeader.slice(7);
+  if (token === SERVICE_ROLE) {
+    return { ok: true, via: "service_role" };
+  }
+
+  try {
+    const userRes = await fetch(`${SUPABASE_URL}/auth/v1/user`, {
+      headers: { Authorization: authHeader, apikey: SERVICE_ROLE },
+    });
+    if (!userRes.ok) return { ok: false, response: unauthorized() };
+    const user = await userRes.json();
+    if (!user?.id) return { ok: false, response: unauthorized() };
+
+    const roleRes = await fetch(
+      `${SUPABASE_URL}/rest/v1/user_roles?user_id=eq.${user.id}&select=role`,
+      { headers: { apikey: SERVICE_ROLE, Authorization: `Bearer ${SERVICE_ROLE}` } },
+    );
+    if (!roleRes.ok) return { ok: false, response: unauthorized() };
+    const roles = (await roleRes.json()) as Array<{ role: string }>;
+    const allowed = new Set(["employee", "master"]);
+    if (roles.some((r) => allowed.has(r.role))) {
+      return { ok: true, via: "staff", userId: user.id };
+    }
+    return { ok: false, response: unauthorized("Forbidden") };
+  } catch {
+    return { ok: false, response: unauthorized() };
+  }
+}
+
+// =============================================================
+// Edge function: motor de Inteligência de Caixa (A1)
+// =============================================================
 type Company = 'oben' | 'colacor' | 'colacor_sc';
 type Cenario = 'realista' | 'otimista' | 'pessimista';
 
@@ -53,7 +115,6 @@ function jsonResponse(body: unknown, status: number): Response {
   });
 }
 
-// === Tipos de domínio ===
 type CR = {
   id: string;
   saldo: number;
@@ -878,7 +939,6 @@ function avaliarAlertas(
   const alertas: Alerta[] = [];
   const t = config.thresholds;
 
-  // 1. Caixa negativo em até N semanas
   const semanaNeg = semanas.slice(0, t.caixa_negativo_semanas).findIndex(s => s.saldo_final < 0);
   if (semanaNeg >= 0) {
     const s = semanas[semanaNeg];
@@ -905,7 +965,6 @@ function avaliarAlertas(
     });
   }
 
-  // 3. Dias cobertura baixo
   if (indicadores.dias_cobertura < t.dias_cobertura_min) {
     alertas.push({
       tipo: 'cobertura_baixa',
@@ -917,7 +976,6 @@ function avaliarAlertas(
     });
   }
 
-  // 4. Inadimplência alta
   if (indicadores.inadimplencia_pct > t.inadimplencia_max_pct) {
     alertas.push({
       tipo: 'inadimplencia_alta',
@@ -929,7 +987,6 @@ function avaliarAlertas(
     });
   }
 
-  // 5. Concentração top1
   const top1 = indicadores.concentracao_top5_clientes[0];
   if (top1 && top1.pct > t.concentracao_top1_max_pct) {
     alertas.push({
@@ -942,11 +999,6 @@ function avaliarAlertas(
     });
   }
 
-  // NOTA: spec original lista 7 alertas — `pmr_subindo` (PMR cresceu >15% em 90d) é
-  // deferido pra próximo ciclo porque depende de snapshots históricos (precisa 90d de
-  // cron rodando pra ter base de comparação). Será adicionado quando dados existirem.
-
-  // 6. Próxima semana saída > entrada × 2
   const s0 = semanas[0];
   if (s0 && s0.total_entradas > 0 && s0.total_saidas > s0.total_entradas * 2) {
     alertas.push({

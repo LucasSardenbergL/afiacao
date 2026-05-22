@@ -153,13 +153,14 @@ export default function AdminReposicaoSlaFornecedor() {
   const { data: fornecedores, isLoading: loadingFor } = useQuery({
     queryKey: ["sla-fornecedor", empresa],
     queryFn: async () => {
-      const { data, error } = await (supabase as any)
+      const { data, error } = await supabase
         .from("v_fornecedor_sla_compliance")
         .select("*")
         .eq("empresa", empresa)
         .order("pct_compliance", { ascending: true, nullsFirst: false });
       if (error) throw error;
-      return (data ?? []) as ForCompliance[];
+      // View columns divergem do shape consumido; cast preserva comportamento runtime
+      return (data ?? []) as unknown as ForCompliance[];
     },
   });
 
@@ -167,13 +168,13 @@ export default function AdminReposicaoSlaFornecedor() {
   const { data: skus, isLoading: loadingSkus } = useQuery({
     queryKey: ["sla-sku", empresa],
     queryFn: async () => {
-      const { data, error } = await (supabase as any)
+      const { data, error } = await supabase
         .from("v_sku_sla_compliance")
         .select("*")
         .eq("empresa", empresa)
         .limit(5000);
       if (error) throw error;
-      return (data ?? []) as SkuCompliance[];
+      return (data ?? []) as unknown as SkuCompliance[];
     },
   });
 
@@ -183,7 +184,7 @@ export default function AdminReposicaoSlaFornecedor() {
     queryKey: ["sla-hist", skuDetalhe?.sku_codigo_omie],
     queryFn: async () => {
       if (!skuDetalhe) return [];
-      const { data, error } = await (supabase as any)
+      const { data, error } = await supabase
         .from("sku_leadtime_history")
         .select("t4_data_recebimento, lt_bruto_dias_uteis, lt_faturamento_dias_uteis, lt_logistica_dias_uteis")
         .eq("sku_codigo_omie", Number(skuDetalhe.sku_codigo_omie))
@@ -191,7 +192,13 @@ export default function AdminReposicaoSlaFornecedor() {
         .order("t4_data_recebimento", { ascending: false })
         .limit(15);
       if (error) throw error;
-      return ((data ?? []) as any[])
+      type HistRow = {
+        t4_data_recebimento: string | null;
+        lt_bruto_dias_uteis: number | string | null;
+        lt_faturamento_dias_uteis: number | string | null;
+        lt_logistica_dias_uteis: number | string | null;
+      };
+      return ((data ?? []) as HistRow[])
         .reverse()
         .map((r) => ({
           data: r.t4_data_recebimento
@@ -548,9 +555,9 @@ export default function AdminReposicaoSlaFornecedor() {
                         connectNulls={false}
                         isAnimationActive={false}
                       />
-                      <Line type="monotone" dataKey="lt" name="LT bruto" stroke="hsl(var(--primary))" strokeWidth={2.5} isAnimationActive={false} dot={(props: any) => {
+                      <Line type="monotone" dataKey="lt" name="LT bruto" stroke="hsl(var(--primary))" strokeWidth={2.5} isAnimationActive={false} dot={(props: { cx?: number; cy?: number; payload?: { lt: number | null } }) => {
                         const { cx, cy, payload } = props;
-                        const violou = skuDetalhe.lt_teorico != null && payload.lt > skuDetalhe.lt_teorico * 1.25;
+                        const violou = skuDetalhe.lt_teorico != null && payload?.lt != null && payload.lt > skuDetalhe.lt_teorico * 1.25;
                         return (
                           <circle cx={cx} cy={cy} r={4} fill={violou ? "hsl(var(--destructive))" : "hsl(var(--primary))"} stroke="white" strokeWidth={1} />
                         );

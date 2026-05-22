@@ -23,7 +23,6 @@ export function useEventosRecorrentes(company: string) {
     queryKey: ['fin_eventos_recorrentes', company],
     enabled: Boolean(company),
     queryFn: async (): Promise<EventoRecorrente[]> => {
-      // @ts-expect-error - fin_eventos_recorrentes não está em types.ts (regenera após migration apply)
       const { data, error } = await supabase
         .from('fin_eventos_recorrentes')
         .select('*')
@@ -40,7 +39,6 @@ export function useCreateEventoRecorrente() {
   return useMutation({
     mutationFn: async (input: EventoRecorrenteInput) => {
       const userId = (await supabase.auth.getUser()).data.user?.id;
-      // @ts-expect-error - fin_eventos_recorrentes não está em types.ts (regenera após migration apply)
       const { data, error } = await supabase
         .from('fin_eventos_recorrentes')
         .insert({ ...input, criado_por: userId })
@@ -60,7 +58,6 @@ export function useUpdateEventoRecorrente() {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: async (input: { id: string; patch: Partial<EventoRecorrenteInput> }) => {
-      // @ts-expect-error - fin_eventos_recorrentes não está em types.ts (regenera após migration apply)
       const { error } = await supabase
         .from('fin_eventos_recorrentes')
         .update({ ...input.patch, updated_at: new Date().toISOString() })
@@ -78,7 +75,6 @@ export function useDeleteEventoRecorrente() {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: async (id: string) => {
-      // @ts-expect-error - fin_eventos_recorrentes não está em types.ts (regenera após migration apply)
       const { error } = await supabase.from('fin_eventos_recorrentes').delete().eq('id', id);
       if (error) throw error;
     },

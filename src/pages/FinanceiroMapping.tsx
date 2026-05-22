@@ -13,7 +13,7 @@ import {
   type FinCategoriaDREMapping,
 } from '@/services/financeiroService';
 import {
-  Loader2, Save, Trash2, Plus, Building2, Search, Layers, AlertTriangle, History
+  Loader2, Save, Trash2, Building2, Search, Layers, AlertTriangle, History
 } from 'lucide-react';
 import { AuditTrailDrawer } from '@/components/financeiro/AuditTrailDrawer';
 import { useSuggestedMapping } from '@/hooks/useSuggestedMapping';
@@ -49,7 +49,7 @@ const FinanceiroMapping = () => {
         const cats = await getCategoriasOmie(company);
         setCategorias(cats);
       }
-    } catch (e: any) {
+    } catch (e) {
       console.error(e);
     } finally {
       setLoading(false);
@@ -71,7 +71,7 @@ const FinanceiroMapping = () => {
         notas: notas || null,
       });
       await load();
-    } catch (e: any) {
+    } catch (e) {
       console.error(e);
     } finally {
       setSaving(null);
@@ -82,7 +82,7 @@ const FinanceiroMapping = () => {
     try {
       await deleteCategoryMapping(id);
       await load();
-    } catch (e: any) {
+    } catch (e) {
       console.error(e);
     }
   };
@@ -140,7 +140,7 @@ const FinanceiroMapping = () => {
             Configurar como cada categoria do Omie é classificada na DRE gerencial
           </p>
         </div>
-        <Select value={company} onValueChange={v => setCompany(v as any)}>
+        <Select value={company} onValueChange={v => setCompany(v as Company | '_default')}>
           <SelectTrigger className="w-[200px]">
             <Building2 className="w-4 h-4 mr-2" />
             <SelectValue />

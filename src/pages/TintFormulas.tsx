@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { supabase } from '@/integrations/supabase/client';
-import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
+import { Card, CardContent } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Input } from '@/components/ui/input';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
@@ -40,11 +40,12 @@ function useBases(produtoId: string) {
         .eq('account', ACCOUNT)
         .eq('produto_id', produtoId);
       const seen = new Set<string>();
-      return (data ?? []).filter((d: any) => {
+      type BaseRow = { base_id: string; tint_bases: { id: string; descricao: string | null } | null };
+      return ((data ?? []) as unknown as BaseRow[]).filter((d) => {
         if (seen.has(d.base_id)) return false;
         seen.add(d.base_id);
         return true;
-      }).map((d: any) => ({ id: d.base_id, descricao: d.tint_bases?.descricao }));
+      }).map((d) => ({ id: d.base_id, descricao: d.tint_bases?.descricao }));
     },
   });
 }
@@ -76,7 +77,7 @@ export default function TintFormulas() {
   const { data: bases } = useBases(produtoFilter);
   const { data: omieMap } = useOmieMap();
 
-  const handleExpand = (formula: { id: string; cor_id: string; nome_cor: string; tint_produtos?: { descricao?: string }; tint_bases?: { descricao?: string } }) => {
+  const handleExpand = (formula: { id: string; cor_id: string; nome_cor: string | null; tint_produtos?: { descricao?: string | null } | null; tint_bases?: { descricao?: string | null } | null }) => {
     const isOpening = expanded !== formula.id;
     setExpanded(isOpening ? formula.id : null);
     // ao expandir uma fórmula, registrar como "consultada"
@@ -84,9 +85,9 @@ export default function TintFormulas() {
       pushRecent({
         id: formula.id,
         cor_id: formula.cor_id,
-        nome_cor: formula.nome_cor,
-        produto_descricao: formula.tint_produtos?.descricao,
-        base_descricao: formula.tint_bases?.descricao,
+        nome_cor: formula.nome_cor ?? '',
+        produto_descricao: formula.tint_produtos?.descricao ?? undefined,
+        base_descricao: formula.tint_bases?.descricao ?? undefined,
       });
     }
   };
@@ -184,7 +185,7 @@ export default function TintFormulas() {
                   <SelectTrigger className="h-9 text-sm"><SelectValue placeholder="Base" /></SelectTrigger>
                   <SelectContent>
                     <SelectItem value="__all__">Todas</SelectItem>
-                    {(bases ?? []).map((b: any) => <SelectItem key={b.id} value={b.id}>{b.descricao}</SelectItem>)}
+                    {(bases ?? []).map((b: { id: string; descricao: string | null | undefined }) => <SelectItem key={b.id} value={b.id}>{b.descricao}</SelectItem>)}
                   </SelectContent>
                 </Select>
               </div>
@@ -218,7 +219,17 @@ export default function TintFormulas() {
                   </TableRow>
                 </TableHeader>
                 <TableBody>
-                  {(data?.rows ?? []).map((f: any) => (
+                  {((data?.rows ?? []) as unknown as Array<{
+                    id: string;
+                    cor_id: string;
+                    nome_cor: string | null;
+                    volume_final_ml: number | null;
+                    preco_final_sayersystem: number | null;
+                    personalizada: boolean | null;
+                    tint_produtos: { descricao: string | null } | null;
+                    tint_bases: { descricao: string | null } | null;
+                    tint_embalagens: { descricao: string | null; volume_ml: number | null } | null;
+                  }>).map((f) => (
                     <>
                       <TableRow key={f.id} className="cursor-pointer hover:bg-muted/50" onClick={() => handleExpand(f)}>
                         <TableCell>
@@ -229,9 +240,9 @@ export default function TintFormulas() {
                               toggleFavorite({
                                 id: f.id,
                                 cor_id: f.cor_id,
-                                nome_cor: f.nome_cor,
-                                produto_descricao: f.tint_produtos?.descricao,
-                                base_descricao: f.tint_bases?.descricao,
+                                nome_cor: f.nome_cor ?? '',
+                                produto_descricao: f.tint_produtos?.descricao ?? undefined,
+                                base_descricao: f.tint_bases?.descricao ?? undefined,
                               });
                             }}
                             className="text-muted-foreground hover:text-status-warning transition-colors"
@@ -274,10 +285,14 @@ export default function TintFormulas() {
                                   </TableRow>
                                 </TableHeader>
                                 <TableBody>
-                                  {expandedDetail.map((it: any, idx: number) => {
+                                  {((expandedDetail ?? []) as unknown as Array<{
+                                    qtd_ml: number;
+                                    ordem: number;
+                                    tint_corantes: { id: string; descricao: string | null; omie_product_id: string | null; volume_total_ml: number } | null;
+                                  }>).map((it, idx: number) => {
                                     const cor = it.tint_corantes;
                                     const custoConc = cor?.omie_product_id && omieMap ? (omieMap.get(cor.omie_product_id) ?? 0) : 0;
-                                    const custoMl = cor?.volume_total_ml > 0 ? custoConc / cor.volume_total_ml : 0;
+                                    const custoMl = cor && cor.volume_total_ml > 0 ? custoConc / cor.volume_total_ml : 0;
                                     const custoItem = custoMl * it.qtd_ml;
                                     return (
                                       <TableRow key={idx}>

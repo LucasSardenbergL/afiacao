@@ -29,7 +29,7 @@ export function useAuditTrail(params: { tableName: string; rowId: string; limit?
         .order('changed_at', { ascending: false })
         .limit(limit);
       if (error) throw error;
-      return (data ?? []) as AuditEntry[];
+      return (data ?? []) as unknown as AuditEntry[];
     },
   });
 }

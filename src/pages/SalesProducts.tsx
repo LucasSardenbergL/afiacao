@@ -91,10 +91,10 @@ const SalesProducts = () => {
       });
 
       await loadProducts();
-    } catch (error: any) {
+    } catch (error) {
       console.error('Erro ao sincronizar:', error);
       toast.error('Erro na sincronização', {
-        description: error.message || 'Não foi possível sincronizar os produtos.',
+        description: error instanceof Error ? error.message : 'Não foi possível sincronizar os produtos.',
       });
     } finally {
       setSyncing(false);
@@ -118,10 +118,10 @@ const SalesProducts = () => {
         description: `${totalUpdated} produtos com estoque atualizado (${account === 'oben' ? 'Oben' : 'Colacor'}).`,
       });
       await loadProducts();
-    } catch (error: any) {
+    } catch (error) {
       console.error('Erro ao sincronizar estoque:', error);
       toast.error('Erro ao atualizar estoque', {
-        description: error.message || 'Não foi possível sincronizar o estoque.',
+        description: error instanceof Error ? error.message : 'Não foi possível sincronizar o estoque.',
       });
     } finally {
       setSyncingStock(false);

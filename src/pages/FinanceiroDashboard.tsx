@@ -5,7 +5,6 @@ import { Button } from '@/components/ui/button';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
-import { Progress } from '@/components/ui/progress';
 import { Skeleton } from '@/components/ui/skeleton';
 import { useFinanceiro, type FinanceiroView } from '@/hooks/useFinanceiro';
 import { useFinanceiroRegime } from '@/hooks/useFinanceiroRegime';
@@ -17,7 +16,7 @@ import {
   Loader2, RefreshCw, DollarSign, TrendingUp, TrendingDown,
   AlertTriangle, Wallet, ArrowDownCircle, ArrowUpCircle,
   Building2, BarChart3, PieChart, Calendar, FileText,
-  ChevronDown, ChevronUp, Clock, Ban, Download, ShieldAlert, History
+  Clock, Download, History
 } from 'lucide-react';
 import { AuditTrailDrawer } from '@/components/financeiro/AuditTrailDrawer';
 import { usePeriodLockHandler } from '@/components/financeiro/PeriodLockGuard';
@@ -63,11 +62,11 @@ const FinanceiroDashboard = () => {
     activeResumo, resumo,
     contasPagar, contasReceber,
     agingReceber, agingPagar,
-    dre, dreConsolidado, drePorEmpresa,
+    dreConsolidado, drePorEmpresa,
     fluxoCaixa, inadimplentes,
     loadResumo, loadContasPagar, loadContasReceber,
     loadAging, loadDRE, loadFluxoCaixa, loadInadimplentes,
-    syncAll, syncSpecific, calcularDRE, calcularDREAnual,
+    syncAll, calcularDRE, calcularDREAnual,
   } = useFinanceiro('all');
 
   const { regime } = useFinanceiroRegime();
@@ -868,7 +867,7 @@ function KpiCard({ title, value, icon: Icon, color, bgColor, subtitle, subtitleC
   );
 }
 
-function AgingCard({ title, data, type }: { title: string; data: any; type: 'receber' | 'pagar' }) {
+function AgingCard({ title, data }: { title: string; data: any; type: 'receber' | 'pagar' }) {
   if (!data) return (
     <Card>
       <CardHeader className="pb-3">
@@ -1056,7 +1055,6 @@ function DRETab({ data, view, ano }: { data: any[]; view: FinanceiroView; ano: n
   const rows = [...data].sort((a: any, b: any) => a.mes - b.mes);
 
   // Ponto 5: check for unmapped categories
-  const totalUnmapped = rows.reduce((s: number, r: any) => s + (r.qtd_categorias_sem_mapeamento || 0), 0);
   const unmappedCats = rows.flatMap((r: any) =>
     r.detalhamento?.categorias_nao_mapeadas || []
   );
@@ -1183,8 +1181,6 @@ function DRETab({ data, view, ano }: { data: any[]; view: FinanceiroView; ano: n
 function DREComparativo({ data, ano }: { data: Record<string, any[]>; ano: number }) {
   const companies = Object.keys(data);
   if (companies.length < 2) return null;
-
-  const meses = ['Jan', 'Fev', 'Mar', 'Abr', 'Mai', 'Jun', 'Jul', 'Ago', 'Set', 'Out', 'Nov', 'Dez'];
 
   // Calculate annual totals per company
   const annualTotals = companies.map(co => {

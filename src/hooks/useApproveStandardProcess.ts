@@ -28,7 +28,7 @@ export function useApproveStandardProcess() {
       }
 
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      const { error } = await (supabase.from('standard_processes') as any)
+      const { error } = await (supabase as any).from('standard_processes')
         .update(payload).eq('id', id);
       if (error) throw error;
     },

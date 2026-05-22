@@ -13,10 +13,18 @@ type FilterTab = 'pending' | 'active' | 'completed' | 'all';
 
 const PAGE_SIZE = 20;
 
+interface OrderItemShape {
+  name?: string;
+  category?: string;
+  description?: string;
+  service_type?: string;
+  serviceType?: string;
+}
+
 interface OrderRow {
   id: string;
   status: string;
-  items: any;
+  items: OrderItemShape[] | unknown;
   total: number;
   created_at: string;
   service_type: string;
@@ -31,8 +39,8 @@ const FILTER_CONFIG: Record<FilterTab, { label: string; emptyTitle: string; empt
 
 const getOrderSearchContent = (order: OrderRow) => {
   const itemsText = Array.isArray(order.items)
-    ? order.items
-        .map((item: any) => [
+    ? (order.items as OrderItemShape[])
+        .map((item) => [
           item?.name,
           item?.category,
           item?.description,

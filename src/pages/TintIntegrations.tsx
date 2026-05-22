@@ -1,6 +1,10 @@
 import { useState } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
+import type { Tables } from "@/integrations/supabase/types";
+
+type IntegrationSetting = Tables<"tint_integration_settings">;
+type SyncRun = Tables<"tint_sync_runs">;
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -135,10 +139,10 @@ export default function TintIntegrations() {
   });
 
   function getStoreRuns(storeCode: string) {
-    return recentRuns.filter((r: any) => r.store_code === storeCode);
+    return (recentRuns as SyncRun[]).filter((r) => r.store_code === storeCode);
   }
 
-  function getHealthStatus(setting: any) {
+  function getHealthStatus(setting: IntegrationSetting) {
     if (!setting.sync_enabled) return { label: "Desabilitado", color: "text-muted-foreground" };
     if (!setting.last_heartbeat_at) return { label: "Sem heartbeat", color: "text-yellow-500" };
     const diff = Date.now() - new Date(setting.last_heartbeat_at).getTime();
@@ -183,11 +187,11 @@ export default function TintIntegrations() {
         <Card><CardContent className="p-8 text-center text-muted-foreground">Nenhuma loja configurada. Adicione uma loja para começar.</CardContent></Card>
       ) : (
         <div className="grid gap-4 md:grid-cols-2">
-          {settings.map((s: any) => {
+          {(settings as IntegrationSetting[]).map((s) => {
             const health = getHealthStatus(s);
             const runs = getStoreRuns(s.store_code);
-            const lastSuccess = runs.find((r: any) => r.status === "complete");
-            const lastError = runs.find((r: any) => r.status === "error");
+            const lastSuccess = runs.find((r) => r.status === "complete");
+            const lastError = runs.find((r) => r.status === "error");
             const lastRun = runs[0];
 
             return (

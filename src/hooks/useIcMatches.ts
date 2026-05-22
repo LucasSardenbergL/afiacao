@@ -35,7 +35,7 @@ export function useIcMatches(filterStatus?: IcMatch['status']) {
       if (filterStatus) q = q.eq('status', filterStatus);
       const { data, error } = await q;
       if (error) throw error;
-      return (data ?? []) as IcMatch[];
+      return (data ?? []) as unknown as IcMatch[];
     },
   });
 }

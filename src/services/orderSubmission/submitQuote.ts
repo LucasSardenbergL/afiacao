@@ -51,7 +51,7 @@ export async function submitQuote(params: SubmitQuoteParams): Promise<SubmitQuot
       });
       if (error) throw error;
       results.push('Orçamento Oben salvo');
-    } catch (e: any) {
+    } catch (e) {
       logger.critical('Failed to insert quote in Supabase', {
         stage: 'supabase_insert',
         account: 'oben',
@@ -64,7 +64,7 @@ export async function submitQuote(params: SubmitQuoteParams): Promise<SubmitQuot
       return {
         success: false,
         results,
-        errors: [{ step: 'insert_oben_quote', message: e?.message || 'Erro ao salvar orçamento Oben' }],
+        errors: [{ step: 'insert_oben_quote', message: e instanceof Error ? e.message : 'Erro ao salvar orçamento Oben' }],
       };
     }
   }
@@ -96,7 +96,7 @@ export async function submitQuote(params: SubmitQuoteParams): Promise<SubmitQuot
       });
       if (error) throw error;
       results.push('Orçamento Colacor salvo');
-    } catch (e: any) {
+    } catch (e) {
       logger.critical('Failed to insert quote in Supabase', {
         stage: 'supabase_insert',
         account: 'colacor',
@@ -106,7 +106,7 @@ export async function submitQuote(params: SubmitQuoteParams): Promise<SubmitQuot
         kind: 'quote',
         error: e,
       });
-      errors.push({ step: 'insert_colacor_quote', message: e?.message || 'Erro ao salvar orçamento Colacor' });
+      errors.push({ step: 'insert_colacor_quote', message: e instanceof Error ? e.message : 'Erro ao salvar orçamento Colacor' });
     }
   }
 

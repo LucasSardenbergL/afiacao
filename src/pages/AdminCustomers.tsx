@@ -19,8 +19,8 @@ import { toast } from 'sonner';
 import { cn } from '@/lib/utils';
 import {
   Loader2, Plus, Wrench, Trash2, Search, User, Phone, FileText,
-  ChevronLeft, Mail, Building2, ShoppingCart, TrendingUp, ArrowUpRight,
-  BarChart3, Clock, AlertTriangle, ChevronRight, Filter, MoreHorizontal,
+  ChevronLeft, Mail, ShoppingCart, TrendingUp,
+  AlertTriangle, ChevronRight, Filter, MoreHorizontal,
   MessageSquare, Calendar, DollarSign, Package, Activity, Users, Sparkles,
 } from 'lucide-react';
 import { EmptyState } from '@/components/EmptyState';
@@ -31,7 +31,7 @@ import { format } from 'date-fns';
 import { ptBR } from 'date-fns/locale';
 import { useUrlState } from '@/hooks/useUrlState';
 import { useCustomerSegments } from '@/hooks/useCustomerSegments';
-import { Save, Bookmark, X as XIcon } from 'lucide-react';
+import { Save, Bookmark, X as XIcon, type LucideIcon } from 'lucide-react';
 import { decodeHtmlEntities } from '@/lib/format';
 import { CustomerProfile360Summary } from '@/components/customer/CustomerProfile360Summary';
 import { CustomerCallsTab } from '@/components/customer/CustomerCallsTab';
@@ -68,6 +68,7 @@ interface UserTool {
 }
 
 interface ClientScore {
+  customer_user_id: string;
   health_score: number;
   health_class: string;
   churn_risk: number;
@@ -77,6 +78,7 @@ interface ClientScore {
   days_since_last_purchase: number;
   category_count: number;
   gross_margin_pct: number;
+  avg_repurchase_interval?: number | null;
 }
 
 interface SalesOrder {
@@ -84,7 +86,7 @@ interface SalesOrder {
   total: number;
   status: string;
   created_at: string;
-  items: any;
+  items: unknown;
 }
 
 const fmt = (v: number) => v.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' });
@@ -417,9 +419,9 @@ function RequiresPoToggle({ customer }: { customer: Customer }) {
       if (error) throw error;
       customer.requires_po = next;
       toast.success(next ? 'Cliente exige ordem de compra' : 'Ordem de compra desativada');
-    } catch (e: any) {
+    } catch (e) {
       setChecked(prev);
-      toast.error('Erro ao salvar', { description: e?.message });
+      toast.error('Erro ao salvar', { description: e instanceof Error ? e.message : String(e) });
     } finally {
       setSaving(false);
     }
@@ -438,7 +440,7 @@ function Customer360View({
   score,
   tools,
   orders,
-  categories,
+  categories: _categories,
   loadingTools,
   loadingOrders,
   onBack,
@@ -727,7 +729,7 @@ function Customer360View({
 }
 
 /* ─── Helper Components ─── */
-function MetricCard({ icon: Icon, label, value, danger }: { icon: any; label: string; value: string; danger?: boolean }) {
+function MetricCard({ icon: Icon, label, value, danger }: { icon: LucideIcon; label: string; value: string; danger?: boolean }) {
   return (
     <Card>
       <CardContent className="p-3">
@@ -789,7 +791,7 @@ const AdminCustomers = () => {
         .from('user_roles')
         .select('user_id')
         .in('role', ['master', 'employee']);
-      return new Set((data || []).map((r: any) => r.user_id));
+      return new Set((data || []).map((r: { user_id: string }) => r.user_id));
     },
     getNextPageParam: () => undefined,
   });
@@ -855,7 +857,19 @@ const AdminCustomers = () => {
         .eq('farmer_id', user.id);
       if (data) {
         const map = new Map<string, ClientScore>();
-        data.forEach((s: any) => map.set(s.customer_user_id, s));
+        // Database row tem fields nullable; normaliza pra non-null com defaults
+        data.forEach((s) => map.set(s.customer_user_id, {
+          customer_user_id: s.customer_user_id,
+          health_score: s.health_score ?? 0,
+          health_class: s.health_class ?? 'critico',
+          churn_risk: s.churn_risk ?? 0,
+          expansion_score: s.expansion_score ?? 0,
+          priority_score: s.priority_score ?? 0,
+          avg_monthly_spend_180d: s.avg_monthly_spend_180d ?? 0,
+          days_since_last_purchase: s.days_since_last_purchase ?? 0,
+          category_count: s.category_count ?? 0,
+          gross_margin_pct: s.gross_margin_pct ?? 0,
+        }));
         setScores(map);
       }
     } catch (e) {

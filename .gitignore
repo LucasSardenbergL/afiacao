@@ -23,3 +23,11 @@ dist-ssr
 *.sln
 *.sw?
 .gstack/
+
+# Agent tooling artifacts (per-developer, never commit)
+.codex/
+AGENTS.md
+
+
+# Serena MCP local project cache
+.serena/

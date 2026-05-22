@@ -102,7 +102,7 @@ export default function AdminReposicaoGruposProducao() {
     queryKey: ["fornecedor-grupos", EMPRESA],
     queryFn: async () => {
       const { data, error } = await supabase
-        .from("fornecedor_grupo_producao" as never)
+        .from("fornecedor_grupo_producao")
         .select("*")
         .eq("empresa", EMPRESA)
         .order("fornecedor_nome")
@@ -116,7 +116,7 @@ export default function AdminReposicaoGruposProducao() {
     queryKey: ["sku-grupo-contagens", EMPRESA],
     queryFn: async () => {
       const { data, error } = await supabase
-        .from("sku_grupo_producao" as never)
+        .from("sku_grupo_producao")
         .select("grupo_codigo")
         .eq("empresa", EMPRESA);
       if (error) throw error;
@@ -154,7 +154,7 @@ export default function AdminReposicaoGruposProducao() {
       const assocMap: Record<string, string> = {};
       if (skuCodes.length > 0) {
         const { data: assoc } = await supabase
-          .from("sku_grupo_producao" as never)
+          .from("sku_grupo_producao")
           .select("sku_codigo_omie, grupo_codigo")
           .eq("empresa", EMPRESA)
           .in("sku_codigo_omie", skuCodes);
@@ -232,14 +232,14 @@ export default function AdminReposicaoGruposProducao() {
       }
       if (g.id) {
         const { error } = await supabase
-          .from("fornecedor_grupo_producao" as never)
+          .from("fornecedor_grupo_producao")
           .update(payload)
           .eq("id", g.id);
         if (error) throw error;
       } else {
         const { error } = await supabase
-          .from("fornecedor_grupo_producao" as never)
-          .insert(payload as never);
+          .from("fornecedor_grupo_producao")
+          .insert(payload);
         if (error) throw error;
       }
     },
@@ -256,21 +256,21 @@ export default function AdminReposicaoGruposProducao() {
       const { sku, novoGrupo } = params;
       if (!novoGrupo) {
         const { error } = await supabase
-          .from("sku_grupo_producao" as never)
+          .from("sku_grupo_producao")
           .delete()
           .eq("empresa", EMPRESA)
           .eq("sku_codigo_omie", String(sku));
         if (error) throw error;
       } else {
         const { error } = await supabase
-          .from("sku_grupo_producao" as never)
+          .from("sku_grupo_producao")
           .upsert(
             {
               empresa: EMPRESA,
               sku_codigo_omie: String(sku),
               grupo_codigo: novoGrupo,
               atualizado_em: new Date().toISOString(),
-            } as never,
+            },
             { onConflict: "empresa,sku_codigo_omie" },
           );
         if (error) throw error;
@@ -294,8 +294,8 @@ export default function AdminReposicaoGruposProducao() {
         atualizado_em: new Date().toISOString(),
       }));
       const { error } = await supabase
-        .from("sku_grupo_producao" as never)
-        .upsert(rows as never, { onConflict: "empresa,sku_codigo_omie" });
+        .from("sku_grupo_producao")
+        .upsert(rows, { onConflict: "empresa,sku_codigo_omie" });
       if (error) throw error;
     },
     onSuccess: async (_, vars) => {

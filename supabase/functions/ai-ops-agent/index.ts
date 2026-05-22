@@ -29,6 +29,35 @@ interface Evidence {
   type: 'warning' | 'info' | 'critical';
 }
 
+interface ClientAssignment {
+  user_id: string;
+  omie_codigo_vendedor: string | null;
+}
+
+interface AiDecision {
+  decision_type: string;
+  customer_user_id: string;
+  farmer_id: string | null;
+  score_final: number;
+  confidence: string;
+  confidence_value: number;
+  suggested_action: string;
+  primary_reason: string;
+  evidences: Evidence[];
+  explanation: string;
+  customer_metrics: {
+    dias_desde_ultima_compra: number;
+    pedidos_90d: number;
+    faturamento_90d: number;
+    ticket_medio_90d: number;
+    faturamento_prev_90d: number;
+    intervalo_medio_dias: number | null;
+    atraso_relativo: number | null;
+    is_cold_start: boolean;
+  };
+  status: string;
+}
+
 function calculateScore(m: CustomerMetric): {
   score: number;
   confidence: string;
@@ -195,7 +224,7 @@ serve(async (req) => {
     await supabase.rpc("refresh_customer_metrics");
 
     // 2. Get all customer metrics with pagination (bypass 1000-row limit)
-    let allMetrics: any[] = [];
+    let allMetrics: CustomerMetric[] = [];
     const PAGE_SIZE = 1000;
     let offset = 0;
     let hasMore = true;
@@ -206,7 +235,7 @@ serve(async (req) => {
         .range(offset, offset + PAGE_SIZE - 1);
       if (pageError) throw new Error(`Failed to get metrics page ${offset}: ${pageError.message}`);
       if (page && page.length > 0) {
-        allMetrics = allMetrics.concat(page);
+        allMetrics = allMetrics.concat((page ?? []) as unknown as CustomerMetric[]);
         offset += PAGE_SIZE;
         hasMore = page.length === PAGE_SIZE;
       } else {
@@ -217,9 +246,10 @@ serve(async (req) => {
     console.log(`[ai-ops-agent] Total customers fetched: ${allMetrics.length}`);
 
     // 3. Get farmer (vendedor) assignments from omie_clientes
-    const { data: clientAssignments } = await supabase
+    const { data: clientAssignmentsRaw } = await supabase
       .from("omie_clientes")
       .select("user_id, omie_codigo_vendedor");
+    const clientAssignments = (clientAssignmentsRaw ?? []) as unknown as ClientAssignment[];
 
     // Get employee profiles to map vendedor codes to farmer_ids
     const { data: employees } = await supabase
@@ -228,22 +258,22 @@ serve(async (req) => {
       .eq("is_employee", true);
 
     // 4. Calculate scores and generate decisions
-    const decisions: any[] = [];
+    const decisions: AiDecision[] = [];
     const today = new Date().toISOString().split("T")[0];
 
     // Only process customers that have at least SOME purchase history
-    const relevantMetrics = allMetrics.filter((m: any) => m.dias_desde_ultima_compra < 9999);
+    const relevantMetrics = allMetrics.filter((m) => m.dias_desde_ultima_compra < 9999);
     console.log(`[ai-ops-agent] Customers with purchase history: ${relevantMetrics.length}`);
 
     for (const m of relevantMetrics) {
 
-      const result = calculateScore(m as CustomerMetric);
+      const result = calculateScore(m);
 
       // Only create decisions for customers with score > 10
       if (result.score < 10) continue;
 
       // Try to find farmer assignment
-      const assignment = clientAssignments?.find((a: any) => a.user_id === m.customer_user_id);
+      const assignment = clientAssignments.find((a) => a.user_id === m.customer_user_id);
 
       decisions.push({
         decision_type: "RECOMMEND_CONTACT",

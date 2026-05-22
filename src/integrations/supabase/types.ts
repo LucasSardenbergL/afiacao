@@ -393,6 +393,30 @@ export type Database = {
         }
         Relationships: []
       }
+      company_cnpjs: {
+        Row: {
+          cnpj: string
+          cnpj_normalized: string | null
+          company: string
+          nome_fantasia: string | null
+          updated_at: string | null
+        }
+        Insert: {
+          cnpj: string
+          cnpj_normalized?: string | null
+          company: string
+          nome_fantasia?: string | null
+          updated_at?: string | null
+        }
+        Update: {
+          cnpj?: string
+          cnpj_normalized?: string | null
+          company?: string
+          nome_fantasia?: string | null
+          updated_at?: string | null
+        }
+        Relationships: []
+      }
       company_config: {
         Row: {
           created_at: string
@@ -736,6 +760,66 @@ export type Database = {
           segment?: string | null
           tags?: string[] | null
           updated_at?: string
+        }
+        Relationships: []
+      }
+      customer_visit_scores: {
+        Row: {
+          calculated_at: string
+          city: string | null
+          customer_user_id: string
+          days_since_last_visit: number | null
+          expansao_score: number | null
+          farmer_id: string
+          id: string
+          last_visit_at: string | null
+          neighborhood: string | null
+          primary_mission: Database["public"]["Enums"]["visit_mission"] | null
+          prospeccao_score: number | null
+          recuperacao_score: number | null
+          relacionamento_score: number | null
+          score_breakdown: Json | null
+          state: string | null
+          updated_at: string
+          visit_score: number | null
+        }
+        Insert: {
+          calculated_at?: string
+          city?: string | null
+          customer_user_id: string
+          days_since_last_visit?: number | null
+          expansao_score?: number | null
+          farmer_id: string
+          id?: string
+          last_visit_at?: string | null
+          neighborhood?: string | null
+          primary_mission?: Database["public"]["Enums"]["visit_mission"] | null
+          prospeccao_score?: number | null
+          recuperacao_score?: number | null
+          relacionamento_score?: number | null
+          score_breakdown?: Json | null
+          state?: string | null
+          updated_at?: string
+          visit_score?: number | null
+        }
+        Update: {
+          calculated_at?: string
+          city?: string | null
+          customer_user_id?: string
+          days_since_last_visit?: number | null
+          expansao_score?: number | null
+          farmer_id?: string
+          id?: string
+          last_visit_at?: string | null
+          neighborhood?: string | null
+          primary_mission?: Database["public"]["Enums"]["visit_mission"] | null
+          prospeccao_score?: number | null
+          recuperacao_score?: number | null
+          relacionamento_score?: number | null
+          score_breakdown?: Json | null
+          state?: string | null
+          updated_at?: string
+          visit_score?: number | null
         }
         Relationships: []
       }
@@ -2514,6 +2598,93 @@ export type Database = {
           },
         ]
       }
+      fin_alertas: {
+        Row: {
+          company: string
+          contexto: Json | null
+          criado_em: string
+          dismissed_at: string | null
+          dismissed_by: string | null
+          dismissed_until: string | null
+          id: string
+          mensagem: string
+          severidade: string
+          threshold: number | null
+          tipo: string
+          valor: number | null
+        }
+        Insert: {
+          company: string
+          contexto?: Json | null
+          criado_em?: string
+          dismissed_at?: string | null
+          dismissed_by?: string | null
+          dismissed_until?: string | null
+          id?: string
+          mensagem: string
+          severidade: string
+          threshold?: number | null
+          tipo: string
+          valor?: number | null
+        }
+        Update: {
+          company?: string
+          contexto?: Json | null
+          criado_em?: string
+          dismissed_at?: string | null
+          dismissed_by?: string | null
+          dismissed_until?: string | null
+          id?: string
+          mensagem?: string
+          severidade?: string
+          threshold?: number | null
+          tipo?: string
+          valor?: number | null
+        }
+        Relationships: []
+      }
+      fin_audit_log: {
+        Row: {
+          changed_at: string
+          changed_by: string | null
+          changed_fields: Json
+          company: string | null
+          id: number
+          op: string
+          origem: string
+          override_justificativa: string | null
+          period_ref: string | null
+          row_id: string
+          table_name: string
+        }
+        Insert: {
+          changed_at?: string
+          changed_by?: string | null
+          changed_fields: Json
+          company?: string | null
+          id?: number
+          op: string
+          origem?: string
+          override_justificativa?: string | null
+          period_ref?: string | null
+          row_id: string
+          table_name: string
+        }
+        Update: {
+          changed_at?: string
+          changed_by?: string | null
+          changed_fields?: Json
+          company?: string | null
+          id?: number
+          op?: string
+          origem?: string
+          override_justificativa?: string | null
+          period_ref?: string | null
+          row_id?: string
+          table_name?: string
+        }
+        Relationships: []
+      }
       fin_categoria_dre_mapping: {
         Row: {
           company: string
@@ -2729,6 +2900,36 @@ export type Database = {
           total_cr?: number | null
           total_mov?: number | null
           ultimo_sync?: string | null
+        }
+        Relationships: []
+      }
+      fin_config_cashflow: {
+        Row: {
+          adiantamento_categorias_codigos: string[]
+          company: string
+          folha_categorias_codigos: string[]
+          overrides_cenario: Json
+          thresholds: Json
+          updated_at: string
+          updated_by: string | null
+        }
+        Insert: {
+          adiantamento_categorias_codigos?: string[]
+          company: string
+          folha_categorias_codigos?: string[]
+          overrides_cenario?: Json
+          thresholds?: Json
+          updated_at?: string
+          updated_by?: string | null
+        }
+        Update: {
+          adiantamento_categorias_codigos?: string[]
+          company?: string
+          folha_categorias_codigos?: string[]
+          overrides_cenario?: Json
+          thresholds?: Json
+          updated_at?: string
+          updated_by?: string | null
         }
         Relationships: []
       }
@@ -3009,7 +3210,7 @@ export type Database = {
           receita_bruta: number | null
           receita_liquida: number | null
           receitas_financeiras: number | null
-          regime: string | null
+          regime: string
           resultado_antes_impostos: number | null
           resultado_liquido: number | null
           resultado_operacional: number | null
@@ -3035,7 +3236,7 @@ export type Database = {
           receita_bruta?: number | null
           receita_liquida?: number | null
           receitas_financeiras?: number | null
-          regime?: string | null
+          regime?: string
           resultado_antes_impostos?: number | null
           resultado_liquido?: number | null
           resultado_operacional?: number | null
@@ -3061,7 +3262,7 @@ export type Database = {
           receita_bruta?: number | null
           receita_liquida?: number | null
           receitas_financeiras?: number | null
-          regime?: string | null
+          regime?: string
           resultado_antes_impostos?: number | null
           resultado_liquido?: number | null
           resultado_operacional?: number | null
@@ -3157,6 +3358,144 @@ export type Database = {
           },
         ]
       }
+      fin_estoque_valor: {
+        Row: {
+          cobertura_pct: number | null
+          company: string
+          created_at: string
+          criado_por: string | null
+          data_ref: string
+          fonte: string
+          id: string
+          observacao: string | null
+          valor: number
+        }
+        Insert: {
+          cobertura_pct?: number | null
+          company: string
+          created_at?: string
+          criado_por?: string | null
+          data_ref: string
+          fonte?: string
+          id?: string
+          observacao?: string | null
+          valor: number
+        }
+        Update: {
+          cobertura_pct?: number | null
+          company?: string
+          created_at?: string
+          criado_por?: string | null
+          data_ref?: string
+          fonte?: string
+          id?: string
+          observacao?: string | null
+          valor?: number
+        }
+        Relationships: []
+      }
+      fin_eventos_eventuais: {
+        Row: {
+          categoria_dre: string | null
+          company: string
+          created_at: string
+          criado_por: string | null
+          data_prevista: string
+          data_realizada: string | null
+          descricao: string
+          id: string
+          observacao: string | null
+          status: string
+          tipo: string
+          updated_at: string
+          valor: number
+        }
+        Insert: {
+          categoria_dre?: string | null
+          company: string
+          created_at?: string
+          criado_por?: string | null
+          data_prevista: string
+          data_realizada?: string | null
+          descricao: string
+          id?: string
+          observacao?: string | null
+          status?: string
+          tipo: string
+          updated_at?: string
+          valor: number
+        }
+        Update: {
+          categoria_dre?: string | null
+          company?: string
+          created_at?: string
+          criado_por?: string | null
+          data_prevista?: string
+          data_realizada?: string | null
+          descricao?: string
+          id?: string
+          observacao?: string | null
+          status?: string
+          tipo?: string
+          updated_at?: string
+          valor?: number
+        }
+        Relationships: []
+      }
+      fin_eventos_recorrentes: {
+        Row: {
+          ativo: boolean
+          categoria_dre: string | null
+          company: string
+          created_at: string
+          criado_por: string | null
+          descricao: string
+          dia_do_mes: number
+          fim: string | null
+          id: string
+          inicio: string
+          is_folha: boolean
+          observacao: string | null
+          tipo: string
+          updated_at: string
+          valor: number
+        }
+        Insert: {
+          ativo?: boolean
+          categoria_dre?: string | null
+          company: string
+          created_at?: string
+          criado_por?: string | null
+          descricao: string
+          dia_do_mes: number
+          fim?: string | null
+          id?: string
+          inicio: string
+          is_folha?: boolean
+          observacao?: string | null
+          tipo: string
+          updated_at?: string
+          valor: number
+        }
+        Update: {
+          ativo?: boolean
+          categoria_dre?: string | null
+          company?: string
+          created_at?: string
+          criado_por?: string | null
+          descricao?: string
+          dia_do_mes?: number
+          fim?: string | null
+          id?: string
+          inicio?: string
+          is_folha?: boolean
+          observacao?: string | null
+          tipo?: string
+          updated_at?: string
+          valor?: number
+        }
+        Relationships: []
+      }
       fin_fechamento_log: {
         Row: {
           acao: string
@@ -3211,6 +3550,8 @@ export type Database = {
           reaberto_em: string | null
           reaberto_por: string | null
           snapshot_data: Json | null
+          snapshot_dre_caixa_id: string | null
+          snapshot_dre_competencia_id: string | null
           snapshot_dre_id: string | null
           status: string
           updated_at: string | null
@@ -3231,6 +3572,8 @@ export type Database = {
           reaberto_em?: string | null
           reaberto_por?: string | null
           snapshot_data?: Json | null
+          snapshot_dre_caixa_id?: string | null
+          snapshot_dre_competencia_id?: string | null
           snapshot_dre_id?: string | null
           status?: string
           updated_at?: string | null
@@ -3251,12 +3594,28 @@ export type Database = {
           reaberto_em?: string | null
           reaberto_por?: string | null
           snapshot_data?: Json | null
+          snapshot_dre_caixa_id?: string | null
+          snapshot_dre_competencia_id?: string | null
           snapshot_dre_id?: string | null
           status?: string
           updated_at?: string | null
           versao?: number
         }
         Relationships: [
+          {
+            foreignKeyName: "fin_fechamentos_snapshot_dre_caixa_id_fkey"
+            columns: ["snapshot_dre_caixa_id"]
+            isOneToOne: false
+            referencedRelation: "fin_dre_snapshots"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "fin_fechamentos_snapshot_dre_competencia_id_fkey"
+            columns: ["snapshot_dre_competencia_id"]
+            isOneToOne: false
+            referencedRelation: "fin_dre_snapshots"
+            referencedColumns: ["id"]
+          },
           {
             foreignKeyName: "fin_fechamentos_snapshot_dre_id_fkey"
             columns: ["snapshot_dre_id"]
@@ -3307,6 +3666,72 @@ export type Database = {
           valor_forecast?: number
         }
         Relationships: []
+      }
+      fin_ic_matches: {
+        Row: {
+          cp_id: string | null
+          cr_id: string | null
+          diff_dias: number | null
+          diff_valor: number | null
+          empresa_destino: string
+          empresa_origem: string
+          id: string
+          matched_at: string
+          observacao: string | null
+          resolvido_em: string | null
+          resolvido_por: string | null
+          status: string
+          valor_destino: number | null
+          valor_origem: number | null
+        }
+        Insert: {
+          cp_id?: string | null
+          cr_id?: string | null
+          diff_dias?: number | null
+          diff_valor?: number | null
+          empresa_destino: string
+          empresa_origem: string
+          id?: string
+          matched_at?: string
+          observacao?: string | null
+          resolvido_em?: string | null
+          resolvido_por?: string | null
+          status: string
+          valor_destino?: number | null
+          valor_origem?: number | null
+        }
+        Update: {
+          cp_id?: string | null
+          cr_id?: string | null
+          diff_dias?: number | null
+          diff_valor?: number | null
+          empresa_destino?: string
+          empresa_origem?: string
+          id?: string
+          matched_at?: string
+          observacao?: string | null
+          resolvido_em?: string | null
+          resolvido_por?: string | null
+          status?: string
+          valor_destino?: number | null
+          valor_origem?: number | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "fin_ic_matches_cp_id_fkey"
+            columns: ["cp_id"]
+            isOneToOne: false
+            referencedRelation: "fin_contas_pagar"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "fin_ic_matches_cr_id_fkey"
+            columns: ["cr_id"]
+            isOneToOne: false
+            referencedRelation: "fin_contas_receber"
+            referencedColumns: ["id"]
+          },
+        ]
       }
       fin_kpi_tributario: {
         Row: {
@@ -3470,6 +3895,48 @@ export type Database = {
         }
         Relationships: []
       }
+      fin_period_overrides: {
+        Row: {
+          acao_planejada: string
+          ano: number
+          closed_at: string | null
+          closed_by: string | null
+          company: string
+          expires_at: string
+          id: string
+          justificativa: string
+          mes: number
+          opened_at: string
+          opened_by: string
+        }
+        Insert: {
+          acao_planejada: string
+          ano: number
+          closed_at?: string | null
+          closed_by?: string | null
+          company: string
+          expires_at: string
+          id?: string
+          justificativa: string
+          mes: number
+          opened_at?: string
+          opened_by: string
+        }
+        Update: {
+          acao_planejada?: string
+          ano?: number
+          closed_at?: string | null
+          closed_by?: string | null
+          company?: string
+          expires_at?: string
+          id?: string
+          justificativa?: string
+          mes?: number
+          opened_at?: string
+          opened_by?: string
+        }
+        Relationships: []
+      }
       fin_permissoes: {
         Row: {
           concedido_por: string | null
@@ -3530,6 +3997,48 @@ export type Database = {
           pode_ver_todas_empresas?: boolean | null
           updated_at?: string | null
           user_id?: string
+        }
+        Relationships: []
+      }
+      fin_projecao_snapshots: {
+        Row: {
+          cenario: string
+          company: string
+          dados: Json
+          dias_cobertura: number | null
+          horizon_weeks: number
+          id: string
+          liquidez_operacional_liquida: number | null
+          ncg: number | null
+          premissas: Json
+          saldo_tesouraria: number | null
+          snapshot_at: string
+        }
+        Insert: {
+          cenario: string
+          company: string
+          dados: Json
+          dias_cobertura?: number | null
+          horizon_weeks?: number
+          id?: string
+          liquidez_operacional_liquida?: number | null
+          ncg?: number | null
+          premissas: Json
+          saldo_tesouraria?: number | null
+          snapshot_at?: string
+        }
+        Update: {
+          cenario?: string
+          company?: string
+          dados?: Json
+          dias_cobertura?: number | null
+          horizon_weeks?: number
+          id?: string
+          liquidez_operacional_liquida?: number | null
+          ncg?: number | null
+          premissas?: Json
+          saldo_tesouraria?: number | null
+          snapshot_at?: string
         }
         Relationships: []
       }
@@ -7531,6 +8040,7 @@ export type Database = {
           customer_address: string | null
           customer_phone: string | null
           customer_user_id: string
+          deleted_at: string | null
           discount: number
           hash_payload: string | null
           id: string
@@ -7553,6 +8063,7 @@ export type Database = {
           customer_address?: string | null
           customer_phone?: string | null
           customer_user_id: string
+          deleted_at?: string | null
           discount?: number
           hash_payload?: string | null
           id?: string
@@ -7575,6 +8086,7 @@ export type Database = {
           customer_address?: string | null
           customer_phone?: string | null
           customer_user_id?: string
+          deleted_at?: string | null
           discount?: number
           hash_payload?: string | null
           id?: string
@@ -8293,6 +8805,83 @@ export type Database = {
           status?: string
         }
         Relationships: []
+      }
+      standard_processes: {
+        Row: {
+          created_at: string
+          created_by: string
+          description: string | null
+          etapas: Json
+          expected_outcomes: string[] | null
+          id: string
+          name: string
+          parent_id: string | null
+          porte_alvo: string[] | null
+          prerequisites: string[] | null
+          reviewed_at: string | null
+          reviewed_by: string | null
+          segmento: string
+          slug: string | null
+          status: string
+          status_notes: string | null
+          tags: string[] | null
+          target_audience: string | null
+          updated_at: string
+          version: number
+        }
+        Insert: {
+          created_at?: string
+          created_by: string
+          description?: string | null
+          etapas: Json
+          expected_outcomes?: string[] | null
+          id?: string
+          name: string
+          parent_id?: string | null
+          porte_alvo?: string[] | null
+          prerequisites?: string[] | null
+          reviewed_at?: string | null
+          reviewed_by?: string | null
+          segmento: string
+          slug?: string | null
+          status?: string
+          status_notes?: string | null
+          tags?: string[] | null
+          target_audience?: string | null
+          updated_at?: string
+          version?: number
+        }
+        Update: {
+          created_at?: string
+          created_by?: string
+          description?: string | null
+          etapas?: Json
+          expected_outcomes?: string[] | null
+          id?: string
+          name?: string
+          parent_id?: string | null
+          porte_alvo?: string[] | null
+          prerequisites?: string[] | null
+          reviewed_at?: string | null
+          reviewed_by?: string | null
+          segmento?: string
+          slug?: string | null
+          status?: string
+          status_notes?: string | null
+          tags?: string[] | null
+          target_audience?: string | null
+          updated_at?: string
+          version?: number
+        }
+        Relationships: [
+          {
+            foreignKeyName: "standard_processes_parent_id_fkey"
+            columns: ["parent_id"]
+            isOneToOne: false
+            referencedRelation: "standard_processes"
+            referencedColumns: ["id"]
+          },
+        ]
       }
       sugestao_negociacao_paralela: {
         Row: {
@@ -10304,6 +10893,39 @@ export type Database = {
         }
         Relationships: []
       }
+      visit_score_recalc_queue: {
+        Row: {
+          customer_user_id: string
+          enqueued_at: string
+          error: string | null
+          farmer_id: string
+          id: string
+          processed_at: string | null
+          reason: string
+          source_event_id: string | null
+        }
+        Insert: {
+          customer_user_id: string
+          enqueued_at?: string
+          error?: string | null
+          farmer_id: string
+          id?: string
+          processed_at?: string | null
+          reason: string
+          source_event_id?: string | null
+        }
+        Update: {
+          customer_user_id?: string
+          enqueued_at?: string
+          error?: string | null
+          farmer_id?: string
+          id?: string
+          processed_at?: string | null
+          reason?: string
+          source_event_id?: string | null
+        }
+        Relationships: []
+      }
       warehouses: {
         Row: {
           cnpj: string | null
@@ -11455,6 +12077,39 @@ export type Database = {
           },
         ]
       }
+      visit_score_recalc_pending: {
+        Row: {
+          customer_user_id: string | null
+          enqueued_at: string | null
+          error: string | null
+          farmer_id: string | null
+          id: string | null
+          processed_at: string | null
+          reason: string | null
+          source_event_id: string | null
+        }
+        Insert: {
+          customer_user_id?: string | null
+          enqueued_at?: string | null
+          error?: string | null
+          farmer_id?: string | null
+          id?: string | null
+          processed_at?: string | null
+          reason?: string | null
+          source_event_id?: string | null
+        }
+        Update: {
+          customer_user_id?: string | null
+          enqueued_at?: string | null
+          error?: string | null
+          farmer_id?: string | null
+          id?: string | null
+          processed_at?: string | null
+          reason?: string | null
+          source_event_id?: string | null
+        }
+        Relationships: []
+      }
     }
     Functions: {
       aplicar_promocoes_no_ciclo: {
@@ -11593,13 +12248,30 @@ export type Database = {
         Args: { p_ano: number; p_company: string; p_mes: number }
         Returns: Json
       }
+      fin_categorias_sem_mapping: {
+        Args: { p_company: string; p_end: string; p_start: string }
+        Returns: {
+          categoria_nome: string
+          omie_codigo: string
+          valor_periodo: number
+        }[]
+      }
       fin_consolidado_intercompany: {
         Args: { p_ano: number; p_mes: number }
         Returns: {
-          dre_linha: string
+          conta: string
           eliminacoes: number
-          valor_bruto: number
-          valor_liquido: number
+          total_bruto: number
+          total_consolidado: number
+        }[]
+      }
+      fin_estimar_estoque_omie: {
+        Args: { p_company: string }
+        Returns: {
+          cobertura_pct: number
+          skus_com_custo: number
+          skus_total: number
+          valor_estimado: number
         }[]
       }
       fin_projecao_13_semanas: {
@@ -11846,6 +12518,10 @@ export type Database = {
           valor_coberto_rs: number
         }[]
       }
+      set_config: {
+        Args: { is_local?: boolean; parameter: string; value: string }
+        Returns: string
+      }
       simular_formula_estoque: {
         Args: {
           p_candidato: string
@@ -11935,6 +12611,11 @@ export type Database = {
         | "REJEITADO"
         | "APLICADO_AUTOMATICO"
       tint_integration_mode: "csv_only" | "shadow_mode" | "automatic_primary"
+      visit_mission:
+        | "recuperacao"
+        | "expansao"
+        | "relacionamento"
+        | "prospeccao"
     }
     CompositeTypes: {
       [_ in never]: never
@@ -12112,6 +12793,12 @@ export const Constants = {
         "APLICADO_AUTOMATICO",
       ],
       tint_integration_mode: ["csv_only", "shadow_mode", "automatic_primary"],
+      visit_mission: [
+        "recuperacao",
+        "expansao",
+        "relacionamento",
+        "prospeccao",
+      ],
     },
   },
 } as const

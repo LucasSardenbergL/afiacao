@@ -16,7 +16,7 @@ interface MockChain {
   maybeSingle: ReturnType<typeof vi.fn>;
 }
 
-function buildChain(resolveValue: { data: unknown; error: unknown }): MockChain {
+function buildChain(resolveValue: { data: unknown; error?: unknown }): MockChain {
   const chain: Partial<MockChain> = {};
   chain.select = vi.fn().mockReturnValue(chain);
   chain.filter = vi.fn().mockReturnValue(chain);

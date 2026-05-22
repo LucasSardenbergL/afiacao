@@ -13,7 +13,7 @@ export function useStandardProcessesList(filters: Filters = {}) {
     staleTime: 30_000,
     queryFn: async (): Promise<StandardProcess[]> => {
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      let q = (supabase.from('standard_processes') as any).select('*');
+      let q = (supabase as any).from('standard_processes').select('*');
       const statusList = filters.status ?? ['draft', 'in_review', 'published'];
       q = q.in('status', statusList);
       if (filters.segmento) q = q.eq('segmento', filters.segmento);

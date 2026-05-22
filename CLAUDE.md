@@ -2,6 +2,8 @@
 
 > Este arquivo orienta agentes de código (e humanos) trabalhando neste repositório. Última atualização: 2026-05-17 (auditoria de código completa — PRs #24-33 entregues: hotfixes de segurança, cleanup -2200 LoC, useUserRole consolidado, codemod sonner em engines IA, infinite scroll, perf gate em polls. Histórico anterior: auditoria UX 2026-05-13 em `docs/ux-audit/` + redesign visual v3 em `docs/visual-direction/`, ambos mergeados via PR #4).
 
+> **🗣️ Idioma das sessões (preferência do Lucas, 2026-05-20):** responda SEMPRE em **português brasileiro** — nesta sessão e em **qualquer sessão nova ou subagente/sessão spawnada a partir de outra que tenhamos**. Toda comunicação com o usuário (texto, resumos, perguntas, descrição de PR) em pt-BR. Código, rotas, commits e PRs já são pt-BR (ver §5).
+
 ---
 
 ## 1. Produto
@@ -261,17 +263,21 @@ Dois backends coexistem; o usuário escolhe via toggle em `/settings`:
 
 - `src/lib/logger.ts` — wrapper estruturado com níveis (info/error/critical), usado consistente em AuthContext
 
-### Migrations & DB ops — preferência do founder (confirmado 2026-05-19)
+### ⛔ Acesso ao banco — SOMENTE via Lovable (sem terminal, sem curl, sem CLI)
 
-> 🔴 **REGRA 1**: o founder acessa o banco via **SQL Editor do Lovable** — **NÃO** menciona "Supabase CLI", "Supabase Dashboard separado" ou "supabase db push" como caminho default. Toda migration / SQL custom é entregue pra **colar e clicar Run no SQL Editor**.
->
-> 🔴 **REGRA 2 (cuidado SEVERO — lição aprendida 2026-05-19)**: **EXISTEM 2 SUPABASES**:
->   1. **Supabase do Lovable** (o que o app de produção usa) — único que importa. Acessível pelo SQL Editor dentro da UI do Lovable.
->   2. **Supabase "standalone"** (project ref `lkotrsfdvnwxqyevhffh`) — outro projeto, que NÃO é usado pelo app. Foi linkado via `supabase link` em 2026-05-18 por engano.
->
-> Aplicar SQL no Supabase standalone (CLI ou Dashboard separado) **NÃO TEM EFEITO no app**. As 15 migrations da Fundação foram aplicadas erroneamente lá (perdidas, precisaram ser re-coladas no Lovable). As 4 edge functions também foram deployadas no standalone (mesmo problema).
->
-> **Nunca mais sugira `supabase db push`, `supabase functions deploy --project-ref <X>`, nem dê ao founder qualquer link com `lkotrsfdvnwxqyevhffh`**. Edge functions tem que ser criadas/editadas via UI do Lovable (existe seção "Edge Functions" dentro do Lovable, sob o módulo Cloud/Backend). Se o founder pedir CLI, OK, mas confirmar antes que ele tem acesso ao mesmo Supabase que o Lovable usa.
+**O Lucas NÃO tem acesso a terminal/curl/Supabase CLI pro backend.** Todo acesso ao banco e edge functions é feito **exclusivamente pela UI do Lovable** (o SQL Editor do Lovable em `lovable.dev/projects/.../view=cloud&section=sql`, ou o chat AI do Lovable). Confirmado em 2026-05-19.
+
+**NUNCA sugerir ao usuário:**
+- ❌ comandos `curl` (ele não tem `$SUPABASE_URL`/`$CRON_SECRET` no shell — falha com "No host part in the URL")
+- ❌ `supabase` CLI, `psql`, ou qualquer ferramenta de terminal
+- ❌ acessar o Supabase Dashboard direto em `supabase.com/dashboard` — o projeto real (`fzvklzpomgnyikkfkzai`) é gerenciado pela org do Lovable e o Lucas recebe "You do not have access". O projeto `lkotrsfdvnwxqyevhffh` que aparece na conta dele é um projeto-teste vazio, NÃO o de produção.
+
+**Como o usuário roda QUALQUER coisa no backend:**
+- **SQL (DDL/DML/migrations/queries)** → cola no SQL Editor dentro do Lovable → Run
+- **Invocar edge function** → pedir pro chat do Lovable invocar, OU via `net.http_post` no SQL Editor (se pg_net + auth configurados), OU acontece automático via triggers/cron
+- Pra dar instrução de SQL, sempre rotular: "🟣 Lovable → SQL Editor → cola → Run"
+
+### Migrations Supabase — ⚠️ aplicação manual obrigatória
 
 **Lovable Cloud NÃO aplica automaticamente** migrations que você commita em `supabase/migrations/`. Confirmado experimentalmente em 2026-05-17:
 
@@ -326,6 +332,15 @@ Dois backends coexistem; o usuário escolhe via toggle em `/settings`:
 > 4. Verificar no Cloud → Edge functions se aparece "Active"
 >
 > **Não sugerir mais**: `supabase functions deploy` via CLI (mesmo com CLI já instalada — o founder ainda perderia tempo confirmando project ref e o standalone supabase ainda paira como armadilha). Mesmo que CLI funcione tecnicamente, o caminho oficial Lovable é via chat — e o founder prefere "colar e clicar".
+
+**Auditoria de quais custom migrations estão aplicadas no banco**:
+
+- Inventário completo em [`docs/migrations-audit.md`](docs/migrations-audit.md) (38 custom migrations, 262 objetos esperados — tables, indexes, functions, triggers, cron jobs, enum values, RLS policies)
+- Script SQL pronto pra colar no Supabase SQL Editor em [`scripts/audit-custom-migrations.sql`](scripts/audit-custom-migrations.sql) — read-only, retorna duas tabelas: (a) `supabase_migrations.schema_migrations` cross-reference, (b) existência objeto-a-objeto via `pg_catalog`/`information_schema`. Linha com `❌` = precisa apply manual
+- Regenerar quando adicionar migration nova: `bun run audit:migrations` (parser regex em `scripts/audit-custom-migrations.ts`, idempotente)
+- **Audit de 2026-05-19**: 262 objetos checados, 2 gaps (`standard_processes` nunca aplicada + `idx_customer_contacts_birthday` partial). Fechados via `scripts/apply-missing-migrations-2026-05-19.sql` (verificado ok=true).
+- **Audit de 2026-05-20**: 40 custom migrations / 274 objetos (re-gerado após PRs paralelos). Nova migration `20260520010000_scoring_visit_p1_fixes.sql` — **rodar `scripts/audit-custom-migrations.sql` no Studio pra confirmar apply**.
+- ⚠️ O histórico de auditorias vive aqui (não no `docs/migrations-audit.md`, que é auto-gerado e sobrescrito a cada `bun run audit:migrations`).
 
 ### Convenções de código
 
@@ -457,7 +472,7 @@ Ainda pendentes (decisão de produto ou sprint próprio):
 - **`SalesOrders.deleteOrder` sem soft-delete** — exclusão direta no Omie; risco compliance. Precisa migration SQL (coluna `deleted_at`) + flag UI
 - **TypeScript strict mode** — `tsconfig.app.json` tem `strict: false`, `noImplicitAny: false`. Resolve raiz de 1300 lint errors (97% `no-explicit-any`). **Infra incremental pronta**: `tsconfig.strict.json` lista files que passam strict (`strict: true` + `noImplicitAny` + `strictNullChecks` + `noUnusedLocals/Parameters`). Rodar via `bun run typecheck:strict`. CI bloqueia se regressão nos files migrados. Pra migrar mais files: garantir 0 `any` + tipos explícitos + adicionar ao `include` de `tsconfig.strict.json`. Convergência: quando 100% do `src/` estiver em strict, mover flags pra `tsconfig.app.json` e deletar `tsconfig.strict.json`. Caminho top-down: hooks de engine (`useBundleEngine`, `useTacticalPlan`, `useFarmerExperiments`, `useFarmerPerformance`, `useCrossSellEngine`, `useCopilotEngine`) concentram ~250 errors.
 - **7 god-components da Reposição** (>1000 LoC cada: AdminReposicaoPromocaoDetail 1691L, AdminRoutePlanner 1661L, AdminReposicaoPedidos 1572L, AdminReposicaoAumentoDetail 1465L, FinanceiroDashboard 1242L, AdminReposicaoNegociacaoParalela 1201L, AdminReposicaoRevisao 1099L) — quebrar em subcomponentes em `src/components/reposicao/`
-- **N+1 patterns em engines IA**: `useCrossSellEngine.ts:372-389` (500 round-trips serializados), `useFarmerExperiments.ts:68-79,195-208`, Edge Functions `omie-vendas-sync:765,772` + `omie-sync:1182-1196`
+- **N+1 patterns remanescentes**: `omie-vendas-sync:765` (pagination sequencial de profiles, ~4 RTT por sync — não crítico) + `omie-sync:1180-1196` (6 deletes serial por order delete — manual path, não crítico). Frontend `useCrossSellEngine.ts:226-233` (profile batching, ~36 RTT em 3598 clientes) ✅ resolvido em PR de profile-fetch paralelo. `useFarmerExperiments.ts:108-122,251-272` ✅ resolvidos em PRs anteriores (comments "antes era N+1" no código).
 - **~100 callsites de `useToast` legados** — migrar gradualmente pra `import { toast } from 'sonner'`
 - **41 cores hardcoded** (`text-emerald-600` etc.) — sweep pra `text-status-*`. Top 5: Admin (21×), des/PosicaoAtualTab (12×), des/SimuladorTab (11×), AdminPortalSayerlack (10×), AdminRoutePlanner (9×)
 - **Adoção `useUrlState`** — hoje 5/119 páginas; migrar `useState` de filtros conforme arquivos forem tocados
@@ -535,6 +550,16 @@ Há muitas skills instaladas (gstack ~40 comandos, superpowers 14, catálogo de 
 | **Navegar/testar no browser** | `/browse` (gstack) | `mcp__Claude_in_Chrome__*`, `mcp__Claude_Preview__*`. Já dito na seção gstack acima. |
 | **QA da app rodando** | `/qa` (report + fix) ou `/qa-only` (só report) — gstack | — |
 | **TDD ao escrever código** | `test-driven-development` (superpowers) | — disciplina de escrita; `engineering:testing-strategy` só para desenhar plano de teste do zero. |
+| **Qualquer task Supabase (DB/Auth/Edge Functions/RLS/migrations)** | `supabase` (oficial) | `engineering:debug` genérico. O skill oficial conhece padrões idiomáticos de RLS/Edge Functions/CLI. |
+| **Otimizar query/schema Postgres** | `supabase-postgres-best-practices` (oficial) | — usar junto do `supabase` ao mexer em SQL/índices. |
+| **Performance React (memo, waterfalls, bundle, N+1 em engines IA)** | `vercel-react-best-practices` | `engineering:tech-debt` genérico. 45 regras priorizadas por impacto. |
+| **Refatorar god-component (>1000 LoC da Reposição) em compound components** | `vercel-composition-patterns` | — pareia com react-best-practices ao quebrar os 7 god-components do §10. |
+| **Auditar UI/acessibilidade (WCAG AA/AAA)** | `vercel-web-design-guidelines` (fetcha regras em runtime) | `design:accessibility-review` (checklist menos rigoroso; ainda útil pra revisão manual). |
+| **Optimistic UI / cache / mutações React Query** | `tanstack-query` | — receitas `onMutate`/`onError`/rollback; referência viva é `SalesOrders.deleteOrder`. |
+| **Adicionar error monitoring (Sentry) ao app** | `sentry-react-sdk` (via router `sentry-sdk-setup`) | — só se houver decisão de produto de adotar Sentry; hoje só PostHog. |
+| **SAST profundo (scan de vulnerabilidade)** | `semgrep` (rápido, JS/TS) ou `codeql` (interprocedural, requer build) + `sarif-parsing` pra agregar | complementam `cso` + `/security-review` (heurísticos); estes rodam análise estática real. |
+| **Auditar supply chain de deps** | `supply-chain-risk-auditor` (Trail of Bits) | — pareia com `cso` (que faz dependency supply chain em alto nível). |
+| **Modelar RBAC / mapear 5 personas → roles + departamentos** | `access-control-rbac` | — apoia o plano de personas do §5. |
 
 **Colisão de nome conhecida:** existe `/review` do gstack e `review` do plugin oficial code-review. Tratamos o **`/review` do gstack como o canônico** para revisão de diff. Se o comando errado disparar, invocar explicitamente via gstack.
 
@@ -545,6 +570,19 @@ Esta tabela é viva — ao instalar/remover skill, atualizar aqui.
 > 🟢 **Toda vez que estivermos em brainstorming**, se fizer sentido pro tema (decisão de arquitetura, metodologia, trade-off não-óbvio), **proponho proativamente uma "discussão" com uma segunda IA** pra melhorar o produto final — e **eu mesmo conduzo via skill `/codex` (consult mode)**, sem fazer o founder copiar/colar pro ChatGPT manualmente (isso desgasta ele com idas e vindas). Fluxo: eu monto o brief, rodo `/codex` consult, leio a resposta, e incorporo o que faz sentido no design — só trago pro founder o resumo do que mudou e por quê. Se o founder preferir explicitamente levar pro ChatGPT dele numa ocasião, tudo bem, mas o default é eu resolver a segunda opinião in-tool via codex.
 >
 > **Status do codex (2026-05-19):** instalado via Homebrew cask (`codex` 0.130.0, em `/opt/homebrew/bin/codex`) e **autenticado** (`~/.codex/auth.json` existe). `npm` NÃO está no PATH desta máquina — se precisar reinstalar/atualizar, usar `brew upgrade codex`, não npm. Consult roda direto: `codex exec "<prompt>" -C <repo> -s read-only -c 'model_reasoning_effort="medium"' --enable web_search_cached --json`. Primeira consulta (A2 metodologia financeira) pegou furos reais de regime tributário — vale o investimento.
+
+### 12b. Skills instaladas em 2026-05-19 (stack-specific, gaps do §10)
+
+15 skills novas em `~/.claude/skills/` (instaladas via git clone dos repos oficiais, não via marketplace pois nenhuma está registrada lá):
+
+- **Supabase oficial** (`supabase`, `supabase-postgres-best-practices`) — repo [supabase/agent-skills](https://github.com/supabase/agent-skills)
+- **Vercel Engineering** (`vercel-react-best-practices`, `vercel-composition-patterns`, `vercel-web-design-guidelines`) — repo [vercel-labs/agent-skills](https://github.com/vercel-labs/agent-skills)
+- **TanStack Query** (`tanstack-query`) — repo [secondsky/claude-skills](https://github.com/secondsky/claude-skills)
+- **Sentry** (`sentry-sdk-setup` [router], `sentry-react-sdk`, `sentry-code-review`, `sentry-fix-issues`) — repo [getsentry/sentry-for-ai](https://github.com/getsentry/sentry-for-ai). `sentry-react-sdk` tem `disable-model-invocation: true` — só dispara via o router `sentry-sdk-setup`.
+- **Trail of Bits security** (`semgrep`, `codeql`, `sarif-parsing`, `supply-chain-risk-auditor`) — repo [trailofbits/skills](https://github.com/trailofbits/skills)
+- **RBAC** (`access-control-rbac`) — repo secondsky
+
+> Atualização: para atualizar essas skills, re-clonar o repo de origem e re-copiar a pasta da skill em `~/.claude/skills/`. Não há auto-update (não são plugins de marketplace).
 
 ---
 

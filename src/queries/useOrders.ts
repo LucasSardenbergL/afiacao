@@ -5,7 +5,7 @@ export interface Order {
   id: string;
   status: string;
   service_type: string;
-  items: any[];
+  items: unknown[];
   total: number;
   created_at: string;
   delivery_option: string;
