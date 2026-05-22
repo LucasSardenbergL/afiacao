@@ -93,14 +93,14 @@ export const useBundleArguments = () => {
     profile: CustomerProfile,
     approachType: string
   ) => {
-    await supabase.from('farmer_bundle_recommendations' as any).update({
+    await supabase.from('farmer_bundle_recommendations').update({
       argument_phone: argument.versao_phone,
       argument_whatsapp: argument.versao_whatsapp,
       argument_technical: argument.versao_tecnica,
       customer_profile: profile,
       approach_type: approachType,
       updated_at: new Date().toISOString(),
-    } as any).eq('id', bundleId);
+    }).eq('id', bundleId);
   }, []);
 
   return {
