@@ -62,6 +62,17 @@ export type Evento = {
   registrado_em: string;
 };
 
+// Estado do formulário do modal "Registrar evento" (todos os campos como string,
+// convertidos no submit). Compartilhado entre a page e EventoDialog.
+export type NovoEventoForm = {
+  tipo_evento: string;
+  desconto_perc_proposto: string;
+  volume_minimo_proposto: string;
+  data_evento: string;
+  email_referencia: string;
+  conteudo: string;
+};
+
 export const TIPO_EVENTO_LABELS: Record<string, string> = {
   proposta_enviada: "Proposta enviada",
   contraproposta_recebida: "Contra-proposta recebida",
