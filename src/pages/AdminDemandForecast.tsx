@@ -39,6 +39,16 @@ interface CustomerToolForecast {
   isDueSoon: boolean;
 }
 
+interface UserToolQueryRow {
+  id: string;
+  user_id: string;
+  generated_name: string | null;
+  custom_name: string | null;
+  next_sharpening_due: string | null;
+  last_sharpened_at: string | null;
+  tool_categories: { name: string } | null;
+}
+
 interface GroupedByCustomer {
   userId: string;
   customerName: string;
@@ -108,7 +118,7 @@ const AdminDemandForecast = () => {
       const now = new Date();
       const processedForecasts: CustomerToolForecast[] = toolsData
         .filter(tool => customerUserIds.has(tool.user_id))
-        .map((tool: any) => {
+        .map((tool: UserToolQueryRow) => {
           const profile = customerProfiles.find(p => p.user_id === tool.user_id);
           const nextDue = tool.next_sharpening_due ? new Date(tool.next_sharpening_due) : null;
           const daysUntilDue = nextDue 

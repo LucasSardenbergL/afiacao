@@ -53,7 +53,7 @@ function KpiCards({ empresa }: { empresa: string }) {
       const trimestre = Math.floor(now.getMonth() / 3) + 1;
       const ano = now.getFullYear();
       const client = supabase as unknown as {
-        from: (t: string) => any;
+        from: (t: string) => ReturnType<typeof supabase.from>;
       };
 
       const [posicao, meta, ligacoes, spin] = await Promise.all([
