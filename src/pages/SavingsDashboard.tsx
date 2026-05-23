@@ -54,7 +54,7 @@ const SavingsDashboard = () => {
       (orders || []).forEach(order => {
         const monthKey = format(new Date(order.created_at), 'yyyy-MM');
         const items = Array.isArray(order.items) ? order.items : [];
-        const toolCount = items.reduce((sum: number, item: { quantity?: number }) => sum + (item.quantity || 1), 0);
+        const toolCount: number = items.reduce((sum: number, item: unknown) => sum + (Number((item as { quantity?: number })?.quantity) || 1), 0);
         
         const orderTotal = Number(order.total) || 0;
         const existing = monthMap.get(monthKey) || { total: 0, toolCount: 0 };
