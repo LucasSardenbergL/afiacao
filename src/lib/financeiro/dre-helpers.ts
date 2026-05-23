@@ -141,3 +141,50 @@ export function bucketizarCaixa(
   const fallback_pct = total > 0 ? total_fallback / total : 0;
   return { total, total_fallback, fallback_pct, itens };
 }
+
+export type DRECalculada = {
+  receita_bruta: number; deducoes: number; receita_liquida: number;
+  cmv: number; lucro_bruto: number;
+  despesas_operacionais: number; despesas_administrativas: number; despesas_comerciais: number;
+  despesas_financeiras: number; receitas_financeiras: number;
+  resultado_operacional: number; outras_receitas: number; outras_despesas: number;
+  resultado_antes_impostos: number; impostos: number; resultado_liquido: number;
+  detalhamento_impostos: Record<string, number>;
+};
+
+export function montarDRE(input: { regime: RegimeTributario; totais: Record<string, number> }): DRECalculada {
+  const t = (k: string) => input.totais[k] ?? 0;
+  const indiretos = t('ded_icms') + t('ded_iss') + t('ded_pis') + t('ded_cofins') + t('ded_ipi');
+  const das = t('das');
+  const impostoLucro = input.regime === 'simples' ? 0 : (t('irpj') + t('csll'));
+
+  // Deduções = devoluções/descontos (balde 'deducoes') + indiretos (presumido) + DAS (Simples).
+  const deducoes = t('deducoes') + indiretos + das;
+  const receita_bruta = t('receita_bruta');
+  const receita_liquida = receita_bruta - deducoes;
+  const cmv = t('cmv');
+  const lucro_bruto = receita_liquida - cmv;
+  const despesas_operacionais = t('despesas_operacionais');
+  const despesas_administrativas = t('despesas_administrativas');
+  const despesas_comerciais = t('despesas_comerciais');
+  const despesas_financeiras = t('despesas_financeiras');
+  const receitas_financeiras = t('receitas_financeiras');
+  const resultado_operacional = lucro_bruto - (despesas_operacionais + despesas_administrativas + despesas_comerciais) + receitas_financeiras - despesas_financeiras;
+  const outras_receitas = t('outras_receitas');
+  const outras_despesas = t('outras_despesas');
+  const resultado_antes_impostos = resultado_operacional + outras_receitas - outras_despesas;
+  const resultado_liquido = resultado_antes_impostos - impostoLucro;
+
+  const detalhamento_impostos: Record<string, number> = {};
+  for (const k of ['ded_icms', 'ded_iss', 'ded_pis', 'ded_cofins', 'ded_ipi', 'das', 'irpj', 'csll']) {
+    if (t(k) !== 0) detalhamento_impostos[k] = t(k);
+  }
+
+  return {
+    receita_bruta, deducoes, receita_liquida, cmv, lucro_bruto,
+    despesas_operacionais, despesas_administrativas, despesas_comerciais,
+    despesas_financeiras, receitas_financeiras, resultado_operacional,
+    outras_receitas, outras_despesas, resultado_antes_impostos,
+    impostos: impostoLucro, resultado_liquido, detalhamento_impostos,
+  };
+}

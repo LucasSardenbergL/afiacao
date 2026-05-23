@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { classificarLinhaDRE, REGIME_POR_EMPRESA, resolverDataCaixa, bucketizarCaixa } from '../dre-helpers';
+import { classificarLinhaDRE, REGIME_POR_EMPRESA, resolverDataCaixa, bucketizarCaixa, montarDRE } from '../dre-helpers';
 
 const M = (pairs: Array<[string, string]>) => new Map<string, string>(pairs);
 
@@ -105,5 +105,41 @@ describe('bucketizarCaixa', () => {
   });
   it('total 0 → fallback_pct 0', () => {
     expect(bucketizarCaixa([], '2026-03-01', '2026-04-01').fallback_pct).toBe(0);
+  });
+});
+
+const tot = (o: Partial<Record<string, number>>) => o as Record<string, number>;
+
+describe('montarDRE — presumido', () => {
+  it('indiretos nas deduções, IRPJ/CSLL abaixo', () => {
+    const r = montarDRE({
+      regime: 'presumido',
+      totais: tot({
+        receita_bruta: 100000, deducoes: 2000,
+        ded_icms: 12000, ded_pis: 650, ded_cofins: 3000,
+        cmv: 40000, despesas_administrativas: 10000,
+        irpj: 5000, csll: 3000,
+      }),
+    });
+    expect(r.deducoes).toBe(17650);
+    expect(r.receita_liquida).toBe(100000 - 17650);
+    expect(r.lucro_bruto).toBe(100000 - 17650 - 40000);
+    expect(r.impostos).toBe(8000);
+    expect(r.resultado_liquido).toBe(r.resultado_antes_impostos - 8000);
+    expect(r.detalhamento_impostos).toEqual({ ded_icms: 12000, ded_pis: 650, ded_cofins: 3000, irpj: 5000, csll: 3000 });
+  });
+});
+
+describe('montarDRE — Simples', () => {
+  it('DAS entra nas deduções (linha única), imposto sobre lucro = 0', () => {
+    const r = montarDRE({
+      regime: 'simples',
+      totais: tot({ receita_bruta: 100000, deducoes: 1000, das: 6000, cmv: 30000, despesas_administrativas: 8000 }),
+    });
+    expect(r.deducoes).toBe(7000);
+    expect(r.receita_liquida).toBe(93000);
+    expect(r.impostos).toBe(0);
+    expect(r.resultado_liquido).toBe(r.resultado_antes_impostos);
+    expect(r.detalhamento_impostos).toEqual({ das: 6000 });
   });
 });
