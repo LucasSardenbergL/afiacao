@@ -23,7 +23,7 @@ import {
 } from "@/components/ui/table";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Skeleton } from "@/components/ui/skeleton";
-import { ArrowDown, ArrowRight, ArrowUp, Download, Search } from "lucide-react";
+import { ArrowDown, ArrowRight, ArrowUp, Download, Minus, Search } from "lucide-react";
 import {
   CartesianGrid,
   Legend,
@@ -46,7 +46,7 @@ type SlaStatus =
   | "sem_sla_teorico"
   | "poucos_dados";
 
-type Tendencia = "melhorando" | "estavel" | "piorando";
+type Tendencia = "melhorando" | "estavel" | "piorando" | "sem_dados";
 
 interface ForCompliance {
   empresa: string;
@@ -113,6 +113,7 @@ const fmtData = (v: string | null) =>
 const TendenciaIcon = ({ t }: { t: Tendencia }) => {
   if (t === "piorando") return <ArrowUp className="h-3.5 w-3.5 text-destructive" aria-label="piorando" />;
   if (t === "melhorando") return <ArrowDown className="h-3.5 w-3.5 text-success" aria-label="melhorando" />;
+  if (t === "sem_dados") return <Minus className="h-3.5 w-3.5 text-muted-foreground/50" aria-label="sem dados de tendência" />;
   return <ArrowRight className="h-3.5 w-3.5 text-muted-foreground" aria-label="estável" />;
 };
 
@@ -358,6 +359,7 @@ export default function AdminReposicaoSlaFornecedor() {
                   <SelectItem value="melhorando">Melhorando</SelectItem>
                   <SelectItem value="estavel">Estável</SelectItem>
                   <SelectItem value="piorando">Piorando</SelectItem>
+                  <SelectItem value="sem_dados">Sem dados</SelectItem>
                 </SelectContent>
               </Select>
             </div>

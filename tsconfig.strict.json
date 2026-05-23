@@ -455,6 +455,8 @@
     "src/components/sales/print/PrintFilters.tsx",
     "src/components/sales/print/buildPrintHtml.ts",
     "src/components/sales/print/types.ts",
-    "src/components/unified-order/ServiceItemForm.tsx"
+    "src/components/unified-order/ServiceItemForm.tsx",
+    "src/components/customer360/format.ts",
+    "src/components/reposicao/alertas/types.ts"
   ]
 }

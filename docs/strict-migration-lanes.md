@@ -58,6 +58,12 @@ subgrafos sujos (`noUnusedLocals`/`strictNullChecks`) → cascata. **Promova lea
 - **Farmer/types**: sessões reescrevem `src/integrations/supabase/types.ts` + área farmer/scoring. Evite colidir.
 - **Reposição**: god-components sendo decompostos.
 
+### Reservas ativas (🔵 = em voo)
+- 🔵 **`feat/strict-promote-lib-leaf`** (sessão cranky-driscoll, 2026-05-23): lote leaf não-farmer —
+  `lib/call-session/aggregate-customer-profile`, `lib/sip/sip-client`, `lib/transcription/{deepgram-client,transcription-engine}`,
+  `components/customer360/format`, `components/financeiro/dashboard/format`, `components/portalSayerlack/types`,
+  `components/reposicao/alertas/types`. **NÃO toco** scoring/visit-scoring/farmer. Append-only no `include`.
+
 ## Follow-up registrado
 
 - **Reestruturar `tsconfig.strict.json` por lane** (fragmento por lane + include
