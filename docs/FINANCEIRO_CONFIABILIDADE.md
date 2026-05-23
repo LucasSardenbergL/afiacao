@@ -71,7 +71,26 @@ Substituímos o modelo de QUANDO o caixa entra na projeção 13 semanas. Antes: 
 ### Ainda direcional (próximas ondas)
 - Segmentação por cliente / faixa de ticket / instrumento de pagamento; overrides manuais de tesouraria: **deferidos**.
 - Timing de pagáveis (CP segue na data de vencimento): simetria deferida.
-- DRE "caixa" + linha de imposto por regime: **Onda 3**.
+
+---
+
+## 🔧 Onda 3a — DRE v2 estrutural (regime-aware) (2026-05-22)
+
+Reescreve a estrutura da DRE do `omie-financeiro` (`calcularDRE`). Lógica testada em `src/lib/financeiro/dre-helpers.ts` (vitest) e espelhada verbatim no engine Deno.
+
+| Mudança | O que passou a valer |
+|---|---|
+| **Estrutura regime-aware** | Deduções (tributos sobre receita) ficam acima da receita líquida; IRPJ/CSLL abaixo do resultado. Presumido: ICMS/ISS/PIS/COFINS/IPI nas deduções + IRPJ/CSLL abaixo. Simples: **DAS como linha única** (nunca quebrado — recolhimento unificado da LC 123), nas deduções, com imposto sobre lucro = 0. |
+| **Caixa real** | `regime=caixa` passa a bucketar pela **data de recebimento/pagamento real** (com fallback pro vencimento). Rastreia `fallback_pct` por valor; rotula **"caixa estimado"** quando >10%. |
+| **Mapping explícito** | Classificação de imposto vem do `fin_categoria_dre_mapping` (`ded_icms`/`ded_iss`/`ded_pis`/`ded_cofins`/`ded_ipi`/`das`/`irpj`/`csll`); a heurística de keyword vira último fallback e, quando pega imposto, conta pra confiança. |
+| **Gate de confiança** | Nível `alta/media/baixa` + `motivos[]` no `detalhamento`, por % mapeado por valor, `fallback_pct`, share de categorias genéricas e imposto não mapeado. Exibido na UI. |
+
+### Regra de ouro da Onda 3a
+A DRE ficou **regime-aware e menos enganosa**, mas a linha de imposto ainda é **descritiva** (o que saiu no Omie). O **check de imposto teórico** (Simples progressivo RBT12/anexo/fator-r; presumido trimestral + adicional) é a **Onda 3b**. No Simples, a "receita líquida" é gerencial — o DAS mistura tributo sobre receita + IRPJ/CSLL, então não é diretamente comparável a presumido.
+
+### Ainda direcional (próximas ondas)
+- Imposto teórico (conferência realizado×esperado por regime): **Onda 3b**.
+- Fechamento contábil, conciliação fiscal (PGDAS/DARF/NF), CMV/CPV real, depreciação, provisões (13º/férias), eliminação intercompany, pró-labore × folha × distribuição: **deferidos** (DRE segue direcional até lá).
 
 ---
 
