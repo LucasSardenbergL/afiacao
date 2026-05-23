@@ -462,6 +462,18 @@
     "src/contexts/CompanyContext.tsx",
     "src/contexts/AuthContext.tsx",
     "src/contexts/ConditionalWebRTCProvider.tsx",
-    "src/services/omieService.ts"
+    "src/services/omieService.ts",
+    "src/pages/MeuDia.tsx",
+    "src/pages/AdminCalculadora.tsx",
+    "src/pages/NotFound.tsx",
+    "src/pages/AdminReposicaoSessaoAplicacao.tsx",
+    "src/pages/AdminDesTrimestreAtual.tsx",
+    "src/pages/AdminReposicaoSessaoHistorico.tsx",
+    "src/pages/AdminReposicaoSessaoConfirmacao.tsx",
+    "src/pages/AdminStandardProcesses.tsx",
+    "src/pages/FinanceiroCapitalGiro.tsx",
+    "src/pages/AdminKnowledgeBase.tsx",
+    "src/pages/TintCorantes.tsx",
+    "src/pages/FinanceiroAnalise.tsx"
   ]
 }
