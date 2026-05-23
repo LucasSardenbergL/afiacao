@@ -45,7 +45,7 @@ interface AIDecision {
   primary_reason: string;
   evidences: Evidence[];
   explanation: string;
-  customer_metrics: Record<string, any>;
+  customer_metrics: Record<string, unknown>;
   status: string;
   created_at: string;
   updated_at: string;

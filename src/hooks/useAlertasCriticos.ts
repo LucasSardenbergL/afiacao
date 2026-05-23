@@ -11,7 +11,7 @@ export function useAlertasCriticos() {
     queryKey: ['alertas-criticos-count'],
     queryFn: async () => {
       try {
-        const { count, error } = await (supabase as any)
+        const { count, error } = await supabase
           .from('eventos_outlier')
           .select('*', { count: 'exact', head: true })
           .eq('status', 'pendente')

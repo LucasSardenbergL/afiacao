@@ -74,7 +74,7 @@ export function ProductItemForm({
                       <div className="flex items-center gap-1 mt-0.5 flex-wrap">
                         <span className="text-[10px] text-muted-foreground font-mono">{product.codigo}</span>
                         {!product.ativo && <Badge variant="destructive" className="text-[9px] px-1 py-0">Inativo</Badge>}
-                        {(product as any).is_tintometric && (
+                        {product.is_tintometric && (
                           <Badge variant="outline" className="text-[9px] px-1 py-0 border-primary/40 text-primary">🎨 Tintométrico</Badge>
                         )}
                         {customerPrice && customerPrice !== product.valor_unitario && (
