@@ -79,7 +79,7 @@ export function DispararAgoraButton({
         }
         onSuccess?.();
       }
-    } catch (err: unknown) {
+    } catch (err) {
       toast.error(`Falha ao disparar: ${err instanceof Error ? err.message : String(err)}`);
     } finally {
       setLoading(false);

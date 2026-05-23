@@ -27,12 +27,6 @@ interface FormulaResult {
   preco_final_sayersystem: number | null;
 }
 
-interface SalesOrderItem {
-  product_id: string;
-  tint_cor_id?: string;
-  valor_unitario: number;
-}
-
 interface AlternativePackaging {
   formulaId: string;
   skuId: string;
@@ -235,7 +229,7 @@ export function TintColorSelectDialog({ product, open, onClose, onConfirm, custo
       if (!orders) return null;
 
       for (const order of orders) {
-        const items = order.items as unknown as SalesOrderItem[];
+        const items = order.items as Array<{ product_id?: string; tint_cor_id?: string; valor_unitario?: number }>;
         if (!Array.isArray(items)) continue;
         for (const item of items) {
           if (
