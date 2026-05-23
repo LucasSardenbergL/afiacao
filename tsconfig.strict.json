@@ -365,6 +365,12 @@
     "src/components/reposicao/routePlanner/types.ts",
     "src/components/reposicao/routePlanner/priority.ts",
     "src/components/reposicao/routePlanner/constants.ts",
+    "src/components/reposicao/routePlanner/renderHelpers.tsx",
+    "src/components/reposicao/routePlanner/StatsStrip.tsx",
+    "src/components/reposicao/routePlanner/RouteStopCard.tsx",
+    "src/components/reposicao/routePlanner/ManualCustomerRow.tsx",
+    "src/components/reposicao/routePlanner/TodayVisitCard.tsx",
+    "src/components/reposicao/routePlanner/CheckoutDialog.tsx",
     "src/components/des/PosicaoAtualTab.tsx",
     "src/components/des/HistoricoTab.tsx",
     "src/pages/FinanceiroAnalytics.tsx",
@@ -382,6 +388,11 @@
     "src/pages/AdminMonthlyReports.tsx",
     "src/pages/NfeReceipt.tsx",
     "src/pages/ResetPassword.tsx",
-    "src/components/portalSayerlack/PortalDetailDrawer.tsx"
+    "src/components/portalSayerlack/PortalDetailDrawer.tsx",
+    "src/components/financeiro/dashboard/KpiCard.tsx",
+    "src/components/financeiro/dashboard/AgingCard.tsx",
+    "src/components/financeiro/dashboard/FluxoCaixaTab.tsx",
+    "src/components/financeiro/dashboard/DRETab.tsx",
+    "src/components/financeiro/dashboard/DREComparativo.tsx"
   ]
 }
