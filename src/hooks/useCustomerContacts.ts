@@ -10,8 +10,8 @@ export function useCustomerContacts(customerId: string | null) {
     staleTime: 30_000,
     queryFn: async (): Promise<CustomerContact[]> => {
       if (!customerId) return [];
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      const { data, error } = await (supabase.from('customer_contacts') as any)
+       
+      const { data, error } = await supabase.from('customer_contacts')
         .select('*')
         .eq('customer_user_id', customerId)
         .order('is_primary', { ascending: false })
@@ -46,8 +46,8 @@ export function useSaveContact() {
 
       // Se setar is_primary=true, desliga primary de outros do mesmo cliente primeiro
       if (input.is_primary) {
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        await (supabase.from('customer_contacts') as any)
+         
+        await supabase.from('customer_contacts')
           .update({ is_primary: false })
           .eq('customer_user_id', input.customer_user_id);
       }
@@ -68,15 +68,15 @@ export function useSaveContact() {
       };
 
       if (input.id) {
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        const { data, error } = await (supabase.from('customer_contacts') as any)
+         
+        const { data, error } = await supabase.from('customer_contacts')
           .update(payload).eq('id', input.id).select().single();
         if (error) throw error;
         return data as CustomerContact;
       }
 
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      const { data, error } = await (supabase.from('customer_contacts') as any)
+       
+      const { data, error } = await supabase.from('customer_contacts')
         .insert(payload).select().single();
       if (error) throw error;
       return data as CustomerContact;
@@ -93,8 +93,8 @@ export function useDeleteContact() {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: async ({ id, customerId }: { id: string; customerId: string }) => {
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      const { error } = await (supabase.from('customer_contacts') as any).delete().eq('id', id);
+       
+      const { error } = await supabase.from('customer_contacts').delete().eq('id', id);
       if (error) throw error;
       return customerId;
     },
