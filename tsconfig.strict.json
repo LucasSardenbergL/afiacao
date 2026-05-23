@@ -457,6 +457,11 @@
     "src/components/sales/print/types.ts",
     "src/components/unified-order/ServiceItemForm.tsx",
     "src/components/customer360/format.ts",
-    "src/components/reposicao/alertas/types.ts"
+    "src/components/reposicao/alertas/types.ts",
+    "src/contexts/WebRTCCallContext.tsx",
+    "src/contexts/CompanyContext.tsx",
+    "src/contexts/AuthContext.tsx",
+    "src/contexts/ConditionalWebRTCProvider.tsx",
+    "src/services/omieService.ts"
   ]
 }
