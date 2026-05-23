@@ -49,6 +49,7 @@ interface NavItem {
   badge?: number;
   badgeVariant?: 'default' | 'destructive';
   managerOnly?: boolean;
+  masterOnly?: boolean;
 }
 
 const unifiedNavSections: { title: string; items: NavItem[] }[] = [
@@ -117,6 +118,7 @@ const unifiedNavSections: { title: string; items: NavItem[] }[] = [
       { icon: Shield, label: 'Cockpit CFO', path: '/financeiro/cockpit', managerOnly: true },
       { icon: DollarSign, label: 'Gestão Financeira', path: '/financeiro/gestao', managerOnly: true },
       { icon: BarChart3, label: 'Análise e Config', path: '/financeiro/analise', managerOnly: true },
+      { icon: TrendingUp, label: 'Retorno & Valor', path: '/financeiro/valor', masterOnly: true },
     ],
   },
   {
@@ -329,7 +331,7 @@ function SidebarItem({
 function AppSidebar({ collapsed, onToggle }: { collapsed: boolean; onToggle: () => void }) {
   const location = useLocation();
   const navigate = useNavigate();
-  const { isStaff } = useAuth();
+  const { isStaff, isMaster } = useAuth();
   const isSalesOnly = useSalesOnlyRestriction();
   const { favorites, isFavorite, toggle: toggleFavorite } = useSidebarFavorites();
 
@@ -545,7 +547,7 @@ function AppSidebar({ collapsed, onToggle }: { collapsed: boolean; onToggle: () 
               sectionsWithBadges
                 .flatMap((s) => s.items)
                 .filter((item) => favorites.includes(item.path))
-                .filter((item) => !item.managerOnly || isStaff)
+                .filter((item) => (!item.managerOnly || isStaff) && (!item.masterOnly || isMaster))
             }
             onToggleFavorite={toggleFavorite}
             isFavorite={isFavorite}
@@ -555,7 +557,7 @@ function AppSidebar({ collapsed, onToggle }: { collapsed: boolean; onToggle: () 
         {sectionsWithBadges.map((section) => {
           if (isSalesOnly && section.title !== 'Vendas') return null;
 
-          const visibleItems = section.items.filter(item => !item.managerOnly || isStaff);
+          const visibleItems = section.items.filter(item => (!item.managerOnly || isStaff) && (!item.masterOnly || isMaster));
           if (visibleItems.length === 0) return null;
 
           const isSecondary = SECONDARY_SECTIONS.includes(section.title);
@@ -651,7 +653,7 @@ function AppTopbar({ sidebarCollapsed, onMobileMenuToggle }: { sidebarCollapsed:
 function MobileNav({ open, onClose }: { open: boolean; onClose: () => void }) {
   const location = useLocation();
   const navigate = useNavigate();
-  const { isStaff } = useAuth();
+  const { isStaff, isMaster } = useAuth();
   const isSalesOnly = useSalesOnlyRestriction();
 
   if (!open) return null;
@@ -680,7 +682,7 @@ function MobileNav({ open, onClose }: { open: boolean; onClose: () => void }) {
         <nav className="flex-1 min-h-0 overflow-y-auto py-2">
           {[...unifiedNavSections, docNavSection].map((section) => {
             if (isSalesOnly && section.title !== 'Vendas') return null;
-            const visibleItems = section.items.filter(item => !item.managerOnly || isStaff);
+            const visibleItems = section.items.filter(item => (!item.managerOnly || isStaff) && (!item.masterOnly || isMaster));
             if (visibleItems.length === 0) return null;
             return (
               <div key={section.title} className="mb-1">
