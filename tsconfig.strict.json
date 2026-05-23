@@ -422,6 +422,11 @@
     "src/contexts/AppShellContext.tsx",
     "src/contexts/DashboardEditModeContext.tsx",
     "src/contexts/DashboardPersonaContext.tsx",
-    "src/contexts/ReposicaoEmpresaContext.tsx"
+    "src/contexts/ReposicaoEmpresaContext.tsx",
+    "src/components/ui/calendar.tsx",
+    "src/components/ui/chart.tsx",
+    "src/components/ui/sidebar.tsx",
+    "src/lib/spin/types.ts",
+    "src/lib/spin/spin-prompts.ts"
   ]
 }
