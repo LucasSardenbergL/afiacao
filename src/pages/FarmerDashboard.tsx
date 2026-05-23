@@ -15,6 +15,7 @@ import {
   Eye, ShoppingCart,
 } from 'lucide-react';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
+import { CallButton } from '@/components/call/CallButton';
 
 // ─── Helpers ─────────────────────────────────────────────────────────
 const healthColors: Record<string, { bg: string; text: string; border: string }> = {
