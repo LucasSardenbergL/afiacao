@@ -397,22 +397,6 @@
     "src/components/financeiro/dashboard/AgingCard.tsx",
     "src/components/financeiro/dashboard/FluxoCaixaTab.tsx",
     "src/components/financeiro/dashboard/DRETab.tsx",
-    "src/components/financeiro/dashboard/DREComparativo.tsx",
-    "src/components/VoiceServiceInput.tsx",
-    "src/components/unified-order/ProductItemForm.tsx",
-    "src/components/TintColorSelectDialog.tsx",
-    "src/pages/UnifiedOrder.tsx",
-    "src/pages/ToolReports.tsx",
-    "src/pages/ToolHistory.tsx",
-    "src/pages/TintCorantes.tsx",
-    "src/pages/SavingsDashboard.tsx",
-    "src/pages/PerformanceHub.tsx",
-    "src/pages/GestaoAdmin.tsx",
-    "src/pages/FarmerIPFDashboard.tsx",
-    "src/pages/FarmerDashboard.tsx",
-    "src/pages/AdminProductivity.tsx",
-    "src/pages/AdminDemandForecast.tsx",
-    "src/pages/AIops.tsx",
-    "src/pages/Auth.tsx"
+    "src/components/financeiro/dashboard/DREComparativo.tsx"
   ]
 }

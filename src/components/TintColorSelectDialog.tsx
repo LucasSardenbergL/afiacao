@@ -235,7 +235,7 @@ export function TintColorSelectDialog({ product, open, onClose, onConfirm, custo
       if (!orders) return null;
 
       for (const order of orders) {
-        const items = order.items as SalesOrderItem[];
+        const items = order.items as unknown as SalesOrderItem[];
         if (!Array.isArray(items)) continue;
         for (const item of items) {
           if (
