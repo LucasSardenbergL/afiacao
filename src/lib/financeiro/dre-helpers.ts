@@ -219,3 +219,15 @@ export function scoreConfianca(input: {
     fallback_pct: input.fallback_pct,
   };
 }
+
+export type ReceitaMensal = { ano: number; mes: number; receita_bruta: number };
+
+// RBT12 = soma da receita bruta dos 12 meses ANTERIORES ao mês de apuração (exclusivo).
+export function calcularRBT12(historico: ReceitaMensal[], ano: number, mes: number): number {
+  const idxApuracao = ano * 12 + mes;
+  const idxInicio = idxApuracao - 12;
+  return historico.reduce((s, h) => {
+    const idx = h.ano * 12 + h.mes;
+    return (idx >= idxInicio && idx < idxApuracao) ? s + h.receita_bruta : s;
+  }, 0);
+}

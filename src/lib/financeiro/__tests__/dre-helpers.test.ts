@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { classificarLinhaDRE, REGIME_POR_EMPRESA, resolverDataCaixa, bucketizarCaixa, montarDRE, scoreConfianca } from '../dre-helpers';
+import { classificarLinhaDRE, REGIME_POR_EMPRESA, resolverDataCaixa, bucketizarCaixa, montarDRE, scoreConfianca, calcularRBT12 } from '../dre-helpers';
 
 const M = (pairs: Array<[string, string]>) => new Map<string, string>(pairs);
 
@@ -163,5 +163,20 @@ describe('scoreConfianca', () => {
     const r = scoreConfianca({ pct_mapeado_valor: 0.98, fallback_pct: 0, share_generico: 0, tem_imposto_nao_mapeado: true });
     expect(r.nivel).toBe('media');
     expect(r.motivos.some(m => m.toLowerCase().includes('imposto'))).toBe(true);
+  });
+});
+
+describe('calcularRBT12', () => {
+  const hist = [
+    { ano: 2025, mes: 6, receita_bruta: 50000 },
+    { ano: 2026, mes: 4, receita_bruta: 30000 },
+    { ano: 2026, mes: 5, receita_bruta: 40000 },
+    { ano: 2024, mes: 1, receita_bruta: 99999 },
+  ];
+  it('soma os 12 meses ANTERIORES ao mês de apuração', () => {
+    expect(calcularRBT12(hist, 2026, 5)).toBe(80000);
+  });
+  it('sem histórico → 0', () => {
+    expect(calcularRBT12([], 2026, 5)).toBe(0);
   });
 });
