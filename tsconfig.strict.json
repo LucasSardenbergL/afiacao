@@ -435,6 +435,10 @@
     "src/components/AddToolDialog.tsx",
     "src/components/OrderPrintLayout.tsx",
     "src/components/SendingQualityChecklist.tsx",
-    "src/components/ToolImageIdentifier.tsx"
+    "src/components/ToolImageIdentifier.tsx",
+    "src/components/customer360/format.ts",
+    "src/components/financeiro/dashboard/format.ts",
+    "src/components/portalSayerlack/types.ts",
+    "src/components/reposicao/alertas/types.ts"
   ]
 }
