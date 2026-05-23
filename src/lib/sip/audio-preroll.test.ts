@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { mixPrerollWithMic } from './audio-preroll';
 
 describe('mixPrerollWithMic', () => {
@@ -22,8 +22,12 @@ describe('mixPrerollWithMic', () => {
       destination: {},
       close: vi.fn().mockResolvedValue(undefined),
     };
-    (globalThis as any).AudioContext = vi.fn(() => audioContextMock);
-    (globalThis as any).fetch = vi.fn().mockResolvedValue({ arrayBuffer: () => Promise.resolve(new ArrayBuffer(8)) });
+    vi.stubGlobal('AudioContext', vi.fn(() => audioContextMock));
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue({ arrayBuffer: () => Promise.resolve(new ArrayBuffer(8)) }));
+  });
+
+  afterEach(() => {
+    vi.unstubAllGlobals();
   });
 
   it('retorna MediaStream mixado e baixa o MP3 fornecido', async () => {
