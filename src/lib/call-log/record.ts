@@ -3,8 +3,11 @@ import { supabase } from '@/integrations/supabase/client';
 import { buildCallLogInsert, type BuildInsertArgs } from './build-insert';
 import type { ResolvedCallParty } from './recording-policy';
 
+// call_log ainda não está nos tipos gerados do Supabase (migration aplicada
+// manualmente no Lovable). Casteia o client ANTES do .from() pra o nome da
+// tabela não bater na union de tabelas tipada (senão TS2769 no typecheck:strict).
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
-const tbl = () => supabase.from('call_log') as any;
+const tbl = () => (supabase as any).from('call_log');
 
 /** Cria a linha inicial (ringing). Idempotente por sip_call_id (ON CONFLICT DO NOTHING). */
 export async function logCallStart(args: BuildInsertArgs): Promise<void> {
