@@ -41,8 +41,8 @@ export default function FarmerCallsPendingLink() {
     queryKey: ['farmer-pending-link', user?.id],
     enabled: !!user,
     queryFn: async (): Promise<Pending[]> => {
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      const { data, error } = await (supabase.from('farmer_calls') as any)
+       
+      const { data, error } = await supabase.from('farmer_calls')
         .select('id, phone_dialed, started_at, duration_seconds')
         .eq('farmer_id', user!.id)
         .is('customer_user_id', null)
@@ -95,8 +95,8 @@ function PendingRow({
       // PostgREST .or() takes user-controlled `search`; escape commas and parens
       // to avoid breaking the filter syntax.
       const safe = search.replace(/[,()]/g, ' ');
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      const { data } = await (supabase.from('profiles') as any)
+       
+      const { data } = await supabase.from('profiles')
         .select('user_id, name, phone')
         .or(`name.ilike.%${safe}%,phone.ilike.%${safe}%`)
         .limit(10);

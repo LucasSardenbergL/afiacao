@@ -6,8 +6,8 @@ export function useLinkCallToCustomer() {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: async ({ callId, customerUserId }: { callId: string; customerUserId: string }) => {
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      const { error } = await (supabase.from('farmer_calls') as any)
+       
+      const { error } = await supabase.from('farmer_calls')
         .update({ customer_user_id: customerUserId })
         .eq('id', callId);
       if (error) throw error;

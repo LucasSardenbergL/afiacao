@@ -29,8 +29,8 @@ export function useMyCommercialRole() {
     staleTime: 60_000,
     queryFn: async (): Promise<MyCommercialRole> => {
       if (!user) return null;
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      const { data } = await (supabase.from('commercial_roles') as any)
+       
+      const { data } = await supabase.from('commercial_roles')
         .select('commercial_role')
         .eq('user_id', user.id)
         .maybeSingle();

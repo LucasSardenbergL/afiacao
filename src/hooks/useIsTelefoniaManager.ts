@@ -8,8 +8,8 @@ export function useIsTelefoniaManager(): boolean {
   const { data } = useQuery({
     queryKey: ['commercial_role', user?.id], enabled: !!user?.id,
     queryFn: async () => {
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      const { data } = await (supabase.from('commercial_roles') as any)
+       
+      const { data } = await supabase.from('commercial_roles')
         .select('commercial_role').eq('user_id', user!.id).maybeSingle();
       return data?.commercial_role as string | undefined;
     },
