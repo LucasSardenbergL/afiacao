@@ -25,7 +25,7 @@ Uma página dedicada de telefonia ("Central de Telefonia") onde qualquer staff c
 2. **Fonte do histórico:** captura **app-side agora** (o que passa pelo app com WebRTC registrado), schema pronto pra sync futuro do Nvoip. Completude com app fechado = Fase 2, **desprioritizada**.
 3. **Visibilidade:** cada vendedor vê as próprias (RLS por `farmer_id`); gestor vê o time. **`commercial_role` NÃO tem `gestor`** — o gate de "Time" usa `gerencial`/`estrategico`/`super_admin` (commercial_role) ou app role `master`. (`persona-detect.ts` já mapeia `gerencial → persona gestor`.)
 4. **Perdidas:** badge no item "Telefonia" do menu (contagem de **não-lidas**, conceito `acknowledged_at`) + aba Perdidas com "Ligar de volta".
-5. **Critério de gravação (LGPD):** gravação + preroll da Sara **só para cliente cadastrado** (BINA resolve `customer_user_id`). Número avulso = liga normal, **sem preroll, sem gravação, sem transcrição** (juridicamente limpo e menos chato).
+5. **Critério de gravação (LGPD):** auto-gravação + preroll da Sara para **cliente OU fornecedor cadastrado**. Avulso/não-identificado = liga sem gravar por padrão, mas com **toggle manual "gravar"** (que dispara a Sara). **Invariante:** sempre que grava, a Sara toca antes. Fornecedor hoje é **dormente** (sem telefone no banco) → cai no toggle manual até existir esse dado.
 6. **Caller-ID único da empresa:** todo outbound apresenta **um único número da empresa** pro cliente, independente do vendedor. Não comprar múltiplos DIDs; cliente já tem "o número da empresa" salvo. Vários números = problema. Adicionar vendedores não cria números novos.
 7. **Modelo de dados:** tabela nova `call_log` (codex-validado), separada de `farmer_calls`.
 
@@ -97,14 +97,18 @@ Lib fina que escreve via `supabase.from('call_log')` (RLS por `farmer_id`); sem 
 
 ### 3. Critério de gravação (LGPD)
 
-A BINA resolve o número **antes de conectar** (na discagem outbound ou no INVITE inbound), então decide-se na hora:
+A BINA resolve o número **antes de conectar** (na discagem outbound ou no INVITE inbound). Regra:
 
 | Situação | Preroll Sara | Gravação | Transcrição/copilot | `farmer_calls` | `call_log.recorded` |
 |---|---|---|---|---|---|
-| Número resolve p/ cliente cadastrado | ✅ obrigatório | ✅ | ✅ | ✅ cria + linka | true |
-| Número avulso | ❌ | ❌ | ❌ | ❌ | false |
+| Resolve p/ **cliente cadastrado** | ✅ obrigatório | ✅ auto | ✅ | ✅ cria + linka | true |
+| Resolve p/ **fornecedor cadastrado** | ✅ obrigatório | ✅ auto | ✅ | ✅ cria + linka | true |
+| **Avulso / não-identificado** | só se ligar o toggle | opcional (toggle manual) | só se gravar | só se gravar | = toggle |
 
-O ponto de decisão fica num único lugar (a lib de captura / makeCall), fácil de evoluir pra um toggle manual ou config por empresa no futuro.
+- **Invariante LGPD:** sempre que `recorded=true` (auto ou manual), a Sara toca ANTES de gravar.
+- **Toggle manual "gravar":** disponível no discador e no card de chamada ativa, pra qualquer número não-identificado. Ligar o toggle dispara Sara + gravação (+ transcrição + linka `farmer_calls`).
+- **Fornecedor dormente:** não há telefone de fornecedor no banco (`fornecedor_*` só tem nome/razão/CNPJ), então a BINA não auto-detecta fornecedor por enquanto — ele cai na regra do avulso (toggle manual). O ramo "fornecedor → auto-gravar" fica **pronto no código** (a função de resolução já contempla uma fonte de fornecedor), só ativando quando existir telefone de fornecedor cadastrado.
+- Ponto de decisão num único lugar (lib de captura / makeCall), fácil de evoluir pra config por empresa.
 
 ### 4. Caller-ID único da empresa
 
@@ -120,7 +124,7 @@ Layout (tema claro, igual app):
 - **Área direita — Histórico em abas:** Recentes · Recebidas · Perdidas (n) · Feitas · **Time** (só gestor/master).
   - Linha: ícone de direção (↗ saída / ↘ entrada; vermelho p/ perdida) · **BINA** (nome+cargo, ou "Desconhecido") · número · tempo relativo · status/duração · ação contextual.
   - Ação: cliente conhecido → "▸ ver cliente" (Customer 360) + religar; avulso → "religar" (+ "Salvar contato" = Fase 2). 🎙️ quando `recorded`.
-- **Chamada ativa:** reusa `CallDialerView` (card de status com timer/mute/encerrar/LGPD).
+- **Chamada ativa:** reusa `CallDialerView` (card de status com timer/mute/encerrar/LGPD) + **toggle "gravar"** quando o número não é identificado (cliente/fornecedor já gravam auto).
 - **Sidebar:** item "Telefonia" com badge vermelho = perdidas não-lidas (`acknowledged_at IS NULL`); zera ao abrir a aba Perdidas ou ligar de volta.
 - Acesso **staff-only** (não cliente logado).
 
@@ -146,7 +150,7 @@ Componentes (isolados, uma responsabilidade cada):
 
 ## Fora de escopo (YAGNI — fazer só DEPOIS de tudo)
 
-Gravação de avulsos · analytics avançado de time · gerar tarefa de follow-up na agenda a partir da perdida · "Salvar contato" (Fase 2) · qualquer integração Nvoip de CDR antes de confirmação do suporte.
+Auto-detecção/auto-gravação de **fornecedor** por telefone (sem dado no banco hoje — gravação manual via toggle cobre) · analytics avançado de time · gerar tarefa de follow-up na agenda a partir da perdida · "Salvar contato" (Fase 2) · qualquer integração Nvoip de CDR antes de confirmação do suporte.
 
 ## Touchpoints no código existente
 
