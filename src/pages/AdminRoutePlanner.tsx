@@ -17,7 +17,7 @@ import { ManualModeCard } from '@/components/reposicao/routePlanner/ManualModeCa
 import { useRoutePlanner } from '@/hooks/useRoutePlanner';
 
 // Fix default marker icons for Leaflet + bundlers
-delete (L.Icon.Default.prototype as any)._getIconUrl;
+delete (L.Icon.Default.prototype as { _getIconUrl?: unknown })._getIconUrl;
 L.Icon.Default.mergeOptions({
   iconRetinaUrl: 'https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/images/marker-icon-2x.png',
   iconUrl: 'https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/images/marker-icon.png',
@@ -254,11 +254,11 @@ const AdminRoutePlanner = () => {
               </CardContent>
             </Card>
           ) : (
-            [...todayVisits].sort((a: any, b: any) => {
+            [...todayVisits].sort((a, b) => {
               if (!a.check_out_at && b.check_out_at) return -1;
               if (a.check_out_at && !b.check_out_at) return 1;
               return 0;
-            }).map((visit: any) => (
+            }).map((visit) => (
               <TodayVisitCard key={visit.id} visit={visit} />
             ))
           )}
