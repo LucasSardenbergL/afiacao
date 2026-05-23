@@ -106,7 +106,7 @@ Pesos configuráveis via recommendation_config
 Penalidades: estoque zerado, margem negativa, item já no basket`}</pre>
 
       <h3 className="font-bold text-lg mt-6 mb-3">4.9 IEE (Índice de Execução Estratégica)</h3>
-      <pre className="text-xs bg-muted p-4 rounded mb-4">{`IEE = 0.25×PTPL_usage + 0.25×ObjectiveAdherence + 0.15×QuestionsUsage
+      <pre className="text-xs bg-muted p-4 rounded mb-4">{`IEE = 0.25×PTPL_usage + 0.25×ObjectiveAdherence + 0.15×QuestionsUsage 
     + 0.15×BundleOffered + 0.20×PostCallRegistration
 
 PTPL_usage = min(100, (totalPlans/totalCalls) × 100)
@@ -116,7 +116,7 @@ BundleOffered = (plansWithBundle/totalPlans) × 100
 PostCallRegistration = (completedPlans/totalPlans) × 100`}</pre>
 
       <h3 className="font-bold text-lg mt-6 mb-3">4.10 IPF (Índice de Performance Farmer)</h3>
-      <pre className="text-xs bg-muted p-4 rounded mb-4">{`IPF = 0.25×IncrementalMargin + 0.25×MarginPerHour + 0.20×MixExpansion
+      <pre className="text-xs bg-muted p-4 rounded mb-4">{`IPF = 0.25×IncrementalMargin + 0.25×MarginPerHour + 0.20×MixExpansion 
     + 0.15×LTVEvolution + 0.15×ChurnReduction
 
 IncrementalMargin = min(100, (CombinedMargin/R$5000) × 100)
@@ -126,7 +126,7 @@ LTVEvolution = min(100, (avgSpend/R$2000) × 100)
 ChurnReduction = (clientesChurn<30% / totalClientes) × 100`}</pre>
 
       <h3 className="font-bold text-lg mt-6 mb-3">4.11 Gamificação Score</h3>
-      <pre className="text-xs bg-muted p-4 rounded mb-4">{`Total = 0.40×Consistência + 0.20×Organização + 0.15×Educação
+      <pre className="text-xs bg-muted p-4 rounded mb-4">{`Total = 0.40×Consistência + 0.20×Organização + 0.15×Educação 
      + 0.15×Indicações + 0.10×Eficiência
 
 Consistência = (ferramentasEmDia / totalFerramentas) × 100
