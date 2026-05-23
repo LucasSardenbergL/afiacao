@@ -58,7 +58,7 @@ const AdminProductivity = () => {
         .gte('created_at', startDate.toISOString());
 
       // Get reviews
-      const { data: reviews } = await (supabase as any)
+      const { data: reviews } = await supabase
         .from('order_reviews')
         .select('rating')
         .gte('created_at', startDate.toISOString());
