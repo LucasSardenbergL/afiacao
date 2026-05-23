@@ -284,7 +284,7 @@ Dois backends coexistem; o usuário escolhe via toggle em `/settings`:
 - Migrations geradas pelo Lovable (formato `_UUID.sql`, ex: `_868822bb-e38c-4fcf-8879-c64e48bd7630.sql`) rodam quando você usa o builder visual dele
 - Migrations com nome custom (`_user_departments.sql`, `_dashboard_visits.sql`, `_enable_realtime_dashboard_v3.sql`) commitadas via PR **ficam só no repo** e não tocam o banco
 
-**Workflow obrigatório quando criar migration custom**:
+**Workflow obrigatório quando criar migration custom** (automatizado pela skill `lovable-db-operator` — ver §12; use-a sempre que for mexer no banco, ela empacota todo este ritual):
 
 1. Cria o arquivo em `supabase/migrations/YYYYMMDDHHMMSS_<nome>.sql`
 2. Mergeia o PR normal (commit fica no histórico do código)
@@ -559,6 +559,7 @@ Há muitas skills instaladas (gstack ~40 comandos, superpowers 14, catálogo de 
 | **QA da app rodando** | `/qa` (report + fix) ou `/qa-only` (só report) — gstack | — |
 | **TDD ao escrever código** | `test-driven-development` (superpowers) | — disciplina de escrita; `engineering:testing-strategy` só para desenhar plano de teste do zero. |
 | **Qualquer task Supabase (DB/Auth/Edge Functions/RLS/migrations)** | `supabase` (oficial) | `engineering:debug` genérico. O skill oficial conhece padrões idiomáticos de RLS/Edge Functions/CLI. |
+| **Aplicar mudança de banco sob o constraint do Lovable** (criar tabela/coluna/índice/policy/função/trigger/enum/cron) | `lovable-db-operator` (project-scoped, `.claude/skills/`) — gera a migration, o bloco pra colar no SQL Editor, a query de validação pós-apply, a nota de PR e regenera o audit | Não substitui `supabase`/`supabase-postgres-best-practices`: esses desenham o SQL/RLS idiomático; o `lovable-db-operator` orquestra o **apply manual + validação** que o Lovable exige (§5). Use os dois juntos: design com `supabase`, entrega com `lovable-db-operator`. |
 | **Otimizar query/schema Postgres** | `supabase-postgres-best-practices` (oficial) | — usar junto do `supabase` ao mexer em SQL/índices. |
 | **Performance React (memo, waterfalls, bundle, N+1 em engines IA)** | `vercel-react-best-practices` | `engineering:tech-debt` genérico. 45 regras priorizadas por impacto. |
 | **Refatorar god-component (>1000 LoC da Reposição) em compound components** | `vercel-composition-patterns` | — pareia com react-best-practices ao quebrar os 7 god-components do §10. |
