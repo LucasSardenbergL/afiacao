@@ -1,80 +1,16 @@
 import { useEffect, useMemo, useState } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { supabase } from '@/integrations/supabase/client';
-import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
-import { Button } from '@/components/ui/button';
-import { Input } from '@/components/ui/input';
-import {
-  Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
-} from '@/components/ui/select';
-import {
-  Table, TableBody, TableCell, TableHead, TableHeader, TableRow,
-} from '@/components/ui/table';
-import { Skeleton } from '@/components/ui/skeleton';
-import { Badge } from '@/components/ui/badge';
-import { ExternalLink, Download } from 'lucide-react';
-import {
-  LineChart, Line, BarChart, Bar, XAxis, YAxis, CartesianGrid,
-  Tooltip as RTooltip, ResponsiveContainer, Legend,
-} from 'recharts';
 import { useAuth } from '@/contexts/AuthContext';
-import { PortalStatusBadge } from '@/components/portalSayerlack/PortalStatusBadge';
 import { DispararAgoraButton } from '@/components/portalSayerlack/DispararAgoraButton';
 import { PortalDetailDrawer } from '@/components/portalSayerlack/PortalDetailDrawer';
-import { Link } from 'react-router-dom';
-
-const SAYERLACK_FILTER = {
-  empresa: 'OBEN',
-  fornecedorIlike: '%SAYERLACK%',
-};
-
-function fmtBRL(v: number | null | undefined) {
-  if (v == null) return '—';
-  return new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' }).format(Number(v));
-}
-function fmtDate(iso: string | null | undefined) {
-  if (!iso) return '—';
-  return new Date(iso).toLocaleDateString('pt-BR');
-}
-function fmtDateTime(iso: string | null | undefined) {
-  if (!iso) return '—';
-  return new Date(iso).toLocaleString('pt-BR');
-}
-function relTime(iso: string | null | undefined): string {
-  if (!iso) return '—';
-  const diff = Date.now() - new Date(iso).getTime();
-  const past = diff >= 0;
-  const abs = Math.abs(diff);
-  const min = Math.round(abs / 60000);
-  if (min < 1) return 'agora';
-  if (min < 60) return past ? `há ${min}m` : `em ${min}m`;
-  const h = Math.round(min / 60);
-  if (h < 24) return past ? `há ${h}h` : `em ${h}h`;
-  const d = Math.round(h / 24);
-  return past ? `há ${d}d` : `em ${d}d`;
-}
-
-type PedidoRow = {
-  id: number;
-  empresa: string;
-  fornecedor_nome: string | null;
-  data_ciclo: string | null;
-  num_skus: number | null;
-  valor_total: number | null;
-  status: string | null;
-  status_envio_portal: string | null;
-  aprovado_em: string | null;
-  enviado_portal_em: string | null;
-  portal_tentativas: number | null;
-  portal_proximo_retry_em: string | null;
-  portal_protocolo: string | null;
-  portal_screenshot_url: string | null;
-  portal_erro: string | null;
-};
-
-const PEDIDO_COLS =
-  'id, empresa, fornecedor_nome, data_ciclo, num_skus, valor_total, status, status_envio_portal, aprovado_em, enviado_portal_em, portal_tentativas, portal_proximo_retry_em, portal_protocolo, portal_screenshot_url, portal_erro';
+import { SAYERLACK_FILTER, PEDIDO_COLS, type PedidoRow } from '@/components/portalSayerlack/types';
+import { KpiCards } from '@/components/portalSayerlack/KpiCards';
+import { PendentesTab } from '@/components/portalSayerlack/PendentesTab';
+import { ConciliarTab } from '@/components/portalSayerlack/ConciliarTab';
+import { HistoricoTab } from '@/components/portalSayerlack/HistoricoTab';
+import { EstatisticasTab } from '@/components/portalSayerlack/EstatisticasTab';
 
 export default function AdminPortalSayerlack() {
   const { isAdmin, isMaster } = useAuth();
@@ -154,7 +90,7 @@ export default function AdminPortalSayerlack() {
   const { data: pendentes, isLoading: loadingPend } = useQuery({
     queryKey: ['portal-sayerlack-pendentes', pendentesBusca],
     queryFn: async () => {
-      let q = supabase
+      const q = supabase
         .from('pedido_compra_sugerido')
         .select(PEDIDO_COLS)
         .eq('empresa', SAYERLACK_FILTER.empresa)
@@ -333,16 +269,6 @@ export default function AdminPortalSayerlack() {
     qc.invalidateQueries({ queryKey: ['portal-sayerlack-stats'] });
   };
 
-  // KPI colors
-  const pendCor = !kpis ? 'text-muted-foreground'
-    : kpis.pendentes === 0 ? 'text-muted-foreground'
-    : kpis.pendentes <= 2 ? 'text-status-info'
-    : 'text-status-warning';
-  const taxaCor = kpis?.taxa == null ? 'text-muted-foreground'
-    : kpis.taxa >= 95 ? 'text-status-success'
-    : kpis.taxa >= 80 ? 'text-status-warning'
-    : 'text-status-error';
-
   // CSV Export
   const handleExportCSV = async () => {
     const desde = new Date(Date.now() - 90 * 86400000).toISOString();
@@ -393,10 +319,6 @@ export default function AdminPortalSayerlack() {
     return conciliacao.filter((p) => String(p.id).includes(q));
   }, [conciliacao, conciliacaoBusca]);
 
-  const concilCor = !kpis ? 'text-muted-foreground'
-    : kpis.conciliacao === 0 ? 'text-muted-foreground'
-    : 'text-status-warning';
-
   return (
     <div className="container mx-auto p-4 sm:p-6 space-y-6 max-w-7xl">
       <div className="flex flex-wrap items-start justify-between gap-3">
@@ -409,38 +331,7 @@ export default function AdminPortalSayerlack() {
         <DispararAgoraButton onSuccess={refetchAll} />
       </div>
 
-      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
-        <Card>
-          <CardHeader className="pb-2"><CardTitle className="text-sm text-muted-foreground">Pendentes envio</CardTitle></CardHeader>
-          <CardContent>
-            <div className={`text-4xl font-bold ${pendCor}`}>{kpis?.pendentes ?? '—'}</div>
-            <div className="text-xs text-muted-foreground mt-1">pedidos aguardando envio</div>
-          </CardContent>
-        </Card>
-        <Card>
-          <CardHeader className="pb-2"><CardTitle className="text-sm text-muted-foreground">Enviados últimos 7d</CardTitle></CardHeader>
-          <CardContent>
-            <div className="text-4xl font-bold text-status-success">{kpis?.enviados7d ?? '—'}</div>
-            <div className="text-xs text-muted-foreground mt-1">pedidos finalizados</div>
-          </CardContent>
-        </Card>
-        <Card>
-          <CardHeader className="pb-2"><CardTitle className="text-sm text-muted-foreground">Taxa de sucesso 30d</CardTitle></CardHeader>
-          <CardContent>
-            <div className={`text-4xl font-bold ${taxaCor}`}>
-              {kpis?.taxa == null ? '—' : `${String(kpis.taxa).replace('.', ',')}%`}
-            </div>
-            <div className="text-xs text-muted-foreground mt-1">enviados / (enviados+falhas)</div>
-          </CardContent>
-        </Card>
-        <Card>
-          <CardHeader className="pb-2"><CardTitle className="text-sm text-muted-foreground">Requer conciliação</CardTitle></CardHeader>
-          <CardContent>
-            <div className={`text-4xl font-bold ${concilCor}`}>{kpis?.conciliacao ?? '—'}</div>
-            <div className="text-xs text-muted-foreground mt-1">aceito sem protocolo / indeterminado</div>
-          </CardContent>
-        </Card>
-      </div>
+      <KpiCards kpis={kpis} />
 
       <Tabs defaultValue="pendentes">
         <TabsList>
@@ -459,288 +350,44 @@ export default function AdminPortalSayerlack() {
 
         {/* ---------- PENDENTES ---------- */}
         <TabsContent value="pendentes" className="space-y-3">
-          <div className="flex flex-wrap gap-2">
-            <Input
-              placeholder="Buscar por ID…"
-              value={pendentesBusca}
-              onChange={(e) => setPendentesBusca(e.target.value)}
-              className="max-w-xs"
-            />
-          </div>
-          <Card>
-            <CardContent className="p-0">
-              {loadingPend ? (
-                <div className="p-4 space-y-2"><Skeleton className="h-8 w-full" /><Skeleton className="h-8 w-full" /></div>
-              ) : filteredPend.length === 0 ? (
-                <div className="p-8 text-center text-muted-foreground">Nenhum pedido pendente.</div>
-              ) : (
-                <Table>
-                  <TableHeader>
-                    <TableRow>
-                      <TableHead>Status</TableHead>
-                      <TableHead>ID</TableHead>
-                      <TableHead>Data ciclo</TableHead>
-                      <TableHead className="text-right">SKUs</TableHead>
-                      <TableHead className="text-right">Valor total</TableHead>
-                      <TableHead>Aprovado</TableHead>
-                      <TableHead className="text-right">Tentativas</TableHead>
-                      <TableHead>Próximo retry</TableHead>
-                      <TableHead></TableHead>
-                    </TableRow>
-                  </TableHeader>
-                  <TableBody>
-                    {filteredPend.map((p) => {
-                      const t = p.portal_tentativas ?? 0;
-                      const tCor = t <= 1 ? 'text-status-success' : t === 2 ? 'text-status-warning' : 'text-status-error';
-                      const retryFut = p.portal_proximo_retry_em && new Date(p.portal_proximo_retry_em) > new Date();
-                      return (
-                        <TableRow key={p.id}>
-                          <TableCell><PortalStatusBadge status={p.status_envio_portal} /></TableCell>
-                          <TableCell>
-                            <Link
-                              to={`/admin/reposicao/pedidos?pedido=${p.id}`}
-                              className="text-primary underline-offset-2 hover:underline"
-                            >
-                              #{p.id}
-                            </Link>
-                          </TableCell>
-                          <TableCell>{fmtDate(p.data_ciclo)}</TableCell>
-                          <TableCell className="text-right">{p.num_skus ?? '—'}</TableCell>
-                          <TableCell className="text-right">{fmtBRL(p.valor_total)}</TableCell>
-                          <TableCell title={fmtDateTime(p.aprovado_em)}>{relTime(p.aprovado_em)}</TableCell>
-                          <TableCell className={`text-right font-medium ${tCor}`}>{t}</TableCell>
-                          <TableCell>{retryFut ? relTime(p.portal_proximo_retry_em) : '—'}</TableCell>
-                          <TableCell>
-                            <Button size="sm" variant="ghost" onClick={() => openDrawer(p.id)}>
-                              Ver detalhes
-                            </Button>
-                          </TableCell>
-                        </TableRow>
-                      );
-                    })}
-                  </TableBody>
-                </Table>
-              )}
-            </CardContent>
-          </Card>
+          <PendentesTab
+            loading={loadingPend}
+            rows={filteredPend}
+            busca={pendentesBusca}
+            setBusca={setPendentesBusca}
+            onOpenDrawer={openDrawer}
+          />
         </TabsContent>
 
         {/* ---------- CONCILIAR (PR1.5) ---------- */}
         <TabsContent value="conciliar" className="space-y-3">
-          <div className="rounded-md border border-status-warning/40 bg-status-warning-bg p-3 text-sm text-status-warning-foreground">
-            <strong>Conciliação manual:</strong> pedidos abaixo podem ter sido recebidos pelo
-            portal Sayerlack mas o sistema não confirmou o protocolo. Abra o detalhe, verifique
-            no portal e informe o número do pedido para liberar o registro no Omie.
-          </div>
-          <div className="flex flex-wrap gap-2">
-            <Input
-              placeholder="Buscar por ID…"
-              value={conciliacaoBusca}
-              onChange={(e) => setConciliacaoBusca(e.target.value)}
-              className="max-w-xs"
-            />
-          </div>
-          <Card>
-            <CardContent className="p-0">
-              {loadingConciliacao ? (
-                <div className="p-4 space-y-2"><Skeleton className="h-8 w-full" /><Skeleton className="h-8 w-full" /></div>
-              ) : filteredConciliacao.length === 0 ? (
-                <div className="p-8 text-center text-muted-foreground">Nenhum pedido aguardando conciliação.</div>
-              ) : (
-                <Table>
-                  <TableHeader>
-                    <TableRow>
-                      <TableHead>Status</TableHead>
-                      <TableHead>ID</TableHead>
-                      <TableHead>Data ciclo</TableHead>
-                      <TableHead className="text-right">SKUs</TableHead>
-                      <TableHead className="text-right">Valor</TableHead>
-                      <TableHead>Aprovado</TableHead>
-                      <TableHead>Motivo</TableHead>
-                      <TableHead></TableHead>
-                    </TableRow>
-                  </TableHeader>
-                  <TableBody>
-                    {filteredConciliacao.map((p) => (
-                      <TableRow key={p.id}>
-                        <TableCell><PortalStatusBadge status={p.status_envio_portal} /></TableCell>
-                        <TableCell>
-                          <Link
-                            to={`/admin/reposicao/pedidos?pedido=${p.id}`}
-                            className="text-primary underline-offset-2 hover:underline"
-                          >
-                            #{p.id}
-                          </Link>
-                        </TableCell>
-                        <TableCell>{fmtDate(p.data_ciclo)}</TableCell>
-                        <TableCell className="text-right">{p.num_skus ?? '—'}</TableCell>
-                        <TableCell className="text-right">{fmtBRL(p.valor_total)}</TableCell>
-                        <TableCell title={fmtDateTime(p.aprovado_em)}>{relTime(p.aprovado_em)}</TableCell>
-                        <TableCell className="max-w-xs truncate text-xs text-muted-foreground" title={p.portal_erro ?? undefined}>
-                          {p.portal_erro ?? '—'}
-                        </TableCell>
-                        <TableCell>
-                          <Button size="sm" variant="default" onClick={() => openDrawer(p.id)}>
-                            Conciliar
-                          </Button>
-                        </TableCell>
-                      </TableRow>
-                    ))}
-                  </TableBody>
-                </Table>
-              )}
-            </CardContent>
-          </Card>
+          <ConciliarTab
+            loading={loadingConciliacao}
+            rows={filteredConciliacao}
+            busca={conciliacaoBusca}
+            setBusca={setConciliacaoBusca}
+            onOpenDrawer={openDrawer}
+          />
         </TabsContent>
 
         {/* ---------- HISTÓRICO ---------- */}
         <TabsContent value="historico" className="space-y-3">
-          <div className="flex flex-wrap gap-2">
-            <Select value={histStatus} onValueChange={(v) => setHistStatus(v as 'todos' | 'enviados' | 'falhas')}>
-              <SelectTrigger className="w-44"><SelectValue /></SelectTrigger>
-              <SelectContent>
-                <SelectItem value="todos">Todos</SelectItem>
-                <SelectItem value="enviados">Enviados</SelectItem>
-                <SelectItem value="falhas">Falhas</SelectItem>
-              </SelectContent>
-            </Select>
-            <Select value={histRange} onValueChange={(v) => setHistRange(v as '7' | '30' | '90')}>
-              <SelectTrigger className="w-44"><SelectValue /></SelectTrigger>
-              <SelectContent>
-                <SelectItem value="7">Últimos 7 dias</SelectItem>
-                <SelectItem value="30">Últimos 30 dias</SelectItem>
-                <SelectItem value="90">Últimos 90 dias</SelectItem>
-              </SelectContent>
-            </Select>
-            <Input
-              placeholder="Buscar por ID ou protocolo…"
-              value={histBusca}
-              onChange={(e) => setHistBusca(e.target.value)}
-              className="max-w-xs"
-            />
-          </div>
-          <Card>
-            <CardContent className="p-0">
-              {loadingHist ? (
-                <div className="p-4 space-y-2"><Skeleton className="h-8 w-full" /><Skeleton className="h-8 w-full" /></div>
-              ) : filteredHist.length === 0 ? (
-                <div className="p-8 text-center text-muted-foreground">Sem registros no período.</div>
-              ) : (
-                <Table>
-                  <TableHeader>
-                    <TableRow>
-                      <TableHead>Status</TableHead>
-                      <TableHead>ID</TableHead>
-                      <TableHead>Protocolo</TableHead>
-                      <TableHead>Data ciclo</TableHead>
-                      <TableHead className="text-right">SKUs</TableHead>
-                      <TableHead className="text-right">Valor</TableHead>
-                      <TableHead>Enviado em</TableHead>
-                      <TableHead className="text-right">Tent.</TableHead>
-                      <TableHead></TableHead>
-                    </TableRow>
-                  </TableHeader>
-                  <TableBody>
-                    {filteredHist.map((p) => (
-                      <TableRow key={p.id}>
-                        <TableCell><PortalStatusBadge status={p.status_envio_portal} /></TableCell>
-                        <TableCell>#{p.id}</TableCell>
-                        <TableCell>
-                          {p.portal_protocolo
-                            ? p.portal_screenshot_url
-                              ? <a href={p.portal_screenshot_url} target="_blank" rel="noreferrer" className="text-primary underline-offset-2 hover:underline inline-flex items-center gap-1">
-                                  {p.portal_protocolo}<ExternalLink className="h-3 w-3" />
-                                </a>
-                              : <span className="font-mono text-xs">{p.portal_protocolo}</span>
-                            : <span className="text-muted-foreground">—</span>}
-                        </TableCell>
-                        <TableCell>{fmtDate(p.data_ciclo)}</TableCell>
-                        <TableCell className="text-right">{p.num_skus ?? '—'}</TableCell>
-                        <TableCell className="text-right">{fmtBRL(p.valor_total)}</TableCell>
-                        <TableCell>{fmtDateTime(p.enviado_portal_em)}</TableCell>
-                        <TableCell className="text-right">{p.portal_tentativas ?? 0}</TableCell>
-                        <TableCell>
-                          <Button size="sm" variant="ghost" onClick={() => openDrawer(p.id)}>
-                            Ver detalhes
-                          </Button>
-                        </TableCell>
-                      </TableRow>
-                    ))}
-                  </TableBody>
-                </Table>
-              )}
-            </CardContent>
-          </Card>
+          <HistoricoTab
+            loading={loadingHist}
+            rows={filteredHist}
+            histStatus={histStatus}
+            setHistStatus={setHistStatus}
+            histRange={histRange}
+            setHistRange={setHistRange}
+            histBusca={histBusca}
+            setHistBusca={setHistBusca}
+            onOpenDrawer={openDrawer}
+          />
         </TabsContent>
 
         {/* ---------- ESTATÍSTICAS ---------- */}
         <TabsContent value="estatisticas" className="space-y-4">
-          <div className="flex justify-end">
-            <Button variant="outline" onClick={handleExportCSV}>
-              <Download className="h-4 w-4 mr-2" />
-              Exportar histórico CSV (90d)
-            </Button>
-          </div>
-
-          <Card>
-            <CardHeader><CardTitle className="text-base">Envios por dia (últimos 30 dias)</CardTitle></CardHeader>
-            <CardContent style={{ height: 280 }}>
-              <ResponsiveContainer width="100%" height="100%">
-                <LineChart data={stats?.porDia ?? []}>
-                  <CartesianGrid strokeDasharray="3 3" />
-                  <XAxis dataKey="dia" />
-                  <YAxis allowDecimals={false} />
-                  <RTooltip />
-                  <Legend />
-                  <Line type="monotone" dataKey="enviado" stroke="hsl(142, 70%, 45%)" name="Enviados" />
-                  <Line type="monotone" dataKey="falha" stroke="hsl(0, 70%, 50%)" name="Falhas" />
-                </LineChart>
-              </ResponsiveContainer>
-            </CardContent>
-          </Card>
-
-          <Card>
-            <CardHeader><CardTitle className="text-base">Tempo até envio (últimos 30 dias)</CardTitle></CardHeader>
-            <CardContent style={{ height: 280 }}>
-              <ResponsiveContainer width="100%" height="100%">
-                <BarChart data={stats?.bins ?? []}>
-                  <CartesianGrid strokeDasharray="3 3" />
-                  <XAxis dataKey="label" />
-                  <YAxis allowDecimals={false} />
-                  <RTooltip />
-                  <Bar dataKey="count" fill="hsl(220, 70%, 50%)" />
-                </BarChart>
-              </ResponsiveContainer>
-            </CardContent>
-          </Card>
-
-          <Card>
-            <CardHeader><CardTitle className="text-base">Top falhas (últimos 30 dias)</CardTitle></CardHeader>
-            <CardContent className="p-0">
-              {!stats || stats.topErros.length === 0 ? (
-                <div className="p-6 text-center text-muted-foreground">Nenhuma falha no período.</div>
-              ) : (
-                <Table>
-                  <TableHeader>
-                    <TableRow>
-                      <TableHead>Erro</TableHead>
-                      <TableHead className="text-right">Ocorrências</TableHead>
-                      <TableHead>Último</TableHead>
-                    </TableRow>
-                  </TableHeader>
-                  <TableBody>
-                    {stats.topErros.map((e) => (
-                      <TableRow key={e.erro}>
-                        <TableCell className="font-mono text-xs max-w-md truncate" title={e.erro}>{e.erro}</TableCell>
-                        <TableCell className="text-right"><Badge variant="outline">{e.count}</Badge></TableCell>
-                        <TableCell>{fmtDateTime(e.ultimo)}</TableCell>
-                      </TableRow>
-                    ))}
-                  </TableBody>
-                </Table>
-              )}
-            </CardContent>
-          </Card>
+          <EstatisticasTab stats={stats} onExportCSV={handleExportCSV} />
         </TabsContent>
       </Tabs>
 
