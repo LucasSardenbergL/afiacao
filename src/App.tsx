@@ -273,7 +273,9 @@ const App = () => (
               <Route element={<RequireAccess section="inteligencia" />}>
                 <Route path="ai-ops" element={<AIops />} />
               </Route>
-              <Route path="nfe-receipt" element={<NfeReceipt />} />
+              <Route element={<RequireAccess section="operacao" />}>
+                <Route path="nfe-receipt" element={<NfeReceipt />} />
+              </Route>
               <Route element={<RequireAccess section="tintometrico_cockpit" />}>
                 <Route path="tintometrico" element={<TintDashboard />} />
                 <Route path="tintometrico/importar" element={<TintImport />} />
