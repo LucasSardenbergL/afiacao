@@ -1,0 +1,167 @@
+import { describe, it, expect } from 'vitest';
+import { classificarLinhaDRE, REGIME_POR_EMPRESA, resolverDataCaixa, bucketizarCaixa, montarDRE, scoreConfianca } from '../dre-helpers';
+
+const M = (pairs: Array<[string, string]>) => new Map<string, string>(pairs);
+
+describe('REGIME_POR_EMPRESA', () => {
+  it('mapeia as 3 empresas', () => {
+    expect(REGIME_POR_EMPRESA.colacor).toBe('presumido');
+    expect(REGIME_POR_EMPRESA.oben).toBe('presumido');
+    expect(REGIME_POR_EMPRESA.colacor_sc).toBe('simples');
+  });
+});
+
+describe('classificarLinhaDRE — mapping explícito', () => {
+  it('usa dre_linha de imposto do mapping (presumido: ICMS → ded_icms)', () => {
+    const r = classificarLinhaDRE({
+      categoria_codigo: '3.05', categoria_descricao: 'ICMS sobre vendas',
+      isReceita: false, regime: 'presumido', mapping: M([['3.05', 'ded_icms']]),
+    });
+    expect(r.linha).toBe('ded_icms');
+    expect(r.mapeado).toBe(true);
+    expect(r.viaFallback).toBe(false);
+  });
+
+  it('prefix match', () => {
+    const r = classificarLinhaDRE({
+      categoria_codigo: '3.01.02.003', categoria_descricao: 'x',
+      isReceita: false, regime: 'presumido', mapping: M([['3.01', 'cmv']]),
+    });
+    expect(r.linha).toBe('cmv');
+    expect(r.mapeado).toBe(true);
+  });
+});
+
+describe('classificarLinhaDRE — fallback regime-aware de imposto', () => {
+  it('presumido: keyword IRPJ não mapeado → irpj + viaFallback', () => {
+    const r = classificarLinhaDRE({
+      categoria_codigo: '9.99', categoria_descricao: 'IRPJ trimestral',
+      isReceita: false, regime: 'presumido', mapping: M([]),
+    });
+    expect(r.linha).toBe('irpj');
+    expect(r.mapeado).toBe(false);
+    expect(r.viaFallback).toBe(true);
+    expect(r.impostoNaoMapeado).toBe(true);
+  });
+
+  it('presumido: PIS → ded_pis; COFINS → ded_cofins; ISS → ded_iss; IPI → ded_ipi', () => {
+    const reg = 'presumido' as const;
+    expect(classificarLinhaDRE({ categoria_codigo: '', categoria_descricao: 'PIS', isReceita: false, regime: reg, mapping: M([]) }).linha).toBe('ded_pis');
+    expect(classificarLinhaDRE({ categoria_codigo: '', categoria_descricao: 'COFINS', isReceita: false, regime: reg, mapping: M([]) }).linha).toBe('ded_cofins');
+    expect(classificarLinhaDRE({ categoria_codigo: '', categoria_descricao: 'ISS retido', isReceita: false, regime: reg, mapping: M([]) }).linha).toBe('ded_iss');
+    expect(classificarLinhaDRE({ categoria_codigo: '', categoria_descricao: 'IPI', isReceita: false, regime: reg, mapping: M([]) }).linha).toBe('ded_ipi');
+  });
+
+  it('SIMPLES: qualquer imposto por keyword → das (linha única, nunca quebra)', () => {
+    const reg = 'simples' as const;
+    expect(classificarLinhaDRE({ categoria_codigo: '', categoria_descricao: 'DAS Simples Nacional', isReceita: false, regime: reg, mapping: M([]) }).linha).toBe('das');
+    const r = classificarLinhaDRE({ categoria_codigo: '', categoria_descricao: 'ICMS', isReceita: false, regime: reg, mapping: M([]) });
+    expect(r.linha).toBe('das');
+    expect(r.impostoNaoMapeado).toBe(true);
+  });
+});
+
+describe('classificarLinhaDRE — não-imposto', () => {
+  it('CMV por keyword', () => {
+    expect(classificarLinhaDRE({ categoria_codigo: '', categoria_descricao: 'Custo mercadoria vendida', isReceita: false, regime: 'presumido', mapping: M([]) }).linha).toBe('cmv');
+  });
+  it('receita: devolução → deducoes', () => {
+    expect(classificarLinhaDRE({ categoria_codigo: '', categoria_descricao: 'Devolução de venda', isReceita: true, regime: 'presumido', mapping: M([]) }).linha).toBe('deducoes');
+  });
+  it('receita não mapeada → receita_bruta (fallback)', () => {
+    const r = classificarLinhaDRE({ categoria_codigo: '1.99', categoria_descricao: 'Venda balcão', isReceita: true, regime: 'presumido', mapping: M([]) });
+    expect(r.linha).toBe('receita_bruta');
+    expect(r.viaFallback).toBe(true);
+  });
+});
+
+describe('resolverDataCaixa', () => {
+  it('usa data real quando presente', () => {
+    expect(resolverDataCaixa({ data_real: '2026-03-10', data_vencimento: '2026-03-05' }))
+      .toEqual({ data_efetiva: '2026-03-10', usou_fallback: false });
+  });
+  it('cai pro vencimento quando data real falta', () => {
+    expect(resolverDataCaixa({ data_real: null, data_vencimento: '2026-03-05' }))
+      .toEqual({ data_efetiva: '2026-03-05', usou_fallback: true });
+  });
+  it('sem nenhuma data → null', () => {
+    expect(resolverDataCaixa({ data_real: null, data_vencimento: null }))
+      .toEqual({ data_efetiva: null, usou_fallback: false });
+  });
+});
+
+describe('bucketizarCaixa', () => {
+  const titulos = [
+    { valor: 100000, data_real: '2026-03-10', data_vencimento: '2026-03-01' },
+    { valor: 50000, data_real: null, data_vencimento: '2026-03-20' },
+    { valor: 999, data_real: '2026-02-10', data_vencimento: '2026-03-02' },
+  ];
+  it('soma só o que cai no mês pela data efetiva, e mede fallback_pct por valor', () => {
+    const r = bucketizarCaixa(titulos, '2026-03-01', '2026-04-01');
+    expect(r.total).toBe(150000);
+    expect(r.total_fallback).toBe(50000);
+    expect(r.fallback_pct).toBeCloseTo(50000 / 150000, 5);
+    expect(r.itens.length).toBe(2);
+  });
+  it('total 0 → fallback_pct 0', () => {
+    expect(bucketizarCaixa([], '2026-03-01', '2026-04-01').fallback_pct).toBe(0);
+  });
+});
+
+const tot = (o: Partial<Record<string, number>>) => o as Record<string, number>;
+
+describe('montarDRE — presumido', () => {
+  it('indiretos nas deduções, IRPJ/CSLL abaixo', () => {
+    const r = montarDRE({
+      regime: 'presumido',
+      totais: tot({
+        receita_bruta: 100000, deducoes: 2000,
+        ded_icms: 12000, ded_pis: 650, ded_cofins: 3000,
+        cmv: 40000, despesas_administrativas: 10000,
+        irpj: 5000, csll: 3000,
+      }),
+    });
+    expect(r.deducoes).toBe(17650);
+    expect(r.receita_liquida).toBe(100000 - 17650);
+    expect(r.lucro_bruto).toBe(100000 - 17650 - 40000);
+    expect(r.impostos).toBe(8000);
+    expect(r.resultado_liquido).toBe(r.resultado_antes_impostos - 8000);
+    expect(r.detalhamento_impostos).toEqual({ ded_icms: 12000, ded_pis: 650, ded_cofins: 3000, irpj: 5000, csll: 3000 });
+  });
+});
+
+describe('montarDRE — Simples', () => {
+  it('DAS entra nas deduções (linha única), imposto sobre lucro = 0', () => {
+    const r = montarDRE({
+      regime: 'simples',
+      totais: tot({ receita_bruta: 100000, deducoes: 1000, das: 6000, cmv: 30000, despesas_administrativas: 8000 }),
+    });
+    expect(r.deducoes).toBe(7000);
+    expect(r.receita_liquida).toBe(93000);
+    expect(r.impostos).toBe(0);
+    expect(r.resultado_liquido).toBe(r.resultado_antes_impostos);
+    expect(r.detalhamento_impostos).toEqual({ das: 6000 });
+  });
+});
+
+describe('scoreConfianca', () => {
+  it('tudo bom → alta', () => {
+    const r = scoreConfianca({ pct_mapeado_valor: 0.98, fallback_pct: 0.02, share_generico: 0.01, tem_imposto_nao_mapeado: false });
+    expect(r.nivel).toBe('alta');
+    expect(r.motivos).toEqual([]);
+  });
+  it('fallback alto rebaixa pra media (>10%) e baixa (>20%)', () => {
+    expect(scoreConfianca({ pct_mapeado_valor: 0.98, fallback_pct: 0.15, share_generico: 0, tem_imposto_nao_mapeado: false }).nivel).toBe('media');
+    expect(scoreConfianca({ pct_mapeado_valor: 0.98, fallback_pct: 0.25, share_generico: 0, tem_imposto_nao_mapeado: false }).nivel).toBe('baixa');
+  });
+  it('pouco mapeado por valor rebaixa', () => {
+    const r = scoreConfianca({ pct_mapeado_valor: 0.7, fallback_pct: 0, share_generico: 0, tem_imposto_nao_mapeado: false });
+    expect(r.nivel).toBe('baixa');
+    expect(r.motivos.some(m => m.includes('mapead'))).toBe(true);
+  });
+  it('imposto não mapeado vira motivo (rebaixa pra no máximo media)', () => {
+    const r = scoreConfianca({ pct_mapeado_valor: 0.98, fallback_pct: 0, share_generico: 0, tem_imposto_nao_mapeado: true });
+    expect(r.nivel).toBe('media');
+    expect(r.motivos.some(m => m.toLowerCase().includes('imposto'))).toBe(true);
+  });
+});

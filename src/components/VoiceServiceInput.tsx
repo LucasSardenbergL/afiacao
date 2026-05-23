@@ -175,7 +175,7 @@ export function VoiceServiceInput({ userTools, onItemsIdentified, isLoading = fa
 
       logger.debug('Sending audio to transcription service', { stage: 'transcribe' });
 
-      const result = await invokeFunction<{ text?: string }>('elevenlabs-transcribe', formData as any);
+      const result = await invokeFunction<{ text?: string }>('elevenlabs-transcribe', formData);
 
       logger.debug('Transcription completed', { stage: 'transcribe', hasText: !!result.text });
 
@@ -237,7 +237,7 @@ export function VoiceServiceInput({ userTools, onItemsIdentified, isLoading = fa
     setIdentifiedItems([]);
 
     try {
-      const result = await invokeFunction<{ items?: any[]; message?: string }>('analyze-services', {
+      const result = await invokeFunction<{ items?: IdentifiedItem[]; message?: string }>('analyze-services', {
         text: text.trim(),
         userTools: userTools.map(t => ({
           id: t.id,

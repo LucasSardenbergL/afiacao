@@ -173,7 +173,7 @@ const Auth = () => {
               <LoginForm formData={formData} onInputChange={handleInputChange} onSubmit={handleLogin} isLoading={isLoading} />
             ) : (
               <SignupForm formData={formData} onInputChange={handleInputChange} isLoading={isLoading}
-                onFinalSubmit={handleSignupSubmit} onSwitchToLogin={() => setMode('login')} toolCategories={toolCategories as any} />
+                onFinalSubmit={handleSignupSubmit} onSwitchToLogin={() => setMode('login')} toolCategories={toolCategories} />
             )}
           </div>
 
