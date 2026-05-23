@@ -94,7 +94,7 @@ Deno.serve(async (req) => {
       const body = await req.json().catch(() => ({}));
       if (body?.empresa) empresa = String(body.empresa).toUpperCase();
     }
-  } catch (_) {}
+  } catch (_) { /* parse de body opcional */ }
 
   const empresasPermitidas = new Set(["OBEN", "COLACOR"]);
   if (!empresasPermitidas.has(empresa)) {

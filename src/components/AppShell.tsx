@@ -39,6 +39,7 @@ import { useSidebarFavorites } from '@/hooks/useSidebarFavorites';
 import { useSalesOnlyRestriction } from '@/hooks/useSalesOnlyRestriction';
 import { useRouteTracker } from '@/lib/dashboard/route-tracker';
 import { useOfflineFlush } from '@/hooks/useOfflineFlush';
+import { useMissedCount } from '@/hooks/useCallLog';
 import { Star } from 'lucide-react';
 
 /* ─── Navigation config ─── */
@@ -74,6 +75,7 @@ const unifiedNavSections: { title: string; items: NavItem[] }[] = [
       { icon: PlusCircle, label: 'Novo Pedido', path: '/sales/new' },
       { icon: Wrench, label: 'Ferramentas de Venda', path: '/vendas/ferramentas' },
       { icon: Link2, label: 'Chamadas pendentes', path: '/farmer/calls/pending-link' },
+      { icon: Phone, label: 'Telefonia', path: '/telefonia' },
     ],
   },
   {
@@ -329,7 +331,7 @@ function SidebarItem({
 function AppSidebar({ collapsed, onToggle }: { collapsed: boolean; onToggle: () => void }) {
   const location = useLocation();
   const navigate = useNavigate();
-  const { isStaff } = useAuth();
+  const { isStaff, user } = useAuth();
   const isSalesOnly = useSalesOnlyRestriction();
   const { favorites, isFavorite, toggle: toggleFavorite } = useSidebarFavorites();
 
@@ -445,6 +447,9 @@ function AppSidebar({ collapsed, onToggle }: { collapsed: boolean; onToggle: () 
   const { data: financeiroAtrasados } = useFinanceiroAlertas();
   const { data: tintErros } = useTintAlertas();
 
+  // Badge de perdidas não-lidas na Central de Telefonia (refetch a cada 30s)
+  const { data: missedCallsCount } = useMissedCount(user?.id);
+
   const sectionsWithBadges = React.useMemo(
     () => [...unifiedNavSections, docNavSection].map((s) => ({
       ...s,
@@ -476,10 +481,13 @@ function AppSidebar({ collapsed, onToggle }: { collapsed: boolean; onToggle: () 
         if (it.path === '/tintometrico' && tintErros && tintErros > 0) {
           return { ...it, badge: tintErros, badgeVariant: 'destructive' as const };
         }
+        if (it.path === '/telefonia' && missedCallsCount && missedCallsCount > 0) {
+          return { ...it, badge: missedCallsCount, badgeVariant: 'destructive' as const };
+        }
         return it;
       }),
     })),
-    [outlierPendentes, pedidosPendentes, aumentosAtivos, oportunidadesAtivas, negociacaoNovasCount, notificacoesPendentes, alertasCriticos, financeiroAtrasados, tintErros],
+    [outlierPendentes, pedidosPendentes, aumentosAtivos, oportunidadesAtivas, negociacaoNovasCount, notificacoesPendentes, alertasCriticos, financeiroAtrasados, tintErros, missedCallsCount],
   );
 
   const isActive = (path: string) => {

@@ -274,6 +274,98 @@ export type Database = {
         }
         Relationships: []
       }
+      call_log: {
+        Row: {
+          acknowledged_at: string | null
+          answered_at: string | null
+          caller_id_used: string | null
+          created_at: string
+          customer_user_id: string | null
+          direction: Database["public"]["Enums"]["call_direction"]
+          display_name: string | null
+          duration_seconds: number
+          ended_at: string | null
+          farmer_call_id: string | null
+          farmer_id: string
+          id: string
+          last_synced_at: string | null
+          match_confidence: string | null
+          matched_contact_id: string | null
+          phone_normalized: string | null
+          phone_raw: string | null
+          provider: string
+          provider_call_id: string | null
+          recorded: boolean
+          sip_call_id: string | null
+          source: string
+          source_payload: Json | null
+          started_at: string
+          status: Database["public"]["Enums"]["call_status"]
+        }
+        Insert: {
+          acknowledged_at?: string | null
+          answered_at?: string | null
+          caller_id_used?: string | null
+          created_at?: string
+          customer_user_id?: string | null
+          direction: Database["public"]["Enums"]["call_direction"]
+          display_name?: string | null
+          duration_seconds?: number
+          ended_at?: string | null
+          farmer_call_id?: string | null
+          farmer_id: string
+          id?: string
+          last_synced_at?: string | null
+          match_confidence?: string | null
+          matched_contact_id?: string | null
+          phone_normalized?: string | null
+          phone_raw?: string | null
+          provider: string
+          provider_call_id?: string | null
+          recorded?: boolean
+          sip_call_id?: string | null
+          source?: string
+          source_payload?: Json | null
+          started_at?: string
+          status?: Database["public"]["Enums"]["call_status"]
+        }
+        Update: {
+          acknowledged_at?: string | null
+          answered_at?: string | null
+          caller_id_used?: string | null
+          created_at?: string
+          customer_user_id?: string | null
+          direction?: Database["public"]["Enums"]["call_direction"]
+          display_name?: string | null
+          duration_seconds?: number
+          ended_at?: string | null
+          farmer_call_id?: string | null
+          farmer_id?: string
+          id?: string
+          last_synced_at?: string | null
+          match_confidence?: string | null
+          matched_contact_id?: string | null
+          phone_normalized?: string | null
+          phone_raw?: string | null
+          provider?: string
+          provider_call_id?: string | null
+          recorded?: boolean
+          sip_call_id?: string | null
+          source?: string
+          source_payload?: Json | null
+          started_at?: string
+          status?: Database["public"]["Enums"]["call_status"]
+        }
+        Relationships: [
+          {
+            foreignKeyName: "call_log_farmer_call_id_fkey"
+            columns: ["farmer_call_id"]
+            isOneToOne: false
+            referencedRelation: "farmer_calls"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       categoria_aumento_familia_mapeamento: {
         Row: {
           aumento_item_id: number
@@ -12570,6 +12662,16 @@ export type Database = {
     }
     Enums: {
       app_role: "master" | "employee" | "customer"
+      call_direction: "inbound" | "outbound"
+      call_status:
+        | "ringing"
+        | "answered"
+        | "missed"
+        | "rejected"
+        | "busy"
+        | "failed"
+        | "canceled"
+        | "ended"
       classe_abc: "A" | "B" | "C"
       classe_xyz: "X" | "Y" | "Z"
       commercial_role:
@@ -12747,6 +12849,17 @@ export const Constants = {
   public: {
     Enums: {
       app_role: ["master", "employee", "customer"],
+      call_direction: ["inbound", "outbound"],
+      call_status: [
+        "ringing",
+        "answered",
+        "missed",
+        "rejected",
+        "busy",
+        "failed",
+        "canceled",
+        "ended",
+      ],
       classe_abc: ["A", "B", "C"],
       classe_xyz: ["X", "Y", "Z"],
       commercial_role: [
