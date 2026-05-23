@@ -3,13 +3,14 @@ import { useAuth } from '@/contexts/AuthContext';
 import { supabase } from '@/integrations/supabase/client';
 
 /**
- * Retorna true se o CPF do usuário está na lista `sales_only_cpfs` da company_config.
- * Extraído de AppShell.tsx pra ser reusado por usePersona e outros lugares.
+ * Estado completo do sales-only: o flag + se as queries ainda estão carregando.
+ * O `loading` é essencial pro controle de acesso fail-closed (não liberar rota
+ * privilegiada na janela em que o sales-only ainda não resolveu). Ver useAccess.
  */
-export function useSalesOnlyRestriction(): boolean {
+export function useSalesOnlyState(): { isSalesOnly: boolean; loading: boolean } {
   const { user } = useAuth();
 
-  const { data: salesOnlyCpfs } = useQuery({
+  const cpfsQuery = useQuery({
     queryKey: ['config', 'sales_only_cpfs'],
     queryFn: async () => {
       const { data } = await supabase
@@ -22,7 +23,7 @@ export function useSalesOnlyRestriction(): boolean {
     staleTime: 5 * 60 * 1000,
   });
 
-  const { data: userDoc } = useQuery({
+  const docQuery = useQuery({
     queryKey: ['profile', 'document', user?.id],
     queryFn: async () => {
       const { data } = await supabase
@@ -36,6 +37,19 @@ export function useSalesOnlyRestriction(): boolean {
     staleTime: 5 * 60 * 1000,
   });
 
-  if (!salesOnlyCpfs || !userDoc) return false;
-  return salesOnlyCpfs.includes(userDoc);
+  // Carregando enquanto qualquer query relevante não resolveu (docQuery só conta
+  // se há user — quando disabled, isLoading é false).
+  const loading = cpfsQuery.isLoading || (!!user?.id && docQuery.isLoading);
+  const salesOnlyCpfs = cpfsQuery.data;
+  const userDoc = docQuery.data;
+  const isSalesOnly = !salesOnlyCpfs || !userDoc ? false : salesOnlyCpfs.includes(userDoc);
+  return { isSalesOnly, loading };
+}
+
+/**
+ * Retorna true se o CPF do usuário está na lista `sales_only_cpfs` da company_config.
+ * Wrapper booleano (compat) sobre useSalesOnlyState — reusado por AppShell/usePersona.
+ */
+export function useSalesOnlyRestriction(): boolean {
+  return useSalesOnlyState().isSalesOnly;
 }

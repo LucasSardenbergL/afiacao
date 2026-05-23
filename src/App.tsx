@@ -226,7 +226,9 @@ const App = () => (
               <Route path="admin/gamification" element={<AdminGamification />} />
               <Route path="admin/training" element={<AdminTraining />} />
               <Route path="admin/price-table" element={<AdminPriceTable />} />
-              <Route path="admin/analytics-sync" element={<AdminAnalyticsSync />} />
+              <Route element={<RequireAccess section="gestao_admin" />}>
+                <Route path="admin/analytics-sync" element={<AdminAnalyticsSync />} />
+              </Route>
               <Route path="recurring-schedules" element={<RecurringSchedules />} />
               <Route path="savings" element={<SavingsDashboard />} />
               <Route path="loyalty" element={<Loyalty />} />
@@ -359,7 +361,9 @@ const App = () => (
                 <Route path="gestao/governanca" element={<GestaoGovernanca />} />
               </Route>
               <Route path="admin/ajuda" element={<AdminAjuda />} />
-              <Route path="admin/des/trimestre-atual" element={<AdminDesTrimestreAtual />} />
+              <Route element={<RequireAccess section="performance" />}>
+                <Route path="admin/des/trimestre-atual" element={<AdminDesTrimestreAtual />} />
+              </Route>
               <Route element={<RequireAccess section="gestao_admin" />}>
                 <Route path="admin/notificacoes" element={<AdminNotificacoes />} />
                 <Route path="admin/portal-sayerlack" element={<AdminPortalSayerlack />} />
