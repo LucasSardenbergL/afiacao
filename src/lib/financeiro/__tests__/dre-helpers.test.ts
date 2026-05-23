@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { classificarLinhaDRE, REGIME_POR_EMPRESA, resolverDataCaixa, bucketizarCaixa, montarDRE, scoreConfianca, calcularRBT12, faixaPorRBT12, aliquotaEfetivaSimples, anexoPorFatorR } from '../dre-helpers';
+import { classificarLinhaDRE, REGIME_POR_EMPRESA, resolverDataCaixa, bucketizarCaixa, montarDRE, scoreConfianca, calcularRBT12, faixaPorRBT12, aliquotaEfetivaSimples, anexoPorFatorR, impostoTeoricoSimples, impostoTeoricoPresumido } from '../dre-helpers';
 
 const M = (pairs: Array<[string, string]>) => new Map<string, string>(pairs);
 
@@ -198,5 +198,29 @@ describe('anexoPorFatorR', () => {
   it('fator-r ≥ 28% → III; < 28% → V', () => {
     expect(anexoPorFatorR(0.30)).toBe('III');
     expect(anexoPorFatorR(0.20)).toBe('V');
+  });
+});
+
+describe('impostoTeoricoSimples', () => {
+  it('DAS teórico = efetiva × receita do mês', () => {
+    const r = impostoTeoricoSimples({ anexo: 'III', rbt12: 300000, receitaMes: 25000 });
+    expect(r).toBeCloseTo(0.0808 * 25000, 0);
+  });
+  it('sem anexo → null (degrade)', () => {
+    expect(impostoTeoricoSimples({ anexo: null, rbt12: 300000, receitaMes: 25000 })).toBeNull();
+  });
+});
+
+describe('impostoTeoricoPresumido', () => {
+  it('IRPJ+CSLL trimestral + PIS/COFINS; adicional só sobre excedente de 60k', () => {
+    const r = impostoTeoricoPresumido({ receitaTrimestre: 1000000, presuncaoIrpj: 0.08, presuncaoCsll: 0.12 });
+    expect(r.irpj).toBeCloseTo(14000, 0);   // 12000 + 10% sobre (80000-60000)=2000
+    expect(r.csll).toBeCloseTo(10800, 0);
+    expect(r.pis).toBeCloseTo(6500, 0);
+    expect(r.cofins).toBeCloseTo(30000, 0);
+  });
+  it('sem excedente → sem adicional', () => {
+    const r = impostoTeoricoPresumido({ receitaTrimestre: 100000, presuncaoIrpj: 0.08, presuncaoCsll: 0.12 });
+    expect(r.irpj).toBeCloseTo(1200, 0);    // base 8000 < 60000 → adicional 0
   });
 });
