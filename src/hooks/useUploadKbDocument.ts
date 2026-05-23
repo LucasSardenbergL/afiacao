@@ -30,8 +30,7 @@ export function useUploadKbDocument() {
       if (upErr) throw upErr;
 
       // 2. Insert document
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      const { data: doc, error: insErr } = await (supabase.from('kb_documents') as any)
+      const { data: doc, error: insErr } = await supabase.from('kb_documents')
         .insert({
           title: input.title,
           type: input.type,

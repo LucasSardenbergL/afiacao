@@ -118,14 +118,14 @@ interface DRERow {
 
 function consolidateDRE(rows: DRERow[]): Map<number, DRERow> {
   const byMonth = new Map<number, DRERow>();
-  const fields: (keyof DRERow)[] = ['receita_bruta', 'receita_liquida', 'lucro_bruto', 'resultado_liquido'];
+  const fields = ['receita_bruta', 'receita_liquida', 'lucro_bruto', 'resultado_liquido'] as const;
   for (const row of rows) {
     if (!byMonth.has(row.mes)) {
       byMonth.set(row.mes, { ...row, company: 'consolidado' });
     } else {
       const c = byMonth.get(row.mes)!;
       for (const f of fields) {
-        (c as any)[f] = ((c as any)[f] || 0) + ((row as any)[f] || 0);
+        c[f] = (c[f] || 0) + (row[f] || 0);
       }
     }
   }
