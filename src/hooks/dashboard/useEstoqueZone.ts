@@ -36,12 +36,12 @@ export function useEstoqueZone() {
       try {
         const { data: nf } = await supabase
           .from('nfe_recebimentos')
-          .select('id, fornecedor_nome, created_at, status')
+          .select('id, razao_social_emitente, created_at, status')
           .eq('status', 'pendente');
         if (nf) {
           const rows = nf as unknown as Array<{
             id: string;
-            fornecedor_nome?: string | null;
+            razao_social_emitente?: string | null;
             created_at: string;
             status?: string | null;
           }>;
@@ -51,7 +51,7 @@ export function useEstoqueZone() {
             topItems.push({
               id: r.id,
               icon: FileCheck,
-              title: r.fornecedor_nome ?? 'Fornecedor',
+              title: r.razao_social_emitente ?? 'Fornecedor',
               subtitle: 'NF aguardando conferência',
               path: `/admin/estoque/recebimento`,
               itemType: 'nfe_pendente',
@@ -72,24 +72,25 @@ export function useEstoqueZone() {
       try {
         const today = new Date();
         today.setDate(today.getDate() + 7);
+        // FEFO mora em picking_task_items (validade_fefo/product_descricao), não em picking_tasks.
         const { data: fefo } = await supabase
-          .from('picking_tasks')
-          .select('id, sku_descricao, validade')
-          .eq('status', 'pendente')
-          .not('validade', 'is', null)
-          .lt('validade', today.toISOString());
+          .from('picking_task_items')
+          .select('id, product_descricao, validade_fefo')
+          .in('status', ['pendente', 'em_andamento'])
+          .not('validade_fefo', 'is', null)
+          .lt('validade_fefo', today.toISOString());
         if (fefo) {
-          const rows = fefo as unknown as Array<{
+          const rows = fefo as Array<{
             id: string;
-            sku_descricao?: string | null;
-            validade?: string | null;
+            product_descricao: string | null;
+            validade_fefo: string | null;
           }>;
           pickingFefoVencendo = rows.length;
           for (const t of rows.slice(0, 1)) {
             topItems.push({
               id: t.id,
               icon: Package,
-              title: t.sku_descricao ?? 'Item',
+              title: t.product_descricao ?? 'Item',
               subtitle: 'Picking com validade próxima',
               path: `/admin/estoque/picking`,
               itemType: 'picking_fefo_vencendo',

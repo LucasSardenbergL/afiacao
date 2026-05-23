@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import { useState, useEffect } from 'react';
 import { useAuth } from '@/contexts/AuthContext';
 import { useCommercialRole } from '@/hooks/useCommercialRole';
 import { supabase } from '@/integrations/supabase/client';
@@ -9,7 +9,7 @@ import { Button } from '@/components/ui/button';
 import { Slider } from '@/components/ui/slider';
 import { Skeleton } from '@/components/ui/skeleton';
 import { toast } from 'sonner';
-import { Calculator, Lock, Save, ShieldCheck, AlertTriangle } from 'lucide-react';
+import { Calculator, Lock, Save, AlertTriangle } from 'lucide-react';
 
 const HEALTH_WEIGHTS = [
   { key: 'hs_weight_recency', label: 'Recência', default: 25 },
@@ -138,7 +138,7 @@ export default function GovernanceMathParams() {
       queryClient.invalidateQueries({ queryKey: ['gov-algo-config'] });
       toast.success('Parâmetros salvos com sucesso');
     },
-    onError: (e: any) => toast.error('Erro: ' + e.message),
+    onError: (e) => toast.error('Erro: ' + e.message),
   });
 
   const hsTotal = HEALTH_WEIGHTS.reduce((a, w) => a + (healthWeights[w.key] ?? w.default), 0);

@@ -131,11 +131,12 @@ export function useNvoipCall(): UseNvoipCallReturn {
         }, 2000);
 
         toast.success('📞 Chamada iniciada', { description: `Ligando para ${formatBrPhone(normalized)}...` });
-      } catch (err: any) {
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : '';
         setCallState('error');
-        setError(err.message || 'Erro ao realizar chamada');
+        setError(msg || 'Erro ao realizar chamada');
         toast.error('Erro na chamada', {
-          description: err.message || 'Não foi possível realizar a chamada',
+          description: msg || 'Não foi possível realizar a chamada',
         });
       }
     },
@@ -150,10 +151,10 @@ export function useNvoipCall(): UseNvoipCallReturn {
       setCallState('finished');
       stopPolling();
       toast.success('Chamada encerrada');
-    } catch (err: any) {
+    } catch (err) {
       console.error('Error ending call:', err);
       toast.error('Erro ao encerrar', {
-        description: err.message,
+        description: err instanceof Error ? err.message : undefined,
       });
     }
   }, [callId, stopPolling]);

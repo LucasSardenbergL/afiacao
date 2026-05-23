@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
+import { Card, CardContent } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -12,7 +12,7 @@ import { useFarmerScoring } from '@/hooks/useFarmerScoring';
 import { useAuth } from '@/contexts/AuthContext';
 import {
   Shield, CheckCircle, XCircle, Clock, FileText,
-  ArrowUpRight, ArrowDownRight, Loader2, Plus, AlertTriangle,
+  Loader2, Plus,
   TrendingUp, TrendingDown, Minus
 } from 'lucide-react';
 import { format } from 'date-fns';
@@ -154,13 +154,13 @@ const FarmerGovernance = () => {
                 Nenhum registro de auditoria
               </div>
             ) : (
-              auditLogs.map((log: any) => (
+              auditLogs.map((log) => (
                 <Card key={log.id}>
                   <CardContent className="p-3">
                     <div className="flex items-center justify-between mb-1">
                       <Badge variant="outline" className="text-[10px]">{log.action}</Badge>
                       <span className="text-[10px] text-muted-foreground">
-                        {format(new Date(log.created_at), 'dd/MM/yy HH:mm', { locale: ptBR })}
+                        {format(new Date(log.created_at ?? ''), 'dd/MM/yy HH:mm', { locale: ptBR })}
                       </span>
                     </div>
                     <p className="text-xs text-muted-foreground">{log.entity_type} · v{log.algorithm_version}</p>
@@ -321,7 +321,7 @@ const ProposalCard = ({ proposal, isGovernor, onApprove, onReject }: {
               <div key={key} className="flex items-center justify-between text-[10px]">
                 <span className="text-muted-foreground">{key}</span>
                 <span>
-                  <span className="text-muted-foreground">{(proposal.current_params as any)[key]}</span>
+                  <span className="text-muted-foreground">{proposal.current_params[key]}</span>
                   <span className="mx-1">→</span>
                   <span className="font-semibold">{val as number}</span>
                 </span>

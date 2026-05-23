@@ -78,10 +78,11 @@ export interface FinDRE {
   resultado_antes_impostos: number;
   impostos: number;
   resultado_liquido: number;
-  detalhamento?: {
-    receitas?: Record<string, number>;
-    despesas?: Record<string, number>;
+  detalhamento: {
+    receitas: Record<string, number>;
+    despesas: Record<string, number>;
     categorias_nao_mapeadas?: string[];
+    // Onda 3a — sub-linhas de imposto regime-aware + confiança + flag de caixa estimado
     impostos?: Partial<Record<'ded_icms' | 'ded_iss' | 'ded_pis' | 'ded_cofins' | 'ded_ipi' | 'das' | 'irpj' | 'csll', number>>;
     regime_tributario?: 'simples' | 'presumido';
     caixa_estimado?: boolean;

@@ -1,15 +1,13 @@
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect } from 'react';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
-import { Button } from '@/components/ui/button';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { Progress } from '@/components/ui/progress';
-import { COMPANIES, ALL_COMPANIES, type Company } from '@/contexts/CompanyContext';
+import { COMPANIES, ALL_COMPANIES } from '@/contexts/CompanyContext';
 import { getDRE, type FinDRE } from '@/services/financeiroService';
-import { supabase } from '@/integrations/supabase/client';
 import {
-  Loader2, Building2, Calendar, BarChart3, TrendingUp, AlertTriangle, Receipt
+  Loader2, Calendar, AlertTriangle, Receipt
 } from 'lucide-react';
 
 const fmt = (v: number) => v.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' });
@@ -100,7 +98,7 @@ const FinanceiroTributario = () => {
 
         // Regime-specific analysis
         let snInfo: { aliquota: number; faixa: string } | null = null;
-        let lpBreakdown: any = null;
+        let lpBreakdown: { irpj: number; adicionalIRPJ: number; csll: number; pis: number; cofins: number; total: number } | null = null;
 
         if (regime === 'simples') {
           snInfo = calcAliquotaEfetivaSN(receitaAnual);

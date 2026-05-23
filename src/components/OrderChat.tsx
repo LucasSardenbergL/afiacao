@@ -61,7 +61,7 @@ export function OrderChat({ orderId }: OrderChatProps) {
 
   const loadMessages = async () => {
     try {
-      const { data, error } = await (supabase as any)
+      const { data, error } = await supabase
         .from('order_messages')
         .select('*')
         .eq('order_id', orderId)
@@ -81,7 +81,7 @@ export function OrderChat({ orderId }: OrderChatProps) {
     setSending(true);
 
     try {
-      const { error } = await (supabase as any).from('order_messages').insert({
+      const { error } = await supabase.from('order_messages').insert({
         order_id: orderId,
         sender_id: user.id,
         message: newMessage.trim(),

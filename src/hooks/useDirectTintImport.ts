@@ -411,7 +411,7 @@ export function useDirectTintImport() {
             newFormulas.push({ row: formulaRow, items: coranteItems });
             imported++;
           }
-        } catch (e: any) {
+        } catch (e) {
           errors++;
           logger.warn('Tint formula row processing failed (skipping row)', {
             stage: 'upload_formulas',

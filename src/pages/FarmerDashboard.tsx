@@ -15,6 +15,7 @@ import {
   Eye, ShoppingCart,
 } from 'lucide-react';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
+import { CallButton } from '@/components/call/CallButton';
 
 // ─── Helpers ─────────────────────────────────────────────────────────
 const healthColors: Record<string, { bg: string; text: string; border: string }> = {
@@ -157,14 +158,7 @@ const FarmerDashboard = () => {
                         </div>
                         <div className="flex items-center gap-0.5 shrink-0">
                           {phone ? (
-                            <Tooltip>
-                              <TooltipTrigger asChild>
-                                <Button size="icon" variant="ghost" className="h-8 w-8 text-primary" asChild>
-                                  <a href={`tel:${phone}`}><Phone className="w-3.5 h-3.5" /></a>
-                                </Button>
-                              </TooltipTrigger>
-                              <TooltipContent><p className="text-xs">Ligar</p></TooltipContent>
-                            </Tooltip>
+                            <CallButton phone={phone} customerName={item.customer_name} variant="icon" />
                           ) : (
                             <Tooltip>
                               <TooltipTrigger asChild>

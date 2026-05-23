@@ -40,7 +40,7 @@ interface ToolEvent {
   id: string;
   event_type: string;
   created_at: string;
-  metadata: Record<string, any> | null;
+  metadata: Record<string, unknown> | null;
   order_id: string | null;
 }
 
