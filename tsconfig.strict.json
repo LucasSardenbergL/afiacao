@@ -427,6 +427,14 @@
     "src/components/ui/chart.tsx",
     "src/components/ui/sidebar.tsx",
     "src/lib/spin/types.ts",
-    "src/lib/spin/spin-prompts.ts"
+    "src/lib/spin/spin-prompts.ts",
+    "src/lib/call-session/aggregate-customer-profile.ts",
+    "src/lib/sip/sip-client.ts",
+    "src/lib/transcription/deepgram-client.ts",
+    "src/lib/transcription/transcription-engine.ts",
+    "src/components/customer360/format.ts",
+    "src/components/financeiro/dashboard/format.ts",
+    "src/components/portalSayerlack/types.ts",
+    "src/components/reposicao/alertas/types.ts"
   ]
 }
