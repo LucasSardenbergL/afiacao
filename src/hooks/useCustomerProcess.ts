@@ -20,7 +20,9 @@ export function useCustomerProcess(customerId: string | null) {
         .eq('is_current', true)
         .maybeSingle();
       if (error) throw error;
-      return (data as CustomerProcess) ?? null;
+      // etapas vem como Json do banco; CustomerProcess.etapas é ProcessEtapa[].
+      // Cast via unknown (mesmo padrão da linha do insert) — tipos não se sobrepõem.
+      return (data as unknown as CustomerProcess) ?? null;
     },
   });
 }
@@ -70,7 +72,7 @@ export function useSaveCustomerProcess() {
         .single();
 
       if (error) throw error;
-      return data as CustomerProcess;
+      return data as unknown as CustomerProcess;
     },
     onSuccess: (data, variables) => {
       qc.invalidateQueries({ queryKey: ['customer-process', variables.customerId] });

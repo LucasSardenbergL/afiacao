@@ -62,8 +62,8 @@ export function IncomingCallModal() {
         if (resolved.contactName) setContactName(resolved.contactName);
         if (resolved.contactCargo) setContactCargo(resolved.contactCargo);
         if (!resolved.customerUserId) return;
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        const { data } = await (supabase.from('profiles') as any)
+         
+        const { data } = await supabase.from('profiles')
           .select('name, razao_social')
           .eq('user_id', resolved.customerUserId)
           .maybeSingle();

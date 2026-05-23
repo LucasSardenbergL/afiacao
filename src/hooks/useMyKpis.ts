@@ -25,8 +25,8 @@ export function useMyKpis() {
       }
       const todayIso = new Date().toISOString().slice(0, 10);
 
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      const { data: calls } = await (supabase.from('farmer_calls') as any)
+       
+      const { data: calls } = await supabase.from('farmer_calls')
         .select('revenue_generated, margin_generated')
         .eq('farmer_id', user.id)
         .gte('started_at', todayIso);
@@ -36,8 +36,8 @@ export function useMyKpis() {
       const margin = callsArr.reduce((s, c) => s + Number(c.margin_generated ?? 0), 0);
       const withRevenue = callsArr.filter((c) => Number(c.revenue_generated ?? 0) > 0);
 
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      const { count: pending } = await (supabase.from('farmer_calls') as any)
+       
+      const { count: pending } = await supabase.from('farmer_calls')
         .select('id', { count: 'exact', head: true })
         .eq('farmer_id', user.id)
         .is('customer_user_id', null)
