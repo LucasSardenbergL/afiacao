@@ -2,6 +2,8 @@
 // Onda 3a — DRE v2 estrutural (regime-aware). Módulo puro, espelhado verbatim no
 // engine Deno supabase/functions/omie-financeiro/index.ts (calcularDRE).
 
+import { ANEXOS_SIMPLES, type AnexoSimples, type FaixaSimples, FATOR_R_LIMIAR, PRESUMIDO } from './dre-tabelas-tributarias';
+
 export type RegimeTributario = 'simples' | 'presumido';
 export type RegimeApuracao = 'caixa' | 'competencia';
 
@@ -218,4 +220,86 @@ export function scoreConfianca(input: {
     pct_mapeado_valor: input.pct_mapeado_valor,
     fallback_pct: input.fallback_pct,
   };
+}
+
+export type ReceitaMensal = { ano: number; mes: number; receita_bruta: number };
+
+// RBT12 = soma da receita bruta dos 12 meses ANTERIORES ao mês de apuração (exclusivo).
+export function calcularRBT12(historico: ReceitaMensal[], ano: number, mes: number): number {
+  const idxApuracao = ano * 12 + mes;
+  const idxInicio = idxApuracao - 12;
+  return historico.reduce((s, h) => {
+    const idx = h.ano * 12 + h.mes;
+    return (idx >= idxInicio && idx < idxApuracao) ? s + h.receita_bruta : s;
+  }, 0);
+}
+
+export function faixaPorRBT12(anexo: AnexoSimples, rbt12: number): FaixaSimples {
+  const faixas = ANEXOS_SIMPLES[anexo];
+  for (const f of faixas) {
+    if (rbt12 <= f.ate) return f;
+  }
+  return faixas[faixas.length - 1];
+}
+
+// Alíquota efetiva do Simples: (RBT12 × nominal − parcela a deduzir) / RBT12.
+export function aliquotaEfetivaSimples(anexo: AnexoSimples, rbt12: number): number {
+  if (rbt12 <= 0) return 0;
+  const f = faixaPorRBT12(anexo, rbt12);
+  const efetiva = (rbt12 * f.aliquota - f.deduzir) / rbt12;
+  return Math.max(0, efetiva);
+}
+
+export function anexoPorFatorR(fatorR: number): AnexoSimples {
+  return fatorR >= FATOR_R_LIMIAR ? 'III' : 'V';
+}
+
+export function impostoTeoricoSimples(input: {
+  anexo: AnexoSimples | null;
+  rbt12: number;
+  receitaMes: number;
+}): number | null {
+  if (!input.anexo) return null;            // degrade: sem anexo configurado
+  const efetiva = aliquotaEfetivaSimples(input.anexo, input.rbt12);
+  return efetiva * input.receitaMes;
+}
+
+export function impostoTeoricoPresumido(input: {
+  receitaTrimestre: number;
+  presuncaoIrpj: number;
+  presuncaoCsll: number;
+}): { irpj: number; csll: number; pis: number; cofins: number; total: number } {
+  const baseIrpj = input.receitaTrimestre * input.presuncaoIrpj;
+  const irpjBase = baseIrpj * PRESUMIDO.irpj_aliquota;
+  const adicional = Math.max(0, baseIrpj - PRESUMIDO.irpj_adicional_limite_trimestral) * PRESUMIDO.irpj_adicional_aliquota;
+  const irpj = irpjBase + adicional;
+  const csll = input.receitaTrimestre * input.presuncaoCsll * PRESUMIDO.csll_aliquota;
+  const pis = input.receitaTrimestre * PRESUMIDO.pis_aliquota;
+  const cofins = input.receitaTrimestre * PRESUMIDO.cofins_aliquota;
+  return { irpj, csll, pis, cofins, total: irpj + csll + pis + cofins };
+}
+
+export type ConfigTributario = {
+  regime: RegimeTributario;
+  anexo: AnexoSimples | null;       // Simples
+  fatorRHabilitado: boolean;        // Simples: alterna III/V por fator-r
+  presuncaoIrpj: number;            // presumido
+  presuncaoCsll: number;            // presumido
+  completa: boolean;                // false → teórico parcial, confiança ≤ media
+};
+
+const PRESUNCAO_DEFAULT = { irpj: 0.08, csll: 0.12 }; // comércio/indústria
+
+export function normalizarConfigTributario(
+  company: string,
+  raw: Record<string, unknown> | null,
+): ConfigTributario {
+  const regimeDefault = REGIME_POR_EMPRESA[company] ?? 'presumido';
+  const regime = ((raw?.regime as RegimeTributario) ?? regimeDefault);
+  const anexo = (raw?.anexo as AnexoSimples | undefined) ?? null;
+  const presuncaoIrpj = Number(raw?.presuncao_irpj ?? PRESUNCAO_DEFAULT.irpj);
+  const presuncaoCsll = Number(raw?.presuncao_csll ?? PRESUNCAO_DEFAULT.csll);
+  const fatorRHabilitado = Boolean(raw?.fator_r_habilitado ?? false);
+  const completa = regime === 'presumido' ? raw != null : anexo != null;
+  return { regime, anexo, fatorRHabilitado, presuncaoIrpj, presuncaoCsll, completa };
 }

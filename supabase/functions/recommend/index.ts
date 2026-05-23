@@ -54,7 +54,7 @@ interface Candidate {
 }
 
 async function recommend(
-  db: any,
+  db: ReturnType<typeof createClient>,
   customerId: string,
   basketProductIds: string[],
   farmerId: string
@@ -290,7 +290,7 @@ async function recommend(
 // ======== LOG EVENT ========
 
 async function logEvent(
-  db: any,
+  db: ReturnType<typeof createClient>,
   farmerId: string,
   customerId: string,
   productId: string,

@@ -89,8 +89,24 @@ Reescreve a estrutura da DRE do `omie-financeiro` (`calcularDRE`). Lógica testa
 A DRE ficou **regime-aware e menos enganosa**, mas a linha de imposto ainda é **descritiva** (o que saiu no Omie). O **check de imposto teórico** (Simples progressivo RBT12/anexo/fator-r; presumido trimestral + adicional) é a **Onda 3b**. No Simples, a "receita líquida" é gerencial — o DAS mistura tributo sobre receita + IRPJ/CSLL, então não é diretamente comparável a presumido.
 
 ### Ainda direcional (próximas ondas)
-- Imposto teórico (conferência realizado×esperado por regime): **Onda 3b**.
 - Fechamento contábil, conciliação fiscal (PGDAS/DARF/NF), CMV/CPV real, depreciação, provisões (13º/férias), eliminação intercompany, pró-labore × folha × distribuição: **deferidos** (DRE segue direcional até lá).
+
+---
+
+## 🔧 Onda 3b — DRE v2: imposto teórico (conferência) (2026-05-22)
+
+Adiciona à DRE o **imposto teórico esperado por regime**, ao lado do realizado (do Omie), como sanity-check. Tabelas legais (Anexos I–V do Simples + presunções) verificadas contra a Receita Federal; lógica testada em `dre-helpers.ts`/`dre-tabelas-tributarias.ts` (vitest) e espelhada no engine.
+
+| Item | Como funciona |
+|---|---|
+| **Simples** | DAS teórico = alíquota efetiva × receita do mês. Efetiva = (RBT12 × nominal − parcela a deduzir) / RBT12, com RBT12 = receita bruta dos 12 meses anteriores (de `fin_dre_snapshots` competência). Anexo vem da config; fator-r alterna III/V (ver limitação). |
+| **Presumido** | IRPJ/CSLL **trimestrais** (presunção por atividade) + **adicional 10%** sobre base presumida que excede R$60k/tri + PIS/COFINS cumulativo. Rateado linearmente por mês (aproximação). |
+| **Degradação honesta** | Sem dado essencial (ex.: Simples sem anexo configurado) → teórico = `null`, **nunca número inventado**, e rebaixa a confiança. |
+| **Confiança** | Delta realizado×teórico > 25% vira **motivo** (não rebaixa sozinho — pode ser competência/recolhimento); config tributária incompleta limita a confiança a "media". |
+| **Config** | Coluna opcional `fin_config_cashflow.dre_tributario` (JSONB): `{regime, anexo, fator_r_habilitado, presuncao_irpj, presuncao_csll}`. Sem ela → default por empresa + teórico parcial. |
+
+### Regra de ouro da Onda 3b
+O teórico é **conferência de plausibilidade**, não verdade fiscal — o realizado (Omie) continua sendo o número. **Limitações documentadas** (viram motivo de delta/confiança, não erro silencioso): (a) fator-r não alterna anexo sem folha segregada confiável; (b) rateio trimestral linear no presumido; (c) competência do DAS (recolhido sobre receita do mês anterior) não realinhada. Conciliação fiscal real (PGDAS/DARF) segue **deferida**.
 
 ---
 
