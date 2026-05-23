@@ -4239,6 +4239,27 @@ export type Database = {
         }
         Relationships: []
       }
+      fin_valor_inputs: {
+        Row: {
+          company: string
+          updated_at: string
+          updated_by: string | null
+          valor_inputs: Json
+        }
+        Insert: {
+          company: string
+          updated_at?: string
+          updated_by?: string | null
+          valor_inputs?: Json
+        }
+        Update: {
+          company?: string
+          updated_at?: string
+          updated_by?: string | null
+          valor_inputs?: Json
+        }
+        Relationships: []
+      }
       fornecedor_alerta: {
         Row: {
           aumento_id: number | null
