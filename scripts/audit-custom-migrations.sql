@@ -3,7 +3,7 @@
 -- ========================================================================
 --
 -- Gerado por: scripts/audit-custom-migrations.ts
--- Total de custom migrations: 44
+-- Total de custom migrations: 45
 --
 -- Como usar:
 --   1. Abra o Supabase SQL Editor (via Lovable Cloud → Backend → SQL Editor)
@@ -63,7 +63,8 @@ WITH expected (version, slug, filename) AS (VALUES
   ('20260520010000', 'scoring_visit_p1_fixes', '20260520010000_scoring_visit_p1_fixes.sql'),
   ('20260523120000', 'call_log', '20260523120000_call_log.sql'),
   ('20260523210000', 'drop_audit_trigger_fin_config_cashflow', '20260523210000_drop_audit_trigger_fin_config_cashflow.sql'),
-  ('20260523230000', 'fin_a2_valor_inputs', '20260523230000_fin_a2_valor_inputs.sql')
+  ('20260523230000', 'fin_a2_valor_inputs', '20260523230000_fin_a2_valor_inputs.sql'),
+  ('20260523230835', 'sync_sla_view_stack', '20260523230835_sync_sla_view_stack.sql')
 )
 SELECT
   e.version,
