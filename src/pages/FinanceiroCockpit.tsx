@@ -354,6 +354,16 @@ const FinanceiroCockpit = () => {
                         ))}
                       </div>
                     )}
+                    {d.detalhamento?.imposto_teorico && (
+                      <div className="text-xs text-muted-foreground mt-1">
+                        Imposto teórico esperado: {fmt(Object.values(d.detalhamento.imposto_teorico).reduce((s: number, v) => s + (v ?? 0), 0))}
+                        {d.detalhamento.delta_imposto_pct != null && (
+                          <span className={Math.abs(d.detalhamento.delta_imposto_pct) > 0.25 ? 'text-status-warning ml-1' : 'ml-1'}>
+                            (Δ {(d.detalhamento.delta_imposto_pct * 100).toFixed(0)}% vs realizado)
+                          </span>
+                        )}
+                      </div>
+                    )}
                   </div>
                 );
               })}

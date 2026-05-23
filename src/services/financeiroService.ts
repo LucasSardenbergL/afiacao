@@ -87,6 +87,9 @@ export interface FinDRE {
     regime_tributario?: 'simples' | 'presumido';
     caixa_estimado?: boolean;
     confianca?: { nivel: 'alta' | 'media' | 'baixa'; motivos: string[]; pct_mapeado_valor: number; fallback_pct: number };
+    imposto_teorico?: Record<string, number | null> | null;
+    delta_imposto_pct?: number | null;
+    config_tributaria_completa?: boolean;
   };
 }
 
