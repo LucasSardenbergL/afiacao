@@ -108,3 +108,36 @@ export function classificarLinhaDRE(input: {
   if (upper.includes('ALUGUE') || upper.includes('CONDOM') || upper.includes('SALÁR') || upper.includes('FOLHA') || upper.includes('ENCARGO') || upper.includes('FGTS') || upper.includes('INSS PATR') || upper.includes('CONTAB') || upper.includes('CONSULTORI') || upper.includes('SOFTWARE') || upper.includes('TELEFO') || upper.includes('INTERNET') || upper.includes('ENERGIA') || upper.includes('ÁGUA')) return { linha: 'despesas_administrativas', mapeado: false, viaFallback: true, impostoNaoMapeado: false };
   return { linha: 'despesas_operacionais', mapeado: false, viaFallback: true, impostoNaoMapeado: false };
 }
+
+export function resolverDataCaixa(input: {
+  data_real: string | null;
+  data_vencimento: string | null;
+}): { data_efetiva: string | null; usou_fallback: boolean } {
+  if (input.data_real) return { data_efetiva: input.data_real, usou_fallback: false };
+  if (input.data_vencimento) return { data_efetiva: input.data_vencimento, usou_fallback: true };
+  return { data_efetiva: null, usou_fallback: false };
+}
+
+export type TituloCaixa = { valor: number; data_real: string | null; data_vencimento: string | null };
+
+// Bucketiza por data EFETIVA dentro de [inicio, fim) (fim exclusivo, ISO yyyy-mm-dd).
+// Mede o % de valor que usou fallback (vencimento) — alimenta a confiança.
+export function bucketizarCaixa(
+  titulos: TituloCaixa[],
+  inicio: string,
+  fim: string,
+): { total: number; total_fallback: number; fallback_pct: number; itens: Array<{ valor: number; data_efetiva: string; usou_fallback: boolean }> } {
+  let total = 0;
+  let total_fallback = 0;
+  const itens: Array<{ valor: number; data_efetiva: string; usou_fallback: boolean }> = [];
+  for (const t of titulos) {
+    const { data_efetiva, usou_fallback } = resolverDataCaixa(t);
+    if (!data_efetiva) continue;
+    if (data_efetiva < inicio || data_efetiva >= fim) continue;
+    total += t.valor;
+    if (usou_fallback) total_fallback += t.valor;
+    itens.push({ valor: t.valor, data_efetiva, usou_fallback });
+  }
+  const fallback_pct = total > 0 ? total_fallback / total : 0;
+  return { total, total_fallback, fallback_pct, itens };
+}

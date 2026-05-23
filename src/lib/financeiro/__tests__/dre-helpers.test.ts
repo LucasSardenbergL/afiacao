@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { classificarLinhaDRE, REGIME_POR_EMPRESA } from '../dre-helpers';
+import { classificarLinhaDRE, REGIME_POR_EMPRESA, resolverDataCaixa, bucketizarCaixa } from '../dre-helpers';
 
 const M = (pairs: Array<[string, string]>) => new Map<string, string>(pairs);
 
@@ -72,5 +72,38 @@ describe('classificarLinhaDRE — não-imposto', () => {
     const r = classificarLinhaDRE({ categoria_codigo: '1.99', categoria_descricao: 'Venda balcão', isReceita: true, regime: 'presumido', mapping: M([]) });
     expect(r.linha).toBe('receita_bruta');
     expect(r.viaFallback).toBe(true);
+  });
+});
+
+describe('resolverDataCaixa', () => {
+  it('usa data real quando presente', () => {
+    expect(resolverDataCaixa({ data_real: '2026-03-10', data_vencimento: '2026-03-05' }))
+      .toEqual({ data_efetiva: '2026-03-10', usou_fallback: false });
+  });
+  it('cai pro vencimento quando data real falta', () => {
+    expect(resolverDataCaixa({ data_real: null, data_vencimento: '2026-03-05' }))
+      .toEqual({ data_efetiva: '2026-03-05', usou_fallback: true });
+  });
+  it('sem nenhuma data → null', () => {
+    expect(resolverDataCaixa({ data_real: null, data_vencimento: null }))
+      .toEqual({ data_efetiva: null, usou_fallback: false });
+  });
+});
+
+describe('bucketizarCaixa', () => {
+  const titulos = [
+    { valor: 100000, data_real: '2026-03-10', data_vencimento: '2026-03-01' },
+    { valor: 50000, data_real: null, data_vencimento: '2026-03-20' },
+    { valor: 999, data_real: '2026-02-10', data_vencimento: '2026-03-02' },
+  ];
+  it('soma só o que cai no mês pela data efetiva, e mede fallback_pct por valor', () => {
+    const r = bucketizarCaixa(titulos, '2026-03-01', '2026-04-01');
+    expect(r.total).toBe(150000);
+    expect(r.total_fallback).toBe(50000);
+    expect(r.fallback_pct).toBeCloseTo(50000 / 150000, 5);
+    expect(r.itens.length).toBe(2);
+  });
+  it('total 0 → fallback_pct 0', () => {
+    expect(bucketizarCaixa([], '2026-03-01', '2026-04-01').fallback_pct).toBe(0);
   });
 });
