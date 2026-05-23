@@ -21,6 +21,27 @@ import type {
 } from '@/components/reposicao/routePlanner/types';
 import { enrichWithPriority } from '@/components/reposicao/routePlanner/priority';
 import { STOP_DURATION_MIN } from '@/components/reposicao/routePlanner/constants';
+import type { Tables } from '@/integrations/supabase/types';
+
+// Linha de route_visits enriquecida com o nome do cliente (resolvido via profiles).
+export type TodayVisitRow = Tables<'route_visits'> & { customerName: string };
+
+// Endereço cru vindo de orders.address (jsonb) — campos opcionais.
+type RawAddress = {
+  street?: string;
+  number?: string;
+  neighborhood?: string;
+  city?: string;
+  state?: string;
+  zip_code?: string;
+  complement?: string;
+};
+
+// Projeção de user_tools + embed tool_categories(name) usada em loadCommercialStops.
+type OverdueToolRow = {
+  user_id: string;
+  tool_categories: { name: string | null } | null;
+};
 
 export function useRoutePlanner() {
   const navigate = useNavigate();
@@ -42,7 +63,7 @@ export function useRoutePlanner() {
 
   // Visit tracking state
   const [visitStatuses, setVisitStatuses] = useState<Map<string, VisitStatus>>(new Map());
-  const [todayVisits, setTodayVisits] = useState<any[]>([]);
+  const [todayVisits, setTodayVisits] = useState<TodayVisitRow[]>([]);
   // Checkout dialog state
   const [checkoutOpen, setCheckoutOpen] = useState(false);
   const [checkoutTarget, setCheckoutTarget] = useState<{ userId: string; name: string } | null>(null);
@@ -127,7 +148,7 @@ export function useRoutePlanner() {
 
       const stops: RouteStop[] = orders.map(order => {
         const profile = profiles?.find(p => p.user_id === order.user_id);
-        const orderAddress = order.address as any;
+        const orderAddress = order.address as unknown as RawAddress | null;
         const defaultAddr = addresses?.find(a => a.user_id === order.user_id && a.is_default) || addresses?.find(a => a.user_id === order.user_id);
         const addr = orderAddress || defaultAddr;
 
@@ -274,19 +295,19 @@ export function useRoutePlanner() {
 
     if (data && data.length > 0) {
       // Fetch customer names
-      const ids = [...new Set(data.map((v: any) => v.customer_user_id))];
+      const ids = [...new Set(data.map(v => v.customer_user_id))];
       const { data: profs } = await supabase
         .from('profiles')
         .select('user_id, name')
         .in('user_id', ids);
-      const nameMap = new Map((profs || []).map((p: any) => [p.user_id, p.name]));
-      const enriched = data.map((v: any) => ({ ...v, customerName: nameMap.get(v.customer_user_id) || 'Cliente' }));
+      const nameMap = new Map((profs || []).map(p => [p.user_id, p.name]));
+      const enriched: TodayVisitRow[] = data.map(v => ({ ...v, customerName: nameMap.get(v.customer_user_id) || 'Cliente' }));
 
       setTodayVisits(enriched);
 
       // Build active check-in status map
       const statusMap = new Map<string, VisitStatus>();
-      enriched.forEach((visit: any) => {
+      enriched.forEach(visit => {
         if (visit.check_in_at && !visit.check_out_at) {
           statusMap.set(visit.customer_user_id, {
             stopId: visit.customer_user_id,
@@ -473,7 +494,7 @@ export function useRoutePlanner() {
 
       // Group overdue tools by user
       const overdueByUser = new Map<string, string[]>();
-      (overdueTools || []).forEach((t: any) => {
+      ((overdueTools || []) as unknown as OverdueToolRow[]).forEach((t) => {
         const toolName = t.tool_categories?.name || 'Ferramenta';
         if (!overdueByUser.has(t.user_id)) overdueByUser.set(t.user_id, []);
         overdueByUser.get(t.user_id)!.push(toolName);
@@ -501,7 +522,7 @@ export function useRoutePlanner() {
           map.set(addr.user_id, addr);
         }
         return map;
-      }, new Map<string, any>());
+      }, new Map<string, Tables<'addresses'>>());
 
       // Deduplicate: build one stop per customer
       const seen = new Set<string>();
@@ -669,8 +690,8 @@ export function useRoutePlanner() {
               s.id === stop.id ? { ...s, lat: coords.lat, lng: coords.lng } : s
             ));
           }
-        } catch (e: any) {
-          if (e?.name === 'AbortError') break;
+        } catch (e) {
+          if ((e as { name?: string })?.name === 'AbortError') break;
           console.warn('Geocode failed for', stop.address.street);
         }
         // Nominatim rate limit: max 1 req/sec
