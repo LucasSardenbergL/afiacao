@@ -1,150 +1,18 @@
 import { useState, useCallback } from 'react';
-import { useQuery, useQueryClient } from '@tanstack/react-query';
-import { supabase } from '@/integrations/supabase/client';
+import { useQueryClient } from '@tanstack/react-query';
 import { invokeFunction } from '@/lib/invoke-function';
-import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
-import { Button } from '@/components/ui/button';
-import { Badge } from '@/components/ui/badge';
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
-import { Progress } from '@/components/ui/progress';
-import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
-import { Skeleton } from '@/components/ui/skeleton';
-import { Upload, RefreshCw, FileText, CheckCircle, AlertTriangle, Loader2, RotateCcw, Zap, Cloud } from 'lucide-react';
 import { toast } from 'sonner';
 import Papa from 'papaparse';
 import { useDirectTintImport } from '@/hooks/useDirectTintImport';
-
-const ACCOUNT = 'oben';
-const CHUNK_SIZE_DEFAULT = 200;
-const CHUNK_SIZE_FORMULAS = 50; // Formulas are heavy (~10 DB ops per row)
-const MAX_RETRIES = 3;
-const RETRY_DELAY_MS = 2000;
-
-function getChunkSize(tipo: string): number {
-  if (tipo === 'formulas_padrao' || tipo === 'formulas_personalizadas') return CHUNK_SIZE_FORMULAS;
-  return CHUNK_SIZE_DEFAULT;
-}
-
-interface TintImportChunkResult {
-  registros_importados?: number;
-  registros_atualizados?: number;
-  registros_erro?: number;
-  status?: string;
-  message?: string;
-  importacao_id?: string;
-  erros?: Array<{ linha: number | string; motivo: string }>;
-  [k: string]: unknown;
-}
-
-interface TintSyncResult {
-  total_sincronizado?: number;
-  totalSynced?: number;
-  [k: string]: unknown;
-}
-
-interface TintImportacaoRow {
-  id: string;
-  tipo: string;
-  arquivo_nome: string;
-  status: string;
-  total_registros: number | null;
-  registros_importados: number | null;
-  registros_atualizados: number | null;
-  registros_erro: number | null;
-  created_at: string;
-  [k: string]: unknown;
-}
-
-interface TintImportFileResult extends TintImportChunkResult {
-  name: string;
-  imported?: number;
-  updated?: number;
-  errors?: number;
-  total_registros?: number;
-  failed_chunks?: number;
-  error?: string | null;
-}
-
-const TIPO_OPTIONS = [
-  { value: 'dados_corantes', label: 'Dados auxiliares — Corantes' },
-  { value: 'dados_produto_base_embalagem', label: 'Dados auxiliares — Produto/Base/Embalagem' },
-  { value: 'formulas_padrao', label: 'Fórmulas — Cores Padrões' },
-  { value: 'formulas_personalizadas', label: 'Fórmulas — Personalizadas' },
-];
-
-function useImportHistory() {
-  return useQuery({
-    queryKey: ['tint-import-history'],
-    queryFn: async () => {
-      const { data } = await supabase
-        .from('tint_importacoes')
-        .select('*')
-        .eq('account', ACCOUNT)
-        .order('created_at', { ascending: false })
-        .limit(20);
-      return data ?? [];
-    },
-  });
-}
-
-function useTintProductCounts() {
-  return useQuery({
-    queryKey: ['tint-product-counts'],
-    queryFn: async () => {
-      const { data } = await supabase
-        .from('omie_products')
-        .select('tint_type')
-        .eq('is_tintometric', true)
-        .eq('account', ACCOUNT);
-      const bases = (data ?? []).filter(p => p.tint_type === 'base').length;
-      const concentrados = (data ?? []).filter(p => p.tint_type === 'concentrado').length;
-      return { bases, concentrados };
-    },
-    staleTime: 5 * 60 * 1000,
-  });
-}
-
-interface FileWithPreview {
-  file: File;
-  preview: string[][];
-  name: string;
-  rawText: string;
-}
-
-async function sha256(content: string): Promise<string> {
-  const data = new TextEncoder().encode(content);
-  const hash = await crypto.subtle.digest('SHA-256', data);
-  return Array.from(new Uint8Array(hash))
-    .map(b => b.toString(16).padStart(2, '0'))
-    .join('');
-}
-
-function sleep(ms: number) {
-  return new Promise(resolve => setTimeout(resolve, ms));
-}
-
-async function sendChunkWithRetry(
-  body: Record<string, unknown>,
-  chunkIndex: number,
-  totalChunks: number,
-): Promise<TintImportChunkResult> {
-  for (let attempt = 1; attempt <= MAX_RETRIES; attempt++) {
-    try {
-      console.log(`Chunk ${chunkIndex + 1}/${totalChunks}: enviando... (tentativa ${attempt}/${MAX_RETRIES})`);
-      const res = await invokeFunction<TintImportChunkResult>('tint-import', body);
-      console.log(`Chunk ${chunkIndex + 1}/${totalChunks}: sucesso, ${res.registros_importados ?? 0} importados, ${res.registros_atualizados ?? 0} atualizados`);
-      return res;
-    } catch (err) {
-      console.error(`Chunk ${chunkIndex + 1}/${totalChunks}: falhou tentativa ${attempt}/${MAX_RETRIES}`, err);
-      if (attempt < MAX_RETRIES) {
-        await sleep(RETRY_DELAY_MS);
-      } else {
-        throw err;
-      }
-    }
-  }
-  throw new Error(`sendChunkWithRetry exhausted retries for chunk ${chunkIndex + 1}`);
-}
+import {
+  ACCOUNT, MAX_RETRIES, getChunkSize, sha256, sendChunkWithRetry,
+  type TintImportChunkResult, type TintSyncResult, type TintImportacaoRow,
+  type TintImportFileResult, type FileWithPreview,
+} from '@/components/tintImport/types';
+import { useImportHistory, useTintProductCounts } from '@/components/tintImport/queries';
+import { SyncCard } from '@/components/tintImport/SyncCard';
+import { ImportCard } from '@/components/tintImport/ImportCard';
+import { HistoryTable } from '@/components/tintImport/HistoryTable';
 
 export default function TintImport() {
   const [tipo, setTipo] = useState('');
@@ -480,15 +348,6 @@ export default function TintImport() {
     toast.success('Retomada finalizada');
   };
 
-  const statusColor: Record<string, string> = {
-    concluido: 'bg-green-500/10 text-green-700',
-    concluido_parcial: 'bg-yellow-500/10 text-yellow-700',
-    parcial: 'bg-yellow-500/10 text-yellow-700',
-    erro: 'bg-red-500/10 text-red-700',
-    processando: 'bg-blue-500/10 text-blue-700',
-    duplicado: 'bg-gray-500/10 text-gray-700',
-  };
-
   const progressPct = chunkProgress.totalChunks > 0
     ? ((chunkProgress.currentChunk / chunkProgress.totalChunks) * 100)
     : 0;
@@ -497,230 +356,32 @@ export default function TintImport() {
     <div className="space-y-6">
       <h1 className="text-2xl font-bold">Tintométrico — Importação</h1>
 
-      {/* Sync Omie */}
-      <Card>
-        <CardHeader>
-          <CardTitle className="text-base">Sincronizar Produtos Omie</CardTitle>
-        </CardHeader>
-        <CardContent>
-          <p className="text-sm text-muted-foreground mb-3">
-            Importa bases e concentrados tintométricos do Omie para o sistema.
-          </p>
-          <Button onClick={handleSync} disabled={syncing}>
-            {syncing ? <Loader2 className="w-4 h-4 mr-2 animate-spin" /> : <RefreshCw className="w-4 h-4 mr-2" />}
-            Sincronizar Produtos Omie
-          </Button>
-          {tintCounts && (tintCounts.bases > 0 || tintCounts.concentrados > 0) && (
-            <p className="text-sm text-muted-foreground mt-3">
-              <span className="font-medium text-foreground">{tintCounts.bases}</span> bases e{' '}
-              <span className="font-medium text-foreground">{tintCounts.concentrados}</span> concentrados encontrados no Omie
-            </p>
-          )}
-        </CardContent>
-      </Card>
+      <SyncCard syncing={syncing} onSync={handleSync} tintCounts={tintCounts} />
 
-      {/* Import CSV */}
-      <Card>
-        <CardHeader>
-          <CardTitle className="text-base">Importar CSV do SAYERSYSTEM</CardTitle>
-        </CardHeader>
-        <CardContent className="space-y-4">
-          <div className="flex gap-4 flex-wrap">
-            <div className="max-w-sm flex-1">
-              <label className="text-sm font-medium mb-1 block">Tipo de importação</label>
-              <Select value={tipo} onValueChange={setTipo}>
-                <SelectTrigger><SelectValue placeholder="Selecione o tipo" /></SelectTrigger>
-                <SelectContent>
-                  {TIPO_OPTIONS.map(o => <SelectItem key={o.value} value={o.value}>{o.label}</SelectItem>)}
-                </SelectContent>
-              </Select>
-            </div>
-            <div className="max-w-xs">
-              <label className="text-sm font-medium mb-1 block">Modo de importação</label>
-              <Select value={importMode} onValueChange={(v) => setImportMode(v as 'auto' | 'edge' | 'direct' | 'rpc')}>
-                <SelectTrigger><SelectValue /></SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="auto">Automático (recomendado)</SelectItem>
-                  <SelectItem value="rpc">⚡ RPC Postgres (mais rápido)</SelectItem>
-                  <SelectItem value="direct">Importação Direta (SQL)</SelectItem>
-                  <SelectItem value="edge">Edge Function (legacy)</SelectItem>
-                </SelectContent>
-              </Select>
-              <p className="text-xs text-muted-foreground mt-1">
-                {importMode === 'auto' && 'Fórmulas grandes: RPC Postgres | Auxiliares: Direto | < 500 linhas: Edge'}
-                {importMode === 'rpc' && '2.000 linhas por lote, processado nativamente no Postgres (~45s para 29k linhas)'}
-                {importMode === 'direct' && 'Sem edge function. 200 linhas por lote via JS client'}
-                {importMode === 'edge' && 'Usa edge function com chunks. Pode dar timeout em arquivos grandes'}
-              </p>
-            </div>
-          </div>
+      <ImportCard
+        tipo={tipo}
+        setTipo={setTipo}
+        importMode={importMode}
+        setImportMode={setImportMode}
+        files={files}
+        onFiles={handleFiles}
+        importing={importing}
+        directRunning={directRunning}
+        directProgress={directProgress}
+        chunkProgress={chunkProgress}
+        progressPct={progressPct}
+        results={results}
+        onImport={handleImportWithMode}
+        onCancelDirect={cancelDirect}
+      />
 
-          <div>
-            <label className="text-sm font-medium mb-1 block">Arquivos CSV</label>
-            <div className="border-2 border-dashed rounded-lg p-6 text-center hover:border-primary/50 transition-colors">
-              <Upload className="w-8 h-8 mx-auto text-muted-foreground mb-2" />
-              <p className="text-sm text-muted-foreground mb-2">Arraste arquivos ou clique para selecionar</p>
-              <input
-                type="file"
-                accept=".csv,.txt"
-                multiple
-                onChange={handleFiles}
-                className="block w-full text-sm file:mr-4 file:py-2 file:px-4 file:rounded-md file:border-0 file:text-sm file:font-medium file:bg-primary file:text-primary-foreground hover:file:bg-primary/90 cursor-pointer"
-              />
-            </div>
-          </div>
-
-          {/* Preview */}
-          {files.length > 0 && (
-            <div className="space-y-3">
-              {files.map((f, idx) => {
-                const lineCount = Papa.parse(f.rawText, { delimiter: ';', skipEmptyLines: true }).data.length - 1;
-                const useDirectMode = importMode === 'direct' || importMode === 'rpc' || (importMode === 'auto' && lineCount >= 500);
-                return (
-                  <div key={idx} className="border rounded-md p-3">
-                    <div className="flex items-center gap-2 mb-2">
-                      <FileText className="w-4 h-4" />
-                      <span className="text-sm font-medium">{f.name}</span>
-                      <Badge variant="outline">{lineCount} linhas</Badge>
-                      {useDirectMode ? (
-                        <Badge variant="secondary" className="gap-1">
-                          <Zap className="w-3 h-3" /> {importMode === 'rpc' || (importMode === 'auto' && (tipo === 'formulas_padrao' || tipo === 'formulas_personalizadas')) ? 'RPC Postgres' : 'Direto'}
-                        </Badge>
-                      ) : (
-                        <Badge variant="outline" className="gap-1"><Cloud className="w-3 h-3" /> Edge Function</Badge>
-                      )}
-                    </div>
-                    <div className="overflow-x-auto">
-                      <table className="text-xs">
-                        <tbody>
-                          {f.preview.map((row, ri) => (
-                            <tr key={ri} className={ri === 0 ? 'font-semibold bg-muted/50' : ''}>
-                              {row.map((cell, ci) => (
-                                <td key={ci} className="px-2 py-0.5 border-b whitespace-nowrap max-w-[200px] truncate">{cell}</td>
-                              ))}
-                            </tr>
-                          ))}
-                        </tbody>
-                      </table>
-                    </div>
-                  </div>
-                );
-              })}
-            </div>
-          )}
-
-          {/* Progress — Edge Function mode */}
-          {importing && !directRunning && (
-            <div className="space-y-2">
-              <p className="text-sm">
-                <Cloud className="w-4 h-4 inline mr-1" />
-                Importando <span className="font-medium">{chunkProgress.fileName}</span>
-                {' '}(arquivo {chunkProgress.currentFile}/{chunkProgress.totalFiles})
-                {chunkProgress.totalChunks > 1 && (
-                  <> — chunk {chunkProgress.currentChunk}/{chunkProgress.totalChunks}</>
-                )}
-              </p>
-              <Progress value={progressPct} />
-            </div>
-          )}
-
-          {/* Progress — Direct mode */}
-          {directRunning && directProgress && (
-            <div className="space-y-2">
-              <p className="text-sm">
-                <Zap className="w-4 h-4 inline mr-1" />
-                {directProgress.phase} — Lote {directProgress.currentBatch}/{directProgress.totalBatches}
-                {' '}({directProgress.recordsProcessed.toLocaleString()} / {directProgress.totalRecords.toLocaleString()} registros)
-              </p>
-              <Progress value={(directProgress.recordsProcessed / directProgress.totalRecords) * 100} />
-              <p className="text-xs text-muted-foreground">
-                {directProgress.imported} importados, {directProgress.updated} atualizados, {directProgress.errors} erros
-              </p>
-              <Button size="sm" variant="outline" onClick={cancelDirect}>Cancelar</Button>
-            </div>
-          )}
-
-          {/* Results */}
-          {results.length > 0 && (
-            <div className="space-y-2">
-              <h3 className="text-sm font-semibold">Resultado</h3>
-              {results.map((r, i) => (
-                <div key={i} className="border rounded-md p-3 flex items-start gap-3">
-                  {r.status === 'concluido' ? <CheckCircle className="w-4 h-4 text-green-500 mt-0.5" /> : <AlertTriangle className="w-4 h-4 text-yellow-500 mt-0.5" />}
-                  <div className="text-sm">
-                    <p className="font-medium">{r.name}</p>
-                    <p className="text-muted-foreground">
-                      {r.registros_importados ?? r.imported ?? 0} importados, {r.registros_atualizados ?? r.updated ?? 0} atualizados, {r.registros_erro ?? r.errors ?? 0} erros
-                      {r.failed_chunks > 0 && <span className="text-destructive"> ({r.failed_chunks} chunks falharam)</span>}
-                    </p>
-                    {r.erros && r.erros.length > 0 && (
-                      <ul className="text-xs text-destructive mt-1">
-                        {r.erros.slice(0, 5).map((e, j: number) => <li key={j}>Linha {e.linha}: {e.motivo}</li>)}
-                      </ul>
-                    )}
-                    {r.error && <p className="text-xs text-destructive">{r.error}</p>}
-                    {r.status === 'duplicado' && <p className="text-xs text-muted-foreground">{r.message || 'Arquivo já importado anteriormente'}</p>}
-                  </div>
-                </div>
-              ))}
-            </div>
-          )}
-
-          <Button onClick={handleImportWithMode} disabled={importing || directRunning || !tipo || files.length === 0}>
-            {(importing || directRunning) ? <Loader2 className="w-4 h-4 mr-2 animate-spin" /> : <Upload className="w-4 h-4 mr-2" />}
-            Importar
-          </Button>
-        </CardContent>
-      </Card>
-
-      {/* History */}
-      <Card>
-        <CardHeader>
-          <CardTitle className="text-base">Histórico de Importações</CardTitle>
-        </CardHeader>
-        <CardContent>
-          <Table>
-            <TableHeader>
-              <TableRow>
-                <TableHead>Data</TableHead>
-                <TableHead>Tipo</TableHead>
-                <TableHead>Arquivo</TableHead>
-                <TableHead>Registros</TableHead>
-                <TableHead>Status</TableHead>
-                <TableHead></TableHead>
-              </TableRow>
-            </TableHeader>
-            <TableBody>
-              {histLoading ? (
-                <TableRow><TableCell colSpan={6}><Skeleton className="h-6 w-full" /></TableCell></TableRow>
-              ) : (history ?? []).map((imp) => (
-                <TableRow key={imp.id}>
-                  <TableCell className="text-sm">{new Date(imp.created_at).toLocaleDateString('pt-BR')}</TableCell>
-                  <TableCell className="text-sm">{imp.tipo}</TableCell>
-                  <TableCell className="text-sm max-w-[200px] truncate">{imp.arquivo_nome}</TableCell>
-                  <TableCell className="text-sm">{(imp.registros_importados ?? 0) + (imp.registros_atualizados ?? 0)} / {imp.total_registros ?? 0}</TableCell>
-                  <TableCell>
-                    <Badge variant="outline" className={statusColor[imp.status] || ''}>{imp.status}</Badge>
-                  </TableCell>
-                  <TableCell>
-                    {(imp.status === 'processando' || imp.status === 'concluido_parcial') && (
-                      <Button
-                        size="sm"
-                        variant="outline"
-                        disabled={importing || resumingId === imp.id}
-                        onClick={() => handleResume(imp)}
-                      >
-                        {resumingId === imp.id ? <Loader2 className="w-3 h-3 mr-1 animate-spin" /> : <RotateCcw className="w-3 h-3 mr-1" />}
-                        Retomar
-                      </Button>
-                    )}
-                  </TableCell>
-                </TableRow>
-              ))}
-            </TableBody>
-          </Table>
-        </CardContent>
-      </Card>
+      <HistoryTable
+        history={(history ?? []) as TintImportacaoRow[]}
+        histLoading={histLoading}
+        importing={importing}
+        resumingId={resumingId}
+        onResume={handleResume}
+      />
     </div>
   );
 }
