@@ -37,7 +37,8 @@ export function useMyCarteiraScores() {
         .order('priority_score', { ascending: false })
         .limit(200);
       if (error) throw error;
-      return (data ?? []) as CarteiraScoreRow[];
+      // signal_modifiers é coluna jsonb (Json nos tipos gerados): asserção Json→ScoreAdjustment no boundary
+      return (data ?? []) as unknown as CarteiraScoreRow[];
     },
   });
 }

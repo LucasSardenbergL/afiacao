@@ -3,84 +3,20 @@ import { useNavigate } from "react-router-dom";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
 import { toast } from "sonner";
-import {
-  Sparkles,
-  Loader2,
-  RefreshCw,
-  PlayCircle,
-  ChevronRight,
-  MoreVertical,
-  EyeOff,
-  ArrowRight,
-  Handshake,
-  X,
-} from "lucide-react";
+import { Sparkles, RefreshCw, PlayCircle } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { Badge } from "@/components/ui/badge";
-import { Switch } from "@/components/ui/switch";
-import { Label } from "@/components/ui/label";
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from "@/components/ui/select";
-import {
-  Table,
-  TableBody,
-  TableCell,
-  TableHead,
-  TableHeader,
-  TableRow,
-} from "@/components/ui/table";
-import {
-  Tooltip,
-  TooltipContent,
-  TooltipTrigger,
-  TooltipProvider,
-} from "@/components/ui/tooltip";
-import {
-  DropdownMenu,
-  DropdownMenuContent,
-  DropdownMenuItem,
-  DropdownMenuTrigger,
-} from "@/components/ui/dropdown-menu";
-import {
-  Sheet,
-  SheetContent,
-} from "@/components/ui/sheet";
-import {
-  AlertDialog,
-  AlertDialogAction,
-  AlertDialogCancel,
-  AlertDialogContent,
-  AlertDialogDescription,
-  AlertDialogFooter,
-  AlertDialogHeader,
-  AlertDialogTitle,
-} from "@/components/ui/alert-dialog";
-import {
-  DropdownMenuCheckboxItem,
-} from "@/components/ui/dropdown-menu";
+import { TooltipProvider } from "@/components/ui/tooltip";
+import { Sheet, SheetContent } from "@/components/ui/sheet";
 
 import { Cenario, Oportunidade, OrdemKey } from "@/components/reposicao/oportunidades/types";
-import {
-  EMPRESA,
-  ALL,
-  CENARIOS,
-  formatBRL,
-  formatNumber,
-  formatDate,
-  formatDateLong,
-  diasEntre,
-  cenarioIcon,
-  cenarioLabel,
-  descontoBadgeClass,
-  diasBadge,
-} from "@/components/reposicao/oportunidades/shared";
-import { EstadoVazio, DrawerConteudo } from "@/components/reposicao/oportunidades/components";
+import { EMPRESA, ALL, CENARIOS, formatBRL, diasEntre } from "@/components/reposicao/oportunidades/shared";
+import { DrawerConteudo } from "@/components/reposicao/oportunidades/components";
+import { KpiCards } from "@/components/reposicao/oportunidades/KpiCards";
+import { NegociacaoBanner } from "@/components/reposicao/oportunidades/NegociacaoBanner";
+import { OportunidadesFiltros } from "@/components/reposicao/oportunidades/OportunidadesFiltros";
+import { OportunidadesTable } from "@/components/reposicao/oportunidades/OportunidadesTable";
+import { GerarCicloDialog } from "@/components/reposicao/oportunidades/GerarCicloDialog";
 
 export default function AdminReposicaoOportunidades() {
   const navigate = useNavigate();
@@ -322,36 +258,14 @@ export default function AdminReposicaoOportunidades() {
         </header>
 
         {!bannerNegociacaoFechado && negociacaoNovasCount > 0 && (
-          <div className="flex items-center justify-between gap-3 rounded-lg border border-status-info/30 bg-status-info/10 px-4 py-3 text-sm">
-            <div className="flex items-center gap-2 flex-1">
-              <Handshake className="h-4 w-4 text-status-info dark:text-status-info shrink-0" />
-              <span>
-                <strong>{negociacaoNovasCount}</strong> SKU{negociacaoNovasCount === 1 ? '' : 's'}{' '}
-                {negociacaoNovasCount === 1 ? 'foi sugerido' : 'foram sugeridos'} para negociação paralela.
-              </span>
-            </div>
-            <div className="flex items-center gap-2 shrink-0">
-              <Button
-                size="sm"
-                variant="outline"
-                onClick={() => navigate('/admin/reposicao/negociacao-paralela')}
-              >
-                Ver sugestões
-              </Button>
-              <Button
-                size="icon"
-                variant="ghost"
-                className="h-7 w-7"
-                onClick={() => {
-                  sessionStorage.setItem('banner-negociacao-fechado', '1');
-                  setBannerNegociacaoFechado(true);
-                }}
-                aria-label="Fechar"
-              >
-                <X className="h-4 w-4" />
-              </Button>
-            </div>
-          </div>
+          <NegociacaoBanner
+            count={negociacaoNovasCount}
+            onVerSugestoes={() => navigate('/admin/reposicao/negociacao-paralela')}
+            onFechar={() => {
+              sessionStorage.setItem('banner-negociacao-fechado', '1');
+              setBannerNegociacaoFechado(true);
+            }}
+          />
         )}
 
         {historicoPromocoes && historicoPromocoes.campanhas > 0 && (
@@ -371,105 +285,15 @@ export default function AdminReposicaoOportunidades() {
         )}
 
         {/* KPI Cards */}
-        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
-          <Card>
-            <CardHeader className="pb-2">
-              <CardTitle className="text-xs font-medium text-muted-foreground">
-                Economia total potencial hoje
-              </CardTitle>
-            </CardHeader>
-            <CardContent>
-              <div className="text-2xl font-bold text-status-success tabular-nums">
-                {formatBRL(totalEconomia)}
-              </div>
-              <p className="text-xs text-muted-foreground mt-1">
-                considerando promoções e aumentos vigentes
-              </p>
-            </CardContent>
-          </Card>
-
-          <Card>
-            <CardHeader className="pb-2">
-              <CardTitle className="text-xs font-medium text-muted-foreground">
-                SKUs com oportunidade
-              </CardTitle>
-            </CardHeader>
-            <CardContent>
-              <div className="text-2xl font-bold tabular-nums">
-                {oportunidades.length}
-              </div>
-              <p className="text-xs text-muted-foreground mt-1">
-                de {totalSkusAtivos} SKUs ativos
-              </p>
-            </CardContent>
-          </Card>
-
-          <Card>
-            <CardHeader className="pb-2">
-              <CardTitle className="text-xs font-medium text-muted-foreground">
-                Data limite mais próxima
-              </CardTitle>
-            </CardHeader>
-            <CardContent>
-              {dataLimiteMaisProxima ? (
-                <>
-                  <div className="text-lg font-bold tabular-nums">
-                    {formatDateLong(dataLimiteMaisProxima)}
-                  </div>
-                  <div className="mt-1">
-                    <Badge variant="outline" className={diasBadge(diasAteLimite)}>
-                      em {diasAteLimite} {diasAteLimite === 1 ? "dia" : "dias"}
-                    </Badge>
-                  </div>
-                  <p className="text-xs text-muted-foreground mt-2">
-                    Próxima janela crítica
-                  </p>
-                </>
-              ) : (
-                <>
-                  <div className="text-lg font-bold text-muted-foreground">—</div>
-                  <p className="text-xs text-muted-foreground mt-1">
-                    Sem janelas ativas
-                  </p>
-                </>
-              )}
-            </CardContent>
-          </Card>
-
-          <Card>
-            <CardHeader className="pb-2">
-              <CardTitle className="text-xs font-medium text-muted-foreground">
-                Ciclo oportunidade do dia
-              </CardTitle>
-            </CardHeader>
-            <CardContent>
-              {cicloHoje > 0 ? (
-                <>
-                  <Badge
-                    className="bg-status-success/15 text-status-success border-status-success/30 cursor-pointer hover:bg-status-success/25"
-                    variant="outline"
-                    onClick={() => setConfirmCicloOpen(true)}
-                  >
-                    <PlayCircle className="h-3 w-3 mr-1" />
-                    Gerar ciclo oportunidade
-                  </Badge>
-                  <p className="text-xs text-muted-foreground mt-2">
-                    {cicloHoje} {cicloHoje === 1 ? "evento" : "eventos"} encerra(m) hoje
-                  </p>
-                </>
-              ) : (
-                <>
-                  <Badge variant="outline" className="text-muted-foreground">
-                    Sem ciclo hoje
-                  </Badge>
-                  <p className="text-xs text-muted-foreground mt-2">
-                    Próxima janela crítica ainda não chegou
-                  </p>
-                </>
-              )}
-            </CardContent>
-          </Card>
-        </div>
+        <KpiCards
+          totalEconomia={totalEconomia}
+          oportunidadesCount={oportunidades.length}
+          totalSkusAtivos={totalSkusAtivos}
+          dataLimiteMaisProxima={dataLimiteMaisProxima}
+          diasAteLimite={diasAteLimite}
+          cicloHoje={cicloHoje}
+          onGerarCiclo={() => setConfirmCicloOpen(true)}
+        />
 
         {/* Filtros + Tabela */}
         <Card>
@@ -477,226 +301,27 @@ export default function AdminReposicaoOportunidades() {
             <CardTitle className="text-base">Oportunidades ativas</CardTitle>
           </CardHeader>
           <CardContent className="space-y-4">
-            <div className="grid grid-cols-1 md:grid-cols-4 gap-3">
-              <DropdownMenu>
-                <DropdownMenuTrigger asChild>
-                  <Button variant="outline" className="justify-between">
-                    {cenariosLabel}
-                    <ChevronRight className="h-4 w-4 rotate-90 opacity-50" />
-                  </Button>
-                </DropdownMenuTrigger>
-                <DropdownMenuContent className="w-56" align="start">
-                  {CENARIOS.map((c) => (
-                    <DropdownMenuCheckboxItem
-                      key={c.value}
-                      checked={cenariosSelecionados.has(c.value)}
-                      onCheckedChange={(checked) => toggleCenario(c.value, !!checked)}
-                      onSelect={(e) => e.preventDefault()}
-                    >
-                      <span className="flex items-center gap-2">
-                        {cenarioIcon(c.value)}
-                        {c.label}
-                      </span>
-                    </DropdownMenuCheckboxItem>
-                  ))}
-                </DropdownMenuContent>
-              </DropdownMenu>
+            <OportunidadesFiltros
+              cenariosSelecionados={cenariosSelecionados}
+              cenariosLabel={cenariosLabel}
+              toggleCenario={toggleCenario}
+              filtroFornecedor={filtroFornecedor}
+              setFiltroFornecedor={setFiltroFornecedor}
+              fornecedoresUnicos={fornecedoresUnicos}
+              ordenacao={ordenacao}
+              setOrdenacao={setOrdenacao}
+              apenasComEconomia={apenasComEconomia}
+              setApenasComEconomia={setApenasComEconomia}
+            />
 
-              <Select value={filtroFornecedor} onValueChange={setFiltroFornecedor}>
-                <SelectTrigger>
-                  <SelectValue placeholder="Fornecedor" />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value={ALL}>Todos os fornecedores</SelectItem>
-                  {fornecedoresUnicos.map((f) => (
-                    <SelectItem key={f} value={f}>
-                      {f}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-
-              <Select value={ordenacao} onValueChange={(v) => setOrdenacao(v as OrdemKey)}>
-                <SelectTrigger>
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="economia">Maior economia</SelectItem>
-                  <SelectItem value="data_limite">Data limite mais próxima</SelectItem>
-                  <SelectItem value="desconto">Maior % desconto</SelectItem>
-                  <SelectItem value="sku">SKU alfabético</SelectItem>
-                </SelectContent>
-              </Select>
-
-              <div className="flex items-center justify-end gap-2 px-2">
-                <Switch
-                  id="apenas-economia"
-                  checked={apenasComEconomia}
-                  onCheckedChange={setApenasComEconomia}
-                />
-                <Label htmlFor="apenas-economia" className="text-sm cursor-pointer">
-                  Apenas com economia &gt; 0
-                </Label>
-              </div>
-            </div>
-
-            {/* Tabela */}
-            {isLoading ? (
-              <div className="flex items-center gap-2 text-sm text-muted-foreground py-12 justify-center">
-                <Loader2 className="h-4 w-4 animate-spin" /> Carregando…
-              </div>
-            ) : oportunidades.length === 0 ? (
-              <EstadoVazio navigate={navigate} />
-            ) : (
-              <div className="overflow-x-auto">
-                <Table>
-                  <TableHeader>
-                    <TableRow>
-                      <TableHead className="w-10"></TableHead>
-                      <TableHead>SKU / Descrição</TableHead>
-                      <TableHead>Fornecedor</TableHead>
-                      <TableHead className="text-right">Desconto total</TableHead>
-                      <TableHead className="text-right">Qtde sugerida</TableHead>
-                      <TableHead>Data limite</TableHead>
-                      <TableHead className="text-right">Economia bruta</TableHead>
-                      <TableHead className="w-20 text-right">Ações</TableHead>
-                    </TableRow>
-                  </TableHeader>
-                  <TableBody>
-                    {oportunidadesFiltradas.length === 0 && (
-                      <TableRow>
-                        <TableCell colSpan={8} className="text-center text-muted-foreground py-12">
-                          Nenhum SKU bate os filtros atuais.
-                        </TableCell>
-                      </TableRow>
-                    )}
-                    {oportunidadesFiltradas.map((o) => (
-                      <TableRow key={`${o.sku_codigo_omie}-${o.cenario}`}>
-                        <TableCell>
-                          <Tooltip>
-                            <TooltipTrigger asChild>
-                              <span className="inline-flex">{cenarioIcon(o.cenario)}</span>
-                            </TooltipTrigger>
-                            <TooltipContent>{cenarioLabel(o.cenario)}</TooltipContent>
-                          </Tooltip>
-                        </TableCell>
-                        <TableCell>
-                          <div className="font-medium tabular-nums text-xs text-muted-foreground">
-                            {o.sku_codigo_omie}
-                          </div>
-                          <div className="text-sm">{o.sku_descricao ?? "—"}</div>
-                        </TableCell>
-                        <TableCell className="text-sm text-muted-foreground">
-                          {o.fornecedor_nome ?? "—"}
-                        </TableCell>
-                        <TableCell className="text-right">
-                          <Tooltip>
-                            <TooltipTrigger asChild>
-                              <Badge
-                                variant="outline"
-                                className={descontoBadgeClass(o.desconto_total_perc)}
-                              >
-                                {formatNumber(o.desconto_total_perc, 1)}%
-                              </Badge>
-                            </TooltipTrigger>
-                            <TooltipContent className="max-w-xs">
-                              <div className="space-y-1 text-xs">
-                                <div>
-                                  Base promo: {formatNumber(o.desconto_promo_perc, 2)}%
-                                </div>
-                                {o.tem_negociacao_extra && (
-                                  <div>+ Extra negociado</div>
-                                )}
-                                {o.aumento_evitado_perc !== null &&
-                                  Number(o.aumento_evitado_perc) > 0 && (
-                                    <div>
-                                      + Aumento evitado:{" "}
-                                      {formatNumber(o.aumento_evitado_perc, 2)}%
-                                    </div>
-                                  )}
-                              </div>
-                            </TooltipContent>
-                          </Tooltip>
-                        </TableCell>
-                        <TableCell className="text-right tabular-nums">
-                          <Tooltip>
-                            <TooltipTrigger asChild>
-                              <span className="font-medium">
-                                {formatNumber(o.qtde_oportunidade, 0)}
-                              </span>
-                            </TooltipTrigger>
-                            <TooltipContent>
-                              <div className="text-xs space-y-1">
-                                <div>
-                                  Demanda diária: {formatNumber(o.demanda_diaria, 2)}
-                                </div>
-                                <div>
-                                  Quantidade base EOQ: {formatNumber(o.qtde_base, 0)}
-                                </div>
-                              </div>
-                            </TooltipContent>
-                          </Tooltip>
-                        </TableCell>
-                        <TableCell className="text-sm">
-                          <div className="tabular-nums">{formatDate(o.data_limite_acao)}</div>
-                          <div className="text-xs text-muted-foreground">
-                            {o.dias_ate_limite !== null
-                              ? `em ${o.dias_ate_limite} ${o.dias_ate_limite === 1 ? "dia" : "dias"}`
-                              : ""}
-                          </div>
-                        </TableCell>
-                        <TableCell
-                          className={`text-right tabular-nums font-medium ${
-                            Number(o.economia_bruta_estimada ?? 0) > 0
-                              ? "text-status-success"
-                              : "text-muted-foreground"
-                          }`}
-                        >
-                          {formatBRL(o.economia_bruta_estimada)}
-                        </TableCell>
-                        <TableCell className="text-right">
-                          <div className="flex items-center justify-end gap-1">
-                            <Button
-                              size="icon"
-                              variant="ghost"
-                              className="h-8 w-8"
-                              onClick={() => setDrawerSku(o)}
-                            >
-                              <ChevronRight className="h-4 w-4" />
-                            </Button>
-                            <DropdownMenu>
-                              <DropdownMenuTrigger asChild>
-                                <Button size="icon" variant="ghost" className="h-8 w-8">
-                                  <MoreVertical className="h-4 w-4" />
-                                </Button>
-                              </DropdownMenuTrigger>
-                              <DropdownMenuContent align="end">
-                                <DropdownMenuItem
-                                  onClick={() =>
-                                    navigate(
-                                      `/admin/reposicao/skus/${o.sku_codigo_omie}`,
-                                    )
-                                  }
-                                >
-                                  <ArrowRight className="h-4 w-4 mr-2" />
-                                  Ir para SKU em reposição
-                                </DropdownMenuItem>
-                                <DropdownMenuItem
-                                  onClick={() => handleIgnorar(o.sku_codigo_omie)}
-                                >
-                                  <EyeOff className="h-4 w-4 mr-2" />
-                                  Ignorar hoje
-                                </DropdownMenuItem>
-                              </DropdownMenuContent>
-                            </DropdownMenu>
-                          </div>
-                        </TableCell>
-                      </TableRow>
-                    ))}
-                  </TableBody>
-                </Table>
-              </div>
-            )}
+            <OportunidadesTable
+              isLoading={isLoading}
+              totalCount={oportunidades.length}
+              rows={oportunidadesFiltradas}
+              navigate={navigate}
+              onOpenDrawer={setDrawerSku}
+              onIgnorar={handleIgnorar}
+            />
           </CardContent>
         </Card>
 
@@ -708,37 +333,14 @@ export default function AdminReposicaoOportunidades() {
         </Sheet>
 
         {/* Confirmação ciclo */}
-        <AlertDialog open={confirmCicloOpen} onOpenChange={setConfirmCicloOpen}>
-          <AlertDialogContent>
-            <AlertDialogHeader>
-              <AlertDialogTitle>Gerar ciclo de oportunidade do dia</AlertDialogTitle>
-              <AlertDialogDescription>
-                Vai gerar pedidos de oportunidade para{" "}
-                <strong>{oportunidades.length} SKUs</strong>, com economia total
-                estimada de{" "}
-                <strong className="text-status-success">
-                  {formatBRL(totalEconomia)}
-                </strong>
-                . Continuar?
-              </AlertDialogDescription>
-            </AlertDialogHeader>
-            <AlertDialogFooter>
-              <AlertDialogCancel disabled={executandoCiclo}>
-                Cancelar
-              </AlertDialogCancel>
-              <AlertDialogAction
-                onClick={(e) => {
-                  e.preventDefault();
-                  handleGerarCiclo();
-                }}
-                disabled={executandoCiclo}
-              >
-                {executandoCiclo && <Loader2 className="h-4 w-4 animate-spin mr-2" />}
-                Confirmar e gerar
-              </AlertDialogAction>
-            </AlertDialogFooter>
-          </AlertDialogContent>
-        </AlertDialog>
+        <GerarCicloDialog
+          open={confirmCicloOpen}
+          onOpenChange={setConfirmCicloOpen}
+          oportunidadesCount={oportunidades.length}
+          totalEconomia={totalEconomia}
+          executando={executandoCiclo}
+          onConfirm={handleGerarCiclo}
+        />
       </div>
     </TooltipProvider>
   );
