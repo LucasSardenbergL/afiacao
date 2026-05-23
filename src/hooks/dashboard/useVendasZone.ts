@@ -74,9 +74,12 @@ export function useVendasZone() {
       const cutoff = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString();
       let topItems: TopListItem[] = [];
       try {
+        // NB: não dá pra embeddar profiles(name) — orders.user_id referencia
+        // auth.users, não public.profiles, então o PostgREST devolve 400. Busca
+        // os nomes num segundo lote por user_id (máx 3 ids, não é N+1).
         const { data: top } = await supabase
           .from('orders')
-          .select('id, total, status, created_at, profiles(name)')
+          .select('id, total, status, created_at, user_id')
           .eq('status', 'orcamento_enviado')
           .lt('created_at', cutoff)
           .order('total', { ascending: false })
@@ -84,12 +87,23 @@ export function useVendasZone() {
         const rows = (top ?? []) as Array<{
           id: string;
           total?: number | string | null;
-          profiles?: { name?: string | null } | null;
+          user_id?: string | null;
         }>;
+        const userIds = [...new Set(rows.map((o) => o.user_id).filter(Boolean))] as string[];
+        const nameMap = new Map<string, string>();
+        if (userIds.length > 0) {
+          const { data: profs } = await supabase
+            .from('profiles')
+            .select('user_id, name')
+            .in('user_id', userIds);
+          for (const p of (profs ?? []) as Array<{ user_id: string; name: string | null }>) {
+            if (p.name) nameMap.set(p.user_id, p.name);
+          }
+        }
         topItems = rows.map((o) => ({
           id: o.id,
           icon: FileText,
-          title: o.profiles?.name ?? 'Cliente',
+          title: (o.user_id && nameMap.get(o.user_id)) || 'Cliente',
           subtitle: `Orçamento ${fmtBRL(Number(o.total ?? 0))} aguardando >24h`,
           path: `/admin/orders/${o.id}`,
           itemType: 'orcamento_pending',

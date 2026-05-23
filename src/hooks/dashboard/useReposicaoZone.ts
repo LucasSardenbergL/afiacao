@@ -69,7 +69,7 @@ export function useReposicaoZone() {
         const { count } = await supabase
           .from('fornecedor_aumento_anunciado')
           .select('id', { count: 'exact', head: true })
-          .gte('created_at', sevenDaysAgo);
+          .gte('criado_em', sevenDaysAgo);
         aumentos7d = count ?? 0;
       } catch { /* */ }
 
