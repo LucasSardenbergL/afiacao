@@ -2,6 +2,8 @@
 // Onda 3a — DRE v2 estrutural (regime-aware). Módulo puro, espelhado verbatim no
 // engine Deno supabase/functions/omie-financeiro/index.ts (calcularDRE).
 
+import { ANEXOS_SIMPLES, type AnexoSimples, type FaixaSimples, FATOR_R_LIMIAR } from './dre-tabelas-tributarias';
+
 export type RegimeTributario = 'simples' | 'presumido';
 export type RegimeApuracao = 'caixa' | 'competencia';
 
@@ -230,4 +232,24 @@ export function calcularRBT12(historico: ReceitaMensal[], ano: number, mes: numb
     const idx = h.ano * 12 + h.mes;
     return (idx >= idxInicio && idx < idxApuracao) ? s + h.receita_bruta : s;
   }, 0);
+}
+
+export function faixaPorRBT12(anexo: AnexoSimples, rbt12: number): FaixaSimples {
+  const faixas = ANEXOS_SIMPLES[anexo];
+  for (const f of faixas) {
+    if (rbt12 <= f.ate) return f;
+  }
+  return faixas[faixas.length - 1];
+}
+
+// Alíquota efetiva do Simples: (RBT12 × nominal − parcela a deduzir) / RBT12.
+export function aliquotaEfetivaSimples(anexo: AnexoSimples, rbt12: number): number {
+  if (rbt12 <= 0) return 0;
+  const f = faixaPorRBT12(anexo, rbt12);
+  const efetiva = (rbt12 * f.aliquota - f.deduzir) / rbt12;
+  return Math.max(0, efetiva);
+}
+
+export function anexoPorFatorR(fatorR: number): AnexoSimples {
+  return fatorR >= FATOR_R_LIMIAR ? 'III' : 'V';
 }

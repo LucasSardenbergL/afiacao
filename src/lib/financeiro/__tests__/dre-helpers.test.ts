@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { classificarLinhaDRE, REGIME_POR_EMPRESA, resolverDataCaixa, bucketizarCaixa, montarDRE, scoreConfianca, calcularRBT12 } from '../dre-helpers';
+import { classificarLinhaDRE, REGIME_POR_EMPRESA, resolverDataCaixa, bucketizarCaixa, montarDRE, scoreConfianca, calcularRBT12, faixaPorRBT12, aliquotaEfetivaSimples, anexoPorFatorR } from '../dre-helpers';
 
 const M = (pairs: Array<[string, string]>) => new Map<string, string>(pairs);
 
@@ -178,5 +178,25 @@ describe('calcularRBT12', () => {
   });
   it('sem histórico → 0', () => {
     expect(calcularRBT12([], 2026, 5)).toBe(0);
+  });
+});
+
+describe('faixaPorRBT12 / aliquotaEfetivaSimples (Anexo III)', () => {
+  it('RBT12 na 2ª faixa: efetiva = (RBT12*nominal - deduzir)/RBT12', () => {
+    // Anexo III, RBT12 = 300.000 → faixa 2 (0.112, deduzir 9360); efetiva = (33600-9360)/300000 = 0.0808
+    expect(aliquotaEfetivaSimples('III', 300000)).toBeCloseTo(0.0808, 4);
+  });
+  it('RBT12 = 0 → 0', () => {
+    expect(aliquotaEfetivaSimples('III', 0)).toBe(0);
+  });
+  it('última faixa por excesso (acima de 4.8M usa a última)', () => {
+    expect(aliquotaEfetivaSimples('III', 5000000)).toBeGreaterThan(0);
+  });
+});
+
+describe('anexoPorFatorR', () => {
+  it('fator-r ≥ 28% → III; < 28% → V', () => {
+    expect(anexoPorFatorR(0.30)).toBe('III');
+    expect(anexoPorFatorR(0.20)).toBe('V');
   });
 });
