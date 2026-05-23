@@ -36,6 +36,13 @@ export async function logAnswered(sipCallId: string): Promise<void> {
   } catch (e) { console.error('[call-log] logAnswered', e); }
 }
 
+/** Marca a linha como gravada (inbound atendido sempre grava — toca a Sara). */
+export async function markRecorded(sipCallId: string): Promise<void> {
+  try {
+    await tbl().update({ recorded: true }).eq('sip_call_id', sipCallId);
+  } catch (e) { console.error('[call-log] markRecorded', e); }
+}
+
 /** Fecha a chamada: ended (atendida) ou missed/rejected (não). */
 export async function logClosed(sipCallId: string, opts: { answered: boolean; rejected?: boolean; durationSeconds: number }): Promise<void> {
   try {

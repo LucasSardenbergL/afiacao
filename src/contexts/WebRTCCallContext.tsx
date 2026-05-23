@@ -13,7 +13,7 @@ import type { SpinAnalysis, SpinAnalysisStatus } from '@/lib/spin/types';
 import { resolveCustomerByPhone } from '@/lib/call-session/resolve-customer';
 import { buildSessionPayload } from '@/lib/call-session/build-session-payload';
 import { resolveCallParty, shouldAutoRecord } from '@/lib/call-log/recording-policy';
-import { logCallStart, logAnswered, logClosed, enrichCallLog } from '@/lib/call-log/record';
+import { logCallStart, logAnswered, logClosed, enrichCallLog, markRecorded } from '@/lib/call-log/record';
 
 export type WebRTCCallState =
   | 'idle' | 'connecting' | 'calling_origin' | 'calling_destination'
@@ -148,6 +148,9 @@ export function WebRTCCallProvider({ children }: ProviderProps) {
   // Telefonia — call_log do outbound + gate de gravação
   const dialedSipCallIdRef = useRef<string | null>(null);
   const recordingRef = useRef<boolean>(false);
+  // userId capturado no init — evita await de getUser no caminho quente do inbound
+  // (reduz a janela em que um incomingClosed rápido correria na frente do insert).
+  const currentUserIdRef = useRef<string | null>(null);
   // Ref atualizado por effect pra evitar problema de hoisting com transcription
   // (transcription é declarado depois dos useCallbacks)
   const turnsRef = useRef<TranscriptTurn[]>([]);
@@ -162,6 +165,9 @@ export function WebRTCCallProvider({ children }: ProviderProps) {
         if (cancelled) return;
 
         callerIdRef.current = creds.callerId ?? null;
+        const { data: { user: initUser } } = await supabase.auth.getUser();
+        if (cancelled) return;
+        currentUserIdRef.current = initUser?.id ?? null;
         const client = new SipClient(creds);
         clientRef.current = client;
 
@@ -171,11 +177,11 @@ export function WebRTCCallProvider({ children }: ProviderProps) {
         // PR-INBOUND-CALLS: emite quando chamada entra
         client.on('incomingCall', async (info) => {
           setIncomingCall(info);
-          const { data: { user } } = await supabase.auth.getUser();
-          if (!user) return;
+          const uid = currentUserIdRef.current;
+          if (!uid) return;
           // Insere ASAP (sem BINA) pra um incomingClosed rápido achar a linha.
           await logCallStart({
-            farmerId: user.id,
+            farmerId: uid,
             direction: 'inbound',
             provider: 'nvoip_sip',
             phoneRaw: info.phone,
@@ -458,6 +464,8 @@ export function WebRTCCallProvider({ children }: ProviderProps) {
       // call_log: marca answered (idempotente — só atualiza se ainda 'ringing')
       if (incomingCall.sipCallId) {
         await logAnswered(incomingCall.sipCallId);
+        // Inbound atendido sempre grava (toca a Sara) → reflete no ledger.
+        void markRecorded(incomingCall.sipCallId);
       }
       const callerLabel = incomingCall.displayName ?? formatBrPhone(incomingCall.phone);
       setIncomingCall(null);
