@@ -59,6 +59,10 @@ subgrafos sujos (`noUnusedLocals`/`strictNullChecks`) → cascata. **Promova lea
 - **Reposição**: god-components sendo decompostos.
 
 ### Reservas ativas (🔵 = em voo)
+- 🔵 **`feat/strict-promote-contexts`** (sessão determined-allen, 2026-05-23): fatia foundational —
+  `contexts/{AuthContext,CompanyContext,ConditionalWebRTCProvider,WebRTCCallContext}` + `services/omieService`.
+  **NÃO toco** `services/financeiroService` nem `financeiroV2Service` (colidem com `feat/financeiro-a2-impl` em voo).
+  Pages virá em fatia/branch separada depois (leaf-first). Append-only no `include`.
 - 🔵 **`feat/strict-promote-lib-leaf`** (sessão cranky-driscoll, 2026-05-23): lote leaf não-farmer —
   `lib/call-session/aggregate-customer-profile`, `lib/sip/sip-client`, `lib/transcription/{deepgram-client,transcription-engine}`,
   `components/customer360/format`, `components/financeiro/dashboard/format`, `components/portalSayerlack/types`,
