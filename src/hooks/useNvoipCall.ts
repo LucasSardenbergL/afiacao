@@ -26,7 +26,7 @@ interface UseNvoipCallReturn {
   callId: string | null;
   callDuration: number;
   audioLink: string | null;
-  makeCall: (phoneNumber: string) => Promise<void>;
+  makeCall: (phoneNumber: string, opts?: { forceRecord?: boolean }) => Promise<void>;
   endCall: () => Promise<void>;
   isActive: boolean;
   isConnecting: boolean;
@@ -101,7 +101,10 @@ export function useNvoipCall(): UseNvoipCallReturn {
   );
 
   const makeCall = useCallback(
-    async (phoneNumber: string) => {
+    // opts.forceRecord é aceito pra paridade de assinatura com o backend WebRTC
+    // (useCallBackend retorna a união dos dois). Nvoip ignora por ora — a gravação
+    // do lado Nvoip é controlada server-side na própria Edge Function.
+    async (phoneNumber: string, _opts?: { forceRecord?: boolean }) => {
       setError(null);
       setCallState('connecting');
       setCallDuration(0);

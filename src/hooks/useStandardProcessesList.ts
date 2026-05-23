@@ -12,15 +12,15 @@ export function useStandardProcessesList(filters: Filters = {}) {
     queryKey: ['standard-processes', filters],
     staleTime: 30_000,
     queryFn: async (): Promise<StandardProcess[]> => {
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      let q = (supabase as any).from('standard_processes').select('*');
+       
+      let q = supabase.from('standard_processes').select('*');
       const statusList = filters.status ?? ['draft', 'in_review', 'published'];
       q = q.in('status', statusList);
       if (filters.segmento) q = q.eq('segmento', filters.segmento);
       q = q.order('updated_at', { ascending: false }).limit(200);
       const { data, error } = await q;
       if (error) throw error;
-      return (data ?? []) as StandardProcess[];
+      return (data ?? []) as unknown as StandardProcess[];
     },
   });
 }

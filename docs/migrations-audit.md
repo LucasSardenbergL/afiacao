@@ -21,15 +21,16 @@ Este audit valida **quais custom migrations estão de fato aplicadas no banco**.
 
 ## Resumo
 
-- **43** custom migrations totais
-- **285** objetos esperados (criados por estas migrations)
+- **44** custom migrations totais
+- **291** objetos esperados (criados por estas migrations)
 - Quebra por tipo:
   - `rls_policy`: 102
-  - `index`: 81
-  - `table`: 45
+  - `index`: 85
+  - `table`: 46
   - `trigger`: 31
   - `function`: 22
   - `enum_value`: 4
+  - `cron_job`: 1
 
 ## Inventário por migration
 
@@ -515,6 +516,17 @@ Lista canônica do que cada migration *deveria* criar (extraído via regex de `C
 | --- | --- | --- |
 | `function` | `public.enqueue_visit_score_recalc_from_visit` | — |
 | `function` | `public.enqueue_visit_score_recalc_from_client_score` | — |
+
+### `20260523120000_call_log.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `table` | `public.call_log` | — |
+| `index` | `public.uq_call_log_provider_call_id` | `call_log` |
+| `index` | `public.uq_call_log_sip_call_id` | `call_log` |
+| `index` | `public.idx_call_log_farmer_started` | `call_log` |
+| `index` | `public.idx_call_log_missed_unack` | `call_log` |
+| `cron_job` | `cron.call-log-missed-backstop` | — |
 
 ### `20260523210000_drop_audit_trigger_fin_config_cashflow.sql`
 

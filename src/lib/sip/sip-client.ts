@@ -56,17 +56,20 @@ export class SipClient {
       const fromUri = session.remote_identity?.uri;
       const displayName = session.remote_identity?.display_name ?? null;
       const phone = fromUri?.user ?? 'desconhecido';
+      const sipCallId: string = session.id;
 
       this.emit('incomingCall', {
         phone,
         displayName,
         receivedAt: Date.now(),
+        sipCallId,
       });
 
-      // Caller cancelou antes do answer
+      // Caller cancelou antes do answer → missed
       session.on('failed', () => {
         if (this.pendingIncoming === session) {
           this.pendingIncoming = null;
+          this.emit('incomingClosed', { sipCallId, answered: false, durationSeconds: 0 });
           this.emit('stateChange', 'idle');
         }
       });
@@ -144,15 +147,18 @@ export class SipClient {
     });
 
     this.callStartedAt = Date.now();
+    const sipCallId: string = session.id;
 
     session.on('confirmed', () => this.extractRemoteStream());
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     session.on('failed', (e: any) => {
       this.setState('failed');
+      this.emit('incomingClosed', { sipCallId, answered: true, durationSeconds: this.getCallDurationSeconds() });
       this.emit('error', new Error(`Inbound call failed: ${e?.cause ?? 'unknown'}`));
     });
     session.on('ended', () => {
       this.setState('ended');
+      this.emit('incomingClosed', { sipCallId, answered: true, durationSeconds: this.getCallDurationSeconds() });
     });
   }
 

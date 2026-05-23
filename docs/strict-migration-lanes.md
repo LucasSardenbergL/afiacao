@@ -6,43 +6,66 @@
 > tipava → trabalho jogado fora) ou conflitam no `tsconfig.strict.json`.
 > Este é o **registro de reserva (claim)**: quem mexe no quê, agora.
 
+## Estado atual (2026-05-23, fim do dia)
+
+- **`no-explicit-any` no repo: 0.** A fase de eliminação de `any` está **concluída**
+  (src + edge functions + tests). Convergência de várias sessões + lotes deste claim.
+- **Fase atual: PROMOÇÃO** — adicionar arquivos strict-clean ao `include` do
+  `tsconfig.strict.json`. Progresso: **~409 / 629** arquivos src (~65%).
+- Edge functions (`supabase/functions/`): lint zerado também (any + prefer-const +
+  no-empty + no-unused-expressions). Restam só 4 `ban-ts-comment` com eslint-disable
+  **justificado** (`@ts-ignore` do `EdgeRuntime` — NÃO trocar pra `@ts-expect-error`,
+  quebraria o typecheck do Deno no deploy).
+
 ## Como usar (protocolo — leia ANTES de começar trabalho strict)
 
-1. **Cheque o que está em voo:** `gh pr list --state open` + leia a tabela abaixo.
-2. **Reserve uma lane livre:** edite a tabela, troque o status pra `🔵 em andamento`
-   e ponha sua branch na coluna *Dono*. Commite essa reserva no **primeiro commit**
-   da sua branch (assim outras sessões enxergam via `gh pr list` / `git fetch`).
-3. **Só toque arquivos da sua lane.** Nunca edite arquivo de lane alheia.
-4. **`tsconfig.strict.json` — convenção de append (até a reestruturação por lane):**
-   adicione seus paths **no fim do array `include`**, um por linha, agrupados pela
-   sua lane. Não reordene/realfabetize o resto do array (reordenar = conflito gigante
-   com todo PR em voo). Conflito de append é trivial: resolva com *keep-both*.
-5. **Ao mergear:** marque a lane como `✅ done` na tabela.
+1. **Cheque o que está em voo:** `gh pr list --state open` + `git worktree list`.
+2. **Reserve sua fatia** editando este arquivo (status 🔵 + branch) no **primeiro
+   commit** da sua branch.
+3. **Só toque arquivos da sua fatia.** Nunca edite arquivo de fatia alheia.
+4. **`tsconfig.strict.json` — convenção de append:** adicione paths **no fim do
+   array `include`**, um por linha. **Não reordene** o resto (reordenar = conflito
+   gigante). Conflito de append é trivial: *keep-both*.
+5. **Ao mergear:** atualize o estado aqui.
 
-## Lanes
+## Promoção — o que sobrou e como fazer (lições aprendidas)
 
-Contagem de `no-explicit-any` (fonte: `bun lint`, 2026-05-23). "any" aqui = lint
-`@typescript-eslint/no-explicit-any` a remover; promoção a strict exige TAMBÉM passar
-`strictNullChecks`/`noUnusedLocals` (alguns arquivos cascateiam — corrige o `any`
-mesmo que a promoção fique pra depois).
+**Regra de ouro (custou um PR refeito — ver #180):** promover um arquivo puxa os
+**imports transitivos** dele pro programa strict. Promover um page/god-component puxa
+subgrafos sujos (`noUnusedLocals`/`strictNullChecks`) → cascata. **Promova leaf-first.**
 
-| Lane | Status | Dono (branch) | Arquivos (any) |
-|---|---|---|---|
-| **L1 hooks-alertas** | 🔵 em andamento | `feat/ts-strict-wave-cold-lanes` | `useSharpeningSuggestions.ts`(2) · `useTintAlertas.ts`(1) · `usePushNotifications.ts`(1) · `useFinanceiroAlertas.ts`(1) · `useAlertasCriticos.ts`(1) · `hooks/unifiedOrder/types.ts`(1) |
-| **L2 components-misc** | 🔵 em andamento | `feat/ts-strict-wave-cold-lanes` | `VoiceServiceInput.tsx`(2) · `OrderChat.tsx`(2) · `unified-order/ProductItemForm.tsx`(1) · `portalSayerlack/DispararAgoraButton.tsx`(1) · `TintColorSelectDialog.tsx`(1) · `ForgotPasswordDialog.tsx`(1) |
-| **L3 pages-afiação-tint** | 🔵 em andamento | `feat/ts-strict-wave-cold-lanes` | `VendasFerramentas.tsx`(1) · `UnifiedOrder.tsx`(1) · `ToolReports.tsx`(1) · `ToolHistory.tsx`(1) · `TintCorantes.tsx`(1) |
-| **L4 pages-gestão-farmer** | 🔵 em andamento | `feat/ts-strict-wave-cold-lanes` | `SavingsDashboard.tsx`(1) · `PerformanceHub.tsx`(1) · `GestaoAdmin.tsx`(1) · `FarmerIPFDashboard.tsx`(1) · `FarmerDashboard.tsx`(1) · `AdminProductivity.tsx`(1) · `AdminDemandForecast.tsx`(1) · `AIops.tsx`(1) · `Auth.tsx`(1) |
-| **L5 reposição** 🔥 | 🟢 livre | — | `AdminReposicaoParametros.tsx`(1) · `AdminReposicaoHistorico.tsx`(1) — **quente: time decompondo god-components da Reposição, coordene antes** |
-| **L6 route-planner** 🔥 | 🟢 livre | — | `AdminRoutePlanner.tsx`(13) — **quente: acabou de ser decomposto (#169); reconfira o any-count antes** |
-| **L7 edge-functions** | 🟢 livre | — | `supabase/functions/**`(~20) — **fora do escopo do `tsconfig.strict.json`** (Deno, não roda no `tsc` do app). Tratar separado. |
-| **L8 tests** | 🟢 livre | — | `src/__tests__/financeiro.test.ts`(3) · `src/lib/sip/audio-preroll.test.ts`(2) · `src/lib/financeiro/__tests__/error-handler.test.ts`(2) · +1 — escopo de teste, baixa prioridade. |
+- **`typecheck:strict` SÓ é confiável com CPU calma.** Com várias sessões rodando
+  `tsc` em paralelo (load chegou a ~50), o comando é morto por contenção e dá
+  **falso-negativo** (grep vê saída vazia → "0 erros" mentiroso). Confirme `load`
+  baixo (`uptime`) e **espere o run completar** antes de confiar.
+- **Padrão por lote:** adicione N candidatos ao `include` → `bun run typecheck:strict`
+  → **remova os que derem erro** (mantém o lote tsconfig-only) → commit. Lotes leaf
+  são tsconfig-only (zero edição de source).
+- **CI**: o check `validate` roda `typecheck:strict` (gate real) — só promova o que
+  passa. `bun lint` NÃO é gate de CI (no-explicit-any/lint não bloqueiam merge).
 
-**Legenda:** 🟢 livre · 🔵 em andamento · ✅ done · 🔥 lane quente (time ativo, coordene)
+### Categorias restantes (~220 arquivos), por risco
 
-## Follow-up registrado (não fazer no meio do fogo cruzado)
+| Fatia | Risco | Nota |
+|---|---|---|
+| `src/lib/**` restantes (scoring, visit-scoring, sip, transcription, call-session) | baixo-médio | leaf; scoring/visit-scoring são **farmer-adjacent** (coordene se houver sessão farmer ativa); sip/transcription têm boundaries de lib externa |
+| `src/components/**` (~95) | médio | leaf primitivos OK; componentes de feature puxam deps |
+| `src/contexts/**` restantes (AuthContext, CompanyContext, WebRTC*) | médio-alto | foundational/WebRTC — importados largamente, cascata |
+| `src/services/**` (financeiroService, omieService, financeiroV2Service) | **alto** | grandes, cascata; precisam de edição de source |
+| `src/pages/**` (~83) | **alto** | god-components/pages — cascata transitiva, edição de source, **fazer com CPU calma + sessões pausadas** |
 
-- **Reestruturar `tsconfig.strict.json` por lane** (um fragmento por lane + include
-  gerado, ou project references) pra eliminar de vez o conflito de append. É um
-  **flag-day**: só fazer numa janela sem PRs strict em voo, senão o reshuffle do
-  array de 375 paths conflita com todo mundo. Por ora, a convenção de append acima
-  basta (conflito trivial). Ver CLAUDE.md §10.
+### Lanes quentes (coordene antes)
+- **Farmer/types**: sessões reescrevem `src/integrations/supabase/types.ts` + área farmer/scoring. Evite colidir.
+- **Reposição**: god-components sendo decompostos.
+
+### Reservas ativas (🔵 = em voo)
+- 🔵 **`feat/strict-promote-lib-leaf`** (sessão cranky-driscoll, 2026-05-23): lote leaf não-farmer —
+  `lib/call-session/aggregate-customer-profile`, `lib/sip/sip-client`, `lib/transcription/{deepgram-client,transcription-engine}`,
+  `components/customer360/format`, `components/financeiro/dashboard/format`, `components/portalSayerlack/types`,
+  `components/reposicao/alertas/types`. **NÃO toco** scoring/visit-scoring/farmer. Append-only no `include`.
+
+## Follow-up registrado
+
+- **Reestruturar `tsconfig.strict.json` por lane** (fragmento por lane + include
+  gerado, ou project references) pra eliminar de vez o conflito de append. **Flag-day**:
+  só numa janela sem PRs strict em voo. Por ora a convenção de append basta. Ver CLAUDE.md §10.
