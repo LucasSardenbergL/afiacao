@@ -58,20 +58,21 @@ function KpiCards() {
     queryFn: async () => {
       const { data: comGrupo, error: e1 } = await supabase
         .from("sku_grupo_producao")
-        .select("sku_codigo");
+        .select("sku_codigo_omie")
+        .eq("empresa", empresa);
       if (e1) return 0;
-      const grupoRows = (comGrupo ?? []) as unknown as Array<{ sku_codigo: string | null }>;
-      const setComGrupo = new Set(grupoRows.map((r) => r.sku_codigo));
+      const grupoRows = (comGrupo ?? []) as unknown as Array<{ sku_codigo_omie: string | number | null }>;
+      const setComGrupo = new Set(grupoRows.map((r) => String(r.sku_codigo_omie)));
 
       const { data: ativos, error: e2 } = await supabase
         .from("sku_parametros")
-        .select("sku_codigo")
+        .select("sku_codigo_omie")
         .eq("empresa", empresa)
         .eq("ativo", true);
       if (e2) return 0;
 
-      const ativosRows = (ativos ?? []) as unknown as Array<{ sku_codigo: string | null }>;
-      return ativosRows.filter((r) => !setComGrupo.has(r.sku_codigo)).length;
+      const ativosRows = (ativos ?? []) as unknown as Array<{ sku_codigo_omie: string | number | null }>;
+      return ativosRows.filter((r) => !setComGrupo.has(String(r.sku_codigo_omie))).length;
     },
     refetchInterval: 60000,
     staleTime: 30000,
@@ -251,10 +252,10 @@ export default function AdminReposicaoCadastros() {
 /* ─── Histórico de Pedidos por Ciclo ─── */
 type CicloRow = {
   data_ciclo: string;
-  fornecedor_grupo: string | null;
+  fornecedor_nome: string | null;
   status: string | null;
   valor_total: number | null;
-  n_skus: number | null;
+  num_skus: number | null;
 };
 
 function statusVariant(status: string | null): "success" | "warning" | "destructive" | "secondary" {
@@ -282,14 +283,14 @@ function HistoricoPedidosCiclos() {
     queryFn: async (): Promise<CicloRow[]> => {
       const { data, error } = await supabase
         .from("pedido_compra_sugerido")
-        .select("data_ciclo, fornecedor_grupo, status, valor_total, n_skus")
+        .select("data_ciclo, fornecedor_nome, status, valor_total, num_skus")
         .eq("empresa", empresa)
         .gte("data_ciclo", de)
         .lte("data_ciclo", ate)
         .order("data_ciclo", { ascending: false })
         .limit(2000);
       if (error) return [];
-      return (data ?? []) as unknown as CicloRow[];
+      return (data ?? []) as CicloRow[];
     },
     staleTime: 30000,
   });
@@ -354,15 +355,15 @@ function HistoricoPedidosCiclos() {
                 </TableHeader>
                 <TableBody>
                   {pageRows.map((r, i) => (
-                    <TableRow key={`${r.data_ciclo}-${r.fornecedor_grupo}-${i}`}>
+                    <TableRow key={`${r.data_ciclo}-${r.fornecedor_nome}-${i}`}>
                       <TableCell className="font-mono text-xs">
                         {r.data_ciclo ? new Date(r.data_ciclo).toLocaleDateString("pt-BR") : "—"}
                       </TableCell>
-                      <TableCell>{r.fornecedor_grupo ?? "—"}</TableCell>
+                      <TableCell>{r.fornecedor_nome ?? "—"}</TableCell>
                       <TableCell>
                         <Badge variant={statusVariant(r.status)}>{r.status ?? "—"}</Badge>
                       </TableCell>
-                      <TableCell className="text-right">{r.n_skus ?? 0}</TableCell>
+                      <TableCell className="text-right">{r.num_skus ?? 0}</TableCell>
                       <TableCell className="text-right">
                         {(r.valor_total ?? 0).toLocaleString("pt-BR", {
                           style: "currency",

@@ -457,7 +457,7 @@ serve(async (req) => {
               }
             }
           }
-        } catch (e) {}
+        } catch (_e) { /* erro ignorado de propósito */ }
       }
     }
 
@@ -1227,7 +1227,7 @@ Responda SEMPRE usando a função identify_order_items.`;
             ].filter(Boolean);
 
             // Get omie_codigo_produto mapping for identified products
-            let omieCodeMap: Record<number, string> = {}; // omie_codigo_produto → product_id
+            const omieCodeMap: Record<number, string> = {}; // omie_codigo_produto → product_id
             if (allProductIds.length > 0) {
               const { data: productMappings } = await supabase
                 .from("omie_products")

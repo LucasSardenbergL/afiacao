@@ -127,8 +127,8 @@ export function PortalDetailDrawer({ pedidoId, open, onOpenChange, isAdmin }: Pr
       setConciliarOpen(false);
       setConciliarProtocolo('');
       refetchAll();
-    } catch (err: any) {
-      const msg = err?.message ?? String(err);
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
       toast.error(`Falha ao conciliar: ${msg}`);
     } finally {
       setConciliando(false);
@@ -153,8 +153,8 @@ export function PortalDetailDrawer({ pedidoId, open, onOpenChange, isAdmin }: Pr
       if (error) throw error;
       toast.success(`Pedido #${pedidoId} resetado. Use 'Disparar agora' para reenviar.`);
       refetchAll();
-    } catch (err: any) {
-      toast.error(`Falha: ${err.message}`);
+    } catch (err) {
+      toast.error(`Falha: ${err instanceof Error ? err.message : String(err)}`);
     } finally {
       setResetting(false);
     }

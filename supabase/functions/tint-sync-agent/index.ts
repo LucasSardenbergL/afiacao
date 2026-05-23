@@ -261,7 +261,8 @@ Deno.serve(async (req) => {
       const runId = await createSyncRun(agent, "catalogs");
       if (!runId) return json({ ok: false, error: "Failed to create sync run" }, 500);
 
-      let inserts = 0, updates = 0, ignored = 0, errors = 0;
+      let inserts = 0, errors = 0;
+      const updates = 0, ignored = 0;
       const errorDetails: { entity_type: string; entity_id: string | null; message: string }[] = [];
 
       const stagingTables: Record<string, { table: string; keyField: string }> = {
@@ -336,7 +337,8 @@ Deno.serve(async (req) => {
       const runId = await createSyncRun(agent, "formulas");
       if (!runId) return json({ ok: false, error: "Failed to create sync run" }, 500);
 
-      let inserts = 0, errors = 0, ignored = 0;
+      let inserts = 0, errors = 0;
+      const ignored = 0;
       const errorDetails: { entity_type: string; entity_id: string | null; message: string }[] = [];
       const formulas: TintFormulaPayload[] = (body.formulas as TintFormulaPayload[] | undefined) || [];
       const received = formulas.length;
@@ -416,7 +418,8 @@ Deno.serve(async (req) => {
       const runId = await createSyncRun(agent, "preparations");
       if (!runId) return json({ ok: false, error: "Failed to create sync run" }, 500);
 
-      let inserts = 0, errors = 0, ignored = 0;
+      let inserts = 0, errors = 0;
+      const ignored = 0;
       const errorDetails: { entity_type: string; entity_id: string | null; message: string }[] = [];
       const preps: TintPreparacaoPayload[] = (body.preparacoes as TintPreparacaoPayload[] | undefined) || [];
       const received = preps.length;
@@ -527,7 +530,7 @@ Deno.serve(async (req) => {
             descricao: c.descricao, preco_litro: c.preco_litro,
             raw_data: c, staging_status: "pending",
           });
-          error ? errors++ : inserts++;
+          if (error) { errors++; } else { inserts++; }
         }
 
         const { data: realFormulas } = await sb.from("tint_formulas")
@@ -565,7 +568,7 @@ Deno.serve(async (req) => {
             personalizada: false, raw_data: { ...f, _sim_index: i },
             staging_status: "pending",
           }).select("id").single();
-          fErr ? errors++ : inserts++;
+          if (fErr) { errors++; } else { inserts++; }
           if (fErr) debugLog.push(`ERROR staging formula ${f.cor_id}: ${fErr.message}`);
         }
 
@@ -580,7 +583,7 @@ Deno.serve(async (req) => {
             volume_final_ml: synth.volume_final_ml, preco_final: synth.preco_final,
             personalizada: false, raw_data: synth, staging_status: "pending",
           });
-          error ? errors++ : inserts++;
+          if (error) { errors++; } else { inserts++; }
           debugLog.push(`Synthetic formula ${synth.cor_id}: only_sync test`);
         }
 
@@ -597,7 +600,7 @@ Deno.serve(async (req) => {
             id_corante_sayersystem: c.id_corante_sayersystem, descricao: c.descricao,
             preco_litro: c.preco_litro, raw_data: c, staging_status: "pending",
           });
-          error ? errors++ : inserts++;
+          if (error) { errors++; } else { inserts++; }
         }
         const seedFormulas = [
           { cor_id: "SIM-COR-001", nome_cor: "Amarelo Sol", cod_produto: "SIM-CORAL", id_base: "BASE-A", id_embalagem: "EMB-900", volume_final_ml: 900, preco_final: 89.90, personalizada: false },
@@ -611,7 +614,7 @@ Deno.serve(async (req) => {
             volume_final_ml: f.volume_final_ml, preco_final: f.preco_final,
             personalizada: f.personalizada, raw_data: f, staging_status: "pending",
           }).select("id").single();
-          error ? errors++ : inserts++;
+          if (error) { errors++; } else { inserts++; }
         }
       }
 

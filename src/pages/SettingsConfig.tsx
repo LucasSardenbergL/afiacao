@@ -3,21 +3,18 @@ import { useState } from 'react';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
-import { Input } from '@/components/ui/input';
-import { Textarea } from '@/components/ui/textarea';
 import { Switch } from '@/components/ui/switch';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Separator } from '@/components/ui/separator';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Slider } from '@/components/ui/slider';
 import {
-  Settings, Sliders, Shield, Users, Link2, Brain,
+  Sliders, Shield, Users, Link2, Brain,
   Save, RotateCcw, AlertTriangle, CheckCircle2, Info,
-  Lock, Eye, EyeOff, Zap, Target, TrendingUp, BarChart3,
+  Eye, EyeOff, Zap, Target, TrendingUp, BarChart3,
   Package, Phone, Award, Database, Webhook,
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
-import { useAuth } from '@/contexts/AuthContext';
 import { useFeatureFlag } from '@/hooks/useFeatureFlag';
 import { Sparkles, Undo2 } from 'lucide-react';
 
@@ -85,7 +82,6 @@ const permissions: PermissionConfig[] = [
 
 /* ─── Main Component ─── */
 const SettingsConfig = () => {
-  const { isAdmin } = useAuth();
   const [weights, setWeights] = useState(defaultWeights);
   const [activeTab, setActiveTab] = useState('recommendations');
   const [hasChanges, setHasChanges] = useState(false);

@@ -31,8 +31,8 @@ export function AgendaTodayList() {
     enabled: agenda.length > 0,
     staleTime: 60_000,
     queryFn: async (): Promise<Record<string, { name: string; phone: string | null }>> => {
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      const { data } = await (supabase.from('profiles') as any)
+       
+      const { data } = await supabase.from('profiles')
         .select('user_id, name, razao_social, phone')
         .in('user_id', agenda.map((a) => a.customer_user_id));
       const map: Record<string, { name: string; phone: string | null }> = {};

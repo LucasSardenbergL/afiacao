@@ -52,9 +52,8 @@ function KpiCards({ empresa }: { empresa: string }) {
       const startOfDay = new Date(now.getFullYear(), now.getMonth(), now.getDate()).toISOString();
       const trimestre = Math.floor(now.getMonth() / 3) + 1;
       const ano = now.getFullYear();
-      const client = supabase as unknown as {
-        from: (t: string) => any;
-      };
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const client = supabase as any;
 
       const [posicao, meta, ligacoes, spin] = await Promise.all([
         safeQuery(

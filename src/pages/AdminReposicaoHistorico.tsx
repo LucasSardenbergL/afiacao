@@ -134,7 +134,7 @@ export default function AdminReposicaoHistorico() {
                     <TableCell className="text-right">{fmt(r.estoque_seguranca, 0)}</TableCell>
                     <TableCell className="text-right">{fmt(r.ponto_pedido, 0)}</TableCell>
                     <TableCell>
-                      <Badge variant={triggerVariant(r.trigger) as any}>
+                      <Badge variant={triggerVariant(r.trigger)}>
                         {triggerLabel(r.trigger)}
                       </Badge>
                     </TableCell>

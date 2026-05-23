@@ -26,7 +26,7 @@ interface UseNvoipCallReturn {
   callId: string | null;
   callDuration: number;
   audioLink: string | null;
-  makeCall: (phoneNumber: string) => Promise<void>;
+  makeCall: (phoneNumber: string, opts?: { forceRecord?: boolean }) => Promise<void>;
   endCall: () => Promise<void>;
   isActive: boolean;
   isConnecting: boolean;
@@ -101,7 +101,10 @@ export function useNvoipCall(): UseNvoipCallReturn {
   );
 
   const makeCall = useCallback(
-    async (phoneNumber: string) => {
+    // opts.forceRecord é aceito pra paridade de assinatura com o backend WebRTC
+    // (useCallBackend retorna a união dos dois). Nvoip ignora por ora — a gravação
+    // do lado Nvoip é controlada server-side na própria Edge Function.
+    async (phoneNumber: string, _opts?: { forceRecord?: boolean }) => {
       setError(null);
       setCallState('connecting');
       setCallDuration(0);
@@ -131,11 +134,12 @@ export function useNvoipCall(): UseNvoipCallReturn {
         }, 2000);
 
         toast.success('📞 Chamada iniciada', { description: `Ligando para ${formatBrPhone(normalized)}...` });
-      } catch (err: any) {
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : '';
         setCallState('error');
-        setError(err.message || 'Erro ao realizar chamada');
+        setError(msg || 'Erro ao realizar chamada');
         toast.error('Erro na chamada', {
-          description: err.message || 'Não foi possível realizar a chamada',
+          description: msg || 'Não foi possível realizar a chamada',
         });
       }
     },
@@ -150,10 +154,10 @@ export function useNvoipCall(): UseNvoipCallReturn {
       setCallState('finished');
       stopPolling();
       toast.success('Chamada encerrada');
-    } catch (err: any) {
+    } catch (err) {
       console.error('Error ending call:', err);
       toast.error('Erro ao encerrar', {
-        description: err.message,
+        description: err instanceof Error ? err.message : undefined,
       });
     }
   }, [callId, stopPolling]);

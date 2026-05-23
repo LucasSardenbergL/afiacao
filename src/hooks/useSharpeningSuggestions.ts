@@ -21,6 +21,15 @@ export interface SharpeningSuggestions {
   loading: boolean;
 }
 
+interface UserToolRow {
+  id: string;
+  tool_category_id: string;
+  last_sharpened_at: string | null;
+  next_sharpening_due: string | null;
+  sharpening_interval_days: number | null;
+  tool_categories: { name: string } | null;
+}
+
 export function useSharpeningSuggestions(): SharpeningSuggestions {
   const { user } = useAuth();
   const [loading, setLoading] = useState(true);
@@ -49,7 +58,7 @@ export function useSharpeningSuggestions(): SharpeningSuggestions {
         if (error) throw error;
 
         const now = new Date();
-        const processedTools: SharpeningTool[] = (data || []).map((tool: any) => {
+        const processedTools: SharpeningTool[] = (data || []).map((tool: UserToolRow) => {
           const nextDue = tool.next_sharpening_due ? new Date(tool.next_sharpening_due) : null;
           const daysUntilDue = nextDue 
             ? Math.ceil((nextDue.getTime() - now.getTime()) / (1000 * 60 * 60 * 24))
@@ -128,7 +137,7 @@ export async function calculateSharpeningStats(userId: string): Promise<{
     // Find most frequent category
     const categoryCounts: Record<string, number> = {};
     orders.forEach(order => {
-      const items = order.items as any[];
+      const items = order.items as unknown as { category?: string }[];
       items?.forEach(item => {
         if (item.category) {
           categoryCounts[item.category] = (categoryCounts[item.category] || 0) + 1;

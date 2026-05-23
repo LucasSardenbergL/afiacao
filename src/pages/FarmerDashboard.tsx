@@ -5,7 +5,7 @@ import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Progress } from '@/components/ui/progress';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
-import { useFarmerScoring, type ClientScore, type AgendaItem } from '@/hooks/useFarmerScoring';
+import { useFarmerScoring, type ClientScore, type AgendaItem, type AlgorithmConfig } from '@/hooks/useFarmerScoring';
 import { useFarmerMetrics } from '@/hooks/useFarmerMetrics';
 import { useAuth } from '@/contexts/AuthContext';
 import {
@@ -15,6 +15,7 @@ import {
   Eye, ShoppingCart,
 } from 'lucide-react';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
+import { CallButton } from '@/components/call/CallButton';
 
 // ─── Helpers ─────────────────────────────────────────────────────────
 const healthColors: Record<string, { bg: string; text: string; border: string }> = {
@@ -157,14 +158,7 @@ const FarmerDashboard = () => {
                         </div>
                         <div className="flex items-center gap-0.5 shrink-0">
                           {phone ? (
-                            <Tooltip>
-                              <TooltipTrigger asChild>
-                                <Button size="icon" variant="ghost" className="h-8 w-8 text-primary" asChild>
-                                  <a href={`tel:${phone}`}><Phone className="w-3.5 h-3.5" /></a>
-                                </Button>
-                              </TooltipTrigger>
-                              <TooltipContent><p className="text-xs">Ligar</p></TooltipContent>
-                            </Tooltip>
+                            <CallButton phone={phone} customerName={item.customer_name} variant="icon" />
                           ) : (
                             <Tooltip>
                               <TooltipTrigger asChild>
@@ -367,7 +361,7 @@ const WeightBar = ({ label, value, color = 'bg-primary' }: { label: string; valu
   </div>
 );
 
-const ClientDetail = ({ client, onBack, config }: { client: ClientScore; onBack: () => void; config: any }) => {
+const ClientDetail = ({ client, onBack, config }: { client: ClientScore; onBack: () => void; config: AlgorithmConfig }) => {
   const hc = healthColors[client.healthClass] || healthColors.critico;
   return (
     <div className="space-y-3">

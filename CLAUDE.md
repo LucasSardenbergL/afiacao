@@ -288,15 +288,57 @@ Dois backends coexistem; o usuário escolhe via toggle em `/settings`:
 
 1. Cria o arquivo em `supabase/migrations/YYYYMMDDHHMMSS_<nome>.sql`
 2. Mergeia o PR normal (commit fica no histórico do código)
-3. **Aplica manualmente**: Supabase Dashboard (via Lovable Cloud) → SQL Editor → New query → cola conteúdo → Run
-4. Valida com query tipo `SELECT EXISTS(SELECT 1 FROM pg_tables WHERE tablename = '<nova_tabela>')`
+3. **Entrega o SQL inline na conversa** em blocos separados (1 bloco por migration), prontos pra colar no **SQL Editor** (não fica enviando o founder pro arquivo no GitHub Raw ou pedindo `bunx supabase db push`)
+4. Founder cola cada bloco no SQL Editor → Run → confirma "Success"
+5. **Valida no final** com uma query de checagem (count de tabelas/triggers/funções criados) também pra colar no SQL Editor
 
-**Migrations já criadas e que precisaram aplicação manual** (referência):
-- `20260517100000_enable_realtime_dashboard_v3.sql` — Realtime publication pras 4 tabelas Dashboard V3
-- `20260517120000_user_departments.sql` — schema `user_departments`
-- `20260517140000_dashboard_visits.sql` — schema `dashboard_visits`
+**Formatação de blocos SQL na conversa** (preferência do founder, registrada 2026-05-19):
 
-**Sempre que adicionar migration nova**: avisar no PR description "**ATENÇÃO: migration manual necessária**" e idealmente colar o SQL no body do PR pra facilitar.
+- Sempre usar fenced code block com ```` ```sql ```` — assim o app de chat renderiza o botão de copiar no canto superior do bloco.
+- **Cada bloco SQL deve terminar com a tag de fechamento ```` ``` ```` numa linha sozinha**, sem texto ou explicação encostada nela. Texto após `\`\`\`` fora do bloco. Isso garante que o botão "Copy" do app cubra a área visível inteira e funcione mesmo quando o bloco é longo (founder rola até o fim e quer poder copiar dali também sem voltar pro topo).
+- Quando entregar múltiplos blocos sequenciais (A→B→C→D), **um bloco SQL por mensagem**, com label "BLOCO A/B/C/D" antes e a query de validação (`SELECT 'BLOCO X OK' AS status, ...`) no final do bloco. Founder cola, vê "Success" + a contagem esperada, confirma, e aí mando o próximo.
+
+**Migrations já entregues por este workflow** (referência):
+- Fundação Tier 1 (15 migrations, 2026-05-17 → 18) — todas coladas via SQL Editor
+- A1 Inteligência de Caixa (4 migrations, 2026-05-19) — idem
+- `20260517100000_enable_realtime_dashboard_v3.sql`, `20260517120000_user_departments.sql`, `20260517140000_dashboard_visits.sql`
+
+**RECOVERY no Supabase do Lovable (concluída 2026-05-19)**: como Fundação + A1 tinham sido aplicados por engano no Supabase standalone, foi feita re-aplicação completa no Supabase do Lovable via SQL Editor (5 blocos A→B→C→D→E idempotentes) + re-deploy das 5 edge functions via chat do Lovable. Estado final validado: **9/9 tabelas, 6/6 funções, 18/18 triggers anexados, ambas colunas (regime + snapshot_dre_caixa_id), unique constraint com regime, seed config 3 empresas, 3 CNPJs**. Edge functions Active no Lovable: `omie-financeiro` (EDIT, 1493 linhas, lida do repo), `fin-period-override`, `fin-suggest-mapping`, `fin-ic-reconcile`, `fin-cashflow-engine` (4 novas). **2 crons agendados e ativos** (BLOCO E): `fin-cashflow-snapshot-diario` (`0 10 * * *`, snapshot 13s por empresa×cenário) e `fin-ic-reconcile-daily` (`0 9 * * *`). **Módulo financeiro 100% completo e automatizado no Supabase de produção.**
+
+**Programa "Estado da Arte do Financeiro" — status (atualizado 2026-05-23)**: sobre a Fundação/A1, executado em ondas (cada uma validada por consult Codex, TDD em helper puro espelhado no engine Deno, mergeada e em produção no Lovable). Specs/planos em `docs/superpowers/{specs,plans}/`; helpers em `src/lib/financeiro/`.
+- ✅ **Onda 1 — NCG** (PCO sem double-count de tributo, estoque real via `fin_estoque_valor`, CCC com PME, rename "capital giro próprio"→"liquidez operacional líquida"). Helper `ncg-helpers.ts`. Mergeada no PR #138.
+- ✅ **Onda 2 — Timing da projeção 13s** (curvas de aging calibradas por exposição, vencidos reagendados, ponte "após horizonte/AR impaired", PMR/PMP + inadimplência ponderados por R$, guard de folha por janela). Helper `aging-helpers.ts` (espelho em `fin-cashflow-engine`). PR #138.
+- ✅ **Onda 3 — DRE v2 regime-aware** (em `omie-financeiro/calcularDRE`, helpers `dre-helpers.ts` + `dre-tabelas-tributarias.ts`): **3a** estrutural — deduções (ICMS/ISS/PIS/COFINS/IPI) vs IRPJ/CSLL; **DAS único no Simples** (nunca quebrado, LC 123); caixa por data real + fallback "caixa estimado"; mapping explícito no lugar do prefixo `'3.99'`; gate de confiança (PR #184). **3b** imposto teórico — Simples (RBT12 + anexo + fator-r) e presumido (trimestral + adicional 10% + PIS/COFINS) ao lado do realizado, degradação honesta p/ `null` (PR #188). Coluna opcional `fin_config_cashflow.dre_tributario` setada nas 3 empresas (Colacor SC = `{regime:simples, anexo:III}`). ⚠️ Trigger `trg_audit` foi **removido de `fin_config_cashflow`** (a função `fin_audit_trigger()` deriva período por `data_emissao`, coluna inexistente em config → quebrava UPDATE; migration `20260523210000_*`, PR #192).
+- ⏳ **A2 — Retorno & Valor** (ROIC / WACC hurdle-rate / EVA / spread + **ROIC incremental** headline + **normalização de comingling** reportado×normalizado): **spec aprovado e commitado** em `docs/superpowers/specs/2026-05-23-financeiro-a2-retorno-valor-design.md`, na branch **`feat/financeiro-a2-retorno-valor`**. NOPAT = `EBIT − imposto absoluto do regime` (nunca `×(1−t)`); capital investido = giro (NCG) computado + ativo fixo manual − ajustes; Kd pré-imposto (tax-shield≈0 nos 2 regimes). **Falta** (próxima sessão): writing-plans → implementar `src/lib/financeiro/valor-helpers.ts` (TDD) + espelho no engine + coluna opcional `fin_config_cashflow.valor_inputs` + rota `/financeiro/valor` + UI (master only) + docs → deploy via chat Lovable + PR. **Retomar com:** "continuar A2 a partir do spec na branch feat/financeiro-a2-retorno-valor".
+- ⚠️ **Deploy é manual via chat do Lovable após cada merge** — `omie-financeiro` e `fin-cashflow-engine` leem o arquivo do repo (branch main). Sem isso, a main e a produção divergem.
+
+**Padrão de cron descoberto no Supabase do Lovable (2026-05-19, referência pra futuros crons)**:
+- `pg_cron` + `pg_net` já habilitados.
+- **Project URL (Supabase do Lovable):** `https://fzvklzpomgnyikkfkzai.supabase.co` — confirma a identidade do Supabase correto (NÃO confundir com o standalone `lkotrsfdvnwxqyevhffh`).
+- **Auth canônico de cron** (usado por ~25 crons que já rodam): header `'x-cron-secret', (SELECT decrypted_secret FROM vault.decrypted_secrets WHERE name='CRON_SECRET' LIMIT 1)`. O secret `CRON_SECRET` já está no Cofre (Vault) — não precisa criar nem rotacionar. Coluna é `decrypted_secret` (não `value`); nome do secret é `CRON_SECRET` (maiúsculo).
+- `cron.schedule(nome, schedule, comando)` faz **upsert por nome** → idempotente, pode rerodar.
+- ✅ **Crons legados corrigidos (2026-05-19, BLOCO F+G)**: 3 crons da Reposição estavam com `x-cron-secret` placeholder (`<<COLE_O_CRON_SECRET_AQUI>>` / `<<48>>`) → falhavam 401. `gerar-pedidos-diario-oben` (9h15) e `disparar-pedidos-aprovados-oben` (13h) foram corrigidos pro padrão vault. `omie-cron-diario-oben` (diário 7h) era redundante com `afiacao_omie_oben_sync_incremental_2h` (mesma função/body, roda a cada 2h) → **deletado** via `cron.unschedule`. Lição: ao herdar crons de outro contexto, conferir se o `x-cron-secret` é placeholder antes de assumir que rodam.
+
+**Sempre que adicionar migration nova**: avisar no PR description "**ATENÇÃO: migration manual necessária**" e colar o SQL no body do PR + entregar inline na conversa.
+
+### Edge functions — caminho oficial Lovable (confirmado via docs.lovable.dev 2026-05-19)
+
+> 🔴 **REGRA**: Edge functions no Lovable Cloud são **criadas e editadas pelo chat do Lovable**, NÃO pela UI de "Edge functions" do Cloud. A UI Cloud → Edge functions é **só pra visualizar logs, status e invocations**. Não há botão de "Create function" / "New function" ali.
+
+> 🟢 **CAPACIDADE CONFIRMADA (2026-05-19, descoberta durante deploy de omie-financeiro)**: o Lovable AI **CONSEGUE ler arquivos do diretório `supabase/functions/<nome>/index.ts`** no repo do projeto. Inicialmente o founder achou que não — mas o próprio Lovable AI confirmou capacidade quando precisou montar a função após truncamento do histórico de chat. Caminho preferencial para edge function GRANDE (>500 linhas) ou EDIT de função existente: instruir Lovable AI a ler `supabase/functions/<nome>/index.ts` do repo e fazer deploy verbatim, em vez de pastear código no chat (que pode truncar). Para edge function nova pequena (<300 linhas) ou quando o arquivo ainda não existe no repo, continuar pastando código no chat.
+>
+> Doc oficial: `https://docs.lovable.dev/integrations/cloud` diz: *"Edge Functions: Easy to create — just describe the function you need in Lovable chat."*
+>
+> **Workflow correto pra entregar edge function nova ou edit**:
+> 1. Eu monto um **prompt para o chat do Lovable** com:
+>    - Instrução clara (ex: "Create a new Supabase edge function named `fin-period-override`" OU "Edit the existing edge function `omie-financeiro` and replace its code with the following:")
+>    - Código completo do `index.ts` em fenced block, self-contained (com helpers inlineados se necessário — UI do Lovable parece não suportar convention `_shared/`)
+>    - Lembrete pra NÃO modificar/reinterpretar o código (Lovable AI tende a "melhorar" — não queremos)
+> 2. Founder cola o prompt no chat do Lovable
+> 3. Lovable AI cria/edita a function
+> 4. Verificar no Cloud → Edge functions se aparece "Active"
+>
+> **Não sugerir mais**: `supabase functions deploy` via CLI (mesmo com CLI já instalada — o founder ainda perderia tempo confirmando project ref e o standalone supabase ainda paira como armadilha). Mesmo que CLI funcione tecnicamente, o caminho oficial Lovable é via chat — e o founder prefere "colar e clicar".
 
 **Auditoria de quais custom migrations estão aplicadas no banco**:
 
@@ -430,13 +472,14 @@ Resolvidos (auditoria 2026-05-13 e auditoria de código 2026-05-16/17):
 - ✅ **`aumentos-ativos` polava pra customer** — gate `isStaff && !isSalesOnly` (PR #32)
 - ✅ **Charts Recharts sem memo** — 3 components com `React.memo` (PR #32)
 - ✅ **Cleanup dead code geral** — 18 arquivos órfãos + 13 deps + 12 default exports redundantes + re-exports inchados em orderSubmission/index.ts deletados em PR #25 (-2200 LoC total)
+- ✅ **7 god-components da Reposição quebrados** (todos <1000 LoC, verificado 2026-05-23): AdminRoutePlanner 1661→**286** (extração presentacional + camada de dados pro hook `src/hooks/useRoutePlanner.ts`, PRs #169/#174/#177), AdminReposicaoAumentoDetail 1465→**387** (#166), AdminReposicaoNegociacaoParalela 1201→**702** (#157/#160), FinanceiroDashboard 1242→**299** (#161, frota), AdminReposicaoPromocaoDetail 1691→**534** (frota), AdminReposicaoPedidos 1572→**236** (frota), AdminReposicaoRevisao 1099→**615** (frota). Subcomponentes presentacionais vivem em `src/components/reposicao/<feature>/` (ex: `routePlanner/`, `aumentoDetail/`, `negociacaoParalela/`). Padrão: extrair leaf pieces (types/helpers/constants) → componentes presentacionais (item-cards/dialogs/seletores) → camada de dados pra hook; refs DOM-coupled (Leaflet) ficam na página.
+- ✅ **~50 `no-explicit-any` removidos via cast-cleanup** (PRs #181/#183/#186/#199/#202/#206, 2026-05-23). ⚠️ **Descoberta-chave: o `types.ts` NÃO estava stale.** Todas as tabelas referenciadas via `(supabase.from('X') as any)` (kb_documents/kb_chunks/kb_product_specs, customer_contacts/customer_processes/customer_visit_scores, farmer_calls/farmer_client_scores, commercial_roles, standard_processes, call_log) E colunas (`profiles.razao_social`) **JÁ existiam** nos tipos gerados — os casts eram legado defensivo dead-weight, removíveis sem editar o `types.ts`. **NÃO re-adicionar essas tabelas ao `types.ts`** (a #186 tentou e quebrou com `Duplicate identifier` TS2300; revertido). **Lição:** ao remover cast de arquivo que está no `tsconfig.strict.json` include, rodar `bun run typecheck:strict` (NÃO só o baseline `tsc --noEmit`) — a query agora tipada expõe `strictNullChecks` (ex: payload jsonb `ProcessEtapa[]`/`StandardProcessEtapa[]` precisa `as unknown as Json`; `.eq(col, id)` gated por `enabled:!!id` precisa `id!`; return `data as X` vira `data as unknown as X` quando a coluna jsonb não sobrepõe o tipo de domínio).
 
 Ainda pendentes (decisão de produto ou sprint próprio):
 
 - **Workbox `NetworkOnly` para picking e orders** — contradiz offline-first; `offline-queue.ts` exposto mas não integrado nas mutações reais
 - **`SalesOrders.deleteOrder` sem soft-delete** — exclusão direta no Omie; risco compliance. Precisa migration SQL (coluna `deleted_at`) + flag UI
-- **TypeScript strict mode** — `tsconfig.app.json` tem `strict: false`, `noImplicitAny: false`. Resolve raiz de 1300 lint errors (97% `no-explicit-any`). **Infra incremental pronta**: `tsconfig.strict.json` lista files que passam strict (`strict: true` + `noImplicitAny` + `strictNullChecks` + `noUnusedLocals/Parameters`). Rodar via `bun run typecheck:strict`. CI bloqueia se regressão nos files migrados. Pra migrar mais files: garantir 0 `any` + tipos explícitos + adicionar ao `include` de `tsconfig.strict.json`. Convergência: quando 100% do `src/` estiver em strict, mover flags pra `tsconfig.app.json` e deletar `tsconfig.strict.json`. Caminho top-down: hooks de engine (`useBundleEngine`, `useTacticalPlan`, `useFarmerExperiments`, `useFarmerPerformance`, `useCrossSellEngine`, `useCopilotEngine`) concentram ~250 errors.
-- **7 god-components da Reposição** (>1000 LoC cada: AdminReposicaoPromocaoDetail 1691L, AdminRoutePlanner 1661L, AdminReposicaoPedidos 1572L, AdminReposicaoAumentoDetail 1465L, FinanceiroDashboard 1242L, AdminReposicaoNegociacaoParalela 1201L, AdminReposicaoRevisao 1099L) — quebrar em subcomponentes em `src/components/reposicao/`
+- **TypeScript strict mode** — `tsconfig.app.json` tem `strict: false`, `noImplicitAny: false`. Resolve raiz de 1300 lint errors (97% `no-explicit-any`). **Infra incremental pronta**: `tsconfig.strict.json` lista files que passam strict (`strict: true` + `noImplicitAny` + `strictNullChecks` + `noUnusedLocals/Parameters`). Rodar via `bun run typecheck:strict`. CI bloqueia se regressão nos files migrados. Pra migrar mais files: garantir 0 `any` + tipos explícitos + adicionar ao `include` de `tsconfig.strict.json`. Convergência: quando 100% do `src/` estiver em strict, mover flags pra `tsconfig.app.json` e deletar `tsconfig.strict.json`. Progresso (2026-05-23): **`no-explicit-any` no repo = 0** — a eliminação de `any` está **concluída** (src + edge functions + tests; convergência de várias sessões). Fase atual = **PROMOÇÃO** (~409/629 files no `include`, ~65%). ⚠️ **COORDENAÇÃO (obrigatória — trabalho paralelo já causou retrabalho: a #161 decompôs `FinanceiroDashboard` enquanto outra sessão o tipava; e promover god-components quebrou o #180 por cascata transitiva):** antes de QUALQUER migração strict, leia [`docs/strict-migration-lanes.md`](docs/strict-migration-lanes.md) — tem o estado atual + lições (promova **leaf-first**; `typecheck:strict` só é confiável com **CPU calma**, senão dá falso-negativo; promover um arquivo puxa os imports transitivos pro programa strict). Rode `gh pr list --state open` + `git worktree list`, reserve sua fatia no **primeiro commit**, e **só toque sua fatia**. No `tsconfig.strict.json`, adicione paths **no fim do `include`** — **não reordene o array** (reordenar = conflito com todo PR em voo). A reestruturação "um tsconfig por lane" é flag-day (ver claim file).
 - **N+1 patterns remanescentes**: `omie-vendas-sync:765` (pagination sequencial de profiles, ~4 RTT por sync — não crítico) + `omie-sync:1180-1196` (6 deletes serial por order delete — manual path, não crítico). Frontend `useCrossSellEngine.ts:226-233` (profile batching, ~36 RTT em 3598 clientes) ✅ resolvido em PR de profile-fetch paralelo. `useFarmerExperiments.ts:108-122,251-272` ✅ resolvidos em PRs anteriores (comments "antes era N+1" no código).
 - **~100 callsites de `useToast` legados** — migrar gradualmente pra `import { toast } from 'sonner'`
 - **41 cores hardcoded** (`text-emerald-600` etc.) — sweep pra `text-status-*`. Top 5: Admin (21×), des/PosicaoAtualTab (12×), des/SimuladorTab (11×), AdminPortalSayerlack (10×), AdminRoutePlanner (9×)
@@ -530,6 +573,12 @@ Há muitas skills instaladas (gstack ~40 comandos, superpowers 14, catálogo de 
 **Colisão de nome conhecida:** existe `/review` do gstack e `review` do plugin oficial code-review. Tratamos o **`/review` do gstack como o canônico** para revisão de diff. Se o comando errado disparar, invocar explicitamente via gstack.
 
 Esta tabela é viva — ao instalar/remover skill, atualizar aqui.
+
+### Preferência do founder — segunda opinião de IA no brainstorming (registrada 2026-05-19)
+
+> 🟢 **Toda vez que estivermos em brainstorming**, se fizer sentido pro tema (decisão de arquitetura, metodologia, trade-off não-óbvio), **proponho proativamente uma "discussão" com uma segunda IA** pra melhorar o produto final — e **eu mesmo conduzo via skill `/codex` (consult mode)**, sem fazer o founder copiar/colar pro ChatGPT manualmente (isso desgasta ele com idas e vindas). Fluxo: eu monto o brief, rodo `/codex` consult, leio a resposta, e incorporo o que faz sentido no design — só trago pro founder o resumo do que mudou e por quê. Se o founder preferir explicitamente levar pro ChatGPT dele numa ocasião, tudo bem, mas o default é eu resolver a segunda opinião in-tool via codex.
+>
+> **Status do codex (2026-05-19):** instalado via Homebrew cask (`codex` 0.130.0, em `/opt/homebrew/bin/codex`) e **autenticado** (`~/.codex/auth.json` existe). `npm` NÃO está no PATH desta máquina — se precisar reinstalar/atualizar, usar `brew upgrade codex`, não npm. Consult roda direto: `codex exec "<prompt>" -C <repo> -s read-only -c 'model_reasoning_effort="medium"' --enable web_search_cached --json`. Primeira consulta (A2 metodologia financeira) pegou furos reais de regime tributário — vale o investimento.
 
 ### 12b. Skills instaladas em 2026-05-19 (stack-specific, gaps do §10)
 

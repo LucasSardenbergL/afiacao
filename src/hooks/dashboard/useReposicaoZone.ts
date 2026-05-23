@@ -40,21 +40,21 @@ export function useReposicaoZone() {
       try {
         const { data: alerts, count } = await supabase
           .from('eventos_outlier')
-          .select('id, tipo, descricao, severidade', { count: 'exact' })
-          .order('created_at', { ascending: false })
+          .select('id, tipo, sku_descricao, severidade', { count: 'exact' })
+          .order('detectado_em', { ascending: false, nullsFirst: false })
           .limit(5);
         alertasAtivos = count ?? 0;
         if (alerts) {
-          const rows = alerts as unknown as Array<{
-            id: string;
-            tipo?: string | null;
-            descricao?: string | null;
-            severidade?: string | null;
+          const rows = alerts as Array<{
+            id: number;
+            tipo: string;
+            sku_descricao: string | null;
+            severidade: string;
           }>;
           topItems = rows.slice(0, 3).map((a) => ({
-            id: a.id,
+            id: String(a.id),
             icon: AlertTriangle,
-            title: a.descricao ?? a.tipo ?? 'Alerta',
+            title: a.sku_descricao ?? a.tipo ?? 'Alerta',
             subtitle: `Severidade ${a.severidade ?? 'média'}`,
             path: '/admin/reposicao/sessao',
             itemType: 'outlier_event',
@@ -69,7 +69,7 @@ export function useReposicaoZone() {
         const { count } = await supabase
           .from('fornecedor_aumento_anunciado')
           .select('id', { count: 'exact', head: true })
-          .gte('created_at', sevenDaysAgo);
+          .gte('criado_em', sevenDaysAgo);
         aumentos7d = count ?? 0;
       } catch { /* */ }
 

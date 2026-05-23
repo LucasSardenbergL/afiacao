@@ -158,6 +158,7 @@ const AdminStandardProcesses = lazy(() => import("./pages/AdminStandardProcesses
 const AdminStandardProcessNew = lazy(() => import("./pages/AdminStandardProcessNew"));
 const AdminStandardProcessDetail = lazy(() => import("./pages/AdminStandardProcessDetail"));
 const AdminCalculadora = lazy(() => import("./pages/AdminCalculadora"));
+const Telefonia = lazy(() => import("./pages/Telefonia"));
 
 const PageLoader = () => <PageSkeleton variant="auto" />;
 
@@ -339,6 +340,7 @@ const App = () => (
               <Route path="admin/standard-processes/new" element={<AdminStandardProcessNew />} />
               <Route path="admin/standard-processes/:id" element={<AdminStandardProcessDetail />} />
               <Route path="admin/calculadora" element={<AdminCalculadora />} />
+              <Route path="telefonia" element={<Telefonia />} />
             </Route>
 
             <Route path="*" element={<NotFound />} />

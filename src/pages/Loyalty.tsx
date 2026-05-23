@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback } from 'react';
-import { ArrowLeft, Star, Gift, Trophy, TrendingUp, Loader2, BookOpen, Target, ChevronRight } from 'lucide-react';
+import { ArrowLeft, Star, Gift, Trophy, TrendingUp, Loader2, BookOpen, Target } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 import { Card, CardContent } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
@@ -81,7 +81,7 @@ export default function Loyalty() {
     try {
       // 1. Create redemption record
       const { error: redemptionError } = await supabase
-        .from('loyalty_redemptions' as any)
+        .from('loyalty_redemptions')
         .insert({
           user_id: user.id,
           reward_name: reward.name,
@@ -103,9 +103,9 @@ export default function Loyalty() {
 
       toast.success('Resgate realizado!', { description: `${reward.name} resgatado com sucesso. Aguarde processamento.` });
       await loadPoints();
-    } catch (err: any) {
+    } catch (err) {
       console.error('[Loyalty] Erro ao resgatar:', err);
-      toast.error('Erro no resgate', { description: err.message || 'Tente novamente.' });
+      toast.error('Erro no resgate', { description: err instanceof Error ? err.message : 'Tente novamente.' });
     } finally {
       setRedeemingReward(null);
     }

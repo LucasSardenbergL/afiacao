@@ -28,6 +28,88 @@
 
 ---
 
+## 🔧 Onda 1 — Correção do NCG (2026-05-19)
+
+Revisão de metodologia via Codex (consult) pegou 4 problemas no NCG/indicadores do `fin-cashflow-engine`. Corrigidos:
+
+| Correção | O que mudou |
+|---|---|
+| **PCO não duplica tributo** | Antes, impostos (categoria `3.99…`) entravam em `cp_fornecedor` E em `tributos_a_pagar` → PCO/NCG inflados. Agora os baldes são mutuamente exclusivos (imposto só em `tributos_a_pagar`). |
+| **Estoque real no NCG** | Antes `estoque_valor = 0` (hardcoded) → NCG e CCC subestimavam capital de giro de Colacor/Oben. Agora vem do balancete via tabela `fin_estoque_valor` (input manual em Configuração), com botão "Estimar do Omie" (Σ físico×custo, best-effort com score de cobertura). |
+| **"Capital de Giro Próprio" → "Liquidez Operacional Líquida"** | O número (caixa + CR + estoque − PCO) não era CGP de verdade. Renomeado pra parar de enganar. CGP verdadeiro (PL + PNC − ANC) chega no A2 (que introduz patrimônio + imobilizado). |
+| **CCC ganha PME** | Antes `CCC = PMR − PMP` (ignorava dias de estoque). Agora `CCC = PMR + PME − PMP`, com PME = estoque ÷ CMV(TTM) × 365. Colacor SC (serviços) cai pra PME ≈ 0. |
+
+### Regra de ouro da Onda 1
+**Sem o valor de estoque do balancete informado em Configuração, NCG e CCC ficam subestimados.** Atualize trimestralmente (o app avisa quando o último valor tem mais de 90 dias ou está ausente). PME usa o estoque pontual como proxy do estoque médio até haver série histórica.
+
+### Ainda direcional (próximas ondas)
+- DRE "caixa" por `data_vencimento` (não por recebimento real) + linha de imposto agregada (Simples vs presumido): **Onda 3**.
+- Detecção de imposto pelo prefixo `'3.99'` ainda é frágil — passa a usar o mapping DRE na **Onda 3**.
+
+---
+
+## 🔧 Onda 2 — Timing da projeção 13s (2026-05-20)
+
+Substituímos o modelo de QUANDO o caixa entra na projeção 13 semanas. Antes: cada recebível caía na data de vencimento, com haircut fixo de inadimplência, o `atraso_medio_dias` calculado era ignorado, e títulos já vencidos **sumiam** da projeção. Agora: **curvas de cobrança por faixa de aging**, calibradas sem viés. Lógica testada em `src/lib/financeiro/aging-helpers.ts` (vitest) e espelhada verbatim no engine Deno.
+
+| Mudança | O que passou a valer |
+|---|---|
+| **Curvas por faixa de aging** | Faixas `a_vencer / 1-30 / 31-60 / 61-90 / +90` (dias de atraso). Cada faixa tem `taxa_recebimento` e `lag_dias`. |
+| **Calibração por exposição (sem viés)** | `taxa = pago ÷ exposição`, onde exposição = R$ que **entrou** na faixa (liquidados **+** abertos não-pagos). Abertos censurados puxam a taxa pra baixo — remove o viés otimista de calibrar só com "quem já pagou". |
+| **Lag ponderado por R$** | `lag_dias` = média do atraso (recebimento − vencimento) **ponderada por valor** (+ mediana guardada). Um título grande lento pesa mais que N pequenos rápidos. |
+| **Vencidos reagendados (não somem)** | `a_vencer` → recebe em `vencimento + lag`; vencido → `hoje + lag restante` (ou residual). Nunca mais desaparece da projeção. |
+| **Ponte "após horizonte" + AR impaired** | Recebimento esperado para **depois das 13 semanas** vai pra linha "esperado após horizonte" (não entra no caixa projetado). A parte não-recebível (`1 − taxa`) vira **AR impaired** (perda esperada). Exclusão deliberada e reportada — ≠ o bug antigo de sumir com vencido. |
+| **Inadimplência = taxa de perda ponderada** | `inadimplencia_pct` = média ponderada por R$ de `(1 − taxa_recebimento[faixa])` sobre o CR aberto. Para de misturar estoque (saldo >90) com fluxo (receita 12m). O alerta `inadimplencia_alta` usa esse número. |
+| **Cenários com clamp** | otimista sobe taxa / encurta lag; pessimista o oposto. Clamps: `taxa ∈ [0,1]`, `lag ∈ [0, lag_max[faixa]]`. Cenário não move +90 pra "caixa fantasia". |
+| **PMR/PMP ponderado por R$** | Antes média simples por título; agora ponderado por valor. |
+| **Guard de folha por janela** | Se houver CP de categoria de folha vencendo em ≤30d, o ERP já registra a folha — não soma o evento recorrente em cima (`folha_30d = max(CP folha na janela, recorrente)`, e os CPs de folha saem de `cp_fornecedor`). Ativa quando `fin_config_cashflow.folha_categorias_codigos` está preenchido; sem isso fica inerte (comportamento atual preservado). |
+| **Confiança por R$ + concentração** | Faixa só é "alta" com ≥20 títulos **E** volume ≥ R$ 50k **E** top-1 ≤ 60% da exposição. Senão usa default editável + flag `confianca: 'baixa'` (mostrado na UI). |
+
+### Regra de ouro da Onda 2
+**Materialmente melhor, mas ainda direcional.** As curvas tratam o portfólio como um todo por faixa — não segmentam por cliente, ticket ou instrumento de pagamento (boleto/PIX/cheque), e não aceitam overrides manuais de tesouraria ("cliente prometeu pra sexta"). Esses refinamentos, mais flags de disputado/protestado/jurídico e cheques pré-datados, ficam **deferidos** (evolução futura). O guard de folha só atua depois de configurar as categorias de folha no `fin_config_cashflow` (coluna opcional `folha_categorias_codigos`).
+
+### Ainda direcional (próximas ondas)
+- Segmentação por cliente / faixa de ticket / instrumento de pagamento; overrides manuais de tesouraria: **deferidos**.
+- Timing de pagáveis (CP segue na data de vencimento): simetria deferida.
+
+---
+
+## 🔧 Onda 3a — DRE v2 estrutural (regime-aware) (2026-05-22)
+
+Reescreve a estrutura da DRE do `omie-financeiro` (`calcularDRE`). Lógica testada em `src/lib/financeiro/dre-helpers.ts` (vitest) e espelhada verbatim no engine Deno.
+
+| Mudança | O que passou a valer |
+|---|---|
+| **Estrutura regime-aware** | Deduções (tributos sobre receita) ficam acima da receita líquida; IRPJ/CSLL abaixo do resultado. Presumido: ICMS/ISS/PIS/COFINS/IPI nas deduções + IRPJ/CSLL abaixo. Simples: **DAS como linha única** (nunca quebrado — recolhimento unificado da LC 123), nas deduções, com imposto sobre lucro = 0. |
+| **Caixa real** | `regime=caixa` passa a bucketar pela **data de recebimento/pagamento real** (com fallback pro vencimento). Rastreia `fallback_pct` por valor; rotula **"caixa estimado"** quando >10%. |
+| **Mapping explícito** | Classificação de imposto vem do `fin_categoria_dre_mapping` (`ded_icms`/`ded_iss`/`ded_pis`/`ded_cofins`/`ded_ipi`/`das`/`irpj`/`csll`); a heurística de keyword vira último fallback e, quando pega imposto, conta pra confiança. |
+| **Gate de confiança** | Nível `alta/media/baixa` + `motivos[]` no `detalhamento`, por % mapeado por valor, `fallback_pct`, share de categorias genéricas e imposto não mapeado. Exibido na UI. |
+
+### Regra de ouro da Onda 3a
+A DRE ficou **regime-aware e menos enganosa**, mas a linha de imposto ainda é **descritiva** (o que saiu no Omie). O **check de imposto teórico** (Simples progressivo RBT12/anexo/fator-r; presumido trimestral + adicional) é a **Onda 3b**. No Simples, a "receita líquida" é gerencial — o DAS mistura tributo sobre receita + IRPJ/CSLL, então não é diretamente comparável a presumido.
+
+### Ainda direcional (próximas ondas)
+- Fechamento contábil, conciliação fiscal (PGDAS/DARF/NF), CMV/CPV real, depreciação, provisões (13º/férias), eliminação intercompany, pró-labore × folha × distribuição: **deferidos** (DRE segue direcional até lá).
+
+---
+
+## 🔧 Onda 3b — DRE v2: imposto teórico (conferência) (2026-05-22)
+
+Adiciona à DRE o **imposto teórico esperado por regime**, ao lado do realizado (do Omie), como sanity-check. Tabelas legais (Anexos I–V do Simples + presunções) verificadas contra a Receita Federal; lógica testada em `dre-helpers.ts`/`dre-tabelas-tributarias.ts` (vitest) e espelhada no engine.
+
+| Item | Como funciona |
+|---|---|
+| **Simples** | DAS teórico = alíquota efetiva × receita do mês. Efetiva = (RBT12 × nominal − parcela a deduzir) / RBT12, com RBT12 = receita bruta dos 12 meses anteriores (de `fin_dre_snapshots` competência). Anexo vem da config; fator-r alterna III/V (ver limitação). |
+| **Presumido** | IRPJ/CSLL **trimestrais** (presunção por atividade) + **adicional 10%** sobre base presumida que excede R$60k/tri + PIS/COFINS cumulativo. Rateado linearmente por mês (aproximação). |
+| **Degradação honesta** | Sem dado essencial (ex.: Simples sem anexo configurado) → teórico = `null`, **nunca número inventado**, e rebaixa a confiança. |
+| **Confiança** | Delta realizado×teórico > 25% vira **motivo** (não rebaixa sozinho — pode ser competência/recolhimento); config tributária incompleta limita a confiança a "media". |
+| **Config** | Coluna opcional `fin_config_cashflow.dre_tributario` (JSONB): `{regime, anexo, fator_r_habilitado, presuncao_irpj, presuncao_csll}`. Sem ela → default por empresa + teórico parcial. |
+
+### Regra de ouro da Onda 3b
+O teórico é **conferência de plausibilidade**, não verdade fiscal — o realizado (Omie) continua sendo o número. **Limitações documentadas** (viram motivo de delta/confiança, não erro silencioso): (a) fator-r não alterna anexo sem folha segregada confiável; (b) rateio trimestral linear no presumido; (c) competência do DAS (recolhido sobre receita do mês anterior) não realinhada. Conciliação fiscal real (PGDAS/DARF) segue **deferida**.
+
+---
+
 ## ✅ MVP Operacional (pode usar agora para gestão diária)
 
 Estes dados vêm direto do Omie sem transformação opinativa.

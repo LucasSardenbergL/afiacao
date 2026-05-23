@@ -11,7 +11,7 @@ export function useFinanceiroAlertas() {
     queryKey: ['financeiro-alertas-atrasado-count'],
     queryFn: async () => {
       try {
-        const { count, error } = await (supabase as any)
+        const { count, error } = await supabase
           .from('fin_contas_pagar')
           .select('*', { count: 'exact', head: true })
           .eq('status_titulo', 'ATRASADO');

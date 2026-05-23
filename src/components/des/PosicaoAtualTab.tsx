@@ -5,7 +5,6 @@ import { Star, Info } from "lucide-react";
 import { supabase } from "@/integrations/supabase/client";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
-import { Progress } from "@/components/ui/progress";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
@@ -109,7 +108,7 @@ export function PosicaoAtualTab({ empresa, ano, trimestre }: Props) {
     queryKey: ["des-posicao", empresa, ano, trimestre],
     queryFn: async () => {
       const { data, error } = await supabase
-        .from("v_des_posicao_trimestre_ao_vivo" as any)
+        .from("v_des_posicao_trimestre_ao_vivo")
         .select("*")
         .eq("empresa", empresa)
         .eq("ano", ano)
@@ -125,7 +124,7 @@ export function PosicaoAtualTab({ empresa, ano, trimestre }: Props) {
     enabled: !!posQuery.data,
     queryFn: async () => {
       let q = supabase
-        .from("v_des_pedidos_em_transito" as any)
+        .from("v_des_pedidos_em_transito")
         .select("*")
         .eq("empresa", empresa);
       if (posQuery.data?.gooddata_data_referencia) {
@@ -204,8 +203,6 @@ export function PosicaoAtualTab({ empresa, ano, trimestre }: Props) {
   const faixaOtim = pos.faixa_otimista?.estrelas ?? 0;
 
   const dias = pos.dias_restantes ?? 0;
-  const diasBadge =
-    dias < 10 ? "destructive" : dias < 20 ? "default" : "secondary";
   const diasCls =
     dias < 10
       ? "bg-status-error/10 text-status-error border-status-error/30"
