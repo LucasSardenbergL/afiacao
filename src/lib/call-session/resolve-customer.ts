@@ -32,8 +32,8 @@ export async function resolveCustomerByPhone(rawPhone: string): Promise<Resolved
 
   try {
     // 1. Tenta customer_contacts primeiro (mais específico — tem nome+cargo)
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const { data: contact } = await (supabase.from('customer_contacts') as any)
+     
+    const { data: contact } = await supabase.from('customer_contacts')
       .select('customer_user_id, nome, cargo')
       .filter('phone', 'ilike', `%${last8}%`)
       .order('is_primary', { ascending: false })

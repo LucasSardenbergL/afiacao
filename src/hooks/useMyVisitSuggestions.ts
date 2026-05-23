@@ -40,10 +40,10 @@ export function useMyVisitSuggestions(opts: {
     enabled: !!userId,
     staleTime: 60_000,
     queryFn: async (): Promise<CityWithCount[]> => {
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      const { data, error } = await (supabase.from('customer_visit_scores') as any)
+       
+      const { data, error } = await supabase.from('customer_visit_scores')
         .select('city, visit_score')
-        .eq('farmer_id', userId)
+        .eq('farmer_id', userId!)
         .gt('visit_score', 30)
         .not('city', 'is', null);
       if (error) throw error;
@@ -70,10 +70,10 @@ export function useMyVisitSuggestions(opts: {
     queryFn: async (): Promise<VisitSuggestion[]> => {
       if (!selectedCity || !userId) return [];
 
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      const { data: scoresData, error: scoresErr } = await (supabase.from('customer_visit_scores') as any)
+       
+      const { data: scoresData, error: scoresErr } = await supabase.from('customer_visit_scores')
         .select('customer_user_id, recuperacao_score, expansao_score, relacionamento_score, prospeccao_score, visit_score, primary_mission, city, neighborhood, days_since_last_visit, last_visit_at, score_breakdown')
-        .eq('farmer_id', userId)
+        .eq('farmer_id', userId!)
         .eq('city', selectedCity)
         .order('visit_score', { ascending: false })
         .limit(30);
@@ -97,8 +97,8 @@ export function useMyVisitSuggestions(opts: {
       if (scores.length === 0) return [];
 
       const userIds = scores.map(s => s.customer_user_id);
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      const { data: profileData } = await (supabase.from('profiles') as any)
+       
+      const { data: profileData } = await supabase.from('profiles')
         .select('user_id, name, razao_social, phone')
         .in('user_id', userIds);
 

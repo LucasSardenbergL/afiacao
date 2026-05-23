@@ -4,6 +4,7 @@ import { invokeFunction } from '@/lib/invoke-function';
 import { toast } from 'sonner';
 import { useReindexRag } from './useReindexRag';
 import type { CustomerProcess, StructuredProcessResponse } from '@/lib/customer-process/types';
+import type { Json } from '@/integrations/supabase/types';
 
 export function useCustomerProcess(customerId: string | null) {
   return useQuery({
@@ -12,8 +13,8 @@ export function useCustomerProcess(customerId: string | null) {
     staleTime: 60_000,
     queryFn: async (): Promise<CustomerProcess | null> => {
       if (!customerId) return null;
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      const { data, error } = await (supabase.from('customer_processes') as any)
+       
+      const { data, error } = await supabase.from('customer_processes')
         .select('*')
         .eq('customer_user_id', customerId)
         .eq('is_current', true)
@@ -41,8 +42,8 @@ export function useSaveCustomerProcess() {
 
       // Se já existe um current, marca como não-current primeiro
       if (input.previousId) {
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        await (supabase.from('customer_processes') as any)
+         
+        await supabase.from('customer_processes')
           .update({ is_current: false })
           .eq('id', input.previousId);
       }
@@ -50,7 +51,7 @@ export function useSaveCustomerProcess() {
       const payload = {
         customer_user_id: input.customerId,
         descricao_livre: input.descricao_livre,
-        etapas: input.structured?.etapas ?? null,
+        etapas: (input.structured?.etapas ?? null) as unknown as Json,
         segmento: input.structured?.segmento ?? null,
         porte: input.structured?.porte ?? null,
         tags: input.structured?.tags ?? [],
@@ -62,8 +63,8 @@ export function useSaveCustomerProcess() {
         parent_id: input.previousId ?? null,
       };
 
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      const { data, error } = await (supabase.from('customer_processes') as any)
+       
+      const { data, error } = await supabase.from('customer_processes')
         .insert(payload)
         .select()
         .single();
