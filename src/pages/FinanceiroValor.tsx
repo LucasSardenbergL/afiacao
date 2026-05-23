@@ -48,10 +48,11 @@ function EmpresaCard({ company, modo }: { company: string; modo: 'reportado' | '
         {data.reportado.capital_parcial && modo === 'reportado' && <p className="text-xs text-status-warning">* capital parcial (sem ativo fixo)</p>}
         {data.reportado.incremental.aviso && <p className="text-xs text-muted-foreground">{data.reportado.incremental.aviso}</p>}
         {modo === 'normalizado' && !data.normalizado.aplicado && <p className="text-xs text-status-warning">Sem inputs de normalização — igual ao reportado.</p>}
+        {modo === 'normalizado' && data.normalizado.nopat_aproximado && <p className="text-xs text-muted-foreground">NOPAT normalizado é aproximado: o imposto absoluto (IRPJ+CSLL) não é recalculado sobre o EBIT ajustado.</p>}
         {data.confianca.motivos.length > 0 && (
           <details className="text-xs text-muted-foreground"><summary>Por que essa confiança?</summary><ul className="list-disc pl-4 mt-1">{data.confianca.motivos.map((m, i) => <li key={i}>{m}</li>)}</ul></details>
         )}
-        <ValorInputsDialog company={company} />
+        <ValorInputsDialog company={company} atual={data.valor_inputs} />
       </CardContent>
     </Card>
   );

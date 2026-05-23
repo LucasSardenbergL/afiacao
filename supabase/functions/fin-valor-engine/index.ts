@@ -126,9 +126,10 @@ function normalizarComingling(input: { ebit_reportado: number; capital_reportado
   if (!aplicado) motivos.push("Sem inputs de normalização — só visão reportada; possível comingling do dono não ajustado.");
   return { ebit_reportado: input.ebit_reportado, ebit_normalizado, capital_reportado: input.capital_reportado, capital_normalizado, ajuste_prolabore, ajuste_aluguel, ajuste_intercompany_capital, aplicado, motivos };
 }
-function scoreConfiancaValor(input: { roic_null: boolean; wacc_null: boolean; eva_null: boolean; capital_parcial: boolean; normalizacao_aplicada: boolean; imposto_teorico_parcial: boolean; dre_confianca: "alta" | "media" | "baixa" }) {
+function scoreConfiancaValor(input: { roic_null: boolean; wacc_null: boolean; eva_null: boolean; capital_parcial: boolean; normalizacao_aplicada: boolean; imposto_teorico_parcial: boolean; dre_confianca: "alta" | "media" | "baixa"; ttm_parcial?: boolean }) {
   const motivos: string[] = []; let nivel = 3;
   const rebaixar = (para: number, motivo: string) => { if (para < nivel) nivel = para; motivos.push(motivo); };
+  if (input.ttm_parcial) rebaixar(2, "TTM incompleto (menos de 12 meses de DRE) — anualização parcial.");
   if (input.capital_parcial) rebaixar(2, "Capital investido parcial (sem ativo fixo) — ROIC/EVA parciais.");
   if (input.wacc_null) rebaixar(2, "WACC/EVA/spread indisponíveis (faltam dívida, PL ou Ke).");
   if (!input.normalizacao_aplicada) rebaixar(2, "Sem normalização de comingling — só visão reportada.");
@@ -211,12 +212,17 @@ serve(async (req: Request) => {
 
   const db = createClient(SUPABASE_URL, SERVICE_ROLE);
 
-  // 1) Config: regime + valor_inputs (defensivo)
+  // 1) Config: regime (fin_config_cashflow) + inputs sensíveis (tabela master-only fin_valor_inputs)
   const { data: cfgRaw } = await db.from("fin_config_cashflow")
-    .select("dre_tributario, valor_inputs").eq("company", company).maybeSingle();
-  const cfg = (cfgRaw ?? {}) as { dre_tributario?: { regime?: RegimeTributario; anexo?: string } | null; valor_inputs?: Record<string, unknown> | null };
+    .select("dre_tributario").eq("company", company).maybeSingle();
+  const cfg = (cfgRaw ?? {}) as { dre_tributario?: { regime?: RegimeTributario; anexo?: string } | null };
   const regime: RegimeTributario = (cfg.dre_tributario?.regime as RegimeTributario) ?? REGIME_POR_EMPRESA[company] ?? "presumido";
-  const vi = (cfg.valor_inputs ?? {}) as ValorInputsRaw;
+  // valor_inputs vive em tabela SEPARADA master-only (NÃO em fin_config_cashflow, que é legível por employee).
+  // O engine usa service_role → bypassa RLS. Leitura defensiva.
+  const { data: viRow } = await db.from("fin_valor_inputs")
+    .select("valor_inputs").eq("company", company).maybeSingle();
+  const viStored = ((viRow as { valor_inputs?: Record<string, unknown> } | null)?.valor_inputs ?? {}) as Record<string, unknown>;
+  const vi = viStored as ValorInputsRaw;
   // Config tributária completa? (propaga rebaixamento de confiança da Onda 3b)
   const configCompleta = regime === "presumido" ? cfg.dre_tributario != null : (cfg.dre_tributario?.anexo != null);
   const imposto_teorico_parcial = !configCompleta;
@@ -239,10 +245,13 @@ serve(async (req: Request) => {
   const { data: snaps } = await db.from("fin_projecao_snapshots")
     .select("ncg, snapshot_at").eq("company", company).order("snapshot_at", { ascending: false }).limit(400);
   const snapRows = (snaps ?? []) as Array<{ ncg: number | null; snapshot_at: string }>;
-  const capital_giro = snapRows.length > 0 && snapRows[0].ncg != null ? Number(snapRows[0].ncg) : 0;
+  // Último snapshot com ncg NÃO-nulo — um snapshot ruim (ncg null) não deve forçar giro=0 falso.
+  const latestNcg = snapRows.find((s) => s.ncg != null) ?? null;
+  const capital_giro = latestNcg ? Number(latestNcg.ncg) : 0;
+  const giro_indisponivel = latestNcg == null;
   let capital_giro_anterior: number | null = null;
-  if (snapRows.length > 0) {
-    const alvo = new Date(snapRows[0].snapshot_at).getTime() - 365 * 86400000;
+  if (latestNcg) {
+    const alvo = new Date(latestNcg.snapshot_at).getTime() - 365 * 86400000;
     let melhor: { ncg: number | null; dist: number } | null = null;
     for (const s of snapRows) {
       if (s.ncg == null) continue;
@@ -254,11 +263,17 @@ serve(async (req: Request) => {
   }
 
   // 4) Inputs manuais (mensais → TTM via ×12)
-  const numOrNull = (x: unknown): number | null => (x == null || x === "" || Number.isNaN(Number(x)) ? null : Number(x));
+  const numOrNull = (x: unknown): number | null => {
+    if (x == null || typeof x === "boolean" || Array.isArray(x)) return null;
+    if (typeof x !== "number" && typeof x !== "string") return null;
+    if (typeof x === "string" && x.trim() === "") return null;
+    const n = Number(x);
+    return Number.isFinite(n) ? n : null; // rejeita NaN e Infinity
+  };
   const ativo_fixo: AtivoFixoInput = vi.ativo_fixo && numOrNull(vi.ativo_fixo.valor) != null
     ? { valor: Number(vi.ativo_fixo.valor), data_ref: vi.ativo_fixo.data_ref ?? null, fonte: vi.ativo_fixo.fonte ?? null, base: vi.ativo_fixo.base ?? null, operacional: vi.ativo_fixo.operacional !== false }
     : null;
-  const ajustes = Number(vi.ajustes ?? 0);
+  const ajustes = numOrNull(vi.ajustes) ?? 0;
   const divida = numOrNull(vi.divida);
   const equity = numOrNull(vi.equity);
   const kd = numOrNull(vi.kd);
@@ -283,7 +298,12 @@ serve(async (req: Request) => {
   const capAnterior = capital_giro_anterior != null ? capitalInvestido({ capital_giro: capital_giro_anterior, ativo_fixo, ajustes }).capital_investido : null;
 
   // 7) WACC (base + cenários)
-  const waccDe = (ke: KeDecomposto | null | undefined) => waccHurdle({ ke: ke ? somarKe(ke) : null, kd, divida, equity });
+  const keSoma = (ke: KeDecomposto | null | undefined): number | null => {
+    if (!ke) return null;
+    const s = somarKe(ke);
+    return Number.isFinite(s) ? s : null; // ke com componente não-finito → indisponível
+  };
+  const waccDe = (ke: KeDecomposto | null | undefined) => waccHurdle({ ke: keSoma(ke), kd, divida, equity });
   const waccBase = waccDe(keBase);
   const wacc_cenarios = {
     conservador: waccDe(keCen.conservador).wacc,
@@ -312,7 +332,12 @@ serve(async (req: Request) => {
   const confianca = scoreConfiancaValor({
     roic_null: roicRep == null, wacc_null: waccBase.wacc == null, eva_null: evaRep == null,
     capital_parcial: capRep.parcial, normalizacao_aplicada: cg.aplicado, imposto_teorico_parcial, dre_confianca,
+    ttm_parcial: ttm.count < 12,
   });
+  // Normalização muda o EBIT mas o imposto absoluto (irpj+csll) não é recomputado → NOPAT normalizado é aproximado.
+  const nopat_normalizado_aproximado = cg.aplicado && (cg.ajuste_prolabore !== 0 || cg.ajuste_aluguel !== 0);
+  const motivos = [...capRep.motivos, ...waccBase.motivos, ...cg.motivos];
+  if (giro_indisponivel) motivos.push("Sem snapshot de NCG disponível — capital de giro assumido 0 (ROIC pode estar superestimado).");
 
   const result = {
     company, regime,
@@ -333,10 +358,11 @@ serve(async (req: Request) => {
       ebit: cg.ebit_normalizado, nopat: nopatNorm, capital_investido: cg.capital_normalizado,
       roic: roicNorm, spread: spreadNorm, eva: evaNorm,
       ajuste_prolabore: cg.ajuste_prolabore, ajuste_aluguel: cg.ajuste_aluguel, ajuste_intercompany_capital: cg.ajuste_intercompany_capital,
-      aplicado: cg.aplicado,
+      aplicado: cg.aplicado, nopat_aproximado: nopat_normalizado_aproximado,
     },
     confianca,
-    motivos: [...capRep.motivos, ...waccBase.motivos, ...cg.motivos],
+    motivos,
+    valor_inputs: viStored, // echo dos inputs crus → pré-preenche o formulário (evita sobrescrita destrutiva)
   };
   return jsonResponse(result, 200);
 });

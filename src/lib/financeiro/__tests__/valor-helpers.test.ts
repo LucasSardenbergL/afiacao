@@ -288,4 +288,14 @@ describe('scoreConfiancaValor', () => {
     });
     expect(r.nivel).toBe('baixa');
   });
+
+  it('TTM parcial (<12 meses) → rebaixa para media + motivo', () => {
+    const r = scoreConfiancaValor({
+      roic_null: false, wacc_null: false, eva_null: false, capital_parcial: false,
+      normalizacao_aplicada: true, imposto_teorico_parcial: false, dre_confianca: 'alta',
+      ttm_parcial: true,
+    });
+    expect(r.nivel).toBe('media');
+    expect(r.motivos.some((m) => m.toLowerCase().includes('ttm incompleto'))).toBe(true);
+  });
 });

@@ -844,7 +844,9 @@ export interface ValorEmpresaResult {
     ebit: number; nopat: number; capital_investido: number;
     roic: number | null; spread: number | null; eva: number | null;
     ajuste_prolabore: number; ajuste_aluguel: number; ajuste_intercompany_capital: number; aplicado: boolean;
+    nopat_aproximado: boolean;
   };
   confianca: { nivel: 'alta' | 'media' | 'baixa'; motivos: string[]; roic_disponivel: boolean; wacc_disponivel: boolean; eva_disponivel: boolean; normalizado_disponivel: boolean };
   motivos: string[];
+  valor_inputs: ValorInputs;
 }

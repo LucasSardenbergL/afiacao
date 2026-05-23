@@ -22,11 +22,11 @@ Este audit valida **quais custom migrations estão de fato aplicadas no banco**.
 ## Resumo
 
 - **43** custom migrations totais
-- **282** objetos esperados (criados por estas migrations)
+- **285** objetos esperados (criados por estas migrations)
 - Quebra por tipo:
-  - `rls_policy`: 100
+  - `rls_policy`: 102
   - `index`: 81
-  - `table`: 44
+  - `table`: 45
   - `trigger`: 31
   - `function`: 22
   - `enum_value`: 4
@@ -522,7 +522,11 @@ Lista canônica do que cada migration *deveria* criar (extraído via regex de `C
 
 ### `20260523230000_fin_a2_valor_inputs.sql`
 
-> _Nenhum objeto extraído via regex._ Migration provavelmente é `ALTER TABLE` / `UPDATE` / `INSERT` / RLS-only. Validar manualmente.
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `table` | `public.fin_valor_inputs` | — |
+| `rls_policy` | `public.fin_valor_inputs_select_master` | `fin_valor_inputs` |
+| `rls_policy` | `public.fin_valor_inputs_write_master` | `fin_valor_inputs` |
 
 ## Próximos passos quando algo der `❌`
 

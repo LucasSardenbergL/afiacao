@@ -362,7 +362,10 @@ WITH expected_objects (migration, kind, schema_name, object_name, parent_name) A
   ('fin_onda1_ncg', 'rls_policy', 'public', 'fin_estoque_valor_select_staff', 'fin_estoque_valor'),
   ('fin_onda1_ncg', 'rls_policy', 'public', 'fin_estoque_valor_write_master', 'fin_estoque_valor'),
   ('scoring_visit_p1_fixes', 'function', 'public', 'enqueue_visit_score_recalc_from_visit', ''),
-  ('scoring_visit_p1_fixes', 'function', 'public', 'enqueue_visit_score_recalc_from_client_score', '')
+  ('scoring_visit_p1_fixes', 'function', 'public', 'enqueue_visit_score_recalc_from_client_score', ''),
+  ('fin_a2_valor_inputs', 'table', 'public', 'fin_valor_inputs', ''),
+  ('fin_a2_valor_inputs', 'rls_policy', 'public', 'fin_valor_inputs_select_master', 'fin_valor_inputs'),
+  ('fin_a2_valor_inputs', 'rls_policy', 'public', 'fin_valor_inputs_write_master', 'fin_valor_inputs')
 )
 SELECT
   e.migration,

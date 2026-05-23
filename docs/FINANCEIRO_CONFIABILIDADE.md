@@ -112,7 +112,7 @@ O teórico é **conferência de plausibilidade**, não verdade fiscal — o real
 
 ## 🔧 A2 — Retorno & Valor (ROIC / WACC / EVA) (2026-05-23)
 
-Camada de retorno sobre o capital empregado, pra decidir **onde colocar o próximo R$1** entre as 3 empresas. Híbrida: NOPAT e capital de giro são **computados** (reusam DRE v2 + NCG); ativo fixo, dívida, PL, Ke/Kd e normalizações são **inputs manuais** (`fin_config_cashflow.valor_inputs`), com degradação honesta. Lógica testada em `valor-helpers.ts` (vitest) e espelhada no engine `fin-valor-engine` (master-only).
+Camada de retorno sobre o capital empregado, pra decidir **onde colocar o próximo R$1** entre as 3 empresas. Híbrida: NOPAT e capital de giro são **computados** (reusam DRE v2 + NCG); ativo fixo, dívida, PL, Ke/Kd e normalizações são **inputs manuais** (tabela **`fin_valor_inputs`, RLS master-only** — dado sensível do dono não fica em `fin_config_cashflow`, legível por employee), com degradação honesta. Lógica testada em `valor-helpers.ts` (vitest) e espelhada no engine `fin-valor-engine` (master-only).
 
 | Item | Como é calculado |
 |---|---|

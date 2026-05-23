@@ -262,11 +262,13 @@ export function scoreConfiancaValor(input: {
   normalizacao_aplicada: boolean;
   imposto_teorico_parcial: boolean;
   dre_confianca: 'alta' | 'media' | 'baixa';
+  ttm_parcial?: boolean;   // janela TTM com < 12 meses de DRE (anualização parcial)
 }): ConfiancaValor {
   const motivos: string[] = [];
   let nivel = 3; // 3=alta, 2=media, 1=baixa — pega o pior sinal
   const rebaixar = (para: number, motivo: string) => { if (para < nivel) nivel = para; motivos.push(motivo); };
 
+  if (input.ttm_parcial) rebaixar(2, 'TTM incompleto (menos de 12 meses de DRE) — anualização parcial.');
   if (input.capital_parcial) rebaixar(2, 'Capital investido parcial (sem ativo fixo) — ROIC/EVA parciais.');
   if (input.wacc_null) rebaixar(2, 'WACC/EVA/spread indisponíveis (faltam dívida, PL ou Ke).');
   if (!input.normalizacao_aplicada) rebaixar(2, 'Sem normalização de comingling — só visão reportada.');

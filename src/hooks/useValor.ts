@@ -19,10 +19,14 @@ export function useUpdateValorInputs() {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: async ({ company, valor_inputs }: { company: string; valor_inputs: ValorInputs }) => {
+      // Tabela master-only dedicada (RLS exige role 'master'). upsert cobre o caso de a linha
+      // de seed não existir. O form é pré-preenchido com os inputs atuais, então o replace é seguro.
       const { error } = await supabase
-        .from('fin_config_cashflow')
-        .update({ valor_inputs: valor_inputs as unknown as Record<string, unknown> })
-        .eq('company', company);
+        .from('fin_valor_inputs')
+        .upsert(
+          { company, valor_inputs: valor_inputs as unknown as Record<string, unknown>, updated_at: new Date().toISOString() },
+          { onConflict: 'company' },
+        );
       if (error) throw error;
     },
     onSuccess: (_d, vars) => {
