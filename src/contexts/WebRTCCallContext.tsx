@@ -133,6 +133,7 @@ export function WebRTCCallProvider({ children }: ProviderProps) {
 
   const clientRef = useRef<SipClient | null>(null);
   const durationTimerRef = useRef<number | null>(null);
+  const callerIdRef = useRef<string | null>(null);
   const rawMicRef = useRef<MediaStream | null>(null);
   const prerollCloseRef = useRef<(() => void) | null>(null);
   const prerollPlayRef = useRef<(() => void) | null>(null);
@@ -156,10 +157,11 @@ export function WebRTCCallProvider({ children }: ProviderProps) {
     (async () => {
       try {
         const creds = await invokeFunction<{
-          wsUri: string; sipDomain: string; username: string; password: string;
+          wsUri: string; sipDomain: string; username: string; password: string; callerId?: string | null;
         }>('nvoip-sip-creds', {});
         if (cancelled) return;
 
+        callerIdRef.current = creds.callerId ?? null;
         const client = new SipClient(creds);
         clientRef.current = client;
 
@@ -303,6 +305,7 @@ export function WebRTCCallProvider({ children }: ProviderProps) {
         party,
         recorded: record,
         sipCallId,
+        callerIdUsed: callerIdRef.current,
       });
     }
 
