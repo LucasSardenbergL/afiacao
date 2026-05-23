@@ -23,8 +23,7 @@ export function useSaveProductSpecs() {
         approved_at: new Date().toISOString(),
       };
 
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      const { data, error } = await (supabase.from('kb_product_specs') as any)
+      const { data, error } = await supabase.from('kb_product_specs')
         .upsert(payload, { onConflict: 'product_code' })
         .select()
         .single();
