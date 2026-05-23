@@ -143,7 +143,7 @@ Deno.serve(async (req) => {
       return data.access_token;
     }
 
-    async function saveTokens(sb: any, tokenResp: any) {
+    async function saveTokens(sb: ReturnType<typeof createClient>, tokenResp: { expires_in?: number; access_token: string; refresh_token?: string }) {
       const expiresAt = Date.now() + (tokenResp.expires_in || 86400) * 1000;
 
       const upsert = async (key: string, value: string) => {

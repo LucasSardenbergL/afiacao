@@ -44,7 +44,7 @@ async function callOmie(
 }
 
 async function syncMetadadosAccount(
-  db: any,
+  db: ReturnType<typeof createClient>,
   account: OmieAccount,
 ) {
   const acctValue = getCredentials(account).label;
