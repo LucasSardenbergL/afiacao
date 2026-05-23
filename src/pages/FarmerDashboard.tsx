@@ -5,7 +5,7 @@ import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Progress } from '@/components/ui/progress';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
-import { useFarmerScoring, type ClientScore, type AgendaItem } from '@/hooks/useFarmerScoring';
+import { useFarmerScoring, type ClientScore, type AgendaItem, type AlgorithmConfig } from '@/hooks/useFarmerScoring';
 import { useFarmerMetrics } from '@/hooks/useFarmerMetrics';
 import { useAuth } from '@/contexts/AuthContext';
 import {
@@ -361,7 +361,7 @@ const WeightBar = ({ label, value, color = 'bg-primary' }: { label: string; valu
   </div>
 );
 
-const ClientDetail = ({ client, onBack, config }: { client: ClientScore; onBack: () => void; config: any }) => {
+const ClientDetail = ({ client, onBack, config }: { client: ClientScore; onBack: () => void; config: AlgorithmConfig }) => {
   const hc = healthColors[client.healthClass] || healthColors.critico;
   return (
     <div className="space-y-3">

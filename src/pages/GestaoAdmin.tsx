@@ -46,7 +46,7 @@ function KpiCards({ empresa }: { empresa: string }) {
   const { data } = useQuery({
     queryKey: ["gestao-admin-kpis", empresa],
     queryFn: async () => {
-      const client = supabase as unknown as { from: (t: string) => any };
+      const client = supabase as unknown as { from: (t: string) => ReturnType<typeof supabase.from> };
 
       const countWhere = (table: string, col?: string, val?: string) =>
         safeQuery(async () => {
