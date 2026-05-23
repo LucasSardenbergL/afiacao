@@ -397,6 +397,23 @@
     "src/components/financeiro/dashboard/AgingCard.tsx",
     "src/components/financeiro/dashboard/FluxoCaixaTab.tsx",
     "src/components/financeiro/dashboard/DRETab.tsx",
-    "src/components/financeiro/dashboard/DREComparativo.tsx"
+    "src/components/financeiro/dashboard/DREComparativo.tsx",
+    "src/types/call-log.ts",
+    "src/types/index.ts",
+    "src/types/reposicao.ts",
+    "src/lib/analytics.ts",
+    "src/lib/offline-queue.ts",
+    "src/lib/call-log/build-insert.ts",
+    "src/lib/call-log/record.ts",
+    "src/lib/call-log/recording-policy.ts",
+    "src/lib/dashboard/persona-detect.ts",
+    "src/lib/dashboard/route-tracker.ts",
+    "src/lib/financeiro/aging-helpers.ts",
+    "src/lib/financeiro/dre-helpers.ts",
+    "src/lib/financeiro/dre-tabelas-tributarias.ts",
+    "src/lib/financeiro/ncg-helpers.ts",
+    "src/lib/knowledge-base/calculate-rendimento.ts",
+    "src/lib/knowledge-base/specs-types.ts",
+    "src/lib/reposicao/sku-param.ts"
   ]
 }
