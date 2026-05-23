@@ -73,13 +73,14 @@ CREATE POLICY "call_log team select" ON public.call_log FOR SELECT
     )
   );
 
--- Backstop de perdidas: aba fechou no toque → marca ringing antigo como missed
+-- Backstop de perdidas: aba fechou no toque → marca ringing antigo como terminal.
+-- Inbound vira 'missed'; outbound vira 'failed' (ex: aba fechada antes do callState terminal).
 SELECT cron.schedule(
   'call-log-missed-backstop',
   '* * * * *',
   $$UPDATE public.call_log
-      SET status = 'missed'
-      WHERE direction = 'inbound'
-        AND status = 'ringing'
+      SET status = CASE WHEN direction = 'inbound' THEN 'missed'::public.call_status ELSE 'failed'::public.call_status END,
+          ended_at = COALESCE(ended_at, now())
+      WHERE status = 'ringing'
         AND started_at < now() - interval '90 seconds'$$
 );

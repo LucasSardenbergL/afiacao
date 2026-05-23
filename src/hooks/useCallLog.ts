@@ -7,7 +7,7 @@ import type { CallLogRow, CallDirection, CallStatus } from '@/types/call-log';
 export type CallLogTab = 'recentes' | 'recebidas' | 'perdidas' | 'feitas' | 'time';
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
-function applyTab(query: any, tab: CallLogTab, userId: string) {
+function applyTab(query: any, tab: CallLogTab) {
   switch (tab) {
     case 'recebidas': return query.eq('direction', 'inbound').neq('status', 'missed');
     case 'perdidas': return query.eq('direction', 'inbound').eq('status', 'missed');
@@ -26,7 +26,7 @@ export function useCallLog(tab: CallLogTab, userId: string | undefined) {
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       let q: any = (supabase.from('call_log') as any).select('*').order('started_at', { ascending: false }).limit(50);
       if (tab !== 'time') q = q.eq('farmer_id', userId);
-      q = applyTab(q, tab, userId!);
+      q = applyTab(q, tab);
       const { data, error } = await q;
       if (error) throw error;
       return (data ?? []) as CallLogRow[];

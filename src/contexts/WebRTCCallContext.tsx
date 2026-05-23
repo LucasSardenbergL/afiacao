@@ -223,6 +223,24 @@ export function WebRTCCallProvider({ children }: ProviderProps) {
     }
   }, [callState]);
 
+  // Telefonia — fecha o call_log do outbound quando a chamada termina por QUALQUER via
+  // (no-answer, busy, failed, error ou remote hangup), não só pelo botão "Encerrar" (endCall).
+  // Sem isso, linhas outbound ficavam presas em 'ringing' pra sempre (o cron backstop só varria inbound).
+  // Não duplica vs endCall: endCall já zera dialedSipCallIdRef.current antes do hangUp(), então
+  // quando o hangUp dispara o stateChange terminal o guard abaixo vira no-op. E logClosed é
+  // idempotente (.neq('status','ended')). Inbound não passa por aqui (dialedSipCallIdRef fica null).
+  useEffect(() => {
+    const TERMINAL: WebRTCCallState[] = ['finished', 'noanswer', 'busy', 'failed', 'error'];
+    if (TERMINAL.includes(callState) && dialedSipCallIdRef.current) {
+      const sid = dialedSipCallIdRef.current;
+      dialedSipCallIdRef.current = null;
+      const durationSeconds = clientRef.current?.getCallDurationSeconds() ?? 0;
+      const answered = durationSeconds > 0;
+      if (answered) void logAnswered(sid);
+      void logClosed(sid, { answered, durationSeconds });
+    }
+  }, [callState]);
+
   /**
    * Timing fix: dispara o pre-roll APENAS quando o cliente atende ('established').
    * Se chamássemos play() em makeCall (antes do INVITE), o áudio tocaria durante
