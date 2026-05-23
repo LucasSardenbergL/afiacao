@@ -2,7 +2,9 @@ import { useState, useEffect } from 'react';
 import { useAuth } from '@/contexts/AuthContext';
 import { supabase } from '@/integrations/supabase/client';
 
-export type CommercialRole = 'operacional' | 'gerencial' | 'estrategico' | 'super_admin';
+export type CommercialRole =
+  | 'operacional' | 'gerencial' | 'estrategico' | 'super_admin'
+  | 'farmer' | 'hunter' | 'closer' | 'master';
 
 interface UseCommercialRoleReturn {
   commercialRole: CommercialRole | null;
