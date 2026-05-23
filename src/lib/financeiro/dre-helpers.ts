@@ -188,3 +188,34 @@ export function montarDRE(input: { regime: RegimeTributario; totais: Record<stri
     impostos: impostoLucro, resultado_liquido, detalhamento_impostos,
   };
 }
+
+export type Confianca = { nivel: 'alta' | 'media' | 'baixa'; motivos: string[]; pct_mapeado_valor: number; fallback_pct: number };
+
+export function scoreConfianca(input: {
+  pct_mapeado_valor: number;   // [0,1] receita+despesa mapeada por valor
+  fallback_pct: number;        // [0,1] valor do caixa que usou fallback de vencimento
+  share_generico: number;      // [0,1] categorias genéricas (outros/diversos/ajuste) por valor
+  tem_imposto_nao_mapeado: boolean;
+}): Confianca {
+  const motivos: string[] = [];
+  // 'alta' = 3, 'media' = 2, 'baixa' = 1 — pega o pior sinal.
+  let nivel = 3;
+  const rebaixar = (para: number, motivo: string) => { if (para < nivel) nivel = para; motivos.push(motivo); };
+
+  if (input.pct_mapeado_valor < 0.8) rebaixar(1, `Só ${(input.pct_mapeado_valor * 100).toFixed(0)}% do valor está mapeado por categoria.`);
+  else if (input.pct_mapeado_valor < 0.9) rebaixar(2, `${(input.pct_mapeado_valor * 100).toFixed(0)}% do valor mapeado (ideal ≥90%).`);
+
+  if (input.fallback_pct > 0.2) rebaixar(1, `${(input.fallback_pct * 100).toFixed(0)}% do caixa usou data de vencimento (fallback) — direcional.`);
+  else if (input.fallback_pct > 0.1) rebaixar(2, `${(input.fallback_pct * 100).toFixed(0)}% do caixa usou fallback de vencimento.`);
+
+  if (input.share_generico > 0.15) rebaixar(2, `${(input.share_generico * 100).toFixed(0)}% em categorias genéricas (outros/diversos/ajuste).`);
+
+  if (input.tem_imposto_nao_mapeado) rebaixar(2, 'Categoria de imposto classificada por heurística (não mapeada).');
+
+  return {
+    nivel: nivel === 3 ? 'alta' : nivel === 2 ? 'media' : 'baixa',
+    motivos,
+    pct_mapeado_valor: input.pct_mapeado_valor,
+    fallback_pct: input.fallback_pct,
+  };
+}

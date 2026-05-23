@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { classificarLinhaDRE, REGIME_POR_EMPRESA, resolverDataCaixa, bucketizarCaixa, montarDRE } from '../dre-helpers';
+import { classificarLinhaDRE, REGIME_POR_EMPRESA, resolverDataCaixa, bucketizarCaixa, montarDRE, scoreConfianca } from '../dre-helpers';
 
 const M = (pairs: Array<[string, string]>) => new Map<string, string>(pairs);
 
@@ -141,5 +141,27 @@ describe('montarDRE — Simples', () => {
     expect(r.impostos).toBe(0);
     expect(r.resultado_liquido).toBe(r.resultado_antes_impostos);
     expect(r.detalhamento_impostos).toEqual({ das: 6000 });
+  });
+});
+
+describe('scoreConfianca', () => {
+  it('tudo bom → alta', () => {
+    const r = scoreConfianca({ pct_mapeado_valor: 0.98, fallback_pct: 0.02, share_generico: 0.01, tem_imposto_nao_mapeado: false });
+    expect(r.nivel).toBe('alta');
+    expect(r.motivos).toEqual([]);
+  });
+  it('fallback alto rebaixa pra media (>10%) e baixa (>20%)', () => {
+    expect(scoreConfianca({ pct_mapeado_valor: 0.98, fallback_pct: 0.15, share_generico: 0, tem_imposto_nao_mapeado: false }).nivel).toBe('media');
+    expect(scoreConfianca({ pct_mapeado_valor: 0.98, fallback_pct: 0.25, share_generico: 0, tem_imposto_nao_mapeado: false }).nivel).toBe('baixa');
+  });
+  it('pouco mapeado por valor rebaixa', () => {
+    const r = scoreConfianca({ pct_mapeado_valor: 0.7, fallback_pct: 0, share_generico: 0, tem_imposto_nao_mapeado: false });
+    expect(r.nivel).toBe('baixa');
+    expect(r.motivos.some(m => m.includes('mapead'))).toBe(true);
+  });
+  it('imposto não mapeado vira motivo (rebaixa pra no máximo media)', () => {
+    const r = scoreConfianca({ pct_mapeado_valor: 0.98, fallback_pct: 0, share_generico: 0, tem_imposto_nao_mapeado: true });
+    expect(r.nivel).toBe('media');
+    expect(r.motivos.some(m => m.toLowerCase().includes('imposto'))).toBe(true);
   });
 });
