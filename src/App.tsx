@@ -14,6 +14,7 @@ import { ConditionalWebRTCProvider } from "@/contexts/ConditionalWebRTCProvider"
 import { ProtectedRoute } from "@/components/ProtectedRoute";
 import { NotificationPrompt } from "@/components/NotificationPrompt";
 import { AppShellLayout } from "@/components/AppShellLayout";
+import { RequireAccess } from "@/components/access/RequireAccess";
 import { PageSkeleton } from "@/components/ui/page-skeleton";
 
 // Lazy-loaded pages
@@ -206,11 +207,15 @@ const App = () => (
               <Route path="tools/:toolId/reports" element={<ToolReports />} />
               <Route path="support" element={<Support />} />
               <Route path="admin" element={<Admin />} />
-              <Route path="admin/approvals" element={<AdminApprovals />} />
-              <Route path="admin/departments" element={<AdminDepartments />} />
-              <Route path="admin/customers" element={<AdminCustomers />} />
-              <Route path="admin/customers/:customerId" element={<AdminCustomers />} />
-              <Route path="admin/customers/:customerId/360" element={<Customer360 />} />
+              <Route element={<RequireAccess section="gestao_admin" />}>
+                <Route path="admin/approvals" element={<AdminApprovals />} />
+                <Route path="admin/departments" element={<AdminDepartments />} />
+              </Route>
+              <Route element={<RequireAccess section="clientes" />}>
+                <Route path="admin/customers" element={<AdminCustomers />} />
+                <Route path="admin/customers/:customerId" element={<AdminCustomers />} />
+                <Route path="admin/customers/:customerId/360" element={<Customer360 />} />
+              </Route>
               <Route path="admin/orders/:id" element={<AdminOrderDetail />} />
               <Route path="admin/orders/:id/quality" element={<QualityChecklist />} />
               <Route path="admin/demand-forecast" element={<AdminDemandForecast />} />
@@ -252,40 +257,53 @@ const App = () => (
               <Route path="coaching" element={<CoachingSPIN />} />
               <Route path="settings" element={<SettingsConfig />} />
               <Route path="docs" element={<TechnicalDocs />} />
-              <Route path="intelligence" element={<IntelligenceDashboard />} />
-              <Route path="governance/users" element={<GovernanceUsers />} />
-              <Route path="governance/permissions" element={<GovernancePermissions />} />
-              <Route path="governance/math" element={<GovernanceMathParams />} />
-              <Route path="governance/audit" element={<GovernanceAudit />} />
-              <Route path="governance/settings" element={<GovernanceSettings />} />
-              <Route path="governance/companies" element={<GovernanceCompanies />} />
-              <Route path="ai-ops" element={<AIops />} />
+              <Route element={<RequireAccess section="inteligencia" />}>
+                <Route path="intelligence" element={<IntelligenceDashboard />} />
+              </Route>
+              <Route element={<RequireAccess section="gestao_admin" />}>
+                <Route path="governance/users" element={<GovernanceUsers />} />
+                <Route path="governance/permissions" element={<GovernancePermissions />} />
+                <Route path="governance/math" element={<GovernanceMathParams />} />
+                <Route path="governance/audit" element={<GovernanceAudit />} />
+                <Route path="governance/settings" element={<GovernanceSettings />} />
+                <Route path="governance/companies" element={<GovernanceCompanies />} />
+              </Route>
+              <Route element={<RequireAccess section="inteligencia" />}>
+                <Route path="ai-ops" element={<AIops />} />
+              </Route>
               <Route path="nfe-receipt" element={<NfeReceipt />} />
-              <Route path="tintometrico" element={<TintDashboard />} />
-              <Route path="tintometrico/importar" element={<TintImport />} />
-              <Route path="tintometrico/mapeamento" element={<TintMapping />} />
-              <Route path="tintometrico/precos" element={<TintPricing />} />
-              <Route path="tintometrico/formulas" element={<TintFormulas />} />
-              <Route path="tintometrico/corantes" element={<TintCorantes />} />
-              <Route path="tintometrico/integracoes" element={<TintIntegrations />} />
-              <Route path="tintometrico/reconciliacao" element={<TintReconciliation />} />
-              <Route path="tintometrico/sync-runs" element={<TintSyncRuns />} />
-              <Route path="tintometrico/api-contract" element={<TintApiContract />} />
-              <Route path="financeiro" element={<FinanceiroDashboard />} />
-              <Route path="financeiro/sync" element={<FinanceiroSync />} />
-              <Route path="financeiro/mapping" element={<FinanceiroMapping />} />
-              <Route path="financeiro/capital-giro" element={<FinanceiroCapitalGiro />} />
-              <Route path="financeiro/fechamento" element={<FinanceiroFechamento />} />
-              <Route path="financeiro/analytics" element={<FinanceiroAnalytics />} />
-              <Route path="financeiro/cockpit" element={<FinanceiroCockpit />} />
-              <Route path="financeiro/conciliacao" element={<FinanceiroConciliacao />} />
-              <Route path="financeiro/orcamento" element={<FinanceiroOrcamento />} />
-              <Route path="financeiro/intercompany" element={<FinanceiroIntercompany />} />
-              <Route path="financeiro/intercompany/fila" element={<FinanceiroIntercompanyFila />} />
-              <Route path="financeiro/tributario" element={<FinanceiroTributario />} />
-              <Route path="recebimento" element={<Recebimento />} />
-              <Route path="recebimento/:id" element={<RecebimentoConferencia />} />
-              <Route path="producao" element={<ProductionOrders />} />
+              <Route element={<RequireAccess section="tintometrico_cockpit" />}>
+                <Route path="tintometrico" element={<TintDashboard />} />
+                <Route path="tintometrico/importar" element={<TintImport />} />
+                <Route path="tintometrico/mapeamento" element={<TintMapping />} />
+                <Route path="tintometrico/precos" element={<TintPricing />} />
+                <Route path="tintometrico/formulas" element={<TintFormulas />} />
+                <Route path="tintometrico/corantes" element={<TintCorantes />} />
+                <Route path="tintometrico/integracoes" element={<TintIntegrations />} />
+                <Route path="tintometrico/reconciliacao" element={<TintReconciliation />} />
+                <Route path="tintometrico/sync-runs" element={<TintSyncRuns />} />
+                <Route path="tintometrico/api-contract" element={<TintApiContract />} />
+              </Route>
+              <Route element={<RequireAccess section="financeiro" />}>
+                <Route path="financeiro" element={<FinanceiroDashboard />} />
+                <Route path="financeiro/sync" element={<FinanceiroSync />} />
+                <Route path="financeiro/mapping" element={<FinanceiroMapping />} />
+                <Route path="financeiro/capital-giro" element={<FinanceiroCapitalGiro />} />
+                <Route path="financeiro/fechamento" element={<FinanceiroFechamento />} />
+                <Route path="financeiro/analytics" element={<FinanceiroAnalytics />} />
+                <Route path="financeiro/cockpit" element={<FinanceiroCockpit />} />
+                <Route path="financeiro/conciliacao" element={<FinanceiroConciliacao />} />
+                <Route path="financeiro/orcamento" element={<FinanceiroOrcamento />} />
+                <Route path="financeiro/intercompany" element={<FinanceiroIntercompany />} />
+                <Route path="financeiro/intercompany/fila" element={<FinanceiroIntercompanyFila />} />
+                <Route path="financeiro/tributario" element={<FinanceiroTributario />} />
+              </Route>
+              <Route element={<RequireAccess section="operacao" />}>
+                <Route path="recebimento" element={<Recebimento />} />
+                <Route path="recebimento/:id" element={<RecebimentoConferencia />} />
+                <Route path="producao" element={<ProductionOrders />} />
+              </Route>
+              <Route element={<RequireAccess section="reposicao" />}>
               <Route path="admin/reposicao/revisao" element={<AdminReposicaoRevisao />} />
               <Route path="admin/reposicao/historico" element={<AdminReposicaoHistorico />} />
               <Route path="admin/reposicao/alertas" element={<AdminReposicaoAlertas />} />
@@ -318,21 +336,34 @@ const App = () => (
               <Route path="admin/reposicao/mercado" element={<Navigate to="/admin/reposicao/sessao/mercado" replace />} />
               <Route path="admin/reposicao/parametros" element={<Navigate to="/admin/reposicao/sessao/parametros" replace />} />
               <Route path="admin/reposicao/cadastros" element={<AdminReposicaoCadastros />} />
-              <Route path="admin/estoque/recebimento" element={<AdminEstoqueRecebimento />} />
-              <Route path="admin/estoque/picking" element={<AdminEstoquePicking />} />
-              <Route path="admin/estoque/picking/mobile" element={<TouchPickingView />} />
-              <Route path="financeiro/gestao" element={<FinanceiroGestao />} />
-              <Route path="financeiro/analise" element={<FinanceiroAnalise />} />
-              <Route path="tintometrico/catalogo" element={<TintCatalogo />} />
-              <Route path="tintometrico/integracao" element={<TintIntegracao />} />
-              <Route path="performance" element={<PerformanceHub />} />
+              </Route>
+              <Route element={<RequireAccess section="operacao" />}>
+                <Route path="admin/estoque/recebimento" element={<AdminEstoqueRecebimento />} />
+                <Route path="admin/estoque/picking" element={<AdminEstoquePicking />} />
+                <Route path="admin/estoque/picking/mobile" element={<TouchPickingView />} />
+              </Route>
+              <Route element={<RequireAccess section="financeiro" />}>
+                <Route path="financeiro/gestao" element={<FinanceiroGestao />} />
+                <Route path="financeiro/analise" element={<FinanceiroAnalise />} />
+              </Route>
+              <Route element={<RequireAccess section="tintometrico_cockpit" />}>
+                <Route path="tintometrico/catalogo" element={<TintCatalogo />} />
+                <Route path="tintometrico/integracao" element={<TintIntegracao />} />
+              </Route>
+              <Route element={<RequireAccess section="performance" />}>
+                <Route path="performance" element={<PerformanceHub />} />
+              </Route>
               <Route path="vendas/ferramentas" element={<VendasFerramentas />} />
-              <Route path="gestao/admin" element={<GestaoAdmin />} />
-              <Route path="gestao/governanca" element={<GestaoGovernanca />} />
+              <Route element={<RequireAccess section="gestao_admin" />}>
+                <Route path="gestao/admin" element={<GestaoAdmin />} />
+                <Route path="gestao/governanca" element={<GestaoGovernanca />} />
+              </Route>
               <Route path="admin/ajuda" element={<AdminAjuda />} />
               <Route path="admin/des/trimestre-atual" element={<AdminDesTrimestreAtual />} />
-              <Route path="admin/notificacoes" element={<AdminNotificacoes />} />
-              <Route path="admin/portal-sayerlack" element={<AdminPortalSayerlack />} />
+              <Route element={<RequireAccess section="gestao_admin" />}>
+                <Route path="admin/notificacoes" element={<AdminNotificacoes />} />
+                <Route path="admin/portal-sayerlack" element={<AdminPortalSayerlack />} />
+              </Route>
               <Route path="admin/sip-credentials" element={<AdminVendorSipCredentials />} />
               <Route path="admin/knowledge-base" element={<AdminKnowledgeBase />} />
               <Route path="admin/knowledge-base/:id" element={<AdminKnowledgeBaseDetail />} />
