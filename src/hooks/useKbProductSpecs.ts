@@ -9,8 +9,7 @@ export function useKbProductSpecs(productCode: string | undefined | null) {
     staleTime: 60_000,
     queryFn: async (): Promise<KbProductSpec | null> => {
       if (!productCode) return null;
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      const { data, error } = await (supabase.from('kb_product_specs') as any)
+      const { data, error } = await supabase.from('kb_product_specs')
         .select('*')
         .eq('product_code', productCode)
         .maybeSingle();

@@ -18,8 +18,7 @@ export default function AdminKnowledgeBaseDetail() {
     queryKey: ['kb-document', id],
     enabled: !!id,
     queryFn: async (): Promise<KbDocument | null> => {
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      const { data, error } = await (supabase.from('kb_documents') as any)
+      const { data, error } = await supabase.from('kb_documents')
         .select('*')
         .eq('id', id!)
         .single();
@@ -34,8 +33,7 @@ export default function AdminKnowledgeBaseDetail() {
     queryKey: ['kb-chunks-count', id],
     enabled: !!id,
     queryFn: async () => {
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      const { count } = await (supabase.from('kb_chunks') as any)
+      const { count } = await supabase.from('kb_chunks')
         .select('*', { count: 'exact', head: true })
         .eq('document_id', id);
       return count ?? 0;
