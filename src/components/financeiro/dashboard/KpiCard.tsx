@@ -1,12 +1,13 @@
 // Card de KPI do dashboard financeiro.
 // Extraído de src/pages/FinanceiroDashboard.tsx (god-component split).
 import { Card, CardContent } from '@/components/ui/card';
+import type { LucideIcon } from 'lucide-react';
 import { fmtCompact } from '@/components/financeiro/dashboard/format';
 
 export function KpiCard({ title, value, icon: Icon, color, bgColor, subtitle, subtitleColor }: {
   title: string;
   value: number;
-  icon: any;
+  icon: LucideIcon;
   color: string;
   bgColor: string;
   subtitle?: string;

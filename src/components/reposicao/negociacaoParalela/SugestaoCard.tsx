@@ -1,8 +1,6 @@
-// Card de uma sugestão de negociação paralela (grid de sugestões).
+// Card de sugestão ativa da tela de negociação paralela.
 // Extraído de src/pages/AdminReposicaoNegociacaoParalela.tsx (god-component split).
-// Presentational: recebe a sugestão + o ranking-extra já resolvido + callbacks.
-// Os handlers de estado/mutação ficam na página.
-import { Eye, MoreVertical, Handshake } from "lucide-react";
+// Apresentacional: recebe a sugestão + callbacks; não detém estado próprio.
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -14,16 +12,28 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
+import { Eye, MoreVertical, Handshake } from "lucide-react";
 import { cn } from "@/lib/utils";
-import type { Sugestao, RankingRow } from "./types";
 import {
-  formatBRL,
-  formatPerc,
   categoriaBadgeClass,
   categoriaLabel,
   statusBadgeClass,
   statusLabel,
+  formatBRL,
+  formatPerc,
 } from "./helpers";
+import type { Sugestao, RankingRow } from "./types";
+
+interface SugestaoCardProps {
+  s: Sugestao;
+  rankingExtra: RankingRow | undefined;
+  onMarcarVisualizada: (s: Sugestao) => void;
+  onIrAoRanking: (s: Sugestao) => void;
+  onMarcarEmAndamento: (s: Sugestao) => void;
+  onIgnorar: (s: Sugestao) => void;
+  onFecharSemAcordo: (s: Sugestao) => void;
+  onConverter: (s: Sugestao) => void;
+}
 
 export function SugestaoCard({
   s,
@@ -34,21 +44,12 @@ export function SugestaoCard({
   onIgnorar,
   onFecharSemAcordo,
   onConverter,
-}: {
-  s: Sugestao;
-  rankingExtra: RankingRow | undefined;
-  onMarcarVisualizada: (s: Sugestao) => void;
-  onIrAoRanking: (s: Sugestao) => void;
-  onMarcarEmAndamento: (s: Sugestao) => void;
-  onIgnorar: (s: Sugestao) => void;
-  onFecharSemAcordo: (s: Sugestao) => void;
-  onConverter: (s: Sugestao) => void;
-}) {
+}: SugestaoCardProps) {
   const numCompras = rankingExtra?.num_compras_12m ?? null;
   const mesesCompra = rankingExtra?.meses_com_compra ?? null;
   const score = Number(s.score_final ?? 0);
   return (
-    <Card key={s.id} className="flex flex-col">
+    <Card className="flex flex-col">
       <CardHeader className="pb-3">
         <div className="flex items-start justify-between gap-2">
           {s.categoria && s.categoria !== "fraco" ? (

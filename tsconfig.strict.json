@@ -379,6 +379,8 @@
     "src/components/reposicao/negociacaoParalela/types.ts",
     "src/components/reposicao/negociacaoParalela/helpers.ts",
     "src/components/reposicao/negociacaoParalela/SugestaoCard.tsx",
+    "src/components/reposicao/negociacaoParalela/RankingTable.tsx",
+    "src/components/reposicao/negociacaoParalela/dialogs.tsx",
     "src/components/reposicao/aumentoDetail/DetalhesTab.tsx",
     "src/components/reposicao/aumentoDetail/CategoriasTab.tsx",
     "src/components/reposicao/aumentoDetail/SkusAfetadosTab.tsx",
@@ -386,6 +388,11 @@
     "src/pages/AdminMonthlyReports.tsx",
     "src/pages/NfeReceipt.tsx",
     "src/pages/ResetPassword.tsx",
-    "src/components/portalSayerlack/PortalDetailDrawer.tsx"
+    "src/components/portalSayerlack/PortalDetailDrawer.tsx",
+    "src/components/financeiro/dashboard/KpiCard.tsx",
+    "src/components/financeiro/dashboard/AgingCard.tsx",
+    "src/components/financeiro/dashboard/FluxoCaixaTab.tsx",
+    "src/components/financeiro/dashboard/DRETab.tsx",
+    "src/components/financeiro/dashboard/DREComparativo.tsx"
   ]
 }
