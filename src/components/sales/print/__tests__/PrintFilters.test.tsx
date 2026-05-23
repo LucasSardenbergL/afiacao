@@ -5,7 +5,10 @@ import { PrintFilters } from '../PrintFilters';
 function noop() { /* */ }
 
 describe('PrintFilters', () => {
-  it('renderiza tabs de período e badges das empresas', () => {
+  // findByText (re-tenta ~1s) em vez de getByText (consulta imediata): tolera
+  // atraso de render/commit do React 18 sob carga paralela do suite completo —
+  // mitiga flake raro (~5%) observado só no `bun run test` inteiro.
+  it('renderiza tabs de período e badges das empresas', async () => {
     render(
       <PrintFilters
         selectedDate={new Date('2026-01-15T12:00:00')}
@@ -16,15 +19,15 @@ describe('PrintFilters', () => {
         toggleCompany={noop}
       />
     );
-    expect(screen.getByText('Todos')).toBeTruthy();
-    expect(screen.getByText('Manhã')).toBeTruthy();
-    expect(screen.getByText('Tarde')).toBeTruthy();
-    expect(screen.getByText('Oben')).toBeTruthy();
-    expect(screen.getByText('Colacor')).toBeTruthy();
-    expect(screen.getByText('Afiação')).toBeTruthy();
+    expect(await screen.findByText('Todos')).toBeTruthy();
+    expect(await screen.findByText('Manhã')).toBeTruthy();
+    expect(await screen.findByText('Tarde')).toBeTruthy();
+    expect(await screen.findByText('Oben')).toBeTruthy();
+    expect(await screen.findByText('Colacor')).toBeTruthy();
+    expect(await screen.findByText('Afiação')).toBeTruthy();
   });
 
-  it('clicar no badge de empresa chama toggleCompany', () => {
+  it('clicar no badge de empresa chama toggleCompany', async () => {
     const toggleCompany = vi.fn();
     render(
       <PrintFilters
@@ -36,7 +39,7 @@ describe('PrintFilters', () => {
         toggleCompany={toggleCompany}
       />
     );
-    fireEvent.click(screen.getByText('Colacor'));
+    fireEvent.click(await screen.findByText('Colacor'));
     expect(toggleCompany).toHaveBeenCalledWith('colacor');
   });
 });
