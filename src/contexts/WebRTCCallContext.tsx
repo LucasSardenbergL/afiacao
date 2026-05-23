@@ -12,6 +12,8 @@ import { useSpinAnalysis } from '@/hooks/useSpinAnalysis';
 import type { SpinAnalysis, SpinAnalysisStatus } from '@/lib/spin/types';
 import { resolveCustomerByPhone } from '@/lib/call-session/resolve-customer';
 import { buildSessionPayload } from '@/lib/call-session/build-session-payload';
+import { resolveCallParty, shouldAutoRecord } from '@/lib/call-log/recording-policy';
+import { logCallStart, logAnswered, logClosed, enrichCallLog, markRecorded } from '@/lib/call-log/record';
 
 export type WebRTCCallState =
   | 'idle' | 'connecting' | 'calling_origin' | 'calling_destination'
@@ -35,7 +37,7 @@ export interface WebRTCCallContextValue {
   callId: string | null;
   callDuration: number;
   audioLink: string | null;
-  makeCall: (phoneNumber: string) => Promise<void>;
+  makeCall: (phoneNumber: string, opts?: { forceRecord?: boolean }) => Promise<void>;
   endCall: () => Promise<void>;
   isActive: boolean;
   isConnecting: boolean;
@@ -131,6 +133,7 @@ export function WebRTCCallProvider({ children }: ProviderProps) {
 
   const clientRef = useRef<SipClient | null>(null);
   const durationTimerRef = useRef<number | null>(null);
+  const callerIdRef = useRef<string | null>(null);
   const rawMicRef = useRef<MediaStream | null>(null);
   const prerollCloseRef = useRef<(() => void) | null>(null);
   const prerollPlayRef = useRef<(() => void) | null>(null);
@@ -142,6 +145,12 @@ export function WebRTCCallProvider({ children }: ProviderProps) {
   const analysisHistoryRef = useRef<SpinAnalysis[]>([]);
   const dialedPhoneRef = useRef<string>('');
   const callStartedAtRef = useRef<Date | null>(null);
+  // Telefonia — call_log do outbound + gate de gravação
+  const dialedSipCallIdRef = useRef<string | null>(null);
+  const recordingRef = useRef<boolean>(false);
+  // userId capturado no init — evita await de getUser no caminho quente do inbound
+  // (reduz a janela em que um incomingClosed rápido correria na frente do insert).
+  const currentUserIdRef = useRef<string | null>(null);
   // Ref atualizado por effect pra evitar problema de hoisting com transcription
   // (transcription é declarado depois dos useCallbacks)
   const turnsRef = useRef<TranscriptTurn[]>([]);
@@ -151,10 +160,14 @@ export function WebRTCCallProvider({ children }: ProviderProps) {
     (async () => {
       try {
         const creds = await invokeFunction<{
-          wsUri: string; sipDomain: string; username: string; password: string;
+          wsUri: string; sipDomain: string; username: string; password: string; callerId?: string | null;
         }>('nvoip-sip-creds', {});
         if (cancelled) return;
 
+        callerIdRef.current = creds.callerId ?? null;
+        const { data: { user: initUser } } = await supabase.auth.getUser();
+        if (cancelled) return;
+        currentUserIdRef.current = initUser?.id ?? null;
         const client = new SipClient(creds);
         clientRef.current = client;
 
@@ -162,7 +175,30 @@ export function WebRTCCallProvider({ children }: ProviderProps) {
         client.on('localStream', (s) => setLocalStream(s));
         client.on('remoteStream', (s) => setRemoteStream(s));
         // PR-INBOUND-CALLS: emite quando chamada entra
-        client.on('incomingCall', (info) => setIncomingCall(info));
+        client.on('incomingCall', async (info) => {
+          setIncomingCall(info);
+          const uid = currentUserIdRef.current;
+          if (!uid) return;
+          // Insere ASAP (sem BINA) pra um incomingClosed rápido achar a linha.
+          await logCallStart({
+            farmerId: uid,
+            direction: 'inbound',
+            provider: 'nvoip_sip',
+            phoneRaw: info.phone,
+            party: { kind: 'desconhecido', customerUserId: null, matchConfidence: 'none', phoneNormalized: normalizeBrPhone(info.phone) },
+            recorded: false,
+            sipCallId: info.sipCallId,
+          });
+          // Enriquece com BINA (query mais lenta) — não bloqueia o ring.
+          const party = await resolveCallParty(info.phone);
+          if (party.customerUserId) {
+            await enrichCallLog(info.sipCallId, party, shouldAutoRecord(party.kind));
+          }
+        });
+        // PR-INBOUND-CALLS: fecha a linha do call_log (atendida/perdida)
+        client.on('incomingClosed', async ({ sipCallId, answered, durationSeconds }) => {
+          await logClosed(sipCallId, { answered, durationSeconds });
+        });
         client.on('error', (e) => {
           setError(e.message);
           toast.error('Erro WebRTC', { description: e.message });
@@ -191,9 +227,32 @@ export function WebRTCCallProvider({ children }: ProviderProps) {
       durationTimerRef.current = window.setInterval(() => {
         setCallDuration((d) => d + 1);
       }, 1000);
+      // Telefonia — marca a linha outbound como 'answered' assim que conecta. Sem isso a
+      // linha fica 'ringing' a chamada inteira e o cron backstop (90s) marca uma chamada
+      // VIVA como 'failed'. logAnswered é idempotente (WHERE status='ringing') e o cron só
+      // toca em 'ringing' → não falha chamada ativa. O fechamento terminal ainda seta 'ended'.
+      if (dialedSipCallIdRef.current) void logAnswered(dialedSipCallIdRef.current);
     } else if (callState !== 'established' && durationTimerRef.current) {
       clearInterval(durationTimerRef.current);
       durationTimerRef.current = null;
+    }
+  }, [callState]);
+
+  // Telefonia — fecha o call_log do outbound quando a chamada termina por QUALQUER via
+  // (no-answer, busy, failed, error ou remote hangup), não só pelo botão "Encerrar" (endCall).
+  // Sem isso, linhas outbound ficavam presas em 'ringing' pra sempre (o cron backstop só varria inbound).
+  // Não duplica vs endCall: endCall já zera dialedSipCallIdRef.current antes do hangUp(), então
+  // quando o hangUp dispara o stateChange terminal o guard abaixo vira no-op. E logClosed é
+  // idempotente (.neq('status','ended')). Inbound não passa por aqui (dialedSipCallIdRef fica null).
+  useEffect(() => {
+    const TERMINAL: WebRTCCallState[] = ['finished', 'noanswer', 'busy', 'failed', 'error'];
+    if (TERMINAL.includes(callState) && dialedSipCallIdRef.current) {
+      const sid = dialedSipCallIdRef.current;
+      dialedSipCallIdRef.current = null;
+      const durationSeconds = clientRef.current?.getCallDurationSeconds() ?? 0;
+      const answered = durationSeconds > 0;
+      if (answered) void logAnswered(sid);
+      void logClosed(sid, { answered, durationSeconds });
     }
   }, [callState]);
 
@@ -245,7 +304,7 @@ export function WebRTCCallProvider({ children }: ProviderProps) {
     }
   }
 
-  const makeCall = useCallback(async (phoneNumber: string) => {
+  const makeCall = useCallback(async (phoneNumber: string, opts?: { forceRecord?: boolean }) => {
     setError(null);
     setCallDuration(0);
 
@@ -262,6 +321,27 @@ export function WebRTCCallProvider({ children }: ProviderProps) {
       return;
     }
 
+    // Telefonia — resolve quem é o número e decide se grava (cliente/fornecedor → auto;
+    // ou forceRecord pelo caller). recordingRef guia preroll/transcrição/persist abaixo.
+    const { data: { user } } = await supabase.auth.getUser();
+    const party = await resolveCallParty(phoneNumber);
+    const record = (opts?.forceRecord ?? false) || shouldAutoRecord(party.kind);
+    recordingRef.current = record;
+    const sipCallId = crypto.randomUUID();
+    dialedSipCallIdRef.current = sipCallId;
+    if (user) {
+      await logCallStart({
+        farmerId: user.id,
+        direction: 'outbound',
+        provider: 'nvoip_sip',
+        phoneRaw: phoneNumber,
+        party,
+        recorded: record,
+        sipCallId,
+        callerIdUsed: callerIdRef.current,
+      });
+    }
+
     // PR4 — Reset refs de sessão antes de iniciar nova chamada
     analysisHistoryRef.current = [];
     dialedPhoneRef.current = normalized;
@@ -272,17 +352,23 @@ export function WebRTCCallProvider({ children }: ProviderProps) {
     try {
       const rawMic = await navigator.mediaDevices.getUserMedia({ audio: true, video: false });
       rawMicRef.current = rawMic;
-      setVendorMicStream(rawMic);
 
       let streamForCall: MediaStream = rawMic;
-      if (prerollUrl) {
-        const mix = await mixPrerollWithMic(prerollUrl, rawMic);
-        streamForCall = mix.stream;
-        // play() é disparado pelo useEffect ao detectar callState === 'established'
-        prerollPlayRef.current = mix.play;
-        prerollCloseRef.current = mix.close;
-        prerollDurationRef.current = mix.durationSeconds;
+      if (record) {
+        // Gravação ON: expõe vendorMicStream (liga transcrição) + mixa preroll LGPD.
+        setVendorMicStream(rawMic);
+        if (prerollUrl) {
+          const mix = await mixPrerollWithMic(prerollUrl, rawMic);
+          streamForCall = mix.stream;
+          // play() é disparado pelo useEffect ao detectar callState === 'established'
+          prerollPlayRef.current = mix.play;
+          prerollCloseRef.current = mix.close;
+          prerollDurationRef.current = mix.durationSeconds;
+        }
       }
+      // Gravação OFF (número avulso/desconhecido sem forceRecord): liga direto com o
+      // mic cru — sem preroll, sem transcrição (vendorMicStream fica null → useTranscription
+      // não inicia), sem prerollPlaying. Áudio bidirecional segue funcionando.
 
       clientRef.current.makeCall(normalized, streamForCall);
       toast.success('📞 Chamada iniciada', { description: `Ligando para ${formatBrPhone(normalized)}...` });
@@ -301,14 +387,28 @@ export function WebRTCCallProvider({ children }: ProviderProps) {
     const turnsSnapshot = [...turnsRef.current];
     const analysesSnapshot = [...analysisHistoryRef.current];
     const dialedPhone = dialedPhoneRef.current;
+    const wasRecording = recordingRef.current;
+
+    // Telefonia — duração/answered vêm do SipClient (callStartedAt só existe após accept).
+    // Captura ANTES de hangUp (hangUp não zera callStartedAt, mas captura é mais seguro).
+    const durationSeconds = clientRef.current?.getCallDurationSeconds() ?? 0;
+    const answered = durationSeconds > 0;
 
     clientRef.current?.hangUp();
     cleanupAudioResources();
     setIsMuted(false);
     toast.success('Chamada encerrada');
 
-    // Fire-and-forget — não bloqueia UI. Só persiste se houve conteúdo útil.
-    if (startedAt && (turnsSnapshot.length > 0 || analysesSnapshot.length > 0)) {
+    // call_log: fecha a linha do outbound (answered → ended; senão → missed).
+    if (dialedSipCallIdRef.current) {
+      if (answered) void logAnswered(dialedSipCallIdRef.current);
+      void logClosed(dialedSipCallIdRef.current, { answered, durationSeconds });
+      dialedSipCallIdRef.current = null;
+    }
+
+    // Fire-and-forget — não bloqueia UI. Só persiste farmer_calls quando GRAVAMOS
+    // (cliente/fornecedor ou forceRecord) E houve conteúdo útil.
+    if (wasRecording && startedAt && (turnsSnapshot.length > 0 || analysesSnapshot.length > 0)) {
       void persistCallSession({
         startedAt,
         endedAt: new Date(),
@@ -338,6 +438,11 @@ export function WebRTCCallProvider({ children }: ProviderProps) {
     analysisHistoryRef.current = [];
     dialedPhoneRef.current = incomingCall.phone;
     callStartedAtRef.current = new Date();
+    // Inbound atendido sempre grava (preroll + transcrição inalterados) → persist habilitado.
+    // dialedSipCallIdRef fica null: o fechamento da call_log do inbound é feito pelo
+    // listener 'incomingClosed' (SipClient), não pelo endCall.
+    recordingRef.current = true;
+    dialedSipCallIdRef.current = null;
 
     cleanupAudioResources();
 
@@ -356,6 +461,12 @@ export function WebRTCCallProvider({ children }: ProviderProps) {
       }
 
       clientRef.current.acceptIncoming(streamForCall);
+      // call_log: marca answered (idempotente — só atualiza se ainda 'ringing')
+      if (incomingCall.sipCallId) {
+        await logAnswered(incomingCall.sipCallId);
+        // Inbound atendido sempre grava (toca a Sara) → reflete no ledger.
+        void markRecorded(incomingCall.sipCallId);
+      }
       const callerLabel = incomingCall.displayName ?? formatBrPhone(incomingCall.phone);
       setIncomingCall(null);
       toast.success('📞 Chamada atendida', { description: callerLabel });
@@ -370,10 +481,14 @@ export function WebRTCCallProvider({ children }: ProviderProps) {
 
   const rejectIncoming = useCallback(() => {
     if (!clientRef.current) return;
+    // call_log: fecha como rejected ANTES de limpar o incomingCall (precisa do sipCallId)
+    if (incomingCall?.sipCallId) {
+      void logClosed(incomingCall.sipCallId, { answered: false, rejected: true, durationSeconds: 0 });
+    }
     clientRef.current.rejectIncoming();
     setIncomingCall(null);
     toast.info('Chamada rejeitada');
-  }, []);
+  }, [incomingCall]);
 
   const isActive = !['idle', 'finished', 'noanswer', 'busy', 'failed', 'error'].includes(callState);
   const isConnecting = callState === 'connecting';
