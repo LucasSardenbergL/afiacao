@@ -1,14 +1,12 @@
 import { useState, useEffect, useRef, useMemo } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Button } from '@/components/ui/button';
-import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
+import { Card, CardContent } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
-import { Input } from '@/components/ui/input';
 import { supabase } from '@/integrations/supabase/client';
 import { useAuth } from '@/contexts/AuthContext';
 import { useFarmerScoring } from '@/hooks/useFarmerScoring';
 import { toast } from 'sonner';
-import { Loader2, Route, Filter, Navigation, ExternalLink, Truck, ShoppingBag, Layers, Search, CheckCircle2, Users } from 'lucide-react';
+import { Loader2, Navigation, CheckCircle2 } from 'lucide-react';
 import L from 'leaflet';
 import 'leaflet/dist/leaflet.css';
 import type {
@@ -28,9 +26,12 @@ import {
 } from '@/components/reposicao/routePlanner/constants';
 import { StatsStrip } from '@/components/reposicao/routePlanner/StatsStrip';
 import { RouteStopCard } from '@/components/reposicao/routePlanner/RouteStopCard';
-import { ManualCustomerRow } from '@/components/reposicao/routePlanner/ManualCustomerRow';
 import { TodayVisitCard } from '@/components/reposicao/routePlanner/TodayVisitCard';
 import { CheckoutDialog } from '@/components/reposicao/routePlanner/CheckoutDialog';
+import { PlanningModeSelector } from '@/components/reposicao/routePlanner/PlanningModeSelector';
+import { PeriodFilter } from '@/components/reposicao/routePlanner/PeriodFilter';
+import { RouteActionButtons } from '@/components/reposicao/routePlanner/RouteActionButtons';
+import { ManualModeCard } from '@/components/reposicao/routePlanner/ManualModeCard';
 
 // Fix default marker icons for Leaflet + bundlers
 delete (L.Icon.Default.prototype as any)._getIconUrl;
@@ -955,111 +956,30 @@ const AdminRoutePlanner = () => {
 
       <main className="pt-16 px-4 max-w-4xl mx-auto space-y-4">
         {/* Planning mode selector */}
-        <div className="flex items-center gap-2">
-          <Route className="w-4 h-4 text-muted-foreground" />
-          <span className="text-sm font-medium text-muted-foreground">Modo:</span>
-          {([
-            { key: 'logistica' as PlanningMode, label: 'Logística', icon: <Truck className="w-3.5 h-3.5" /> },
-            { key: 'comercial' as PlanningMode, label: 'Comercial', icon: <ShoppingBag className="w-3.5 h-3.5" /> },
-            { key: 'hibrido' as PlanningMode, label: 'Híbrido', icon: <Layers className="w-3.5 h-3.5" /> },
-            { key: 'manual' as PlanningMode, label: 'Manual', icon: <Users className="w-3.5 h-3.5" /> },
-          ]).map(mode => (
-            <Button
-              key={mode.key}
-              variant={planningMode === mode.key ? 'default' : 'outline'}
-              size="sm"
-              onClick={() => setPlanningMode(mode.key)}
-              className="gap-1.5"
-            >
-              {mode.icon}
-              {mode.label}
-            </Button>
-          ))}
-        </div>
-        
+        <PlanningModeSelector value={planningMode} onChange={setPlanningMode} />
+
         {/* Manual mode UI */}
         {planningMode === 'manual' && (
-          <Card>
-            <CardHeader>
-              <CardTitle className="text-base flex items-center justify-between">
-                <span>Selecionar Clientes</span>
-                <Badge variant="outline">
-                  {selectedCustomerIds.size} selecionados · ~{estimatedManualHours}h estimadas
-                </Badge>
-              </CardTitle>
-            </CardHeader>
-            <CardContent className="space-y-3">
-              {/* Filters */}
-              <div className="flex items-center gap-2 flex-wrap">
-                {(['todos', 'nunca_visitados', 'sem_compra_30d'] as ManualFilter[]).map(filter => (
-                  <Button
-                    key={filter}
-                    variant={manualFilter === filter ? 'secondary' : 'ghost'}
-                    size="sm"
-                    onClick={() => setManualFilter(filter)}
-                  >
-                    {filter === 'todos' ? 'Todos' : filter === 'nunca_visitados' ? 'Nunca visitados' : 'Sem compra há 30+ dias'}
-                  </Button>
-                ))}
-              </div>
-              
-              {/* Search */}
-              <div className="relative">
-                <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
-                <Input
-                  placeholder="Buscar por nome, cidade, bairro..."
-                  value={manualSearch}
-                  onChange={(e) => setManualSearch(e.target.value)}
-                  className="pl-9"
-                />
-              </div>
-              
-              {/* Customer list */}
-              {loadingManual ? (
-                <div className="flex items-center justify-center py-8">
-                  <Loader2 className="w-6 h-6 animate-spin text-primary" />
-                </div>
-              ) : (
-                <div className="space-y-2 max-h-96 overflow-y-auto">
-                  {filteredManualCustomers.map(customer => (
-                    <ManualCustomerRow
-                      key={customer.user_id}
-                      customer={customer}
-                      isSelected={selectedCustomerIds.has(customer.user_id)}
-                      isCheckedIn={!!visitStatuses.get(customer.user_id)?.isCheckedIn}
-                      timerLabel={formatTimer(visitTimers.get(customer.user_id) ?? 0)}
-                      onToggle={() => toggleCustomerSelection(customer.user_id)}
-                      onCheckIn={() => handleCheckIn(customer)}
-                      onCheckout={() => openCheckoutDialog(customer.user_id, customer.name)}
-                    />
-                  ))}
-
-                  {filteredManualCustomers.length === 0 && (
-                    <div className="text-center py-8 text-muted-foreground text-sm">
-                      Nenhum cliente encontrado
-                    </div>
-                  )}
-                </div>
-              )}
-            </CardContent>
-          </Card>
+          <ManualModeCard
+            selectedCount={selectedCustomerIds.size}
+            estimatedHours={estimatedManualHours}
+            filter={manualFilter}
+            onFilterChange={setManualFilter}
+            search={manualSearch}
+            onSearchChange={setManualSearch}
+            loading={loadingManual}
+            customers={filteredManualCustomers}
+            isSelected={(id) => selectedCustomerIds.has(id)}
+            isCheckedIn={(id) => !!visitStatuses.get(id)?.isCheckedIn}
+            timerLabel={(id) => formatTimer(visitTimers.get(id) ?? 0)}
+            onToggle={toggleCustomerSelection}
+            onCheckIn={handleCheckIn}
+            onCheckout={openCheckoutDialog}
+          />
         )}
 
         {/* Period filter */}
-        <div className="flex items-center gap-2">
-          <Filter className="w-4 h-4 text-muted-foreground" />
-          <span className="text-sm text-muted-foreground">Período:</span>
-          {(['all', 'manha', 'tarde'] as FilterPeriod[]).map(period => (
-            <Button
-              key={period}
-              variant={filterPeriod === period ? 'secondary' : 'ghost'}
-              size="sm"
-              onClick={() => setFilterPeriod(period)}
-            >
-              {period === 'all' ? 'Todos' : period === 'manha' ? 'Manhã' : 'Tarde'}
-            </Button>
-          ))}
-        </div>
+        <PeriodFilter value={filterPeriod} onChange={setFilterPeriod} />
 
         {/* Stats */}
         <StatsStrip planningMode={planningMode} stopCounts={stopCounts} />
@@ -1076,59 +996,7 @@ const AdminRoutePlanner = () => {
         </Card>
 
         {/* Route action buttons */}
-        {optimizedRoute.some(s => s.lat && s.lng) && (
-          <div className="flex gap-2">
-            <Button
-              className="flex-1 gap-2"
-              onClick={() => {
-                const stopsWithCoords = optimizedRoute.filter(s => s.lat && s.lng).slice(0, 25);
-                const tooMany = optimizedRoute.filter(s => s.lat && s.lng).length > 25;
-
-                if (tooMany) {
-                  toast.success('Google Maps suporta até 25 paradas', { description: 'Mostrando as 25 de maior prioridade.' });
-                }
-
-                const waypoints = stopsWithCoords.map(s => `${s.lat},${s.lng}`);
-
-                // Try to get current location as origin
-                if (navigator.geolocation) {
-                  navigator.geolocation.getCurrentPosition(
-                    (pos) => {
-                      const origin = `${pos.coords.latitude},${pos.coords.longitude}`;
-                      const url = `https://www.google.com/maps/dir/${origin}/${waypoints.join('/')}`;
-                      window.open(url, '_blank');
-                    },
-                    () => {
-                      // Fallback: start from first waypoint
-                      const url = `https://www.google.com/maps/dir/${waypoints.join('/')}`;
-                      window.open(url, '_blank');
-                    },
-                    { timeout: 5000 }
-                  );
-                } else {
-                  const url = `https://www.google.com/maps/dir/${waypoints.join('/')}`;
-                  window.open(url, '_blank');
-                }
-              }}
-            >
-              <Navigation className="w-4 h-4" />
-              Abrir rota no Google Maps
-            </Button>
-            <Button
-              variant="outline"
-              className="gap-2"
-              onClick={() => {
-                const first = optimizedRoute.find(s => s.lat && s.lng);
-                if (first) {
-                  window.open(`https://waze.com/ul?ll=${first.lat},${first.lng}&navigate=yes`, '_blank');
-                }
-              }}
-            >
-              <ExternalLink className="w-4 h-4" />
-              Waze
-            </Button>
-          </div>
-        )}
+        <RouteActionButtons optimizedRoute={optimizedRoute} />
 
 
         <div className="space-y-2">
