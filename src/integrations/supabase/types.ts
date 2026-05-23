@@ -14,273 +14,6 @@ export type Database = {
   }
   public: {
     Tables: {
-      kb_chunks: {
-        Row: {
-          id: string
-          document_id: string
-          chunk_index: number
-          content: string
-          embedding: string | null
-          token_count: number | null
-          char_start: number | null
-          char_end: number | null
-          created_at: string
-        }
-        Insert: {
-          id?: string
-          document_id: string
-          chunk_index: number
-          content: string
-          embedding?: string | null
-          token_count?: number | null
-          char_start?: number | null
-          char_end?: number | null
-          created_at?: string
-        }
-        Update: {
-          id?: string
-          document_id?: string
-          chunk_index?: number
-          content?: string
-          embedding?: string | null
-          token_count?: number | null
-          char_start?: number | null
-          char_end?: number | null
-          created_at?: string
-        }
-        Relationships: [
-          {
-            foreignKeyName: "kb_chunks_document_id_fkey"
-            columns: ["document_id"]
-            isOneToOne: false
-            referencedRelation: "kb_documents"
-            referencedColumns: ["id"]
-          },
-        ]
-      }
-      kb_documents: {
-        Row: {
-          id: string
-          title: string
-          type: string
-          supplier: string | null
-          product_code: string | null
-          file_url: string
-          file_size_bytes: number | null
-          content_extracted: string | null
-          tags: string[] | null
-          status: string
-          status_error: string | null
-          version: number
-          parent_id: string | null
-          created_by: string
-          created_at: string
-          updated_at: string
-        }
-        Insert: {
-          id?: string
-          title: string
-          type: string
-          supplier?: string | null
-          product_code?: string | null
-          file_url: string
-          file_size_bytes?: number | null
-          content_extracted?: string | null
-          tags?: string[] | null
-          status?: string
-          status_error?: string | null
-          version?: number
-          parent_id?: string | null
-          created_by: string
-          created_at?: string
-          updated_at?: string
-        }
-        Update: {
-          id?: string
-          title?: string
-          type?: string
-          supplier?: string | null
-          product_code?: string | null
-          file_url?: string
-          file_size_bytes?: number | null
-          content_extracted?: string | null
-          tags?: string[] | null
-          status?: string
-          status_error?: string | null
-          version?: number
-          parent_id?: string | null
-          created_by?: string
-          created_at?: string
-          updated_at?: string
-        }
-        Relationships: [
-          {
-            foreignKeyName: "kb_documents_parent_id_fkey"
-            columns: ["parent_id"]
-            isOneToOne: false
-            referencedRelation: "kb_documents"
-            referencedColumns: ["id"]
-          },
-        ]
-      }
-      kb_product_specs: {
-        Row: {
-          id: string
-          document_id: string | null
-          product_code: string
-          product_name: string
-          supplier: string
-          product_line: string | null
-          product_category: string | null
-          densidade_g_cm3: number | null
-          solidos_pct: number | null
-          viscosidade_aplicacao_s: number | null
-          viscosidade_copo: string | null
-          brilho_ub: number | null
-          dureza: string | null
-          rendimento_m2_por_litro: number | null
-          demaos_recomendadas: number | null
-          gramatura_g_m2_min: number | null
-          gramatura_g_m2_max: number | null
-          pot_life_horas: number | null
-          temp_aplicacao_c_min: number | null
-          temp_aplicacao_c_max: number | null
-          umidade_aplicacao_pct_min: number | null
-          umidade_aplicacao_pct_max: number | null
-          catalisador_codigo: string | null
-          catalisador_proporcao_pct: number | null
-          diluente_codigo: string | null
-          equipamentos_aplicacao: string[] | null
-          lixa_recomendada: string | null
-          substrato: string[] | null
-          secagem_manuseio_h: number | null
-          secagem_empilhamento_h: number | null
-          secagem_total_h: number | null
-          validade_dias: number | null
-          temp_armazenamento_c_min: number | null
-          temp_armazenamento_c_max: number | null
-          certificacoes_aplicaveis: string[] | null
-          isento_metais_pesados: string[] | null
-          isento_substancias: string[] | null
-          diferenciais_chave: string[] | null
-          uso_recomendado: string | null
-          publico_alvo: string | null
-          extraction_confidence: number | null
-          extraction_gaps: string[] | null
-          extracted_by: string | null
-          approved_by: string | null
-          approved_at: string | null
-          created_at: string
-          updated_at: string
-        }
-        Insert: {
-          id?: string
-          document_id?: string | null
-          product_code: string
-          product_name: string
-          supplier?: string
-          product_line?: string | null
-          product_category?: string | null
-          densidade_g_cm3?: number | null
-          solidos_pct?: number | null
-          viscosidade_aplicacao_s?: number | null
-          viscosidade_copo?: string | null
-          brilho_ub?: number | null
-          dureza?: string | null
-          rendimento_m2_por_litro?: number | null
-          demaos_recomendadas?: number | null
-          gramatura_g_m2_min?: number | null
-          gramatura_g_m2_max?: number | null
-          pot_life_horas?: number | null
-          temp_aplicacao_c_min?: number | null
-          temp_aplicacao_c_max?: number | null
-          umidade_aplicacao_pct_min?: number | null
-          umidade_aplicacao_pct_max?: number | null
-          catalisador_codigo?: string | null
-          catalisador_proporcao_pct?: number | null
-          diluente_codigo?: string | null
-          equipamentos_aplicacao?: string[] | null
-          lixa_recomendada?: string | null
-          substrato?: string[] | null
-          secagem_manuseio_h?: number | null
-          secagem_empilhamento_h?: number | null
-          secagem_total_h?: number | null
-          validade_dias?: number | null
-          temp_armazenamento_c_min?: number | null
-          temp_armazenamento_c_max?: number | null
-          certificacoes_aplicaveis?: string[] | null
-          isento_metais_pesados?: string[] | null
-          isento_substancias?: string[] | null
-          diferenciais_chave?: string[] | null
-          uso_recomendado?: string | null
-          publico_alvo?: string | null
-          extraction_confidence?: number | null
-          extraction_gaps?: string[] | null
-          extracted_by?: string | null
-          approved_by?: string | null
-          approved_at?: string | null
-          created_at?: string
-          updated_at?: string
-        }
-        Update: {
-          id?: string
-          document_id?: string | null
-          product_code?: string
-          product_name?: string
-          supplier?: string
-          product_line?: string | null
-          product_category?: string | null
-          densidade_g_cm3?: number | null
-          solidos_pct?: number | null
-          viscosidade_aplicacao_s?: number | null
-          viscosidade_copo?: string | null
-          brilho_ub?: number | null
-          dureza?: string | null
-          rendimento_m2_por_litro?: number | null
-          demaos_recomendadas?: number | null
-          gramatura_g_m2_min?: number | null
-          gramatura_g_m2_max?: number | null
-          pot_life_horas?: number | null
-          temp_aplicacao_c_min?: number | null
-          temp_aplicacao_c_max?: number | null
-          umidade_aplicacao_pct_min?: number | null
-          umidade_aplicacao_pct_max?: number | null
-          catalisador_codigo?: string | null
-          catalisador_proporcao_pct?: number | null
-          diluente_codigo?: string | null
-          equipamentos_aplicacao?: string[] | null
-          lixa_recomendada?: string | null
-          substrato?: string[] | null
-          secagem_manuseio_h?: number | null
-          secagem_empilhamento_h?: number | null
-          secagem_total_h?: number | null
-          validade_dias?: number | null
-          temp_armazenamento_c_min?: number | null
-          temp_armazenamento_c_max?: number | null
-          certificacoes_aplicaveis?: string[] | null
-          isento_metais_pesados?: string[] | null
-          isento_substancias?: string[] | null
-          diferenciais_chave?: string[] | null
-          uso_recomendado?: string | null
-          publico_alvo?: string | null
-          extraction_confidence?: number | null
-          extraction_gaps?: string[] | null
-          extracted_by?: string | null
-          approved_by?: string | null
-          approved_at?: string | null
-          created_at?: string
-          updated_at?: string
-        }
-        Relationships: [
-          {
-            foreignKeyName: "kb_product_specs_document_id_fkey"
-            columns: ["document_id"]
-            isOneToOne: false
-            referencedRelation: "kb_documents"
-            referencedColumns: ["id"]
-          },
-        ]
-      }
       abc_xyz_classification: {
         Row: {
           classe_abc: Database["public"]["Enums"]["classe_abc"] | null
@@ -3174,6 +2907,7 @@ export type Database = {
         Row: {
           adiantamento_categorias_codigos: string[]
           company: string
+          dre_tributario: Json
           folha_categorias_codigos: string[]
           overrides_cenario: Json
           thresholds: Json
@@ -3183,6 +2917,7 @@ export type Database = {
         Insert: {
           adiantamento_categorias_codigos?: string[]
           company: string
+          dre_tributario?: Json
           folha_categorias_codigos?: string[]
           overrides_cenario?: Json
           thresholds?: Json
@@ -3192,6 +2927,7 @@ export type Database = {
         Update: {
           adiantamento_categorias_codigos?: string[]
           company?: string
+          dre_tributario?: Json
           folha_categorias_codigos?: string[]
           overrides_cenario?: Json
           thresholds?: Json
