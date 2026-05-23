@@ -179,6 +179,26 @@ function somaJanela(rows: DreRow[], idxFim: number, meses = 12) {
   return acc;
 }
 
+// Shape cru (defensivo) do JSONB valor_inputs — campos numéricos como unknown (validados via numOrNull).
+type ValorInputsRaw = {
+  ativo_fixo?: {
+    valor?: unknown;
+    data_ref?: string | null;
+    fonte?: "book" | "avaliacao" | "reposicao" | "seguro" | null;
+    base?: "reposicao" | "book" | null;
+    operacional?: boolean;
+  } | null;
+  ajustes?: unknown;
+  divida?: unknown;
+  equity?: unknown;
+  kd?: unknown;
+  ke?: Record<string, KeDecomposto | undefined>;
+  prolabore_real_mensal?: unknown;
+  prolabore_mercado_mensal?: unknown;
+  aluguel_mercado_mensal?: unknown;
+  intercompany_giro?: unknown;
+};
+
 serve(async (req: Request) => {
   if (req.method === "OPTIONS") return new Response(null, { headers: corsHeaders });
   const auth = await authorizeMaster(req);
@@ -196,7 +216,7 @@ serve(async (req: Request) => {
     .select("dre_tributario, valor_inputs").eq("company", company).maybeSingle();
   const cfg = (cfgRaw ?? {}) as { dre_tributario?: { regime?: RegimeTributario; anexo?: string } | null; valor_inputs?: Record<string, unknown> | null };
   const regime: RegimeTributario = (cfg.dre_tributario?.regime as RegimeTributario) ?? REGIME_POR_EMPRESA[company] ?? "presumido";
-  const vi = (cfg.valor_inputs ?? {}) as Record<string, any>;
+  const vi = (cfg.valor_inputs ?? {}) as ValorInputsRaw;
   // Config tributária completa? (propaga rebaixamento de confiança da Onda 3b)
   const configCompleta = regime === "presumido" ? cfg.dre_tributario != null : (cfg.dre_tributario?.anexo != null);
   const imposto_teorico_parcial = !configCompleta;
