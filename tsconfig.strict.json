@@ -414,6 +414,14 @@
     "src/lib/financeiro/ncg-helpers.ts",
     "src/lib/knowledge-base/calculate-rendimento.ts",
     "src/lib/knowledge-base/specs-types.ts",
-    "src/lib/reposicao/sku-param.ts"
+    "src/lib/reposicao/sku-param.ts",
+    "src/services/orderSubmission/types.ts",
+    "src/services/orderSubmission/buildPrintData.ts",
+    "src/services/orderSubmission/submitQuote.ts",
+    "src/services/orderSubmission/index.ts",
+    "src/contexts/AppShellContext.tsx",
+    "src/contexts/DashboardEditModeContext.tsx",
+    "src/contexts/DashboardPersonaContext.tsx",
+    "src/contexts/ReposicaoEmpresaContext.tsx"
   ]
 }
