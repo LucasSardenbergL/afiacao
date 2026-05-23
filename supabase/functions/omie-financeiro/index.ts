@@ -1033,6 +1033,152 @@ function scoreConfianca(input: {
   };
 }
 
+// ── Onda 3b — imposto teórico (espelho de dre-helpers.ts + dre-tabelas-tributarias.ts) ──
+// Tabelas legais (LC 123/2006 c/ LC 155/2016) inlinadas verbatim de dre-tabelas-tributarias.ts.
+type AnexoSimples = 'I' | 'II' | 'III' | 'IV' | 'V';
+type FaixaSimples = { ate: number; aliquota: number; deduzir: number };
+
+const ANEXOS_SIMPLES: Record<AnexoSimples, FaixaSimples[]> = {
+  // Anexo I — Comércio
+  I: [
+    { ate: 180000, aliquota: 0.04, deduzir: 0 },
+    { ate: 360000, aliquota: 0.073, deduzir: 5940 },
+    { ate: 720000, aliquota: 0.095, deduzir: 13860 },
+    { ate: 1800000, aliquota: 0.107, deduzir: 22500 },
+    { ate: 3600000, aliquota: 0.143, deduzir: 87300 },
+    { ate: 4800000, aliquota: 0.19, deduzir: 378000 },
+  ],
+  // Anexo II — Indústria
+  II: [
+    { ate: 180000, aliquota: 0.045, deduzir: 0 },
+    { ate: 360000, aliquota: 0.078, deduzir: 5940 },
+    { ate: 720000, aliquota: 0.10, deduzir: 13860 },
+    { ate: 1800000, aliquota: 0.112, deduzir: 22500 },
+    { ate: 3600000, aliquota: 0.147, deduzir: 85500 },
+    { ate: 4800000, aliquota: 0.30, deduzir: 720000 },
+  ],
+  // Anexo III — Serviços (fator-r ≥ 28%)
+  III: [
+    { ate: 180000, aliquota: 0.06, deduzir: 0 },
+    { ate: 360000, aliquota: 0.112, deduzir: 9360 },
+    { ate: 720000, aliquota: 0.135, deduzir: 17640 },
+    { ate: 1800000, aliquota: 0.16, deduzir: 35640 },
+    { ate: 3600000, aliquota: 0.21, deduzir: 125640 },
+    { ate: 4800000, aliquota: 0.33, deduzir: 648000 },
+  ],
+  // Anexo IV — Serviços (limpeza/vigilância/construção/advocacia)
+  IV: [
+    { ate: 180000, aliquota: 0.045, deduzir: 0 },
+    { ate: 360000, aliquota: 0.09, deduzir: 8100 },
+    { ate: 720000, aliquota: 0.102, deduzir: 12420 },
+    { ate: 1800000, aliquota: 0.14, deduzir: 39780 },
+    { ate: 3600000, aliquota: 0.22, deduzir: 183780 },
+    { ate: 4800000, aliquota: 0.33, deduzir: 828000 },
+  ],
+  // Anexo V — Serviços (fator-r < 28%)
+  V: [
+    { ate: 180000, aliquota: 0.155, deduzir: 0 },
+    { ate: 360000, aliquota: 0.18, deduzir: 4500 },
+    { ate: 720000, aliquota: 0.195, deduzir: 9900 },
+    { ate: 1800000, aliquota: 0.205, deduzir: 17100 },
+    { ate: 3600000, aliquota: 0.23, deduzir: 62100 },
+    { ate: 4800000, aliquota: 0.305, deduzir: 540000 },
+  ],
+};
+
+const PRESUMIDO = {
+  irpj_aliquota: 0.15,
+  irpj_adicional_aliquota: 0.10,
+  irpj_adicional_limite_trimestral: 60000,
+  csll_aliquota: 0.09,
+  pis_aliquota: 0.0065,
+  cofins_aliquota: 0.03,
+};
+
+const FATOR_R_LIMIAR = 0.28;
+
+type ReceitaMensal = { ano: number; mes: number; receita_bruta: number };
+
+// RBT12 = soma da receita bruta dos 12 meses ANTERIORES ao mês de apuração (exclusivo).
+function calcularRBT12(historico: ReceitaMensal[], ano: number, mes: number): number {
+  const idxApuracao = ano * 12 + mes;
+  const idxInicio = idxApuracao - 12;
+  return historico.reduce((s, h) => {
+    const idx = h.ano * 12 + h.mes;
+    return (idx >= idxInicio && idx < idxApuracao) ? s + h.receita_bruta : s;
+  }, 0);
+}
+
+function faixaPorRBT12(anexo: AnexoSimples, rbt12: number): FaixaSimples {
+  const faixas = ANEXOS_SIMPLES[anexo];
+  for (const f of faixas) {
+    if (rbt12 <= f.ate) return f;
+  }
+  return faixas[faixas.length - 1];
+}
+
+// Alíquota efetiva do Simples: (RBT12 × nominal − parcela a deduzir) / RBT12.
+function aliquotaEfetivaSimples(anexo: AnexoSimples, rbt12: number): number {
+  if (rbt12 <= 0) return 0;
+  const f = faixaPorRBT12(anexo, rbt12);
+  const efetiva = (rbt12 * f.aliquota - f.deduzir) / rbt12;
+  return Math.max(0, efetiva);
+}
+
+function anexoPorFatorR(fatorR: number): AnexoSimples {
+  return fatorR >= FATOR_R_LIMIAR ? 'III' : 'V';
+}
+
+function impostoTeoricoSimples(input: {
+  anexo: AnexoSimples | null;
+  rbt12: number;
+  receitaMes: number;
+}): number | null {
+  if (!input.anexo) return null;            // degrade: sem anexo configurado
+  const efetiva = aliquotaEfetivaSimples(input.anexo, input.rbt12);
+  return efetiva * input.receitaMes;
+}
+
+function impostoTeoricoPresumido(input: {
+  receitaTrimestre: number;
+  presuncaoIrpj: number;
+  presuncaoCsll: number;
+}): { irpj: number; csll: number; pis: number; cofins: number; total: number } {
+  const baseIrpj = input.receitaTrimestre * input.presuncaoIrpj;
+  const irpjBase = baseIrpj * PRESUMIDO.irpj_aliquota;
+  const adicional = Math.max(0, baseIrpj - PRESUMIDO.irpj_adicional_limite_trimestral) * PRESUMIDO.irpj_adicional_aliquota;
+  const irpj = irpjBase + adicional;
+  const csll = input.receitaTrimestre * input.presuncaoCsll * PRESUMIDO.csll_aliquota;
+  const pis = input.receitaTrimestre * PRESUMIDO.pis_aliquota;
+  const cofins = input.receitaTrimestre * PRESUMIDO.cofins_aliquota;
+  return { irpj, csll, pis, cofins, total: irpj + csll + pis + cofins };
+}
+
+type ConfigTributario = {
+  regime: RegimeTributario;
+  anexo: AnexoSimples | null;       // Simples
+  fatorRHabilitado: boolean;        // Simples: alterna III/V por fator-r
+  presuncaoIrpj: number;            // presumido
+  presuncaoCsll: number;            // presumido
+  completa: boolean;                // false → teórico parcial, confiança ≤ media
+};
+
+const PRESUNCAO_DEFAULT = { irpj: 0.08, csll: 0.12 }; // comércio/indústria
+
+function normalizarConfigTributario(
+  company: string,
+  raw: Record<string, unknown> | null,
+): ConfigTributario {
+  const regimeDefault = REGIME_POR_EMPRESA[company] ?? 'presumido';
+  const regime = ((raw?.regime as RegimeTributario) ?? regimeDefault);
+  const anexo = (raw?.anexo as AnexoSimples | undefined) ?? null;
+  const presuncaoIrpj = Number(raw?.presuncao_irpj ?? PRESUNCAO_DEFAULT.irpj);
+  const presuncaoCsll = Number(raw?.presuncao_csll ?? PRESUNCAO_DEFAULT.csll);
+  const fatorRHabilitado = Boolean(raw?.fator_r_habilitado ?? false);
+  const completa = regime === 'presumido' ? raw != null : anexo != null;
+  return { regime, anexo, fatorRHabilitado, presuncaoIrpj, presuncaoCsll, completa };
+}
+
 // ═══════════════ CALCULAR DRE SNAPSHOT ═══════════════
 type Regime = "caixa" | "competencia";
 
@@ -1093,6 +1239,12 @@ async function calcularDRE(
     .slice().sort((a, b) => (a.company === "_default" ? -1 : 1));
   for (const m of sorted) mapping.set(m.omie_codigo, m.dre_linha);
 
+  // Onda 3b: config tributária (coluna opcional — degrade se ausente) + histórico de receita p/ RBT12
+  const cfgRes = await db.from("fin_config_cashflow").select("dre_tributario").eq("company", company).maybeSingle();
+  const configTrib = normalizarConfigTributario(company, (cfgRes.data as { dre_tributario?: Record<string, unknown> } | null)?.dre_tributario ?? null);
+  const histRes = await db.from("fin_dre_snapshots").select("ano, mes, receita_bruta").eq("company", company).eq("regime", "competencia");
+  const histReceita = ((histRes.data ?? []) as Array<{ ano: number; mes: number; receita_bruta: number }>);
+
   // ── Classificar + bucketizar (caixa por data efetiva) ──
   const totais: Record<string, number> = {};
   const detalheReceitas: Record<string, number> = {};
@@ -1140,6 +1292,32 @@ async function calcularDRE(
   // ── Montar DRE (ladder regime-aware) ──
   const dre = montarDRE({ regime: regimeTrib, totais });
 
+  // ── Onda 3b: imposto teórico (conferência) — degrade honesto p/ null quando faltar dado ──
+  let imposto_teorico: Record<string, number | null> | null = null;
+  let delta_imposto_pct: number | null = null;
+  if (regimeTrib === "simples") {
+    const rbt12 = calcularRBT12(histReceita, ano, mes);
+    const anexo = configTrib.anexo; // fator-r não alterna sem folha segregada confiável (degrade documentado)
+    const dasTeorico = impostoTeoricoSimples({ anexo, rbt12, receitaMes: dre.receita_bruta });
+    imposto_teorico = { das: dasTeorico };
+    const dasReal = dre.detalhamento_impostos.das ?? 0;
+    if (dasTeorico != null && dasTeorico > 0 && dasReal > 0) {
+      delta_imposto_pct = (dasReal - dasTeorico) / dasTeorico;
+    }
+  } else {
+    const triIdx = Math.floor((mes - 1) / 3);
+    const mesesTri = [triIdx * 3 + 1, triIdx * 3 + 2, triIdx * 3 + 3];
+    const receitaTri = histReceita.filter((h) => h.ano === ano && mesesTri.includes(h.mes)).reduce((s, h) => s + h.receita_bruta, 0) || dre.receita_bruta;
+    const teo = impostoTeoricoPresumido({ receitaTrimestre: receitaTri, presuncaoIrpj: configTrib.presuncaoIrpj, presuncaoCsll: configTrib.presuncaoCsll });
+    // teórico mensal aproximado = trimestre / 3 (rateio linear — aproximação documentada)
+    imposto_teorico = { irpj: teo.irpj / 3, csll: teo.csll / 3, pis: teo.pis / 3, cofins: teo.cofins / 3, total: teo.total / 3 };
+    const realLucro = (dre.detalhamento_impostos.irpj ?? 0) + (dre.detalhamento_impostos.csll ?? 0);
+    const teoLucroMensal = (teo.irpj + teo.csll) / 3;
+    if (teoLucroMensal > 0 && realLucro > 0) {
+      delta_imposto_pct = (realLucro - teoLucroMensal) / teoLucroMensal;
+    }
+  }
+
   // ── Confiança ──
   const fallback_pct = caixaValor > 0 ? fallbackValor / caixaValor : 0;
   const confianca = scoreConfianca({
@@ -1148,6 +1326,13 @@ async function calcularDRE(
     share_generico: valorTotal > 0 ? valorGenerico / valorTotal : 0,
     tem_imposto_nao_mapeado: temImpostoNaoMapeado,
   });
+  if (delta_imposto_pct != null && Math.abs(delta_imposto_pct) > 0.25) {
+    confianca.motivos.push(`Imposto realizado diverge ${(delta_imposto_pct * 100).toFixed(0)}% do teórico esperado — conferir competência/recolhimento.`);
+  }
+  if (!configTrib.completa && confianca.nivel === "alta") {
+    confianca.nivel = "media";
+    confianca.motivos.push("Config tributária incompleta — teórico parcial.");
+  }
   const unique = [...new Set(naoMapeadas)];
   const caixa_estimado = regime === "caixa" && fallback_pct > 0.1;
   if (unique.length > 0) {
@@ -1184,6 +1369,9 @@ async function calcularDRE(
       regime_tributario: regimeTrib,
       caixa_estimado,
       confianca,
+      imposto_teorico,
+      delta_imposto_pct,
+      config_tributaria_completa: configTrib.completa,
     },
     calculated_at: new Date().toISOString(),
   };
