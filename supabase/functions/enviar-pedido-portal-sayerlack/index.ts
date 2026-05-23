@@ -2151,8 +2151,10 @@ Deno.serve(async (req) => {
       .catch((e) => {
         console.error("[envio-portal][async] Excecao geral:", e?.message ?? e);
       });
+    // eslint-disable-next-line @typescript-eslint/ban-ts-comment -- @ts-ignore intencional: EdgeRuntime é global do Deno/Supabase Edge (pode não estar tipado); @ts-expect-error quebraria o deploy se estivesse
     // @ts-ignore - EdgeRuntime existe no runtime do Supabase Edge
     if (typeof EdgeRuntime !== "undefined" && typeof EdgeRuntime.waitUntil === "function") {
+      // eslint-disable-next-line @typescript-eslint/ban-ts-comment -- idem acima
       // @ts-ignore
       EdgeRuntime.waitUntil(bgTask);
     }

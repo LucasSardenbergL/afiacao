@@ -213,8 +213,10 @@ serve(async (req: Request) => {
     const { novo, id } = await registrarEvento(empresa, payload, eventId);
 
     if (novo && id) {
+      // eslint-disable-next-line @typescript-eslint/ban-ts-comment -- @ts-ignore intencional: EdgeRuntime é global do Deno/Supabase Edge (pode não estar tipado); @ts-expect-error quebraria o deploy se estivesse
       // @ts-ignore EdgeRuntime existe no Supabase Edge Runtime
       if (typeof EdgeRuntime !== "undefined" && EdgeRuntime.waitUntil) {
+        // eslint-disable-next-line @typescript-eslint/ban-ts-comment -- idem acima
         // @ts-ignore
         EdgeRuntime.waitUntil(processarEvento(empresa, payload, id));
       } else {
