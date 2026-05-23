@@ -110,6 +110,26 @@ O teórico é **conferência de plausibilidade**, não verdade fiscal — o real
 
 ---
 
+## 🔧 A2 — Retorno & Valor (ROIC / WACC / EVA) (2026-05-23)
+
+Camada de retorno sobre o capital empregado, pra decidir **onde colocar o próximo R$1** entre as 3 empresas. Híbrida: NOPAT e capital de giro são **computados** (reusam DRE v2 + NCG); ativo fixo, dívida, PL, Ke/Kd e normalizações são **inputs manuais** (tabela **`fin_valor_inputs`, RLS master-only** — dado sensível do dono não fica em `fin_config_cashflow`, legível por employee), com degradação honesta. Lógica testada em `valor-helpers.ts` (vitest) e espelhada no engine `fin-valor-engine` (master-only).
+
+| Item | Como é calculado |
+|---|---|
+| **NOPAT** | EBIT operacional puro (`resultado_operacional − receitas_financeiras + despesas_financeiras`, TTM) **menos** só os impostos **abaixo da linha**: presumido `IRPJ+CSLL`; Simples `0` (DAS já está nas deduções). Nunca `EBIT×(1−t)`. Sem clamp (NOPAT pode ser negativo). Carga tributária total do regime é exibida à parte, **nunca** re-subtraída. |
+| **Margem op. pré-imposto** | `EBIT / receita_líquida` — comparável entre regimes. |
+| **Capital investido** | `capital_giro (NCG do último snapshot) + ativo_fixo (manual) − ajustes`. Sem ativo fixo → **parcial** + confiança rebaixada. |
+| **WACC (hurdle-rate)** | `peso_equity·Ke + peso_dívida·Kd`. Ke decomposto (âncora + prêmios) com cenários conservador/base/agressivo; **Kd pré-imposto** (tax-shield desligado nos 2 regimes). Sem dívida/PL/Ke → **indisponível** (não chuta). |
+| **ROIC / spread / EVA** | `ROIC = NOPAT/capital`; `spread = ROIC − WACC`; `EVA = spread × capital`. Capital ≤ 0 → null. |
+| **ROIC incremental (headline)** | `ΔNOPAT / Δcapital` (TTM atual vs −12m). Δcapital pequeno/negativo ou histórico insuficiente → `null` + aviso. |
+| **Normalização (comingling)** | Pró-labore de mercado, aluguel de mercado e intercompany. Saída **reportado vs normalizado** lado a lado; o normalizado é o número de decisão. |
+| **Confiança** | `alta/media/baixa` por completude dos inputs; nunca fabrica número (campo ausente = `null` + motivo). Propaga a confiança da DRE subjacente (Onda 3). |
+
+### Regra de ouro da A2
+A2 nunca inventa. Faltou ativo fixo → ROIC parcial. Faltou dívida/PL/Ke → WACC/EVA/spread indisponíveis. Faltou normalização → só reportado, com aviso de comingling. **Limitações deferidas (documentadas):** leases/aluguéis como quase-dívida; split capex manutenção × crescimento; eliminação intercompany pra view consolidada; registro automático de ativo fixo (sync ERP); real vs nominal/inflação; concentração cliente/fornecedor; obsolescência de estoque. Migração de regime pra lucro real reativaria o tax-shield. **A2 é direcional**, não auditoria — melhora a decisão de alocação de capital, mas não substitui balanço/valuation formal.
+
+---
+
 ## ✅ MVP Operacional (pode usar agora para gestão diária)
 
 Estes dados vêm direto do Omie sem transformação opinativa.

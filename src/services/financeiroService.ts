@@ -803,3 +803,50 @@ export async function getLastSyncTime(): Promise<string | null> {
 
   return latest;
 }
+
+// ═══════════════ A2 — Retorno & Valor (contrato com fin-valor-engine) ═══════════════
+
+export interface ValorKeDecomposto {
+  ancora: number;
+  premio_risco_equity: number;
+  premio_tamanho_private: number;
+  premio_iliquidez_controle: number;
+}
+
+export interface ValorInputs {
+  ativo_fixo?: { valor: number; data_ref: string | null; fonte: 'book' | 'avaliacao' | 'reposicao' | 'seguro' | null; base: 'reposicao' | 'book' | null; operacional: boolean } | null;
+  ajustes?: number;
+  divida?: number | null;
+  equity?: number | null;
+  kd?: number | null;
+  ke?: { conservador?: ValorKeDecomposto; base?: ValorKeDecomposto; agressivo?: ValorKeDecomposto };
+  prolabore_real_mensal?: number | null;
+  prolabore_mercado_mensal?: number | null;
+  aluguel_mercado_mensal?: number | null;
+  intercompany_giro?: number | null;
+}
+
+export interface ValorEmpresaResult {
+  company: string;
+  regime: 'simples' | 'presumido';
+  ttm: { ano_mes_fim: string; meses: number; tem_anterior: boolean };
+  reportado: {
+    ebit: number; nopat: number; imposto_operacional_nopat: number; carga_tributaria_regime_total: number;
+    margem_operacional_pre_imposto: number; receita_liquida_ttm: number;
+    capital_investido: number; capital_giro: number; ativo_fixo: number; ajustes: number; capital_parcial: boolean;
+    roic: number | null; wacc: number | null; spread: number | null; eva: number | null;
+    roic_incremental: number | null;
+    incremental: { delta_nopat: number | null; delta_capital: number | null; aviso: string | null };
+    wacc_cenarios: { conservador: number | null; base: number | null; agressivo: number | null };
+    peso_divida: number | null; peso_equity: number | null;
+  };
+  normalizado: {
+    ebit: number; nopat: number; capital_investido: number;
+    roic: number | null; spread: number | null; eva: number | null;
+    ajuste_prolabore: number; ajuste_aluguel: number; ajuste_intercompany_capital: number; aplicado: boolean;
+    nopat_aproximado: boolean;
+  };
+  confianca: { nivel: 'alta' | 'media' | 'baixa'; motivos: string[]; roic_disponivel: boolean; wacc_disponivel: boolean; eva_disponivel: boolean; normalizado_disponivel: boolean };
+  motivos: string[];
+  valor_inputs: ValorInputs;
+}

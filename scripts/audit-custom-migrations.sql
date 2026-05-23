@@ -3,7 +3,7 @@
 -- ========================================================================
 --
 -- Gerado por: scripts/audit-custom-migrations.ts
--- Total de custom migrations: 40
+-- Total de custom migrations: 44
 --
 -- Como usar:
 --   1. Abra o Supabase SQL Editor (via Lovable Cloud → Backend → SQL Editor)
@@ -59,7 +59,11 @@ WITH expected (version, slug, filename) AS (VALUES
   ('20260519000100', 'fin_a1_snapshots_alertas_config', '20260519000100_fin_a1_snapshots_alertas_config.sql'),
   ('20260519000200', 'fin_a1_audit_lock_attach', '20260519000200_fin_a1_audit_lock_attach.sql'),
   ('20260519010000', 'fin_a1_cron', '20260519010000_fin_a1_cron.sql'),
-  ('20260520010000', 'scoring_visit_p1_fixes', '20260520010000_scoring_visit_p1_fixes.sql')
+  ('20260519020000', 'fin_onda1_ncg', '20260519020000_fin_onda1_ncg.sql'),
+  ('20260520010000', 'scoring_visit_p1_fixes', '20260520010000_scoring_visit_p1_fixes.sql'),
+  ('20260523120000', 'call_log', '20260523120000_call_log.sql'),
+  ('20260523210000', 'drop_audit_trigger_fin_config_cashflow', '20260523210000_drop_audit_trigger_fin_config_cashflow.sql'),
+  ('20260523230000', 'fin_a2_valor_inputs', '20260523230000_fin_a2_valor_inputs.sql')
 )
 SELECT
   e.version,
@@ -350,8 +354,25 @@ WITH expected_objects (migration, kind, schema_name, object_name, parent_name) A
   ('fin_a1_audit_lock_attach', 'trigger', 'public', 'trg_audit', 'fin_config_cashflow'),
   ('fin_a1_audit_lock_attach', 'trigger', 'public', 'trg_period_lock', 'fin_eventos_recorrentes'),
   ('fin_a1_audit_lock_attach', 'trigger', 'public', 'trg_period_lock', 'fin_eventos_eventuais'),
+  ('fin_onda1_ncg', 'table', 'public', 'fin_estoque_valor', ''),
+  ('fin_onda1_ncg', 'index', 'public', 'fin_estoque_valor_company_data_idx', 'fin_estoque_valor'),
+  ('fin_onda1_ncg', 'function', 'public', 'fin_period_lock_trigger', ''),
+  ('fin_onda1_ncg', 'function', 'public', 'fin_estimar_estoque_omie', ''),
+  ('fin_onda1_ncg', 'trigger', 'public', 'trg_audit', 'fin_estoque_valor'),
+  ('fin_onda1_ncg', 'trigger', 'public', 'trg_period_lock', 'fin_estoque_valor'),
+  ('fin_onda1_ncg', 'rls_policy', 'public', 'fin_estoque_valor_select_staff', 'fin_estoque_valor'),
+  ('fin_onda1_ncg', 'rls_policy', 'public', 'fin_estoque_valor_write_master', 'fin_estoque_valor'),
   ('scoring_visit_p1_fixes', 'function', 'public', 'enqueue_visit_score_recalc_from_visit', ''),
-  ('scoring_visit_p1_fixes', 'function', 'public', 'enqueue_visit_score_recalc_from_client_score', '')
+  ('scoring_visit_p1_fixes', 'function', 'public', 'enqueue_visit_score_recalc_from_client_score', ''),
+  ('call_log', 'table', 'public', 'call_log', ''),
+  ('call_log', 'index', 'public', 'uq_call_log_provider_call_id', 'call_log'),
+  ('call_log', 'index', 'public', 'uq_call_log_sip_call_id', 'call_log'),
+  ('call_log', 'index', 'public', 'idx_call_log_farmer_started', 'call_log'),
+  ('call_log', 'index', 'public', 'idx_call_log_missed_unack', 'call_log'),
+  ('call_log', 'cron_job', 'cron', 'call-log-missed-backstop', ''),
+  ('fin_a2_valor_inputs', 'table', 'public', 'fin_valor_inputs', ''),
+  ('fin_a2_valor_inputs', 'rls_policy', 'public', 'fin_valor_inputs_select_master', 'fin_valor_inputs'),
+  ('fin_a2_valor_inputs', 'rls_policy', 'public', 'fin_valor_inputs_write_master', 'fin_valor_inputs')
 )
 SELECT
   e.migration,

@@ -21,15 +21,16 @@ Este audit valida **quais custom migrations estão de fato aplicadas no banco**.
 
 ## Resumo
 
-- **40** custom migrations totais
-- **274** objetos esperados (criados por estas migrations)
+- **44** custom migrations totais
+- **291** objetos esperados (criados por estas migrations)
 - Quebra por tipo:
-  - `rls_policy`: 98
-  - `index`: 80
-  - `table`: 43
-  - `trigger`: 29
-  - `function`: 20
+  - `rls_policy`: 102
+  - `index`: 85
+  - `table`: 46
+  - `trigger`: 31
+  - `function`: 22
   - `enum_value`: 4
+  - `cron_job`: 1
 
 ## Inventário por migration
 
@@ -496,12 +497,48 @@ Lista canônica do que cada migration *deveria* criar (extraído via regex de `C
 
 > _Nenhum objeto extraído via regex._ Migration provavelmente é `ALTER TABLE` / `UPDATE` / `INSERT` / RLS-only. Validar manualmente.
 
+### `20260519020000_fin_onda1_ncg.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `table` | `public.fin_estoque_valor` | — |
+| `index` | `public.fin_estoque_valor_company_data_idx` | `fin_estoque_valor` |
+| `function` | `public.fin_period_lock_trigger` | — |
+| `function` | `public.fin_estimar_estoque_omie` | — |
+| `trigger` | `public.trg_audit` | `fin_estoque_valor` |
+| `trigger` | `public.trg_period_lock` | `fin_estoque_valor` |
+| `rls_policy` | `public.fin_estoque_valor_select_staff` | `fin_estoque_valor` |
+| `rls_policy` | `public.fin_estoque_valor_write_master` | `fin_estoque_valor` |
+
 ### `20260520010000_scoring_visit_p1_fixes.sql`
 
 | Tipo | Objeto | Parent |
 | --- | --- | --- |
 | `function` | `public.enqueue_visit_score_recalc_from_visit` | — |
 | `function` | `public.enqueue_visit_score_recalc_from_client_score` | — |
+
+### `20260523120000_call_log.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `table` | `public.call_log` | — |
+| `index` | `public.uq_call_log_provider_call_id` | `call_log` |
+| `index` | `public.uq_call_log_sip_call_id` | `call_log` |
+| `index` | `public.idx_call_log_farmer_started` | `call_log` |
+| `index` | `public.idx_call_log_missed_unack` | `call_log` |
+| `cron_job` | `cron.call-log-missed-backstop` | — |
+
+### `20260523210000_drop_audit_trigger_fin_config_cashflow.sql`
+
+> _Nenhum objeto extraído via regex._ Migration provavelmente é `ALTER TABLE` / `UPDATE` / `INSERT` / RLS-only. Validar manualmente.
+
+### `20260523230000_fin_a2_valor_inputs.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `table` | `public.fin_valor_inputs` | — |
+| `rls_policy` | `public.fin_valor_inputs_select_master` | `fin_valor_inputs` |
+| `rls_policy` | `public.fin_valor_inputs_write_master` | `fin_valor_inputs` |
 
 ## Próximos passos quando algo der `❌`
 
