@@ -1224,7 +1224,7 @@ serve(async (req: Request) => {
   const idxFim = Math.max(...rows.map((r) => r.ano * 12 + r.mes));
   const ttm = somaJanela(rows, idxFim, 12);
   const ttmAnterior = somaJanela(rows, idxFim - 12, 12);
-  const ano_mes_fim = `${Math.floor(idxFim / 12)}-${String(((idxFim - 1) % 12) + 1).padStart(2, "0")}`;
+  const ano_mes_fim = `${Math.floor((idxFim - 1) / 12)}-${String(((idxFim - 1) % 12) + 1).padStart(2, "0")}`;
   const dre_confianca: "alta" | "media" | "baixa" = ttm.confianca_pior === 1 ? "baixa" : ttm.confianca_pior === 2 ? "media" : "alta";
 
   // 3) Capital de giro: último ncg snapshot + ncg ~365d antes
