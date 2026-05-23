@@ -10,6 +10,7 @@ import {
   Loader2, TrendingUp, DollarSign, BarChart3, Users, ShieldCheck,
   RefreshCw, Layers, Target
 } from 'lucide-react';
+import type { LucideIcon } from 'lucide-react';
 
 const fmt = (v: number) => v.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' });
 
@@ -166,7 +167,7 @@ const FarmerIPFDashboard = () => {
   );
 };
 
-const IPFMetric = ({ label, value, weight, icon: Icon }: { label: string; value: number; weight: number; icon: any }) => (
+const IPFMetric = ({ label, value, weight, icon: Icon }: { label: string; value: number; weight: number; icon: LucideIcon }) => (
   <div>
     <div className="flex items-center justify-between mb-1">
       <div className="flex items-center gap-1.5">
