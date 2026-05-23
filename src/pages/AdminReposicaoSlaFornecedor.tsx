@@ -51,16 +51,14 @@ type Tendencia = "melhorando" | "estavel" | "piorando";
 interface ForCompliance {
   empresa: string;
   fornecedor_nome: string;
-  skus_avaliados: number;
-  cumprindo: number;
-  limite: number;
-  violando: number;
-  critico: number;
-  sem_sla: number;
-  poucos_dados: number;
-  pct_compliance: number | null;
-  lt_teorico_medio: number | null;
-  lt_observado_medio: number | null;
+  skus_total: number;
+  skus_cumprindo: number;
+  skus_limite: number;
+  skus_violando: number;
+  skus_criticos: number;
+  perc_sla_compliance: number | null;
+  lt_teorico_agregado: number | null;
+  lt_medio_observado_agregado: number | null;
 }
 
 interface SkuCompliance {
@@ -68,15 +66,13 @@ interface SkuCompliance {
   sku_codigo_omie: string;
   sku_descricao: string | null;
   fornecedor_nome: string | null;
-  grupo_producao: string | null;
-  grupo_descricao: string | null;
+  grupo_codigo: string | null;
   lt_teorico: number | null;
   lt_observado_medio: number | null;
-  lt_obs_recente_5: number | null;
-  lt_obs_anterior_5: number | null;
+  lt_recente_medio: number | null;
   n_observacoes: number | null;
   ultimo_recebimento: string | null;
-  desvio_pct: number | null;
+  desvio_perc: number | null;
   status_sla: SlaStatus;
   tendencia: Tendencia;
 }
@@ -157,10 +153,9 @@ export default function AdminReposicaoSlaFornecedor() {
         .from("v_fornecedor_sla_compliance")
         .select("*")
         .eq("empresa", empresa)
-        .order("pct_compliance", { ascending: true, nullsFirst: false });
+        .order("perc_sla_compliance", { ascending: true, nullsFirst: false });
       if (error) throw error;
-      // View columns divergem do shape consumido; cast preserva comportamento runtime
-      return (data ?? []) as unknown as ForCompliance[];
+      return (data ?? []) as ForCompliance[];
     },
   });
 
@@ -212,7 +207,7 @@ export default function AdminReposicaoSlaFornecedor() {
   });
 
   const grupos = useMemo(
-    () => Array.from(new Set((skus ?? []).map((s) => s.grupo_producao).filter(Boolean))).sort() as string[],
+    () => Array.from(new Set((skus ?? []).map((s) => s.grupo_codigo).filter(Boolean))).sort() as string[],
     [skus],
   );
 
@@ -222,7 +217,7 @@ export default function AdminReposicaoSlaFornecedor() {
       .filter((s) => filtroStatus.includes(s.status_sla))
       .filter((s) => filtroFornecedor === "__all__" || s.fornecedor_nome === filtroFornecedor)
       .filter((s) => filtroTendencia === "__all__" || s.tendencia === filtroTendencia)
-      .filter((s) => filtroGrupo === "__all__" || s.grupo_producao === filtroGrupo)
+      .filter((s) => filtroGrupo === "__all__" || s.grupo_codigo === filtroGrupo)
       .filter(
         (s) =>
           !q ||
@@ -232,7 +227,7 @@ export default function AdminReposicaoSlaFornecedor() {
       .sort((a, b) => {
         const r = STATUS_RANK[a.status_sla] - STATUS_RANK[b.status_sla];
         if (r !== 0) return r;
-        return (b.desvio_pct ?? -Infinity) - (a.desvio_pct ?? -Infinity);
+        return (b.desvio_perc ?? -Infinity) - (a.desvio_perc ?? -Infinity);
       });
   }, [skus, filtroStatus, filtroFornecedor, filtroTendencia, filtroGrupo, busca]);
 
@@ -245,26 +240,26 @@ export default function AdminReposicaoSlaFornecedor() {
     if (!fornecedores?.length) return;
     const head = [
       "fornecedor",
-      "skus_avaliados",
-      "pct_compliance",
-      "cumprindo",
-      "limite",
-      "violando",
-      "critico",
-      "lt_teorico_medio",
-      "lt_observado_medio",
+      "skus_total",
+      "perc_sla_compliance",
+      "skus_cumprindo",
+      "skus_limite",
+      "skus_violando",
+      "skus_criticos",
+      "lt_teorico_agregado",
+      "lt_medio_observado_agregado",
     ];
     const rows = fornecedores.map((f) =>
       [
         `"${f.fornecedor_nome.replace(/"/g, '""')}"`,
-        f.skus_avaliados,
-        f.pct_compliance ?? "",
-        f.cumprindo,
-        f.limite,
-        f.violando,
-        f.critico,
-        f.lt_teorico_medio ?? "",
-        f.lt_observado_medio ?? "",
+        f.skus_total,
+        f.perc_sla_compliance ?? "",
+        f.skus_cumprindo,
+        f.skus_limite,
+        f.skus_violando,
+        f.skus_criticos,
+        f.lt_teorico_agregado ?? "",
+        f.lt_medio_observado_agregado ?? "",
       ].join(","),
     );
     const blob = new Blob([head.join(",") + "\n" + rows.join("\n")], { type: "text/csv;charset=utf-8" });
@@ -300,27 +295,27 @@ export default function AdminReposicaoSlaFornecedor() {
           Array.from({ length: 3 }).map((_, i) => <Skeleton key={i} className="h-40 w-full" />)}
         {!loadingFor &&
           fornecedores?.map((f) => (
-            <Card key={f.fornecedor_nome} className={cardTone(f.pct_compliance)}>
+            <Card key={f.fornecedor_nome} className={cardTone(f.perc_sla_compliance)}>
               <CardHeader className="pb-2">
                 <CardTitle className="text-sm flex items-center justify-between gap-2">
                   <span className="truncate" title={f.fornecedor_nome}>{f.fornecedor_nome}</span>
-                  <Badge variant="outline" className="shrink-0">{f.skus_avaliados} SKUs</Badge>
+                  <Badge variant="outline" className="shrink-0">{f.skus_total} SKUs</Badge>
                 </CardTitle>
               </CardHeader>
               <CardContent className="space-y-2">
                 <div className="text-3xl font-bold">
-                  {f.pct_compliance != null ? `${f.pct_compliance}%` : "—"}
+                  {f.perc_sla_compliance != null ? `${f.perc_sla_compliance}%` : "—"}
                   <span className="text-xs font-normal text-muted-foreground ml-1">compliance</span>
                 </div>
                 <div className="text-xs text-muted-foreground">
-                  LT teórico: <span className="font-mono">{fmtNum(f.lt_teorico_medio)}d</span> · observado:{" "}
-                  <span className="font-mono">{fmtNum(f.lt_observado_medio)}d</span>
+                  LT teórico: <span className="font-mono">{fmtNum(f.lt_teorico_agregado)}d</span> · observado:{" "}
+                  <span className="font-mono">{fmtNum(f.lt_medio_observado_agregado)}d</span>
                 </div>
                 <div className="flex flex-wrap gap-1.5 pt-1">
-                  <Badge variant="success">{f.cumprindo} ok</Badge>
-                  <Badge variant="warning">{f.limite} limite</Badge>
-                  <Badge variant="warning">{f.violando} viol.</Badge>
-                  <Badge variant="destructive">{f.critico} crít.</Badge>
+                  <Badge variant="success">{f.skus_cumprindo} ok</Badge>
+                  <Badge variant="warning">{f.skus_limite} limite</Badge>
+                  <Badge variant="warning">{f.skus_violando} viol.</Badge>
+                  <Badge variant="destructive">{f.skus_criticos} crít.</Badge>
                 </div>
               </CardContent>
             </Card>
@@ -464,8 +459,8 @@ export default function AdminReposicaoSlaFornecedor() {
                           </div>
                         </TableCell>
                         <TableCell>
-                          {s.grupo_producao ? (
-                            <Badge variant="outline" className="text-xs">{s.grupo_producao}</Badge>
+                          {s.grupo_codigo ? (
+                            <Badge variant="outline" className="text-xs">{s.grupo_codigo}</Badge>
                           ) : (
                             <span className="text-xs text-muted-foreground">—</span>
                           )}
@@ -474,12 +469,12 @@ export default function AdminReposicaoSlaFornecedor() {
                         <TableCell className="text-right font-mono text-xs">{fmtNum(s.lt_observado_medio, 1)}</TableCell>
                         <TableCell className="text-right">
                           <div className="inline-flex items-center gap-1 font-mono text-xs">
-                            {fmtNum(s.lt_obs_recente_5, 1)}
+                            {fmtNum(s.lt_recente_medio, 1)}
                             <TendenciaIcon t={s.tendencia} />
                           </div>
                         </TableCell>
-                        <TableCell className={`text-right font-mono text-xs ${desvioColorClass(s.desvio_pct)}`}>
-                          {s.desvio_pct == null ? "—" : `${s.desvio_pct > 0 ? "+" : ""}${s.desvio_pct}%`}
+                        <TableCell className={`text-right font-mono text-xs ${desvioColorClass(s.desvio_perc)}`}>
+                          {s.desvio_perc == null ? "—" : `${s.desvio_perc > 0 ? "+" : ""}${s.desvio_perc}%`}
                         </TableCell>
                         <TableCell className="text-xs">{fmtData(s.ultimo_recebimento)}</TableCell>
                         <TableCell className="text-right font-mono text-xs">{s.n_observacoes ?? 0}</TableCell>
@@ -510,7 +505,7 @@ export default function AdminReposicaoSlaFornecedor() {
               <div className="flex flex-wrap gap-2 text-xs">
                 <Badge variant={STATUS_VARIANT[skuDetalhe.status_sla]}>{STATUS_LABEL[skuDetalhe.status_sla]}</Badge>
                 {skuDetalhe.fornecedor_nome && <Badge variant="outline">{skuDetalhe.fornecedor_nome}</Badge>}
-                {skuDetalhe.grupo_producao && <Badge variant="outline">Grupo {skuDetalhe.grupo_producao}</Badge>}
+                {skuDetalhe.grupo_codigo && <Badge variant="outline">Grupo {skuDetalhe.grupo_codigo}</Badge>}
                 <Badge variant="outline">LT teórico: <span className="font-mono ml-1">{fmtNum(skuDetalhe.lt_teorico, 1)}d</span></Badge>
                 <Badge variant="outline">Médio observado: <span className="font-mono ml-1">{fmtNum(skuDetalhe.lt_observado_medio, 1)}d</span></Badge>
               </div>
