@@ -40,6 +40,15 @@ describe('resolveAccessPersona', () => {
   it('staff sem tag → vendedor (default)', () => {
     expect(resolveAccessPersona({ ...base, appRole: 'employee' })).toBe('vendedor');
   });
+  // Anti-escalação (codex review): restrições vencem sinais de privilégio residuais.
+  it('customer com commercial_role residual NÃO escala — fica cliente', () => {
+    expect(resolveAccessPersona({ ...base, appRole: 'customer', commercialRole: 'super_admin' })).toBe('cliente');
+    expect(resolveAccessPersona({ ...base, appRole: 'customer', commercialRole: 'gerencial' })).toBe('cliente');
+  });
+  it('sales-only com department privilegiado NÃO escala — fica vendedor', () => {
+    expect(resolveAccessPersona({ ...base, appRole: 'employee', isSalesOnly: true, department: 'financeiro' })).toBe('vendedor');
+    expect(resolveAccessPersona({ ...base, appRole: 'employee', isSalesOnly: true, commercialRole: 'gerencial' })).toBe('vendedor');
+  });
 });
 
 describe('resolveGroupTag', () => {

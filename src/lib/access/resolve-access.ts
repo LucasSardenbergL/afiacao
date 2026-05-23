@@ -13,6 +13,11 @@ export interface AccessSignals {
 
 /** Resolve a persona de acesso de forma DETERMINÍSTICA (sem heurística). */
 export function resolveAccessPersona(s: AccessSignals): AccessPersona {
+  // RESTRIÇÕES PRIMEIRO — vencem qualquer sinal de privilégio "perdido"
+  // (ex: customer com commercial_role residual; sales-only com department).
+  if (s.appRole === 'customer') return 'cliente';
+  if (s.isSalesOnly) return 'vendedor';
+  // Escada de privilégio (do mais alto pro mais baixo).
   if (s.appRole === 'master'
     || s.commercialRole === 'estrategico'
     || s.commercialRole === 'super_admin'
@@ -20,8 +25,7 @@ export function resolveAccessPersona(s: AccessSignals): AccessPersona {
   if (s.commercialRole === 'gerencial' || s.department === 'gestao') return 'gestor_comercial';
   if (s.department === 'financeiro') return 'financeiro';
   if (s.department === 'separador' || s.department === 'conferente' || s.department === 'tintometrico') return 'operacao';
-  if (s.appRole === 'customer') return 'cliente';
-  // operacional/farmer/hunter/closer, dept vendas, sales-only, ou staff sem tag → vendedor (default)
+  // operacional/farmer/hunter/closer, dept vendas, ou staff sem tag → vendedor (default)
   return 'vendedor';
 }
 

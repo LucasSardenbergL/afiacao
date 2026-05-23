@@ -364,13 +364,15 @@ const App = () => (
                 <Route path="admin/notificacoes" element={<AdminNotificacoes />} />
                 <Route path="admin/portal-sayerlack" element={<AdminPortalSayerlack />} />
               </Route>
-              <Route path="admin/sip-credentials" element={<AdminVendorSipCredentials />} />
-              <Route path="admin/knowledge-base" element={<AdminKnowledgeBase />} />
-              <Route path="admin/knowledge-base/:id" element={<AdminKnowledgeBaseDetail />} />
-              <Route path="admin/standard-processes" element={<AdminStandardProcesses />} />
-              <Route path="admin/standard-processes/new" element={<AdminStandardProcessNew />} />
-              <Route path="admin/standard-processes/:id" element={<AdminStandardProcessDetail />} />
-              <Route path="admin/calculadora" element={<AdminCalculadora />} />
+              <Route element={<RequireAccess section="gestao_admin" />}>
+                <Route path="admin/sip-credentials" element={<AdminVendorSipCredentials />} />
+                <Route path="admin/knowledge-base" element={<AdminKnowledgeBase />} />
+                <Route path="admin/knowledge-base/:id" element={<AdminKnowledgeBaseDetail />} />
+                <Route path="admin/standard-processes" element={<AdminStandardProcesses />} />
+                <Route path="admin/standard-processes/new" element={<AdminStandardProcessNew />} />
+                <Route path="admin/standard-processes/:id" element={<AdminStandardProcessDetail />} />
+                <Route path="admin/calculadora" element={<AdminCalculadora />} />
+              </Route>
               <Route path="telefonia" element={<Telefonia />} />
             </Route>
 
