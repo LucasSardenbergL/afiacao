@@ -13,7 +13,7 @@ import type { SpinAnalysis, SpinAnalysisStatus } from '@/lib/spin/types';
 import { resolveCustomerByPhone } from '@/lib/call-session/resolve-customer';
 import { buildSessionPayload } from '@/lib/call-session/build-session-payload';
 import { resolveCallParty, shouldAutoRecord } from '@/lib/call-log/recording-policy';
-import { logCallStart, logAnswered, logClosed } from '@/lib/call-log/record';
+import { logCallStart, logAnswered, logClosed, enrichCallLog } from '@/lib/call-log/record';
 
 export type WebRTCCallState =
   | 'idle' | 'connecting' | 'calling_origin' | 'calling_destination'
@@ -171,19 +171,23 @@ export function WebRTCCallProvider({ children }: ProviderProps) {
         // PR-INBOUND-CALLS: emite quando chamada entra
         client.on('incomingCall', async (info) => {
           setIncomingCall(info);
-          // Captura no call_log (additivo — não bloqueia o ring). Erros logam só.
           const { data: { user } } = await supabase.auth.getUser();
           if (!user) return;
-          const party = await resolveCallParty(info.phone);
+          // Insere ASAP (sem BINA) pra um incomingClosed rápido achar a linha.
           await logCallStart({
             farmerId: user.id,
             direction: 'inbound',
             provider: 'nvoip_sip',
             phoneRaw: info.phone,
-            party,
-            recorded: shouldAutoRecord(party.kind),
+            party: { kind: 'desconhecido', customerUserId: null, matchConfidence: 'none', phoneNormalized: normalizeBrPhone(info.phone) },
+            recorded: false,
             sipCallId: info.sipCallId,
           });
+          // Enriquece com BINA (query mais lenta) — não bloqueia o ring.
+          const party = await resolveCallParty(info.phone);
+          if (party.customerUserId) {
+            await enrichCallLog(info.sipCallId, party, shouldAutoRecord(party.kind));
+          }
         });
         // PR-INBOUND-CALLS: fecha a linha do call_log (atendida/perdida)
         client.on('incomingClosed', async ({ sipCallId, answered, durationSeconds }) => {
@@ -217,6 +221,11 @@ export function WebRTCCallProvider({ children }: ProviderProps) {
       durationTimerRef.current = window.setInterval(() => {
         setCallDuration((d) => d + 1);
       }, 1000);
+      // Telefonia — marca a linha outbound como 'answered' assim que conecta. Sem isso a
+      // linha fica 'ringing' a chamada inteira e o cron backstop (90s) marca uma chamada
+      // VIVA como 'failed'. logAnswered é idempotente (WHERE status='ringing') e o cron só
+      // toca em 'ringing' → não falha chamada ativa. O fechamento terminal ainda seta 'ended'.
+      if (dialedSipCallIdRef.current) void logAnswered(dialedSipCallIdRef.current);
     } else if (callState !== 'established' && durationTimerRef.current) {
       clearInterval(durationTimerRef.current);
       durationTimerRef.current = null;

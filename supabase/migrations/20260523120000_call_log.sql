@@ -37,11 +37,13 @@ CREATE TABLE IF NOT EXISTS public.call_log (
   created_at timestamptz NOT NULL DEFAULT now()
 );
 
--- Dedup idempotente (parciais — só quando id presente)
+-- Dedup idempotente. Índices NÃO-parciais: NULLs continuam distintos em unique index
+-- do Postgres (várias linhas NULL permitidas — mesmo efeito), mas agora o ON CONFLICT
+-- do PostgREST (sem predicado) bate no índice e o upsert funciona (evita erro 42P10).
 CREATE UNIQUE INDEX IF NOT EXISTS uq_call_log_provider_call_id
-  ON public.call_log (provider, provider_call_id) WHERE provider_call_id IS NOT NULL;
+  ON public.call_log (provider, provider_call_id);
 CREATE UNIQUE INDEX IF NOT EXISTS uq_call_log_sip_call_id
-  ON public.call_log (provider, sip_call_id) WHERE sip_call_id IS NOT NULL;
+  ON public.call_log (provider, sip_call_id);
 
 -- Listagem do histórico
 CREATE INDEX IF NOT EXISTS idx_call_log_farmer_started

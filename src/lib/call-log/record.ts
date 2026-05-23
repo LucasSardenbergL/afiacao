@@ -1,6 +1,7 @@
 // src/lib/call-log/record.ts
 import { supabase } from '@/integrations/supabase/client';
 import { buildCallLogInsert, type BuildInsertArgs } from './build-insert';
+import type { ResolvedCallParty } from './recording-policy';
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 const tbl = () => supabase.from('call_log') as any;
@@ -15,6 +16,18 @@ export async function logCallStart(args: BuildInsertArgs): Promise<void> {
   }
 }
 
+/** Enriquece a linha inbound com BINA depois do insert inicial (sip_call_id já existe). */
+export async function enrichCallLog(sipCallId: string, party: ResolvedCallParty, recorded: boolean): Promise<void> {
+  try {
+    await tbl().update({
+      customer_user_id: party.customerUserId,
+      match_confidence: party.matchConfidence,
+      display_name: party.contactName ?? null,
+      recorded,
+    }).eq('sip_call_id', sipCallId).in('status', ['ringing', 'answered']);
+  } catch (e) { console.error('[call-log] enrichCallLog', e); }
+}
+
 /** Marca answered (condicional: só se ainda ringing — em multi-aba só quem atende ganha). */
 export async function logAnswered(sipCallId: string): Promise<void> {
   try {
@@ -27,11 +40,13 @@ export async function logAnswered(sipCallId: string): Promise<void> {
 export async function logClosed(sipCallId: string, opts: { answered: boolean; rejected?: boolean; durationSeconds: number }): Promise<void> {
   try {
     const status = opts.answered ? 'ended' : opts.rejected ? 'rejected' : 'missed';
+    // Só fecha linhas NÃO-terminais. Preserva rejected/missed/failed/busy/canceled/ended
+    // (ex: um inbound já 'rejected' não pode virar 'missed' quando incomingClosed dispara depois).
     await tbl().update({
       status,
       ended_at: new Date().toISOString(),
       duration_seconds: opts.durationSeconds,
-    }).eq('sip_call_id', sipCallId).neq('status', 'ended');
+    }).eq('sip_call_id', sipCallId).in('status', ['ringing', 'answered']);
   } catch (e) { console.error('[call-log] logClosed', e); }
 }
 
