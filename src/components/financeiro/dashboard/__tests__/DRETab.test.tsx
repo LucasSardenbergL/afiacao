@@ -1,14 +1,15 @@
 import { describe, it, expect } from 'vitest';
 import { render, screen } from '@testing-library/react';
 import { DRETab } from '../DRETab';
+import { makeDRE } from './factories';
 
-const row = {
+const row = makeDRE({
   mes: 1,
   receita_bruta: 10000, deducoes: 1000, receita_liquida: 9000, cmv: 4000, lucro_bruto: 5000,
   despesas_operacionais: 1000, despesas_administrativas: 500, despesas_comerciais: 300,
   despesas_financeiras: 100, receitas_financeiras: 50, resultado_operacional: 3150,
-  impostos: 600, resultado_liquido: 2550, detalhamento: {},
-};
+  impostos: 600, resultado_liquido: 2550,
+});
 
 describe('DRETab', () => {
   it('vazio → mensagem de recalcular', () => {
@@ -26,7 +27,7 @@ describe('DRETab', () => {
   });
 
   it('categorias não mapeadas → aviso de heurística', () => {
-    const unmapped = [{ ...row, detalhamento: { categorias_nao_mapeadas: ['CAT_X'] } }];
+    const unmapped = [{ ...row, detalhamento: { receitas: {}, despesas: {}, categorias_nao_mapeadas: ['CAT_X'] } }];
     render(<DRETab data={unmapped} view="all" ano={2026} />);
     expect(screen.getByText(/classificadas por heurística/)).toBeTruthy();
     expect(screen.getByText(/CAT_X/)).toBeTruthy();

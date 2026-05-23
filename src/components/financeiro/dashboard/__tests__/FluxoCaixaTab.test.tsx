@@ -1,10 +1,11 @@
 import { describe, it, expect } from 'vitest';
 import { render, screen } from '@testing-library/react';
 import { FluxoCaixaTab } from '../FluxoCaixaTab';
+import { makeFluxoDia } from './factories';
 
 const days = [
-  { data: '2026-01-05', entradas_realizadas: 1000, saidas_realizadas: 400, entradas_previstas: 0, saidas_previstas: 0 },
-  { data: '2099-01-05', entradas_realizadas: 0, saidas_realizadas: 0, entradas_previstas: 800, saidas_previstas: 300 },
+  makeFluxoDia({ data: '2026-01-05', entradas_realizadas: 1000, saidas_realizadas: 400 }),
+  makeFluxoDia({ data: '2099-01-05', entradas_previstas: 800, saidas_previstas: 300 }),
 ];
 
 describe('FluxoCaixaTab', () => {
