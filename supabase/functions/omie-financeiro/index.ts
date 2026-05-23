@@ -859,6 +859,180 @@ async function syncMovimentacoes(
   };
 }
 
+// ═══════════════ Onda 3a — DRE v2 estrutural (regime-aware) ═══════════════
+// Espelho VERBATIM de src/lib/financeiro/dre-helpers.ts (testado em vitest).
+// Qualquer mudança aqui deve ser refletida lá e vice-versa.
+type RegimeTributario = 'simples' | 'presumido';
+
+const REGIME_POR_EMPRESA: Record<string, RegimeTributario> = {
+  colacor: 'presumido',
+  oben: 'presumido',
+  colacor_sc: 'simples',
+};
+
+type DreLinha =
+  | 'receita_bruta' | 'deducoes' | 'receitas_financeiras' | 'outras_receitas'
+  | 'cmv' | 'despesas_operacionais' | 'despesas_administrativas' | 'despesas_comerciais'
+  | 'despesas_financeiras' | 'outras_despesas'
+  | 'ded_icms' | 'ded_iss' | 'ded_pis' | 'ded_cofins' | 'ded_ipi'
+  | 'das' | 'irpj' | 'csll';
+
+const DRE_LINHAS_VALIDAS = new Set<string>([
+  'receita_bruta', 'deducoes', 'receitas_financeiras', 'outras_receitas',
+  'cmv', 'despesas_operacionais', 'despesas_administrativas', 'despesas_comerciais',
+  'despesas_financeiras', 'outras_despesas',
+  'ded_icms', 'ded_iss', 'ded_pis', 'ded_cofins', 'ded_ipi', 'das', 'irpj', 'csll',
+  'impostos',
+]);
+
+type ResultadoClassificacao = {
+  linha: DreLinha;
+  mapeado: boolean;
+  viaFallback: boolean;
+  impostoNaoMapeado: boolean;
+};
+
+function impostoPorKeyword(upper: string, regime: RegimeTributario): DreLinha | null {
+  const tem = (s: string) => upper.includes(s);
+  if (regime === 'simples') {
+    if (tem('DAS') || tem('SIMPLES') || tem('IRPJ') || tem('CSLL') || tem('PIS') ||
+        tem('COFINS') || tem('ISS') || tem('ICMS') || tem('IPI') || tem('IMPOST') || tem('TRIBUT')) {
+      return 'das';
+    }
+    return null;
+  }
+  if (tem('IRPJ')) return 'irpj';
+  if (tem('CSLL')) return 'csll';
+  if (tem('COFINS')) return 'ded_cofins';
+  if (tem('PIS')) return 'ded_pis';
+  if (tem('ISS')) return 'ded_iss';
+  if (tem('ICMS')) return 'ded_icms';
+  if (tem('IPI')) return 'ded_ipi';
+  if (tem('DAS') || tem('SIMPLES') || tem('IMPOST') || tem('TRIBUT')) return 'ded_icms';
+  return null;
+}
+
+function normalizarImpostoLegado(linha: string, regime: RegimeTributario): DreLinha {
+  if (linha !== 'impostos') return linha as DreLinha;
+  return regime === 'simples' ? 'das' : 'ded_icms';
+}
+
+function classificarLinhaDRE(input: {
+  categoria_codigo: string;
+  categoria_descricao: string;
+  isReceita: boolean;
+  regime: RegimeTributario;
+  mapping: Map<string, string>;
+}): ResultadoClassificacao {
+  const { categoria_codigo: cod, categoria_descricao: desc, isReceita, regime, mapping } = input;
+  if (cod && mapping.has(cod)) {
+    const raw = mapping.get(cod)!;
+    const linha = DRE_LINHAS_VALIDAS.has(raw) ? normalizarImpostoLegado(raw, regime) : (isReceita ? 'receita_bruta' : 'despesas_operacionais');
+    return { linha, mapeado: true, viaFallback: false, impostoNaoMapeado: false };
+  }
+  if (cod) {
+    const parts = cod.split('.');
+    for (let i = parts.length - 1; i >= 2; i--) {
+      const prefix = parts.slice(0, i).join('.');
+      if (mapping.has(prefix)) {
+        const raw = mapping.get(prefix)!;
+        const linha = DRE_LINHAS_VALIDAS.has(raw) ? normalizarImpostoLegado(raw, regime) : (isReceita ? 'receita_bruta' : 'despesas_operacionais');
+        return { linha, mapeado: true, viaFallback: false, impostoNaoMapeado: false };
+      }
+    }
+  }
+  const upper = (desc + ' ' + cod).toUpperCase();
+  if (isReceita) {
+    if (upper.includes('DEVOL') || upper.includes('CANCEL')) return { linha: 'deducoes', mapeado: false, viaFallback: true, impostoNaoMapeado: false };
+    if (upper.includes('FINANC') || upper.includes('REND') || upper.includes('JUROS REC')) return { linha: 'receitas_financeiras', mapeado: false, viaFallback: true, impostoNaoMapeado: false };
+    return { linha: 'receita_bruta', mapeado: false, viaFallback: true, impostoNaoMapeado: false };
+  }
+  const imp = impostoPorKeyword(upper, regime);
+  if (imp) return { linha: imp, mapeado: false, viaFallback: true, impostoNaoMapeado: true };
+  if (upper.includes('CMV') || upper.includes('CUSTO MERC') || upper.includes('CUSTO PROD') || upper.includes('MATÉRIA') || upper.includes('MATERIA')) return { linha: 'cmv', mapeado: false, viaFallback: true, impostoNaoMapeado: false };
+  if (upper.includes('JUROS') || upper.includes('IOF') || upper.includes('TARIFA BANC') || upper.includes('DESC CONCED')) return { linha: 'despesas_financeiras', mapeado: false, viaFallback: true, impostoNaoMapeado: false };
+  if (upper.includes('COMISS') || upper.includes('FRETE VEND') || upper.includes('MARKET') || upper.includes('PUBLICID') || upper.includes('PROPAGANDA') || upper.includes('VIAGEM') || upper.includes('REPRESENT')) return { linha: 'despesas_comerciais', mapeado: false, viaFallback: true, impostoNaoMapeado: false };
+  if (upper.includes('ALUGUE') || upper.includes('CONDOM') || upper.includes('SALÁR') || upper.includes('FOLHA') || upper.includes('ENCARGO') || upper.includes('FGTS') || upper.includes('INSS PATR') || upper.includes('CONTAB') || upper.includes('CONSULTORI') || upper.includes('SOFTWARE') || upper.includes('TELEFO') || upper.includes('INTERNET') || upper.includes('ENERGIA') || upper.includes('ÁGUA')) return { linha: 'despesas_administrativas', mapeado: false, viaFallback: true, impostoNaoMapeado: false };
+  return { linha: 'despesas_operacionais', mapeado: false, viaFallback: true, impostoNaoMapeado: false };
+}
+
+function resolverDataCaixa(input: {
+  data_real: string | null;
+  data_vencimento: string | null;
+}): { data_efetiva: string | null; usou_fallback: boolean } {
+  if (input.data_real) return { data_efetiva: input.data_real, usou_fallback: false };
+  if (input.data_vencimento) return { data_efetiva: input.data_vencimento, usou_fallback: true };
+  return { data_efetiva: null, usou_fallback: false };
+}
+
+type DRECalculada = {
+  receita_bruta: number; deducoes: number; receita_liquida: number;
+  cmv: number; lucro_bruto: number;
+  despesas_operacionais: number; despesas_administrativas: number; despesas_comerciais: number;
+  despesas_financeiras: number; receitas_financeiras: number;
+  resultado_operacional: number; outras_receitas: number; outras_despesas: number;
+  resultado_antes_impostos: number; impostos: number; resultado_liquido: number;
+  detalhamento_impostos: Record<string, number>;
+};
+
+function montarDRE(input: { regime: RegimeTributario; totais: Record<string, number> }): DRECalculada {
+  const t = (k: string) => input.totais[k] ?? 0;
+  const indiretos = t('ded_icms') + t('ded_iss') + t('ded_pis') + t('ded_cofins') + t('ded_ipi');
+  const das = t('das');
+  const impostoLucro = input.regime === 'simples' ? 0 : (t('irpj') + t('csll'));
+  const deducoes = t('deducoes') + indiretos + das;
+  const receita_bruta = t('receita_bruta');
+  const receita_liquida = receita_bruta - deducoes;
+  const cmv = t('cmv');
+  const lucro_bruto = receita_liquida - cmv;
+  const despesas_operacionais = t('despesas_operacionais');
+  const despesas_administrativas = t('despesas_administrativas');
+  const despesas_comerciais = t('despesas_comerciais');
+  const despesas_financeiras = t('despesas_financeiras');
+  const receitas_financeiras = t('receitas_financeiras');
+  const resultado_operacional = lucro_bruto - (despesas_operacionais + despesas_administrativas + despesas_comerciais) + receitas_financeiras - despesas_financeiras;
+  const outras_receitas = t('outras_receitas');
+  const outras_despesas = t('outras_despesas');
+  const resultado_antes_impostos = resultado_operacional + outras_receitas - outras_despesas;
+  const resultado_liquido = resultado_antes_impostos - impostoLucro;
+  const detalhamento_impostos: Record<string, number> = {};
+  for (const k of ['ded_icms', 'ded_iss', 'ded_pis', 'ded_cofins', 'ded_ipi', 'das', 'irpj', 'csll']) {
+    if (t(k) !== 0) detalhamento_impostos[k] = t(k);
+  }
+  return {
+    receita_bruta, deducoes, receita_liquida, cmv, lucro_bruto,
+    despesas_operacionais, despesas_administrativas, despesas_comerciais,
+    despesas_financeiras, receitas_financeiras, resultado_operacional,
+    outras_receitas, outras_despesas, resultado_antes_impostos,
+    impostos: impostoLucro, resultado_liquido, detalhamento_impostos,
+  };
+}
+
+type Confianca = { nivel: 'alta' | 'media' | 'baixa'; motivos: string[]; pct_mapeado_valor: number; fallback_pct: number };
+
+function scoreConfianca(input: {
+  pct_mapeado_valor: number;
+  fallback_pct: number;
+  share_generico: number;
+  tem_imposto_nao_mapeado: boolean;
+}): Confianca {
+  const motivos: string[] = [];
+  let nivel = 3;
+  const rebaixar = (para: number, motivo: string) => { if (para < nivel) nivel = para; motivos.push(motivo); };
+  if (input.pct_mapeado_valor < 0.8) rebaixar(1, `Só ${(input.pct_mapeado_valor * 100).toFixed(0)}% do valor está mapeado por categoria.`);
+  else if (input.pct_mapeado_valor < 0.9) rebaixar(2, `${(input.pct_mapeado_valor * 100).toFixed(0)}% do valor mapeado (ideal ≥90%).`);
+  if (input.fallback_pct > 0.2) rebaixar(1, `${(input.fallback_pct * 100).toFixed(0)}% do caixa usou data de vencimento (fallback) — direcional.`);
+  else if (input.fallback_pct > 0.1) rebaixar(2, `${(input.fallback_pct * 100).toFixed(0)}% do caixa usou fallback de vencimento.`);
+  if (input.share_generico > 0.15) rebaixar(2, `${(input.share_generico * 100).toFixed(0)}% em categorias genéricas (outros/diversos/ajuste).`);
+  if (input.tem_imposto_nao_mapeado) rebaixar(2, 'Categoria de imposto classificada por heurística (não mapeada).');
+  return {
+    nivel: nivel === 3 ? 'alta' : nivel === 2 ? 'media' : 'baixa',
+    motivos,
+    pct_mapeado_valor: input.pct_mapeado_valor,
+    fallback_pct: input.fallback_pct,
+  };
+}
+
 // ═══════════════ CALCULAR DRE SNAPSHOT ═══════════════
 type Regime = "caixa" | "competencia";
 
@@ -874,162 +1048,110 @@ async function calcularDRE(
     mes === 12
       ? `${ano + 1}-01-01`
       : `${ano}-${String(mes + 1).padStart(2, "0")}-01`;
+  const regimeTrib: RegimeTributario = REGIME_POR_EMPRESA[company] ?? "presumido";
 
-  // REGIME:
-  // - "caixa": agrupa por data_vencimento (proxy do recebimento/pagamento efetivo, já que
-  //   o Omie nem sempre retorna data_recebimento/data_pagamento), e considera só títulos
-  //   com status pago/recebido. É o que o código historicamente fazia (mesmo rotulado errado).
-  // - "competencia": agrupa por data_emissao (regime contábil) e inclui todos os títulos
-  //   exceto CANCELADO. Usa valor_documento integral pois o evento de competência é a emissão.
-  const dataColCR = regime === "caixa" ? "data_vencimento" : "data_emissao";
-  const dataColCP = regime === "caixa" ? "data_vencimento" : "data_emissao";
-
-  let receitasQuery = db
-    .from("fin_contas_receber")
-    .select("valor_documento, valor_recebido, categoria_codigo, categoria_descricao")
-    .eq("company", company)
-    .gte(dataColCR, inicioMes)
-    .lt(dataColCR, fimMes);
-  if (regime === "caixa") {
-    receitasQuery = receitasQuery.in("status_titulo", ["RECEBIDO", "PARCIAL", "LIQUIDADO"]);
-  } else {
-    receitasQuery = receitasQuery.neq("status_titulo", "CANCELADO");
-  }
-  const { data: receitas } = await receitasQuery;
-
-  let despesasQuery = db
-    .from("fin_contas_pagar")
-    .select("valor_documento, valor_pago, categoria_codigo, categoria_descricao")
-    .eq("company", company)
-    .gte(dataColCP, inicioMes)
-    .lt(dataColCP, fimMes);
-  if (regime === "caixa") {
-    despesasQuery = despesasQuery.in("status_titulo", ["PAGO", "PARCIAL", "LIQUIDADO"]);
-  } else {
-    despesasQuery = despesasQuery.neq("status_titulo", "CANCELADO");
-  }
-  const { data: despesas } = await despesasQuery;
-
-  // Buscar mapeamento configurável: empresa-específico tem prioridade sobre _default
-  const { data: mappings } = await db
-    .from("fin_categoria_dre_mapping")
-    .select("omie_codigo, dre_linha, company")
-    .in("company", [company, "_default"]);
-
-  // Montar mapa de categorias → linha DRE (empresa-específico ganha)
-  const catToDre = new Map<string, string>();
-  const sortedMappings = ((mappings ?? []) as CategoriaDreMappingRow[]).slice().sort((a, b) =>
-    a.company === "_default" ? -1 : 1
-  );
-  for (const m of sortedMappings) {
-    catToDre.set(m.omie_codigo, m.dre_linha);
-  }
-
-  // Função de lookup que tenta match exato, depois prefix match
-  function resolveCategoria(cod: string, desc: string, isReceita: boolean): string {
-    // 1. Match exato
-    if (catToDre.has(cod)) return catToDre.get(cod)!;
-    // 2. Prefix match (ex: "1.01.02.003" → tenta "1.01.02", depois "1.01")
-    const parts = cod.split(".");
-    for (let i = parts.length - 1; i >= 2; i--) {
-      const prefix = parts.slice(0, i).join(".");
-      if (catToDre.has(prefix)) return catToDre.get(prefix)!;
+  // ── Buscar títulos ──
+  // Competência: bucketiza por data_emissao (server-side). Caixa: precisa da data EFETIVA
+  // (recebimento/pagamento) com fallback p/ vencimento → busca um superset (data real OU
+  // vencimento na janela) e bucketiza client-side via resolverDataCaixa.
+  async function buscarCR() {
+    if (regime === "competencia") {
+      const { data } = await db.from("fin_contas_receber")
+        .select("valor_documento, valor_recebido, data_recebimento, data_vencimento, categoria_codigo, categoria_descricao")
+        .eq("company", company).neq("status_titulo", "CANCELADO")
+        .gte("data_emissao", inicioMes).lt("data_emissao", fimMes);
+      return data ?? [];
     }
-    // 3. Heurística por descrição (fallback)
-    const upper = (desc + cod).toUpperCase();
-    if (isReceita) {
-      if (upper.includes("DEVOL") || upper.includes("CANCEL")) return "deducoes";
-      if (upper.includes("FINANC") || upper.includes("REND") || upper.includes("JUROS REC")) return "receitas_financeiras";
-      return "receita_bruta";
-    } else {
-      if (upper.includes("CMV") || upper.includes("CUSTO MERC") || upper.includes("CUSTO PROD") || upper.includes("MATÉRIA") || upper.includes("MATERIA")) return "cmv";
-      if (upper.includes("DAS") || upper.includes("SIMPLES") || upper.includes("IRPJ") || upper.includes("CSLL") || upper.includes("PIS") || upper.includes("COFINS") || upper.includes("ISS") || upper.includes("ICMS") || upper.includes("IPI") || upper.includes("IMPOST") || upper.includes("TRIBUT")) return "impostos";
-      if (upper.includes("JUROS") || upper.includes("IOF") || upper.includes("TARIFA BANC") || upper.includes("DESC CONCED")) return "despesas_financeiras";
-      if (upper.includes("COMISS") || upper.includes("FRETE VEND") || upper.includes("MARKET") || upper.includes("PUBLICID") || upper.includes("PROPAGANDA") || upper.includes("VIAGEM") || upper.includes("REPRESENT")) return "despesas_comerciais";
-      if (upper.includes("ALUGUE") || upper.includes("CONDOM") || upper.includes("SALÁR") || upper.includes("FOLHA") || upper.includes("ENCARGO") || upper.includes("FGTS") || upper.includes("INSS PATR") || upper.includes("CONTAB") || upper.includes("CONSULTORI") || upper.includes("SOFTWARE") || upper.includes("TELEFO") || upper.includes("INTERNET") || upper.includes("ENERGIA") || upper.includes("ÁGUA")) return "despesas_administrativas";
-      return "despesas_operacionais";
-    }
+    const { data } = await db.from("fin_contas_receber")
+      .select("valor_documento, valor_recebido, data_recebimento, data_vencimento, categoria_codigo, categoria_descricao")
+      .eq("company", company).in("status_titulo", ["RECEBIDO", "PARCIAL", "LIQUIDADO"])
+      .or(`and(data_recebimento.gte.${inicioMes},data_recebimento.lt.${fimMes}),and(data_recebimento.is.null,data_vencimento.gte.${inicioMes},data_vencimento.lt.${fimMes})`);
+    return data ?? [];
   }
+  async function buscarCP() {
+    if (regime === "competencia") {
+      const { data } = await db.from("fin_contas_pagar")
+        .select("valor_documento, valor_pago, data_pagamento, data_vencimento, categoria_codigo, categoria_descricao")
+        .eq("company", company).neq("status_titulo", "CANCELADO")
+        .gte("data_emissao", inicioMes).lt("data_emissao", fimMes);
+      return data ?? [];
+    }
+    const { data } = await db.from("fin_contas_pagar")
+      .select("valor_documento, valor_pago, data_pagamento, data_vencimento, categoria_codigo, categoria_descricao")
+      .eq("company", company).in("status_titulo", ["PAGO", "PARCIAL", "LIQUIDADO"])
+      .or(`and(data_pagamento.gte.${inicioMes},data_pagamento.lt.${fimMes}),and(data_pagamento.is.null,data_vencimento.gte.${inicioMes},data_vencimento.lt.${fimMes})`);
+    return data ?? [];
+  }
+  const receitas = await buscarCR();
+  const despesas = await buscarCP();
 
-  // Classificar receitas
-  let receitaBruta = 0;
-  let deducoes = 0;
-  let receitasFinanceiras = 0;
-  let outrasReceitas = 0;
+  // ── Mapping ──
+  const { data: mappings } = await db.from("fin_categoria_dre_mapping")
+    .select("omie_codigo, dre_linha, company").in("company", [company, "_default"]);
+  const mapping = new Map<string, string>();
+  const sorted = ((mappings ?? []) as Array<{ omie_codigo: string; dre_linha: string; company: string }>)
+    .slice().sort((a, b) => (a.company === "_default" ? -1 : 1));
+  for (const m of sorted) mapping.set(m.omie_codigo, m.dre_linha);
+
+  // ── Classificar + bucketizar (caixa por data efetiva) ──
+  const totais: Record<string, number> = {};
   const detalheReceitas: Record<string, number> = {};
-  const categoriasNaoMapeadas: string[] = [];
-
-  for (const r of receitas || []) {
-    // Caixa: prefere valor_recebido (efetivo); Competência: usa valor_documento (faturado)
-    const val = regime === "competencia"
-      ? (r.valor_documento || 0)
-      : (r.valor_recebido || r.valor_documento || 0);
-    const cod = r.categoria_codigo || "";
-    const desc = r.categoria_descricao || cod || "Sem categoria";
-    detalheReceitas[desc] = (detalheReceitas[desc] || 0) + val;
-
-    const linha = resolveCategoria(cod, desc, true);
-    if (!catToDre.has(cod) && cod) categoriasNaoMapeadas.push(cod);
-
-    switch (linha) {
-      case "receita_bruta": receitaBruta += val; break;
-      case "deducoes": deducoes += val; break;
-      case "receitas_financeiras": receitasFinanceiras += val; break;
-      case "outras_receitas": outrasReceitas += val; break;
-      default: receitaBruta += val;
-    }
-  }
-
-  // Classificar despesas
-  let cmv = 0;
-  let despesasOperacionais = 0;
-  let despesasAdministrativas = 0;
-  let despesasComerciais = 0;
-  let despesasFinanceiras = 0;
-  let impostos = 0;
-  let outrasDespesas = 0;
   const detalheDespesas: Record<string, number> = {};
+  const naoMapeadas: string[] = [];
+  let valorTotal = 0, valorMapeado = 0, valorGenerico = 0;
+  let temImpostoNaoMapeado = false;
+  let fallbackValor = 0, caixaValor = 0;
+  const GENERICOS = ["OUTROS", "DIVERSOS", "AJUSTE", "TRANSFER"];
 
-  for (const d of despesas || []) {
-    // Caixa: prefere valor_pago (efetivo); Competência: usa valor_documento (incurred)
-    const val = regime === "competencia"
-      ? (d.valor_documento || 0)
-      : (d.valor_pago || d.valor_documento || 0);
-    const cod = d.categoria_codigo || "";
-    const desc = d.categoria_descricao || cod || "Sem categoria";
-    detalheDespesas[desc] = (detalheDespesas[desc] || 0) + val;
+  function processar(rows: Array<Record<string, unknown>>, isReceita: boolean) {
+    for (const row of rows) {
+      const cod = (row.categoria_codigo as string) || "";
+      const desc = (row.categoria_descricao as string) || cod || "Sem categoria";
+      let val: number;
+      let usouFallback = false;
+      if (regime === "competencia") {
+        val = Number(row.valor_documento ?? 0);
+      } else {
+        const dataReal = isReceita ? (row.data_recebimento as string | null) : (row.data_pagamento as string | null);
+        const venc = row.data_vencimento as string | null;
+        const { data_efetiva, usou_fallback } = resolverDataCaixa({ data_real: dataReal, data_vencimento: venc });
+        if (!data_efetiva || data_efetiva < inicioMes || data_efetiva >= fimMes) continue;
+        usouFallback = usou_fallback;
+        val = isReceita ? Number(row.valor_recebido ?? row.valor_documento ?? 0) : Number(row.valor_pago ?? row.valor_documento ?? 0);
+        caixaValor += val;
+        if (usouFallback) fallbackValor += val;
+      }
+      const det = isReceita ? detalheReceitas : detalheDespesas;
+      det[desc] = (det[desc] || 0) + val;
 
-    const linha = resolveCategoria(cod, desc, false);
-    if (!catToDre.has(cod) && cod) categoriasNaoMapeadas.push(cod);
-
-    switch (linha) {
-      case "cmv": cmv += val; break;
-      case "despesas_administrativas": despesasAdministrativas += val; break;
-      case "despesas_comerciais": despesasComerciais += val; break;
-      case "despesas_financeiras": despesasFinanceiras += val; break;
-      case "receitas_financeiras": receitasFinanceiras += val; break;
-      case "impostos": impostos += val; break;
-      case "outras_despesas": outrasDespesas += val; break;
-      default: despesasOperacionais += val;
+      const c = classificarLinhaDRE({ categoria_codigo: cod, categoria_descricao: desc, isReceita, regime: regimeTrib, mapping });
+      totais[c.linha] = (totais[c.linha] ?? 0) + val;
+      valorTotal += val;
+      if (c.mapeado) valorMapeado += val;
+      if (c.impostoNaoMapeado) temImpostoNaoMapeado = true;
+      if (!c.mapeado && cod) naoMapeadas.push(cod);
+      const up = (desc + " " + cod).toUpperCase();
+      if (GENERICOS.some((g) => up.includes(g))) valorGenerico += val;
     }
   }
+  processar(receitas as Array<Record<string, unknown>>, true);
+  processar(despesas as Array<Record<string, unknown>>, false);
 
-  const receitaLiquida = receitaBruta - deducoes;
-  const lucroBruto = receitaLiquida - cmv;
-  const totalDespesasOp =
-    despesasOperacionais +
-    despesasAdministrativas +
-    despesasComerciais;
-  const resultadoOperacional =
-    lucroBruto - totalDespesasOp + receitasFinanceiras - despesasFinanceiras;
-  const resultadoAntesImpostos =
-    resultadoOperacional + outrasReceitas - outrasDespesas;
-  const resultadoLiquido = resultadoAntesImpostos - impostos;
+  // ── Montar DRE (ladder regime-aware) ──
+  const dre = montarDRE({ regime: regimeTrib, totais });
 
-  // Log categorias não mapeadas para facilitar configuração
-  const unique = [...new Set(categoriasNaoMapeadas)];
+  // ── Confiança ──
+  const fallback_pct = caixaValor > 0 ? fallbackValor / caixaValor : 0;
+  const confianca = scoreConfianca({
+    pct_mapeado_valor: valorTotal > 0 ? valorMapeado / valorTotal : 1,
+    fallback_pct,
+    share_generico: valorTotal > 0 ? valorGenerico / valorTotal : 0,
+    tem_imposto_nao_mapeado: temImpostoNaoMapeado,
+  });
+  const unique = [...new Set(naoMapeadas)];
+  const caixa_estimado = regime === "caixa" && fallback_pct > 0.1;
   if (unique.length > 0) {
-    console.log(`[Fin][${company}] DRE ${mes}/${ano}: ${unique.length} categorias sem mapeamento explícito (heurística usada): ${unique.slice(0, 10).join(", ")}`);
+    console.log(`[Fin][${company}] DRE ${mes}/${ano} (${regimeTrib}): ${unique.length} categorias sem mapeamento explícito: ${unique.slice(0, 10).join(", ")}`);
   }
 
   const snapshot = {
@@ -1037,27 +1159,31 @@ async function calcularDRE(
     ano,
     mes,
     regime,
-    receita_bruta: receitaBruta,
-    deducoes,
-    receita_liquida: receitaLiquida,
-    cmv,
-    lucro_bruto: lucroBruto,
-    despesas_operacionais: despesasOperacionais,
-    despesas_administrativas: despesasAdministrativas,
-    despesas_comerciais: despesasComerciais,
-    despesas_financeiras: despesasFinanceiras,
-    receitas_financeiras: receitasFinanceiras,
-    resultado_operacional: resultadoOperacional,
-    outras_receitas: outrasReceitas,
-    outras_despesas: outrasDespesas,
-    resultado_antes_impostos: resultadoAntesImpostos,
-    impostos,
-    resultado_liquido: resultadoLiquido,
-    qtd_categorias_sem_mapeamento: unique.length, // Ponto 5
+    receita_bruta: dre.receita_bruta,
+    deducoes: dre.deducoes,
+    receita_liquida: dre.receita_liquida,
+    cmv: dre.cmv,
+    lucro_bruto: dre.lucro_bruto,
+    despesas_operacionais: dre.despesas_operacionais,
+    despesas_administrativas: dre.despesas_administrativas,
+    despesas_comerciais: dre.despesas_comerciais,
+    despesas_financeiras: dre.despesas_financeiras,
+    receitas_financeiras: dre.receitas_financeiras,
+    resultado_operacional: dre.resultado_operacional,
+    outras_receitas: dre.outras_receitas,
+    outras_despesas: dre.outras_despesas,
+    resultado_antes_impostos: dre.resultado_antes_impostos,
+    impostos: dre.impostos,
+    resultado_liquido: dre.resultado_liquido,
+    qtd_categorias_sem_mapeamento: unique.length,
     detalhamento: {
       receitas: detalheReceitas,
       despesas: detalheDespesas,
       categorias_nao_mapeadas: unique,
+      impostos: dre.detalhamento_impostos,
+      regime_tributario: regimeTrib,
+      caixa_estimado,
+      confianca,
     },
     calculated_at: new Date().toISOString(),
   };

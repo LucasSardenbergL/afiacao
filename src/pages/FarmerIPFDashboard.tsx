@@ -8,9 +8,8 @@ import { useAuth } from '@/contexts/AuthContext';
 import { useFarmerPerformance } from '@/hooks/useFarmerPerformance';
 import {
   Loader2, TrendingUp, DollarSign, BarChart3, Users, ShieldCheck,
-  RefreshCw, Layers, Target
+  RefreshCw, Layers, Target, type LucideIcon
 } from 'lucide-react';
-import type { LucideIcon } from 'lucide-react';
 
 const fmt = (v: number) => v.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' });
 
