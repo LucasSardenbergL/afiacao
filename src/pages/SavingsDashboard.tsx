@@ -56,14 +56,15 @@ const SavingsDashboard = () => {
         const items = Array.isArray(order.items) ? order.items : [];
         const toolCount = items.reduce((sum: number, item: { quantity?: number }) => sum + (item.quantity || 1), 0);
         
+        const orderTotal = Number(order.total) || 0;
         const existing = monthMap.get(monthKey) || { total: 0, toolCount: 0 };
         monthMap.set(monthKey, {
-          total: existing.total + (order.total || 0),
+          total: existing.total + orderTotal,
           toolCount: existing.toolCount + toolCount,
         });
 
         allToolsCount += toolCount;
-        allSpent += order.total || 0;
+        allSpent += orderTotal;
       });
 
       // Generate last 6 months data
