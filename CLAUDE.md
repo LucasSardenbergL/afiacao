@@ -525,6 +525,7 @@ Há muitas skills instaladas (gstack ~40 comandos, superpowers 14, catálogo de 
 | **SAST profundo (scan de vulnerabilidade)** | `semgrep` (rápido, JS/TS) ou `codeql` (interprocedural, requer build) + `sarif-parsing` pra agregar | complementam `cso` + `/security-review` (heurísticos); estes rodam análise estática real. |
 | **Auditar supply chain de deps** | `supply-chain-risk-auditor` (Trail of Bits) | — pareia com `cso` (que faz dependency supply chain em alto nível). |
 | **Modelar RBAC / mapear 5 personas → roles + departamentos** | `access-control-rbac` | — apoia o plano de personas do §5. |
+| **Puxar/analisar NÚMERO DE NEGÓCIO do banco (BI executivo, "brief da semana", vendas/estoque/inadimplência/margem)** | `bi-colacor` (PROPRIETÁRIA, project-scoped em `.claude/skills/`) — gera SQL read-only versionado p/ colar no Lovable→SQL Editor, interpreta o resultado colado e vira decisão. Conhece as 4 grafias de empresa, chaves de cliente/SKU e confiabilidade do dado. | `data:*`/`data:write-query` (text-to-SQL genérico, sem schema), `finance:*` (não conhece nosso schema), PostHog (análise de produto, não de negócio). Para DDL/DML/migrations/RLS use `supabase`; pra construir telas/dashboards no app use `frontend-design`. |
 
 **Colisão de nome conhecida:** existe `/review` do gstack e `review` do plugin oficial code-review. Tratamos o **`/review` do gstack como o canônico** para revisão de diff. Se o comando errado disparar, invocar explicitamente via gstack.
 
