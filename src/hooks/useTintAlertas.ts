@@ -12,7 +12,7 @@ export function useTintAlertas() {
     queryFn: async () => {
       try {
         const since = new Date(Date.now() - 60 * 24 * 60 * 60 * 1000).toISOString();
-        const { count, error } = await (supabase as any)
+        const { count, error } = await supabase
           .from('tint_importacoes')
           .select('*', { count: 'exact', head: true })
           .eq('account', 'oben')
