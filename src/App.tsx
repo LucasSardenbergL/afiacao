@@ -108,6 +108,7 @@ const FinanceiroOrcamento = lazy(() => import("./pages/FinanceiroOrcamento"));
 const FinanceiroIntercompany = lazy(() => import("./pages/FinanceiroIntercompany"));
 const FinanceiroIntercompanyFila = lazy(() => import("./pages/FinanceiroIntercompanyFila"));
 const FinanceiroTributario = lazy(() => import("./pages/FinanceiroTributario"));
+const FinanceiroValor = lazy(() => import("./pages/FinanceiroValor"));
 const Recebimento = lazy(() => import("./pages/Recebimento"));
 const RecebimentoConferencia = lazy(() => import("./pages/RecebimentoConferencia"));
 const ProductionOrders = lazy(() => import("./pages/ProductionOrders"));
@@ -283,6 +284,7 @@ const App = () => (
               <Route path="financeiro/intercompany" element={<FinanceiroIntercompany />} />
               <Route path="financeiro/intercompany/fila" element={<FinanceiroIntercompanyFila />} />
               <Route path="financeiro/tributario" element={<FinanceiroTributario />} />
+              <Route path="financeiro/valor" element={<FinanceiroValor />} />
               <Route path="recebimento" element={<Recebimento />} />
               <Route path="recebimento/:id" element={<RecebimentoConferencia />} />
               <Route path="producao" element={<ProductionOrders />} />
