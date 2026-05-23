@@ -1,11 +1,12 @@
 import { describe, it, expect } from 'vitest';
 import { render, screen } from '@testing-library/react';
 import { DREComparativo } from '../DREComparativo';
+import { makeDRE } from './factories';
 
-const row = {
+const row = makeDRE({
   receita_liquida: 9000, lucro_bruto: 5000, resultado_operacional: 3000,
   resultado_liquido: 2500, impostos: 600,
-};
+});
 
 describe('DREComparativo', () => {
   it('menos de 2 empresas → não renderiza nada', () => {
