@@ -1,0 +1,23 @@
+[
+  { "query": "preciso guardar os segmentos de cliente no banco em vez de no localStorage, hoje tá tudo em memória e some quando recarrega", "should_trigger": true, "note": "tabela nova — caso real §9b" },
+  { "query": "adiciona um campo data_nascimento na customer_contacts pra gente disparar parabéns automático", "should_trigger": true, "note": "ALTER ADD COLUMN" },
+  { "query": "a listagem de pedidos em /sales tá lenta, acho que falta índice em sales_orders por created_at", "should_trigger": true, "note": "índice — não diz 'migration'" },
+  { "query": "cria uma RLS policy nova na fin_contas_pagar pra vendedor não enxergar o custo do fornecedor", "should_trigger": true, "note": "RLS policy" },
+  { "query": "quero adicionar o valor 'inativo' no enum commercial_role", "should_trigger": true, "note": "enum value — gotcha de transação" },
+  { "query": "escreve a migration da tabela de histórico de NF-e recebida, com lote e validade", "should_trigger": true, "note": "explícito 'migration'" },
+  { "query": "preciso de um trigger que seta updated_at sozinho na standard_processes quando edita", "should_trigger": true, "note": "trigger + função SQL" },
+  { "query": "soft delete em sales_orders: uma coluna deleted_at pra não apagar de vez no Omie", "should_trigger": true, "note": "coluna — débito §10" },
+  { "query": "instala a extensão pgvector no banco, vou precisar pra busca semântica do RAG", "should_trigger": true, "note": "extension — aplica via Lovable" },
+  { "query": "como eu confirmo se a migration user_departments realmente foi aplicada no banco de produção?", "should_trigger": true, "note": "validação/audit — domínio da skill" },
+
+  { "query": "roda uma query pra ver quantos pedidos a oben fechou esse mês, só quero o número", "should_trigger": false, "note": "SELECT read-only, não muda schema" },
+  { "query": "o supabase client tá dando erro de auth no front, o login não persiste depois do refresh", "should_trigger": false, "note": "bug de frontend/auth — investigate/supabase, não migration" },
+  { "query": "preciso de uma edge function nova pra processar o webhook de status da nvoip", "should_trigger": false, "note": "edge function ≠ função SQL; deploy diferente" },
+  { "query": "regenera os tipos TypeScript do supabase, o integrations/supabase/types.ts tá desatualizado depois das últimas tabelas", "should_trigger": false, "note": "regen de tipos TS, não toca o banco" },
+  { "query": "muda o staleTime do react-query pra 30s nas queries de pedidos, tá refetchando demais", "should_trigger": false, "note": "config frontend, mesmo citando 'pedidos'/'queries'" },
+  { "query": "revisa as RLS policies que já existem na fin_contas_receber e me diz se tem algum buraco de segurança", "should_trigger": false, "note": "auditoria de policy existente ≠ criar — security-review/supabase" },
+  { "query": "o build quebrou com erro de tipo em useOrders, parece algo com a coluna status de sales_orders", "should_trigger": false, "note": "erro de build TS citando tabela — debug, não migration" },
+  { "query": "faz um SELECT que junta sales_orders com profiles pra eu exportar pro Excel", "should_trigger": false, "note": "consulta de leitura/export" },
+  { "query": "preciso popular o catálogo de fórmulas tintométricas com os 200 SKUs novos da Sayerlack", "should_trigger": true, "note": "seed de dados que vira migration versionada — escopo confirmado (validação = COUNT)" },
+  { "query": "documenta no README como rodar o projeto localmente com o supabase", "should_trigger": false, "note": "docs, cita supabase mas é texto" }
+]
