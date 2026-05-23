@@ -36,7 +36,7 @@ async function omieCall(
   call: string,
   param: Record<string, unknown>,
   attempt = 1
-): Promise<any> {
+): Promise<Record<string, unknown>> {
   try {
     const res = await fetch(OMIE_URL, {
       method: "POST",
@@ -183,7 +183,7 @@ Deno.serve(async (req) => {
     let falhas = 0;
     let encontradosNaListagem = 0;
     const encontrados = new Set<string>();
-    const upserts: any[] = [];
+    const upserts: Record<string, unknown>[] = [];
 
     do {
       const resp = await omieCall(appKey, appSecret, "ListarProdutos", {
@@ -194,7 +194,7 @@ Deno.serve(async (req) => {
       });
 
       totalPages = resp?.total_de_paginas ?? 1;
-      const produtos: OmieProduto[] = resp?.produto_servico_cadastro ?? [];
+      const produtos: OmieProduto[] = (resp as { produto_servico_cadastro?: OmieProduto[] })?.produto_servico_cadastro ?? [];
 
       for (const p of produtos) {
         const codStr = String(p.codigo_produto ?? "");
