@@ -4,8 +4,8 @@ description: >-
   Ritual obrigatório para QUALQUER mudança de banco neste repo (Afiação/Colacor), que roda em
   Lovable Cloud. Use SEMPRE que a tarefa envolver criar/alterar tabela, coluna, índice, constraint,
   função SQL/Postgres, trigger, RLS policy, enum value, view, cron job ou extensão no Supabase — e
-  também backfill/seed de dados que vai virar migration versionada. Vale mesmo quando o usuário não
-  diz "migration" e só descreve o objetivo ("preciso guardar X em vez do localStorage", "adiciona um
+  também backfill/seed de dados que vai virar migration versionada, ou confirmar se uma migration já
+  foi de fato aplicada no banco. Vale mesmo quando o usuário não diz "migration" e só descreve o objetivo ("preciso guardar X em vez do localStorage", "adiciona um
   campo Y na tabela Z", "cria um índice pra acelerar essa query", "nova tabela pra segmentos de
   cliente", "instala a extensão pgvector", "popula o catálogo com esses SKUs"). Por quê: o Lovable
   NÃO aplica automaticamente migrations de nome custom — elas ficam só no repo e o banco continua sem
@@ -14,7 +14,8 @@ description: >-
   colar no SQL Editor, a query de validação pós-apply, a nota pro PR e regenera o audit. NÃO use
   para: consultas de leitura (SELECT pra ver/exportar dados), UPDATE ad-hoc que não vira migration,
   edge functions (supabase/functions — deploy diferente), regenerar tipos TypeScript do Supabase,
-  revisar/auditar policies que já existem, ou debugar erro de auth/client do Supabase no frontend.
+  revisar/auditar policies que já existem, ou debugar erro de build/tipo (TS) ou de auth/client do
+  Supabase no frontend.
 ---
 
 # Lovable DB Operator
