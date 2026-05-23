@@ -103,12 +103,12 @@ Deno.serve(async (req) => {
     }
 
     // Parse items — NO conversion table, smart rounding only
-    const rawItems: any[] =
+    const rawItems: Record<string, unknown>[] =
       nfe.itens ?? nfe.items ?? nfe.det ?? nfe.produtos ?? [];
 
     const cnpjEmClean = cnpjEmitente.replace(/\D/g, "");
 
-    const itensToInsert = rawItems.map((item: any, idx: number) => {
+    const itensToInsert = rawItems.map((item: Record<string, unknown>, idx: number) => {
       const codigoProduto = item.codigo_produto ?? item.cProd ?? item.codigo ?? null;
       const descricao = item.descricao ?? item.xProd ?? item.desc ?? "Item sem descrição";
       const ncm = item.ncm ?? item.NCM ?? null;

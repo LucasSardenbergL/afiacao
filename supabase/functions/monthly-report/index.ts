@@ -299,9 +299,9 @@ serve(async (req) => {
           : null;
 
         toolSummaries.push({
-          name: tool.generated_name || tool.custom_name || (tool.tool_categories as any)?.name || 'Ferramenta',
+          name: tool.generated_name || tool.custom_name || (tool.tool_categories as { name?: string } | null)?.name || 'Ferramenta',
           internal_code: tool.internal_code,
-          category: (tool.tool_categories as any)?.name || '',
+          category: (tool.tool_categories as { name?: string } | null)?.name || '',
           last_sharpened_at: tool.last_sharpened_at,
           next_sharpening_due: tool.next_sharpening_due,
           sharpening_count: sharpeningCount || 0,
@@ -378,7 +378,7 @@ serve(async (req) => {
       status: 200,
       headers: { ...corsHeaders, 'Content-Type': 'application/json' },
     });
-  } catch (error: any) {
+  } catch (error) {
     console.error('Error in monthly-report:', error);
     return new Response(JSON.stringify({ error: 'Erro ao gerar relatório' }), {
       status: 500,
