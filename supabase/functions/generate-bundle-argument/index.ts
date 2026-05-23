@@ -93,7 +93,7 @@ Gasto médio mensal: R$ ${customer.avgMonthlySpend || 0}
 Categorias compradas: ${customer.categoryCount || 0}
 
 Bundle sugerido (${bundle.products.length} produtos):
-${bundle.products.map((p: any, i: number) => `${i + 1}. ${p.name} - Preço: R$ ${p.price.toFixed(2)} | Margem: R$ ${p.margin.toFixed(2)}`).join('\n')}
+${bundle.products.map((p: { name: string; price: number; margin: number }, i: number) => `${i + 1}. ${p.name} - Preço: R$ ${p.price.toFixed(2)} | Margem: R$ ${p.margin.toFixed(2)}`).join('\n')}
 
 LIE do Bundle: R$ ${bundle.lieBundle.toFixed(2)}
 Confidence: ${(bundle.confidence * 100).toFixed(1)}%
@@ -186,7 +186,7 @@ Gasto médio mensal: R$ ${customer.avgMonthlySpend || 0}
 Categorias compradas: ${customer.categoryCount || 0}
 
 Bundle sugerido (${bundle.products.length} produtos):
-${bundle.products.map((p: any, i: number) => `${i + 1}. ${p.name} - Preço: R$ ${p.price.toFixed(2)} | Margem: R$ ${p.margin.toFixed(2)}`).join('\n')}
+${bundle.products.map((p: { name: string; price: number; margin: number }, i: number) => `${i + 1}. ${p.name} - Preço: R$ ${p.price.toFixed(2)} | Margem: R$ ${p.margin.toFixed(2)}`).join('\n')}
 
 LIE do Bundle: R$ ${bundle.lieBundle.toFixed(2)}
 Confidence: ${(bundle.confidence * 100).toFixed(1)}%
