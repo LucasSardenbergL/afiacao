@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { classificarLinhaDRE, REGIME_POR_EMPRESA, resolverDataCaixa, bucketizarCaixa, montarDRE, scoreConfianca } from '../dre-helpers';
+import { classificarLinhaDRE, REGIME_POR_EMPRESA, resolverDataCaixa, bucketizarCaixa, montarDRE, scoreConfianca, calcularRBT12, faixaPorRBT12, aliquotaEfetivaSimples, anexoPorFatorR, impostoTeoricoSimples, impostoTeoricoPresumido, normalizarConfigTributario } from '../dre-helpers';
 
 const M = (pairs: Array<[string, string]>) => new Map<string, string>(pairs);
 
@@ -163,5 +163,84 @@ describe('scoreConfianca', () => {
     const r = scoreConfianca({ pct_mapeado_valor: 0.98, fallback_pct: 0, share_generico: 0, tem_imposto_nao_mapeado: true });
     expect(r.nivel).toBe('media');
     expect(r.motivos.some(m => m.toLowerCase().includes('imposto'))).toBe(true);
+  });
+});
+
+describe('calcularRBT12', () => {
+  const hist = [
+    { ano: 2025, mes: 6, receita_bruta: 50000 },
+    { ano: 2026, mes: 4, receita_bruta: 30000 },
+    { ano: 2026, mes: 5, receita_bruta: 40000 },
+    { ano: 2024, mes: 1, receita_bruta: 99999 },
+  ];
+  it('soma os 12 meses ANTERIORES ao mês de apuração', () => {
+    expect(calcularRBT12(hist, 2026, 5)).toBe(80000);
+  });
+  it('sem histórico → 0', () => {
+    expect(calcularRBT12([], 2026, 5)).toBe(0);
+  });
+});
+
+describe('faixaPorRBT12 / aliquotaEfetivaSimples (Anexo III)', () => {
+  it('RBT12 na 2ª faixa: efetiva = (RBT12*nominal - deduzir)/RBT12', () => {
+    // Anexo III, RBT12 = 300.000 → faixa 2 (0.112, deduzir 9360); efetiva = (33600-9360)/300000 = 0.0808
+    expect(aliquotaEfetivaSimples('III', 300000)).toBeCloseTo(0.0808, 4);
+  });
+  it('RBT12 = 0 → 0', () => {
+    expect(aliquotaEfetivaSimples('III', 0)).toBe(0);
+  });
+  it('última faixa por excesso (acima de 4.8M usa a última)', () => {
+    expect(aliquotaEfetivaSimples('III', 5000000)).toBeGreaterThan(0);
+  });
+});
+
+describe('anexoPorFatorR', () => {
+  it('fator-r ≥ 28% → III; < 28% → V', () => {
+    expect(anexoPorFatorR(0.30)).toBe('III');
+    expect(anexoPorFatorR(0.20)).toBe('V');
+  });
+});
+
+describe('impostoTeoricoSimples', () => {
+  it('DAS teórico = efetiva × receita do mês', () => {
+    const r = impostoTeoricoSimples({ anexo: 'III', rbt12: 300000, receitaMes: 25000 });
+    expect(r).toBeCloseTo(0.0808 * 25000, 0);
+  });
+  it('sem anexo → null (degrade)', () => {
+    expect(impostoTeoricoSimples({ anexo: null, rbt12: 300000, receitaMes: 25000 })).toBeNull();
+  });
+});
+
+describe('impostoTeoricoPresumido', () => {
+  it('IRPJ+CSLL trimestral + PIS/COFINS; adicional só sobre excedente de 60k', () => {
+    const r = impostoTeoricoPresumido({ receitaTrimestre: 1000000, presuncaoIrpj: 0.08, presuncaoCsll: 0.12 });
+    expect(r.irpj).toBeCloseTo(14000, 0);   // 12000 + 10% sobre (80000-60000)=2000
+    expect(r.csll).toBeCloseTo(10800, 0);
+    expect(r.pis).toBeCloseTo(6500, 0);
+    expect(r.cofins).toBeCloseTo(30000, 0);
+  });
+  it('sem excedente → sem adicional', () => {
+    const r = impostoTeoricoPresumido({ receitaTrimestre: 100000, presuncaoIrpj: 0.08, presuncaoCsll: 0.12 });
+    expect(r.irpj).toBeCloseTo(1200, 0);    // base 8000 < 60000 → adicional 0
+  });
+});
+
+describe('normalizarConfigTributario', () => {
+  it('config ausente → default por empresa (Colacor SC = simples, sem anexo → degrada)', () => {
+    const c = normalizarConfigTributario('colacor_sc', null);
+    expect(c.regime).toBe('simples');
+    expect(c.anexo).toBeNull();
+    expect(c.completa).toBe(false);
+  });
+  it('config presente: presumido com presunções → completa', () => {
+    const c = normalizarConfigTributario('colacor', { regime: 'presumido', presuncao_irpj: 0.08, presuncao_csll: 0.12 });
+    expect(c.regime).toBe('presumido');
+    expect(c.presuncaoIrpj).toBe(0.08);
+    expect(c.completa).toBe(true);
+  });
+  it('simples COM anexo → completa', () => {
+    const c = normalizarConfigTributario('colacor_sc', { regime: 'simples', anexo: 'III' });
+    expect(c.anexo).toBe('III');
+    expect(c.completa).toBe(true);
   });
 });
