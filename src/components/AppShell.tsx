@@ -37,6 +37,8 @@ import { AnalyticsIdentify } from '@/components/shell/AnalyticsIdentify';
 import { useFeatureFlagBodyClass } from '@/hooks/useFeatureFlag';
 import { useSidebarFavorites } from '@/hooks/useSidebarFavorites';
 import { useSalesOnlyRestriction } from '@/hooks/useSalesOnlyRestriction';
+import { useAccess } from '@/hooks/useAccess';
+import type { SectionId } from '@/lib/access/types';
 import { useRouteTracker } from '@/lib/dashboard/route-tracker';
 import { useOfflineFlush } from '@/hooks/useOfflineFlush';
 import { useMissedCount } from '@/hooks/useCallLog';
@@ -49,103 +51,104 @@ interface NavItem {
   path: string;
   badge?: number;
   badgeVariant?: 'default' | 'destructive';
-  managerOnly?: boolean;
+  /** Seção de acesso dona deste item — filtra a visibilidade via useAccess().can */
+  section: SectionId;
 }
 
 const unifiedNavSections: { title: string; items: NavItem[] }[] = [
   {
     title: 'Principal',
     items: [
-      { icon: LayoutDashboard, label: 'Dashboard', path: '/' },
-      { icon: Target, label: 'Meu dia', path: '/meu-dia' },
-      { icon: Users, label: 'Clientes', path: '/admin/customers' },
+      { icon: LayoutDashboard, label: 'Dashboard', path: '/', section: 'principal' },
+      { icon: Target, label: 'Meu dia', path: '/meu-dia', section: 'principal' },
+      { icon: Users, label: 'Clientes', path: '/admin/customers', section: 'clientes' },
     ],
   },
   {
     title: 'Afiação',
     items: [
-      { icon: Wrench, label: 'Ferramentas', path: '/tools' },
-      { icon: Award, label: 'Gamificação', path: '/gamification' },
+      { icon: Wrench, label: 'Ferramentas', path: '/tools', section: 'principal' },
+      { icon: Award, label: 'Gamificação', path: '/gamification', section: 'principal' },
     ],
   },
   {
     title: 'Vendas',
     items: [
-      { icon: ShoppingCart, label: 'Pedidos', path: '/sales' },
-      { icon: PlusCircle, label: 'Novo Pedido', path: '/sales/new' },
-      { icon: Wrench, label: 'Ferramentas de Venda', path: '/vendas/ferramentas' },
-      { icon: Link2, label: 'Chamadas pendentes', path: '/farmer/calls/pending-link' },
-      { icon: Phone, label: 'Telefonia', path: '/telefonia' },
+      { icon: ShoppingCart, label: 'Pedidos', path: '/sales', section: 'vendas' },
+      { icon: PlusCircle, label: 'Novo Pedido', path: '/sales/new', section: 'vendas' },
+      { icon: Wrench, label: 'Ferramentas de Venda', path: '/vendas/ferramentas', section: 'vendas' },
+      { icon: Link2, label: 'Chamadas pendentes', path: '/farmer/calls/pending-link', section: 'vendas' },
+      { icon: Phone, label: 'Telefonia', path: '/telefonia', section: 'vendas' },
     ],
   },
   {
     title: 'Estoque',
     items: [
-      { icon: FileCheck, label: 'Recebimento', path: '/admin/estoque/recebimento' },
-      { icon: Package, label: 'Picking & Estoque', path: '/admin/estoque/picking' },
+      { icon: FileCheck, label: 'Recebimento', path: '/admin/estoque/recebimento', section: 'operacao' },
+      { icon: Package, label: 'Picking & Estoque', path: '/admin/estoque/picking', section: 'operacao' },
     ],
   },
   {
     title: 'Reposição',
     items: [
-      { icon: LayoutDashboard, label: 'Cockpit', path: '/admin/reposicao/sessao', managerOnly: true },
-      { icon: TrendingUp, label: 'Mercado', path: '/admin/reposicao/sessao/mercado', managerOnly: true },
-      { icon: Settings, label: 'Parâmetros', path: '/admin/reposicao/sessao/parametros', managerOnly: true },
-      { icon: Database, label: 'Cadastros', path: '/admin/reposicao/cadastros', managerOnly: true },
+      { icon: LayoutDashboard, label: 'Cockpit', path: '/admin/reposicao/sessao', section: 'reposicao' },
+      { icon: TrendingUp, label: 'Mercado', path: '/admin/reposicao/sessao/mercado', section: 'reposicao' },
+      { icon: Settings, label: 'Parâmetros', path: '/admin/reposicao/sessao/parametros', section: 'reposicao' },
+      { icon: Database, label: 'Cadastros', path: '/admin/reposicao/cadastros', section: 'reposicao' },
     ],
   },
   {
     title: 'Produção',
     items: [
-      { icon: Wrench, label: 'Ordens de Produção', path: '/producao' },
+      { icon: Wrench, label: 'Ordens de Produção', path: '/producao', section: 'operacao' },
     ],
   },
   {
     title: 'Performance',
     items: [
-      { icon: BarChart3, label: 'Performance', path: '/performance' },
+      { icon: BarChart3, label: 'Performance', path: '/performance', section: 'performance' },
     ],
   },
   {
     title: 'Inteligência',
     items: [
-      { icon: BarChart3, label: 'Dashboard Intel', path: '/intelligence' },
-      { icon: Target, label: 'AI Ops', path: '/ai-ops' },
+      { icon: BarChart3, label: 'Dashboard Intel', path: '/intelligence', section: 'inteligencia' },
+      { icon: Target, label: 'AI Ops', path: '/ai-ops', section: 'inteligencia' },
     ],
   },
   {
     title: 'Financeiro',
     items: [
-      { icon: Shield, label: 'Cockpit CFO', path: '/financeiro/cockpit', managerOnly: true },
-      { icon: DollarSign, label: 'Gestão Financeira', path: '/financeiro/gestao', managerOnly: true },
-      { icon: BarChart3, label: 'Análise e Config', path: '/financeiro/analise', managerOnly: true },
+      { icon: Shield, label: 'Cockpit CFO', path: '/financeiro/cockpit', section: 'financeiro' },
+      { icon: DollarSign, label: 'Gestão Financeira', path: '/financeiro/gestao', section: 'financeiro' },
+      { icon: BarChart3, label: 'Análise e Config', path: '/financeiro/analise', section: 'financeiro' },
     ],
   },
   {
     title: 'Tintométrico',
     items: [
-      { icon: BarChart3, label: 'Dashboard', path: '/tintometrico', managerOnly: true },
-      { icon: Palette, label: 'Catálogo e Preços', path: '/tintometrico/catalogo', managerOnly: true },
-      { icon: Settings, label: 'Integração e Sync', path: '/tintometrico/integracao', managerOnly: true },
+      { icon: BarChart3, label: 'Dashboard', path: '/tintometrico', section: 'tintometrico_cockpit' },
+      { icon: Palette, label: 'Catálogo e Preços', path: '/tintometrico/catalogo', section: 'tintometrico_cockpit' },
+      { icon: Settings, label: 'Integração e Sync', path: '/tintometrico/integracao', section: 'tintometrico_cockpit' },
     ],
   },
   {
     title: 'Automação',
     items: [
-      { icon: Bell, label: 'Notificações', path: '/admin/notificacoes', managerOnly: true },
-      { icon: Globe2, label: 'Portal Sayerlack', path: '/admin/portal-sayerlack', managerOnly: true },
+      { icon: Bell, label: 'Notificações', path: '/admin/notificacoes', section: 'gestao_admin' },
+      { icon: Globe2, label: 'Portal Sayerlack', path: '/admin/portal-sayerlack', section: 'gestao_admin' },
     ],
   },
   {
     title: 'Gestão',
     items: [
-      { icon: UserCheck, label: 'Liberar Acessos', path: '/admin/approvals', managerOnly: true },
-      { icon: Users, label: 'Departamentos', path: '/admin/departments', managerOnly: true },
-      { icon: Library, label: 'Base de conhecimento', path: '/admin/knowledge-base', managerOnly: true },
-      { icon: Calculator, label: 'Calculadora de rendimento', path: '/admin/calculadora' },
-      { icon: Factory, label: 'Processos padrão', path: '/admin/standard-processes' },
-      { icon: Shield, label: 'Admin & Relatórios', path: '/gestao/admin', managerOnly: true },
-      { icon: Lock, label: 'Governança', path: '/gestao/governanca', managerOnly: true },
+      { icon: UserCheck, label: 'Liberar Acessos', path: '/admin/approvals', section: 'gestao_admin' },
+      { icon: Users, label: 'Departamentos', path: '/admin/departments', section: 'gestao_admin' },
+      { icon: Library, label: 'Base de conhecimento', path: '/admin/knowledge-base', section: 'gestao_admin' },
+      { icon: Calculator, label: 'Calculadora de rendimento', path: '/admin/calculadora', section: 'gestao_admin' },
+      { icon: Factory, label: 'Processos padrão', path: '/admin/standard-processes', section: 'gestao_admin' },
+      { icon: Shield, label: 'Admin & Relatórios', path: '/gestao/admin', section: 'gestao_admin' },
+      { icon: Lock, label: 'Governança', path: '/gestao/governanca', section: 'gestao_admin' },
     ],
   },
 ];
@@ -153,9 +156,9 @@ const unifiedNavSections: { title: string; items: NavItem[] }[] = [
 const docNavSection: { title: string; items: NavItem[] } = {
   title: 'Documentação',
   items: [
-    { icon: BookOpen, label: 'Ajuda', path: '/admin/ajuda' },
-    { icon: BookOpen, label: 'Design System', path: '/design-system' },
-    { icon: BookOpen, label: 'UX Rules', path: '/ux-rules' },
+    { icon: BookOpen, label: 'Ajuda', path: '/admin/ajuda', section: 'docs' },
+    { icon: BookOpen, label: 'Design System', path: '/design-system', section: 'docs' },
+    { icon: BookOpen, label: 'UX Rules', path: '/ux-rules', section: 'docs' },
   ],
 };
 
@@ -332,6 +335,7 @@ function AppSidebar({ collapsed, onToggle }: { collapsed: boolean; onToggle: () 
   const location = useLocation();
   const navigate = useNavigate();
   const { isStaff, user } = useAuth();
+  const { can } = useAccess();
   const isSalesOnly = useSalesOnlyRestriction();
   const { favorites, isFavorite, toggle: toggleFavorite } = useSidebarFavorites();
 
@@ -541,8 +545,8 @@ function AppSidebar({ collapsed, onToggle }: { collapsed: boolean; onToggle: () 
 
       {/* Navigation — Favoritos no topo (se houver) + seções secundárias colapsadas por padrão */}
       <nav className="flex-1 min-h-0 overflow-y-auto py-2">
-        {/* Favoritos pinados — coletados de todas as seções pelo path */}
-        {!isSalesOnly && favorites.length > 0 && !collapsed && (
+        {/* Favoritos pinados — coletados de todas as seções pelo path (só os acessíveis) */}
+        {favorites.length > 0 && !collapsed && (
           <SidebarSection
             title="Favoritos"
             collapsed={false}
@@ -553,7 +557,7 @@ function AppSidebar({ collapsed, onToggle }: { collapsed: boolean; onToggle: () 
               sectionsWithBadges
                 .flatMap((s) => s.items)
                 .filter((item) => favorites.includes(item.path))
-                .filter((item) => !item.managerOnly || isStaff)
+                .filter((item) => can(item.section))
             }
             onToggleFavorite={toggleFavorite}
             isFavorite={isFavorite}
@@ -561,9 +565,9 @@ function AppSidebar({ collapsed, onToggle }: { collapsed: boolean; onToggle: () 
         )}
 
         {sectionsWithBadges.map((section) => {
-          if (isSalesOnly && section.title !== 'Vendas') return null;
-
-          const visibleItems = section.items.filter(item => !item.managerOnly || isStaff);
+          // Filtro de acesso por persona: cada item só aparece se a matriz liberar
+          // a seção dele. Uma seção (grupo) só renderiza se tiver ≥1 item visível.
+          const visibleItems = section.items.filter((item) => can(item.section));
           if (visibleItems.length === 0) return null;
 
           const isSecondary = SECONDARY_SECTIONS.includes(section.title);
@@ -659,8 +663,7 @@ function AppTopbar({ sidebarCollapsed, onMobileMenuToggle }: { sidebarCollapsed:
 function MobileNav({ open, onClose }: { open: boolean; onClose: () => void }) {
   const location = useLocation();
   const navigate = useNavigate();
-  const { isStaff } = useAuth();
-  const isSalesOnly = useSalesOnlyRestriction();
+  const { can } = useAccess();
 
   if (!open) return null;
 
@@ -687,8 +690,7 @@ function MobileNav({ open, onClose }: { open: boolean; onClose: () => void }) {
         </div>
         <nav className="flex-1 min-h-0 overflow-y-auto py-2">
           {[...unifiedNavSections, docNavSection].map((section) => {
-            if (isSalesOnly && section.title !== 'Vendas') return null;
-            const visibleItems = section.items.filter(item => !item.managerOnly || isStaff);
+            const visibleItems = section.items.filter((item) => can(item.section));
             if (visibleItems.length === 0) return null;
             return (
               <div key={section.title} className="mb-1">

@@ -12,7 +12,10 @@ export const ACCESS: Record<AccessPersona, { sections: SectionId[]; readOnly: Se
   vendedor:         { sections: ['principal', 'clientes', 'vendas', 'performance', 'docs'], readOnly: [] },
   operacao:         { sections: ['principal', 'operacao', 'docs'], readOnly: [] },
   financeiro:       { sections: ['principal', 'clientes', 'vendas', 'financeiro', 'docs'], readOnly: ['vendas'] },
-  cliente:          { sections: [], readOnly: [] }, // customer usa o portal próprio (nav de customer, fora desta matriz)
+  // Customer renderiza o MESMO AppShell (rotas /orders /tools /profile vivem nele).
+  // Mantém Dashboard + Ferramentas/tools (principal) + docs; esconde tudo de staff
+  // (vendas/clientes-admin/financeiro/etc.) — mais correto que o menu permissivo antigo.
+  cliente:          { sections: ['principal', 'docs'], readOnly: [] },
 };
 
 export function canAccess(persona: AccessPersona, section: SectionId): boolean {

@@ -38,4 +38,13 @@ describe('canAccess', () => {
       expect(canAccess(p, 'docs')).toBe(true);
     }
   });
+
+  it('cliente: principal/docs sim (Dashboard+tools); staff sections não', () => {
+    expect(canAccess('cliente', 'principal')).toBe(true);
+    expect(canAccess('cliente', 'docs')).toBe(true);
+    expect(canAccess('cliente', 'vendas')).toBe(false);
+    expect(canAccess('cliente', 'clientes')).toBe(false);
+    expect(canAccess('cliente', 'financeiro')).toBe(false);
+    expect(canAccess('cliente', 'gestao_admin')).toBe(false);
+  });
 });
