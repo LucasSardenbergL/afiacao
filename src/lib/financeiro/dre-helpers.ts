@@ -278,3 +278,28 @@ export function impostoTeoricoPresumido(input: {
   const cofins = input.receitaTrimestre * PRESUMIDO.cofins_aliquota;
   return { irpj, csll, pis, cofins, total: irpj + csll + pis + cofins };
 }
+
+export type ConfigTributario = {
+  regime: RegimeTributario;
+  anexo: AnexoSimples | null;       // Simples
+  fatorRHabilitado: boolean;        // Simples: alterna III/V por fator-r
+  presuncaoIrpj: number;            // presumido
+  presuncaoCsll: number;            // presumido
+  completa: boolean;                // false → teórico parcial, confiança ≤ media
+};
+
+const PRESUNCAO_DEFAULT = { irpj: 0.08, csll: 0.12 }; // comércio/indústria
+
+export function normalizarConfigTributario(
+  company: string,
+  raw: Record<string, unknown> | null,
+): ConfigTributario {
+  const regimeDefault = REGIME_POR_EMPRESA[company] ?? 'presumido';
+  const regime = ((raw?.regime as RegimeTributario) ?? regimeDefault);
+  const anexo = (raw?.anexo as AnexoSimples | undefined) ?? null;
+  const presuncaoIrpj = Number(raw?.presuncao_irpj ?? PRESUNCAO_DEFAULT.irpj);
+  const presuncaoCsll = Number(raw?.presuncao_csll ?? PRESUNCAO_DEFAULT.csll);
+  const fatorRHabilitado = Boolean(raw?.fator_r_habilitado ?? false);
+  const completa = regime === 'presumido' ? raw != null : anexo != null;
+  return { regime, anexo, fatorRHabilitado, presuncaoIrpj, presuncaoCsll, completa };
+}

@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { classificarLinhaDRE, REGIME_POR_EMPRESA, resolverDataCaixa, bucketizarCaixa, montarDRE, scoreConfianca, calcularRBT12, faixaPorRBT12, aliquotaEfetivaSimples, anexoPorFatorR, impostoTeoricoSimples, impostoTeoricoPresumido } from '../dre-helpers';
+import { classificarLinhaDRE, REGIME_POR_EMPRESA, resolverDataCaixa, bucketizarCaixa, montarDRE, scoreConfianca, calcularRBT12, faixaPorRBT12, aliquotaEfetivaSimples, anexoPorFatorR, impostoTeoricoSimples, impostoTeoricoPresumido, normalizarConfigTributario } from '../dre-helpers';
 
 const M = (pairs: Array<[string, string]>) => new Map<string, string>(pairs);
 
@@ -222,5 +222,25 @@ describe('impostoTeoricoPresumido', () => {
   it('sem excedente → sem adicional', () => {
     const r = impostoTeoricoPresumido({ receitaTrimestre: 100000, presuncaoIrpj: 0.08, presuncaoCsll: 0.12 });
     expect(r.irpj).toBeCloseTo(1200, 0);    // base 8000 < 60000 → adicional 0
+  });
+});
+
+describe('normalizarConfigTributario', () => {
+  it('config ausente → default por empresa (Colacor SC = simples, sem anexo → degrada)', () => {
+    const c = normalizarConfigTributario('colacor_sc', null);
+    expect(c.regime).toBe('simples');
+    expect(c.anexo).toBeNull();
+    expect(c.completa).toBe(false);
+  });
+  it('config presente: presumido com presunções → completa', () => {
+    const c = normalizarConfigTributario('colacor', { regime: 'presumido', presuncao_irpj: 0.08, presuncao_csll: 0.12 });
+    expect(c.regime).toBe('presumido');
+    expect(c.presuncaoIrpj).toBe(0.08);
+    expect(c.completa).toBe(true);
+  });
+  it('simples COM anexo → completa', () => {
+    const c = normalizarConfigTributario('colacor_sc', { regime: 'simples', anexo: 'III' });
+    expect(c.anexo).toBe('III');
+    expect(c.completa).toBe(true);
   });
 });
