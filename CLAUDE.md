@@ -525,6 +525,7 @@ Há muitas skills instaladas (gstack ~40 comandos, superpowers 14, catálogo de 
 | **SAST profundo (scan de vulnerabilidade)** | `semgrep` (rápido, JS/TS) ou `codeql` (interprocedural, requer build) + `sarif-parsing` pra agregar | complementam `cso` + `/security-review` (heurísticos); estes rodam análise estática real. |
 | **Auditar supply chain de deps** | `supply-chain-risk-auditor` (Trail of Bits) | — pareia com `cso` (que faz dependency supply chain em alto nível). |
 | **Modelar RBAC / mapear 5 personas → roles + departamentos** | `access-control-rbac` | — apoia o plano de personas do §5. |
+| **Ritual financeiro gerencial das 3 empresas (fechamento, caixa 13s, NCG, inadimplência, DRE, carga tributária, perguntas pro contador)** | `cfo-colacor` (project-scoped, em `.claude/skills/cfo-colacor/`) | `finance:*` e `data:*` genéricos. A `cfo-colacor` é proprietária: conhece o schema `fin_*` real, as armadilhas (status MAIÚSCULO, estoque=0 no NCG, regime hardcoded) e gera SQL **read-only** pra colar no Lovable. NÃO apura imposto nem substitui contador. |
 
 **Colisão de nome conhecida:** existe `/review` do gstack e `review` do plugin oficial code-review. Tratamos o **`/review` do gstack como o canônico** para revisão de diff. Se o comando errado disparar, invocar explicitamente via gstack.
 
