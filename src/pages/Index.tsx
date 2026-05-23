@@ -37,7 +37,7 @@ const Index = () => {
   if (!isStaff) {
     return (
       <CustomerDashboard
-        profile={profile}
+        profile={profile ?? null}
         pendingOrders={pendingOrders}
         userTools={userTools}
         getGreeting={getGreeting}

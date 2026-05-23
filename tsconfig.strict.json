@@ -474,6 +474,10 @@
     "src/pages/FinanceiroCapitalGiro.tsx",
     "src/pages/AdminKnowledgeBase.tsx",
     "src/pages/TintCorantes.tsx",
-    "src/pages/FinanceiroAnalise.tsx"
+    "src/pages/FinanceiroAnalise.tsx",
+    "src/pages/AdminOrderDetail.tsx",
+    "src/pages/Telefonia.tsx",
+    "src/pages/IntelligenceDashboard.tsx",
+    "src/pages/Index.tsx"
   ]
 }
