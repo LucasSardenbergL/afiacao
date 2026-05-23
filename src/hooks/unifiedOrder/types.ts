@@ -44,7 +44,7 @@ export interface Product {
   account?: string;
   is_tintometric?: boolean;
   tint_type?: string;
-  metadata?: Record<string, any> | null;
+  metadata?: Record<string, unknown> | null;
 }
 
 export interface ProductCartItem {
