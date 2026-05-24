@@ -130,6 +130,24 @@ A2 nunca inventa. Faltou ativo fixo → ROIC parcial. Faltou dívida/PL/Ke → W
 
 ---
 
+## 🔧 A3 — Inteligência de Valor (Cockpit cliente/produto) (2026-05-24)
+
+Para de olhar faturamento e olha **lucro econômico** por cliente/SKU: margem de contribuição **menos o custo do capital de giro** (recebíveis + estoque parados) cobrado ao hurdle-rate da A2. Escopo MVP: **Oben** (onde há linha de SKU no app). Gate: gestor comercial (`commercial_role` gerencial/estrategico/super_admin) + master.
+
+| Item | Como é calculado |
+|---|---|
+| **Lucro econômico (EVP)** | Tabela atômica cliente×SKU: `EVP_cs = CM_cs − k×(A_cs + I_cs)`. AR do cliente alocado por receita; estoque do SKU por quantidade. Cliente/SKU/empresa reconciliam (invariante testado). |
+| **Margem de contribuição** | `receita_líquida − custo×qtd` (`product_costs`, custo médio atual; sem BOM). Custo ausente → null. |
+| **Encargo de capital** | AR = saldo médio TTM (time-weighted) × WACC; estoque = `saldo×cmc` (snapshot run-rate) × WACC. AP = crédito nível-empresa (não rateado por linha). |
+| **Recomendações** | Regras determinísticas: cortar desconto / subir preço / encurtar prazo / despriorizar SKU / crescer, com R$ em jogo. Limiares em `fin_config_cashflow.cockpit_config`. |
+| **Confiança** | Cobertura de receita (order_items ÷ AR), custo/AR/estoque ausentes, imposto estimado nível-empresa. |
+
+**Regra de ouro:** direcional, não verdade contábil. Custo sem BOM; imposto estimado nível-empresa; estoque snapshot; cobertura depende do sync de vendas (medida e exibida). Nunca fabrica: ausente = null + motivo. **Filtro Oben por produto:** um pedido do app mistura itens das 3 empresas (enviados separadamente), então o engine conta só linhas de `omie_products.account='oben'`. **Deferido:** recomendações de prazo/estoque (precisam de PMR por cliente e dias-de-estoque por SKU — hoje inertes); AR médio ignora cronologia de pagamento parcial.
+
+**Onde:** helper `src/lib/financeiro/valor-cockpit-helpers.ts` (vitest); engine `fin-valor-cockpit` (gestor+master, espelha o helper, escopo Oben); coluna `fin_config_cashflow.cockpit_config`; página `/financeiro/valor-cockpit`.
+
+---
+
 ## ✅ MVP Operacional (pode usar agora para gestão diária)
 
 Estes dados vêm direto do Omie sem transformação opinativa.

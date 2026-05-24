@@ -16,6 +16,10 @@ interface AuthContextType {
   isMaster: boolean;
   isStaff: boolean;
   isApproved: boolean;
+  /** commercial_role do usuário (null se não cadastrado). */
+  commercialRole: string | null;
+  /** Gestor comercial: commercial_role em ('gerencial','estrategico','super_admin'). */
+  isGestorComercial: boolean;
   signUp: (email: string, password: string, name: string) => Promise<{ error: Error | null }>;
   signIn: (email: string, password: string) => Promise<{ error: Error | null }>;
   signOut: () => Promise<void>;
@@ -38,6 +42,7 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
   const [loading, setLoading] = useState(true);
   const [role, setRole] = useState<AppRole | null>(null);
   const [isApproved, setIsApproved] = useState(false);
+  const [commercialRole, setCommercialRole] = useState<string | null>(null);
 
   const fetchUserRoleAndApproval = async (userId: string) => {
     try {
@@ -69,11 +74,15 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
         // fail-closed
         setRole(null);
         setIsApproved(false);
+        setCommercialRole(null);
         return;
       }
 
       const fetchedRole = (roleResult.data?.role as AppRole) || 'customer';
       setRole(fetchedRole);
+
+      // Store commercial role for downstream use (isGestorComercial)
+      setCommercialRole(commercialResult.data?.commercial_role ?? null);
 
       // Staff (admin/employee/master) or users with commercial roles are auto-approved
       const hasCommercialRole = !!commercialResult.data?.commercial_role;
@@ -111,6 +120,7 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
       // fail-closed
       setRole(null);
       setIsApproved(false);
+      setCommercialRole(null);
     }
   };
 
@@ -248,6 +258,7 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
     await supabase.auth.signOut();
     setRole(null);
     setIsApproved(false);
+    setCommercialRole(null);
   };
 
   const refetchRole = async () => {
@@ -261,6 +272,7 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
   const isMaster = role === 'master';
   const isCustomer = role === 'customer';
   const isStaff = isAdmin || isEmployee || isMaster;
+  const isGestorComercial = ['gerencial', 'estrategico', 'super_admin'].includes(commercialRole ?? '');
 
   return (
     <AuthContext.Provider value={{
@@ -274,6 +286,8 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
       isMaster,
       isStaff,
       isApproved,
+      commercialRole,
+      isGestorComercial,
       signUp,
       signIn,
       signOut,
