@@ -47,9 +47,25 @@ Deno.serve(async (req) => {
   });
   const drained = await drainResp.json().catch(() => ({}));
 
-  // 2. Recalc full: para cada par único (customer_user_id, farmer_id) com call
-  //    nos últimos 30 dias. Garante refresh diário do decay temporal mesmo sem
-  //    novas chamadas (um sinal de 30 dias atrás muda de peso todo dia).
+  // 2. Decay diário: recalcula só os clientes COM atividade (call) nos últimos 30d,
+  //    mapeando farmer_id = DONO da carteira (Opção A; codex 2026-05-24). Garante o
+  //    refresh do decay temporal (um sinal de 30 dias atrás muda de peso todo dia)
+  //    sem fan-out da carteira inteira (~6908 estouraria o timeout de 50s). O backfill
+  //    completo da carteira é feito pela fila no rollout, não aqui.
+  //    ANTI-DRIFT: o dono vem de carteira_assignments, nunca do farmer_id da ligação.
+
+  // ownerMap: customer_user_id → owner_user_id (carteira_assignments, paginado)
+  const ownerMap = new Map<string, string>();
+  for (let cp = 0; ; cp++) {
+    const { data: aPage } = await supabase
+      .from('carteira_assignments')
+      .select('customer_user_id, owner_user_id')
+      .range(cp * 1000, cp * 1000 + 999);
+    const aRows = (aPage ?? []) as Array<{ customer_user_id: string; owner_user_id: string }>;
+    for (const a of aRows) ownerMap.set(a.customer_user_id, a.owner_user_id);
+    if (aRows.length < 1000) break;
+  }
+
   const { data: pairs, error: pErr } = await supabase
     .from('farmer_calls')
     .select('customer_user_id, farmer_id')
@@ -63,10 +79,13 @@ Deno.serve(async (req) => {
     });
   }
 
-  // Dedup: um par pode ter N chamadas — processar só uma vez
+  // Dedup por CLIENTE (1 score por cliente); farmer_id = dono (fallback: quem ligou).
   const unique = new Map<string, { customer_user_id: string; farmer_id: string }>();
   for (const p of (pairs ?? []) as Array<{ customer_user_id: string; farmer_id: string }>) {
-    unique.set(`${p.customer_user_id}::${p.farmer_id}`, p);
+    unique.set(p.customer_user_id, {
+      customer_user_id: p.customer_user_id,
+      farmer_id: ownerMap.get(p.customer_user_id) ?? p.farmer_id,
+    });
   }
 
   // Process pairs in concurrent batches to fit within edge function 50s timeout.
