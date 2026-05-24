@@ -34,6 +34,16 @@
 **imports transitivos** dele pro programa strict. Promover um page/god-component puxa
 subgrafos sujos (`noUnusedLocals`/`strictNullChecks`) → cascata. **Promova leaf-first.**
 
+- **⚠️ `lazy(() => import("..."))` CONTA como import pro tsc** (lição do lote 3,
+  2026-05-24). Pages-hub pequenas (PerformanceHub, GestaoAdmin, TintIntegracao,
+  TintCatalogo, VendasFerramentas, AdminReposicaoParametros) parecem leaf pelo
+  `import ... from` (só ui+supabase), mas lazy-carregam **sub-páginas inteiras**
+  (CoachingSPIN, FarmerBundles, AdminReposicaoAlertas, TintApiContract, Admin, ...)
+  que entram no programa strict e quebram. **NÃO são leaf.** Ao triar candidatos,
+  `grep -nE 'lazy\(' src/pages/<page>.tsx` — se houver lazy, trate como hub (defira
+  até o subgrafo lazy estar limpo). Pages realmente leaf: sem `lazy`, só importam
+  ui/hooks/lib já no programa.
+
 - **`typecheck:strict` SÓ é confiável com CPU calma.** Com várias sessões rodando
   `tsc` em paralelo (load chegou a ~50), o comando é morto por contenção e dá
   **falso-negativo** (grep vê saída vazia → "0 erros" mentiroso). Confirme `load`
@@ -62,11 +72,14 @@ subgrafos sujos (`noUnusedLocals`/`strictNullChecks`) → cascata. **Promova lea
 - ✅ **`feat/strict-promote-contexts`** (sessão determined-allen, 2026-05-23): fatia foundational —
   `contexts/{AuthContext,CompanyContext,ConditionalWebRTCProvider,WebRTCCallContext}` + `services/omieService`.
   **MERGEADA** (#220). `services/financeiroService`/`financeiroV2Service` ficaram fora (colidem com `feat/financeiro-a2-impl`).
-- 🔵 **`feat/strict-promote-pages`** (sessão determined-allen, 2026-05-23): fatia pages leaf-first.
-  Promovo pages pequenas cujas deps já estão no programa strict (MeuDia, AdminCalculadora, NotFound,
-  AdminReposicaoSessao*, AdminDesTrimestreAtual e demais leaf por lotes empíricos; lote 2 em
-  `feat/strict-promote-pages-fixes` com fixes triviais de dead-code). **NÃO toco** pages
-  reservadas por outras sessões nem `services/financeiro*`. Append-only no `include`.
+- ✅ **`feat/strict-promote-pages`** (lote 1, #225 MERGEADO) + ✅ **`feat/strict-promote-pages-fixes`**
+  (lote 2, #228 MERGEADO): 16 pages leaf promovidas (MeuDia, AdminCalculadora, NotFound,
+  AdminReposicaoSessao{Aplicacao,Historico,Confirmacao}, AdminDesTrimestreAtual, AdminStandardProcesses,
+  FinanceiroCapitalGiro, AdminKnowledgeBase, TintCorantes, FinanceiroAnalise, AdminOrderDetail, Telefonia,
+  IntelligenceDashboard, Index).
+- 🔵 **`feat/strict-promote-pages-lote3`** (sessão determined-allen, 2026-05-24): mais pages leaf por
+  lote empírico. **NÃO toco** Customer360 (lane refactor/customer360-split), pages farmer (lane farmer),
+  nem `services/financeiro*`. Append-only no `include`.
 - 🔵 **`feat/strict-promote-lib-leaf`** (sessão cranky-driscoll, 2026-05-23): lote leaf não-farmer —
   `lib/call-session/aggregate-customer-profile`, `lib/sip/sip-client`, `lib/transcription/{deepgram-client,transcription-engine}`,
   `components/customer360/format`, `components/financeiro/dashboard/format`, `components/portalSayerlack/types`,
