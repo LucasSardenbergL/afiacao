@@ -486,6 +486,13 @@
     "src/pages/Support.tsx",
     "src/pages/ToolPublicHistory.tsx",
     "src/pages/Auth.tsx",
-    "src/pages/AdminPriceTable.tsx"
+    "src/pages/AdminPriceTable.tsx",
+    "src/hooks/useIsTouchDevice.ts",
+    "src/hooks/useIsTelefoniaManager.ts",
+    "src/hooks/useBiometricAuth.ts",
+    "src/hooks/useEstoqueValor.ts",
+    "src/hooks/useDirectTintImport.ts",
+    "src/hooks/unifiedOrder/useCart.ts",
+    "src/hooks/unifiedOrder/useProductCatalog.ts"
   ]
 }
