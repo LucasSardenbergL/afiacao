@@ -481,6 +481,11 @@
     "src/pages/Index.tsx",
     "src/pages/AdminReposicaoHistorico.tsx",
     "src/pages/AdminVendorSipCredentials.tsx",
-    "src/pages/Orders.tsx"
+    "src/pages/Orders.tsx",
+    "src/pages/AdminAjuda.tsx",
+    "src/pages/Support.tsx",
+    "src/pages/ToolPublicHistory.tsx",
+    "src/pages/Auth.tsx",
+    "src/pages/AdminPriceTable.tsx"
   ]
 }

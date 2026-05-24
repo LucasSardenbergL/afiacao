@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { Loader2, FileText, User, Lock, Eye, EyeOff, MapPin, Phone, Mail, AlertCircle, Factory, ChevronLeft } from 'lucide-react';
+import { Loader2, FileText, User, Lock, Eye, EyeOff, MapPin, AlertCircle, Factory, ChevronLeft } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
