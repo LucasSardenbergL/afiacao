@@ -45,7 +45,7 @@ Um `supabase db reset` a partir das migrations **quebra** (ex: `20260510235956` 
 - O dump é do **pg_dump 17** e usa os meta-comandos `\restrict` / `\unrestrict` (primeira/última linha), reconhecidos pelo `psql`. O SQL Editor do Lovable pode não reconhecê-los — remova-os se restaurar por lá.
 - O prelude deixa **`pg_cron` comentado** de propósito (habilitá-lo pode abortar o restore sob `ON_ERROR_STOP`). Habilite-o antes pelo dashboard do Supabase se quiser as views `v_cron_jobs_status` / `v_cron_jobs_falhas`; senão elas falham no replay e devem ser puladas.
 
-> **Status: restore NUNCA foi testado.** Sem um teste de restore num projeto Supabase vazio, este arquivo é **inventário, não seguro de recuperação**. Validar o restore é follow-up (ver `schema-rebuild-runbook.md` §Verificação — exige projeto Supabase vazio ou docker, indisponível na máquina atual).
+> **Status: restore validado por replay local (2026-05-24).** `db/verify-snapshot-replay.sh` roda prelude + stubs (`db/stubs-supabase.sql`) + snapshot num Postgres 17 descartável (transação única, `ON_ERROR_STOP`) → replay limpo e contagens batem 1:1 com produção (212/37/4/86/76/14/474). **Limitação:** prova ordem/dependência/sintaxe do `public`, **não** o comportamento runtime do Supabase (RLS/`auth` reais) — esse nível ("Gold") ainda pede projeto Supabase vazio ou docker (ver `schema-rebuild-runbook.md` §Verificação).
 
 ## Como re-gerar
 
