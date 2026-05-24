@@ -38,7 +38,7 @@ SET row_security = off;
 -- Name: public; Type: SCHEMA; Schema: -; Owner: -
 --
 
-CREATE SCHEMA public;
+CREATE SCHEMA IF NOT EXISTS public;
 
 -- [baseline] Extensions de dependência de DDL (não vêm no dump --schema=public)
 CREATE SCHEMA IF NOT EXISTS extensions;
@@ -27985,14 +27985,28 @@ INSERT INTO storage.buckets (id, name, public, file_size_limit, allowed_mime_typ
 ON CONFLICT (id) DO NOTHING;
 
 -- ============================================================================
--- [baseline] Realtime publication (supabase_realtime existe por padrão no Supabase)
+-- [baseline] Realtime publication (idempotente; respeita FOR ALL TABLES)
 -- ============================================================================
 DO $baseline$
+DECLARE t text;
 BEGIN
   IF NOT EXISTS (SELECT 1 FROM pg_publication WHERE pubname = 'supabase_realtime') THEN
     CREATE PUBLICATION supabase_realtime;
   END IF;
+  -- só adiciona se a publication não for FOR ALL TABLES
+  IF NOT (SELECT puballtables FROM pg_publication WHERE pubname = 'supabase_realtime') THEN
+    FOREACH t IN ARRAY ARRAY['eventos_outlier','farmer_calls','nfe_recebimentos','order_messages',
+      'orders','pedido_compra_sugerido','picking_tasks','sales_orders','sku_parametros','tint_importacoes']
+    LOOP
+      IF NOT EXISTS (
+        SELECT 1 FROM pg_publication_rel pr
+          JOIN pg_publication p ON p.oid = pr.prpubid
+          JOIN pg_class c ON c.oid = pr.prrelid
+          JOIN pg_namespace n ON n.oid = c.relnamespace
+        WHERE p.pubname = 'supabase_realtime' AND n.nspname = 'public' AND c.relname = t
+      ) THEN
+        EXECUTE format('ALTER PUBLICATION supabase_realtime ADD TABLE public.%I', t);
+      END IF;
+    END LOOP;
+  END IF;
 END $baseline$;
-ALTER PUBLICATION supabase_realtime ADD TABLE public.eventos_outlier, public.farmer_calls,
-  public.nfe_recebimentos, public.order_messages, public.orders, public.pedido_compra_sugerido,
-  public.picking_tasks, public.sales_orders, public.sku_parametros, public.tint_importacoes;

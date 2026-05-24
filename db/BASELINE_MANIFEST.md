@@ -43,5 +43,8 @@ Não vão no baseline (env-specific: URL do projeto + secret no vault). Recriar 
 - **Funções 86 (dump) vs 204 (`pg_proc` public):** diferença ≈ funções da extension `vector` (instalada em `public`) — recriadas pelo `CREATE EXTENSION vector`.
 - **Índices 230 (`CREATE INDEX`) vs 532 (`pg_indexes`):** diferença = índices de PK/UNIQUE (pg_dump emite como `ALTER TABLE ADD CONSTRAINT`, não `CREATE INDEX`) + índices da extension.
 
+## Runtime: `search_path` precisa incluir `extensions` (default do Supabase)
+Há funções com `SET search_path TO 'public', 'pg_temp'` que chamam `pg_trgm` **não-qualificado** (ex: `similarity(...)`), mas `pg_trgm` está no schema `extensions`. Em produção isso funciona porque o Supabase configura o `search_path` do banco/role incluindo `extensions`. **No ambiente alvo (staging/DR), garantir o mesmo** (`ALTER DATABASE ... SET search_path = public, extensions` — Supabase já faz por padrão). É estado fiel à produção, não introduzido pelo baseline — registrado no security report como latente.
+
 ## Encoding
 Dump veio com `client_encoding = 'SQL_ASCII'`; baseline usa `UTF8` (corpo tem `→` e acentos pt-BR).
