@@ -97,13 +97,18 @@ CREATE TABLE public.carteira_coverage (
 - Múltiplas coberturas ativas são permitidas; a leitura faz dedupe por cliente.
 - **Quem cria:** só master/admin **ou** o próprio dono coberto (`covered_user_id = auth.uid()`). Nunca auto-concessão de um terceiro.
 
-### Refactor — scores viram por cliente
+### Scores — `farmer_id` redefinido = dono da carteira (Opção A; 2ª opinião codex 2026-05-24)
 
-`customer_visit_scores` e `farmer_client_scores` hoje são por `(customer_user_id, farmer_id)`. Como o score é **intrínseco ao cliente** (missões de recuperação/expansão/relacionamento/prospecção computadas do histórico do cliente, `signal_modifiers`, `city` — nada é específico do vendedor), eles passam a ser **por `customer_user_id`**:
+> **Revisão de rumo (2026-05-24):** o plano original era dropar `farmer_id` (score por-cliente). Uma auditoria do motor de scoring revelou raio de impacto grande (~18 callsites, recriação de índices, migração de dados) **e** que métricas por-vendedor (`useFarmerPerformance`, `IntelligenceManagerialTab`) agregam por `farmer_id` — quebrariam. 2º codex consult recomendou **Opção A**: manter a coluna, mas **`farmer_id` passa a significar "dono da carteira"** (não mais "quem teve atividade"). Comercialmente idêntico a dropar; muito menos risco.
 
-- Dropar `farmer_id`; `UNIQUE (customer_user_id)`.
-- Migração de dados: colapsar linhas existentes por cliente (caso haja múltiplas para o mesmo cliente, manter a mais recente).
-- O recalc deixa de iterar pares `(customer, farmer)` de atividade e passa a iterar **clientes**.
+`customer_visit_scores` e `farmer_client_scores` continuam `(customer_user_id, farmer_id)`, mas:
+
+- O recalc **deixa de enumerar pares de atividade** (farmer_calls/route_visits) e passa a enumerar **`carteira_assignments` (customer, owner)** — `farmer_id` gravado = `owner_user_id`. Assim **todo cliente da carteira ganha score** (não só os contatados).
+- Valores dos scores seguem intrínsecos ao cliente (histórico de compra). `signal_modifiers` usa as ligações **do dono** (cobertura é visibilidade, não muda atribuição).
+- **Recompute com cursor/continuação** (lotes resumíveis com estado de job) — recomputar ~3.600 clientes num run único estouraria o timeout de 50s da edge.
+- **Anti-drift:** nada pode voltar a seedar score por "quem teve atividade". Travar em naming/comentário + um teste afirmando que o score deriva de `carteira_assignments`.
+- Leituras quase não mudam (`eq('farmer_id', eu)` já significa "minha carteira"); cobertura expande pra `farmer_id IN [eu, ...donos cobertos]` (sem duplicar linhas).
+- **Dívida semântica aceita:** o nome `farmer_id` fica "ressignificado" como dono; renomear pra `owner_user_id` é trabalho futuro opcional, sem pressa.
 
 ## Fluxo de dados — rebuild da carteira
 
@@ -229,10 +234,9 @@ CREATE TABLE public.carteira_positivacao_snapshot (
 
 Tamanho médio. Faseamento sugerido para reduzir risco:
 
-- **Fase 1 — Posse:** `omie_vendedor_map` + `carteira_assignments` + `carteira_coverage` + `carteira-rebuild` + RLS + helper de visibilidade + seed do mapa (3 linhas via SQL no Lovable).
-- **Fase 2 — Leituras:** virar `useMyVisitSuggestions` / `useMyCarteiraScores` pra ler da carteira; UI de cobertura + selo.
-- **Fase 3 — Colapsar scores:** refactor das tabelas de score pra por-cliente + ajuste do recalc (`visit-score-recalc-batch`, `visit-score-recalc-client`, `scoring-recalc-*`). Ponto mais delicado; fazer por último, com migração de dados validada.
-- **Fase 4 — KPIs / Positivação:** `carteira_positivacao_snapshot` + helper puro de positivação/MTD (TDD) + hook de KPIs (estende/substitui `useMyKpis`) + revamp da tela `FarmerCalls` (heros por Farmer/Hunter, atuais rebaixados) + cron mensal de snapshot. "Receita vs Meta" fora (sem meta).
+- ✅ **Sub-PR A — Posse (Fase 1, ENTREGUE PR #236):** `omie_vendedor_map` + `carteira_assignments` + `carteira_coverage` + `carteira-rebuild` + RLS + helper de visibilidade + seed do mapa. Em produção: 6908 clientes (Lucas 3434 / Regina 1890 / Tati 1584), cron ativo.
+- **Sub-PR B — Carteira ativa (Fases 2+3 fundidas, Opção A):** o recalc (`scoring-recalc-batch`/`-client`, `visit-score-recalc-batch`/`-client`) passa a enumerar `carteira_assignments` (customer, owner) com `farmer_id = owner`, recomputando **todos** os clientes da carteira via **cursor/continuação**; teste anti-drift; leituras (`useMyVisitSuggestions`/`useMyCarteiraScores`) ganham expansão de cobertura (`farmer_id IN [eu, ...cobertos]`) + selo; **UI de cobertura**. Sem dropar `farmer_id` (ver seção de scores acima). Risco baixo, sem migração de dados destrutiva.
+- **Sub-PR D — KPIs / Positivação (Fase 4):** `carteira_positivacao_snapshot` + helper puro de positivação/MTD (TDD) + hook de KPIs (estende/substitui `useMyKpis`) + revamp da tela `FarmerCalls` (heros por Farmer/Hunter, atuais rebaixados) + cron mensal de snapshot. "Receita vs Meta" fora (sem meta).
 
 ## YAGNI (cortado de propósito)
 
