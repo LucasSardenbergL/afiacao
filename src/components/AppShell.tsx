@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
-import { BookOpen, Lock, Calculator, FileText, Palette, Beaker, FileUp, Droplets, LayoutDashboard, Users, ShoppingCart, ShoppingBag, Phone, GraduationCap, BarChart3, Settings, ChevronLeft, ChevronRight, Search, Bell, User, LogOut, Package, TrendingUp, Headphones, Target, Menu, X, ClipboardList, PlusCircle, Shield, Wrench, Award, Scissors, DollarSign, Layers, Printer, UserCheck, FileCheck, Boxes, AlertTriangle, PlayCircle, Factory, Truck, Percent, Sparkles, Handshake, Link2, Globe2, Database, Library } from 'lucide-react';
+import { BookOpen, Lock, Calculator, FileText, Palette, Beaker, FileUp, Droplets, LayoutDashboard, Users, ShoppingCart, ShoppingBag, Phone, GraduationCap, BarChart3, Settings, ChevronLeft, ChevronRight, Search, Bell, User, LogOut, Package, TrendingUp, Headphones, Target, Menu, X, ClipboardList, PlusCircle, Shield, Wrench, Award, Scissors, DollarSign, Layers, Printer, UserCheck, FileCheck, Boxes, AlertTriangle, PlayCircle, Factory, Truck, Percent, Sparkles, Handshake, Link2, Globe2, Database, Library, Crosshair } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { useAuth } from '@/contexts/AuthContext';
 import { AppShellProvider } from '@/contexts/AppShellContext';
@@ -51,6 +51,8 @@ interface NavItem {
   badgeVariant?: 'default' | 'destructive';
   managerOnly?: boolean;
   masterOnly?: boolean;
+  /** Visível apenas a gestor comercial (gerencial/estrategico/super_admin) OU master. */
+  gestorComercialOuMaster?: boolean;
 }
 
 const unifiedNavSections: { title: string; items: NavItem[] }[] = [
@@ -121,6 +123,7 @@ const unifiedNavSections: { title: string; items: NavItem[] }[] = [
       { icon: DollarSign, label: 'Gestão Financeira', path: '/financeiro/gestao', managerOnly: true },
       { icon: BarChart3, label: 'Análise e Config', path: '/financeiro/analise', managerOnly: true },
       { icon: TrendingUp, label: 'Retorno & Valor', path: '/financeiro/valor', masterOnly: true },
+      { icon: Crosshair, label: 'Cockpit de Valor', path: '/financeiro/valor-cockpit', gestorComercialOuMaster: true },
     ],
   },
   {
@@ -333,7 +336,7 @@ function SidebarItem({
 function AppSidebar({ collapsed, onToggle }: { collapsed: boolean; onToggle: () => void }) {
   const location = useLocation();
   const navigate = useNavigate();
-  const { isStaff, isMaster, user } = useAuth();
+  const { isStaff, isMaster, isGestorComercial, user } = useAuth();
   const isSalesOnly = useSalesOnlyRestriction();
   const { favorites, isFavorite, toggle: toggleFavorite } = useSidebarFavorites();
 
@@ -555,7 +558,7 @@ function AppSidebar({ collapsed, onToggle }: { collapsed: boolean; onToggle: () 
               sectionsWithBadges
                 .flatMap((s) => s.items)
                 .filter((item) => favorites.includes(item.path))
-                .filter((item) => (!item.managerOnly || isStaff) && (!item.masterOnly || isMaster))
+                .filter((item) => (!item.managerOnly || isStaff) && (!item.masterOnly || isMaster) && (!item.gestorComercialOuMaster || isMaster || isGestorComercial))
             }
             onToggleFavorite={toggleFavorite}
             isFavorite={isFavorite}
@@ -565,7 +568,7 @@ function AppSidebar({ collapsed, onToggle }: { collapsed: boolean; onToggle: () 
         {sectionsWithBadges.map((section) => {
           if (isSalesOnly && section.title !== 'Vendas') return null;
 
-          const visibleItems = section.items.filter(item => (!item.managerOnly || isStaff) && (!item.masterOnly || isMaster));
+          const visibleItems = section.items.filter(item => (!item.managerOnly || isStaff) && (!item.masterOnly || isMaster) && (!item.gestorComercialOuMaster || isMaster || isGestorComercial));
           if (visibleItems.length === 0) return null;
 
           const isSecondary = SECONDARY_SECTIONS.includes(section.title);
@@ -661,7 +664,7 @@ function AppTopbar({ sidebarCollapsed, onMobileMenuToggle }: { sidebarCollapsed:
 function MobileNav({ open, onClose }: { open: boolean; onClose: () => void }) {
   const location = useLocation();
   const navigate = useNavigate();
-  const { isStaff, isMaster } = useAuth();
+  const { isStaff, isMaster, isGestorComercial } = useAuth();
   const isSalesOnly = useSalesOnlyRestriction();
 
   if (!open) return null;
@@ -690,7 +693,7 @@ function MobileNav({ open, onClose }: { open: boolean; onClose: () => void }) {
         <nav className="flex-1 min-h-0 overflow-y-auto py-2">
           {[...unifiedNavSections, docNavSection].map((section) => {
             if (isSalesOnly && section.title !== 'Vendas') return null;
-            const visibleItems = section.items.filter(item => (!item.managerOnly || isStaff) && (!item.masterOnly || isMaster));
+            const visibleItems = section.items.filter(item => (!item.managerOnly || isStaff) && (!item.masterOnly || isMaster) && (!item.gestorComercialOuMaster || isMaster || isGestorComercial));
             if (visibleItems.length === 0) return null;
             return (
               <div key={section.title} className="mb-1">
