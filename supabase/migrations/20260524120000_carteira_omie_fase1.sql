@@ -5,7 +5,7 @@
 CREATE TABLE IF NOT EXISTS public.omie_vendedor_map (
   id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
   omie_account text NOT NULL,
-  omie_codigo_vendedor int NOT NULL,
+  omie_codigo_vendedor bigint NOT NULL,
   user_id uuid NOT NULL REFERENCES auth.users(id) ON DELETE CASCADE,
   nome text,
   created_at timestamptz NOT NULL DEFAULT now(),
@@ -20,7 +20,7 @@ CREATE TABLE IF NOT EXISTS public.carteira_assignments (
   owner_user_id uuid NOT NULL REFERENCES auth.users(id) ON DELETE CASCADE,
   source text NOT NULL CHECK (source IN ('omie','hunter_orphan')),
   omie_account text,
-  omie_codigo_vendedor int,
+  omie_codigo_vendedor bigint,
   eligible boolean NOT NULL DEFAULT true,
   valid_from timestamptz NOT NULL DEFAULT now(),
   updated_at timestamptz NOT NULL DEFAULT now(),
