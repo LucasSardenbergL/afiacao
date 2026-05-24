@@ -1,7 +1,7 @@
 # Baseline Manifest — o que o baseline cobre e o que é Supabase-managed
 
 **Gerado:** 2026-05-24 · **Fonte:** `pg_dump --schema-only --schema=public` de produção (`fzvklzpomgnyikkfkzai`) via chat do Lovable.
-**Arquivo baseline:** `supabase/migrations/20260524130000_baseline_schema_NAO_APLICAR_EM_PROD_EXISTENTE.sql`
+**Arquivo baseline:** `db/baselines/2026-05-24_prod_schema_baseline.sql` (⚠️ **fora** de `supabase/migrations/` — decisão pós-codex; ver runbook). Tag git: `schema-baseline-prod-2026-05-24`. Regerar: `db/build-baseline.sh`.
 
 ## No baseline (núcleo `public`)
 212 tabelas · 37 views (34 com `security_invoker`) · 4 matviews · 86 funções nossas · 76 triggers · 474 policies · 38 sequences · 14 enums · índices · GRANTs/REVOKEs · RLS `ENABLE`.

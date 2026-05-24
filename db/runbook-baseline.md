@@ -1,16 +1,17 @@
 # Runbook — Baseline do schema (pós-squash 2026-05-24)
 
-O schema do repo foi consolidado num **baseline** (`supabase/migrations/20260524130000_baseline_schema_NAO_APLICAR_EM_PROD_EXISTENTE.sql`). As 222 migrations incrementais antigas estão em `db/archive/migrations_pre_baseline/` (preservadas, fora do replay). Detalhes do escopo: `db/BASELINE_MANIFEST.md`.
+Existe um **baseline** completo do schema de produção em **`db/baselines/2026-05-24_prod_schema_baseline.sql`** (+ tag git `schema-baseline-prod-2026-05-24`), pra reconstruir um ambiente Supabase do zero. **Decisão deliberada (pós-codex):** o baseline fica **fora** de `supabase/migrations/`, que continua **intocada** — porque o Lovable é dono operacional do backend e a pasta `supabase/migrations/` é reconhecida pelo ecossistema Lovable/Supabase (mexer nela arriscaria confundir o builder e o tracking `schema_migrations` do Supabase CLI). Detalhes do escopo: `db/BASELINE_MANIFEST.md`.
 
 ## ⛔ O que NUNCA fazer
 - **Não aplicar o baseline em PRODUÇÃO existente.** Ele recria o schema do zero — em prod já existente, dá erro/estrago. Produção já tem o schema; não é tocada.
-- **Não rodar `supabase db push` contra produção.** O histórico foi squashado: o remoto tem 222 versões aplicadas, o repo tem só o baseline → o CLI acusa divergência ("remote migration versions not found locally") ou tenta aplicar o baseline sobre schema existente. Se algum dia for usar o CLI contra prod, fazer `supabase migration repair` / marcar o baseline como já aplicado primeiro.
+- **Não mover o baseline pra `supabase/migrations/`** nem arquivar as migrations de lá enquanto o Lovable for dono operacional do backend.
+- **Não rodar `supabase db push` do baseline contra produção.** Ele tentaria recriar objetos sobre schema existente / causaria divergência no `schema_migrations`. `supabase migration repair` só mexe no tracking, não aplica SQL.
 
 ## Criar um ambiente novo (staging / disaster-recovery) a partir do baseline
 1. Criar um projeto Supabase novo (ou banco vazio Supabase-compatível).
 2. Habilitar as extensions de **plataforma** (dashboard): `pg_cron`, `pg_net`, `pg_stat_statements`, `supabase_vault`. (As 4 de DDL — `uuid-ossp`/`pgcrypto`/`pg_trgm`/`vector` — o baseline cria.)
 3. Garantir `search_path` do banco incluindo `extensions` (default Supabase) — ver nota no manifest sobre `similarity()`.
-4. Rodar o baseline (`...20260524130000_baseline_schema...sql`) no SQL Editor / via runner do projeto novo.
+4. Rodar o baseline (`db/baselines/2026-05-24_prod_schema_baseline.sql`) no SQL Editor / via runner do projeto novo.
 5. Criar o secret **`CRON_SECRET`** no Vault do projeto novo.
 6. Recriar os **33 crons** (ver §abaixo).
 7. Conferir buckets (o baseline insere os 6) e a publication realtime (o baseline configura).
@@ -30,5 +31,5 @@ Depois, no projeto NOVO: substituir `https://<PROJECT_REF_ANTIGO>.supabase.co` p
 4. Re-capturar fora-de-`public` (extensions/crons/buckets/publication) e atualizar o manifest se mudou.
 5. Verificar (codex / staging) → commitar → PR.
 
-## audit:migrations (legado)
-`bun run audit:migrations` agora retorna 0 custom migrations (o baseline é a fonte de verdade; o script exclui o baseline). Mantido por compat; sem função real pós-squash.
+## audit:migrations
+Inalterado — `supabase/migrations/` segue intocada, então `bun run audit:migrations` continua funcionando normalmente sobre as migrations custom de lá. O baseline (em `db/baselines/`) não é uma migration e não entra nesse audit.

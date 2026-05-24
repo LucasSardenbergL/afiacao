@@ -14,17 +14,19 @@
 set -euo pipefail
 cd "$(dirname "$0")/.."
 SRC="db/_incoming/production_schema_dump.sql"
-TS="20260524130000"
-OUT="supabase/migrations/${TS}_baseline_schema_NAO_APLICAR_EM_PROD_EXISTENTE.sql"
+# ⚠️ Baseline fica em db/baselines/ — NÃO em supabase/migrations/ (decisão pós-codex:
+# o Lovable é dono operacional do backend e a pasta supabase/migrations/ é reconhecida
+# pelo ecossistema Lovable/Supabase; mexer nela arrisca confundir builder/CLI tracking).
+OUT="db/baselines/2026-05-24_prod_schema_baseline.sql"
+mkdir -p db/baselines
 
 cat > "$OUT" <<'HDR'
 -- ============================================================================
 -- BASELINE SCHEMA (squash) — gerado de produção em 2026-05-24
 -- ============================================================================
--- ⚠️  NÃO APLICAR EM PRODUÇÃO EXISTENTE.
--- Ponto de partida para reconstruir um ambiente Supabase do zero
--- (staging / disaster-recovery / onboarding). Substitui as 222 migrations
--- incrementais (arquivadas em db/archive/migrations_pre_baseline/).
+-- ⚠️  NÃO APLICAR EM PRODUÇÃO EXISTENTE. Vive em db/baselines/ (NÃO em
+-- supabase/migrations/, que fica intocada — ver runbook). Ponto de partida
+-- para reconstruir um ambiente Supabase DO ZERO (staging/DR/onboarding).
 -- Produção não é tocada por este arquivo.
 --
 -- Núcleo: schema public completo (212 tabelas, 37 views, 86 funções nossas,

@@ -1,10 +1,9 @@
 -- ============================================================================
 -- BASELINE SCHEMA (squash) — gerado de produção em 2026-05-24
 -- ============================================================================
--- ⚠️  NÃO APLICAR EM PRODUÇÃO EXISTENTE.
--- Ponto de partida para reconstruir um ambiente Supabase do zero
--- (staging / disaster-recovery / onboarding). Substitui as 222 migrations
--- incrementais (arquivadas em db/archive/migrations_pre_baseline/).
+-- ⚠️  NÃO APLICAR EM PRODUÇÃO EXISTENTE. Vive em db/baselines/ (NÃO em
+-- supabase/migrations/, que fica intocada — ver runbook). Ponto de partida
+-- para reconstruir um ambiente Supabase DO ZERO (staging/DR/onboarding).
 -- Produção não é tocada por este arquivo.
 --
 -- Núcleo: schema public completo (212 tabelas, 37 views, 86 funções nossas,
