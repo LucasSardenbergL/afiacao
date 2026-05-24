@@ -21,15 +21,15 @@ Este audit valida **quais custom migrations estão de fato aplicadas no banco**.
 
 ## Resumo
 
-- **52** custom migrations totais
-- **306** objetos esperados (criados por estas migrations)
+- **54** custom migrations totais
+- **313** objetos esperados (criados por estas migrations)
 - Quebra por tipo:
   - `rls_policy`: 102
   - `index`: 89
   - `table`: 49
   - `trigger`: 31
-  - `function`: 26
-  - `cron_job`: 5
+  - `function`: 28
+  - `cron_job`: 10
   - `enum_value`: 4
 
 ## Inventário por migration
@@ -590,6 +590,23 @@ Lista canônica do que cada migration *deveria* criar (extraído via regex de `C
 ### `20260524121531_restore_sla_guards.sql`
 
 > _Nenhum objeto extraído via regex._ Migration provavelmente é `ALTER TABLE` / `UPDATE` / `INSERT` / RLS-only. Validar manualmente.
+
+### `20260524202410_tuning_crons_estoque_freq_e_timeouts.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `cron_job` | `cron.omie-sync-estoque-diario` | — |
+| `cron_job` | `cron.sync-orders-vendas-2h` | — |
+| `cron_job` | `cron.sync-products-customers-daily` | — |
+| `cron_job` | `cron.sync-inventory-vendas-30m` | — |
+| `cron_job` | `cron.sync-omie-services-hourly` | — |
+
+### `20260524203000_rpc_staff_guard_permite_cron_backend.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `function` | `public.sugerir_negociacao_paralela_hoje` | — |
+| `function` | `public.refresh_sku_ranking_negociacao` | — |
 
 ## Próximos passos quando algo der `❌`
 

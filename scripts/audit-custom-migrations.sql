@@ -3,7 +3,7 @@
 -- ========================================================================
 --
 -- Gerado por: scripts/audit-custom-migrations.ts
--- Total de custom migrations: 52
+-- Total de custom migrations: 54
 --
 -- Como usar:
 --   1. Abra o Supabase SQL Editor (via Lovable Cloud → Backend → SQL Editor)
@@ -71,7 +71,9 @@ WITH expected (version, slug, filename) AS (VALUES
   ('20260524100500', 'cron_financeiro_e_fix_sayerlack', '20260524100500_cron_financeiro_e_fix_sayerlack.sql'),
   ('20260524102500', 'fix_fin_triggers_json_field_access', '20260524102500_fix_fin_triggers_json_field_access.sql'),
   ('20260524120000', 'carteira_omie_fase1', '20260524120000_carteira_omie_fase1.sql'),
-  ('20260524121531', 'restore_sla_guards', '20260524121531_restore_sla_guards.sql')
+  ('20260524121531', 'restore_sla_guards', '20260524121531_restore_sla_guards.sql'),
+  ('20260524202410', 'tuning_crons_estoque_freq_e_timeouts', '20260524202410_tuning_crons_estoque_freq_e_timeouts.sql'),
+  ('20260524203000', 'rpc_staff_guard_permite_cron_backend', '20260524203000_rpc_staff_guard_permite_cron_backend.sql')
 )
 SELECT
   e.version,
@@ -395,7 +397,14 @@ WITH expected_objects (migration, kind, schema_name, object_name, parent_name) A
   ('carteira_omie_fase1', 'index', 'public', 'idx_carteira_owner_eligible', 'carteira_assignments'),
   ('carteira_omie_fase1', 'index', 'public', 'idx_coverage_covering_active', 'carteira_coverage'),
   ('carteira_omie_fase1', 'function', 'public', 'carteira_visivel_para', ''),
-  ('carteira_omie_fase1', 'function', 'public', 'minha_carteira', '')
+  ('carteira_omie_fase1', 'function', 'public', 'minha_carteira', ''),
+  ('tuning_crons_estoque_freq_e_timeouts', 'cron_job', 'cron', 'omie-sync-estoque-diario', ''),
+  ('tuning_crons_estoque_freq_e_timeouts', 'cron_job', 'cron', 'sync-orders-vendas-2h', ''),
+  ('tuning_crons_estoque_freq_e_timeouts', 'cron_job', 'cron', 'sync-products-customers-daily', ''),
+  ('tuning_crons_estoque_freq_e_timeouts', 'cron_job', 'cron', 'sync-inventory-vendas-30m', ''),
+  ('tuning_crons_estoque_freq_e_timeouts', 'cron_job', 'cron', 'sync-omie-services-hourly', ''),
+  ('rpc_staff_guard_permite_cron_backend', 'function', 'public', 'sugerir_negociacao_paralela_hoje', ''),
+  ('rpc_staff_guard_permite_cron_backend', 'function', 'public', 'refresh_sku_ranking_negociacao', '')
 )
 SELECT
   e.migration,
