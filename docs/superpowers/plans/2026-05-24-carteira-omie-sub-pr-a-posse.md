@@ -519,17 +519,34 @@ Deno.serve(async (req) => {
     Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!,
   );
 
-  // 1. Carregar dados
-  const [clientesRes, mapRes, hunterRes] = await Promise.all([
-    supabase.from('omie_clientes').select('user_id, omie_codigo_vendedor').not('user_id', 'is', null),
+  // 1. Carregar mapa + hunter (tabelas pequenas). Hunter via config explícito
+  // (company_config.carteira_hunter_user_id) — não depende de commercial_role.
+  const [mapRes, hunterRes] = await Promise.all([
     supabase.from('omie_vendedor_map').select('omie_codigo_vendedor, user_id'),
-    supabase.from('commercial_roles').select('user_id').eq('commercial_role', 'hunter').limit(1),
+    supabase.from('company_config').select('value').eq('key', 'carteira_hunter_user_id').maybeSingle(),
   ]);
-
-  const clientes: OmieClienteRow[] = ((clientesRes.data ?? []) as Array<{ user_id: string; omie_codigo_vendedor: number | null }>)
-    .map((r) => ({ customer_user_id: r.user_id, omie_codigo_vendedor: r.omie_codigo_vendedor }));
   const vendedorMap = (mapRes.data ?? []) as VendedorMapRow[];
-  const hunterUserId = (hunterRes.data?.[0]?.user_id as string | undefined) ?? null;
+  const rawHunter = (hunterRes.data?.value as string | null | undefined) ?? null;
+  const hunterUserId = rawHunter ? (rawHunter.replace(/^"|"$/g, '').trim() || null) : null;
+
+  // omie_clientes: paginar (PostgREST limita SELECT a ~1000/página → senão trunca).
+  const clientes: OmieClienteRow[] = [];
+  const PAGE = 1000;
+  for (let from = 0; ; from += PAGE) {
+    const { data, error } = await supabase
+      .from('omie_clientes')
+      .select('user_id, omie_codigo_vendedor')
+      .not('user_id', 'is', null)
+      .range(from, from + PAGE - 1);
+    if (error) {
+      return new Response(JSON.stringify({ ok: false, error: error.message }), {
+        status: 500, headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+      });
+    }
+    const page = (data ?? []) as Array<{ user_id: string; omie_codigo_vendedor: number | null }>;
+    for (const r of page) clientes.push({ customer_user_id: r.user_id, omie_codigo_vendedor: r.omie_codigo_vendedor });
+    if (page.length < PAGE) break;
+  }
 
   // 2. Computar (espelho)
   const { assignments, conflicts, orphanCount } = computeCarteira(clientes, vendedorMap, hunterUserId);
