@@ -142,7 +142,7 @@ Para de olhar faturamento e olha **lucro econômico** por cliente/SKU: margem de
 | **Recomendações** | Regras determinísticas: cortar desconto / subir preço / encurtar prazo / despriorizar SKU / crescer, com R$ em jogo. Limiares em `fin_config_cashflow.cockpit_config`. |
 | **Confiança** | Cobertura de receita (order_items ÷ AR), custo/AR/estoque ausentes, imposto estimado nível-empresa. |
 
-**Regra de ouro:** direcional, não verdade contábil. Custo sem BOM; imposto estimado nível-empresa; estoque snapshot; cobertura depende do sync de vendas (medida e exibida). Nunca fabrica: ausente = null + motivo.
+**Regra de ouro:** direcional, não verdade contábil. Custo sem BOM; imposto estimado nível-empresa; estoque snapshot; cobertura depende do sync de vendas (medida e exibida). Nunca fabrica: ausente = null + motivo. **Filtro Oben por produto:** um pedido do app mistura itens das 3 empresas (enviados separadamente), então o engine conta só linhas de `omie_products.account='oben'`. **Deferido:** recomendações de prazo/estoque (precisam de PMR por cliente e dias-de-estoque por SKU — hoje inertes); AR médio ignora cronologia de pagamento parcial.
 
 **Onde:** helper `src/lib/financeiro/valor-cockpit-helpers.ts` (vitest); engine `fin-valor-cockpit` (gestor+master, espelha o helper, escopo Oben); coluna `fin_config_cashflow.cockpit_config`; página `/financeiro/valor-cockpit`.
 
