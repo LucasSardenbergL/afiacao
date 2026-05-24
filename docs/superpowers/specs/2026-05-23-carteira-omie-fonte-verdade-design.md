@@ -1,8 +1,9 @@
 # Carteira vinda do Omie como fonte de verdade — Design
 
-> **Status:** spec aprovado no brainstorm (2026-05-23). Próximo passo: writing-plans.
+> **Status:** spec aprovado no brainstorm (2026-05-23, camada de KPIs adicionada 2026-05-24). Próximo passo: writing-plans.
 > **Branch:** `feat/carteira-omie-fonte-verdade`
-> **2ª opinião:** codex consult (2026-05-23) — recomendou Abordagem C; refinamentos incorporados.
+> **2ª opinião:** codex consult (2026-05-23 arquitetura da posse; 2026-05-24 KPIs/positivação) — recomendou Abordagem C + conjunto enxuto de KPIs; refinamentos incorporados.
+> **Escopo:** modelo de posse da carteira (Fases 1-3) + camada de KPIs/positivação na tela de ligações (Fase 4).
 
 ## Problema
 
@@ -64,6 +65,7 @@ CREATE TABLE public.carteira_assignments (
   source text NOT NULL CHECK (source IN ('omie','hunter_orphan')),
   omie_account text,
   omie_codigo_vendedor int,
+  eligible boolean NOT NULL DEFAULT true, -- entra no denominador de positivação? master pode desmarcar (duplicado/atribuição errada/não-comercial)
   valid_from timestamptz NOT NULL DEFAULT now(),
   updated_at timestamptz NOT NULL DEFAULT now(),
   last_synced_at timestamptz,            -- lag de sync fica VISÍVEL, não escondido
@@ -151,6 +153,78 @@ Tela enxuta (em `/settings` ou página admin de cobertura):
 
 Cliente que existe no Omie mas **não tem conta no app** (sem `customer_user_id`) não entra em sugestões hoje — nem entrava (limitação pré-existente, não nova). Em vez de sumir em silêncio, expor uma **contagem/relatório "não-vinculados"** pra o founder saber que existem. Vincular de fato (criar conta/stub) é **trabalho futuro, fora do escopo**.
 
+## Camada de KPIs / Positivação (Fase 4)
+
+> Decisão (2026-05-24): a camada de KPIs faz parte desta feature (consome a carteira) e entra como **Fase 4**. 2ª opinião do codex incorporada. KPI "Receita vs Meta" **fica fora por ora** (não há meta mensal por vendedor cadastrada) — adicionar quando houver meta.
+
+### Positivação — definição canônica
+
+> **% da carteira elegível que comprou ≥1 vez no mês comercial corrente.**
+
+```
+positivacao_mes = clientes_distintos_da_carteira_com_≥1_pedido_válido_no_mês
+                  ÷ clientes_distintos_da_carteira_elegíveis
+```
+
+- **Janela:** mês calendário (MTD) — rotina/meta/comissão de distribuidora rodam por mês. Não usar 30d rolantes.
+- **Denominador = carteira elegível:** `carteira_assignments` do vendedor com `eligible = true`. Exclui duplicado/atribuição-errada/não-comercial (master desmarca `eligible`). **Não** exclui cliente em risco/churn — esses são exatamente quem a positivação deve pressionar.
+- **Numerador = "pedido válido":** pedido faturado/confirmado no mês (não cancelado), por `customer_user_id`. (Definir o status-filtro exato contra `orders`/`sales_orders` no plano.)
+
+### Conjunto de KPIs (7 — "Receita vs Meta" adiado)
+
+| KPI | Definição | Tipo | Pra quem |
+|---|---|---|---|
+| **Positivação MTD** | carteira elegível que comprou no mês ÷ carteira elegível | lagging | Farmer |
+| **Clientes a Positivar** | carteira elegível com 0 pedidos no mês, ordenada por `revenue_potential`/`churn_risk`/`recover_score` | **leading** | Farmer |
+| **Cobertura de Contato MTD** | carteira contatada (`farmer_calls`) ou visitada (`route_visits`) no mês ÷ elegível | leading | Farmer |
+| **Recência Crítica** | nº de clientes da carteira com `days_since_last_purchase` acima da cadência esperada ou `churn_risk` alto | leading | Farmer |
+| **Ticket Médio MTD** | receita MTD ÷ nº de clientes compradores no mês | lagging | ambos |
+| **Mix / Gap de Cross-sell** | compradores do mês sem categoria-chave esperada (usa `order_items`/categorias) | leading | Farmer/Hunter |
+| **Novos Clientes Positivados** | clientes órfãos/prospect com 1ª compra válida no mês | lagging | **Hunter** |
+
+**A lista "Clientes a Positivar" é o coração da tela** — a % diz status, a lista diz o que fazer agora. Ela deve reaproveitar o `pickDailyMix`/scoring existente, filtrando por "0 pedidos no mês".
+
+### Placement na tela de ligações (`FarmerCalls`)
+
+- **Hero (topo), Farmer:** Positivação MTD · Clientes a Positivar · Cobertura de Contato MTD.
+- **Hero (topo), Hunter:** Novos Clientes Positivados · Clientes a Positivar (pool órfão) · Recência Crítica.
+- **Linha secundária:** Ticket Médio MTD · Mix/Gap · Recência Crítica (a que não estiver no hero).
+- **Rebaixar pra secundário** os KPIs atuais (`calls_today`, `revenue_today`, `margin_today`, `avg_ticket_today`, `pending_link_count`) — são de atividade/operacional, não de progresso comercial. `pending_link_count` continua como tarefa de qualidade de dado, não KPI de venda.
+- **Não** colocar na tela do vendedor (fica em visão de gestor): ranking entre vendedores, balanceamento de carteira, coortes de churn de longo prazo, benchmark de produtividade de ligação — distraem e induzem gaming mid-call.
+
+### Vanity / armadilhas a evitar (codex)
+
+`calls_today` como hero; `revenue_today` só-de-ligações como principal (atribuição incompleta — pedido via ERP sem ligação fica de fora); ticket/margem **diário** (amostra ruidosa); `pending_link_count` como KPI de venda; receita-de-carteira **sem** positivação (esconde perda de amplitude); cobertura **sem qualidade** (contatar muito sem pedido/próximo-passo não é sucesso).
+
+### Snapshot mensal (decisão de modelo — provisionar agora)
+
+Como a **posse muda no tempo**, calcular positivação histórica com a tabela de dono de *hoje* corrompe a tendência. Congelar cada mês fechado:
+
+```sql
+CREATE TABLE public.carteira_positivacao_snapshot (
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  mes date NOT NULL,                       -- 1º dia do mês comercial
+  customer_user_id uuid NOT NULL,
+  owner_user_id uuid NOT NULL,             -- dono NAQUELE mês (congelado)
+  eligible boolean NOT NULL,
+  had_order_in_month boolean NOT NULL,
+  first_order_date_in_month date,
+  revenue_month numeric,
+  margin_month numeric,
+  contacted_in_month boolean NOT NULL DEFAULT false,
+  visited_in_month boolean NOT NULL DEFAULT false,
+  days_since_last_purchase_at_month_start int,
+  health_score_at_month_start numeric,
+  churn_risk_at_month_start numeric,
+  created_at timestamptz NOT NULL DEFAULT now(),
+  UNIQUE (mes, customer_user_id)
+);
+```
+
+- **KPIs do mês corrente:** computados **ao vivo** (carteira atual × `orders` × atividade MTD).
+- **Meses anteriores:** lidos do snapshot (dono congelado, elegibilidade congelada).
+- **Job:** cron mensal (fechamento do mês anterior) materializa o snapshot. Idempotente (upsert por `(mes, customer_user_id)`).
+
 ## Escopo e faseamento (para o writing-plans)
 
 Tamanho médio. Faseamento sugerido para reduzir risco:
@@ -158,10 +232,12 @@ Tamanho médio. Faseamento sugerido para reduzir risco:
 - **Fase 1 — Posse:** `omie_vendedor_map` + `carteira_assignments` + `carteira_coverage` + `carteira-rebuild` + RLS + helper de visibilidade + seed do mapa (3 linhas via SQL no Lovable).
 - **Fase 2 — Leituras:** virar `useMyVisitSuggestions` / `useMyCarteiraScores` pra ler da carteira; UI de cobertura + selo.
 - **Fase 3 — Colapsar scores:** refactor das tabelas de score pra por-cliente + ajuste do recalc (`visit-score-recalc-batch`, `visit-score-recalc-client`, `scoring-recalc-*`). Ponto mais delicado; fazer por último, com migração de dados validada.
+- **Fase 4 — KPIs / Positivação:** `carteira_positivacao_snapshot` + helper puro de positivação/MTD (TDD) + hook de KPIs (estende/substitui `useMyKpis`) + revamp da tela `FarmerCalls` (heros por Farmer/Hunter, atuais rebaixados) + cron mensal de snapshot. "Receita vs Meta" fora (sem meta).
 
 ## YAGNI (cortado de propósito)
 
-- **Nada** de gestão histórica/temporal de território (CRM de territory). Só estado-atual + expiração de cobertura.
+- **Sem CRM de território temporal/bitemporal.** A posse é **estado-atual** (uma linha por cliente). O `carteira_positivacao_snapshot` congela **fatos de KPI por mês** (pra tendência de positivação) — isso **não** é versionamento histórico de posse com intervalos de validade; não guardamos o "diário" de reatribuições, só a foto mensal.
+- **"Receita vs Meta" adiado** — não há meta mensal por vendedor cadastrada (decisão 2026-05-24). Entra quando houver meta.
 - Sem vinculação automática de clientes ERP sem conta (só relatório).
 - Sem auto-distribuição de órfãos entre múltiplos Hunters (hoje 1 Hunter; regra de round-robin fica para quando houver 2+).
 
