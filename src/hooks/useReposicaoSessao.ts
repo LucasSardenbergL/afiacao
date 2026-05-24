@@ -5,6 +5,33 @@ import type { PedidoItem } from "@/types/reposicao";
 
 export const REPOSICAO_EMPRESA = "OBEN";
 
+/**
+ * Paths canônicos das 5 etapas da sessão de Reposição, em ordem.
+ * Single source of truth — ProcessoComprasStepper importa daqui para montar
+ * REPOSICAO_STEPS (label + ícone + to).
+ */
+export const REPOSICAO_STEP_PATHS = [
+  "/admin/reposicao/sessao/mercado",
+  "/admin/reposicao/sessao/parametros",
+  "/admin/reposicao/sessao/pedidos",
+  "/admin/reposicao/sessao/aplicacao",
+  "/admin/reposicao/sessao/confirmacao",
+] as const;
+
+/**
+ * Deriva a etapa (1-based) correspondente à URL atual. Retorna 0 quando
+ * nenhuma etapa casa (ex.: cockpit index /admin/reposicao/sessao, ou rota
+ * fora da sessão). Ignora query string e barra final.
+ *
+ * Esta é a "etapa em foco" (onde o usuário ESTÁ) — distinta de
+ * deriveCurrentStep (a etapa de PROGRESSO derivada dos dados).
+ */
+export function deriveActiveStep(pathname: string): number {
+  const clean = pathname.split("?")[0].replace(/\/+$/, "");
+  const idx = REPOSICAO_STEP_PATHS.findIndex((p) => p === clean);
+  return idx === -1 ? 0 : idx + 1;
+}
+
 export function useItensDoDia() {
   const today = format(new Date(), "yyyy-MM-dd");
   return useQuery({

@@ -1,7 +1,9 @@
 import { describe, it, expect } from "vitest";
 import {
+  deriveActiveStep,
   deriveCurrentStep,
   getStepLocks,
+  REPOSICAO_STEP_PATHS,
   type ReposicaoStatus,
 } from "@/hooks/useReposicaoSessao";
 
@@ -120,5 +122,38 @@ describe("getStepLocks", () => {
       pedidosAprovados: 5,
     });
     expect(locks[4].locked).toBe(false);
+  });
+});
+
+describe("deriveActiveStep", () => {
+  it("returns the 1-based step index matching the current pathname", () => {
+    expect(deriveActiveStep("/admin/reposicao/sessao/mercado")).toBe(1);
+    expect(deriveActiveStep("/admin/reposicao/sessao/parametros")).toBe(2);
+    expect(deriveActiveStep("/admin/reposicao/sessao/pedidos")).toBe(3);
+    expect(deriveActiveStep("/admin/reposicao/sessao/aplicacao")).toBe(4);
+    expect(deriveActiveStep("/admin/reposicao/sessao/confirmacao")).toBe(5);
+  });
+
+  it("ignores query strings and trailing slashes", () => {
+    expect(deriveActiveStep("/admin/reposicao/sessao/pedidos?fornecedor=ACME")).toBe(3);
+    expect(deriveActiveStep("/admin/reposicao/sessao/pedidos/")).toBe(3);
+  });
+
+  it("returns 0 for the cockpit index (no step page)", () => {
+    expect(deriveActiveStep("/admin/reposicao/sessao")).toBe(0);
+  });
+
+  it("returns 0 for unrelated routes", () => {
+    expect(deriveActiveStep("/admin/customers")).toBe(0);
+  });
+
+  it("exposes the canonical step paths in order", () => {
+    expect(REPOSICAO_STEP_PATHS).toEqual([
+      "/admin/reposicao/sessao/mercado",
+      "/admin/reposicao/sessao/parametros",
+      "/admin/reposicao/sessao/pedidos",
+      "/admin/reposicao/sessao/aplicacao",
+      "/admin/reposicao/sessao/confirmacao",
+    ]);
   });
 });
