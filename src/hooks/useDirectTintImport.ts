@@ -76,7 +76,7 @@ export function useDirectTintImport() {
     for (const r of bases.data ?? []) baseCache.current.set(r.id_base_sayersystem, r.id);
     for (const r of embalagens.data ?? []) embalagemCache.current.set(r.id_embalagem_sayersystem, r.id);
     for (const r of corantes.data ?? []) coranteCache.current.set(r.id_corante_sayersystem, r.id);
-    for (const r of subcolecoes.data ?? []) subcolecaoCache.current.set(r.id_subcolecao_sayersystem, r.id);
+    for (const r of subcolecoes.data ?? []) { if (r.id_subcolecao_sayersystem) subcolecaoCache.current.set(r.id_subcolecao_sayersystem, r.id); }
     for (const r of skus.data ?? []) skuCache.current.set(`${r.produto_id}:${r.base_id}:${r.embalagem_id}`, r.id);
     logger.info('Tint import caches pre-warmed', {
       stage: 'pre_warm_caches',
@@ -306,7 +306,7 @@ export function useDirectTintImport() {
           newSubs.map(([id, desc]) => ({ account: ACCOUNT, id_subcolecao_sayersystem: id, descricao: desc })),
           { onConflict: 'account,id_subcolecao_sayersystem' }
         ).select('id, id_subcolecao_sayersystem');
-        for (const r of data ?? []) subcolecaoCache.current.set(r.id_subcolecao_sayersystem, r.id);
+        for (const r of data ?? []) { if (r.id_subcolecao_sayersystem) subcolecaoCache.current.set(r.id_subcolecao_sayersystem, r.id); }
       }
 
       // Phase 3: Build SKUs
@@ -475,7 +475,7 @@ export function useDirectTintImport() {
   };
 
   // ─── Process formulas via RPC (Postgres-native) ───
-  const processFormulasRPC = async (rows: string[][], personalizada: boolean, importacaoId: string): Promise<{ imported: number; updated: number; errors: number }> => {
+  const processFormulasRPC = async (rows: string[][], personalizada: boolean, _importacaoId: string): Promise<{ imported: number; updated: number; errors: number }> => {
     let imported = 0, updated = 0, errors = 0;
     const offset = personalizada ? 0 : 2;
     const totalBatches = Math.ceil(rows.length / RPC_BATCH_SIZE);

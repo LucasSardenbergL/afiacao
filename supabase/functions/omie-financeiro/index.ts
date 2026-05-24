@@ -1471,6 +1471,12 @@ async function validateCaller(
   req: Request,
   db: SupabaseClient
 ): Promise<{ authorized: boolean; userId?: string; error?: string }> {
+  const cronSecret = req.headers.get("x-cron-secret");
+  const expectedCron = Deno.env.get("CRON_SECRET");
+  if (cronSecret && expectedCron && cronSecret === expectedCron) {
+    return { authorized: true, userId: "cron" };
+  }
+
   const authHeader = req.headers.get("authorization");
   if (!authHeader?.startsWith("Bearer ")) {
     return { authorized: false, error: "Token ausente" };
