@@ -1,5 +1,5 @@
 // src/lib/carteira/rebuild-helpers.ts
-export type CarteiraSource = 'omie' | 'hunter_orphan';
+import type { CarteiraSource } from '@/types/carteira';
 
 export interface OmieClienteRow {
   customer_user_id: string;
