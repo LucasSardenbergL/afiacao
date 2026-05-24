@@ -597,13 +597,15 @@ GROUP BY omie_codigo_vendedor
 ORDER BY clientes DESC;
 ```
 
-E os `user_id` dos 3 vendedores (founder confirma e-mails):
+E os `user_id` dos vendedores (coluna de nome em `profiles` é `name`; `email` está na própria `profiles`):
 
 ```sql
-SELECT p.user_id, p.full_name, u.email
+SELECT p.user_id, p.name, p.email, cr.commercial_role
 FROM public.profiles p
-JOIN auth.users u ON u.id = p.user_id
-WHERE u.email IN ('lucascoelhosardenberg@gmail.com', '<EMAIL_REGINA>', '<EMAIL_TATI>');
+LEFT JOIN public.commercial_roles cr ON cr.user_id = p.user_id
+WHERE cr.commercial_role IS NOT NULL
+   OR p.email = 'lucascoelhosardenberg@gmail.com'
+ORDER BY cr.commercial_role NULLS LAST, p.name;
 ```
 
 - [ ] **Step 2: Entregar o INSERT do mapa (founder preenche os códigos/ids reais)**
