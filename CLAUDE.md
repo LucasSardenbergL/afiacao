@@ -81,6 +81,15 @@ bun preview   # vite preview
 > ⚠️ **`bun test` ≠ `bun run test`**. `bun test` invoca o runner nativo do bun (não usa vitest.config.ts).
 > Use pra loop rápido de TDD em tests que não dependem de DOM/React renderização. Resultado oficial é só do vitest.
 
+> 🟢 **Prefixe comandos PESADOS com `heavy`** quando houver sessões/worktrees rodando em paralelo (máquina do Lucas é M2 8GB, satura fácil). `heavy` é um semáforo global (`~/.local/bin/heavy`, fonte em `scripts/heavy.sh`) que limita quantos test/build/typecheck rodam ao mesmo tempo entre TODOS os worktrees — os demais esperam a vez em vez de competir por CPU/RAM. Auto-dimensiona pelo HW (1 slot na M2 8GB; ~9 num M4 Pro 48GB). Use:
+> ```bash
+> heavy bun run test
+> heavy bun run typecheck:strict
+> heavy bun build
+> heavy --status   # slots em uso
+> ```
+> Override: `AFIACAO_MAX_HEAVY=2 heavy …`. Comandos leves (`bun lint`, `bun dev`) não precisam.
+
 ---
 
 ## 3. Estrutura de pastas
