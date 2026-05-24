@@ -850,3 +850,46 @@ export interface ValorEmpresaResult {
   motivos: string[];
   valor_inputs: ValorInputs;
 }
+
+// ═══════════════ A3 — Cockpit de Valor (contrato com fin-valor-cockpit) ═══════════════
+export interface CockpitConfig {
+  margem_minima_pct: number;
+  desconto_max_pct: number;
+  prazo_alvo_dias: number;
+  dias_estoque_max: number;
+  sample_min_receita: number;
+}
+export interface CockpitRecomendacao {
+  acao: string;
+  motivo: string;
+  impacto_rs: number | null;
+}
+export interface CockpitRollupCliente {
+  cliente: string;
+  receita: number;
+  cm: number | null;
+  encargo: number;
+  evp: number | null;
+}
+export interface CockpitRollupSKU {
+  sku: string;
+  receita: number;
+  quantidade: number;
+  cm: number | null;
+  encargo: number;
+  evp: number | null;
+}
+export interface ValorCockpitResult {
+  company: string;
+  k: number;
+  ttm: { inicio: string; fim: string };
+  vazio?: boolean;
+  motivo?: string;
+  porCliente: CockpitRollupCliente[];
+  porSKU: CockpitRollupSKU[];
+  empresa: { receita: number; cm: number | null; encargo: number; evp: number | null };
+  recomendacoesCliente: Array<{ cliente: string; recomendacoes: CockpitRecomendacao[] }>;
+  confianca: { nivel: 'alta' | 'media' | 'baixa'; motivos: string[] };
+  cobertura_receita: number;
+  config: CockpitConfig;
+}
