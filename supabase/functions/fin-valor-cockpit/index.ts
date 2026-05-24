@@ -78,21 +78,23 @@ function montarCelulasComboEVP(input: { combos: ComboInput[]; capitalClientes: C
     const estS = estoquePorSKU.get(c.sku) ?? null;
     const rc = receitaPorCliente.get(c.cliente) ?? 0;
     const qs = qtdPorSKU.get(c.sku) ?? 0;
+    const ar_indisponivel = arC == null || rc <= 0;
+    const estoque_indisponivel = estS == null || qs <= 0;
     const a_cs = arC != null && rc > 0 ? arC * (c.receita_liquida / rc) : 0;
     const i_cs = estS != null && qs > 0 ? estS * (c.quantidade / qs) : 0;
     const encargo = input.k * (a_cs + i_cs);
     const evp = cm == null ? null : cm - encargo;
-    return { cliente: c.cliente, sku: c.sku, receita_liquida: c.receita_liquida, quantidade: c.quantidade, cm, a_cs, i_cs, encargo, evp, ar_indisponivel: arC == null, estoque_indisponivel: estS == null };
+    return { cliente: c.cliente, sku: c.sku, receita_liquida: c.receita_liquida, quantidade: c.quantidade, cm, a_cs, i_cs, encargo, evp, ar_indisponivel, estoque_indisponivel };
   });
   type Cel = typeof celulas[number];
   const rollup = (keyFn: (c: Cel) => string) => {
-    const m = new Map<string, { receita: number; quantidade: number; cm: number; cmNull: boolean; encargo: number; evp: number; evpNull: boolean }>();
+    const m = new Map<string, { receita: number; quantidade: number; cm: number; cmNull: boolean; encargo: number; encargoTotal: number; evp: number; evpNull: boolean }>();
     for (const cel of celulas) {
       const key = keyFn(cel);
-      const acc = m.get(key) ?? { receita: 0, quantidade: 0, cm: 0, cmNull: true, encargo: 0, evp: 0, evpNull: true };
+      const acc = m.get(key) ?? { receita: 0, quantidade: 0, cm: 0, cmNull: true, encargo: 0, encargoTotal: 0, evp: 0, evpNull: true };
       acc.receita += cel.receita_liquida; acc.quantidade += cel.quantidade;
-      if (cel.cm != null) { acc.cm += cel.cm; acc.cmNull = false; }
-      acc.encargo += cel.encargo;
+      acc.encargoTotal += cel.encargo;
+      if (cel.cm != null) { acc.cm += cel.cm; acc.cmNull = false; acc.encargo += cel.encargo; }
       if (cel.evp != null) { acc.evp += cel.evp; acc.evpNull = false; }
       m.set(key, acc);
     }
@@ -100,11 +102,11 @@ function montarCelulasComboEVP(input: { combos: ComboInput[]; capitalClientes: C
   };
   const mc = rollup((c) => c.cliente);
   const ms = rollup((c) => c.sku);
-  const porCliente = [...mc.entries()].map(([cliente, a]) => ({ cliente, receita: a.receita, cm: a.cmNull ? null : a.cm, encargo: a.encargo, evp: a.evpNull ? null : a.evp }));
-  const porSKU = [...ms.entries()].map(([sku, a]) => ({ sku, receita: a.receita, quantidade: a.quantidade, cm: a.cmNull ? null : a.cm, encargo: a.encargo, evp: a.evpNull ? null : a.evp }));
-  let cmEmp = 0, cmNull = true, encEmp = 0, evpEmp = 0, evpNull = true, recEmp = 0;
-  for (const cel of celulas) { recEmp += cel.receita_liquida; encEmp += cel.encargo; if (cel.cm != null) { cmEmp += cel.cm; cmNull = false; } if (cel.evp != null) { evpEmp += cel.evp; evpNull = false; } }
-  return { celulas, porCliente, porSKU, empresa: { receita: recEmp, cm: cmNull ? null : cmEmp, encargo: encEmp, evp: evpNull ? null : evpEmp } };
+  const porCliente = [...mc.entries()].map(([cliente, a]) => ({ cliente, receita: a.receita, cm: a.cmNull ? null : a.cm, encargo: a.encargo, encargo_total: a.encargoTotal, evp: a.evpNull ? null : a.evp }));
+  const porSKU = [...ms.entries()].map(([sku, a]) => ({ sku, receita: a.receita, quantidade: a.quantidade, cm: a.cmNull ? null : a.cm, encargo: a.encargo, encargo_total: a.encargoTotal, evp: a.evpNull ? null : a.evp }));
+  let cmEmp = 0, cmNull = true, encEmp = 0, encTotalEmp = 0, evpEmp = 0, evpNull = true, recEmp = 0;
+  for (const cel of celulas) { recEmp += cel.receita_liquida; encTotalEmp += cel.encargo; if (cel.cm != null) { cmEmp += cel.cm; cmNull = false; encEmp += cel.encargo; } if (cel.evp != null) { evpEmp += cel.evp; evpNull = false; } }
+  return { celulas, porCliente, porSKU, empresa: { receita: recEmp, cm: cmNull ? null : cmEmp, encargo: encEmp, encargo_total: encTotalEmp, evp: evpNull ? null : evpEmp } };
 }
 type CockpitConfig = { margem_minima_pct: number; desconto_max_pct: number; prazo_alvo_dias: number; dias_estoque_max: number; sample_min_receita: number };
 type Recomendacao = { acao: string; motivo: string; impacto_rs: number | null };
@@ -143,102 +145,126 @@ serve(async (req: Request) => {
   if (!auth.ok) return auth.response;
   const db = createClient(SUPABASE_URL, SERVICE_ROLE);
 
+  // Paginação robusta: evita o truncamento silencioso do default ~1000 do PostgREST e propaga erro.
+  async function fetchAll<T>(
+    build: (from: number, to: number) => PromiseLike<{ data: T[] | null; error: { message: string } | null }>,
+    label: string,
+  ): Promise<T[]> {
+    const page = 1000; let from = 0; const out: T[] = [];
+    for (;;) {
+      const { data, error } = await build(from, from + page - 1);
+      if (error) throw new Error(`${label}: ${error.message}`);
+      const rows = data ?? [];
+      out.push(...rows);
+      if (rows.length < page) break;
+      from += page;
+    }
+    return out;
+  }
+
   const now = new Date();
   const ttm_fim = now.toISOString().slice(0, 10);
   const ttm_inicio = new Date(now.getTime() - 365 * 86400000).toISOString().slice(0, 10);
 
-  // WACC (A2) — reusa fin_valor_inputs.ke.base; fallback default se ausente.
-  const { data: viRow } = await db.from("fin_valor_inputs").select("valor_inputs").eq("company", COMPANY).maybeSingle();
-  const vi = ((viRow as { valor_inputs?: Record<string, unknown> } | null)?.valor_inputs ?? {}) as Record<string, unknown>;
-  const keBase = (vi.ke as Record<string, unknown> | undefined)?.base as Record<string, unknown> | undefined;
-  const k = keBase ? (Number(keBase.ancora || 0) + Number(keBase.premio_risco_equity || 0) + Number(keBase.premio_tamanho_private || 0) + Number(keBase.premio_iliquidez_controle || 0)) : 0.20;
+  try {
+    // WACC (A2) — reusa fin_valor_inputs.ke.base; fallback default se ausente.
+    const { data: viRow } = await db.from("fin_valor_inputs").select("valor_inputs").eq("company", COMPANY).maybeSingle();
+    const vi = ((viRow as { valor_inputs?: Record<string, unknown> } | null)?.valor_inputs ?? {}) as Record<string, unknown>;
+    const keBase = (vi.ke as Record<string, unknown> | undefined)?.base as Record<string, unknown> | undefined;
+    const k = keBase ? (Number(keBase.ancora || 0) + Number(keBase.premio_risco_equity || 0) + Number(keBase.premio_tamanho_private || 0) + Number(keBase.premio_iliquidez_controle || 0)) : 0.20;
 
-  // Config (limiares)
-  const { data: cfgRow } = await db.from("fin_config_cashflow").select("cockpit_config").eq("company", COMPANY).maybeSingle();
-  const cfgRaw = ((cfgRow as { cockpit_config?: Record<string, unknown> } | null)?.cockpit_config ?? {}) as Record<string, unknown>;
-  const numOr = (x: unknown, d: number) => (typeof x === "number" && Number.isFinite(x) ? x : typeof x === "string" && x.trim() !== "" && Number.isFinite(Number(x)) ? Number(x) : d);
-  const config: CockpitConfig = {
-    margem_minima_pct: numOr(cfgRaw.margem_minima_pct, CONFIG_DEFAULT.margem_minima_pct),
-    desconto_max_pct: numOr(cfgRaw.desconto_max_pct, CONFIG_DEFAULT.desconto_max_pct),
-    prazo_alvo_dias: numOr(cfgRaw.prazo_alvo_dias, CONFIG_DEFAULT.prazo_alvo_dias),
-    dias_estoque_max: numOr(cfgRaw.dias_estoque_max, CONFIG_DEFAULT.dias_estoque_max),
-    sample_min_receita: numOr(cfgRaw.sample_min_receita, CONFIG_DEFAULT.sample_min_receita),
-  };
+    // Config (limiares)
+    const { data: cfgRow } = await db.from("fin_config_cashflow").select("cockpit_config").eq("company", COMPANY).maybeSingle();
+    const cfgRaw = ((cfgRow as { cockpit_config?: Record<string, unknown> } | null)?.cockpit_config ?? {}) as Record<string, unknown>;
+    const numOr = (x: unknown, d: number) => (typeof x === "number" && Number.isFinite(x) ? x : typeof x === "string" && x.trim() !== "" && Number.isFinite(Number(x)) ? Number(x) : d);
+    const config: CockpitConfig = {
+      margem_minima_pct: numOr(cfgRaw.margem_minima_pct, CONFIG_DEFAULT.margem_minima_pct),
+      desconto_max_pct: numOr(cfgRaw.desconto_max_pct, CONFIG_DEFAULT.desconto_max_pct),
+      prazo_alvo_dias: numOr(cfgRaw.prazo_alvo_dias, CONFIG_DEFAULT.prazo_alvo_dias),
+      dias_estoque_max: numOr(cfgRaw.dias_estoque_max, CONFIG_DEFAULT.dias_estoque_max),
+      sample_min_receita: numOr(cfgRaw.sample_min_receita, CONFIG_DEFAULT.sample_min_receita),
+    };
 
-  // 1) Linhas de venda TTM (order_items × sales_orders pra data) — paginado simples (limite alto).
-  const { data: orders } = await db.from("sales_orders").select("id, created_at").gte("created_at", ttm_inicio);
-  const orderIds = (orders ?? []).map((o: { id: string }) => o.id);
-  if (orderIds.length === 0) return jsonResponse({ company: COMPANY, vazio: true, motivo: "Sem pedidos no TTM." }, 200);
-  const { data: items } = await db.from("order_items").select("sales_order_id, customer_user_id, product_id, omie_codigo_produto, quantity, unit_price, discount").in("sales_order_id", orderIds);
-  const linhas = (items ?? []) as Array<{ customer_user_id: string; product_id: string | null; omie_codigo_produto: number | null; quantity: number; unit_price: number; discount: number | null }>;
+    // FILTRO OBEN obrigatório: um pedido do app mistura itens das 3 empresas (Oben/Colacor/Colacor SC),
+    // enviados separadamente. Sem o filtro por produto, o cockpit da Oben fica contaminado.
+    type Prod = { id: string; omie_codigo_produto: number; account: string };
+    const prods = await fetchAll<Prod>((f, t) => db.from("omie_products").select("id, omie_codigo_produto, account").eq("account", COMPANY).range(f, t), "omie_products");
+    const obenProductIds = new Set(prods.map((p) => p.id));
+    const obenSkus = new Set(prods.map((p) => String(p.omie_codigo_produto)));
 
-  // 2) Mapas de apoio
-  const userIds = [...new Set(linhas.map((l) => l.customer_user_id))];
-  const productIds = [...new Set(linhas.map((l) => l.product_id).filter(Boolean) as string[])];
-  const { data: clientes } = await db.from("omie_clientes").select("user_id, omie_codigo_cliente").in("user_id", userIds);
-  const userToOmie = new Map((clientes ?? []).map((c: { user_id: string; omie_codigo_cliente: number }) => [c.user_id, String(c.omie_codigo_cliente)]));
-  const { data: custos } = await db.from("product_costs").select("product_id, cost_price").in("product_id", productIds);
-  const custoPorProduto = new Map((custos ?? []).map((c: { product_id: string; cost_price: number }) => [c.product_id, c.cost_price]));
-  const { data: estoque } = await db.from("inventory_position").select("omie_codigo_produto, saldo, cmc, account");
-  const estoquePorSKU = new Map((estoque ?? []).filter((e: { account: string }) => e.account === COMPANY || e.account === "vendas").map((e: { omie_codigo_produto: number; saldo: number; cmc: number }) => [String(e.omie_codigo_produto), { saldo: e.saldo, cmc: e.cmc }]));
+    // Linhas de venda no TTM (order_items tem created_at próprio → sem .in gigante de pedidos).
+    type Item = { customer_user_id: string; product_id: string | null; omie_codigo_produto: number | null; quantity: number; unit_price: number; discount: number | null };
+    const itemsAll = await fetchAll<Item>((f, t) => db.from("order_items").select("customer_user_id, product_id, omie_codigo_produto, quantity, unit_price, discount, created_at").gte("created_at", ttm_inicio).range(f, t), "order_items");
+    const linhas = itemsAll.filter((l) => l.product_id != null && obenProductIds.has(l.product_id)); // só produtos Oben
+    if (linhas.length === 0) return jsonResponse({ company: COMPANY, vazio: true, motivo: "Sem linhas de venda da Oben no TTM." }, 200);
 
-  // 3) Combos cliente×SKU
-  const comboMap = new Map<string, { cliente: string; sku: string; receita: number; qtd: number; desconto: number; product_id: string | null }>();
-  for (const l of linhas) {
-    const cliente = userToOmie.get(l.customer_user_id) ?? "sem_cliente";
-    const sku = l.omie_codigo_produto != null ? String(l.omie_codigo_produto) : "sem_sku";
-    const key = `${cliente}|${sku}`;
-    const receita = l.unit_price * l.quantity - (l.discount ?? 0);
-    const acc = comboMap.get(key) ?? { cliente, sku, receita: 0, qtd: 0, desconto: 0, product_id: l.product_id };
-    acc.receita += receita; acc.qtd += l.quantity; acc.desconto += (l.discount ?? 0);
-    comboMap.set(key, acc);
+    // Mapas de apoio (paginados, sem .in para evitar URL gigante + truncamento)
+    const clientesAll = await fetchAll<{ user_id: string; omie_codigo_cliente: number }>((f, t) => db.from("omie_clientes").select("user_id, omie_codigo_cliente").range(f, t), "omie_clientes");
+    const userToOmie = new Map(clientesAll.map((c) => [c.user_id, String(c.omie_codigo_cliente)]));
+    const custosAll = await fetchAll<{ product_id: string; cost_price: number }>((f, t) => db.from("product_costs").select("product_id, cost_price").range(f, t), "product_costs");
+    const custoPorProduto = new Map(custosAll.map((c) => [c.product_id, c.cost_price]));
+    const estoqueAll = await fetchAll<{ omie_codigo_produto: number; saldo: number; cmc: number }>((f, t) => db.from("inventory_position").select("omie_codigo_produto, saldo, cmc").range(f, t), "inventory_position");
+    const estoquePorSKU = new Map(estoqueAll.filter((e) => obenSkus.has(String(e.omie_codigo_produto))).map((e) => [String(e.omie_codigo_produto), { saldo: e.saldo, cmc: e.cmc }]));
+
+    // Combos cliente×SKU — cliente não-mapeado vira 'app:<uuid>' (NÃO funde clientes distintos).
+    const comboMap = new Map<string, { cliente: string; sku: string; receita: number; qtd: number; desconto: number; product_id: string | null }>();
+    for (const l of linhas) {
+      const cliente = userToOmie.get(l.customer_user_id) ?? `app:${l.customer_user_id}`;
+      const sku = l.omie_codigo_produto != null ? String(l.omie_codigo_produto) : "sem_sku";
+      const key = `${cliente}|${sku}`;
+      const receita = l.unit_price * l.quantity - (l.discount ?? 0);
+      const acc = comboMap.get(key) ?? { cliente, sku, receita: 0, qtd: 0, desconto: 0, product_id: l.product_id };
+      acc.receita += receita; acc.qtd += l.quantity; acc.desconto += (l.discount ?? 0);
+      comboMap.set(key, acc);
+    }
+    const combos: ComboInput[] = [...comboMap.values()].map((c) => ({ cliente: c.cliente, sku: c.sku, receita_liquida: c.receita, quantidade: c.qtd, custo_unitario: c.product_id ? (custoPorProduto.get(c.product_id) ?? null) : null }));
+
+    // AR da Oben relevante à janela (emitido na janela OU ainda em aberto) — serve p/ AR por cliente e cobertura.
+    type CR = { omie_codigo_cliente: number | null; valor_documento: number; saldo: number; data_emissao: string | null; data_recebimento: string | null; status_titulo: string };
+    const crsAll = await fetchAll<CR>((f, t) => db.from("fin_contas_receber").select("omie_codigo_cliente, valor_documento, saldo, data_emissao, data_recebimento, status_titulo").eq("company", COMPANY).or(`data_recebimento.is.null,data_recebimento.gte.${ttm_inicio},data_emissao.gte.${ttm_inicio}`).range(f, t), "fin_contas_receber");
+    const titulosPorCliente = new Map<string, TituloAR[]>();
+    for (const cr of crsAll) {
+      if (cr.omie_codigo_cliente == null) continue;
+      const key = String(cr.omie_codigo_cliente);
+      const arr = titulosPorCliente.get(key) ?? [];
+      arr.push({ valor_documento: cr.valor_documento, saldo: cr.saldo, data_emissao: cr.data_emissao, data_recebimento: cr.data_recebimento, status: cr.status_titulo });
+      titulosPorCliente.set(key, arr);
+    }
+    const capitalClientes: CapitalCliente[] = [...new Set(combos.map((c) => c.cliente))].map((cliente) => ({
+      cliente,
+      ar_medio: titulosPorCliente.has(cliente) ? arMedioTTM({ titulos: titulosPorCliente.get(cliente)!, ttm_inicio, ttm_fim }) : null,
+    }));
+    const capitalSKUs: CapitalSKU[] = [...new Set(combos.map((c) => c.sku))].map((sku) => {
+      const e = estoquePorSKU.get(sku);
+      return { sku, estoque_valor: e ? e.saldo * e.cmc : null };
+    });
+
+    const res = montarCelulasComboEVP({ combos, capitalClientes, capitalSKUs, k });
+
+    // Recomendações por cliente. NOTA: prazo_medio_dias/dias_estoque ainda não computados por cliente/SKU
+    // (deferido) → as regras de prazo/estoque ficam inertes; as de desconto/preço usam dados reais.
+    const descontoPorCliente = new Map<string, number>();
+    for (const c of [...comboMap.values()]) descontoPorCliente.set(c.cliente, (descontoPorCliente.get(c.cliente) ?? 0) + c.desconto);
+    const recomendacoesCliente = res.porCliente.map((rc) => ({
+      cliente: rc.cliente,
+      recomendacoes: recomendarAcaoComercial({ evp: rc.evp, receita_liquida: rc.receita, cm: rc.cm, desconto_total: descontoPorCliente.get(rc.cliente) ?? 0, prazo_medio_dias: 0, dias_estoque: 0, config }),
+    }));
+
+    const total = res.celulas.length || 1;
+    const custo_ausente_pct = res.celulas.filter((c) => c.cm == null).length / total;
+    const ar_indisponivel_pct = res.celulas.filter((c) => c.ar_indisponivel).length / total;
+    const estoque_ausente_pct = res.celulas.filter((c) => c.estoque_indisponivel).length / total;
+    // cobertura: receita Oben do cockpit ÷ AR Oben emitido no TTM (mesmo conjunto crsAll).
+    const arTotal = crsAll.filter((cr) => cr.data_emissao != null && cr.data_emissao >= ttm_inicio).reduce((s, cr) => s + (cr.valor_documento || 0), 0);
+    const cobertura_receita = arTotal > 0 ? Math.min(1, res.empresa.receita / arTotal) : 1;
+    const confianca = scoreConfiancaCockpit({ cobertura_receita, custo_ausente_pct, ar_indisponivel_pct, estoque_ausente_pct, imposto_estimado: true });
+
+    return jsonResponse({
+      company: COMPANY, k, ttm: { inicio: ttm_inicio, fim: ttm_fim },
+      porCliente: res.porCliente, porSKU: res.porSKU, empresa: res.empresa,
+      recomendacoesCliente, confianca, cobertura_receita, config,
+    }, 200);
+  } catch (e) {
+    return jsonResponse({ error: e instanceof Error ? e.message : String(e) }, 500);
   }
-  const combos: ComboInput[] = [...comboMap.values()].map((c) => ({ cliente: c.cliente, sku: c.sku, receita_liquida: c.receita, quantidade: c.qtd, custo_unitario: c.product_id ? (custoPorProduto.get(c.product_id) ?? null) : null }));
-
-  // 4) Capital por cliente (AR médio TTM) e por SKU (estoque)
-  const omieCods = [...new Set(combos.map((c) => c.cliente).filter((c) => c !== "sem_cliente"))];
-  const { data: crs } = await db.from("fin_contas_receber").select("omie_codigo_cliente, valor_documento, saldo, data_emissao, data_recebimento, status_titulo").eq("company", COMPANY).in("omie_codigo_cliente", omieCods.map(Number));
-  const titulosPorCliente = new Map<string, TituloAR[]>();
-  for (const t of (crs ?? []) as Array<{ omie_codigo_cliente: number; valor_documento: number; saldo: number; data_emissao: string | null; data_recebimento: string | null; status_titulo: string }>) {
-    const key = String(t.omie_codigo_cliente);
-    const arr = titulosPorCliente.get(key) ?? [];
-    arr.push({ valor_documento: t.valor_documento, saldo: t.saldo, data_emissao: t.data_emissao, data_recebimento: t.data_recebimento, status: t.status_titulo });
-    titulosPorCliente.set(key, arr);
-  }
-  const capitalClientes: CapitalCliente[] = [...new Set(combos.map((c) => c.cliente))].map((cliente) => ({
-    cliente,
-    ar_medio: cliente === "sem_cliente" ? null : (titulosPorCliente.has(cliente) ? arMedioTTM({ titulos: titulosPorCliente.get(cliente)!, ttm_inicio, ttm_fim }) : null),
-  }));
-  const capitalSKUs: CapitalSKU[] = [...new Set(combos.map((c) => c.sku))].map((sku) => {
-    const e = estoquePorSKU.get(sku);
-    return { sku, estoque_valor: e ? e.saldo * e.cmc : null };
-  });
-
-  // 5) Monta EVP
-  const res = montarCelulasComboEVP({ combos, capitalClientes, capitalSKUs, k });
-
-  // 6) Recomendações por cliente (usa PMR médio do cliente como prazo; desconto agregado)
-  const descontoPorCliente = new Map<string, number>();
-  for (const c of [...comboMap.values()]) descontoPorCliente.set(c.cliente, (descontoPorCliente.get(c.cliente) ?? 0) + c.desconto);
-  const recomendacoesCliente = res.porCliente.map((rc) => ({
-    cliente: rc.cliente,
-    recomendacoes: recomendarAcaoComercial({ evp: rc.evp, receita_liquida: rc.receita, cm: rc.cm, desconto_total: descontoPorCliente.get(rc.cliente) ?? 0, prazo_medio_dias: 0, dias_estoque: 0, config }),
-  }));
-
-  // 7) Confiança
-  const total = res.celulas.length || 1;
-  const custo_ausente_pct = res.celulas.filter((c) => c.cm == null).length / total;
-  const ar_indisponivel_pct = res.celulas.filter((c) => c.ar_indisponivel).length / total;
-  const estoque_ausente_pct = res.celulas.filter((c) => c.estoque_indisponivel).length / total;
-  // cobertura de receita: receita do cockpit ÷ receita-AR total da Oben no TTM
-  const { data: arTotalRows } = await db.from("fin_contas_receber").select("valor_documento").eq("company", COMPANY).gte("data_emissao", ttm_inicio);
-  const arTotal = (arTotalRows ?? []).reduce((s: number, t: { valor_documento: number }) => s + (t.valor_documento || 0), 0);
-  const cobertura_receita = arTotal > 0 ? Math.min(1, res.empresa.receita / arTotal) : 1;
-  const confianca = scoreConfiancaCockpit({ cobertura_receita, custo_ausente_pct, ar_indisponivel_pct, estoque_ausente_pct, imposto_estimado: true });
-
-  return jsonResponse({
-    company: COMPANY, k, ttm: { inicio: ttm_inicio, fim: ttm_fim },
-    porCliente: res.porCliente, porSKU: res.porSKU, empresa: res.empresa,
-    recomendacoesCliente, confianca, cobertura_receita, config,
-  }, 200);
 });

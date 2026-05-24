@@ -23,7 +23,7 @@ export default function FinanceiroValorCockpit() {
   const { isMaster, isGestorComercial } = useAuth();
   const [aba, setAba] = useState<'cliente' | 'sku'>('cliente');
   const podeVer = isMaster || isGestorComercial;
-  const { data, isLoading, error } = useValorCockpit();
+  const { data, isLoading, error } = useValorCockpit(podeVer);
 
   if (!podeVer) {
     return (

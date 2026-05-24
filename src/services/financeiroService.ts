@@ -869,6 +869,7 @@ export interface CockpitRollupCliente {
   receita: number;
   cm: number | null;
   encargo: number;
+  encargo_total: number;
   evp: number | null;
 }
 export interface CockpitRollupSKU {
@@ -877,6 +878,7 @@ export interface CockpitRollupSKU {
   quantidade: number;
   cm: number | null;
   encargo: number;
+  encargo_total: number;
   evp: number | null;
 }
 export interface ValorCockpitResult {
@@ -887,7 +889,7 @@ export interface ValorCockpitResult {
   motivo?: string;
   porCliente: CockpitRollupCliente[];
   porSKU: CockpitRollupSKU[];
-  empresa: { receita: number; cm: number | null; encargo: number; evp: number | null };
+  empresa: { receita: number; cm: number | null; encargo: number; encargo_total: number; evp: number | null };
   recomendacoesCliente: Array<{ cliente: string; recomendacoes: CockpitRecomendacao[] }>;
   confianca: { nivel: 'alta' | 'media' | 'baixa'; motivos: string[] };
   cobertura_receita: number;
