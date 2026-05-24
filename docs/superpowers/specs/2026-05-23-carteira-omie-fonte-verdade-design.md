@@ -123,7 +123,7 @@ Usuário `U` vê o cliente `X` se:
 - existe `carteira_coverage` com `covering_user_id = U`, `active`, `(valid_until IS NULL OR valid_until > now())`, e `covered_user_id = owner(X)` (cobertura), **OU**
 - `U` é master.
 
-Essa é a **única** regra de visibilidade de carteira, vivendo num só lugar (helper `SECURITY DEFINER`, ex.: `carteira_visivel_para(customer_user_id, uid)` ou um RPC `minha_carteira(uid)` que retorna os `customer_user_id` visíveis + flag `coberto_de` = nome do dono original ou `null` se próprio).
+Essa é a **única** regra de visibilidade de carteira, vivendo num só lugar (helper `SECURITY DEFINER`, ex.: `carteira_visivel_para(customer_user_id, uid)` ou um RPC `minha_carteira()` — **sem parâmetro de uid**, usa `auth.uid()` internamente pra evitar IDOR, já que SECURITY DEFINER bypassa RLS — que retorna os `customer_user_id` visíveis + flag `coberto_de` = dono original ou `null` se próprio).
 
 ## Cobertura (UI)
 
@@ -143,7 +143,7 @@ Tela enxuta (em `/settings` ou página admin de cobertura):
 ## Frontend
 
 - `useMyVisitSuggestions` e `useMyCarteiraScores` deixam de fazer `eq('farmer_id', user.id)`. Passam a:
-  1. Buscar meus clientes visíveis via `minha_carteira(uid)` (próprios + cobertura ativa), com flag de cobertura.
+  1. Buscar meus clientes visíveis via `minha_carteira()` (próprios + cobertura ativa), com flag de cobertura.
   2. Buscar scores por `customer_user_id IN (...)`.
   3. `pickDailyMix` como hoje (lógica de missões/mix inalterada).
 - Selo de cobertura ("Cobertura — {nome}") vem da flag da carteira.

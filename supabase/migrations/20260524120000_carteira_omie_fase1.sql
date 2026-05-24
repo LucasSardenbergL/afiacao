@@ -16,8 +16,8 @@ CREATE INDEX IF NOT EXISTS idx_omie_vendedor_map_codigo ON public.omie_vendedor_
 -- 2. Dono primário (1 por cliente)
 CREATE TABLE IF NOT EXISTS public.carteira_assignments (
   id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
-  customer_user_id uuid NOT NULL,
-  owner_user_id uuid NOT NULL,
+  customer_user_id uuid NOT NULL REFERENCES auth.users(id) ON DELETE CASCADE,
+  owner_user_id uuid NOT NULL REFERENCES auth.users(id) ON DELETE CASCADE,
   source text NOT NULL CHECK (source IN ('omie','hunter_orphan')),
   omie_account text,
   omie_codigo_vendedor int,
@@ -64,18 +64,20 @@ RETURNS boolean LANGUAGE sql STABLE SECURITY DEFINER SET search_path = public AS
     );
 $$;
 
--- 5. RPC: minha carteira visível (próprios + cobertura ativa)
-CREATE OR REPLACE FUNCTION public.minha_carteira(_uid uuid)
+-- 5. RPC: minha carteira visível (próprios + cobertura ativa).
+-- SEM parâmetro de uid (usa auth.uid() internamente): como é SECURITY DEFINER e
+-- bypassa RLS, um _uid externo permitiria IDOR (qualquer um leria a carteira alheia).
+CREATE OR REPLACE FUNCTION public.minha_carteira()
 RETURNS TABLE (customer_user_id uuid, owner_user_id uuid, coberto_de uuid)
 LANGUAGE sql STABLE SECURITY DEFINER SET search_path = public AS $$
   SELECT a.customer_user_id, a.owner_user_id, NULL::uuid AS coberto_de
   FROM carteira_assignments a
-  WHERE a.owner_user_id = _uid
+  WHERE a.owner_user_id = auth.uid()
   UNION
   SELECT a.customer_user_id, a.owner_user_id, a.owner_user_id AS coberto_de
   FROM carteira_assignments a
   JOIN carteira_coverage c ON c.covered_user_id = a.owner_user_id
-  WHERE c.covering_user_id = _uid
+  WHERE c.covering_user_id = auth.uid()
     AND c.active
     AND (c.valid_until IS NULL OR c.valid_until > now());
 $$;
