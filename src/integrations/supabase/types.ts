@@ -366,6 +366,78 @@ export type Database = {
           },
         ]
       }
+      carteira_assignments: {
+        Row: {
+          customer_user_id: string
+          eligible: boolean
+          id: string
+          last_synced_at: string | null
+          omie_account: string | null
+          omie_codigo_vendedor: number | null
+          owner_user_id: string
+          source: string
+          updated_at: string
+          valid_from: string
+        }
+        Insert: {
+          customer_user_id: string
+          eligible?: boolean
+          id?: string
+          last_synced_at?: string | null
+          omie_account?: string | null
+          omie_codigo_vendedor?: number | null
+          owner_user_id: string
+          source: string
+          updated_at?: string
+          valid_from?: string
+        }
+        Update: {
+          customer_user_id?: string
+          eligible?: boolean
+          id?: string
+          last_synced_at?: string | null
+          omie_account?: string | null
+          omie_codigo_vendedor?: number | null
+          owner_user_id?: string
+          source?: string
+          updated_at?: string
+          valid_from?: string
+        }
+        Relationships: []
+      }
+      carteira_coverage: {
+        Row: {
+          active: boolean
+          covered_user_id: string
+          covering_user_id: string
+          created_at: string
+          created_by: string
+          id: string
+          valid_from: string
+          valid_until: string | null
+        }
+        Insert: {
+          active?: boolean
+          covered_user_id: string
+          covering_user_id: string
+          created_at?: string
+          created_by: string
+          id?: string
+          valid_from?: string
+          valid_until?: string | null
+        }
+        Update: {
+          active?: boolean
+          covered_user_id?: string
+          covering_user_id?: string
+          created_at?: string
+          created_by?: string
+          id?: string
+          valid_from?: string
+          valid_until?: string | null
+        }
+        Relationships: []
+      }
       categoria_aumento_familia_mapeamento: {
         Row: {
           aumento_item_id: number
@@ -6218,6 +6290,33 @@ export type Database = {
           omie_codigo_integracao?: string | null
           omie_codigo_servico?: number
           updated_at?: string
+        }
+        Relationships: []
+      }
+      omie_vendedor_map: {
+        Row: {
+          created_at: string
+          id: string
+          nome: string | null
+          omie_account: string
+          omie_codigo_vendedor: number
+          user_id: string
+        }
+        Insert: {
+          created_at?: string
+          id?: string
+          nome?: string | null
+          omie_account: string
+          omie_codigo_vendedor: number
+          user_id: string
+        }
+        Update: {
+          created_at?: string
+          id?: string
+          nome?: string | null
+          omie_account?: string
+          omie_codigo_vendedor?: number
+          user_id?: string
         }
         Relationships: []
       }
@@ -12284,6 +12383,10 @@ export type Database = {
         }
         Returns: Json
       }
+      carteira_visivel_para: {
+        Args: { _customer_user_id: string; _uid: string }
+        Returns: boolean
+      }
       ciclo_oportunidade_do_dia: {
         Args: { p_data_ciclo?: string; p_empresa?: string }
         Returns: {
@@ -12517,6 +12620,14 @@ export type Database = {
           p_email_enviado?: boolean
         }
         Returns: boolean
+      }
+      minha_carteira: {
+        Args: never
+        Returns: {
+          coberto_de: string
+          customer_user_id: string
+          owner_user_id: string
+        }[]
       }
       pedido_compra_split: {
         Args: { p_chunk_size?: number; p_pedido_id: number }

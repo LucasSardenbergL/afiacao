@@ -69,6 +69,7 @@ const AdminPriceTable = () => {
       if (pricesRes.data) {
         setPrices(pricesRes.data.map(p => ({
           ...p,
+          tool_category_id: p.tool_category_id ?? '',
           spec_filter: (p.spec_filter as Record<string, string>) || {},
         })));
         // Initialize edited prices
