@@ -31,11 +31,11 @@ Um `supabase db reset` a partir das migrations **quebra** (ex: `20260510235956` 
 - Usuários **Auth**, objetos do **Storage**, **secrets do Vault**, **Edge Functions**.
 - Infra fora de `public`: **crons** (`cron.job`), **buckets** (`storage.buckets`), **realtime publications**, **extensions** (ver prelude).
 
-> A captura **funcional completa** (infra fora de `public` + archive das migrations + verificação de replay + runbook) está planejada como baseline-squash na branch **`feat/baseline-squash-schema`** — executar quando houver necessidade real de staging/DR funcional.
+> A captura **funcional completa** da infra fora de `public` está **entregue** ao lado deste arquivo: **`schema-infra-outside-public.sql`** (buckets + realtime publication, idempotente), **`schema-rebuild-runbook.md`** (ordem de rebuild, recriação dos 33 crons, verificação) e **`schema-security-report.md`**. (O *archive* das migrations foi **descartado** de propósito — decisão pós-codex: não mexer em `supabase/migrations/` enquanto o Lovable é dono operacional do backend.)
 
 ## Como restaurar (em projeto Supabase, não Postgres puro)
 
-⚠️ O snapshot referencia `auth.uid()` (1119×), `auth.role()`, `auth.users` nas policies. Só restaura num **projeto Supabase** (que provê o schema `auth`). Em Postgres puro seria necessário stubar `auth.*` (ver branch `feat/baseline-squash-schema`).
+⚠️ O snapshot referencia `auth.uid()` (1119×), `auth.role()`, `auth.users` nas policies. Só restaura num **projeto Supabase** (que provê o schema `auth`). Em Postgres puro seria necessário stubar `auth.*` (ver `schema-rebuild-runbook.md` §Verificação).
 
 1. Rode **`schema-extensions-prelude.sql`** primeiro (cria schema `extensions` + uuid-ossp/pgcrypto/pg_trgm e `vector` em `public`; `pg_cron` fica comentado — ver abaixo).
 2. Rode **`schema-snapshot.sql`** com **`psql`** (é dump SQL plain; **não** use `pg_restore`, que serve só pra formatos custom/tar/directory).
@@ -45,7 +45,7 @@ Um `supabase db reset` a partir das migrations **quebra** (ex: `20260510235956` 
 - O dump é do **pg_dump 17** e usa os meta-comandos `\restrict` / `\unrestrict` (primeira/última linha), reconhecidos pelo `psql`. O SQL Editor do Lovable pode não reconhecê-los — remova-os se restaurar por lá.
 - O prelude deixa **`pg_cron` comentado** de propósito (habilitá-lo pode abortar o restore sob `ON_ERROR_STOP`). Habilite-o antes pelo dashboard do Supabase se quiser as views `v_cron_jobs_status` / `v_cron_jobs_falhas`; senão elas falham no replay e devem ser puladas.
 
-> **Status: restore NUNCA foi testado.** Sem um teste de restore num projeto Supabase vazio, este arquivo é **inventário, não seguro de recuperação**. Validar o restore é follow-up (ver branch `feat/baseline-squash-schema`).
+> **Status: restore NUNCA foi testado.** Sem um teste de restore num projeto Supabase vazio, este arquivo é **inventário, não seguro de recuperação**. Validar o restore é follow-up (ver `schema-rebuild-runbook.md` §Verificação — exige projeto Supabase vazio ou docker, indisponível na máquina atual).
 
 ## Como re-gerar
 
