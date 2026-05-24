@@ -288,8 +288,6 @@ Dois backends coexistem; o usuário escolhe via toggle em `/settings`:
 
 ### Migrations Supabase — ⚠️ aplicação manual obrigatória
 
-> **🟣 BASELINE DE SCHEMA (2026-05-24):** existe um baseline completo do schema de produção (`pg_dump` schema-only) em **`db/baselines/2026-05-24_prod_schema_baseline.sql`**, pra reconstruir um ambiente Supabase **do zero** (staging/DR/onboarding). ⚠️ **NÃO fica em `supabase/migrations/`** e **NÃO aplica em prod existente** — decisão deliberada (pós-codex): o Lovable é dono operacional do backend e a pasta `supabase/migrations/` é reconhecida pelo ecossistema Lovable/Supabase; mexer nela arriscaria confundir o builder/CLI tracking. `supabase/migrations/` fica **intocada** (workflow de migration nova segue igual: manual via Lovable). Também há a tag git `schema-baseline-prod-2026-05-24`. **Runbook:** `db/runbook-baseline.md` · **Escopo/Supabase-managed:** `db/BASELINE_MANIFEST.md` · **Security report:** `db/baseline-security-report.md` · **Regerar:** `db/build-baseline.sh`.
-
 **Lovable Cloud NÃO aplica automaticamente** migrations que você commita em `supabase/migrations/`. Confirmado experimentalmente em 2026-05-17:
 
 - Migrations geradas pelo Lovable (formato `_UUID.sql`, ex: `_868822bb-e38c-4fcf-8879-c64e48bd7630.sql`) rodam quando você usa o builder visual dele

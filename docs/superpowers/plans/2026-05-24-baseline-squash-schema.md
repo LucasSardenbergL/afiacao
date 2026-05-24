@@ -2,6 +2,8 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
+> ⚠️ **RECONCILIADO 2026-05-24:** os PRs #244/#247 entregaram o **snapshot** na main em paralelo. Este plano foi parcialmente executado e **reconciliado**: o snapshot é da main; esta branch entregou só o **complemento funcional** (`supabase/schema-infra-outside-public.sql` + `schema-rebuild-runbook.md` + `schema-security-report.md`). **Tasks 7 (verificação local), 8 (archive das migrations) e o baseline em `supabase/migrations/` foram DESCARTADOS** (não mexer na pasta do Lovable). Plano mantido como registro.
+
 **Goal:** Tornar o repo capaz de reconstruir um ambiente Supabase equivalente ao de produção a partir de um baseline único, substituindo as 222 migrations incrementais defasadas.
 
 **Architecture:** Squash baseline Supabase-aware — `public` como núcleo (dump schema-only) + manifesto/runbook pro que vive fora de `public` (crons, buckets, realtime, extensions, nomes de secrets). Arquiva as 222 migrations fora de `supabase/migrations/`. Produção não é tocada.

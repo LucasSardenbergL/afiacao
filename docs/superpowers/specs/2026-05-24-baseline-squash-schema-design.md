@@ -1,7 +1,7 @@
 # Baseline/squash do schema (Supabase-aware) — design
 
 **Data:** 2026-05-24
-**Status:** aprovado (brainstorming) + revisado por codex consult — aguardando review do spec
+**Status:** ⚠️ RECONCILIADO 2026-05-24 — em paralelo, os PRs #244/#247 entregaram o **snapshot** (`supabase/schema-snapshot.sql`) na main. Esta branch virou o **complemento funcional** (entregue): `supabase/schema-infra-outside-public.sql` + `schema-rebuild-runbook.md` + `schema-security-report.md`. **A parte de SQUASH/ARCHIVE das migrations foi DESCARTADA** (codex consult: não mexer em `supabase/migrations/` enquanto o Lovable é dono operacional do backend). Este doc é o registro do design/raciocínio; a abordagem final está no `README-schema.md` + runbook.
 **Branch:** `feat/baseline-squash-schema`
 
 ## Problema
