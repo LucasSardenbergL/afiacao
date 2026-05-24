@@ -30,6 +30,11 @@ const MD_OUT = join(REPO_ROOT, 'docs', 'migrations-audit.md');
 
 const UUID_PATTERN = /_[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}\.sql$/;
 const TIMESTAMP_PATTERN = /^(\d{14})_(.+)\.sql$/;
+// Pós-squash (2026-05-24): o baseline é a fonte de verdade do schema, não uma
+// "custom migration" a validar objeto-a-objeto. As 222 antigas estão em
+// db/archive/migrations_pre_baseline/. Este audit ficou efetivamente legado
+// (0 custom migrations a auditar). Ver db/BASELINE_MANIFEST.md.
+const BASELINE_PATTERN = /_baseline_schema/;
 
 type ObjectKind = 'table' | 'index' | 'function' | 'trigger' | 'cron_job' | 'enum_value' | 'rls_policy' | 'rpc';
 
@@ -116,7 +121,7 @@ function extractObjects(sql: string): ExtractedObject[] {
 }
 
 function loadMigrations(): MigrationAudit[] {
-  const files = readdirSync(MIGRATIONS_DIR).filter((f) => f.endsWith('.sql') && isCustom(f)).sort();
+  const files = readdirSync(MIGRATIONS_DIR).filter((f) => f.endsWith('.sql') && isCustom(f) && !BASELINE_PATTERN.test(f)).sort();
   return files.map((filename) => {
     const content = readFileSync(join(MIGRATIONS_DIR, filename), 'utf8');
     const m = filename.match(TIMESTAMP_PATTERN);

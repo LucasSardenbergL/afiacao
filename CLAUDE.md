@@ -279,6 +279,8 @@ Dois backends coexistem; o usuário escolhe via toggle em `/settings`:
 
 ### Migrations Supabase — ⚠️ aplicação manual obrigatória
 
+> **🟣 SQUASH BASELINE (2026-05-24):** o schema foi consolidado num baseline único (`supabase/migrations/20260524130000_baseline_schema_NAO_APLICAR_EM_PROD_EXISTENTE.sql`, gerado de `pg_dump` de produção). As 222 migrations incrementais antigas estão em `db/archive/migrations_pre_baseline/` (preservadas, fora do replay). O baseline é só pra **rebuild/staging/DR** — produção NÃO é tocada. **Runbook:** `db/runbook-baseline.md` · **Escopo/Supabase-managed:** `db/BASELINE_MANIFEST.md` · **Security report:** `db/baseline-security-report.md`. `bun run audit:migrations` virou legado (0 custom migrations pós-squash). **Workflow de migration nova continua igual** (manual via Lovable, empilha sobre o baseline).
+
 **Lovable Cloud NÃO aplica automaticamente** migrations que você commita em `supabase/migrations/`. Confirmado experimentalmente em 2026-05-17:
 
 - Migrations geradas pelo Lovable (formato `_UUID.sql`, ex: `_868822bb-e38c-4fcf-8879-c64e48bd7630.sql`) rodam quando você usa o builder visual dele
