@@ -37,13 +37,13 @@ Um `supabase db reset` a partir das migrations **quebra** (ex: `20260510235956` 
 
 ⚠️ O snapshot referencia `auth.uid()` (1119×), `auth.role()`, `auth.users` nas policies. Só restaura num **projeto Supabase** (que provê o schema `auth`). Em Postgres puro seria necessário stubar `auth.*` (ver branch `feat/baseline-squash-schema`).
 
-1. Rode **`schema-extensions-prelude.sql`** primeiro (cria schema `extensions` + uuid-ossp/pgcrypto/pg_trgm, `vector` em `public`, `pg_cron`).
-2. Rode **`schema-snapshot.sql`**.
+1. Rode **`schema-extensions-prelude.sql`** primeiro (cria schema `extensions` + uuid-ossp/pgcrypto/pg_trgm e `vector` em `public`; `pg_cron` fica comentado — ver abaixo).
+2. Rode **`schema-snapshot.sql`** com **`psql`** (é dump SQL plain; **não** use `pg_restore`, que serve só pra formatos custom/tar/directory).
 
 ### Armadilhas conhecidas
-- O dump tem **`CREATE SCHEMA public;`** sem `IF NOT EXISTS` (linha ~27). Num projeto novo o schema `public` já existe → o statement falha. Remova essa linha ou rode tolerando o erro.
-- O dump é do **pg_dump 17** e usa os meta-comandos `\restrict` / `\unrestrict` (primeira/última linha). Funcionam via `psql`/`pg_restore`; o SQL Editor do Lovable pode não reconhecê-los — remova-os se restaurar por lá.
-- Se `pg_cron` não puder ser habilitado, as views `v_cron_jobs_status` / `v_cron_jobs_falhas` falham no replay e podem ser puladas.
+- O dump tem **`CREATE SCHEMA public;`** sem `IF NOT EXISTS` (linha ~27). Num projeto novo o schema `public` já existe → o statement falha. **Remova essa linha** (caminho preferido); só tolere o erro se rodar **sem** `ON_ERROR_STOP` (com `ON_ERROR_STOP` o restore aborta aí).
+- O dump é do **pg_dump 17** e usa os meta-comandos `\restrict` / `\unrestrict` (primeira/última linha), reconhecidos pelo `psql`. O SQL Editor do Lovable pode não reconhecê-los — remova-os se restaurar por lá.
+- O prelude deixa **`pg_cron` comentado** de propósito (habilitá-lo pode abortar o restore sob `ON_ERROR_STOP`). Habilite-o antes pelo dashboard do Supabase se quiser as views `v_cron_jobs_status` / `v_cron_jobs_falhas`; senão elas falham no replay e devem ser puladas.
 
 > **Status: restore NUNCA foi testado.** Sem um teste de restore num projeto Supabase vazio, este arquivo é **inventário, não seguro de recuperação**. Validar o restore é follow-up (ver branch `feat/baseline-squash-schema`).
 

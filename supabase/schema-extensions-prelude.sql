@@ -19,6 +19,12 @@
 --   - supabase_vault / pg_stat_statements / plpgsql são geridas/builtin — não recriar.
 -- ============================================================================
 
+-- NOTA: estes comandos assumem ambiente NOVO/vazio. `IF NOT EXISTS` NÃO move uma
+-- extension que já exista em OUTRO schema — apenas emite notice e não faz nada.
+-- Como o snapshot usa nomes qualificados (extensions.*, public.vector), num alvo
+-- não-limpo valide `SELECT extname, extnamespace::regnamespace FROM pg_extension`
+-- depois, senão as referências quebram.
+
 CREATE SCHEMA IF NOT EXISTS extensions;
 
 CREATE EXTENSION IF NOT EXISTS "uuid-ossp" WITH SCHEMA extensions;
@@ -28,9 +34,10 @@ CREATE EXTENSION IF NOT EXISTS pg_trgm     WITH SCHEMA extensions;
 -- O tipo vector é referenciado como public.vector(...) no snapshot.
 CREATE EXTENSION IF NOT EXISTS vector WITH SCHEMA public;
 
--- pg_cron cria o schema `cron`; as views v_cron_jobs_status / v_cron_jobs_falhas
--- leem cron.job e cron.job_run_details. Em Supabase, habilitar pg_cron normalmente
--- é via dashboard (Database > Extensions); em Postgres puro exige pg_cron em
--- shared_preload_libraries. Se não puder habilitar, as 2 views v_cron_jobs_*
--- falham no replay e podem ser puladas (ver README-schema.md).
-CREATE EXTENSION IF NOT EXISTS pg_cron;
+-- pg_cron: deixado COMENTADO de propósito. `CREATE EXTENSION pg_cron` pode falhar
+-- (permissão / shared_preload_libraries) e, sob ON_ERROR_STOP, abortaria o restore
+-- antes do snapshot. Habilite-o ANTES pelo dashboard do Supabase (Database >
+-- Extensions) se quiser as views v_cron_jobs_status / v_cron_jobs_falhas (que leem
+-- cron.job / cron.job_run_details). Sem ele, essas 2 views falham no replay do
+-- snapshot e devem ser puladas.
+-- CREATE EXTENSION IF NOT EXISTS pg_cron;
