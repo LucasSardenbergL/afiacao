@@ -1,4 +1,13 @@
 {
+  "permissions": {
+    "allow": [
+      "Bash(bun run test*)",
+      "Bash(bun run typecheck:strict*)",
+      "Bash(bun run vitest*)",
+      "Bash(bun run tsc*)",
+      "Bash(bun lint)"
+    ]
+  },
   "hooks": {
     "PreToolUse": [
       {

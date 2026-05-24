@@ -2,7 +2,7 @@
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { supabase } from '@/integrations/supabase/client';
 import { acknowledgeMissed } from '@/lib/call-log/record';
-import type { CallLogRow, CallDirection, CallStatus } from '@/types/call-log';
+import type { CallLogRow } from '@/types/call-log';
 
 export type CallLogTab = 'recentes' | 'recebidas' | 'perdidas' | 'feitas' | 'time';
 

@@ -2,9 +2,9 @@ import { useNavigate } from 'react-router-dom';
 import { useEffect, useState } from 'react';
 import { Card, CardContent } from '@/components/ui/card';
 import { Progress } from '@/components/ui/progress';
-import { motion, AnimatePresence } from 'framer-motion';
+import { motion } from 'framer-motion';
 import {
-  PlusCircle, ClipboardList, ChevronRight, Wrench, Calendar, User,
+  PlusCircle, ChevronRight, Wrench, User,
   ArrowRight, TrendingUp, Package, Trophy, Gamepad2,
   Sparkles, AlertTriangle, Award, CheckCircle2, MapPin,
   LifeBuoy, FileText
