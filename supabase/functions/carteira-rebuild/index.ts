@@ -62,17 +62,21 @@ Deno.serve(async (req) => {
     Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!,
   );
 
-  // 1. Carregar dados
+  // 1. Carregar dados. Hunter (dono dos órfãos) vem de config explícito
+  // (company_config.carteira_hunter_user_id) — não depende de commercial_role,
+  // que pode ser 'master' pro Hunter real (ver decisão 2026-05-24).
   const [clientesRes, mapRes, hunterRes] = await Promise.all([
     supabase.from('omie_clientes').select('user_id, omie_codigo_vendedor').not('user_id', 'is', null),
     supabase.from('omie_vendedor_map').select('omie_codigo_vendedor, user_id'),
-    supabase.from('commercial_roles').select('user_id').eq('commercial_role', 'hunter').limit(1),
+    supabase.from('company_config').select('value').eq('key', 'carteira_hunter_user_id').maybeSingle(),
   ]);
 
   const clientes: OmieClienteRow[] = ((clientesRes.data ?? []) as Array<{ user_id: string; omie_codigo_vendedor: number | null }>)
     .map((r) => ({ customer_user_id: r.user_id, omie_codigo_vendedor: r.omie_codigo_vendedor }));
   const vendedorMap = (mapRes.data ?? []) as VendedorMapRow[];
-  const hunterUserId = (hunterRes.data?.[0]?.user_id as string | undefined) ?? null;
+  // value pode vir como uuid puro ou JSON-quoted ("uuid") — normaliza removendo aspas.
+  const rawHunter = (hunterRes.data?.value as string | null | undefined) ?? null;
+  const hunterUserId = rawHunter ? (rawHunter.replace(/^"|"$/g, '').trim() || null) : null;
 
   // 2. Computar (espelho)
   const { assignments, conflicts, orphanCount } = computeCarteira(clientes, vendedorMap, hunterUserId);
