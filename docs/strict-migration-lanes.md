@@ -67,6 +67,13 @@ subgrafos sujos (`noUnusedLocals`/`strictNullChecks`) → cascata. **Promova lea
   `lib/call-session/aggregate-customer-profile`, `lib/sip/sip-client`, `lib/transcription/{deepgram-client,transcription-engine}`,
   `components/customer360/format`, `components/financeiro/dashboard/format`, `components/portalSayerlack/types`,
   `components/reposicao/alertas/types`. **NÃO toco** scoring/visit-scoring/farmer. Append-only no `include`.
+- 🔵 **`feat/strict-promote-hooks-leaf`** (sessão loving-nash, 2026-05-24): lote de hooks leaf não-reivindicados —
+  `hooks/useIsTouchDevice`, `hooks/useIsTelefoniaManager`, `hooks/useBiometricAuth`, `hooks/useEstoqueValor`,
+  `hooks/useDirectTintImport`, `hooks/unifiedOrder/useCart`, `hooks/unifiedOrder/useProductCatalog`. Append no fim do
+  `include` + 3 fixes mínimos que o strict revelou (dead-code `base64ToArrayBuffer` em useBiometricAuth; param
+  `importacaoId` não usado + 2 chaves de cache `string|null` guardadas em useDirectTintImport). **NÃO toco**
+  `useMyAgendaToday` (puxa `lib/scoring/agenda`, lane farmer) nem `useAdminOrderDetail`/`useCallLog` (PR #228) nem
+  `useValor` (financeiro-a2) nem `useRoutePlanner` (reposição).
 
 ## Follow-up registrado
 

@@ -462,6 +462,13 @@
     "src/contexts/CompanyContext.tsx",
     "src/contexts/AuthContext.tsx",
     "src/contexts/ConditionalWebRTCProvider.tsx",
-    "src/services/omieService.ts"
+    "src/services/omieService.ts",
+    "src/hooks/useIsTouchDevice.ts",
+    "src/hooks/useIsTelefoniaManager.ts",
+    "src/hooks/useBiometricAuth.ts",
+    "src/hooks/useEstoqueValor.ts",
+    "src/hooks/useDirectTintImport.ts",
+    "src/hooks/unifiedOrder/useCart.ts",
+    "src/hooks/unifiedOrder/useProductCatalog.ts"
   ]
 }
