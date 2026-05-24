@@ -9,7 +9,31 @@
 **Tech Stack:** Supabase Postgres (migration manual Lovable), Deno edge functions (deploy via chat Lovable), React + Vitest.
 
 **Spec:** `docs/superpowers/specs/2026-05-23-carteira-omie-fonte-verdade-design.md` (seção "Scores — farmer_id redefinido = dono").
-**Pré-requisito:** PR #236 (Sub-PR A) mergeado no `main`. Branch novo: `feat/carteira-omie-scores-cobertura` a partir do `main`.
+**Pré-requisito:** PR #236 (Sub-PR A) mergeado no `main`. ✅ MERGEADO.
+
+---
+
+## 🟢 STATUS / RETOMAR DAQUI (atualizado 2026-05-24)
+
+**Branch:** `feat/carteira-omie-scores-cobertura` (pushada no origin, tip `383c479`). **#236 já mergeado** → Sub-PR A (Posse) está no `main` e em produção (6908 clientes na carteira: Lucas 3434 / Regina 1890 / Tati 1584; cron `carteira-rebuild-nightly` ativo).
+
+**Feito (commitado + pushado):**
+- ✅ **Task 1** — `supabase/migrations/20260524170000_scores_unique_por_cliente.sql` (dedupe + UNIQUE(customer_user_id) nas 2 tabelas). **Ainda NÃO aplicada no Lovable** (faz parte do rollout coordenado).
+- ✅ **Task 2** — `src/lib/carteira/owner-map.ts` + testes (TDD verde).
+- ✅ **Task 3** — `supabase/functions/calculate-scores/index.ts` editado: seed usa `ownerMap.get(client.user_id) ?? defaultFarmerId` + `onConflict: 'customer_user_id'` + comentário anti-drift. **Ainda NÃO deployada.**
+
+**Falta (retomar aqui):**
+- ⏳ **Task 4** — editar 4 edge functions: `scoring-recalc-batch`, `scoring-recalc-client`, `visit-score-recalc-batch`, `visit-score-recalc-client` (enumerar `carteira_assignments`, `farmer_id = owner`, `onConflict: 'customer_user_id'`). Ver Task 4 abaixo.
+- ⏳ **Task 5** — `src/hooks/useCoverage.ts` + expandir `useMyVisitSuggestions`/`useMyCarteiraScores` (`farmer_id IN [eu, ...cobertos]` + selo).
+- ⏳ **Task 6** — `CoveragePanel.tsx` + selo no `VisitSuggestionsCard` + **ROLLOUT COORDENADO** + validação + PR.
+
+**⚠️ Rollout coordenado (CRÍTICO):** a migration (Task 1) e os deploys das functions (Tasks 3-4) são **acoplados** — o `onConflict` muda de `customer_user_id,farmer_id` pra `customer_user_id` ao mesmo tempo que a UNIQUE muda. NÃO aplicar a migration antes das functions estarem prontas pra deploy. Sequência no fim: **aplicar migration → deployar calculate-scores + as 4 recalc → invocar calculate-scores (recompute) → invocar visit-score-recalc-batch → validar (Regina ~1890, Tati ~1584 com score) → cron.**
+
+**⚠️ Contenção de diretório:** o diretório principal teve um flip transitório de branch (sessão paralela). **Comece numa worktree isolada** (`git worktree add` a partir de `origin/feat/carteira-omie-scores-cobertura`) pra evitar colisão, OU confirme que o diretório está só pra você. Faça `git fetch` e cheque que está em `383c479` antes de editar.
+
+**Frase pra abrir a sessão nova:** "Continuar Sub-PR B da carteira (carteira ativa) a partir do plano `docs/superpowers/plans/2026-05-24-carteira-omie-sub-pr-b-carteira-ativa.md` — Tasks 1-3 já feitas/pushadas na branch feat/carteira-omie-scores-cobertura; executar Tasks 4-6 + rollout. Usar worktree isolada."
+
+---
 
 ---
 
