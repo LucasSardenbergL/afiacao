@@ -47,9 +47,9 @@ Inventário (jobname / schedule):
 | monthly-tool-report | `0 9 1 * *` | | | |
 
 ## Verificação de replay
-**Restore NUNCA foi testado** (ver `README-schema.md`). Opções:
-- **Gold:** rodar a sequência num projeto Supabase vazio (provê `auth`/roles/extensions). Não há docker nesta máquina pra `supabase start`.
-- **Sintaxe/ordem (sem Supabase):** Postgres + stub de roles (`anon`/`authenticated`/`service_role`) + schema `auth` com `auth.uid()`/`auth.role()` stub + extensions (ou stub do tipo `vector`). Prova ordem/dependência do `public`, não o comportamento de plataforma.
+**Replay sintático/ordem validado em 2026-05-24** via `db/verify-snapshot-replay.sh` (Postgres 17 local + `db/stubs-supabase.sql`): prelude + stubs + snapshot em transação única (`ON_ERROR_STOP`) rodaram limpo e as contagens batem 1:1 com produção (212/37/4/86/76/14/474). Níveis:
+- **Gold (pendente):** rodar a sequência num projeto Supabase vazio (provê `auth`/roles/extensions reais). Sem docker nesta máquina pra `supabase start`.
+- **Sintaxe/ordem (FEITO):** `db/verify-snapshot-replay.sh` — Postgres + stub de roles (`anon`/`authenticated`/`service_role`) + schema `auth` (`auth.uid()`/`auth.role()`) + extensions. Prova ordem/dependência do `public`, não o comportamento de plataforma. ⚠️ O script contorna percalços do brew keg-only (popula share/lib do postgresql@17 a partir do Cellar; módulos `.dylib`; `LC_ALL=C` senão o postmaster aborta).
 - Garantir `search_path` do banco incluindo `extensions` (default Supabase) — funções com `similarity()` não-qualificado dependem disso (ver security report).
 
 ## Se o Lovable criar drift de novo
