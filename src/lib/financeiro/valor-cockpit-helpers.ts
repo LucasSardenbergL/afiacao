@@ -44,13 +44,15 @@ export type CelulaEVP = {
   cm: number | null; a_cs: number; i_cs: number; encargo: number; evp: number | null;
   ar_indisponivel: boolean; estoque_indisponivel: boolean;
 };
-export type RollupCliente = { cliente: string; receita: number; cm: number | null; encargo: number; evp: number | null };
-export type RollupSKU = { sku: string; receita: number; quantidade: number; cm: number | null; encargo: number; evp: number | null };
+// `encargo` = encargo de capital SÓ das células com cm conhecido (mantém a identidade evp = cm − encargo).
+// `encargo_total` = encargo de TODAS as células (inclui as de margem desconhecida) — transparência.
+export type RollupCliente = { cliente: string; receita: number; cm: number | null; encargo: number; encargo_total: number; evp: number | null };
+export type RollupSKU = { sku: string; receita: number; quantidade: number; cm: number | null; encargo: number; encargo_total: number; evp: number | null };
 export type ComboEVPResult = {
   celulas: CelulaEVP[];
   porCliente: RollupCliente[];
   porSKU: RollupSKU[];
-  empresa: { receita: number; cm: number | null; encargo: number; evp: number | null };
+  empresa: { receita: number; cm: number | null; encargo: number; encargo_total: number; evp: number | null };
 };
 
 export function montarCelulasComboEVP(input: {
@@ -75,8 +77,9 @@ export function montarCelulasComboEVP(input: {
     const estS = estoquePorSKU.get(c.sku) ?? null;
     const rc = receitaPorCliente.get(c.cliente) ?? 0;
     const qs = qtdPorSKU.get(c.sku) ?? 0;
-    const ar_indisponivel = arC == null;
-    const estoque_indisponivel = estS == null;
+    // Indisponível se não há base OU se o denominador da alocação é ≤ 0 (não dá pra alocar honestamente).
+    const ar_indisponivel = arC == null || rc <= 0;
+    const estoque_indisponivel = estS == null || qs <= 0;
     const a_cs = arC != null && rc > 0 ? arC * (c.receita_liquida / rc) : 0;
     const i_cs = estS != null && qs > 0 ? estS * (c.quantidade / qs) : 0;
     const encargo = input.k * (a_cs + i_cs);
@@ -84,15 +87,18 @@ export function montarCelulasComboEVP(input: {
     return { cliente: c.cliente, sku: c.sku, receita_liquida: c.receita_liquida, quantidade: c.quantidade, cm, a_cs, i_cs, encargo, evp, ar_indisponivel, estoque_indisponivel };
   });
 
-  const rollup = (_keyFn: (c: CelulaEVP) => string) => {
-    const m = new Map<string, { receita: number; quantidade: number; cm: number; cmNull: boolean; encargo: number; evp: number; evpNull: boolean }>();
+  const rollup = (keyFn: (c: CelulaEVP) => string) => {
+    const m = new Map<string, { receita: number; quantidade: number; cm: number; cmNull: boolean; encargo: number; encargoTotal: number; evp: number; evpNull: boolean }>();
     for (const cel of celulas) {
-      const key = _keyFn(cel);
-      const acc = m.get(key) ?? { receita: 0, quantidade: 0, cm: 0, cmNull: true, encargo: 0, evp: 0, evpNull: true };
+      const key = keyFn(cel);
+      const acc = m.get(key) ?? { receita: 0, quantidade: 0, cm: 0, cmNull: true, encargo: 0, encargoTotal: 0, evp: 0, evpNull: true };
       acc.receita += cel.receita_liquida;
       acc.quantidade += cel.quantidade;
-      if (cel.cm != null) { acc.cm += cel.cm; acc.cmNull = false; }
-      acc.encargo += cel.encargo;
+      acc.encargoTotal += cel.encargo; // todas as células
+      if (cel.cm != null) {
+        acc.cm += cel.cm; acc.cmNull = false;
+        acc.encargo += cel.encargo;     // encargo relevante ao EVP (só células com cm)
+      }
       if (cel.evp != null) { acc.evp += cel.evp; acc.evpNull = false; }
       m.set(key, acc);
     }
@@ -101,17 +107,17 @@ export function montarCelulasComboEVP(input: {
 
   const mc = rollup((c) => c.cliente);
   const ms = rollup((c) => c.sku);
-  const porCliente: RollupCliente[] = [...mc.entries()].map(([cliente, a]) => ({ cliente, receita: a.receita, cm: a.cmNull ? null : a.cm, encargo: a.encargo, evp: a.evpNull ? null : a.evp }));
-  const porSKU: RollupSKU[] = [...ms.entries()].map(([sku, a]) => ({ sku, receita: a.receita, quantidade: a.quantidade, cm: a.cmNull ? null : a.cm, encargo: a.encargo, evp: a.evpNull ? null : a.evp }));
+  const porCliente: RollupCliente[] = [...mc.entries()].map(([cliente, a]) => ({ cliente, receita: a.receita, cm: a.cmNull ? null : a.cm, encargo: a.encargo, encargo_total: a.encargoTotal, evp: a.evpNull ? null : a.evp }));
+  const porSKU: RollupSKU[] = [...ms.entries()].map(([sku, a]) => ({ sku, receita: a.receita, quantidade: a.quantidade, cm: a.cmNull ? null : a.cm, encargo: a.encargo, encargo_total: a.encargoTotal, evp: a.evpNull ? null : a.evp }));
 
-  let cmEmp = 0, cmNull = true, encEmp = 0, evpEmp = 0, evpNull = true, recEmp = 0;
+  let cmEmp = 0, cmNull = true, encEmp = 0, encTotalEmp = 0, evpEmp = 0, evpNull = true, recEmp = 0;
   for (const cel of celulas) {
     recEmp += cel.receita_liquida;
-    encEmp += cel.encargo;
-    if (cel.cm != null) { cmEmp += cel.cm; cmNull = false; }
+    encTotalEmp += cel.encargo;
+    if (cel.cm != null) { cmEmp += cel.cm; cmNull = false; encEmp += cel.encargo; }
     if (cel.evp != null) { evpEmp += cel.evp; evpNull = false; }
   }
-  return { celulas, porCliente, porSKU, empresa: { receita: recEmp, cm: cmNull ? null : cmEmp, encargo: encEmp, evp: evpNull ? null : evpEmp } };
+  return { celulas, porCliente, porSKU, empresa: { receita: recEmp, cm: cmNull ? null : cmEmp, encargo: encEmp, encargo_total: encTotalEmp, evp: evpNull ? null : evpEmp } };
 }
 
 export type CockpitConfig = {

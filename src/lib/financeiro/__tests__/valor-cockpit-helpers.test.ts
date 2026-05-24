@@ -72,6 +72,26 @@ describe('montarCelulasComboEVP', () => {
     expect(somaCli).toBeCloseTo(somaSku, 6);
   });
 
+  it('IDENTIDADE CONTÁBIL: empresa.evp = empresa.cm − empresa.encargo, mesmo com célula de custo nulo', () => {
+    // Um combo SEM custo (cm null) não pode quebrar a identidade: seu encargo entra só em encargo_total.
+    const r = montarCelulasComboEVP({
+      ...base,
+      combos: [
+        ...base.combos,
+        { cliente: 'C2', sku: 'S2', receita_liquida: 500, quantidade: 30, custo_unitario: null }, // cm null
+      ],
+    });
+    expect(r.empresa.cm).not.toBeNull();
+    expect(r.empresa.evp).not.toBeNull();
+    // identidade fecha usando o encargo relevante-ao-EVP (não o total):
+    expect(r.empresa.evp!).toBeCloseTo(r.empresa.cm! - r.empresa.encargo, 6);
+    // e por rollup:
+    for (const c of r.porCliente) if (c.cm != null && c.evp != null) expect(c.evp).toBeCloseTo(c.cm - c.encargo, 6);
+    for (const s of r.porSKU) if (s.cm != null && s.evp != null) expect(s.evp).toBeCloseTo(s.cm - s.encargo, 6);
+    // encargo_total inclui a célula sem custo → ≥ encargo relevante-ao-EVP:
+    expect(r.empresa.encargo_total).toBeGreaterThanOrEqual(r.empresa.encargo - 1e-9);
+  });
+
   it('custo ausente → cm null, célula fora do EVP, flag', () => {
     const r = montarCelulasComboEVP({
       ...base,
