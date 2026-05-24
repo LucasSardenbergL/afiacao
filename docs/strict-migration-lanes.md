@@ -11,7 +11,7 @@
 - **`no-explicit-any` no repo: 0.** A fase de eliminação de `any` está **concluída**
   (src + edge functions + tests). Convergência de várias sessões + lotes deste claim.
 - **Fase atual: PROMOÇÃO** — adicionar arquivos strict-clean ao `include` do
-  `tsconfig.strict.json`. Progresso: **~468 / 690** arquivos src (~68%).
+  `tsconfig.strict.json`. Progresso: **~475 / 695** arquivos src (~68%).
 - Edge functions (`supabase/functions/`): lint zerado também (any + prefer-const +
   no-empty + no-unused-expressions). Restam só 4 `ban-ts-comment` com eslint-disable
   **justificado** (`@ts-ignore` do `EdgeRuntime` — NÃO trocar pra `@ts-expect-error`,
@@ -93,7 +93,7 @@ subgrafos sujos (`noUnusedLocals`/`strictNullChecks`) → cascata. **Promova lea
   `lib/call-session/aggregate-customer-profile`, `lib/sip/sip-client`, `lib/transcription/{deepgram-client,transcription-engine}`,
   `components/customer360/format`, `components/financeiro/dashboard/format`, `components/portalSayerlack/types`,
   `components/reposicao/alertas/types`. **NÃO toco** scoring/visit-scoring/farmer. Append-only no `include`.
-- 🔵 **`feat/strict-promote-hooks-leaf`** (sessão loving-nash, 2026-05-24): lote de hooks leaf não-reivindicados —
+- ✅ **`feat/strict-promote-hooks-leaf`** (sessão loving-nash, 2026-05-24, #237 MERGEADO): lote de hooks leaf não-reivindicados —
   `hooks/useIsTouchDevice`, `hooks/useIsTelefoniaManager`, `hooks/useBiometricAuth`, `hooks/useEstoqueValor`,
   `hooks/useDirectTintImport`, `hooks/unifiedOrder/useCart`, `hooks/unifiedOrder/useProductCatalog`. Append no fim do
   `include` + 3 fixes mínimos que o strict revelou (dead-code `base64ToArrayBuffer` em useBiometricAuth; param
