@@ -239,6 +239,12 @@ Deploy: entregar o conteúdo final do arquivo pro chat do Lovable (EDIT da funç
 
 > Implementador lê cada arquivo antes de editar. Mudanças descritas com código exato.
 
+> ⚠️ **NUANCE CRÍTICA (parte mais delicada do Sub-PR B — fazer com cuidado):**
+> 1. **Full refresh já é do `calculate-scores`** (Task 3, feito). Pra evitar timeout de 50s, o `scoring-recalc-batch` **NÃO deve** fazer fan-out por cliente sobre os ~6908 da carteira. Decisão recomendada: `scoring-recalc-batch` mantém **só o drain da fila incremental**; o full refresh fica com o `calculate-scores`. (O `visit-score-recalc-batch` pode enumerar a carteira pois é mais leve — medir; se estourar, idem: delegar full refresh e só drenar fila.)
+> 2. **`farmer_id` = DONO, sempre.** Em `scoring-recalc-client`/`visit-score-recalc-client`, ao processar um cliente, resolver o dono via `carteira_assignments` (não confiar no `farmer_id` que veio da fila/atividade). Upsert `onConflict: 'customer_user_id'`.
+> 3. **`signal_modifiers` = ligações DO DONO.** Em `scoring-recalc-client`, o `.eq('farmer_id', X)` em `farmer_calls` deve usar X = **dono** (não quem ligou). Cobertura é visibilidade, não muda atribuição (decisão codex).
+> 4. **Triggers/fila:** os triggers que enfileiram recalc usam o `farmer_id` da atividade (ex.: `enqueue ... from_visit` usa `NEW.visited_by`; o de `farmer_calls` usa o caller). Sob a Opção A, o que importa é o **cliente** (o dono é resolvido no recalc). Avaliar: (a) deixar a fila enfileirar por cliente e o recalc-client resolver o dono (mais simples), ou (b) o trigger já resolver o dono. Preferir (a). **Cuidado** com a unique parcial da fila `(customer_user_id, farmer_id) WHERE processed_at IS NULL` — se a fila virar por-cliente, ajustar pra `(customer_user_id)`. Mapear isso ao editar os triggers (migration adicional pequena pode ser necessária).
+
 - [ ] **Step 1: `scoring-recalc-batch` — enumerar carteira (não farmer_calls)**
 
 Hoje monta pares únicos de `farmer_calls` (últimos 30d). Trocar a enumeração por `carteira_assignments` paginado (mesmo padrão de paginação da Task 3), gerando pares `{ customer_user_id, farmer_id: owner_user_id }`. Manter o drain da fila como está.
@@ -387,7 +393,15 @@ WHERE farmer_id = '700657a1-d75d-4c72-99b1-0a0f2065fa29';  -- esperado ~1890
 - [ ] **Step 5: Testes + build + PR**
 
 Run: `bun run test && bun run typecheck:strict` (esperado verde).
+
+> ⚠️ **Antes de abrir/mergear o PR — regenerar o audit de migrations.** Esta branch
+> adicionou migrations custom (`carteira_omie_fase1`, `restore_sla_guards`) que ainda
+> não estão no inventário. Rode `bun run audit:migrations` e commite os 2 arquivos
+> regenerados (`docs/migrations-audit.md` + `scripts/audit-custom-migrations.sql`)
+> junto deste PR. É o passo 6 obrigatório do ritual `lovable-db-operator` (CLAUDE.md §5).
+
 ```bash
+bun run audit:migrations   # regenera o inventário; commitar os 2 arquivos
 git push -u origin feat/carteira-omie-scores-cobertura
 gh pr create --title "feat(carteira): Sub-PR B — scores por dono + cobertura (Opção A)" --body "..."
 ```
