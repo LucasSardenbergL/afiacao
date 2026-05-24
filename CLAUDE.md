@@ -635,3 +635,15 @@ Persistido em 2026-05-17 após primeira run completa do skill com sucesso.
 - **gbrain**: não configurado neste projeto.
 
 **Pre-flight**: worktrees novos precisam de `bun install` antes de `/health` (~3s pra extrair 955 packages).
+
+---
+
+## 14. Sessões paralelas — uma sessão por working tree (regra)
+
+> Registrado 2026-05-24 após duas sessões Claude rodarem no MESMO diretório principal e trocarem de branch uma da outra (uma quase perdeu commits; só um guard por SHA salvou). Esta máquina roda MUITAS sessões em paralelo (rode `git worktree list` — costuma ter ~10 worktrees ativas em `.claude/worktrees/`).
+
+**Regra:** cada sessão Claude trabalha no **seu próprio working tree**. NUNCA rode duas sessões ao mesmo tempo no diretório principal (`/Users/lucassardenberg/Projetos/afiacao`) — elas compartilham o mesmo checkout, e o `git checkout`/troca de branch de uma vaza pra outra (causa: branch-flip silencioso entre comandos → commit no lugar errado, risco de perda).
+
+- **Worktrees são o padrão seguro** — cada uma tem checkout + branch próprios. As de `.claude/worktrees/*` que o Claude Code cria já isolam automaticamente. O problema só aparece quando uma sessão roda **direto na raiz** junto com outra.
+- **Helper:** `bun run wt <branch> [base]` (`scripts/new-worktree.sh`) cria uma worktree isolada como sibling do repo (`../afiacao-<branch>`) a partir de `origin/main` (ou base custom) e imprime os próximos passos (`cd` + `bun install` + abrir a sessão lá).
+- **Rede de segurança (hook global):** `~/.claude/hooks/concurrent-session-guard.sh`, registrado em `SessionStart` no `~/.claude/settings.json`, **avisa** (via `systemMessage`) quando uma 2ª sessão inicia no mesmo working tree principal. Worktrees ficam **isentas** (são o caso bom). É aviso, não bloqueio — mas pega o lapso de "abri sem perceber". É global (vale em qualquer repo), validado com shellcheck + pipe-test. Pra revisar/desligar: `/hooks` ou editar o `settings.json`.
