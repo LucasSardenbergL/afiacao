@@ -84,6 +84,9 @@ subgrafos sujos (`noUnusedLocals`/`strictNullChecks`) → cascata. **Promova lea
   hubs (PerformanceHub, GestaoAdmin, TintIntegracao/Catalogo, VendasFerramentas, AdminReposicaoParametros)
   e pages com fix próprio (Auth, AdminAjuda, AdminPriceTable, Support, ToolPublicHistory,
   AdminReposicaoSessaoPedidos, AdminStandardProcessNew).
+- 🔵 **`feat/strict-promote-pages-fixes2`** (sessão determined-allen, 2026-05-24): lote de fixes próprios
+  (grupo C) — AdminAjuda, Support, ToolPublicHistory (dead-code), Auth, AdminPriceTable (typing de setState).
+  Defiro AdminStandardProcessNew (zodResolver) e os hubs. **NÃO toco** lanes farmer/financeiro.
 - 🔵 **`feat/strict-promote-lib-leaf`** (sessão cranky-driscoll, 2026-05-23): lote leaf não-farmer —
   `lib/call-session/aggregate-customer-profile`, `lib/sip/sip-client`, `lib/transcription/{deepgram-client,transcription-engine}`,
   `components/customer360/format`, `components/financeiro/dashboard/format`, `components/portalSayerlack/types`,
