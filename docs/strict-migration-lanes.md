@@ -11,7 +11,7 @@
 - **`no-explicit-any` no repo: 0.** A fase de eliminação de `any` está **concluída**
   (src + edge functions + tests). Convergência de várias sessões + lotes deste claim.
 - **Fase atual: PROMOÇÃO** — adicionar arquivos strict-clean ao `include` do
-  `tsconfig.strict.json`. Progresso: **~463 / 668** arquivos src (~69%).
+  `tsconfig.strict.json`. Progresso: **~468 / 690** arquivos src (~68%).
 - Edge functions (`supabase/functions/`): lint zerado também (any + prefer-const +
   no-empty + no-unused-expressions). Restam só 4 `ban-ts-comment` com eslint-disable
   **justificado** (`@ts-ignore` do `EdgeRuntime` — NÃO trocar pra `@ts-expect-error`,
@@ -84,9 +84,11 @@ subgrafos sujos (`noUnusedLocals`/`strictNullChecks`) → cascata. **Promova lea
   hubs (PerformanceHub, GestaoAdmin, TintIntegracao/Catalogo, VendasFerramentas, AdminReposicaoParametros)
   e pages com fix próprio (Auth, AdminAjuda, AdminPriceTable, Support, ToolPublicHistory,
   AdminReposicaoSessaoPedidos, AdminStandardProcessNew).
-- 🔵 **`feat/strict-promote-pages-fixes2`** (sessão determined-allen, 2026-05-24): lote de fixes próprios
-  (grupo C) — AdminAjuda, Support, ToolPublicHistory (dead-code), Auth, AdminPriceTable (typing de setState).
-  Defiro AdminStandardProcessNew (zodResolver) e os hubs. **NÃO toco** lanes farmer/financeiro.
+- ✅ **`feat/strict-promote-pages-fixes2`** (sessão determined-allen, 2026-05-24, #241 MERGEADO): lote de
+  fixes próprios (grupo C) — AdminAjuda, Support, ToolPublicHistory (dead-code), Auth, AdminPriceTable
+  (typing: coerção de null no `.map()`, sem mexer em tipos compartilhados). Ainda deferidos:
+  **AdminStandardProcessNew** (zodResolver com defaults opcionais vs required) e os **hubs com `lazy()`**
+  (precisam do subgrafo lazy limpo — método bottom-up).
 - 🔵 **`feat/strict-promote-lib-leaf`** (sessão cranky-driscoll, 2026-05-23): lote leaf não-farmer —
   `lib/call-session/aggregate-customer-profile`, `lib/sip/sip-client`, `lib/transcription/{deepgram-client,transcription-engine}`,
   `components/customer360/format`, `components/financeiro/dashboard/format`, `components/portalSayerlack/types`,
