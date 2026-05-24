@@ -34,6 +34,16 @@
 **imports transitivos** dele pro programa strict. Promover um page/god-component puxa
 subgrafos sujos (`noUnusedLocals`/`strictNullChecks`) → cascata. **Promova leaf-first.**
 
+- **⚠️ `lazy(() => import("..."))` CONTA como import pro tsc** (lição do lote 3,
+  2026-05-24). Pages-hub pequenas (PerformanceHub, GestaoAdmin, TintIntegracao,
+  TintCatalogo, VendasFerramentas, AdminReposicaoParametros) parecem leaf pelo
+  `import ... from` (só ui+supabase), mas lazy-carregam **sub-páginas inteiras**
+  (CoachingSPIN, FarmerBundles, AdminReposicaoAlertas, TintApiContract, Admin, ...)
+  que entram no programa strict e quebram. **NÃO são leaf.** Ao triar candidatos,
+  `grep -nE 'lazy\(' src/pages/<page>.tsx` — se houver lazy, trate como hub (defira
+  até o subgrafo lazy estar limpo). Pages realmente leaf: sem `lazy`, só importam
+  ui/hooks/lib já no programa.
+
 - **`typecheck:strict` SÓ é confiável com CPU calma.** Com várias sessões rodando
   `tsc` em paralelo (load chegou a ~50), o comando é morto por contenção e dá
   **falso-negativo** (grep vê saída vazia → "0 erros" mentiroso). Confirme `load`

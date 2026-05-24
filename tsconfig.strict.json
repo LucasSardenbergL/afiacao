@@ -478,6 +478,9 @@
     "src/pages/AdminOrderDetail.tsx",
     "src/pages/Telefonia.tsx",
     "src/pages/IntelligenceDashboard.tsx",
-    "src/pages/Index.tsx"
+    "src/pages/Index.tsx",
+    "src/pages/AdminReposicaoHistorico.tsx",
+    "src/pages/AdminVendorSipCredentials.tsx",
+    "src/pages/Orders.tsx"
   ]
 }
