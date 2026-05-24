@@ -3,7 +3,7 @@
 -- ========================================================================
 --
 -- Gerado por: scripts/audit-custom-migrations.ts
--- Total de custom migrations: 46
+-- Total de custom migrations: 49
 --
 -- Como usar:
 --   1. Abra o Supabase SQL Editor (via Lovable Cloud → Backend → SQL Editor)
@@ -65,7 +65,10 @@ WITH expected (version, slug, filename) AS (VALUES
   ('20260523210000', 'drop_audit_trigger_fin_config_cashflow', '20260523210000_drop_audit_trigger_fin_config_cashflow.sql'),
   ('20260523230000', 'fin_a2_valor_inputs', '20260523230000_fin_a2_valor_inputs.sql'),
   ('20260523230835', 'sync_sla_view_stack', '20260523230835_sync_sla_view_stack.sql'),
-  ('20260523233000', 'restaura_guardas_sla_view_stack', '20260523233000_restaura_guardas_sla_view_stack.sql')
+  ('20260523233000', 'restaura_guardas_sla_view_stack', '20260523233000_restaura_guardas_sla_view_stack.sql'),
+  ('20260524095612', 'crons_scoring_visit_lendo_cron_secret_do_vault', '20260524095612_crons_scoring_visit_lendo_cron_secret_do_vault.sql'),
+  ('20260524100500', 'cron_financeiro_e_fix_sayerlack', '20260524100500_cron_financeiro_e_fix_sayerlack.sql'),
+  ('20260524102500', 'fix_fin_triggers_json_field_access', '20260524102500_fix_fin_triggers_json_field_access.sql')
 )
 SELECT
   e.version,
@@ -374,7 +377,13 @@ WITH expected_objects (migration, kind, schema_name, object_name, parent_name) A
   ('call_log', 'cron_job', 'cron', 'call-log-missed-backstop', ''),
   ('fin_a2_valor_inputs', 'table', 'public', 'fin_valor_inputs', ''),
   ('fin_a2_valor_inputs', 'rls_policy', 'public', 'fin_valor_inputs_select_master', 'fin_valor_inputs'),
-  ('fin_a2_valor_inputs', 'rls_policy', 'public', 'fin_valor_inputs_write_master', 'fin_valor_inputs')
+  ('fin_a2_valor_inputs', 'rls_policy', 'public', 'fin_valor_inputs_write_master', 'fin_valor_inputs'),
+  ('crons_scoring_visit_lendo_cron_secret_do_vault', 'cron_job', 'cron', 'scoring-recalc-batch-nightly', ''),
+  ('crons_scoring_visit_lendo_cron_secret_do_vault', 'cron_job', 'cron', 'visit-score-recalc-batch-nightly', ''),
+  ('cron_financeiro_e_fix_sayerlack', 'cron_job', 'cron', 'fin-omie-sync-2x-diario', ''),
+  ('cron_financeiro_e_fix_sayerlack', 'cron_job', 'cron', 'sayerlack-portal-watchdog', ''),
+  ('fix_fin_triggers_json_field_access', 'function', 'public', 'fin_audit_trigger', ''),
+  ('fix_fin_triggers_json_field_access', 'function', 'public', 'fin_period_lock_trigger', '')
 )
 SELECT
   e.migration,

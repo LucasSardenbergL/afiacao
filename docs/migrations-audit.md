@@ -21,16 +21,16 @@ Este audit valida **quais custom migrations estão de fato aplicadas no banco**.
 
 ## Resumo
 
-- **46** custom migrations totais
-- **291** objetos esperados (criados por estas migrations)
+- **49** custom migrations totais
+- **297** objetos esperados (criados por estas migrations)
 - Quebra por tipo:
   - `rls_policy`: 102
   - `index`: 85
   - `table`: 46
   - `trigger`: 31
-  - `function`: 22
+  - `function`: 24
+  - `cron_job`: 5
   - `enum_value`: 4
-  - `cron_job`: 1
 
 ## Inventário por migration
 
@@ -547,6 +547,27 @@ Lista canônica do que cada migration *deveria* criar (extraído via regex de `C
 ### `20260523233000_restaura_guardas_sla_view_stack.sql`
 
 > _Nenhum objeto extraído via regex._ Migration provavelmente é `ALTER TABLE` / `UPDATE` / `INSERT` / RLS-only. Validar manualmente.
+
+### `20260524095612_crons_scoring_visit_lendo_cron_secret_do_vault.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `cron_job` | `cron.scoring-recalc-batch-nightly` | — |
+| `cron_job` | `cron.visit-score-recalc-batch-nightly` | — |
+
+### `20260524100500_cron_financeiro_e_fix_sayerlack.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `cron_job` | `cron.fin-omie-sync-2x-diario` | — |
+| `cron_job` | `cron.sayerlack-portal-watchdog` | — |
+
+### `20260524102500_fix_fin_triggers_json_field_access.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `function` | `public.fin_audit_trigger` | — |
+| `function` | `public.fin_period_lock_trigger` | — |
 
 ## Próximos passos quando algo der `❌`
 
