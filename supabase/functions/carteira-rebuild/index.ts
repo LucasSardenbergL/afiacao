@@ -1,3 +1,15 @@
+// supabase/functions/carteira-rebuild/index.ts
+// Reconstrói carteira_assignments a partir de omie_clientes × omie_vendedor_map.
+// Órfão (sem vendedor mapeado) → Hunter. Idempotente (upsert por customer_user_id).
+//
+// Setup pg_cron (manual pós-merge), roda após o sync do Omie:
+//   SELECT cron.schedule('carteira-rebuild-nightly', '30 7 * * *',
+//     $$ SELECT net.http_post(
+//       url := 'https://fzvklzpomgnyikkfkzai.supabase.co/functions/v1/carteira-rebuild',
+//       headers := jsonb_build_object('x-cron-secret',
+//         (SELECT decrypted_secret FROM vault.decrypted_secrets WHERE name='CRON_SECRET' LIMIT 1))
+//     ); $$);
+
 import { createClient } from 'npm:@supabase/supabase-js@^2';
 import { authorizeCronOrStaff, corsHeaders } from '../_shared/auth.ts';
 
@@ -9,6 +21,7 @@ interface ComputedAssignment {
 }
 interface MappingConflict { customer_user_id: string; omie_codigo_vendedor: number; candidate_user_ids: string[]; }
 
+// ESPELHO de src/lib/carteira/rebuild-helpers.ts (manter idêntico)
 function computeCarteira(
   clientes: OmieClienteRow[], vendedorMap: VendedorMapRow[], hunterUserId: string | null,
 ): { assignments: ComputedAssignment[]; conflicts: MappingConflict[]; orphanCount: number } {
@@ -49,14 +62,21 @@ Deno.serve(async (req) => {
     Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!,
   );
 
+  // 1. Carregar mapa + hunter (tabelas pequenas). Hunter vem de config explícito
+  // (company_config.carteira_hunter_user_id) — não depende de commercial_role,
+  // que pode ser 'master' pro Hunter real (ver decisão 2026-05-24).
   const [mapRes, hunterRes] = await Promise.all([
     supabase.from('omie_vendedor_map').select('omie_codigo_vendedor, user_id'),
     supabase.from('company_config').select('value').eq('key', 'carteira_hunter_user_id').maybeSingle(),
   ]);
   const vendedorMap = (mapRes.data ?? []) as VendedorMapRow[];
+  // value pode vir como uuid puro ou JSON-quoted ("uuid") — normaliza removendo aspas.
   const rawHunter = (hunterRes.data?.value as string | null | undefined) ?? null;
   const hunterUserId = rawHunter ? (rawHunter.replace(/^"|"$/g, '').trim() || null) : null;
 
+  // omie_clientes pode ter milhares de linhas e o PostgREST limita o SELECT a
+  // ~1000 por página → paginar com range() até esgotar (senão a carteira fica
+  // truncada nos primeiros 1000 clientes).
   const clientes: OmieClienteRow[] = [];
   const PAGE = 1000;
   for (let from = 0; ; from += PAGE) {
@@ -76,8 +96,10 @@ Deno.serve(async (req) => {
     if (page.length < PAGE) break;
   }
 
+  // 2. Computar (espelho)
   const { assignments, conflicts, orphanCount } = computeCarteira(clientes, vendedorMap, hunterUserId);
 
+  // 3. Upsert idempotente
   const now = new Date().toISOString();
   const rows = assignments.map((a) => ({
     customer_user_id: a.customer_user_id,
@@ -104,6 +126,7 @@ Deno.serve(async (req) => {
 
   if (conflicts.length) console.warn('[carteira-rebuild] conflitos de mapeamento:', JSON.stringify(conflicts));
 
-  return new Response(JSON.stringify({ ok: true, upserted, orphanCount, conflicts, hunterUserId }),
-    { headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
+  return new Response(JSON.stringify({
+    ok: true, upserted, orphanCount, conflicts, hunterUserId,
+  }), { headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
 });
