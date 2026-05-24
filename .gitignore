@@ -32,3 +32,4 @@ AGENTS.md
 # Serena MCP local project cache
 .serena/
 .superpowers/
+db/_incoming/
