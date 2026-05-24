@@ -81,6 +81,15 @@ bun preview   # vite preview
 > ⚠️ **`bun test` ≠ `bun run test`**. `bun test` invoca o runner nativo do bun (não usa vitest.config.ts).
 > Use pra loop rápido de TDD em tests que não dependem de DOM/React renderização. Resultado oficial é só do vitest.
 
+> 🟢 **Prefixe comandos PESADOS com `heavy`** quando houver sessões/worktrees rodando em paralelo (máquina do Lucas é M2 8GB, satura fácil). `heavy` é um semáforo global (`~/.local/bin/heavy`, fonte em `scripts/heavy.sh`) que limita quantos test/build/typecheck rodam ao mesmo tempo entre TODOS os worktrees — os demais esperam a vez em vez de competir por CPU/RAM. Auto-dimensiona pelo HW (1 slot na M2 8GB; ~9 num M4 Pro 48GB). Use:
+> ```bash
+> heavy bun run test
+> heavy bun run typecheck:strict
+> heavy bun build
+> heavy --status   # slots em uso
+> ```
+> Override: `AFIACAO_MAX_HEAVY=2 heavy …`. Comandos leves (`bun lint`, `bun dev`) não precisam.
+
 ---
 
 ## 3. Estrutura de pastas
@@ -351,6 +360,17 @@ Dois backends coexistem; o usuário escolhe via toggle em `/settings`:
 - **Audit de 2026-05-20**: 40 custom migrations / 274 objetos (re-gerado após PRs paralelos). Nova migration `20260520010000_scoring_visit_p1_fixes.sql` — **rodar `scripts/audit-custom-migrations.sql` no Studio pra confirmar apply**.
 - ⚠️ O histórico de auditorias vive aqui (não no `docs/migrations-audit.md`, que é auto-gerado e sobrescrito a cada `bun run audit:migrations`).
 
+### Snapshot de schema (`supabase/schema-snapshot.sql`) — ⚠️ o repo NÃO é rebuildável via migrations
+
+> **As migrations em `supabase/migrations/` NÃO são uma cadeia restaurável.** Diagnóstico de 2026-05-24 (set-difference catálogo de produção × `CREATE`s das migrations): **~210 objetos existem em produção sem `CREATE` commitado** — 60 tabelas, 41 funções, 25 views, ~22 triggers, 5 enums, ~56 policies. Módulos inteiros (Reposição/DES/Picking) foram criados direto em produção pelo Lovable e nunca ganharam migration de criação; as migrations seguintes só `ALTER`am tabelas-fantasma (ex: `sku_parametros` é ALTERada em 20 migrations mas nunca criada). Um `supabase db reset` a partir do repo **quebra**.
+
+Solução adotada (híbrido em fases, PR #244):
+- **`supabase/schema-snapshot.sql`** — `pg_dump --schema-only --schema=public --no-owner --no-privileges` de produção (gerado pelo chat do Lovable; 23.745 linhas; contagens batem 1:1 com prod). É a **fonte de DR/auditoria/base de staging do schema**, NÃO um sistema de migrations.
+- **`supabase/schema-extensions-prelude.sql`** + **`README-schema.md`** + **`schema-snapshot.manifest.md`** — pré-requisitos de extensions, runbook de restore e contagens pra revisar drift por diff. **Ler o README antes de restaurar** (só em projeto Supabase, por causa de `auth.*`; armadilhas `CREATE SCHEMA public`/`\restrict`/`pg_cron`).
+- **Re-gerar:** prompt pro chat do Lovable (ver `README-schema.md`) → commitar o `.sql` → atualizar o manifest. Cadência: após módulo/tabela nova do Lovable, antes de staging, ou mensal.
+- ⚠️ **Restore ainda NÃO foi testado** num projeto vazio — até passar, é inventário, não seguro de DR.
+- O **baseline-squash funcional completo** (captura de infra fora de `public` — crons/buckets/realtime/nomes de secrets — + archive das 222 migrations + verificação de replay + runbook) está planejado na branch **`feat/baseline-squash-schema`** (spec + plano de 10 tasks prontos), a executar quando houver necessidade real de staging/DR funcional. Usa o mesmo dump como insumo.
+
 ### Convenções de código
 
 - Pages em PascalCase (`AdminReposicaoCockpit.tsx`)
@@ -479,6 +499,7 @@ Resolvidos (auditoria 2026-05-13 e auditoria de código 2026-05-16/17):
 
 Ainda pendentes (decisão de produto ou sprint próprio):
 
+- **Drift schema×migrations + repo não-rebuildável** — ~210 objetos em produção sem `CREATE` commitado (detalhe em §5 "Snapshot de schema"). **Fase 1 (snapshot) entregue** (PR #244): `supabase/schema-snapshot.sql` + prelude + README + manifest como artefato de DR/auditoria. **Pendente:** (a) testar o restore num projeto Supabase vazio (até lá é inventário, não seguro de DR de verdade); (b) **baseline-squash funcional completo** na branch `feat/baseline-squash-schema` (spec + plano de 10 tasks prontos) quando precisar de staging/DR funcional.
 - **Workbox `NetworkOnly` para picking e orders** — contradiz offline-first; `offline-queue.ts` exposto mas não integrado nas mutações reais
 - **`SalesOrders.deleteOrder` sem soft-delete** — exclusão direta no Omie; risco compliance. Precisa migration SQL (coluna `deleted_at`) + flag UI
 - **TypeScript strict mode** — `tsconfig.app.json` tem `strict: false`, `noImplicitAny: false`. Resolve raiz de 1300 lint errors (97% `no-explicit-any`). **Infra incremental pronta**: `tsconfig.strict.json` lista files que passam strict (`strict: true` + `noImplicitAny` + `strictNullChecks` + `noUnusedLocals/Parameters`). Rodar via `bun run typecheck:strict`. CI bloqueia se regressão nos files migrados. Pra migrar mais files: garantir 0 `any` + tipos explícitos + adicionar ao `include` de `tsconfig.strict.json`. Convergência: quando 100% do `src/` estiver em strict, mover flags pra `tsconfig.app.json` e deletar `tsconfig.strict.json`. Progresso (2026-05-23): **`no-explicit-any` no repo = 0** — a eliminação de `any` está **concluída** (src + edge functions + tests; convergência de várias sessões). Fase atual = **PROMOÇÃO** (~409/629 files no `include`, ~65%). ⚠️ **COORDENAÇÃO (obrigatória — trabalho paralelo já causou retrabalho: a #161 decompôs `FinanceiroDashboard` enquanto outra sessão o tipava; e promover god-components quebrou o #180 por cascata transitiva):** antes de QUALQUER migração strict, leia [`docs/strict-migration-lanes.md`](docs/strict-migration-lanes.md) — tem o estado atual + lições (promova **leaf-first**; `typecheck:strict` só é confiável com **CPU calma**, senão dá falso-negativo; promover um arquivo puxa os imports transitivos pro programa strict). Rode `gh pr list --state open` + `git worktree list`, reserve sua fatia no **primeiro commit**, e **só toque sua fatia**. No `tsconfig.strict.json`, adicione paths **no fim do `include`** — **não reordene o array** (reordenar = conflito com todo PR em voo). A reestruturação "um tsconfig por lane" é flag-day (ver claim file).
