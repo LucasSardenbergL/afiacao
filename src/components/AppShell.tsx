@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
 import { BookOpen, Lock, Calculator, FileText, Palette, Beaker, FileUp, Droplets, LayoutDashboard, Users, ShoppingCart, ShoppingBag, Phone, GraduationCap, BarChart3, Settings, ChevronLeft, ChevronRight, Search, Bell, User, LogOut, Package, TrendingUp, Headphones, Target, Menu, X, ClipboardList, PlusCircle, Shield, Wrench, Award, Scissors, DollarSign, Layers, Printer, UserCheck, FileCheck, Boxes, AlertTriangle, PlayCircle, Factory, Truck, Percent, Sparkles, Handshake, Link2, Globe2, Database, Library } from 'lucide-react';
 import { cn } from '@/lib/utils';
@@ -39,6 +39,7 @@ import { useSidebarFavorites } from '@/hooks/useSidebarFavorites';
 import { useSalesOnlyRestriction } from '@/hooks/useSalesOnlyRestriction';
 import { useRouteTracker } from '@/lib/dashboard/route-tracker';
 import { useOfflineFlush } from '@/hooks/useOfflineFlush';
+import { registerAllOfflineHandlers } from '@/lib/offline-handlers';
 import { useMissedCount } from '@/hooks/useCallLog';
 import { Star } from 'lucide-react';
 
@@ -730,6 +731,8 @@ function MobileNav({ open, onClose }: { open: boolean; onClose: () => void }) {
 /* ─── Main Shell ─── */
 export function AppShell({ children }: { children: React.ReactNode }) {
   useRouteTracker();
+  // Registra os handlers de flush ANTES do useOfflineFlush (que pode disparar flush no mount).
+  useEffect(() => registerAllOfflineHandlers(), []);
   useOfflineFlush();
   const [collapsed, setCollapsed] = useState(false);
   const [mobileOpen, setMobileOpen] = useState(false);
