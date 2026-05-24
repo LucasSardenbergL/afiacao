@@ -11,7 +11,7 @@
 - **`no-explicit-any` no repo: 0.** A fase de eliminação de `any` está **concluída**
   (src + edge functions + tests). Convergência de várias sessões + lotes deste claim.
 - **Fase atual: PROMOÇÃO** — adicionar arquivos strict-clean ao `include` do
-  `tsconfig.strict.json`. Progresso: **~409 / 629** arquivos src (~65%).
+  `tsconfig.strict.json`. Progresso: **~463 / 668** arquivos src (~69%).
 - Edge functions (`supabase/functions/`): lint zerado também (any + prefer-const +
   no-empty + no-unused-expressions). Restam só 4 `ban-ts-comment` com eslint-disable
   **justificado** (`@ts-ignore` do `EdgeRuntime` — NÃO trocar pra `@ts-expect-error`,
@@ -33,6 +33,16 @@
 **Regra de ouro (custou um PR refeito — ver #180):** promover um arquivo puxa os
 **imports transitivos** dele pro programa strict. Promover um page/god-component puxa
 subgrafos sujos (`noUnusedLocals`/`strictNullChecks`) → cascata. **Promova leaf-first.**
+
+- **⚠️ `lazy(() => import("..."))` CONTA como import pro tsc** (lição do lote 3,
+  2026-05-24). Pages-hub pequenas (PerformanceHub, GestaoAdmin, TintIntegracao,
+  TintCatalogo, VendasFerramentas, AdminReposicaoParametros) parecem leaf pelo
+  `import ... from` (só ui+supabase), mas lazy-carregam **sub-páginas inteiras**
+  (CoachingSPIN, FarmerBundles, AdminReposicaoAlertas, TintApiContract, Admin, ...)
+  que entram no programa strict e quebram. **NÃO são leaf.** Ao triar candidatos,
+  `grep -nE 'lazy\(' src/pages/<page>.tsx` — se houver lazy, trate como hub (defira
+  até o subgrafo lazy estar limpo). Pages realmente leaf: sem `lazy`, só importam
+  ui/hooks/lib já no programa.
 
 - **`typecheck:strict` SÓ é confiável com CPU calma.** Com várias sessões rodando
   `tsc` em paralelo (load chegou a ~50), o comando é morto por contenção e dá
@@ -59,10 +69,21 @@ subgrafos sujos (`noUnusedLocals`/`strictNullChecks`) → cascata. **Promova lea
 - **Reposição**: god-components sendo decompostos.
 
 ### Reservas ativas (🔵 = em voo)
-- 🔵 **`feat/strict-promote-contexts`** (sessão determined-allen, 2026-05-23): fatia foundational —
+- ✅ **`feat/strict-promote-contexts`** (sessão determined-allen, 2026-05-23): fatia foundational —
   `contexts/{AuthContext,CompanyContext,ConditionalWebRTCProvider,WebRTCCallContext}` + `services/omieService`.
-  **NÃO toco** `services/financeiroService` nem `financeiroV2Service` (colidem com `feat/financeiro-a2-impl` em voo).
-  Pages virá em fatia/branch separada depois (leaf-first). Append-only no `include`.
+  **MERGEADA** (#220). `services/financeiroService`/`financeiroV2Service` ficaram fora (colidem com `feat/financeiro-a2-impl`).
+- ✅ **`feat/strict-promote-pages`** (lote 1, #225 MERGEADO) + ✅ **`feat/strict-promote-pages-fixes`**
+  (lote 2, #228 MERGEADO): 16 pages leaf promovidas (MeuDia, AdminCalculadora, NotFound,
+  AdminReposicaoSessao{Aplicacao,Historico,Confirmacao}, AdminDesTrimestreAtual, AdminStandardProcesses,
+  FinanceiroCapitalGiro, AdminKnowledgeBase, TintCorantes, FinanceiroAnalise, AdminOrderDetail, Telefonia,
+  IntelligenceDashboard, Index).
+- ✅ **`feat/strict-promote-pages-lote3`** (sessão determined-allen, 2026-05-24, #232 MERGEADO):
+  3 pages leaf de verdade (Orders, AdminVendorSipCredentials, AdminReposicaoHistorico). Triagem do
+  batch revelou que a maioria das pages "pequenas" restantes são **hubs com `lazy(() => import())`**
+  (não-leaf — ver lição acima) ou têm dead-code/typing próprios. Deferidas p/ próximos lotes:
+  hubs (PerformanceHub, GestaoAdmin, TintIntegracao/Catalogo, VendasFerramentas, AdminReposicaoParametros)
+  e pages com fix próprio (Auth, AdminAjuda, AdminPriceTable, Support, ToolPublicHistory,
+  AdminReposicaoSessaoPedidos, AdminStandardProcessNew).
 - 🔵 **`feat/strict-promote-lib-leaf`** (sessão cranky-driscoll, 2026-05-23): lote leaf não-farmer —
   `lib/call-session/aggregate-customer-profile`, `lib/sip/sip-client`, `lib/transcription/{deepgram-client,transcription-engine}`,
   `components/customer360/format`, `components/financeiro/dashboard/format`, `components/portalSayerlack/types`,

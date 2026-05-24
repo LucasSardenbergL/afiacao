@@ -76,3 +76,11 @@ export function lastDayOfNextMonth(): string {
   const d = new Date(now.getFullYear(), now.getMonth() + 2, 0);
   return d.toISOString().slice(0, 10);
 }
+
+// Toggle imutável de um valor num Set (helper genérico, puro).
+export function toggleSet<T>(set: Set<T>, value: T): Set<T> {
+  const next = new Set(set);
+  if (next.has(value)) next.delete(value);
+  else next.add(value);
+  return next;
+}

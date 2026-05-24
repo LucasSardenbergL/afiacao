@@ -11,7 +11,7 @@ import type { Order, OrderItem, Profile } from '@/components/admin-order/types';
 
 export function useAdminOrderDetail(id: string | undefined) {
   const navigate = useNavigate();
-  const { user, isStaff, loading: authLoading, role } = useAuth();
+  const { isStaff, loading: authLoading, role } = useAuth();
 
   const [order, setOrder] = useState<Order | null>(null);
   const [profile, setProfile] = useState<Profile | null>(null);
