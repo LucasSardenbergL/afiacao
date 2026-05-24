@@ -14,7 +14,7 @@ import { Badge } from "@/components/ui/badge";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 import { cn } from "@/lib/utils";
-import type { StepLock } from "@/hooks/useReposicaoSessao";
+import { REPOSICAO_STEP_PATHS, type StepLock } from "@/hooks/useReposicaoSessao";
 
 type Step = {
   label: string;
@@ -23,23 +23,33 @@ type Step = {
   description?: string;
 };
 
-export const REPOSICAO_STEPS: Step[] = [
-  { label: "Mercado", icon: Lightbulb, to: "/admin/reposicao/sessao/mercado" },
-  { label: "Parâmetros", icon: SlidersHorizontal, to: "/admin/reposicao/sessao/parametros" },
-  { label: "Pedidos", icon: ClipboardCheck, to: "/admin/reposicao/sessao/pedidos" },
-  { label: "Aplicação Omie", icon: Upload, to: "/admin/reposicao/sessao/aplicacao" },
-  { label: "Confirmação", icon: CheckCircle2, to: "/admin/reposicao/sessao/confirmacao" },
+const STEP_META: { label: string; icon: Step["icon"] }[] = [
+  { label: "Mercado", icon: Lightbulb },
+  { label: "Parâmetros", icon: SlidersHorizontal },
+  { label: "Pedidos", icon: ClipboardCheck },
+  { label: "Aplicação Omie", icon: Upload },
+  { label: "Confirmação", icon: CheckCircle2 },
 ];
 
+export const REPOSICAO_STEPS: Step[] = STEP_META.map((m, i) => ({
+  label: m.label,
+  icon: m.icon,
+  to: REPOSICAO_STEP_PATHS[i],
+}));
+
 interface Props {
-  currentStep?: number;
+  /** Etapa em FOCO (1-based), derivada da URL. 0 = nenhuma (ex.: cockpit index). */
+  activeStep?: number;
+  /** Etapa de PROGRESSO (1-based), derivada dos dados (deriveCurrentStep). */
+  progressStep?: number;
   onStepClick?: (step: number) => void;
   isLoading?: boolean;
   locks?: StepLock[];
 }
 
 export function ProcessoComprasStepper({
-  currentStep = 3,
+  activeStep = 0,
+  progressStep = 3,
   onStepClick,
   isLoading = false,
   locks,
@@ -70,14 +80,16 @@ export function ProcessoComprasStepper({
         <ol className="flex flex-col sm:flex-row items-stretch sm:items-center gap-2 sm:gap-0">
           {REPOSICAO_STEPS.map((step, idx) => {
             const stepNum = idx + 1;
-            const isCurrent = stepNum === currentStep;
-            const isDone = stepNum < currentStep;
-            const isFuture = stepNum > currentStep;
+            const isActive = stepNum === activeStep;       // etapa em FOCO (URL)
+            const isProgress = stepNum === progressStep;   // etapa de PROGRESSO (dados)
+            const isDone = stepNum < progressStep;         // concluída (independe do foco)
+            const isFuture = stepNum > progressStep;       // futura (independe do foco)
             const lock = locks?.[idx];
-            const isLocked = !isCurrent && !isDone && !!lock?.locked;
+            const isLocked = !isActive && !!lock?.locked;  // nunca trava a etapa em foco
             const Icon = step.icon;
 
             const handleClick = () => {
+              if (isLocked) return; // bloqueio real, comportamental
               if (onStepClick) {
                 onStepClick(stepNum);
                 return;
@@ -91,22 +103,23 @@ export function ProcessoComprasStepper({
               <button
                 type="button"
                 onClick={handleClick}
-                aria-current={isCurrent ? "step" : undefined}
+                aria-current={isActive ? "step" : undefined}
                 aria-disabled={isLocked ? "true" : undefined}
                 className={cn(
                   "flex items-center gap-2 rounded-md px-3 py-2 w-full text-left transition-colors",
-                  isCurrent && "bg-primary/10 text-primary border border-primary/30",
-                  isDone && "bg-status-success/5 text-foreground border border-status-success/20",
-                  isFuture && !isLocked && "bg-muted/40 text-muted-foreground border border-transparent",
+                  isActive && "bg-primary/10 text-primary border border-primary/30",
+                  !isActive && isProgress && "border border-primary/20",
+                  !isActive && isDone && "bg-status-success/5 text-foreground border border-status-success/20",
+                  !isActive && isFuture && !isLocked && "bg-muted/40 text-muted-foreground border border-transparent",
                   isLocked && "bg-muted/30 text-muted-foreground/70 border border-dashed border-muted-foreground/20 opacity-70",
-                  !isCurrent && !isLocked && "hover:bg-muted hover:text-foreground cursor-pointer",
+                  !isActive && !isLocked && "hover:bg-muted hover:text-foreground cursor-pointer",
                   isLocked && "cursor-not-allowed",
                 )}
               >
                 <div
                   className={cn(
                     "flex h-8 w-8 shrink-0 items-center justify-center rounded-full text-xs font-semibold",
-                    isCurrent && "bg-primary text-primary-foreground",
+                    isActive && "bg-primary text-primary-foreground",
                     isDone && "bg-status-success text-white",
                     isFuture && !isLocked && "bg-muted text-foreground/70",
                     isLocked && "bg-muted text-muted-foreground/60",
@@ -128,6 +141,14 @@ export function ProcessoComprasStepper({
                     {isDone && (
                       <Badge className="h-4 px-1.5 text-[9px] bg-status-success hover:bg-status-success text-white border-0">
                         ok
+                      </Badge>
+                    )}
+                    {isProgress && !isActive && (
+                      <Badge
+                        variant="outline"
+                        className="h-4 px-1.5 text-[9px] border-primary/40 text-primary"
+                      >
+                        atual
                       </Badge>
                     )}
                   </div>
