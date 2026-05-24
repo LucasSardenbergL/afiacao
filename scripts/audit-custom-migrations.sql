@@ -3,7 +3,7 @@
 -- ========================================================================
 --
 -- Gerado por: scripts/audit-custom-migrations.ts
--- Total de custom migrations: 49
+-- Total de custom migrations: 52
 --
 -- Como usar:
 --   1. Abra o Supabase SQL Editor (via Lovable Cloud → Backend → SQL Editor)
@@ -66,9 +66,12 @@ WITH expected (version, slug, filename) AS (VALUES
   ('20260523230000', 'fin_a2_valor_inputs', '20260523230000_fin_a2_valor_inputs.sql'),
   ('20260523230835', 'sync_sla_view_stack', '20260523230835_sync_sla_view_stack.sql'),
   ('20260523233000', 'restaura_guardas_sla_view_stack', '20260523233000_restaura_guardas_sla_view_stack.sql'),
+  ('20260524000000', 'fin_a3_cockpit_config', '20260524000000_fin_a3_cockpit_config.sql'),
   ('20260524095612', 'crons_scoring_visit_lendo_cron_secret_do_vault', '20260524095612_crons_scoring_visit_lendo_cron_secret_do_vault.sql'),
   ('20260524100500', 'cron_financeiro_e_fix_sayerlack', '20260524100500_cron_financeiro_e_fix_sayerlack.sql'),
-  ('20260524102500', 'fix_fin_triggers_json_field_access', '20260524102500_fix_fin_triggers_json_field_access.sql')
+  ('20260524102500', 'fix_fin_triggers_json_field_access', '20260524102500_fix_fin_triggers_json_field_access.sql'),
+  ('20260524120000', 'carteira_omie_fase1', '20260524120000_carteira_omie_fase1.sql'),
+  ('20260524121531', 'restore_sla_guards', '20260524121531_restore_sla_guards.sql')
 )
 SELECT
   e.version,
@@ -383,7 +386,16 @@ WITH expected_objects (migration, kind, schema_name, object_name, parent_name) A
   ('cron_financeiro_e_fix_sayerlack', 'cron_job', 'cron', 'fin-omie-sync-2x-diario', ''),
   ('cron_financeiro_e_fix_sayerlack', 'cron_job', 'cron', 'sayerlack-portal-watchdog', ''),
   ('fix_fin_triggers_json_field_access', 'function', 'public', 'fin_audit_trigger', ''),
-  ('fix_fin_triggers_json_field_access', 'function', 'public', 'fin_period_lock_trigger', '')
+  ('fix_fin_triggers_json_field_access', 'function', 'public', 'fin_period_lock_trigger', ''),
+  ('carteira_omie_fase1', 'table', 'public', 'omie_vendedor_map', ''),
+  ('carteira_omie_fase1', 'table', 'public', 'carteira_assignments', ''),
+  ('carteira_omie_fase1', 'table', 'public', 'carteira_coverage', ''),
+  ('carteira_omie_fase1', 'index', 'public', 'idx_omie_vendedor_map_codigo', 'omie_vendedor_map'),
+  ('carteira_omie_fase1', 'index', 'public', 'idx_carteira_owner', 'carteira_assignments'),
+  ('carteira_omie_fase1', 'index', 'public', 'idx_carteira_owner_eligible', 'carteira_assignments'),
+  ('carteira_omie_fase1', 'index', 'public', 'idx_coverage_covering_active', 'carteira_coverage'),
+  ('carteira_omie_fase1', 'function', 'public', 'carteira_visivel_para', ''),
+  ('carteira_omie_fase1', 'function', 'public', 'minha_carteira', '')
 )
 SELECT
   e.migration,

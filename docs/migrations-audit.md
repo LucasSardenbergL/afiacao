@@ -21,14 +21,14 @@ Este audit valida **quais custom migrations estão de fato aplicadas no banco**.
 
 ## Resumo
 
-- **49** custom migrations totais
-- **297** objetos esperados (criados por estas migrations)
+- **52** custom migrations totais
+- **306** objetos esperados (criados por estas migrations)
 - Quebra por tipo:
   - `rls_policy`: 102
-  - `index`: 85
-  - `table`: 46
+  - `index`: 89
+  - `table`: 49
   - `trigger`: 31
-  - `function`: 24
+  - `function`: 26
   - `cron_job`: 5
   - `enum_value`: 4
 
@@ -548,6 +548,10 @@ Lista canônica do que cada migration *deveria* criar (extraído via regex de `C
 
 > _Nenhum objeto extraído via regex._ Migration provavelmente é `ALTER TABLE` / `UPDATE` / `INSERT` / RLS-only. Validar manualmente.
 
+### `20260524000000_fin_a3_cockpit_config.sql`
+
+> _Nenhum objeto extraído via regex._ Migration provavelmente é `ALTER TABLE` / `UPDATE` / `INSERT` / RLS-only. Validar manualmente.
+
 ### `20260524095612_crons_scoring_visit_lendo_cron_secret_do_vault.sql`
 
 | Tipo | Objeto | Parent |
@@ -568,6 +572,24 @@ Lista canônica do que cada migration *deveria* criar (extraído via regex de `C
 | --- | --- | --- |
 | `function` | `public.fin_audit_trigger` | — |
 | `function` | `public.fin_period_lock_trigger` | — |
+
+### `20260524120000_carteira_omie_fase1.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `table` | `public.omie_vendedor_map` | — |
+| `table` | `public.carteira_assignments` | — |
+| `table` | `public.carteira_coverage` | — |
+| `index` | `public.idx_omie_vendedor_map_codigo` | `omie_vendedor_map` |
+| `index` | `public.idx_carteira_owner` | `carteira_assignments` |
+| `index` | `public.idx_carteira_owner_eligible` | `carteira_assignments` |
+| `index` | `public.idx_coverage_covering_active` | `carteira_coverage` |
+| `function` | `public.carteira_visivel_para` | — |
+| `function` | `public.minha_carteira` | — |
+
+### `20260524121531_restore_sla_guards.sql`
+
+> _Nenhum objeto extraído via regex._ Migration provavelmente é `ALTER TABLE` / `UPDATE` / `INSERT` / RLS-only. Validar manualmente.
 
 ## Próximos passos quando algo der `❌`
 

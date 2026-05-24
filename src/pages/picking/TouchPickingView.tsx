@@ -1,20 +1,24 @@
-import { useState } from 'react';
-import { useQuery } from '@tanstack/react-query';
+import { useState, useEffect, useMemo } from 'react';
+import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { supabase } from '@/integrations/supabase/client';
 import type { Tables } from '@/integrations/supabase/types';
-import { Card, CardContent } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
-import { Badge } from '@/components/ui/badge';
 import { Progress } from '@/components/ui/progress';
 import { ScanBar, type ScanResult } from '@/components/picking/ScanBar';
-import { Loader2, ChevronRight, Check, AlertTriangle, Package } from 'lucide-react';
+import { Loader2, ChevronRight, Package } from 'lucide-react';
 import { toast } from 'sonner';
 import { cn } from '@/lib/utils';
+import { useAuth } from '@/contexts/AuthContext';
+import { useOfflineMutation } from '@/hooks/useOfflineMutation';
+import { confirmPickItem, type ConfirmPickItemVars } from '@/services/picking-confirm';
+import { getQueuedByKind, subscribeToOfflineQueue } from '@/lib/offline-queue';
+import { applyQueuedPickConfirms } from '@/lib/picking/optimistic-merge';
+import { PickItemConfirmCard, type ConfirmPayload } from '@/components/picking/PickItemConfirmCard';
 
 type PickingTaskRow = Pick<Tables<'picking_tasks'>, 'id' | 'sales_order_id' | 'status' | 'created_at'>;
 type PickingTaskItemRow = Pick<
   Tables<'picking_task_items'>,
-  'id' | 'product_descricao' | 'quantidade' | 'quantidade_separada' | 'status' | 'lote_fefo' | 'lote_separado'
+  'id' | 'product_descricao' | 'quantidade' | 'quantidade_separada' | 'status' | 'lote_fefo' | 'lote_separado' | 'separado_at'
 >;
 
 /**
@@ -123,21 +127,84 @@ function ActiveTaskView({
   onBack: () => void;
   onScan: (r: ScanResult) => void;
 }) {
+  const { user } = useAuth();
+  const queryClient = useQueryClient();
+
   const { data: items, isLoading } = useQuery({
     queryKey: ['touch-pk-items', taskId],
     queryFn: async (): Promise<PickingTaskItemRow[]> => {
       const { data } = await supabase
         .from('picking_task_items')
-        .select('id, product_descricao, quantidade, quantidade_separada, status, lote_fefo, lote_separado')
+        .select('id, product_descricao, quantidade, quantidade_separada, status, lote_fefo, lote_separado, separado_at')
         .eq('picking_task_id', taskId)
         .order('id');
       return (data ?? []) as PickingTaskItemRow[];
     },
   });
 
-  const total = (items ?? []).reduce((s: number, i) => s + (i.quantidade ?? 0), 0);
-  const done = (items ?? []).reduce((s: number, i) => s + (i.quantidade_separada ?? 0), 0);
+  const confirmMutation = useOfflineMutation<{ ok: true }, ConfirmPickItemVars>({
+    kind: 'picking.confirm-item',
+    mutationFn: confirmPickItem,
+  });
+
+  // Confirms enfileirados desta task (overlay optimista). Recalcula quando a fila muda:
+  // subscribeToOfflineQueue dispara no mount e a cada enqueue/flush.
+  const [queuedVars, setQueuedVars] = useState<ConfirmPickItemVars[]>([]);
+  useEffect(() => {
+    const recompute = () =>
+      setQueuedVars(
+        getQueuedByKind<ConfirmPickItemVars>('picking.confirm-item')
+          .map((q) => q.variables)
+          .filter((v) => v.pickingTaskId === taskId),
+      );
+    return subscribeToOfflineQueue(recompute);
+  }, [taskId]);
+
+  // Overlay: mescla confirms enfileirados sobre as linhas do servidor.
+  const { items: mergedItems, pendingIds } = useMemo(
+    () => applyQueuedPickConfirms(items ?? [], queuedVars),
+    [items, queuedVars],
+  );
+
+  const total = mergedItems.reduce((s: number, i) => s + (i.quantidade ?? 0), 0);
+  const done = mergedItems.reduce((s: number, i) => s + (i.quantidade_separada ?? 0), 0);
   const pct = total > 0 ? Math.round((done / total) * 100) : 0;
+
+  const handleConfirm = async (item: PickingTaskItemRow, payload: ConfirmPayload) => {
+    const vars: ConfirmPickItemVars = {
+      eventId: crypto.randomUUID(),
+      pickingTaskId: taskId,
+      pickingTaskItemId: item.id,
+      userId: user?.id ?? null,
+      quantidade: item.quantidade,
+      quantidadeSeparada: payload.quantidadeSeparada,
+      loteEsperado: item.lote_fefo,
+      loteInformado: payload.loteInformado,
+      justificativa: payload.justificativa,
+      confirmedAt: new Date().toISOString(),
+    };
+
+    // Optimistic instantâneo (feedback <100ms). Reusa o mesmo merge.
+    const snapshot = queryClient.getQueryData<PickingTaskItemRow[]>(['touch-pk-items', taskId]);
+    queryClient.setQueryData<PickingTaskItemRow[]>(['touch-pk-items', taskId], (old) =>
+      old ? applyQueuedPickConfirms(old, [vars]).items : old,
+    );
+
+    try {
+      const result = await confirmMutation.mutateAsync(vars);
+      if (result === null) {
+        // Caiu na fila offline — overlay (fila) sustenta o estado.
+        toast.info('Salvo offline — sincroniza ao reconectar');
+      } else {
+        toast.success('Item confirmado');
+        queryClient.invalidateQueries({ queryKey: ['touch-pk-items', taskId] });
+      }
+    } catch {
+      // Erro de aplicação (RLS etc.) — rollback do optimistic.
+      queryClient.setQueryData(['touch-pk-items', taskId], snapshot);
+      toast.error('Falha ao confirmar item');
+    }
+  };
 
   if (isLoading) {
     return (
@@ -162,38 +229,17 @@ function ActiveTaskView({
           <Progress value={pct} className="h-3" />
         </div>
       </div>
-      <ul className="space-y-2 px-1">
-        {(items ?? []).map((it) => {
-          const ok = it.status === 'concluido' || (it.quantidade_separada ?? 0) >= it.quantidade;
-          const divergente = it.lote_separado && it.lote_fefo && it.lote_separado !== it.lote_fefo;
-          return (
-            <Card key={it.id} className={cn(ok && 'opacity-50')}>
-              <CardContent className="p-4 space-y-2">
-                <div className="flex items-start justify-between gap-2">
-                  <p className="text-base font-medium leading-snug">{it.product_descricao}</p>
-                  {ok && <Check className="w-5 h-5 text-status-success shrink-0" />}
-                </div>
-                <div className="flex items-center gap-2 text-sm">
-                  <Badge variant="outline" className="text-xs">
-                    {it.quantidade_separada ?? 0} de {it.quantidade}
-                  </Badge>
-                  {it.lote_fefo && (
-                    <Badge variant="outline" className="text-xs font-mono">
-                      FEFO: {it.lote_fefo}
-                    </Badge>
-                  )}
-                  {divergente && (
-                    <Badge variant="outline" className="text-xs status-pending gap-1">
-                      <AlertTriangle className="w-3 h-3" />
-                      Lote divergente
-                    </Badge>
-                  )}
-                </div>
-              </CardContent>
-            </Card>
-          );
-        })}
-      </ul>
+      <div className="space-y-2 px-1">
+        {mergedItems.map((it) => (
+          <PickItemConfirmCard
+            key={it.id}
+            item={it}
+            pending={pendingIds.has(it.id)}
+            onConfirm={(payload) => handleConfirm(it, payload)}
+            disabled={confirmMutation.isPending}
+          />
+        ))}
+      </div>
     </div>
   );
 }

@@ -1471,9 +1471,6 @@ async function validateCaller(
   req: Request,
   db: SupabaseClient
 ): Promise<{ authorized: boolean; userId?: string; error?: string }> {
-  // Cron: aceita x-cron-secret == CRON_SECRET (mesmo padrão dos demais crons,
-  // que mandam o secret lido do Vault). Checado antes do Authorization porque
-  // o cron não manda header Authorization.
   const cronSecret = req.headers.get("x-cron-secret");
   const expectedCron = Deno.env.get("CRON_SECRET");
   if (cronSecret && expectedCron && cronSecret === expectedCron) {

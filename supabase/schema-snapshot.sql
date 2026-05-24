@@ -1,0 +1,23745 @@
+--
+-- PostgreSQL database dump
+--
+
+\restrict Mmifr0ebMfQH6xtRdrBiXi2dSHbUaJRfeUKX6XDsxHgeFSafukZhhmDCHIupkAC
+
+-- Dumped from database version 17.6
+-- Dumped by pg_dump version 17.9
+
+SET statement_timeout = 0;
+SET lock_timeout = 0;
+SET idle_in_transaction_session_timeout = 0;
+SET transaction_timeout = 0;
+SET client_encoding = 'SQL_ASCII';
+SET standard_conforming_strings = off;
+SELECT pg_catalog.set_config('search_path', '', false);
+SET check_function_bodies = false;
+SET xmloption = content;
+SET client_min_messages = warning;
+SET escape_string_warning = off;
+SET row_security = off;
+
+--
+-- Name: public; Type: SCHEMA; Schema: -; Owner: -
+--
+
+CREATE SCHEMA public;
+
+
+--
+-- Name: SCHEMA public; Type: COMMENT; Schema: -; Owner: -
+--
+
+COMMENT ON SCHEMA public IS 'standard public schema';
+
+
+--
+-- Name: app_role; Type: TYPE; Schema: public; Owner: -
+--
+
+CREATE TYPE public.app_role AS ENUM (
+    'master',
+    'employee',
+    'customer'
+);
+
+
+--
+-- Name: call_direction; Type: TYPE; Schema: public; Owner: -
+--
+
+CREATE TYPE public.call_direction AS ENUM (
+    'inbound',
+    'outbound'
+);
+
+
+--
+-- Name: call_status; Type: TYPE; Schema: public; Owner: -
+--
+
+CREATE TYPE public.call_status AS ENUM (
+    'ringing',
+    'answered',
+    'missed',
+    'rejected',
+    'busy',
+    'failed',
+    'canceled',
+    'ended'
+);
+
+
+--
+-- Name: classe_abc; Type: TYPE; Schema: public; Owner: -
+--
+
+CREATE TYPE public.classe_abc AS ENUM (
+    'A',
+    'B',
+    'C'
+);
+
+
+--
+-- Name: classe_xyz; Type: TYPE; Schema: public; Owner: -
+--
+
+CREATE TYPE public.classe_xyz AS ENUM (
+    'X',
+    'Y',
+    'Z'
+);
+
+
+--
+-- Name: commercial_role; Type: TYPE; Schema: public; Owner: -
+--
+
+CREATE TYPE public.commercial_role AS ENUM (
+    'operacional',
+    'gerencial',
+    'estrategico',
+    'super_admin',
+    'farmer',
+    'hunter',
+    'closer',
+    'master'
+);
+
+
+--
+-- Name: department; Type: TYPE; Schema: public; Owner: -
+--
+
+CREATE TYPE public.department AS ENUM (
+    'separador',
+    'conferente',
+    'comprador',
+    'tintometrico',
+    'financeiro',
+    'vendas',
+    'gestao',
+    'outro'
+);
+
+
+--
+-- Name: empresa_reposicao; Type: TYPE; Schema: public; Owner: -
+--
+
+CREATE TYPE public.empresa_reposicao AS ENUM (
+    'OBEN',
+    'COLACOR'
+);
+
+
+--
+-- Name: farmer_call_result; Type: TYPE; Schema: public; Owner: -
+--
+
+CREATE TYPE public.farmer_call_result AS ENUM (
+    'contato_sucesso',
+    'sem_resposta',
+    'ocupado',
+    'caixa_postal',
+    'numero_invalido',
+    'reagendado'
+);
+
+
+--
+-- Name: farmer_call_type; Type: TYPE; Schema: public; Owner: -
+--
+
+CREATE TYPE public.farmer_call_type AS ENUM (
+    'reativacao',
+    'cross_sell',
+    'up_sell',
+    'follow_up'
+);
+
+
+--
+-- Name: status_pedido_compra; Type: TYPE; Schema: public; Owner: -
+--
+
+CREATE TYPE public.status_pedido_compra AS ENUM (
+    'CRIADO',
+    'FATURADO',
+    'EM_TRANSPORTE',
+    'RECEBIDO',
+    'CANCELADO',
+    'DIVERGENCIA'
+);
+
+
+--
+-- Name: status_revisao; Type: TYPE; Schema: public; Owner: -
+--
+
+CREATE TYPE public.status_revisao AS ENUM (
+    'NAO_REVISADO',
+    'PENDENTE_APROVACAO',
+    'APROVADO',
+    'APLICADO',
+    'REJEITADO',
+    'APLICADO_AUTOMATICO'
+);
+
+
+--
+-- Name: tint_integration_mode; Type: TYPE; Schema: public; Owner: -
+--
+
+CREATE TYPE public.tint_integration_mode AS ENUM (
+    'csv_only',
+    'shadow_mode',
+    'automatic_primary'
+);
+
+
+--
+-- Name: visit_mission; Type: TYPE; Schema: public; Owner: -
+--
+
+CREATE TYPE public.visit_mission AS ENUM (
+    'recuperacao',
+    'expansao',
+    'relacionamento',
+    'prospeccao'
+);
+
+
+--
+-- Name: aplicar_promocoes_no_ciclo(text, date); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.aplicar_promocoes_no_ciclo(p_empresa text DEFAULT 'OBEN'::text, p_data_ciclo date DEFAULT CURRENT_DATE) RETURNS TABLE(itens_flat_aplicados integer, itens_forward_buying_aplicados integer, pedidos_afetados integer, economia_total_estimada numeric, pedidos_bloqueados_por_delta integer)
+    LANGUAGE plpgsql
+    SET search_path TO 'public', 'pg_temp'
+    AS $$
+DECLARE
+  v_flat int := 0;
+  v_fb int := 0;
+  v_pedidos int := 0;
+  v_economia numeric := 0;
+  v_bloqueados int := 0;
+BEGIN
+  -- ========== MODO FLAT: desconto no preço, quantidade inalterada ==========
+  WITH aplicados_flat AS (
+    UPDATE pedido_compra_item pci
+    SET 
+      preco_sem_desconto = pci.preco_unitario,
+      preco_unitario = pci.preco_unitario * (1 - av.desconto_perc / 100),
+      valor_linha = pci.qtde_final * (pci.preco_unitario * (1 - av.desconto_perc / 100)),
+      modo_promocao = 'flat',
+      promocao_item_id = av.item_id,
+      desconto_perc_aplicado = av.desconto_perc,
+      economia_estimada_valor = pci.qtde_final * pci.preco_unitario * av.desconto_perc / 100
+    FROM v_promocao_avaliacao_hoje av
+    JOIN pedido_compra_sugerido pcs ON pcs.id = pci.pedido_id
+    WHERE av.modo_aplicacao = 'flat'
+      AND av.empresa = p_empresa
+      AND pcs.empresa = p_empresa
+      AND pcs.data_ciclo = p_data_ciclo
+      AND pcs.status = 'pendente_aprovacao'
+      AND pci.sku_codigo_omie::bigint = av.sku_codigo_omie
+      AND pci.modo_promocao IS NULL  -- idempotência
+    RETURNING pci.id, pci.pedido_id, pci.economia_estimada_valor
+  )
+  SELECT COUNT(*) INTO v_flat FROM aplicados_flat;
+
+  -- ========== MODO FORWARD BUYING: infla quantidade ==========
+  WITH aplicados_fb AS (
+    UPDATE pedido_compra_item pci
+    SET 
+      qtde_sem_promocao = pci.qtde_sugerida,
+      qtde_final = av.qtde_com_desconto,
+      -- Preço fica o mesmo; valor_linha cresce pela quantidade
+      valor_linha = av.qtde_com_desconto * pci.preco_unitario * (1 - av.desconto_perc / 100),
+      preco_sem_desconto = pci.preco_unitario,
+      preco_unitario = pci.preco_unitario * (1 - av.desconto_perc / 100),
+      modo_promocao = 'forward_buying',
+      promocao_item_id = av.item_id,
+      desconto_perc_aplicado = av.desconto_perc,
+      economia_estimada_valor = av.economia_bruta_valor
+    FROM v_promocao_avaliacao_hoje av
+    JOIN pedido_compra_sugerido pcs ON pcs.id = pci.pedido_id
+    WHERE av.modo_aplicacao = 'forward_buying'
+      AND av.empresa = p_empresa
+      AND pcs.empresa = p_empresa
+      AND pcs.data_ciclo = p_data_ciclo
+      AND pcs.status = 'pendente_aprovacao'
+      AND pci.sku_codigo_omie::bigint = av.sku_codigo_omie
+      AND pci.modo_promocao IS NULL
+    RETURNING pci.id, pci.pedido_id, pci.economia_estimada_valor
+  )
+  SELECT COUNT(*) INTO v_fb FROM aplicados_fb;
+
+  -- Conta pedidos afetados e soma economia
+  SELECT 
+    COUNT(DISTINCT pedido_id),
+    COALESCE(SUM(economia_estimada_valor), 0)
+  INTO v_pedidos, v_economia
+  FROM pedido_compra_item
+  WHERE pedido_id IN (
+    SELECT id FROM pedido_compra_sugerido 
+    WHERE empresa = p_empresa AND data_ciclo = p_data_ciclo
+  )
+  AND modo_promocao IS NOT NULL;
+
+  -- Recalcula valor_total dos pedidos afetados
+  UPDATE pedido_compra_sugerido pcs
+  SET valor_total = (
+    SELECT COALESCE(SUM(valor_linha), 0) FROM pedido_compra_item WHERE pedido_id = pcs.id
+  )
+  WHERE pcs.empresa = p_empresa
+    AND pcs.data_ciclo = p_data_ciclo
+    AND pcs.status = 'pendente_aprovacao'
+    AND EXISTS (
+      SELECT 1 FROM pedido_compra_item pci 
+      WHERE pci.pedido_id = pcs.id AND pci.modo_promocao IS NOT NULL
+    );
+
+  -- Reavalia guardrail de delta — só para pedidos inflados por forward_buying
+  -- (promoção flat reduz valor, então não dispara guardrail de alta)
+  WITH reavaliacao AS (
+    UPDATE pedido_compra_sugerido pcs
+    SET 
+      delta_vs_anterior_perc = CASE
+        WHEN pcs.pedido_anterior_valor > 0
+        THEN ROUND(((pcs.valor_total - pcs.pedido_anterior_valor) / pcs.pedido_anterior_valor * 100)::numeric, 1)
+        ELSE NULL
+      END,
+      status = CASE
+        WHEN pcs.pedido_anterior_valor > 0
+          AND pcs.valor_total / NULLIF(pcs.pedido_anterior_valor, 0) > 1 + (
+            (SELECT fh.delta_max_perc FROM fornecedor_habilitado_reposicao fh
+             WHERE fh.empresa = pcs.empresa AND fh.fornecedor_nome = pcs.fornecedor_nome) / 100.0
+          )
+        THEN 'bloqueado_guardrail'
+        ELSE pcs.status
+      END,
+      mensagem_bloqueio = CASE
+        WHEN pcs.pedido_anterior_valor > 0
+          AND pcs.valor_total / NULLIF(pcs.pedido_anterior_valor, 0) > 1 + (
+            (SELECT fh.delta_max_perc FROM fornecedor_habilitado_reposicao fh
+             WHERE fh.empresa = pcs.empresa AND fh.fornecedor_nome = pcs.fornecedor_nome) / 100.0
+          )
+        THEN 'Variação acima do delta máximo — forward buying promocional inflou pedido, revisar'
+        ELSE pcs.mensagem_bloqueio
+      END
+    WHERE pcs.empresa = p_empresa
+      AND pcs.data_ciclo = p_data_ciclo
+      AND pcs.status IN ('pendente_aprovacao', 'bloqueado_guardrail')
+      AND EXISTS (
+        SELECT 1 FROM pedido_compra_item pci 
+        WHERE pci.pedido_id = pcs.id AND pci.modo_promocao = 'forward_buying'
+      )
+    RETURNING id, status
+  )
+  SELECT COUNT(*) FILTER (WHERE status = 'bloqueado_guardrail') 
+  INTO v_bloqueados FROM reavaliacao;
+
+  RETURN QUERY SELECT v_flat, v_fb, v_pedidos, v_economia, v_bloqueados;
+END;
+$$;
+
+
+--
+-- Name: FUNCTION aplicar_promocoes_no_ciclo(p_empresa text, p_data_ciclo date); Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON FUNCTION public.aplicar_promocoes_no_ciclo(p_empresa text, p_data_ciclo date) IS 'Pós-processa pedidos pendentes aplicando promoções ativas. Modo flat: desconto no preço, sem mudar quantidade. Modo forward_buying: infla quantidade pra atingir volume mínimo SE desconto paga custo de capital. Idempotente. Reavalia guardrail de delta após inflação.';
+
+
+--
+-- Name: aprovar_pedido_sugerido(bigint, text); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.aprovar_pedido_sugerido(p_pedido_id bigint, p_usuario text) RETURNS jsonb
+    LANGUAGE plpgsql
+    SET search_path TO 'public', 'pg_temp'
+    AS $$
+DECLARE
+  v_pedido RECORD;
+BEGIN
+  SELECT * INTO v_pedido FROM pedido_compra_sugerido WHERE id = p_pedido_id;
+  IF NOT FOUND THEN
+    RETURN jsonb_build_object('error', 'pedido não encontrado');
+  END IF;
+  IF v_pedido.status NOT IN ('pendente_aprovacao', 'bloqueado_guardrail') THEN
+    RETURN jsonb_build_object('error', 'pedido já está no estado ' || v_pedido.status);
+  END IF;
+  UPDATE pedido_compra_sugerido
+  SET status = 'aprovado_aguardando_disparo',
+      aprovado_por = p_usuario,
+      aprovado_em = NOW(),
+      atualizado_em = NOW()
+  WHERE id = p_pedido_id;
+  RETURN jsonb_build_object('status', 'ok', 'pedido_id', p_pedido_id,
+                             'sera_disparado_em', v_pedido.horario_corte_planejado);
+END;
+$$;
+
+
+--
+-- Name: atualizar_campanha_datas_corte(bigint, date, date); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.atualizar_campanha_datas_corte(p_campanha_id bigint, p_data_corte_pedido date DEFAULT NULL::date, p_data_corte_faturamento date DEFAULT NULL::date) RETURNS boolean
+    LANGUAGE plpgsql
+    SET search_path TO 'public', 'pg_temp'
+    AS $$
+BEGIN
+  UPDATE promocao_campanha
+  SET 
+    data_corte_pedido = COALESCE(p_data_corte_pedido, data_corte_pedido, data_fim),
+    data_corte_faturamento = COALESCE(p_data_corte_faturamento, data_corte_faturamento, 
+      (date_trunc('month', data_fim) + interval '2 months' - interval '1 day')::date
+    )
+  WHERE id = p_campanha_id;
+  
+  RETURN FOUND;
+END;
+$$;
+
+
+--
+-- Name: atualizar_classificacao_skus(text); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.atualizar_classificacao_skus(p_empresa text) RETURNS TABLE(sku_codigo_omie bigint, classe_anterior text, classe_proposta text, classe_aplicada text, acao text)
+    LANGUAGE plpgsql
+    SET search_path TO 'public', 'pg_temp'
+    AS $$
+DECLARE
+  r RECORD;
+  prioridade_ordem text[] := ARRAY[
+    'AX','AY','AZ',
+    'BX','BY','BZ',
+    'CX','CY','CZ'
+  ];
+  pos_atual int;
+  pos_nova int;
+  subindo boolean;
+  aplicar boolean;
+  meses_novo int;
+BEGIN
+  FOR r IN 
+    SELECT 
+      v.sku_codigo_omie, 
+      v.sku_descricao,
+      v.classe_consolidada as classe_nova,
+      v.valor_total_90d,
+      v.num_ordens,
+      sp.id as param_id,
+      sp.classe_consolidada as classe_atual,
+      sp.classe_proposta_pendente,
+      sp.meses_consecutivos_nova_classe
+    FROM v_sku_parametros_sugeridos v
+    LEFT JOIN sku_parametros sp 
+      ON sp.empresa = v.empresa 
+      AND sp.sku_codigo_omie = v.sku_codigo_omie
+    WHERE v.empresa = p_empresa
+  LOOP
+    -- CASO 1: SKU novo
+    IF r.param_id IS NULL THEN
+      INSERT INTO sku_parametros (
+        empresa, sku_codigo_omie, sku_descricao,
+        classe_abc, classe_xyz, 
+        meses_consecutivos_nova_classe,
+        data_ultima_mudanca_classe
+      )
+      VALUES (
+        p_empresa, 
+        r.sku_codigo_omie, 
+        r.sku_descricao,
+        substring(r.classe_nova, 1, 1), 
+        substring(r.classe_nova, 2, 1),
+        1,
+        CURRENT_DATE
+      );
+      
+      sku_codigo_omie := r.sku_codigo_omie;
+      classe_anterior := NULL;
+      classe_proposta := r.classe_nova;
+      classe_aplicada := r.classe_nova;
+      acao := 'SKU_NOVO';
+      RETURN NEXT;
+      CONTINUE;
+    END IF;
+    
+    -- CASO 2: Mesma classe atual (sem mudança)
+    IF r.classe_atual = r.classe_nova THEN
+      UPDATE sku_parametros 
+      SET classe_proposta_pendente = NULL,
+          meses_consecutivos_nova_classe = 0
+      WHERE id = r.param_id;
+      
+      sku_codigo_omie := r.sku_codigo_omie;
+      classe_anterior := r.classe_atual;
+      classe_proposta := r.classe_nova;
+      classe_aplicada := r.classe_atual;
+      acao := 'MANTIDA';
+      RETURN NEXT;
+      CONTINUE;
+    END IF;
+    
+    -- CASO 3: Proposta igual à pendente anterior (incrementar histerese)
+    IF r.classe_proposta_pendente = r.classe_nova THEN
+      meses_novo := COALESCE(r.meses_consecutivos_nova_classe, 0) + 1;
+      
+      pos_atual := array_position(prioridade_ordem, r.classe_atual);
+      pos_nova := array_position(prioridade_ordem, r.classe_nova);
+      subindo := (pos_nova < pos_atual);  -- posição menor = classe mais alta
+      
+      aplicar := (subindo AND meses_novo >= 2) OR (NOT subindo AND meses_novo >= 3);
+      
+      IF aplicar THEN
+        UPDATE sku_parametros 
+        SET classe_abc = substring(r.classe_nova, 1, 1),
+            classe_xyz = substring(r.classe_nova, 2, 1),
+            classe_proposta_pendente = NULL,
+            meses_consecutivos_nova_classe = 0,
+            data_ultima_mudanca_classe = CURRENT_DATE
+        WHERE id = r.param_id;
+        
+        sku_codigo_omie := r.sku_codigo_omie;
+        classe_anterior := r.classe_atual;
+        classe_proposta := r.classe_nova;
+        classe_aplicada := r.classe_nova;
+        acao := CASE WHEN subindo THEN 'PROMOVIDA' ELSE 'REBAIXADA' END;
+        RETURN NEXT;
+      ELSE
+        UPDATE sku_parametros 
+        SET meses_consecutivos_nova_classe = meses_novo
+        WHERE id = r.param_id;
+        
+        sku_codigo_omie := r.sku_codigo_omie;
+        classe_anterior := r.classe_atual;
+        classe_proposta := r.classe_nova;
+        classe_aplicada := r.classe_atual;
+        acao := 'PENDENTE_HISTERESE_MES_' || meses_novo;
+        RETURN NEXT;
+      END IF;
+      CONTINUE;
+    END IF;
+    
+    -- CASO 4: Nova proposta (diferente da atual E da pendente)
+    UPDATE sku_parametros 
+    SET classe_proposta_pendente = r.classe_nova,
+        meses_consecutivos_nova_classe = 1
+    WHERE id = r.param_id;
+    
+    sku_codigo_omie := r.sku_codigo_omie;
+    classe_anterior := r.classe_atual;
+    classe_proposta := r.classe_nova;
+    classe_aplicada := r.classe_atual;
+    acao := 'NOVA_PROPOSTA_INICIADA';
+    RETURN NEXT;
+  END LOOP;
+END;
+$$;
+
+
+--
+-- Name: atualizar_estados_eventos_comerciais(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.atualizar_estados_eventos_comerciais() RETURNS TABLE(campanhas_encerradas integer, aumentos_vigentes integer, aumentos_expirados integer)
+    LANGUAGE plpgsql
+    SET search_path TO 'public', 'pg_temp'
+    AS $$
+DECLARE
+  v_camp int; v_vig int; v_exp int;
+BEGIN
+  WITH u AS (
+    UPDATE promocao_campanha 
+    SET estado = 'encerrada'
+    WHERE estado = 'ativa' AND data_fim < CURRENT_DATE
+    RETURNING 1
+  ) SELECT COUNT(*) INTO v_camp FROM u;
+
+  WITH u AS (
+    UPDATE fornecedor_aumento_anunciado 
+    SET estado = 'vigente'
+    WHERE estado = 'ativo' AND data_vigencia <= CURRENT_DATE
+    RETURNING 1
+  ) SELECT COUNT(*) INTO v_vig FROM u;
+
+  WITH u AS (
+    UPDATE fornecedor_aumento_anunciado 
+    SET estado = 'expirado'
+    WHERE estado = 'vigente' AND data_vigencia < (CURRENT_DATE - INTERVAL '30 days')
+    RETURNING 1
+  ) SELECT COUNT(*) INTO v_exp FROM u;
+
+  RETURN QUERY SELECT v_camp, v_vig, v_exp;
+END;
+$$;
+
+
+--
+-- Name: atualizar_parametros_numericos_skus(text); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.atualizar_parametros_numericos_skus(p_empresa text) RETURNS integer
+    LANGUAGE plpgsql
+    SET search_path TO 'public', 'pg_temp'
+    AS $$
+DECLARE
+  atualizados int := 0;
+BEGIN
+  UPDATE sku_parametros sp
+  SET 
+    sku_descricao = COALESCE(v.sku_descricao, sp.sku_descricao),
+    fornecedor_nome = COALESCE(v.fornecedor_nome, sp.fornecedor_nome),
+    demanda_media_diaria = v.demanda_media_diaria,
+    -- [BUG #2b FIX] desvio diário (usado na fórmula), não desvio por ordem
+    demanda_desvio_padrao = v.demanda_sigma_diario,
+    demanda_coef_variacao = v.coef_variacao_ordem,
+    demanda_dias_com_movimento = v.num_ordens,
+    valor_vendido_90d = v.valor_total_90d,
+    lt_medio_dias_uteis = v.lead_time_medio,
+    lt_desvio_padrao_dias = v.lead_time_desvio,
+    lt_p95_dias = v.lt_p95_dias,
+    fonte_leadtime = v.fonte_leadtime,
+    -- [BUG #2c FIX] persiste Z pra auditoria
+    z_score = v.z_aplicado,
+    -- [BUG #2a FIX] agora recebe SS puro, separado do minimo
+    estoque_seguranca = v.estoque_seguranca_sugerido,
+    ponto_pedido = v.ponto_pedido_sugerido,
+    estoque_minimo = v.estoque_minimo_sugerido,
+    cobertura_alvo_dias = v.cobertura_alvo_dias,
+    estoque_maximo = v.estoque_maximo_sugerido,
+    ultima_atualizacao_calculo = NOW()
+  FROM v_sku_parametros_sugeridos v
+  WHERE sp.empresa = v.empresa
+    AND sp.sku_codigo_omie = v.sku_codigo_omie
+    AND sp.empresa = p_empresa;
+  
+  GET DIAGNOSTICS atualizados = ROW_COUNT;
+  RETURN atualizados;
+END;
+$$;
+
+
+--
+-- Name: auto_assign_commercial_super_admin(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.auto_assign_commercial_super_admin() RETURNS trigger
+    LANGUAGE plpgsql SECURITY DEFINER
+    SET search_path TO 'public'
+    AS $$
+DECLARE
+  master_cpf_value TEXT;
+  profile_doc TEXT;
+BEGIN
+  IF TG_OP != 'INSERT' THEN
+    RETURN NEW;
+  END IF;
+
+  IF NEW.is_employee != true THEN
+    RETURN NEW;
+  END IF;
+
+  SELECT value INTO master_cpf_value FROM public.company_config WHERE key = 'master_cpf';
+  profile_doc := REGEXP_REPLACE(NEW.document, '\D', '', 'g');
+
+  IF profile_doc = master_cpf_value THEN
+    INSERT INTO public.commercial_roles (user_id, commercial_role)
+    VALUES (NEW.user_id, 'super_admin')
+    ON CONFLICT (user_id) DO UPDATE SET commercial_role = 'super_admin', updated_at = now();
+  END IF;
+
+  RETURN NEW;
+END;
+$$;
+
+
+--
+-- Name: auto_assign_user_role(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.auto_assign_user_role() RETURNS trigger
+    LANGUAGE plpgsql SECURITY DEFINER
+    SET search_path TO 'public'
+    AS $$
+DECLARE
+  master_cnpj_value TEXT;
+  profile_doc TEXT;
+  existing_role app_role;
+BEGIN
+  IF TG_OP = 'UPDATE' THEN RETURN NEW; END IF;
+  SELECT role INTO existing_role FROM public.user_roles WHERE user_id = NEW.user_id LIMIT 1;
+  IF existing_role IS NOT NULL THEN RETURN NEW; END IF;
+  SELECT value INTO master_cnpj_value FROM public.company_config WHERE key = 'master_cnpj';
+  profile_doc := REGEXP_REPLACE(NEW.document, '\D', '', 'g');
+  IF profile_doc = master_cnpj_value THEN
+    INSERT INTO public.user_roles (user_id, role) VALUES (NEW.user_id, 'master') ON CONFLICT (user_id, role) DO NOTHING;
+  ELSIF NEW.is_employee = true THEN
+    INSERT INTO public.user_roles (user_id, role) VALUES (NEW.user_id, 'employee') ON CONFLICT (user_id, role) DO NOTHING;
+  ELSE
+    INSERT INTO public.user_roles (user_id, role) VALUES (NEW.user_id, 'customer') ON CONFLICT (user_id, role) DO NOTHING;
+  END IF;
+  RETURN NEW;
+END;
+$$;
+
+
+--
+-- Name: award_loyalty_points(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.award_loyalty_points() RETURNS trigger
+    LANGUAGE plpgsql SECURITY DEFINER
+    SET search_path TO 'public'
+    AS $$
+BEGIN
+  IF NEW.status = 'entregue' AND OLD.status != 'entregue' THEN
+    INSERT INTO public.loyalty_points (user_id, order_id, points, type, description)
+    VALUES (
+      NEW.user_id,
+      NEW.id,
+      GREATEST(FLOOR(NEW.total)::integer, 10),
+      'earn',
+      'Pontos por pedido entregue #' || LEFT(NEW.id::text, 8)
+    );
+  END IF;
+  RETURN NEW;
+END;
+$$;
+
+
+--
+-- Name: calcular_gatilhos_reposicao(text, bigint); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.calcular_gatilhos_reposicao(p_empresa text DEFAULT 'OBEN'::text, p_only_sku bigint DEFAULT NULL::bigint, OUT atualizados integer, OUT skus_baixo_giro integer, OUT skus_normais integer) RETURNS record
+    LANGUAGE plpgsql SECURITY DEFINER
+    SET search_path TO 'public', 'pg_temp'
+    AS $$
+BEGIN
+  WITH base AS (
+    SELECT
+      sp.empresa,
+      sp.sku_codigo_omie,
+      sp.estoque_minimo_omie,
+      sp.ponto_pedido_omie,
+      sp.estoque_maximo_omie,
+      COALESCE(sp.demanda_media_diaria, 0) AS dmd,
+      -- Fallback de desvio-padrão por classe XYZ (CV típico)
+      COALESCE(
+        sp.demanda_desvio_padrao,
+        COALESCE(sp.demanda_media_diaria, 0) *
+          CASE COALESCE(sp.classe_xyz, '')
+            WHEN 'X' THEN 0.20
+            WHEN 'Y' THEN 0.50
+            WHEN 'Z' THEN 1.00
+            ELSE 0.50
+          END
+      ) AS dstd,
+      COALESCE(sp.lt_medio_dias_uteis, 7) AS lt,
+      -- Cobertura padrão por classe ABC: A=15d, B=30d, C=45d
+      COALESCE(
+        sp.cobertura_alvo_dias,
+        CASE COALESCE(sp.classe_abc, '')
+          WHEN 'A' THEN 15
+          WHEN 'B' THEN 30
+          WHEN 'C' THEN 45
+          ELSE 30
+        END
+      ) AS cob,
+      COALESCE(sp.lote_minimo_fornecedor, 1) AS lote_min,
+      CASE COALESCE(sp.classe_abc, '')
+        WHEN 'A' THEN 2.33
+        WHEN 'B' THEN 1.65
+        WHEN 'C' THEN 1.28
+        ELSE 1.65
+      END AS z,
+      -- Baixo giro APENAS quando: (B/C com Y/Z) OU demanda < 0.05/dia
+      -- Itens A-class continuam sendo dimensionados pela fórmula clássica,
+      -- mesmo com demanda irregular (Y/Z) — o z=2.33 já compensa via segurança.
+      (
+        (LEFT(COALESCE(sp.classe_abc, ''), 1) IN ('B','C')
+         AND COALESCE(sp.classe_xyz, '') IN ('Y','Z'))
+        OR COALESCE(sp.demanda_media_diaria, 0) < 0.05
+      ) AS is_baixo_giro
+    FROM sku_parametros sp
+    WHERE sp.empresa = p_empresa
+      AND sp.ativo = TRUE
+      AND sp.habilitado_reposicao_automatica = TRUE
+      AND (p_only_sku IS NULL OR sp.sku_codigo_omie = p_only_sku)
+  ),
+  calc AS (
+    SELECT
+      b.*,
+      -- Estoque de segurança (= estoque mínimo, com piso 1)
+      GREATEST(
+        1::numeric,
+        CASE WHEN b.is_baixo_giro THEN 1::numeric
+             ELSE CEIL(b.z * b.dstd * SQRT(b.lt))
+        END
+      ) AS estoque_min_novo,
+      -- Ponto de pedido (respeita MOQ)
+      GREATEST(
+        b.lote_min,
+        CASE WHEN b.is_baixo_giro THEN GREATEST(1::numeric, b.lote_min)
+             ELSE CEIL(b.dmd * b.lt + b.z * b.dstd * SQRT(b.lt))
+        END
+      ) AS ponto_pedido_novo_raw,
+      -- Estoque máximo bruto
+      CASE WHEN b.is_baixo_giro
+           THEN GREATEST(2::numeric, b.lote_min + 1)
+           ELSE CEIL((b.dmd * b.lt + b.z * b.dstd * SQRT(b.lt)) + b.dmd * b.cob)
+      END AS estoque_max_novo_raw
+    FROM base b
+  ),
+  final AS (
+    SELECT
+      c.*,
+      -- Garantir Emax >= PP + lote_min (para caber pelo menos 1 lote acima do PP)
+      GREATEST(c.estoque_max_novo_raw, c.ponto_pedido_novo_raw + c.lote_min) AS estoque_max_novo,
+      c.ponto_pedido_novo_raw AS ponto_pedido_novo
+    FROM calc c
+  ),
+  upd AS (
+    UPDATE sku_parametros sp
+       SET ponto_pedido = f.ponto_pedido_novo,
+           estoque_minimo = f.estoque_min_novo,
+           estoque_seguranca = f.estoque_min_novo,
+           estoque_maximo = f.estoque_max_novo,
+           ultima_atualizacao_calculo = NOW(),
+           -- Marca para sincronizar com Omie quando algum valor diferiu
+           aplicar_no_omie = CASE
+             WHEN sp.estoque_minimo_omie IS DISTINCT FROM f.estoque_min_novo
+               OR sp.ponto_pedido_omie  IS DISTINCT FROM f.ponto_pedido_novo
+               OR sp.estoque_maximo_omie IS DISTINCT FROM f.estoque_max_novo
+             THEN TRUE
+             ELSE sp.aplicar_no_omie
+           END
+      FROM final f
+     WHERE sp.empresa = f.empresa
+       AND sp.sku_codigo_omie = f.sku_codigo_omie
+    RETURNING f.is_baixo_giro AS bg
+  )
+  SELECT COUNT(*)::int,
+         COUNT(*) FILTER (WHERE bg)::int,
+         COUNT(*) FILTER (WHERE NOT bg)::int
+    INTO atualizados, skus_baixo_giro, skus_normais
+    FROM upd;
+END;
+$$;
+
+
+--
+-- Name: cancelar_pedido_sugerido(bigint, text, text); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.cancelar_pedido_sugerido(p_pedido_id bigint, p_usuario text, p_justificativa text) RETURNS jsonb
+    LANGUAGE plpgsql
+    SET search_path TO 'public', 'pg_temp'
+    AS $$
+DECLARE
+  v_pedido RECORD;
+BEGIN
+  SELECT * INTO v_pedido FROM pedido_compra_sugerido WHERE id = p_pedido_id;
+  IF NOT FOUND THEN
+    RETURN jsonb_build_object('error', 'pedido não encontrado');
+  END IF;
+  IF v_pedido.status IN ('disparado', 'concluido_recebido') THEN
+    RETURN jsonb_build_object('error', 'pedido já foi disparado em ' || v_pedido.horario_disparo_real::text);
+  END IF;
+  UPDATE pedido_compra_sugerido
+  SET status = 'cancelado_humano',
+      cancelado_por = p_usuario,
+      cancelado_em = NOW(),
+      justificativa_cancelamento = p_justificativa,
+      atualizado_em = NOW()
+  WHERE id = p_pedido_id;
+  RETURN jsonb_build_object('status', 'ok', 'pedido_id', p_pedido_id);
+END;
+$$;
+
+
+--
+-- Name: carteira_visivel_para(uuid, uuid); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.carteira_visivel_para(_customer_user_id uuid, _uid uuid) RETURNS boolean
+    LANGUAGE sql STABLE SECURITY DEFINER
+    SET search_path TO 'public'
+    AS $$
+  SELECT
+    has_role(_uid, 'master'::app_role)
+    OR EXISTS (
+      SELECT 1 FROM carteira_assignments a
+      WHERE a.customer_user_id = _customer_user_id AND a.owner_user_id = _uid
+    )
+    OR EXISTS (
+      SELECT 1 FROM carteira_assignments a
+      JOIN carteira_coverage c ON c.covered_user_id = a.owner_user_id
+      WHERE a.customer_user_id = _customer_user_id
+        AND c.covering_user_id = _uid
+        AND c.active
+        AND (c.valid_until IS NULL OR c.valid_until > now())
+    );
+$$;
+
+
+--
+-- Name: ciclo_oportunidade_do_dia(text, date); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.ciclo_oportunidade_do_dia(p_empresa text DEFAULT 'OBEN'::text, p_data_ciclo date DEFAULT CURRENT_DATE) RETURNS TABLE(executou boolean, motivo text, pedidos_gerados integer, skus_incluidos integer, economia_estimada numeric)
+    LANGUAGE plpgsql
+    SET search_path TO 'public', 'pg_temp'
+    AS $_$
+DECLARE
+  v_campanhas_hoje int;
+  v_aumentos_hoje int;
+  v_result record;
+  v_motivo text := '';
+BEGIN
+  -- Quantas campanhas têm corte hoje?
+  SELECT COUNT(*) INTO v_campanhas_hoje
+  FROM promocao_campanha
+  WHERE empresa = p_empresa
+    AND estado = 'ativa'
+    AND data_corte_pedido = p_data_ciclo
+    AND permite_pedido_oportunidade = true;
+
+  -- Quantos aumentos entram em vigência amanhã (corte é véspera)?
+  SELECT COUNT(*) INTO v_aumentos_hoje
+  FROM fornecedor_aumento_anunciado
+  WHERE empresa = p_empresa
+    AND estado IN ('ativo', 'vigente')
+    AND data_vigencia = p_data_ciclo + INTERVAL '1 day';
+  
+  IF v_campanhas_hoje = 0 AND v_aumentos_hoje = 0 THEN
+    RETURN QUERY SELECT false, 'sem_eventos_hoje'::text, 0, 0, 0::numeric;
+    RETURN;
+  END IF;
+
+  v_motivo := CASE 
+    WHEN v_campanhas_hoje > 0 AND v_aumentos_hoje > 0 THEN 'promo_e_aumento'
+    WHEN v_campanhas_hoje > 0 THEN 'corte_promocao'
+    ELSE 'vespera_aumento'
+  END;
+
+  -- Chama a função de geração
+  SELECT * INTO v_result
+  FROM gerar_pedidos_oportunidade_ciclo(p_empresa, p_data_ciclo) 
+  LIMIT 1;
+  
+  -- Gera alerta informando que ciclo oportunidade rodou
+  INSERT INTO fornecedor_alerta (
+    empresa, tipo, severidade, titulo, mensagem
+  ) VALUES (
+    p_empresa, 'oportunidade_calculada', 'atencao',
+    'Ciclo oportunidade gerado: ' || v_motivo,
+    format('Foram gerados %s pedidos cobrindo %s SKUs com economia bruta estimada de R$ %s. Revisar em /admin/reposicao/pedidos.',
+           v_result.pedidos_gerados, v_result.skus_incluidos, v_result.valor_total)
+  );
+
+  RETURN QUERY SELECT true, v_motivo, v_result.pedidos_gerados, v_result.skus_incluidos, v_result.valor_total;
+END;
+$_$;
+
+
+--
+-- Name: converter_sugestao_em_campanha_flat(bigint, numeric, numeric, text, date, text, text, text); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.converter_sugestao_em_campanha_flat(p_sugestao_id bigint, p_desconto_perc numeric, p_volume_minimo numeric, p_volume_unidade text, p_data_fim date, p_responsavel_nome text DEFAULT NULL::text, p_canal text DEFAULT 'ligacao'::text, p_observacoes text DEFAULT NULL::text) RETURNS bigint
+    LANGUAGE plpgsql SECURITY DEFINER
+    SET search_path TO 'public'
+    AS $$
+DECLARE
+  v_sugestao record;
+  v_campanha_id bigint;
+BEGIN
+  IF auth.uid() IS NULL OR NOT (public.has_role(auth.uid(), 'employee'::app_role) OR public.has_role(auth.uid(), 'master'::app_role)) THEN
+    RAISE EXCEPTION 'Acesso negado: requer perfil staff' USING ERRCODE = '42501';
+  END IF;
+  SELECT * INTO v_sugestao FROM sugestao_negociacao_paralela WHERE id = p_sugestao_id;
+  IF NOT FOUND THEN RAISE EXCEPTION 'Sugestão % não encontrada', p_sugestao_id; END IF;
+  INSERT INTO promocao_campanha (
+    empresa, fornecedor_nome, nome, tipo_origem, estado,
+    data_inicio, data_fim, data_corte_pedido, data_corte_faturamento,
+    responsavel_oferta_nome, canal_oferta, data_oferta,
+    volume_minimo_condicional, volume_minimo_unidade,
+    status_aceite, observacoes_negociacao, permite_pedido_oportunidade
+  ) VALUES (
+    v_sugestao.empresa, 'RENNER SAYERLACK S/A',
+    format('Desconto Flat Condicional - %s', v_sugestao.sku_codigo_omie),
+    'desconto_flat_condicional', 'negociando',
+    CURRENT_DATE, p_data_fim, p_data_fim,
+    (date_trunc('month', p_data_fim) + interval '2 months - 1 day')::date,
+    p_responsavel_nome, p_canal, CURRENT_DATE,
+    p_volume_minimo, p_volume_unidade,
+    'aceita', p_observacoes, false
+  ) RETURNING id INTO v_campanha_id;
+  INSERT INTO promocao_item (
+    campanha_id, sku_codigo_omie, sku_descricao_extraido,
+    desconto_base_perc, mapeamento_confianca, mapeamento_origem, ativo
+  ) VALUES (
+    v_campanha_id, v_sugestao.sku_codigo_omie, v_sugestao.sku_descricao,
+    p_desconto_perc, 1.0, 'sugestao_sistema', true
+  );
+  UPDATE sugestao_negociacao_paralela
+  SET status = 'fechada_desconto', campanha_id_gerada = v_campanha_id,
+      data_acao = now(), observacoes = p_observacoes, atualizado_em = now()
+  WHERE id = p_sugestao_id;
+  RETURN v_campanha_id;
+END;
+$$;
+
+
+--
+-- Name: des_data_faturamento_prevista(date, text, text); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.des_data_faturamento_prevista(p_data_emissao date, p_grupo_codigo text, p_empresa text DEFAULT 'OBEN'::text) RETURNS date
+    LANGUAGE sql STABLE
+    SET search_path TO 'public', 'pg_temp'
+    AS $$
+  -- Retorna data_emissao + lt_producao_dias úteis do grupo, aproximado como dias corridos * 1.4
+  -- Para aproximação mais precisa, usaria função de dia útil mas isso exige tabela de feriados.
+  -- O fator 1.4 assume ~5 dias úteis por 7 dias corridos.
+  SELECT (p_data_emissao + (COALESCE(fgp.lt_producao_dias, 8) * 1.4)::int * INTERVAL '1 day')::date
+  FROM fornecedor_grupo_producao fgp
+  WHERE fgp.grupo_codigo = p_grupo_codigo
+    AND fgp.empresa = p_empresa
+  LIMIT 1;
+$$;
+
+
+--
+-- Name: des_determinar_faixa(numeric, text); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.des_determinar_faixa(p_valor numeric, p_versao text DEFAULT '2026'::text) RETURNS TABLE(faixa_id bigint, faixa_numero integer, estrelas integer, desconto_padrao_perc numeric, volume_min numeric, volume_max numeric)
+    LANGUAGE sql STABLE
+    SET search_path TO 'public', 'pg_temp'
+    AS $$
+  SELECT 
+    fq.id,
+    fq.faixa_numero,
+    fq.estrelas,
+    fq.desconto_padrao_perc,
+    fq.volume_min,
+    fq.volume_max
+  FROM des_faixa_quantitativa fq
+  JOIN des_contrato_versao cv ON cv.id = fq.contrato_versao_id
+  WHERE cv.versao = p_versao
+    AND p_valor >= fq.volume_min
+    AND (fq.volume_max IS NULL OR p_valor <= fq.volume_max)
+  LIMIT 1;
+$$;
+
+
+--
+-- Name: detectar_outliers_empresa(text); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.detectar_outliers_empresa(p_empresa text DEFAULT 'OBEN'::text) RETURNS TABLE(tipo text, novos_eventos integer, eventos_criticos integer)
+    LANGUAGE plpgsql
+    SET search_path TO 'public', 'pg_temp'
+    AS $$
+DECLARE
+  v_venda_novos INT := 0;
+  v_venda_criticos INT := 0;
+  v_lt_novos INT := 0;
+  v_lt_criticos INT := 0;
+BEGIN
+  -- TIPO 1: VENDAS ATÍPICAS
+  WITH estatisticas AS (
+    SELECT 
+      empresa::text as empresa,
+      sku_codigo_omie::text as sku_codigo_omie,
+      AVG(quantidade) as media_qtde_por_venda,
+      STDDEV_SAMP(quantidade) as desvio_qtde_por_venda
+    FROM venda_items_history
+    WHERE data_emissao >= CURRENT_DATE - INTERVAL '180 days' AND quantidade > 0
+    GROUP BY empresa::text, sku_codigo_omie::text
+    HAVING COUNT(*) >= 5
+  ),
+  vendas_anomalas AS (
+    SELECT 
+      v.empresa::text as empresa,
+      v.sku_codigo_omie::text as sku_codigo_omie,
+      v.data_emissao::date as data_evento,
+      v.nfe_chave_acesso::text as nfe_chave_acesso,
+      v.quantidade,
+      e.media_qtde_por_venda, e.desvio_qtde_por_venda,
+      (v.quantidade - e.media_qtde_por_venda) / NULLIF(e.desvio_qtde_por_venda, 0) as z
+    FROM venda_items_history v
+    JOIN estatisticas e 
+      ON e.empresa = v.empresa::text 
+      AND e.sku_codigo_omie = v.sku_codigo_omie::text
+    WHERE v.empresa::text = p_empresa
+      AND v.data_emissao >= CURRENT_DATE - INTERVAL '180 days'
+      AND v.quantidade > 0
+      AND e.desvio_qtde_por_venda > 0
+      AND (v.quantidade - e.media_qtde_por_venda) / e.desvio_qtde_por_venda > 3
+  ),
+  para_inserir AS (
+    SELECT va.*
+    FROM vendas_anomalas va
+    WHERE NOT EXISTS (
+      SELECT 1 FROM eventos_outlier eo
+      WHERE eo.empresa = va.empresa
+        AND eo.sku_codigo_omie = va.sku_codigo_omie
+        AND eo.data_evento = va.data_evento
+        AND eo.tipo = 'venda_atipica'
+        AND eo.detalhes->>'nfe' = va.nfe_chave_acesso
+    )
+    AND NOT EXISTS (
+      SELECT 1 FROM observacoes_excluidas oe
+      WHERE oe.empresa = va.empresa
+        AND oe.sku_codigo_omie = va.sku_codigo_omie
+        AND oe.tipo_observacao = 'venda'
+        AND oe.referencia_original = va.nfe_chave_acesso
+    )
+  ),
+  inseridos AS (
+    INSERT INTO eventos_outlier (
+      empresa, sku_codigo_omie, sku_descricao,
+      tipo, severidade, data_evento, valor_observado, valor_esperado,
+      desvios_padrao, detalhes
+    )
+    SELECT 
+      pi.empresa, pi.sku_codigo_omie,
+      (SELECT MAX(sku_descricao) FROM venda_items_history 
+       WHERE sku_codigo_omie::text = pi.sku_codigo_omie),
+      'venda_atipica',
+      CASE WHEN pi.z > 5 THEN 'critico' WHEN pi.z > 4 THEN 'atencao' ELSE 'info' END,
+      pi.data_evento, pi.quantidade,
+      ROUND(pi.media_qtde_por_venda, 2), ROUND(pi.z, 2),
+      jsonb_build_object(
+        'nfe', pi.nfe_chave_acesso,
+        'desvio_qtde', pi.desvio_qtde_por_venda,
+        'mensagem', 'Venda de ' || pi.quantidade || ' unidades em 1 pedido. Média histórica por pedido: ' 
+                    || ROUND(pi.media_qtde_por_venda, 1) || ' (± ' || ROUND(pi.desvio_qtde_por_venda, 1) || ')'
+      )
+    FROM para_inserir pi
+    RETURNING severidade
+  )
+  SELECT COUNT(*), COUNT(*) FILTER (WHERE severidade = 'critico')
+  INTO v_venda_novos, v_venda_criticos
+  FROM inseridos;
+
+  -- TIPO 2: LT ATÍPICOS (com casts corretos)
+  WITH estatisticas_lt AS (
+    SELECT 
+      empresa::text as empresa,
+      sku_codigo_omie::text as sku_codigo_omie,
+      AVG(lt_bruto_dias_uteis) as lt_medio,
+      STDDEV_SAMP(lt_bruto_dias_uteis) as lt_desvio
+    FROM sku_leadtime_history
+    WHERE lt_bruto_dias_uteis IS NOT NULL
+    GROUP BY empresa::text, sku_codigo_omie::text
+    HAVING COUNT(*) >= 3
+  ),
+  lts_anomalos AS (
+    SELECT 
+      h.empresa::text as empresa,
+      h.sku_codigo_omie::text as sku_codigo_omie,
+      h.tracking_id::text as tracking_id,   -- cast uuid→text
+      h.t4_data_recebimento::date as data_evento,
+      h.lt_bruto_dias_uteis,
+      e.lt_medio, e.lt_desvio,
+      (h.lt_bruto_dias_uteis - e.lt_medio) / NULLIF(e.lt_desvio, 0) as z
+    FROM sku_leadtime_history h
+    JOIN estatisticas_lt e 
+      ON e.empresa = h.empresa::text 
+      AND e.sku_codigo_omie = h.sku_codigo_omie::text
+    WHERE h.empresa::text = p_empresa
+      AND h.lt_bruto_dias_uteis IS NOT NULL
+      AND e.lt_desvio > 0
+      AND (h.lt_bruto_dias_uteis - e.lt_medio) / e.lt_desvio > 2
+  ),
+  para_inserir_lt AS (
+    SELECT la.*
+    FROM lts_anomalos la
+    WHERE NOT EXISTS (
+      SELECT 1 FROM eventos_outlier eo
+      WHERE eo.empresa = la.empresa
+        AND eo.sku_codigo_omie = la.sku_codigo_omie
+        AND eo.tipo = 'lt_atipico'
+        AND eo.detalhes->>'tracking_id' = la.tracking_id
+    )
+    AND NOT EXISTS (
+      SELECT 1 FROM observacoes_excluidas oe
+      WHERE oe.empresa = la.empresa
+        AND oe.sku_codigo_omie = la.sku_codigo_omie
+        AND oe.tipo_observacao = 'lt'
+        AND oe.referencia_original = la.tracking_id
+    )
+  ),
+  inseridos_lt AS (
+    INSERT INTO eventos_outlier (
+      empresa, sku_codigo_omie, sku_descricao,
+      tipo, severidade, data_evento, valor_observado, valor_esperado,
+      desvios_padrao, detalhes
+    )
+    SELECT 
+      pi.empresa, pi.sku_codigo_omie,
+      (SELECT MAX(sku_descricao) FROM venda_items_history 
+       WHERE sku_codigo_omie::text = pi.sku_codigo_omie),
+      'lt_atipico',
+      CASE WHEN pi.z > 4 THEN 'critico' WHEN pi.z > 3 THEN 'atencao' ELSE 'info' END,
+      pi.data_evento, pi.lt_bruto_dias_uteis,
+      ROUND(pi.lt_medio, 1), ROUND(pi.z, 2),
+      jsonb_build_object(
+        'tracking_id', pi.tracking_id,
+        'lt_desvio', pi.lt_desvio,
+        'mensagem', 'Pedido chegou em ' || pi.lt_bruto_dias_uteis || ' dias úteis. '
+                    || 'Média histórica: ' || ROUND(pi.lt_medio, 1) || ' (± ' || ROUND(pi.lt_desvio, 1) || ')'
+      )
+    FROM para_inserir_lt pi
+    RETURNING severidade
+  )
+  SELECT COUNT(*), COUNT(*) FILTER (WHERE severidade = 'critico')
+  INTO v_lt_novos, v_lt_criticos
+  FROM inseridos_lt;
+
+  RETURN QUERY
+  SELECT 'venda_atipica'::text, v_venda_novos, v_venda_criticos
+  UNION ALL
+  SELECT 'lt_atipico'::text, v_lt_novos, v_lt_criticos;
+END;
+$$;
+
+
+--
+-- Name: detectar_skus_sem_grupo(text); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.detectar_skus_sem_grupo(p_empresa text DEFAULT 'OBEN'::text) RETURNS integer
+    LANGUAGE plpgsql SECURITY DEFINER
+    SET search_path TO 'public'
+    AS $$
+DECLARE
+  v_inseridos integer := 0;
+BEGIN
+  WITH fornecedores_com_grupos AS (
+    SELECT DISTINCT fornecedor_nome
+    FROM fornecedor_grupo_producao
+    WHERE empresa = p_empresa
+  ),
+  inseridos AS (
+    INSERT INTO eventos_outlier (
+      empresa, sku_codigo_omie, sku_descricao,
+      tipo, severidade, data_evento, detalhes
+    )
+    SELECT
+      sp.empresa,
+      sp.sku_codigo_omie::text,
+      sp.sku_descricao,
+      'sku_sem_grupo',
+      'atencao',
+      CURRENT_DATE,
+      jsonb_build_object(
+        'fornecedor', sp.fornecedor_nome,
+        'mensagem', 'SKU novo detectado. Classifique em um grupo de produção antes do próximo ciclo de reposição.'
+      )
+    FROM sku_parametros sp
+    JOIN fornecedores_com_grupos fcg ON fcg.fornecedor_nome = sp.fornecedor_nome
+    WHERE sp.empresa = p_empresa
+      AND NOT EXISTS (
+        SELECT 1 FROM sku_grupo_producao sg
+        WHERE sg.empresa = sp.empresa
+          AND sg.sku_codigo_omie = sp.sku_codigo_omie::text
+      )
+      AND NOT EXISTS (
+        SELECT 1 FROM eventos_outlier eo
+        WHERE eo.empresa = sp.empresa
+          AND eo.sku_codigo_omie = sp.sku_codigo_omie::text
+          AND eo.tipo = 'sku_sem_grupo'
+          AND eo.status = 'pendente'
+      )
+    RETURNING 1
+  )
+  SELECT COUNT(*) INTO v_inseridos FROM inseridos;
+
+  RETURN v_inseridos;
+END;
+$$;
+
+
+--
+-- Name: dias_uteis_entre(timestamp with time zone, timestamp with time zone); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.dias_uteis_entre(inicio timestamp with time zone, fim timestamp with time zone) RETURNS integer
+    LANGUAGE plpgsql IMMUTABLE
+    SET search_path TO 'public', 'pg_temp'
+    AS $$
+DECLARE
+  total integer := 0;
+  cursor_dia date;
+  ultimo_dia date;
+BEGIN
+  IF inicio IS NULL OR fim IS NULL OR fim < inicio THEN
+    RETURN NULL;
+  END IF;
+
+  cursor_dia := inicio::date;
+  ultimo_dia := fim::date;
+
+  WHILE cursor_dia <= ultimo_dia LOOP
+    -- EXTRACT(DOW): 0=domingo, 6=sábado
+    IF EXTRACT(DOW FROM cursor_dia) NOT IN (0, 6) THEN
+      total := total + 1;
+    END IF;
+    cursor_dia := cursor_dia + interval '1 day';
+  END LOOP;
+
+  -- Ajuste: não conta o dia de início se a contagem começou
+  -- (convenção: lead time = dias transcorridos, não incluindo o dia inicial)
+  RETURN GREATEST(total - 1, 0);
+END;
+$$;
+
+
+--
+-- Name: FUNCTION dias_uteis_entre(inicio timestamp with time zone, fim timestamp with time zone); Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON FUNCTION public.dias_uteis_entre(inicio timestamp with time zone, fim timestamp with time zone) IS 'Dias úteis entre duas datas. Fase 1 expandirá para considerar feriados BR/MG/Divinópolis.';
+
+
+--
+-- Name: enqueue_score_recalc_from_call(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.enqueue_score_recalc_from_call() RETURNS trigger
+    LANGUAGE plpgsql SECURITY DEFINER
+    SET search_path TO 'public'
+    AS $$
+BEGIN
+  IF NEW.customer_user_id IS NOT NULL
+     AND NEW.entities_extracted IS NOT NULL
+     AND jsonb_typeof(NEW.entities_extracted) = 'array'
+     AND jsonb_array_length(NEW.entities_extracted) > 0 THEN
+    INSERT INTO public.score_recalc_queue
+      (customer_user_id, farmer_id, reason, source_call_id)
+    VALUES
+      (NEW.customer_user_id, NEW.farmer_id, 'call_inserted', NEW.id)
+    ON CONFLICT (customer_user_id, farmer_id) WHERE processed_at IS NULL DO NOTHING;
+  END IF;
+  RETURN NEW;
+END;
+$$;
+
+
+--
+-- Name: enqueue_visit_score_recalc_from_client_score(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.enqueue_visit_score_recalc_from_client_score() RETURNS trigger
+    LANGUAGE plpgsql SECURITY DEFINER
+    SET search_path TO 'public'
+    AS $$
+BEGIN
+  IF (NEW.priority_score    IS DISTINCT FROM OLD.priority_score
+      OR NEW.churn_risk      IS DISTINCT FROM OLD.churn_risk
+      OR NEW.expansion_score IS DISTINCT FROM OLD.expansion_score
+      OR NEW.signal_modifiers IS DISTINCT FROM OLD.signal_modifiers)
+     AND NEW.customer_user_id IS NOT NULL
+     AND NEW.farmer_id IS NOT NULL THEN
+    INSERT INTO public.visit_score_recalc_queue
+      (customer_user_id, farmer_id, reason)
+    VALUES
+      (NEW.customer_user_id, NEW.farmer_id, 'score_changed')
+    ON CONFLICT (customer_user_id, farmer_id) WHERE processed_at IS NULL DO NOTHING;
+  END IF;
+  RETURN NEW;
+END;
+$$;
+
+
+--
+-- Name: enqueue_visit_score_recalc_from_visit(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.enqueue_visit_score_recalc_from_visit() RETURNS trigger
+    LANGUAGE plpgsql SECURITY DEFINER
+    SET search_path TO 'public'
+    AS $$
+BEGIN
+  IF NEW.customer_user_id IS NOT NULL AND NEW.visited_by IS NOT NULL THEN
+    INSERT INTO public.visit_score_recalc_queue
+      (customer_user_id, farmer_id, reason, source_event_id)
+    VALUES
+      (NEW.customer_user_id, NEW.visited_by, 'visit_completed', NEW.id)
+    ON CONFLICT (customer_user_id, farmer_id) WHERE processed_at IS NULL DO NOTHING;
+  END IF;
+  RETURN NEW;
+END;
+$$;
+
+
+--
+-- Name: envio_portal_lock_candidatos(integer); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.envio_portal_lock_candidatos(p_max integer DEFAULT 5) RETURNS TABLE(id bigint, empresa text, fornecedor_nome text, status_envio_portal text, portal_tentativas integer, portal_protocolo text)
+    LANGUAGE plpgsql SECURITY DEFINER
+    SET search_path TO 'public'
+    AS $$
+BEGIN
+  IF auth.uid() IS NULL OR NOT (public.has_role(auth.uid(), 'employee'::app_role) OR public.has_role(auth.uid(), 'master'::app_role)) THEN
+    RAISE EXCEPTION 'Acesso negado: requer perfil staff' USING ERRCODE = '42501';
+  END IF;
+  RETURN QUERY
+  WITH candidatos AS (
+    SELECT p.id, p.status_envio_portal AS status_anterior
+    FROM public.pedido_compra_sugerido p
+    WHERE p.status = 'disparado'
+      AND p.status_envio_portal IN ('pendente_envio_portal','erro_retentavel')
+      AND COALESCE(p.portal_tentativas, 0) < 3
+      AND p.fornecedor_nome ILIKE '%SAYERLACK%' AND p.empresa = 'OBEN'
+      AND (p.portal_proximo_retry_em IS NULL OR p.portal_proximo_retry_em <= now())
+    ORDER BY p.aprovado_em ASC NULLS LAST, p.id ASC
+    LIMIT p_max FOR UPDATE SKIP LOCKED
+  ),
+  travados AS (
+    UPDATE public.pedido_compra_sugerido p
+    SET status_envio_portal = 'enviando_portal'
+    FROM candidatos c WHERE p.id = c.id
+    RETURNING p.id, p.empresa, p.fornecedor_nome, c.status_anterior AS status_envio_portal,
+              COALESCE(p.portal_tentativas, 0) AS portal_tentativas, p.portal_protocolo
+  )
+  SELECT t.id, t.empresa, t.fornecedor_nome, t.status_envio_portal, t.portal_tentativas, t.portal_protocolo FROM travados t;
+END; $$;
+
+
+--
+-- Name: estimar_impacto_exclusao_outlier(bigint); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.estimar_impacto_exclusao_outlier(p_evento_id bigint) RETURNS jsonb
+    LANGUAGE plpgsql SECURITY DEFINER
+    SET search_path TO 'public'
+    AS $$
+DECLARE
+  v_evento RECORD;
+  v_sigma_atual numeric;
+  v_media_atual numeric;
+  v_sigma_sem numeric;
+  v_media_sem numeric;
+  v_d numeric;
+  v_lt numeric;
+  v_z numeric := 1.65;
+  v_em_atual numeric;
+  v_em_sem numeric;
+BEGIN
+  IF auth.uid() IS NULL OR NOT (public.has_role(auth.uid(), 'employee'::app_role) OR public.has_role(auth.uid(), 'master'::app_role)) THEN
+    RAISE EXCEPTION 'Acesso negado: requer perfil staff' USING ERRCODE = '42501';
+  END IF;
+  SELECT * INTO v_evento FROM eventos_outlier WHERE id = p_evento_id;
+  IF NOT FOUND THEN
+    RETURN jsonb_build_object('error', 'Evento não encontrado');
+  END IF;
+
+  IF v_evento.tipo = 'venda_atipica' THEN
+    SELECT AVG(quantidade), STDDEV_SAMP(quantidade) INTO v_media_atual, v_sigma_atual
+    FROM venda_items_history
+    WHERE empresa::text = v_evento.empresa AND sku_codigo_omie::text = v_evento.sku_codigo_omie
+      AND data_emissao >= CURRENT_DATE - INTERVAL '180 days' AND quantidade > 0;
+    SELECT AVG(quantidade), STDDEV_SAMP(quantidade) INTO v_media_sem, v_sigma_sem
+    FROM venda_items_history
+    WHERE empresa::text = v_evento.empresa AND sku_codigo_omie::text = v_evento.sku_codigo_omie
+      AND data_emissao >= CURRENT_DATE - INTERVAL '180 days' AND quantidade > 0
+      AND NOT (data_emissao::date = v_evento.data_evento AND nfe_chave_acesso::text = COALESCE(v_evento.detalhes->>'nfe', ''));
+    SELECT demanda_media_diaria, lt_medio_dias_uteis INTO v_d, v_lt
+    FROM sku_parametros WHERE empresa = v_evento.empresa AND sku_codigo_omie::text = v_evento.sku_codigo_omie LIMIT 1;
+    v_d := COALESCE(v_d, v_media_atual);
+    v_lt := COALESCE(v_lt, 10);
+    v_em_atual := CEIL(v_z * COALESCE(v_sigma_atual, 0) * SQRT(v_lt));
+    v_em_sem := CEIL(v_z * COALESCE(v_sigma_sem, 0) * SQRT(v_lt));
+    RETURN jsonb_build_object(
+      'tipo', 'venda_atipica',
+      'sigma_atual', ROUND(COALESCE(v_sigma_atual, 0), 2),
+      'sigma_sem', ROUND(COALESCE(v_sigma_sem, 0), 2),
+      'media_atual', ROUND(COALESCE(v_media_atual, 0), 2),
+      'media_sem', ROUND(COALESCE(v_media_sem, 0), 2),
+      'em_atual', v_em_atual, 'em_sem', v_em_sem,
+      'delta_em', v_em_sem - v_em_atual, 'd', v_d, 'lt', v_lt
+    );
+  ELSE
+    SELECT AVG(lt_bruto_dias_uteis), STDDEV_SAMP(lt_bruto_dias_uteis) INTO v_media_atual, v_sigma_atual
+    FROM sku_leadtime_history WHERE empresa::text = v_evento.empresa AND sku_codigo_omie::text = v_evento.sku_codigo_omie;
+    SELECT AVG(lt_bruto_dias_uteis), STDDEV_SAMP(lt_bruto_dias_uteis) INTO v_media_sem, v_sigma_sem
+    FROM sku_leadtime_history WHERE empresa::text = v_evento.empresa AND sku_codigo_omie::text = v_evento.sku_codigo_omie
+      AND NOT (data_pedido::date = v_evento.data_evento);
+    RETURN jsonb_build_object(
+      'tipo', 'lt_atipico',
+      'sigma_atual', ROUND(COALESCE(v_sigma_atual, 0), 2),
+      'sigma_sem', ROUND(COALESCE(v_sigma_sem, 0), 2),
+      'media_atual', ROUND(COALESCE(v_media_atual, 0), 2),
+      'media_sem', ROUND(COALESCE(v_media_sem, 0), 2)
+    );
+  END IF;
+END;
+$$;
+
+
+--
+-- Name: expandir_promocao_item(bigint); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.expandir_promocao_item(p_item_id bigint) RETURNS jsonb
+    LANGUAGE plpgsql
+    SET search_path TO 'public', 'pg_temp'
+    AS $$
+DECLARE
+  v_item record;
+  v_variantes_count int;
+  v_variante record;
+  v_novos_ids bigint[] := ARRAY[]::bigint[];
+  v_novo_id bigint;
+BEGIN
+  -- Carrega item original
+  SELECT pi.*, pc.empresa
+  INTO v_item
+  FROM promocao_item pi
+  JOIN promocao_campanha pc ON pc.id = pi.campanha_id
+  WHERE pi.id = p_item_id;
+
+  IF NOT FOUND THEN
+    RETURN jsonb_build_object('erro', 'item_nao_encontrado', 'item_id', p_item_id);
+  END IF;
+
+  -- Protege contra expansão dupla
+  IF v_item.mapeamento_qualidade = 'expandido_origem' THEN
+    RETURN jsonb_build_object('erro', 'ja_expandido', 'item_id', p_item_id);
+  END IF;
+
+  IF v_item.confirmado = true AND v_item.sku_codigo_omie IS NOT NULL THEN
+    RETURN jsonb_build_object('erro', 'ja_confirmado', 'item_id', p_item_id);
+  END IF;
+
+  -- Conta variantes
+  SELECT COUNT(*) INTO v_variantes_count
+  FROM listar_skus_por_codigo_fornecedor(v_item.empresa, v_item.sku_codigo_fornecedor);
+
+  -- Zero variantes: marca como não encontrado
+  IF v_variantes_count = 0 THEN
+    UPDATE promocao_item 
+    SET mapeamento_qualidade = 'nao_encontrado',
+        sku_codigo_omie = NULL,
+        mapeamento_candidatos = NULL
+    WHERE id = p_item_id;
+    
+    RETURN jsonb_build_object(
+      'status', 'nao_encontrado',
+      'item_id', p_item_id,
+      'codigo_fornecedor', v_item.sku_codigo_fornecedor
+    );
+  END IF;
+
+  -- Uma variante: resolve in-place (não precisa expandir)
+  IF v_variantes_count = 1 THEN
+    SELECT * INTO v_variante
+    FROM listar_skus_por_codigo_fornecedor(v_item.empresa, v_item.sku_codigo_fornecedor)
+    LIMIT 1;
+
+    UPDATE promocao_item 
+    SET mapeamento_qualidade = 'unico',
+        sku_codigo_omie = v_variante.omie_codigo_produto,
+        descricao_produto_fornecedor = COALESCE(descricao_produto_fornecedor, v_variante.descricao),
+        confirmado = true,
+        mapeamento_candidatos = NULL
+    WHERE id = p_item_id;
+
+    RETURN jsonb_build_object(
+      'status', 'resolvido_unico',
+      'item_id', p_item_id,
+      'sku_codigo_omie', v_variante.omie_codigo_produto,
+      'descricao', v_variante.descricao
+    );
+  END IF;
+
+  -- Múltiplas variantes: expande criando N itens novos
+  FOR v_variante IN 
+    SELECT * FROM listar_skus_por_codigo_fornecedor(v_item.empresa, v_item.sku_codigo_fornecedor)
+  LOOP
+    INSERT INTO promocao_item (
+      campanha_id,
+      sku_codigo_fornecedor,
+      descricao_produto_fornecedor,
+      sku_codigo_omie,
+      mapeamento_qualidade,
+      mapeamento_candidatos,
+      desconto_perc,
+      volume_minimo,
+      confirmado,
+      ativo,
+      observacoes
+    ) VALUES (
+      v_item.campanha_id,
+      v_item.sku_codigo_fornecedor,
+      v_variante.descricao,
+      v_variante.omie_codigo_produto,
+      'expandido_automatico',
+      NULL,
+      v_item.desconto_perc,
+      v_item.volume_minimo,
+      true,  -- expansão é confirmada automaticamente
+      true,
+      COALESCE(v_item.observacoes, '') || 
+        ' [Expandido automaticamente do código ' || v_item.sku_codigo_fornecedor || 
+        ' — variante: ' || v_variante.descricao || ']'
+    )
+    ON CONFLICT (campanha_id, sku_codigo_fornecedor, volume_minimo) DO NOTHING
+    RETURNING id INTO v_novo_id;
+
+    IF v_novo_id IS NOT NULL THEN
+      v_novos_ids := array_append(v_novos_ids, v_novo_id);
+    END IF;
+  END LOOP;
+
+  -- Desativa o item original (marca como origem da expansão)
+  UPDATE promocao_item 
+  SET ativo = false,
+      mapeamento_qualidade = 'expandido_origem',
+      observacoes = COALESCE(observacoes, '') || 
+        ' [Item original — expandido em ' || array_length(v_novos_ids, 1) || ' variantes]'
+  WHERE id = p_item_id;
+
+  RETURN jsonb_build_object(
+    'status', 'expandido',
+    'item_id_original', p_item_id,
+    'variantes_criadas', array_length(v_novos_ids, 1),
+    'novos_ids', v_novos_ids
+  );
+END;
+$$;
+
+
+--
+-- Name: FUNCTION expandir_promocao_item(p_item_id bigint); Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON FUNCTION public.expandir_promocao_item(p_item_id bigint) IS 'Transforma um item com múltiplas variantes em N itens (um por variante de embalagem). Cenários: 0 matches = marca nao_encontrado. 1 match = resolve in-place. N matches = cria N novos itens, desativa o original. Idempotente.';
+
+
+--
+-- Name: expandir_promocao_item(bigint, numeric); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.expandir_promocao_item(p_item_id bigint, p_threshold_similaridade numeric DEFAULT 0.5) RETURNS jsonb
+    LANGUAGE plpgsql
+    SET search_path TO 'public', 'pg_temp'
+    AS $$
+DECLARE
+  v_item record;
+  v_variantes_count int;
+  v_variante record;
+  v_novos_ids bigint[] := ARRAY[]::bigint[];
+  v_novo_id bigint;
+  v_usou_similaridade boolean := false;
+  v_similar_max numeric;
+BEGIN
+  SELECT pi.*, pc.empresa INTO v_item
+  FROM promocao_item pi JOIN promocao_campanha pc ON pc.id = pi.campanha_id
+  WHERE pi.id = p_item_id;
+
+  IF NOT FOUND THEN
+    RETURN jsonb_build_object('erro', 'item_nao_encontrado', 'item_id', p_item_id);
+  END IF;
+  IF v_item.mapeamento_qualidade = 'expandido_origem' THEN
+    RETURN jsonb_build_object('erro', 'ja_expandido', 'item_id', p_item_id);
+  END IF;
+  IF v_item.confirmado = true AND v_item.sku_codigo_omie IS NOT NULL THEN
+    RETURN jsonb_build_object('erro', 'ja_confirmado', 'item_id', p_item_id);
+  END IF;
+
+  SELECT COUNT(*) INTO v_variantes_count
+  FROM listar_skus_por_codigo_fornecedor(v_item.empresa, v_item.sku_codigo_fornecedor);
+
+  IF v_variantes_count = 0 THEN
+    SELECT MAX(similarity(op.descricao, v_item.sku_codigo_fornecedor))
+    INTO v_similar_max
+    FROM omie_products op
+    WHERE LOWER(op.account) = LOWER(v_item.empresa) AND COALESCE(op.ativo, true) = true;
+
+    IF v_similar_max >= p_threshold_similaridade THEN
+      v_usou_similaridade := true;
+      SELECT COUNT(*) INTO v_variantes_count
+      FROM omie_products op
+      WHERE LOWER(op.account) = LOWER(v_item.empresa)
+        AND COALESCE(op.ativo, true) = true
+        AND similarity(op.descricao, v_item.sku_codigo_fornecedor) >= p_threshold_similaridade;
+    END IF;
+  END IF;
+
+  IF v_variantes_count = 0 THEN
+    UPDATE promocao_item 
+    SET mapeamento_qualidade = 'nao_encontrado',
+        sku_codigo_omie = NULL, mapeamento_candidatos = NULL
+    WHERE id = p_item_id;
+    RETURN jsonb_build_object(
+      'status', 'nao_encontrado', 'item_id', p_item_id,
+      'codigo_fornecedor', v_item.sku_codigo_fornecedor,
+      'melhor_similaridade', v_similar_max
+    );
+  END IF;
+
+  IF v_variantes_count = 1 THEN
+    IF v_usou_similaridade THEN
+      SELECT op.omie_codigo_produto, op.descricao, op.codigo INTO v_variante
+      FROM omie_products op
+      WHERE LOWER(op.account) = LOWER(v_item.empresa) AND COALESCE(op.ativo, true) = true
+        AND similarity(op.descricao, v_item.sku_codigo_fornecedor) >= p_threshold_similaridade
+      ORDER BY similarity(op.descricao, v_item.sku_codigo_fornecedor) DESC LIMIT 1;
+    ELSE
+      SELECT omie_codigo_produto, descricao, codigo_interno AS codigo INTO v_variante
+      FROM listar_skus_por_codigo_fornecedor(v_item.empresa, v_item.sku_codigo_fornecedor) LIMIT 1;
+    END IF;
+
+    UPDATE promocao_item 
+    SET mapeamento_qualidade = CASE WHEN v_usou_similaridade THEN 'unico_por_similaridade' ELSE 'unico' END,
+        sku_codigo_omie = v_variante.omie_codigo_produto,
+        descricao_produto_fornecedor = COALESCE(descricao_produto_fornecedor, v_variante.descricao),
+        confirmado = NOT v_usou_similaridade,
+        mapeamento_candidatos = NULL,
+        observacoes = CASE WHEN v_usou_similaridade THEN 
+          COALESCE(observacoes, '') || ' [Resolvido por similaridade — revisar]' ELSE observacoes END
+    WHERE id = p_item_id;
+
+    RETURN jsonb_build_object(
+      'status', CASE WHEN v_usou_similaridade THEN 'resolvido_por_similaridade' ELSE 'resolvido_unico' END,
+      'item_id', p_item_id,
+      'sku_codigo_omie', v_variante.omie_codigo_produto,
+      'descricao', v_variante.descricao
+    );
+  END IF;
+
+  FOR v_variante IN 
+    SELECT op.omie_codigo_produto, op.descricao, op.codigo AS codigo_interno
+    FROM omie_products op
+    WHERE LOWER(op.account) = LOWER(v_item.empresa) AND COALESCE(op.ativo, true) = true
+      AND (CASE WHEN v_usou_similaridade 
+                THEN similarity(op.descricao, v_item.sku_codigo_fornecedor) >= p_threshold_similaridade
+                ELSE op.descricao ILIKE '%' || v_item.sku_codigo_fornecedor || '%' END)
+    ORDER BY op.descricao
+  LOOP
+    INSERT INTO promocao_item (
+      campanha_id, sku_codigo_fornecedor, descricao_produto_fornecedor,
+      sku_codigo_omie, mapeamento_qualidade, mapeamento_candidatos,
+      desconto_perc, volume_minimo, confirmado, ativo, observacoes
+    ) VALUES (
+      v_item.campanha_id, v_item.sku_codigo_fornecedor, v_variante.descricao,
+      v_variante.omie_codigo_produto,
+      CASE WHEN v_usou_similaridade THEN 'expandido_por_similaridade' ELSE 'expandido_automatico' END,
+      NULL, v_item.desconto_perc, v_item.volume_minimo,
+      NOT v_usou_similaridade, true,
+      COALESCE(v_item.observacoes, '') || ' [Expandido' ||
+        CASE WHEN v_usou_similaridade THEN ' por similaridade' ELSE ' automaticamente' END ||
+        ' do código ' || v_item.sku_codigo_fornecedor || ' — variante: ' || v_variante.descricao || ']'
+    )
+    ON CONFLICT (campanha_id, sku_codigo_fornecedor, volume_minimo) DO NOTHING
+    RETURNING id INTO v_novo_id;
+    IF v_novo_id IS NOT NULL THEN
+      v_novos_ids := array_append(v_novos_ids, v_novo_id);
+    END IF;
+  END LOOP;
+
+  UPDATE promocao_item 
+  SET ativo = false, mapeamento_qualidade = 'expandido_origem',
+      observacoes = COALESCE(observacoes, '') || 
+        ' [Item original — expandido em ' || array_length(v_novos_ids, 1) || ' variantes' ||
+        CASE WHEN v_usou_similaridade THEN ' (similaridade)' ELSE '' END || ']'
+  WHERE id = p_item_id;
+
+  RETURN jsonb_build_object(
+    'status', CASE WHEN v_usou_similaridade THEN 'expandido_por_similaridade' ELSE 'expandido' END,
+    'item_id_original', p_item_id,
+    'variantes_criadas', array_length(v_novos_ids, 1),
+    'novos_ids', v_novos_ids,
+    'requer_revisao', v_usou_similaridade
+  );
+END;
+$$;
+
+
+--
+-- Name: fin_audit_trigger(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.fin_audit_trigger() RETURNS trigger
+    LANGUAGE plpgsql SECURITY DEFINER
+    SET search_path TO 'public'
+    AS $$
+DECLARE
+  v_changed jsonb := '{}'::jsonb;
+  v_origem  text  := COALESCE(current_setting('fin.origem', true), 'manual');
+  v_justif  text  := current_setting('fin.override_justificativa', true);
+  v_period  date;
+  v_row_id  text;
+  v_company text;
+BEGIN
+  IF TG_OP = 'UPDATE' THEN
+    SELECT jsonb_object_agg(key, jsonb_build_object('before', o_val, 'after', n_val))
+      INTO v_changed
+      FROM (
+        SELECT o.key, o.value AS o_val, n.value AS n_val
+          FROM jsonb_each(to_jsonb(OLD)) o
+          JOIN jsonb_each(to_jsonb(NEW)) n USING (key)
+         WHERE o.value IS DISTINCT FROM n.value
+      ) diffs;
+    IF v_changed IS NULL THEN
+      RETURN NEW;
+    END IF;
+  ELSIF TG_OP = 'INSERT' THEN
+    v_changed := to_jsonb(NEW);
+  ELSE
+    v_changed := to_jsonb(OLD);
+  END IF;
+
+  v_row_id := COALESCE(
+    (CASE TG_OP WHEN 'DELETE' THEN to_jsonb(OLD) ELSE to_jsonb(NEW) END)->>'id',
+    'unknown'
+  );
+
+  v_company := COALESCE(
+    (CASE TG_OP WHEN 'DELETE' THEN to_jsonb(OLD) ELSE to_jsonb(NEW) END)->>'company',
+    (CASE TG_OP WHEN 'DELETE' THEN to_jsonb(OLD) ELSE to_jsonb(NEW) END)->>'empresa_origem'
+  );
+
+  v_period := CASE TG_TABLE_NAME
+    WHEN 'fin_contas_receber'           THEN COALESCE((NEW).data_emissao, (OLD).data_emissao)
+    WHEN 'fin_contas_pagar'             THEN COALESCE((NEW).data_emissao, (OLD).data_emissao)
+    WHEN 'fin_movimentacoes'            THEN COALESCE((NEW).data_movimento, (OLD).data_movimento)
+    WHEN 'fin_categoria_dre_mapping'    THEN current_date
+    WHEN 'fin_orcamento'                THEN make_date(COALESCE((NEW).ano,(OLD).ano), COALESCE((NEW).mes,(OLD).mes), 1)
+    WHEN 'fin_fechamentos'              THEN make_date(COALESCE((NEW).ano,(OLD).ano), COALESCE((NEW).mes,(OLD).mes), 1)
+    WHEN 'fin_eliminacoes_intercompany' THEN current_date
+    ELSE current_date
+  END;
+
+  INSERT INTO fin_audit_log (
+    table_name, row_id, op, changed_fields, changed_by, company, origem, period_ref, override_justificativa
+  ) VALUES (
+    TG_TABLE_NAME, v_row_id, TG_OP, v_changed, auth.uid(), v_company, v_origem, v_period, v_justif
+  );
+
+  RETURN COALESCE(NEW, OLD);
+END $$;
+
+
+--
+-- Name: fin_calcular_confiabilidade(text, integer, integer); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.fin_calcular_confiabilidade(p_company text, p_ano integer, p_mes integer) RETURNS jsonb
+    LANGUAGE plpgsql SECURITY DEFINER
+    SET search_path TO 'public', 'pg_temp'
+    AS $$
+DECLARE
+  v_inicio date;
+  v_fim date;
+  v_result jsonb;
+  v_total_cr integer;
+  v_total_cp integer;
+  v_total_mov integer;
+  v_cr_sem_cat integer;
+  v_cp_sem_cat integer;
+  v_pct_conciliado numeric;
+  v_mov_sem_titulo integer;
+  v_dre_mapped integer;
+  v_dre_heuristic integer;
+  v_dre_total integer;
+  v_pct_valor_map numeric;
+  v_fech_status text;
+  v_fech_versao integer;
+  v_ultimo_sync timestamptz;
+BEGIN
+  v_inicio := make_date(p_ano, p_mes, 1);
+  v_fim := v_inicio + interval '1 month';
+
+  -- Contagens
+  SELECT COUNT(*) INTO v_total_cr FROM fin_contas_receber
+    WHERE company = p_company AND data_vencimento >= v_inicio AND data_vencimento < v_fim;
+  SELECT COUNT(*) INTO v_total_cp FROM fin_contas_pagar
+    WHERE company = p_company AND data_vencimento >= v_inicio AND data_vencimento < v_fim;
+  SELECT COUNT(*) INTO v_total_mov FROM fin_movimentacoes
+    WHERE company = p_company AND data_movimento >= v_inicio AND data_movimento < v_fim;
+
+  -- Sem categoria
+  SELECT COUNT(*) INTO v_cr_sem_cat FROM fin_contas_receber
+    WHERE company = p_company AND data_vencimento >= v_inicio AND data_vencimento < v_fim
+    AND (categoria_codigo IS NULL OR categoria_codigo = '');
+  SELECT COUNT(*) INTO v_cp_sem_cat FROM fin_contas_pagar
+    WHERE company = p_company AND data_vencimento >= v_inicio AND data_vencimento < v_fim
+    AND (categoria_codigo IS NULL OR categoria_codigo = '');
+
+  -- Conciliação
+  SELECT COALESCE(
+    100.0 * COUNT(*) FILTER (WHERE conciliado) / NULLIF(COUNT(*), 0), 0
+  ) INTO v_pct_conciliado FROM fin_movimentacoes
+    WHERE company = p_company AND data_movimento >= v_inicio AND data_movimento < v_fim;
+
+  SELECT COUNT(*) INTO v_mov_sem_titulo FROM fin_movimentacoes
+    WHERE company = p_company AND data_movimento >= v_inicio AND data_movimento < v_fim
+    AND omie_codigo_lancamento IS NULL;
+
+  -- DRE mapping coverage
+  SELECT
+    COUNT(*) FILTER (WHERE m.id IS NOT NULL),
+    COUNT(*) FILTER (WHERE m.id IS NULL),
+    COUNT(*)
+  INTO v_dre_mapped, v_dre_heuristic, v_dre_total
+  FROM (
+    SELECT DISTINCT categoria_codigo FROM fin_contas_receber
+      WHERE company = p_company AND data_vencimento >= v_inicio AND data_vencimento < v_fim AND categoria_codigo != ''
+    UNION
+    SELECT DISTINCT categoria_codigo FROM fin_contas_pagar
+      WHERE company = p_company AND data_vencimento >= v_inicio AND data_vencimento < v_fim AND categoria_codigo != ''
+  ) cats
+  LEFT JOIN fin_categoria_dre_mapping m
+    ON (m.company = p_company OR m.company = '_default') AND m.omie_codigo = cats.categoria_codigo;
+
+  -- Valor mapeado vs total
+  WITH vals AS (
+    SELECT categoria_codigo, SUM(valor_documento) AS val FROM fin_contas_receber
+      WHERE company = p_company AND data_vencimento >= v_inicio AND data_vencimento < v_fim GROUP BY 1
+    UNION ALL
+    SELECT categoria_codigo, SUM(valor_documento) AS val FROM fin_contas_pagar
+      WHERE company = p_company AND data_vencimento >= v_inicio AND data_vencimento < v_fim GROUP BY 1
+  )
+  SELECT COALESCE(
+    100.0 * SUM(CASE WHEN m.id IS NOT NULL THEN v.val ELSE 0 END) / NULLIF(SUM(v.val), 0), 0
+  ) INTO v_pct_valor_map
+  FROM vals v
+  LEFT JOIN fin_categoria_dre_mapping m
+    ON (m.company = p_company OR m.company = '_default') AND m.omie_codigo = v.categoria_codigo;
+
+  -- Fechamento
+  SELECT status, versao INTO v_fech_status, v_fech_versao
+  FROM fin_fechamentos
+  WHERE company = p_company AND ano = p_ano AND mes = p_mes
+  ORDER BY versao DESC LIMIT 1;
+
+  -- Último sync
+  SELECT MAX(completed_at) INTO v_ultimo_sync FROM fin_sync_log
+  WHERE p_company = ANY(companies) AND status = 'complete';
+
+  -- Upsert
+  INSERT INTO fin_confiabilidade (
+    company, ano, mes,
+    total_cr, total_cp, total_mov,
+    cr_sem_categoria, cp_sem_categoria,
+    pct_mov_conciliado, mov_sem_titulo,
+    dre_categorias_mapeadas, dre_categorias_heuristica, dre_categorias_total,
+    pct_valor_mapeado,
+    fechamento_status, fechamento_versao,
+    ultimo_sync, calculated_at
+  ) VALUES (
+    p_company, p_ano, p_mes,
+    v_total_cr, v_total_cp, v_total_mov,
+    v_cr_sem_cat, v_cp_sem_cat,
+    v_pct_conciliado, v_mov_sem_titulo,
+    v_dre_mapped, v_dre_heuristic, v_dre_total,
+    v_pct_valor_map,
+    COALESCE(v_fech_status, 'sem_fechamento'), COALESCE(v_fech_versao, 0),
+    v_ultimo_sync, now()
+  )
+  ON CONFLICT (company, ano, mes) DO UPDATE SET
+    total_cr = EXCLUDED.total_cr,
+    total_cp = EXCLUDED.total_cp,
+    total_mov = EXCLUDED.total_mov,
+    cr_sem_categoria = EXCLUDED.cr_sem_categoria,
+    cp_sem_categoria = EXCLUDED.cp_sem_categoria,
+    pct_mov_conciliado = EXCLUDED.pct_mov_conciliado,
+    mov_sem_titulo = EXCLUDED.mov_sem_titulo,
+    dre_categorias_mapeadas = EXCLUDED.dre_categorias_mapeadas,
+    dre_categorias_heuristica = EXCLUDED.dre_categorias_heuristica,
+    dre_categorias_total = EXCLUDED.dre_categorias_total,
+    pct_valor_mapeado = EXCLUDED.pct_valor_mapeado,
+    fechamento_status = EXCLUDED.fechamento_status,
+    fechamento_versao = EXCLUDED.fechamento_versao,
+    ultimo_sync = EXCLUDED.ultimo_sync,
+    calculated_at = now();
+
+  RETURN jsonb_build_object(
+    'company', p_company, 'ano', p_ano, 'mes', p_mes,
+    'total_cr', v_total_cr, 'total_cp', v_total_cp, 'total_mov', v_total_mov,
+    'pct_conciliado', v_pct_conciliado,
+    'pct_valor_mapeado', v_pct_valor_map,
+    'categorias_heuristica', v_dre_heuristic,
+    'fechamento', COALESCE(v_fech_status, 'sem_fechamento')
+  );
+END;
+$$;
+
+
+--
+-- Name: fin_categorias_sem_mapping(text, date, date); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.fin_categorias_sem_mapping(p_company text, p_start date, p_end date) RETURNS TABLE(omie_codigo text, categoria_nome text, valor_periodo numeric)
+    LANGUAGE sql STABLE SECURITY DEFINER
+    SET search_path TO 'public'
+    AS $$
+  WITH cat AS (
+    SELECT categoria_codigo AS omie_codigo,
+           categoria_descricao AS categoria_nome,
+           SUM(COALESCE(valor_documento,0)) AS valor
+      FROM fin_contas_receber
+     WHERE company = p_company AND data_emissao BETWEEN p_start AND p_end
+       AND categoria_codigo IS NOT NULL
+     GROUP BY 1, 2
+    UNION ALL
+    SELECT categoria_codigo, categoria_descricao, SUM(COALESCE(valor_documento,0))
+      FROM fin_contas_pagar
+     WHERE company = p_company AND data_emissao BETWEEN p_start AND p_end
+       AND categoria_codigo IS NOT NULL
+     GROUP BY 1, 2
+  ), aggregated AS (
+    SELECT omie_codigo, MAX(categoria_nome) AS categoria_nome, SUM(valor) AS valor_periodo
+      FROM cat GROUP BY omie_codigo
+  )
+  SELECT a.omie_codigo, a.categoria_nome, a.valor_periodo
+    FROM aggregated a
+    LEFT JOIN fin_categoria_dre_mapping m
+      ON (m.company = p_company OR m.company = '_default')
+     AND m.omie_codigo = a.omie_codigo
+   WHERE m.id IS NULL
+     AND a.valor_periodo > 0
+   ORDER BY a.valor_periodo DESC;
+$$;
+
+
+--
+-- Name: fin_check_mapping_complete_trigger(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.fin_check_mapping_complete_trigger() RETURNS trigger
+    LANGUAGE plpgsql SECURITY DEFINER
+    SET search_path TO 'public'
+    AS $$
+DECLARE
+  v_pendentes jsonb;
+  v_target_date date;
+BEGIN
+  IF (NEW.status <> 'fechado' OR NEW.aprovado_em IS NULL)
+     OR (OLD.status = 'fechado' AND OLD.aprovado_em IS NOT NULL) THEN
+    RETURN NEW;
+  END IF;
+
+  v_target_date := make_date(NEW.ano, NEW.mes, 1);
+
+  WITH categorias_periodo AS (
+    SELECT DISTINCT categoria_codigo AS omie_codigo, categoria_descricao AS nome
+      FROM fin_contas_receber
+     WHERE company = NEW.company
+       AND data_emissao >= v_target_date
+       AND data_emissao < (v_target_date + interval '1 month')
+       AND COALESCE(valor_documento, 0) > 0
+       AND categoria_codigo IS NOT NULL
+    UNION
+    SELECT DISTINCT categoria_codigo, categoria_descricao
+      FROM fin_contas_pagar
+     WHERE company = NEW.company
+       AND data_emissao >= v_target_date
+       AND data_emissao < (v_target_date + interval '1 month')
+       AND COALESCE(valor_documento, 0) > 0
+       AND categoria_codigo IS NOT NULL
+  ),
+  pendentes AS (
+    SELECT cp.omie_codigo, cp.nome
+      FROM categorias_periodo cp
+      LEFT JOIN fin_categoria_dre_mapping m
+        ON (m.company = NEW.company OR m.company = '_default')
+       AND m.omie_codigo = cp.omie_codigo
+     WHERE m.id IS NULL
+  )
+  SELECT jsonb_agg(jsonb_build_object('id', omie_codigo, 'nome', nome))
+    INTO v_pendentes FROM pendentes;
+
+  IF v_pendentes IS NOT NULL AND jsonb_array_length(v_pendentes) > 0 THEN
+    RAISE EXCEPTION 'MAPPING_INCOMPLETE: % categorias sem mapeamento DRE: %',
+      jsonb_array_length(v_pendentes), v_pendentes::text
+      USING ERRCODE = 'P0002';
+  END IF;
+
+  RETURN NEW;
+END $$;
+
+
+--
+-- Name: fin_consolidado_intercompany(integer, integer); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.fin_consolidado_intercompany(p_ano integer, p_mes integer) RETURNS TABLE(conta text, total_bruto numeric, eliminacoes numeric, total_consolidado numeric)
+    LANGUAGE sql STABLE SECURITY DEFINER
+    SET search_path TO 'public'
+    AS $$
+  WITH dre_all AS (
+    SELECT 'receita_bruta'::text AS conta, COALESCE(SUM(receita_bruta), 0) AS total
+      FROM fin_dre_snapshots
+     WHERE ano = p_ano AND mes = p_mes AND regime = 'competencia'
+    UNION ALL
+    SELECT 'cmv', COALESCE(SUM(cmv), 0)
+      FROM fin_dre_snapshots
+     WHERE ano = p_ano AND mes = p_mes AND regime = 'competencia'
+    UNION ALL
+    SELECT 'despesas_operacionais', COALESCE(SUM(despesas_operacionais), 0)
+      FROM fin_dre_snapshots
+     WHERE ano = p_ano AND mes = p_mes AND regime = 'competencia'
+    UNION ALL
+    SELECT 'resultado_liquido', COALESCE(SUM(resultado_liquido), 0)
+      FROM fin_dre_snapshots
+     WHERE ano = p_ano AND mes = p_mes AND regime = 'competencia'
+  ),
+  ic_elim AS (
+    SELECT COALESCE(SUM(CASE WHEN status IN ('auto_matched','manual_matched') THEN valor_origem ELSE 0 END), 0) AS valor_elim
+      FROM fin_ic_matches m
+      JOIN fin_contas_receber cr ON cr.id = m.cr_id
+     WHERE EXTRACT(YEAR FROM cr.data_emissao) = p_ano
+       AND EXTRACT(MONTH FROM cr.data_emissao) = p_mes
+  )
+  SELECT
+    d.conta,
+    d.total AS total_bruto,
+    CASE
+      WHEN d.conta = 'receita_bruta' THEN -(SELECT valor_elim FROM ic_elim)
+      WHEN d.conta = 'cmv'           THEN  (SELECT valor_elim FROM ic_elim)
+      ELSE 0
+    END AS eliminacoes,
+    d.total + CASE
+      WHEN d.conta = 'receita_bruta' THEN -(SELECT valor_elim FROM ic_elim)
+      WHEN d.conta = 'cmv'           THEN  (SELECT valor_elim FROM ic_elim)
+      ELSE 0
+    END AS total_consolidado
+  FROM dre_all d;
+$$;
+
+
+--
+-- Name: fin_estimar_estoque_omie(text); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.fin_estimar_estoque_omie(p_company text) RETURNS TABLE(valor_estimado numeric, cobertura_pct numeric, skus_total integer, skus_com_custo integer)
+    LANGUAGE sql STABLE SECURITY DEFINER
+    SET search_path TO 'public'
+    AS $$
+  WITH est AS (
+    SELECT s.sku_codigo_omie, s.estoque_fisico,
+           pc.cost_price AS custo
+      FROM sku_estoque_atual s
+      LEFT JOIN product_costs pc ON pc.product_id::text = s.sku_codigo_omie
+     WHERE s.empresa = p_company AND COALESCE(s.estoque_fisico,0) > 0
+  )
+  SELECT
+    COALESCE(SUM(CASE WHEN custo > 0 THEN estoque_fisico * custo ELSE 0 END), 0) AS valor_estimado,
+    CASE WHEN COUNT(*) = 0 THEN 0
+         ELSE ROUND(100.0 * COUNT(*) FILTER (WHERE custo > 0) / COUNT(*), 2) END AS cobertura_pct,
+    COUNT(*)::int AS skus_total,
+    COUNT(*) FILTER (WHERE custo > 0)::int AS skus_com_custo
+  FROM est;
+$$;
+
+
+--
+-- Name: fin_period_lock_trigger(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.fin_period_lock_trigger() RETURNS trigger
+    LANGUAGE plpgsql SECURITY DEFINER
+    SET search_path TO 'public'
+    AS $$
+DECLARE
+  v_target_date date;
+  v_target_company text;
+  v_last_closed_year int;
+  v_last_closed_month int;
+  v_last_closed_date date;
+  v_has_override boolean;
+  v_bypass text := current_setting('fin.bypass_lock', true);
+BEGIN
+  IF v_bypass = 'true' THEN RETURN COALESCE(NEW, OLD); END IF;
+  v_target_company := COALESCE(
+    (CASE TG_OP WHEN 'DELETE' THEN to_jsonb(OLD) ELSE to_jsonb(NEW) END)->>'company'
+  );
+  v_target_date := CASE TG_TABLE_NAME
+    WHEN 'fin_contas_receber'        THEN COALESCE((NEW).data_emissao, (OLD).data_emissao)
+    WHEN 'fin_contas_pagar'          THEN COALESCE((NEW).data_emissao, (OLD).data_emissao)
+    WHEN 'fin_movimentacoes'         THEN COALESCE((NEW).data_movimento, (OLD).data_movimento)
+    WHEN 'fin_categoria_dre_mapping' THEN current_date
+    WHEN 'fin_orcamento'             THEN make_date(COALESCE((NEW).ano,(OLD).ano), COALESCE((NEW).mes,(OLD).mes), 1)
+    WHEN 'fin_eventos_recorrentes'   THEN COALESCE((NEW).inicio, (OLD).inicio)
+    WHEN 'fin_eventos_eventuais'     THEN COALESCE((NEW).data_prevista, (OLD).data_prevista)
+    WHEN 'fin_estoque_valor'         THEN COALESCE((NEW).data_ref, (OLD).data_ref)
+  END;
+  IF TG_OP = 'INSERT' AND TG_TABLE_NAME IN (
+    'fin_categoria_dre_mapping','fin_eventos_recorrentes','fin_eventos_eventuais','fin_estoque_valor'
+  ) THEN RETURN NEW; END IF;
+  IF v_target_date IS NULL OR v_target_company IS NULL THEN RETURN COALESCE(NEW, OLD); END IF;
+  SELECT ano, mes INTO v_last_closed_year, v_last_closed_month
+    FROM fin_fechamentos WHERE company = v_target_company AND status='fechado' AND aprovado_em IS NOT NULL
+    ORDER BY ano DESC, mes DESC LIMIT 1;
+  IF v_last_closed_year IS NULL THEN RETURN COALESCE(NEW, OLD); END IF;
+  v_last_closed_date := (make_date(v_last_closed_year, v_last_closed_month, 1) + interval '1 month - 1 day')::date;
+  IF v_target_date > v_last_closed_date THEN RETURN COALESCE(NEW, OLD); END IF;
+  SELECT EXISTS(
+    SELECT 1 FROM fin_period_overrides
+     WHERE company = v_target_company
+       AND ano = EXTRACT(YEAR FROM v_target_date)::int
+       AND mes = EXTRACT(MONTH FROM v_target_date)::int
+       AND expires_at > now() AND closed_at IS NULL AND opened_by = auth.uid()
+  ) INTO v_has_override;
+  IF v_has_override THEN RETURN COALESCE(NEW, OLD); END IF;
+  RAISE EXCEPTION 'PERIOD_LOCKED: Período %/% da empresa % está fechado em %. Use override de emergência.',
+    LPAD(EXTRACT(MONTH FROM v_target_date)::text, 2, '0'),
+    EXTRACT(YEAR FROM v_target_date), v_target_company, v_last_closed_date
+    USING ERRCODE = 'P0001';
+END $$;
+
+
+--
+-- Name: fin_projecao_13_semanas(text, numeric); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.fin_projecao_13_semanas(p_company text DEFAULT NULL::text, p_saldo_inicial numeric DEFAULT NULL::numeric) RETURNS TABLE(semana_inicio date, semana_fim date, semana_label text, entradas_previstas numeric, saidas_previstas numeric, fluxo_liquido numeric, saldo_projetado numeric)
+    LANGUAGE plpgsql STABLE SECURITY DEFINER
+    SET search_path TO 'public'
+    AS $$
+DECLARE
+  v_saldo numeric;
+  v_week_start date;
+  v_week_end date;
+BEGIN
+  IF auth.uid() IS NULL OR NOT (public.has_role(auth.uid(), 'employee'::app_role) OR public.has_role(auth.uid(), 'master'::app_role)) THEN
+    RAISE EXCEPTION 'Acesso negado: requer perfil staff' USING ERRCODE = '42501';
+  END IF;
+  IF p_saldo_inicial IS NOT NULL THEN
+    v_saldo := p_saldo_inicial;
+  ELSE
+    IF p_company IS NOT NULL THEN
+      SELECT COALESCE(SUM(saldo_atual), 0) INTO v_saldo FROM fin_contas_correntes WHERE company = p_company AND ativo;
+    ELSE
+      SELECT COALESCE(SUM(saldo_atual), 0) INTO v_saldo FROM fin_contas_correntes WHERE ativo;
+    END IF;
+  END IF;
+
+  FOR i IN 0..12 LOOP
+    v_week_start := date_trunc('week', CURRENT_DATE)::date + (i * 7);
+    v_week_end := v_week_start + 6;
+    SELECT COALESCE(SUM(valor_documento - COALESCE(valor_recebido, 0)), 0) INTO entradas_previstas
+    FROM fin_contas_receber
+    WHERE (p_company IS NULL OR company = p_company)
+      AND data_vencimento BETWEEN v_week_start AND v_week_end
+      AND status_titulo IN ('A VENCER','ATRASADO','VENCE HOJE');
+    SELECT COALESCE(SUM(valor_documento - COALESCE(valor_pago, 0)), 0) INTO saidas_previstas
+    FROM fin_contas_pagar
+    WHERE (p_company IS NULL OR company = p_company)
+      AND data_vencimento BETWEEN v_week_start AND v_week_end
+      AND status_titulo IN ('A VENCER','ATRASADO','VENCE HOJE');
+    fluxo_liquido := entradas_previstas - saidas_previstas;
+    v_saldo := v_saldo + fluxo_liquido;
+    semana_inicio := v_week_start;
+    semana_fim := v_week_end;
+    semana_label := to_char(v_week_start, 'DD/MM') || '-' || to_char(v_week_end, 'DD/MM');
+    saldo_projetado := v_saldo;
+    RETURN NEXT;
+  END LOOP;
+END;
+$$;
+
+
+--
+-- Name: fin_refresh_analise_dimensoes(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.fin_refresh_analise_dimensoes() RETURNS void
+    LANGUAGE plpgsql
+    SET search_path TO 'public', 'pg_temp'
+    AS $$
+BEGIN
+  REFRESH MATERIALIZED VIEW CONCURRENTLY fin_analise_cr_dimensoes;
+  REFRESH MATERIALIZED VIEW CONCURRENTLY fin_analise_cp_dimensoes;
+EXCEPTION WHEN OTHERS THEN
+  -- Concurrently requires unique index, fallback to full refresh
+  REFRESH MATERIALIZED VIEW fin_analise_cr_dimensoes;
+  REFRESH MATERIALIZED VIEW fin_analise_cp_dimensoes;
+END;
+$$;
+
+
+--
+-- Name: fin_user_can_access(text); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.fin_user_can_access(check_company text DEFAULT NULL::text) RETURNS boolean
+    LANGUAGE plpgsql STABLE SECURITY DEFINER
+    SET search_path TO 'public'
+    AS $$
+DECLARE v_perm RECORD;
+BEGIN
+  IF EXISTS (SELECT 1 FROM user_roles WHERE user_id = auth.uid() AND role IN ('master','employee')) THEN
+    RETURN true;
+  END IF;
+  SELECT * INTO v_perm FROM fin_permissoes WHERE user_id = auth.uid();
+  IF v_perm IS NULL THEN RETURN false; END IF;
+  IF check_company IS NULL THEN RETURN true; END IF;
+  RETURN v_perm.pode_ver_todas_empresas OR check_company = ANY(v_perm.empresas);
+END;
+$$;
+
+
+--
+-- Name: fornecedor_operacional(text, text, timestamp with time zone); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.fornecedor_operacional(p_empresa text, p_fornecedor text, p_timestamp timestamp with time zone DEFAULT now()) RETURNS TABLE(opera boolean, motivo text, calendario_validado boolean)
+    LANGUAGE plpgsql STABLE
+    SET search_path TO 'public', 'pg_temp'
+    AS $$
+DECLARE
+  v_data DATE := (p_timestamp AT TIME ZONE 'America/Sao_Paulo')::date;
+  v_hora TIME := (p_timestamp AT TIME ZONE 'America/Sao_Paulo')::time;
+  v_dia_semana INT := EXTRACT(DOW FROM v_data);
+  v_calendario RECORD;
+  v_eh_feriado BOOLEAN;
+BEGIN
+  SELECT EXISTS (SELECT 1 FROM calendario_feriados WHERE data = v_data) 
+  INTO v_eh_feriado;
+  
+  IF v_eh_feriado THEN 
+    RETURN QUERY SELECT false, 'Feriado nacional'::text, true;
+    RETURN;
+  END IF;
+  
+  SELECT * INTO v_calendario
+  FROM fornecedor_calendario_operacao
+  WHERE empresa = p_empresa 
+    AND fornecedor_nome = p_fornecedor
+    AND dia_semana = v_dia_semana;
+  
+  IF NOT FOUND THEN
+    RETURN QUERY SELECT true, 'Calendário não configurado'::text, false;
+    RETURN;
+  END IF;
+  
+  IF v_calendario.hora_abertura IS NULL THEN
+    RETURN QUERY SELECT false, 'Fornecedor não opera neste dia'::text, 
+                        v_calendario.validado_com_fornecedor;
+    RETURN;
+  END IF;
+  
+  IF v_hora BETWEEN v_calendario.hora_abertura AND v_calendario.hora_fechamento THEN
+    RETURN QUERY SELECT true, 'Dentro da janela operacional'::text,
+                        v_calendario.validado_com_fornecedor;
+  ELSE
+    RETURN QUERY SELECT false, 'Fora da janela operacional'::text,
+                        v_calendario.validado_com_fornecedor;
+  END IF;
+END;
+$$;
+
+
+--
+-- Name: fornecedor_polling_pendente(integer); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.fornecedor_polling_pendente(p_intervalo_min integer DEFAULT 60) RETURNS TABLE(config_id bigint, empresa text, fornecedor_nome text, remetente_email text, assunto_contem text[], assunto_suspensao text[], tipo_documento text, aceitar_pdf boolean, aceitar_imagem boolean, ultimo_email_processado_id text, notificar_email text, notificar_calendar_id text)
+    LANGUAGE sql STABLE
+    SET search_path TO 'public', 'pg_temp'
+    AS $$
+  SELECT 
+    id, empresa, fornecedor_nome, remetente_email,
+    assunto_contem, assunto_suspensao, tipo_documento,
+    aceitar_pdf, aceitar_imagem,
+    ultimo_email_processado_id,
+    notificar_email, notificar_calendar_id
+  FROM fornecedor_email_polling
+  WHERE ativo = true
+    AND (
+      ultimo_poll_em IS NULL 
+      OR ultimo_poll_em < (now() - (p_intervalo_min::text || ' minutes')::interval)
+    )
+  ORDER BY ultimo_poll_em NULLS FIRST;
+$$;
+
+
+--
+-- Name: generate_tool_internal_code(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.generate_tool_internal_code() RETURNS trigger
+    LANGUAGE plpgsql
+    SET search_path TO 'public'
+    AS $$
+DECLARE
+  category_prefix TEXT;
+  seq_num INTEGER;
+  new_code TEXT;
+BEGIN
+  -- Get first 3 chars of category name uppercased
+  SELECT UPPER(LEFT(REGEXP_REPLACE(name, '[^A-Za-z]', '', 'g'), 3))
+  INTO category_prefix
+  FROM public.tool_categories
+  WHERE id = NEW.tool_category_id;
+
+  IF category_prefix IS NULL OR category_prefix = '' THEN
+    category_prefix := 'FER';
+  END IF;
+
+  -- Count existing tools in this category for sequential numbering
+  SELECT COUNT(*) + 1
+  INTO seq_num
+  FROM public.user_tools
+  WHERE tool_category_id = NEW.tool_category_id;
+
+  new_code := category_prefix || '-' || LPAD(seq_num::TEXT, 4, '0');
+
+  -- Handle uniqueness conflicts
+  WHILE EXISTS (SELECT 1 FROM public.user_tools WHERE internal_code = new_code) LOOP
+    seq_num := seq_num + 1;
+    new_code := category_prefix || '-' || LPAD(seq_num::TEXT, 4, '0');
+  END LOOP;
+
+  NEW.internal_code := new_code;
+  RETURN NEW;
+END;
+$$;
+
+
+--
+-- Name: gerar_pedidos_oportunidade_ciclo(text, date, text[]); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.gerar_pedidos_oportunidade_ciclo(p_empresa text DEFAULT 'OBEN'::text, p_data_ciclo date DEFAULT CURRENT_DATE, p_cenarios text[] DEFAULT ARRAY['promo_flat'::text, 'promo_volume'::text, 'promo_e_aumento'::text, 'aumento_apenas'::text]) RETURNS TABLE(pedidos_gerados integer, skus_incluidos integer, valor_total numeric, economia_bruta numeric, cenarios_cobertos text[])
+    LANGUAGE plpgsql
+    SET search_path TO 'public', 'pg_temp'
+    AS $$
+DECLARE
+  v_pedidos int := 0;
+  v_skus int := 0;
+  v_valor numeric := 0;
+  v_economia numeric := 0;
+  v_cenarios_encontrados text[];
+BEGIN
+  -- Remove pedidos oportunidade pendentes do mesmo ciclo (idempotente)
+  DELETE FROM pedido_compra_sugerido
+  WHERE empresa = p_empresa
+    AND data_ciclo = p_data_ciclo
+    AND tipo_ciclo LIKE 'oportunidade_%'
+    AND status = 'pendente_aprovacao';
+
+  -- Identifica cenários presentes
+  SELECT array_agg(DISTINCT cenario) INTO v_cenarios_encontrados
+  FROM v_oportunidade_economica_hoje
+  WHERE empresa = p_empresa 
+    AND cenario = ANY(p_cenarios)
+    AND economia_bruta_estimada > 0;
+
+  -- Gera um pedido por (fornecedor, cenário_tipo)
+  -- cenário_tipo: 'promo' (inclui flat, volume, promo_e_aumento) ou 'aumento'
+  WITH oportunidades AS (
+    SELECT *,
+      CASE 
+        WHEN cenario IN ('promo_flat', 'promo_volume', 'promo_e_aumento') 
+          THEN 'oportunidade_promo'
+        ELSE 'oportunidade_aumento'
+      END AS tipo_ciclo_dest,
+      CASE 
+        WHEN cenario IN ('promo_flat', 'promo_volume', 'promo_e_aumento') 
+          THEN campanha_id
+        ELSE NULL
+      END AS evento_promo_id,
+      CASE 
+        WHEN cenario = 'aumento_apenas' 
+          THEN (aumentos_json -> 0 -> 0 ->> 'aumento_id')::bigint
+        ELSE NULL
+      END AS evento_aumento_id
+    FROM v_oportunidade_economica_hoje
+    WHERE empresa = p_empresa
+      AND cenario = ANY(p_cenarios)
+      AND economia_bruta_estimada > 0
+      AND qtde_oportunidade > 0
+  ),
+  pedidos_criados AS (
+    INSERT INTO pedido_compra_sugerido (
+      empresa, fornecedor_nome, grupo_codigo, data_ciclo,
+      horario_corte_planejado, valor_total, num_skus, status,
+      tipo_ciclo, origem_evento_id, origem_evento_tipo
+    )
+    SELECT 
+      o.empresa, 
+      o.fornecedor_nome,
+      NULL,  -- oportunidade não respeita grupo; é um pedido único por fornecedor
+      p_data_ciclo,
+      (p_data_ciclo + TIME '18:00')::timestamptz,
+      SUM(o.qtde_oportunidade * o.preco_item_eoq),
+      COUNT(*),
+      'pendente_aprovacao',
+      o.tipo_ciclo_dest,
+      COALESCE(o.evento_promo_id, o.evento_aumento_id),
+      CASE WHEN o.evento_promo_id IS NOT NULL THEN 'campanha_promocao' ELSE 'aumento_anunciado' END
+    FROM oportunidades o
+    GROUP BY o.empresa, o.fornecedor_nome, o.tipo_ciclo_dest, o.evento_promo_id, o.evento_aumento_id
+    RETURNING id, fornecedor_nome, tipo_ciclo, origem_evento_id, origem_evento_tipo
+  )
+  INSERT INTO pedido_compra_item (
+    pedido_id, sku_codigo_omie, sku_descricao,
+    estoque_atual, ponto_pedido, estoque_maximo,
+    qtde_sugerida, qtde_final, preco_unitario, valor_linha, primeira_compra,
+    modo_promocao, promocao_item_id, preco_sem_desconto, desconto_perc_aplicado,
+    economia_estimada_valor
+  )
+  SELECT 
+    pc.id,
+    o.sku_codigo_omie, 
+    o.sku_descricao,
+    NULL, NULL, NULL,  -- não aplicável em oportunidade
+    o.qtde_oportunidade, 
+    o.qtde_oportunidade,
+    o.preco_item_eoq * (1 - o.desconto_total_perc / 100),
+    o.qtde_oportunidade * o.preco_item_eoq * (1 - o.desconto_total_perc / 100),
+    false,
+    CASE 
+      WHEN o.cenario IN ('promo_flat') THEN 'flat'
+      WHEN o.cenario IN ('promo_volume', 'promo_e_aumento') THEN 'forward_buying'
+      ELSE NULL
+    END,
+    o.promo_item_id,
+    o.preco_item_eoq,
+    o.desconto_total_perc,
+    o.economia_bruta_estimada
+  FROM v_oportunidade_economica_hoje o
+  JOIN pedidos_criados pc ON (
+    pc.fornecedor_nome = o.fornecedor_nome
+    AND pc.tipo_ciclo = CASE 
+      WHEN o.cenario IN ('promo_flat', 'promo_volume', 'promo_e_aumento') 
+        THEN 'oportunidade_promo'
+      ELSE 'oportunidade_aumento'
+    END
+  )
+  WHERE o.empresa = p_empresa
+    AND o.cenario = ANY(p_cenarios)
+    AND o.economia_bruta_estimada > 0
+    AND o.qtde_oportunidade > 0;
+
+  -- Agrega retorno
+  SELECT 
+    COUNT(*),
+    COALESCE(SUM(num_skus), 0),
+    COALESCE(SUM(valor_total), 0)
+  INTO v_pedidos, v_skus, v_valor
+  FROM pedido_compra_sugerido
+  WHERE empresa = p_empresa 
+    AND data_ciclo = p_data_ciclo
+    AND tipo_ciclo LIKE 'oportunidade_%'
+    AND status = 'pendente_aprovacao';
+
+  SELECT COALESCE(SUM(economia_estimada_valor), 0)
+  INTO v_economia
+  FROM pedido_compra_item pci
+  JOIN pedido_compra_sugerido pcs ON pcs.id = pci.pedido_id
+  WHERE pcs.empresa = p_empresa 
+    AND pcs.data_ciclo = p_data_ciclo
+    AND pcs.tipo_ciclo LIKE 'oportunidade_%'
+    AND pcs.status = 'pendente_aprovacao';
+
+  RETURN QUERY SELECT v_pedidos, v_skus, v_valor, v_economia, v_cenarios_encontrados;
+END;
+$$;
+
+
+--
+-- Name: gerar_pedidos_sugeridos_ciclo(text, date); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.gerar_pedidos_sugeridos_ciclo(p_empresa text DEFAULT 'OBEN'::text, p_data_ciclo date DEFAULT CURRENT_DATE) RETURNS TABLE(pedidos_gerados integer, skus_incluidos integer, valor_total_ciclo numeric, bloqueados integer)
+    LANGUAGE plpgsql
+    SET search_path TO 'public', 'pg_temp'
+    SET statement_timeout TO '120s'
+    AS $$
+DECLARE
+  v_pedidos INT := 0;
+  v_skus INT := 0;
+  v_valor NUMERIC := 0;
+  v_bloqueados INT := 0;
+BEGIN
+  DELETE FROM pedido_compra_sugerido
+  WHERE empresa = p_empresa
+    AND data_ciclo = p_data_ciclo
+    AND status = 'pendente_aprovacao';
+
+  WITH em_transito AS (
+    SELECT pcs2.empresa, pci.sku_codigo_omie::text AS sku_codigo_omie, SUM(pci.qtde_final) AS qtde
+    FROM pedido_compra_item pci
+    JOIN pedido_compra_sugerido pcs2 ON pcs2.id = pci.pedido_id
+    WHERE pcs2.empresa = p_empresa
+      AND pcs2.status IN ('aprovado_aguardando_disparo','disparado','concluido_recebido')
+      AND pcs2.data_ciclo >= (p_data_ciclo - INTERVAL '7 days')
+    GROUP BY pcs2.empresa, pci.sku_codigo_omie
+  ),
+  preco_medio AS (
+    SELECT slh.empresa::text AS empresa, slh.sku_codigo_omie::text AS sku_codigo_omie,
+           AVG(slh.valor_total / NULLIF(slh.quantidade_recebida, 0)) AS preco_unitario, COUNT(*) AS n
+    FROM sku_leadtime_history slh
+    WHERE slh.quantidade_recebida > 0 AND slh.valor_total > 0
+    GROUP BY slh.empresa, slh.sku_codigo_omie
+  ),
+  skus_necessitando AS (
+    SELECT sp.empresa, sp.sku_codigo_omie::text AS sku_codigo_omie, sp.sku_descricao,
+      sp.fornecedor_nome, sg.grupo_codigo, sp.ponto_pedido, sp.estoque_maximo,
+      COALESCE(sea.estoque_fisico, 0) AS estoque_fisico,
+      COALESCE(sea.estoque_pendente_entrada, 0) AS estoque_pendente,
+      COALESCE(et.qtde, 0) AS qtde_em_transito_recente,
+      (COALESCE(sea.estoque_fisico, 0) + COALESCE(sea.estoque_pendente_entrada, 0) + COALESCE(et.qtde, 0)) AS estoque_efetivo,
+      (sp.estoque_maximo - (COALESCE(sea.estoque_fisico, 0) + COALESCE(sea.estoque_pendente_entrada, 0) + COALESCE(et.qtde, 0))) AS qtde_sugerida,
+      COALESCE(pm.preco_unitario, 0) AS preco_unitario,
+      (pm.n IS NULL) AS primeira_compra,
+      fh.horario_corte_pedido, fh.valor_maximo_mensal, fh.delta_max_perc
+    FROM sku_parametros sp
+    LEFT JOIN sku_grupo_producao sg ON sg.empresa = sp.empresa AND sg.sku_codigo_omie = sp.sku_codigo_omie::text
+    LEFT JOIN sku_estoque_atual sea ON sea.empresa = sp.empresa AND sea.sku_codigo_omie = sp.sku_codigo_omie::text
+    LEFT JOIN fornecedor_habilitado_reposicao fh ON fh.empresa = sp.empresa AND fh.fornecedor_nome = sp.fornecedor_nome
+    LEFT JOIN omie_products op ON op.omie_codigo_produto::text = sp.sku_codigo_omie::text
+    LEFT JOIN familia_nao_comprada fnc ON fnc.empresa = sp.empresa AND fnc.familia = op.familia
+    LEFT JOIN em_transito et ON et.empresa = sp.empresa AND et.sku_codigo_omie = sp.sku_codigo_omie::text
+    LEFT JOIN preco_medio pm ON pm.empresa = sp.empresa AND pm.sku_codigo_omie = sp.sku_codigo_omie::text
+    LEFT JOIN sku_status_omie sso ON sso.empresa = sp.empresa AND sso.sku_codigo_omie = sp.sku_codigo_omie::text
+    WHERE sp.empresa = p_empresa
+      AND sp.habilitado_reposicao_automatica = TRUE
+      AND COALESCE(sp.tipo_reposicao, 'automatica') = 'automatica'
+      AND fnc.id IS NULL
+      AND COALESCE(op.ativo, true) = true
+      AND COALESCE(sso.ativo_no_omie, true) = true
+      AND COALESCE(op.descricao, '') NOT ILIKE '%450ML'
+      AND sp.ponto_pedido IS NOT NULL
+      AND sp.estoque_maximo IS NOT NULL
+      AND (COALESCE(sea.estoque_fisico, 0) + COALESCE(sea.estoque_pendente_entrada, 0) + COALESCE(et.qtde, 0)) <= sp.ponto_pedido
+  ),
+  pedidos_por_fornecedor_grupo AS (
+    INSERT INTO pedido_compra_sugerido (
+      empresa, fornecedor_nome, grupo_codigo, data_ciclo,
+      horario_corte_planejado, valor_total, num_skus, status,
+      condicao_pagamento_codigo, condicao_pagamento_descricao,
+      num_parcelas, dias_parcelas, condicao_origem
+    )
+    SELECT sn.empresa, sn.fornecedor_nome, sn.grupo_codigo, p_data_ciclo,
+      (p_data_ciclo + MAX(sn.horario_corte_pedido))::timestamptz,
+      SUM(sn.qtde_sugerida * sn.preco_unitario), COUNT(*),
+      'pendente_aprovacao', '000', 'À Vista', 1, NULL, 'default_a_vista'
+    FROM skus_necessitando sn
+    WHERE sn.qtde_sugerida > 0
+    GROUP BY sn.empresa, sn.fornecedor_nome, sn.grupo_codigo
+    RETURNING id, fornecedor_nome, grupo_codigo
+  )
+  INSERT INTO pedido_compra_item (
+    pedido_id, sku_codigo_omie, sku_descricao,
+    estoque_atual, ponto_pedido, estoque_maximo,
+    qtde_sugerida, qtde_final, preco_unitario, valor_linha, primeira_compra
+  )
+  SELECT pfg.id, sn.sku_codigo_omie, sn.sku_descricao,
+    sn.estoque_efetivo, sn.ponto_pedido, sn.estoque_maximo,
+    sn.qtde_sugerida, sn.qtde_sugerida, sn.preco_unitario,
+    sn.qtde_sugerida * sn.preco_unitario, sn.primeira_compra
+  FROM skus_necessitando sn
+  JOIN pedidos_por_fornecedor_grupo pfg
+    ON pfg.fornecedor_nome = sn.fornecedor_nome
+   AND COALESCE(pfg.grupo_codigo,'') = COALESCE(sn.grupo_codigo,'');
+
+  SELECT COUNT(*), COALESCE(SUM(num_skus),0), COALESCE(SUM(valor_total),0)
+  INTO v_pedidos, v_skus, v_valor
+  FROM pedido_compra_sugerido
+  WHERE empresa = p_empresa AND data_ciclo = p_data_ciclo AND status = 'pendente_aprovacao';
+
+  RETURN QUERY SELECT v_pedidos, v_skus, v_valor, v_bloqueados;
+END;
+$$;
+
+
+--
+-- Name: get_commercial_role(uuid); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.get_commercial_role(_user_id uuid) RETURNS public.commercial_role
+    LANGUAGE sql STABLE SECURITY DEFINER
+    SET search_path TO 'public'
+    AS $$
+  SELECT commercial_role
+  FROM public.commercial_roles
+  WHERE user_id = _user_id
+  LIMIT 1
+$$;
+
+
+--
+-- Name: get_customer_metrics(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.get_customer_metrics() RETURNS TABLE(customer_user_id uuid, razao_social text, document text, ultima_compra_data timestamp with time zone, dias_desde_ultima_compra integer, pedidos_90d bigint, faturamento_90d numeric, ticket_medio_90d numeric, faturamento_prev_90d numeric, intervalo_medio_dias numeric, atraso_relativo numeric, is_cold_start boolean, calculated_at timestamp with time zone)
+    LANGUAGE sql STABLE SECURITY DEFINER
+    SET search_path TO 'public'
+    AS $$
+  SELECT * FROM public.customer_metrics_mv;
+$$;
+
+
+--
+-- Name: get_default_production_assignee(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.get_default_production_assignee() RETURNS text
+    LANGUAGE sql STABLE SECURITY DEFINER
+    SET search_path TO 'public'
+    AS $$
+  SELECT value FROM public.company_config WHERE key = 'default_production_assignee_id' LIMIT 1;
+$$;
+
+
+--
+-- Name: get_user_role(uuid); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.get_user_role(_user_id uuid) RETURNS public.app_role
+    LANGUAGE sql STABLE SECURITY DEFINER
+    SET search_path TO 'public'
+    AS $$ SELECT role FROM public.user_roles WHERE user_id = _user_id LIMIT 1 $$;
+
+
+--
+-- Name: has_role(uuid, public.app_role); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.has_role(_user_id uuid, _role public.app_role) RETURNS boolean
+    LANGUAGE sql STABLE SECURITY DEFINER
+    SET search_path TO 'public'
+    AS $$ SELECT EXISTS (SELECT 1 FROM public.user_roles WHERE user_id = _user_id AND role = _role) $$;
+
+
+--
+-- Name: import_tint_formulas(text, boolean, jsonb); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.import_tint_formulas(p_account text, p_personalizada boolean, p_rows jsonb) RETURNS jsonb
+    LANGUAGE plpgsql SECURITY DEFINER
+    SET search_path TO 'public'
+    AS $$
+DECLARE
+  r jsonb;
+  v_imported int := 0;
+  v_updated int := 0;
+  v_errors int := 0;
+  v_produto_id uuid;
+  v_base_id uuid;
+  v_emb_id uuid;
+  v_sub_id uuid;
+  v_sku_id uuid;
+  v_formula_id uuid;
+  v_corante_id uuid;
+  v_existing_formula_id uuid;
+  v_cor_key text;
+  v_i int;
+BEGIN
+  IF auth.uid() IS NULL OR NOT (public.has_role(auth.uid(), 'employee'::app_role) OR public.has_role(auth.uid(), 'master'::app_role)) THEN
+    RAISE EXCEPTION 'Acesso negado: requer perfil staff' USING ERRCODE = '42501';
+  END IF;
+  FOR r IN SELECT * FROM jsonb_array_elements(p_rows)
+  LOOP
+    BEGIN
+      INSERT INTO public.tint_produtos (account, cod_produto, descricao)
+      VALUES (p_account, r->>'cod_produto', COALESCE(r->>'produto', r->>'cod_produto'))
+      ON CONFLICT (account, cod_produto) DO NOTHING
+      RETURNING id INTO v_produto_id;
+      IF v_produto_id IS NULL THEN
+        SELECT id INTO v_produto_id FROM public.tint_produtos WHERE account = p_account AND cod_produto = r->>'cod_produto';
+      END IF;
+
+      INSERT INTO public.tint_bases (account, id_base_sayersystem, descricao)
+      VALUES (p_account, r->>'id_base', COALESCE(r->>'base', r->>'id_base'))
+      ON CONFLICT (account, id_base_sayersystem) DO NOTHING
+      RETURNING id INTO v_base_id;
+      IF v_base_id IS NULL THEN
+        SELECT id INTO v_base_id FROM public.tint_bases WHERE account = p_account AND id_base_sayersystem = r->>'id_base';
+      END IF;
+
+      INSERT INTO public.tint_embalagens (account, id_embalagem_sayersystem, descricao, volume_ml)
+      VALUES (p_account, r->>'id_embalagem', r->>'embalagem', COALESCE((r->>'embalagem_ml')::numeric, 0))
+      ON CONFLICT (account, id_embalagem_sayersystem) DO UPDATE SET volume_ml = EXCLUDED.volume_ml
+      RETURNING id INTO v_emb_id;
+      IF v_emb_id IS NULL THEN
+        SELECT id INTO v_emb_id FROM public.tint_embalagens WHERE account = p_account AND id_embalagem_sayersystem = r->>'id_embalagem';
+      END IF;
+
+      v_sub_id := NULL;
+      IF r->>'subcolecao' IS NOT NULL AND r->>'subcolecao' != '' THEN
+        INSERT INTO public.tint_subcolecoes (account, id_subcolecao_sayersystem, descricao)
+        VALUES (p_account, r->>'subcolecao', COALESCE(r->>'sub_colecao', r->>'subcolecao'))
+        ON CONFLICT (account, id_subcolecao_sayersystem) DO NOTHING
+        RETURNING id INTO v_sub_id;
+        IF v_sub_id IS NULL THEN
+          SELECT id INTO v_sub_id FROM public.tint_subcolecoes WHERE account = p_account AND id_subcolecao_sayersystem = r->>'subcolecao';
+        END IF;
+      END IF;
+
+      INSERT INTO public.tint_skus (account, produto_id, base_id, embalagem_id)
+      VALUES (p_account, v_produto_id, v_base_id, v_emb_id)
+      ON CONFLICT (account, produto_id, base_id, embalagem_id) DO NOTHING
+      RETURNING id INTO v_sku_id;
+      IF v_sku_id IS NULL THEN
+        SELECT id INTO v_sku_id FROM public.tint_skus WHERE account = p_account AND produto_id = v_produto_id AND base_id = v_base_id AND embalagem_id = v_emb_id;
+      END IF;
+
+      SELECT id INTO v_existing_formula_id FROM public.tint_formulas
+      WHERE account = p_account
+        AND cor_id = r->>'cor_id'
+        AND produto_id = v_produto_id
+        AND base_id = v_base_id
+        AND COALESCE(subcolecao_id, '00000000-0000-0000-0000-000000000000'::uuid) = COALESCE(v_sub_id, '00000000-0000-0000-0000-000000000000'::uuid)
+        AND embalagem_id = v_emb_id;
+
+      IF v_existing_formula_id IS NOT NULL THEN
+        UPDATE public.tint_formulas SET
+          id_seq = COALESCE((r->>'id_seq')::int, id_seq),
+          nome_cor = COALESCE(r->>'nome_cor', nome_cor),
+          sku_id = v_sku_id,
+          volume_final_ml = COALESCE((r->>'volume_finalml')::numeric, volume_final_ml),
+          preco_final_sayersystem = COALESCE((r->>'preco_final')::numeric, preco_final_sayersystem),
+          data_geracao = CASE WHEN r->>'data_geracao' IS NOT NULL AND r->>'data_geracao' != '' THEN (r->>'data_geracao')::timestamptz ELSE data_geracao END,
+          updated_at = now()
+        WHERE id = v_existing_formula_id;
+        v_formula_id := v_existing_formula_id;
+        v_updated := v_updated + 1;
+      ELSE
+        INSERT INTO public.tint_formulas (account, id_seq, cor_id, nome_cor, produto_id, base_id, embalagem_id, subcolecao_id, sku_id, volume_final_ml, preco_final_sayersystem, data_geracao, personalizada)
+        VALUES (
+          p_account, (r->>'id_seq')::int, r->>'cor_id', r->>'nome_cor',
+          v_produto_id, v_base_id, v_emb_id, v_sub_id, v_sku_id,
+          (r->>'volume_finalml')::numeric, (r->>'preco_final')::numeric,
+          CASE WHEN r->>'data_geracao' IS NOT NULL AND r->>'data_geracao' != '' THEN (r->>'data_geracao')::timestamptz ELSE now() END,
+          p_personalizada
+        )
+        RETURNING id INTO v_formula_id;
+        v_imported := v_imported + 1;
+      END IF;
+
+      DELETE FROM public.tint_formula_itens WHERE formula_id = v_formula_id;
+
+      FOR v_i IN 1..6 LOOP
+        v_cor_key := r->>('corante' || v_i::text);
+        IF v_cor_key IS NOT NULL AND v_cor_key != '' THEN
+          SELECT id INTO v_corante_id FROM public.tint_corantes
+          WHERE account = p_account AND id_corante_sayersystem = v_cor_key;
+          IF v_corante_id IS NOT NULL AND COALESCE((r->>('qtd' || v_i::text || 'ml'))::numeric, 0) > 0 THEN
+            INSERT INTO public.tint_formula_itens (formula_id, corante_id, ordem, qtd_ml)
+            VALUES (v_formula_id, v_corante_id, v_i, (r->>('qtd' || v_i::text || 'ml'))::numeric)
+            ON CONFLICT (formula_id, corante_id) DO UPDATE SET qtd_ml = EXCLUDED.qtd_ml, ordem = EXCLUDED.ordem;
+          END IF;
+        END IF;
+      END LOOP;
+
+    EXCEPTION WHEN OTHERS THEN
+      v_errors := v_errors + 1;
+      RAISE NOTICE 'Error processing row: %', SQLERRM;
+    END;
+  END LOOP;
+
+  RETURN jsonb_build_object('imported', v_imported, 'updated', v_updated, 'errors', v_errors);
+END;
+$$;
+
+
+--
+-- Name: is_super_admin(uuid); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.is_super_admin(_user_id uuid) RETURNS boolean
+    LANGUAGE sql STABLE SECURITY DEFINER
+    SET search_path TO 'public'
+    AS $$
+  SELECT EXISTS (
+    SELECT 1
+    FROM public.commercial_roles
+    WHERE user_id = _user_id
+      AND commercial_role = 'super_admin'
+  )
+$$;
+
+
+--
+-- Name: kb_documents_set_updated_at(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.kb_documents_set_updated_at() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+BEGIN
+  NEW.updated_at = now();
+  RETURN NEW;
+END;
+$$;
+
+
+--
+-- Name: limpar_sugestoes_antigas(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.limpar_sugestoes_antigas() RETURNS TABLE(expiradas integer, deletadas integer)
+    LANGUAGE plpgsql SECURITY DEFINER
+    SET search_path TO 'public'
+    AS $$
+DECLARE
+  v_expiradas int;
+  v_deletadas int;
+BEGIN
+  -- Marca como expiradas sugestões abandonadas (nova/visualizada há 90+ dias)
+  UPDATE sugestao_negociacao_paralela
+  SET status = 'ignorada',
+      observacoes = COALESCE(observacoes || ' | ', '') || 
+                    'Expirada automaticamente em ' || to_char(now(), 'DD/MM/YYYY')
+  WHERE status IN ('nova', 'visualizada')
+    AND data_geracao < CURRENT_DATE - interval '90 days';
+  
+  GET DIAGNOSTICS v_expiradas = ROW_COUNT;
+  
+  -- Deleta sugestões antigas em status final há mais de 365 dias (limpa o lixo)
+  DELETE FROM sugestao_negociacao_paralela
+  WHERE status IN ('fechada_sem_acordo', 'ignorada')
+    AND data_geracao < CURRENT_DATE - interval '365 days';
+  
+  GET DIAGNOSTICS v_deletadas = ROW_COUNT;
+  
+  RETURN QUERY SELECT v_expiradas, v_deletadas;
+END;
+$$;
+
+
+--
+-- Name: FUNCTION limpar_sugestoes_antigas(); Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON FUNCTION public.limpar_sugestoes_antigas() IS 'Manutenção mensal: expira sugestões abandonadas há 90+ dias e deleta sugestões fechadas sem acordo/ignoradas há 365+ dias. Preserva apenas sugestões que viraram campanha (histórico útil).';
+
+
+--
+-- Name: listar_skus_por_codigo_fornecedor(text, text); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.listar_skus_por_codigo_fornecedor(p_empresa text, p_codigo_fornecedor text) RETURNS TABLE(omie_codigo_produto bigint, codigo_interno text, descricao text, familia text)
+    LANGUAGE sql STABLE
+    SET search_path TO 'public', 'pg_temp'
+    AS $$
+  SELECT 
+    op.omie_codigo_produto,
+    op.codigo,
+    op.descricao,
+    op.familia
+  FROM omie_products op
+  WHERE LOWER(op.account) = LOWER(p_empresa)
+    AND COALESCE(op.ativo, true) = true
+    AND p_codigo_fornecedor IS NOT NULL
+    AND TRIM(p_codigo_fornecedor) <> ''
+    AND op.descricao ILIKE '%' || p_codigo_fornecedor || '%'
+  ORDER BY op.descricao;
+$$;
+
+
+--
+-- Name: FUNCTION listar_skus_por_codigo_fornecedor(p_empresa text, p_codigo_fornecedor text); Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON FUNCTION public.listar_skus_por_codigo_fornecedor(p_empresa text, p_codigo_fornecedor text) IS 'Retorna TODOS os produtos Omie cuja descrição contém o código do fornecedor. Usado para expansão automática de variantes de embalagem em promoções. Se retornar zero linhas, o código não foi encontrado (tratar como erro).';
+
+
+--
+-- Name: marcar_alerta_notificado(bigint, boolean, text); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.marcar_alerta_notificado(p_alerta_id bigint, p_email_enviado boolean DEFAULT false, p_calendar_evento_id text DEFAULT NULL::text) RETURNS boolean
+    LANGUAGE plpgsql
+    SET search_path TO 'public', 'pg_temp'
+    AS $$
+BEGIN
+  UPDATE fornecedor_alerta
+  SET 
+    email_enviado = CASE WHEN p_email_enviado THEN true ELSE email_enviado END,
+    email_enviado_em = CASE WHEN p_email_enviado THEN now() ELSE email_enviado_em END,
+    calendar_evento_id = COALESCE(p_calendar_evento_id, calendar_evento_id)
+  WHERE id = p_alerta_id;
+  
+  RETURN FOUND;
+END;
+$$;
+
+
+--
+-- Name: minha_carteira(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.minha_carteira() RETURNS TABLE(customer_user_id uuid, owner_user_id uuid, coberto_de uuid)
+    LANGUAGE sql STABLE SECURITY DEFINER
+    SET search_path TO 'public'
+    AS $$
+  SELECT a.customer_user_id, a.owner_user_id, NULL::uuid AS coberto_de
+  FROM carteira_assignments a
+  WHERE a.owner_user_id = auth.uid()
+  UNION
+  SELECT a.customer_user_id, a.owner_user_id, a.owner_user_id AS coberto_de
+  FROM carteira_assignments a
+  JOIN carteira_coverage c ON c.covered_user_id = a.owner_user_id
+  WHERE c.covering_user_id = auth.uid()
+    AND c.active
+    AND (c.valid_until IS NULL OR c.valid_until > now());
+$$;
+
+
+--
+-- Name: pedido_compra_split(bigint, integer); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.pedido_compra_split(p_pedido_id bigint, p_chunk_size integer DEFAULT 4) RETURNS TABLE(filho_id bigint, lote integer, total integer)
+    LANGUAGE plpgsql SECURITY DEFINER
+    SET search_path TO 'public', 'pg_temp'
+    AS $$
+DECLARE
+  v_status text;
+  v_split_parent bigint;
+  v_itens_total integer;
+  v_total_chunks integer;
+  v_chunk_idx integer;
+  v_filho_id bigint;
+BEGIN
+  IF auth.uid() IS NOT NULL THEN
+    IF NOT (public.has_role(auth.uid(), 'employee'::app_role) OR public.has_role(auth.uid(), 'master'::app_role)) THEN
+      RAISE EXCEPTION 'Acesso negado: requer perfil staff' USING ERRCODE = '42501';
+    END IF;
+  END IF;
+
+  IF p_chunk_size < 1 THEN
+    RAISE EXCEPTION 'chunk_size deve ser >= 1';
+  END IF;
+
+  SELECT status, split_parent_id INTO v_status, v_split_parent
+  FROM public.pedido_compra_sugerido
+  WHERE id = p_pedido_id
+  FOR UPDATE;
+
+  IF NOT FOUND THEN
+    RAISE EXCEPTION 'Pedido % não encontrado', p_pedido_id;
+  END IF;
+
+  IF v_status <> 'aprovado_aguardando_disparo' THEN
+    RAISE EXCEPTION 'Pedido % com status=% não pode ser dividido (esperado: aprovado_aguardando_disparo)', p_pedido_id, v_status;
+  END IF;
+
+  IF v_split_parent IS NOT NULL THEN
+    RAISE EXCEPTION 'Pedido % já é filho de um split (parent=%)', p_pedido_id, v_split_parent;
+  END IF;
+
+  SELECT count(*) INTO v_itens_total FROM public.pedido_compra_item WHERE pedido_id = p_pedido_id;
+
+  IF v_itens_total <= p_chunk_size THEN
+    RETURN;
+  END IF;
+
+  v_total_chunks := ceil(v_itens_total::numeric / p_chunk_size)::integer;
+
+  FOR v_chunk_idx IN 1..v_total_chunks LOOP
+    INSERT INTO public.pedido_compra_sugerido (
+      empresa, fornecedor_nome, grupo_codigo, data_ciclo,
+      horario_geracao, horario_corte_planejado,
+      valor_total, num_skus,
+      status,
+      condicao_pagamento_codigo, condicao_pagamento_descricao,
+      num_parcelas, dias_parcelas, condicao_origem,
+      aprovado_em, aprovado_por,
+      criado_em, atualizado_em,
+      split_parent_id, split_lote, split_total
+    )
+    SELECT
+      p.empresa, p.fornecedor_nome, p.grupo_codigo, p.data_ciclo,
+      p.horario_geracao, p.horario_corte_planejado,
+      0, 0,
+      'aprovado_aguardando_disparo',
+      p.condicao_pagamento_codigo, p.condicao_pagamento_descricao,
+      p.num_parcelas, p.dias_parcelas, p.condicao_origem,
+      p.aprovado_em, p.aprovado_por,
+      now(), now(),
+      p_pedido_id, v_chunk_idx, v_total_chunks
+    FROM public.pedido_compra_sugerido p
+    WHERE p.id = p_pedido_id
+    RETURNING id INTO v_filho_id;
+
+    WITH lote_ids AS (
+      SELECT id FROM public.pedido_compra_item
+      WHERE pedido_id = p_pedido_id
+      ORDER BY id
+      LIMIT p_chunk_size
+    )
+    UPDATE public.pedido_compra_item pci
+    SET pedido_id = v_filho_id
+    FROM lote_ids
+    WHERE pci.id = lote_ids.id;
+
+    UPDATE public.pedido_compra_sugerido f
+    SET
+      num_skus = (SELECT count(*) FROM public.pedido_compra_item WHERE pedido_id = f.id),
+      valor_total = COALESCE(
+        (SELECT sum(COALESCE(valor_linha, qtde_final * preco_unitario, 0))
+         FROM public.pedido_compra_item WHERE pedido_id = f.id),
+        0
+      )
+    WHERE f.id = v_filho_id;
+
+    filho_id := v_filho_id;
+    lote := v_chunk_idx;
+    total := v_total_chunks;
+    RETURN NEXT;
+  END LOOP;
+
+  UPDATE public.pedido_compra_sugerido SET
+    status = 'split_em_filhos',
+    status_envio_portal = 'nao_aplicavel',
+    split_total = v_total_chunks,
+    atualizado_em = now()
+  WHERE id = p_pedido_id;
+END;
+$$;
+
+
+--
+-- Name: processar_alertas_pendentes_notificacao(text); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.processar_alertas_pendentes_notificacao(p_empresa text DEFAULT 'OBEN'::text) RETURNS TABLE(alerta_id bigint, empresa text, tipo text, severidade text, titulo text, mensagem text, email_destino text, calendar_id text, deve_criar_calendar_evento boolean, calendar_evento_titulo text, calendar_evento_data timestamp with time zone, calendar_evento_duracao_minutos integer, campanha_id bigint, aumento_id bigint, deve_enviar_email boolean, payload_json jsonb)
+    LANGUAGE plpgsql
+    SET search_path TO 'public', 'pg_temp'
+    AS $$
+BEGIN
+  RETURN QUERY
+  WITH alertas_candidatos AS (
+    SELECT 
+      a.id AS alerta_id,
+      a.empresa,
+      a.tipo,
+      a.severidade,
+      a.titulo,
+      a.mensagem,
+      a.campanha_id,
+      a.aumento_id,
+      a.email_enviado,
+      a.calendar_evento_id,
+      pc.data_corte_pedido,
+      pc.data_fim AS campanha_data_fim,
+      fa.data_vigencia AS aumento_data_vigencia,
+      -- Config do fornecedor (pega a primeira config ativa como fallback)
+      (SELECT fep.notificar_email 
+       FROM fornecedor_email_polling fep 
+       WHERE fep.empresa = a.empresa 
+         AND fep.fornecedor_nome = a.fornecedor_nome
+         AND fep.ativo = true 
+       LIMIT 1) AS email_destino,
+      (SELECT fep.notificar_calendar_id 
+       FROM fornecedor_email_polling fep 
+       WHERE fep.empresa = a.empresa 
+         AND fep.fornecedor_nome = a.fornecedor_nome
+         AND fep.ativo = true 
+       LIMIT 1) AS calendar_id
+    FROM fornecedor_alerta a
+    LEFT JOIN promocao_campanha pc ON pc.id = a.campanha_id
+    LEFT JOIN fornecedor_aumento_anunciado fa ON fa.id = a.aumento_id
+    WHERE a.empresa = p_empresa
+      AND NOT a.resolvido
+      AND (
+        (a.severidade = 'urgente' AND NOT a.email_enviado) OR
+        (a.tipo IN ('promocao_nova', 'aumento_anunciado') AND a.calendar_evento_id IS NULL) OR
+        (a.tipo = 'promocao_suspensa' AND NOT a.email_enviado)
+      )
+  )
+  SELECT 
+    ac.alerta_id,
+    ac.empresa,
+    ac.tipo,
+    ac.severidade,
+    ac.titulo,
+    ac.mensagem,
+    COALESCE(ac.email_destino, 'lucascoelhosardenberg@gmail.com') AS email_destino,
+    COALESCE(ac.calendar_id, 'primary') AS calendar_id,
+    -- Criar evento calendar: nova promoção ou aumento cria evento agendado
+    (ac.tipo IN ('promocao_nova', 'aumento_anunciado')) AS deve_criar_calendar_evento,
+    -- Título do evento
+    CASE ac.tipo
+      WHEN 'promocao_nova' THEN 'Revisar pedidos oportunidade — ' || ac.titulo
+      WHEN 'aumento_anunciado' THEN 'Antecipar compras antes de aumento — ' || ac.titulo
+      ELSE ac.titulo
+    END AS calendar_evento_titulo,
+    -- Data do evento: dia útil anterior ao corte (promoção) ou à vigência (aumento)
+    CASE ac.tipo
+      WHEN 'promocao_nova' THEN (COALESCE(ac.data_corte_pedido, ac.campanha_data_fim) - INTERVAL '1 day')::timestamptz + TIME '08:00'
+      WHEN 'aumento_anunciado' THEN (ac.aumento_data_vigencia - INTERVAL '1 day')::timestamptz + TIME '08:00'
+      ELSE NULL
+    END AS calendar_evento_data,
+    120 AS calendar_evento_duracao_minutos,  -- 2 horas para revisar
+    ac.campanha_id,
+    ac.aumento_id,
+    -- Enviar email: urgente sempre, novas sempre, suspensões sempre
+    (ac.severidade = 'urgente' OR ac.tipo IN ('promocao_nova', 'aumento_anunciado', 'promocao_suspensa')) 
+      AS deve_enviar_email,
+    -- Payload completo para debug/auditoria
+    jsonb_build_object(
+      'alerta_id', ac.alerta_id,
+      'tipo', ac.tipo,
+      'severidade', ac.severidade,
+      'titulo', ac.titulo,
+      'mensagem', ac.mensagem,
+      'campanha_id', ac.campanha_id,
+      'aumento_id', ac.aumento_id
+    ) AS payload_json
+  FROM alertas_candidatos ac;
+END;
+$$;
+
+
+--
+-- Name: FUNCTION processar_alertas_pendentes_notificacao(p_empresa text); Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON FUNCTION public.processar_alertas_pendentes_notificacao(p_empresa text) IS 'Retorna alertas pendentes de notificação com payload pronto. A edge function de notificação itera sobre o resultado, chama Resend (email) e MCP Calendar para cada linha, e depois marca cada alerta como notificado via marcar_alerta_notificado.';
+
+
+--
+-- Name: propagar_habilitacao_fornecedor(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.propagar_habilitacao_fornecedor() RETURNS trigger
+    LANGUAGE plpgsql
+    SET search_path TO 'public', 'pg_temp'
+    AS $$
+BEGIN
+  -- Se fornecedor foi habilitado (ou já era habilitado), marca todos os SKUs com parâmetros
+  IF NEW.habilitado = TRUE AND (OLD.habilitado IS NULL OR OLD.habilitado = FALSE) THEN
+    UPDATE sku_parametros sp
+    SET 
+      habilitado_reposicao_automatica = TRUE,
+      aprovado_em = COALESCE(aprovado_em, NOW()),
+      aprovado_por = COALESCE(aprovado_por, 'trigger_habilitacao_fornecedor')
+    WHERE sp.empresa = NEW.empresa
+      AND sp.fornecedor_nome = NEW.fornecedor_nome
+      AND sp.estoque_maximo IS NOT NULL
+      AND sp.habilitado_reposicao_automatica = FALSE;
+  END IF;
+  
+  -- Se fornecedor foi DESABILITADO, tira a flag automática dos SKUs
+  IF NEW.habilitado = FALSE AND OLD.habilitado = TRUE THEN
+    UPDATE sku_parametros sp
+    SET habilitado_reposicao_automatica = FALSE
+    WHERE sp.empresa = NEW.empresa
+      AND sp.fornecedor_nome = NEW.fornecedor_nome
+      AND sp.habilitado_reposicao_automatica = TRUE;
+  END IF;
+  
+  RETURN NEW;
+END;
+$$;
+
+
+--
+-- Name: protect_master_config(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.protect_master_config() RETURNS trigger
+    LANGUAGE plpgsql SECURITY DEFINER
+    SET search_path TO 'public'
+    AS $$
+BEGIN
+  -- Se a key sendo alterada é sensível (master_cpf/master_cnpj),
+  -- exigir que quem está alterando seja super_admin.
+  IF (TG_OP IN ('UPDATE', 'DELETE'))
+     AND (OLD.key IN ('master_cpf', 'master_cnpj'))
+     AND NOT public.is_super_admin(auth.uid())
+  THEN
+    RAISE EXCEPTION 'Somente super admin pode alterar master_cpf ou master_cnpj';
+  END IF;
+
+  -- Também bloqueia INSERT de uma key 'master_cpf' ou 'master_cnpj' se ela
+  -- já existe (evita contornar com DELETE + INSERT separados).
+  IF TG_OP = 'INSERT'
+     AND NEW.key IN ('master_cpf', 'master_cnpj')
+     AND EXISTS (SELECT 1 FROM public.company_config WHERE key = NEW.key)
+     AND NOT public.is_super_admin(auth.uid())
+  THEN
+    RAISE EXCEPTION 'Somente super admin pode redefinir master_cpf ou master_cnpj';
+  END IF;
+
+  RETURN COALESCE(NEW, OLD);
+END;
+$$;
+
+
+--
+-- Name: proxima_janela_operacional(text, text, timestamp with time zone); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.proxima_janela_operacional(p_empresa text, p_fornecedor text, p_a_partir timestamp with time zone DEFAULT now()) RETURNS timestamp with time zone
+    LANGUAGE plpgsql STABLE
+    SET search_path TO 'public', 'pg_temp'
+    AS $$
+DECLARE
+  v_check_data DATE := (p_a_partir AT TIME ZONE 'America/Sao_Paulo')::date;
+  v_dia_semana INT;
+  v_calendario RECORD;
+  v_eh_feriado BOOLEAN;
+  v_max_iter INT := 14;
+BEGIN
+  WHILE v_max_iter > 0 LOOP
+    v_max_iter := v_max_iter - 1;
+    v_dia_semana := EXTRACT(DOW FROM v_check_data);
+    
+    SELECT EXISTS (SELECT 1 FROM calendario_feriados WHERE data = v_check_data) 
+    INTO v_eh_feriado;
+    
+    IF NOT v_eh_feriado THEN
+      SELECT * INTO v_calendario
+      FROM fornecedor_calendario_operacao
+      WHERE empresa = p_empresa 
+        AND fornecedor_nome = p_fornecedor
+        AND dia_semana = v_dia_semana
+        AND hora_abertura IS NOT NULL;
+      
+      IF FOUND THEN
+        -- Tem janela nesse dia. Se ainda dá tempo hoje, retorna agora.
+        IF v_check_data = (p_a_partir AT TIME ZONE 'America/Sao_Paulo')::date 
+           AND (p_a_partir AT TIME ZONE 'America/Sao_Paulo')::time < v_calendario.hora_fechamento THEN
+          RETURN p_a_partir;
+        END IF;
+        -- Senão, retorna abertura do próximo dia operacional
+        RETURN (v_check_data + 1 + (v_calendario.hora_abertura)::interval) 
+               AT TIME ZONE 'America/Sao_Paulo';
+      END IF;
+    END IF;
+    
+    v_check_data := v_check_data + 1;
+  END LOOP;
+  
+  RETURN NULL;  -- 14 dias sem janela = inconsistência
+END;
+$$;
+
+
+--
+-- Name: refresh_customer_metrics(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.refresh_customer_metrics() RETURNS void
+    LANGUAGE plpgsql SECURITY DEFINER
+    SET search_path TO 'public'
+    AS $$
+BEGIN
+  IF auth.uid() IS NULL OR NOT (public.has_role(auth.uid(), 'employee'::app_role) OR public.has_role(auth.uid(), 'master'::app_role)) THEN
+    RAISE EXCEPTION 'Acesso negado: requer perfil staff' USING ERRCODE = '42501';
+  END IF;
+  REFRESH MATERIALIZED VIEW CONCURRENTLY public.customer_metrics_mv;
+END;
+$$;
+
+
+--
+-- Name: refresh_sku_ranking_negociacao(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.refresh_sku_ranking_negociacao() RETURNS TABLE(skus_ranqueados integer, atualizado_em timestamp with time zone)
+    LANGUAGE plpgsql SECURITY DEFINER
+    SET search_path TO 'public'
+    AS $$
+BEGIN
+  IF auth.uid() IS NULL OR NOT (public.has_role(auth.uid(), 'employee'::app_role) OR public.has_role(auth.uid(), 'master'::app_role)) THEN
+    RAISE EXCEPTION 'Acesso negado: requer perfil staff' USING ERRCODE = '42501';
+  END IF;
+  REFRESH MATERIALIZED VIEW CONCURRENTLY public.mv_sku_ranking_negociacao_paralela;
+  RETURN QUERY SELECT COUNT(*)::int, now() FROM public.mv_sku_ranking_negociacao_paralela;
+END;
+$$;
+
+
+--
+-- Name: registrar_aumento_via_vision(text, text, text, date, date, jsonb, text, text, text, text, timestamp with time zone, numeric, text, text); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.registrar_aumento_via_vision(p_empresa text, p_fornecedor_nome text, p_nome text, p_data_vigencia date, p_data_anuncio date, p_categorias jsonb, p_origem_arquivo_url text DEFAULT NULL::text, p_origem_arquivo_tipo text DEFAULT 'pdf'::text, p_origem_email_assunto text DEFAULT NULL::text, p_origem_email_remetente text DEFAULT NULL::text, p_origem_email_data timestamp with time zone DEFAULT NULL::timestamp with time zone, p_extracao_confianca numeric DEFAULT NULL::numeric, p_extracao_observacoes text DEFAULT NULL::text, p_criado_por text DEFAULT 'extrator_vision'::text) RETURNS bigint
+    LANGUAGE plpgsql
+    SET search_path TO 'public', 'pg_temp'
+    AS $$
+DECLARE
+  v_aumento_id bigint;
+  v_categoria jsonb;
+BEGIN
+  INSERT INTO fornecedor_aumento_anunciado (
+    empresa, fornecedor_nome, nome, 
+    data_vigencia, data_anuncio, estado,
+    origem_arquivo_url, origem_arquivo_tipo,
+    origem_email_assunto, origem_email_remetente, origem_email_data,
+    extracao_confianca, extracao_observacoes, extraido_em,
+    criado_por
+  ) VALUES (
+    p_empresa, p_fornecedor_nome, p_nome,
+    p_data_vigencia, p_data_anuncio, 'rascunho',
+    p_origem_arquivo_url, p_origem_arquivo_tipo,
+    p_origem_email_assunto, p_origem_email_remetente, p_origem_email_data,
+    p_extracao_confianca, p_extracao_observacoes, now(),
+    p_criado_por
+  ) RETURNING id INTO v_aumento_id;
+  
+  FOR v_categoria IN SELECT * FROM jsonb_array_elements(p_categorias) LOOP
+    INSERT INTO fornecedor_aumento_item (
+      aumento_id, 
+      categoria_fornecedor, 
+      aumento_perc,
+      data_vigencia_especifica,
+      confirmado, ativo
+    ) VALUES (
+      v_aumento_id,
+      v_categoria->>'categoria_fornecedor',
+      (v_categoria->>'aumento_perc')::numeric,
+      (v_categoria->>'data_vigencia_especifica')::date,
+      false, true
+    )
+    ON CONFLICT (aumento_id, categoria_fornecedor) DO NOTHING;
+  END LOOP;
+  
+  RETURN v_aumento_id;
+END;
+$$;
+
+
+--
+-- Name: registrar_historico_sku_parametros(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.registrar_historico_sku_parametros() RETURNS trigger
+    LANGUAGE plpgsql SECURITY DEFINER
+    SET search_path TO 'public'
+    AS $$
+BEGIN
+  -- Só registra se houve mudança em campos relevantes
+  IF (OLD.estoque_minimo IS DISTINCT FROM NEW.estoque_minimo)
+     OR (OLD.ponto_pedido IS DISTINCT FROM NEW.ponto_pedido)
+     OR (OLD.estoque_maximo IS DISTINCT FROM NEW.estoque_maximo)
+     OR (OLD.aprovado_em IS DISTINCT FROM NEW.aprovado_em)
+     OR (OLD.aplicar_no_omie IS DISTINCT FROM NEW.aplicar_no_omie) THEN
+    INSERT INTO public.sku_parametros_historico (
+      sku_parametro_id, snapshot_em, classe_consolidada,
+      demanda_media_diaria, lt_medio_dias_uteis, z_score,
+      estoque_seguranca, ponto_pedido, trigger
+    ) VALUES (
+      NEW.id, now(), NEW.classe_consolidada,
+      NEW.demanda_media_diaria, NEW.lt_medio_dias_uteis, NEW.z_score,
+      NEW.estoque_seguranca, NEW.ponto_pedido,
+      CASE
+        WHEN OLD.aprovado_em IS DISTINCT FROM NEW.aprovado_em AND NEW.aprovado_em IS NOT NULL THEN 'aprovacao_humana'
+        WHEN OLD.estoque_minimo IS DISTINCT FROM NEW.estoque_minimo
+          OR OLD.ponto_pedido IS DISTINCT FROM NEW.ponto_pedido
+          OR OLD.estoque_maximo IS DISTINCT FROM NEW.estoque_maximo THEN 'edicao_manual'
+        ELSE 'atualizacao'
+      END
+    );
+  END IF;
+  RETURN NEW;
+END;
+$$;
+
+
+--
+-- Name: registrar_polling_resultado(bigint, integer, integer, integer, integer, integer, integer, text, text, jsonb); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.registrar_polling_resultado(p_config_id bigint, p_emails_encontrados integer, p_emails_processados integer, p_anexos_extraidos integer, p_campanhas_criadas integer, p_aumentos_criados integer, p_alertas_suspensao integer, p_ultimo_email_id text DEFAULT NULL::text, p_erro text DEFAULT NULL::text, p_detalhes jsonb DEFAULT NULL::jsonb) RETURNS bigint
+    LANGUAGE plpgsql
+    SET search_path TO 'public', 'pg_temp'
+    AS $$
+DECLARE
+  v_log_id bigint;
+BEGIN
+  -- Log
+  INSERT INTO fornecedor_email_polling_log (
+    polling_config_id, 
+    emails_encontrados, emails_processados, anexos_extraidos,
+    campanhas_criadas, aumentos_criados, alertas_suspensao,
+    erro, detalhes
+  ) VALUES (
+    p_config_id,
+    p_emails_encontrados, p_emails_processados, p_anexos_extraidos,
+    p_campanhas_criadas, p_aumentos_criados, p_alertas_suspensao,
+    p_erro, p_detalhes
+  ) RETURNING id INTO v_log_id;
+  
+  -- Atualiza checkpoint
+  UPDATE fornecedor_email_polling
+  SET 
+    ultimo_poll_em = now(),
+    ultimo_email_processado_id = COALESCE(p_ultimo_email_id, ultimo_email_processado_id)
+  WHERE id = p_config_id;
+  
+  -- Se deu erro, gera alerta de polling
+  IF p_erro IS NOT NULL THEN
+    INSERT INTO fornecedor_alerta (
+      empresa, fornecedor_nome, tipo, severidade,
+      titulo, mensagem
+    )
+    SELECT 
+      empresa, fornecedor_nome, 'polling_erro', 'atencao',
+      'Falha no polling de emails: ' || fornecedor_nome,
+      'Erro ao processar emails de ' || remetente_email || ': ' || p_erro
+    FROM fornecedor_email_polling
+    WHERE id = p_config_id;
+  END IF;
+  
+  RETURN v_log_id;
+END;
+$$;
+
+
+--
+-- Name: registrar_substituicao_sku(text, text, text, text, text, text); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.registrar_substituicao_sku(p_empresa text, p_codigo_antigo text, p_codigo_novo text, p_acao_parametros text, p_motivo text, p_usuario text) RETURNS jsonb
+    LANGUAGE plpgsql
+    SET search_path TO 'public', 'pg_temp'
+    AS $$
+DECLARE
+  v_resultado JSONB;
+  v_count_novo INT;
+BEGIN
+  -- Validar ação
+  IF p_acao_parametros NOT IN ('transferir', 'recalcular_do_zero', 'manter_ambos') THEN
+    RETURN jsonb_build_object('error', 'ação inválida: ' || p_acao_parametros);
+  END IF;
+  
+  -- Verificar se código novo existe
+  SELECT COUNT(*) INTO v_count_novo
+  FROM sku_parametros
+  WHERE empresa = p_empresa AND sku_codigo_omie::text = p_codigo_novo;
+  
+  IF v_count_novo = 0 THEN
+    RETURN jsonb_build_object('error', 'Código novo ' || p_codigo_novo || ' não encontrado em sku_parametros');
+  END IF;
+  
+  -- Registra substituição
+  INSERT INTO sku_substituicao (
+    empresa, sku_codigo_antigo, sku_codigo_novo,
+    acao_parametros, data_substituicao, motivo, criado_por
+  ) VALUES (
+    p_empresa, p_codigo_antigo, p_codigo_novo,
+    p_acao_parametros, CURRENT_DATE, p_motivo, p_usuario
+  )
+  ON CONFLICT (empresa, sku_codigo_antigo, status) 
+  DO UPDATE SET 
+    sku_codigo_novo = EXCLUDED.sku_codigo_novo,
+    acao_parametros = EXCLUDED.acao_parametros,
+    motivo = EXCLUDED.motivo,
+    criado_por = EXCLUDED.criado_por,
+    criado_em = NOW();
+  
+  -- Se ação for 'transferir', copia parâmetros do antigo pro novo
+  IF p_acao_parametros = 'transferir' THEN
+    UPDATE sku_parametros novo
+    SET 
+      estoque_minimo = antigo.estoque_minimo,
+      ponto_pedido = antigo.ponto_pedido,
+      estoque_maximo = antigo.estoque_maximo,
+      aplicar_no_omie = TRUE,
+      ultima_atualizacao_calculo = NOW()
+    FROM sku_parametros antigo
+    WHERE novo.empresa = p_empresa AND novo.sku_codigo_omie::text = p_codigo_novo
+      AND antigo.empresa = p_empresa AND antigo.sku_codigo_omie::text = p_codigo_antigo;
+  END IF;
+  
+  -- Desativa aplicação no código antigo
+  UPDATE sku_parametros
+  SET aplicar_no_omie = FALSE
+  WHERE empresa = p_empresa AND sku_codigo_omie::text = p_codigo_antigo;
+  
+  RETURN jsonb_build_object(
+    'status', 'ok',
+    'mensagem', 'Substituição registrada. Código antigo desativado da fila, código novo atualizado.'
+  );
+END;
+$$;
+
+
+--
+-- Name: reprocessar_sku_items_via_raw_data(text); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.reprocessar_sku_items_via_raw_data(p_empresa text) RETURNS TABLE(etapa text, valor bigint)
+    LANGUAGE plpgsql
+    SET search_path TO 'public', 'pg_temp'
+    AS $$
+DECLARE
+  v_itens_removidos bigint := 0;
+  v_itens_totais bigint := 0;
+  v_itens_com_match bigint := 0;
+BEGIN
+  -- Limpar só linhas sem LT calculado (preserva histórico válido)
+  DELETE FROM sku_leadtime_history 
+  WHERE empresa::text = p_empresa
+    AND lt_bruto_dias_uteis IS NULL;
+  
+  GET DIAGNOSTICS v_itens_removidos = ROW_COUNT;
+  etapa := 'linhas_antigas_removidas';
+  valor := v_itens_removidos;
+  RETURN NEXT;
+  
+  -- Inserir a partir do raw_data, AGREGANDO duplicatas do mesmo SKU na mesma NFe
+  INSERT INTO sku_leadtime_history (
+    tracking_id,
+    empresa,
+    fornecedor_codigo_omie,
+    fornecedor_nome,
+    grupo_leadtime,
+    sku_codigo_omie,
+    sku_codigo,
+    sku_descricao,
+    sku_unidade,
+    sku_ncm,
+    quantidade_pedida,
+    quantidade_recebida,
+    valor_unitario,
+    valor_total,
+    t1_data_pedido,
+    t2_data_faturamento,
+    t3_data_cte,
+    t4_data_recebimento,
+    lt_bruto_dias_uteis,
+    lt_faturamento_dias_uteis,
+    lt_logistica_dias_uteis
+  )
+  WITH itens_extraidos AS (
+    SELECT 
+      p.id as tracking_id,
+      p.empresa,
+      p.fornecedor_codigo_omie,
+      p.fornecedor_nome,
+      p.grupo_leadtime,
+      p.t1_data_pedido,
+      p.t2_data_faturamento,
+      p.t3_data_cte,
+      p.t4_data_recebimento,
+      (item->'itensCabec'->>'nIdProduto')::bigint as sku_codigo_omie,
+      item->'itensCabec'->>'cCodigoProduto' as sku_codigo,
+      item->'itensCabec'->>'cDescricaoProduto' as sku_descricao,
+      item->'itensCabec'->>'cUnidadeNfe' as sku_unidade,
+      item->'itensCabec'->>'cNCM' as sku_ncm,
+      COALESCE(
+        (item->'itensCabec'->>'nQtdeNFe')::numeric,
+        (item->'itensAjustes'->>'nQtdeRecebida')::numeric,
+        0
+      ) as quantidade_pedida,
+      (item->'itensAjustes'->>'nQtdeRecebida')::numeric as quantidade_recebida,
+      (item->'itensCabec'->>'nPrecoUnit')::numeric as valor_unitario,
+      (item->'itensCabec'->>'vTotalItem')::numeric as valor_total,
+      item->'itensInfoAdic'->>'nNumPedCompra' as num_ped_sayerlack
+    FROM purchase_orders_tracking p
+    CROSS JOIN jsonb_array_elements(p.raw_data->'itensRecebimento') as item
+    WHERE p.empresa::text = p_empresa
+      AND p.fornecedor_codigo_omie = 8689681266
+      AND p.raw_data IS NOT NULL
+      AND p.raw_data->'cabec'->>'cModeloNFe' = '55'
+      AND jsonb_typeof(p.raw_data->'itensRecebimento') = 'array'
+  ),
+  itens_agregados AS (
+    -- Soma quantidades/valores quando mesmo SKU aparece 2x na mesma NFe
+    SELECT 
+      tracking_id,
+      empresa,
+      fornecedor_codigo_omie,
+      MAX(fornecedor_nome) as fornecedor_nome,
+      MAX(grupo_leadtime) as grupo_leadtime,
+      MAX(t1_data_pedido) as t1_data_pedido,
+      MAX(t2_data_faturamento) as t2_data_faturamento,
+      MAX(t3_data_cte) as t3_data_cte,
+      MAX(t4_data_recebimento) as t4_data_recebimento,
+      sku_codigo_omie,
+      MAX(sku_codigo) as sku_codigo,
+      MAX(sku_descricao) as sku_descricao,
+      MAX(sku_unidade) as sku_unidade,
+      MAX(sku_ncm) as sku_ncm,
+      SUM(quantidade_pedida) as quantidade_pedida,
+      SUM(quantidade_recebida) as quantidade_recebida,
+      AVG(valor_unitario) as valor_unitario,
+      SUM(valor_total) as valor_total,
+      -- Pega o primeiro num_ped_sayerlack (pode ter mais de 1 pedido, pegamos o primeiro)
+      MIN(num_ped_sayerlack) as num_ped_sayerlack
+    FROM itens_extraidos
+    GROUP BY tracking_id, empresa, fornecedor_codigo_omie, sku_codigo_omie
+  ),
+  itens_com_pedido AS (
+    SELECT 
+      i.*,
+      pedido.t1_data_pedido as t1_real
+    FROM itens_agregados i
+    LEFT JOIN LATERAL (
+      SELECT p2.t1_data_pedido
+      FROM purchase_orders_tracking p2
+      WHERE p2.empresa::text = p_empresa
+        AND p2.fornecedor_codigo_omie = 8689681266
+        AND p2.numero_contrato_fornecedor = i.num_ped_sayerlack
+        AND i.num_ped_sayerlack IS NOT NULL
+      ORDER BY p2.t1_data_pedido
+      LIMIT 1
+    ) as pedido ON true
+  )
+  SELECT 
+    tracking_id,
+    empresa,
+    fornecedor_codigo_omie,
+    fornecedor_nome,
+    grupo_leadtime,
+    sku_codigo_omie,
+    sku_codigo,
+    sku_descricao,
+    sku_unidade,
+    sku_ncm,
+    quantidade_pedida,
+    quantidade_recebida,
+    valor_unitario,
+    valor_total,
+    COALESCE(t1_real, t1_data_pedido) as t1_data_pedido,
+    t2_data_faturamento,
+    t3_data_cte,
+    t4_data_recebimento,
+    CASE 
+      WHEN t1_real IS NOT NULL AND t4_data_recebimento IS NOT NULL 
+      THEN dias_uteis_entre(t1_real::date, t4_data_recebimento::date)
+      ELSE NULL 
+    END as lt_bruto_dias_uteis,
+    CASE 
+      WHEN t1_real IS NOT NULL AND t2_data_faturamento IS NOT NULL 
+      THEN dias_uteis_entre(t1_real::date, t2_data_faturamento::date)
+      ELSE NULL 
+    END as lt_faturamento_dias_uteis,
+    CASE 
+      WHEN t2_data_faturamento IS NOT NULL AND t4_data_recebimento IS NOT NULL 
+      THEN dias_uteis_entre(t2_data_faturamento::date, t4_data_recebimento::date)
+      ELSE NULL 
+    END as lt_logistica_dias_uteis
+  FROM itens_com_pedido
+  ON CONFLICT (tracking_id, sku_codigo_omie) 
+  DO UPDATE SET
+    quantidade_recebida = EXCLUDED.quantidade_recebida,
+    valor_total = EXCLUDED.valor_total,
+    t1_data_pedido = EXCLUDED.t1_data_pedido,
+    t4_data_recebimento = EXCLUDED.t4_data_recebimento,
+    lt_bruto_dias_uteis = EXCLUDED.lt_bruto_dias_uteis,
+    lt_faturamento_dias_uteis = EXCLUDED.lt_faturamento_dias_uteis,
+    lt_logistica_dias_uteis = EXCLUDED.lt_logistica_dias_uteis;
+  
+  SELECT 
+    COUNT(*),
+    COUNT(*) FILTER (WHERE t1_data_pedido != t2_data_faturamento)
+  INTO v_itens_totais, v_itens_com_match
+  FROM sku_leadtime_history
+  WHERE empresa::text = p_empresa;
+  
+  etapa := 'itens_totais_no_banco';
+  valor := v_itens_totais;
+  RETURN NEXT;
+  
+  etapa := 'itens_com_match_pedido_real';
+  valor := v_itens_com_match;
+  RETURN NEXT;
+  
+  etapa := 'itens_com_fallback_t1_igual_t2';
+  valor := v_itens_totais - v_itens_com_match;
+  RETURN NEXT;
+  
+  RETURN;
+END;
+$$;
+
+
+--
+-- Name: resolver_outlier(bigint, text, text, text); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.resolver_outlier(p_evento_id bigint, p_decisao text, p_justificativa text DEFAULT NULL::text, p_usuario_email text DEFAULT NULL::text) RETURNS jsonb
+    LANGUAGE plpgsql SECURITY DEFINER
+    SET search_path TO 'public'
+    AS $$
+DECLARE
+  v_evento RECORD;
+  v_novo_status text;
+BEGIN
+  IF auth.uid() IS NULL OR NOT (public.has_role(auth.uid(), 'employee'::app_role) OR public.has_role(auth.uid(), 'master'::app_role)) THEN
+    RAISE EXCEPTION 'Acesso negado: requer perfil staff' USING ERRCODE = '42501';
+  END IF;
+  IF p_decisao NOT IN ('aceitar', 'excluir', 'ignorar') THEN
+    RAISE EXCEPTION 'Decisão inválida: %. Use aceitar/excluir/ignorar', p_decisao;
+  END IF;
+  SELECT * INTO v_evento FROM eventos_outlier WHERE id = p_evento_id;
+  IF NOT FOUND THEN
+    RAISE EXCEPTION 'Evento outlier % não encontrado', p_evento_id;
+  END IF;
+  IF v_evento.status != 'pendente' THEN
+    RAISE EXCEPTION 'Evento já resolvido com status: %', v_evento.status;
+  END IF;
+  v_novo_status := CASE p_decisao
+    WHEN 'aceitar' THEN 'aceito'
+    WHEN 'excluir' THEN 'excluido'
+    WHEN 'ignorar' THEN 'ignorado'
+  END;
+  UPDATE eventos_outlier
+  SET status = v_novo_status, decidido_em = now(),
+      decidido_por = p_usuario_email, justificativa_decisao = p_justificativa
+  WHERE id = p_evento_id;
+  IF p_decisao = 'excluir' THEN
+    INSERT INTO observacoes_excluidas (
+      empresa, sku_codigo_omie, tipo_observacao, data_observacao,
+      referencia_original, valor_excluido, excluido_por,
+      evento_outlier_id, justificativa
+    ) VALUES (
+      v_evento.empresa, v_evento.sku_codigo_omie,
+      CASE WHEN v_evento.tipo = 'venda_atipica' THEN 'venda' ELSE 'leadtime' END,
+      v_evento.data_evento,
+      COALESCE(v_evento.detalhes->>'nfe', v_evento.detalhes->>'pedido_compra', v_evento.id::text),
+      v_evento.valor_observado, p_usuario_email, v_evento.id, p_justificativa
+    )
+    ON CONFLICT (empresa, sku_codigo_omie, tipo_observacao, data_observacao, referencia_original)
+    DO UPDATE SET
+      valor_excluido = EXCLUDED.valor_excluido,
+      excluido_por = EXCLUDED.excluido_por,
+      justificativa = EXCLUDED.justificativa,
+      excluido_em = now();
+  END IF;
+  RETURN jsonb_build_object('evento_id', p_evento_id, 'novo_status', v_novo_status, 'decisao', p_decisao);
+END;
+$$;
+
+
+--
+-- Name: resolver_sku_por_codigo_fornecedor(text, text); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.resolver_sku_por_codigo_fornecedor(p_empresa text, p_codigo_fornecedor text) RETURNS jsonb
+    LANGUAGE plpgsql STABLE
+    SET search_path TO 'public', 'pg_temp'
+    AS $$
+DECLARE
+  v_count int;
+  v_unico record;
+  v_candidatos jsonb;
+  v_empresa text := lower(coalesce(p_empresa, ''));
+BEGIN
+  IF p_codigo_fornecedor IS NULL OR TRIM(p_codigo_fornecedor) = '' THEN
+    RETURN jsonb_build_object('qualidade', 'nao_encontrado', 'motivo', 'codigo_vazio');
+  END IF;
+
+  SELECT COUNT(*) INTO v_count
+  FROM omie_products op
+  WHERE lower(op.account) = v_empresa
+    AND COALESCE(op.ativo, true) = true
+    AND op.descricao ILIKE '%' || p_codigo_fornecedor || '%';
+
+  IF v_count = 0 THEN
+    RETURN jsonb_build_object('qualidade', 'nao_encontrado');
+  END IF;
+
+  IF v_count = 1 THEN
+    SELECT op.omie_codigo_produto, op.descricao INTO v_unico
+    FROM omie_products op
+    WHERE lower(op.account) = v_empresa
+      AND COALESCE(op.ativo, true) = true
+      AND op.descricao ILIKE '%' || p_codigo_fornecedor || '%'
+    LIMIT 1;
+
+    RETURN jsonb_build_object(
+      'qualidade', 'unico',
+      'omie_codigo_produto', v_unico.omie_codigo_produto,
+      'descricao', v_unico.descricao
+    );
+  END IF;
+
+  SELECT jsonb_agg(
+    jsonb_build_object(
+      'omie_codigo_produto', op.omie_codigo_produto,
+      'descricao', op.descricao,
+      'codigo_interno', op.codigo
+    )
+    ORDER BY op.descricao
+  )
+  INTO v_candidatos
+  FROM (
+    SELECT omie_codigo_produto, descricao, codigo
+    FROM omie_products
+    WHERE lower(account) = v_empresa
+      AND COALESCE(ativo, true) = true
+      AND descricao ILIKE '%' || p_codigo_fornecedor || '%'
+    LIMIT 5
+  ) op;
+
+  RETURN jsonb_build_object(
+    'qualidade', 'ambiguo',
+    'total_matches', v_count,
+    'candidatos', v_candidatos
+  );
+END;
+$$;
+
+
+--
+-- Name: FUNCTION resolver_sku_por_codigo_fornecedor(p_empresa text, p_codigo_fornecedor text); Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON FUNCTION public.resolver_sku_por_codigo_fornecedor(p_empresa text, p_codigo_fornecedor text) IS 'Busca código do fornecedor (ex: DR.4403) na descrição dos produtos Omie. Retorna JSON com qualidade do match e dados relevantes.';
+
+
+--
+-- Name: rodar_bateria_simulacao(text, integer); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.rodar_bateria_simulacao(p_empresa text, p_top_n integer DEFAULT 30) RETURNS TABLE(skus_simulados integer, candidatos_testados integer, simulacoes_total integer, valor_coberto_rs numeric, tempo_execucao_seg numeric)
+    LANGUAGE plpgsql
+    SET search_path TO 'public', 'pg_temp'
+    AS $$
+DECLARE
+  v_sku RECORD;
+  v_cand TEXT;
+  v_inicio TIMESTAMPTZ := CLOCK_TIMESTAMP();
+  v_skus INT := 0;
+  v_sims INT := 0;
+  v_valor NUMERIC := 0;
+BEGIN
+  DELETE FROM simulacao_estoque_resultados WHERE empresa = p_empresa;
+
+  FOR v_sku IN
+    SELECT sku_codigo_omie::text AS sku_codigo_omie, valor_total_180d
+    FROM v_sku_parametros_sugeridos
+    WHERE empresa = p_empresa AND status_sugestao = 'OK'
+    ORDER BY valor_total_180d DESC NULLS LAST
+    LIMIT p_top_n
+  LOOP
+    v_skus := v_skus + 1;
+    v_valor := v_valor + COALESCE(v_sku.valor_total_180d, 0);
+    FOREACH v_cand IN ARRAY ARRAY['C1','C2','C3','C4','C5'] LOOP
+      PERFORM simular_formula_estoque(p_empresa, v_sku.sku_codigo_omie, v_cand, 180);
+      v_sims := v_sims + 1;
+    END LOOP;
+  END LOOP;
+
+  RETURN QUERY SELECT v_skus, 5, v_sims, ROUND(v_valor, 2),
+    ROUND(EXTRACT(EPOCH FROM (CLOCK_TIMESTAMP() - v_inicio))::numeric, 2);
+END;
+$$;
+
+
+--
+-- Name: set_config(text, text, boolean); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.set_config(parameter text, value text, is_local boolean DEFAULT false) RETURNS text
+    LANGUAGE plpgsql SECURITY DEFINER
+    SET search_path TO 'public'
+    AS $$
+BEGIN
+  IF parameter NOT LIKE 'fin.%' THEN
+    RAISE EXCEPTION 'set_config: namespace não permitido: %', parameter;
+  END IF;
+  RETURN pg_catalog.set_config(parameter, value, is_local);
+END $$;
+
+
+--
+-- Name: set_status_envio_portal_on_disparo(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.set_status_envio_portal_on_disparo() RETURNS trigger
+    LANGUAGE plpgsql SECURITY DEFINER
+    SET search_path TO 'public'
+    AS $$
+BEGIN
+  -- Só age na transição p/ disparado
+  IF NEW.status = 'disparado' AND COALESCE(OLD.status, '') IS DISTINCT FROM 'disparado' THEN
+    -- Idempotente: só sobrescreve se ainda está em 'nao_aplicavel' (default)
+    IF COALESCE(NEW.status_envio_portal, 'nao_aplicavel') = 'nao_aplicavel' THEN
+      IF NEW.canal_usado = 'portal_b2b'
+         AND NEW.fornecedor_nome ILIKE '%SAYERLACK%' THEN
+        NEW.status_envio_portal := 'pendente_envio_portal';
+      ELSE
+        NEW.status_envio_portal := 'nao_aplicavel';
+      END IF;
+    END IF;
+  END IF;
+  RETURN NEW;
+END;
+$$;
+
+
+--
+-- Name: set_updated_at(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.set_updated_at() RETURNS trigger
+    LANGUAGE plpgsql
+    SET search_path TO 'public', 'pg_temp'
+    AS $$
+BEGIN
+  NEW.updated_at = now();
+  RETURN NEW;
+END;
+$$;
+
+
+--
+-- Name: simular_formula_estoque(text, text, text, integer); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.simular_formula_estoque(p_empresa text, p_sku text, p_candidato text, p_dias_simulacao integer DEFAULT 180) RETURNS jsonb
+    LANGUAGE plpgsql
+    SET search_path TO 'public', 'pg_temp'
+    AS $$
+DECLARE
+  v_p RECORD;
+  v_em NUMERIC; v_pp NUMERIC; v_qc NUMERIC; v_emax NUMERIC;
+  v_lt NUMERIC;
+  v_pior_janela_lt NUMERIC := NULL;
+  v_preco_medio NUMERIC;
+  v_estoque NUMERIC;
+  v_dia DATE;
+  v_qtde_dia NUMERIC;
+  v_pedido_chegada DATE := NULL;
+  v_pedido_qtde NUMERIC := 0;
+  v_dias_rupt INT := 0;
+  v_qtde_rupt NUMERIC := 0;
+  v_qtde_dem NUMERIC := 0;
+  v_soma_estoque NUMERIC := 0;
+  v_max_est NUMERIC := 0;
+  v_min_est NUMERIC := NULL;
+  v_num_pedidos INT := 0;
+  v_srl NUMERIC;
+  v_giros NUMERIC;
+  v_valor_emi NUMERIC;
+  v_valor_rupt NUMERIC;
+  v_sub_formula TEXT := NULL;  -- para C6: qual sub-fórmula vai usar
+BEGIN
+  SELECT
+    sku_descricao, classe_consolidada, classe_abc_proposta,
+    classe_xyz_proposta,
+    demanda_media_diaria AS d, p95_diario, p90_quando_vende,
+    pico_maximo_dia AS pico, lead_time_medio AS lt,
+    dias_seguranca AS ds, cobertura_alvo_dias AS cob, minimo_operacional AS mop
+  INTO v_p
+  FROM v_sku_parametros_sugeridos
+  WHERE empresa = p_empresa
+    AND sku_codigo_omie::text = p_sku
+    AND status_sugestao = 'OK';
+
+  IF NOT FOUND THEN
+    RETURN jsonb_build_object('error', 'SKU sem status OK', 'sku', p_sku);
+  END IF;
+
+  v_lt := GREATEST(COALESCE(v_p.lt, 10), 1);
+
+  SELECT ROUND(AVG(valor_total / NULLIF(quantidade, 0))::numeric, 2)
+  INTO v_preco_medio
+  FROM venda_items_history
+  WHERE empresa = p_empresa
+    AND sku_codigo_omie::text = p_sku
+    AND data_emissao >= CURRENT_DATE - (p_dias_simulacao || ' days')::interval
+    AND quantidade > 0;
+  v_preco_medio := COALESCE(v_preco_medio, 0);
+
+  -- Pior janela LT para C3 e C6 (Y/Z)
+  IF p_candidato IN ('C3', 'C6') THEN
+    WITH diario AS (
+      SELECT d.dt::date AS dt, COALESCE(SUM(v.quantidade), 0) AS qtde
+      FROM generate_series(
+        CURRENT_DATE - (p_dias_simulacao || ' days')::interval,
+        CURRENT_DATE - INTERVAL '1 day', INTERVAL '1 day') d(dt)
+      LEFT JOIN venda_items_history v
+        ON v.empresa = p_empresa
+       AND v.sku_codigo_omie::text = p_sku
+       AND v.data_emissao::date = d.dt::date
+      GROUP BY d.dt
+    ),
+    janelas AS (
+      SELECT SUM(qtde) OVER (ORDER BY dt
+        ROWS BETWEEN (v_lt::int - 1) PRECEDING AND CURRENT ROW) AS soma
+      FROM diario
+    )
+    SELECT MAX(soma) INTO v_pior_janela_lt FROM janelas;
+    v_pior_janela_lt := COALESCE(v_pior_janela_lt, v_p.d * v_lt);
+  END IF;
+
+  -- Sub-fórmula para C6
+  IF p_candidato = 'C6' THEN
+    IF v_p.classe_xyz_proposta = 'X' THEN
+      v_sub_formula := 'C1';
+    ELSE
+      v_sub_formula := 'C3';
+    END IF;
+  END IF;
+
+  CASE p_candidato
+    WHEN 'C1' THEN
+      v_em := GREATEST(CEIL(v_p.d * v_p.ds), COALESCE(v_p.mop, 0));
+      v_pp := GREATEST(CEIL(v_p.d * (v_lt + v_p.ds)), v_em + 1);
+      v_qc := GREATEST(CEIL(v_p.d * v_p.cob), 1);
+    WHEN 'C2' THEN
+      v_em := GREATEST(CEIL(COALESCE(v_p.p95_diario, v_p.d) * v_p.ds),
+        CEIL(v_p.d * v_p.ds), COALESCE(v_p.mop, 0));
+      v_pp := GREATEST(
+        CEIL(COALESCE(v_p.p95_diario, v_p.d) * v_lt
+             + COALESCE(v_p.p95_diario, v_p.d) * v_p.ds * 0.5), v_em + 1);
+      v_qc := GREATEST(CEIL(v_p.d * v_p.cob), 1);
+    WHEN 'C3' THEN
+      v_em := GREATEST(CEIL(v_p.d * v_p.ds), COALESCE(v_p.mop, 0));
+      v_pp := GREATEST(CEIL(v_pior_janela_lt + v_p.d * v_p.ds), v_em + 1);
+      v_qc := GREATEST(CEIL(v_p.d * v_p.cob), 1);
+    WHEN 'C4' THEN
+      v_em := GREATEST(CEIL(v_p.pico * 1.5), COALESCE(v_p.mop, 0));
+      v_pp := GREATEST(CEIL(v_p.pico * (v_lt + 1)), v_em + 1);
+      v_qc := GREATEST(CEIL(v_p.pico * v_p.ds), 1);
+    WHEN 'C5' THEN
+      IF v_p.classe_abc_proposta = 'A' THEN
+        v_em := GREATEST(CEIL(COALESCE(v_p.p95_diario, v_p.d) * v_p.ds),
+          CEIL(v_p.d * v_p.ds), COALESCE(v_p.mop, 0));
+        v_pp := GREATEST(
+          CEIL(COALESCE(v_p.p95_diario, v_p.d) * v_lt
+               + COALESCE(v_p.p95_diario, v_p.d) * v_p.ds * 0.5), v_em + 1);
+        v_qc := GREATEST(CEIL(v_p.d * v_p.cob), 1);
+      ELSIF v_p.classe_abc_proposta = 'B' THEN
+        v_em := GREATEST(CEIL(v_p.d * v_p.ds), COALESCE(v_p.mop, 0));
+        v_pp := GREATEST(CEIL(v_p.d * (v_lt + v_p.ds)), v_em + 1);
+        v_qc := GREATEST(CEIL(v_p.d * v_p.cob), 1);
+      ELSE
+        v_em := GREATEST(CEIL(v_p.pico * 1.5), COALESCE(v_p.mop, 0));
+        v_pp := GREATEST(CEIL(v_p.pico * (v_lt + 1)), v_em + 1);
+        v_qc := GREATEST(CEIL(v_p.pico * v_p.ds), 1);
+      END IF;
+    WHEN 'C6' THEN
+      IF v_sub_formula = 'C1' THEN
+        -- X: fórmula econômica
+        v_em := GREATEST(CEIL(v_p.d * v_p.ds), COALESCE(v_p.mop, 0));
+        v_pp := GREATEST(CEIL(v_p.d * (v_lt + v_p.ds)), v_em + 1);
+        v_qc := GREATEST(CEIL(v_p.d * v_p.cob), 1);
+      ELSE
+        -- Y/Z: rolling pessimista
+        v_em := GREATEST(CEIL(v_p.d * v_p.ds), COALESCE(v_p.mop, 0));
+        v_pp := GREATEST(CEIL(v_pior_janela_lt + v_p.d * v_p.ds), v_em + 1);
+        v_qc := GREATEST(CEIL(v_p.d * v_p.cob), 1);
+      END IF;
+    ELSE
+      RETURN jsonb_build_object('error', 'Candidato inválido: ' || p_candidato);
+  END CASE;
+
+  v_emax := v_pp + v_qc;
+  v_estoque := v_emax;
+  v_max_est := v_emax;
+  v_min_est := v_emax;
+
+  FOR v_dia IN
+    SELECT dt::date FROM generate_series(
+      CURRENT_DATE - (p_dias_simulacao || ' days')::interval,
+      CURRENT_DATE - INTERVAL '1 day', INTERVAL '1 day') AS t(dt)
+    ORDER BY 1
+  LOOP
+    IF v_pedido_chegada IS NOT NULL AND v_dia >= v_pedido_chegada THEN
+      v_estoque := v_estoque + v_pedido_qtde;
+      v_pedido_chegada := NULL; v_pedido_qtde := 0;
+    END IF;
+
+    SELECT COALESCE(SUM(quantidade), 0) INTO v_qtde_dia
+    FROM venda_items_history
+    WHERE empresa = p_empresa AND sku_codigo_omie::text = p_sku
+      AND data_emissao::date = v_dia;
+
+    v_qtde_dem := v_qtde_dem + v_qtde_dia;
+
+    IF v_estoque >= v_qtde_dia THEN
+      v_estoque := v_estoque - v_qtde_dia;
+    ELSE
+      v_qtde_rupt := v_qtde_rupt + (v_qtde_dia - v_estoque);
+      v_estoque := 0;
+      IF v_qtde_dia > 0 THEN v_dias_rupt := v_dias_rupt + 1; END IF;
+    END IF;
+
+    IF v_estoque <= v_pp AND v_pedido_chegada IS NULL THEN
+      v_pedido_qtde := v_qc;
+      SELECT dt::date INTO v_pedido_chegada
+      FROM generate_series(
+        (v_dia + INTERVAL '1 day')::date,
+        (v_dia + INTERVAL '30 days')::date,
+        INTERVAL '1 day') AS g(dt)
+      WHERE dias_uteis_entre(v_dia, dt::date) >= v_lt
+      ORDER BY dt LIMIT 1;
+      IF v_pedido_chegada IS NULL THEN
+        v_pedido_chegada := v_dia + CEIL(v_lt * 1.4)::int;
+      END IF;
+      v_num_pedidos := v_num_pedidos + 1;
+    END IF;
+
+    v_soma_estoque := v_soma_estoque + v_estoque;
+    IF v_estoque > v_max_est THEN v_max_est := v_estoque; END IF;
+    IF v_estoque < v_min_est THEN v_min_est := v_estoque; END IF;
+  END LOOP;
+
+  v_srl := CASE WHEN v_qtde_dem > 0 THEN ROUND((1 - v_qtde_rupt / v_qtde_dem) * 100, 2) ELSE 100 END;
+  v_valor_emi := ROUND((v_soma_estoque / p_dias_simulacao::numeric) * v_preco_medio, 2);
+  v_valor_rupt := ROUND(v_qtde_rupt * v_preco_medio, 2);
+  v_giros := CASE WHEN v_soma_estoque > 0 THEN
+    ROUND((v_qtde_dem / (v_soma_estoque / p_dias_simulacao::numeric)) * (365.0 / p_dias_simulacao), 2)
+    ELSE 0 END;
+
+  INSERT INTO simulacao_estoque_resultados (
+    empresa, sku_codigo_omie, sku_descricao, classe_consolidada, classe_abc, candidato,
+    estoque_min_aplicado, ponto_pedido_aplicado, qtde_compra_aplicada, estoque_max_aplicado,
+    lead_time_aplicado, dias_simulados, dias_em_ruptura, srl_perc, qtde_ruptura_total,
+    qtde_demandada_total, estoque_medio, estoque_max_observado, estoque_min_observado,
+    num_pedidos_disparados, giros_ano, valor_emi, valor_ruptura_estimado, metadata
+  ) VALUES (
+    p_empresa, p_sku, v_p.sku_descricao, v_p.classe_consolidada, v_p.classe_abc_proposta, p_candidato,
+    v_em, v_pp, v_qc, v_emax, v_lt, p_dias_simulacao, v_dias_rupt, v_srl, v_qtde_rupt, v_qtde_dem,
+    ROUND(v_soma_estoque / p_dias_simulacao::numeric, 2), v_max_est, COALESCE(v_min_est, 0),
+    v_num_pedidos, v_giros, v_valor_emi, v_valor_rupt,
+    jsonb_build_object('D', v_p.d, 'LT_dias_uteis', v_lt, 'pico', v_p.pico,
+      'p95_diario', v_p.p95_diario, 'p90_quando_vende', v_p.p90_quando_vende,
+      'preco_medio', v_preco_medio, 'pior_janela_lt', v_pior_janela_lt,
+      'ds', v_p.ds, 'cob', v_p.cob,
+      'classe_xyz', v_p.classe_xyz_proposta,
+      'c6_sub', v_sub_formula));
+
+  RETURN jsonb_build_object('sku', p_sku, 'candidato', p_candidato, 'srl_perc', v_srl,
+    'dias_rupt', v_dias_rupt, 'estoque_medio', ROUND(v_soma_estoque / p_dias_simulacao::numeric, 2),
+    'giros_ano', v_giros, 'valor_emi', v_valor_emi, 'em', v_em, 'pp', v_pp, 'qc', v_qc);
+END;
+$$;
+
+
+--
+-- Name: simular_puxar_volume_trimestre(text, integer, integer, numeric, text, integer); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.simular_puxar_volume_trimestre(p_empresa text DEFAULT 'OBEN'::text, p_ano integer DEFAULT NULL::integer, p_trimestre integer DEFAULT NULL::integer, p_valor_extra numeric DEFAULT 0, p_prazo_pagamento_codigo text DEFAULT 'antecipado'::text, p_dias_estoque_extra integer DEFAULT 60) RETURNS jsonb
+    LANGUAGE plpgsql STABLE
+    SET search_path TO 'public', 'pg_temp'
+    AS $$
+DECLARE
+  v_ano int;
+  v_trimestre int;
+  v_posicao_atual numeric;
+  v_posicao_com_extra numeric;
+  v_faixa_atual record;
+  v_faixa_nova record;
+  v_desc_atual_total numeric;
+  v_desc_novo_total numeric;
+  v_delta_percentual numeric;
+  v_projecao_proximo_trimestre numeric;
+  v_ganho_proximo_trimestre numeric;
+  v_perda_antecipado numeric;
+  v_encargo_prazo numeric;
+  v_custo_frete numeric;
+  v_custo_capital numeric;
+  v_cm_anual numeric;
+  v_perda_total numeric;
+  v_saldo_liquido numeric;
+  v_prazo_atual record;
+  v_prazo_novo record;
+  v_checkin record;
+  v_fator_inflacao_nominal numeric;
+  v_nominal_adicional_na_nf numeric;
+BEGIN
+  -- Defaults: trimestre atual se não especificado
+  v_ano := COALESCE(p_ano, EXTRACT(YEAR FROM CURRENT_DATE)::int);
+  v_trimestre := COALESCE(p_trimestre, EXTRACT(QUARTER FROM CURRENT_DATE)::int);
+  
+  -- Posição atual
+  SELECT posicao_ao_vivo_conservadora INTO v_posicao_atual
+  FROM v_des_posicao_trimestre_ao_vivo
+  WHERE empresa = p_empresa AND ano = v_ano AND trimestre = v_trimestre;
+  
+  IF v_posicao_atual IS NULL THEN v_posicao_atual := 0; END IF;
+  
+  -- Prazo de pagamento escolhido
+  SELECT * INTO v_prazo_novo
+  FROM fornecedor_prazo_pagamento_config
+  WHERE empresa = p_empresa 
+    AND fornecedor_nome = 'RENNER SAYERLACK S/A'
+    AND codigo = p_prazo_pagamento_codigo;
+  
+  -- Prazo padrão (antecipado default)
+  SELECT * INTO v_prazo_atual
+  FROM fornecedor_prazo_pagamento_config
+  WHERE empresa = p_empresa 
+    AND fornecedor_nome = 'RENNER SAYERLACK S/A'
+    AND padrao = true;
+  
+  -- Fator de inflação da NF: 
+  -- - se prazo escolhido é antecipado, NF = valor pedido
+  -- - se prazo é 28/42/56, NF = valor pedido × (1 + encargo_abs)
+  -- encargo_abs = abs(desconto_ou_encargo_perc) / 100 se valor negativo
+  v_fator_inflacao_nominal := 1.0;
+  IF v_prazo_novo.desconto_ou_encargo_perc < 0 THEN
+    v_fator_inflacao_nominal := 1.0 + (ABS(v_prazo_novo.desconto_ou_encargo_perc) / 100.0);
+  END IF;
+  
+  -- Valor adicional na NF (o que conta para DES)
+  v_nominal_adicional_na_nf := p_valor_extra * v_fator_inflacao_nominal;
+  
+  -- Nova posição
+  v_posicao_com_extra := v_posicao_atual + v_nominal_adicional_na_nf;
+  
+  -- Faixas: atual e nova
+  SELECT * INTO v_faixa_atual FROM des_determinar_faixa(v_posicao_atual);
+  SELECT * INTO v_faixa_nova FROM des_determinar_faixa(v_posicao_com_extra);
+  
+  -- Checkin mais recente para saber quais qualitativos estão ativos
+  SELECT * INTO v_checkin 
+  FROM v_des_desconto_por_checkin
+  WHERE empresa = p_empresa AND ano = v_ano AND trimestre = v_trimestre
+  LIMIT 1;
+  
+  -- Desconto total atual (sem puxar)
+  v_desc_atual_total := COALESCE(
+    (SELECT desconto_total_projetado FROM v_des_desconto_por_checkin
+     WHERE empresa = p_empresa AND ano = v_ano AND trimestre = v_trimestre),
+    COALESCE(v_faixa_atual.desconto_padrao_perc, 0)
+  );
+  
+  -- Desconto total na nova faixa (reaplica qualitativos do checkin)
+  IF v_faixa_nova.faixa_id IS NOT NULL THEN
+    v_desc_novo_total := v_faixa_nova.desconto_padrao_perc +
+      COALESCE((
+        SELECT SUM(cp.percentual)
+        FROM des_checkin_qualitativo_resposta qr
+        JOIN des_checkin_qualitativo ck ON ck.id = qr.checkin_id
+        JOIN des_criterio_percentual cp 
+          ON cp.criterio_id = qr.criterio_id 
+         AND cp.faixa_id = v_faixa_nova.faixa_id
+        WHERE qr.atingido = true
+          AND ck.empresa = p_empresa 
+          AND ck.ano = v_ano 
+          AND ck.trimestre = v_trimestre
+          AND ck.id = (SELECT MAX(id) FROM des_checkin_qualitativo 
+                       WHERE empresa = p_empresa 
+                         AND ano = v_ano 
+                         AND trimestre = v_trimestre)
+      ), 0);
+  ELSE
+    v_desc_novo_total := v_desc_atual_total;
+  END IF;
+  
+  v_delta_percentual := v_desc_novo_total - v_desc_atual_total;
+  
+  -- Projeção de faturamento do próximo trimestre (meta pessoal)
+  SELECT meta_faturamento INTO v_projecao_proximo_trimestre
+  FROM des_meta_empresa
+  WHERE empresa = p_empresa 
+    AND ano = v_ano 
+    AND trimestre = CASE WHEN v_trimestre = 4 THEN 1 ELSE v_trimestre + 1 END;
+  
+  IF v_projecao_proximo_trimestre IS NULL THEN
+    -- Fallback: usa meta do trimestre corrente
+    v_projecao_proximo_trimestre := COALESCE(
+      (SELECT meta_faturamento FROM des_meta_empresa 
+       WHERE empresa = p_empresa AND ano = v_ano AND trimestre = v_trimestre),
+      400000
+    );
+  END IF;
+  
+  -- Ganho no próximo trimestre = delta_perc × projeção_próximo
+  v_ganho_proximo_trimestre := (v_delta_percentual / 100.0) * v_projecao_proximo_trimestre;
+  
+  -- Perdas no pedido atual
+  -- 1. Perda de antecipado (se mudou para prazo)
+  v_perda_antecipado := 0;
+  IF v_prazo_atual.codigo <> v_prazo_novo.codigo 
+     AND v_prazo_atual.desconto_ou_encargo_perc > 0 THEN
+    v_perda_antecipado := p_valor_extra * (v_prazo_atual.desconto_ou_encargo_perc / 100.0);
+  END IF;
+  
+  -- 2. Encargo do prazo (se negativo)
+  v_encargo_prazo := 0;
+  IF v_prazo_novo.desconto_ou_encargo_perc < 0 THEN
+    v_encargo_prazo := p_valor_extra * (ABS(v_prazo_novo.desconto_ou_encargo_perc) / 100.0);
+  END IF;
+  
+  -- 3. Frete adicional sobre o valor extra
+  v_custo_frete := p_valor_extra * (COALESCE(
+    (SELECT valor FROM fornecedor_custo_adicional_config 
+     WHERE empresa = p_empresa 
+       AND fornecedor_nome = 'RENNER SAYERLACK S/A' 
+       AND tipo = 'frete_perc_valor' 
+       AND ativo = true LIMIT 1), 
+    2.5
+  ) / 100.0);
+  
+  -- 4. Custo de capital do estoque extra
+  v_cm_anual := COALESCE(
+    (SELECT (selic_anual + spread_oportunidade + armazenagem_fisica) / 100.0 
+     FROM empresa_configuracao_custos WHERE empresa = p_empresa LIMIT 1),
+    0.20
+  );
+  v_custo_capital := p_valor_extra * v_cm_anual * (p_dias_estoque_extra::numeric / 365.0);
+  
+  -- Perda total no pedido
+  v_perda_total := v_perda_antecipado + v_encargo_prazo + v_custo_frete + v_custo_capital;
+  
+  -- Saldo líquido
+  v_saldo_liquido := v_ganho_proximo_trimestre - v_perda_total;
+  
+  -- Retorno estruturado
+  RETURN jsonb_build_object(
+    'parametros', jsonb_build_object(
+      'empresa', p_empresa,
+      'ano', v_ano,
+      'trimestre', v_trimestre,
+      'valor_extra', p_valor_extra,
+      'prazo_pagamento', p_prazo_pagamento_codigo,
+      'dias_estoque_extra', p_dias_estoque_extra
+    ),
+    'posicao', jsonb_build_object(
+      'atual', v_posicao_atual,
+      'com_extra', v_posicao_com_extra,
+      'nominal_adicional_na_nf', v_nominal_adicional_na_nf,
+      'fator_inflacao', v_fator_inflacao_nominal
+    ),
+    'faixas', jsonb_build_object(
+      'atual', row_to_json(v_faixa_atual),
+      'nova', row_to_json(v_faixa_nova),
+      'mudou_faixa', (COALESCE(v_faixa_atual.faixa_numero, 0) <> COALESCE(v_faixa_nova.faixa_numero, 0))
+    ),
+    'descontos', jsonb_build_object(
+      'atual_total_perc', v_desc_atual_total,
+      'novo_total_perc', v_desc_novo_total,
+      'delta_perc', v_delta_percentual
+    ),
+    'projecao', jsonb_build_object(
+      'proximo_trimestre_projetado', v_projecao_proximo_trimestre,
+      'ganho_futuro_rs', ROUND(v_ganho_proximo_trimestre, 2)
+    ),
+    'perdas_pedido_atual', jsonb_build_object(
+      'antecipado_rs', ROUND(v_perda_antecipado, 2),
+      'encargo_prazo_rs', ROUND(v_encargo_prazo, 2),
+      'frete_rs', ROUND(v_custo_frete, 2),
+      'custo_capital_rs', ROUND(v_custo_capital, 2),
+      'total_rs', ROUND(v_perda_total, 2)
+    ),
+    'saldo_liquido_rs', ROUND(v_saldo_liquido, 2),
+    'recomendacao', CASE 
+      WHEN v_saldo_liquido > 1000 THEN 'compensa'
+      WHEN v_saldo_liquido > 0 THEN 'compensa_marginalmente'
+      WHEN v_saldo_liquido > -1000 THEN 'indiferente'
+      ELSE 'nao_compensa'
+    END
+  );
+END;
+$$;
+
+
+--
+-- Name: FUNCTION simular_puxar_volume_trimestre(p_empresa text, p_ano integer, p_trimestre integer, p_valor_extra numeric, p_prazo_pagamento_codigo text, p_dias_estoque_extra integer); Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON FUNCTION public.simular_puxar_volume_trimestre(p_empresa text, p_ano integer, p_trimestre integer, p_valor_extra numeric, p_prazo_pagamento_codigo text, p_dias_estoque_extra integer) IS 'Simulador de impacto financeiro de puxar volume extra em um trimestre. Retorna JSON estruturado com: posição atual e projetada, faixas atingidas, descontos envolvidos, ganho futuro, perdas no pedido, saldo líquido e recomendação. Usado pela UI de simulação.';
+
+
+--
+-- Name: sincronizar_ativo_omie_para_reposicao(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.sincronizar_ativo_omie_para_reposicao() RETURNS trigger
+    LANGUAGE plpgsql
+    SET search_path TO 'public', 'pg_temp'
+    AS $$
+BEGIN
+  -- Se virou inativo, desabilita reposição + gera alerta
+  IF NEW.ativo = false AND (OLD.ativo IS NULL OR OLD.ativo = true) THEN
+    UPDATE sku_parametros sp
+    SET habilitado_reposicao_automatica = FALSE
+    WHERE sp.sku_codigo_omie::text = NEW.omie_codigo_produto::text
+      AND sp.habilitado_reposicao_automatica = TRUE;
+    
+    -- Registra evento pra Lucas decidir merge
+    INSERT INTO eventos_outlier (
+      empresa, sku_codigo_omie, sku_descricao,
+      tipo, severidade, data_evento, detalhes
+    )
+    SELECT 
+      sp.empresa, sp.sku_codigo_omie::text, sp.sku_descricao,
+      'sku_inativado_omie', 'atencao', CURRENT_DATE,
+      jsonb_build_object(
+        'mensagem', 'SKU foi inativado no Omie. Reposição automática desligada. Decida: (1) merge histórico com outro SKU, (2) manter desabilitado, (3) reativar no Omie.',
+        'familia', NEW.familia,
+        'valor_unitario', NEW.valor_unitario
+      )
+    FROM sku_parametros sp
+    WHERE sp.sku_codigo_omie::text = NEW.omie_codigo_produto::text
+      AND NOT EXISTS (
+        SELECT 1 FROM eventos_outlier eo
+        WHERE eo.empresa = sp.empresa
+          AND eo.sku_codigo_omie = sp.sku_codigo_omie::text
+          AND eo.tipo = 'sku_inativado_omie'
+          AND eo.status = 'pendente'
+      );
+  END IF;
+  
+  -- Se voltou a ser ativo, regrava observação (mas não reabilita automático)
+  IF NEW.ativo = true AND OLD.ativo = false THEN
+    INSERT INTO eventos_outlier (
+      empresa, sku_codigo_omie, sku_descricao,
+      tipo, severidade, data_evento, detalhes
+    )
+    SELECT 
+      sp.empresa, sp.sku_codigo_omie::text, sp.sku_descricao,
+      'sku_reativado_omie', 'info', CURRENT_DATE,
+      jsonb_build_object(
+        'mensagem', 'SKU foi reativado no Omie. Revisar se deseja habilitar reposição automática novamente.'
+      )
+    FROM sku_parametros sp
+    WHERE sp.sku_codigo_omie::text = NEW.omie_codigo_produto::text;
+  END IF;
+  
+  RETURN NEW;
+END;
+$$;
+
+
+--
+-- Name: sugerir_negociacao_paralela_hoje(text, integer); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.sugerir_negociacao_paralela_hoje(p_empresa text DEFAULT 'OBEN'::text, p_limite integer DEFAULT 10) RETURNS TABLE(out_sugestao_id bigint, out_sku_codigo_omie text, out_sku_descricao text, out_motivo text, out_score_final numeric, out_volume_financeiro_12m numeric, out_preco_medio_unitario numeric, out_categoria text, out_motivo_legivel text)
+    LANGUAGE plpgsql SECURITY DEFINER
+    SET search_path TO 'public'
+    AS $$
+DECLARE
+  v_dia_mes int;
+  v_eh_fim_mes boolean;
+BEGIN
+  IF auth.uid() IS NULL OR NOT (public.has_role(auth.uid(), 'employee'::app_role) OR public.has_role(auth.uid(), 'master'::app_role)) THEN
+    RAISE EXCEPTION 'Acesso negado: requer perfil staff' USING ERRCODE = '42501';
+  END IF;
+  v_dia_mes := EXTRACT(DAY FROM CURRENT_DATE)::int;
+  v_eh_fim_mes := v_dia_mes >= 20;
+  UPDATE sugestao_negociacao_paralela
+  SET status = 'ignorada'
+  WHERE empresa = p_empresa AND status IN ('nova', 'visualizada') AND valido_ate < CURRENT_DATE;
+  RETURN QUERY
+  WITH candidatos AS (
+    SELECT 
+      r.sku_codigo_omie AS sku_cod, r.sku_descricao AS sku_desc,
+      r.score_final AS score_val, r.volume_financeiro_12m AS vol_12m,
+      r.preco_medio_unitario AS preco_med, r.promocoes_12m AS promo_12m,
+      r.perc_meses_com_promo AS perc_promo, r.categoria AS cat,
+      CASE 
+        WHEN r.categoria IN ('prioritario', 'forte') AND r.perc_meses_com_promo < 30 AND v_eh_fim_mes
+          THEN 'combinacao_heuristica'
+        WHEN r.categoria IN ('prioritario', 'forte') AND r.perc_meses_com_promo < 30 
+          THEN 'candidato_forte_sem_promo_recente'
+        WHEN v_eh_fim_mes AND r.categoria IN ('prioritario', 'forte', 'moderado')
+          THEN 'consumo_abaixo_tipico_fim_de_mes'
+        ELSE 'score_alto_ciclo_semanal'
+      END AS motivo_comp
+    FROM mv_sku_ranking_negociacao_paralela r
+    WHERE r.empresa = p_empresa
+      AND r.categoria IN ('prioritario', 'forte', 'moderado')
+      AND NOT EXISTS (
+        SELECT 1 FROM promocao_item pi
+        JOIN promocao_campanha pc ON pc.id = pi.campanha_id
+        WHERE pc.empresa = r.empresa
+          AND pc.tipo_origem = 'desconto_flat_condicional'
+          AND pc.estado IN ('ativa', 'negociando')
+          AND pi.sku_codigo_omie::text = r.sku_codigo_omie AND pi.ativo = true
+      )
+      AND NOT EXISTS (
+        SELECT 1 FROM sugestao_negociacao_paralela sng
+        WHERE sng.empresa = r.empresa AND sng.sku_codigo_omie = r.sku_codigo_omie
+          AND sng.status IN ('nova', 'visualizada', 'acao_tomada')
+          AND sng.valido_ate >= CURRENT_DATE
+      )
+    ORDER BY r.score_final DESC LIMIT p_limite
+  ),
+  inserted AS (
+    INSERT INTO sugestao_negociacao_paralela (
+      empresa, sku_codigo_omie, sku_descricao, motivo, motivo_detalhes, 
+      score_final, volume_financeiro_12m, preco_medio_unitario,
+      promocoes_12m, perc_meses_com_promo, valido_ate
+    )
+    SELECT 
+      p_empresa, c.sku_cod, c.sku_desc, c.motivo_comp,
+      jsonb_build_object('dia_mes', v_dia_mes, 'eh_fim_mes', v_eh_fim_mes,
+        'categoria_ranking', c.cat, 'heuristica_disparou', c.motivo_comp),
+      c.score_val, c.vol_12m, c.preco_med, c.promo_12m, c.perc_promo,
+      CURRENT_DATE + interval '14 days'
+    FROM candidatos c
+    RETURNING id, sku_codigo_omie, sku_descricao, motivo, score_final, 
+              volume_financeiro_12m, preco_medio_unitario
+  )
+  SELECT 
+    ins.id, ins.sku_codigo_omie, ins.sku_descricao, ins.motivo, ins.score_final,
+    ins.volume_financeiro_12m, ins.preco_medio_unitario, c.cat,
+    CASE ins.motivo
+      WHEN 'combinacao_heuristica' 
+        THEN format('Candidato %s (score %s) sem promoção nos últimos %s%% dos meses, estamos em fim de mês (dia %s). Momento ótimo para negociar.',
+          c.cat, ins.score_final, ROUND(c.perc_promo, 0), v_dia_mes)
+      WHEN 'candidato_forte_sem_promo_recente' 
+        THEN format('Candidato %s (score %s) que raramente entra em promoção (%s%% dos últimos 12 meses). Provavelmente aceita desconto paralelo.',
+          c.cat, ins.score_final, ROUND(c.perc_promo, 0))
+      WHEN 'consumo_abaixo_tipico_fim_de_mes' 
+        THEN format('Dia %s. SKU categoria %s, consumo recorrente, vale completar volume do mês negociando desconto condicional.',
+          v_dia_mes, c.cat)
+      ELSE format('Top candidato do ranking (score %s, categoria %s). Vale avaliar para negociação.',
+        ins.score_final, c.cat)
+    END
+  FROM inserted ins
+  JOIN candidatos c ON c.sku_cod = ins.sku_codigo_omie;
+END;
+$$;
+
+
+--
+-- Name: tint_run_reconciliation(uuid); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.tint_run_reconciliation(p_sync_run_id uuid) RETURNS jsonb
+    LANGUAGE plpgsql SECURITY DEFINER
+    SET search_path TO 'public'
+    AS $$
+DECLARE
+  v_run record;
+  v_recon_id uuid;
+  v_matches int := 0;
+  v_divergences int := 0;
+  v_only_csv int := 0;
+  v_only_sync int := 0;
+  v_total int := 0;
+  r record;
+BEGIN
+  IF auth.uid() IS NULL OR NOT (public.has_role(auth.uid(), 'employee'::app_role) OR public.has_role(auth.uid(), 'master'::app_role)) THEN
+    RAISE EXCEPTION 'Acesso negado: requer perfil staff' USING ERRCODE = '42501';
+  END IF;
+  SELECT * INTO v_run FROM tint_sync_runs WHERE id = p_sync_run_id;
+  IF v_run IS NULL THEN
+    RETURN jsonb_build_object('error', 'Sync run not found');
+  END IF;
+
+  INSERT INTO tint_reconciliation_runs (account, store_code, sync_run_id, status)
+  VALUES (v_run.account, v_run.store_code, p_sync_run_id, 'running')
+  RETURNING id INTO v_recon_id;
+
+  FOR r IN
+    SELECT sf.id, sf.cor_id, sf.nome_cor, sf.cod_produto, sf.id_base, sf.id_embalagem,
+           sf.volume_final_ml AS stg_vol, sf.preco_final AS stg_preco,
+           tf.id AS official_id, tf.volume_final_ml AS off_vol, tf.preco_final_sayersystem AS off_preco,
+           tf.nome_cor AS off_nome
+    FROM tint_staging_formulas sf
+    LEFT JOIN tint_formulas tf ON tf.account = sf.account AND tf.cor_id = sf.cor_id
+      AND tf.produto_id = (SELECT tp.id FROM tint_produtos tp WHERE tp.account = sf.account AND tp.cod_produto = sf.cod_produto LIMIT 1)
+      AND tf.base_id = (SELECT tb.id FROM tint_bases tb WHERE tb.account = sf.account AND tb.id_base_sayersystem = sf.id_base LIMIT 1)
+      AND tf.embalagem_id = (SELECT te.id FROM tint_embalagens te WHERE te.account = sf.account AND te.id_embalagem_sayersystem = sf.id_embalagem LIMIT 1)
+    WHERE sf.sync_run_id = p_sync_run_id
+  LOOP
+    v_total := v_total + 1;
+    IF r.official_id IS NULL THEN
+      v_only_sync := v_only_sync + 1;
+      INSERT INTO tint_reconciliation_items (reconciliation_run_id, entity_type, entity_key, sync_value, diff_type)
+      VALUES (v_recon_id, 'formula', r.cor_id || '|' || COALESCE(r.cod_produto,'') || '|' || COALESCE(r.id_base,'') || '|' || COALESCE(r.id_embalagem,''),
+              jsonb_build_object('cor_id', r.cor_id, 'nome_cor', r.nome_cor, 'volume', r.stg_vol, 'preco', r.stg_preco),
+              'only_sync');
+    ELSE
+      DECLARE
+        v_diffs text[] := ARRAY[]::text[];
+      BEGIN
+        IF COALESCE(r.stg_vol,0) != COALESCE(r.off_vol,0) THEN v_diffs := array_append(v_diffs, 'volume_final_ml'); END IF;
+        IF COALESCE(r.stg_preco,0) != COALESCE(r.off_preco,0) THEN v_diffs := array_append(v_diffs, 'preco_final'); END IF;
+        IF COALESCE(r.nome_cor,'') != COALESCE(r.off_nome,'') THEN v_diffs := array_append(v_diffs, 'nome_cor'); END IF;
+
+        IF array_length(v_diffs, 1) IS NULL OR array_length(v_diffs, 1) = 0 THEN
+          v_matches := v_matches + 1;
+          INSERT INTO tint_reconciliation_items (reconciliation_run_id, entity_type, entity_key, diff_type)
+          VALUES (v_recon_id, 'formula', r.cor_id || '|' || COALESCE(r.cod_produto,''), 'match');
+        ELSE
+          v_divergences := v_divergences + 1;
+          INSERT INTO tint_reconciliation_items (reconciliation_run_id, entity_type, entity_key,
+            csv_value, sync_value, diff_type, diff_fields, diff_details)
+          VALUES (v_recon_id, 'formula', r.cor_id || '|' || COALESCE(r.cod_produto,''),
+            jsonb_build_object('volume', r.off_vol, 'preco', r.off_preco, 'nome_cor', r.off_nome),
+            jsonb_build_object('volume', r.stg_vol, 'preco', r.stg_preco, 'nome_cor', r.nome_cor),
+            'divergence', v_diffs,
+            jsonb_build_object('fields', v_diffs));
+        END IF;
+      END;
+    END IF;
+
+    UPDATE tint_staging_formulas SET staging_status = 
+      CASE WHEN r.official_id IS NULL THEN 'only_sync'
+           WHEN (SELECT count(*) FROM tint_reconciliation_items WHERE reconciliation_run_id = v_recon_id AND entity_key = r.cor_id || '|' || COALESCE(r.cod_produto,'') AND diff_type = 'match') > 0 THEN 'matched'
+           ELSE 'divergent' END
+    WHERE id = r.id;
+  END LOOP;
+
+  FOR r IN
+    SELECT sc.id, sc.id_corante_sayersystem, sc.descricao AS stg_desc, sc.preco_litro AS stg_preco,
+           tc.id AS official_id, tc.descricao AS off_desc, tc.preco_litro AS off_preco
+    FROM tint_staging_corantes sc
+    LEFT JOIN tint_corantes tc ON tc.account = sc.account AND tc.id_corante_sayersystem = sc.id_corante_sayersystem
+    WHERE sc.sync_run_id = p_sync_run_id
+  LOOP
+    v_total := v_total + 1;
+    IF r.official_id IS NULL THEN
+      v_only_sync := v_only_sync + 1;
+      INSERT INTO tint_reconciliation_items (reconciliation_run_id, entity_type, entity_key, sync_value, diff_type)
+      VALUES (v_recon_id, 'corante', r.id_corante_sayersystem,
+              jsonb_build_object('descricao', r.stg_desc, 'preco_litro', r.stg_preco), 'only_sync');
+    ELSE
+      DECLARE v_diffs2 text[] := ARRAY[]::text[];
+      BEGIN
+        IF COALESCE(r.stg_preco,0) != COALESCE(r.off_preco,0) THEN v_diffs2 := array_append(v_diffs2, 'preco_litro'); END IF;
+        IF COALESCE(r.stg_desc,'') != COALESCE(r.off_desc,'') THEN v_diffs2 := array_append(v_diffs2, 'descricao'); END IF;
+        IF array_length(v_diffs2, 1) IS NULL OR array_length(v_diffs2, 1) = 0 THEN
+          v_matches := v_matches + 1;
+          INSERT INTO tint_reconciliation_items (reconciliation_run_id, entity_type, entity_key, diff_type)
+          VALUES (v_recon_id, 'corante', r.id_corante_sayersystem, 'match');
+        ELSE
+          v_divergences := v_divergences + 1;
+          INSERT INTO tint_reconciliation_items (reconciliation_run_id, entity_type, entity_key,
+            csv_value, sync_value, diff_type, diff_fields)
+          VALUES (v_recon_id, 'corante', r.id_corante_sayersystem,
+            jsonb_build_object('descricao', r.off_desc, 'preco_litro', r.off_preco),
+            jsonb_build_object('descricao', r.stg_desc, 'preco_litro', r.stg_preco),
+            'divergence', v_diffs2);
+        END IF;
+      END;
+    END IF;
+  END LOOP;
+
+  UPDATE tint_reconciliation_runs SET
+    status = 'complete', completed_at = now(),
+    total_compared = v_total, matches = v_matches, divergences = v_divergences,
+    only_csv = v_only_csv, only_sync = v_only_sync
+  WHERE id = v_recon_id;
+
+  RETURN jsonb_build_object(
+    'reconciliation_run_id', v_recon_id,
+    'total', v_total, 'matches', v_matches,
+    'divergences', v_divergences, 'only_csv', v_only_csv, 'only_sync', v_only_sync
+  );
+END;
+$$;
+
+
+--
+-- Name: touch_des_updated_at(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.touch_des_updated_at() RETURNS trigger
+    LANGUAGE plpgsql
+    SET search_path TO 'public', 'pg_temp'
+    AS $$
+BEGIN NEW.atualizado_em := now(); RETURN NEW; END; 
+$$;
+
+
+--
+-- Name: touch_fornecedor_aumento(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.touch_fornecedor_aumento() RETURNS trigger
+    LANGUAGE plpgsql
+    SET search_path TO 'public', 'pg_temp'
+    AS $$
+BEGIN NEW.atualizado_em := now(); RETURN NEW; END; 
+$$;
+
+
+--
+-- Name: touch_promocao(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.touch_promocao() RETURNS trigger
+    LANGUAGE plpgsql
+    SET search_path TO 'public', 'pg_temp'
+    AS $$
+BEGIN
+  NEW.atualizado_em := now();
+  RETURN NEW;
+END;
+$$;
+
+
+--
+-- Name: touch_sugestao_updated_at(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.touch_sugestao_updated_at() RETURNS trigger
+    LANGUAGE plpgsql
+    SET search_path TO 'public', 'pg_temp'
+    AS $$
+BEGIN NEW.atualizado_em := now(); RETURN NEW; END; 
+$$;
+
+
+--
+-- Name: trg_aumento_gera_alerta(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.trg_aumento_gera_alerta() RETURNS trigger
+    LANGUAGE plpgsql
+    SET search_path TO 'public', 'pg_temp'
+    AS $$
+BEGIN
+  -- Aumento mudou para ativo (confirmado, aguardando vigência)
+  IF NEW.estado = 'ativo' AND (OLD IS NULL OR OLD.estado != 'ativo') THEN
+    INSERT INTO fornecedor_alerta (
+      empresa, fornecedor_nome, tipo, severidade,
+      titulo, mensagem, aumento_id
+    ) VALUES (
+      NEW.empresa, NEW.fornecedor_nome, 'aumento_anunciado', 'atencao',
+      'Aumento anunciado: ' || NEW.nome,
+      'Entra em vigência em ' || NEW.data_vigencia::text || 
+      '. Avalie antecipação de compra para evitar o aumento.',
+      NEW.id
+    );
+  END IF;
+
+  -- Aumento entrou em vigência (data_vigencia atingida)
+  IF NEW.estado = 'vigente' AND (OLD IS NULL OR OLD.estado != 'vigente') THEN
+    INSERT INTO fornecedor_alerta (
+      empresa, fornecedor_nome, tipo, severidade,
+      titulo, mensagem, aumento_id
+    ) VALUES (
+      NEW.empresa, NEW.fornecedor_nome, 'aumento_anunciado', 'info',
+      'Aumento entrou em vigência: ' || NEW.nome,
+      'Preços já refletem o aumento a partir de ' || NEW.data_vigencia::text || '.',
+      NEW.id
+    );
+  END IF;
+
+  RETURN NEW;
+END;
+$$;
+
+
+--
+-- Name: trg_campanha_gera_alerta(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.trg_campanha_gera_alerta() RETURNS trigger
+    LANGUAGE plpgsql
+    SET search_path TO 'public', 'pg_temp'
+    AS $$
+BEGIN
+  -- Campanha ativada (transição para 'ativa')
+  IF NEW.estado = 'ativa' AND (OLD IS NULL OR OLD.estado != 'ativa') THEN
+    INSERT INTO fornecedor_alerta (
+      empresa, fornecedor_nome, tipo, severidade,
+      titulo, mensagem, campanha_id
+    ) VALUES (
+      NEW.empresa, NEW.fornecedor_nome, 'promocao_nova', 'info',
+      'Nova promoção ativa: ' || NEW.nome,
+      'Campanha vigente de ' || NEW.data_inicio::text || ' a ' || NEW.data_fim::text || 
+      '. Corte de pedido: ' || COALESCE(NEW.data_corte_pedido::text, NEW.data_fim::text) || '.',
+      NEW.id
+    );
+  END IF;
+
+  -- Campanha suspensa/cancelada durante vigência
+  IF NEW.estado = 'cancelada' 
+     AND (OLD IS NULL OR OLD.estado IN ('ativa', 'negociando'))
+     AND OLD.data_fim >= CURRENT_DATE THEN
+    INSERT INTO fornecedor_alerta (
+      empresa, fornecedor_nome, tipo, severidade,
+      titulo, mensagem, campanha_id
+    ) VALUES (
+      NEW.empresa, NEW.fornecedor_nome, 'promocao_suspensa', 'urgente',
+      'PROMOÇÃO SUSPENSA: ' || NEW.nome,
+      'Campanha foi cancelada durante vigência. Reavalie pedidos de oportunidade pendentes.',
+      NEW.id
+    );
+  END IF;
+  
+  RETURN NEW;
+END;
+$$;
+
+
+--
+-- Name: update_updated_at_column(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.update_updated_at_column() RETURNS trigger
+    LANGUAGE plpgsql
+    SET search_path TO 'public'
+    AS $$
+BEGIN
+  NEW.updated_at = now();
+  RETURN NEW;
+END;
+$$;
+
+
+--
+-- Name: update_user_tools_on_order_complete(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.update_user_tools_on_order_complete() RETURNS trigger
+    LANGUAGE plpgsql
+    SET search_path TO 'public'
+    AS $$
+DECLARE
+  item jsonb;
+  order_category text;
+  matched_category_id uuid;
+  tool_interval integer;
+BEGIN
+  -- Only run when status changes to 'entregue'
+  IF NEW.status = 'entregue' AND OLD.status != 'entregue' THEN
+    -- Loop through order items
+    FOR item IN SELECT * FROM jsonb_array_elements(NEW.items)
+    LOOP
+      -- Get the category from the item
+      order_category := item->>'category';
+      
+      -- Use the mapping table to find the tool category
+      SELECT cm.tool_category_id, tc.suggested_interval_days 
+      INTO matched_category_id, tool_interval
+      FROM category_mappings cm
+      JOIN tool_categories tc ON tc.id = cm.tool_category_id
+      WHERE cm.order_category = order_category
+      LIMIT 1;
+      
+      -- If we found a matching category, update or create user_tools entry
+      IF matched_category_id IS NOT NULL THEN
+        -- Check if user already has this tool
+        IF EXISTS (
+          SELECT 1 FROM user_tools 
+          WHERE user_id = NEW.user_id AND tool_category_id = matched_category_id
+        ) THEN
+          -- Update existing tool with new sharpening date
+          UPDATE user_tools
+          SET 
+            last_sharpened_at = now(),
+            next_sharpening_due = now() + (COALESCE(sharpening_interval_days, tool_interval, 90) * interval '1 day'),
+            updated_at = now()
+          WHERE user_id = NEW.user_id AND tool_category_id = matched_category_id;
+        ELSE
+          -- Insert new tool for user
+          INSERT INTO user_tools (
+            user_id,
+            tool_category_id,
+            last_sharpened_at,
+            next_sharpening_due,
+            sharpening_interval_days
+          ) VALUES (
+            NEW.user_id,
+            matched_category_id,
+            now(),
+            now() + (tool_interval * interval '1 day'),
+            tool_interval
+          );
+        END IF;
+      END IF;
+    END LOOP;
+  END IF;
+  
+  RETURN NEW;
+END;
+$$;
+
+
+--
+-- Name: update_vendor_sip_credentials_updated_at(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.update_vendor_sip_credentials_updated_at() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+BEGIN
+  NEW.updated_at = now();
+  RETURN NEW;
+END;
+$$;
+
+
+--
+-- Name: validar_sku_para_aplicacao(text, text); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.validar_sku_para_aplicacao(p_empresa text, p_sku text) RETURNS jsonb
+    LANGUAGE plpgsql
+    SET search_path TO 'public', 'pg_temp'
+    AS $$
+DECLARE
+  v_status_omie RECORD;
+  v_substituicao RECORD;
+  v_resultado JSONB;
+BEGIN
+  -- Check 1: existe no Omie?
+  SELECT * INTO v_status_omie
+  FROM sku_status_omie
+  WHERE empresa = p_empresa AND sku_codigo_omie = p_sku;
+  
+  IF NOT FOUND THEN
+    RETURN jsonb_build_object(
+      'status', 'bloqueado_nao_existe',
+      'mensagem', 'SKU ' || p_sku || ' não está no espelho do Omie. '
+                  || 'Sincronizar via ConsultarProduto antes de aplicar.'
+    );
+  END IF;
+  
+  -- Check 2: está ativo no Omie?
+  IF NOT COALESCE(v_status_omie.ativo_no_omie, false) THEN
+    -- Verificar se já tem substituição registrada
+    SELECT * INTO v_substituicao
+    FROM sku_substituicao
+    WHERE empresa = p_empresa 
+      AND sku_codigo_antigo = p_sku 
+      AND status = 'pendente';
+    
+    IF FOUND THEN
+      RETURN jsonb_build_object(
+        'status', 'bloqueado_substituicao',
+        'mensagem', 'SKU ' || p_sku || ' (' || COALESCE(v_status_omie.sku_descricao, '?') 
+                    || ') está INATIVO no Omie e tem substituição pendente por ' 
+                    || v_substituicao.sku_codigo_novo || '. Motivo: ' 
+                    || COALESCE(v_substituicao.motivo, 'não informado') || '. '
+                    || 'Decidir ação na tela de substituições antes de aplicar.',
+        'sku_novo', v_substituicao.sku_codigo_novo,
+        'acao_prevista', v_substituicao.acao_parametros
+      );
+    ELSE
+      RETURN jsonb_build_object(
+        'status', 'bloqueado_inativo',
+        'mensagem', 'SKU ' || p_sku || ' (' || COALESCE(v_status_omie.sku_descricao, '?') 
+                    || ') está INATIVO no Omie (desde ' 
+                    || COALESCE(v_status_omie.data_inativacao::text, 'data desconhecida') 
+                    || '). Aplicação NÃO pode prosseguir — chamada AlterarProduto pode reativar '
+                    || 'o item silenciosamente. Decidir: (1) reativar manualmente e aplicar, '
+                    || '(2) registrar substituição por outro SKU, ou '
+                    || '(3) descadastrar do módulo de reposição.',
+        'data_inativacao', v_status_omie.data_inativacao
+      );
+    END IF;
+  END IF;
+  
+  -- Passou nos checks, está pronto
+  RETURN jsonb_build_object(
+    'status', 'pronto',
+    'mensagem', 'SKU validado, pronto para aplicação.',
+    'parametros_atuais_omie', jsonb_build_object(
+      'estoque_minimo', v_status_omie.estoque_minimo_omie,
+      'ponto_pedido', v_status_omie.ponto_pedido_omie,
+      'estoque_maximo', v_status_omie.estoque_maximo_omie
+    )
+  );
+END;
+$$;
+
+
+SET default_tablespace = '';
+
+SET default_table_access_method = heap;
+
+--
+-- Name: abc_xyz_classification; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.abc_xyz_classification (
+    id uuid DEFAULT extensions.uuid_generate_v4() NOT NULL,
+    empresa public.empresa_reposicao NOT NULL,
+    sku_codigo_omie bigint NOT NULL,
+    sku_codigo text,
+    sku_descricao text,
+    mes_referencia date NOT NULL,
+    valor_consumido_12m numeric(15,2),
+    rank_pareto integer,
+    percentual_valor_acumulado numeric(5,2),
+    classe_abc public.classe_abc,
+    demanda_media_mensal numeric(15,4),
+    demanda_desvio_padrao numeric(15,4),
+    coeficiente_variacao numeric(8,4),
+    classe_xyz public.classe_xyz,
+    classe_abc_anterior public.classe_abc,
+    classe_xyz_anterior public.classe_xyz,
+    meses_na_classe_abc integer DEFAULT 1 NOT NULL,
+    meses_na_classe_xyz integer DEFAULT 1 NOT NULL,
+    classe_abc_efetiva public.classe_abc,
+    classe_xyz_efetiva public.classe_xyz,
+    created_at timestamp with time zone DEFAULT now() NOT NULL
+);
+
+
+--
+-- Name: TABLE abc_xyz_classification; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON TABLE public.abc_xyz_classification IS 'Histórico mensal da matriz ABC-XYZ. Histerese: sobe após 2 meses, desce após 3 meses consecutivos.';
+
+
+--
+-- Name: addresses; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.addresses (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    user_id uuid NOT NULL,
+    label text NOT NULL,
+    street text NOT NULL,
+    number text NOT NULL,
+    complement text,
+    neighborhood text NOT NULL,
+    city text NOT NULL,
+    state text NOT NULL,
+    zip_code text NOT NULL,
+    is_default boolean DEFAULT false NOT NULL,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    is_from_omie boolean DEFAULT false NOT NULL
+);
+
+
+--
+-- Name: ai_decision_audit_log; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.ai_decision_audit_log (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    decision_id uuid,
+    action text NOT NULL,
+    performed_by uuid,
+    data_snapshot jsonb DEFAULT '{}'::jsonb,
+    notes text,
+    created_at timestamp with time zone DEFAULT now() NOT NULL
+);
+
+
+--
+-- Name: ai_decisions; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.ai_decisions (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    decision_type text DEFAULT 'RECOMMEND_CONTACT'::text NOT NULL,
+    customer_user_id uuid NOT NULL,
+    farmer_id uuid,
+    score_final numeric DEFAULT 0 NOT NULL,
+    confidence text DEFAULT 'baixa'::text NOT NULL,
+    confidence_value numeric DEFAULT 0,
+    suggested_action text DEFAULT 'ligar'::text,
+    primary_reason text,
+    evidences jsonb DEFAULT '[]'::jsonb,
+    explanation text,
+    customer_metrics jsonb DEFAULT '{}'::jsonb,
+    status text DEFAULT 'pending'::text NOT NULL,
+    executed_at timestamp with time zone,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    updated_at timestamp with time zone DEFAULT now() NOT NULL
+);
+
+
+--
+-- Name: cache_lotes; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.cache_lotes (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    cache_key text NOT NULL,
+    data jsonb NOT NULL,
+    expires_at timestamp with time zone NOT NULL,
+    created_at timestamp with time zone DEFAULT now() NOT NULL
+);
+
+
+--
+-- Name: calendario_feriados; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.calendario_feriados (
+    data date NOT NULL,
+    nome text NOT NULL,
+    tipo text DEFAULT 'nacional'::text NOT NULL,
+    observacoes text
+);
+
+
+--
+-- Name: call_log; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.call_log (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    farmer_id uuid NOT NULL,
+    direction public.call_direction NOT NULL,
+    status public.call_status DEFAULT 'ringing'::public.call_status NOT NULL,
+    provider text NOT NULL,
+    provider_call_id text,
+    sip_call_id text,
+    customer_user_id uuid,
+    matched_contact_id uuid,
+    match_confidence text,
+    display_name text,
+    phone_normalized text,
+    phone_raw text,
+    caller_id_used text,
+    recorded boolean DEFAULT false NOT NULL,
+    started_at timestamp with time zone DEFAULT now() NOT NULL,
+    answered_at timestamp with time zone,
+    ended_at timestamp with time zone,
+    duration_seconds integer DEFAULT 0 NOT NULL,
+    acknowledged_at timestamp with time zone,
+    source text DEFAULT 'app'::text NOT NULL,
+    source_payload jsonb,
+    last_synced_at timestamp with time zone,
+    farmer_call_id uuid,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT call_log_match_confidence_check CHECK (((match_confidence IS NULL) OR (match_confidence = ANY (ARRAY['exact'::text, 'last8'::text, 'none'::text])))),
+    CONSTRAINT call_log_provider_check CHECK ((provider = ANY (ARRAY['nvoip_click_to_call'::text, 'nvoip_sip'::text, 'manual'::text]))),
+    CONSTRAINT call_log_source_check CHECK ((source = ANY (ARRAY['app'::text, 'cdr'::text, 'webhook'::text, 'backfill'::text])))
+);
+
+
+--
+-- Name: carteira_assignments; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.carteira_assignments (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    customer_user_id uuid NOT NULL,
+    owner_user_id uuid NOT NULL,
+    source text NOT NULL,
+    omie_account text,
+    omie_codigo_vendedor bigint,
+    eligible boolean DEFAULT true NOT NULL,
+    valid_from timestamp with time zone DEFAULT now() NOT NULL,
+    updated_at timestamp with time zone DEFAULT now() NOT NULL,
+    last_synced_at timestamp with time zone,
+    CONSTRAINT carteira_assignments_source_check CHECK ((source = ANY (ARRAY['omie'::text, 'hunter_orphan'::text])))
+);
+
+
+--
+-- Name: carteira_coverage; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.carteira_coverage (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    covering_user_id uuid NOT NULL,
+    covered_user_id uuid NOT NULL,
+    valid_from timestamp with time zone DEFAULT now() NOT NULL,
+    valid_until timestamp with time zone,
+    active boolean DEFAULT true NOT NULL,
+    created_by uuid NOT NULL,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT carteira_coverage_check CHECK ((covering_user_id <> covered_user_id))
+);
+
+
+--
+-- Name: categoria_aumento_familia_mapeamento; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.categoria_aumento_familia_mapeamento (
+    id bigint NOT NULL,
+    aumento_item_id bigint NOT NULL,
+    familia_omie text NOT NULL,
+    sku_codigo_omie_especifico bigint,
+    criado_em timestamp with time zone DEFAULT now()
+);
+
+
+--
+-- Name: TABLE categoria_aumento_familia_mapeamento; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON TABLE public.categoria_aumento_familia_mapeamento IS 'Ligação entre uma categoria de aumento do fornecedor e uma ou mais famílias do omie_products. Permite exceção por SKU específico. Usado para identificar SKUs afetados por cada aumento na view de oportunidade econômica.';
+
+
+--
+-- Name: categoria_aumento_familia_mapeamento_id_seq; Type: SEQUENCE; Schema: public; Owner: -
+--
+
+CREATE SEQUENCE public.categoria_aumento_familia_mapeamento_id_seq
+    START WITH 1
+    INCREMENT BY 1
+    NO MINVALUE
+    NO MAXVALUE
+    CACHE 1;
+
+
+--
+-- Name: categoria_aumento_familia_mapeamento_id_seq; Type: SEQUENCE OWNED BY; Schema: public; Owner: -
+--
+
+ALTER SEQUENCE public.categoria_aumento_familia_mapeamento_id_seq OWNED BY public.categoria_aumento_familia_mapeamento.id;
+
+
+--
+-- Name: category_mappings; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.category_mappings (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    order_category text NOT NULL,
+    tool_category_id uuid
+);
+
+
+--
+-- Name: cockpit_audit_log; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.cockpit_audit_log (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    user_id uuid,
+    action text NOT NULL,
+    result text NOT NULL,
+    metadata jsonb DEFAULT '{}'::jsonb
+);
+
+
+--
+-- Name: commercial_roles; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.commercial_roles (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    user_id uuid NOT NULL,
+    commercial_role public.commercial_role DEFAULT 'operacional'::public.commercial_role NOT NULL,
+    assigned_by uuid,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    updated_at timestamp with time zone DEFAULT now() NOT NULL
+);
+
+
+--
+-- Name: company_cnpjs; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.company_cnpjs (
+    company text NOT NULL,
+    cnpj text NOT NULL,
+    cnpj_normalized text GENERATED ALWAYS AS (regexp_replace(cnpj, '[^0-9]'::text, ''::text, 'g'::text)) STORED,
+    nome_fantasia text,
+    updated_at timestamp with time zone DEFAULT now(),
+    CONSTRAINT company_cnpjs_company_check CHECK ((company = ANY (ARRAY['oben'::text, 'colacor'::text, 'colacor_sc'::text])))
+);
+
+
+--
+-- Name: company_config; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.company_config (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    key text NOT NULL,
+    value text NOT NULL,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    updated_at timestamp with time zone DEFAULT now() NOT NULL
+);
+
+
+--
+-- Name: company_profiles; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.company_profiles (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    account text NOT NULL,
+    legal_name text NOT NULL,
+    cnpj text NOT NULL,
+    phone text,
+    address text,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    updated_at timestamp with time zone DEFAULT now() NOT NULL,
+    data_fundacao date
+);
+
+
+--
+-- Name: conversao_unidades; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.conversao_unidades (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    cnpj_fornecedor character varying(14) NOT NULL,
+    codigo_produto_fornecedor character varying(60) NOT NULL,
+    descricao_produto text,
+    unidade_origem character varying(10) NOT NULL,
+    unidade_destino character varying(10) NOT NULL,
+    fator_conversao numeric(15,6) NOT NULL,
+    is_active boolean DEFAULT true NOT NULL,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    updated_at timestamp with time zone DEFAULT now() NOT NULL
+);
+
+
+--
+-- Name: cte_associados; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.cte_associados (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    nfe_recebimento_id uuid NOT NULL,
+    numero_cte character varying(20),
+    chave_acesso_cte character varying(44) NOT NULL,
+    cnpj_transportadora character varying(14),
+    razao_social_transportadora text,
+    valor_frete numeric(15,2),
+    xml_cte text,
+    omie_cte_id bigint,
+    status character varying(20) DEFAULT 'pendente'::character varying NOT NULL,
+    created_at timestamp with time zone DEFAULT now() NOT NULL
+);
+
+
+--
+-- Name: customer_contacts; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.customer_contacts (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    customer_user_id uuid NOT NULL,
+    phone text NOT NULL,
+    nome text,
+    cargo text,
+    email text,
+    is_decision_maker boolean DEFAULT false NOT NULL,
+    is_primary boolean DEFAULT false NOT NULL,
+    whatsapp_only boolean DEFAULT false NOT NULL,
+    birthday date,
+    notas text,
+    source text,
+    created_by uuid,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    updated_at timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT customer_contacts_cargo_check CHECK ((cargo = ANY (ARRAY['dono'::text, 'socio'::text, 'gerente'::text, 'comprador'::text, 'secretaria'::text, 'aplicador'::text, 'tecnico'::text, 'outro'::text]))),
+    CONSTRAINT customer_contacts_source_check CHECK ((source = ANY (ARRAY['omie'::text, 'manual'::text, 'auto_detected_call'::text, 'auto_import'::text])))
+);
+
+
+--
+-- Name: profiles; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.profiles (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    user_id uuid NOT NULL,
+    name text NOT NULL,
+    email text,
+    phone text,
+    document text,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    updated_at timestamp with time zone DEFAULT now() NOT NULL,
+    customer_type text DEFAULT 'domestic'::text,
+    cnae text,
+    avatar_url text,
+    is_employee boolean DEFAULT false,
+    employee_code text,
+    business_hours_open text,
+    business_hours_close text,
+    is_approved boolean DEFAULT false NOT NULL,
+    lunch_start text,
+    lunch_end text,
+    preferred_delivery_time text,
+    requires_po boolean DEFAULT false NOT NULL,
+    is_prospect boolean DEFAULT false NOT NULL,
+    prospect_source text,
+    prospect_origin_call_id uuid,
+    razao_social text,
+    cnpj text,
+    CONSTRAINT profiles_prospect_source_check CHECK ((prospect_source = ANY (ARRAY['chamada_inbound'::text, 'chamada_outbound'::text, 'walk_in'::text, 'manual'::text, 'omie_import'::text])))
+);
+
+
+--
+-- Name: sales_orders; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.sales_orders (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    customer_user_id uuid NOT NULL,
+    created_by uuid NOT NULL,
+    items jsonb DEFAULT '[]'::jsonb NOT NULL,
+    subtotal numeric DEFAULT 0 NOT NULL,
+    discount numeric DEFAULT 0 NOT NULL,
+    total numeric DEFAULT 0 NOT NULL,
+    status text DEFAULT 'rascunho'::text NOT NULL,
+    notes text,
+    omie_pedido_id bigint,
+    omie_numero_pedido text,
+    omie_payload jsonb,
+    omie_response jsonb,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    updated_at timestamp with time zone DEFAULT now() NOT NULL,
+    account text DEFAULT 'oben'::text NOT NULL,
+    hash_payload text,
+    customer_address text,
+    customer_phone text,
+    ready_by_date date,
+    deleted_at timestamp with time zone
+);
+
+
+--
+-- Name: COLUMN sales_orders.deleted_at; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON COLUMN public.sales_orders.deleted_at IS 'Soft-delete timestamp. NULL = ativo. SalesOrders.deleteOrder seta antes de chamar Omie; se Omie falhar, rollback pra NULL. Queries default filtram WHERE deleted_at IS NULL.';
+
+
+--
+-- Name: customer_metrics_mv; Type: MATERIALIZED VIEW; Schema: public; Owner: -
+--
+
+CREATE MATERIALIZED VIEW public.customer_metrics_mv AS
+ WITH last_order AS (
+         SELECT so.customer_user_id,
+            max(so.created_at) AS ultima_compra_data,
+            (EXTRACT(day FROM (now() - max(so.created_at))))::integer AS dias_desde_ultima_compra
+           FROM public.sales_orders so
+          WHERE (so.status <> ALL (ARRAY['cancelado'::text, 'rascunho'::text]))
+          GROUP BY so.customer_user_id
+        ), orders_90d AS (
+         SELECT so.customer_user_id,
+            count(*) AS pedidos_90d,
+            COALESCE(sum(so.total), (0)::numeric) AS faturamento_90d,
+                CASE
+                    WHEN (count(*) > 0) THEN (COALESCE(sum(so.total), (0)::numeric) / (count(*))::numeric)
+                    ELSE (0)::numeric
+                END AS ticket_medio_90d
+           FROM public.sales_orders so
+          WHERE ((so.status <> ALL (ARRAY['cancelado'::text, 'rascunho'::text])) AND (so.created_at >= (now() - '90 days'::interval)))
+          GROUP BY so.customer_user_id
+        ), orders_prev_90d AS (
+         SELECT so.customer_user_id,
+            COALESCE(sum(so.total), (0)::numeric) AS faturamento_prev_90d
+           FROM public.sales_orders so
+          WHERE ((so.status <> ALL (ARRAY['cancelado'::text, 'rascunho'::text])) AND (so.created_at >= (now() - '180 days'::interval)) AND (so.created_at < (now() - '90 days'::interval)))
+          GROUP BY so.customer_user_id
+        ), cadence AS (
+         SELECT so.customer_user_id,
+                CASE
+                    WHEN (count(*) >= 3) THEN (EXTRACT(day FROM (max(so.created_at) - min(so.created_at))) / (NULLIF((count(*) - 1), 0))::numeric)
+                    ELSE NULL::numeric
+                END AS intervalo_medio_dias
+           FROM public.sales_orders so
+          WHERE (so.status <> ALL (ARRAY['cancelado'::text, 'rascunho'::text]))
+          GROUP BY so.customer_user_id
+        )
+ SELECT p.user_id AS customer_user_id,
+    p.name AS razao_social,
+    p.document,
+    lo.ultima_compra_data,
+    COALESCE(lo.dias_desde_ultima_compra, 9999) AS dias_desde_ultima_compra,
+    COALESCE(o90.pedidos_90d, (0)::bigint) AS pedidos_90d,
+    COALESCE(o90.faturamento_90d, (0)::numeric) AS faturamento_90d,
+    COALESCE(o90.ticket_medio_90d, (0)::numeric) AS ticket_medio_90d,
+    COALESCE(op.faturamento_prev_90d, (0)::numeric) AS faturamento_prev_90d,
+    c.intervalo_medio_dias,
+        CASE
+            WHEN ((c.intervalo_medio_dias IS NOT NULL) AND (c.intervalo_medio_dias > (0)::numeric)) THEN ((COALESCE(lo.dias_desde_ultima_compra, 9999))::numeric / c.intervalo_medio_dias)
+            ELSE NULL::numeric
+        END AS atraso_relativo,
+        CASE
+            WHEN (c.intervalo_medio_dias IS NULL) THEN true
+            ELSE false
+        END AS is_cold_start,
+    now() AS calculated_at
+   FROM ((((public.profiles p
+     LEFT JOIN last_order lo ON ((lo.customer_user_id = p.user_id)))
+     LEFT JOIN orders_90d o90 ON ((o90.customer_user_id = p.user_id)))
+     LEFT JOIN orders_prev_90d op ON ((op.customer_user_id = p.user_id)))
+     LEFT JOIN cadence c ON ((c.customer_user_id = p.user_id)))
+  WHERE ((p.is_employee = false) OR (p.is_employee IS NULL))
+  WITH NO DATA;
+
+
+--
+-- Name: customer_preferred_items; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.customer_preferred_items (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    omie_codigo_cliente bigint NOT NULL,
+    omie_codigo_produto bigint NOT NULL,
+    product_codigo text,
+    product_descricao text,
+    account text DEFAULT 'oben'::text NOT NULL,
+    familia text,
+    last_ordered_at timestamp with time zone,
+    order_count integer DEFAULT 1,
+    added_manually boolean DEFAULT false,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    updated_at timestamp with time zone DEFAULT now() NOT NULL
+);
+
+
+--
+-- Name: customer_processes; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.customer_processes (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    customer_user_id uuid NOT NULL,
+    descricao_livre text NOT NULL,
+    etapas jsonb,
+    segmento text,
+    porte text,
+    tags text[] DEFAULT '{}'::text[],
+    ia_confidence numeric,
+    ia_gaps text[],
+    ia_structured_at timestamp with time zone,
+    version integer DEFAULT 1 NOT NULL,
+    parent_id uuid,
+    is_current boolean DEFAULT true NOT NULL,
+    created_by uuid NOT NULL,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    updated_at timestamp with time zone DEFAULT now() NOT NULL
+);
+
+
+--
+-- Name: customer_segments; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.customer_segments (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    omie_codigo_cliente bigint NOT NULL,
+    account text DEFAULT 'oben'::text NOT NULL,
+    segment text,
+    tags text[] DEFAULT '{}'::text[],
+    atividade text,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    updated_at timestamp with time zone DEFAULT now() NOT NULL
+);
+
+
+--
+-- Name: customer_visit_scores; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.customer_visit_scores (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    customer_user_id uuid NOT NULL,
+    farmer_id uuid NOT NULL,
+    recuperacao_score numeric DEFAULT 0,
+    expansao_score numeric DEFAULT 0,
+    relacionamento_score numeric DEFAULT 0,
+    prospeccao_score numeric DEFAULT 0,
+    visit_score numeric DEFAULT 0,
+    primary_mission public.visit_mission,
+    city text,
+    neighborhood text,
+    state text,
+    last_visit_at timestamp with time zone,
+    days_since_last_visit integer,
+    score_breakdown jsonb DEFAULT '{}'::jsonb,
+    calculated_at timestamp with time zone DEFAULT now() NOT NULL,
+    updated_at timestamp with time zone DEFAULT now() NOT NULL
+);
+
+
+--
+-- Name: dashboard_visits; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.dashboard_visits (
+    id bigint NOT NULL,
+    user_id uuid NOT NULL,
+    visited_at timestamp with time zone DEFAULT now() NOT NULL,
+    persona text,
+    company_selection text,
+    session_minutes integer
+);
+
+
+--
+-- Name: dashboard_visits_id_seq; Type: SEQUENCE; Schema: public; Owner: -
+--
+
+CREATE SEQUENCE public.dashboard_visits_id_seq
+    START WITH 1
+    INCREMENT BY 1
+    NO MINVALUE
+    NO MAXVALUE
+    CACHE 1;
+
+
+--
+-- Name: dashboard_visits_id_seq; Type: SEQUENCE OWNED BY; Schema: public; Owner: -
+--
+
+ALTER SEQUENCE public.dashboard_visits_id_seq OWNED BY public.dashboard_visits.id;
+
+
+--
+-- Name: default_prices; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.default_prices (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    tool_category_id uuid,
+    spec_filter jsonb DEFAULT '{}'::jsonb NOT NULL,
+    price numeric NOT NULL,
+    description text,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    updated_at timestamp with time zone DEFAULT now() NOT NULL
+);
+
+
+--
+-- Name: des_checkin_qualitativo; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.des_checkin_qualitativo (
+    id bigint NOT NULL,
+    empresa text NOT NULL,
+    ano integer NOT NULL,
+    trimestre integer NOT NULL,
+    data_avaliacao date NOT NULL,
+    avaliado_com text,
+    avaliado_por text,
+    observacoes_gerais text,
+    tipo text DEFAULT 'projecao'::text NOT NULL,
+    criado_em timestamp with time zone DEFAULT now(),
+    atualizado_em timestamp with time zone DEFAULT now(),
+    CONSTRAINT des_checkin_qualitativo_tipo_check CHECK ((tipo = ANY (ARRAY['projecao'::text, 'confirmacao_andre'::text]))),
+    CONSTRAINT des_checkin_qualitativo_trimestre_check CHECK (((trimestre >= 1) AND (trimestre <= 4)))
+);
+
+
+--
+-- Name: TABLE des_checkin_qualitativo; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON TABLE public.des_checkin_qualitativo IS 'Sessão de avaliação qualitativa do trimestre com o André. Tipo "projecao" é o que o Lucas espera atingir no início/meio do trimestre. Tipo "confirmacao_andre" é a validação final que o André faz ~10 dias antes do fim do trimestre. Pode haver múltiplos checkins por trimestre (revisões).';
+
+
+--
+-- Name: des_checkin_qualitativo_id_seq; Type: SEQUENCE; Schema: public; Owner: -
+--
+
+CREATE SEQUENCE public.des_checkin_qualitativo_id_seq
+    START WITH 1
+    INCREMENT BY 1
+    NO MINVALUE
+    NO MAXVALUE
+    CACHE 1;
+
+
+--
+-- Name: des_checkin_qualitativo_id_seq; Type: SEQUENCE OWNED BY; Schema: public; Owner: -
+--
+
+ALTER SEQUENCE public.des_checkin_qualitativo_id_seq OWNED BY public.des_checkin_qualitativo.id;
+
+
+--
+-- Name: des_checkin_qualitativo_resposta; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.des_checkin_qualitativo_resposta (
+    id bigint NOT NULL,
+    checkin_id bigint NOT NULL,
+    criterio_id bigint NOT NULL,
+    atingido boolean DEFAULT false NOT NULL,
+    observacao text,
+    criado_em timestamp with time zone DEFAULT now()
+);
+
+
+--
+-- Name: TABLE des_checkin_qualitativo_resposta; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON TABLE public.des_checkin_qualitativo_resposta IS 'Resposta checkbox para cada critério qualitativo numa sessão de avaliação. Uma linha por critério por sessão. atingido=true significa que o critério vai gerar seu percentual no desconto total.';
+
+
+--
+-- Name: des_checkin_qualitativo_resposta_id_seq; Type: SEQUENCE; Schema: public; Owner: -
+--
+
+CREATE SEQUENCE public.des_checkin_qualitativo_resposta_id_seq
+    START WITH 1
+    INCREMENT BY 1
+    NO MINVALUE
+    NO MAXVALUE
+    CACHE 1;
+
+
+--
+-- Name: des_checkin_qualitativo_resposta_id_seq; Type: SEQUENCE OWNED BY; Schema: public; Owner: -
+--
+
+ALTER SEQUENCE public.des_checkin_qualitativo_resposta_id_seq OWNED BY public.des_checkin_qualitativo_resposta.id;
+
+
+--
+-- Name: des_contrato_versao; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.des_contrato_versao (
+    id bigint NOT NULL,
+    versao text NOT NULL,
+    data_inicio_vigencia date NOT NULL,
+    data_fim_vigencia date,
+    observacoes text,
+    criado_em timestamp with time zone DEFAULT now()
+);
+
+
+--
+-- Name: TABLE des_contrato_versao; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON TABLE public.des_contrato_versao IS 'Versões do contrato DES Sayerlack. Permite matriz evoluir anualmente sem perder avaliações históricas. Use data_fim_vigencia para marcar versão encerrada.';
+
+
+--
+-- Name: des_contrato_versao_id_seq; Type: SEQUENCE; Schema: public; Owner: -
+--
+
+CREATE SEQUENCE public.des_contrato_versao_id_seq
+    START WITH 1
+    INCREMENT BY 1
+    NO MINVALUE
+    NO MAXVALUE
+    CACHE 1;
+
+
+--
+-- Name: des_contrato_versao_id_seq; Type: SEQUENCE OWNED BY; Schema: public; Owner: -
+--
+
+ALTER SEQUENCE public.des_contrato_versao_id_seq OWNED BY public.des_contrato_versao.id;
+
+
+--
+-- Name: des_criterio_percentual; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.des_criterio_percentual (
+    id bigint NOT NULL,
+    criterio_id bigint NOT NULL,
+    faixa_id bigint NOT NULL,
+    percentual numeric NOT NULL,
+    criado_em timestamp with time zone DEFAULT now(),
+    CONSTRAINT des_criterio_percentual_percentual_check CHECK (((percentual >= (0)::numeric) AND (percentual <= (10)::numeric)))
+);
+
+
+--
+-- Name: TABLE des_criterio_percentual; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON TABLE public.des_criterio_percentual IS 'Matriz de percentuais: para cada (critério, faixa) define quanto o critério adiciona ao desconto total se estiver tickado. Ex: mix_produtos na faixa 4 (3 estrelas) = 0.73%.';
+
+
+--
+-- Name: des_criterio_percentual_id_seq; Type: SEQUENCE; Schema: public; Owner: -
+--
+
+CREATE SEQUENCE public.des_criterio_percentual_id_seq
+    START WITH 1
+    INCREMENT BY 1
+    NO MINVALUE
+    NO MAXVALUE
+    CACHE 1;
+
+
+--
+-- Name: des_criterio_percentual_id_seq; Type: SEQUENCE OWNED BY; Schema: public; Owner: -
+--
+
+ALTER SEQUENCE public.des_criterio_percentual_id_seq OWNED BY public.des_criterio_percentual.id;
+
+
+--
+-- Name: des_criterio_qualitativo; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.des_criterio_qualitativo (
+    id bigint NOT NULL,
+    contrato_versao_id bigint NOT NULL,
+    codigo text NOT NULL,
+    nome text NOT NULL,
+    descricao text,
+    ordem integer NOT NULL,
+    tipo text NOT NULL,
+    criado_em timestamp with time zone DEFAULT now(),
+    CONSTRAINT des_criterio_qualitativo_tipo_check CHECK ((tipo = ANY (ARRAY['qualitativo'::text, 'bonus'::text])))
+);
+
+
+--
+-- Name: TABLE des_criterio_qualitativo; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON TABLE public.des_criterio_qualitativo IS 'Critérios qualitativos do programa DES (mix de produtos, cursos, etc). Cada critério tem percentual diferente por faixa — ver tabela _percentual.';
+
+
+--
+-- Name: des_criterio_qualitativo_id_seq; Type: SEQUENCE; Schema: public; Owner: -
+--
+
+CREATE SEQUENCE public.des_criterio_qualitativo_id_seq
+    START WITH 1
+    INCREMENT BY 1
+    NO MINVALUE
+    NO MAXVALUE
+    CACHE 1;
+
+
+--
+-- Name: des_criterio_qualitativo_id_seq; Type: SEQUENCE OWNED BY; Schema: public; Owner: -
+--
+
+ALTER SEQUENCE public.des_criterio_qualitativo_id_seq OWNED BY public.des_criterio_qualitativo.id;
+
+
+--
+-- Name: des_faixa_quantitativa; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.des_faixa_quantitativa (
+    id bigint NOT NULL,
+    contrato_versao_id bigint NOT NULL,
+    faixa_numero integer NOT NULL,
+    estrelas integer NOT NULL,
+    volume_min numeric NOT NULL,
+    volume_max numeric,
+    desconto_padrao_perc numeric NOT NULL,
+    observacoes text,
+    criado_em timestamp with time zone DEFAULT now(),
+    CONSTRAINT des_faixa_quantitativa_desconto_padrao_perc_check CHECK (((desconto_padrao_perc >= (0)::numeric) AND (desconto_padrao_perc <= (20)::numeric))),
+    CONSTRAINT des_faixa_quantitativa_estrelas_check CHECK (((estrelas >= 1) AND (estrelas <= 6))),
+    CONSTRAINT des_faixa_quantitativa_faixa_numero_check CHECK (((faixa_numero >= 1) AND (faixa_numero <= 10)))
+);
+
+
+--
+-- Name: TABLE des_faixa_quantitativa; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON TABLE public.des_faixa_quantitativa IS 'Faixas de volume trimestral do programa DES. Cada faixa tem um desconto padrão que é aplicado se o volume cair dentro. Subir de faixa aumenta o desconto padrão E os percentuais dos critérios qualitativos.';
+
+
+--
+-- Name: des_faixa_quantitativa_id_seq; Type: SEQUENCE; Schema: public; Owner: -
+--
+
+CREATE SEQUENCE public.des_faixa_quantitativa_id_seq
+    START WITH 1
+    INCREMENT BY 1
+    NO MINVALUE
+    NO MAXVALUE
+    CACHE 1;
+
+
+--
+-- Name: des_faixa_quantitativa_id_seq; Type: SEQUENCE OWNED BY; Schema: public; Owner: -
+--
+
+ALTER SEQUENCE public.des_faixa_quantitativa_id_seq OWNED BY public.des_faixa_quantitativa.id;
+
+
+--
+-- Name: des_meta_empresa; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.des_meta_empresa (
+    id bigint NOT NULL,
+    empresa text NOT NULL,
+    ano integer NOT NULL,
+    trimestre integer NOT NULL,
+    meta_faturamento numeric NOT NULL,
+    faixa_des_objetivo integer,
+    observacoes text,
+    criado_em timestamp with time zone DEFAULT now(),
+    atualizado_em timestamp with time zone DEFAULT now(),
+    CONSTRAINT des_meta_empresa_trimestre_check CHECK (((trimestre >= 1) AND (trimestre <= 4)))
+);
+
+
+--
+-- Name: TABLE des_meta_empresa; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON TABLE public.des_meta_empresa IS 'Meta pessoal de faturamento trimestral (diferente de faixa DES). Exemplo: Lucas tem meta de R$ 400.840/trimestre, o que é acima do piso da faixa 3 (4 estrelas) mas ele pode ter meta diferente do programa DES.';
+
+
+--
+-- Name: des_meta_empresa_id_seq; Type: SEQUENCE; Schema: public; Owner: -
+--
+
+CREATE SEQUENCE public.des_meta_empresa_id_seq
+    START WITH 1
+    INCREMENT BY 1
+    NO MINVALUE
+    NO MAXVALUE
+    CACHE 1;
+
+
+--
+-- Name: des_meta_empresa_id_seq; Type: SEQUENCE OWNED BY; Schema: public; Owner: -
+--
+
+ALTER SEQUENCE public.des_meta_empresa_id_seq OWNED BY public.des_meta_empresa.id;
+
+
+--
+-- Name: des_trimestre_snapshot; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.des_trimestre_snapshot (
+    id bigint NOT NULL,
+    empresa text NOT NULL,
+    ano integer NOT NULL,
+    trimestre integer NOT NULL,
+    data_referencia date NOT NULL,
+    data_envio_email timestamp with time zone,
+    objetivo_valor numeric NOT NULL,
+    fat_bruto_valor numeric NOT NULL,
+    objetivo_qtde numeric,
+    fat_bruto_qtde numeric,
+    perc_atingimento_valor numeric,
+    perc_atingimento_qtde numeric,
+    pedidos_abertos_valor numeric,
+    pedidos_abertos_qtde numeric,
+    preco_medio_trimestre numeric,
+    nd_fat_tot_valor numeric,
+    nd_fat_tot_perc numeric,
+    laminas_m2 numeric,
+    tingimix_qtde integer,
+    origem_arquivo_url text,
+    extracao_confianca numeric,
+    criado_em timestamp with time zone DEFAULT now(),
+    CONSTRAINT des_trimestre_snapshot_trimestre_check CHECK (((trimestre >= 1) AND (trimestre <= 4)))
+);
+
+
+--
+-- Name: TABLE des_trimestre_snapshot; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON TABLE public.des_trimestre_snapshot IS 'Snapshot semanal vindo do PDF GoodData (noreply@gooddata.com). Cada segunda chega um PDF com posição atualizada até o sábado anterior. Um snapshot por semana. Último snapshot é a fonte de verdade do faturado + pedidos em aberto.';
+
+
+--
+-- Name: des_trimestre_snapshot_id_seq; Type: SEQUENCE; Schema: public; Owner: -
+--
+
+CREATE SEQUENCE public.des_trimestre_snapshot_id_seq
+    START WITH 1
+    INCREMENT BY 1
+    NO MINVALUE
+    NO MAXVALUE
+    CACHE 1;
+
+
+--
+-- Name: des_trimestre_snapshot_id_seq; Type: SEQUENCE OWNED BY; Schema: public; Owner: -
+--
+
+ALTER SEQUENCE public.des_trimestre_snapshot_id_seq OWNED BY public.des_trimestre_snapshot.id;
+
+
+--
+-- Name: empresa_configuracao_custos; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.empresa_configuracao_custos (
+    empresa text NOT NULL,
+    selic_anual numeric NOT NULL,
+    spread_oportunidade numeric NOT NULL,
+    armazenagem_fisica numeric NOT NULL,
+    custo_pedido_manual numeric NOT NULL,
+    custo_pedido_api numeric NOT NULL,
+    modo_pedido text DEFAULT 'manual'::text NOT NULL,
+    z_classe_a numeric DEFAULT 1.65 NOT NULL,
+    z_classe_b numeric DEFAULT 1.28 NOT NULL,
+    z_classe_c numeric DEFAULT 0.84 NOT NULL,
+    haircut_fallback_preco numeric DEFAULT 0.65 NOT NULL,
+    atualizado_em timestamp with time zone DEFAULT now(),
+    atualizado_por text,
+    observacoes text,
+    email_notificacoes text,
+    modo_disparo_pedidos text DEFAULT 'dry_run'::text
+);
+
+
+--
+-- Name: COLUMN empresa_configuracao_custos.haircut_fallback_preco; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON COLUMN public.empresa_configuracao_custos.haircut_fallback_preco IS 'Fator de fallback quando SKU não tem preço de compra real. 0.65 = assume preço de compra = 65% do preço de venda médio. Só usado em casos raros.';
+
+
+--
+-- Name: COLUMN empresa_configuracao_custos.modo_disparo_pedidos; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON COLUMN public.empresa_configuracao_custos.modo_disparo_pedidos IS 'dry_run = cria pedido no Omie mas NÃO envia ao fornecedor (Lucas valida); producao = tudo automático';
+
+
+--
+-- Name: eventos_outlier; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.eventos_outlier (
+    id bigint NOT NULL,
+    empresa text NOT NULL,
+    sku_codigo_omie text NOT NULL,
+    sku_descricao text,
+    tipo text NOT NULL,
+    severidade text NOT NULL,
+    data_evento date NOT NULL,
+    valor_observado numeric,
+    valor_esperado numeric,
+    desvios_padrao numeric,
+    detalhes jsonb,
+    status text DEFAULT 'pendente'::text NOT NULL,
+    decidido_em timestamp with time zone,
+    decidido_por text,
+    justificativa_decisao text,
+    detectado_em timestamp with time zone DEFAULT now()
+);
+
+
+--
+-- Name: eventos_outlier_id_seq; Type: SEQUENCE; Schema: public; Owner: -
+--
+
+CREATE SEQUENCE public.eventos_outlier_id_seq
+    START WITH 1
+    INCREMENT BY 1
+    NO MINVALUE
+    NO MAXVALUE
+    CACHE 1;
+
+
+--
+-- Name: eventos_outlier_id_seq; Type: SEQUENCE OWNED BY; Schema: public; Owner: -
+--
+
+ALTER SEQUENCE public.eventos_outlier_id_seq OWNED BY public.eventos_outlier.id;
+
+
+--
+-- Name: familia_nao_comprada; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.familia_nao_comprada (
+    id bigint NOT NULL,
+    empresa text NOT NULL,
+    familia text NOT NULL,
+    motivo text NOT NULL,
+    observacoes text,
+    criado_em timestamp with time zone DEFAULT now()
+);
+
+
+--
+-- Name: familia_nao_comprada_id_seq; Type: SEQUENCE; Schema: public; Owner: -
+--
+
+CREATE SEQUENCE public.familia_nao_comprada_id_seq
+    START WITH 1
+    INCREMENT BY 1
+    NO MINVALUE
+    NO MAXVALUE
+    CACHE 1;
+
+
+--
+-- Name: familia_nao_comprada_id_seq; Type: SEQUENCE OWNED BY; Schema: public; Owner: -
+--
+
+ALTER SEQUENCE public.familia_nao_comprada_id_seq OWNED BY public.familia_nao_comprada.id;
+
+
+--
+-- Name: farmer_agenda; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.farmer_agenda (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    farmer_id uuid NOT NULL,
+    customer_user_id uuid NOT NULL,
+    agenda_date date DEFAULT CURRENT_DATE NOT NULL,
+    priority_score numeric DEFAULT 0,
+    agenda_type text DEFAULT 'follow_up'::text NOT NULL,
+    status text DEFAULT 'pendente'::text,
+    completed_at timestamp with time zone,
+    call_id uuid,
+    created_at timestamp with time zone DEFAULT now()
+);
+
+
+--
+-- Name: farmer_algorithm_config; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.farmer_algorithm_config (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    key text NOT NULL,
+    value numeric NOT NULL,
+    description text,
+    updated_at timestamp with time zone DEFAULT now()
+);
+
+
+--
+-- Name: farmer_association_rules; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.farmer_association_rules (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    antecedent_product_ids text[] NOT NULL,
+    consequent_product_ids text[] NOT NULL,
+    support numeric DEFAULT 0 NOT NULL,
+    confidence numeric DEFAULT 0 NOT NULL,
+    lift numeric DEFAULT 0 NOT NULL,
+    rule_type text DEFAULT 'association'::text NOT NULL,
+    cluster_segment text,
+    sample_size integer DEFAULT 0,
+    created_at timestamp with time zone DEFAULT now(),
+    updated_at timestamp with time zone DEFAULT now(),
+    CONSTRAINT farmer_association_rules_rule_type_check CHECK ((rule_type = ANY (ARRAY['association'::text, 'sequential'::text])))
+);
+
+
+--
+-- Name: farmer_audit_log; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.farmer_audit_log (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    action text NOT NULL,
+    entity_type text NOT NULL,
+    entity_id uuid,
+    performed_by uuid NOT NULL,
+    algorithm_version text DEFAULT 'v1.0'::text,
+    previous_params jsonb,
+    new_params jsonb,
+    projection jsonb,
+    notes text,
+    created_at timestamp with time zone DEFAULT now()
+);
+
+
+--
+-- Name: farmer_bundle_recommendations; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.farmer_bundle_recommendations (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    farmer_id uuid NOT NULL,
+    customer_user_id uuid NOT NULL,
+    bundle_products jsonb DEFAULT '[]'::jsonb NOT NULL,
+    bundle_type text DEFAULT 'association'::text NOT NULL,
+    support numeric DEFAULT 0,
+    confidence numeric DEFAULT 0,
+    lift numeric DEFAULT 0,
+    p_bundle numeric DEFAULT 0,
+    m_bundle numeric DEFAULT 0,
+    lie_bundle numeric DEFAULT 0,
+    complexity_factor numeric DEFAULT 1.0,
+    status text DEFAULT 'pendente'::text,
+    offered_at timestamp with time zone,
+    accepted_at timestamp with time zone,
+    rejected_at timestamp with time zone,
+    actual_margin numeric,
+    time_spent_seconds integer,
+    accepted_products jsonb,
+    created_at timestamp with time zone DEFAULT now(),
+    updated_at timestamp with time zone DEFAULT now(),
+    approach_type text,
+    argument_phone text,
+    argument_whatsapp text,
+    argument_technical text,
+    customer_profile text DEFAULT 'misto'::text,
+    argument_effectiveness numeric,
+    CONSTRAINT farmer_bundle_recommendations_status_check CHECK ((status = ANY (ARRAY['pendente'::text, 'ofertado'::text, 'aceito_total'::text, 'aceito_parcial'::text, 'rejeitado'::text])))
+);
+
+
+--
+-- Name: farmer_calls; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.farmer_calls (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    farmer_id uuid NOT NULL,
+    customer_user_id uuid,
+    call_type public.farmer_call_type NOT NULL,
+    call_result public.farmer_call_result DEFAULT 'sem_resposta'::public.farmer_call_result NOT NULL,
+    started_at timestamp with time zone DEFAULT now() NOT NULL,
+    ended_at timestamp with time zone,
+    duration_seconds integer DEFAULT 0,
+    follow_up_duration_seconds integer DEFAULT 0,
+    attempt_number integer DEFAULT 1,
+    notes text,
+    linked_sales_order_id uuid,
+    revenue_generated numeric DEFAULT 0,
+    margin_generated numeric DEFAULT 0,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    is_whatsapp boolean DEFAULT false,
+    whatsapp_replied boolean DEFAULT false,
+    transcript jsonb,
+    analyses jsonb,
+    entities_extracted jsonb,
+    call_backend text,
+    phone_dialed text,
+    CONSTRAINT farmer_calls_call_backend_check CHECK (((call_backend IS NULL) OR (call_backend = ANY (ARRAY['nvoip'::text, 'webrtc'::text, 'manual'::text]))))
+);
+
+
+--
+-- Name: COLUMN farmer_calls.transcript; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON COLUMN public.farmer_calls.transcript IS 'Array de TranscriptTurnLite: [{ speaker, text, isFinal, startedAt }]. Capturado do PR2 (Deepgram).';
+
+
+--
+-- Name: COLUMN farmer_calls.analyses; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON COLUMN public.farmer_calls.analyses IS 'Array de SpinAnalysis snapshots ao longo da chamada (cada vez que useSpinAnalysis disparou). Capturado do PR3+PR3.5.';
+
+
+--
+-- Name: COLUMN farmer_calls.entities_extracted; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON COLUMN public.farmer_calls.entities_extracted IS 'Array deduplicado de ExtractedEntity agregando todas as análises. Pronto pra alimentar perfil 360 do cliente (PR5).';
+
+
+--
+-- Name: COLUMN farmer_calls.call_backend; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON COLUMN public.farmer_calls.call_backend IS 'Qual backend foi usado: nvoip | webrtc | manual.';
+
+
+--
+-- Name: COLUMN farmer_calls.phone_dialed; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON COLUMN public.farmer_calls.phone_dialed IS 'Telefone normalizado (dígitos apenas) que foi discado. Útil quando customer_user_id ainda é NULL.';
+
+
+--
+-- Name: farmer_category_conversion; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.farmer_category_conversion (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    category_id text NOT NULL,
+    total_offers integer DEFAULT 0,
+    total_accepts integer DEFAULT 0,
+    conversion_rate numeric DEFAULT 0,
+    avg_margin_generated numeric DEFAULT 0,
+    avg_time_spent_seconds integer DEFAULT 0,
+    profit_per_hour numeric DEFAULT 0,
+    complexity_factor numeric DEFAULT 1.0,
+    updated_at timestamp with time zone DEFAULT now()
+);
+
+
+--
+-- Name: farmer_client_scores; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.farmer_client_scores (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    customer_user_id uuid NOT NULL,
+    farmer_id uuid NOT NULL,
+    rf_score numeric DEFAULT 0,
+    m_score numeric DEFAULT 0,
+    g_score numeric DEFAULT 0,
+    x_score numeric DEFAULT 0,
+    s_score numeric DEFAULT 0,
+    health_score numeric DEFAULT 0,
+    health_class text DEFAULT 'critico'::text,
+    churn_risk numeric DEFAULT 0,
+    recover_score numeric DEFAULT 0,
+    expansion_score numeric DEFAULT 0,
+    eff_score numeric DEFAULT 0,
+    priority_score numeric DEFAULT 0,
+    days_since_last_purchase integer DEFAULT 0,
+    avg_repurchase_interval numeric DEFAULT 0,
+    avg_monthly_spend_180d numeric DEFAULT 0,
+    gross_margin_pct numeric DEFAULT 0,
+    category_count integer DEFAULT 0,
+    answer_rate_60d numeric DEFAULT 0,
+    whatsapp_reply_rate_60d numeric DEFAULT 0,
+    revenue_potential numeric DEFAULT 0,
+    calculated_at timestamp with time zone DEFAULT now(),
+    created_at timestamp with time zone DEFAULT now(),
+    updated_at timestamp with time zone DEFAULT now(),
+    signal_modifiers jsonb DEFAULT '{}'::jsonb,
+    last_signal_recalc_at timestamp with time zone
+);
+
+
+--
+-- Name: COLUMN farmer_client_scores.signal_modifiers; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON COLUMN public.farmer_client_scores.signal_modifiers IS 'Breakdown dos modifiers aplicados pelo copilot. Schema: { churn: { delta, reasons: [{kind, value, weight, decay}] }, expansion: {...}, health: {...}, eff: {...} }.';
+
+
+--
+-- Name: COLUMN farmer_client_scores.last_signal_recalc_at; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON COLUMN public.farmer_client_scores.last_signal_recalc_at IS 'Última vez que scoring-recalc-client rodou pra esse (customer_user_id, farmer_id).';
+
+
+--
+-- Name: farmer_config; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.farmer_config (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    farmer_id uuid NOT NULL,
+    hours_weekday numeric DEFAULT 8.83 NOT NULL,
+    hours_friday numeric DEFAULT 8.33 NOT NULL,
+    working_days_per_month integer DEFAULT 22 NOT NULL,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    updated_at timestamp with time zone DEFAULT now() NOT NULL
+);
+
+
+--
+-- Name: farmer_copilot_events; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.farmer_copilot_events (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    session_id uuid NOT NULL,
+    event_type text NOT NULL,
+    event_data jsonb DEFAULT '{}'::jsonb,
+    transcript_snippet text,
+    suggestion_text text,
+    suggestion_used boolean DEFAULT false,
+    created_at timestamp with time zone DEFAULT now()
+);
+
+
+--
+-- Name: farmer_copilot_sessions; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.farmer_copilot_sessions (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    farmer_id uuid NOT NULL,
+    customer_user_id uuid,
+    call_id uuid,
+    bundle_recommendation_id uuid,
+    started_at timestamp with time zone DEFAULT now() NOT NULL,
+    ended_at timestamp with time zone,
+    duration_seconds integer DEFAULT 0,
+    final_direction text DEFAULT 'neutral'::text,
+    final_intent text,
+    final_phase text,
+    suggestions_shown integer DEFAULT 0,
+    suggestions_used integer DEFAULT 0,
+    result text DEFAULT 'em_andamento'::text,
+    revenue_generated numeric DEFAULT 0,
+    margin_generated numeric DEFAULT 0,
+    transcript_summary text,
+    created_at timestamp with time zone DEFAULT now(),
+    updated_at timestamp with time zone DEFAULT now()
+);
+
+
+--
+-- Name: farmer_diagnostic_questions; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.farmer_diagnostic_questions (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    bundle_recommendation_id uuid,
+    farmer_id uuid NOT NULL,
+    customer_user_id uuid NOT NULL,
+    question_type text NOT NULL,
+    question_text text NOT NULL,
+    alt_question_text text,
+    customer_profile text DEFAULT 'misto'::text,
+    response_type text,
+    response_notes text,
+    was_bundle_offered boolean DEFAULT false,
+    bundle_result text,
+    margin_generated numeric DEFAULT 0,
+    time_spent_seconds integer DEFAULT 0,
+    effectiveness_score numeric,
+    created_at timestamp with time zone DEFAULT now(),
+    updated_at timestamp with time zone DEFAULT now()
+);
+
+
+--
+-- Name: farmer_experiment_clients; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.farmer_experiment_clients (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    experiment_id uuid NOT NULL,
+    customer_user_id uuid NOT NULL,
+    group_type text NOT NULL,
+    metric_value numeric DEFAULT 0,
+    revenue_generated numeric DEFAULT 0,
+    margin_generated numeric DEFAULT 0,
+    calls_count integer DEFAULT 0,
+    total_time_seconds integer DEFAULT 0,
+    created_at timestamp with time zone DEFAULT now(),
+    updated_at timestamp with time zone DEFAULT now(),
+    CONSTRAINT farmer_experiment_clients_group_type_check CHECK ((group_type = ANY (ARRAY['controle'::text, 'teste'::text])))
+);
+
+
+--
+-- Name: farmer_experiments; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.farmer_experiments (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    farmer_id uuid NOT NULL,
+    title text NOT NULL,
+    hypothesis text NOT NULL,
+    primary_metric text NOT NULL,
+    min_duration_days integer DEFAULT 14 NOT NULL,
+    min_sample_size integer DEFAULT 10 NOT NULL,
+    min_significance numeric DEFAULT 0.95 NOT NULL,
+    status text DEFAULT 'rascunho'::text NOT NULL,
+    winner text,
+    control_description text,
+    test_description text,
+    control_metric_value numeric DEFAULT 0,
+    test_metric_value numeric DEFAULT 0,
+    lift_pct numeric DEFAULT 0,
+    p_value numeric,
+    started_at timestamp with time zone,
+    ended_at timestamp with time zone,
+    created_at timestamp with time zone DEFAULT now(),
+    updated_at timestamp with time zone DEFAULT now(),
+    CONSTRAINT farmer_experiments_primary_metric_check CHECK ((primary_metric = ANY (ARRAY['margem_por_hora'::text, 'ltv'::text, 'churn'::text, 'receita_incremental'::text]))),
+    CONSTRAINT farmer_experiments_status_check CHECK ((status = ANY (ARRAY['rascunho'::text, 'ativo'::text, 'concluido'::text, 'cancelado'::text]))),
+    CONSTRAINT farmer_experiments_winner_check CHECK ((winner = ANY (ARRAY['controle'::text, 'teste'::text, 'inconclusivo'::text, NULL::text])))
+);
+
+
+--
+-- Name: farmer_governance_proposals; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.farmer_governance_proposals (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    proposed_by uuid NOT NULL,
+    proposal_type text NOT NULL,
+    title text NOT NULL,
+    description text,
+    current_params jsonb DEFAULT '{}'::jsonb NOT NULL,
+    proposed_params jsonb DEFAULT '{}'::jsonb NOT NULL,
+    impact_revenue_pct numeric,
+    impact_margin_pct numeric,
+    impact_churn_pct numeric,
+    impact_margin_per_hour numeric,
+    status text DEFAULT 'aguardando_aprovacao'::text,
+    approved_by uuid,
+    approved_at timestamp with time zone,
+    rejection_reason text,
+    algorithm_version text DEFAULT 'v1.0'::text,
+    created_at timestamp with time zone DEFAULT now(),
+    updated_at timestamp with time zone DEFAULT now()
+);
+
+
+--
+-- Name: farmer_learning_weights; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.farmer_learning_weights (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    farmer_id uuid NOT NULL,
+    weight_recency numeric DEFAULT 0.3,
+    weight_frequency numeric DEFAULT 0.2,
+    weight_monetary numeric DEFAULT 0.3,
+    weight_margin numeric DEFAULT 0.2,
+    agenda_pct_risk numeric DEFAULT 0.40,
+    agenda_pct_recovery numeric DEFAULT 0.30,
+    agenda_pct_expansion numeric DEFAULT 0.30,
+    suggested_calls_per_day integer,
+    suggested_portfolio_size integer,
+    last_adjusted_at timestamp with time zone,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    updated_at timestamp with time zone DEFAULT now() NOT NULL
+);
+
+
+--
+-- Name: farmer_performance_scores; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.farmer_performance_scores (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    farmer_id uuid NOT NULL,
+    calculated_at timestamp with time zone DEFAULT now() NOT NULL,
+    iee_ptpl_usage numeric DEFAULT 0,
+    iee_objective_adherence numeric DEFAULT 0,
+    iee_questions_usage numeric DEFAULT 0,
+    iee_bundle_offered numeric DEFAULT 0,
+    iee_post_call_registration numeric DEFAULT 0,
+    iee_total numeric DEFAULT 0,
+    ipf_incremental_margin numeric DEFAULT 0,
+    ipf_margin_per_hour numeric DEFAULT 0,
+    ipf_mix_expansion numeric DEFAULT 0,
+    ipf_ltv_evolution numeric DEFAULT 0,
+    ipf_churn_reduction numeric DEFAULT 0,
+    ipf_total numeric DEFAULT 0,
+    period_start date NOT NULL,
+    period_end date NOT NULL,
+    total_calls integer DEFAULT 0,
+    total_plans integer DEFAULT 0,
+    total_margin numeric DEFAULT 0,
+    total_time_seconds integer DEFAULT 0,
+    created_at timestamp with time zone DEFAULT now()
+);
+
+
+--
+-- Name: farmer_recommendations; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.farmer_recommendations (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    farmer_id uuid NOT NULL,
+    customer_user_id uuid NOT NULL,
+    recommendation_type text NOT NULL,
+    product_id uuid,
+    current_product_id uuid,
+    p_ij numeric DEFAULT 0,
+    m_ij numeric DEFAULT 0,
+    lie numeric DEFAULT 0,
+    complexity_factor numeric DEFAULT 1.0,
+    cluster_volume_estimate numeric DEFAULT 1,
+    offered_at timestamp with time zone,
+    accepted_at timestamp with time zone,
+    rejected_at timestamp with time zone,
+    actual_margin numeric,
+    time_spent_seconds integer,
+    status text DEFAULT 'pendente'::text,
+    created_at timestamp with time zone DEFAULT now(),
+    updated_at timestamp with time zone DEFAULT now(),
+    CONSTRAINT farmer_recommendations_recommendation_type_check CHECK ((recommendation_type = ANY (ARRAY['cross_sell'::text, 'up_sell'::text]))),
+    CONSTRAINT farmer_recommendations_status_check CHECK ((status = ANY (ARRAY['pendente'::text, 'ofertado'::text, 'aceito'::text, 'rejeitado'::text, 'expirado'::text])))
+);
+
+
+--
+-- Name: farmer_tactical_plans; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.farmer_tactical_plans (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    farmer_id uuid NOT NULL,
+    customer_user_id uuid NOT NULL,
+    bundle_recommendation_id uuid,
+    health_score numeric DEFAULT 0,
+    churn_risk numeric DEFAULT 0,
+    mix_gap integer DEFAULT 0,
+    current_margin_pct numeric DEFAULT 0,
+    cluster_avg_margin_pct numeric DEFAULT 0,
+    expansion_potential numeric DEFAULT 0,
+    strategic_objective text DEFAULT 'expansao_mix'::text NOT NULL,
+    customer_profile text DEFAULT 'misto'::text,
+    top_bundle jsonb DEFAULT '{}'::jsonb,
+    bundle_lie numeric DEFAULT 0,
+    bundle_probability numeric DEFAULT 0,
+    bundle_incremental_margin numeric DEFAULT 0,
+    best_individual_lie numeric DEFAULT 0,
+    diagnostic_questions jsonb DEFAULT '[]'::jsonb,
+    implication_question text,
+    offer_transition text,
+    probable_objections jsonb DEFAULT '[]'::jsonb,
+    approach_strategy text,
+    plan_followed boolean,
+    call_result text,
+    actual_margin numeric,
+    call_duration_seconds integer,
+    objection_type text,
+    notes text,
+    effectiveness_score numeric,
+    status text DEFAULT 'gerado'::text,
+    generated_at timestamp with time zone DEFAULT now(),
+    used_at timestamp with time zone,
+    completed_at timestamp with time zone,
+    created_at timestamp with time zone DEFAULT now(),
+    updated_at timestamp with time zone DEFAULT now(),
+    plan_type text DEFAULT 'essencial'::text,
+    approach_strategy_b text,
+    second_bundle jsonb DEFAULT '{}'::jsonb,
+    ltv_projection jsonb,
+    expected_result jsonb,
+    operational_risks jsonb DEFAULT '[]'::jsonb
+);
+
+
+--
+-- Name: fin_contas_pagar; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.fin_contas_pagar (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    company text NOT NULL,
+    omie_codigo_lancamento bigint NOT NULL,
+    omie_codigo_cliente_fornecedor bigint,
+    nome_fornecedor text,
+    cnpj_cpf text,
+    numero_documento text,
+    numero_documento_fiscal text,
+    data_emissao date,
+    data_vencimento date,
+    data_pagamento date,
+    data_previsao date,
+    valor_documento numeric(15,2) DEFAULT 0 NOT NULL,
+    valor_pago numeric(15,2) DEFAULT 0,
+    valor_desconto numeric(15,2) DEFAULT 0,
+    valor_juros numeric(15,2) DEFAULT 0,
+    valor_multa numeric(15,2) DEFAULT 0,
+    saldo numeric(15,2) GENERATED ALWAYS AS ((valor_documento - COALESCE(valor_pago, (0)::numeric))) STORED,
+    status_titulo text DEFAULT 'ABERTO'::text,
+    categoria_codigo text,
+    categoria_descricao text,
+    departamento text,
+    centro_custo text,
+    observacao text,
+    omie_ncodcc bigint,
+    codigo_barras text,
+    tipo_documento text,
+    id_origem text,
+    metadata jsonb DEFAULT '{}'::jsonb,
+    created_at timestamp with time zone DEFAULT now(),
+    updated_at timestamp with time zone DEFAULT now(),
+    CONSTRAINT fin_contas_pagar_company_check CHECK ((company = ANY (ARRAY['oben'::text, 'colacor'::text, 'colacor_sc'::text])))
+);
+
+
+--
+-- Name: fin_aging_pagar; Type: VIEW; Schema: public; Owner: -
+--
+
+CREATE VIEW public.fin_aging_pagar WITH (security_invoker='on') AS
+ SELECT company,
+    count(*) FILTER (WHERE (data_vencimento >= CURRENT_DATE)) AS a_vencer_qtd,
+    COALESCE(sum(saldo) FILTER (WHERE (data_vencimento >= CURRENT_DATE)), (0)::numeric) AS a_vencer_valor,
+    count(*) FILTER (WHERE (((CURRENT_DATE - data_vencimento) >= 1) AND ((CURRENT_DATE - data_vencimento) <= 30))) AS vencido_1_30_qtd,
+    COALESCE(sum(saldo) FILTER (WHERE (((CURRENT_DATE - data_vencimento) >= 1) AND ((CURRENT_DATE - data_vencimento) <= 30))), (0)::numeric) AS vencido_1_30_valor,
+    count(*) FILTER (WHERE (((CURRENT_DATE - data_vencimento) >= 31) AND ((CURRENT_DATE - data_vencimento) <= 60))) AS vencido_31_60_qtd,
+    COALESCE(sum(saldo) FILTER (WHERE (((CURRENT_DATE - data_vencimento) >= 31) AND ((CURRENT_DATE - data_vencimento) <= 60))), (0)::numeric) AS vencido_31_60_valor,
+    count(*) FILTER (WHERE (((CURRENT_DATE - data_vencimento) >= 61) AND ((CURRENT_DATE - data_vencimento) <= 90))) AS vencido_61_90_qtd,
+    COALESCE(sum(saldo) FILTER (WHERE (((CURRENT_DATE - data_vencimento) >= 61) AND ((CURRENT_DATE - data_vencimento) <= 90))), (0)::numeric) AS vencido_61_90_valor,
+    count(*) FILTER (WHERE ((CURRENT_DATE - data_vencimento) > 90)) AS vencido_90_plus_qtd,
+    COALESCE(sum(saldo) FILTER (WHERE ((CURRENT_DATE - data_vencimento) > 90)), (0)::numeric) AS vencido_90_plus_valor
+   FROM public.fin_contas_pagar
+  WHERE (status_titulo = ANY (ARRAY['ABERTO'::text, 'VENCIDO'::text, 'PARCIAL'::text]))
+  GROUP BY company;
+
+
+--
+-- Name: fin_contas_receber; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.fin_contas_receber (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    company text NOT NULL,
+    omie_codigo_lancamento bigint NOT NULL,
+    omie_codigo_cliente bigint,
+    nome_cliente text,
+    cnpj_cpf text,
+    numero_documento text,
+    numero_documento_fiscal text,
+    numero_pedido text,
+    data_emissao date,
+    data_vencimento date,
+    data_recebimento date,
+    data_previsao date,
+    valor_documento numeric(15,2) DEFAULT 0 NOT NULL,
+    valor_recebido numeric(15,2) DEFAULT 0,
+    valor_desconto numeric(15,2) DEFAULT 0,
+    valor_juros numeric(15,2) DEFAULT 0,
+    valor_multa numeric(15,2) DEFAULT 0,
+    saldo numeric(15,2) GENERATED ALWAYS AS ((valor_documento - COALESCE(valor_recebido, (0)::numeric))) STORED,
+    status_titulo text DEFAULT 'ABERTO'::text,
+    categoria_codigo text,
+    categoria_descricao text,
+    departamento text,
+    centro_custo text,
+    observacao text,
+    omie_ncodcc bigint,
+    vendedor_id bigint,
+    tipo_documento text,
+    id_origem text,
+    metadata jsonb DEFAULT '{}'::jsonb,
+    created_at timestamp with time zone DEFAULT now(),
+    updated_at timestamp with time zone DEFAULT now(),
+    CONSTRAINT fin_contas_receber_company_check CHECK ((company = ANY (ARRAY['oben'::text, 'colacor'::text, 'colacor_sc'::text])))
+);
+
+
+--
+-- Name: fin_aging_receber; Type: VIEW; Schema: public; Owner: -
+--
+
+CREATE VIEW public.fin_aging_receber WITH (security_invoker='on') AS
+ SELECT company,
+    count(*) FILTER (WHERE (data_vencimento >= CURRENT_DATE)) AS a_vencer_qtd,
+    COALESCE(sum(saldo) FILTER (WHERE (data_vencimento >= CURRENT_DATE)), (0)::numeric) AS a_vencer_valor,
+    count(*) FILTER (WHERE (((CURRENT_DATE - data_vencimento) >= 1) AND ((CURRENT_DATE - data_vencimento) <= 30))) AS vencido_1_30_qtd,
+    COALESCE(sum(saldo) FILTER (WHERE (((CURRENT_DATE - data_vencimento) >= 1) AND ((CURRENT_DATE - data_vencimento) <= 30))), (0)::numeric) AS vencido_1_30_valor,
+    count(*) FILTER (WHERE (((CURRENT_DATE - data_vencimento) >= 31) AND ((CURRENT_DATE - data_vencimento) <= 60))) AS vencido_31_60_qtd,
+    COALESCE(sum(saldo) FILTER (WHERE (((CURRENT_DATE - data_vencimento) >= 31) AND ((CURRENT_DATE - data_vencimento) <= 60))), (0)::numeric) AS vencido_31_60_valor,
+    count(*) FILTER (WHERE (((CURRENT_DATE - data_vencimento) >= 61) AND ((CURRENT_DATE - data_vencimento) <= 90))) AS vencido_61_90_qtd,
+    COALESCE(sum(saldo) FILTER (WHERE (((CURRENT_DATE - data_vencimento) >= 61) AND ((CURRENT_DATE - data_vencimento) <= 90))), (0)::numeric) AS vencido_61_90_valor,
+    count(*) FILTER (WHERE ((CURRENT_DATE - data_vencimento) > 90)) AS vencido_90_plus_qtd,
+    COALESCE(sum(saldo) FILTER (WHERE ((CURRENT_DATE - data_vencimento) > 90)), (0)::numeric) AS vencido_90_plus_valor
+   FROM public.fin_contas_receber
+  WHERE (status_titulo = ANY (ARRAY['ABERTO'::text, 'VENCIDO'::text, 'PARCIAL'::text]))
+  GROUP BY company;
+
+
+--
+-- Name: fin_alertas; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.fin_alertas (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    company text NOT NULL,
+    tipo text NOT NULL,
+    severidade text NOT NULL,
+    mensagem text NOT NULL,
+    valor numeric(15,2),
+    threshold numeric(15,2),
+    contexto jsonb,
+    criado_em timestamp with time zone DEFAULT now() NOT NULL,
+    dismissed_at timestamp with time zone,
+    dismissed_by uuid,
+    dismissed_until timestamp with time zone,
+    CONSTRAINT fin_alertas_company_check CHECK ((company = ANY (ARRAY['oben'::text, 'colacor'::text, 'colacor_sc'::text]))),
+    CONSTRAINT fin_alertas_severidade_check CHECK ((severidade = ANY (ARRAY['info'::text, 'aviso'::text, 'critico'::text])))
+);
+
+
+--
+-- Name: TABLE fin_alertas; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON TABLE public.fin_alertas IS 'Alertas avaliados pela engine. UNIQUE em (company, tipo) WHERE dismissed_at IS NULL evita spam.';
+
+
+--
+-- Name: fin_analise_cp_dimensoes; Type: MATERIALIZED VIEW; Schema: public; Owner: -
+--
+
+CREATE MATERIALIZED VIEW public.fin_analise_cp_dimensoes AS
+ SELECT company,
+    (EXTRACT(year FROM data_vencimento))::integer AS ano,
+    (EXTRACT(month FROM data_vencimento))::integer AS mes,
+    categoria_codigo,
+    categoria_descricao,
+    departamento,
+    centro_custo,
+    nome_fornecedor,
+    cnpj_cpf,
+    tipo_documento,
+    status_titulo,
+    count(*) AS qtd_titulos,
+    sum(valor_documento) AS total_documento,
+    sum(valor_pago) AS total_pago,
+    sum(saldo) AS total_saldo
+   FROM public.fin_contas_pagar
+  WHERE (data_vencimento IS NOT NULL)
+  GROUP BY company, (EXTRACT(year FROM data_vencimento)), (EXTRACT(month FROM data_vencimento)), categoria_codigo, categoria_descricao, departamento, centro_custo, nome_fornecedor, cnpj_cpf, tipo_documento, status_titulo
+  WITH NO DATA;
+
+
+--
+-- Name: fin_analise_cr_dimensoes; Type: MATERIALIZED VIEW; Schema: public; Owner: -
+--
+
+CREATE MATERIALIZED VIEW public.fin_analise_cr_dimensoes AS
+ SELECT company,
+    (EXTRACT(year FROM data_vencimento))::integer AS ano,
+    (EXTRACT(month FROM data_vencimento))::integer AS mes,
+    categoria_codigo,
+    categoria_descricao,
+    departamento,
+    centro_custo,
+    vendedor_id,
+    nome_cliente,
+    cnpj_cpf,
+    status_titulo,
+    count(*) AS qtd_titulos,
+    sum(valor_documento) AS total_documento,
+    sum(valor_recebido) AS total_recebido,
+    sum(saldo) AS total_saldo
+   FROM public.fin_contas_receber
+  WHERE (data_vencimento IS NOT NULL)
+  GROUP BY company, (EXTRACT(year FROM data_vencimento)), (EXTRACT(month FROM data_vencimento)), categoria_codigo, categoria_descricao, departamento, centro_custo, vendedor_id, nome_cliente, cnpj_cpf, status_titulo
+  WITH NO DATA;
+
+
+--
+-- Name: fin_audit_log; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.fin_audit_log (
+    id bigint NOT NULL,
+    table_name text NOT NULL,
+    row_id text NOT NULL,
+    op text NOT NULL,
+    changed_fields jsonb NOT NULL,
+    changed_by uuid,
+    changed_at timestamp with time zone DEFAULT now() NOT NULL,
+    company text,
+    origem text DEFAULT 'manual'::text NOT NULL,
+    period_ref date,
+    override_justificativa text,
+    CONSTRAINT fin_audit_log_op_check CHECK ((op = ANY (ARRAY['INSERT'::text, 'UPDATE'::text, 'DELETE'::text]))),
+    CONSTRAINT fin_audit_log_origem_check CHECK ((origem = ANY (ARRAY['manual'::text, 'omie_sync'::text, 'edge_fn'::text, 'override_emergencia'::text, 'cron'::text, 'trigger'::text])))
+);
+
+
+--
+-- Name: fin_audit_log_id_seq; Type: SEQUENCE; Schema: public; Owner: -
+--
+
+CREATE SEQUENCE public.fin_audit_log_id_seq
+    START WITH 1
+    INCREMENT BY 1
+    NO MINVALUE
+    NO MAXVALUE
+    CACHE 1;
+
+
+--
+-- Name: fin_audit_log_id_seq; Type: SEQUENCE OWNED BY; Schema: public; Owner: -
+--
+
+ALTER SEQUENCE public.fin_audit_log_id_seq OWNED BY public.fin_audit_log.id;
+
+
+--
+-- Name: fin_categoria_dre_mapping; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.fin_categoria_dre_mapping (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    company text NOT NULL,
+    omie_codigo text NOT NULL,
+    dre_linha text NOT NULL,
+    notas text,
+    created_at timestamp with time zone DEFAULT now(),
+    updated_at timestamp with time zone DEFAULT now(),
+    CONSTRAINT fin_categoria_dre_mapping_company_check CHECK ((company = ANY (ARRAY['oben'::text, 'colacor'::text, 'colacor_sc'::text, '_default'::text]))),
+    CONSTRAINT fin_categoria_dre_mapping_dre_linha_check CHECK ((dre_linha = ANY (ARRAY['receita_bruta'::text, 'deducoes'::text, 'cmv'::text, 'despesas_operacionais'::text, 'despesas_administrativas'::text, 'despesas_comerciais'::text, 'despesas_financeiras'::text, 'receitas_financeiras'::text, 'outras_receitas'::text, 'outras_despesas'::text, 'impostos'::text])))
+);
+
+
+--
+-- Name: fin_categorias; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.fin_categorias (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    company text NOT NULL,
+    omie_codigo text NOT NULL,
+    descricao text NOT NULL,
+    tipo text,
+    conta_pai text,
+    nivel integer DEFAULT 1,
+    totalizadora boolean DEFAULT false,
+    ativo boolean DEFAULT true,
+    created_at timestamp with time zone DEFAULT now(),
+    updated_at timestamp with time zone DEFAULT now(),
+    CONSTRAINT fin_categorias_company_check CHECK ((company = ANY (ARRAY['oben'::text, 'colacor'::text, 'colacor_sc'::text]))),
+    CONSTRAINT fin_categorias_tipo_check CHECK ((tipo = ANY (ARRAY['R'::text, 'D'::text, 'T'::text])))
+);
+
+
+--
+-- Name: fin_conciliacao; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.fin_conciliacao (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    company text NOT NULL,
+    omie_ncodcc bigint NOT NULL,
+    mov_id uuid,
+    mov_data date,
+    mov_valor numeric(15,2),
+    mov_descricao text,
+    tipo_titulo text,
+    titulo_id uuid,
+    titulo_valor numeric(15,2),
+    status text DEFAULT 'pendente'::text NOT NULL,
+    tipo_match text,
+    diferenca numeric(15,2) GENERATED ALWAYS AS ((COALESCE(mov_valor, (0)::numeric) - COALESCE(titulo_valor, (0)::numeric))) STORED,
+    resolvido_por uuid,
+    resolvido_em timestamp with time zone,
+    observacao text,
+    created_at timestamp with time zone DEFAULT now(),
+    updated_at timestamp with time zone DEFAULT now(),
+    CONSTRAINT fin_conciliacao_company_check CHECK ((company = ANY (ARRAY['oben'::text, 'colacor'::text, 'colacor_sc'::text]))),
+    CONSTRAINT fin_conciliacao_status_check CHECK ((status = ANY (ARRAY['pendente'::text, 'conciliado'::text, 'divergencia'::text, 'ignorado'::text]))),
+    CONSTRAINT fin_conciliacao_tipo_match_check CHECK ((tipo_match = ANY (ARRAY['automatico'::text, 'manual'::text, 'parcial'::text]))),
+    CONSTRAINT fin_conciliacao_tipo_titulo_check CHECK ((tipo_titulo = ANY (ARRAY['CR'::text, 'CP'::text])))
+);
+
+
+--
+-- Name: fin_confiabilidade; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.fin_confiabilidade (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    company text NOT NULL,
+    ano integer NOT NULL,
+    mes integer NOT NULL,
+    total_cr integer DEFAULT 0,
+    total_cp integer DEFAULT 0,
+    total_mov integer DEFAULT 0,
+    cr_sem_categoria integer DEFAULT 0,
+    cp_sem_categoria integer DEFAULT 0,
+    pct_mov_conciliado numeric(5,2) DEFAULT 0,
+    mov_sem_titulo integer DEFAULT 0,
+    titulo_sem_mov integer DEFAULT 0,
+    dre_regime text,
+    dre_categorias_mapeadas integer DEFAULT 0,
+    dre_categorias_heuristica integer DEFAULT 0,
+    dre_categorias_total integer DEFAULT 0,
+    pct_valor_mapeado numeric(5,2) DEFAULT 0,
+    fechamento_status text DEFAULT 'sem_fechamento'::text,
+    fechamento_versao integer DEFAULT 0,
+    ultimo_sync timestamp with time zone,
+    sync_status text,
+    calculated_at timestamp with time zone DEFAULT now()
+);
+
+
+--
+-- Name: fin_config_cashflow; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.fin_config_cashflow (
+    company text NOT NULL,
+    overrides_cenario jsonb DEFAULT '{"otimista": {"inadimplencia_pct_delta": -50, "recebimento_no_prazo_pct_delta": 10}, "pessimista": {"inadimplencia_pct_delta": 50, "recebimento_no_prazo_pct_delta": -15}}'::jsonb NOT NULL,
+    thresholds jsonb DEFAULT '{"dias_cobertura_min": 30, "ncg_deficit_alerta": 0, "inadimplencia_max_pct": 10, "caixa_negativo_semanas": 4, "concentracao_top1_max_pct": 20, "pmr_crescimento_max_pct_90d": 15}'::jsonb NOT NULL,
+    adiantamento_categorias_codigos text[] DEFAULT '{}'::text[] NOT NULL,
+    updated_at timestamp with time zone DEFAULT now() NOT NULL,
+    updated_by uuid,
+    folha_categorias_codigos text[] DEFAULT '{}'::text[] NOT NULL,
+    dre_tributario jsonb DEFAULT '{}'::jsonb NOT NULL,
+    CONSTRAINT fin_config_cashflow_company_check CHECK ((company = ANY (ARRAY['oben'::text, 'colacor'::text, 'colacor_sc'::text])))
+);
+
+
+--
+-- Name: TABLE fin_config_cashflow; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON TABLE public.fin_config_cashflow IS 'Config por empresa: thresholds de alertas + overrides de cenário + categorias de adiantamento.';
+
+
+--
+-- Name: fin_contas_correntes; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.fin_contas_correntes (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    company text NOT NULL,
+    omie_ncodcc bigint NOT NULL,
+    descricao text,
+    banco text,
+    agencia text,
+    numero_conta text,
+    tipo text,
+    saldo_data date,
+    saldo_atual numeric(15,2) DEFAULT 0,
+    ativo boolean DEFAULT true,
+    created_at timestamp with time zone DEFAULT now(),
+    updated_at timestamp with time zone DEFAULT now(),
+    CONSTRAINT fin_contas_correntes_company_check CHECK ((company = ANY (ARRAY['oben'::text, 'colacor'::text, 'colacor_sc'::text])))
+);
+
+
+--
+-- Name: fin_dre_competencia_base; Type: VIEW; Schema: public; Owner: -
+--
+
+CREATE VIEW public.fin_dre_competencia_base WITH (security_invoker='on') AS
+ WITH cr_competencia AS (
+         SELECT fin_contas_receber.company,
+            (EXTRACT(year FROM fin_contas_receber.data_emissao))::integer AS ano,
+            (EXTRACT(month FROM fin_contas_receber.data_emissao))::integer AS mes,
+            fin_contas_receber.categoria_codigo,
+            fin_contas_receber.categoria_descricao,
+            sum(fin_contas_receber.valor_documento) AS valor_total,
+            count(*) AS qtd
+           FROM public.fin_contas_receber
+          WHERE ((fin_contas_receber.data_emissao IS NOT NULL) AND (fin_contas_receber.status_titulo <> 'CANCELADO'::text))
+          GROUP BY fin_contas_receber.company, (EXTRACT(year FROM fin_contas_receber.data_emissao)), (EXTRACT(month FROM fin_contas_receber.data_emissao)), fin_contas_receber.categoria_codigo, fin_contas_receber.categoria_descricao
+        ), cp_competencia AS (
+         SELECT fin_contas_pagar.company,
+            (EXTRACT(year FROM fin_contas_pagar.data_emissao))::integer AS ano,
+            (EXTRACT(month FROM fin_contas_pagar.data_emissao))::integer AS mes,
+            fin_contas_pagar.categoria_codigo,
+            fin_contas_pagar.categoria_descricao,
+            sum(fin_contas_pagar.valor_documento) AS valor_total,
+            count(*) AS qtd
+           FROM public.fin_contas_pagar
+          WHERE ((fin_contas_pagar.data_emissao IS NOT NULL) AND (fin_contas_pagar.status_titulo <> 'CANCELADO'::text))
+          GROUP BY fin_contas_pagar.company, (EXTRACT(year FROM fin_contas_pagar.data_emissao)), (EXTRACT(month FROM fin_contas_pagar.data_emissao)), fin_contas_pagar.categoria_codigo, fin_contas_pagar.categoria_descricao
+        )
+ SELECT 'CR'::text AS origem,
+    cr_competencia.company,
+    cr_competencia.ano,
+    cr_competencia.mes,
+    cr_competencia.categoria_codigo,
+    cr_competencia.categoria_descricao,
+    cr_competencia.valor_total,
+    cr_competencia.qtd
+   FROM cr_competencia
+UNION ALL
+ SELECT 'CP'::text AS origem,
+    cp_competencia.company,
+    cp_competencia.ano,
+    cp_competencia.mes,
+    cp_competencia.categoria_codigo,
+    cp_competencia.categoria_descricao,
+    cp_competencia.valor_total,
+    cp_competencia.qtd
+   FROM cp_competencia;
+
+
+--
+-- Name: fin_dre_snapshots; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.fin_dre_snapshots (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    company text NOT NULL,
+    ano integer NOT NULL,
+    mes integer NOT NULL,
+    receita_bruta numeric(15,2) DEFAULT 0,
+    deducoes numeric(15,2) DEFAULT 0,
+    receita_liquida numeric(15,2) DEFAULT 0,
+    cmv numeric(15,2) DEFAULT 0,
+    lucro_bruto numeric(15,2) DEFAULT 0,
+    despesas_operacionais numeric(15,2) DEFAULT 0,
+    despesas_administrativas numeric(15,2) DEFAULT 0,
+    despesas_comerciais numeric(15,2) DEFAULT 0,
+    despesas_financeiras numeric(15,2) DEFAULT 0,
+    receitas_financeiras numeric(15,2) DEFAULT 0,
+    resultado_operacional numeric(15,2) DEFAULT 0,
+    outras_receitas numeric(15,2) DEFAULT 0,
+    outras_despesas numeric(15,2) DEFAULT 0,
+    resultado_antes_impostos numeric(15,2) DEFAULT 0,
+    impostos numeric(15,2) DEFAULT 0,
+    resultado_liquido numeric(15,2) DEFAULT 0,
+    detalhamento jsonb DEFAULT '{}'::jsonb,
+    calculated_at timestamp with time zone DEFAULT now(),
+    regime text DEFAULT 'caixa'::text NOT NULL,
+    qtd_categorias_sem_mapeamento integer DEFAULT 0,
+    CONSTRAINT fin_dre_snapshots_company_check CHECK ((company = ANY (ARRAY['oben'::text, 'colacor'::text, 'colacor_sc'::text]))),
+    CONSTRAINT fin_dre_snapshots_mes_check CHECK (((mes >= 1) AND (mes <= 12))),
+    CONSTRAINT fin_dre_snapshots_regime_check CHECK ((regime = ANY (ARRAY['caixa'::text, 'competencia'::text])))
+);
+
+
+--
+-- Name: COLUMN fin_dre_snapshots.regime; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON COLUMN public.fin_dre_snapshots.regime IS 'caixa = baseado em pagamento/recebimento efetivo. competencia = baseado em emissão (não implementado ainda)';
+
+
+--
+-- Name: COLUMN fin_dre_snapshots.qtd_categorias_sem_mapeamento; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON COLUMN public.fin_dre_snapshots.qtd_categorias_sem_mapeamento IS 'Quantidade de categorias classificadas por heurística, sem mapeamento explícito na fin_categoria_dre_mapping';
+
+
+--
+-- Name: fin_eliminacoes_intercompany; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.fin_eliminacoes_intercompany (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    empresa_origem text NOT NULL,
+    empresa_destino text NOT NULL,
+    tipo text NOT NULL,
+    match_por text DEFAULT 'cnpj'::text NOT NULL,
+    cnpj_origem text,
+    cnpj_destino text,
+    categoria_origem text,
+    categoria_destino text,
+    descricao text NOT NULL,
+    ativo boolean DEFAULT true,
+    created_at timestamp with time zone DEFAULT now(),
+    updated_at timestamp with time zone DEFAULT now(),
+    CONSTRAINT fin_eliminacoes_intercompany_check CHECK ((empresa_origem <> empresa_destino)),
+    CONSTRAINT fin_eliminacoes_intercompany_empresa_destino_check CHECK ((empresa_destino = ANY (ARRAY['oben'::text, 'colacor'::text, 'colacor_sc'::text]))),
+    CONSTRAINT fin_eliminacoes_intercompany_empresa_origem_check CHECK ((empresa_origem = ANY (ARRAY['oben'::text, 'colacor'::text, 'colacor_sc'::text]))),
+    CONSTRAINT fin_eliminacoes_intercompany_match_por_check CHECK ((match_por = ANY (ARRAY['cnpj'::text, 'categoria'::text, 'documento'::text, 'manual'::text]))),
+    CONSTRAINT fin_eliminacoes_intercompany_tipo_check CHECK ((tipo = ANY (ARRAY['receita_despesa'::text, 'cr_cp'::text, 'transferencia'::text])))
+);
+
+
+--
+-- Name: fin_eliminacoes_log; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.fin_eliminacoes_log (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    regra_id uuid,
+    ano integer NOT NULL,
+    mes integer NOT NULL,
+    valor_eliminado numeric(15,2) NOT NULL,
+    qtd_titulos integer DEFAULT 0,
+    detalhes jsonb DEFAULT '{}'::jsonb,
+    created_at timestamp with time zone DEFAULT now()
+);
+
+
+--
+-- Name: fin_estoque_valor; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.fin_estoque_valor (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    company text NOT NULL,
+    valor numeric(15,2) NOT NULL,
+    data_ref date NOT NULL,
+    fonte text DEFAULT 'manual'::text NOT NULL,
+    cobertura_pct numeric(5,2),
+    observacao text,
+    criado_por uuid,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT fin_estoque_valor_company_check CHECK ((company = ANY (ARRAY['oben'::text, 'colacor'::text, 'colacor_sc'::text]))),
+    CONSTRAINT fin_estoque_valor_fonte_check CHECK ((fonte = ANY (ARRAY['manual'::text, 'omie_estimado'::text]))),
+    CONSTRAINT fin_estoque_valor_valor_check CHECK ((valor >= (0)::numeric))
+);
+
+
+--
+-- Name: fin_eventos_eventuais; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.fin_eventos_eventuais (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    company text NOT NULL,
+    descricao text NOT NULL,
+    valor numeric(15,2) NOT NULL,
+    tipo text NOT NULL,
+    categoria_dre text,
+    data_prevista date NOT NULL,
+    data_realizada date,
+    status text DEFAULT 'previsto'::text NOT NULL,
+    observacao text,
+    criado_por uuid,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    updated_at timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT fin_eventos_eventuais_categoria_dre_check CHECK (((categoria_dre IS NULL) OR (categoria_dre = ANY (ARRAY['receita_bruta'::text, 'deducoes'::text, 'cmv'::text, 'despesas_operacionais'::text, 'despesas_administrativas'::text, 'despesas_comerciais'::text, 'despesas_financeiras'::text, 'receitas_financeiras'::text, 'outras_receitas'::text, 'outras_despesas'::text, 'impostos'::text])))),
+    CONSTRAINT fin_eventos_eventuais_company_check CHECK ((company = ANY (ARRAY['oben'::text, 'colacor'::text, 'colacor_sc'::text]))),
+    CONSTRAINT fin_eventos_eventuais_status_check CHECK ((status = ANY (ARRAY['previsto'::text, 'confirmado'::text, 'cancelado'::text, 'realizado'::text]))),
+    CONSTRAINT fin_eventos_eventuais_tipo_check CHECK ((tipo = ANY (ARRAY['entrada'::text, 'saida'::text])))
+);
+
+
+--
+-- Name: TABLE fin_eventos_eventuais; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON TABLE public.fin_eventos_eventuais IS 'Eventos pontuais (aporte, compra de máquina, empréstimo). Status: previsto → confirmado → realizado (ou cancelado).';
+
+
+--
+-- Name: fin_eventos_recorrentes; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.fin_eventos_recorrentes (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    company text NOT NULL,
+    descricao text NOT NULL,
+    valor numeric(15,2) NOT NULL,
+    tipo text NOT NULL,
+    categoria_dre text,
+    is_folha boolean DEFAULT false NOT NULL,
+    dia_do_mes integer NOT NULL,
+    inicio date NOT NULL,
+    fim date,
+    ativo boolean DEFAULT true NOT NULL,
+    observacao text,
+    criado_por uuid,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    updated_at timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT fin_eventos_recorrentes_categoria_dre_check CHECK ((categoria_dre = ANY (ARRAY['receita_bruta'::text, 'deducoes'::text, 'cmv'::text, 'despesas_operacionais'::text, 'despesas_administrativas'::text, 'despesas_comerciais'::text, 'despesas_financeiras'::text, 'receitas_financeiras'::text, 'outras_receitas'::text, 'outras_despesas'::text, 'impostos'::text]))),
+    CONSTRAINT fin_eventos_recorrentes_company_check CHECK ((company = ANY (ARRAY['oben'::text, 'colacor'::text, 'colacor_sc'::text]))),
+    CONSTRAINT fin_eventos_recorrentes_dia_do_mes_check CHECK (((dia_do_mes >= 1) AND (dia_do_mes <= 31))),
+    CONSTRAINT fin_eventos_recorrentes_tipo_check CHECK ((tipo = ANY (ARRAY['entrada'::text, 'saida'::text])))
+);
+
+
+--
+-- Name: TABLE fin_eventos_recorrentes; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON TABLE public.fin_eventos_recorrentes IS 'Eventos que se repetem mensalmente (folha, aluguel, pró-labore, dividendo). Usados pra projetar cashflow 13s.';
+
+
+--
+-- Name: fin_fechamento_log; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.fin_fechamento_log (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    fechamento_id uuid NOT NULL,
+    acao text NOT NULL,
+    usuario_id uuid,
+    usuario_nome text,
+    detalhes jsonb DEFAULT '{}'::jsonb,
+    created_at timestamp with time zone DEFAULT now(),
+    CONSTRAINT fin_fechamento_log_acao_check CHECK ((acao = ANY (ARRAY['criar'::text, 'revisar'::text, 'fechar'::text, 'aprovar'::text, 'reabrir'::text, 'comentar'::text])))
+);
+
+
+--
+-- Name: fin_fechamentos; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.fin_fechamentos (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    company text NOT NULL,
+    ano integer NOT NULL,
+    mes integer NOT NULL,
+    status text DEFAULT 'aberto'::text NOT NULL,
+    versao integer DEFAULT 1 NOT NULL,
+    snapshot_dre_id uuid,
+    snapshot_data jsonb DEFAULT '{}'::jsonb,
+    fechado_por uuid,
+    fechado_em timestamp with time zone,
+    aprovado_por uuid,
+    aprovado_em timestamp with time zone,
+    reaberto_por uuid,
+    reaberto_em timestamp with time zone,
+    motivo_reabertura text,
+    notas text,
+    created_at timestamp with time zone DEFAULT now(),
+    updated_at timestamp with time zone DEFAULT now(),
+    snapshot_dre_caixa_id uuid,
+    snapshot_dre_competencia_id uuid,
+    CONSTRAINT fin_fechamentos_company_check CHECK ((company = ANY (ARRAY['oben'::text, 'colacor'::text, 'colacor_sc'::text]))),
+    CONSTRAINT fin_fechamentos_mes_check CHECK (((mes >= 1) AND (mes <= 12))),
+    CONSTRAINT fin_fechamentos_status_check CHECK ((status = ANY (ARRAY['aberto'::text, 'em_revisao'::text, 'fechado'::text, 'reaberto'::text])))
+);
+
+
+--
+-- Name: fin_fluxo_caixa_diario; Type: VIEW; Schema: public; Owner: -
+--
+
+CREATE VIEW public.fin_fluxo_caixa_diario WITH (security_invoker='on') AS
+ WITH datas AS (
+         SELECT (d_1.d)::date AS data
+           FROM generate_series((CURRENT_DATE - '90 days'::interval), (CURRENT_DATE + '90 days'::interval), '1 day'::interval) d_1(d)
+        ), empresas AS (
+         SELECT DISTINCT fin_contas_receber.company
+           FROM public.fin_contas_receber
+        UNION
+         SELECT DISTINCT fin_contas_pagar.company
+           FROM public.fin_contas_pagar
+        ), cr_agg AS (
+         SELECT fin_contas_receber.company,
+            fin_contas_receber.data_vencimento AS data,
+            sum(
+                CASE
+                    WHEN (fin_contas_receber.status_titulo = ANY (ARRAY['ABERTO'::text, 'PARCIAL'::text, 'VENCIDO'::text])) THEN fin_contas_receber.valor_documento
+                    ELSE (0)::numeric
+                END) AS entradas_previstas,
+            (0)::numeric AS entradas_realizadas
+           FROM public.fin_contas_receber
+          WHERE (fin_contas_receber.data_vencimento IS NOT NULL)
+          GROUP BY fin_contas_receber.company, fin_contas_receber.data_vencimento
+        UNION ALL
+         SELECT fin_contas_receber.company,
+            fin_contas_receber.data_recebimento AS data,
+            (0)::numeric AS entradas_previstas,
+            sum(fin_contas_receber.valor_recebido) AS entradas_realizadas
+           FROM public.fin_contas_receber
+          WHERE ((fin_contas_receber.data_recebimento IS NOT NULL) AND (fin_contas_receber.status_titulo = ANY (ARRAY['RECEBIDO'::text, 'LIQUIDADO'::text, 'PARCIAL'::text])))
+          GROUP BY fin_contas_receber.company, fin_contas_receber.data_recebimento
+        ), cp_agg AS (
+         SELECT fin_contas_pagar.company,
+            fin_contas_pagar.data_vencimento AS data,
+            sum(
+                CASE
+                    WHEN (fin_contas_pagar.status_titulo = ANY (ARRAY['ABERTO'::text, 'PARCIAL'::text, 'VENCIDO'::text])) THEN fin_contas_pagar.valor_documento
+                    ELSE (0)::numeric
+                END) AS saidas_previstas,
+            (0)::numeric AS saidas_realizadas
+           FROM public.fin_contas_pagar
+          WHERE (fin_contas_pagar.data_vencimento IS NOT NULL)
+          GROUP BY fin_contas_pagar.company, fin_contas_pagar.data_vencimento
+        UNION ALL
+         SELECT fin_contas_pagar.company,
+            fin_contas_pagar.data_pagamento AS data,
+            (0)::numeric AS saidas_previstas,
+            sum(fin_contas_pagar.valor_pago) AS saidas_realizadas
+           FROM public.fin_contas_pagar
+          WHERE ((fin_contas_pagar.data_pagamento IS NOT NULL) AND (fin_contas_pagar.status_titulo = ANY (ARRAY['PAGO'::text, 'LIQUIDADO'::text, 'PARCIAL'::text])))
+          GROUP BY fin_contas_pagar.company, fin_contas_pagar.data_pagamento
+        )
+ SELECT e.company,
+    d.data,
+    COALESCE(sum(cr.entradas_previstas), (0)::numeric) AS entradas_previstas,
+    COALESCE(sum(cr.entradas_realizadas), (0)::numeric) AS entradas_realizadas,
+    COALESCE(sum(cp.saidas_previstas), (0)::numeric) AS saidas_previstas,
+    COALESCE(sum(cp.saidas_realizadas), (0)::numeric) AS saidas_realizadas
+   FROM (((datas d
+     CROSS JOIN empresas e)
+     LEFT JOIN cr_agg cr ON (((cr.company = e.company) AND (cr.data = d.data))))
+     LEFT JOIN cp_agg cp ON (((cp.company = e.company) AND (cp.data = d.data))))
+  GROUP BY e.company, d.data;
+
+
+--
+-- Name: fin_forecast; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.fin_forecast (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    company text NOT NULL,
+    tipo text NOT NULL,
+    ano integer NOT NULL,
+    mes integer NOT NULL,
+    dre_linha text,
+    valor_forecast numeric(15,2) DEFAULT 0 NOT NULL,
+    metodo text DEFAULT 'manual'::text,
+    base_meses integer,
+    confianca numeric(5,2),
+    updated_at timestamp with time zone DEFAULT now(),
+    CONSTRAINT fin_forecast_company_check CHECK ((company = ANY (ARRAY['oben'::text, 'colacor'::text, 'colacor_sc'::text]))),
+    CONSTRAINT fin_forecast_mes_check CHECK (((mes >= 1) AND (mes <= 12))),
+    CONSTRAINT fin_forecast_metodo_check CHECK ((metodo = ANY (ARRAY['manual'::text, 'media_movel'::text, 'tendencia'::text, 'ia'::text]))),
+    CONSTRAINT fin_forecast_tipo_check CHECK ((tipo = ANY (ARRAY['caixa'::text, 'dre'::text])))
+);
+
+
+--
+-- Name: fin_ic_matches; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.fin_ic_matches (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    empresa_origem text NOT NULL,
+    empresa_destino text NOT NULL,
+    cr_id uuid,
+    cp_id uuid,
+    valor_origem numeric(15,2),
+    valor_destino numeric(15,2),
+    diff_valor numeric(15,2) GENERATED ALWAYS AS ((COALESCE(valor_origem, (0)::numeric) - COALESCE(valor_destino, (0)::numeric))) STORED,
+    diff_dias integer,
+    status text NOT NULL,
+    matched_at timestamp with time zone DEFAULT now() NOT NULL,
+    resolvido_por uuid,
+    resolvido_em timestamp with time zone,
+    observacao text,
+    CONSTRAINT fin_ic_matches_check CHECK ((empresa_origem <> empresa_destino)),
+    CONSTRAINT fin_ic_matches_check1 CHECK (((cr_id IS NOT NULL) OR (cp_id IS NOT NULL))),
+    CONSTRAINT fin_ic_matches_empresa_destino_check CHECK ((empresa_destino = ANY (ARRAY['oben'::text, 'colacor'::text, 'colacor_sc'::text]))),
+    CONSTRAINT fin_ic_matches_empresa_origem_check CHECK ((empresa_origem = ANY (ARRAY['oben'::text, 'colacor'::text, 'colacor_sc'::text]))),
+    CONSTRAINT fin_ic_matches_status_check CHECK ((status = ANY (ARRAY['auto_matched'::text, 'manual_matched'::text, 'divergencia_valor'::text, 'divergencia_data'::text, 'sem_contrapartida'::text, 'duplicidade_possivel'::text, 'desconsiderado'::text])))
+);
+
+
+--
+-- Name: fin_kpi_tributario; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.fin_kpi_tributario (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    company text NOT NULL,
+    ano integer NOT NULL,
+    mes integer NOT NULL,
+    regime text NOT NULL,
+    receita_bruta_acumulada numeric(15,2) DEFAULT 0,
+    aliquota_efetiva numeric(8,4) DEFAULT 0,
+    carga_tributaria_total numeric(15,2) DEFAULT 0,
+    faixa_sn text,
+    fator_r numeric(8,4),
+    base_presuncao_servico numeric(15,2) DEFAULT 0,
+    base_presuncao_comercio numeric(15,2) DEFAULT 0,
+    irpj numeric(15,2) DEFAULT 0,
+    csll numeric(15,2) DEFAULT 0,
+    pis numeric(15,2) DEFAULT 0,
+    cofins numeric(15,2) DEFAULT 0,
+    iss numeric(15,2) DEFAULT 0,
+    icms numeric(15,2) DEFAULT 0,
+    detalhamento jsonb DEFAULT '{}'::jsonb,
+    calculated_at timestamp with time zone DEFAULT now(),
+    CONSTRAINT fin_kpi_tributario_company_check CHECK ((company = ANY (ARRAY['oben'::text, 'colacor'::text, 'colacor_sc'::text]))),
+    CONSTRAINT fin_kpi_tributario_mes_check CHECK (((mes >= 1) AND (mes <= 12)))
+);
+
+
+--
+-- Name: fin_movimentacoes; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.fin_movimentacoes (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    company text NOT NULL,
+    omie_ncodmov bigint NOT NULL,
+    omie_ncodcc bigint,
+    data_movimento date NOT NULL,
+    tipo text,
+    valor numeric(15,2) NOT NULL,
+    descricao text,
+    categoria_codigo text,
+    categoria_descricao text,
+    conciliado boolean DEFAULT false,
+    omie_codigo_lancamento bigint,
+    natureza text,
+    metadata jsonb DEFAULT '{}'::jsonb,
+    created_at timestamp with time zone DEFAULT now(),
+    updated_at timestamp with time zone DEFAULT now(),
+    CONSTRAINT fin_movimentacoes_company_check CHECK ((company = ANY (ARRAY['oben'::text, 'colacor'::text, 'colacor_sc'::text]))),
+    CONSTRAINT fin_movimentacoes_tipo_check CHECK ((tipo = ANY (ARRAY['E'::text, 'S'::text])))
+);
+
+
+--
+-- Name: fin_orcamento; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.fin_orcamento (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    company text NOT NULL,
+    ano integer NOT NULL,
+    mes integer NOT NULL,
+    dre_linha text NOT NULL,
+    valor_orcado numeric(15,2) DEFAULT 0 NOT NULL,
+    notas text,
+    criado_por uuid,
+    updated_at timestamp with time zone DEFAULT now(),
+    CONSTRAINT fin_orcamento_company_check CHECK ((company = ANY (ARRAY['oben'::text, 'colacor'::text, 'colacor_sc'::text]))),
+    CONSTRAINT fin_orcamento_mes_check CHECK (((mes >= 1) AND (mes <= 12)))
+);
+
+
+--
+-- Name: fin_period_overrides; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.fin_period_overrides (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    company text NOT NULL,
+    ano integer NOT NULL,
+    mes integer NOT NULL,
+    opened_by uuid NOT NULL,
+    opened_at timestamp with time zone DEFAULT now() NOT NULL,
+    expires_at timestamp with time zone NOT NULL,
+    justificativa text NOT NULL,
+    acao_planejada text NOT NULL,
+    closed_at timestamp with time zone,
+    closed_by uuid,
+    CONSTRAINT fin_period_overrides_company_check CHECK ((company = ANY (ARRAY['oben'::text, 'colacor'::text, 'colacor_sc'::text]))),
+    CONSTRAINT fin_period_overrides_mes_check CHECK (((mes >= 1) AND (mes <= 12)))
+);
+
+
+--
+-- Name: fin_permissoes; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.fin_permissoes (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    user_id uuid NOT NULL,
+    perfil text NOT NULL,
+    empresas text[] DEFAULT ARRAY['oben'::text, 'colacor'::text, 'colacor_sc'::text] NOT NULL,
+    pode_sync boolean DEFAULT false,
+    pode_fechar_mes boolean DEFAULT false,
+    pode_aprovar_fechamento boolean DEFAULT false,
+    pode_reabrir_fechamento boolean DEFAULT false,
+    pode_editar_orcamento boolean DEFAULT false,
+    pode_editar_mapping boolean DEFAULT false,
+    pode_eliminar_intercompany boolean DEFAULT false,
+    pode_conciliar boolean DEFAULT false,
+    pode_exportar boolean DEFAULT true,
+    pode_ver_dre boolean DEFAULT true,
+    pode_ver_todas_empresas boolean DEFAULT false,
+    concedido_por uuid,
+    created_at timestamp with time zone DEFAULT now(),
+    updated_at timestamp with time zone DEFAULT now(),
+    CONSTRAINT fin_permissoes_perfil_check CHECK ((perfil = ANY (ARRAY['analista'::text, 'gerente'::text, 'controller'::text, 'cfo'::text])))
+);
+
+
+--
+-- Name: TABLE fin_permissoes; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON TABLE public.fin_permissoes IS '
+Perfis padrão:
+- analista: pode_exportar, pode_ver_dre, pode_conciliar. Vê empresa(s) atribuída(s).
+- gerente: tudo do analista + pode_sync, pode_fechar_mes, pode_editar_mapping. Vê empresa(s) atribuída(s).
+- controller: tudo do gerente + pode_aprovar_fechamento, pode_editar_orcamento, pode_eliminar_intercompany, pode_ver_todas_empresas.
+- cfo: tudo. Inclui pode_reabrir_fechamento.
+';
+
+
+--
+-- Name: fin_projecao_snapshots; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.fin_projecao_snapshots (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    company text NOT NULL,
+    snapshot_at timestamp with time zone DEFAULT now() NOT NULL,
+    cenario text NOT NULL,
+    horizon_weeks integer DEFAULT 13 NOT NULL,
+    dados jsonb NOT NULL,
+    ncg numeric(15,2),
+    liquidez_operacional_liquida numeric(15,2),
+    saldo_tesouraria numeric(15,2),
+    dias_cobertura numeric(10,2),
+    premissas jsonb NOT NULL,
+    CONSTRAINT fin_projecao_snapshots_cenario_check CHECK ((cenario = ANY (ARRAY['realista'::text, 'otimista'::text, 'pessimista'::text]))),
+    CONSTRAINT fin_projecao_snapshots_company_check CHECK ((company = ANY (ARRAY['oben'::text, 'colacor'::text, 'colacor_sc'::text])))
+);
+
+
+--
+-- Name: TABLE fin_projecao_snapshots; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON TABLE public.fin_projecao_snapshots IS 'Snapshot diário (via cron) da projeção 13s + NCG + indicadores. Permite trend e comparação histórica.';
+
+
+--
+-- Name: fin_sync_checkpoint; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.fin_sync_checkpoint (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    company text NOT NULL,
+    entidade text NOT NULL,
+    ultima_pagina integer DEFAULT 0,
+    total_paginas integer,
+    total_synced integer DEFAULT 0,
+    filtro_data_de text,
+    filtro_data_ate text,
+    status text DEFAULT 'idle'::text,
+    lock_id text,
+    lock_expires_at timestamp with time zone,
+    last_error text,
+    started_at timestamp with time zone,
+    completed_at timestamp with time zone,
+    updated_at timestamp with time zone DEFAULT now(),
+    CONSTRAINT fin_sync_checkpoint_status_check CHECK ((status = ANY (ARRAY['idle'::text, 'running'::text, 'complete'::text, 'error'::text, 'stale'::text])))
+);
+
+
+--
+-- Name: fin_sync_log; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.fin_sync_log (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    action text NOT NULL,
+    companies text[],
+    status text DEFAULT 'running'::text,
+    results jsonb DEFAULT '{}'::jsonb,
+    error_message text,
+    triggered_by text DEFAULT 'manual'::text,
+    started_at timestamp with time zone DEFAULT now(),
+    completed_at timestamp with time zone,
+    duracao_ms integer,
+    entidades_por_empresa jsonb DEFAULT '{}'::jsonb,
+    api_calls integer DEFAULT 0,
+    rate_limits_hit integer DEFAULT 0,
+    CONSTRAINT fin_sync_log_status_check CHECK ((status = ANY (ARRAY['running'::text, 'complete'::text, 'error'::text])))
+);
+
+
+--
+-- Name: fin_valor_inputs; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.fin_valor_inputs (
+    company text NOT NULL,
+    valor_inputs jsonb DEFAULT '{}'::jsonb NOT NULL,
+    updated_at timestamp with time zone DEFAULT now() NOT NULL,
+    updated_by uuid
+);
+
+
+--
+-- Name: COLUMN fin_valor_inputs.valor_inputs; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON COLUMN public.fin_valor_inputs.valor_inputs IS 'A2: { ativo_fixo:{valor,data_ref,fonte,base,operacional}, ajustes, divida, equity, kd, ke:{conservador,base,agressivo}, prolabore_real_mensal, prolabore_mercado_mensal, aluguel_mercado_mensal, intercompany_giro }';
+
+
+--
+-- Name: fornecedor_alerta; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.fornecedor_alerta (
+    id bigint NOT NULL,
+    empresa text NOT NULL,
+    fornecedor_nome text,
+    tipo text NOT NULL,
+    severidade text DEFAULT 'info'::text NOT NULL,
+    titulo text NOT NULL,
+    mensagem text,
+    campanha_id bigint,
+    aumento_id bigint,
+    email_origem_id text,
+    visualizado boolean DEFAULT false,
+    visualizado_em timestamp with time zone,
+    resolvido boolean DEFAULT false,
+    resolvido_em timestamp with time zone,
+    resolvido_por text,
+    email_enviado boolean DEFAULT false,
+    email_enviado_em timestamp with time zone,
+    calendar_evento_id text,
+    criado_em timestamp with time zone DEFAULT now(),
+    tipo_alerta text,
+    fornecedor_id uuid,
+    data_evento timestamp with time zone,
+    duracao_minutos integer DEFAULT 30,
+    status text DEFAULT 'pendente_notificacao'::text,
+    gmail_message_id text,
+    erro_notificacao text,
+    tentativas integer DEFAULT 0,
+    notificado_em timestamp with time zone,
+    metadata jsonb,
+    CONSTRAINT fornecedor_alerta_severidade_check CHECK ((severidade = ANY (ARRAY['info'::text, 'atencao'::text, 'urgente'::text]))),
+    CONSTRAINT fornecedor_alerta_status_check CHECK ((status = ANY (ARRAY['pendente_notificacao'::text, 'notificado'::text, 'falha_notificacao'::text, 'ignorado'::text]))),
+    CONSTRAINT fornecedor_alerta_tipo_check CHECK ((tipo = ANY (ARRAY['promocao_suspensa'::text, 'aumento_anunciado'::text, 'promocao_nova'::text, 'polling_erro'::text, 'mapeamento_pendente'::text, 'oportunidade_calculada'::text, 'outro'::text])))
+);
+
+
+--
+-- Name: TABLE fornecedor_alerta; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON TABLE public.fornecedor_alerta IS 'Alertas centralizados. Badge de alertas pendentes aparece no menu. severidade=urgente dispara email e evento na agenda imediatamente.';
+
+
+--
+-- Name: fornecedor_alerta_id_seq; Type: SEQUENCE; Schema: public; Owner: -
+--
+
+CREATE SEQUENCE public.fornecedor_alerta_id_seq
+    START WITH 1
+    INCREMENT BY 1
+    NO MINVALUE
+    NO MAXVALUE
+    CACHE 1;
+
+
+--
+-- Name: fornecedor_alerta_id_seq; Type: SEQUENCE OWNED BY; Schema: public; Owner: -
+--
+
+ALTER SEQUENCE public.fornecedor_alerta_id_seq OWNED BY public.fornecedor_alerta.id;
+
+
+--
+-- Name: fornecedor_aumento_anunciado; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.fornecedor_aumento_anunciado (
+    id bigint NOT NULL,
+    empresa text NOT NULL,
+    fornecedor_nome text NOT NULL,
+    nome text NOT NULL,
+    data_vigencia date NOT NULL,
+    data_anuncio date,
+    estado text DEFAULT 'rascunho'::text NOT NULL,
+    origem_arquivo_url text,
+    origem_arquivo_tipo text,
+    origem_email_assunto text,
+    origem_email_remetente text,
+    origem_email_data timestamp with time zone,
+    extracao_confianca numeric,
+    extracao_observacoes text,
+    extraido_em timestamp with time zone,
+    observacoes text,
+    criado_em timestamp with time zone DEFAULT now(),
+    criado_por text,
+    atualizado_em timestamp with time zone DEFAULT now(),
+    atualizado_por text,
+    CONSTRAINT ck_aumento_data_coerente CHECK (((data_anuncio IS NULL) OR (data_anuncio <= data_vigencia))),
+    CONSTRAINT fornecedor_aumento_anunciado_estado_check CHECK ((estado = ANY (ARRAY['rascunho'::text, 'ativo'::text, 'vigente'::text, 'expirado'::text, 'cancelado'::text])))
+);
+
+
+--
+-- Name: TABLE fornecedor_aumento_anunciado; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON TABLE public.fornecedor_aumento_anunciado IS 'Anúncio de aumento de preços com data de vigência futura. Gera oportunidades de antecipação de compra. Estado muda automaticamente para "vigente" quando data_vigencia é atingida, e "expirado" depois.';
+
+
+--
+-- Name: fornecedor_aumento_anunciado_id_seq; Type: SEQUENCE; Schema: public; Owner: -
+--
+
+CREATE SEQUENCE public.fornecedor_aumento_anunciado_id_seq
+    START WITH 1
+    INCREMENT BY 1
+    NO MINVALUE
+    NO MAXVALUE
+    CACHE 1;
+
+
+--
+-- Name: fornecedor_aumento_anunciado_id_seq; Type: SEQUENCE OWNED BY; Schema: public; Owner: -
+--
+
+ALTER SEQUENCE public.fornecedor_aumento_anunciado_id_seq OWNED BY public.fornecedor_aumento_anunciado.id;
+
+
+--
+-- Name: fornecedor_aumento_item; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.fornecedor_aumento_item (
+    id bigint NOT NULL,
+    aumento_id bigint NOT NULL,
+    categoria_fornecedor text NOT NULL,
+    aumento_perc numeric NOT NULL,
+    data_vigencia_especifica date,
+    confirmado boolean DEFAULT false NOT NULL,
+    ativo boolean DEFAULT true NOT NULL,
+    observacoes text,
+    criado_em timestamp with time zone DEFAULT now(),
+    atualizado_em timestamp with time zone DEFAULT now(),
+    CONSTRAINT fornecedor_aumento_item_aumento_perc_check CHECK (((aumento_perc >= (0)::numeric) AND (aumento_perc <= (100)::numeric)))
+);
+
+
+--
+-- Name: TABLE fornecedor_aumento_item; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON TABLE public.fornecedor_aumento_item IS 'Uma linha por categoria do fornecedor no anúncio de aumento. Ex: "Diluentes PU 5%", "Nitrocelulose 7%". Mapeia para famílias Omie via categoria_aumento_familia_mapeamento.';
+
+
+--
+-- Name: fornecedor_aumento_item_id_seq; Type: SEQUENCE; Schema: public; Owner: -
+--
+
+CREATE SEQUENCE public.fornecedor_aumento_item_id_seq
+    START WITH 1
+    INCREMENT BY 1
+    NO MINVALUE
+    NO MAXVALUE
+    CACHE 1;
+
+
+--
+-- Name: fornecedor_aumento_item_id_seq; Type: SEQUENCE OWNED BY; Schema: public; Owner: -
+--
+
+ALTER SEQUENCE public.fornecedor_aumento_item_id_seq OWNED BY public.fornecedor_aumento_item.id;
+
+
+--
+-- Name: fornecedor_cadeia_logistica; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.fornecedor_cadeia_logistica (
+    id bigint NOT NULL,
+    empresa text NOT NULL,
+    fornecedor_nome text NOT NULL,
+    ordem integer NOT NULL,
+    etapa_codigo text NOT NULL,
+    descricao text NOT NULL,
+    lt_dias integer NOT NULL,
+    lt_unidade text DEFAULT 'uteis'::text NOT NULL,
+    parceiro_nome text,
+    parceiro_tipo text,
+    parceiro_contato text,
+    ativo boolean DEFAULT true,
+    valido_desde date DEFAULT CURRENT_DATE,
+    valido_ate date,
+    observacoes text,
+    criado_em timestamp with time zone DEFAULT now(),
+    atualizado_em timestamp with time zone DEFAULT now(),
+    atualizado_por text
+);
+
+
+--
+-- Name: fornecedor_cadeia_logistica_historico; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.fornecedor_cadeia_logistica_historico (
+    id bigint NOT NULL,
+    empresa text NOT NULL,
+    fornecedor_nome text NOT NULL,
+    etapa_id bigint,
+    etapa_codigo text,
+    acao text NOT NULL,
+    descricao_mudanca text NOT NULL,
+    valores_anteriores jsonb,
+    valores_novos jsonb,
+    alterado_por text,
+    criado_em timestamp with time zone DEFAULT now() NOT NULL
+);
+
+
+--
+-- Name: fornecedor_cadeia_logistica_historico_id_seq; Type: SEQUENCE; Schema: public; Owner: -
+--
+
+CREATE SEQUENCE public.fornecedor_cadeia_logistica_historico_id_seq
+    START WITH 1
+    INCREMENT BY 1
+    NO MINVALUE
+    NO MAXVALUE
+    CACHE 1;
+
+
+--
+-- Name: fornecedor_cadeia_logistica_historico_id_seq; Type: SEQUENCE OWNED BY; Schema: public; Owner: -
+--
+
+ALTER SEQUENCE public.fornecedor_cadeia_logistica_historico_id_seq OWNED BY public.fornecedor_cadeia_logistica_historico.id;
+
+
+--
+-- Name: fornecedor_cadeia_logistica_id_seq; Type: SEQUENCE; Schema: public; Owner: -
+--
+
+CREATE SEQUENCE public.fornecedor_cadeia_logistica_id_seq
+    START WITH 1
+    INCREMENT BY 1
+    NO MINVALUE
+    NO MAXVALUE
+    CACHE 1;
+
+
+--
+-- Name: fornecedor_cadeia_logistica_id_seq; Type: SEQUENCE OWNED BY; Schema: public; Owner: -
+--
+
+ALTER SEQUENCE public.fornecedor_cadeia_logistica_id_seq OWNED BY public.fornecedor_cadeia_logistica.id;
+
+
+--
+-- Name: fornecedor_calendario_operacao; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.fornecedor_calendario_operacao (
+    id bigint NOT NULL,
+    empresa text NOT NULL,
+    fornecedor_nome text NOT NULL,
+    dia_semana integer NOT NULL,
+    hora_abertura time without time zone,
+    hora_fechamento time without time zone,
+    observacoes text,
+    criado_em timestamp with time zone DEFAULT now(),
+    validado_com_fornecedor boolean DEFAULT false,
+    validado_em timestamp with time zone,
+    validado_por text,
+    fonte_informacao text,
+    CONSTRAINT fornecedor_calendario_operacao_dia_semana_check CHECK (((dia_semana >= 0) AND (dia_semana <= 6)))
+);
+
+
+--
+-- Name: fornecedor_calendario_operacao_id_seq; Type: SEQUENCE; Schema: public; Owner: -
+--
+
+CREATE SEQUENCE public.fornecedor_calendario_operacao_id_seq
+    START WITH 1
+    INCREMENT BY 1
+    NO MINVALUE
+    NO MAXVALUE
+    CACHE 1;
+
+
+--
+-- Name: fornecedor_calendario_operacao_id_seq; Type: SEQUENCE OWNED BY; Schema: public; Owner: -
+--
+
+ALTER SEQUENCE public.fornecedor_calendario_operacao_id_seq OWNED BY public.fornecedor_calendario_operacao.id;
+
+
+--
+-- Name: fornecedor_condicao_pagamento_padrao; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.fornecedor_condicao_pagamento_padrao (
+    empresa text NOT NULL,
+    fornecedor_nome text NOT NULL,
+    ultima_condicao_codigo text,
+    ultima_condicao_descricao text,
+    ultimo_num_parcelas integer,
+    ultimos_dias_parcelas text,
+    ultima_atualizacao timestamp with time zone DEFAULT now(),
+    fonte_omie_pedido_id text
+);
+
+
+--
+-- Name: fornecedor_custo_adicional_config; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.fornecedor_custo_adicional_config (
+    id bigint NOT NULL,
+    empresa text NOT NULL,
+    fornecedor_nome text NOT NULL,
+    tipo text NOT NULL,
+    valor numeric NOT NULL,
+    ativo boolean DEFAULT true,
+    observacoes text,
+    criado_em timestamp with time zone DEFAULT now(),
+    CONSTRAINT fornecedor_custo_adicional_config_tipo_check CHECK ((tipo = ANY (ARRAY['frete_perc_valor'::text, 'frete_fixo'::text, 'taxa_pedido'::text])))
+);
+
+
+--
+-- Name: fornecedor_custo_adicional_config_id_seq; Type: SEQUENCE; Schema: public; Owner: -
+--
+
+CREATE SEQUENCE public.fornecedor_custo_adicional_config_id_seq
+    START WITH 1
+    INCREMENT BY 1
+    NO MINVALUE
+    NO MAXVALUE
+    CACHE 1;
+
+
+--
+-- Name: fornecedor_custo_adicional_config_id_seq; Type: SEQUENCE OWNED BY; Schema: public; Owner: -
+--
+
+ALTER SEQUENCE public.fornecedor_custo_adicional_config_id_seq OWNED BY public.fornecedor_custo_adicional_config.id;
+
+
+--
+-- Name: fornecedor_email_polling; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.fornecedor_email_polling (
+    id bigint NOT NULL,
+    empresa text NOT NULL,
+    fornecedor_nome text NOT NULL,
+    remetente_email text NOT NULL,
+    assunto_contem text[],
+    assunto_suspensao text[],
+    aceitar_pdf boolean DEFAULT true,
+    aceitar_imagem boolean DEFAULT true,
+    ativo boolean DEFAULT true,
+    ultimo_poll_em timestamp with time zone,
+    ultimo_email_processado_id text,
+    notificar_email text,
+    notificar_calendar_id text DEFAULT 'primary'::text,
+    observacoes text,
+    criado_em timestamp with time zone DEFAULT now(),
+    atualizado_em timestamp with time zone DEFAULT now(),
+    tipo_documento text DEFAULT 'campanha_sayerlack'::text NOT NULL,
+    CONSTRAINT fornecedor_email_polling_tipo_documento_check CHECK ((tipo_documento = ANY (ARRAY['campanha_sayerlack'::text, 'aumento_sayerlack'::text, 'relatorio_trimestral'::text, 'outro'::text])))
+);
+
+
+--
+-- Name: TABLE fornecedor_email_polling; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON TABLE public.fornecedor_email_polling IS 'Configuração de monitoramento de inbox por fornecedor. O edge function de polling lê daqui quais emails processar.';
+
+
+--
+-- Name: COLUMN fornecedor_email_polling.tipo_documento; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON COLUMN public.fornecedor_email_polling.tipo_documento IS 'Define qual fluxo de processamento disparar. campanha_sayerlack extrai promoção/aumento via Vision; relatorio_trimestral extrai posição de meta.';
+
+
+--
+-- Name: fornecedor_email_polling_id_seq; Type: SEQUENCE; Schema: public; Owner: -
+--
+
+CREATE SEQUENCE public.fornecedor_email_polling_id_seq
+    START WITH 1
+    INCREMENT BY 1
+    NO MINVALUE
+    NO MAXVALUE
+    CACHE 1;
+
+
+--
+-- Name: fornecedor_email_polling_id_seq; Type: SEQUENCE OWNED BY; Schema: public; Owner: -
+--
+
+ALTER SEQUENCE public.fornecedor_email_polling_id_seq OWNED BY public.fornecedor_email_polling.id;
+
+
+--
+-- Name: fornecedor_email_polling_log; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.fornecedor_email_polling_log (
+    id bigint NOT NULL,
+    polling_config_id bigint,
+    executado_em timestamp with time zone DEFAULT now() NOT NULL,
+    emails_encontrados integer DEFAULT 0,
+    emails_processados integer DEFAULT 0,
+    anexos_extraidos integer DEFAULT 0,
+    campanhas_criadas integer DEFAULT 0,
+    aumentos_criados integer DEFAULT 0,
+    alertas_suspensao integer DEFAULT 0,
+    erro text,
+    detalhes jsonb
+);
+
+
+--
+-- Name: fornecedor_email_polling_log_id_seq; Type: SEQUENCE; Schema: public; Owner: -
+--
+
+CREATE SEQUENCE public.fornecedor_email_polling_log_id_seq
+    START WITH 1
+    INCREMENT BY 1
+    NO MINVALUE
+    NO MAXVALUE
+    CACHE 1;
+
+
+--
+-- Name: fornecedor_email_polling_log_id_seq; Type: SEQUENCE OWNED BY; Schema: public; Owner: -
+--
+
+ALTER SEQUENCE public.fornecedor_email_polling_log_id_seq OWNED BY public.fornecedor_email_polling_log.id;
+
+
+--
+-- Name: fornecedor_grupo_producao; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.fornecedor_grupo_producao (
+    id bigint NOT NULL,
+    empresa text NOT NULL,
+    fornecedor_nome text NOT NULL,
+    grupo_codigo text NOT NULL,
+    descricao text,
+    lt_producao_dias integer NOT NULL,
+    lt_producao_unidade text DEFAULT 'uteis'::text NOT NULL,
+    horario_corte time without time zone,
+    observacoes text,
+    criado_em timestamp with time zone DEFAULT now(),
+    atualizado_em timestamp with time zone DEFAULT now()
+);
+
+
+--
+-- Name: fornecedor_grupo_producao_id_seq; Type: SEQUENCE; Schema: public; Owner: -
+--
+
+CREATE SEQUENCE public.fornecedor_grupo_producao_id_seq
+    START WITH 1
+    INCREMENT BY 1
+    NO MINVALUE
+    NO MAXVALUE
+    CACHE 1;
+
+
+--
+-- Name: fornecedor_grupo_producao_id_seq; Type: SEQUENCE OWNED BY; Schema: public; Owner: -
+--
+
+ALTER SEQUENCE public.fornecedor_grupo_producao_id_seq OWNED BY public.fornecedor_grupo_producao.id;
+
+
+--
+-- Name: fornecedor_habilitado_reposicao; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.fornecedor_habilitado_reposicao (
+    id bigint NOT NULL,
+    empresa text NOT NULL,
+    fornecedor_nome text NOT NULL,
+    habilitado boolean DEFAULT false NOT NULL,
+    data_habilitacao timestamp with time zone,
+    habilitado_por text,
+    observacoes text,
+    criado_em timestamp with time zone DEFAULT now(),
+    lt_logistica_dias integer DEFAULT 0,
+    lt_logistica_unidade text DEFAULT 'uteis'::text,
+    lt_logistica_observacoes text,
+    horario_corte_pedido time without time zone DEFAULT '10:00:00'::time without time zone,
+    canal_pedido text DEFAULT 'email'::text,
+    email_pedido text,
+    whatsapp_pedido text,
+    nome_contato text,
+    observacoes_pedido text,
+    janela_override_minutos integer DEFAULT 120,
+    valor_maximo_mensal numeric,
+    delta_max_perc numeric DEFAULT 100
+);
+
+
+--
+-- Name: fornecedor_habilitado_reposicao_id_seq; Type: SEQUENCE; Schema: public; Owner: -
+--
+
+CREATE SEQUENCE public.fornecedor_habilitado_reposicao_id_seq
+    START WITH 1
+    INCREMENT BY 1
+    NO MINVALUE
+    NO MAXVALUE
+    CACHE 1;
+
+
+--
+-- Name: fornecedor_habilitado_reposicao_id_seq; Type: SEQUENCE OWNED BY; Schema: public; Owner: -
+--
+
+ALTER SEQUENCE public.fornecedor_habilitado_reposicao_id_seq OWNED BY public.fornecedor_habilitado_reposicao.id;
+
+
+--
+-- Name: fornecedor_mapeamento_extracao; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.fornecedor_mapeamento_extracao (
+    id bigint NOT NULL,
+    alias_extraido text NOT NULL,
+    nome_canonico text NOT NULL,
+    ativo boolean DEFAULT true NOT NULL,
+    criado_em timestamp with time zone DEFAULT now() NOT NULL
+);
+
+
+--
+-- Name: fornecedor_mapeamento_extracao_id_seq; Type: SEQUENCE; Schema: public; Owner: -
+--
+
+CREATE SEQUENCE public.fornecedor_mapeamento_extracao_id_seq
+    START WITH 1
+    INCREMENT BY 1
+    NO MINVALUE
+    NO MAXVALUE
+    CACHE 1;
+
+
+--
+-- Name: fornecedor_mapeamento_extracao_id_seq; Type: SEQUENCE OWNED BY; Schema: public; Owner: -
+--
+
+ALTER SEQUENCE public.fornecedor_mapeamento_extracao_id_seq OWNED BY public.fornecedor_mapeamento_extracao.id;
+
+
+--
+-- Name: fornecedor_omie_cache; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.fornecedor_omie_cache (
+    empresa text NOT NULL,
+    fornecedor_nome text NOT NULL,
+    omie_codigo_cliente_fornecedor bigint NOT NULL,
+    razao_social_omie text,
+    cnpj text,
+    cached_at timestamp with time zone DEFAULT now() NOT NULL
+);
+
+
+--
+-- Name: fornecedor_prazo_pagamento_config; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.fornecedor_prazo_pagamento_config (
+    id bigint NOT NULL,
+    empresa text NOT NULL,
+    fornecedor_nome text NOT NULL,
+    codigo text NOT NULL,
+    nome text NOT NULL,
+    desconto_ou_encargo_perc numeric NOT NULL,
+    ativo boolean DEFAULT true,
+    padrao boolean DEFAULT false,
+    observacoes text,
+    criado_em timestamp with time zone DEFAULT now()
+);
+
+
+--
+-- Name: TABLE fornecedor_prazo_pagamento_config; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON TABLE public.fornecedor_prazo_pagamento_config IS 'Prazos de pagamento do fornecedor. Cada um tem desconto ou encargo. Um prazo é marcado como "padrao" — é o que o Lucas usa no dia a dia. Trocar prazo em pedido específico muda a conta econômica desse pedido.';
+
+
+--
+-- Name: fornecedor_prazo_pagamento_config_id_seq; Type: SEQUENCE; Schema: public; Owner: -
+--
+
+CREATE SEQUENCE public.fornecedor_prazo_pagamento_config_id_seq
+    START WITH 1
+    INCREMENT BY 1
+    NO MINVALUE
+    NO MAXVALUE
+    CACHE 1;
+
+
+--
+-- Name: fornecedor_prazo_pagamento_config_id_seq; Type: SEQUENCE OWNED BY; Schema: public; Owner: -
+--
+
+ALTER SEQUENCE public.fornecedor_prazo_pagamento_config_id_seq OWNED BY public.fornecedor_prazo_pagamento_config.id;
+
+
+--
+-- Name: fornecedor_promocao; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.fornecedor_promocao (
+    id bigint NOT NULL,
+    empresa text NOT NULL,
+    fornecedor_nome text NOT NULL,
+    escopo text NOT NULL,
+    grupo_codigo text,
+    sku_codigo_omie text,
+    tipo_desconto text NOT NULL,
+    desconto_perc numeric,
+    condicao_descricao text,
+    valido_desde date NOT NULL,
+    valido_ate date NOT NULL,
+    recorrencia text,
+    volume_minimo numeric,
+    observacoes text,
+    fonte text,
+    criado_em timestamp with time zone DEFAULT now(),
+    criado_por text,
+    CONSTRAINT fornecedor_promocao_escopo_check CHECK ((escopo = ANY (ARRAY['fornecedor_total'::text, 'grupo'::text, 'sku'::text]))),
+    CONSTRAINT fornecedor_promocao_recorrencia_check CHECK ((recorrencia = ANY (ARRAY['unica'::text, 'mensal'::text, 'trimestral'::text, 'semestral'::text, 'anual'::text, 'sazonal'::text]))),
+    CONSTRAINT fornecedor_promocao_tipo_desconto_check CHECK ((tipo_desconto = ANY (ARRAY['percentual'::text, 'valor_fixo'::text, 'prazo_pagamento'::text, 'volume_progressivo'::text])))
+);
+
+
+--
+-- Name: fornecedor_promocao_id_seq; Type: SEQUENCE; Schema: public; Owner: -
+--
+
+CREATE SEQUENCE public.fornecedor_promocao_id_seq
+    START WITH 1
+    INCREMENT BY 1
+    NO MINVALUE
+    NO MAXVALUE
+    CACHE 1;
+
+
+--
+-- Name: fornecedor_promocao_id_seq; Type: SEQUENCE OWNED BY; Schema: public; Owner: -
+--
+
+ALTER SEQUENCE public.fornecedor_promocao_id_seq OWNED BY public.fornecedor_promocao.id;
+
+
+--
+-- Name: gamification_scores; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.gamification_scores (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    user_id uuid NOT NULL,
+    consistency_score numeric DEFAULT 0 NOT NULL,
+    organization_score numeric DEFAULT 0 NOT NULL,
+    education_score numeric DEFAULT 0 NOT NULL,
+    referral_score numeric DEFAULT 0 NOT NULL,
+    efficiency_score numeric DEFAULT 0 NOT NULL,
+    total_score numeric DEFAULT 0 NOT NULL,
+    level integer DEFAULT 1 NOT NULL,
+    level_name text DEFAULT 'Operacional'::text NOT NULL,
+    tool_health_index numeric DEFAULT 0 NOT NULL,
+    updated_at timestamp with time zone DEFAULT now() NOT NULL
+);
+
+
+--
+-- Name: gmail_webhook_log; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.gmail_webhook_log (
+    id bigint NOT NULL,
+    message_id text NOT NULL,
+    remetente text NOT NULL,
+    subject text,
+    received_at timestamp with time zone,
+    recebido_em timestamp with time zone DEFAULT now() NOT NULL,
+    processado_em timestamp with time zone,
+    status text DEFAULT 'recebido'::text NOT NULL,
+    tipo_documento text,
+    campanhas_criadas bigint[] DEFAULT ARRAY[]::bigint[],
+    alertas_criados bigint[] DEFAULT ARRAY[]::bigint[],
+    aumentos_criados bigint[] DEFAULT ARRAY[]::bigint[],
+    erro text,
+    detalhes jsonb,
+    CONSTRAINT gmail_webhook_log_status_check CHECK ((status = ANY (ARRAY['recebido'::text, 'processando'::text, 'sucesso'::text, 'parcial'::text, 'erro'::text, 'duplicado'::text, 'suspensao'::text, 'rejeitado'::text])))
+);
+
+
+--
+-- Name: gmail_webhook_log_id_seq; Type: SEQUENCE; Schema: public; Owner: -
+--
+
+CREATE SEQUENCE public.gmail_webhook_log_id_seq
+    START WITH 1
+    INCREMENT BY 1
+    NO MINVALUE
+    NO MAXVALUE
+    CACHE 1;
+
+
+--
+-- Name: gmail_webhook_log_id_seq; Type: SEQUENCE OWNED BY; Schema: public; Owner: -
+--
+
+ALTER SEQUENCE public.gmail_webhook_log_id_seq OWNED BY public.gmail_webhook_log.id;
+
+
+--
+-- Name: health_score_history; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.health_score_history (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    customer_user_id uuid NOT NULL,
+    farmer_id uuid NOT NULL,
+    health_score numeric DEFAULT 0 NOT NULL,
+    health_class text DEFAULT 'critico'::text NOT NULL,
+    rf_score numeric DEFAULT 0,
+    m_score numeric DEFAULT 0,
+    g_score numeric DEFAULT 0,
+    x_score numeric DEFAULT 0,
+    s_score numeric DEFAULT 0,
+    churn_risk numeric DEFAULT 0,
+    calculated_at timestamp with time zone DEFAULT now() NOT NULL,
+    created_at timestamp with time zone DEFAULT now() NOT NULL
+);
+
+
+--
+-- Name: inventory_position; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.inventory_position (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    omie_codigo_produto bigint NOT NULL,
+    product_id uuid,
+    saldo numeric DEFAULT 0,
+    cmc numeric DEFAULT 0,
+    preco_medio numeric DEFAULT 0,
+    account text DEFAULT 'vendas'::text NOT NULL,
+    synced_at timestamp with time zone DEFAULT now(),
+    created_at timestamp with time zone DEFAULT now(),
+    updated_at timestamp with time zone DEFAULT now()
+);
+
+
+--
+-- Name: kb_chunks; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.kb_chunks (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    document_id uuid NOT NULL,
+    chunk_index integer NOT NULL,
+    content text NOT NULL,
+    embedding public.vector(1536),
+    token_count integer,
+    char_start integer,
+    char_end integer,
+    created_at timestamp with time zone DEFAULT now() NOT NULL
+);
+
+
+--
+-- Name: TABLE kb_chunks; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON TABLE public.kb_chunks IS 'Chunks vetorizados pra busca semântica. Geração via edge function kb-ingest-document.';
+
+
+--
+-- Name: COLUMN kb_chunks.embedding; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON COLUMN public.kb_chunks.embedding IS 'OpenAI text-embedding-3-small (1536 dims).';
+
+
+--
+-- Name: kb_competitor_products; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.kb_competitor_products (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    competitor_id uuid NOT NULL,
+    product_name text NOT NULL,
+    category text,
+    rendimento_m2_por_litro numeric,
+    solidos_pct numeric,
+    pot_life_horas numeric,
+    validade_dias integer,
+    preco_referencia_l numeric,
+    preco_atualizado_em timestamp with time zone,
+    fonte_preco text,
+    pontos_fortes text[],
+    pontos_fracos text[],
+    nosso_equivalente_product_code text,
+    argumentos_comparativos jsonb,
+    created_by uuid,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    updated_at timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT kb_competitor_products_fonte_preco_check CHECK ((fonte_preco = ANY (ARRAY['vendedor'::text, 'cotacao'::text, 'site'::text, 'estimado'::text, 'detectado_ia'::text])))
+);
+
+
+--
+-- Name: kb_competitors; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.kb_competitors (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    name text NOT NULL,
+    tipo text,
+    regiao_principal text,
+    segmento_atuacao text[],
+    notas_estrategicas text,
+    created_by uuid,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    updated_at timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT kb_competitors_tipo_check CHECK ((tipo = ANY (ARRAY['regional'::text, 'nacional'::text, 'importado'::text])))
+);
+
+
+--
+-- Name: kb_documents; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.kb_documents (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    title text NOT NULL,
+    type text NOT NULL,
+    supplier text,
+    product_code text,
+    file_url text NOT NULL,
+    file_size_bytes integer,
+    content_extracted text,
+    tags text[] DEFAULT '{}'::text[],
+    status text DEFAULT 'processing'::text NOT NULL,
+    status_error text,
+    version integer DEFAULT 1 NOT NULL,
+    parent_id uuid,
+    created_by uuid NOT NULL,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    updated_at timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT kb_documents_status_check CHECK ((status = ANY (ARRAY['processing'::text, 'ready'::text, 'error'::text, 'draft'::text]))),
+    CONSTRAINT kb_documents_type_check CHECK ((type = ANY (ARRAY['boletim_tecnico'::text, 'case'::text, 'comparativo'::text, 'tutorial'::text, 'msds'::text, 'outro'::text])))
+);
+
+
+--
+-- Name: TABLE kb_documents; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON TABLE public.kb_documents IS 'Knowledge base: boletins técnicos, cases, comparativos. Indexa em kb_chunks pra RAG.';
+
+
+--
+-- Name: kb_product_specs; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.kb_product_specs (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    document_id uuid,
+    product_code text NOT NULL,
+    product_name text NOT NULL,
+    supplier text DEFAULT 'sayerlack'::text NOT NULL,
+    product_line text,
+    product_category text,
+    densidade_g_cm3 numeric,
+    solidos_pct numeric,
+    viscosidade_aplicacao_s numeric,
+    viscosidade_copo text,
+    brilho_ub numeric,
+    dureza text,
+    rendimento_m2_por_litro numeric,
+    demaos_recomendadas integer,
+    gramatura_g_m2_min integer,
+    gramatura_g_m2_max integer,
+    pot_life_horas numeric,
+    temp_aplicacao_c_min numeric,
+    temp_aplicacao_c_max numeric,
+    umidade_aplicacao_pct_min numeric,
+    umidade_aplicacao_pct_max numeric,
+    catalisador_codigo text,
+    catalisador_proporcao_pct numeric,
+    diluente_codigo text,
+    equipamentos_aplicacao text[],
+    lixa_recomendada text,
+    substrato text[],
+    secagem_manuseio_h numeric,
+    secagem_empilhamento_h numeric,
+    secagem_total_h numeric,
+    validade_dias integer,
+    temp_armazenamento_c_min integer,
+    temp_armazenamento_c_max integer,
+    certificacoes_aplicaveis text[],
+    isento_metais_pesados text[],
+    isento_substancias text[],
+    diferenciais_chave text[],
+    uso_recomendado text,
+    publico_alvo text,
+    extraction_confidence numeric,
+    extraction_gaps text[],
+    extracted_by uuid,
+    approved_by uuid,
+    approved_at timestamp with time zone,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    updated_at timestamp with time zone DEFAULT now() NOT NULL
+);
+
+
+--
+-- Name: loyalty_points; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.loyalty_points (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    user_id uuid NOT NULL,
+    order_id uuid,
+    points integer DEFAULT 0 NOT NULL,
+    type text DEFAULT 'earn'::text NOT NULL,
+    description text,
+    created_at timestamp with time zone DEFAULT now() NOT NULL
+);
+
+
+--
+-- Name: loyalty_redemptions; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.loyalty_redemptions (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    user_id uuid NOT NULL,
+    reward_name text NOT NULL,
+    points_spent integer NOT NULL,
+    status text DEFAULT 'pendente'::text NOT NULL,
+    created_at timestamp with time zone DEFAULT now() NOT NULL
+);
+
+
+--
+-- Name: margin_audit_log; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.margin_audit_log (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    customer_user_id uuid NOT NULL,
+    farmer_id uuid NOT NULL,
+    period_start date NOT NULL,
+    period_end date NOT NULL,
+    margin_real numeric DEFAULT 0,
+    margin_potential numeric DEFAULT 0,
+    margin_gap numeric DEFAULT 0,
+    gap_pct numeric DEFAULT 0,
+    top_gap_products jsonb DEFAULT '[]'::jsonb,
+    calculated_at timestamp with time zone DEFAULT now() NOT NULL,
+    created_at timestamp with time zone DEFAULT now()
+);
+
+
+--
+-- Name: promocao_campanha; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.promocao_campanha (
+    id bigint NOT NULL,
+    empresa text NOT NULL,
+    fornecedor_nome text NOT NULL,
+    nome text NOT NULL,
+    tipo_origem text NOT NULL,
+    data_inicio date NOT NULL,
+    data_fim date NOT NULL,
+    estado text DEFAULT 'rascunho'::text NOT NULL,
+    origem_arquivo_url text,
+    origem_arquivo_tipo text,
+    origem_email_assunto text,
+    origem_email_remetente text,
+    origem_email_data timestamp with time zone,
+    extracao_confianca numeric,
+    extracao_observacoes text,
+    extraido_em timestamp with time zone,
+    observacoes text,
+    criado_em timestamp with time zone DEFAULT now(),
+    criado_por text,
+    atualizado_em timestamp with time zone DEFAULT now(),
+    atualizado_por text,
+    data_corte_pedido date,
+    data_corte_faturamento date,
+    permite_pedido_oportunidade boolean DEFAULT true,
+    responsavel_oferta_nome text,
+    responsavel_oferta_email text,
+    canal_oferta text,
+    data_oferta date,
+    volume_minimo_condicional numeric,
+    volume_minimo_unidade text,
+    status_aceite text DEFAULT 'pendente'::text,
+    observacoes_negociacao text,
+    CONSTRAINT ck_periodo_coerente CHECK ((data_fim >= data_inicio)),
+    CONSTRAINT promocao_campanha_canal_oferta_check CHECK (((canal_oferta IS NULL) OR (canal_oferta = ANY (ARRAY['email'::text, 'whatsapp'::text, 'ligacao'::text, 'visita_presencial'::text, 'outro'::text])))),
+    CONSTRAINT promocao_campanha_estado_check CHECK ((estado = ANY (ARRAY['rascunho'::text, 'negociando'::text, 'ativa'::text, 'encerrada'::text, 'cancelada'::text]))),
+    CONSTRAINT promocao_campanha_status_aceite_check CHECK ((status_aceite = ANY (ARRAY['pendente'::text, 'aceita'::text, 'recusada'::text, 'cumprida'::text, 'expirada'::text]))),
+    CONSTRAINT promocao_campanha_tipo_origem_check CHECK ((tipo_origem = ANY (ARRAY['fornecedor_impoe'::text, 'oficial_mensal'::text, 'negociacao_cliente'::text, 'desconto_flat_condicional'::text, 'outro'::text]))),
+    CONSTRAINT promocao_campanha_volume_minimo_unidade_check CHECK (((volume_minimo_unidade IS NULL) OR (volume_minimo_unidade = ANY (ARRAY['unidades'::text, 'reais'::text, 'kg'::text, 'litros'::text]))))
+);
+
+
+--
+-- Name: TABLE promocao_campanha; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON TABLE public.promocao_campanha IS 'Uma campanha promocional. Pode ser imposta pelo fornecedor (PDF/imagem mensal) ou resultado de negociação pontual. Agrupa N itens sob mesmas datas de vigência.';
+
+
+--
+-- Name: COLUMN promocao_campanha.data_corte_pedido; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON COLUMN public.promocao_campanha.data_corte_pedido IS 'Último dia útil em que a Sayerlack aceita pedido dessa campanha. Tipicamente último dia útil do mês. Ciclo de oportunidade roda neste dia.';
+
+
+--
+-- Name: COLUMN promocao_campanha.data_corte_faturamento; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON COLUMN public.promocao_campanha.data_corte_faturamento IS 'Último dia em que a NF da promoção deve sair. Pode cair no mês seguinte ao fim da promoção se pedido foi colocado dentro do corte.';
+
+
+--
+-- Name: COLUMN promocao_campanha.permite_pedido_oportunidade; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON COLUMN public.promocao_campanha.permite_pedido_oportunidade IS 'Se FALSE, campanha não gera ciclo de oportunidade. Útil para promoções retroativas históricas (os 12 meses) ou campanhas já encerradas.';
+
+
+--
+-- Name: promocao_item; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.promocao_item (
+    id bigint NOT NULL,
+    campanha_id bigint NOT NULL,
+    sku_codigo_fornecedor text NOT NULL,
+    descricao_produto_fornecedor text,
+    sku_codigo_omie bigint,
+    mapeamento_qualidade text,
+    mapeamento_candidatos jsonb,
+    desconto_perc numeric NOT NULL,
+    volume_minimo numeric,
+    confirmado boolean DEFAULT false NOT NULL,
+    ativo boolean DEFAULT true NOT NULL,
+    observacoes text,
+    criado_em timestamp with time zone DEFAULT now(),
+    atualizado_em timestamp with time zone DEFAULT now(),
+    desconto_extra_perc numeric,
+    desconto_extra_observacoes text,
+    desconto_extra_negociado_por text,
+    desconto_extra_negociado_em timestamp with time zone,
+    desconto_extra_email_referencia text,
+    CONSTRAINT promocao_item_desconto_extra_perc_check CHECK (((desconto_extra_perc IS NULL) OR ((desconto_extra_perc > (0)::numeric) AND (desconto_extra_perc <= (50)::numeric)))),
+    CONSTRAINT promocao_item_desconto_perc_check CHECK (((desconto_perc > (0)::numeric) AND (desconto_perc <= (100)::numeric))),
+    CONSTRAINT promocao_item_mapeamento_qualidade_check CHECK ((mapeamento_qualidade = ANY (ARRAY['unico'::text, 'unico_por_similaridade'::text, 'ambiguo'::text, 'nao_encontrado'::text, 'manual_confirmado'::text, 'expandido_automatico'::text, 'expandido_por_similaridade'::text, 'expandido_origem'::text, NULL::text])))
+);
+
+
+--
+-- Name: TABLE promocao_item; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON TABLE public.promocao_item IS 'Item específico dentro de uma campanha. volume_minimo NULL indica promoção flat; volume_minimo preenchido indica condição de volume (imposta ou negociada).';
+
+
+--
+-- Name: sku_leadtime_history; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.sku_leadtime_history (
+    id uuid DEFAULT extensions.uuid_generate_v4() NOT NULL,
+    tracking_id uuid NOT NULL,
+    empresa public.empresa_reposicao NOT NULL,
+    sku_codigo_omie bigint NOT NULL,
+    sku_codigo text,
+    sku_descricao text,
+    sku_unidade text,
+    sku_ncm text,
+    fornecedor_codigo_omie bigint,
+    fornecedor_nome text,
+    grupo_leadtime text,
+    quantidade_pedida numeric(15,4),
+    quantidade_recebida numeric(15,4),
+    valor_unitario numeric(15,4),
+    valor_total numeric(15,2),
+    t1_data_pedido timestamp with time zone NOT NULL,
+    t2_data_faturamento timestamp with time zone,
+    t3_data_cte timestamp with time zone,
+    t4_data_recebimento timestamp with time zone,
+    lt_bruto_dias_uteis integer,
+    lt_faturamento_dias_uteis integer,
+    lt_logistica_dias_uteis integer,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    updated_at timestamp with time zone DEFAULT now() NOT NULL,
+    origem_compra text DEFAULT 'normal'::text NOT NULL,
+    CONSTRAINT sku_leadtime_history_origem_compra_check CHECK ((origem_compra = ANY (ARRAY['normal'::text, 'oportunidade_promo'::text, 'oportunidade_aumento'::text, 'manual'::text, 'desconhecida'::text])))
+);
+
+
+--
+-- Name: TABLE sku_leadtime_history; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON TABLE public.sku_leadtime_history IS 'Histórico granular SKU x recebimento. Base estatística para média, desvio padrão e percentis de lead time.';
+
+
+--
+-- Name: COLUMN sku_leadtime_history.origem_compra; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON COLUMN public.sku_leadtime_history.origem_compra IS 'Categoriza como a compra foi iniciada. Apenas origem_compra = normal alimenta as estatísticas de lead time (views como v_sku_leadtime_estatisticas).';
+
+
+--
+-- Name: sku_parametros; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.sku_parametros (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    empresa text NOT NULL,
+    sku_codigo_omie bigint NOT NULL,
+    sku_descricao text,
+    fornecedor_codigo_omie bigint,
+    fornecedor_nome text,
+    classe_abc character(1),
+    classe_xyz character(1),
+    classe_consolidada text GENERATED ALWAYS AS (((classe_abc)::text || (classe_xyz)::text)) STORED,
+    classe_forcada text,
+    motivo_classe_forcada text,
+    classe_proposta_pendente text,
+    meses_consecutivos_nova_classe integer DEFAULT 0,
+    data_ultima_mudanca_classe date,
+    demanda_media_diaria numeric,
+    demanda_desvio_padrao numeric,
+    demanda_coef_variacao numeric,
+    demanda_dias_com_movimento integer,
+    demanda_total_90d numeric,
+    valor_vendido_90d numeric,
+    lt_medio_dias_uteis numeric,
+    lt_desvio_padrao_dias numeric,
+    lt_p95_dias numeric,
+    lt_n_observacoes integer,
+    fonte_leadtime text,
+    z_score numeric,
+    estoque_seguranca numeric,
+    ponto_pedido numeric,
+    estoque_minimo numeric,
+    cobertura_alvo_dias integer,
+    estoque_maximo numeric,
+    lote_minimo_fornecedor numeric DEFAULT 1,
+    ativo boolean DEFAULT true,
+    aplicar_no_omie boolean DEFAULT false,
+    ultima_aplicacao_omie timestamp with time zone,
+    ultima_atualizacao_calculo timestamp with time zone,
+    estoque_minimo_omie numeric,
+    ponto_pedido_omie numeric,
+    estoque_maximo_omie numeric,
+    omie_ultima_sincronizacao timestamp with time zone,
+    aprovado_em timestamp with time zone,
+    aprovado_por text,
+    justificativa_aprovacao text,
+    demanda_multiplicador_override numeric DEFAULT 1.0,
+    motivo_override text,
+    override_validade_ate date,
+    override_criado_em timestamp with time zone,
+    override_criado_por text,
+    habilitado_reposicao_automatica boolean DEFAULT false,
+    tipo_reposicao text DEFAULT 'automatica'::text
+);
+
+
+--
+-- Name: COLUMN sku_parametros.tipo_reposicao; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON COLUMN public.sku_parametros.tipo_reposicao IS 'automatica = compra automática via PP/Emax; produto_acabado = fabricado internamente OBEN, nunca comprar; sob_encomenda = só compra quando cliente pede';
+
+
+--
+-- Name: mv_sku_ranking_negociacao_paralela; Type: MATERIALIZED VIEW; Schema: public; Owner: -
+--
+
+CREATE MATERIALIZED VIEW public.mv_sku_ranking_negociacao_paralela AS
+ WITH params AS (
+         SELECT (CURRENT_DATE - '365 days'::interval) AS janela_analise_inicio,
+            (CURRENT_DATE - '90 days'::interval) AS recente_inicio,
+            1.0 AS peso_volume_financeiro,
+            0.8 AS peso_consistencia,
+            0.6 AS peso_preco_unitario,
+            0.4 AS peso_ausencia_promo
+        ), compras_janela AS (
+         SELECT (slh.empresa)::text AS empresa,
+            (slh.sku_codigo_omie)::text AS sku_codigo_omie,
+            sp.sku_descricao,
+            sp.fornecedor_nome,
+            sum(slh.valor_total) AS volume_financeiro_12m,
+            count(*) AS num_compras_12m,
+            (sum(slh.valor_total) / NULLIF(sum(slh.quantidade_recebida), (0)::numeric)) AS preco_medio_unitario,
+            (stddev(slh.valor_total) / NULLIF(avg(slh.valor_total), (0)::numeric)) AS coef_variacao,
+            max(slh.t1_data_pedido) AS ultima_compra,
+            count(DISTINCT date_trunc('month'::text, slh.t1_data_pedido)) AS meses_com_compra
+           FROM ((public.sku_leadtime_history slh
+             JOIN public.sku_parametros sp ON (((sp.empresa = (slh.empresa)::text) AND ((sp.sku_codigo_omie)::text = (slh.sku_codigo_omie)::text))))
+             CROSS JOIN params p)
+          WHERE ((slh.t1_data_pedido >= p.janela_analise_inicio) AND (slh.fornecedor_nome = 'RENNER SAYERLACK S/A'::text) AND ((slh.origem_compra = 'normal'::text) OR (slh.origem_compra IS NULL)) AND (sp.ativo = true) AND (slh.valor_total > (0)::numeric))
+          GROUP BY slh.empresa, slh.sku_codigo_omie, sp.sku_descricao, sp.fornecedor_nome
+         HAVING (count(*) >= 1)
+        ), frequencia_promo AS (
+         SELECT (pi.sku_codigo_omie)::text AS sku_codigo_omie,
+            count(DISTINCT pc.id) AS promocoes_12m,
+            ((count(DISTINCT date_trunc('month'::text, (pc.data_inicio)::timestamp with time zone)))::numeric / 12.0) AS perc_meses_com_promo
+           FROM ((public.promocao_item pi
+             JOIN public.promocao_campanha pc ON ((pc.id = pi.campanha_id)))
+             CROSS JOIN params p)
+          WHERE ((pc.estado = ANY (ARRAY['ativa'::text, 'encerrada'::text])) AND (pc.fornecedor_nome = 'RENNER SAYERLACK S/A'::text) AND (pc.data_inicio >= p.janela_analise_inicio) AND (pi.ativo = true) AND (pi.sku_codigo_omie IS NOT NULL))
+          GROUP BY pi.sku_codigo_omie
+        ), ranking_base AS (
+         SELECT cj.empresa,
+            cj.sku_codigo_omie,
+            cj.sku_descricao,
+            cj.fornecedor_nome,
+            cj.volume_financeiro_12m,
+            cj.num_compras_12m,
+            cj.preco_medio_unitario,
+            cj.coef_variacao,
+            cj.ultima_compra,
+            cj.meses_com_compra,
+            COALESCE(fp.promocoes_12m, (0)::bigint) AS promocoes_12m,
+            COALESCE(fp.perc_meses_com_promo, (0)::numeric) AS perc_meses_com_promo,
+            ((percent_rank() OVER (PARTITION BY cj.empresa ORDER BY cj.volume_financeiro_12m) * (100)::double precision))::numeric AS score_volume,
+            ((((1)::double precision - percent_rank() OVER (PARTITION BY cj.empresa ORDER BY COALESCE(cj.coef_variacao, (999)::numeric))) * (100)::double precision))::numeric AS score_consistencia,
+            ((percent_rank() OVER (PARTITION BY cj.empresa ORDER BY cj.preco_medio_unitario) * (100)::double precision))::numeric AS score_preco,
+            GREATEST((0)::numeric, ((100)::numeric - (COALESCE(fp.perc_meses_com_promo, (0)::numeric) * (200)::numeric))) AS score_ausencia_promo
+           FROM (compras_janela cj
+             LEFT JOIN frequencia_promo fp ON ((fp.sku_codigo_omie = cj.sku_codigo_omie)))
+        )
+ SELECT empresa,
+    sku_codigo_omie,
+    sku_descricao,
+    fornecedor_nome,
+    volume_financeiro_12m,
+    num_compras_12m,
+    meses_com_compra,
+    preco_medio_unitario,
+    COALESCE(coef_variacao, (999)::numeric) AS coef_variacao,
+    ultima_compra,
+    promocoes_12m,
+    round((perc_meses_com_promo * (100)::numeric), 1) AS perc_meses_com_promo,
+    round(score_volume, 1) AS score_volume,
+    round(score_consistencia, 1) AS score_consistencia,
+    round(score_preco, 1) AS score_preco,
+    round(score_ausencia_promo, 1) AS score_ausencia_promo,
+    round((((((score_volume * ( SELECT params.peso_volume_financeiro
+           FROM params)) + (score_consistencia * ( SELECT params.peso_consistencia
+           FROM params))) + (score_preco * ( SELECT params.peso_preco_unitario
+           FROM params))) + (score_ausencia_promo * ( SELECT params.peso_ausencia_promo
+           FROM params))) / ( SELECT (((params.peso_volume_financeiro + params.peso_consistencia) + params.peso_preco_unitario) + params.peso_ausencia_promo)
+           FROM params)), 1) AS score_final,
+        CASE
+            WHEN ((((((score_volume * 1.0) + (score_consistencia * 0.8)) + (score_preco * 0.6)) + (score_ausencia_promo * 0.4)) / 2.8) >= (80)::numeric) THEN 'prioritario'::text
+            WHEN ((((((score_volume * 1.0) + (score_consistencia * 0.8)) + (score_preco * 0.6)) + (score_ausencia_promo * 0.4)) / 2.8) >= (60)::numeric) THEN 'forte'::text
+            WHEN ((((((score_volume * 1.0) + (score_consistencia * 0.8)) + (score_preco * 0.6)) + (score_ausencia_promo * 0.4)) / 2.8) >= (40)::numeric) THEN 'moderado'::text
+            ELSE 'fraco'::text
+        END AS categoria,
+    now() AS atualizado_em
+   FROM ranking_base
+  ORDER BY empresa, (round((((((score_volume * ( SELECT params.peso_volume_financeiro
+           FROM params)) + (score_consistencia * ( SELECT params.peso_consistencia
+           FROM params))) + (score_preco * ( SELECT params.peso_preco_unitario
+           FROM params))) + (score_ausencia_promo * ( SELECT params.peso_ausencia_promo
+           FROM params))) / ( SELECT (((params.peso_volume_financeiro + params.peso_consistencia) + params.peso_preco_unitario) + params.peso_ausencia_promo)
+           FROM params)), 1)) DESC
+  WITH NO DATA;
+
+
+--
+-- Name: nfe_lotes_escaneados; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.nfe_lotes_escaneados (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    nfe_recebimento_item_id uuid NOT NULL,
+    numero_lote character varying(30) NOT NULL,
+    data_fabricacao date,
+    data_validade date,
+    metodo_leitura character varying(10) DEFAULT 'manual'::character varying NOT NULL,
+    escaneado_at timestamp with time zone DEFAULT now() NOT NULL,
+    escaneado_por uuid
+);
+
+
+--
+-- Name: nfe_recebimento_itens; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.nfe_recebimento_itens (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    nfe_recebimento_id uuid NOT NULL,
+    sequencia integer NOT NULL,
+    codigo_produto character varying(60),
+    descricao text NOT NULL,
+    ncm character varying(8),
+    ean character varying(14),
+    unidade_nfe character varying(10) NOT NULL,
+    quantidade_nfe numeric(15,4) NOT NULL,
+    valor_unitario numeric(15,4),
+    valor_total numeric(15,2),
+    unidade_estoque character varying(10),
+    quantidade_convertida numeric(15,4),
+    quantidade_conferida integer DEFAULT 0 NOT NULL,
+    quantidade_esperada integer NOT NULL,
+    status_item character varying(20) DEFAULT 'pendente'::character varying NOT NULL,
+    observacao_divergencia text,
+    produto_omie_id bigint,
+    created_at timestamp with time zone DEFAULT now() NOT NULL
+);
+
+
+--
+-- Name: nfe_recebimentos; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.nfe_recebimentos (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    warehouse_id uuid NOT NULL,
+    numero_nfe character varying(20) NOT NULL,
+    serie_nfe character varying(5),
+    chave_acesso character varying(44) NOT NULL,
+    cnpj_emitente character varying(14) NOT NULL,
+    razao_social_emitente text,
+    data_emissao date,
+    valor_total numeric(15,2),
+    xml_completo text,
+    status character varying(20) DEFAULT 'pendente'::character varying NOT NULL,
+    omie_nfe_id bigint,
+    omie_id_receb bigint,
+    conferente_id uuid,
+    conferido_at timestamp with time zone,
+    efetivado_at timestamp with time zone,
+    observacoes text,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    updated_at timestamp with time zone DEFAULT now() NOT NULL
+);
+
+
+--
+-- Name: observacoes_excluidas; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.observacoes_excluidas (
+    id bigint NOT NULL,
+    empresa text NOT NULL,
+    sku_codigo_omie text NOT NULL,
+    tipo_observacao text NOT NULL,
+    data_observacao date NOT NULL,
+    referencia_original text,
+    valor_excluido numeric,
+    excluido_em timestamp with time zone DEFAULT now(),
+    excluido_por text,
+    evento_outlier_id bigint,
+    justificativa text
+);
+
+
+--
+-- Name: observacoes_excluidas_id_seq; Type: SEQUENCE; Schema: public; Owner: -
+--
+
+CREATE SEQUENCE public.observacoes_excluidas_id_seq
+    START WITH 1
+    INCREMENT BY 1
+    NO MINVALUE
+    NO MAXVALUE
+    CACHE 1;
+
+
+--
+-- Name: observacoes_excluidas_id_seq; Type: SEQUENCE OWNED BY; Schema: public; Owner: -
+--
+
+ALTER SEQUENCE public.observacoes_excluidas_id_seq OWNED BY public.observacoes_excluidas.id;
+
+
+--
+-- Name: omie_clientes; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.omie_clientes (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    user_id uuid NOT NULL,
+    omie_codigo_cliente bigint NOT NULL,
+    omie_codigo_cliente_integracao text,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    updated_at timestamp with time zone DEFAULT now() NOT NULL,
+    omie_codigo_vendedor bigint,
+    empresa_omie text DEFAULT 'colacor'::text NOT NULL,
+    CONSTRAINT omie_clientes_empresa_omie_check CHECK ((empresa_omie = ANY (ARRAY['colacor'::text, 'oben'::text, 'colacor_sc'::text])))
+);
+
+
+--
+-- Name: omie_condicao_pagamento_catalogo; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.omie_condicao_pagamento_catalogo (
+    empresa text NOT NULL,
+    codigo text NOT NULL,
+    descricao text,
+    num_parcelas integer,
+    dias_parcelas text,
+    ativo boolean DEFAULT true,
+    ultima_sincronizacao timestamp with time zone DEFAULT now()
+);
+
+
+--
+-- Name: omie_ordens_servico; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.omie_ordens_servico (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    order_id uuid NOT NULL,
+    omie_numero_os text NOT NULL,
+    omie_codigo_os bigint,
+    status text DEFAULT 'enviado'::text NOT NULL,
+    payload_enviado jsonb,
+    resposta_omie jsonb,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    updated_at timestamp with time zone DEFAULT now() NOT NULL
+);
+
+
+--
+-- Name: omie_products; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.omie_products (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    omie_codigo_produto bigint NOT NULL,
+    omie_codigo_produto_integracao text,
+    codigo text NOT NULL,
+    descricao text NOT NULL,
+    unidade text DEFAULT 'UN'::text NOT NULL,
+    ncm text,
+    valor_unitario numeric DEFAULT 0 NOT NULL,
+    estoque numeric DEFAULT 0,
+    ativo boolean DEFAULT true NOT NULL,
+    imagem_url text,
+    metadata jsonb DEFAULT '{}'::jsonb,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    updated_at timestamp with time zone DEFAULT now() NOT NULL,
+    familia text,
+    subfamilia text,
+    account text DEFAULT 'oben'::text NOT NULL,
+    is_tintometric boolean DEFAULT false,
+    tint_type text
+);
+
+
+--
+-- Name: omie_servicos; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.omie_servicos (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    app_service_type text NOT NULL,
+    omie_codigo_servico bigint NOT NULL,
+    omie_codigo_integracao text,
+    descricao text NOT NULL,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    inativo boolean DEFAULT false NOT NULL,
+    updated_at timestamp with time zone DEFAULT now() NOT NULL
+);
+
+
+--
+-- Name: omie_vendedor_map; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.omie_vendedor_map (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    omie_account text NOT NULL,
+    omie_codigo_vendedor bigint NOT NULL,
+    user_id uuid NOT NULL,
+    nome text,
+    created_at timestamp with time zone DEFAULT now() NOT NULL
+);
+
+
+--
+-- Name: omie_webhook_events; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.omie_webhook_events (
+    id uuid DEFAULT extensions.uuid_generate_v4() NOT NULL,
+    event_id text NOT NULL,
+    empresa public.empresa_reposicao NOT NULL,
+    topic text NOT NULL,
+    author_id text,
+    message_id text,
+    payload jsonb NOT NULL,
+    received_at timestamp with time zone DEFAULT now() NOT NULL,
+    processed_at timestamp with time zone,
+    processing_error text,
+    retry_count integer DEFAULT 0 NOT NULL
+);
+
+
+--
+-- Name: TABLE omie_webhook_events; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON TABLE public.omie_webhook_events IS 'Log de webhooks Omie para dedupe idempotente e reprocessamento em caso de erro';
+
+
+--
+-- Name: COLUMN omie_webhook_events.event_id; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON COLUMN public.omie_webhook_events.event_id IS 'ID único do evento fornecido pelo Omie — chave de deduplicação';
+
+
+--
+-- Name: order_items; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.order_items (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    sales_order_id uuid NOT NULL,
+    customer_user_id uuid NOT NULL,
+    product_id uuid,
+    omie_codigo_produto bigint,
+    quantity numeric DEFAULT 1 NOT NULL,
+    unit_price numeric DEFAULT 0 NOT NULL,
+    discount numeric DEFAULT 0,
+    created_at timestamp with time zone DEFAULT now(),
+    hash_payload text
+);
+
+
+--
+-- Name: order_messages; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.order_messages (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    order_id uuid NOT NULL,
+    sender_id uuid NOT NULL,
+    message text NOT NULL,
+    is_staff boolean DEFAULT false NOT NULL,
+    read_at timestamp with time zone,
+    created_at timestamp with time zone DEFAULT now() NOT NULL
+);
+
+
+--
+-- Name: order_price_history; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.order_price_history (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    user_id uuid NOT NULL,
+    user_tool_id uuid,
+    service_type text NOT NULL,
+    unit_price numeric NOT NULL,
+    created_at timestamp with time zone DEFAULT now() NOT NULL
+);
+
+
+--
+-- Name: order_reviews; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.order_reviews (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    order_id uuid NOT NULL,
+    user_id uuid NOT NULL,
+    rating integer NOT NULL,
+    comment text,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT order_reviews_rating_check CHECK (((rating >= 1) AND (rating <= 5)))
+);
+
+
+--
+-- Name: orders; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.orders (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    user_id uuid NOT NULL,
+    status text DEFAULT 'pedido_recebido'::text NOT NULL,
+    items jsonb DEFAULT '[]'::jsonb NOT NULL,
+    service_type text NOT NULL,
+    delivery_option text NOT NULL,
+    address jsonb,
+    time_slot text,
+    subtotal numeric(10,2) DEFAULT 0 NOT NULL,
+    delivery_fee numeric(10,2) DEFAULT 0 NOT NULL,
+    total numeric(10,2) DEFAULT 0 NOT NULL,
+    notes text,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    updated_at timestamp with time zone DEFAULT now() NOT NULL
+);
+
+
+--
+-- Name: pedido_compra_item; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.pedido_compra_item (
+    id bigint NOT NULL,
+    pedido_id bigint NOT NULL,
+    sku_codigo_omie text NOT NULL,
+    sku_descricao text,
+    estoque_atual numeric,
+    ponto_pedido numeric,
+    estoque_maximo numeric,
+    qtde_sugerida numeric NOT NULL,
+    qtde_final numeric,
+    preco_unitario numeric,
+    valor_linha numeric,
+    primeira_compra boolean DEFAULT false,
+    ajustado_humano boolean DEFAULT false,
+    criado_em timestamp with time zone DEFAULT now(),
+    modo_promocao text,
+    promocao_item_id bigint,
+    qtde_sem_promocao numeric,
+    preco_sem_desconto numeric,
+    desconto_perc_aplicado numeric,
+    economia_estimada_valor numeric,
+    CONSTRAINT pedido_compra_item_modo_promocao_check CHECK ((modo_promocao = ANY (ARRAY['flat'::text, 'forward_buying'::text, NULL::text])))
+);
+
+
+--
+-- Name: COLUMN pedido_compra_item.modo_promocao; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON COLUMN public.pedido_compra_item.modo_promocao IS 'flat = desconto aplicado no preço sem mudança de quantidade; forward_buying = quantidade foi inflada pra atingir volume mínimo.';
+
+
+--
+-- Name: pedido_compra_item_id_seq; Type: SEQUENCE; Schema: public; Owner: -
+--
+
+CREATE SEQUENCE public.pedido_compra_item_id_seq
+    START WITH 1
+    INCREMENT BY 1
+    NO MINVALUE
+    NO MAXVALUE
+    CACHE 1;
+
+
+--
+-- Name: pedido_compra_item_id_seq; Type: SEQUENCE OWNED BY; Schema: public; Owner: -
+--
+
+ALTER SEQUENCE public.pedido_compra_item_id_seq OWNED BY public.pedido_compra_item.id;
+
+
+--
+-- Name: pedido_compra_sugerido; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.pedido_compra_sugerido (
+    id bigint NOT NULL,
+    empresa text NOT NULL,
+    fornecedor_nome text,
+    grupo_codigo text,
+    data_ciclo date DEFAULT CURRENT_DATE NOT NULL,
+    horario_geracao timestamp with time zone DEFAULT now(),
+    horario_corte_planejado timestamp with time zone,
+    horario_disparo_real timestamp with time zone,
+    valor_total numeric DEFAULT 0 NOT NULL,
+    num_skus integer DEFAULT 0 NOT NULL,
+    valor_mes_ate_agora numeric,
+    pedido_anterior_valor numeric,
+    delta_vs_anterior_perc numeric,
+    status text DEFAULT 'pendente_aprovacao'::text NOT NULL,
+    mensagem_bloqueio text,
+    canal_usado text,
+    resposta_canal jsonb,
+    omie_pedido_compra_id text,
+    omie_pedido_compra_numero text,
+    omie_registrado_em timestamp with time zone,
+    aprovado_por text,
+    aprovado_em timestamp with time zone,
+    cancelado_por text,
+    cancelado_em timestamp with time zone,
+    justificativa_cancelamento text,
+    criado_em timestamp with time zone DEFAULT now(),
+    atualizado_em timestamp with time zone DEFAULT now(),
+    condicao_pagamento_codigo text,
+    condicao_pagamento_descricao text,
+    num_parcelas integer,
+    dias_parcelas text,
+    condicao_origem text,
+    tipo_ciclo text DEFAULT 'normal'::text NOT NULL,
+    origem_evento_id bigint,
+    origem_evento_tipo text,
+    status_envio_portal text DEFAULT 'nao_aplicavel'::text,
+    enviado_portal_em timestamp with time zone,
+    portal_protocolo text,
+    portal_resposta jsonb,
+    portal_screenshot_url text,
+    portal_tentativas integer DEFAULT 0,
+    portal_proximo_retry_em timestamp with time zone,
+    portal_erro text,
+    portal_data_entrega date,
+    split_parent_id bigint,
+    split_lote integer,
+    split_total integer,
+    CONSTRAINT pedido_compra_sugerido_origem_evento_tipo_check CHECK ((origem_evento_tipo = ANY (ARRAY['campanha_promocao'::text, 'aumento_anunciado'::text, NULL::text]))),
+    CONSTRAINT pedido_compra_sugerido_status_envio_portal_check CHECK ((status_envio_portal = ANY (ARRAY['nao_aplicavel'::text, 'pendente_envio_portal'::text, 'enviando_portal'::text, 'enviado_portal'::text, 'falha_envio_portal'::text, 'sucesso_portal'::text, 'aceito_portal_sem_protocolo'::text, 'indeterminado_requer_conciliacao'::text, 'erro_retentavel'::text, 'erro_nao_retentavel'::text]))),
+    CONSTRAINT pedido_compra_sugerido_tipo_ciclo_check CHECK ((tipo_ciclo = ANY (ARRAY['normal'::text, 'oportunidade_promo'::text, 'oportunidade_aumento'::text])))
+);
+
+
+--
+-- Name: COLUMN pedido_compra_sugerido.condicao_origem; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON COLUMN public.pedido_compra_sugerido.condicao_origem IS 'sugerido_ultimo_pedido = inferido do último pedido do fornecedor; ajustado_humano = Lucas alterou na UI; default = sem histórico, default Omie';
+
+
+--
+-- Name: COLUMN pedido_compra_sugerido.tipo_ciclo; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON COLUMN public.pedido_compra_sugerido.tipo_ciclo IS 'normal = reposição diária. oportunidade_* = ciclos especiais disparados pelo corte de promoção ou pela véspera de aumento.';
+
+
+--
+-- Name: COLUMN pedido_compra_sugerido.portal_data_entrega; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON COLUMN public.pedido_compra_sugerido.portal_data_entrega IS 'Data de entrega confirmada pelo portal Sayerlack no momento do submit. Usada para calcular dDtPrevisao do pedido de compra no Omie (= portal_data_entrega + 2 dias corridos).';
+
+
+--
+-- Name: pedido_compra_sugerido_id_seq; Type: SEQUENCE; Schema: public; Owner: -
+--
+
+CREATE SEQUENCE public.pedido_compra_sugerido_id_seq
+    START WITH 1
+    INCREMENT BY 1
+    NO MINVALUE
+    NO MAXVALUE
+    CACHE 1;
+
+
+--
+-- Name: pedido_compra_sugerido_id_seq; Type: SEQUENCE OWNED BY; Schema: public; Owner: -
+--
+
+ALTER SEQUENCE public.pedido_compra_sugerido_id_seq OWNED BY public.pedido_compra_sugerido.id;
+
+
+--
+-- Name: pedidos_portal_tentativas; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.pedidos_portal_tentativas (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    pedido_id bigint NOT NULL,
+    iniciado_em timestamp with time zone DEFAULT now() NOT NULL,
+    concluido_em timestamp with time zone,
+    status_resultado text NOT NULL,
+    elapsed_ms integer,
+    evidence jsonb DEFAULT '{}'::jsonb NOT NULL,
+    browserless_response_ms integer,
+    erro text
+);
+
+
+--
+-- Name: permission_change_log; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.permission_change_log (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    target_user_id uuid NOT NULL,
+    changed_by uuid NOT NULL,
+    change_type text NOT NULL,
+    previous_value text,
+    new_value text,
+    created_at timestamp with time zone DEFAULT now() NOT NULL
+);
+
+
+--
+-- Name: permission_overrides; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.permission_overrides (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    user_id uuid NOT NULL,
+    permission_key text NOT NULL,
+    granted boolean DEFAULT true NOT NULL,
+    granted_by uuid,
+    created_at timestamp with time zone DEFAULT now() NOT NULL
+);
+
+
+--
+-- Name: picking_events; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.picking_events (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    picking_task_id uuid NOT NULL,
+    picking_task_item_id uuid,
+    event_type text NOT NULL,
+    user_id uuid,
+    lote_informado text,
+    lote_esperado text,
+    justificativa text,
+    metadata jsonb,
+    created_at timestamp with time zone DEFAULT now() NOT NULL
+);
+
+
+--
+-- Name: picking_task_items; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.picking_task_items (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    picking_task_id uuid NOT NULL,
+    omie_codigo_produto bigint,
+    product_codigo text,
+    product_descricao text,
+    quantidade integer DEFAULT 1 NOT NULL,
+    quantidade_separada integer DEFAULT 0 NOT NULL,
+    localizacao text,
+    lote_fefo text,
+    validade_fefo date,
+    lote_separado text,
+    justificativa_substituicao text,
+    status text DEFAULT 'pendente'::text NOT NULL,
+    separado_at timestamp with time zone,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    updated_at timestamp with time zone DEFAULT now() NOT NULL
+);
+
+
+--
+-- Name: picking_tasks; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.picking_tasks (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    sales_order_id uuid,
+    account text DEFAULT 'colacor'::text NOT NULL,
+    status text DEFAULT 'pendente'::text NOT NULL,
+    assigned_to uuid,
+    started_at timestamp with time zone,
+    completed_at timestamp with time zone,
+    notes text,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    updated_at timestamp with time zone DEFAULT now() NOT NULL
+);
+
+
+--
+-- Name: priority_score_log; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.priority_score_log (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    customer_user_id uuid NOT NULL,
+    farmer_id uuid NOT NULL,
+    priority_score numeric DEFAULT 0 NOT NULL,
+    margin_potential_component numeric DEFAULT 0,
+    churn_risk_component numeric DEFAULT 0,
+    repurchase_component numeric DEFAULT 0,
+    goal_proximity_component numeric DEFAULT 0,
+    score_date date DEFAULT CURRENT_DATE NOT NULL,
+    calculated_at timestamp with time zone DEFAULT now() NOT NULL,
+    created_at timestamp with time zone DEFAULT now() NOT NULL
+);
+
+
+--
+-- Name: product_costs; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.product_costs (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    product_id uuid NOT NULL,
+    cost_price numeric DEFAULT 0 NOT NULL,
+    updated_at timestamp with time zone DEFAULT now() NOT NULL,
+    cmc numeric DEFAULT 0,
+    cost_source text DEFAULT 'UNKNOWN'::text,
+    cost_confidence numeric DEFAULT 0,
+    family_category text,
+    cost_final numeric DEFAULT 0
+);
+
+
+--
+-- Name: production_orders; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.production_orders (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    sales_order_id uuid,
+    sales_order_number text,
+    customer_name text,
+    product_id uuid,
+    product_codigo text,
+    product_descricao text,
+    quantidade numeric DEFAULT 1 NOT NULL,
+    unidade text DEFAULT 'UN'::text,
+    status text DEFAULT 'pending'::text NOT NULL,
+    omie_ordem_producao_id bigint,
+    omie_ordem_numero text,
+    assigned_to uuid,
+    ready_by_date date,
+    completed_at timestamp with time zone,
+    notes text,
+    account text DEFAULT 'colacor'::text NOT NULL,
+    created_by uuid,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    updated_at timestamp with time zone DEFAULT now() NOT NULL
+);
+
+
+--
+-- Name: promocao_campanha_id_seq; Type: SEQUENCE; Schema: public; Owner: -
+--
+
+CREATE SEQUENCE public.promocao_campanha_id_seq
+    START WITH 1
+    INCREMENT BY 1
+    NO MINVALUE
+    NO MAXVALUE
+    CACHE 1;
+
+
+--
+-- Name: promocao_campanha_id_seq; Type: SEQUENCE OWNED BY; Schema: public; Owner: -
+--
+
+ALTER SEQUENCE public.promocao_campanha_id_seq OWNED BY public.promocao_campanha.id;
+
+
+--
+-- Name: promocao_item_id_seq; Type: SEQUENCE; Schema: public; Owner: -
+--
+
+CREATE SEQUENCE public.promocao_item_id_seq
+    START WITH 1
+    INCREMENT BY 1
+    NO MINVALUE
+    NO MAXVALUE
+    CACHE 1;
+
+
+--
+-- Name: promocao_item_id_seq; Type: SEQUENCE OWNED BY; Schema: public; Owner: -
+--
+
+ALTER SEQUENCE public.promocao_item_id_seq OWNED BY public.promocao_item.id;
+
+
+--
+-- Name: promocao_negociacao_evento; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.promocao_negociacao_evento (
+    id bigint NOT NULL,
+    campanha_id bigint NOT NULL,
+    item_id bigint,
+    tipo_evento text NOT NULL,
+    desconto_perc_proposto numeric,
+    volume_minimo_proposto numeric,
+    data_evento timestamp with time zone DEFAULT now() NOT NULL,
+    email_referencia text,
+    conteudo text,
+    registrado_por text,
+    registrado_em timestamp with time zone DEFAULT now(),
+    CONSTRAINT promocao_negociacao_evento_tipo_evento_check CHECK ((tipo_evento = ANY (ARRAY['proposta_enviada'::text, 'contraproposta_recebida'::text, 'aceite_lucas'::text, 'aceite_gerente'::text, 'recusa_gerente'::text, 'abandono'::text, 'nota'::text])))
+);
+
+
+--
+-- Name: TABLE promocao_negociacao_evento; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON TABLE public.promocao_negociacao_evento IS 'Histórico de propostas/contra-propostas da negociação. Cada evento é um snapshot do que foi proposto. Os valores finais aceitos ficam em promocao_item.';
+
+
+--
+-- Name: promocao_negociacao_evento_id_seq; Type: SEQUENCE; Schema: public; Owner: -
+--
+
+CREATE SEQUENCE public.promocao_negociacao_evento_id_seq
+    START WITH 1
+    INCREMENT BY 1
+    NO MINVALUE
+    NO MAXVALUE
+    CACHE 1;
+
+
+--
+-- Name: promocao_negociacao_evento_id_seq; Type: SEQUENCE OWNED BY; Schema: public; Owner: -
+--
+
+ALTER SEQUENCE public.promocao_negociacao_evento_id_seq OWNED BY public.promocao_negociacao_evento.id;
+
+
+--
+-- Name: purchase_orders_tracking; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.purchase_orders_tracking (
+    id uuid DEFAULT extensions.uuid_generate_v4() NOT NULL,
+    empresa public.empresa_reposicao NOT NULL,
+    omie_codigo_pedido bigint NOT NULL,
+    omie_codigo_integracao text,
+    numero_pedido text,
+    fornecedor_codigo_omie bigint NOT NULL,
+    fornecedor_nome text,
+    fornecedor_cnpj text,
+    grupo_leadtime text,
+    status public.status_pedido_compra DEFAULT 'CRIADO'::public.status_pedido_compra NOT NULL,
+    t1_data_pedido timestamp with time zone NOT NULL,
+    t2_data_faturamento timestamp with time zone,
+    t3_data_cte timestamp with time zone,
+    t4_data_recebimento timestamp with time zone,
+    data_previsao_original date,
+    nfe_chave_acesso text,
+    nfe_numero text,
+    nfe_serie text,
+    cte_chave_acesso text,
+    cte_numero text,
+    numero_pedido_fornecedor text,
+    infcpl_raw text,
+    lt_bruto_dias_uteis integer,
+    lt_faturamento_dias_uteis integer,
+    lt_logistica_dias_uteis integer,
+    observacoes text,
+    raw_data jsonb,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    updated_at timestamp with time zone DEFAULT now() NOT NULL,
+    transportadora_cnpj text,
+    transportadora_nome text,
+    representante_codigo text,
+    representante_nome text,
+    numero_contrato_fornecedor text,
+    cte_valor_frete numeric(15,2),
+    cte_transportadora_nome_real text,
+    cte_transportadora_cnpj text,
+    match_cte_score numeric(3,2),
+    match_cte_metodo text
+);
+
+
+--
+-- Name: TABLE purchase_orders_tracking; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON TABLE public.purchase_orders_tracking IS 'Um registro por pedido de compra. Trilha completa T1->T4 para cálculo de lead time realizado.';
+
+
+--
+-- Name: COLUMN purchase_orders_tracking.t1_data_pedido; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON COLUMN public.purchase_orders_tracking.t1_data_pedido IS 'T1: quando o pedido foi criado no Omie';
+
+
+--
+-- Name: COLUMN purchase_orders_tracking.t2_data_faturamento; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON COLUMN public.purchase_orders_tracking.t2_data_faturamento IS 'T2: data de emissão da NFe pela Sayerlack (dhEmi)';
+
+
+--
+-- Name: COLUMN purchase_orders_tracking.t3_data_cte; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON COLUMN public.purchase_orders_tracking.t3_data_cte IS 'T3: data de emissão do CTe (proxy: transportadora pegou a mercadoria)';
+
+
+--
+-- Name: COLUMN purchase_orders_tracking.t4_data_recebimento; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON COLUMN public.purchase_orders_tracking.t4_data_recebimento IS 'T4: data de entrada da NFe no Omie (proxy: chegou em Divinópolis)';
+
+
+--
+-- Name: rag_chunks; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.rag_chunks (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    source_table text NOT NULL,
+    source_id uuid NOT NULL,
+    chunk_index integer NOT NULL,
+    content text NOT NULL,
+    embedding public.vector(1536),
+    metadata jsonb DEFAULT '{}'::jsonb,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT rag_chunks_source_table_check CHECK ((source_table = ANY (ARRAY['customer_processes'::text, 'standard_processes'::text, 'kb_documents'::text])))
+);
+
+
+--
+-- Name: recommendation_config; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.recommendation_config (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    key text NOT NULL,
+    value numeric DEFAULT 0 NOT NULL,
+    description text,
+    updated_at timestamp with time zone DEFAULT now(),
+    updated_by uuid
+);
+
+
+--
+-- Name: recommendation_log; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.recommendation_log (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    farmer_id uuid NOT NULL,
+    customer_user_id uuid NOT NULL,
+    product_id uuid,
+    recommendation_type text DEFAULT 'cross_sell'::text NOT NULL,
+    score_final numeric DEFAULT 0,
+    score_assoc numeric DEFAULT 0,
+    score_eip numeric DEFAULT 0,
+    score_sim numeric DEFAULT 0,
+    score_ctx numeric DEFAULT 0,
+    explanation_text text,
+    explanation_key text,
+    unit_cost numeric DEFAULT 0,
+    cost_source text,
+    margin numeric DEFAULT 0,
+    probability numeric DEFAULT 0,
+    eip numeric DEFAULT 0,
+    event_type text DEFAULT 'impression'::text,
+    quantity_suggested numeric DEFAULT 1,
+    quantity_accepted numeric DEFAULT 0,
+    margin_realized numeric DEFAULT 0,
+    sales_order_id uuid,
+    mode text DEFAULT 'profit'::text,
+    weights jsonb DEFAULT '{}'::jsonb,
+    created_at timestamp with time zone DEFAULT now()
+);
+
+
+--
+-- Name: recurring_schedules; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.recurring_schedules (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    user_id uuid NOT NULL,
+    tool_ids uuid[] DEFAULT '{}'::uuid[] NOT NULL,
+    frequency_days integer DEFAULT 30 NOT NULL,
+    delivery_option text DEFAULT 'retirada'::text NOT NULL,
+    time_slot text,
+    address_id uuid,
+    next_order_date date NOT NULL,
+    is_active boolean DEFAULT true NOT NULL,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    updated_at timestamp with time zone DEFAULT now() NOT NULL
+);
+
+
+--
+-- Name: referrals; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.referrals (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    referrer_id uuid NOT NULL,
+    referred_email text NOT NULL,
+    referred_user_id uuid,
+    status text DEFAULT 'pending'::text NOT NULL,
+    points_awarded boolean DEFAULT false NOT NULL,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    converted_at timestamp with time zone
+);
+
+
+--
+-- Name: referrals_for_referrer; Type: VIEW; Schema: public; Owner: -
+--
+
+CREATE VIEW public.referrals_for_referrer WITH (security_invoker='true') AS
+ SELECT id,
+    referrer_id,
+    referred_user_id,
+    status,
+    points_awarded,
+    created_at,
+    converted_at
+   FROM public.referrals
+  WHERE (referrer_id = auth.uid());
+
+
+--
+-- Name: reposition_parameters; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.reposition_parameters (
+    id uuid DEFAULT extensions.uuid_generate_v4() NOT NULL,
+    empresa public.empresa_reposicao NOT NULL,
+    sku_codigo_omie bigint NOT NULL,
+    sku_codigo text,
+    sku_descricao text,
+    fornecedor_codigo_omie bigint,
+    fornecedor_nome text,
+    grupo_leadtime text,
+    lt_atual_omie integer,
+    estoque_min_atual_omie numeric(15,4),
+    estoque_max_atual_omie numeric(15,4),
+    lt_sugerido integer,
+    estoque_min_sugerido numeric(15,4),
+    ponto_pedido_sugerido numeric(15,4),
+    estoque_seguranca numeric(15,4),
+    demanda_media_diaria numeric(15,4),
+    demanda_desvio_padrao numeric(15,4),
+    lt_medio_realizado numeric(8,2),
+    lt_desvio_padrao numeric(8,2),
+    lt_percentil_95 numeric(8,2),
+    n_amostras_demanda integer,
+    n_amostras_leadtime integer,
+    classe_abc public.classe_abc,
+    classe_xyz public.classe_xyz,
+    z_aplicado numeric(5,3),
+    delta_lt_pct numeric(8,2),
+    delta_estoque_min_pct numeric(8,2),
+    status_revisao public.status_revisao DEFAULT 'NAO_REVISADO'::public.status_revisao NOT NULL,
+    calculado_em timestamp with time zone,
+    aprovado_em timestamp with time zone,
+    aprovado_por uuid,
+    aplicado_em timestamp with time zone,
+    motivo_rejeicao text,
+    z_override numeric(5,3),
+    override_justificativa text,
+    override_por uuid,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    updated_at timestamp with time zone DEFAULT now() NOT NULL
+);
+
+
+--
+-- Name: TABLE reposition_parameters; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON TABLE public.reposition_parameters IS 'Fonte da verdade: parâmetros atuais no Omie vs sugeridos pelo Afiação. Workflow de aprovação humana.';
+
+
+--
+-- Name: roadmap_state; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.roadmap_state (
+    id uuid DEFAULT extensions.uuid_generate_v4() NOT NULL,
+    state jsonb NOT NULL,
+    updated_at timestamp with time zone DEFAULT now() NOT NULL
+);
+
+
+--
+-- Name: TABLE roadmap_state; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON TABLE public.roadmap_state IS 'Estado do dashboard de tracking do Módulo Reposição (substitui window.storage do artifact standalone)';
+
+
+--
+-- Name: route_visits; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.route_visits (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    customer_user_id uuid NOT NULL,
+    visited_by uuid NOT NULL,
+    visit_date date DEFAULT CURRENT_DATE NOT NULL,
+    check_in_at timestamp with time zone,
+    check_out_at timestamp with time zone,
+    visit_type text DEFAULT 'comercial'::text NOT NULL,
+    result text,
+    notes text,
+    revenue_generated numeric(10,2) DEFAULT 0,
+    order_created boolean DEFAULT false,
+    lat numeric(10,7),
+    lng numeric(10,7),
+    created_at timestamp with time zone DEFAULT now() NOT NULL
+);
+
+
+--
+-- Name: sales_price_history; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.sales_price_history (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    customer_user_id uuid NOT NULL,
+    product_id uuid NOT NULL,
+    unit_price numeric NOT NULL,
+    sales_order_id uuid,
+    created_at timestamp with time zone DEFAULT now() NOT NULL
+);
+
+
+--
+-- Name: score_recalc_queue; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.score_recalc_queue (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    customer_user_id uuid NOT NULL,
+    farmer_id uuid NOT NULL,
+    reason text NOT NULL,
+    source_call_id uuid,
+    enqueued_at timestamp with time zone DEFAULT now() NOT NULL,
+    processed_at timestamp with time zone,
+    error text
+);
+
+
+--
+-- Name: score_recalc_pending; Type: VIEW; Schema: public; Owner: -
+--
+
+CREATE VIEW public.score_recalc_pending AS
+ SELECT id,
+    customer_user_id,
+    farmer_id,
+    reason,
+    source_call_id,
+    enqueued_at,
+    processed_at,
+    error
+   FROM public.score_recalc_queue q
+  WHERE (processed_at IS NULL)
+  ORDER BY enqueued_at;
+
+
+--
+-- Name: sending_quality_logs; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.sending_quality_logs (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    order_id uuid NOT NULL,
+    user_id uuid NOT NULL,
+    is_clean boolean DEFAULT false NOT NULL,
+    is_separated boolean DEFAULT false NOT NULL,
+    is_identified boolean DEFAULT false NOT NULL,
+    is_properly_packed boolean DEFAULT false NOT NULL,
+    score integer DEFAULT 0 NOT NULL,
+    evaluated_by uuid,
+    created_at timestamp with time zone DEFAULT now() NOT NULL
+);
+
+
+--
+-- Name: simulacao_estoque_resultados; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.simulacao_estoque_resultados (
+    id bigint NOT NULL,
+    empresa text NOT NULL,
+    sku_codigo_omie text NOT NULL,
+    sku_descricao text,
+    classe_consolidada text,
+    classe_abc text,
+    candidato text NOT NULL,
+    estoque_min_aplicado numeric,
+    ponto_pedido_aplicado numeric,
+    qtde_compra_aplicada numeric,
+    estoque_max_aplicado numeric,
+    lead_time_aplicado numeric,
+    dias_simulados integer,
+    dias_em_ruptura integer,
+    srl_perc numeric,
+    qtde_ruptura_total numeric,
+    qtde_demandada_total numeric,
+    estoque_medio numeric,
+    estoque_max_observado numeric,
+    estoque_min_observado numeric,
+    num_pedidos_disparados integer,
+    giros_ano numeric,
+    valor_emi numeric,
+    valor_ruptura_estimado numeric,
+    simulado_em timestamp with time zone DEFAULT now(),
+    metadata jsonb
+);
+
+
+--
+-- Name: simulacao_estoque_resultados_id_seq; Type: SEQUENCE; Schema: public; Owner: -
+--
+
+CREATE SEQUENCE public.simulacao_estoque_resultados_id_seq
+    START WITH 1
+    INCREMENT BY 1
+    NO MINVALUE
+    NO MAXVALUE
+    CACHE 1;
+
+
+--
+-- Name: simulacao_estoque_resultados_id_seq; Type: SEQUENCE OWNED BY; Schema: public; Owner: -
+--
+
+ALTER SEQUENCE public.simulacao_estoque_resultados_id_seq OWNED BY public.simulacao_estoque_resultados.id;
+
+
+--
+-- Name: sku_estoque_atual; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.sku_estoque_atual (
+    empresa text NOT NULL,
+    sku_codigo_omie text NOT NULL,
+    estoque_fisico numeric DEFAULT 0 NOT NULL,
+    estoque_disponivel numeric,
+    estoque_pendente_entrada numeric,
+    ultima_sincronizacao timestamp with time zone DEFAULT now(),
+    fonte_sync text
+);
+
+
+--
+-- Name: sku_fornecedor_externo; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.sku_fornecedor_externo (
+    id bigint NOT NULL,
+    empresa text NOT NULL,
+    fornecedor_nome text NOT NULL,
+    sku_omie text NOT NULL,
+    sku_portal text,
+    unidade_portal text DEFAULT 'UN'::text NOT NULL,
+    fator_conversao numeric DEFAULT 1 NOT NULL,
+    ativo boolean DEFAULT true NOT NULL,
+    observacoes text,
+    criado_em timestamp with time zone DEFAULT now() NOT NULL,
+    atualizado_em timestamp with time zone DEFAULT now() NOT NULL
+);
+
+
+--
+-- Name: sku_fornecedor_externo_id_seq; Type: SEQUENCE; Schema: public; Owner: -
+--
+
+CREATE SEQUENCE public.sku_fornecedor_externo_id_seq
+    START WITH 1
+    INCREMENT BY 1
+    NO MINVALUE
+    NO MAXVALUE
+    CACHE 1;
+
+
+--
+-- Name: sku_fornecedor_externo_id_seq; Type: SEQUENCE OWNED BY; Schema: public; Owner: -
+--
+
+ALTER SEQUENCE public.sku_fornecedor_externo_id_seq OWNED BY public.sku_fornecedor_externo.id;
+
+
+--
+-- Name: sku_grupo_producao; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.sku_grupo_producao (
+    empresa text NOT NULL,
+    sku_codigo_omie text NOT NULL,
+    grupo_codigo text NOT NULL,
+    atualizado_em timestamp with time zone DEFAULT now(),
+    atualizado_por text
+);
+
+
+--
+-- Name: sku_parametros_historico; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.sku_parametros_historico (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    sku_parametro_id uuid,
+    snapshot_em timestamp with time zone DEFAULT now(),
+    classe_consolidada text,
+    demanda_media_diaria numeric,
+    lt_medio_dias_uteis numeric,
+    z_score numeric,
+    estoque_seguranca numeric,
+    ponto_pedido numeric,
+    trigger text
+);
+
+
+--
+-- Name: sku_status_omie; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.sku_status_omie (
+    empresa text NOT NULL,
+    sku_codigo_omie text NOT NULL,
+    sku_descricao text,
+    ativo_no_omie boolean,
+    data_inativacao timestamp with time zone,
+    estoque_minimo_omie numeric,
+    ponto_pedido_omie numeric,
+    estoque_maximo_omie numeric,
+    ultima_sincronizacao timestamp with time zone DEFAULT now(),
+    fonte_sincronizacao text
+);
+
+
+--
+-- Name: sku_substituicao; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.sku_substituicao (
+    id bigint NOT NULL,
+    empresa text NOT NULL,
+    sku_codigo_antigo text NOT NULL,
+    sku_codigo_novo text NOT NULL,
+    acao_parametros text NOT NULL,
+    data_substituicao date NOT NULL,
+    motivo text,
+    observacoes text,
+    status text DEFAULT 'pendente'::text NOT NULL,
+    aplicado_em timestamp with time zone,
+    criado_em timestamp with time zone DEFAULT now(),
+    criado_por text
+);
+
+
+--
+-- Name: sku_substituicao_id_seq; Type: SEQUENCE; Schema: public; Owner: -
+--
+
+CREATE SEQUENCE public.sku_substituicao_id_seq
+    START WITH 1
+    INCREMENT BY 1
+    NO MINVALUE
+    NO MAXVALUE
+    CACHE 1;
+
+
+--
+-- Name: sku_substituicao_id_seq; Type: SEQUENCE OWNED BY; Schema: public; Owner: -
+--
+
+ALTER SEQUENCE public.sku_substituicao_id_seq OWNED BY public.sku_substituicao.id;
+
+
+--
+-- Name: standard_processes; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.standard_processes (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    name text NOT NULL,
+    slug text,
+    description text,
+    segmento text NOT NULL,
+    porte_alvo text[],
+    tags text[] DEFAULT '{}'::text[],
+    etapas jsonb NOT NULL,
+    expected_outcomes text[],
+    target_audience text,
+    prerequisites text[],
+    status text DEFAULT 'draft'::text NOT NULL,
+    status_notes text,
+    version integer DEFAULT 1 NOT NULL,
+    parent_id uuid,
+    created_by uuid NOT NULL,
+    reviewed_by uuid,
+    reviewed_at timestamp with time zone,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    updated_at timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT standard_processes_status_check CHECK ((status = ANY (ARRAY['draft'::text, 'in_review'::text, 'published'::text, 'archived'::text])))
+);
+
+
+--
+-- Name: sugestao_negociacao_paralela; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.sugestao_negociacao_paralela (
+    id bigint NOT NULL,
+    empresa text NOT NULL,
+    sku_codigo_omie text NOT NULL,
+    sku_descricao text,
+    motivo text NOT NULL,
+    motivo_detalhes jsonb,
+    score_final numeric,
+    volume_financeiro_12m numeric,
+    preco_medio_unitario numeric,
+    promocoes_12m integer,
+    perc_meses_com_promo numeric,
+    status text DEFAULT 'nova'::text NOT NULL,
+    campanha_id_gerada bigint,
+    data_acao timestamp with time zone,
+    observacoes text,
+    data_geracao date DEFAULT CURRENT_DATE NOT NULL,
+    valido_ate date DEFAULT (CURRENT_DATE + '14 days'::interval) NOT NULL,
+    criado_em timestamp with time zone DEFAULT now(),
+    atualizado_em timestamp with time zone DEFAULT now(),
+    CONSTRAINT sugestao_negociacao_paralela_motivo_check CHECK ((motivo = ANY (ARRAY['candidato_forte_sem_promo_recente'::text, 'consumo_abaixo_tipico_fim_de_mes'::text, 'score_alto_ciclo_semanal'::text, 'combinacao_heuristica'::text]))),
+    CONSTRAINT sugestao_negociacao_paralela_status_check CHECK ((status = ANY (ARRAY['nova'::text, 'visualizada'::text, 'acao_tomada'::text, 'fechada_desconto'::text, 'fechada_sem_acordo'::text, 'ignorada'::text])))
+);
+
+
+--
+-- Name: sugestao_negociacao_paralela_id_seq; Type: SEQUENCE; Schema: public; Owner: -
+--
+
+CREATE SEQUENCE public.sugestao_negociacao_paralela_id_seq
+    START WITH 1
+    INCREMENT BY 1
+    NO MINVALUE
+    NO MAXVALUE
+    CACHE 1;
+
+
+--
+-- Name: sugestao_negociacao_paralela_id_seq; Type: SEQUENCE OWNED BY; Schema: public; Owner: -
+--
+
+ALTER SEQUENCE public.sugestao_negociacao_paralela_id_seq OWNED BY public.sugestao_negociacao_paralela.id;
+
+
+--
+-- Name: sync_reprocess_config; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.sync_reprocess_config (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    key text NOT NULL,
+    value integer NOT NULL,
+    description text,
+    updated_at timestamp with time zone DEFAULT now()
+);
+
+
+--
+-- Name: sync_reprocess_log; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.sync_reprocess_log (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    entity_type text NOT NULL,
+    account text DEFAULT 'vendas'::text NOT NULL,
+    reprocess_type text DEFAULT 'operational'::text NOT NULL,
+    window_start timestamp with time zone NOT NULL,
+    window_end timestamp with time zone NOT NULL,
+    status text DEFAULT 'running'::text NOT NULL,
+    upserts_count integer DEFAULT 0,
+    deletes_count integer DEFAULT 0,
+    divergences_found integer DEFAULT 0,
+    corrections_applied integer DEFAULT 0,
+    duration_ms integer DEFAULT 0,
+    error_message text,
+    metadata jsonb DEFAULT '{}'::jsonb,
+    created_at timestamp with time zone DEFAULT now() NOT NULL
+);
+
+
+--
+-- Name: sync_state; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.sync_state (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    entity_type text NOT NULL,
+    account text DEFAULT 'vendas'::text NOT NULL,
+    last_sync_at timestamp with time zone,
+    last_page integer DEFAULT 0,
+    last_cursor text,
+    total_synced integer DEFAULT 0,
+    status text DEFAULT 'idle'::text,
+    error_message text,
+    metadata jsonb DEFAULT '{}'::jsonb,
+    created_at timestamp with time zone DEFAULT now(),
+    updated_at timestamp with time zone DEFAULT now()
+);
+
+
+--
+-- Name: tint_bases; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.tint_bases (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    account text DEFAULT 'oben'::text NOT NULL,
+    id_base_sayersystem text NOT NULL,
+    descricao text NOT NULL,
+    created_at timestamp with time zone DEFAULT now()
+);
+
+
+--
+-- Name: tint_colecoes; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.tint_colecoes (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    account text DEFAULT 'oben'::text NOT NULL,
+    id_colecao_sayersystem text,
+    descricao text NOT NULL,
+    created_at timestamp with time zone DEFAULT now()
+);
+
+
+--
+-- Name: tint_corantes; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.tint_corantes (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    account text DEFAULT 'oben'::text NOT NULL,
+    id_corante_sayersystem text NOT NULL,
+    descricao text NOT NULL,
+    volume_total_ml numeric NOT NULL,
+    peso_especifico numeric,
+    codigo_barras text,
+    omie_product_id uuid,
+    ativo boolean DEFAULT true,
+    created_at timestamp with time zone DEFAULT now(),
+    preco_litro numeric
+);
+
+
+--
+-- Name: tint_embalagens; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.tint_embalagens (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    account text DEFAULT 'oben'::text NOT NULL,
+    id_embalagem_sayersystem text NOT NULL,
+    descricao text,
+    volume_ml numeric NOT NULL,
+    created_at timestamp with time zone DEFAULT now()
+);
+
+
+--
+-- Name: tint_formula_itens; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.tint_formula_itens (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    formula_id uuid NOT NULL,
+    corante_id uuid NOT NULL,
+    ordem integer NOT NULL,
+    qtd_ml numeric NOT NULL,
+    created_at timestamp with time zone DEFAULT now()
+);
+
+
+--
+-- Name: tint_formulas; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.tint_formulas (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    account text DEFAULT 'oben'::text NOT NULL,
+    id_seq integer,
+    cor_id text NOT NULL,
+    nome_cor text NOT NULL,
+    produto_id uuid NOT NULL,
+    base_id uuid NOT NULL,
+    embalagem_id uuid NOT NULL,
+    subcolecao_id uuid,
+    sku_id uuid,
+    volume_final_ml numeric,
+    preco_final_sayersystem numeric,
+    data_geracao timestamp with time zone,
+    personalizada boolean DEFAULT false,
+    importacao_id uuid,
+    created_at timestamp with time zone DEFAULT now(),
+    updated_at timestamp with time zone DEFAULT now()
+);
+
+
+--
+-- Name: tint_importacoes; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.tint_importacoes (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    account text DEFAULT 'oben'::text NOT NULL,
+    tipo text NOT NULL,
+    arquivo_nome text NOT NULL,
+    arquivo_hash text NOT NULL,
+    total_registros integer,
+    registros_importados integer,
+    registros_atualizados integer,
+    registros_erro integer,
+    status text DEFAULT 'processando'::text,
+    erros_detalhe jsonb,
+    importado_por uuid,
+    created_at timestamp with time zone DEFAULT now()
+);
+
+
+--
+-- Name: tint_integration_settings; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.tint_integration_settings (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    account text NOT NULL,
+    store_code text NOT NULL,
+    store_name text,
+    integration_mode public.tint_integration_mode DEFAULT 'csv_only'::public.tint_integration_mode NOT NULL,
+    sync_token text DEFAULT encode(extensions.gen_random_bytes(32), 'hex'::text) NOT NULL,
+    sync_enabled boolean DEFAULT false NOT NULL,
+    last_heartbeat_at timestamp with time zone,
+    agent_version text,
+    agent_hostname text,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    updated_at timestamp with time zone DEFAULT now() NOT NULL
+);
+
+
+--
+-- Name: tint_produtos; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.tint_produtos (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    account text DEFAULT 'oben'::text NOT NULL,
+    cod_produto text NOT NULL,
+    descricao text NOT NULL,
+    created_at timestamp with time zone DEFAULT now()
+);
+
+
+--
+-- Name: tint_reconciliation_items; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.tint_reconciliation_items (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    reconciliation_run_id uuid NOT NULL,
+    entity_type text NOT NULL,
+    entity_key text NOT NULL,
+    csv_value jsonb,
+    sync_value jsonb,
+    diff_type text NOT NULL,
+    diff_fields text[],
+    diff_details jsonb,
+    resolved boolean DEFAULT false,
+    resolved_at timestamp with time zone,
+    resolved_by uuid,
+    created_at timestamp with time zone DEFAULT now() NOT NULL
+);
+
+
+--
+-- Name: tint_reconciliation_runs; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.tint_reconciliation_runs (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    account text NOT NULL,
+    store_code text NOT NULL,
+    sync_run_id uuid,
+    status text DEFAULT 'running'::text NOT NULL,
+    started_at timestamp with time zone DEFAULT now() NOT NULL,
+    completed_at timestamp with time zone,
+    total_compared integer DEFAULT 0,
+    matches integer DEFAULT 0,
+    divergences integer DEFAULT 0,
+    only_csv integer DEFAULT 0,
+    only_sync integer DEFAULT 0,
+    created_at timestamp with time zone DEFAULT now() NOT NULL
+);
+
+
+--
+-- Name: tint_skus; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.tint_skus (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    account text DEFAULT 'oben'::text NOT NULL,
+    produto_id uuid NOT NULL,
+    base_id uuid NOT NULL,
+    embalagem_id uuid NOT NULL,
+    omie_product_id uuid,
+    imposto_pct numeric DEFAULT 0,
+    margem_pct numeric DEFAULT 0,
+    codigo_etiqueta text,
+    ativo boolean DEFAULT true,
+    created_at timestamp with time zone DEFAULT now(),
+    updated_at timestamp with time zone DEFAULT now()
+);
+
+
+--
+-- Name: tint_staging_bases; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.tint_staging_bases (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    sync_run_id uuid NOT NULL,
+    account text NOT NULL,
+    store_code text NOT NULL,
+    id_base_sayersystem text NOT NULL,
+    descricao text,
+    raw_data jsonb,
+    staging_status text DEFAULT 'pending'::text NOT NULL,
+    matched_id uuid,
+    created_at timestamp with time zone DEFAULT now() NOT NULL
+);
+
+
+--
+-- Name: tint_staging_corantes; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.tint_staging_corantes (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    sync_run_id uuid NOT NULL,
+    account text NOT NULL,
+    store_code text NOT NULL,
+    id_corante_sayersystem text NOT NULL,
+    descricao text,
+    preco_litro numeric,
+    raw_data jsonb,
+    staging_status text DEFAULT 'pending'::text NOT NULL,
+    matched_id uuid,
+    created_at timestamp with time zone DEFAULT now() NOT NULL
+);
+
+
+--
+-- Name: tint_staging_cores_catalogo; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.tint_staging_cores_catalogo (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    sync_run_id uuid NOT NULL,
+    account text NOT NULL,
+    store_code text NOT NULL,
+    cor_id text NOT NULL,
+    nome_cor text,
+    colecao text,
+    subcolecao text,
+    raw_data jsonb,
+    staging_status text DEFAULT 'pending'::text NOT NULL,
+    created_at timestamp with time zone DEFAULT now() NOT NULL
+);
+
+
+--
+-- Name: tint_staging_cores_personalizadas; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.tint_staging_cores_personalizadas (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    sync_run_id uuid NOT NULL,
+    account text NOT NULL,
+    store_code text NOT NULL,
+    cor_id text NOT NULL,
+    nome_cor text,
+    cliente text,
+    raw_data jsonb,
+    staging_status text DEFAULT 'pending'::text NOT NULL,
+    created_at timestamp with time zone DEFAULT now() NOT NULL
+);
+
+
+--
+-- Name: tint_staging_embalagens; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.tint_staging_embalagens (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    sync_run_id uuid NOT NULL,
+    account text NOT NULL,
+    store_code text NOT NULL,
+    id_embalagem_sayersystem text NOT NULL,
+    descricao text,
+    volume_ml numeric,
+    raw_data jsonb,
+    staging_status text DEFAULT 'pending'::text NOT NULL,
+    matched_id uuid,
+    created_at timestamp with time zone DEFAULT now() NOT NULL
+);
+
+
+--
+-- Name: tint_staging_formula_itens; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.tint_staging_formula_itens (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    sync_run_id uuid NOT NULL,
+    staging_formula_id uuid,
+    id_corante text NOT NULL,
+    ordem integer,
+    qtd_ml numeric,
+    created_at timestamp with time zone DEFAULT now() NOT NULL
+);
+
+
+--
+-- Name: tint_staging_formulas; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.tint_staging_formulas (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    sync_run_id uuid NOT NULL,
+    account text NOT NULL,
+    store_code text NOT NULL,
+    cor_id text NOT NULL,
+    nome_cor text,
+    cod_produto text,
+    id_base text,
+    id_embalagem text,
+    subcolecao text,
+    volume_final_ml numeric,
+    preco_final numeric,
+    personalizada boolean DEFAULT false,
+    raw_data jsonb,
+    staging_status text DEFAULT 'pending'::text NOT NULL,
+    matched_id uuid,
+    created_at timestamp with time zone DEFAULT now() NOT NULL
+);
+
+
+--
+-- Name: tint_staging_preparacao_itens; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.tint_staging_preparacao_itens (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    sync_run_id uuid NOT NULL,
+    staging_preparacao_id uuid,
+    id_corante text NOT NULL,
+    ordem integer,
+    qtd_ml numeric,
+    created_at timestamp with time zone DEFAULT now() NOT NULL
+);
+
+
+--
+-- Name: tint_staging_preparacoes; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.tint_staging_preparacoes (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    sync_run_id uuid NOT NULL,
+    account text NOT NULL,
+    store_code text NOT NULL,
+    preparacao_id text NOT NULL,
+    cor_id text,
+    nome_cor text,
+    cod_produto text,
+    id_base text,
+    id_embalagem text,
+    volume_ml numeric,
+    preco numeric,
+    cliente text,
+    data_preparacao timestamp with time zone,
+    personalizada boolean DEFAULT false,
+    raw_data jsonb,
+    staging_status text DEFAULT 'pending'::text NOT NULL,
+    created_at timestamp with time zone DEFAULT now() NOT NULL
+);
+
+
+--
+-- Name: tint_staging_produtos; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.tint_staging_produtos (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    sync_run_id uuid NOT NULL,
+    account text NOT NULL,
+    store_code text NOT NULL,
+    cod_produto text NOT NULL,
+    descricao text,
+    raw_data jsonb,
+    staging_status text DEFAULT 'pending'::text NOT NULL,
+    matched_id uuid,
+    created_at timestamp with time zone DEFAULT now() NOT NULL
+);
+
+
+--
+-- Name: tint_staging_skus; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.tint_staging_skus (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    sync_run_id uuid NOT NULL,
+    account text NOT NULL,
+    store_code text NOT NULL,
+    cod_produto text NOT NULL,
+    id_base text NOT NULL,
+    id_embalagem text NOT NULL,
+    raw_data jsonb,
+    staging_status text DEFAULT 'pending'::text NOT NULL,
+    matched_id uuid,
+    created_at timestamp with time zone DEFAULT now() NOT NULL
+);
+
+
+--
+-- Name: tint_subcolecoes; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.tint_subcolecoes (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    account text DEFAULT 'oben'::text NOT NULL,
+    colecao_id uuid,
+    id_subcolecao_sayersystem text,
+    descricao text NOT NULL,
+    created_at timestamp with time zone DEFAULT now()
+);
+
+
+--
+-- Name: tint_sync_errors; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.tint_sync_errors (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    sync_run_id uuid NOT NULL,
+    entity_type text NOT NULL,
+    entity_id text,
+    error_message text NOT NULL,
+    error_details jsonb,
+    raw_data jsonb,
+    created_at timestamp with time zone DEFAULT now() NOT NULL
+);
+
+
+--
+-- Name: tint_sync_runs; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.tint_sync_runs (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    setting_id uuid NOT NULL,
+    account text NOT NULL,
+    store_code text NOT NULL,
+    sync_type text DEFAULT 'incremental'::text NOT NULL,
+    status text DEFAULT 'running'::text NOT NULL,
+    started_at timestamp with time zone DEFAULT now() NOT NULL,
+    completed_at timestamp with time zone,
+    duration_ms integer,
+    total_records integer DEFAULT 0,
+    inserts integer DEFAULT 0,
+    updates integer DEFAULT 0,
+    deletes integer DEFAULT 0,
+    errors integer DEFAULT 0,
+    source text DEFAULT 'agent'::text NOT NULL,
+    metadata jsonb,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    idempotency_key text,
+    idempotency_response jsonb
+);
+
+
+--
+-- Name: tint_vendas; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.tint_vendas (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    account text DEFAULT 'oben'::text NOT NULL,
+    id_venda_sayersystem text,
+    data_venda timestamp with time zone NOT NULL,
+    operador text,
+    origem text DEFAULT 'manual'::text,
+    created_at timestamp with time zone DEFAULT now()
+);
+
+
+--
+-- Name: tint_vendas_itens; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.tint_vendas_itens (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    venda_id uuid NOT NULL,
+    formula_id uuid,
+    sku_id uuid,
+    cor_id text,
+    nome_cor text,
+    volume_dosado_ml numeric,
+    preco_praticado numeric,
+    personalizada boolean DEFAULT false,
+    created_at timestamp with time zone DEFAULT now()
+);
+
+
+--
+-- Name: tool_categories; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.tool_categories (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    name text NOT NULL,
+    description text,
+    icon text,
+    usage_type text DEFAULT 'domestic'::text NOT NULL,
+    suggested_interval_days integer DEFAULT 90,
+    created_at timestamp with time zone DEFAULT now() NOT NULL
+);
+
+
+--
+-- Name: tool_events; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.tool_events (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    user_tool_id uuid NOT NULL,
+    event_type text NOT NULL,
+    description text,
+    metadata jsonb DEFAULT '{}'::jsonb,
+    order_id uuid,
+    performed_by uuid,
+    created_at timestamp with time zone DEFAULT now() NOT NULL
+);
+
+
+--
+-- Name: tool_specifications; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.tool_specifications (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    tool_category_id uuid,
+    spec_key text NOT NULL,
+    spec_label text NOT NULL,
+    spec_type text DEFAULT 'select'::text NOT NULL,
+    options jsonb,
+    is_required boolean DEFAULT true,
+    display_order integer DEFAULT 0,
+    created_at timestamp with time zone DEFAULT now() NOT NULL
+);
+
+
+--
+-- Name: training_completions; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.training_completions (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    user_id uuid NOT NULL,
+    module_id uuid NOT NULL,
+    quiz_score integer DEFAULT 0 NOT NULL,
+    passed boolean DEFAULT false NOT NULL,
+    completed_at timestamp with time zone DEFAULT now() NOT NULL
+);
+
+
+--
+-- Name: training_modules; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.training_modules (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    title text NOT NULL,
+    description text,
+    video_url text,
+    quiz_questions jsonb DEFAULT '[]'::jsonb NOT NULL,
+    min_score integer DEFAULT 60 NOT NULL,
+    points_reward integer DEFAULT 15 NOT NULL,
+    is_active boolean DEFAULT true NOT NULL,
+    created_at timestamp with time zone DEFAULT now() NOT NULL
+);
+
+
+--
+-- Name: user_departments; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.user_departments (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    user_id uuid NOT NULL,
+    department public.department NOT NULL,
+    primary_dept boolean DEFAULT true NOT NULL,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    created_by uuid
+);
+
+
+--
+-- Name: user_roles; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.user_roles (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    user_id uuid NOT NULL,
+    role public.app_role DEFAULT 'customer'::public.app_role NOT NULL,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    updated_at timestamp with time zone DEFAULT now() NOT NULL
+);
+
+
+--
+-- Name: user_tools; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.user_tools (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    user_id uuid NOT NULL,
+    tool_category_id uuid NOT NULL,
+    custom_name text,
+    quantity integer DEFAULT 1,
+    last_sharpened_at timestamp with time zone,
+    next_sharpening_due timestamp with time zone,
+    sharpening_interval_days integer,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    updated_at timestamp with time zone DEFAULT now() NOT NULL,
+    specifications jsonb DEFAULT '{}'::jsonb,
+    generated_name text,
+    internal_code text
+);
+
+
+--
+-- Name: v_cron_jobs_falhas; Type: VIEW; Schema: public; Owner: -
+--
+
+CREATE VIEW public.v_cron_jobs_falhas WITH (security_invoker='on') AS
+ SELECT j.jobname,
+    jrd.jobid,
+    jrd.runid,
+    jrd.start_time,
+    jrd.end_time,
+    (EXTRACT(epoch FROM (jrd.end_time - jrd.start_time)))::numeric(10,2) AS duracao_segundos,
+    jrd.return_message,
+    jrd.status
+   FROM (cron.job_run_details jrd
+     JOIN cron.job j ON ((j.jobid = jrd.jobid)))
+  WHERE ((jrd.status = 'failed'::text) AND (jrd.start_time > (now() - '7 days'::interval)) AND (j.jobname ~~ 'afiacao_%'::text))
+  ORDER BY jrd.start_time DESC;
+
+
+--
+-- Name: VIEW v_cron_jobs_falhas; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON VIEW public.v_cron_jobs_falhas IS 'Execuções de cron jobs que falharam nos últimos 7 dias. Se esta view retornar linhas, investigar return_message para entender a causa.';
+
+
+--
+-- Name: v_cron_jobs_status; Type: VIEW; Schema: public; Owner: -
+--
+
+CREATE VIEW public.v_cron_jobs_status WITH (security_invoker='on') AS
+ WITH ultima_execucao AS (
+         SELECT DISTINCT ON (job_run_details.jobid) job_run_details.jobid,
+            job_run_details.start_time,
+            job_run_details.end_time,
+            job_run_details.status,
+            job_run_details.return_message,
+            EXTRACT(epoch FROM (job_run_details.end_time - job_run_details.start_time)) AS duracao_segundos
+           FROM cron.job_run_details
+          WHERE (job_run_details.start_time > (now() - '30 days'::interval))
+          ORDER BY job_run_details.jobid, job_run_details.start_time DESC
+        ), historico_7d AS (
+         SELECT job_run_details.jobid,
+            count(*) AS execucoes_7d,
+            count(*) FILTER (WHERE (job_run_details.status = 'succeeded'::text)) AS sucessos_7d,
+            count(*) FILTER (WHERE (job_run_details.status = 'failed'::text)) AS falhas_7d,
+            (avg(EXTRACT(epoch FROM (job_run_details.end_time - job_run_details.start_time))))::numeric(10,2) AS duracao_media_segundos
+           FROM cron.job_run_details
+          WHERE (job_run_details.start_time > (now() - '7 days'::interval))
+          GROUP BY job_run_details.jobid
+        )
+ SELECT j.jobid,
+    j.jobname,
+    j.schedule,
+    j.command,
+    j.active,
+    ue.start_time AS ultima_execucao,
+    ue.status AS ultimo_status,
+    ue.duracao_segundos AS ultima_duracao_seg,
+    ue.return_message AS ultima_mensagem,
+    h.execucoes_7d,
+    h.sucessos_7d,
+    h.falhas_7d,
+    h.duracao_media_segundos
+   FROM ((cron.job j
+     LEFT JOIN ultima_execucao ue ON ((ue.jobid = j.jobid)))
+     LEFT JOIN historico_7d h ON ((h.jobid = j.jobid)))
+  WHERE (j.jobname ~~ 'afiacao_%'::text)
+  ORDER BY j.jobname;
+
+
+--
+-- Name: VIEW v_cron_jobs_status; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON VIEW public.v_cron_jobs_status IS 'Monitoramento de cron jobs do Afiação. Mostra última execução, status, duração e histórico dos últimos 7 dias. Útil para diagnosticar se algum job parou de rodar ou está falhando.';
+
+
+--
+-- Name: v_des_checkin_atual; Type: VIEW; Schema: public; Owner: -
+--
+
+CREATE VIEW public.v_des_checkin_atual WITH (security_invoker='on') AS
+ WITH checkin_mais_recente AS (
+         SELECT DISTINCT ON (des_checkin_qualitativo.empresa, des_checkin_qualitativo.ano, des_checkin_qualitativo.trimestre) des_checkin_qualitativo.id,
+            des_checkin_qualitativo.empresa,
+            des_checkin_qualitativo.ano,
+            des_checkin_qualitativo.trimestre,
+            des_checkin_qualitativo.data_avaliacao,
+            des_checkin_qualitativo.tipo,
+            des_checkin_qualitativo.avaliado_com,
+            des_checkin_qualitativo.avaliado_por,
+            des_checkin_qualitativo.observacoes_gerais
+           FROM public.des_checkin_qualitativo
+          ORDER BY des_checkin_qualitativo.empresa, des_checkin_qualitativo.ano, des_checkin_qualitativo.trimestre, des_checkin_qualitativo.data_avaliacao DESC, des_checkin_qualitativo.criado_em DESC
+        )
+ SELECT cr.empresa,
+    cr.ano,
+    cr.trimestre,
+    cr.id AS checkin_id,
+    cr.data_avaliacao,
+    cr.tipo,
+    cr.avaliado_com,
+    cr.avaliado_por,
+    cq.codigo,
+    cq.nome,
+    cq.tipo AS criterio_tipo,
+    COALESCE(cr_resp.atingido, false) AS atingido,
+    cr_resp.observacao AS observacao_criterio
+   FROM ((checkin_mais_recente cr
+     CROSS JOIN public.des_criterio_qualitativo cq)
+     LEFT JOIN public.des_checkin_qualitativo_resposta cr_resp ON (((cr_resp.checkin_id = cr.id) AND (cr_resp.criterio_id = cq.id))))
+  WHERE (cq.contrato_versao_id = ( SELECT des_contrato_versao.id
+           FROM public.des_contrato_versao
+          WHERE (des_contrato_versao.versao = '2026'::text)));
+
+
+--
+-- Name: v_des_pedidos_em_transito; Type: VIEW; Schema: public; Owner: -
+--
+
+CREATE VIEW public.v_des_pedidos_em_transito WITH (security_invoker='on') AS
+ WITH trimestre_info AS (
+         SELECT (EXTRACT(year FROM CURRENT_DATE))::integer AS ano_atual,
+            (EXTRACT(quarter FROM CURRENT_DATE))::integer AS trimestre_atual,
+            (date_trunc('quarter'::text, (CURRENT_DATE)::timestamp with time zone))::date AS inicio_trimestre,
+            ((date_trunc('quarter'::text, (CURRENT_DATE)::timestamp with time zone) + '3 mons -1 days'::interval))::date AS fim_trimestre
+        ), pedidos AS (
+         SELECT pcs.id AS pedido_id,
+            pcs.empresa,
+            pcs.fornecedor_nome,
+            pcs.grupo_codigo,
+            pcs.data_ciclo,
+            pcs.horario_disparo_real,
+            pcs.valor_total,
+            pcs.status,
+            pcs.tipo_ciclo,
+            COALESCE((pcs.horario_disparo_real)::date, pcs.data_ciclo) AS data_emissao,
+            public.des_data_faturamento_prevista(COALESCE((pcs.horario_disparo_real)::date, pcs.data_ciclo), pcs.grupo_codigo, pcs.empresa) AS data_faturamento_prevista
+           FROM public.pedido_compra_sugerido pcs
+          WHERE ((pcs.fornecedor_nome = 'RENNER SAYERLACK S/A'::text) AND (pcs.status = ANY (ARRAY['pendente_aprovacao'::text, 'aprovado'::text, 'disparado'::text])))
+        )
+ SELECT p.pedido_id,
+    p.empresa,
+    p.fornecedor_nome,
+    p.grupo_codigo,
+    p.data_ciclo,
+    p.horario_disparo_real,
+    p.valor_total,
+    p.status,
+    p.tipo_ciclo,
+    p.data_emissao,
+    p.data_faturamento_prevista,
+    ti.ano_atual,
+    ti.trimestre_atual,
+    ti.inicio_trimestre,
+    ti.fim_trimestre,
+    ((p.data_faturamento_prevista >= ti.inicio_trimestre) AND (p.data_faturamento_prevista <= ti.fim_trimestre)) AS fatura_no_trimestre,
+        CASE
+            WHEN (p.data_faturamento_prevista > ti.fim_trimestre) THEN 'fora'::text
+            WHEN (((ti.fim_trimestre - p.data_emissao))::numeric >= (((COALESCE(( SELECT fgp.lt_producao_dias
+               FROM public.fornecedor_grupo_producao fgp
+              WHERE (fgp.grupo_codigo = p.grupo_codigo)
+             LIMIT 1), 8))::numeric * 1.4) * 1.2)) THEN 'verde'::text
+            WHEN (((ti.fim_trimestre - p.data_emissao))::numeric >= ((COALESCE(( SELECT fgp.lt_producao_dias
+               FROM public.fornecedor_grupo_producao fgp
+              WHERE (fgp.grupo_codigo = p.grupo_codigo)
+             LIMIT 1), 8))::numeric * 1.4)) THEN 'amarelo'::text
+            ELSE 'vermelho'::text
+        END AS zona_confianca
+   FROM (pedidos p
+     CROSS JOIN trimestre_info ti);
+
+
+--
+-- Name: VIEW v_des_pedidos_em_transito; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON VIEW public.v_des_pedidos_em_transito IS 'Pedidos Sayerlack ainda não faturados. Mostra a data prevista de faturamento e se cai dentro do trimestre corrente. Zona de confiança sinaliza o risco de o faturamento escapar para o próximo trimestre.';
+
+
+--
+-- Name: v_des_snapshot_mais_recente; Type: VIEW; Schema: public; Owner: -
+--
+
+CREATE VIEW public.v_des_snapshot_mais_recente WITH (security_invoker='on') AS
+ SELECT DISTINCT ON (empresa, ano, trimestre) id,
+    empresa,
+    ano,
+    trimestre,
+    data_referencia,
+    objetivo_valor,
+    fat_bruto_valor,
+    objetivo_qtde,
+    fat_bruto_qtde,
+    pedidos_abertos_valor,
+    pedidos_abertos_qtde,
+    criado_em
+   FROM public.des_trimestre_snapshot
+  ORDER BY empresa, ano, trimestre, data_referencia DESC;
+
+
+--
+-- Name: v_des_posicao_trimestre_ao_vivo; Type: VIEW; Schema: public; Owner: -
+--
+
+CREATE VIEW public.v_des_posicao_trimestre_ao_vivo WITH (security_invoker='on') AS
+ WITH snapshot AS (
+         SELECT v_des_snapshot_mais_recente.empresa,
+            v_des_snapshot_mais_recente.ano,
+            v_des_snapshot_mais_recente.trimestre,
+            v_des_snapshot_mais_recente.data_referencia,
+            v_des_snapshot_mais_recente.objetivo_valor,
+            v_des_snapshot_mais_recente.fat_bruto_valor,
+            v_des_snapshot_mais_recente.pedidos_abertos_valor
+           FROM public.v_des_snapshot_mais_recente
+        ), pedidos_apos_snapshot AS (
+         SELECT t.empresa,
+            t.ano_atual AS ano,
+            t.trimestre_atual AS trimestre,
+            sum(
+                CASE
+                    WHEN (t.fatura_no_trimestre AND (t.zona_confianca = ANY (ARRAY['verde'::text, 'amarelo'::text]))) THEN t.valor_total
+                    ELSE (0)::numeric
+                END) AS valor_em_transito_seguro,
+            sum(
+                CASE
+                    WHEN (t.fatura_no_trimestre AND (t.zona_confianca = 'vermelho'::text)) THEN t.valor_total
+                    ELSE (0)::numeric
+                END) AS valor_em_transito_risco,
+            sum(
+                CASE
+                    WHEN (NOT t.fatura_no_trimestre) THEN t.valor_total
+                    ELSE (0)::numeric
+                END) AS valor_fora_trimestre,
+            count(*) FILTER (WHERE t.fatura_no_trimestre) AS pedidos_no_trimestre,
+            count(*) FILTER (WHERE (NOT t.fatura_no_trimestre)) AS pedidos_fora_trimestre
+           FROM (public.v_des_pedidos_em_transito t
+             LEFT JOIN snapshot s_1 ON (((s_1.empresa = t.empresa) AND (s_1.ano = t.ano_atual) AND (s_1.trimestre = t.trimestre_atual))))
+          WHERE (t.data_emissao > COALESCE(s_1.data_referencia, '1900-01-01'::date))
+          GROUP BY t.empresa, t.ano_atual, t.trimestre_atual
+        ), meta AS (
+         SELECT des_meta_empresa.empresa,
+            des_meta_empresa.ano,
+            des_meta_empresa.trimestre,
+            des_meta_empresa.meta_faturamento,
+            des_meta_empresa.faixa_des_objetivo
+           FROM public.des_meta_empresa
+        )
+ SELECT COALESCE(s.empresa, p.empresa, m.empresa) AS empresa,
+    COALESCE(s.ano, p.ano, m.ano) AS ano,
+    COALESCE(s.trimestre, p.trimestre, m.trimestre) AS trimestre,
+    s.data_referencia AS gooddata_data_referencia,
+    s.objetivo_valor AS gooddata_objetivo,
+    s.fat_bruto_valor AS fat_bruto_confirmado,
+    s.pedidos_abertos_valor AS gooddata_pedidos_abertos,
+    m.meta_faturamento AS meta_pessoal,
+    m.faixa_des_objetivo AS faixa_des_alvo,
+    COALESCE(p.valor_em_transito_seguro, (0)::numeric) AS valor_em_transito_seguro,
+    COALESCE(p.valor_em_transito_risco, (0)::numeric) AS valor_em_transito_risco,
+    COALESCE(p.valor_fora_trimestre, (0)::numeric) AS valor_fora_trimestre,
+    COALESCE(p.pedidos_no_trimestre, (0)::bigint) AS qtd_pedidos_no_trimestre,
+    COALESCE(p.pedidos_fora_trimestre, (0)::bigint) AS qtd_pedidos_fora_trimestre,
+    round((COALESCE(s.fat_bruto_valor, (0)::numeric) + COALESCE(p.valor_em_transito_seguro, (0)::numeric)), 2) AS posicao_ao_vivo_conservadora,
+    round(((COALESCE(s.fat_bruto_valor, (0)::numeric) + COALESCE(p.valor_em_transito_seguro, (0)::numeric)) + COALESCE(p.valor_em_transito_risco, (0)::numeric)), 2) AS posicao_ao_vivo_otimista,
+    ( SELECT row_to_json(r.*) AS row_to_json
+           FROM ( SELECT des_determinar_faixa.faixa_id,
+                    des_determinar_faixa.faixa_numero,
+                    des_determinar_faixa.estrelas,
+                    des_determinar_faixa.desconto_padrao_perc,
+                    des_determinar_faixa.volume_min,
+                    des_determinar_faixa.volume_max
+                   FROM public.des_determinar_faixa((COALESCE(s.fat_bruto_valor, (0)::numeric) + COALESCE(p.valor_em_transito_seguro, (0)::numeric))) des_determinar_faixa(faixa_id, faixa_numero, estrelas, desconto_padrao_perc, volume_min, volume_max)) r) AS faixa_conservadora,
+    ( SELECT row_to_json(r.*) AS row_to_json
+           FROM ( SELECT des_determinar_faixa.faixa_id,
+                    des_determinar_faixa.faixa_numero,
+                    des_determinar_faixa.estrelas,
+                    des_determinar_faixa.desconto_padrao_perc,
+                    des_determinar_faixa.volume_min,
+                    des_determinar_faixa.volume_max
+                   FROM public.des_determinar_faixa(((COALESCE(s.fat_bruto_valor, (0)::numeric) + COALESCE(p.valor_em_transito_seguro, (0)::numeric)) + COALESCE(p.valor_em_transito_risco, (0)::numeric))) des_determinar_faixa(faixa_id, faixa_numero, estrelas, desconto_padrao_perc, volume_min, volume_max)) r) AS faixa_otimista,
+    round(GREATEST((0)::numeric, (COALESCE(m.meta_faturamento, (0)::numeric) - (COALESCE(s.fat_bruto_valor, (0)::numeric) + COALESCE(p.valor_em_transito_seguro, (0)::numeric)))), 2) AS gap_para_meta_pessoal,
+    CURRENT_DATE AS calculado_em,
+    (date_trunc('quarter'::text, (CURRENT_DATE)::timestamp with time zone))::date AS inicio_trimestre,
+    ((date_trunc('quarter'::text, (CURRENT_DATE)::timestamp with time zone) + '3 mons -1 days'::interval))::date AS fim_trimestre,
+    (((date_trunc('quarter'::text, (CURRENT_DATE)::timestamp with time zone) + '3 mons -1 days'::interval))::date - CURRENT_DATE) AS dias_restantes
+   FROM ((snapshot s
+     FULL JOIN pedidos_apos_snapshot p ON (((p.empresa = s.empresa) AND (p.ano = s.ano) AND (p.trimestre = s.trimestre))))
+     FULL JOIN meta m ON (((m.empresa = COALESCE(s.empresa, p.empresa)) AND (m.ano = COALESCE(s.ano, p.ano)) AND (m.trimestre = COALESCE(s.trimestre, p.trimestre)))));
+
+
+--
+-- Name: VIEW v_des_posicao_trimestre_ao_vivo; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON VIEW public.v_des_posicao_trimestre_ao_vivo IS 'Posição atualizada do trimestre. Soma snapshot GoodData (verdade até sábado anterior) com pedidos Omie emitidos depois. Versões conservadora (apenas pedidos com zona segura) e otimista (inclui zona de risco). Gap para meta pessoal e faixa atingida calculados a partir dessas.';
+
+
+--
+-- Name: v_des_desconto_por_checkin; Type: VIEW; Schema: public; Owner: -
+--
+
+CREATE VIEW public.v_des_desconto_por_checkin WITH (security_invoker='on') AS
+ WITH checkin_com_faixa AS (
+         SELECT vca.empresa,
+            vca.ano,
+            vca.trimestre,
+            vca.checkin_id,
+            vca.data_avaliacao,
+            vca.tipo,
+            vca.codigo AS criterio_codigo,
+            vca.nome AS criterio_nome,
+            vca.criterio_tipo,
+            vca.atingido,
+            cp.percentual AS percentual_da_faixa,
+            ((vptr.faixa_conservadora ->> 'faixa_id'::text))::bigint AS faixa_id,
+            ((vptr.faixa_conservadora ->> 'faixa_numero'::text))::integer AS faixa_numero,
+            ((vptr.faixa_conservadora ->> 'estrelas'::text))::integer AS estrelas,
+            ((vptr.faixa_conservadora ->> 'desconto_padrao_perc'::text))::numeric AS desconto_padrao
+           FROM (((public.v_des_checkin_atual vca
+             LEFT JOIN public.v_des_posicao_trimestre_ao_vivo vptr ON (((vptr.empresa = vca.empresa) AND (vptr.ano = vca.ano) AND (vptr.trimestre = vca.trimestre))))
+             LEFT JOIN public.des_criterio_qualitativo cq_full ON (((cq_full.codigo = vca.codigo) AND (cq_full.contrato_versao_id = ( SELECT des_contrato_versao.id
+                   FROM public.des_contrato_versao
+                  WHERE (des_contrato_versao.versao = '2026'::text))))))
+             LEFT JOIN public.des_criterio_percentual cp ON (((cp.criterio_id = cq_full.id) AND (cp.faixa_id = ((vptr.faixa_conservadora ->> 'faixa_id'::text))::bigint))))
+        )
+ SELECT empresa,
+    ano,
+    trimestre,
+    checkin_id,
+    data_avaliacao,
+    tipo,
+    faixa_numero,
+    estrelas,
+    desconto_padrao,
+    sum(
+        CASE
+            WHEN ((criterio_tipo = 'qualitativo'::text) AND atingido) THEN percentual_da_faixa
+            ELSE (0)::numeric
+        END) AS qualitativos_atingidos_perc,
+    sum(
+        CASE
+            WHEN ((criterio_tipo = 'bonus'::text) AND atingido) THEN percentual_da_faixa
+            ELSE (0)::numeric
+        END) AS bonus_atingido_perc,
+    round(((desconto_padrao + sum(
+        CASE
+            WHEN ((criterio_tipo = 'qualitativo'::text) AND atingido) THEN percentual_da_faixa
+            ELSE (0)::numeric
+        END)) + sum(
+        CASE
+            WHEN ((criterio_tipo = 'bonus'::text) AND atingido) THEN percentual_da_faixa
+            ELSE (0)::numeric
+        END)), 2) AS desconto_total_projetado,
+    (desconto_padrao + ( SELECT sum(cp2.percentual) AS sum
+           FROM (public.des_criterio_percentual cp2
+             JOIN public.des_criterio_qualitativo cq2 ON ((cq2.id = cp2.criterio_id)))
+          WHERE (cp2.faixa_id = cp2.faixa_id))) AS desconto_total_maximo
+   FROM checkin_com_faixa
+  WHERE (faixa_id IS NOT NULL)
+  GROUP BY empresa, ano, trimestre, checkin_id, data_avaliacao, tipo, faixa_id, faixa_numero, estrelas, desconto_padrao;
+
+
+--
+-- Name: v_desconto_flat_condicional_ativo; Type: VIEW; Schema: public; Owner: -
+--
+
+CREATE VIEW public.v_desconto_flat_condicional_ativo WITH (security_invoker='on') AS
+ SELECT id AS campanha_id,
+    empresa,
+    fornecedor_nome,
+    nome,
+    tipo_origem,
+    estado,
+    data_inicio,
+    data_fim,
+    data_corte_pedido,
+    responsavel_oferta_nome,
+    responsavel_oferta_email,
+    canal_oferta,
+    data_oferta,
+    volume_minimo_condicional,
+    volume_minimo_unidade,
+    status_aceite,
+    observacoes_negociacao,
+    ( SELECT count(*) AS count
+           FROM public.promocao_item pi
+          WHERE ((pi.campanha_id = pc.id) AND pi.ativo)) AS qtd_itens,
+    (data_fim - CURRENT_DATE) AS dias_restantes,
+        CASE
+            WHEN (data_fim < CURRENT_DATE) THEN 'expirada'::text
+            WHEN ((data_fim - CURRENT_DATE) <= 3) THEN 'urgente'::text
+            WHEN ((data_fim - CURRENT_DATE) <= 7) THEN 'atencao'::text
+            ELSE 'confortavel'::text
+        END AS urgencia
+   FROM public.promocao_campanha pc
+  WHERE ((tipo_origem = 'desconto_flat_condicional'::text) AND (estado = ANY (ARRAY['negociando'::text, 'ativa'::text, 'rascunho'::text])));
+
+
+--
+-- Name: v_envios_portal_status; Type: VIEW; Schema: public; Owner: -
+--
+
+CREATE VIEW public.v_envios_portal_status WITH (security_invoker='on') AS
+ SELECT (date_trunc('day'::text, COALESCE(enviado_portal_em, criado_em)))::date AS dia,
+    fornecedor_nome,
+    status_envio_portal,
+    count(*) AS total,
+    count(*) FILTER (WHERE (portal_tentativas >= 3)) AS esgotados,
+    (avg(portal_tentativas))::numeric(10,2) AS media_tentativas
+   FROM public.pedido_compra_sugerido
+  WHERE ((COALESCE(enviado_portal_em, criado_em) >= (now() - '30 days'::interval)) AND (status_envio_portal <> 'nao_aplicavel'::text))
+  GROUP BY ((date_trunc('day'::text, COALESCE(enviado_portal_em, criado_em)))::date), fornecedor_nome, status_envio_portal
+  ORDER BY ((date_trunc('day'::text, COALESCE(enviado_portal_em, criado_em)))::date) DESC, fornecedor_nome, status_envio_portal;
+
+
+--
+-- Name: v_fornecedor_lt_logistica_total; Type: VIEW; Schema: public; Owner: -
+--
+
+CREATE VIEW public.v_fornecedor_lt_logistica_total WITH (security_invoker='on') AS
+ SELECT empresa,
+    fornecedor_nome,
+    count(*) AS num_etapas,
+    sum(
+        CASE lt_unidade
+            WHEN 'uteis'::text THEN lt_dias
+            WHEN 'corridos'::text THEN (ceil(((lt_dias)::numeric * 0.7)))::integer
+            ELSE lt_dias
+        END) AS lt_logistica_total_dias_uteis,
+    string_agg(parceiro_nome, ' → '::text ORDER BY ordem) AS cadeia_descricao
+   FROM public.fornecedor_cadeia_logistica
+  WHERE ((ativo = true) AND ((valido_ate IS NULL) OR (valido_ate >= CURRENT_DATE)))
+  GROUP BY empresa, fornecedor_nome;
+
+
+--
+-- Name: v_sku_lt_teorico; Type: VIEW; Schema: public; Owner: -
+--
+
+CREATE VIEW public.v_sku_lt_teorico WITH (security_invoker='on') AS
+ SELECT sg.empresa,
+    sg.sku_codigo_omie,
+    sg.grupo_codigo,
+    gp.lt_producao_dias,
+    gp.lt_producao_unidade,
+    COALESCE(llt.lt_logistica_total_dias_uteis, (0)::bigint) AS lt_logistica_dias,
+    'uteis'::text AS lt_logistica_unidade,
+    llt.cadeia_descricao,
+    llt.num_etapas AS num_etapas_logistica,
+        CASE gp.lt_producao_unidade
+            WHEN 'uteis'::text THEN (gp.lt_producao_dias + COALESCE(llt.lt_logistica_total_dias_uteis, (0)::bigint))
+            WHEN 'corridos'::text THEN ((ceil(((gp.lt_producao_dias)::numeric * 0.7)))::integer + COALESCE(llt.lt_logistica_total_dias_uteis, (0)::bigint))
+            ELSE (gp.lt_producao_dias + COALESCE(llt.lt_logistica_total_dias_uteis, (0)::bigint))
+        END AS lt_total_teorico_dias_uteis,
+    gp.horario_corte
+   FROM (((public.sku_grupo_producao sg
+     JOIN public.sku_parametros sp ON (((sp.empresa = sg.empresa) AND ((sp.sku_codigo_omie)::text = sg.sku_codigo_omie))))
+     JOIN public.fornecedor_grupo_producao gp ON (((gp.empresa = sg.empresa) AND (gp.grupo_codigo = sg.grupo_codigo) AND (gp.fornecedor_nome = sp.fornecedor_nome))))
+     LEFT JOIN public.v_fornecedor_lt_logistica_total llt ON (((llt.empresa = sg.empresa) AND (llt.fornecedor_nome = sp.fornecedor_nome))));
+
+
+--
+-- Name: v_sku_sla_compliance; Type: VIEW; Schema: public; Owner: -
+--
+
+CREATE VIEW public.v_sku_sla_compliance WITH (security_invoker='on') AS
+ WITH lt_observado AS (
+         SELECT (sku_leadtime_history.empresa)::text AS empresa,
+            (sku_leadtime_history.sku_codigo_omie)::text AS sku_codigo_omie,
+            avg(sku_leadtime_history.lt_bruto_dias_uteis) AS lt_medio_observado,
+            stddev_samp(sku_leadtime_history.lt_bruto_dias_uteis) AS lt_desvio_observado,
+            percentile_cont((0.50)::double precision) WITHIN GROUP (ORDER BY ((sku_leadtime_history.lt_bruto_dias_uteis)::double precision)) AS lt_mediana_observada,
+            percentile_cont((0.95)::double precision) WITHIN GROUP (ORDER BY ((sku_leadtime_history.lt_bruto_dias_uteis)::double precision)) AS lt_p95_observado,
+            min(sku_leadtime_history.lt_bruto_dias_uteis) AS lt_min,
+            max(sku_leadtime_history.lt_bruto_dias_uteis) AS lt_max,
+            count(*) AS n_observacoes,
+            max((sku_leadtime_history.t4_data_recebimento)::date) AS ultimo_recebimento,
+            avg(sku_leadtime_history.lt_faturamento_dias_uteis) AS lt_faturamento_medio,
+            avg(sku_leadtime_history.lt_logistica_dias_uteis) AS lt_logistica_medio
+           FROM public.sku_leadtime_history
+          WHERE (sku_leadtime_history.lt_bruto_dias_uteis IS NOT NULL)
+          GROUP BY (sku_leadtime_history.empresa)::text, (sku_leadtime_history.sku_codigo_omie)::text
+        ), lt_recente AS (
+         SELECT (ranked.empresa)::text AS empresa,
+            (ranked.sku_codigo_omie)::text AS sku_codigo_omie,
+            avg(ranked.lt_bruto_dias_uteis) AS lt_medio_recente,
+            count(*) AS n_recentes
+           FROM ( SELECT slh.id,
+                    slh.tracking_id,
+                    slh.empresa,
+                    slh.sku_codigo_omie,
+                    slh.sku_codigo,
+                    slh.sku_descricao,
+                    slh.sku_unidade,
+                    slh.sku_ncm,
+                    slh.fornecedor_codigo_omie,
+                    slh.fornecedor_nome,
+                    slh.grupo_leadtime,
+                    slh.quantidade_pedida,
+                    slh.quantidade_recebida,
+                    slh.valor_unitario,
+                    slh.valor_total,
+                    slh.t1_data_pedido,
+                    slh.t2_data_faturamento,
+                    slh.t3_data_cte,
+                    slh.t4_data_recebimento,
+                    slh.lt_bruto_dias_uteis,
+                    slh.lt_faturamento_dias_uteis,
+                    slh.lt_logistica_dias_uteis,
+                    slh.created_at,
+                    slh.updated_at,
+                    row_number() OVER (PARTITION BY slh.empresa, slh.sku_codigo_omie ORDER BY slh.t4_data_recebimento DESC) AS rn
+                   FROM public.sku_leadtime_history slh
+                  WHERE (slh.lt_bruto_dias_uteis IS NOT NULL)) ranked
+          WHERE (ranked.rn <= 5)
+          GROUP BY (ranked.empresa)::text, (ranked.sku_codigo_omie)::text
+        )
+ SELECT sp.empresa,
+    (sp.sku_codigo_omie)::text AS sku_codigo_omie,
+    sp.sku_descricao,
+    sp.fornecedor_nome,
+    sg.grupo_codigo,
+    lts.lt_total_teorico_dias_uteis AS lt_teorico,
+    round(lo.lt_medio_observado, 2) AS lt_observado_medio,
+    round(lo.lt_desvio_observado, 2) AS lt_observado_desvio,
+    round((lo.lt_mediana_observada)::numeric, 1) AS lt_observado_mediana,
+    round((lo.lt_p95_observado)::numeric, 1) AS lt_observado_p95,
+    lo.lt_min,
+    lo.lt_max,
+    lo.n_observacoes,
+    lo.ultimo_recebimento,
+    round(lo.lt_faturamento_medio, 2) AS lt_faturamento_medio,
+    round(lo.lt_logistica_medio, 2) AS lt_logistica_medio,
+    round(lr.lt_medio_recente, 2) AS lt_recente_medio,
+    lr.n_recentes,
+    round((lo.lt_medio_observado - (lts.lt_total_teorico_dias_uteis)::numeric), 2) AS desvio_absoluto,
+    round((((lo.lt_medio_observado - (lts.lt_total_teorico_dias_uteis)::numeric) / (NULLIF(lts.lt_total_teorico_dias_uteis, 0))::numeric) * (100)::numeric), 1) AS desvio_perc,
+        CASE
+            WHEN ((lr.lt_medio_recente IS NULL) OR (lo.lt_medio_observado IS NULL)) THEN 'sem_dados'::text
+            WHEN (lr.lt_medio_recente < (lo.lt_medio_observado * 0.9)) THEN 'melhorando'::text
+            WHEN (lr.lt_medio_recente > (lo.lt_medio_observado * 1.1)) THEN 'piorando'::text
+            ELSE 'estavel'::text
+        END AS tendencia,
+        CASE
+            WHEN (lts.lt_total_teorico_dias_uteis IS NULL) THEN 'sem_sla_teorico'::text
+            WHEN ((lo.n_observacoes IS NULL) OR (lo.n_observacoes < 3)) THEN 'poucos_dados'::text
+            WHEN (lo.lt_medio_observado <= ((lts.lt_total_teorico_dias_uteis)::numeric * 1.05)) THEN 'cumprindo'::text
+            WHEN (lo.lt_medio_observado <= ((lts.lt_total_teorico_dias_uteis)::numeric * 1.20)) THEN 'limite'::text
+            WHEN (lo.lt_medio_observado <= ((lts.lt_total_teorico_dias_uteis)::numeric * 1.50)) THEN 'violando'::text
+            ELSE 'critico'::text
+        END AS status_sla
+   FROM ((((public.sku_parametros sp
+     LEFT JOIN public.sku_grupo_producao sg ON (((sg.empresa = sp.empresa) AND (sg.sku_codigo_omie = (sp.sku_codigo_omie)::text))))
+     LEFT JOIN public.v_sku_lt_teorico lts ON (((lts.empresa = sp.empresa) AND (lts.sku_codigo_omie = (sp.sku_codigo_omie)::text))))
+     LEFT JOIN lt_observado lo ON (((lo.empresa = sp.empresa) AND (lo.sku_codigo_omie = (sp.sku_codigo_omie)::text))))
+     LEFT JOIN lt_recente lr ON (((lr.empresa = sp.empresa) AND (lr.sku_codigo_omie = (sp.sku_codigo_omie)::text))))
+  ORDER BY
+        CASE
+            WHEN (lts.lt_total_teorico_dias_uteis IS NULL) THEN 5
+            WHEN ((lo.n_observacoes IS NULL) OR (lo.n_observacoes < 3)) THEN 4
+            WHEN (lo.lt_medio_observado <= ((lts.lt_total_teorico_dias_uteis)::numeric * 1.05)) THEN 3
+            WHEN (lo.lt_medio_observado <= ((lts.lt_total_teorico_dias_uteis)::numeric * 1.20)) THEN 2
+            ELSE 1
+        END, (round((((lo.lt_medio_observado - (lts.lt_total_teorico_dias_uteis)::numeric) / (NULLIF(lts.lt_total_teorico_dias_uteis, 0))::numeric) * (100)::numeric), 1)) DESC NULLS LAST;
+
+
+--
+-- Name: v_fornecedor_sla_compliance; Type: VIEW; Schema: public; Owner: -
+--
+
+CREATE VIEW public.v_fornecedor_sla_compliance WITH (security_invoker='on') AS
+ SELECT empresa,
+    fornecedor_nome,
+    count(*) AS skus_total,
+    count(*) FILTER (WHERE (status_sla = 'cumprindo'::text)) AS skus_cumprindo,
+    count(*) FILTER (WHERE (status_sla = 'limite'::text)) AS skus_limite,
+    count(*) FILTER (WHERE (status_sla = 'violando'::text)) AS skus_violando,
+    count(*) FILTER (WHERE (status_sla = 'critico'::text)) AS skus_criticos,
+    round(avg(desvio_perc), 1) AS desvio_medio_perc,
+    round(avg(lt_observado_medio), 2) AS lt_medio_observado_agregado,
+    round(avg(lt_teorico), 2) AS lt_teorico_agregado,
+    round(((100.0 * (count(*) FILTER (WHERE (status_sla = 'cumprindo'::text)))::numeric) / (NULLIF(count(*) FILTER (WHERE (status_sla = ANY (ARRAY['cumprindo'::text, 'limite'::text, 'violando'::text, 'critico'::text]))), 0))::numeric), 1) AS perc_sla_compliance
+   FROM public.v_sku_sla_compliance
+  WHERE (status_sla = ANY (ARRAY['cumprindo'::text, 'limite'::text, 'violando'::text, 'critico'::text]))
+  GROUP BY empresa, fornecedor_nome
+  ORDER BY (round(((100.0 * (count(*) FILTER (WHERE (status_sla = 'cumprindo'::text)))::numeric) / (NULLIF(count(*) FILTER (WHERE (status_sla = ANY (ARRAY['cumprindo'::text, 'limite'::text, 'violando'::text, 'critico'::text]))), 0))::numeric), 1)) DESC;
+
+
+--
+-- Name: v_leadtime_por_grupo; Type: VIEW; Schema: public; Owner: -
+--
+
+CREATE VIEW public.v_leadtime_por_grupo WITH (security_invoker='on') AS
+ SELECT empresa,
+    grupo_leadtime,
+    count(*) AS n_pedidos,
+    round(avg(lt_bruto_dias_uteis), 2) AS lt_bruto_medio,
+    round(avg(lt_faturamento_dias_uteis), 2) AS lt_faturamento_medio,
+    round(avg(lt_logistica_dias_uteis), 2) AS lt_logistica_medio,
+    round(stddev(lt_bruto_dias_uteis), 2) AS lt_bruto_stddev,
+    percentile_cont((0.95)::double precision) WITHIN GROUP (ORDER BY ((lt_bruto_dias_uteis)::double precision)) AS lt_bruto_p95,
+    max(lt_bruto_dias_uteis) AS lt_bruto_max
+   FROM public.purchase_orders_tracking
+  WHERE ((status = 'RECEBIDO'::public.status_pedido_compra) AND (t1_data_pedido >= (now() - '90 days'::interval)))
+  GROUP BY empresa, grupo_leadtime;
+
+
+--
+-- Name: VIEW v_leadtime_por_grupo; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON VIEW public.v_leadtime_por_grupo IS 'Dashboard: lead time médio, desvio e percentil 95 por grupo nos últimos 90 dias';
+
+
+--
+-- Name: v_notificacoes_status; Type: VIEW; Schema: public; Owner: -
+--
+
+CREATE VIEW public.v_notificacoes_status WITH (security_invoker='on') AS
+ SELECT (date_trunc('day'::text, criado_em))::date AS dia,
+    status,
+    count(*) AS total,
+    count(*) FILTER (WHERE (tentativas >= 3)) AS esgotados,
+    count(*) FILTER (WHERE (data_evento IS NOT NULL)) AS com_calendar_event
+   FROM public.fornecedor_alerta
+  WHERE (criado_em >= (now() - '30 days'::interval))
+  GROUP BY ((date_trunc('day'::text, criado_em))::date), status
+  ORDER BY ((date_trunc('day'::text, criado_em))::date) DESC, status;
+
+
+--
+-- Name: v_promocao_item_efetivo; Type: VIEW; Schema: public; Owner: -
+--
+
+CREATE VIEW public.v_promocao_item_efetivo WITH (security_invoker='on') AS
+ SELECT id,
+    campanha_id,
+    sku_codigo_fornecedor,
+    sku_codigo_omie,
+    desconto_perc AS desconto_base,
+    desconto_extra_perc AS desconto_extra,
+    LEAST((99)::numeric, (desconto_perc + COALESCE(desconto_extra_perc, (0)::numeric))) AS desconto_efetivo,
+    (COALESCE(desconto_extra_perc, (0)::numeric) > (0)::numeric) AS tem_negociacao_extra,
+    desconto_extra_negociado_em,
+    desconto_extra_negociado_por,
+    desconto_extra_observacoes,
+    desconto_extra_email_referencia,
+    volume_minimo,
+    confirmado,
+    ativo
+   FROM public.promocao_item pi;
+
+
+--
+-- Name: v_sku_aumento_vigente; Type: VIEW; Schema: public; Owner: -
+--
+
+CREATE VIEW public.v_sku_aumento_vigente WITH (security_invoker='on') AS
+ SELECT DISTINCT op.account AS empresa_lower,
+    op.omie_codigo_produto AS sku_codigo_omie,
+    op.descricao AS sku_descricao,
+    op.familia,
+    fa.id AS aumento_id,
+    fa.fornecedor_nome,
+    fa.nome AS aumento_nome,
+    COALESCE(fai.data_vigencia_especifica, fa.data_vigencia) AS data_vigencia_efetiva,
+    fai.aumento_perc,
+    fai.categoria_fornecedor,
+    fai.id AS aumento_item_id,
+    fa.estado AS aumento_estado
+   FROM (((public.fornecedor_aumento_anunciado fa
+     JOIN public.fornecedor_aumento_item fai ON ((fai.aumento_id = fa.id)))
+     JOIN public.categoria_aumento_familia_mapeamento m ON ((m.aumento_item_id = fai.id)))
+     JOIN public.omie_products op ON (((op.familia = m.familia_omie) AND (lower(op.account) = lower(fa.empresa)) AND (COALESCE(op.ativo, true) = true) AND ((m.sku_codigo_omie_especifico IS NULL) OR (op.omie_codigo_produto = m.sku_codigo_omie_especifico)))))
+  WHERE ((fa.estado = ANY (ARRAY['ativo'::text, 'vigente'::text])) AND (fai.ativo = true) AND (fai.confirmado = true) AND (COALESCE(fai.data_vigencia_especifica, fa.data_vigencia) >= (CURRENT_DATE - '7 days'::interval)));
+
+
+--
+-- Name: VIEW v_sku_aumento_vigente; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON VIEW public.v_sku_aumento_vigente IS 'Resolve quais aumentos anunciados afetam cada SKU. Considera mapeamento por família com override por SKU específico quando houver.';
+
+
+--
+-- Name: venda_items_history; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.venda_items_history (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    empresa text NOT NULL,
+    nfe_chave_acesso text,
+    nfe_numero text,
+    nfe_serie text,
+    data_emissao date NOT NULL,
+    cliente_codigo_omie bigint,
+    cliente_razao_social text,
+    cliente_cnpj_cpf text,
+    cliente_uf text,
+    cliente_cidade text,
+    sku_codigo_omie bigint NOT NULL,
+    sku_codigo text,
+    sku_descricao text,
+    sku_ncm text,
+    sku_unidade text,
+    quantidade numeric NOT NULL,
+    valor_unitario numeric,
+    valor_total numeric,
+    cfop text,
+    raw_data jsonb,
+    created_at timestamp with time zone DEFAULT now() NOT NULL
+);
+
+
+--
+-- Name: v_sku_demanda_estatisticas; Type: VIEW; Schema: public; Owner: -
+--
+
+CREATE VIEW public.v_sku_demanda_estatisticas WITH (security_invoker='on') AS
+ WITH vendas_por_ordem AS (
+         SELECT venda_items_history.empresa,
+            venda_items_history.sku_codigo_omie,
+            max(venda_items_history.sku_descricao) AS sku_descricao,
+            max(venda_items_history.sku_unidade) AS sku_unidade,
+            venda_items_history.nfe_chave_acesso,
+            venda_items_history.data_emissao,
+            sum(venda_items_history.quantidade) AS qtde_ordem,
+            sum(venda_items_history.valor_total) AS valor_ordem
+           FROM public.venda_items_history
+          WHERE (venda_items_history.data_emissao >= (CURRENT_DATE - '90 days'::interval))
+          GROUP BY venda_items_history.empresa, venda_items_history.sku_codigo_omie, venda_items_history.nfe_chave_acesso, venda_items_history.data_emissao
+        ), stats AS (
+         SELECT vendas_por_ordem.empresa,
+            vendas_por_ordem.sku_codigo_omie,
+            max(vendas_por_ordem.sku_descricao) AS sku_descricao,
+            max(vendas_por_ordem.sku_unidade) AS sku_unidade,
+            count(DISTINCT vendas_por_ordem.nfe_chave_acesso) AS num_ordens,
+            sum(vendas_por_ordem.qtde_ordem) AS demanda_total_90d,
+            sum(vendas_por_ordem.valor_ordem) AS valor_total_90d,
+            round(avg(vendas_por_ordem.qtde_ordem), 4) AS qtde_media_por_ordem,
+            round(stddev(vendas_por_ordem.qtde_ordem), 4) AS qtde_desvio_por_ordem,
+            max(vendas_por_ordem.data_emissao) AS ultima_venda_data,
+            round((sum(vendas_por_ordem.qtde_ordem) / 90.0), 4) AS demanda_media_diaria,
+                CASE
+                    WHEN ((avg(vendas_por_ordem.qtde_ordem) > (0)::numeric) AND (count(*) >= 2)) THEN round((stddev(vendas_por_ordem.qtde_ordem) / avg(vendas_por_ordem.qtde_ordem)), 4)
+                    ELSE NULL::numeric
+                END AS coef_variacao_ordem
+           FROM vendas_por_ordem
+          GROUP BY vendas_por_ordem.empresa, vendas_por_ordem.sku_codigo_omie
+        )
+ SELECT empresa,
+    sku_codigo_omie,
+    sku_descricao,
+    sku_unidade,
+    num_ordens,
+    demanda_total_90d,
+    valor_total_90d,
+    qtde_media_por_ordem,
+    qtde_desvio_por_ordem,
+    demanda_media_diaria,
+    coef_variacao_ordem,
+    ultima_venda_data
+   FROM stats;
+
+
+--
+-- Name: v_sku_classificacao_abc_xyz; Type: VIEW; Schema: public; Owner: -
+--
+
+CREATE VIEW public.v_sku_classificacao_abc_xyz WITH (security_invoker='on') AS
+ WITH base_demanda AS (
+         SELECT v_sku_demanda_estatisticas.empresa,
+            v_sku_demanda_estatisticas.sku_codigo_omie,
+            v_sku_demanda_estatisticas.sku_descricao,
+            v_sku_demanda_estatisticas.num_ordens,
+            v_sku_demanda_estatisticas.demanda_media_diaria,
+            v_sku_demanda_estatisticas.qtde_media_por_ordem,
+            v_sku_demanda_estatisticas.qtde_desvio_por_ordem,
+            v_sku_demanda_estatisticas.coef_variacao_ordem,
+            v_sku_demanda_estatisticas.valor_total_90d
+           FROM public.v_sku_demanda_estatisticas
+        ), abc_base AS (
+         SELECT base_demanda.empresa,
+            base_demanda.sku_codigo_omie,
+            base_demanda.sku_descricao,
+            base_demanda.num_ordens,
+            base_demanda.demanda_media_diaria,
+            base_demanda.qtde_media_por_ordem,
+            base_demanda.qtde_desvio_por_ordem,
+            base_demanda.coef_variacao_ordem,
+            base_demanda.valor_total_90d,
+            sum(base_demanda.valor_total_90d) OVER (PARTITION BY base_demanda.empresa ORDER BY base_demanda.valor_total_90d DESC) AS acumulado,
+            sum(base_demanda.valor_total_90d) OVER (PARTITION BY base_demanda.empresa) AS total_geral
+           FROM base_demanda
+        ), abc_classificada AS (
+         SELECT abc_base.empresa,
+            abc_base.sku_codigo_omie,
+            abc_base.sku_descricao,
+            abc_base.num_ordens,
+            abc_base.demanda_media_diaria,
+            abc_base.qtde_media_por_ordem,
+            abc_base.qtde_desvio_por_ordem,
+            abc_base.coef_variacao_ordem,
+            abc_base.valor_total_90d,
+            abc_base.acumulado,
+            abc_base.total_geral,
+                CASE
+                    WHEN ((abc_base.total_geral IS NULL) OR (abc_base.total_geral = (0)::numeric)) THEN 'C'::text
+                    WHEN ((abc_base.acumulado / NULLIF(abc_base.total_geral, (0)::numeric)) <= 0.80) THEN 'A'::text
+                    WHEN ((abc_base.acumulado / NULLIF(abc_base.total_geral, (0)::numeric)) <= 0.95) THEN 'B'::text
+                    ELSE 'C'::text
+                END AS classe_abc_proposta
+           FROM abc_base
+        )
+ SELECT empresa,
+    sku_codigo_omie,
+    sku_descricao,
+    num_ordens,
+    valor_total_90d,
+    demanda_media_diaria,
+    qtde_media_por_ordem,
+    qtde_desvio_por_ordem,
+    coef_variacao_ordem,
+    classe_abc_proposta,
+        CASE
+            WHEN (num_ordens < 2) THEN 'Z'::text
+            WHEN (coef_variacao_ordem IS NULL) THEN 'Z'::text
+            WHEN (coef_variacao_ordem < 0.4) THEN 'X'::text
+            WHEN (coef_variacao_ordem < 0.8) THEN 'Y'::text
+            ELSE 'Z'::text
+        END AS classe_xyz_proposta,
+    (classe_abc_proposta ||
+        CASE
+            WHEN (num_ordens < 2) THEN 'Z'::text
+            WHEN (coef_variacao_ordem IS NULL) THEN 'Z'::text
+            WHEN (coef_variacao_ordem < 0.4) THEN 'X'::text
+            WHEN (coef_variacao_ordem < 0.8) THEN 'Y'::text
+            ELSE 'Z'::text
+        END) AS classe_consolidada_proposta
+   FROM abc_classificada;
+
+
+--
+-- Name: v_sku_demanda_rajada; Type: VIEW; Schema: public; Owner: -
+--
+
+CREATE VIEW public.v_sku_demanda_rajada WITH (security_invoker='on') AS
+ WITH datas_serie AS (
+         SELECT (generate_series((CURRENT_DATE - '179 days'::interval), (CURRENT_DATE)::timestamp without time zone, '1 day'::interval))::date AS dt
+        ), skus_ativos AS (
+         SELECT DISTINCT venda_items_history.empresa,
+            venda_items_history.sku_codigo_omie,
+            max(venda_items_history.sku_descricao) AS sku_descricao,
+            max(venda_items_history.sku_unidade) AS sku_unidade
+           FROM public.venda_items_history
+          WHERE (venda_items_history.data_emissao >= (CURRENT_DATE - '180 days'::interval))
+          GROUP BY venda_items_history.empresa, venda_items_history.sku_codigo_omie
+        ), vendas_diarias AS (
+         SELECT venda_items_history.empresa,
+            venda_items_history.sku_codigo_omie,
+            venda_items_history.data_emissao AS dt,
+            sum(venda_items_history.quantidade) AS qtde_dia,
+            sum(venda_items_history.valor_total) AS valor_dia
+           FROM public.venda_items_history
+          WHERE (venda_items_history.data_emissao >= (CURRENT_DATE - '180 days'::interval))
+          GROUP BY venda_items_history.empresa, venda_items_history.sku_codigo_omie, venda_items_history.data_emissao
+        ), serie_completa AS (
+         SELECT s.empresa,
+            s.sku_codigo_omie,
+            s.sku_descricao,
+            s.sku_unidade,
+            d.dt,
+            COALESCE(v.qtde_dia, (0)::numeric) AS qtde_dia,
+            COALESCE(v.valor_dia, (0)::numeric) AS valor_dia
+           FROM ((skus_ativos s
+             CROSS JOIN datas_serie d)
+             LEFT JOIN vendas_diarias v ON (((s.empresa = v.empresa) AND (s.sku_codigo_omie = v.sku_codigo_omie) AND (d.dt = v.dt))))
+        )
+ SELECT empresa,
+    sku_codigo_omie,
+    max(sku_descricao) AS sku_descricao,
+    max(sku_unidade) AS sku_unidade,
+    round(avg(qtde_dia), 4) AS demanda_media_diaria,
+    round(stddev(qtde_dia), 4) AS demanda_desvio_diario,
+    round((percentile_cont((0.90)::double precision) WITHIN GROUP (ORDER BY ((qtde_dia)::double precision)))::numeric, 2) AS p90_diario,
+    round((percentile_cont((0.95)::double precision) WITHIN GROUP (ORDER BY ((qtde_dia)::double precision)))::numeric, 2) AS p95_diario,
+    round((percentile_cont((0.99)::double precision) WITHIN GROUP (ORDER BY ((qtde_dia)::double precision)))::numeric, 2) AS p99_diario,
+    round((percentile_cont((0.90)::double precision) WITHIN GROUP (ORDER BY ((qtde_dia)::double precision)) FILTER (WHERE (qtde_dia > (0)::numeric)))::numeric, 2) AS p90_quando_vende,
+    round((percentile_cont((0.95)::double precision) WITHIN GROUP (ORDER BY ((qtde_dia)::double precision)) FILTER (WHERE (qtde_dia > (0)::numeric)))::numeric, 2) AS p95_quando_vende,
+    max(qtde_dia) AS pico_maximo_dia,
+    count(*) FILTER (WHERE (qtde_dia > (0)::numeric)) AS dias_com_movimento,
+    sum(qtde_dia) AS qtde_total_180d,
+    round(sum(valor_dia), 2) AS valor_total_180d
+   FROM serie_completa
+  GROUP BY empresa, sku_codigo_omie;
+
+
+--
+-- Name: v_sku_leadtime_history_normal; Type: VIEW; Schema: public; Owner: -
+--
+
+CREATE VIEW public.v_sku_leadtime_history_normal WITH (security_invoker='on') AS
+ SELECT id,
+    tracking_id,
+    empresa,
+    sku_codigo_omie,
+    sku_codigo,
+    sku_descricao,
+    sku_unidade,
+    sku_ncm,
+    fornecedor_codigo_omie,
+    fornecedor_nome,
+    grupo_leadtime,
+    quantidade_pedida,
+    quantidade_recebida,
+    valor_unitario,
+    valor_total,
+    t1_data_pedido,
+    t2_data_faturamento,
+    t3_data_cte,
+    t4_data_recebimento,
+    lt_bruto_dias_uteis,
+    lt_faturamento_dias_uteis,
+    lt_logistica_dias_uteis,
+    created_at,
+    updated_at,
+    origem_compra
+   FROM public.sku_leadtime_history
+  WHERE (origem_compra = 'normal'::text);
+
+
+--
+-- Name: VIEW v_sku_leadtime_history_normal; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON VIEW public.v_sku_leadtime_history_normal IS 'Apenas compras de ciclo normal — fonte para cálculo de estatísticas de lead time. Exclui oportunidades (promo/aumento) para não contaminar médias.';
+
+
+--
+-- Name: v_sku_leadtime_estatisticas; Type: VIEW; Schema: public; Owner: -
+--
+
+CREATE VIEW public.v_sku_leadtime_estatisticas WITH (security_invoker='on') AS
+ WITH stats AS (
+         SELECT (h.empresa)::text AS empresa,
+            h.sku_codigo_omie,
+            max(h.sku_descricao) AS sku_descricao,
+            max(h.fornecedor_codigo_omie) AS fornecedor_codigo_omie,
+            max(h.fornecedor_nome) AS fornecedor_nome,
+            count(*) FILTER (WHERE (h.lt_bruto_dias_uteis IS NOT NULL)) AS lt_n_observacoes,
+            round(avg(h.lt_bruto_dias_uteis), 2) AS lt_sku_medio,
+            round(stddev(h.lt_bruto_dias_uteis), 2) AS lt_sku_desvio,
+            percentile_cont((0.95)::double precision) WITHIN GROUP (ORDER BY ((h.lt_bruto_dias_uteis)::double precision)) AS lt_p95_dias
+           FROM public.v_sku_leadtime_history_normal h
+          WHERE ((h.t2_data_faturamento >= (CURRENT_DATE - '180 days'::interval)) AND (h.lt_bruto_dias_uteis IS NOT NULL))
+          GROUP BY (h.empresa)::text, h.sku_codigo_omie
+        ), fornecedor_stats AS (
+         SELECT (h.empresa)::text AS empresa,
+            h.fornecedor_codigo_omie,
+            round(avg(h.lt_bruto_dias_uteis), 2) AS lt_fornecedor_medio,
+            round(stddev(h.lt_bruto_dias_uteis), 2) AS lt_fornecedor_desvio,
+            count(*) AS lt_fornecedor_n_observacoes
+           FROM public.v_sku_leadtime_history_normal h
+          WHERE ((h.t2_data_faturamento >= (CURRENT_DATE - '180 days'::interval)) AND (h.lt_bruto_dias_uteis IS NOT NULL))
+          GROUP BY (h.empresa)::text, h.fornecedor_codigo_omie
+        )
+ SELECT s.empresa,
+    s.sku_codigo_omie,
+    s.sku_descricao,
+    s.fornecedor_codigo_omie,
+    s.fornecedor_nome,
+    s.lt_n_observacoes,
+        CASE
+            WHEN (s.lt_n_observacoes >= 3) THEN s.lt_sku_medio
+            ELSE f.lt_fornecedor_medio
+        END AS lt_medio_dias_uteis,
+        CASE
+            WHEN (s.lt_n_observacoes >= 3) THEN s.lt_sku_desvio
+            ELSE f.lt_fornecedor_desvio
+        END AS lt_desvio_padrao_dias,
+    s.lt_p95_dias,
+        CASE
+            WHEN (s.lt_n_observacoes >= 3) THEN 'SKU'::text
+            ELSE 'FORNECEDOR'::text
+        END AS fonte_leadtime,
+    f.lt_fornecedor_desvio,
+    f.lt_fornecedor_n_observacoes
+   FROM (stats s
+     LEFT JOIN fornecedor_stats f ON (((s.empresa = f.empresa) AND (s.fornecedor_codigo_omie = f.fornecedor_codigo_omie))));
+
+
+--
+-- Name: v_sku_sigma_demanda; Type: VIEW; Schema: public; Owner: -
+--
+
+CREATE VIEW public.v_sku_sigma_demanda WITH (security_invoker='on') AS
+ WITH datas AS (
+         SELECT (generate_series((CURRENT_DATE - '180 days'::interval), (CURRENT_DATE - '1 day'::interval), '1 day'::interval))::date AS dt
+        ), vendas_diarias AS (
+         SELECT venda_items_history.empresa,
+            (venda_items_history.sku_codigo_omie)::text AS sku_codigo_omie,
+            venda_items_history.data_emissao AS dt,
+            sum(venda_items_history.quantidade) AS qtde
+           FROM public.venda_items_history
+          WHERE (venda_items_history.data_emissao >= (CURRENT_DATE - '180 days'::interval))
+          GROUP BY venda_items_history.empresa, (venda_items_history.sku_codigo_omie)::text, venda_items_history.data_emissao
+        ), serie AS (
+         SELECT v.empresa,
+            v.sku_codigo_omie,
+            d.dt,
+            COALESCE(sum(vd.qtde), (0)::numeric) AS qtde
+           FROM ((( SELECT DISTINCT vendas_diarias.empresa,
+                    vendas_diarias.sku_codigo_omie
+                   FROM vendas_diarias) v
+             CROSS JOIN datas d)
+             LEFT JOIN vendas_diarias vd ON (((vd.empresa = v.empresa) AND (vd.sku_codigo_omie = v.sku_codigo_omie) AND (vd.dt = d.dt))))
+          GROUP BY v.empresa, v.sku_codigo_omie, d.dt
+        )
+ SELECT empresa,
+    sku_codigo_omie,
+    round(stddev_samp(qtde), 4) AS sigma_demanda_diaria,
+    round(avg(qtde), 4) AS media_demanda_diaria
+   FROM serie
+  GROUP BY empresa, sku_codigo_omie;
+
+
+--
+-- Name: v_sku_parametros_sugeridos; Type: VIEW; Schema: public; Owner: -
+--
+
+CREATE VIEW public.v_sku_parametros_sugeridos WITH (security_invoker='on') AS
+ WITH minimo_operacional AS (
+         SELECT 'A'::text AS letra_abc,
+            2 AS min_op
+        UNION ALL
+         SELECT 'B'::text AS text,
+            1
+        UNION ALL
+         SELECT 'C'::text AS text,
+            0
+        ), config_efetiva AS (
+         SELECT empresa_configuracao_custos.empresa,
+            (((empresa_configuracao_custos.selic_anual + empresa_configuracao_custos.spread_oportunidade) + empresa_configuracao_custos.armazenagem_fisica) / 100.0) AS cm_anual,
+                CASE
+                    WHEN (empresa_configuracao_custos.modo_pedido = 'api'::text) THEN empresa_configuracao_custos.custo_pedido_api
+                    ELSE empresa_configuracao_custos.custo_pedido_manual
+                END AS cp,
+            empresa_configuracao_custos.z_classe_a,
+            empresa_configuracao_custos.z_classe_b,
+            empresa_configuracao_custos.z_classe_c,
+            empresa_configuracao_custos.modo_pedido
+           FROM public.empresa_configuracao_custos
+        ), precos_compra AS (
+         SELECT (v_sku_leadtime_history_normal.empresa)::text AS empresa,
+            (v_sku_leadtime_history_normal.sku_codigo_omie)::text AS sku_codigo_omie,
+            avg((v_sku_leadtime_history_normal.valor_total / NULLIF(v_sku_leadtime_history_normal.quantidade_recebida, (0)::numeric))) AS preco_compra_real,
+            count(*) AS n_compras
+           FROM public.v_sku_leadtime_history_normal
+          WHERE ((v_sku_leadtime_history_normal.quantidade_recebida > (0)::numeric) AND (v_sku_leadtime_history_normal.valor_total > (0)::numeric))
+          GROUP BY (v_sku_leadtime_history_normal.empresa)::text, (v_sku_leadtime_history_normal.sku_codigo_omie)::text
+        ), precos_venda AS (
+         SELECT venda_items_history.empresa,
+            (venda_items_history.sku_codigo_omie)::text AS sku_codigo_omie,
+            avg((venda_items_history.valor_total / NULLIF(venda_items_history.quantidade, (0)::numeric))) AS preco_venda_medio
+           FROM public.venda_items_history
+          WHERE ((venda_items_history.data_emissao >= (CURRENT_DATE - '180 days'::interval)) AND (venda_items_history.quantidade > (0)::numeric))
+          GROUP BY venda_items_history.empresa, (venda_items_history.sku_codigo_omie)::text
+        ), base AS (
+         SELECT c.empresa,
+            c.sku_codigo_omie,
+            c.sku_descricao,
+            c.valor_total_90d,
+            c.num_ordens,
+            c.demanda_media_diaria AS d,
+            c.qtde_media_por_ordem,
+            c.qtde_desvio_por_ordem,
+            c.coef_variacao_ordem,
+            c.classe_abc_proposta,
+            c.classe_xyz_proposta,
+            c.classe_consolidada_proposta AS classe,
+            r.p90_diario,
+            r.p95_diario,
+            r.p99_diario,
+            r.p90_quando_vende,
+            r.p95_quando_vende,
+            r.pico_maximo_dia,
+            r.dias_com_movimento,
+            r.valor_total_180d,
+            COALESCE(sd.sigma_demanda_diaria, (c.demanda_media_diaria * 0.5)) AS sigma_d,
+            GREATEST((lts.lt_total_teorico_dias_uteis)::numeric, lt.lt_medio_dias_uteis) AS lt,
+            COALESCE(lt.lt_desvio_padrao_dias, lt.lt_fornecedor_desvio, ((COALESCE(lts.lt_total_teorico_dias_uteis, (10)::bigint))::numeric * 0.3)) AS sigma_lt,
+            lts.lt_total_teorico_dias_uteis,
+            lt.lt_medio_dias_uteis AS lt_historico_medio,
+                CASE
+                    WHEN ((lts.lt_total_teorico_dias_uteis IS NULL) AND (lt.lt_medio_dias_uteis IS NULL)) THEN 'sem_dados'::text
+                    WHEN (lts.lt_total_teorico_dias_uteis IS NULL) THEN 'historico_medio'::text
+                    WHEN (lt.lt_medio_dias_uteis IS NULL) THEN 'sla_teorico'::text
+                    WHEN (lt.lt_medio_dias_uteis > (lts.lt_total_teorico_dias_uteis)::numeric) THEN 'historico_sobrepos_teorico'::text
+                    ELSE 'sla_teorico'::text
+                END AS fonte_lt,
+            lts.grupo_codigo,
+            lt.lt_p95_dias,
+            lt.fonte_leadtime,
+            COALESCE(lt.fornecedor_nome, fgp.fornecedor_nome) AS fornecedor_nome,
+                CASE
+                    WHEN (lt.fornecedor_nome IS NOT NULL) THEN 'historico_compras'::text
+                    WHEN (fgp.fornecedor_nome IS NOT NULL) THEN 'grupo_producao'::text
+                    ELSE NULL::text
+                END AS fonte_fornecedor,
+            pv.preco_venda_medio,
+            pc.preco_compra_real,
+            pc.n_compras,
+            COALESCE(pc.preco_compra_real, (pv.preco_venda_medio * 0.55)) AS preco_item_eoq,
+                CASE
+                    WHEN (pc.preco_compra_real IS NOT NULL) THEN 'compra_real'::text
+                    WHEN (pv.preco_venda_medio IS NOT NULL) THEN 'venda_estimado'::text
+                    ELSE 'sem_preco'::text
+                END AS fonte_preco,
+            COALESCE(fh.habilitado, false) AS fornecedor_habilitado,
+            cfg.cm_anual,
+            cfg.cp,
+            cfg.z_classe_a,
+            cfg.z_classe_b,
+            cfg.z_classe_c,
+            cfg.modo_pedido,
+            mop.min_op AS minimo_operacional,
+                CASE c.classe_abc_proposta
+                    WHEN 'A'::text THEN cfg.z_classe_a
+                    WHEN 'B'::text THEN cfg.z_classe_b
+                    ELSE cfg.z_classe_c
+                END AS z_aplicado
+           FROM ((((((((((public.v_sku_classificacao_abc_xyz c
+             LEFT JOIN public.v_sku_demanda_rajada r ON (((c.empresa = r.empresa) AND (c.sku_codigo_omie = r.sku_codigo_omie))))
+             LEFT JOIN public.v_sku_leadtime_estatisticas lt ON (((c.empresa = lt.empresa) AND (c.sku_codigo_omie = lt.sku_codigo_omie))))
+             LEFT JOIN public.v_sku_lt_teorico lts ON (((c.empresa = lts.empresa) AND ((c.sku_codigo_omie)::text = lts.sku_codigo_omie))))
+             LEFT JOIN public.v_sku_sigma_demanda sd ON (((c.empresa = sd.empresa) AND ((c.sku_codigo_omie)::text = sd.sku_codigo_omie))))
+             LEFT JOIN precos_venda pv ON (((c.empresa = pv.empresa) AND ((c.sku_codigo_omie)::text = pv.sku_codigo_omie))))
+             LEFT JOIN precos_compra pc ON (((c.empresa = pc.empresa) AND ((c.sku_codigo_omie)::text = pc.sku_codigo_omie))))
+             LEFT JOIN config_efetiva cfg ON ((c.empresa = cfg.empresa)))
+             LEFT JOIN minimo_operacional mop ON ((c.classe_abc_proposta = mop.letra_abc)))
+             LEFT JOIN public.fornecedor_grupo_producao fgp ON (((fgp.empresa = c.empresa) AND (fgp.grupo_codigo = lts.grupo_codigo))))
+             LEFT JOIN public.fornecedor_habilitado_reposicao fh ON (((c.empresa = fh.empresa) AND (fh.fornecedor_nome = COALESCE(lt.fornecedor_nome, fgp.fornecedor_nome)))))
+        ), com_calculos AS (
+         SELECT base.empresa,
+            base.sku_codigo_omie,
+            base.sku_descricao,
+            base.valor_total_90d,
+            base.num_ordens,
+            base.d,
+            base.qtde_media_por_ordem,
+            base.qtde_desvio_por_ordem,
+            base.coef_variacao_ordem,
+            base.classe_abc_proposta,
+            base.classe_xyz_proposta,
+            base.classe,
+            base.p90_diario,
+            base.p95_diario,
+            base.p99_diario,
+            base.p90_quando_vende,
+            base.p95_quando_vende,
+            base.pico_maximo_dia,
+            base.dias_com_movimento,
+            base.valor_total_180d,
+            base.sigma_d,
+            base.lt,
+            base.sigma_lt,
+            base.lt_total_teorico_dias_uteis,
+            base.lt_historico_medio,
+            base.fonte_lt,
+            base.grupo_codigo,
+            base.lt_p95_dias,
+            base.fonte_leadtime,
+            base.fornecedor_nome,
+            base.fonte_fornecedor,
+            base.preco_venda_medio,
+            base.preco_compra_real,
+            base.n_compras,
+            base.preco_item_eoq,
+            base.fonte_preco,
+            base.fornecedor_habilitado,
+            base.cm_anual,
+            base.cp,
+            base.z_classe_a,
+            base.z_classe_b,
+            base.z_classe_c,
+            base.modo_pedido,
+            base.minimo_operacional,
+            base.z_aplicado,
+            sqrt(((COALESCE(base.lt, (10)::numeric) * power(COALESCE(base.sigma_d, (0)::numeric), (2)::numeric)) + (power(COALESCE(base.d, (0)::numeric), (2)::numeric) * power(COALESCE(base.sigma_lt, (0)::numeric), (2)::numeric)))) AS sigma_lt_d,
+                CASE
+                    WHEN (base.num_ordens < 2) THEN 'AGUARDANDO_SEGUNDA_ORDEM'::text
+                    WHEN (base.lt IS NULL) THEN 'SEM_LEADTIME_DEFINIDO'::text
+                    WHEN (base.fornecedor_nome IS NULL) THEN 'SEM_FORNECEDOR_IDENTIFICADO'::text
+                    WHEN (NOT base.fornecedor_habilitado) THEN 'AGUARDANDO_HABILITACAO_FORNECEDOR'::text
+                    WHEN ((base.grupo_codigo IS NULL) AND (base.fornecedor_nome = 'RENNER SAYERLACK S/A'::text)) THEN 'AGUARDANDO_CLASSIFICACAO_GRUPO'::text
+                    WHEN ((base.preco_item_eoq IS NULL) OR (base.preco_item_eoq = (0)::numeric)) THEN 'SEM_PRECO'::text
+                    ELSE 'OK'::text
+                END AS status_sugestao
+           FROM base
+        ), com_formulas AS (
+         SELECT com_calculos.empresa,
+            com_calculos.sku_codigo_omie,
+            com_calculos.sku_descricao,
+            com_calculos.valor_total_90d,
+            com_calculos.num_ordens,
+            com_calculos.d,
+            com_calculos.qtde_media_por_ordem,
+            com_calculos.qtde_desvio_por_ordem,
+            com_calculos.coef_variacao_ordem,
+            com_calculos.classe_abc_proposta,
+            com_calculos.classe_xyz_proposta,
+            com_calculos.classe,
+            com_calculos.p90_diario,
+            com_calculos.p95_diario,
+            com_calculos.p99_diario,
+            com_calculos.p90_quando_vende,
+            com_calculos.p95_quando_vende,
+            com_calculos.pico_maximo_dia,
+            com_calculos.dias_com_movimento,
+            com_calculos.valor_total_180d,
+            com_calculos.sigma_d,
+            com_calculos.lt,
+            com_calculos.sigma_lt,
+            com_calculos.lt_total_teorico_dias_uteis,
+            com_calculos.lt_historico_medio,
+            com_calculos.fonte_lt,
+            com_calculos.grupo_codigo,
+            com_calculos.lt_p95_dias,
+            com_calculos.fonte_leadtime,
+            com_calculos.fornecedor_nome,
+            com_calculos.fonte_fornecedor,
+            com_calculos.preco_venda_medio,
+            com_calculos.preco_compra_real,
+            com_calculos.n_compras,
+            com_calculos.preco_item_eoq,
+            com_calculos.fonte_preco,
+            com_calculos.fornecedor_habilitado,
+            com_calculos.cm_anual,
+            com_calculos.cp,
+            com_calculos.z_classe_a,
+            com_calculos.z_classe_b,
+            com_calculos.z_classe_c,
+            com_calculos.modo_pedido,
+            com_calculos.minimo_operacional,
+            com_calculos.z_aplicado,
+            com_calculos.sigma_lt_d,
+            com_calculos.status_sugestao,
+            ceil((com_calculos.z_aplicado * com_calculos.sigma_lt_d)) AS ss_calculado,
+            ceil(((COALESCE(com_calculos.d, (0)::numeric) * COALESCE(com_calculos.lt, (10)::numeric)) + (com_calculos.z_aplicado * com_calculos.sigma_lt_d))) AS pp_calculado,
+                CASE
+                    WHEN ((com_calculos.preco_item_eoq > (0)::numeric) AND (com_calculos.cm_anual > (0)::numeric) AND (com_calculos.d > (0)::numeric)) THEN ceil(sqrt((((2.0 * (COALESCE(com_calculos.d, (0)::numeric) * (252)::numeric)) * com_calculos.cp) / (com_calculos.cm_anual * com_calculos.preco_item_eoq))))
+                    ELSE (1)::numeric
+                END AS qc_eoq
+           FROM com_calculos
+        )
+ SELECT empresa,
+    sku_codigo_omie,
+    sku_descricao,
+    fornecedor_nome,
+    fornecedor_habilitado,
+    fonte_fornecedor,
+    grupo_codigo,
+    classe_abc_proposta,
+    classe_xyz_proposta,
+    classe AS classe_consolidada,
+    num_ordens,
+    d AS demanda_media_diaria,
+    qtde_media_por_ordem,
+    qtde_desvio_por_ordem,
+    coef_variacao_ordem,
+    p90_diario,
+    p95_diario,
+    p99_diario,
+    p90_quando_vende,
+    p95_quando_vende,
+    pico_maximo_dia,
+    dias_com_movimento,
+    valor_total_180d,
+    sigma_d AS demanda_sigma_diario,
+    lt AS lead_time_medio,
+    lt_total_teorico_dias_uteis,
+    lt_historico_medio,
+    fonte_lt,
+    sigma_lt AS lead_time_desvio,
+    lt_p95_dias,
+    fonte_leadtime,
+    sigma_lt_d,
+    z_aplicado,
+    minimo_operacional,
+    preco_venda_medio,
+    preco_compra_real,
+    preco_item_eoq,
+    fonte_preco,
+    n_compras,
+    (cm_anual * (100)::numeric) AS custo_capital_efetivo_perc,
+    cp AS custo_pedido_aplicado,
+    modo_pedido,
+    status_sugestao,
+        CASE
+            WHEN (status_sugestao = 'OK'::text) THEN GREATEST(ss_calculado, (COALESCE(minimo_operacional, 0))::numeric)
+            ELSE NULL::numeric
+        END AS estoque_minimo_sugerido,
+        CASE
+            WHEN (status_sugestao = 'OK'::text) THEN GREATEST(pp_calculado, (GREATEST(ss_calculado, (COALESCE(minimo_operacional, 0))::numeric) + (1)::numeric))
+            ELSE NULL::numeric
+        END AS ponto_pedido_sugerido,
+        CASE
+            WHEN (status_sugestao = 'OK'::text) THEN GREATEST(qc_eoq, (1)::numeric)
+            ELSE NULL::numeric
+        END AS qtde_compra_ciclo_sugerida,
+        CASE
+            WHEN (status_sugestao = 'OK'::text) THEN (GREATEST(pp_calculado, (GREATEST(ss_calculado, (COALESCE(minimo_operacional, 0))::numeric) + (1)::numeric)) + GREATEST(qc_eoq, (1)::numeric))
+            ELSE NULL::numeric
+        END AS estoque_maximo_sugerido,
+        CASE
+            WHEN ((status_sugestao = 'OK'::text) AND (d > (0)::numeric)) THEN (ceil((GREATEST(qc_eoq, (1)::numeric) / d)))::integer
+            ELSE NULL::integer
+        END AS cobertura_alvo_dias,
+    COALESCE(valor_total_90d, valor_total_180d) AS valor_total_90d,
+    CURRENT_DATE AS calculado_em,
+        CASE
+            WHEN (status_sugestao = 'OK'::text) THEN ss_calculado
+            ELSE NULL::numeric
+        END AS estoque_seguranca_sugerido
+   FROM com_formulas
+  ORDER BY
+        CASE status_sugestao
+            WHEN 'OK'::text THEN 1
+            WHEN 'AGUARDANDO_CLASSIFICACAO_GRUPO'::text THEN 2
+            WHEN 'AGUARDANDO_HABILITACAO_FORNECEDOR'::text THEN 3
+            WHEN 'SEM_LEADTIME_DEFINIDO'::text THEN 4
+            WHEN 'SEM_PRECO'::text THEN 5
+            ELSE 6
+        END, valor_total_180d DESC NULLS LAST;
+
+
+--
+-- Name: v_oportunidade_economica_hoje; Type: VIEW; Schema: public; Owner: -
+--
+
+CREATE VIEW public.v_oportunidade_economica_hoje AS
+ WITH promo_por_sku AS (
+         SELECT pc.empresa,
+            pc.id AS campanha_id,
+            pc.nome AS campanha_nome,
+            pc.data_corte_pedido,
+            pc.data_corte_faturamento,
+            pi.id AS item_id,
+            pi.sku_codigo_omie,
+            pi.volume_minimo,
+            ef.desconto_efetivo AS desconto_promo_perc,
+            ef.tem_negociacao_extra,
+                CASE
+                    WHEN (pi.volume_minimo IS NULL) THEN 'flat'::text
+                    ELSE 'forward_buying'::text
+                END AS modo_promo
+           FROM ((public.promocao_campanha pc
+             JOIN public.promocao_item pi ON ((pi.campanha_id = pc.id)))
+             JOIN public.v_promocao_item_efetivo ef ON ((ef.id = pi.id)))
+          WHERE ((pc.estado = 'ativa'::text) AND ((CURRENT_DATE >= pc.data_inicio) AND (CURRENT_DATE <= pc.data_fim)) AND (pi.ativo = true) AND (pi.confirmado = true) AND (pi.sku_codigo_omie IS NOT NULL))
+        ), aumento_por_sku AS (
+         SELECT lower(v_sku_aumento_vigente.empresa_lower) AS empresa_lower,
+            v_sku_aumento_vigente.sku_codigo_omie,
+            v_sku_aumento_vigente.aumento_id,
+            v_sku_aumento_vigente.aumento_nome,
+            v_sku_aumento_vigente.data_vigencia_efetiva,
+            max(v_sku_aumento_vigente.aumento_perc) AS aumento_perc_max,
+            jsonb_agg(jsonb_build_object('aumento_id', v_sku_aumento_vigente.aumento_id, 'categoria', v_sku_aumento_vigente.categoria_fornecedor, 'perc', v_sku_aumento_vigente.aumento_perc, 'vigencia', v_sku_aumento_vigente.data_vigencia_efetiva)) AS aumentos_detalhes
+           FROM public.v_sku_aumento_vigente
+          GROUP BY v_sku_aumento_vigente.empresa_lower, v_sku_aumento_vigente.sku_codigo_omie, v_sku_aumento_vigente.aumento_id, v_sku_aumento_vigente.aumento_nome, v_sku_aumento_vigente.data_vigencia_efetiva
+        ), aumento_agregado_sku AS (
+         SELECT aumento_por_sku.empresa_lower,
+            aumento_por_sku.sku_codigo_omie,
+            max(aumento_por_sku.aumento_perc_max) AS aumento_evitado_perc,
+            min(aumento_por_sku.data_vigencia_efetiva) AS proxima_vigencia_aumento,
+            jsonb_agg(aumento_por_sku.aumentos_detalhes) AS aumentos_json
+           FROM aumento_por_sku
+          GROUP BY aumento_por_sku.empresa_lower, aumento_por_sku.sku_codigo_omie
+        ), base AS (
+         SELECT sp.empresa,
+            sp.sku_codigo_omie,
+            sp.sku_descricao,
+            sp.demanda_media_diaria AS d,
+            sp.fornecedor_nome,
+            vps.qtde_compra_ciclo_sugerida AS qtde_base,
+            vps.custo_capital_efetivo_perc,
+            vps.preco_item_eoq,
+            p.campanha_id,
+            p.campanha_nome,
+            p.item_id AS promo_item_id,
+            p.volume_minimo AS promo_volume_minimo,
+            p.desconto_promo_perc,
+            p.tem_negociacao_extra,
+            p.modo_promo,
+            p.data_corte_pedido AS promo_data_corte_pedido,
+            p.data_corte_faturamento AS promo_data_corte_faturamento,
+            a.aumento_evitado_perc,
+            a.proxima_vigencia_aumento,
+            a.aumentos_json
+           FROM (((public.sku_parametros sp
+             LEFT JOIN public.v_sku_parametros_sugeridos vps ON (((vps.empresa = sp.empresa) AND (vps.sku_codigo_omie = sp.sku_codigo_omie))))
+             LEFT JOIN promo_por_sku p ON (((p.empresa = sp.empresa) AND (p.sku_codigo_omie = sp.sku_codigo_omie))))
+             LEFT JOIN aumento_agregado_sku a ON (((lower(sp.empresa) = a.empresa_lower) AND (sp.sku_codigo_omie = a.sku_codigo_omie))))
+          WHERE ((sp.ativo = true) AND ((p.item_id IS NOT NULL) OR (a.aumento_evitado_perc IS NOT NULL)))
+        ), com_decisao AS (
+         SELECT base.empresa,
+            base.sku_codigo_omie,
+            base.sku_descricao,
+            base.d,
+            base.fornecedor_nome,
+            base.qtde_base,
+            base.custo_capital_efetivo_perc,
+            base.preco_item_eoq,
+            base.campanha_id,
+            base.campanha_nome,
+            base.promo_item_id,
+            base.promo_volume_minimo,
+            base.desconto_promo_perc,
+            base.tem_negociacao_extra,
+            base.modo_promo,
+            base.promo_data_corte_pedido,
+            base.promo_data_corte_faturamento,
+            base.aumento_evitado_perc,
+            base.proxima_vigencia_aumento,
+            base.aumentos_json,
+            (COALESCE(base.desconto_promo_perc, (0)::numeric) + COALESCE(base.aumento_evitado_perc, (0)::numeric)) AS desconto_total_perc,
+            LEAST(((base.proxima_vigencia_aumento - '1 day'::interval))::date, base.promo_data_corte_pedido) AS data_limite_acao,
+                CASE
+                    WHEN ((base.promo_item_id IS NOT NULL) AND (base.aumento_evitado_perc IS NOT NULL)) THEN 'promo_e_aumento'::text
+                    WHEN (base.promo_item_id IS NOT NULL) THEN
+                    CASE
+                        WHEN (base.modo_promo = 'flat'::text) THEN 'promo_flat'::text
+                        ELSE 'promo_volume'::text
+                    END
+                    ELSE 'aumento_apenas'::text
+                END AS cenario
+           FROM base
+        ), com_calculos AS (
+         SELECT com_decisao.empresa,
+            com_decisao.sku_codigo_omie,
+            com_decisao.sku_descricao,
+            com_decisao.d,
+            com_decisao.fornecedor_nome,
+            com_decisao.qtde_base,
+            com_decisao.custo_capital_efetivo_perc,
+            com_decisao.preco_item_eoq,
+            com_decisao.campanha_id,
+            com_decisao.campanha_nome,
+            com_decisao.promo_item_id,
+            com_decisao.promo_volume_minimo,
+            com_decisao.desconto_promo_perc,
+            com_decisao.tem_negociacao_extra,
+            com_decisao.modo_promo,
+            com_decisao.promo_data_corte_pedido,
+            com_decisao.promo_data_corte_faturamento,
+            com_decisao.aumento_evitado_perc,
+            com_decisao.proxima_vigencia_aumento,
+            com_decisao.aumentos_json,
+            com_decisao.desconto_total_perc,
+            com_decisao.data_limite_acao,
+            com_decisao.cenario,
+                CASE
+                    WHEN (com_decisao.data_limite_acao IS NULL) THEN NULL::integer
+                    ELSE GREATEST(0, (com_decisao.data_limite_acao - CURRENT_DATE))
+                END AS dias_ate_limite,
+                CASE
+                    WHEN (com_decisao.cenario = 'promo_flat'::text) THEN com_decisao.qtde_base
+                    WHEN (com_decisao.cenario = 'promo_volume'::text) THEN GREATEST(COALESCE(com_decisao.qtde_base, (0)::numeric), COALESCE(com_decisao.promo_volume_minimo, (0)::numeric))
+                    WHEN (com_decisao.cenario = ANY (ARRAY['aumento_apenas'::text, 'promo_e_aumento'::text])) THEN ceil((com_decisao.d * (((((date_trunc('month'::text, (com_decisao.proxima_vigencia_aumento)::timestamp with time zone) + '2 mons'::interval) - '1 day'::interval))::date - CURRENT_DATE))::numeric))
+                    ELSE com_decisao.qtde_base
+                END AS qtde_oportunidade,
+                CASE
+                    WHEN ((com_decisao.preco_item_eoq IS NOT NULL) AND (com_decisao.d > (0)::numeric)) THEN round((((
+                    CASE
+                        WHEN (com_decisao.cenario = 'promo_flat'::text) THEN com_decisao.qtde_base
+                        WHEN (com_decisao.cenario = 'promo_volume'::text) THEN GREATEST(COALESCE(com_decisao.qtde_base, (0)::numeric), COALESCE(com_decisao.promo_volume_minimo, (0)::numeric))
+                        WHEN (com_decisao.cenario = ANY (ARRAY['aumento_apenas'::text, 'promo_e_aumento'::text])) THEN ceil((com_decisao.d * (((((date_trunc('month'::text, (com_decisao.proxima_vigencia_aumento)::timestamp with time zone) + '2 mons'::interval) - '1 day'::interval))::date - CURRENT_DATE))::numeric))
+                        ELSE com_decisao.qtde_base
+                    END * com_decisao.preco_item_eoq) * com_decisao.desconto_total_perc) / (100)::numeric), 2)
+                    ELSE NULL::numeric
+                END AS economia_bruta_estimada
+           FROM com_decisao
+        )
+ SELECT empresa,
+    sku_codigo_omie,
+    sku_descricao,
+    fornecedor_nome,
+    cenario,
+    desconto_total_perc,
+    desconto_promo_perc,
+    aumento_evitado_perc,
+    tem_negociacao_extra,
+    campanha_id,
+    campanha_nome,
+    promo_item_id,
+    modo_promo,
+    promo_data_corte_pedido,
+    promo_data_corte_faturamento,
+    proxima_vigencia_aumento,
+    aumentos_json,
+    data_limite_acao,
+    dias_ate_limite,
+    d AS demanda_diaria,
+    qtde_base,
+    qtde_oportunidade,
+    preco_item_eoq,
+    economia_bruta_estimada,
+    custo_capital_efetivo_perc
+   FROM com_calculos
+  ORDER BY economia_bruta_estimada DESC NULLS LAST;
+
+
+--
+-- Name: VIEW v_oportunidade_economica_hoje; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON VIEW public.v_oportunidade_economica_hoje IS 'Visão unificada de oportunidades por SKU: combina promoção ativa + aumento anunciado. Cada linha representa uma decisão possível com economia estimada. Ordenado por economia descendente.';
+
+
+--
+-- Name: v_pedidos_em_aberto; Type: VIEW; Schema: public; Owner: -
+--
+
+CREATE VIEW public.v_pedidos_em_aberto WITH (security_invoker='on') AS
+ SELECT id,
+    empresa,
+    omie_codigo_pedido,
+    fornecedor_nome,
+    grupo_leadtime,
+    status,
+    t1_data_pedido,
+    t2_data_faturamento,
+    t3_data_cte,
+    t4_data_recebimento,
+    (EXTRACT(day FROM (now() - t1_data_pedido)))::integer AS dias_desde_pedido,
+        CASE
+            WHEN (t2_data_faturamento IS NULL) THEN 'AGUARDANDO_FATURAMENTO'::text
+            WHEN (t3_data_cte IS NULL) THEN 'AGUARDANDO_CTE'::text
+            WHEN (t4_data_recebimento IS NULL) THEN 'AGUARDANDO_ENTRADA'::text
+            ELSE 'COMPLETO'::text
+        END AS estagio
+   FROM public.purchase_orders_tracking
+  WHERE (status <> ALL (ARRAY['RECEBIDO'::public.status_pedido_compra, 'CANCELADO'::public.status_pedido_compra]));
+
+
+--
+-- Name: v_promocao_avaliacao_hoje; Type: VIEW; Schema: public; Owner: -
+--
+
+CREATE VIEW public.v_promocao_avaliacao_hoje WITH (security_invoker='on') AS
+ WITH campanhas_ativas AS (
+         SELECT pc.id AS campanha_id,
+            pc.empresa,
+            pc.fornecedor_nome,
+            pc.nome AS campanha_nome,
+            pc.data_inicio,
+            pc.data_fim,
+            pc.tipo_origem
+           FROM public.promocao_campanha pc
+          WHERE ((pc.estado = 'ativa'::text) AND ((CURRENT_DATE >= pc.data_inicio) AND (CURRENT_DATE <= pc.data_fim)))
+        ), itens_ativos AS (
+         SELECT ca.campanha_id,
+            ca.empresa,
+            ca.fornecedor_nome,
+            ca.campanha_nome,
+            ca.data_inicio,
+            ca.data_fim,
+            ca.tipo_origem,
+            pi.id AS item_id,
+            pi.sku_codigo_fornecedor,
+            pi.sku_codigo_omie,
+            ef.desconto_efetivo AS desconto_perc,
+            ef.desconto_base,
+            ef.desconto_extra,
+            ef.tem_negociacao_extra,
+            pi.volume_minimo,
+            pi.confirmado
+           FROM ((campanhas_ativas ca
+             JOIN public.promocao_item pi ON ((pi.campanha_id = ca.campanha_id)))
+             JOIN public.v_promocao_item_efetivo ef ON ((ef.id = pi.id)))
+          WHERE ((pi.ativo = true) AND (pi.confirmado = true) AND (pi.sku_codigo_omie IS NOT NULL))
+        ), com_parametros AS (
+         SELECT ia.campanha_id,
+            ia.empresa,
+            ia.fornecedor_nome,
+            ia.campanha_nome,
+            ia.data_inicio,
+            ia.data_fim,
+            ia.tipo_origem,
+            ia.item_id,
+            ia.sku_codigo_fornecedor,
+            ia.sku_codigo_omie,
+            ia.desconto_perc,
+            ia.desconto_base,
+            ia.desconto_extra,
+            ia.tem_negociacao_extra,
+            ia.volume_minimo,
+            ia.confirmado,
+            sp.sku_descricao,
+            sp.demanda_media_diaria AS d,
+            vps.qtde_compra_ciclo_sugerida AS qtde_base,
+            vps.custo_capital_efetivo_perc,
+            vps.preco_item_eoq,
+                CASE
+                    WHEN (ia.volume_minimo IS NULL) THEN 'flat'::text
+                    ELSE 'forward_buying'::text
+                END AS modo_aplicacao
+           FROM ((itens_ativos ia
+             JOIN public.sku_parametros sp ON (((sp.empresa = ia.empresa) AND (sp.sku_codigo_omie = ia.sku_codigo_omie) AND (sp.ativo = true))))
+             LEFT JOIN public.v_sku_parametros_sugeridos vps ON (((vps.empresa = sp.empresa) AND (vps.sku_codigo_omie = sp.sku_codigo_omie))))
+        ), com_calculos AS (
+         SELECT cp.campanha_id,
+            cp.empresa,
+            cp.fornecedor_nome,
+            cp.campanha_nome,
+            cp.data_inicio,
+            cp.data_fim,
+            cp.tipo_origem,
+            cp.item_id,
+            cp.sku_codigo_fornecedor,
+            cp.sku_codigo_omie,
+            cp.desconto_perc,
+            cp.desconto_base,
+            cp.desconto_extra,
+            cp.tem_negociacao_extra,
+            cp.volume_minimo,
+            cp.confirmado,
+            cp.sku_descricao,
+            cp.d,
+            cp.qtde_base,
+            cp.custo_capital_efetivo_perc,
+            cp.preco_item_eoq,
+            cp.modo_aplicacao,
+                CASE
+                    WHEN (cp.modo_aplicacao = 'flat'::text) THEN cp.qtde_base
+                    ELSE GREATEST(COALESCE(cp.qtde_base, (0)::numeric), COALESCE(cp.volume_minimo, (0)::numeric))
+                END AS qtde_com_desconto,
+                CASE
+                    WHEN (cp.modo_aplicacao = 'flat'::text) THEN (0)::numeric
+                    ELSE (GREATEST(COALESCE(cp.qtde_base, (0)::numeric), COALESCE(cp.volume_minimo, (0)::numeric)) - COALESCE(cp.qtde_base, (0)::numeric))
+                END AS qtde_extra,
+                CASE
+                    WHEN ((cp.modo_aplicacao = 'forward_buying'::text) AND (cp.d > (0)::numeric)) THEN round(((GREATEST(COALESCE(cp.qtde_base, (0)::numeric), COALESCE(cp.volume_minimo, (0)::numeric)) - COALESCE(cp.qtde_base, (0)::numeric)) / cp.d), 1)
+                    ELSE (0)::numeric
+                END AS dias_extra_estoque,
+                CASE
+                    WHEN ((cp.modo_aplicacao = 'forward_buying'::text) AND (cp.d > (0)::numeric)) THEN round(((cp.custo_capital_efetivo_perc * ((GREATEST(COALESCE(cp.qtde_base, (0)::numeric), COALESCE(cp.volume_minimo, (0)::numeric)) - COALESCE(cp.qtde_base, (0)::numeric)) / cp.d)) / (365)::numeric), 3)
+                    ELSE (0)::numeric
+                END AS custo_capital_periodo_perc
+           FROM com_parametros cp
+        ), com_economia AS (
+         SELECT com_calculos.campanha_id,
+            com_calculos.empresa,
+            com_calculos.fornecedor_nome,
+            com_calculos.campanha_nome,
+            com_calculos.data_inicio,
+            com_calculos.data_fim,
+            com_calculos.tipo_origem,
+            com_calculos.item_id,
+            com_calculos.sku_codigo_fornecedor,
+            com_calculos.sku_codigo_omie,
+            com_calculos.desconto_perc,
+            com_calculos.desconto_base,
+            com_calculos.desconto_extra,
+            com_calculos.tem_negociacao_extra,
+            com_calculos.volume_minimo,
+            com_calculos.confirmado,
+            com_calculos.sku_descricao,
+            com_calculos.d,
+            com_calculos.qtde_base,
+            com_calculos.custo_capital_efetivo_perc,
+            com_calculos.preco_item_eoq,
+            com_calculos.modo_aplicacao,
+            com_calculos.qtde_com_desconto,
+            com_calculos.qtde_extra,
+            com_calculos.dias_extra_estoque,
+            com_calculos.custo_capital_periodo_perc,
+            round((com_calculos.desconto_perc - com_calculos.custo_capital_periodo_perc), 2) AS economia_liquida_perc,
+                CASE
+                    WHEN (com_calculos.preco_item_eoq IS NOT NULL) THEN round((((com_calculos.qtde_com_desconto * com_calculos.preco_item_eoq) * com_calculos.desconto_perc) / (100)::numeric), 2)
+                    ELSE NULL::numeric
+                END AS economia_bruta_valor,
+                CASE
+                    WHEN (com_calculos.preco_item_eoq IS NOT NULL) THEN round((((com_calculos.qtde_com_desconto * com_calculos.preco_item_eoq) * (com_calculos.desconto_perc - com_calculos.custo_capital_periodo_perc)) / (100)::numeric), 2)
+                    ELSE NULL::numeric
+                END AS economia_liquida_valor
+           FROM com_calculos
+        )
+ SELECT DISTINCT ON (empresa, sku_codigo_omie) campanha_id,
+    campanha_nome,
+    tipo_origem,
+    data_inicio,
+    data_fim,
+    item_id,
+    sku_codigo_fornecedor,
+    sku_codigo_omie,
+    sku_descricao,
+    empresa,
+    fornecedor_nome,
+    modo_aplicacao,
+    desconto_perc,
+    desconto_base,
+    desconto_extra,
+    tem_negociacao_extra,
+    volume_minimo,
+    qtde_base,
+    qtde_com_desconto,
+    qtde_extra,
+    dias_extra_estoque,
+    custo_capital_periodo_perc,
+    economia_liquida_perc,
+    economia_bruta_valor,
+    economia_liquida_valor
+   FROM com_economia
+  WHERE ((modo_aplicacao = 'flat'::text) OR ((modo_aplicacao = 'forward_buying'::text) AND (economia_liquida_perc > (0)::numeric)))
+  ORDER BY empresa, sku_codigo_omie, economia_liquida_valor DESC NULLS LAST, desconto_perc DESC;
+
+
+--
+-- Name: v_simulacao_comparativa; Type: VIEW; Schema: public; Owner: -
+--
+
+CREATE VIEW public.v_simulacao_comparativa WITH (security_invoker='on') AS
+ WITH ranked AS (
+         SELECT simulacao_estoque_resultados.empresa,
+            simulacao_estoque_resultados.sku_codigo_omie,
+            simulacao_estoque_resultados.sku_descricao,
+            simulacao_estoque_resultados.classe_consolidada,
+            simulacao_estoque_resultados.classe_abc,
+            simulacao_estoque_resultados.candidato,
+            simulacao_estoque_resultados.srl_perc,
+            simulacao_estoque_resultados.dias_em_ruptura,
+            simulacao_estoque_resultados.qtde_ruptura_total,
+            simulacao_estoque_resultados.qtde_demandada_total,
+            simulacao_estoque_resultados.estoque_medio,
+            simulacao_estoque_resultados.estoque_max_observado,
+            simulacao_estoque_resultados.num_pedidos_disparados,
+            simulacao_estoque_resultados.giros_ano,
+            simulacao_estoque_resultados.valor_emi,
+            simulacao_estoque_resultados.valor_ruptura_estimado,
+            simulacao_estoque_resultados.estoque_min_aplicado,
+            simulacao_estoque_resultados.ponto_pedido_aplicado,
+            simulacao_estoque_resultados.qtde_compra_aplicada,
+            simulacao_estoque_resultados.estoque_max_aplicado,
+            simulacao_estoque_resultados.lead_time_aplicado,
+            rank() OVER (PARTITION BY simulacao_estoque_resultados.empresa, simulacao_estoque_resultados.sku_codigo_omie ORDER BY simulacao_estoque_resultados.srl_perc DESC, simulacao_estoque_resultados.valor_emi) AS rank_srl_emi,
+            rank() OVER (PARTITION BY simulacao_estoque_resultados.empresa, simulacao_estoque_resultados.sku_codigo_omie ORDER BY simulacao_estoque_resultados.srl_perc DESC) AS rank_srl,
+            rank() OVER (PARTITION BY simulacao_estoque_resultados.empresa, simulacao_estoque_resultados.sku_codigo_omie ORDER BY simulacao_estoque_resultados.valor_emi) AS rank_emi,
+            rank() OVER (PARTITION BY simulacao_estoque_resultados.empresa, simulacao_estoque_resultados.sku_codigo_omie ORDER BY simulacao_estoque_resultados.giros_ano DESC) AS rank_giros
+           FROM public.simulacao_estoque_resultados
+        )
+ SELECT empresa,
+    sku_codigo_omie,
+    sku_descricao,
+    classe_consolidada,
+    classe_abc,
+    candidato,
+    srl_perc,
+    dias_em_ruptura,
+    qtde_ruptura_total,
+    qtde_demandada_total,
+    estoque_medio,
+    estoque_max_observado,
+    num_pedidos_disparados,
+    giros_ano,
+    valor_emi,
+    valor_ruptura_estimado,
+    estoque_min_aplicado,
+    ponto_pedido_aplicado,
+    qtde_compra_aplicada,
+    estoque_max_aplicado,
+    lead_time_aplicado,
+    rank_srl_emi,
+    rank_srl,
+    rank_emi,
+    rank_giros,
+        CASE
+            WHEN (rank_srl_emi = 1) THEN '🏆'::text
+            ELSE ''::text
+        END AS vencedor
+   FROM ranked
+  ORDER BY empresa, sku_codigo_omie, rank_srl_emi;
+
+
+--
+-- Name: v_simulacao_ranking_global; Type: VIEW; Schema: public; Owner: -
+--
+
+CREATE VIEW public.v_simulacao_ranking_global WITH (security_invoker='on') AS
+ SELECT empresa,
+    candidato,
+    count(*) AS skus_simulados,
+    round(avg(srl_perc), 2) AS srl_medio,
+    round((percentile_cont((0.5)::double precision) WITHIN GROUP (ORDER BY ((srl_perc)::double precision)))::numeric, 2) AS srl_mediano,
+    round(min(srl_perc), 2) AS srl_pior,
+    sum(dias_em_ruptura) AS dias_rupt_total,
+    round(sum(valor_emi), 2) AS emi_total_rs,
+    round(avg(valor_emi), 2) AS emi_medio_rs,
+    round(sum(valor_ruptura_estimado), 2) AS perda_ruptura_total_rs,
+    round(avg(giros_ano), 2) AS giros_medios,
+    sum(num_pedidos_disparados) AS pedidos_disparados_total,
+    sum(
+        CASE
+            WHEN (srl_perc >= (98)::numeric) THEN 1
+            ELSE 0
+        END) AS skus_srl_98_plus,
+    sum(
+        CASE
+            WHEN (srl_perc >= (95)::numeric) THEN 1
+            ELSE 0
+        END) AS skus_srl_95_plus,
+    sum(
+        CASE
+            WHEN (srl_perc < (90)::numeric) THEN 1
+            ELSE 0
+        END) AS skus_srl_criticos
+   FROM public.simulacao_estoque_resultados
+  GROUP BY empresa, candidato
+  ORDER BY empresa, (round(avg(srl_perc), 2)) DESC, (round(sum(valor_emi), 2));
+
+
+--
+-- Name: v_sugestao_negociacao_ativa; Type: VIEW; Schema: public; Owner: -
+--
+
+CREATE VIEW public.v_sugestao_negociacao_ativa WITH (security_invoker='on') AS
+ SELECT sng.id,
+    sng.empresa,
+    sng.sku_codigo_omie,
+    sng.sku_descricao,
+    sng.motivo,
+    sng.motivo_detalhes,
+    sng.score_final,
+    sng.volume_financeiro_12m,
+    sng.preco_medio_unitario,
+    sng.promocoes_12m,
+    sng.perc_meses_com_promo,
+    sng.status,
+    sng.data_geracao,
+    sng.valido_ate,
+    (sng.valido_ate - CURRENT_DATE) AS dias_ate_expirar,
+    sng.campanha_id_gerada,
+    mv.categoria,
+    sp.fornecedor_nome,
+    sp.ponto_pedido,
+    sp.estoque_maximo,
+    (COALESCE(sea.estoque_fisico, (0)::numeric) + COALESCE(sea.estoque_pendente_entrada, (0)::numeric)) AS estoque_efetivo
+   FROM (((public.sugestao_negociacao_paralela sng
+     LEFT JOIN public.mv_sku_ranking_negociacao_paralela mv ON (((mv.empresa = sng.empresa) AND (mv.sku_codigo_omie = sng.sku_codigo_omie))))
+     LEFT JOIN public.sku_parametros sp ON (((sp.empresa = sng.empresa) AND ((sp.sku_codigo_omie)::text = sng.sku_codigo_omie))))
+     LEFT JOIN public.sku_estoque_atual sea ON (((sea.empresa = sng.empresa) AND (sea.sku_codigo_omie = sng.sku_codigo_omie))))
+  WHERE ((sng.status = ANY (ARRAY['nova'::text, 'visualizada'::text, 'acao_tomada'::text])) AND (sng.valido_ate >= (CURRENT_DATE - '7 days'::interval)));
+
+
+--
+-- Name: vendor_sip_credentials; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.vendor_sip_credentials (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    user_id uuid NOT NULL,
+    sip_user text NOT NULL,
+    sip_pass text NOT NULL,
+    sip_caller_id text,
+    notes text,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    updated_at timestamp with time zone DEFAULT now() NOT NULL
+);
+
+
+--
+-- Name: TABLE vendor_sip_credentials; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON TABLE public.vendor_sip_credentials IS 'SIP credentials per user for WebRTC dialer. Service role reads via auth.uid(); master role manages via /admin/sip-credentials UI.';
+
+
+--
+-- Name: COLUMN vendor_sip_credentials.sip_pass; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON COLUMN public.vendor_sip_credentials.sip_pass IS 'Plaintext SIP password. Protected by RLS (master+service_role only).';
+
+
+--
+-- Name: visit_score_recalc_queue; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.visit_score_recalc_queue (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    customer_user_id uuid NOT NULL,
+    farmer_id uuid NOT NULL,
+    reason text NOT NULL,
+    source_event_id uuid,
+    enqueued_at timestamp with time zone DEFAULT now() NOT NULL,
+    processed_at timestamp with time zone,
+    error text
+);
+
+
+--
+-- Name: visit_score_recalc_pending; Type: VIEW; Schema: public; Owner: -
+--
+
+CREATE VIEW public.visit_score_recalc_pending AS
+ SELECT id,
+    customer_user_id,
+    farmer_id,
+    reason,
+    source_event_id,
+    enqueued_at,
+    processed_at,
+    error
+   FROM public.visit_score_recalc_queue q
+  WHERE (processed_at IS NULL)
+  ORDER BY enqueued_at;
+
+
+--
+-- Name: warehouses; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.warehouses (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    code character varying(10) NOT NULL,
+    name text NOT NULL,
+    cnpj character varying(14),
+    is_active boolean DEFAULT true NOT NULL,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    updated_at timestamp with time zone DEFAULT now() NOT NULL
+);
+
+
+--
+-- Name: webauthn_challenges; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.webauthn_challenges (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    credential_id text NOT NULL,
+    challenge text NOT NULL,
+    expires_at timestamp with time zone DEFAULT (now() + '00:05:00'::interval) NOT NULL,
+    created_at timestamp with time zone DEFAULT now() NOT NULL
+);
+
+
+--
+-- Name: webauthn_credentials; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.webauthn_credentials (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    user_id uuid NOT NULL,
+    credential_id text NOT NULL,
+    public_key text NOT NULL,
+    counter integer DEFAULT 0 NOT NULL,
+    device_name text,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    last_used_at timestamp with time zone
+);
+
+
+--
+-- Name: categoria_aumento_familia_mapeamento id; Type: DEFAULT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.categoria_aumento_familia_mapeamento ALTER COLUMN id SET DEFAULT nextval('public.categoria_aumento_familia_mapeamento_id_seq'::regclass);
+
+
+--
+-- Name: dashboard_visits id; Type: DEFAULT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.dashboard_visits ALTER COLUMN id SET DEFAULT nextval('public.dashboard_visits_id_seq'::regclass);
+
+
+--
+-- Name: des_checkin_qualitativo id; Type: DEFAULT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.des_checkin_qualitativo ALTER COLUMN id SET DEFAULT nextval('public.des_checkin_qualitativo_id_seq'::regclass);
+
+
+--
+-- Name: des_checkin_qualitativo_resposta id; Type: DEFAULT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.des_checkin_qualitativo_resposta ALTER COLUMN id SET DEFAULT nextval('public.des_checkin_qualitativo_resposta_id_seq'::regclass);
+
+
+--
+-- Name: des_contrato_versao id; Type: DEFAULT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.des_contrato_versao ALTER COLUMN id SET DEFAULT nextval('public.des_contrato_versao_id_seq'::regclass);
+
+
+--
+-- Name: des_criterio_percentual id; Type: DEFAULT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.des_criterio_percentual ALTER COLUMN id SET DEFAULT nextval('public.des_criterio_percentual_id_seq'::regclass);
+
+
+--
+-- Name: des_criterio_qualitativo id; Type: DEFAULT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.des_criterio_qualitativo ALTER COLUMN id SET DEFAULT nextval('public.des_criterio_qualitativo_id_seq'::regclass);
+
+
+--
+-- Name: des_faixa_quantitativa id; Type: DEFAULT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.des_faixa_quantitativa ALTER COLUMN id SET DEFAULT nextval('public.des_faixa_quantitativa_id_seq'::regclass);
+
+
+--
+-- Name: des_meta_empresa id; Type: DEFAULT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.des_meta_empresa ALTER COLUMN id SET DEFAULT nextval('public.des_meta_empresa_id_seq'::regclass);
+
+
+--
+-- Name: des_trimestre_snapshot id; Type: DEFAULT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.des_trimestre_snapshot ALTER COLUMN id SET DEFAULT nextval('public.des_trimestre_snapshot_id_seq'::regclass);
+
+
+--
+-- Name: eventos_outlier id; Type: DEFAULT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.eventos_outlier ALTER COLUMN id SET DEFAULT nextval('public.eventos_outlier_id_seq'::regclass);
+
+
+--
+-- Name: familia_nao_comprada id; Type: DEFAULT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.familia_nao_comprada ALTER COLUMN id SET DEFAULT nextval('public.familia_nao_comprada_id_seq'::regclass);
+
+
+--
+-- Name: fin_audit_log id; Type: DEFAULT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.fin_audit_log ALTER COLUMN id SET DEFAULT nextval('public.fin_audit_log_id_seq'::regclass);
+
+
+--
+-- Name: fornecedor_alerta id; Type: DEFAULT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.fornecedor_alerta ALTER COLUMN id SET DEFAULT nextval('public.fornecedor_alerta_id_seq'::regclass);
+
+
+--
+-- Name: fornecedor_aumento_anunciado id; Type: DEFAULT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.fornecedor_aumento_anunciado ALTER COLUMN id SET DEFAULT nextval('public.fornecedor_aumento_anunciado_id_seq'::regclass);
+
+
+--
+-- Name: fornecedor_aumento_item id; Type: DEFAULT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.fornecedor_aumento_item ALTER COLUMN id SET DEFAULT nextval('public.fornecedor_aumento_item_id_seq'::regclass);
+
+
+--
+-- Name: fornecedor_cadeia_logistica id; Type: DEFAULT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.fornecedor_cadeia_logistica ALTER COLUMN id SET DEFAULT nextval('public.fornecedor_cadeia_logistica_id_seq'::regclass);
+
+
+--
+-- Name: fornecedor_cadeia_logistica_historico id; Type: DEFAULT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.fornecedor_cadeia_logistica_historico ALTER COLUMN id SET DEFAULT nextval('public.fornecedor_cadeia_logistica_historico_id_seq'::regclass);
+
+
+--
+-- Name: fornecedor_calendario_operacao id; Type: DEFAULT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.fornecedor_calendario_operacao ALTER COLUMN id SET DEFAULT nextval('public.fornecedor_calendario_operacao_id_seq'::regclass);
+
+
+--
+-- Name: fornecedor_custo_adicional_config id; Type: DEFAULT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.fornecedor_custo_adicional_config ALTER COLUMN id SET DEFAULT nextval('public.fornecedor_custo_adicional_config_id_seq'::regclass);
+
+
+--
+-- Name: fornecedor_email_polling id; Type: DEFAULT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.fornecedor_email_polling ALTER COLUMN id SET DEFAULT nextval('public.fornecedor_email_polling_id_seq'::regclass);
+
+
+--
+-- Name: fornecedor_email_polling_log id; Type: DEFAULT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.fornecedor_email_polling_log ALTER COLUMN id SET DEFAULT nextval('public.fornecedor_email_polling_log_id_seq'::regclass);
+
+
+--
+-- Name: fornecedor_grupo_producao id; Type: DEFAULT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.fornecedor_grupo_producao ALTER COLUMN id SET DEFAULT nextval('public.fornecedor_grupo_producao_id_seq'::regclass);
+
+
+--
+-- Name: fornecedor_habilitado_reposicao id; Type: DEFAULT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.fornecedor_habilitado_reposicao ALTER COLUMN id SET DEFAULT nextval('public.fornecedor_habilitado_reposicao_id_seq'::regclass);
+
+
+--
+-- Name: fornecedor_mapeamento_extracao id; Type: DEFAULT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.fornecedor_mapeamento_extracao ALTER COLUMN id SET DEFAULT nextval('public.fornecedor_mapeamento_extracao_id_seq'::regclass);
+
+
+--
+-- Name: fornecedor_prazo_pagamento_config id; Type: DEFAULT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.fornecedor_prazo_pagamento_config ALTER COLUMN id SET DEFAULT nextval('public.fornecedor_prazo_pagamento_config_id_seq'::regclass);
+
+
+--
+-- Name: fornecedor_promocao id; Type: DEFAULT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.fornecedor_promocao ALTER COLUMN id SET DEFAULT nextval('public.fornecedor_promocao_id_seq'::regclass);
+
+
+--
+-- Name: gmail_webhook_log id; Type: DEFAULT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.gmail_webhook_log ALTER COLUMN id SET DEFAULT nextval('public.gmail_webhook_log_id_seq'::regclass);
+
+
+--
+-- Name: observacoes_excluidas id; Type: DEFAULT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.observacoes_excluidas ALTER COLUMN id SET DEFAULT nextval('public.observacoes_excluidas_id_seq'::regclass);
+
+
+--
+-- Name: pedido_compra_item id; Type: DEFAULT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.pedido_compra_item ALTER COLUMN id SET DEFAULT nextval('public.pedido_compra_item_id_seq'::regclass);
+
+
+--
+-- Name: pedido_compra_sugerido id; Type: DEFAULT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.pedido_compra_sugerido ALTER COLUMN id SET DEFAULT nextval('public.pedido_compra_sugerido_id_seq'::regclass);
+
+
+--
+-- Name: promocao_campanha id; Type: DEFAULT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.promocao_campanha ALTER COLUMN id SET DEFAULT nextval('public.promocao_campanha_id_seq'::regclass);
+
+
+--
+-- Name: promocao_item id; Type: DEFAULT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.promocao_item ALTER COLUMN id SET DEFAULT nextval('public.promocao_item_id_seq'::regclass);
+
+
+--
+-- Name: promocao_negociacao_evento id; Type: DEFAULT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.promocao_negociacao_evento ALTER COLUMN id SET DEFAULT nextval('public.promocao_negociacao_evento_id_seq'::regclass);
+
+
+--
+-- Name: simulacao_estoque_resultados id; Type: DEFAULT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.simulacao_estoque_resultados ALTER COLUMN id SET DEFAULT nextval('public.simulacao_estoque_resultados_id_seq'::regclass);
+
+
+--
+-- Name: sku_fornecedor_externo id; Type: DEFAULT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.sku_fornecedor_externo ALTER COLUMN id SET DEFAULT nextval('public.sku_fornecedor_externo_id_seq'::regclass);
+
+
+--
+-- Name: sku_substituicao id; Type: DEFAULT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.sku_substituicao ALTER COLUMN id SET DEFAULT nextval('public.sku_substituicao_id_seq'::regclass);
+
+
+--
+-- Name: sugestao_negociacao_paralela id; Type: DEFAULT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.sugestao_negociacao_paralela ALTER COLUMN id SET DEFAULT nextval('public.sugestao_negociacao_paralela_id_seq'::regclass);
+
+
+--
+-- Name: abc_xyz_classification abc_xyz_classification_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.abc_xyz_classification
+    ADD CONSTRAINT abc_xyz_classification_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: addresses addresses_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.addresses
+    ADD CONSTRAINT addresses_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: ai_decision_audit_log ai_decision_audit_log_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.ai_decision_audit_log
+    ADD CONSTRAINT ai_decision_audit_log_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: ai_decisions ai_decisions_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.ai_decisions
+    ADD CONSTRAINT ai_decisions_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: cache_lotes cache_lotes_cache_key_key; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.cache_lotes
+    ADD CONSTRAINT cache_lotes_cache_key_key UNIQUE (cache_key);
+
+
+--
+-- Name: cache_lotes cache_lotes_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.cache_lotes
+    ADD CONSTRAINT cache_lotes_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: calendario_feriados calendario_feriados_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.calendario_feriados
+    ADD CONSTRAINT calendario_feriados_pkey PRIMARY KEY (data);
+
+
+--
+-- Name: call_log call_log_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.call_log
+    ADD CONSTRAINT call_log_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: carteira_assignments carteira_assignments_customer_user_id_key; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.carteira_assignments
+    ADD CONSTRAINT carteira_assignments_customer_user_id_key UNIQUE (customer_user_id);
+
+
+--
+-- Name: carteira_assignments carteira_assignments_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.carteira_assignments
+    ADD CONSTRAINT carteira_assignments_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: carteira_coverage carteira_coverage_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.carteira_coverage
+    ADD CONSTRAINT carteira_coverage_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: categoria_aumento_familia_mapeamento categoria_aumento_familia_mapeamento_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.categoria_aumento_familia_mapeamento
+    ADD CONSTRAINT categoria_aumento_familia_mapeamento_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: category_mappings category_mappings_order_category_key; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.category_mappings
+    ADD CONSTRAINT category_mappings_order_category_key UNIQUE (order_category);
+
+
+--
+-- Name: category_mappings category_mappings_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.category_mappings
+    ADD CONSTRAINT category_mappings_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: cockpit_audit_log cockpit_audit_log_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.cockpit_audit_log
+    ADD CONSTRAINT cockpit_audit_log_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: commercial_roles commercial_roles_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.commercial_roles
+    ADD CONSTRAINT commercial_roles_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: commercial_roles commercial_roles_user_id_key; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.commercial_roles
+    ADD CONSTRAINT commercial_roles_user_id_key UNIQUE (user_id);
+
+
+--
+-- Name: company_cnpjs company_cnpjs_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.company_cnpjs
+    ADD CONSTRAINT company_cnpjs_pkey PRIMARY KEY (company);
+
+
+--
+-- Name: company_config company_config_key_key; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.company_config
+    ADD CONSTRAINT company_config_key_key UNIQUE (key);
+
+
+--
+-- Name: company_config company_config_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.company_config
+    ADD CONSTRAINT company_config_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: company_profiles company_profiles_account_key; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.company_profiles
+    ADD CONSTRAINT company_profiles_account_key UNIQUE (account);
+
+
+--
+-- Name: company_profiles company_profiles_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.company_profiles
+    ADD CONSTRAINT company_profiles_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: conversao_unidades conversao_unidades_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.conversao_unidades
+    ADD CONSTRAINT conversao_unidades_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: cte_associados cte_associados_chave_acesso_cte_key; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.cte_associados
+    ADD CONSTRAINT cte_associados_chave_acesso_cte_key UNIQUE (chave_acesso_cte);
+
+
+--
+-- Name: cte_associados cte_associados_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.cte_associados
+    ADD CONSTRAINT cte_associados_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: customer_contacts customer_contacts_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.customer_contacts
+    ADD CONSTRAINT customer_contacts_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: customer_preferred_items customer_preferred_items_omie_codigo_cliente_omie_codigo_pr_key; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.customer_preferred_items
+    ADD CONSTRAINT customer_preferred_items_omie_codigo_cliente_omie_codigo_pr_key UNIQUE (omie_codigo_cliente, omie_codigo_produto, account);
+
+
+--
+-- Name: customer_preferred_items customer_preferred_items_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.customer_preferred_items
+    ADD CONSTRAINT customer_preferred_items_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: customer_processes customer_processes_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.customer_processes
+    ADD CONSTRAINT customer_processes_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: customer_segments customer_segments_omie_codigo_cliente_account_key; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.customer_segments
+    ADD CONSTRAINT customer_segments_omie_codigo_cliente_account_key UNIQUE (omie_codigo_cliente, account);
+
+
+--
+-- Name: customer_segments customer_segments_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.customer_segments
+    ADD CONSTRAINT customer_segments_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: customer_visit_scores customer_visit_scores_customer_user_id_farmer_id_key; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.customer_visit_scores
+    ADD CONSTRAINT customer_visit_scores_customer_user_id_farmer_id_key UNIQUE (customer_user_id, farmer_id);
+
+
+--
+-- Name: customer_visit_scores customer_visit_scores_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.customer_visit_scores
+    ADD CONSTRAINT customer_visit_scores_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: dashboard_visits dashboard_visits_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.dashboard_visits
+    ADD CONSTRAINT dashboard_visits_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: dashboard_visits dashboard_visits_unique_visit; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.dashboard_visits
+    ADD CONSTRAINT dashboard_visits_unique_visit UNIQUE (user_id, visited_at);
+
+
+--
+-- Name: default_prices default_prices_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.default_prices
+    ADD CONSTRAINT default_prices_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: des_checkin_qualitativo des_checkin_qualitativo_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.des_checkin_qualitativo
+    ADD CONSTRAINT des_checkin_qualitativo_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: des_checkin_qualitativo_resposta des_checkin_qualitativo_resposta_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.des_checkin_qualitativo_resposta
+    ADD CONSTRAINT des_checkin_qualitativo_resposta_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: des_contrato_versao des_contrato_versao_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.des_contrato_versao
+    ADD CONSTRAINT des_contrato_versao_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: des_contrato_versao des_contrato_versao_versao_key; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.des_contrato_versao
+    ADD CONSTRAINT des_contrato_versao_versao_key UNIQUE (versao);
+
+
+--
+-- Name: des_criterio_percentual des_criterio_percentual_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.des_criterio_percentual
+    ADD CONSTRAINT des_criterio_percentual_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: des_criterio_qualitativo des_criterio_qualitativo_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.des_criterio_qualitativo
+    ADD CONSTRAINT des_criterio_qualitativo_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: des_faixa_quantitativa des_faixa_quantitativa_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.des_faixa_quantitativa
+    ADD CONSTRAINT des_faixa_quantitativa_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: des_meta_empresa des_meta_empresa_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.des_meta_empresa
+    ADD CONSTRAINT des_meta_empresa_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: des_trimestre_snapshot des_trimestre_snapshot_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.des_trimestre_snapshot
+    ADD CONSTRAINT des_trimestre_snapshot_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: empresa_configuracao_custos empresa_configuracao_custos_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.empresa_configuracao_custos
+    ADD CONSTRAINT empresa_configuracao_custos_pkey PRIMARY KEY (empresa);
+
+
+--
+-- Name: eventos_outlier eventos_outlier_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.eventos_outlier
+    ADD CONSTRAINT eventos_outlier_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: familia_nao_comprada familia_nao_comprada_empresa_familia_key; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.familia_nao_comprada
+    ADD CONSTRAINT familia_nao_comprada_empresa_familia_key UNIQUE (empresa, familia);
+
+
+--
+-- Name: familia_nao_comprada familia_nao_comprada_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.familia_nao_comprada
+    ADD CONSTRAINT familia_nao_comprada_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: farmer_agenda farmer_agenda_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.farmer_agenda
+    ADD CONSTRAINT farmer_agenda_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: farmer_algorithm_config farmer_algorithm_config_key_key; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.farmer_algorithm_config
+    ADD CONSTRAINT farmer_algorithm_config_key_key UNIQUE (key);
+
+
+--
+-- Name: farmer_algorithm_config farmer_algorithm_config_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.farmer_algorithm_config
+    ADD CONSTRAINT farmer_algorithm_config_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: farmer_association_rules farmer_association_rules_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.farmer_association_rules
+    ADD CONSTRAINT farmer_association_rules_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: farmer_audit_log farmer_audit_log_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.farmer_audit_log
+    ADD CONSTRAINT farmer_audit_log_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: farmer_bundle_recommendations farmer_bundle_recommendations_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.farmer_bundle_recommendations
+    ADD CONSTRAINT farmer_bundle_recommendations_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: farmer_calls farmer_calls_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.farmer_calls
+    ADD CONSTRAINT farmer_calls_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: farmer_category_conversion farmer_category_conversion_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.farmer_category_conversion
+    ADD CONSTRAINT farmer_category_conversion_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: farmer_client_scores farmer_client_scores_customer_user_id_farmer_id_key; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.farmer_client_scores
+    ADD CONSTRAINT farmer_client_scores_customer_user_id_farmer_id_key UNIQUE (customer_user_id, farmer_id);
+
+
+--
+-- Name: farmer_client_scores farmer_client_scores_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.farmer_client_scores
+    ADD CONSTRAINT farmer_client_scores_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: farmer_config farmer_config_farmer_id_key; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.farmer_config
+    ADD CONSTRAINT farmer_config_farmer_id_key UNIQUE (farmer_id);
+
+
+--
+-- Name: farmer_config farmer_config_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.farmer_config
+    ADD CONSTRAINT farmer_config_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: farmer_copilot_events farmer_copilot_events_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.farmer_copilot_events
+    ADD CONSTRAINT farmer_copilot_events_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: farmer_copilot_sessions farmer_copilot_sessions_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.farmer_copilot_sessions
+    ADD CONSTRAINT farmer_copilot_sessions_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: farmer_diagnostic_questions farmer_diagnostic_questions_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.farmer_diagnostic_questions
+    ADD CONSTRAINT farmer_diagnostic_questions_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: farmer_experiment_clients farmer_experiment_clients_experiment_id_customer_user_id_key; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.farmer_experiment_clients
+    ADD CONSTRAINT farmer_experiment_clients_experiment_id_customer_user_id_key UNIQUE (experiment_id, customer_user_id);
+
+
+--
+-- Name: farmer_experiment_clients farmer_experiment_clients_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.farmer_experiment_clients
+    ADD CONSTRAINT farmer_experiment_clients_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: farmer_experiments farmer_experiments_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.farmer_experiments
+    ADD CONSTRAINT farmer_experiments_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: farmer_governance_proposals farmer_governance_proposals_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.farmer_governance_proposals
+    ADD CONSTRAINT farmer_governance_proposals_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: farmer_learning_weights farmer_learning_weights_farmer_id_key; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.farmer_learning_weights
+    ADD CONSTRAINT farmer_learning_weights_farmer_id_key UNIQUE (farmer_id);
+
+
+--
+-- Name: farmer_learning_weights farmer_learning_weights_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.farmer_learning_weights
+    ADD CONSTRAINT farmer_learning_weights_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: farmer_performance_scores farmer_performance_scores_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.farmer_performance_scores
+    ADD CONSTRAINT farmer_performance_scores_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: farmer_recommendations farmer_recommendations_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.farmer_recommendations
+    ADD CONSTRAINT farmer_recommendations_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: farmer_tactical_plans farmer_tactical_plans_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.farmer_tactical_plans
+    ADD CONSTRAINT farmer_tactical_plans_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: fin_alertas fin_alertas_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.fin_alertas
+    ADD CONSTRAINT fin_alertas_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: fin_audit_log fin_audit_log_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.fin_audit_log
+    ADD CONSTRAINT fin_audit_log_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: fin_categoria_dre_mapping fin_categoria_dre_mapping_company_omie_codigo_key; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.fin_categoria_dre_mapping
+    ADD CONSTRAINT fin_categoria_dre_mapping_company_omie_codigo_key UNIQUE (company, omie_codigo);
+
+
+--
+-- Name: fin_categoria_dre_mapping fin_categoria_dre_mapping_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.fin_categoria_dre_mapping
+    ADD CONSTRAINT fin_categoria_dre_mapping_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: fin_categorias fin_categorias_company_omie_codigo_key; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.fin_categorias
+    ADD CONSTRAINT fin_categorias_company_omie_codigo_key UNIQUE (company, omie_codigo);
+
+
+--
+-- Name: fin_categorias fin_categorias_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.fin_categorias
+    ADD CONSTRAINT fin_categorias_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: fin_conciliacao fin_conciliacao_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.fin_conciliacao
+    ADD CONSTRAINT fin_conciliacao_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: fin_confiabilidade fin_confiabilidade_company_ano_mes_key; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.fin_confiabilidade
+    ADD CONSTRAINT fin_confiabilidade_company_ano_mes_key UNIQUE (company, ano, mes);
+
+
+--
+-- Name: fin_confiabilidade fin_confiabilidade_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.fin_confiabilidade
+    ADD CONSTRAINT fin_confiabilidade_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: fin_config_cashflow fin_config_cashflow_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.fin_config_cashflow
+    ADD CONSTRAINT fin_config_cashflow_pkey PRIMARY KEY (company);
+
+
+--
+-- Name: fin_contas_correntes fin_contas_correntes_company_omie_ncodcc_key; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.fin_contas_correntes
+    ADD CONSTRAINT fin_contas_correntes_company_omie_ncodcc_key UNIQUE (company, omie_ncodcc);
+
+
+--
+-- Name: fin_contas_correntes fin_contas_correntes_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.fin_contas_correntes
+    ADD CONSTRAINT fin_contas_correntes_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: fin_contas_pagar fin_contas_pagar_company_omie_codigo_lancamento_key; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.fin_contas_pagar
+    ADD CONSTRAINT fin_contas_pagar_company_omie_codigo_lancamento_key UNIQUE (company, omie_codigo_lancamento);
+
+
+--
+-- Name: fin_contas_pagar fin_contas_pagar_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.fin_contas_pagar
+    ADD CONSTRAINT fin_contas_pagar_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: fin_contas_receber fin_contas_receber_company_omie_codigo_lancamento_key; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.fin_contas_receber
+    ADD CONSTRAINT fin_contas_receber_company_omie_codigo_lancamento_key UNIQUE (company, omie_codigo_lancamento);
+
+
+--
+-- Name: fin_contas_receber fin_contas_receber_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.fin_contas_receber
+    ADD CONSTRAINT fin_contas_receber_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: fin_dre_snapshots fin_dre_snapshots_company_ano_mes_regime_key; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.fin_dre_snapshots
+    ADD CONSTRAINT fin_dre_snapshots_company_ano_mes_regime_key UNIQUE (company, ano, mes, regime);
+
+
+--
+-- Name: fin_dre_snapshots fin_dre_snapshots_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.fin_dre_snapshots
+    ADD CONSTRAINT fin_dre_snapshots_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: fin_eliminacoes_intercompany fin_eliminacoes_intercompany_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.fin_eliminacoes_intercompany
+    ADD CONSTRAINT fin_eliminacoes_intercompany_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: fin_eliminacoes_log fin_eliminacoes_log_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.fin_eliminacoes_log
+    ADD CONSTRAINT fin_eliminacoes_log_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: fin_estoque_valor fin_estoque_valor_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.fin_estoque_valor
+    ADD CONSTRAINT fin_estoque_valor_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: fin_eventos_eventuais fin_eventos_eventuais_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.fin_eventos_eventuais
+    ADD CONSTRAINT fin_eventos_eventuais_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: fin_eventos_recorrentes fin_eventos_recorrentes_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.fin_eventos_recorrentes
+    ADD CONSTRAINT fin_eventos_recorrentes_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: fin_fechamento_log fin_fechamento_log_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.fin_fechamento_log
+    ADD CONSTRAINT fin_fechamento_log_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: fin_fechamentos fin_fechamentos_company_ano_mes_versao_key; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.fin_fechamentos
+    ADD CONSTRAINT fin_fechamentos_company_ano_mes_versao_key UNIQUE (company, ano, mes, versao);
+
+
+--
+-- Name: fin_fechamentos fin_fechamentos_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.fin_fechamentos
+    ADD CONSTRAINT fin_fechamentos_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: fin_forecast fin_forecast_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.fin_forecast
+    ADD CONSTRAINT fin_forecast_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: fin_ic_matches fin_ic_matches_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.fin_ic_matches
+    ADD CONSTRAINT fin_ic_matches_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: fin_kpi_tributario fin_kpi_tributario_company_ano_mes_key; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.fin_kpi_tributario
+    ADD CONSTRAINT fin_kpi_tributario_company_ano_mes_key UNIQUE (company, ano, mes);
+
+
+--
+-- Name: fin_kpi_tributario fin_kpi_tributario_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.fin_kpi_tributario
+    ADD CONSTRAINT fin_kpi_tributario_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: fin_movimentacoes fin_movimentacoes_company_omie_ncodmov_key; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.fin_movimentacoes
+    ADD CONSTRAINT fin_movimentacoes_company_omie_ncodmov_key UNIQUE (company, omie_ncodmov);
+
+
+--
+-- Name: fin_movimentacoes fin_movimentacoes_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.fin_movimentacoes
+    ADD CONSTRAINT fin_movimentacoes_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: fin_orcamento fin_orcamento_company_ano_mes_dre_linha_key; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.fin_orcamento
+    ADD CONSTRAINT fin_orcamento_company_ano_mes_dre_linha_key UNIQUE (company, ano, mes, dre_linha);
+
+
+--
+-- Name: fin_orcamento fin_orcamento_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.fin_orcamento
+    ADD CONSTRAINT fin_orcamento_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: fin_period_overrides fin_period_overrides_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.fin_period_overrides
+    ADD CONSTRAINT fin_period_overrides_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: fin_permissoes fin_permissoes_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.fin_permissoes
+    ADD CONSTRAINT fin_permissoes_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: fin_permissoes fin_permissoes_user_id_key; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.fin_permissoes
+    ADD CONSTRAINT fin_permissoes_user_id_key UNIQUE (user_id);
+
+
+--
+-- Name: fin_projecao_snapshots fin_projecao_snapshots_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.fin_projecao_snapshots
+    ADD CONSTRAINT fin_projecao_snapshots_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: fin_sync_checkpoint fin_sync_checkpoint_company_entidade_key; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.fin_sync_checkpoint
+    ADD CONSTRAINT fin_sync_checkpoint_company_entidade_key UNIQUE (company, entidade);
+
+
+--
+-- Name: fin_sync_checkpoint fin_sync_checkpoint_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.fin_sync_checkpoint
+    ADD CONSTRAINT fin_sync_checkpoint_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: fin_sync_log fin_sync_log_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.fin_sync_log
+    ADD CONSTRAINT fin_sync_log_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: fin_valor_inputs fin_valor_inputs_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.fin_valor_inputs
+    ADD CONSTRAINT fin_valor_inputs_pkey PRIMARY KEY (company);
+
+
+--
+-- Name: fornecedor_alerta fornecedor_alerta_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.fornecedor_alerta
+    ADD CONSTRAINT fornecedor_alerta_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: fornecedor_aumento_anunciado fornecedor_aumento_anunciado_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.fornecedor_aumento_anunciado
+    ADD CONSTRAINT fornecedor_aumento_anunciado_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: fornecedor_aumento_item fornecedor_aumento_item_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.fornecedor_aumento_item
+    ADD CONSTRAINT fornecedor_aumento_item_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: fornecedor_cadeia_logistica fornecedor_cadeia_logistica_empresa_fornecedor_nome_ordem_v_key; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.fornecedor_cadeia_logistica
+    ADD CONSTRAINT fornecedor_cadeia_logistica_empresa_fornecedor_nome_ordem_v_key UNIQUE (empresa, fornecedor_nome, ordem, valido_desde);
+
+
+--
+-- Name: fornecedor_cadeia_logistica_historico fornecedor_cadeia_logistica_historico_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.fornecedor_cadeia_logistica_historico
+    ADD CONSTRAINT fornecedor_cadeia_logistica_historico_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: fornecedor_cadeia_logistica fornecedor_cadeia_logistica_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.fornecedor_cadeia_logistica
+    ADD CONSTRAINT fornecedor_cadeia_logistica_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: fornecedor_calendario_operacao fornecedor_calendario_operaca_empresa_fornecedor_nome_dia_s_key; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.fornecedor_calendario_operacao
+    ADD CONSTRAINT fornecedor_calendario_operaca_empresa_fornecedor_nome_dia_s_key UNIQUE (empresa, fornecedor_nome, dia_semana);
+
+
+--
+-- Name: fornecedor_calendario_operacao fornecedor_calendario_operacao_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.fornecedor_calendario_operacao
+    ADD CONSTRAINT fornecedor_calendario_operacao_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: fornecedor_condicao_pagamento_padrao fornecedor_condicao_pagamento_padrao_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.fornecedor_condicao_pagamento_padrao
+    ADD CONSTRAINT fornecedor_condicao_pagamento_padrao_pkey PRIMARY KEY (empresa, fornecedor_nome);
+
+
+--
+-- Name: fornecedor_custo_adicional_config fornecedor_custo_adicional_config_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.fornecedor_custo_adicional_config
+    ADD CONSTRAINT fornecedor_custo_adicional_config_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: fornecedor_email_polling_log fornecedor_email_polling_log_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.fornecedor_email_polling_log
+    ADD CONSTRAINT fornecedor_email_polling_log_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: fornecedor_email_polling fornecedor_email_polling_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.fornecedor_email_polling
+    ADD CONSTRAINT fornecedor_email_polling_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: fornecedor_grupo_producao fornecedor_grupo_producao_empresa_fornecedor_nome_grupo_cod_key; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.fornecedor_grupo_producao
+    ADD CONSTRAINT fornecedor_grupo_producao_empresa_fornecedor_nome_grupo_cod_key UNIQUE (empresa, fornecedor_nome, grupo_codigo);
+
+
+--
+-- Name: fornecedor_grupo_producao fornecedor_grupo_producao_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.fornecedor_grupo_producao
+    ADD CONSTRAINT fornecedor_grupo_producao_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: fornecedor_habilitado_reposicao fornecedor_habilitado_reposicao_empresa_fornecedor_nome_key; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.fornecedor_habilitado_reposicao
+    ADD CONSTRAINT fornecedor_habilitado_reposicao_empresa_fornecedor_nome_key UNIQUE (empresa, fornecedor_nome);
+
+
+--
+-- Name: fornecedor_habilitado_reposicao fornecedor_habilitado_reposicao_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.fornecedor_habilitado_reposicao
+    ADD CONSTRAINT fornecedor_habilitado_reposicao_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: fornecedor_mapeamento_extracao fornecedor_mapeamento_extracao_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.fornecedor_mapeamento_extracao
+    ADD CONSTRAINT fornecedor_mapeamento_extracao_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: fornecedor_omie_cache fornecedor_omie_cache_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.fornecedor_omie_cache
+    ADD CONSTRAINT fornecedor_omie_cache_pkey PRIMARY KEY (empresa, fornecedor_nome);
+
+
+--
+-- Name: fornecedor_prazo_pagamento_config fornecedor_prazo_pagamento_config_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.fornecedor_prazo_pagamento_config
+    ADD CONSTRAINT fornecedor_prazo_pagamento_config_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: fornecedor_promocao fornecedor_promocao_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.fornecedor_promocao
+    ADD CONSTRAINT fornecedor_promocao_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: gamification_scores gamification_scores_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.gamification_scores
+    ADD CONSTRAINT gamification_scores_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: gamification_scores gamification_scores_user_id_key; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.gamification_scores
+    ADD CONSTRAINT gamification_scores_user_id_key UNIQUE (user_id);
+
+
+--
+-- Name: gmail_webhook_log gmail_webhook_log_message_id_key; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.gmail_webhook_log
+    ADD CONSTRAINT gmail_webhook_log_message_id_key UNIQUE (message_id);
+
+
+--
+-- Name: gmail_webhook_log gmail_webhook_log_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.gmail_webhook_log
+    ADD CONSTRAINT gmail_webhook_log_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: health_score_history health_score_history_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.health_score_history
+    ADD CONSTRAINT health_score_history_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: inventory_position inventory_position_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.inventory_position
+    ADD CONSTRAINT inventory_position_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: kb_chunks kb_chunks_document_id_chunk_index_key; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.kb_chunks
+    ADD CONSTRAINT kb_chunks_document_id_chunk_index_key UNIQUE (document_id, chunk_index);
+
+
+--
+-- Name: kb_chunks kb_chunks_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.kb_chunks
+    ADD CONSTRAINT kb_chunks_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: kb_competitor_products kb_competitor_products_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.kb_competitor_products
+    ADD CONSTRAINT kb_competitor_products_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: kb_competitors kb_competitors_name_key; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.kb_competitors
+    ADD CONSTRAINT kb_competitors_name_key UNIQUE (name);
+
+
+--
+-- Name: kb_competitors kb_competitors_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.kb_competitors
+    ADD CONSTRAINT kb_competitors_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: kb_documents kb_documents_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.kb_documents
+    ADD CONSTRAINT kb_documents_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: kb_product_specs kb_product_specs_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.kb_product_specs
+    ADD CONSTRAINT kb_product_specs_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: kb_product_specs kb_product_specs_product_code_key; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.kb_product_specs
+    ADD CONSTRAINT kb_product_specs_product_code_key UNIQUE (product_code);
+
+
+--
+-- Name: loyalty_points loyalty_points_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.loyalty_points
+    ADD CONSTRAINT loyalty_points_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: loyalty_redemptions loyalty_redemptions_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.loyalty_redemptions
+    ADD CONSTRAINT loyalty_redemptions_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: margin_audit_log margin_audit_log_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.margin_audit_log
+    ADD CONSTRAINT margin_audit_log_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: nfe_lotes_escaneados nfe_lotes_escaneados_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.nfe_lotes_escaneados
+    ADD CONSTRAINT nfe_lotes_escaneados_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: nfe_recebimento_itens nfe_recebimento_itens_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.nfe_recebimento_itens
+    ADD CONSTRAINT nfe_recebimento_itens_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: nfe_recebimentos nfe_recebimentos_chave_acesso_key; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.nfe_recebimentos
+    ADD CONSTRAINT nfe_recebimentos_chave_acesso_key UNIQUE (chave_acesso);
+
+
+--
+-- Name: nfe_recebimentos nfe_recebimentos_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.nfe_recebimentos
+    ADD CONSTRAINT nfe_recebimentos_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: observacoes_excluidas observacoes_excluidas_empresa_sku_codigo_omie_tipo_observac_key; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.observacoes_excluidas
+    ADD CONSTRAINT observacoes_excluidas_empresa_sku_codigo_omie_tipo_observac_key UNIQUE (empresa, sku_codigo_omie, tipo_observacao, data_observacao, referencia_original);
+
+
+--
+-- Name: observacoes_excluidas observacoes_excluidas_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.observacoes_excluidas
+    ADD CONSTRAINT observacoes_excluidas_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: omie_clientes omie_clientes_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.omie_clientes
+    ADD CONSTRAINT omie_clientes_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: omie_condicao_pagamento_catalogo omie_condicao_pagamento_catalogo_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.omie_condicao_pagamento_catalogo
+    ADD CONSTRAINT omie_condicao_pagamento_catalogo_pkey PRIMARY KEY (empresa, codigo);
+
+
+--
+-- Name: omie_ordens_servico omie_ordens_servico_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.omie_ordens_servico
+    ADD CONSTRAINT omie_ordens_servico_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: omie_products omie_products_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.omie_products
+    ADD CONSTRAINT omie_products_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: omie_servicos omie_servicos_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.omie_servicos
+    ADD CONSTRAINT omie_servicos_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: omie_vendedor_map omie_vendedor_map_omie_account_omie_codigo_vendedor_key; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.omie_vendedor_map
+    ADD CONSTRAINT omie_vendedor_map_omie_account_omie_codigo_vendedor_key UNIQUE (omie_account, omie_codigo_vendedor);
+
+
+--
+-- Name: omie_vendedor_map omie_vendedor_map_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.omie_vendedor_map
+    ADD CONSTRAINT omie_vendedor_map_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: omie_webhook_events omie_webhook_events_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.omie_webhook_events
+    ADD CONSTRAINT omie_webhook_events_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: order_items order_items_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.order_items
+    ADD CONSTRAINT order_items_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: order_messages order_messages_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.order_messages
+    ADD CONSTRAINT order_messages_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: order_price_history order_price_history_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.order_price_history
+    ADD CONSTRAINT order_price_history_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: order_reviews order_reviews_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.order_reviews
+    ADD CONSTRAINT order_reviews_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: orders orders_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.orders
+    ADD CONSTRAINT orders_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: pedido_compra_item pedido_compra_item_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.pedido_compra_item
+    ADD CONSTRAINT pedido_compra_item_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: pedido_compra_sugerido pedido_compra_sugerido_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.pedido_compra_sugerido
+    ADD CONSTRAINT pedido_compra_sugerido_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: pedidos_portal_tentativas pedidos_portal_tentativas_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.pedidos_portal_tentativas
+    ADD CONSTRAINT pedidos_portal_tentativas_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: permission_change_log permission_change_log_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.permission_change_log
+    ADD CONSTRAINT permission_change_log_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: permission_overrides permission_overrides_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.permission_overrides
+    ADD CONSTRAINT permission_overrides_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: permission_overrides permission_overrides_user_id_permission_key_key; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.permission_overrides
+    ADD CONSTRAINT permission_overrides_user_id_permission_key_key UNIQUE (user_id, permission_key);
+
+
+--
+-- Name: picking_events picking_events_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.picking_events
+    ADD CONSTRAINT picking_events_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: picking_task_items picking_task_items_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.picking_task_items
+    ADD CONSTRAINT picking_task_items_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: picking_tasks picking_tasks_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.picking_tasks
+    ADD CONSTRAINT picking_tasks_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: priority_score_log priority_score_log_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.priority_score_log
+    ADD CONSTRAINT priority_score_log_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: product_costs product_costs_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.product_costs
+    ADD CONSTRAINT product_costs_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: product_costs product_costs_product_id_key; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.product_costs
+    ADD CONSTRAINT product_costs_product_id_key UNIQUE (product_id);
+
+
+--
+-- Name: production_orders production_orders_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.production_orders
+    ADD CONSTRAINT production_orders_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: profiles profiles_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.profiles
+    ADD CONSTRAINT profiles_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: profiles profiles_user_id_key; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.profiles
+    ADD CONSTRAINT profiles_user_id_key UNIQUE (user_id);
+
+
+--
+-- Name: promocao_campanha promocao_campanha_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.promocao_campanha
+    ADD CONSTRAINT promocao_campanha_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: promocao_item promocao_item_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.promocao_item
+    ADD CONSTRAINT promocao_item_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: promocao_negociacao_evento promocao_negociacao_evento_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.promocao_negociacao_evento
+    ADD CONSTRAINT promocao_negociacao_evento_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: purchase_orders_tracking purchase_orders_tracking_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.purchase_orders_tracking
+    ADD CONSTRAINT purchase_orders_tracking_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: rag_chunks rag_chunks_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.rag_chunks
+    ADD CONSTRAINT rag_chunks_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: rag_chunks rag_chunks_source_table_source_id_chunk_index_key; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.rag_chunks
+    ADD CONSTRAINT rag_chunks_source_table_source_id_chunk_index_key UNIQUE (source_table, source_id, chunk_index);
+
+
+--
+-- Name: recommendation_config recommendation_config_key_key; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.recommendation_config
+    ADD CONSTRAINT recommendation_config_key_key UNIQUE (key);
+
+
+--
+-- Name: recommendation_config recommendation_config_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.recommendation_config
+    ADD CONSTRAINT recommendation_config_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: recommendation_log recommendation_log_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.recommendation_log
+    ADD CONSTRAINT recommendation_log_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: recurring_schedules recurring_schedules_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.recurring_schedules
+    ADD CONSTRAINT recurring_schedules_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: referrals referrals_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.referrals
+    ADD CONSTRAINT referrals_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: reposition_parameters reposition_parameters_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.reposition_parameters
+    ADD CONSTRAINT reposition_parameters_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: roadmap_state roadmap_state_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.roadmap_state
+    ADD CONSTRAINT roadmap_state_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: route_visits route_visits_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.route_visits
+    ADD CONSTRAINT route_visits_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: sales_orders sales_orders_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.sales_orders
+    ADD CONSTRAINT sales_orders_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: sales_price_history sales_price_history_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.sales_price_history
+    ADD CONSTRAINT sales_price_history_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: score_recalc_queue score_recalc_queue_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.score_recalc_queue
+    ADD CONSTRAINT score_recalc_queue_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: sending_quality_logs sending_quality_logs_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.sending_quality_logs
+    ADD CONSTRAINT sending_quality_logs_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: simulacao_estoque_resultados simulacao_estoque_resultados_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.simulacao_estoque_resultados
+    ADD CONSTRAINT simulacao_estoque_resultados_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: sku_estoque_atual sku_estoque_atual_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.sku_estoque_atual
+    ADD CONSTRAINT sku_estoque_atual_pkey PRIMARY KEY (empresa, sku_codigo_omie);
+
+
+--
+-- Name: sku_fornecedor_externo sku_fornecedor_externo_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.sku_fornecedor_externo
+    ADD CONSTRAINT sku_fornecedor_externo_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: sku_fornecedor_externo sku_fornecedor_externo_unique; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.sku_fornecedor_externo
+    ADD CONSTRAINT sku_fornecedor_externo_unique UNIQUE (empresa, fornecedor_nome, sku_omie);
+
+
+--
+-- Name: sku_grupo_producao sku_grupo_producao_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.sku_grupo_producao
+    ADD CONSTRAINT sku_grupo_producao_pkey PRIMARY KEY (empresa, sku_codigo_omie);
+
+
+--
+-- Name: sku_leadtime_history sku_leadtime_history_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.sku_leadtime_history
+    ADD CONSTRAINT sku_leadtime_history_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: sku_parametros sku_parametros_empresa_sku_codigo_omie_key; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.sku_parametros
+    ADD CONSTRAINT sku_parametros_empresa_sku_codigo_omie_key UNIQUE (empresa, sku_codigo_omie);
+
+
+--
+-- Name: sku_parametros_historico sku_parametros_historico_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.sku_parametros_historico
+    ADD CONSTRAINT sku_parametros_historico_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: sku_parametros sku_parametros_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.sku_parametros
+    ADD CONSTRAINT sku_parametros_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: sku_status_omie sku_status_omie_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.sku_status_omie
+    ADD CONSTRAINT sku_status_omie_pkey PRIMARY KEY (empresa, sku_codigo_omie);
+
+
+--
+-- Name: sku_substituicao sku_substituicao_empresa_sku_codigo_antigo_status_key; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.sku_substituicao
+    ADD CONSTRAINT sku_substituicao_empresa_sku_codigo_antigo_status_key UNIQUE (empresa, sku_codigo_antigo, status);
+
+
+--
+-- Name: sku_substituicao sku_substituicao_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.sku_substituicao
+    ADD CONSTRAINT sku_substituicao_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: standard_processes standard_processes_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.standard_processes
+    ADD CONSTRAINT standard_processes_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: standard_processes standard_processes_slug_key; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.standard_processes
+    ADD CONSTRAINT standard_processes_slug_key UNIQUE (slug);
+
+
+--
+-- Name: sugestao_negociacao_paralela sugestao_negociacao_paralela_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.sugestao_negociacao_paralela
+    ADD CONSTRAINT sugestao_negociacao_paralela_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: sync_reprocess_config sync_reprocess_config_key_key; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.sync_reprocess_config
+    ADD CONSTRAINT sync_reprocess_config_key_key UNIQUE (key);
+
+
+--
+-- Name: sync_reprocess_config sync_reprocess_config_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.sync_reprocess_config
+    ADD CONSTRAINT sync_reprocess_config_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: sync_reprocess_log sync_reprocess_log_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.sync_reprocess_log
+    ADD CONSTRAINT sync_reprocess_log_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: sync_state sync_state_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.sync_state
+    ADD CONSTRAINT sync_state_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: tint_bases tint_bases_account_id_base_sayersystem_key; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.tint_bases
+    ADD CONSTRAINT tint_bases_account_id_base_sayersystem_key UNIQUE (account, id_base_sayersystem);
+
+
+--
+-- Name: tint_bases tint_bases_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.tint_bases
+    ADD CONSTRAINT tint_bases_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: tint_colecoes tint_colecoes_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.tint_colecoes
+    ADD CONSTRAINT tint_colecoes_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: tint_corantes tint_corantes_account_id_corante_sayersystem_key; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.tint_corantes
+    ADD CONSTRAINT tint_corantes_account_id_corante_sayersystem_key UNIQUE (account, id_corante_sayersystem);
+
+
+--
+-- Name: tint_corantes tint_corantes_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.tint_corantes
+    ADD CONSTRAINT tint_corantes_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: tint_embalagens tint_embalagens_account_id_embalagem_sayersystem_key; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.tint_embalagens
+    ADD CONSTRAINT tint_embalagens_account_id_embalagem_sayersystem_key UNIQUE (account, id_embalagem_sayersystem);
+
+
+--
+-- Name: tint_embalagens tint_embalagens_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.tint_embalagens
+    ADD CONSTRAINT tint_embalagens_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: tint_formula_itens tint_formula_itens_formula_id_corante_id_key; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.tint_formula_itens
+    ADD CONSTRAINT tint_formula_itens_formula_id_corante_id_key UNIQUE (formula_id, corante_id);
+
+
+--
+-- Name: tint_formula_itens tint_formula_itens_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.tint_formula_itens
+    ADD CONSTRAINT tint_formula_itens_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: tint_formulas tint_formulas_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.tint_formulas
+    ADD CONSTRAINT tint_formulas_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: tint_importacoes tint_importacoes_account_arquivo_hash_key; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.tint_importacoes
+    ADD CONSTRAINT tint_importacoes_account_arquivo_hash_key UNIQUE (account, arquivo_hash);
+
+
+--
+-- Name: tint_importacoes tint_importacoes_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.tint_importacoes
+    ADD CONSTRAINT tint_importacoes_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: tint_integration_settings tint_integration_settings_account_store_code_key; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.tint_integration_settings
+    ADD CONSTRAINT tint_integration_settings_account_store_code_key UNIQUE (account, store_code);
+
+
+--
+-- Name: tint_integration_settings tint_integration_settings_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.tint_integration_settings
+    ADD CONSTRAINT tint_integration_settings_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: tint_produtos tint_produtos_account_cod_produto_key; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.tint_produtos
+    ADD CONSTRAINT tint_produtos_account_cod_produto_key UNIQUE (account, cod_produto);
+
+
+--
+-- Name: tint_produtos tint_produtos_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.tint_produtos
+    ADD CONSTRAINT tint_produtos_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: tint_reconciliation_items tint_reconciliation_items_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.tint_reconciliation_items
+    ADD CONSTRAINT tint_reconciliation_items_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: tint_reconciliation_runs tint_reconciliation_runs_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.tint_reconciliation_runs
+    ADD CONSTRAINT tint_reconciliation_runs_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: tint_skus tint_skus_account_produto_id_base_id_embalagem_id_key; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.tint_skus
+    ADD CONSTRAINT tint_skus_account_produto_id_base_id_embalagem_id_key UNIQUE (account, produto_id, base_id, embalagem_id);
+
+
+--
+-- Name: tint_skus tint_skus_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.tint_skus
+    ADD CONSTRAINT tint_skus_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: tint_staging_bases tint_staging_bases_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.tint_staging_bases
+    ADD CONSTRAINT tint_staging_bases_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: tint_staging_corantes tint_staging_corantes_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.tint_staging_corantes
+    ADD CONSTRAINT tint_staging_corantes_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: tint_staging_cores_catalogo tint_staging_cores_catalogo_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.tint_staging_cores_catalogo
+    ADD CONSTRAINT tint_staging_cores_catalogo_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: tint_staging_cores_personalizadas tint_staging_cores_personalizadas_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.tint_staging_cores_personalizadas
+    ADD CONSTRAINT tint_staging_cores_personalizadas_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: tint_staging_embalagens tint_staging_embalagens_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.tint_staging_embalagens
+    ADD CONSTRAINT tint_staging_embalagens_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: tint_staging_formula_itens tint_staging_formula_itens_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.tint_staging_formula_itens
+    ADD CONSTRAINT tint_staging_formula_itens_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: tint_staging_formulas tint_staging_formulas_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.tint_staging_formulas
+    ADD CONSTRAINT tint_staging_formulas_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: tint_staging_preparacao_itens tint_staging_preparacao_itens_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.tint_staging_preparacao_itens
+    ADD CONSTRAINT tint_staging_preparacao_itens_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: tint_staging_preparacoes tint_staging_preparacoes_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.tint_staging_preparacoes
+    ADD CONSTRAINT tint_staging_preparacoes_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: tint_staging_produtos tint_staging_produtos_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.tint_staging_produtos
+    ADD CONSTRAINT tint_staging_produtos_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: tint_staging_skus tint_staging_skus_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.tint_staging_skus
+    ADD CONSTRAINT tint_staging_skus_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: tint_subcolecoes tint_subcolecoes_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.tint_subcolecoes
+    ADD CONSTRAINT tint_subcolecoes_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: tint_sync_errors tint_sync_errors_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.tint_sync_errors
+    ADD CONSTRAINT tint_sync_errors_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: tint_sync_runs tint_sync_runs_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.tint_sync_runs
+    ADD CONSTRAINT tint_sync_runs_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: tint_vendas_itens tint_vendas_itens_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.tint_vendas_itens
+    ADD CONSTRAINT tint_vendas_itens_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: tint_vendas tint_vendas_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.tint_vendas
+    ADD CONSTRAINT tint_vendas_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: tool_categories tool_categories_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.tool_categories
+    ADD CONSTRAINT tool_categories_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: tool_events tool_events_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.tool_events
+    ADD CONSTRAINT tool_events_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: tool_specifications tool_specifications_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.tool_specifications
+    ADD CONSTRAINT tool_specifications_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: training_completions training_completions_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.training_completions
+    ADD CONSTRAINT training_completions_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: training_completions training_completions_user_id_module_id_key; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.training_completions
+    ADD CONSTRAINT training_completions_user_id_module_id_key UNIQUE (user_id, module_id);
+
+
+--
+-- Name: training_modules training_modules_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.training_modules
+    ADD CONSTRAINT training_modules_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: omie_servicos unique_omie_codigo_servico; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.omie_servicos
+    ADD CONSTRAINT unique_omie_codigo_servico UNIQUE (omie_codigo_servico);
+
+
+--
+-- Name: omie_clientes unique_user_omie; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.omie_clientes
+    ADD CONSTRAINT unique_user_omie UNIQUE (user_id);
+
+
+--
+-- Name: abc_xyz_classification uq_abcxyz_sku_mes; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.abc_xyz_classification
+    ADD CONSTRAINT uq_abcxyz_sku_mes UNIQUE (empresa, sku_codigo_omie, mes_referencia);
+
+
+--
+-- Name: fornecedor_aumento_item uq_aumento_categoria; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.fornecedor_aumento_item
+    ADD CONSTRAINT uq_aumento_categoria UNIQUE (aumento_id, categoria_fornecedor);
+
+
+--
+-- Name: conversao_unidades uq_conversao_fornecedor_produto; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.conversao_unidades
+    ADD CONSTRAINT uq_conversao_fornecedor_produto UNIQUE (cnpj_fornecedor, codigo_produto_fornecedor);
+
+
+--
+-- Name: des_criterio_qualitativo uq_criterio; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.des_criterio_qualitativo
+    ADD CONSTRAINT uq_criterio UNIQUE (contrato_versao_id, codigo);
+
+
+--
+-- Name: des_criterio_percentual uq_criterio_faixa; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.des_criterio_percentual
+    ADD CONSTRAINT uq_criterio_faixa UNIQUE (criterio_id, faixa_id);
+
+
+--
+-- Name: des_faixa_quantitativa uq_faixa; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.des_faixa_quantitativa
+    ADD CONSTRAINT uq_faixa UNIQUE (contrato_versao_id, faixa_numero);
+
+
+--
+-- Name: promocao_item uq_item_na_campanha; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.promocao_item
+    ADD CONSTRAINT uq_item_na_campanha UNIQUE (campanha_id, sku_codigo_fornecedor, volume_minimo);
+
+
+--
+-- Name: categoria_aumento_familia_mapeamento uq_mapeamento; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.categoria_aumento_familia_mapeamento
+    ADD CONSTRAINT uq_mapeamento UNIQUE (aumento_item_id, familia_omie, sku_codigo_omie_especifico);
+
+
+--
+-- Name: des_meta_empresa uq_meta; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.des_meta_empresa
+    ADD CONSTRAINT uq_meta UNIQUE (empresa, ano, trimestre);
+
+
+--
+-- Name: omie_webhook_events uq_omie_event; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.omie_webhook_events
+    ADD CONSTRAINT uq_omie_event UNIQUE (empresa, event_id);
+
+
+--
+-- Name: purchase_orders_tracking uq_pedido_omie; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.purchase_orders_tracking
+    ADD CONSTRAINT uq_pedido_omie UNIQUE (empresa, omie_codigo_pedido);
+
+
+--
+-- Name: fornecedor_email_polling uq_polling_remetente_tipo; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.fornecedor_email_polling
+    ADD CONSTRAINT uq_polling_remetente_tipo UNIQUE (empresa, remetente_email, tipo_documento);
+
+
+--
+-- Name: fornecedor_prazo_pagamento_config uq_prazo; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.fornecedor_prazo_pagamento_config
+    ADD CONSTRAINT uq_prazo UNIQUE (empresa, fornecedor_nome, codigo);
+
+
+--
+-- Name: reposition_parameters uq_repos_sku; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.reposition_parameters
+    ADD CONSTRAINT uq_repos_sku UNIQUE (empresa, sku_codigo_omie);
+
+
+--
+-- Name: des_checkin_qualitativo_resposta uq_resposta; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.des_checkin_qualitativo_resposta
+    ADD CONSTRAINT uq_resposta UNIQUE (checkin_id, criterio_id);
+
+
+--
+-- Name: sku_leadtime_history uq_sku_hist_tracking_sku; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.sku_leadtime_history
+    ADD CONSTRAINT uq_sku_hist_tracking_sku UNIQUE (tracking_id, sku_codigo_omie);
+
+
+--
+-- Name: des_trimestre_snapshot uq_snapshot; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.des_trimestre_snapshot
+    ADD CONSTRAINT uq_snapshot UNIQUE (empresa, ano, trimestre, data_referencia);
+
+
+--
+-- Name: tint_colecoes uq_tint_colecoes_account_id; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.tint_colecoes
+    ADD CONSTRAINT uq_tint_colecoes_account_id UNIQUE (account, id_colecao_sayersystem);
+
+
+--
+-- Name: tint_subcolecoes uq_tint_subcolecoes_account_id; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.tint_subcolecoes
+    ADD CONSTRAINT uq_tint_subcolecoes_account_id UNIQUE (account, id_subcolecao_sayersystem);
+
+
+--
+-- Name: user_departments user_departments_one_primary; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.user_departments
+    ADD CONSTRAINT user_departments_one_primary EXCLUDE USING btree (user_id WITH =) WHERE ((primary_dept = true));
+
+
+--
+-- Name: user_departments user_departments_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.user_departments
+    ADD CONSTRAINT user_departments_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: user_roles user_roles_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.user_roles
+    ADD CONSTRAINT user_roles_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: user_roles user_roles_user_id_role_key; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.user_roles
+    ADD CONSTRAINT user_roles_user_id_role_key UNIQUE (user_id, role);
+
+
+--
+-- Name: user_tools user_tools_internal_code_key; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.user_tools
+    ADD CONSTRAINT user_tools_internal_code_key UNIQUE (internal_code);
+
+
+--
+-- Name: user_tools user_tools_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.user_tools
+    ADD CONSTRAINT user_tools_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: venda_items_history venda_items_history_nfe_chave_acesso_sku_codigo_omie_key; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.venda_items_history
+    ADD CONSTRAINT venda_items_history_nfe_chave_acesso_sku_codigo_omie_key UNIQUE (nfe_chave_acesso, sku_codigo_omie);
+
+
+--
+-- Name: venda_items_history venda_items_history_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.venda_items_history
+    ADD CONSTRAINT venda_items_history_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: vendor_sip_credentials vendor_sip_credentials_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.vendor_sip_credentials
+    ADD CONSTRAINT vendor_sip_credentials_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: vendor_sip_credentials vendor_sip_credentials_user_id_key; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.vendor_sip_credentials
+    ADD CONSTRAINT vendor_sip_credentials_user_id_key UNIQUE (user_id);
+
+
+--
+-- Name: visit_score_recalc_queue visit_score_recalc_queue_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.visit_score_recalc_queue
+    ADD CONSTRAINT visit_score_recalc_queue_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: warehouses warehouses_code_key; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.warehouses
+    ADD CONSTRAINT warehouses_code_key UNIQUE (code);
+
+
+--
+-- Name: warehouses warehouses_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.warehouses
+    ADD CONSTRAINT warehouses_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: webauthn_challenges webauthn_challenges_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.webauthn_challenges
+    ADD CONSTRAINT webauthn_challenges_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: webauthn_credentials webauthn_credentials_credential_id_key; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.webauthn_credentials
+    ADD CONSTRAINT webauthn_credentials_credential_id_key UNIQUE (credential_id);
+
+
+--
+-- Name: webauthn_credentials webauthn_credentials_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.webauthn_credentials
+    ADD CONSTRAINT webauthn_credentials_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: company_cnpjs_normalized_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX company_cnpjs_normalized_idx ON public.company_cnpjs USING btree (cnpj_normalized);
+
+
+--
+-- Name: fin_alertas_company_criado_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX fin_alertas_company_criado_idx ON public.fin_alertas USING btree (company, criado_em DESC) WHERE (dismissed_at IS NULL);
+
+
+--
+-- Name: fin_alertas_unique_ativo; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE UNIQUE INDEX fin_alertas_unique_ativo ON public.fin_alertas USING btree (company, tipo) WHERE (dismissed_at IS NULL);
+
+
+--
+-- Name: fin_audit_log_company_period_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX fin_audit_log_company_period_idx ON public.fin_audit_log USING btree (company, period_ref, changed_at DESC);
+
+
+--
+-- Name: fin_audit_log_table_row_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX fin_audit_log_table_row_idx ON public.fin_audit_log USING btree (table_name, row_id, changed_at DESC);
+
+
+--
+-- Name: fin_audit_log_user_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX fin_audit_log_user_idx ON public.fin_audit_log USING btree (changed_by, changed_at DESC);
+
+
+--
+-- Name: fin_estoque_valor_company_data_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX fin_estoque_valor_company_data_idx ON public.fin_estoque_valor USING btree (company, data_ref DESC);
+
+
+--
+-- Name: fin_eventos_ev_company_data_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX fin_eventos_ev_company_data_idx ON public.fin_eventos_eventuais USING btree (company, data_prevista);
+
+
+--
+-- Name: fin_eventos_ev_status_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX fin_eventos_ev_status_idx ON public.fin_eventos_eventuais USING btree (status, company);
+
+
+--
+-- Name: fin_eventos_rec_categoria_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX fin_eventos_rec_categoria_idx ON public.fin_eventos_recorrentes USING btree (categoria_dre);
+
+
+--
+-- Name: fin_eventos_rec_company_ativo_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX fin_eventos_rec_company_ativo_idx ON public.fin_eventos_recorrentes USING btree (company, ativo);
+
+
+--
+-- Name: fin_ic_matches_cp_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX fin_ic_matches_cp_idx ON public.fin_ic_matches USING btree (cp_id) WHERE (cp_id IS NOT NULL);
+
+
+--
+-- Name: fin_ic_matches_cp_unique; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE UNIQUE INDEX fin_ic_matches_cp_unique ON public.fin_ic_matches USING btree (cp_id) WHERE (cp_id IS NOT NULL);
+
+
+--
+-- Name: fin_ic_matches_cr_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX fin_ic_matches_cr_idx ON public.fin_ic_matches USING btree (cr_id) WHERE (cr_id IS NOT NULL);
+
+
+--
+-- Name: fin_ic_matches_cr_unique; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE UNIQUE INDEX fin_ic_matches_cr_unique ON public.fin_ic_matches USING btree (cr_id) WHERE (cr_id IS NOT NULL);
+
+
+--
+-- Name: fin_ic_matches_status_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX fin_ic_matches_status_idx ON public.fin_ic_matches USING btree (status, matched_at DESC);
+
+
+--
+-- Name: fin_period_overrides_active_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX fin_period_overrides_active_idx ON public.fin_period_overrides USING btree (company, ano, mes, expires_at) WHERE (closed_at IS NULL);
+
+
+--
+-- Name: fin_proj_cenario_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX fin_proj_cenario_idx ON public.fin_projecao_snapshots USING btree (cenario, snapshot_at DESC);
+
+
+--
+-- Name: fin_proj_company_snap_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX fin_proj_company_snap_idx ON public.fin_projecao_snapshots USING btree (company, snapshot_at DESC);
+
+
+--
+-- Name: fornecedor_mapeamento_extracao_alias_unique; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE UNIQUE INDEX fornecedor_mapeamento_extracao_alias_unique ON public.fornecedor_mapeamento_extracao USING btree (lower(alias_extraido));
+
+
+--
+-- Name: idx_abcxyz_classe; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX idx_abcxyz_classe ON public.abc_xyz_classification USING btree (empresa, classe_abc_efetiva, classe_xyz_efetiva);
+
+
+--
+-- Name: idx_abcxyz_mes; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX idx_abcxyz_mes ON public.abc_xyz_classification USING btree (empresa, mes_referencia DESC);
+
+
+--
+-- Name: idx_ai_decisions_customer; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX idx_ai_decisions_customer ON public.ai_decisions USING btree (customer_user_id);
+
+
+--
+-- Name: idx_ai_decisions_farmer_date; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX idx_ai_decisions_farmer_date ON public.ai_decisions USING btree (farmer_id, created_at DESC);
+
+
+--
+-- Name: idx_ai_decisions_status; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX idx_ai_decisions_status ON public.ai_decisions USING btree (status);
+
+
+--
+-- Name: idx_alerta_pendente; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX idx_alerta_pendente ON public.fornecedor_alerta USING btree (empresa, resolvido, severidade) WHERE (NOT resolvido);
+
+
+--
+-- Name: idx_alerta_por_tipo; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX idx_alerta_por_tipo ON public.fornecedor_alerta USING btree (empresa, tipo, criado_em DESC);
+
+
+--
+-- Name: idx_aumento_estado; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX idx_aumento_estado ON public.fornecedor_aumento_anunciado USING btree (empresa, estado, data_vigencia DESC);
+
+
+--
+-- Name: idx_aumento_item_pendente; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX idx_aumento_item_pendente ON public.fornecedor_aumento_item USING btree (aumento_id) WHERE (NOT confirmado);
+
+
+--
+-- Name: idx_aumento_vigencia; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX idx_aumento_vigencia ON public.fornecedor_aumento_anunciado USING btree (empresa, fornecedor_nome, data_vigencia);
+
+
+--
+-- Name: idx_cache_lotes_expires; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX idx_cache_lotes_expires ON public.cache_lotes USING btree (expires_at);
+
+
+--
+-- Name: idx_cache_lotes_key; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX idx_cache_lotes_key ON public.cache_lotes USING btree (cache_key);
+
+
+--
+-- Name: idx_cadeia_ativa; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX idx_cadeia_ativa ON public.fornecedor_cadeia_logistica USING btree (empresa, fornecedor_nome, ativo, valido_ate);
+
+
+--
+-- Name: idx_cadeia_hist_fornecedor; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX idx_cadeia_hist_fornecedor ON public.fornecedor_cadeia_logistica_historico USING btree (empresa, fornecedor_nome, criado_em DESC);
+
+
+--
+-- Name: idx_call_log_farmer_started; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX idx_call_log_farmer_started ON public.call_log USING btree (farmer_id, started_at DESC);
+
+
+--
+-- Name: idx_call_log_missed_unack; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX idx_call_log_missed_unack ON public.call_log USING btree (farmer_id) WHERE ((direction = 'inbound'::public.call_direction) AND (status = 'missed'::public.call_status) AND (acknowledged_at IS NULL));
+
+
+--
+-- Name: idx_carteira_owner; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX idx_carteira_owner ON public.carteira_assignments USING btree (owner_user_id);
+
+
+--
+-- Name: idx_carteira_owner_eligible; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX idx_carteira_owner_eligible ON public.carteira_assignments USING btree (owner_user_id) WHERE eligible;
+
+
+--
+-- Name: idx_checkin_trimestre; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX idx_checkin_trimestre ON public.des_checkin_qualitativo USING btree (empresa, ano, trimestre, data_avaliacao DESC);
+
+
+--
+-- Name: idx_cockpit_audit_log_created_at; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX idx_cockpit_audit_log_created_at ON public.cockpit_audit_log USING btree (created_at DESC);
+
+
+--
+-- Name: idx_conversao_cnpj; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX idx_conversao_cnpj ON public.conversao_unidades USING btree (cnpj_fornecedor);
+
+
+--
+-- Name: idx_coverage_covering_active; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX idx_coverage_covering_active ON public.carteira_coverage USING btree (covering_user_id) WHERE active;
+
+
+--
+-- Name: idx_cte_associados_nfe; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX idx_cte_associados_nfe ON public.cte_associados USING btree (nfe_recebimento_id);
+
+
+--
+-- Name: idx_customer_contacts_birthday; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX idx_customer_contacts_birthday ON public.customer_contacts USING btree (EXTRACT(month FROM birthday), EXTRACT(day FROM birthday)) WHERE (birthday IS NOT NULL);
+
+
+--
+-- Name: idx_customer_contacts_customer; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX idx_customer_contacts_customer ON public.customer_contacts USING btree (customer_user_id);
+
+
+--
+-- Name: idx_customer_contacts_one_primary; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE UNIQUE INDEX idx_customer_contacts_one_primary ON public.customer_contacts USING btree (customer_user_id) WHERE (is_primary = true);
+
+
+--
+-- Name: idx_customer_contacts_phone; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX idx_customer_contacts_phone ON public.customer_contacts USING btree (phone);
+
+
+--
+-- Name: idx_customer_metrics_mv_uid; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE UNIQUE INDEX idx_customer_metrics_mv_uid ON public.customer_metrics_mv USING btree (customer_user_id);
+
+
+--
+-- Name: idx_customer_processes_customer; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX idx_customer_processes_customer ON public.customer_processes USING btree (customer_user_id, version DESC);
+
+
+--
+-- Name: idx_customer_processes_one_current; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE UNIQUE INDEX idx_customer_processes_one_current ON public.customer_processes USING btree (customer_user_id) WHERE (is_current = true);
+
+
+--
+-- Name: idx_customer_processes_segmento; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX idx_customer_processes_segmento ON public.customer_processes USING btree (segmento, porte) WHERE (is_current = true);
+
+
+--
+-- Name: idx_dashboard_visits_user_recent; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX idx_dashboard_visits_user_recent ON public.dashboard_visits USING btree (user_id, visited_at DESC);
+
+
+--
+-- Name: idx_estoque_sync; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX idx_estoque_sync ON public.sku_estoque_atual USING btree (ultima_sincronizacao);
+
+
+--
+-- Name: idx_excl_empresa_sku; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX idx_excl_empresa_sku ON public.observacoes_excluidas USING btree (empresa, sku_codigo_omie);
+
+
+--
+-- Name: idx_excl_tipo_data; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX idx_excl_tipo_data ON public.observacoes_excluidas USING btree (tipo_observacao, data_observacao);
+
+
+--
+-- Name: idx_farmer_calls_has_transcript; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX idx_farmer_calls_has_transcript ON public.farmer_calls USING btree (farmer_id, started_at DESC) WHERE (transcript IS NOT NULL);
+
+
+--
+-- Name: idx_farmer_category_conversion_category; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE UNIQUE INDEX idx_farmer_category_conversion_category ON public.farmer_category_conversion USING btree (category_id);
+
+
+--
+-- Name: idx_fin_analise_cp_unique; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE UNIQUE INDEX idx_fin_analise_cp_unique ON public.fin_analise_cp_dimensoes USING btree (company, ano, mes, COALESCE(categoria_codigo, ''::text), COALESCE(departamento, ''::text), COALESCE(centro_custo, ''::text), COALESCE(nome_fornecedor, ''::text), COALESCE(cnpj_cpf, ''::text), COALESCE(tipo_documento, ''::text), status_titulo);
+
+
+--
+-- Name: idx_fin_analise_cr_unique; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE UNIQUE INDEX idx_fin_analise_cr_unique ON public.fin_analise_cr_dimensoes USING btree (company, ano, mes, COALESCE(categoria_codigo, ''::text), COALESCE(departamento, ''::text), COALESCE(centro_custo, ''::text), COALESCE((vendedor_id)::text, ''::text), COALESCE(nome_cliente, ''::text), COALESCE(cnpj_cpf, ''::text), status_titulo);
+
+
+--
+-- Name: idx_fin_cat_dre_company; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX idx_fin_cat_dre_company ON public.fin_categoria_dre_mapping USING btree (company);
+
+
+--
+-- Name: idx_fin_categorias_company; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX idx_fin_categorias_company ON public.fin_categorias USING btree (company);
+
+
+--
+-- Name: idx_fin_categorias_tipo; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX idx_fin_categorias_tipo ON public.fin_categorias USING btree (company, tipo);
+
+
+--
+-- Name: idx_fin_cc_company; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX idx_fin_cc_company ON public.fin_contas_correntes USING btree (company);
+
+
+--
+-- Name: idx_fin_conc_company; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX idx_fin_conc_company ON public.fin_conciliacao USING btree (company, omie_ncodcc);
+
+
+--
+-- Name: idx_fin_conc_mov; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX idx_fin_conc_mov ON public.fin_conciliacao USING btree (mov_id);
+
+
+--
+-- Name: idx_fin_conc_status; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX idx_fin_conc_status ON public.fin_conciliacao USING btree (status);
+
+
+--
+-- Name: idx_fin_conf_periodo; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX idx_fin_conf_periodo ON public.fin_confiabilidade USING btree (company, ano, mes);
+
+
+--
+-- Name: idx_fin_cp_categoria; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX idx_fin_cp_categoria ON public.fin_contas_pagar USING btree (company, categoria_codigo);
+
+
+--
+-- Name: idx_fin_cp_company; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX idx_fin_cp_company ON public.fin_contas_pagar USING btree (company);
+
+
+--
+-- Name: idx_fin_cp_fornecedor; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX idx_fin_cp_fornecedor ON public.fin_contas_pagar USING btree (company, omie_codigo_cliente_fornecedor);
+
+
+--
+-- Name: idx_fin_cp_status; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX idx_fin_cp_status ON public.fin_contas_pagar USING btree (company, status_titulo);
+
+
+--
+-- Name: idx_fin_cp_vencimento; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX idx_fin_cp_vencimento ON public.fin_contas_pagar USING btree (company, data_vencimento);
+
+
+--
+-- Name: idx_fin_cr_categoria; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX idx_fin_cr_categoria ON public.fin_contas_receber USING btree (company, categoria_codigo);
+
+
+--
+-- Name: idx_fin_cr_cliente; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX idx_fin_cr_cliente ON public.fin_contas_receber USING btree (company, omie_codigo_cliente);
+
+
+--
+-- Name: idx_fin_cr_company; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX idx_fin_cr_company ON public.fin_contas_receber USING btree (company);
+
+
+--
+-- Name: idx_fin_cr_status; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX idx_fin_cr_status ON public.fin_contas_receber USING btree (company, status_titulo);
+
+
+--
+-- Name: idx_fin_cr_vencimento; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX idx_fin_cr_vencimento ON public.fin_contas_receber USING btree (company, data_vencimento);
+
+
+--
+-- Name: idx_fin_dre_company_periodo; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX idx_fin_dre_company_periodo ON public.fin_dre_snapshots USING btree (company, ano, mes);
+
+
+--
+-- Name: idx_fin_elim_log_periodo; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX idx_fin_elim_log_periodo ON public.fin_eliminacoes_log USING btree (ano, mes);
+
+
+--
+-- Name: idx_fin_fech_company_periodo; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX idx_fin_fech_company_periodo ON public.fin_fechamentos USING btree (company, ano, mes);
+
+
+--
+-- Name: idx_fin_fech_log_fech; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX idx_fin_fech_log_fech ON public.fin_fechamento_log USING btree (fechamento_id);
+
+
+--
+-- Name: idx_fin_fech_status; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX idx_fin_fech_status ON public.fin_fechamentos USING btree (status);
+
+
+--
+-- Name: idx_fin_forecast_unique; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE UNIQUE INDEX idx_fin_forecast_unique ON public.fin_forecast USING btree (company, tipo, ano, mes, COALESCE(dre_linha, '_'::text));
+
+
+--
+-- Name: idx_fin_kpi_trib_periodo; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX idx_fin_kpi_trib_periodo ON public.fin_kpi_tributario USING btree (company, ano, mes);
+
+
+--
+-- Name: idx_fin_mov_cc; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX idx_fin_mov_cc ON public.fin_movimentacoes USING btree (company, omie_ncodcc);
+
+
+--
+-- Name: idx_fin_mov_company; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX idx_fin_mov_company ON public.fin_movimentacoes USING btree (company);
+
+
+--
+-- Name: idx_fin_mov_data; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX idx_fin_mov_data ON public.fin_movimentacoes USING btree (company, data_movimento);
+
+
+--
+-- Name: idx_fin_orc_periodo; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX idx_fin_orc_periodo ON public.fin_orcamento USING btree (company, ano, mes);
+
+
+--
+-- Name: idx_fin_sync_log_started; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX idx_fin_sync_log_started ON public.fin_sync_log USING btree (started_at DESC);
+
+
+--
+-- Name: idx_fornecedor_alerta_criado_em; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX idx_fornecedor_alerta_criado_em ON public.fornecedor_alerta USING btree (criado_em DESC);
+
+
+--
+-- Name: idx_fornecedor_alerta_pendente; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX idx_fornecedor_alerta_pendente ON public.fornecedor_alerta USING btree (status, criado_em) WHERE (status = 'pendente_notificacao'::text);
+
+
+--
+-- Name: idx_fornecedor_alerta_tipo; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX idx_fornecedor_alerta_tipo ON public.fornecedor_alerta USING btree (tipo_alerta);
+
+
+--
+-- Name: idx_gmail_webhook_log_message_id; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX idx_gmail_webhook_log_message_id ON public.gmail_webhook_log USING btree (message_id);
+
+
+--
+-- Name: idx_gmail_webhook_log_recebido_em; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX idx_gmail_webhook_log_recebido_em ON public.gmail_webhook_log USING btree (recebido_em DESC);
+
+
+--
+-- Name: idx_health_history_customer; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX idx_health_history_customer ON public.health_score_history USING btree (customer_user_id, calculated_at DESC);
+
+
+--
+-- Name: idx_health_history_farmer; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX idx_health_history_farmer ON public.health_score_history USING btree (farmer_id, calculated_at DESC);
+
+
+--
+-- Name: idx_inventory_omie_account; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE UNIQUE INDEX idx_inventory_omie_account ON public.inventory_position USING btree (omie_codigo_produto, account);
+
+
+--
+-- Name: idx_kb_chunks_document; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX idx_kb_chunks_document ON public.kb_chunks USING btree (document_id, chunk_index);
+
+
+--
+-- Name: idx_kb_chunks_embedding; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX idx_kb_chunks_embedding ON public.kb_chunks USING ivfflat (embedding public.vector_cosine_ops) WITH (lists='100');
+
+
+--
+-- Name: idx_kb_competitor_products_competitor; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX idx_kb_competitor_products_competitor ON public.kb_competitor_products USING btree (competitor_id);
+
+
+--
+-- Name: idx_kb_competitor_products_equivalent; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX idx_kb_competitor_products_equivalent ON public.kb_competitor_products USING btree (nosso_equivalente_product_code);
+
+
+--
+-- Name: idx_kb_documents_status_type; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX idx_kb_documents_status_type ON public.kb_documents USING btree (status, type, created_at DESC);
+
+
+--
+-- Name: idx_kb_product_specs_product_code; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX idx_kb_product_specs_product_code ON public.kb_product_specs USING btree (product_code);
+
+
+--
+-- Name: idx_kb_product_specs_supplier_line; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX idx_kb_product_specs_supplier_line ON public.kb_product_specs USING btree (supplier, product_line);
+
+
+--
+-- Name: idx_mapeamento_familia; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX idx_mapeamento_familia ON public.categoria_aumento_familia_mapeamento USING btree (familia_omie);
+
+
+--
+-- Name: idx_mv_ranking_categoria; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX idx_mv_ranking_categoria ON public.mv_sku_ranking_negociacao_paralela USING btree (empresa, categoria, score_final DESC);
+
+
+--
+-- Name: idx_mv_ranking_pk; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE UNIQUE INDEX idx_mv_ranking_pk ON public.mv_sku_ranking_negociacao_paralela USING btree (empresa, sku_codigo_omie);
+
+
+--
+-- Name: idx_nfe_lotes_item; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX idx_nfe_lotes_item ON public.nfe_lotes_escaneados USING btree (nfe_recebimento_item_id);
+
+
+--
+-- Name: idx_nfe_lotes_numero; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX idx_nfe_lotes_numero ON public.nfe_lotes_escaneados USING btree (numero_lote);
+
+
+--
+-- Name: idx_nfe_recebimento_itens_nfe; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX idx_nfe_recebimento_itens_nfe ON public.nfe_recebimento_itens USING btree (nfe_recebimento_id);
+
+
+--
+-- Name: idx_nfe_recebimentos_cnpj; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX idx_nfe_recebimentos_cnpj ON public.nfe_recebimentos USING btree (cnpj_emitente);
+
+
+--
+-- Name: idx_nfe_recebimentos_created; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX idx_nfe_recebimentos_created ON public.nfe_recebimentos USING btree (created_at);
+
+
+--
+-- Name: idx_nfe_recebimentos_status; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX idx_nfe_recebimentos_status ON public.nfe_recebimentos USING btree (status);
+
+
+--
+-- Name: idx_nfe_recebimentos_warehouse; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX idx_nfe_recebimentos_warehouse ON public.nfe_recebimentos USING btree (warehouse_id);
+
+
+--
+-- Name: idx_omie_clientes_codigo_empresa; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE UNIQUE INDEX idx_omie_clientes_codigo_empresa ON public.omie_clientes USING btree (omie_codigo_cliente, empresa_omie);
+
+
+--
+-- Name: idx_omie_clientes_user_empresa; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE UNIQUE INDEX idx_omie_clientes_user_empresa ON public.omie_clientes USING btree (user_id, empresa_omie);
+
+
+--
+-- Name: idx_omie_vendedor_map_codigo; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX idx_omie_vendedor_map_codigo ON public.omie_vendedor_map USING btree (omie_codigo_vendedor);
+
+
+--
+-- Name: idx_order_items_customer; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX idx_order_items_customer ON public.order_items USING btree (customer_user_id);
+
+
+--
+-- Name: idx_order_items_product; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX idx_order_items_product ON public.order_items USING btree (product_id);
+
+
+--
+-- Name: idx_order_items_sales_order; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX idx_order_items_sales_order ON public.order_items USING btree (sales_order_id);
+
+
+--
+-- Name: idx_order_reviews_unique; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE UNIQUE INDEX idx_order_reviews_unique ON public.order_reviews USING btree (order_id);
+
+
+--
+-- Name: idx_outlier_empresa_sku; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX idx_outlier_empresa_sku ON public.eventos_outlier USING btree (empresa, sku_codigo_omie);
+
+
+--
+-- Name: idx_outlier_status; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX idx_outlier_status ON public.eventos_outlier USING btree (status);
+
+
+--
+-- Name: idx_outlier_tipo_sev; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX idx_outlier_tipo_sev ON public.eventos_outlier USING btree (tipo, severidade);
+
+
+--
+-- Name: idx_pedido_compra_item_pedido; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX idx_pedido_compra_item_pedido ON public.pedido_compra_item USING btree (pedido_id);
+
+
+--
+-- Name: idx_pedido_compra_item_sku; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX idx_pedido_compra_item_sku ON public.pedido_compra_item USING btree (sku_codigo_omie);
+
+
+--
+-- Name: idx_pedido_compra_split_parent; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX idx_pedido_compra_split_parent ON public.pedido_compra_sugerido USING btree (split_parent_id) WHERE (split_parent_id IS NOT NULL);
+
+
+--
+-- Name: idx_pedido_compra_sugerido_emp_ciclo_status; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX idx_pedido_compra_sugerido_emp_ciclo_status ON public.pedido_compra_sugerido USING btree (empresa, data_ciclo, status);
+
+
+--
+-- Name: idx_pedido_data; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX idx_pedido_data ON public.pedido_compra_sugerido USING btree (empresa, data_ciclo DESC);
+
+
+--
+-- Name: idx_pedido_fornecedor; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX idx_pedido_fornecedor ON public.pedido_compra_sugerido USING btree (empresa, fornecedor_nome, data_ciclo);
+
+
+--
+-- Name: idx_pedido_item_pedido; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX idx_pedido_item_pedido ON public.pedido_compra_item USING btree (pedido_id);
+
+
+--
+-- Name: idx_pedido_status; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX idx_pedido_status ON public.pedido_compra_sugerido USING btree (empresa, status);
+
+
+--
+-- Name: idx_pedido_status_envio_portal; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX idx_pedido_status_envio_portal ON public.pedido_compra_sugerido USING btree (status_envio_portal) WHERE (status_envio_portal = ANY (ARRAY['pendente_envio_portal'::text, 'falha_envio_portal'::text, 'erro_retentavel'::text]));
+
+
+--
+-- Name: idx_pedidos_portal_tentativas_iniciado; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX idx_pedidos_portal_tentativas_iniciado ON public.pedidos_portal_tentativas USING btree (iniciado_em DESC);
+
+
+--
+-- Name: idx_pedidos_portal_tentativas_pedido; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX idx_pedidos_portal_tentativas_pedido ON public.pedidos_portal_tentativas USING btree (pedido_id, iniciado_em DESC);
+
+
+--
+-- Name: idx_pedidos_portal_tentativas_status; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX idx_pedidos_portal_tentativas_status ON public.pedidos_portal_tentativas USING btree (status_resultado);
+
+
+--
+-- Name: idx_picking_task_items_task; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX idx_picking_task_items_task ON public.picking_task_items USING btree (picking_task_id);
+
+
+--
+-- Name: idx_picking_tasks_status; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX idx_picking_tasks_status ON public.picking_tasks USING btree (status);
+
+
+--
+-- Name: idx_po_cte_chave; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX idx_po_cte_chave ON public.purchase_orders_tracking USING btree (cte_chave_acesso) WHERE (cte_chave_acesso IS NOT NULL);
+
+
+--
+-- Name: idx_po_empresa_status; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX idx_po_empresa_status ON public.purchase_orders_tracking USING btree (empresa, status);
+
+
+--
+-- Name: idx_po_fornecedor; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX idx_po_fornecedor ON public.purchase_orders_tracking USING btree (empresa, fornecedor_codigo_omie);
+
+
+--
+-- Name: idx_po_grupo; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX idx_po_grupo ON public.purchase_orders_tracking USING btree (empresa, grupo_leadtime);
+
+
+--
+-- Name: idx_po_nfe_chave; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX idx_po_nfe_chave ON public.purchase_orders_tracking USING btree (nfe_chave_acesso) WHERE (nfe_chave_acesso IS NOT NULL);
+
+
+--
+-- Name: idx_po_pendentes_cte; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX idx_po_pendentes_cte ON public.purchase_orders_tracking USING btree (empresa, t2_data_faturamento) WHERE ((status = 'FATURADO'::public.status_pedido_compra) AND (t3_data_cte IS NULL));
+
+
+--
+-- Name: idx_po_t1; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX idx_po_t1 ON public.purchase_orders_tracking USING btree (t1_data_pedido DESC);
+
+
+--
+-- Name: idx_polling_log_recentes; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX idx_polling_log_recentes ON public.fornecedor_email_polling_log USING btree (polling_config_id, executado_em DESC);
+
+
+--
+-- Name: idx_pot_cte_match_pending; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX idx_pot_cte_match_pending ON public.purchase_orders_tracking USING btree (empresa, fornecedor_codigo_omie, t2_data_faturamento) WHERE ((nfe_chave_acesso IS NOT NULL) AND (t3_data_cte IS NULL));
+
+
+--
+-- Name: idx_pot_num_contrato; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX idx_pot_num_contrato ON public.purchase_orders_tracking USING btree (empresa, fornecedor_codigo_omie, numero_contrato_fornecedor) WHERE (numero_contrato_fornecedor IS NOT NULL);
+
+
+--
+-- Name: idx_priority_log_customer; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX idx_priority_log_customer ON public.priority_score_log USING btree (customer_user_id, score_date DESC);
+
+
+--
+-- Name: idx_priority_log_farmer_date; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX idx_priority_log_farmer_date ON public.priority_score_log USING btree (farmer_id, score_date DESC);
+
+
+--
+-- Name: idx_production_orders_account; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX idx_production_orders_account ON public.production_orders USING btree (account);
+
+
+--
+-- Name: idx_production_orders_assigned; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX idx_production_orders_assigned ON public.production_orders USING btree (assigned_to);
+
+
+--
+-- Name: idx_production_orders_status; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX idx_production_orders_status ON public.production_orders USING btree (status);
+
+
+--
+-- Name: idx_profiles_document_unique; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE UNIQUE INDEX idx_profiles_document_unique ON public.profiles USING btree (document) WHERE ((document IS NOT NULL) AND (document <> ''::text));
+
+
+--
+-- Name: idx_profiles_is_prospect; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX idx_profiles_is_prospect ON public.profiles USING btree (is_prospect, created_at DESC) WHERE (is_prospect = true);
+
+
+--
+-- Name: idx_promo_flat_condicional; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX idx_promo_flat_condicional ON public.promocao_campanha USING btree (empresa, estado, tipo_origem, data_fim) WHERE (tipo_origem = 'desconto_flat_condicional'::text);
+
+
+--
+-- Name: idx_promo_negociacao_campanha; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX idx_promo_negociacao_campanha ON public.promocao_negociacao_evento USING btree (campanha_id, data_evento DESC);
+
+
+--
+-- Name: idx_promocao_campanha_estado; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX idx_promocao_campanha_estado ON public.promocao_campanha USING btree (empresa, estado, data_fim DESC);
+
+
+--
+-- Name: idx_promocao_campanha_vigente; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX idx_promocao_campanha_vigente ON public.promocao_campanha USING btree (empresa, fornecedor_nome, data_inicio, data_fim) WHERE (estado = 'ativa'::text);
+
+
+--
+-- Name: idx_promocao_item_pendente_mapeamento; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX idx_promocao_item_pendente_mapeamento ON public.promocao_item USING btree (campanha_id) WHERE ((sku_codigo_omie IS NULL) OR (NOT confirmado));
+
+
+--
+-- Name: idx_promocao_item_sku_omie; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX idx_promocao_item_sku_omie ON public.promocao_item USING btree (sku_codigo_omie) WHERE ((sku_codigo_omie IS NOT NULL) AND (ativo = true));
+
+
+--
+-- Name: idx_rag_chunks_embedding; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX idx_rag_chunks_embedding ON public.rag_chunks USING ivfflat (embedding public.vector_cosine_ops) WITH (lists='100');
+
+
+--
+-- Name: idx_rag_chunks_metadata_segmento; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX idx_rag_chunks_metadata_segmento ON public.rag_chunks USING btree (((metadata ->> 'segmento'::text))) WHERE (source_table = ANY (ARRAY['customer_processes'::text, 'standard_processes'::text]));
+
+
+--
+-- Name: idx_rag_chunks_source; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX idx_rag_chunks_source ON public.rag_chunks USING btree (source_table, source_id);
+
+
+--
+-- Name: idx_rec_log_customer; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX idx_rec_log_customer ON public.recommendation_log USING btree (customer_user_id);
+
+
+--
+-- Name: idx_rec_log_event; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX idx_rec_log_event ON public.recommendation_log USING btree (event_type);
+
+
+--
+-- Name: idx_rec_log_farmer; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX idx_rec_log_farmer ON public.recommendation_log USING btree (farmer_id);
+
+
+--
+-- Name: idx_rec_log_product; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX idx_rec_log_product ON public.recommendation_log USING btree (product_id);
+
+
+--
+-- Name: idx_repos_classe; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX idx_repos_classe ON public.reposition_parameters USING btree (empresa, classe_abc, classe_xyz);
+
+
+--
+-- Name: idx_repos_delta; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX idx_repos_delta ON public.reposition_parameters USING btree (empresa, abs(delta_lt_pct) DESC);
+
+
+--
+-- Name: idx_repos_fornecedor; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX idx_repos_fornecedor ON public.reposition_parameters USING btree (empresa, fornecedor_codigo_omie);
+
+
+--
+-- Name: idx_repos_status; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX idx_repos_status ON public.reposition_parameters USING btree (empresa, status_revisao);
+
+
+--
+-- Name: idx_sales_orders_active; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX idx_sales_orders_active ON public.sales_orders USING btree (created_at DESC) WHERE (deleted_at IS NULL);
+
+
+--
+-- Name: idx_sales_orders_updated; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX idx_sales_orders_updated ON public.sales_orders USING btree (updated_at);
+
+
+--
+-- Name: idx_score_recalc_queue_pending; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX idx_score_recalc_queue_pending ON public.score_recalc_queue USING btree (enqueued_at) WHERE (processed_at IS NULL);
+
+
+--
+-- Name: idx_sim_candidato; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX idx_sim_candidato ON public.simulacao_estoque_resultados USING btree (candidato);
+
+
+--
+-- Name: idx_sim_empresa_candidato; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX idx_sim_empresa_candidato ON public.simulacao_estoque_resultados USING btree (empresa, candidato);
+
+
+--
+-- Name: idx_sim_empresa_sku; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX idx_sim_empresa_sku ON public.simulacao_estoque_resultados USING btree (empresa, sku_codigo_omie);
+
+
+--
+-- Name: idx_sku_fornecedor_externo_lookup; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX idx_sku_fornecedor_externo_lookup ON public.sku_fornecedor_externo USING btree (empresa, fornecedor_nome, sku_omie) WHERE (ativo = true);
+
+
+--
+-- Name: idx_sku_fornecedor_externo_sku_omie; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX idx_sku_fornecedor_externo_sku_omie ON public.sku_fornecedor_externo USING btree (sku_omie);
+
+
+--
+-- Name: idx_sku_hist_fornecedor; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX idx_sku_hist_fornecedor ON public.sku_leadtime_history USING btree (empresa, fornecedor_codigo_omie, t1_data_pedido DESC);
+
+
+--
+-- Name: idx_sku_hist_grupo; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX idx_sku_hist_grupo ON public.sku_leadtime_history USING btree (empresa, grupo_leadtime, t1_data_pedido DESC);
+
+
+--
+-- Name: idx_sku_hist_param_data; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX idx_sku_hist_param_data ON public.sku_parametros_historico USING btree (sku_parametro_id, snapshot_em DESC);
+
+
+--
+-- Name: idx_sku_hist_sku; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX idx_sku_hist_sku ON public.sku_leadtime_history USING btree (empresa, sku_codigo_omie, t1_data_pedido DESC);
+
+
+--
+-- Name: idx_sku_hist_tracking; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX idx_sku_hist_tracking ON public.sku_leadtime_history USING btree (tracking_id);
+
+
+--
+-- Name: idx_sku_param_classe; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX idx_sku_param_classe ON public.sku_parametros USING btree (empresa, classe_consolidada);
+
+
+--
+-- Name: idx_sku_param_empresa; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX idx_sku_param_empresa ON public.sku_parametros USING btree (empresa, ativo);
+
+
+--
+-- Name: idx_snapshot_recentes; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX idx_snapshot_recentes ON public.des_trimestre_snapshot USING btree (empresa, ano, trimestre, data_referencia DESC);
+
+
+--
+-- Name: idx_standard_processes_published_segmento; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX idx_standard_processes_published_segmento ON public.standard_processes USING btree (segmento) WHERE (status = 'published'::text);
+
+
+--
+-- Name: idx_standard_processes_slug; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX idx_standard_processes_slug ON public.standard_processes USING btree (slug);
+
+
+--
+-- Name: idx_standard_processes_status_segmento; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX idx_standard_processes_status_segmento ON public.standard_processes USING btree (status, segmento, created_at DESC);
+
+
+--
+-- Name: idx_substituicao_antigo; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX idx_substituicao_antigo ON public.sku_substituicao USING btree (empresa, sku_codigo_antigo, status);
+
+
+--
+-- Name: idx_sugestao_empresa_status; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX idx_sugestao_empresa_status ON public.sugestao_negociacao_paralela USING btree (empresa, status, data_geracao DESC);
+
+
+--
+-- Name: idx_sync_reprocess_log_created; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX idx_sync_reprocess_log_created ON public.sync_reprocess_log USING btree (created_at DESC);
+
+
+--
+-- Name: idx_sync_reprocess_log_entity; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX idx_sync_reprocess_log_entity ON public.sync_reprocess_log USING btree (entity_type, account, reprocess_type);
+
+
+--
+-- Name: idx_sync_state_entity_account; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE UNIQUE INDEX idx_sync_state_entity_account ON public.sync_state USING btree (entity_type, account);
+
+
+--
+-- Name: idx_tint_formulas_busca_cor; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX idx_tint_formulas_busca_cor ON public.tint_formulas USING btree (account, sku_id, cor_id);
+
+
+--
+-- Name: idx_tint_formulas_nome_cor; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX idx_tint_formulas_nome_cor ON public.tint_formulas USING gin (nome_cor extensions.gin_trgm_ops);
+
+
+--
+-- Name: idx_tint_reconciliation_items_run; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX idx_tint_reconciliation_items_run ON public.tint_reconciliation_items USING btree (reconciliation_run_id);
+
+
+--
+-- Name: idx_tint_reconciliation_items_type; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX idx_tint_reconciliation_items_type ON public.tint_reconciliation_items USING btree (entity_type, diff_type);
+
+
+--
+-- Name: idx_tint_staging_formulas_run; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX idx_tint_staging_formulas_run ON public.tint_staging_formulas USING btree (sync_run_id);
+
+
+--
+-- Name: idx_tint_staging_preparacoes_run; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX idx_tint_staging_preparacoes_run ON public.tint_staging_preparacoes USING btree (sync_run_id);
+
+
+--
+-- Name: idx_tint_sync_errors_run; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX idx_tint_sync_errors_run ON public.tint_sync_errors USING btree (sync_run_id);
+
+
+--
+-- Name: idx_tint_sync_runs_idempotency; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE UNIQUE INDEX idx_tint_sync_runs_idempotency ON public.tint_sync_runs USING btree (setting_id, sync_type, idempotency_key) WHERE (idempotency_key IS NOT NULL);
+
+
+--
+-- Name: idx_tint_sync_runs_setting; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX idx_tint_sync_runs_setting ON public.tint_sync_runs USING btree (setting_id);
+
+
+--
+-- Name: idx_tint_sync_runs_status; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX idx_tint_sync_runs_status ON public.tint_sync_runs USING btree (status);
+
+
+--
+-- Name: idx_user_departments_dept; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX idx_user_departments_dept ON public.user_departments USING btree (department);
+
+
+--
+-- Name: idx_user_departments_user; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX idx_user_departments_user ON public.user_departments USING btree (user_id);
+
+
+--
+-- Name: idx_user_tools_next_sharpening; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX idx_user_tools_next_sharpening ON public.user_tools USING btree (next_sharpening_due);
+
+
+--
+-- Name: idx_user_tools_user_id; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX idx_user_tools_user_id ON public.user_tools USING btree (user_id);
+
+
+--
+-- Name: idx_venda_cliente; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX idx_venda_cliente ON public.venda_items_history USING btree (empresa, cliente_codigo_omie);
+
+
+--
+-- Name: idx_venda_empresa_data; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX idx_venda_empresa_data ON public.venda_items_history USING btree (empresa, data_emissao DESC);
+
+
+--
+-- Name: idx_venda_sku_data; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX idx_venda_sku_data ON public.venda_items_history USING btree (empresa, sku_codigo_omie, data_emissao);
+
+
+--
+-- Name: idx_vendor_sip_credentials_user_id; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX idx_vendor_sip_credentials_user_id ON public.vendor_sip_credentials USING btree (user_id);
+
+
+--
+-- Name: idx_visit_score_queue_pending; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX idx_visit_score_queue_pending ON public.visit_score_recalc_queue USING btree (enqueued_at) WHERE (processed_at IS NULL);
+
+
+--
+-- Name: idx_visit_scores_farmer_city; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX idx_visit_scores_farmer_city ON public.customer_visit_scores USING btree (farmer_id, city, visit_score DESC);
+
+
+--
+-- Name: idx_visit_scores_farmer_priority; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX idx_visit_scores_farmer_priority ON public.customer_visit_scores USING btree (farmer_id, visit_score DESC);
+
+
+--
+-- Name: idx_webauthn_challenges_credential_id; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX idx_webauthn_challenges_credential_id ON public.webauthn_challenges USING btree (credential_id);
+
+
+--
+-- Name: idx_webauthn_credentials_credential_id; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX idx_webauthn_credentials_credential_id ON public.webauthn_credentials USING btree (credential_id);
+
+
+--
+-- Name: idx_webauthn_credentials_user_id; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX idx_webauthn_credentials_user_id ON public.webauthn_credentials USING btree (user_id);
+
+
+--
+-- Name: idx_webhook_pendentes; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX idx_webhook_pendentes ON public.omie_webhook_events USING btree (received_at) WHERE (processed_at IS NULL);
+
+
+--
+-- Name: idx_webhook_topic; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX idx_webhook_topic ON public.omie_webhook_events USING btree (empresa, topic, received_at DESC);
+
+
+--
+-- Name: inventory_position_produto_account_uq; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE UNIQUE INDEX inventory_position_produto_account_uq ON public.inventory_position USING btree (omie_codigo_produto, account);
+
+
+--
+-- Name: omie_products_omie_codigo_produto_account_key; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE UNIQUE INDEX omie_products_omie_codigo_produto_account_key ON public.omie_products USING btree (omie_codigo_produto, account);
+
+
+--
+-- Name: sync_state_entity_account_uq; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE UNIQUE INDEX sync_state_entity_account_uq ON public.sync_state USING btree (entity_type, account);
+
+
+--
+-- Name: uniq_score_recalc_queue_pending; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE UNIQUE INDEX uniq_score_recalc_queue_pending ON public.score_recalc_queue USING btree (customer_user_id, farmer_id) WHERE (processed_at IS NULL);
+
+
+--
+-- Name: uniq_visit_score_queue_pending; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE UNIQUE INDEX uniq_visit_score_queue_pending ON public.visit_score_recalc_queue USING btree (customer_user_id, farmer_id) WHERE (processed_at IS NULL);
+
+
+--
+-- Name: uq_call_log_provider_call_id; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE UNIQUE INDEX uq_call_log_provider_call_id ON public.call_log USING btree (provider, provider_call_id);
+
+
+--
+-- Name: uq_call_log_sip_call_id; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE UNIQUE INDEX uq_call_log_sip_call_id ON public.call_log USING btree (provider, sip_call_id);
+
+
+--
+-- Name: uq_tint_formulas_chave; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE UNIQUE INDEX uq_tint_formulas_chave ON public.tint_formulas USING btree (account, cor_id, produto_id, base_id, COALESCE(subcolecao_id, '00000000-0000-0000-0000-000000000000'::uuid), embalagem_id);
+
+
+--
+-- Name: profiles on_profile_created_assign_role; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER on_profile_created_assign_role AFTER INSERT ON public.profiles FOR EACH ROW EXECUTE FUNCTION public.auto_assign_user_role();
+
+
+--
+-- Name: profiles on_profile_updated_assign_role; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER on_profile_updated_assign_role AFTER UPDATE OF is_employee, document ON public.profiles FOR EACH ROW WHEN (((old.is_employee IS DISTINCT FROM new.is_employee) OR (old.document IS DISTINCT FROM new.document))) EXECUTE FUNCTION public.auto_assign_user_role();
+
+
+--
+-- Name: company_config protect_master_config_trigger; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER protect_master_config_trigger BEFORE INSERT OR DELETE OR UPDATE ON public.company_config FOR EACH ROW EXECUTE FUNCTION public.protect_master_config();
+
+
+--
+-- Name: sku_fornecedor_externo sku_fornecedor_externo_set_atualizado_em; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER sku_fornecedor_externo_set_atualizado_em BEFORE UPDATE ON public.sku_fornecedor_externo FOR EACH ROW EXECUTE FUNCTION public.update_updated_at_column();
+
+
+--
+-- Name: fornecedor_habilitado_reposicao tr_propagar_habilitacao_fornecedor; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER tr_propagar_habilitacao_fornecedor AFTER INSERT OR UPDATE ON public.fornecedor_habilitado_reposicao FOR EACH ROW EXECUTE FUNCTION public.propagar_habilitacao_fornecedor();
+
+
+--
+-- Name: omie_products tr_sincronizar_ativo_omie; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER tr_sincronizar_ativo_omie AFTER UPDATE OF ativo ON public.omie_products FOR EACH ROW WHEN ((old.ativo IS DISTINCT FROM new.ativo)) EXECUTE FUNCTION public.sincronizar_ativo_omie_para_reposicao();
+
+
+--
+-- Name: fin_alertas trg_audit; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trg_audit AFTER INSERT OR DELETE OR UPDATE ON public.fin_alertas FOR EACH ROW EXECUTE FUNCTION public.fin_audit_trigger();
+
+
+--
+-- Name: fin_categoria_dre_mapping trg_audit; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trg_audit AFTER INSERT OR DELETE OR UPDATE ON public.fin_categoria_dre_mapping FOR EACH ROW EXECUTE FUNCTION public.fin_audit_trigger();
+
+
+--
+-- Name: fin_contas_pagar trg_audit; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trg_audit AFTER INSERT OR DELETE OR UPDATE ON public.fin_contas_pagar FOR EACH ROW EXECUTE FUNCTION public.fin_audit_trigger();
+
+
+--
+-- Name: fin_contas_receber trg_audit; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trg_audit AFTER INSERT OR DELETE OR UPDATE ON public.fin_contas_receber FOR EACH ROW EXECUTE FUNCTION public.fin_audit_trigger();
+
+
+--
+-- Name: fin_eliminacoes_intercompany trg_audit; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trg_audit AFTER INSERT OR DELETE OR UPDATE ON public.fin_eliminacoes_intercompany FOR EACH ROW EXECUTE FUNCTION public.fin_audit_trigger();
+
+
+--
+-- Name: fin_estoque_valor trg_audit; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trg_audit AFTER INSERT OR DELETE OR UPDATE ON public.fin_estoque_valor FOR EACH ROW EXECUTE FUNCTION public.fin_audit_trigger();
+
+
+--
+-- Name: fin_eventos_eventuais trg_audit; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trg_audit AFTER INSERT OR DELETE OR UPDATE ON public.fin_eventos_eventuais FOR EACH ROW EXECUTE FUNCTION public.fin_audit_trigger();
+
+
+--
+-- Name: fin_eventos_recorrentes trg_audit; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trg_audit AFTER INSERT OR DELETE OR UPDATE ON public.fin_eventos_recorrentes FOR EACH ROW EXECUTE FUNCTION public.fin_audit_trigger();
+
+
+--
+-- Name: fin_fechamentos trg_audit; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trg_audit AFTER INSERT OR DELETE OR UPDATE ON public.fin_fechamentos FOR EACH ROW EXECUTE FUNCTION public.fin_audit_trigger();
+
+
+--
+-- Name: fin_orcamento trg_audit; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trg_audit AFTER INSERT OR DELETE OR UPDATE ON public.fin_orcamento FOR EACH ROW EXECUTE FUNCTION public.fin_audit_trigger();
+
+
+--
+-- Name: fornecedor_aumento_anunciado trg_aumento_alerta; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trg_aumento_alerta AFTER INSERT OR UPDATE OF estado ON public.fornecedor_aumento_anunciado FOR EACH ROW EXECUTE FUNCTION public.trg_aumento_gera_alerta();
+
+
+--
+-- Name: profiles trg_auto_commercial_super_admin; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trg_auto_commercial_super_admin AFTER INSERT ON public.profiles FOR EACH ROW EXECUTE FUNCTION public.auto_assign_commercial_super_admin();
+
+
+--
+-- Name: promocao_campanha trg_campanha_alerta; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trg_campanha_alerta AFTER INSERT OR UPDATE OF estado ON public.promocao_campanha FOR EACH ROW EXECUTE FUNCTION public.trg_campanha_gera_alerta();
+
+
+--
+-- Name: customer_contacts trg_customer_contacts_updated_at; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trg_customer_contacts_updated_at BEFORE UPDATE ON public.customer_contacts FOR EACH ROW EXECUTE FUNCTION public.kb_documents_set_updated_at();
+
+
+--
+-- Name: customer_processes trg_customer_processes_updated_at; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trg_customer_processes_updated_at BEFORE UPDATE ON public.customer_processes FOR EACH ROW EXECUTE FUNCTION public.kb_documents_set_updated_at();
+
+
+--
+-- Name: farmer_calls trg_farmer_calls_enqueue_recalc; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trg_farmer_calls_enqueue_recalc AFTER INSERT OR UPDATE OF entities_extracted ON public.farmer_calls FOR EACH ROW EXECUTE FUNCTION public.enqueue_score_recalc_from_call();
+
+
+--
+-- Name: farmer_client_scores trg_farmer_client_scores_enqueue_visit_recalc; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trg_farmer_client_scores_enqueue_visit_recalc AFTER UPDATE ON public.farmer_client_scores FOR EACH ROW EXECUTE FUNCTION public.enqueue_visit_score_recalc_from_client_score();
+
+
+--
+-- Name: user_tools trg_generate_tool_code; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trg_generate_tool_code BEFORE INSERT ON public.user_tools FOR EACH ROW WHEN ((new.internal_code IS NULL)) EXECUTE FUNCTION public.generate_tool_internal_code();
+
+
+--
+-- Name: sku_parametros trg_historico_sku_parametros; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trg_historico_sku_parametros AFTER UPDATE ON public.sku_parametros FOR EACH ROW EXECUTE FUNCTION public.registrar_historico_sku_parametros();
+
+
+--
+-- Name: kb_competitor_products trg_kb_competitor_products_updated_at; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trg_kb_competitor_products_updated_at BEFORE UPDATE ON public.kb_competitor_products FOR EACH ROW EXECUTE FUNCTION public.kb_documents_set_updated_at();
+
+
+--
+-- Name: kb_competitors trg_kb_competitors_updated_at; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trg_kb_competitors_updated_at BEFORE UPDATE ON public.kb_competitors FOR EACH ROW EXECUTE FUNCTION public.kb_documents_set_updated_at();
+
+
+--
+-- Name: kb_documents trg_kb_documents_updated_at; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trg_kb_documents_updated_at BEFORE UPDATE ON public.kb_documents FOR EACH ROW EXECUTE FUNCTION public.kb_documents_set_updated_at();
+
+
+--
+-- Name: kb_product_specs trg_kb_product_specs_updated_at; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trg_kb_product_specs_updated_at BEFORE UPDATE ON public.kb_product_specs FOR EACH ROW EXECUTE FUNCTION public.kb_documents_set_updated_at();
+
+
+--
+-- Name: fin_fechamentos trg_mapping_gate; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trg_mapping_gate BEFORE UPDATE ON public.fin_fechamentos FOR EACH ROW EXECUTE FUNCTION public.fin_check_mapping_complete_trigger();
+
+
+--
+-- Name: fin_categoria_dre_mapping trg_period_lock; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trg_period_lock BEFORE DELETE OR UPDATE ON public.fin_categoria_dre_mapping FOR EACH ROW EXECUTE FUNCTION public.fin_period_lock_trigger();
+
+
+--
+-- Name: fin_contas_pagar trg_period_lock; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trg_period_lock BEFORE INSERT OR DELETE OR UPDATE ON public.fin_contas_pagar FOR EACH ROW EXECUTE FUNCTION public.fin_period_lock_trigger();
+
+
+--
+-- Name: fin_contas_receber trg_period_lock; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trg_period_lock BEFORE INSERT OR DELETE OR UPDATE ON public.fin_contas_receber FOR EACH ROW EXECUTE FUNCTION public.fin_period_lock_trigger();
+
+
+--
+-- Name: fin_estoque_valor trg_period_lock; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trg_period_lock BEFORE DELETE OR UPDATE ON public.fin_estoque_valor FOR EACH ROW EXECUTE FUNCTION public.fin_period_lock_trigger();
+
+
+--
+-- Name: fin_eventos_eventuais trg_period_lock; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trg_period_lock BEFORE DELETE OR UPDATE ON public.fin_eventos_eventuais FOR EACH ROW EXECUTE FUNCTION public.fin_period_lock_trigger();
+
+
+--
+-- Name: fin_eventos_recorrentes trg_period_lock; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trg_period_lock BEFORE DELETE OR UPDATE ON public.fin_eventos_recorrentes FOR EACH ROW EXECUTE FUNCTION public.fin_period_lock_trigger();
+
+
+--
+-- Name: fin_movimentacoes trg_period_lock; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trg_period_lock BEFORE INSERT OR DELETE OR UPDATE ON public.fin_movimentacoes FOR EACH ROW EXECUTE FUNCTION public.fin_period_lock_trigger();
+
+
+--
+-- Name: fin_orcamento trg_period_lock; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trg_period_lock BEFORE INSERT OR DELETE OR UPDATE ON public.fin_orcamento FOR EACH ROW EXECUTE FUNCTION public.fin_period_lock_trigger();
+
+
+--
+-- Name: purchase_orders_tracking trg_po_updated; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trg_po_updated BEFORE UPDATE ON public.purchase_orders_tracking FOR EACH ROW EXECUTE FUNCTION public.set_updated_at();
+
+
+--
+-- Name: reposition_parameters trg_repos_updated; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trg_repos_updated BEFORE UPDATE ON public.reposition_parameters FOR EACH ROW EXECUTE FUNCTION public.set_updated_at();
+
+
+--
+-- Name: roadmap_state trg_roadmap_updated; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trg_roadmap_updated BEFORE UPDATE ON public.roadmap_state FOR EACH ROW EXECUTE FUNCTION public.set_updated_at();
+
+
+--
+-- Name: route_visits trg_route_visits_enqueue_visit_recalc; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trg_route_visits_enqueue_visit_recalc AFTER INSERT OR UPDATE OF check_out_at ON public.route_visits FOR EACH ROW EXECUTE FUNCTION public.enqueue_visit_score_recalc_from_visit();
+
+
+--
+-- Name: pedido_compra_sugerido trg_set_status_envio_portal; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trg_set_status_envio_portal BEFORE UPDATE OF status ON public.pedido_compra_sugerido FOR EACH ROW EXECUTE FUNCTION public.set_status_envio_portal_on_disparo();
+
+
+--
+-- Name: sku_leadtime_history trg_sku_hist_updated; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trg_sku_hist_updated BEFORE UPDATE ON public.sku_leadtime_history FOR EACH ROW EXECUTE FUNCTION public.set_updated_at();
+
+
+--
+-- Name: standard_processes trg_standard_processes_updated_at; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trg_standard_processes_updated_at BEFORE UPDATE ON public.standard_processes FOR EACH ROW EXECUTE FUNCTION public.kb_documents_set_updated_at();
+
+
+--
+-- Name: fornecedor_aumento_anunciado trg_touch_aumento_anunciado; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trg_touch_aumento_anunciado BEFORE UPDATE ON public.fornecedor_aumento_anunciado FOR EACH ROW EXECUTE FUNCTION public.touch_fornecedor_aumento();
+
+
+--
+-- Name: fornecedor_aumento_item trg_touch_aumento_item; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trg_touch_aumento_item BEFORE UPDATE ON public.fornecedor_aumento_item FOR EACH ROW EXECUTE FUNCTION public.touch_fornecedor_aumento();
+
+
+--
+-- Name: des_checkin_qualitativo trg_touch_des_checkin; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trg_touch_des_checkin BEFORE UPDATE ON public.des_checkin_qualitativo FOR EACH ROW EXECUTE FUNCTION public.touch_des_updated_at();
+
+
+--
+-- Name: des_meta_empresa trg_touch_des_meta; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trg_touch_des_meta BEFORE UPDATE ON public.des_meta_empresa FOR EACH ROW EXECUTE FUNCTION public.touch_des_updated_at();
+
+
+--
+-- Name: fornecedor_email_polling trg_touch_polling; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trg_touch_polling BEFORE UPDATE ON public.fornecedor_email_polling FOR EACH ROW EXECUTE FUNCTION public.touch_fornecedor_aumento();
+
+
+--
+-- Name: promocao_campanha trg_touch_promocao_campanha; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trg_touch_promocao_campanha BEFORE UPDATE ON public.promocao_campanha FOR EACH ROW EXECUTE FUNCTION public.touch_promocao();
+
+
+--
+-- Name: promocao_item trg_touch_promocao_item; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trg_touch_promocao_item BEFORE UPDATE ON public.promocao_item FOR EACH ROW EXECUTE FUNCTION public.touch_promocao();
+
+
+--
+-- Name: sugestao_negociacao_paralela trg_touch_sugestao; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trg_touch_sugestao BEFORE UPDATE ON public.sugestao_negociacao_paralela FOR EACH ROW EXECUTE FUNCTION public.touch_sugestao_updated_at();
+
+
+--
+-- Name: orders trigger_award_loyalty_points; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trigger_award_loyalty_points AFTER UPDATE ON public.orders FOR EACH ROW EXECUTE FUNCTION public.award_loyalty_points();
+
+
+--
+-- Name: orders trigger_update_user_tools_on_order_complete; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trigger_update_user_tools_on_order_complete AFTER UPDATE ON public.orders FOR EACH ROW EXECUTE FUNCTION public.update_user_tools_on_order_complete();
+
+
+--
+-- Name: company_profiles update_company_profiles_updated_at; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER update_company_profiles_updated_at BEFORE UPDATE ON public.company_profiles FOR EACH ROW EXECUTE FUNCTION public.update_updated_at_column();
+
+
+--
+-- Name: conversao_unidades update_conversao_unidades_updated_at; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER update_conversao_unidades_updated_at BEFORE UPDATE ON public.conversao_unidades FOR EACH ROW EXECUTE FUNCTION public.update_updated_at_column();
+
+
+--
+-- Name: customer_preferred_items update_customer_preferred_items_updated_at; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER update_customer_preferred_items_updated_at BEFORE UPDATE ON public.customer_preferred_items FOR EACH ROW EXECUTE FUNCTION public.update_updated_at_column();
+
+
+--
+-- Name: customer_segments update_customer_segments_updated_at; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER update_customer_segments_updated_at BEFORE UPDATE ON public.customer_segments FOR EACH ROW EXECUTE FUNCTION public.update_updated_at_column();
+
+
+--
+-- Name: default_prices update_default_prices_updated_at; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER update_default_prices_updated_at BEFORE UPDATE ON public.default_prices FOR EACH ROW EXECUTE FUNCTION public.update_updated_at_column();
+
+
+--
+-- Name: inventory_position update_inventory_updated_at; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER update_inventory_updated_at BEFORE UPDATE ON public.inventory_position FOR EACH ROW EXECUTE FUNCTION public.update_updated_at_column();
+
+
+--
+-- Name: nfe_recebimentos update_nfe_recebimentos_updated_at; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER update_nfe_recebimentos_updated_at BEFORE UPDATE ON public.nfe_recebimentos FOR EACH ROW EXECUTE FUNCTION public.update_updated_at_column();
+
+
+--
+-- Name: omie_clientes update_omie_clientes_updated_at; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER update_omie_clientes_updated_at BEFORE UPDATE ON public.omie_clientes FOR EACH ROW EXECUTE FUNCTION public.update_updated_at_column();
+
+
+--
+-- Name: omie_ordens_servico update_omie_ordens_servico_updated_at; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER update_omie_ordens_servico_updated_at BEFORE UPDATE ON public.omie_ordens_servico FOR EACH ROW EXECUTE FUNCTION public.update_updated_at_column();
+
+
+--
+-- Name: omie_products update_omie_products_updated_at; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER update_omie_products_updated_at BEFORE UPDATE ON public.omie_products FOR EACH ROW EXECUTE FUNCTION public.update_updated_at_column();
+
+
+--
+-- Name: orders update_orders_updated_at; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER update_orders_updated_at BEFORE UPDATE ON public.orders FOR EACH ROW EXECUTE FUNCTION public.update_updated_at_column();
+
+
+--
+-- Name: picking_task_items update_picking_task_items_updated_at; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER update_picking_task_items_updated_at BEFORE UPDATE ON public.picking_task_items FOR EACH ROW EXECUTE FUNCTION public.update_updated_at_column();
+
+
+--
+-- Name: picking_tasks update_picking_tasks_updated_at; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER update_picking_tasks_updated_at BEFORE UPDATE ON public.picking_tasks FOR EACH ROW EXECUTE FUNCTION public.update_updated_at_column();
+
+
+--
+-- Name: production_orders update_production_orders_updated_at; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER update_production_orders_updated_at BEFORE UPDATE ON public.production_orders FOR EACH ROW EXECUTE FUNCTION public.update_updated_at_column();
+
+
+--
+-- Name: profiles update_profiles_updated_at; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER update_profiles_updated_at BEFORE UPDATE ON public.profiles FOR EACH ROW EXECUTE FUNCTION public.update_updated_at_column();
+
+
+--
+-- Name: recurring_schedules update_recurring_schedules_updated_at; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER update_recurring_schedules_updated_at BEFORE UPDATE ON public.recurring_schedules FOR EACH ROW EXECUTE FUNCTION public.update_updated_at_column();
+
+
+--
+-- Name: sales_orders update_sales_orders_updated_at; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER update_sales_orders_updated_at BEFORE UPDATE ON public.sales_orders FOR EACH ROW EXECUTE FUNCTION public.update_updated_at_column();
+
+
+--
+-- Name: sync_state update_sync_state_updated_at; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER update_sync_state_updated_at BEFORE UPDATE ON public.sync_state FOR EACH ROW EXECUTE FUNCTION public.update_updated_at_column();
+
+
+--
+-- Name: user_tools update_user_tools_updated_at; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER update_user_tools_updated_at BEFORE UPDATE ON public.user_tools FOR EACH ROW EXECUTE FUNCTION public.update_updated_at_column();
+
+
+--
+-- Name: warehouses update_warehouses_updated_at; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER update_warehouses_updated_at BEFORE UPDATE ON public.warehouses FOR EACH ROW EXECUTE FUNCTION public.update_updated_at_column();
+
+
+--
+-- Name: vendor_sip_credentials vendor_sip_credentials_updated_at_trigger; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER vendor_sip_credentials_updated_at_trigger BEFORE UPDATE ON public.vendor_sip_credentials FOR EACH ROW EXECUTE FUNCTION public.update_vendor_sip_credentials_updated_at();
+
+
+--
+-- Name: ai_decision_audit_log ai_decision_audit_log_decision_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.ai_decision_audit_log
+    ADD CONSTRAINT ai_decision_audit_log_decision_id_fkey FOREIGN KEY (decision_id) REFERENCES public.ai_decisions(id) ON DELETE CASCADE;
+
+
+--
+-- Name: call_log call_log_farmer_call_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.call_log
+    ADD CONSTRAINT call_log_farmer_call_id_fkey FOREIGN KEY (farmer_call_id) REFERENCES public.farmer_calls(id) ON DELETE SET NULL;
+
+
+--
+-- Name: carteira_assignments carteira_assignments_customer_user_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.carteira_assignments
+    ADD CONSTRAINT carteira_assignments_customer_user_id_fkey FOREIGN KEY (customer_user_id) REFERENCES auth.users(id) ON DELETE CASCADE;
+
+
+--
+-- Name: carteira_assignments carteira_assignments_owner_user_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.carteira_assignments
+    ADD CONSTRAINT carteira_assignments_owner_user_id_fkey FOREIGN KEY (owner_user_id) REFERENCES auth.users(id) ON DELETE CASCADE;
+
+
+--
+-- Name: categoria_aumento_familia_mapeamento categoria_aumento_familia_mapeamento_aumento_item_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.categoria_aumento_familia_mapeamento
+    ADD CONSTRAINT categoria_aumento_familia_mapeamento_aumento_item_id_fkey FOREIGN KEY (aumento_item_id) REFERENCES public.fornecedor_aumento_item(id) ON DELETE CASCADE;
+
+
+--
+-- Name: category_mappings category_mappings_tool_category_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.category_mappings
+    ADD CONSTRAINT category_mappings_tool_category_id_fkey FOREIGN KEY (tool_category_id) REFERENCES public.tool_categories(id);
+
+
+--
+-- Name: commercial_roles commercial_roles_assigned_by_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.commercial_roles
+    ADD CONSTRAINT commercial_roles_assigned_by_fkey FOREIGN KEY (assigned_by) REFERENCES auth.users(id);
+
+
+--
+-- Name: commercial_roles commercial_roles_user_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.commercial_roles
+    ADD CONSTRAINT commercial_roles_user_id_fkey FOREIGN KEY (user_id) REFERENCES auth.users(id) ON DELETE CASCADE;
+
+
+--
+-- Name: cte_associados cte_associados_nfe_recebimento_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.cte_associados
+    ADD CONSTRAINT cte_associados_nfe_recebimento_id_fkey FOREIGN KEY (nfe_recebimento_id) REFERENCES public.nfe_recebimentos(id) ON DELETE CASCADE;
+
+
+--
+-- Name: customer_contacts customer_contacts_created_by_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.customer_contacts
+    ADD CONSTRAINT customer_contacts_created_by_fkey FOREIGN KEY (created_by) REFERENCES auth.users(id);
+
+
+--
+-- Name: customer_contacts customer_contacts_customer_user_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.customer_contacts
+    ADD CONSTRAINT customer_contacts_customer_user_id_fkey FOREIGN KEY (customer_user_id) REFERENCES auth.users(id) ON DELETE CASCADE;
+
+
+--
+-- Name: customer_processes customer_processes_created_by_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.customer_processes
+    ADD CONSTRAINT customer_processes_created_by_fkey FOREIGN KEY (created_by) REFERENCES auth.users(id) ON DELETE CASCADE;
+
+
+--
+-- Name: customer_processes customer_processes_customer_user_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.customer_processes
+    ADD CONSTRAINT customer_processes_customer_user_id_fkey FOREIGN KEY (customer_user_id) REFERENCES auth.users(id) ON DELETE CASCADE;
+
+
+--
+-- Name: customer_processes customer_processes_parent_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.customer_processes
+    ADD CONSTRAINT customer_processes_parent_id_fkey FOREIGN KEY (parent_id) REFERENCES public.customer_processes(id) ON DELETE SET NULL;
+
+
+--
+-- Name: dashboard_visits dashboard_visits_user_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.dashboard_visits
+    ADD CONSTRAINT dashboard_visits_user_id_fkey FOREIGN KEY (user_id) REFERENCES auth.users(id) ON DELETE CASCADE;
+
+
+--
+-- Name: default_prices default_prices_tool_category_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.default_prices
+    ADD CONSTRAINT default_prices_tool_category_id_fkey FOREIGN KEY (tool_category_id) REFERENCES public.tool_categories(id);
+
+
+--
+-- Name: des_checkin_qualitativo_resposta des_checkin_qualitativo_resposta_checkin_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.des_checkin_qualitativo_resposta
+    ADD CONSTRAINT des_checkin_qualitativo_resposta_checkin_id_fkey FOREIGN KEY (checkin_id) REFERENCES public.des_checkin_qualitativo(id) ON DELETE CASCADE;
+
+
+--
+-- Name: des_checkin_qualitativo_resposta des_checkin_qualitativo_resposta_criterio_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.des_checkin_qualitativo_resposta
+    ADD CONSTRAINT des_checkin_qualitativo_resposta_criterio_id_fkey FOREIGN KEY (criterio_id) REFERENCES public.des_criterio_qualitativo(id);
+
+
+--
+-- Name: des_criterio_percentual des_criterio_percentual_criterio_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.des_criterio_percentual
+    ADD CONSTRAINT des_criterio_percentual_criterio_id_fkey FOREIGN KEY (criterio_id) REFERENCES public.des_criterio_qualitativo(id) ON DELETE CASCADE;
+
+
+--
+-- Name: des_criterio_percentual des_criterio_percentual_faixa_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.des_criterio_percentual
+    ADD CONSTRAINT des_criterio_percentual_faixa_id_fkey FOREIGN KEY (faixa_id) REFERENCES public.des_faixa_quantitativa(id) ON DELETE CASCADE;
+
+
+--
+-- Name: des_criterio_qualitativo des_criterio_qualitativo_contrato_versao_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.des_criterio_qualitativo
+    ADD CONSTRAINT des_criterio_qualitativo_contrato_versao_id_fkey FOREIGN KEY (contrato_versao_id) REFERENCES public.des_contrato_versao(id);
+
+
+--
+-- Name: des_faixa_quantitativa des_faixa_quantitativa_contrato_versao_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.des_faixa_quantitativa
+    ADD CONSTRAINT des_faixa_quantitativa_contrato_versao_id_fkey FOREIGN KEY (contrato_versao_id) REFERENCES public.des_contrato_versao(id);
+
+
+--
+-- Name: farmer_agenda farmer_agenda_call_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.farmer_agenda
+    ADD CONSTRAINT farmer_agenda_call_id_fkey FOREIGN KEY (call_id) REFERENCES public.farmer_calls(id);
+
+
+--
+-- Name: farmer_calls farmer_calls_linked_sales_order_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.farmer_calls
+    ADD CONSTRAINT farmer_calls_linked_sales_order_id_fkey FOREIGN KEY (linked_sales_order_id) REFERENCES public.sales_orders(id);
+
+
+--
+-- Name: farmer_copilot_events farmer_copilot_events_session_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.farmer_copilot_events
+    ADD CONSTRAINT farmer_copilot_events_session_id_fkey FOREIGN KEY (session_id) REFERENCES public.farmer_copilot_sessions(id) ON DELETE CASCADE;
+
+
+--
+-- Name: farmer_copilot_sessions farmer_copilot_sessions_bundle_recommendation_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.farmer_copilot_sessions
+    ADD CONSTRAINT farmer_copilot_sessions_bundle_recommendation_id_fkey FOREIGN KEY (bundle_recommendation_id) REFERENCES public.farmer_bundle_recommendations(id);
+
+
+--
+-- Name: farmer_copilot_sessions farmer_copilot_sessions_call_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.farmer_copilot_sessions
+    ADD CONSTRAINT farmer_copilot_sessions_call_id_fkey FOREIGN KEY (call_id) REFERENCES public.farmer_calls(id);
+
+
+--
+-- Name: farmer_diagnostic_questions farmer_diagnostic_questions_bundle_recommendation_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.farmer_diagnostic_questions
+    ADD CONSTRAINT farmer_diagnostic_questions_bundle_recommendation_id_fkey FOREIGN KEY (bundle_recommendation_id) REFERENCES public.farmer_bundle_recommendations(id);
+
+
+--
+-- Name: farmer_experiment_clients farmer_experiment_clients_experiment_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.farmer_experiment_clients
+    ADD CONSTRAINT farmer_experiment_clients_experiment_id_fkey FOREIGN KEY (experiment_id) REFERENCES public.farmer_experiments(id) ON DELETE CASCADE;
+
+
+--
+-- Name: farmer_recommendations farmer_recommendations_current_product_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.farmer_recommendations
+    ADD CONSTRAINT farmer_recommendations_current_product_id_fkey FOREIGN KEY (current_product_id) REFERENCES public.omie_products(id);
+
+
+--
+-- Name: farmer_recommendations farmer_recommendations_product_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.farmer_recommendations
+    ADD CONSTRAINT farmer_recommendations_product_id_fkey FOREIGN KEY (product_id) REFERENCES public.omie_products(id);
+
+
+--
+-- Name: farmer_tactical_plans farmer_tactical_plans_bundle_recommendation_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.farmer_tactical_plans
+    ADD CONSTRAINT farmer_tactical_plans_bundle_recommendation_id_fkey FOREIGN KEY (bundle_recommendation_id) REFERENCES public.farmer_bundle_recommendations(id);
+
+
+--
+-- Name: fin_alertas fin_alertas_dismissed_by_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.fin_alertas
+    ADD CONSTRAINT fin_alertas_dismissed_by_fkey FOREIGN KEY (dismissed_by) REFERENCES auth.users(id);
+
+
+--
+-- Name: fin_audit_log fin_audit_log_changed_by_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.fin_audit_log
+    ADD CONSTRAINT fin_audit_log_changed_by_fkey FOREIGN KEY (changed_by) REFERENCES auth.users(id);
+
+
+--
+-- Name: fin_conciliacao fin_conciliacao_mov_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.fin_conciliacao
+    ADD CONSTRAINT fin_conciliacao_mov_id_fkey FOREIGN KEY (mov_id) REFERENCES public.fin_movimentacoes(id);
+
+
+--
+-- Name: fin_config_cashflow fin_config_cashflow_updated_by_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.fin_config_cashflow
+    ADD CONSTRAINT fin_config_cashflow_updated_by_fkey FOREIGN KEY (updated_by) REFERENCES auth.users(id);
+
+
+--
+-- Name: fin_eliminacoes_log fin_eliminacoes_log_regra_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.fin_eliminacoes_log
+    ADD CONSTRAINT fin_eliminacoes_log_regra_id_fkey FOREIGN KEY (regra_id) REFERENCES public.fin_eliminacoes_intercompany(id);
+
+
+--
+-- Name: fin_estoque_valor fin_estoque_valor_criado_por_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.fin_estoque_valor
+    ADD CONSTRAINT fin_estoque_valor_criado_por_fkey FOREIGN KEY (criado_por) REFERENCES auth.users(id);
+
+
+--
+-- Name: fin_eventos_eventuais fin_eventos_eventuais_criado_por_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.fin_eventos_eventuais
+    ADD CONSTRAINT fin_eventos_eventuais_criado_por_fkey FOREIGN KEY (criado_por) REFERENCES auth.users(id);
+
+
+--
+-- Name: fin_eventos_recorrentes fin_eventos_recorrentes_criado_por_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.fin_eventos_recorrentes
+    ADD CONSTRAINT fin_eventos_recorrentes_criado_por_fkey FOREIGN KEY (criado_por) REFERENCES auth.users(id);
+
+
+--
+-- Name: fin_fechamento_log fin_fechamento_log_fechamento_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.fin_fechamento_log
+    ADD CONSTRAINT fin_fechamento_log_fechamento_id_fkey FOREIGN KEY (fechamento_id) REFERENCES public.fin_fechamentos(id) ON DELETE CASCADE;
+
+
+--
+-- Name: fin_fechamentos fin_fechamentos_snapshot_dre_caixa_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.fin_fechamentos
+    ADD CONSTRAINT fin_fechamentos_snapshot_dre_caixa_id_fkey FOREIGN KEY (snapshot_dre_caixa_id) REFERENCES public.fin_dre_snapshots(id);
+
+
+--
+-- Name: fin_fechamentos fin_fechamentos_snapshot_dre_competencia_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.fin_fechamentos
+    ADD CONSTRAINT fin_fechamentos_snapshot_dre_competencia_id_fkey FOREIGN KEY (snapshot_dre_competencia_id) REFERENCES public.fin_dre_snapshots(id);
+
+
+--
+-- Name: fin_fechamentos fin_fechamentos_snapshot_dre_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.fin_fechamentos
+    ADD CONSTRAINT fin_fechamentos_snapshot_dre_id_fkey FOREIGN KEY (snapshot_dre_id) REFERENCES public.fin_dre_snapshots(id);
+
+
+--
+-- Name: fin_ic_matches fin_ic_matches_cp_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.fin_ic_matches
+    ADD CONSTRAINT fin_ic_matches_cp_id_fkey FOREIGN KEY (cp_id) REFERENCES public.fin_contas_pagar(id) ON DELETE SET NULL;
+
+
+--
+-- Name: fin_ic_matches fin_ic_matches_cr_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.fin_ic_matches
+    ADD CONSTRAINT fin_ic_matches_cr_id_fkey FOREIGN KEY (cr_id) REFERENCES public.fin_contas_receber(id) ON DELETE SET NULL;
+
+
+--
+-- Name: fin_ic_matches fin_ic_matches_resolvido_por_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.fin_ic_matches
+    ADD CONSTRAINT fin_ic_matches_resolvido_por_fkey FOREIGN KEY (resolvido_por) REFERENCES auth.users(id);
+
+
+--
+-- Name: fin_period_overrides fin_period_overrides_closed_by_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.fin_period_overrides
+    ADD CONSTRAINT fin_period_overrides_closed_by_fkey FOREIGN KEY (closed_by) REFERENCES auth.users(id);
+
+
+--
+-- Name: fin_period_overrides fin_period_overrides_opened_by_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.fin_period_overrides
+    ADD CONSTRAINT fin_period_overrides_opened_by_fkey FOREIGN KEY (opened_by) REFERENCES auth.users(id);
+
+
+--
+-- Name: fornecedor_alerta fornecedor_alerta_aumento_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.fornecedor_alerta
+    ADD CONSTRAINT fornecedor_alerta_aumento_id_fkey FOREIGN KEY (aumento_id) REFERENCES public.fornecedor_aumento_anunciado(id) ON DELETE SET NULL;
+
+
+--
+-- Name: fornecedor_alerta fornecedor_alerta_campanha_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.fornecedor_alerta
+    ADD CONSTRAINT fornecedor_alerta_campanha_id_fkey FOREIGN KEY (campanha_id) REFERENCES public.promocao_campanha(id) ON DELETE SET NULL;
+
+
+--
+-- Name: fornecedor_aumento_item fornecedor_aumento_item_aumento_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.fornecedor_aumento_item
+    ADD CONSTRAINT fornecedor_aumento_item_aumento_id_fkey FOREIGN KEY (aumento_id) REFERENCES public.fornecedor_aumento_anunciado(id) ON DELETE CASCADE;
+
+
+--
+-- Name: fornecedor_email_polling_log fornecedor_email_polling_log_polling_config_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.fornecedor_email_polling_log
+    ADD CONSTRAINT fornecedor_email_polling_log_polling_config_id_fkey FOREIGN KEY (polling_config_id) REFERENCES public.fornecedor_email_polling(id) ON DELETE CASCADE;
+
+
+--
+-- Name: inventory_position inventory_position_product_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.inventory_position
+    ADD CONSTRAINT inventory_position_product_id_fkey FOREIGN KEY (product_id) REFERENCES public.omie_products(id);
+
+
+--
+-- Name: kb_chunks kb_chunks_document_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.kb_chunks
+    ADD CONSTRAINT kb_chunks_document_id_fkey FOREIGN KEY (document_id) REFERENCES public.kb_documents(id) ON DELETE CASCADE;
+
+
+--
+-- Name: kb_competitor_products kb_competitor_products_competitor_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.kb_competitor_products
+    ADD CONSTRAINT kb_competitor_products_competitor_id_fkey FOREIGN KEY (competitor_id) REFERENCES public.kb_competitors(id) ON DELETE CASCADE;
+
+
+--
+-- Name: kb_competitor_products kb_competitor_products_created_by_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.kb_competitor_products
+    ADD CONSTRAINT kb_competitor_products_created_by_fkey FOREIGN KEY (created_by) REFERENCES auth.users(id);
+
+
+--
+-- Name: kb_competitors kb_competitors_created_by_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.kb_competitors
+    ADD CONSTRAINT kb_competitors_created_by_fkey FOREIGN KEY (created_by) REFERENCES auth.users(id);
+
+
+--
+-- Name: kb_documents kb_documents_created_by_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.kb_documents
+    ADD CONSTRAINT kb_documents_created_by_fkey FOREIGN KEY (created_by) REFERENCES auth.users(id) ON DELETE CASCADE;
+
+
+--
+-- Name: kb_documents kb_documents_parent_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.kb_documents
+    ADD CONSTRAINT kb_documents_parent_id_fkey FOREIGN KEY (parent_id) REFERENCES public.kb_documents(id) ON DELETE SET NULL;
+
+
+--
+-- Name: kb_product_specs kb_product_specs_approved_by_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.kb_product_specs
+    ADD CONSTRAINT kb_product_specs_approved_by_fkey FOREIGN KEY (approved_by) REFERENCES auth.users(id);
+
+
+--
+-- Name: kb_product_specs kb_product_specs_document_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.kb_product_specs
+    ADD CONSTRAINT kb_product_specs_document_id_fkey FOREIGN KEY (document_id) REFERENCES public.kb_documents(id) ON DELETE SET NULL;
+
+
+--
+-- Name: kb_product_specs kb_product_specs_extracted_by_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.kb_product_specs
+    ADD CONSTRAINT kb_product_specs_extracted_by_fkey FOREIGN KEY (extracted_by) REFERENCES auth.users(id);
+
+
+--
+-- Name: loyalty_points loyalty_points_order_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.loyalty_points
+    ADD CONSTRAINT loyalty_points_order_id_fkey FOREIGN KEY (order_id) REFERENCES public.orders(id);
+
+
+--
+-- Name: nfe_lotes_escaneados nfe_lotes_escaneados_nfe_recebimento_item_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.nfe_lotes_escaneados
+    ADD CONSTRAINT nfe_lotes_escaneados_nfe_recebimento_item_id_fkey FOREIGN KEY (nfe_recebimento_item_id) REFERENCES public.nfe_recebimento_itens(id) ON DELETE CASCADE;
+
+
+--
+-- Name: nfe_recebimento_itens nfe_recebimento_itens_nfe_recebimento_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.nfe_recebimento_itens
+    ADD CONSTRAINT nfe_recebimento_itens_nfe_recebimento_id_fkey FOREIGN KEY (nfe_recebimento_id) REFERENCES public.nfe_recebimentos(id) ON DELETE CASCADE;
+
+
+--
+-- Name: nfe_recebimentos nfe_recebimentos_warehouse_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.nfe_recebimentos
+    ADD CONSTRAINT nfe_recebimentos_warehouse_id_fkey FOREIGN KEY (warehouse_id) REFERENCES public.warehouses(id);
+
+
+--
+-- Name: observacoes_excluidas observacoes_excluidas_evento_outlier_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.observacoes_excluidas
+    ADD CONSTRAINT observacoes_excluidas_evento_outlier_id_fkey FOREIGN KEY (evento_outlier_id) REFERENCES public.eventos_outlier(id);
+
+
+--
+-- Name: omie_vendedor_map omie_vendedor_map_user_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.omie_vendedor_map
+    ADD CONSTRAINT omie_vendedor_map_user_id_fkey FOREIGN KEY (user_id) REFERENCES auth.users(id) ON DELETE CASCADE;
+
+
+--
+-- Name: order_items order_items_product_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.order_items
+    ADD CONSTRAINT order_items_product_id_fkey FOREIGN KEY (product_id) REFERENCES public.omie_products(id);
+
+
+--
+-- Name: order_items order_items_sales_order_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.order_items
+    ADD CONSTRAINT order_items_sales_order_id_fkey FOREIGN KEY (sales_order_id) REFERENCES public.sales_orders(id) ON DELETE CASCADE;
+
+
+--
+-- Name: order_messages order_messages_order_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.order_messages
+    ADD CONSTRAINT order_messages_order_id_fkey FOREIGN KEY (order_id) REFERENCES public.orders(id);
+
+
+--
+-- Name: order_price_history order_price_history_user_tool_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.order_price_history
+    ADD CONSTRAINT order_price_history_user_tool_id_fkey FOREIGN KEY (user_tool_id) REFERENCES public.user_tools(id) ON DELETE CASCADE;
+
+
+--
+-- Name: order_reviews order_reviews_order_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.order_reviews
+    ADD CONSTRAINT order_reviews_order_id_fkey FOREIGN KEY (order_id) REFERENCES public.orders(id);
+
+
+--
+-- Name: pedido_compra_item pedido_compra_item_pedido_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.pedido_compra_item
+    ADD CONSTRAINT pedido_compra_item_pedido_id_fkey FOREIGN KEY (pedido_id) REFERENCES public.pedido_compra_sugerido(id) ON DELETE CASCADE;
+
+
+--
+-- Name: pedido_compra_item pedido_compra_item_promocao_item_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.pedido_compra_item
+    ADD CONSTRAINT pedido_compra_item_promocao_item_id_fkey FOREIGN KEY (promocao_item_id) REFERENCES public.promocao_item(id);
+
+
+--
+-- Name: pedido_compra_sugerido pedido_compra_sugerido_split_parent_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.pedido_compra_sugerido
+    ADD CONSTRAINT pedido_compra_sugerido_split_parent_id_fkey FOREIGN KEY (split_parent_id) REFERENCES public.pedido_compra_sugerido(id) ON DELETE SET NULL;
+
+
+--
+-- Name: pedidos_portal_tentativas pedidos_portal_tentativas_pedido_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.pedidos_portal_tentativas
+    ADD CONSTRAINT pedidos_portal_tentativas_pedido_id_fkey FOREIGN KEY (pedido_id) REFERENCES public.pedido_compra_sugerido(id) ON DELETE CASCADE;
+
+
+--
+-- Name: permission_overrides permission_overrides_granted_by_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.permission_overrides
+    ADD CONSTRAINT permission_overrides_granted_by_fkey FOREIGN KEY (granted_by) REFERENCES auth.users(id);
+
+
+--
+-- Name: permission_overrides permission_overrides_user_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.permission_overrides
+    ADD CONSTRAINT permission_overrides_user_id_fkey FOREIGN KEY (user_id) REFERENCES auth.users(id) ON DELETE CASCADE;
+
+
+--
+-- Name: picking_events picking_events_picking_task_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.picking_events
+    ADD CONSTRAINT picking_events_picking_task_id_fkey FOREIGN KEY (picking_task_id) REFERENCES public.picking_tasks(id) ON DELETE CASCADE;
+
+
+--
+-- Name: picking_events picking_events_picking_task_item_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.picking_events
+    ADD CONSTRAINT picking_events_picking_task_item_id_fkey FOREIGN KEY (picking_task_item_id) REFERENCES public.picking_task_items(id) ON DELETE CASCADE;
+
+
+--
+-- Name: picking_task_items picking_task_items_picking_task_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.picking_task_items
+    ADD CONSTRAINT picking_task_items_picking_task_id_fkey FOREIGN KEY (picking_task_id) REFERENCES public.picking_tasks(id) ON DELETE CASCADE;
+
+
+--
+-- Name: picking_tasks picking_tasks_sales_order_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.picking_tasks
+    ADD CONSTRAINT picking_tasks_sales_order_id_fkey FOREIGN KEY (sales_order_id) REFERENCES public.sales_orders(id);
+
+
+--
+-- Name: product_costs product_costs_product_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.product_costs
+    ADD CONSTRAINT product_costs_product_id_fkey FOREIGN KEY (product_id) REFERENCES public.omie_products(id) ON DELETE CASCADE;
+
+
+--
+-- Name: production_orders production_orders_product_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.production_orders
+    ADD CONSTRAINT production_orders_product_id_fkey FOREIGN KEY (product_id) REFERENCES public.omie_products(id);
+
+
+--
+-- Name: production_orders production_orders_sales_order_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.production_orders
+    ADD CONSTRAINT production_orders_sales_order_id_fkey FOREIGN KEY (sales_order_id) REFERENCES public.sales_orders(id) ON DELETE SET NULL;
+
+
+--
+-- Name: profiles profiles_prospect_origin_call_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.profiles
+    ADD CONSTRAINT profiles_prospect_origin_call_id_fkey FOREIGN KEY (prospect_origin_call_id) REFERENCES public.farmer_calls(id) ON DELETE SET NULL;
+
+
+--
+-- Name: promocao_item promocao_item_campanha_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.promocao_item
+    ADD CONSTRAINT promocao_item_campanha_id_fkey FOREIGN KEY (campanha_id) REFERENCES public.promocao_campanha(id) ON DELETE CASCADE;
+
+
+--
+-- Name: promocao_negociacao_evento promocao_negociacao_evento_campanha_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.promocao_negociacao_evento
+    ADD CONSTRAINT promocao_negociacao_evento_campanha_id_fkey FOREIGN KEY (campanha_id) REFERENCES public.promocao_campanha(id) ON DELETE CASCADE;
+
+
+--
+-- Name: promocao_negociacao_evento promocao_negociacao_evento_item_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.promocao_negociacao_evento
+    ADD CONSTRAINT promocao_negociacao_evento_item_id_fkey FOREIGN KEY (item_id) REFERENCES public.promocao_item(id) ON DELETE CASCADE;
+
+
+--
+-- Name: recommendation_log recommendation_log_product_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.recommendation_log
+    ADD CONSTRAINT recommendation_log_product_id_fkey FOREIGN KEY (product_id) REFERENCES public.omie_products(id);
+
+
+--
+-- Name: recommendation_log recommendation_log_sales_order_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.recommendation_log
+    ADD CONSTRAINT recommendation_log_sales_order_id_fkey FOREIGN KEY (sales_order_id) REFERENCES public.sales_orders(id);
+
+
+--
+-- Name: recurring_schedules recurring_schedules_address_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.recurring_schedules
+    ADD CONSTRAINT recurring_schedules_address_id_fkey FOREIGN KEY (address_id) REFERENCES public.addresses(id);
+
+
+--
+-- Name: sales_price_history sales_price_history_product_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.sales_price_history
+    ADD CONSTRAINT sales_price_history_product_id_fkey FOREIGN KEY (product_id) REFERENCES public.omie_products(id) ON DELETE CASCADE;
+
+
+--
+-- Name: sales_price_history sales_price_history_sales_order_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.sales_price_history
+    ADD CONSTRAINT sales_price_history_sales_order_id_fkey FOREIGN KEY (sales_order_id) REFERENCES public.sales_orders(id) ON DELETE SET NULL;
+
+
+--
+-- Name: score_recalc_queue score_recalc_queue_source_call_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.score_recalc_queue
+    ADD CONSTRAINT score_recalc_queue_source_call_id_fkey FOREIGN KEY (source_call_id) REFERENCES public.farmer_calls(id) ON DELETE SET NULL;
+
+
+--
+-- Name: sending_quality_logs sending_quality_logs_order_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.sending_quality_logs
+    ADD CONSTRAINT sending_quality_logs_order_id_fkey FOREIGN KEY (order_id) REFERENCES public.orders(id) ON DELETE CASCADE;
+
+
+--
+-- Name: sku_leadtime_history sku_leadtime_history_tracking_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.sku_leadtime_history
+    ADD CONSTRAINT sku_leadtime_history_tracking_id_fkey FOREIGN KEY (tracking_id) REFERENCES public.purchase_orders_tracking(id) ON DELETE CASCADE;
+
+
+--
+-- Name: sku_parametros_historico sku_parametros_historico_sku_parametro_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.sku_parametros_historico
+    ADD CONSTRAINT sku_parametros_historico_sku_parametro_id_fkey FOREIGN KEY (sku_parametro_id) REFERENCES public.sku_parametros(id);
+
+
+--
+-- Name: standard_processes standard_processes_created_by_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.standard_processes
+    ADD CONSTRAINT standard_processes_created_by_fkey FOREIGN KEY (created_by) REFERENCES auth.users(id) ON DELETE CASCADE;
+
+
+--
+-- Name: standard_processes standard_processes_parent_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.standard_processes
+    ADD CONSTRAINT standard_processes_parent_id_fkey FOREIGN KEY (parent_id) REFERENCES public.standard_processes(id) ON DELETE SET NULL;
+
+
+--
+-- Name: standard_processes standard_processes_reviewed_by_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.standard_processes
+    ADD CONSTRAINT standard_processes_reviewed_by_fkey FOREIGN KEY (reviewed_by) REFERENCES auth.users(id) ON DELETE SET NULL;
+
+
+--
+-- Name: sugestao_negociacao_paralela sugestao_negociacao_paralela_campanha_id_gerada_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.sugestao_negociacao_paralela
+    ADD CONSTRAINT sugestao_negociacao_paralela_campanha_id_gerada_fkey FOREIGN KEY (campanha_id_gerada) REFERENCES public.promocao_campanha(id);
+
+
+--
+-- Name: tint_corantes tint_corantes_omie_product_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.tint_corantes
+    ADD CONSTRAINT tint_corantes_omie_product_id_fkey FOREIGN KEY (omie_product_id) REFERENCES public.omie_products(id);
+
+
+--
+-- Name: tint_formula_itens tint_formula_itens_corante_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.tint_formula_itens
+    ADD CONSTRAINT tint_formula_itens_corante_id_fkey FOREIGN KEY (corante_id) REFERENCES public.tint_corantes(id);
+
+
+--
+-- Name: tint_formula_itens tint_formula_itens_formula_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.tint_formula_itens
+    ADD CONSTRAINT tint_formula_itens_formula_id_fkey FOREIGN KEY (formula_id) REFERENCES public.tint_formulas(id) ON DELETE CASCADE;
+
+
+--
+-- Name: tint_formulas tint_formulas_base_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.tint_formulas
+    ADD CONSTRAINT tint_formulas_base_id_fkey FOREIGN KEY (base_id) REFERENCES public.tint_bases(id);
+
+
+--
+-- Name: tint_formulas tint_formulas_embalagem_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.tint_formulas
+    ADD CONSTRAINT tint_formulas_embalagem_id_fkey FOREIGN KEY (embalagem_id) REFERENCES public.tint_embalagens(id);
+
+
+--
+-- Name: tint_formulas tint_formulas_importacao_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.tint_formulas
+    ADD CONSTRAINT tint_formulas_importacao_id_fkey FOREIGN KEY (importacao_id) REFERENCES public.tint_importacoes(id);
+
+
+--
+-- Name: tint_formulas tint_formulas_produto_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.tint_formulas
+    ADD CONSTRAINT tint_formulas_produto_id_fkey FOREIGN KEY (produto_id) REFERENCES public.tint_produtos(id);
+
+
+--
+-- Name: tint_formulas tint_formulas_sku_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.tint_formulas
+    ADD CONSTRAINT tint_formulas_sku_id_fkey FOREIGN KEY (sku_id) REFERENCES public.tint_skus(id);
+
+
+--
+-- Name: tint_formulas tint_formulas_subcolecao_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.tint_formulas
+    ADD CONSTRAINT tint_formulas_subcolecao_id_fkey FOREIGN KEY (subcolecao_id) REFERENCES public.tint_subcolecoes(id);
+
+
+--
+-- Name: tint_reconciliation_items tint_reconciliation_items_reconciliation_run_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.tint_reconciliation_items
+    ADD CONSTRAINT tint_reconciliation_items_reconciliation_run_id_fkey FOREIGN KEY (reconciliation_run_id) REFERENCES public.tint_reconciliation_runs(id) ON DELETE CASCADE;
+
+
+--
+-- Name: tint_reconciliation_runs tint_reconciliation_runs_sync_run_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.tint_reconciliation_runs
+    ADD CONSTRAINT tint_reconciliation_runs_sync_run_id_fkey FOREIGN KEY (sync_run_id) REFERENCES public.tint_sync_runs(id);
+
+
+--
+-- Name: tint_skus tint_skus_base_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.tint_skus
+    ADD CONSTRAINT tint_skus_base_id_fkey FOREIGN KEY (base_id) REFERENCES public.tint_bases(id);
+
+
+--
+-- Name: tint_skus tint_skus_embalagem_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.tint_skus
+    ADD CONSTRAINT tint_skus_embalagem_id_fkey FOREIGN KEY (embalagem_id) REFERENCES public.tint_embalagens(id);
+
+
+--
+-- Name: tint_skus tint_skus_omie_product_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.tint_skus
+    ADD CONSTRAINT tint_skus_omie_product_id_fkey FOREIGN KEY (omie_product_id) REFERENCES public.omie_products(id);
+
+
+--
+-- Name: tint_skus tint_skus_produto_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.tint_skus
+    ADD CONSTRAINT tint_skus_produto_id_fkey FOREIGN KEY (produto_id) REFERENCES public.tint_produtos(id);
+
+
+--
+-- Name: tint_staging_bases tint_staging_bases_sync_run_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.tint_staging_bases
+    ADD CONSTRAINT tint_staging_bases_sync_run_id_fkey FOREIGN KEY (sync_run_id) REFERENCES public.tint_sync_runs(id) ON DELETE CASCADE;
+
+
+--
+-- Name: tint_staging_corantes tint_staging_corantes_sync_run_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.tint_staging_corantes
+    ADD CONSTRAINT tint_staging_corantes_sync_run_id_fkey FOREIGN KEY (sync_run_id) REFERENCES public.tint_sync_runs(id) ON DELETE CASCADE;
+
+
+--
+-- Name: tint_staging_cores_catalogo tint_staging_cores_catalogo_sync_run_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.tint_staging_cores_catalogo
+    ADD CONSTRAINT tint_staging_cores_catalogo_sync_run_id_fkey FOREIGN KEY (sync_run_id) REFERENCES public.tint_sync_runs(id) ON DELETE CASCADE;
+
+
+--
+-- Name: tint_staging_cores_personalizadas tint_staging_cores_personalizadas_sync_run_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.tint_staging_cores_personalizadas
+    ADD CONSTRAINT tint_staging_cores_personalizadas_sync_run_id_fkey FOREIGN KEY (sync_run_id) REFERENCES public.tint_sync_runs(id) ON DELETE CASCADE;
+
+
+--
+-- Name: tint_staging_embalagens tint_staging_embalagens_sync_run_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.tint_staging_embalagens
+    ADD CONSTRAINT tint_staging_embalagens_sync_run_id_fkey FOREIGN KEY (sync_run_id) REFERENCES public.tint_sync_runs(id) ON DELETE CASCADE;
+
+
+--
+-- Name: tint_staging_formula_itens tint_staging_formula_itens_staging_formula_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.tint_staging_formula_itens
+    ADD CONSTRAINT tint_staging_formula_itens_staging_formula_id_fkey FOREIGN KEY (staging_formula_id) REFERENCES public.tint_staging_formulas(id) ON DELETE CASCADE;
+
+
+--
+-- Name: tint_staging_formula_itens tint_staging_formula_itens_sync_run_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.tint_staging_formula_itens
+    ADD CONSTRAINT tint_staging_formula_itens_sync_run_id_fkey FOREIGN KEY (sync_run_id) REFERENCES public.tint_sync_runs(id) ON DELETE CASCADE;
+
+
+--
+-- Name: tint_staging_formulas tint_staging_formulas_sync_run_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.tint_staging_formulas
+    ADD CONSTRAINT tint_staging_formulas_sync_run_id_fkey FOREIGN KEY (sync_run_id) REFERENCES public.tint_sync_runs(id) ON DELETE CASCADE;
+
+
+--
+-- Name: tint_staging_preparacao_itens tint_staging_preparacao_itens_staging_preparacao_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.tint_staging_preparacao_itens
+    ADD CONSTRAINT tint_staging_preparacao_itens_staging_preparacao_id_fkey FOREIGN KEY (staging_preparacao_id) REFERENCES public.tint_staging_preparacoes(id) ON DELETE CASCADE;
+
+
+--
+-- Name: tint_staging_preparacao_itens tint_staging_preparacao_itens_sync_run_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.tint_staging_preparacao_itens
+    ADD CONSTRAINT tint_staging_preparacao_itens_sync_run_id_fkey FOREIGN KEY (sync_run_id) REFERENCES public.tint_sync_runs(id) ON DELETE CASCADE;
+
+
+--
+-- Name: tint_staging_preparacoes tint_staging_preparacoes_sync_run_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.tint_staging_preparacoes
+    ADD CONSTRAINT tint_staging_preparacoes_sync_run_id_fkey FOREIGN KEY (sync_run_id) REFERENCES public.tint_sync_runs(id) ON DELETE CASCADE;
+
+
+--
+-- Name: tint_staging_produtos tint_staging_produtos_sync_run_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.tint_staging_produtos
+    ADD CONSTRAINT tint_staging_produtos_sync_run_id_fkey FOREIGN KEY (sync_run_id) REFERENCES public.tint_sync_runs(id) ON DELETE CASCADE;
+
+
+--
+-- Name: tint_staging_skus tint_staging_skus_sync_run_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.tint_staging_skus
+    ADD CONSTRAINT tint_staging_skus_sync_run_id_fkey FOREIGN KEY (sync_run_id) REFERENCES public.tint_sync_runs(id) ON DELETE CASCADE;
+
+
+--
+-- Name: tint_subcolecoes tint_subcolecoes_colecao_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.tint_subcolecoes
+    ADD CONSTRAINT tint_subcolecoes_colecao_id_fkey FOREIGN KEY (colecao_id) REFERENCES public.tint_colecoes(id);
+
+
+--
+-- Name: tint_sync_errors tint_sync_errors_sync_run_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.tint_sync_errors
+    ADD CONSTRAINT tint_sync_errors_sync_run_id_fkey FOREIGN KEY (sync_run_id) REFERENCES public.tint_sync_runs(id) ON DELETE CASCADE;
+
+
+--
+-- Name: tint_sync_runs tint_sync_runs_setting_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.tint_sync_runs
+    ADD CONSTRAINT tint_sync_runs_setting_id_fkey FOREIGN KEY (setting_id) REFERENCES public.tint_integration_settings(id) ON DELETE CASCADE;
+
+
+--
+-- Name: tint_vendas_itens tint_vendas_itens_formula_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.tint_vendas_itens
+    ADD CONSTRAINT tint_vendas_itens_formula_id_fkey FOREIGN KEY (formula_id) REFERENCES public.tint_formulas(id);
+
+
+--
+-- Name: tint_vendas_itens tint_vendas_itens_sku_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.tint_vendas_itens
+    ADD CONSTRAINT tint_vendas_itens_sku_id_fkey FOREIGN KEY (sku_id) REFERENCES public.tint_skus(id);
+
+
+--
+-- Name: tint_vendas_itens tint_vendas_itens_venda_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.tint_vendas_itens
+    ADD CONSTRAINT tint_vendas_itens_venda_id_fkey FOREIGN KEY (venda_id) REFERENCES public.tint_vendas(id) ON DELETE CASCADE;
+
+
+--
+-- Name: tool_events tool_events_order_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.tool_events
+    ADD CONSTRAINT tool_events_order_id_fkey FOREIGN KEY (order_id) REFERENCES public.orders(id) ON DELETE SET NULL;
+
+
+--
+-- Name: tool_events tool_events_user_tool_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.tool_events
+    ADD CONSTRAINT tool_events_user_tool_id_fkey FOREIGN KEY (user_tool_id) REFERENCES public.user_tools(id) ON DELETE CASCADE;
+
+
+--
+-- Name: tool_specifications tool_specifications_tool_category_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.tool_specifications
+    ADD CONSTRAINT tool_specifications_tool_category_id_fkey FOREIGN KEY (tool_category_id) REFERENCES public.tool_categories(id) ON DELETE CASCADE;
+
+
+--
+-- Name: training_completions training_completions_module_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.training_completions
+    ADD CONSTRAINT training_completions_module_id_fkey FOREIGN KEY (module_id) REFERENCES public.training_modules(id) ON DELETE CASCADE;
+
+
+--
+-- Name: user_departments user_departments_created_by_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.user_departments
+    ADD CONSTRAINT user_departments_created_by_fkey FOREIGN KEY (created_by) REFERENCES auth.users(id);
+
+
+--
+-- Name: user_departments user_departments_user_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.user_departments
+    ADD CONSTRAINT user_departments_user_id_fkey FOREIGN KEY (user_id) REFERENCES auth.users(id) ON DELETE CASCADE;
+
+
+--
+-- Name: user_roles user_roles_user_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.user_roles
+    ADD CONSTRAINT user_roles_user_id_fkey FOREIGN KEY (user_id) REFERENCES auth.users(id) ON DELETE CASCADE;
+
+
+--
+-- Name: user_tools user_tools_tool_category_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.user_tools
+    ADD CONSTRAINT user_tools_tool_category_id_fkey FOREIGN KEY (tool_category_id) REFERENCES public.tool_categories(id);
+
+
+--
+-- Name: vendor_sip_credentials vendor_sip_credentials_user_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.vendor_sip_credentials
+    ADD CONSTRAINT vendor_sip_credentials_user_id_fkey FOREIGN KEY (user_id) REFERENCES auth.users(id) ON DELETE CASCADE;
+
+
+--
+-- Name: fornecedor_cadeia_logistica_historico Admin pode inserir historico cadeia; Type: POLICY; Schema: public; Owner: -
+--
+
+CREATE POLICY "Admin pode inserir historico cadeia" ON public.fornecedor_cadeia_logistica_historico FOR INSERT TO authenticated WITH CHECK ((public.has_role(auth.uid(), 'master'::public.app_role) OR public.has_role(auth.uid(), 'master'::public.app_role)));
+
+
+--
+-- Name: categoria_aumento_familia_mapeamento Admin/manager editam categoria_aumento_familia_mapeamento; Type: POLICY; Schema: public; Owner: -
+--
+
+CREATE POLICY "Admin/manager editam categoria_aumento_familia_mapeamento" ON public.categoria_aumento_familia_mapeamento TO authenticated USING ((public.has_role(auth.uid(), 'master'::public.app_role) OR public.has_role(auth.uid(), 'master'::public.app_role) OR public.has_role(auth.uid(), 'master'::public.app_role))) WITH CHECK ((public.has_role(auth.uid(), 'master'::public.app_role) OR public.has_role(auth.uid(), 'master'::public.app_role) OR public.has_role(auth.uid(), 'master'::public.app_role)));
+
+
+--
+-- Name: fornecedor_alerta Admin/manager editam fornecedor_alerta; Type: POLICY; Schema: public; Owner: -
+--
+
+CREATE POLICY "Admin/manager editam fornecedor_alerta" ON public.fornecedor_alerta TO authenticated USING ((public.has_role(auth.uid(), 'master'::public.app_role) OR public.has_role(auth.uid(), 'master'::public.app_role) OR public.has_role(auth.uid(), 'master'::public.app_role))) WITH CHECK ((public.has_role(auth.uid(), 'master'::public.app_role) OR public.has_role(auth.uid(), 'master'::public.app_role) OR public.has_role(auth.uid(), 'master'::public.app_role)));
+
+
+--
+-- Name: fornecedor_aumento_anunciado Admin/manager editam fornecedor_aumento_anunciado; Type: POLICY; Schema: public; Owner: -
+--
+
+CREATE POLICY "Admin/manager editam fornecedor_aumento_anunciado" ON public.fornecedor_aumento_anunciado TO authenticated USING ((public.has_role(auth.uid(), 'master'::public.app_role) OR public.has_role(auth.uid(), 'master'::public.app_role) OR public.has_role(auth.uid(), 'master'::public.app_role))) WITH CHECK ((public.has_role(auth.uid(), 'master'::public.app_role) OR public.has_role(auth.uid(), 'master'::public.app_role) OR public.has_role(auth.uid(), 'master'::public.app_role)));
+
+
+--
+-- Name: fornecedor_aumento_item Admin/manager editam fornecedor_aumento_item; Type: POLICY; Schema: public; Owner: -
+--
+
+CREATE POLICY "Admin/manager editam fornecedor_aumento_item" ON public.fornecedor_aumento_item TO authenticated USING ((public.has_role(auth.uid(), 'master'::public.app_role) OR public.has_role(auth.uid(), 'master'::public.app_role) OR public.has_role(auth.uid(), 'master'::public.app_role))) WITH CHECK ((public.has_role(auth.uid(), 'master'::public.app_role) OR public.has_role(auth.uid(), 'master'::public.app_role) OR public.has_role(auth.uid(), 'master'::public.app_role)));
+
+
+--
+-- Name: fornecedor_email_polling Admin/manager editam fornecedor_email_polling; Type: POLICY; Schema: public; Owner: -
+--
+
+CREATE POLICY "Admin/manager editam fornecedor_email_polling" ON public.fornecedor_email_polling TO authenticated USING ((public.has_role(auth.uid(), 'master'::public.app_role) OR public.has_role(auth.uid(), 'master'::public.app_role) OR public.has_role(auth.uid(), 'master'::public.app_role))) WITH CHECK ((public.has_role(auth.uid(), 'master'::public.app_role) OR public.has_role(auth.uid(), 'master'::public.app_role) OR public.has_role(auth.uid(), 'master'::public.app_role)));
+
+
+--
+-- Name: fornecedor_email_polling_log Admin/manager editam fornecedor_email_polling_log; Type: POLICY; Schema: public; Owner: -
+--
+
+CREATE POLICY "Admin/manager editam fornecedor_email_polling_log" ON public.fornecedor_email_polling_log TO authenticated USING ((public.has_role(auth.uid(), 'master'::public.app_role) OR public.has_role(auth.uid(), 'master'::public.app_role) OR public.has_role(auth.uid(), 'master'::public.app_role))) WITH CHECK ((public.has_role(auth.uid(), 'master'::public.app_role) OR public.has_role(auth.uid(), 'master'::public.app_role) OR public.has_role(auth.uid(), 'master'::public.app_role)));
+
+
+--
+-- Name: gmail_webhook_log Admin/manager editam gmail_webhook_log; Type: POLICY; Schema: public; Owner: -
+--
+
+CREATE POLICY "Admin/manager editam gmail_webhook_log" ON public.gmail_webhook_log TO authenticated USING ((public.has_role(auth.uid(), 'master'::public.app_role) OR public.has_role(auth.uid(), 'master'::public.app_role) OR public.has_role(auth.uid(), 'master'::public.app_role))) WITH CHECK ((public.has_role(auth.uid(), 'master'::public.app_role) OR public.has_role(auth.uid(), 'master'::public.app_role) OR public.has_role(auth.uid(), 'master'::public.app_role)));
+
+
+--
+-- Name: promocao_negociacao_evento Admin/manager editam negociacao; Type: POLICY; Schema: public; Owner: -
+--
+
+CREATE POLICY "Admin/manager editam negociacao" ON public.promocao_negociacao_evento TO authenticated USING ((public.has_role(auth.uid(), 'master'::public.app_role) OR public.has_role(auth.uid(), 'master'::public.app_role))) WITH CHECK ((public.has_role(auth.uid(), 'master'::public.app_role) OR public.has_role(auth.uid(), 'master'::public.app_role)));
+
+
+--
+-- Name: promocao_campanha Admin/manager/master editam campanhas; Type: POLICY; Schema: public; Owner: -
+--
+
+CREATE POLICY "Admin/manager/master editam campanhas" ON public.promocao_campanha USING ((public.has_role(auth.uid(), 'master'::public.app_role) OR public.has_role(auth.uid(), 'master'::public.app_role) OR public.has_role(auth.uid(), 'master'::public.app_role))) WITH CHECK ((public.has_role(auth.uid(), 'master'::public.app_role) OR public.has_role(auth.uid(), 'master'::public.app_role) OR public.has_role(auth.uid(), 'master'::public.app_role)));
+
+
+--
+-- Name: promocao_item Admin/manager/master editam itens; Type: POLICY; Schema: public; Owner: -
+--
+
+CREATE POLICY "Admin/manager/master editam itens" ON public.promocao_item USING ((public.has_role(auth.uid(), 'master'::public.app_role) OR public.has_role(auth.uid(), 'master'::public.app_role) OR public.has_role(auth.uid(), 'master'::public.app_role))) WITH CHECK ((public.has_role(auth.uid(), 'master'::public.app_role) OR public.has_role(auth.uid(), 'master'::public.app_role) OR public.has_role(auth.uid(), 'master'::public.app_role)));
+
+
+--
+-- Name: des_checkin_qualitativo Admin/master editam des_checkin_qualitativo; Type: POLICY; Schema: public; Owner: -
+--
+
+CREATE POLICY "Admin/master editam des_checkin_qualitativo" ON public.des_checkin_qualitativo TO authenticated USING ((public.has_role(auth.uid(), 'master'::public.app_role) OR public.has_role(auth.uid(), 'master'::public.app_role))) WITH CHECK ((public.has_role(auth.uid(), 'master'::public.app_role) OR public.has_role(auth.uid(), 'master'::public.app_role)));
+
+
+--
+-- Name: des_checkin_qualitativo_resposta Admin/master editam des_checkin_qualitativo_resposta; Type: POLICY; Schema: public; Owner: -
+--
+
+CREATE POLICY "Admin/master editam des_checkin_qualitativo_resposta" ON public.des_checkin_qualitativo_resposta TO authenticated USING ((public.has_role(auth.uid(), 'master'::public.app_role) OR public.has_role(auth.uid(), 'master'::public.app_role))) WITH CHECK ((public.has_role(auth.uid(), 'master'::public.app_role) OR public.has_role(auth.uid(), 'master'::public.app_role)));
+
+
+--
+-- Name: des_contrato_versao Admin/master editam des_contrato_versao; Type: POLICY; Schema: public; Owner: -
+--
+
+CREATE POLICY "Admin/master editam des_contrato_versao" ON public.des_contrato_versao TO authenticated USING ((public.has_role(auth.uid(), 'master'::public.app_role) OR public.has_role(auth.uid(), 'master'::public.app_role))) WITH CHECK ((public.has_role(auth.uid(), 'master'::public.app_role) OR public.has_role(auth.uid(), 'master'::public.app_role)));
+
+
+--
+-- Name: des_criterio_percentual Admin/master editam des_criterio_percentual; Type: POLICY; Schema: public; Owner: -
+--
+
+CREATE POLICY "Admin/master editam des_criterio_percentual" ON public.des_criterio_percentual TO authenticated USING ((public.has_role(auth.uid(), 'master'::public.app_role) OR public.has_role(auth.uid(), 'master'::public.app_role))) WITH CHECK ((public.has_role(auth.uid(), 'master'::public.app_role) OR public.has_role(auth.uid(), 'master'::public.app_role)));
+
+
+--
+-- Name: des_criterio_qualitativo Admin/master editam des_criterio_qualitativo; Type: POLICY; Schema: public; Owner: -
+--
+
+CREATE POLICY "Admin/master editam des_criterio_qualitativo" ON public.des_criterio_qualitativo TO authenticated USING ((public.has_role(auth.uid(), 'master'::public.app_role) OR public.has_role(auth.uid(), 'master'::public.app_role))) WITH CHECK ((public.has_role(auth.uid(), 'master'::public.app_role) OR public.has_role(auth.uid(), 'master'::public.app_role)));
+
+
+--
+-- Name: des_faixa_quantitativa Admin/master editam des_faixa_quantitativa; Type: POLICY; Schema: public; Owner: -
+--
+
+CREATE POLICY "Admin/master editam des_faixa_quantitativa" ON public.des_faixa_quantitativa TO authenticated USING ((public.has_role(auth.uid(), 'master'::public.app_role) OR public.has_role(auth.uid(), 'master'::public.app_role))) WITH CHECK ((public.has_role(auth.uid(), 'master'::public.app_role) OR public.has_role(auth.uid(), 'master'::public.app_role)));
+
+
+--
+-- Name: des_meta_empresa Admin/master editam des_meta_empresa; Type: POLICY; Schema: public; Owner: -
+--
+
+CREATE POLICY "Admin/master editam des_meta_empresa" ON public.des_meta_empresa TO authenticated USING ((public.has_role(auth.uid(), 'master'::public.app_role) OR public.has_role(auth.uid(), 'master'::public.app_role))) WITH CHECK ((public.has_role(auth.uid(), 'master'::public.app_role) OR public.has_role(auth.uid(), 'master'::public.app_role)));
+
+
+--
+-- Name: des_trimestre_snapshot Admin/master editam des_trimestre_snapshot; Type: POLICY; Schema: public; Owner: -
+--
+
+CREATE POLICY "Admin/master editam des_trimestre_snapshot" ON public.des_trimestre_snapshot TO authenticated USING ((public.has_role(auth.uid(), 'master'::public.app_role) OR public.has_role(auth.uid(), 'master'::public.app_role))) WITH CHECK ((public.has_role(auth.uid(), 'master'::public.app_role) OR public.has_role(auth.uid(), 'master'::public.app_role)));
+
+
+--
+-- Name: fornecedor_custo_adicional_config Admin/master editam fornecedor_custo_adicional_config; Type: POLICY; Schema: public; Owner: -
+--
+
+CREATE POLICY "Admin/master editam fornecedor_custo_adicional_config" ON public.fornecedor_custo_adicional_config TO authenticated USING ((public.has_role(auth.uid(), 'master'::public.app_role) OR public.has_role(auth.uid(), 'master'::public.app_role))) WITH CHECK ((public.has_role(auth.uid(), 'master'::public.app_role) OR public.has_role(auth.uid(), 'master'::public.app_role)));
+
+
+--
+-- Name: fornecedor_prazo_pagamento_config Admin/master editam fornecedor_prazo_pagamento_config; Type: POLICY; Schema: public; Owner: -
+--
+
+CREATE POLICY "Admin/master editam fornecedor_prazo_pagamento_config" ON public.fornecedor_prazo_pagamento_config TO authenticated USING ((public.has_role(auth.uid(), 'master'::public.app_role) OR public.has_role(auth.uid(), 'master'::public.app_role))) WITH CHECK ((public.has_role(auth.uid(), 'master'::public.app_role) OR public.has_role(auth.uid(), 'master'::public.app_role)));
+
+
+--
+-- Name: sugestao_negociacao_paralela Admin/master editam sugestões; Type: POLICY; Schema: public; Owner: -
+--
+
+CREATE POLICY "Admin/master editam sugestões" ON public.sugestao_negociacao_paralela TO authenticated USING ((public.has_role(auth.uid(), 'master'::public.app_role) OR public.has_role(auth.uid(), 'master'::public.app_role))) WITH CHECK ((public.has_role(auth.uid(), 'master'::public.app_role) OR public.has_role(auth.uid(), 'master'::public.app_role)));
+
+
+--
+-- Name: user_roles Admins and employees can view all roles; Type: POLICY; Schema: public; Owner: -
+--
+
+CREATE POLICY "Admins and employees can view all roles" ON public.user_roles FOR SELECT USING ((public.has_role(auth.uid(), 'master'::public.app_role) OR public.has_role(auth.uid(), 'employee'::public.app_role)));
+
+
+--
+-- Name: company_profiles Admins can delete company profiles; Type: POLICY; Schema: public; Owner: -
+--
+
+CREATE POLICY "Admins can delete company profiles" ON public.company_profiles FOR DELETE TO authenticated USING ((public.has_role(auth.uid(), 'master'::public.app_role) OR public.has_role(auth.uid(), 'master'::public.app_role)));
+
+
+--
+-- Name: profiles Admins can delete profiles; Type: POLICY; Schema: public; Owner: -
+--
+
+CREATE POLICY "Admins can delete profiles" ON public.profiles FOR DELETE USING (public.has_role(auth.uid(), 'master'::public.app_role));
+
+
+--
+-- Name: company_profiles Admins can insert company profiles; Type: POLICY; Schema: public; Owner: -
+--
+
+CREATE POLICY "Admins can insert company profiles" ON public.company_profiles FOR INSERT TO authenticated WITH CHECK ((public.has_role(auth.uid(), 'master'::public.app_role) OR public.has_role(auth.uid(), 'master'::public.app_role)));
+
+
+--
+-- Name: farmer_performance_scores Admins can manage all performance scores; Type: POLICY; Schema: public; Owner: -
+--
+
+CREATE POLICY "Admins can manage all performance scores" ON public.farmer_performance_scores USING (public.has_role(auth.uid(), 'master'::public.app_role)) WITH CHECK (public.has_role(auth.uid(), 'master'::public.app_role));
+
+
+--
+-- Name: commercial_roles Admins can manage commercial roles; Type: POLICY; Schema: public; Owner: -
+--
+
+CREATE POLICY "Admins can manage commercial roles" ON public.commercial_roles TO authenticated USING (public.has_role(auth.uid(), 'master'::public.app_role)) WITH CHECK (public.has_role(auth.uid(), 'master'::public.app_role));
+
+
+--
+-- Name: permission_change_log Admins can manage permission log; Type: POLICY; Schema: public; Owner: -
+--
+
+CREATE POLICY "Admins can manage permission log" ON public.permission_change_log TO authenticated USING (public.has_role(auth.uid(), 'master'::public.app_role)) WITH CHECK (public.has_role(auth.uid(), 'master'::public.app_role));
+
+
+--
+-- Name: permission_overrides Admins can manage permission overrides; Type: POLICY; Schema: public; Owner: -
+--
+
+CREATE POLICY "Admins can manage permission overrides" ON public.permission_overrides TO authenticated USING (public.has_role(auth.uid(), 'master'::public.app_role)) WITH CHECK (public.has_role(auth.uid(), 'master'::public.app_role));
+
+
+--
+-- Name: profiles Admins can update any profile; Type: POLICY; Schema: public; Owner: -
+--
+
+CREATE POLICY "Admins can update any profile" ON public.profiles FOR UPDATE USING (public.has_role(auth.uid(), 'master'::public.app_role)) WITH CHECK (public.has_role(auth.uid(), 'master'::public.app_role));
+
+
+--
+-- Name: company_profiles Admins can update company profiles; Type: POLICY; Schema: public; Owner: -
+--
+
+CREATE POLICY "Admins can update company profiles" ON public.company_profiles FOR UPDATE TO authenticated USING ((public.has_role(auth.uid(), 'master'::public.app_role) OR public.has_role(auth.uid(), 'master'::public.app_role))) WITH CHECK ((public.has_role(auth.uid(), 'master'::public.app_role) OR public.has_role(auth.uid(), 'master'::public.app_role)));
+
+
+--
+-- Name: fornecedor_mapeamento_extracao Admins gerenciam mapeamento fornecedor; Type: POLICY; Schema: public; Owner: -
+--
+
+CREATE POLICY "Admins gerenciam mapeamento fornecedor" ON public.fornecedor_mapeamento_extracao USING ((public.has_role(auth.uid(), 'master'::public.app_role) OR public.has_role(auth.uid(), 'master'::public.app_role))) WITH CHECK ((public.has_role(auth.uid(), 'master'::public.app_role) OR public.has_role(auth.uid(), 'master'::public.app_role)));
+
+
+--
+-- Name: tool_specifications Anyone can read tool specifications; Type: POLICY; Schema: public; Owner: -
+--
+
+CREATE POLICY "Anyone can read tool specifications" ON public.tool_specifications FOR SELECT USING (true);
+
+
+--
+-- Name: training_modules Anyone can view active training modules; Type: POLICY; Schema: public; Owner: -
+--
+
+CREATE POLICY "Anyone can view active training modules" ON public.training_modules FOR SELECT USING (true);
+
+
+--
+-- Name: category_mappings Anyone can view category mappings; Type: POLICY; Schema: public; Owner: -
+--
+
+CREATE POLICY "Anyone can view category mappings" ON public.category_mappings FOR SELECT USING (true);
+
+
+--
+-- Name: default_prices Anyone can view default prices; Type: POLICY; Schema: public; Owner: -
+--
+
+CREATE POLICY "Anyone can view default prices" ON public.default_prices FOR SELECT USING (true);
+
+
+--
+-- Name: omie_servicos Anyone can view omie services mapping; Type: POLICY; Schema: public; Owner: -
+--
+
+CREATE POLICY "Anyone can view omie services mapping" ON public.omie_servicos FOR SELECT USING (true);
+
+
+--
+-- Name: tool_categories Anyone can view tool categories; Type: POLICY; Schema: public; Owner: -
+--
+
+CREATE POLICY "Anyone can view tool categories" ON public.tool_categories FOR SELECT USING (true);
+
+
+--
+-- Name: tint_bases Authenticated can view tint_bases; Type: POLICY; Schema: public; Owner: -
+--
+
+CREATE POLICY "Authenticated can view tint_bases" ON public.tint_bases FOR SELECT TO authenticated USING (true);
+
+
+--
+-- Name: tint_colecoes Authenticated can view tint_colecoes; Type: POLICY; Schema: public; Owner: -
+--
+
+CREATE POLICY "Authenticated can view tint_colecoes" ON public.tint_colecoes FOR SELECT TO authenticated USING (true);
+
+
+--
+-- Name: tint_corantes Authenticated can view tint_corantes; Type: POLICY; Schema: public; Owner: -
+--
+
+CREATE POLICY "Authenticated can view tint_corantes" ON public.tint_corantes FOR SELECT TO authenticated USING (true);
+
+
+--
+-- Name: tint_embalagens Authenticated can view tint_embalagens; Type: POLICY; Schema: public; Owner: -
+--
+
+CREATE POLICY "Authenticated can view tint_embalagens" ON public.tint_embalagens FOR SELECT TO authenticated USING (true);
+
+
+--
+-- Name: tint_formula_itens Authenticated can view tint_formula_itens; Type: POLICY; Schema: public; Owner: -
+--
+
+CREATE POLICY "Authenticated can view tint_formula_itens" ON public.tint_formula_itens FOR SELECT TO authenticated USING (true);
+
+
+--
+-- Name: tint_formulas Authenticated can view tint_formulas; Type: POLICY; Schema: public; Owner: -
+--
+
+CREATE POLICY "Authenticated can view tint_formulas" ON public.tint_formulas FOR SELECT TO authenticated USING (true);
+
+
+--
+-- Name: tint_produtos Authenticated can view tint_produtos; Type: POLICY; Schema: public; Owner: -
+--
+
+CREATE POLICY "Authenticated can view tint_produtos" ON public.tint_produtos FOR SELECT TO authenticated USING (true);
+
+
+--
+-- Name: tint_skus Authenticated can view tint_skus; Type: POLICY; Schema: public; Owner: -
+--
+
+CREATE POLICY "Authenticated can view tint_skus" ON public.tint_skus FOR SELECT TO authenticated USING (true);
+
+
+--
+-- Name: tint_subcolecoes Authenticated can view tint_subcolecoes; Type: POLICY; Schema: public; Owner: -
+--
+
+CREATE POLICY "Authenticated can view tint_subcolecoes" ON public.tint_subcolecoes FOR SELECT TO authenticated USING (true);
+
+
+--
+-- Name: company_profiles Authenticated staff can read company profiles; Type: POLICY; Schema: public; Owner: -
+--
+
+CREATE POLICY "Authenticated staff can read company profiles" ON public.company_profiles FOR SELECT TO authenticated USING ((public.has_role(auth.uid(), 'master'::public.app_role) OR public.has_role(auth.uid(), 'employee'::public.app_role) OR public.has_role(auth.uid(), 'master'::public.app_role)));
+
+
+--
+-- Name: omie_products Authenticated users can view products; Type: POLICY; Schema: public; Owner: -
+--
+
+CREATE POLICY "Authenticated users can view products" ON public.omie_products FOR SELECT TO authenticated USING (true);
+
+
+--
+-- Name: warehouses Authenticated users can view warehouses; Type: POLICY; Schema: public; Owner: -
+--
+
+CREATE POLICY "Authenticated users can view warehouses" ON public.warehouses FOR SELECT TO authenticated USING (true);
+
+
+--
+-- Name: order_items Customers can view their own order items; Type: POLICY; Schema: public; Owner: -
+--
+
+CREATE POLICY "Customers can view their own order items" ON public.order_items FOR SELECT TO authenticated USING ((auth.uid() = customer_user_id));
+
+
+--
+-- Name: sales_price_history Customers can view their own price history; Type: POLICY; Schema: public; Owner: -
+--
+
+CREATE POLICY "Customers can view their own price history" ON public.sales_price_history FOR SELECT TO authenticated USING ((auth.uid() = customer_user_id));
+
+
+--
+-- Name: sales_orders Customers can view their own sales orders; Type: POLICY; Schema: public; Owner: -
+--
+
+CREATE POLICY "Customers can view their own sales orders" ON public.sales_orders FOR SELECT TO authenticated USING ((auth.uid() = customer_user_id));
+
+
+--
+-- Name: user_tools Employees can manage all user tools; Type: POLICY; Schema: public; Owner: -
+--
+
+CREATE POLICY "Employees can manage all user tools" ON public.user_tools USING ((public.has_role(auth.uid(), 'master'::public.app_role) OR public.has_role(auth.uid(), 'employee'::public.app_role))) WITH CHECK ((public.has_role(auth.uid(), 'master'::public.app_role) OR public.has_role(auth.uid(), 'employee'::public.app_role)));
+
+
+--
+-- Name: orders Employees can update all orders; Type: POLICY; Schema: public; Owner: -
+--
+
+CREATE POLICY "Employees can update all orders" ON public.orders FOR UPDATE USING ((public.has_role(auth.uid(), 'master'::public.app_role) OR public.has_role(auth.uid(), 'employee'::public.app_role)));
+
+
+--
+-- Name: addresses Employees can view all addresses; Type: POLICY; Schema: public; Owner: -
+--
+
+CREATE POLICY "Employees can view all addresses" ON public.addresses FOR SELECT USING ((public.has_role(auth.uid(), 'master'::public.app_role) OR public.has_role(auth.uid(), 'employee'::public.app_role)));
+
+
+--
+-- Name: orders Employees can view all orders; Type: POLICY; Schema: public; Owner: -
+--
+
+CREATE POLICY "Employees can view all orders" ON public.orders FOR SELECT USING ((public.has_role(auth.uid(), 'master'::public.app_role) OR public.has_role(auth.uid(), 'employee'::public.app_role)));
+
+
+--
+-- Name: profiles Employees can view all profiles; Type: POLICY; Schema: public; Owner: -
+--
+
+CREATE POLICY "Employees can view all profiles" ON public.profiles FOR SELECT USING ((public.has_role(auth.uid(), 'master'::public.app_role) OR public.has_role(auth.uid(), 'employee'::public.app_role)));
+
+
+--
+-- Name: user_tools Employees can view all user tools; Type: POLICY; Schema: public; Owner: -
+--
+
+CREATE POLICY "Employees can view all user tools" ON public.user_tools FOR SELECT USING ((public.has_role(auth.uid(), 'master'::public.app_role) OR public.has_role(auth.uid(), 'employee'::public.app_role)));
+
+
+--
+-- Name: farmer_calls Farmers can view their own calls; Type: POLICY; Schema: public; Owner: -
+--
+
+CREATE POLICY "Farmers can view their own calls" ON public.farmer_calls FOR SELECT USING ((auth.uid() = farmer_id));
+
+
+--
+-- Name: fornecedor_mapeamento_extracao Mapeamento fornecedor visível para staff; Type: POLICY; Schema: public; Owner: -
+--
+
+CREATE POLICY "Mapeamento fornecedor visível para staff" ON public.fornecedor_mapeamento_extracao FOR SELECT USING ((public.has_role(auth.uid(), 'master'::public.app_role) OR public.has_role(auth.uid(), 'master'::public.app_role) OR public.has_role(auth.uid(), 'employee'::public.app_role)));
+
+
+--
+-- Name: vendor_sip_credentials Master can delete vendor SIP credentials; Type: POLICY; Schema: public; Owner: -
+--
+
+CREATE POLICY "Master can delete vendor SIP credentials" ON public.vendor_sip_credentials FOR DELETE USING ((EXISTS ( SELECT 1
+   FROM public.user_roles
+  WHERE ((user_roles.user_id = auth.uid()) AND (user_roles.role = 'master'::public.app_role)))));
+
+
+--
+-- Name: vendor_sip_credentials Master can insert vendor SIP credentials; Type: POLICY; Schema: public; Owner: -
+--
+
+CREATE POLICY "Master can insert vendor SIP credentials" ON public.vendor_sip_credentials FOR INSERT WITH CHECK ((EXISTS ( SELECT 1
+   FROM public.user_roles
+  WHERE ((user_roles.user_id = auth.uid()) AND (user_roles.role = 'master'::public.app_role)))));
+
+
+--
+-- Name: tint_integration_settings Master can manage tint_integration_settings; Type: POLICY; Schema: public; Owner: -
+--
+
+CREATE POLICY "Master can manage tint_integration_settings" ON public.tint_integration_settings TO authenticated USING (public.has_role(auth.uid(), 'master'::public.app_role)) WITH CHECK (public.has_role(auth.uid(), 'master'::public.app_role));
+
+
+--
+-- Name: vendor_sip_credentials Master can read all vendor SIP credentials; Type: POLICY; Schema: public; Owner: -
+--
+
+CREATE POLICY "Master can read all vendor SIP credentials" ON public.vendor_sip_credentials FOR SELECT USING ((EXISTS ( SELECT 1
+   FROM public.user_roles
+  WHERE ((user_roles.user_id = auth.uid()) AND (user_roles.role = 'master'::public.app_role)))));
+
+
+--
+-- Name: vendor_sip_credentials Master can update vendor SIP credentials; Type: POLICY; Schema: public; Owner: -
+--
+
+CREATE POLICY "Master can update vendor SIP credentials" ON public.vendor_sip_credentials FOR UPDATE USING ((EXISTS ( SELECT 1
+   FROM public.user_roles
+  WHERE ((user_roles.user_id = auth.uid()) AND (user_roles.role = 'master'::public.app_role)))));
+
+
+--
+-- Name: carteira_assignments Master manage carteira; Type: POLICY; Schema: public; Owner: -
+--
+
+CREATE POLICY "Master manage carteira" ON public.carteira_assignments USING (public.has_role(auth.uid(), 'master'::public.app_role)) WITH CHECK (public.has_role(auth.uid(), 'master'::public.app_role));
+
+
+--
+-- Name: omie_vendedor_map Master manage vendedor map; Type: POLICY; Schema: public; Owner: -
+--
+
+CREATE POLICY "Master manage vendedor map" ON public.omie_vendedor_map USING (public.has_role(auth.uid(), 'master'::public.app_role)) WITH CHECK (public.has_role(auth.uid(), 'master'::public.app_role));
+
+
+--
+-- Name: carteira_coverage Master ou coberto cria coverage; Type: POLICY; Schema: public; Owner: -
+--
+
+CREATE POLICY "Master ou coberto cria coverage" ON public.carteira_coverage FOR INSERT WITH CHECK ((public.has_role(auth.uid(), 'master'::public.app_role) OR (covered_user_id = auth.uid())));
+
+
+--
+-- Name: carteira_coverage Master ou coberto edita coverage; Type: POLICY; Schema: public; Owner: -
+--
+
+CREATE POLICY "Master ou coberto edita coverage" ON public.carteira_coverage FOR UPDATE USING ((public.has_role(auth.uid(), 'master'::public.app_role) OR (covered_user_id = auth.uid()))) WITH CHECK ((public.has_role(auth.uid(), 'master'::public.app_role) OR (covered_user_id = auth.uid())));
+
+
+--
+-- Name: webauthn_challenges No client access to webauthn_challenges; Type: POLICY; Schema: public; Owner: -
+--
+
+CREATE POLICY "No client access to webauthn_challenges" ON public.webauthn_challenges TO authenticated, anon USING (false) WITH CHECK (false);
+
+
+--
+-- Name: company_config Only admins can manage company config; Type: POLICY; Schema: public; Owner: -
+--
+
+CREATE POLICY "Only admins can manage company config" ON public.company_config USING (public.has_role(auth.uid(), 'master'::public.app_role)) WITH CHECK (public.has_role(auth.uid(), 'master'::public.app_role));
+
+
+--
+-- Name: default_prices Only admins can manage default prices; Type: POLICY; Schema: public; Owner: -
+--
+
+CREATE POLICY "Only admins can manage default prices" ON public.default_prices USING (public.has_role(auth.uid(), 'master'::public.app_role)) WITH CHECK (public.has_role(auth.uid(), 'master'::public.app_role));
+
+
+--
+-- Name: user_roles Only admins can manage roles; Type: POLICY; Schema: public; Owner: -
+--
+
+CREATE POLICY "Only admins can manage roles" ON public.user_roles USING (public.has_role(auth.uid(), 'master'::public.app_role)) WITH CHECK (public.has_role(auth.uid(), 'master'::public.app_role));
+
+
+--
+-- Name: tool_specifications Only admins can manage specifications; Type: POLICY; Schema: public; Owner: -
+--
+
+CREATE POLICY "Only admins can manage specifications" ON public.tool_specifications USING (public.has_role(auth.uid(), 'master'::public.app_role)) WITH CHECK (public.has_role(auth.uid(), 'master'::public.app_role));
+
+
+--
+-- Name: conversao_unidades Service role full access conversao_unidades; Type: POLICY; Schema: public; Owner: -
+--
+
+CREATE POLICY "Service role full access conversao_unidades" ON public.conversao_unidades TO service_role USING (true) WITH CHECK (true);
+
+
+--
+-- Name: nfe_recebimento_itens Service role full access nfe_recebimento_itens; Type: POLICY; Schema: public; Owner: -
+--
+
+CREATE POLICY "Service role full access nfe_recebimento_itens" ON public.nfe_recebimento_itens TO service_role USING (true) WITH CHECK (true);
+
+
+--
+-- Name: nfe_recebimentos Service role full access nfe_recebimentos; Type: POLICY; Schema: public; Owner: -
+--
+
+CREATE POLICY "Service role full access nfe_recebimentos" ON public.nfe_recebimentos TO service_role USING (true) WITH CHECK (true);
+
+
+--
+-- Name: warehouses Service role full access warehouses; Type: POLICY; Schema: public; Owner: -
+--
+
+CREATE POLICY "Service role full access warehouses" ON public.warehouses TO service_role USING (true) WITH CHECK (true);
+
+
+--
+-- Name: fornecedor_omie_cache Service role manages fornecedor cache; Type: POLICY; Schema: public; Owner: -
+--
+
+CREATE POLICY "Service role manages fornecedor cache" ON public.fornecedor_omie_cache TO service_role USING (true) WITH CHECK (true);
+
+
+--
+-- Name: production_orders Staff can create production orders; Type: POLICY; Schema: public; Owner: -
+--
+
+CREATE POLICY "Staff can create production orders" ON public.production_orders FOR INSERT TO authenticated WITH CHECK ((EXISTS ( SELECT 1
+   FROM public.user_roles
+  WHERE ((user_roles.user_id = auth.uid()) AND (user_roles.role = ANY (ARRAY['master'::public.app_role, 'employee'::public.app_role, 'master'::public.app_role]))))));
+
+
+--
+-- Name: nfe_recebimento_itens Staff can delete nfe_recebimento_itens; Type: POLICY; Schema: public; Owner: -
+--
+
+CREATE POLICY "Staff can delete nfe_recebimento_itens" ON public.nfe_recebimento_itens FOR DELETE TO authenticated USING ((public.has_role(auth.uid(), 'master'::public.app_role) OR public.has_role(auth.uid(), 'employee'::public.app_role)));
+
+
+--
+-- Name: sku_fornecedor_externo Staff can delete sku mapping; Type: POLICY; Schema: public; Owner: -
+--
+
+CREATE POLICY "Staff can delete sku mapping" ON public.sku_fornecedor_externo FOR DELETE TO authenticated USING (public.has_role(auth.uid(), 'master'::public.app_role));
+
+
+--
+-- Name: cockpit_audit_log Staff can insert audit log; Type: POLICY; Schema: public; Owner: -
+--
+
+CREATE POLICY "Staff can insert audit log" ON public.cockpit_audit_log FOR INSERT TO authenticated WITH CHECK ((public.has_role(auth.uid(), 'master'::public.app_role) OR public.has_role(auth.uid(), 'employee'::public.app_role)));
+
+
+--
+-- Name: nfe_lotes_escaneados Staff can insert nfe_lotes_escaneados; Type: POLICY; Schema: public; Owner: -
+--
+
+CREATE POLICY "Staff can insert nfe_lotes_escaneados" ON public.nfe_lotes_escaneados FOR INSERT TO authenticated WITH CHECK ((public.has_role(auth.uid(), 'master'::public.app_role) OR public.has_role(auth.uid(), 'employee'::public.app_role)));
+
+
+--
+-- Name: nfe_recebimento_itens Staff can insert nfe_recebimento_itens; Type: POLICY; Schema: public; Owner: -
+--
+
+CREATE POLICY "Staff can insert nfe_recebimento_itens" ON public.nfe_recebimento_itens FOR INSERT TO authenticated WITH CHECK ((public.has_role(auth.uid(), 'master'::public.app_role) OR public.has_role(auth.uid(), 'employee'::public.app_role)));
+
+
+--
+-- Name: nfe_recebimentos Staff can insert nfe_recebimentos; Type: POLICY; Schema: public; Owner: -
+--
+
+CREATE POLICY "Staff can insert nfe_recebimentos" ON public.nfe_recebimentos FOR INSERT TO authenticated WITH CHECK ((public.has_role(auth.uid(), 'master'::public.app_role) OR public.has_role(auth.uid(), 'employee'::public.app_role)));
+
+
+--
+-- Name: farmer_performance_scores Staff can insert own scores; Type: POLICY; Schema: public; Owner: -
+--
+
+CREATE POLICY "Staff can insert own scores" ON public.farmer_performance_scores FOR INSERT WITH CHECK ((public.has_role(auth.uid(), 'master'::public.app_role) OR public.has_role(auth.uid(), 'employee'::public.app_role)));
+
+
+--
+-- Name: score_recalc_queue Staff can insert recalc queue; Type: POLICY; Schema: public; Owner: -
+--
+
+CREATE POLICY "Staff can insert recalc queue" ON public.score_recalc_queue FOR INSERT WITH CHECK ((public.has_role(auth.uid(), 'master'::public.app_role) OR public.has_role(auth.uid(), 'employee'::public.app_role)));
+
+
+--
+-- Name: sku_fornecedor_externo Staff can insert sku mapping; Type: POLICY; Schema: public; Owner: -
+--
+
+CREATE POLICY "Staff can insert sku mapping" ON public.sku_fornecedor_externo FOR INSERT TO authenticated WITH CHECK ((public.has_role(auth.uid(), 'master'::public.app_role) OR public.has_role(auth.uid(), 'employee'::public.app_role)));
+
+
+--
+-- Name: visit_score_recalc_queue Staff can insert visit recalc queue; Type: POLICY; Schema: public; Owner: -
+--
+
+CREATE POLICY "Staff can insert visit recalc queue" ON public.visit_score_recalc_queue FOR INSERT WITH CHECK ((public.has_role(auth.uid(), 'master'::public.app_role) OR public.has_role(auth.uid(), 'employee'::public.app_role)));
+
+
+--
+-- Name: farmer_agenda Staff can manage agenda; Type: POLICY; Schema: public; Owner: -
+--
+
+CREATE POLICY "Staff can manage agenda" ON public.farmer_agenda USING ((public.has_role(auth.uid(), 'master'::public.app_role) OR public.has_role(auth.uid(), 'employee'::public.app_role))) WITH CHECK ((public.has_role(auth.uid(), 'master'::public.app_role) OR public.has_role(auth.uid(), 'employee'::public.app_role)));
+
+
+--
+-- Name: ai_decision_audit_log Staff can manage ai decision audit; Type: POLICY; Schema: public; Owner: -
+--
+
+CREATE POLICY "Staff can manage ai decision audit" ON public.ai_decision_audit_log TO authenticated USING ((public.has_role(auth.uid(), 'master'::public.app_role) OR public.has_role(auth.uid(), 'employee'::public.app_role))) WITH CHECK ((public.has_role(auth.uid(), 'master'::public.app_role) OR public.has_role(auth.uid(), 'employee'::public.app_role)));
+
+
+--
+-- Name: ai_decisions Staff can manage ai decisions; Type: POLICY; Schema: public; Owner: -
+--
+
+CREATE POLICY "Staff can manage ai decisions" ON public.ai_decisions TO authenticated USING ((public.has_role(auth.uid(), 'master'::public.app_role) OR public.has_role(auth.uid(), 'employee'::public.app_role))) WITH CHECK ((public.has_role(auth.uid(), 'master'::public.app_role) OR public.has_role(auth.uid(), 'employee'::public.app_role)));
+
+
+--
+-- Name: farmer_algorithm_config Staff can manage algorithm config; Type: POLICY; Schema: public; Owner: -
+--
+
+CREATE POLICY "Staff can manage algorithm config" ON public.farmer_algorithm_config USING ((public.has_role(auth.uid(), 'master'::public.app_role) OR public.has_role(auth.uid(), 'employee'::public.app_role))) WITH CHECK ((public.has_role(auth.uid(), 'master'::public.app_role) OR public.has_role(auth.uid(), 'employee'::public.app_role)));
+
+
+--
+-- Name: gamification_scores Staff can manage all gamification scores; Type: POLICY; Schema: public; Owner: -
+--
+
+CREATE POLICY "Staff can manage all gamification scores" ON public.gamification_scores USING ((public.has_role(auth.uid(), 'master'::public.app_role) OR public.has_role(auth.uid(), 'employee'::public.app_role))) WITH CHECK ((public.has_role(auth.uid(), 'master'::public.app_role) OR public.has_role(auth.uid(), 'employee'::public.app_role)));
+
+
+--
+-- Name: loyalty_points Staff can manage all points; Type: POLICY; Schema: public; Owner: -
+--
+
+CREATE POLICY "Staff can manage all points" ON public.loyalty_points USING ((public.has_role(auth.uid(), 'master'::public.app_role) OR public.has_role(auth.uid(), 'employee'::public.app_role))) WITH CHECK ((public.has_role(auth.uid(), 'master'::public.app_role) OR public.has_role(auth.uid(), 'employee'::public.app_role)));
+
+
+--
+-- Name: sending_quality_logs Staff can manage all quality logs; Type: POLICY; Schema: public; Owner: -
+--
+
+CREATE POLICY "Staff can manage all quality logs" ON public.sending_quality_logs USING ((public.has_role(auth.uid(), 'master'::public.app_role) OR public.has_role(auth.uid(), 'employee'::public.app_role))) WITH CHECK ((public.has_role(auth.uid(), 'master'::public.app_role) OR public.has_role(auth.uid(), 'employee'::public.app_role)));
+
+
+--
+-- Name: loyalty_redemptions Staff can manage all redemptions; Type: POLICY; Schema: public; Owner: -
+--
+
+CREATE POLICY "Staff can manage all redemptions" ON public.loyalty_redemptions TO authenticated USING ((public.has_role(auth.uid(), 'master'::public.app_role) OR public.has_role(auth.uid(), 'employee'::public.app_role))) WITH CHECK ((public.has_role(auth.uid(), 'master'::public.app_role) OR public.has_role(auth.uid(), 'employee'::public.app_role)));
+
+
+--
+-- Name: referrals Staff can manage all referrals; Type: POLICY; Schema: public; Owner: -
+--
+
+CREATE POLICY "Staff can manage all referrals" ON public.referrals USING ((public.has_role(auth.uid(), 'master'::public.app_role) OR public.has_role(auth.uid(), 'employee'::public.app_role))) WITH CHECK ((public.has_role(auth.uid(), 'master'::public.app_role) OR public.has_role(auth.uid(), 'employee'::public.app_role)));
+
+
+--
+-- Name: farmer_association_rules Staff can manage association rules; Type: POLICY; Schema: public; Owner: -
+--
+
+CREATE POLICY "Staff can manage association rules" ON public.farmer_association_rules USING ((public.has_role(auth.uid(), 'master'::public.app_role) OR public.has_role(auth.uid(), 'employee'::public.app_role))) WITH CHECK ((public.has_role(auth.uid(), 'master'::public.app_role) OR public.has_role(auth.uid(), 'employee'::public.app_role)));
+
+
+--
+-- Name: farmer_audit_log Staff can manage audit log; Type: POLICY; Schema: public; Owner: -
+--
+
+CREATE POLICY "Staff can manage audit log" ON public.farmer_audit_log USING ((public.has_role(auth.uid(), 'master'::public.app_role) OR public.has_role(auth.uid(), 'employee'::public.app_role))) WITH CHECK ((public.has_role(auth.uid(), 'master'::public.app_role) OR public.has_role(auth.uid(), 'employee'::public.app_role)));
+
+
+--
+-- Name: farmer_bundle_recommendations Staff can manage bundle recommendations; Type: POLICY; Schema: public; Owner: -
+--
+
+CREATE POLICY "Staff can manage bundle recommendations" ON public.farmer_bundle_recommendations USING ((public.has_role(auth.uid(), 'master'::public.app_role) OR public.has_role(auth.uid(), 'employee'::public.app_role))) WITH CHECK ((public.has_role(auth.uid(), 'master'::public.app_role) OR public.has_role(auth.uid(), 'employee'::public.app_role)));
+
+
+--
+-- Name: farmer_category_conversion Staff can manage category conversion; Type: POLICY; Schema: public; Owner: -
+--
+
+CREATE POLICY "Staff can manage category conversion" ON public.farmer_category_conversion USING ((public.has_role(auth.uid(), 'master'::public.app_role) OR public.has_role(auth.uid(), 'employee'::public.app_role))) WITH CHECK ((public.has_role(auth.uid(), 'master'::public.app_role) OR public.has_role(auth.uid(), 'employee'::public.app_role)));
+
+
+--
+-- Name: farmer_client_scores Staff can manage client scores; Type: POLICY; Schema: public; Owner: -
+--
+
+CREATE POLICY "Staff can manage client scores" ON public.farmer_client_scores USING ((public.has_role(auth.uid(), 'master'::public.app_role) OR public.has_role(auth.uid(), 'employee'::public.app_role))) WITH CHECK ((public.has_role(auth.uid(), 'master'::public.app_role) OR public.has_role(auth.uid(), 'employee'::public.app_role)));
+
+
+--
+-- Name: farmer_copilot_events Staff can manage copilot events; Type: POLICY; Schema: public; Owner: -
+--
+
+CREATE POLICY "Staff can manage copilot events" ON public.farmer_copilot_events USING ((public.has_role(auth.uid(), 'master'::public.app_role) OR public.has_role(auth.uid(), 'employee'::public.app_role))) WITH CHECK ((public.has_role(auth.uid(), 'master'::public.app_role) OR public.has_role(auth.uid(), 'employee'::public.app_role)));
+
+
+--
+-- Name: farmer_copilot_sessions Staff can manage copilot sessions; Type: POLICY; Schema: public; Owner: -
+--
+
+CREATE POLICY "Staff can manage copilot sessions" ON public.farmer_copilot_sessions USING ((public.has_role(auth.uid(), 'master'::public.app_role) OR public.has_role(auth.uid(), 'employee'::public.app_role))) WITH CHECK ((public.has_role(auth.uid(), 'master'::public.app_role) OR public.has_role(auth.uid(), 'employee'::public.app_role)));
+
+
+--
+-- Name: farmer_diagnostic_questions Staff can manage diagnostic questions; Type: POLICY; Schema: public; Owner: -
+--
+
+CREATE POLICY "Staff can manage diagnostic questions" ON public.farmer_diagnostic_questions USING ((public.has_role(auth.uid(), 'master'::public.app_role) OR public.has_role(auth.uid(), 'employee'::public.app_role))) WITH CHECK ((public.has_role(auth.uid(), 'master'::public.app_role) OR public.has_role(auth.uid(), 'employee'::public.app_role)));
+
+
+--
+-- Name: farmer_experiment_clients Staff can manage experiment clients; Type: POLICY; Schema: public; Owner: -
+--
+
+CREATE POLICY "Staff can manage experiment clients" ON public.farmer_experiment_clients USING ((public.has_role(auth.uid(), 'master'::public.app_role) OR public.has_role(auth.uid(), 'employee'::public.app_role))) WITH CHECK ((public.has_role(auth.uid(), 'master'::public.app_role) OR public.has_role(auth.uid(), 'employee'::public.app_role)));
+
+
+--
+-- Name: farmer_experiments Staff can manage experiments; Type: POLICY; Schema: public; Owner: -
+--
+
+CREATE POLICY "Staff can manage experiments" ON public.farmer_experiments USING ((public.has_role(auth.uid(), 'master'::public.app_role) OR public.has_role(auth.uid(), 'employee'::public.app_role))) WITH CHECK ((public.has_role(auth.uid(), 'master'::public.app_role) OR public.has_role(auth.uid(), 'employee'::public.app_role)));
+
+
+--
+-- Name: farmer_calls Staff can manage farmer calls; Type: POLICY; Schema: public; Owner: -
+--
+
+CREATE POLICY "Staff can manage farmer calls" ON public.farmer_calls USING ((public.has_role(auth.uid(), 'master'::public.app_role) OR public.has_role(auth.uid(), 'employee'::public.app_role))) WITH CHECK ((public.has_role(auth.uid(), 'master'::public.app_role) OR public.has_role(auth.uid(), 'employee'::public.app_role)));
+
+
+--
+-- Name: farmer_config Staff can manage farmer config; Type: POLICY; Schema: public; Owner: -
+--
+
+CREATE POLICY "Staff can manage farmer config" ON public.farmer_config USING ((public.has_role(auth.uid(), 'master'::public.app_role) OR public.has_role(auth.uid(), 'employee'::public.app_role))) WITH CHECK ((public.has_role(auth.uid(), 'master'::public.app_role) OR public.has_role(auth.uid(), 'employee'::public.app_role)));
+
+
+--
+-- Name: farmer_governance_proposals Staff can manage governance proposals; Type: POLICY; Schema: public; Owner: -
+--
+
+CREATE POLICY "Staff can manage governance proposals" ON public.farmer_governance_proposals USING ((public.has_role(auth.uid(), 'master'::public.app_role) OR public.has_role(auth.uid(), 'employee'::public.app_role))) WITH CHECK ((public.has_role(auth.uid(), 'master'::public.app_role) OR public.has_role(auth.uid(), 'employee'::public.app_role)));
+
+
+--
+-- Name: health_score_history Staff can manage health history; Type: POLICY; Schema: public; Owner: -
+--
+
+CREATE POLICY "Staff can manage health history" ON public.health_score_history TO authenticated USING ((public.has_role(auth.uid(), 'master'::public.app_role) OR public.has_role(auth.uid(), 'employee'::public.app_role))) WITH CHECK ((public.has_role(auth.uid(), 'master'::public.app_role) OR public.has_role(auth.uid(), 'employee'::public.app_role)));
+
+
+--
+-- Name: inventory_position Staff can manage inventory; Type: POLICY; Schema: public; Owner: -
+--
+
+CREATE POLICY "Staff can manage inventory" ON public.inventory_position USING ((public.has_role(auth.uid(), 'master'::public.app_role) OR public.has_role(auth.uid(), 'employee'::public.app_role))) WITH CHECK ((public.has_role(auth.uid(), 'master'::public.app_role) OR public.has_role(auth.uid(), 'employee'::public.app_role)));
+
+
+--
+-- Name: farmer_learning_weights Staff can manage learning weights; Type: POLICY; Schema: public; Owner: -
+--
+
+CREATE POLICY "Staff can manage learning weights" ON public.farmer_learning_weights USING ((public.has_role(auth.uid(), 'master'::public.app_role) OR public.has_role(auth.uid(), 'employee'::public.app_role))) WITH CHECK ((public.has_role(auth.uid(), 'master'::public.app_role) OR public.has_role(auth.uid(), 'employee'::public.app_role)));
+
+
+--
+-- Name: omie_clientes Staff can manage omie clients; Type: POLICY; Schema: public; Owner: -
+--
+
+CREATE POLICY "Staff can manage omie clients" ON public.omie_clientes TO authenticated USING ((public.has_role(auth.uid(), 'master'::public.app_role) OR public.has_role(auth.uid(), 'employee'::public.app_role))) WITH CHECK ((public.has_role(auth.uid(), 'master'::public.app_role) OR public.has_role(auth.uid(), 'employee'::public.app_role)));
+
+
+--
+-- Name: omie_servicos Staff can manage omie services; Type: POLICY; Schema: public; Owner: -
+--
+
+CREATE POLICY "Staff can manage omie services" ON public.omie_servicos TO authenticated USING ((public.has_role(auth.uid(), 'master'::public.app_role) OR public.has_role(auth.uid(), 'employee'::public.app_role))) WITH CHECK ((public.has_role(auth.uid(), 'master'::public.app_role) OR public.has_role(auth.uid(), 'employee'::public.app_role)));
+
+
+--
+-- Name: order_items Staff can manage order items; Type: POLICY; Schema: public; Owner: -
+--
+
+CREATE POLICY "Staff can manage order items" ON public.order_items USING ((public.has_role(auth.uid(), 'master'::public.app_role) OR public.has_role(auth.uid(), 'employee'::public.app_role))) WITH CHECK ((public.has_role(auth.uid(), 'master'::public.app_role) OR public.has_role(auth.uid(), 'employee'::public.app_role)));
+
+
+--
+-- Name: omie_ordens_servico Staff can manage order sync data; Type: POLICY; Schema: public; Owner: -
+--
+
+CREATE POLICY "Staff can manage order sync data" ON public.omie_ordens_servico TO authenticated USING ((public.has_role(auth.uid(), 'master'::public.app_role) OR public.has_role(auth.uid(), 'employee'::public.app_role))) WITH CHECK ((public.has_role(auth.uid(), 'master'::public.app_role) OR public.has_role(auth.uid(), 'employee'::public.app_role)));
+
+
+--
+-- Name: customer_preferred_items Staff can manage preferred items; Type: POLICY; Schema: public; Owner: -
+--
+
+CREATE POLICY "Staff can manage preferred items" ON public.customer_preferred_items TO authenticated USING ((EXISTS ( SELECT 1
+   FROM public.user_roles
+  WHERE ((user_roles.user_id = auth.uid()) AND (user_roles.role = ANY (ARRAY['master'::public.app_role, 'master'::public.app_role, 'employee'::public.app_role]))))));
+
+
+--
+-- Name: order_price_history Staff can manage price history; Type: POLICY; Schema: public; Owner: -
+--
+
+CREATE POLICY "Staff can manage price history" ON public.order_price_history USING ((public.has_role(auth.uid(), 'master'::public.app_role) OR public.has_role(auth.uid(), 'employee'::public.app_role))) WITH CHECK ((public.has_role(auth.uid(), 'master'::public.app_role) OR public.has_role(auth.uid(), 'employee'::public.app_role)));
+
+
+--
+-- Name: priority_score_log Staff can manage priority log; Type: POLICY; Schema: public; Owner: -
+--
+
+CREATE POLICY "Staff can manage priority log" ON public.priority_score_log TO authenticated USING ((public.has_role(auth.uid(), 'master'::public.app_role) OR public.has_role(auth.uid(), 'employee'::public.app_role))) WITH CHECK ((public.has_role(auth.uid(), 'master'::public.app_role) OR public.has_role(auth.uid(), 'employee'::public.app_role)));
+
+
+--
+-- Name: product_costs Staff can manage product costs; Type: POLICY; Schema: public; Owner: -
+--
+
+CREATE POLICY "Staff can manage product costs" ON public.product_costs USING ((public.has_role(auth.uid(), 'master'::public.app_role) OR public.has_role(auth.uid(), 'employee'::public.app_role))) WITH CHECK ((public.has_role(auth.uid(), 'master'::public.app_role) OR public.has_role(auth.uid(), 'employee'::public.app_role)));
+
+
+--
+-- Name: omie_products Staff can manage products; Type: POLICY; Schema: public; Owner: -
+--
+
+CREATE POLICY "Staff can manage products" ON public.omie_products TO authenticated USING ((public.has_role(auth.uid(), 'master'::public.app_role) OR public.has_role(auth.uid(), 'employee'::public.app_role))) WITH CHECK ((public.has_role(auth.uid(), 'master'::public.app_role) OR public.has_role(auth.uid(), 'employee'::public.app_role)));
+
+
+--
+-- Name: recommendation_config Staff can manage rec config; Type: POLICY; Schema: public; Owner: -
+--
+
+CREATE POLICY "Staff can manage rec config" ON public.recommendation_config USING ((public.has_role(auth.uid(), 'master'::public.app_role) OR public.has_role(auth.uid(), 'employee'::public.app_role))) WITH CHECK ((public.has_role(auth.uid(), 'master'::public.app_role) OR public.has_role(auth.uid(), 'employee'::public.app_role)));
+
+
+--
+-- Name: recommendation_log Staff can manage recommendation log; Type: POLICY; Schema: public; Owner: -
+--
+
+CREATE POLICY "Staff can manage recommendation log" ON public.recommendation_log USING ((public.has_role(auth.uid(), 'master'::public.app_role) OR public.has_role(auth.uid(), 'employee'::public.app_role))) WITH CHECK ((public.has_role(auth.uid(), 'master'::public.app_role) OR public.has_role(auth.uid(), 'employee'::public.app_role)));
+
+
+--
+-- Name: farmer_recommendations Staff can manage recommendations; Type: POLICY; Schema: public; Owner: -
+--
+
+CREATE POLICY "Staff can manage recommendations" ON public.farmer_recommendations USING ((public.has_role(auth.uid(), 'master'::public.app_role) OR public.has_role(auth.uid(), 'employee'::public.app_role))) WITH CHECK ((public.has_role(auth.uid(), 'master'::public.app_role) OR public.has_role(auth.uid(), 'employee'::public.app_role)));
+
+
+--
+-- Name: sync_reprocess_config Staff can manage reprocess config; Type: POLICY; Schema: public; Owner: -
+--
+
+CREATE POLICY "Staff can manage reprocess config" ON public.sync_reprocess_config USING ((public.has_role(auth.uid(), 'master'::public.app_role) OR public.has_role(auth.uid(), 'employee'::public.app_role))) WITH CHECK ((public.has_role(auth.uid(), 'master'::public.app_role) OR public.has_role(auth.uid(), 'employee'::public.app_role)));
+
+
+--
+-- Name: sync_reprocess_log Staff can manage reprocess logs; Type: POLICY; Schema: public; Owner: -
+--
+
+CREATE POLICY "Staff can manage reprocess logs" ON public.sync_reprocess_log USING ((public.has_role(auth.uid(), 'master'::public.app_role) OR public.has_role(auth.uid(), 'employee'::public.app_role))) WITH CHECK ((public.has_role(auth.uid(), 'master'::public.app_role) OR public.has_role(auth.uid(), 'employee'::public.app_role)));
+
+
+--
+-- Name: route_visits Staff can manage route visits; Type: POLICY; Schema: public; Owner: -
+--
+
+CREATE POLICY "Staff can manage route visits" ON public.route_visits TO authenticated USING ((public.has_role(auth.uid(), 'master'::public.app_role) OR public.has_role(auth.uid(), 'employee'::public.app_role))) WITH CHECK ((public.has_role(auth.uid(), 'master'::public.app_role) OR public.has_role(auth.uid(), 'employee'::public.app_role)));
+
+
+--
+-- Name: sales_orders Staff can manage sales orders; Type: POLICY; Schema: public; Owner: -
+--
+
+CREATE POLICY "Staff can manage sales orders" ON public.sales_orders TO authenticated USING ((public.has_role(auth.uid(), 'master'::public.app_role) OR public.has_role(auth.uid(), 'employee'::public.app_role))) WITH CHECK ((public.has_role(auth.uid(), 'master'::public.app_role) OR public.has_role(auth.uid(), 'employee'::public.app_role)));
+
+
+--
+-- Name: sales_price_history Staff can manage sales price history; Type: POLICY; Schema: public; Owner: -
+--
+
+CREATE POLICY "Staff can manage sales price history" ON public.sales_price_history TO authenticated USING ((public.has_role(auth.uid(), 'master'::public.app_role) OR public.has_role(auth.uid(), 'employee'::public.app_role))) WITH CHECK ((public.has_role(auth.uid(), 'master'::public.app_role) OR public.has_role(auth.uid(), 'employee'::public.app_role)));
+
+
+--
+-- Name: customer_segments Staff can manage segments; Type: POLICY; Schema: public; Owner: -
+--
+
+CREATE POLICY "Staff can manage segments" ON public.customer_segments TO authenticated USING ((EXISTS ( SELECT 1
+   FROM public.user_roles
+  WHERE ((user_roles.user_id = auth.uid()) AND (user_roles.role = ANY (ARRAY['master'::public.app_role, 'master'::public.app_role, 'employee'::public.app_role]))))));
+
+
+--
+-- Name: sync_state Staff can manage sync state; Type: POLICY; Schema: public; Owner: -
+--
+
+CREATE POLICY "Staff can manage sync state" ON public.sync_state USING ((public.has_role(auth.uid(), 'master'::public.app_role) OR public.has_role(auth.uid(), 'employee'::public.app_role))) WITH CHECK ((public.has_role(auth.uid(), 'master'::public.app_role) OR public.has_role(auth.uid(), 'employee'::public.app_role)));
+
+
+--
+-- Name: farmer_tactical_plans Staff can manage tactical plans; Type: POLICY; Schema: public; Owner: -
+--
+
+CREATE POLICY "Staff can manage tactical plans" ON public.farmer_tactical_plans USING ((public.has_role(auth.uid(), 'master'::public.app_role) OR public.has_role(auth.uid(), 'employee'::public.app_role))) WITH CHECK ((public.has_role(auth.uid(), 'master'::public.app_role) OR public.has_role(auth.uid(), 'employee'::public.app_role)));
+
+
+--
+-- Name: customer_visit_scores Staff can manage their visit scores; Type: POLICY; Schema: public; Owner: -
+--
+
+CREATE POLICY "Staff can manage their visit scores" ON public.customer_visit_scores USING ((public.has_role(auth.uid(), 'master'::public.app_role) OR (public.has_role(auth.uid(), 'employee'::public.app_role) AND (farmer_id = auth.uid())))) WITH CHECK ((public.has_role(auth.uid(), 'master'::public.app_role) OR (public.has_role(auth.uid(), 'employee'::public.app_role) AND (farmer_id = auth.uid()))));
+
+
+--
+-- Name: tint_bases Staff can manage tint_bases; Type: POLICY; Schema: public; Owner: -
+--
+
+CREATE POLICY "Staff can manage tint_bases" ON public.tint_bases TO authenticated USING ((public.has_role(auth.uid(), 'master'::public.app_role) OR public.has_role(auth.uid(), 'employee'::public.app_role))) WITH CHECK ((public.has_role(auth.uid(), 'master'::public.app_role) OR public.has_role(auth.uid(), 'employee'::public.app_role)));
+
+
+--
+-- Name: tint_colecoes Staff can manage tint_colecoes; Type: POLICY; Schema: public; Owner: -
+--
+
+CREATE POLICY "Staff can manage tint_colecoes" ON public.tint_colecoes TO authenticated USING ((public.has_role(auth.uid(), 'master'::public.app_role) OR public.has_role(auth.uid(), 'employee'::public.app_role))) WITH CHECK ((public.has_role(auth.uid(), 'master'::public.app_role) OR public.has_role(auth.uid(), 'employee'::public.app_role)));
+
+
+--
+-- Name: tint_corantes Staff can manage tint_corantes; Type: POLICY; Schema: public; Owner: -
+--
+
+CREATE POLICY "Staff can manage tint_corantes" ON public.tint_corantes TO authenticated USING ((public.has_role(auth.uid(), 'master'::public.app_role) OR public.has_role(auth.uid(), 'employee'::public.app_role))) WITH CHECK ((public.has_role(auth.uid(), 'master'::public.app_role) OR public.has_role(auth.uid(), 'employee'::public.app_role)));
+
+
+--
+-- Name: tint_embalagens Staff can manage tint_embalagens; Type: POLICY; Schema: public; Owner: -
+--
+
+CREATE POLICY "Staff can manage tint_embalagens" ON public.tint_embalagens TO authenticated USING ((public.has_role(auth.uid(), 'master'::public.app_role) OR public.has_role(auth.uid(), 'employee'::public.app_role))) WITH CHECK ((public.has_role(auth.uid(), 'master'::public.app_role) OR public.has_role(auth.uid(), 'employee'::public.app_role)));
+
+
+--
+-- Name: tint_formula_itens Staff can manage tint_formula_itens; Type: POLICY; Schema: public; Owner: -
+--
+
+CREATE POLICY "Staff can manage tint_formula_itens" ON public.tint_formula_itens TO authenticated USING ((public.has_role(auth.uid(), 'master'::public.app_role) OR public.has_role(auth.uid(), 'employee'::public.app_role))) WITH CHECK ((public.has_role(auth.uid(), 'master'::public.app_role) OR public.has_role(auth.uid(), 'employee'::public.app_role)));
+
+
+--
+-- Name: tint_formulas Staff can manage tint_formulas; Type: POLICY; Schema: public; Owner: -
+--
+
+CREATE POLICY "Staff can manage tint_formulas" ON public.tint_formulas TO authenticated USING ((public.has_role(auth.uid(), 'master'::public.app_role) OR public.has_role(auth.uid(), 'employee'::public.app_role))) WITH CHECK ((public.has_role(auth.uid(), 'master'::public.app_role) OR public.has_role(auth.uid(), 'employee'::public.app_role)));
+
+
+--
+-- Name: tint_importacoes Staff can manage tint_importacoes; Type: POLICY; Schema: public; Owner: -
+--
+
+CREATE POLICY "Staff can manage tint_importacoes" ON public.tint_importacoes TO authenticated USING ((public.has_role(auth.uid(), 'master'::public.app_role) OR public.has_role(auth.uid(), 'employee'::public.app_role))) WITH CHECK ((public.has_role(auth.uid(), 'master'::public.app_role) OR public.has_role(auth.uid(), 'employee'::public.app_role)));
+
+
+--
+-- Name: tint_produtos Staff can manage tint_produtos; Type: POLICY; Schema: public; Owner: -
+--
+
+CREATE POLICY "Staff can manage tint_produtos" ON public.tint_produtos TO authenticated USING ((public.has_role(auth.uid(), 'master'::public.app_role) OR public.has_role(auth.uid(), 'employee'::public.app_role))) WITH CHECK ((public.has_role(auth.uid(), 'master'::public.app_role) OR public.has_role(auth.uid(), 'employee'::public.app_role)));
+
+
+--
+-- Name: tint_skus Staff can manage tint_skus; Type: POLICY; Schema: public; Owner: -
+--
+
+CREATE POLICY "Staff can manage tint_skus" ON public.tint_skus TO authenticated USING ((public.has_role(auth.uid(), 'master'::public.app_role) OR public.has_role(auth.uid(), 'employee'::public.app_role))) WITH CHECK ((public.has_role(auth.uid(), 'master'::public.app_role) OR public.has_role(auth.uid(), 'employee'::public.app_role)));
+
+
+--
+-- Name: tint_subcolecoes Staff can manage tint_subcolecoes; Type: POLICY; Schema: public; Owner: -
+--
+
+CREATE POLICY "Staff can manage tint_subcolecoes" ON public.tint_subcolecoes TO authenticated USING ((public.has_role(auth.uid(), 'master'::public.app_role) OR public.has_role(auth.uid(), 'employee'::public.app_role))) WITH CHECK ((public.has_role(auth.uid(), 'master'::public.app_role) OR public.has_role(auth.uid(), 'employee'::public.app_role)));
+
+
+--
+-- Name: tint_vendas Staff can manage tint_vendas; Type: POLICY; Schema: public; Owner: -
+--
+
+CREATE POLICY "Staff can manage tint_vendas" ON public.tint_vendas TO authenticated USING ((public.has_role(auth.uid(), 'master'::public.app_role) OR public.has_role(auth.uid(), 'employee'::public.app_role))) WITH CHECK ((public.has_role(auth.uid(), 'master'::public.app_role) OR public.has_role(auth.uid(), 'employee'::public.app_role)));
+
+
+--
+-- Name: tint_vendas_itens Staff can manage tint_vendas_itens; Type: POLICY; Schema: public; Owner: -
+--
+
+CREATE POLICY "Staff can manage tint_vendas_itens" ON public.tint_vendas_itens TO authenticated USING ((public.has_role(auth.uid(), 'master'::public.app_role) OR public.has_role(auth.uid(), 'employee'::public.app_role))) WITH CHECK ((public.has_role(auth.uid(), 'master'::public.app_role) OR public.has_role(auth.uid(), 'employee'::public.app_role)));
+
+
+--
+-- Name: tool_events Staff can manage tool events; Type: POLICY; Schema: public; Owner: -
+--
+
+CREATE POLICY "Staff can manage tool events" ON public.tool_events USING ((public.has_role(auth.uid(), 'master'::public.app_role) OR public.has_role(auth.uid(), 'employee'::public.app_role))) WITH CHECK ((public.has_role(auth.uid(), 'master'::public.app_role) OR public.has_role(auth.uid(), 'employee'::public.app_role)));
+
+
+--
+-- Name: training_modules Staff can manage training modules; Type: POLICY; Schema: public; Owner: -
+--
+
+CREATE POLICY "Staff can manage training modules" ON public.training_modules TO authenticated USING ((public.has_role(auth.uid(), 'master'::public.app_role) OR public.has_role(auth.uid(), 'employee'::public.app_role))) WITH CHECK ((public.has_role(auth.uid(), 'master'::public.app_role) OR public.has_role(auth.uid(), 'employee'::public.app_role)));
+
+
+--
+-- Name: nfe_lotes_escaneados Staff can update nfe_lotes_escaneados; Type: POLICY; Schema: public; Owner: -
+--
+
+CREATE POLICY "Staff can update nfe_lotes_escaneados" ON public.nfe_lotes_escaneados FOR UPDATE TO authenticated USING ((public.has_role(auth.uid(), 'master'::public.app_role) OR public.has_role(auth.uid(), 'employee'::public.app_role))) WITH CHECK ((public.has_role(auth.uid(), 'master'::public.app_role) OR public.has_role(auth.uid(), 'employee'::public.app_role)));
+
+
+--
+-- Name: nfe_recebimento_itens Staff can update nfe_recebimento_itens; Type: POLICY; Schema: public; Owner: -
+--
+
+CREATE POLICY "Staff can update nfe_recebimento_itens" ON public.nfe_recebimento_itens FOR UPDATE TO authenticated USING ((public.has_role(auth.uid(), 'master'::public.app_role) OR public.has_role(auth.uid(), 'employee'::public.app_role))) WITH CHECK ((public.has_role(auth.uid(), 'master'::public.app_role) OR public.has_role(auth.uid(), 'employee'::public.app_role)));
+
+
+--
+-- Name: nfe_recebimentos Staff can update nfe_recebimentos; Type: POLICY; Schema: public; Owner: -
+--
+
+CREATE POLICY "Staff can update nfe_recebimentos" ON public.nfe_recebimentos FOR UPDATE TO authenticated USING ((public.has_role(auth.uid(), 'master'::public.app_role) OR public.has_role(auth.uid(), 'employee'::public.app_role))) WITH CHECK ((public.has_role(auth.uid(), 'master'::public.app_role) OR public.has_role(auth.uid(), 'employee'::public.app_role)));
+
+
+--
+-- Name: production_orders Staff can update production orders; Type: POLICY; Schema: public; Owner: -
+--
+
+CREATE POLICY "Staff can update production orders" ON public.production_orders FOR UPDATE TO authenticated USING ((EXISTS ( SELECT 1
+   FROM public.user_roles
+  WHERE ((user_roles.user_id = auth.uid()) AND (user_roles.role = ANY (ARRAY['master'::public.app_role, 'employee'::public.app_role, 'master'::public.app_role]))))));
+
+
+--
+-- Name: sku_fornecedor_externo Staff can update sku mapping; Type: POLICY; Schema: public; Owner: -
+--
+
+CREATE POLICY "Staff can update sku mapping" ON public.sku_fornecedor_externo FOR UPDATE TO authenticated USING ((public.has_role(auth.uid(), 'master'::public.app_role) OR public.has_role(auth.uid(), 'employee'::public.app_role)));
+
+
+--
+-- Name: farmer_algorithm_config Staff can view algorithm config; Type: POLICY; Schema: public; Owner: -
+--
+
+CREATE POLICY "Staff can view algorithm config" ON public.farmer_algorithm_config FOR SELECT USING ((public.has_role(auth.uid(), 'master'::public.app_role) OR public.has_role(auth.uid(), 'employee'::public.app_role)));
+
+
+--
+-- Name: training_completions Staff can view all completions; Type: POLICY; Schema: public; Owner: -
+--
+
+CREATE POLICY "Staff can view all completions" ON public.training_completions FOR SELECT USING ((public.has_role(auth.uid(), 'master'::public.app_role) OR public.has_role(auth.uid(), 'employee'::public.app_role)));
+
+
+--
+-- Name: gamification_scores Staff can view all gamification scores; Type: POLICY; Schema: public; Owner: -
+--
+
+CREATE POLICY "Staff can view all gamification scores" ON public.gamification_scores FOR SELECT USING ((public.has_role(auth.uid(), 'master'::public.app_role) OR public.has_role(auth.uid(), 'employee'::public.app_role)));
+
+
+--
+-- Name: loyalty_points Staff can view all points; Type: POLICY; Schema: public; Owner: -
+--
+
+CREATE POLICY "Staff can view all points" ON public.loyalty_points FOR SELECT USING ((public.has_role(auth.uid(), 'master'::public.app_role) OR public.has_role(auth.uid(), 'employee'::public.app_role)));
+
+
+--
+-- Name: order_price_history Staff can view all price history; Type: POLICY; Schema: public; Owner: -
+--
+
+CREATE POLICY "Staff can view all price history" ON public.order_price_history FOR SELECT USING ((public.has_role(auth.uid(), 'master'::public.app_role) OR public.has_role(auth.uid(), 'employee'::public.app_role)));
+
+
+--
+-- Name: sending_quality_logs Staff can view all quality logs; Type: POLICY; Schema: public; Owner: -
+--
+
+CREATE POLICY "Staff can view all quality logs" ON public.sending_quality_logs FOR SELECT USING ((public.has_role(auth.uid(), 'master'::public.app_role) OR public.has_role(auth.uid(), 'employee'::public.app_role)));
+
+
+--
+-- Name: loyalty_redemptions Staff can view all redemptions; Type: POLICY; Schema: public; Owner: -
+--
+
+CREATE POLICY "Staff can view all redemptions" ON public.loyalty_redemptions FOR SELECT TO authenticated USING ((public.has_role(auth.uid(), 'master'::public.app_role) OR public.has_role(auth.uid(), 'employee'::public.app_role)));
+
+
+--
+-- Name: referrals Staff can view all referrals; Type: POLICY; Schema: public; Owner: -
+--
+
+CREATE POLICY "Staff can view all referrals" ON public.referrals FOR SELECT USING ((public.has_role(auth.uid(), 'master'::public.app_role) OR public.has_role(auth.uid(), 'employee'::public.app_role)));
+
+
+--
+-- Name: order_reviews Staff can view all reviews; Type: POLICY; Schema: public; Owner: -
+--
+
+CREATE POLICY "Staff can view all reviews" ON public.order_reviews FOR SELECT USING ((public.has_role(auth.uid(), 'master'::public.app_role) OR public.has_role(auth.uid(), 'employee'::public.app_role)));
+
+
+--
+-- Name: recurring_schedules Staff can view all schedules; Type: POLICY; Schema: public; Owner: -
+--
+
+CREATE POLICY "Staff can view all schedules" ON public.recurring_schedules FOR SELECT USING ((public.has_role(auth.uid(), 'master'::public.app_role) OR public.has_role(auth.uid(), 'employee'::public.app_role)));
+
+
+--
+-- Name: customer_segments Staff can view all segments; Type: POLICY; Schema: public; Owner: -
+--
+
+CREATE POLICY "Staff can view all segments" ON public.customer_segments FOR SELECT TO authenticated USING ((EXISTS ( SELECT 1
+   FROM public.user_roles
+  WHERE ((user_roles.user_id = auth.uid()) AND (user_roles.role = ANY (ARRAY['master'::public.app_role, 'master'::public.app_role, 'employee'::public.app_role]))))));
+
+
+--
+-- Name: tool_events Staff can view all tool events; Type: POLICY; Schema: public; Owner: -
+--
+
+CREATE POLICY "Staff can view all tool events" ON public.tool_events FOR SELECT USING ((public.has_role(auth.uid(), 'master'::public.app_role) OR public.has_role(auth.uid(), 'employee'::public.app_role)));
+
+
+--
+-- Name: cockpit_audit_log Staff can view audit log; Type: POLICY; Schema: public; Owner: -
+--
+
+CREATE POLICY "Staff can view audit log" ON public.cockpit_audit_log FOR SELECT TO authenticated USING ((public.has_role(auth.uid(), 'master'::public.app_role) OR public.has_role(auth.uid(), 'employee'::public.app_role)));
+
+
+--
+-- Name: fornecedor_omie_cache Staff can view fornecedor cache; Type: POLICY; Schema: public; Owner: -
+--
+
+CREATE POLICY "Staff can view fornecedor cache" ON public.fornecedor_omie_cache FOR SELECT TO authenticated USING ((EXISTS ( SELECT 1
+   FROM public.user_roles
+  WHERE ((user_roles.user_id = auth.uid()) AND (user_roles.role = ANY (ARRAY['master'::public.app_role, 'master'::public.app_role, 'employee'::public.app_role]))))));
+
+
+--
+-- Name: nfe_lotes_escaneados Staff can view nfe_lotes_escaneados; Type: POLICY; Schema: public; Owner: -
+--
+
+CREATE POLICY "Staff can view nfe_lotes_escaneados" ON public.nfe_lotes_escaneados FOR SELECT TO authenticated USING ((public.has_role(auth.uid(), 'master'::public.app_role) OR public.has_role(auth.uid(), 'employee'::public.app_role)));
+
+
+--
+-- Name: nfe_recebimento_itens Staff can view nfe_recebimento_itens; Type: POLICY; Schema: public; Owner: -
+--
+
+CREATE POLICY "Staff can view nfe_recebimento_itens" ON public.nfe_recebimento_itens FOR SELECT TO authenticated USING ((public.has_role(auth.uid(), 'master'::public.app_role) OR public.has_role(auth.uid(), 'employee'::public.app_role)));
+
+
+--
+-- Name: nfe_recebimentos Staff can view nfe_recebimentos; Type: POLICY; Schema: public; Owner: -
+--
+
+CREATE POLICY "Staff can view nfe_recebimentos" ON public.nfe_recebimentos FOR SELECT TO authenticated USING ((public.has_role(auth.uid(), 'master'::public.app_role) OR public.has_role(auth.uid(), 'employee'::public.app_role)));
+
+
+--
+-- Name: commercial_roles Staff can view own commercial role; Type: POLICY; Schema: public; Owner: -
+--
+
+CREATE POLICY "Staff can view own commercial role" ON public.commercial_roles FOR SELECT TO authenticated USING ((auth.uid() = user_id));
+
+
+--
+-- Name: customer_preferred_items Staff can view preferred items; Type: POLICY; Schema: public; Owner: -
+--
+
+CREATE POLICY "Staff can view preferred items" ON public.customer_preferred_items FOR SELECT TO authenticated USING ((EXISTS ( SELECT 1
+   FROM public.user_roles
+  WHERE ((user_roles.user_id = auth.uid()) AND (user_roles.role = ANY (ARRAY['master'::public.app_role, 'master'::public.app_role, 'employee'::public.app_role]))))));
+
+
+--
+-- Name: product_costs Staff can view product costs; Type: POLICY; Schema: public; Owner: -
+--
+
+CREATE POLICY "Staff can view product costs" ON public.product_costs FOR SELECT USING ((public.has_role(auth.uid(), 'master'::public.app_role) OR public.has_role(auth.uid(), 'employee'::public.app_role)));
+
+
+--
+-- Name: production_orders Staff can view production orders; Type: POLICY; Schema: public; Owner: -
+--
+
+CREATE POLICY "Staff can view production orders" ON public.production_orders FOR SELECT TO authenticated USING ((EXISTS ( SELECT 1
+   FROM public.user_roles
+  WHERE ((user_roles.user_id = auth.uid()) AND (user_roles.role = ANY (ARRAY['master'::public.app_role, 'employee'::public.app_role, 'master'::public.app_role]))))));
+
+
+--
+-- Name: score_recalc_queue Staff can view recalc queue; Type: POLICY; Schema: public; Owner: -
+--
+
+CREATE POLICY "Staff can view recalc queue" ON public.score_recalc_queue FOR SELECT USING ((public.has_role(auth.uid(), 'master'::public.app_role) OR public.has_role(auth.uid(), 'employee'::public.app_role)));
+
+
+--
+-- Name: tint_reconciliation_items Staff can view reconciliation_items; Type: POLICY; Schema: public; Owner: -
+--
+
+CREATE POLICY "Staff can view reconciliation_items" ON public.tint_reconciliation_items FOR SELECT TO authenticated USING ((public.has_role(auth.uid(), 'master'::public.app_role) OR public.has_role(auth.uid(), 'employee'::public.app_role)));
+
+
+--
+-- Name: tint_reconciliation_runs Staff can view reconciliation_runs; Type: POLICY; Schema: public; Owner: -
+--
+
+CREATE POLICY "Staff can view reconciliation_runs" ON public.tint_reconciliation_runs FOR SELECT TO authenticated USING ((public.has_role(auth.uid(), 'master'::public.app_role) OR public.has_role(auth.uid(), 'employee'::public.app_role)));
+
+
+--
+-- Name: sku_fornecedor_externo Staff can view sku mapping; Type: POLICY; Schema: public; Owner: -
+--
+
+CREATE POLICY "Staff can view sku mapping" ON public.sku_fornecedor_externo FOR SELECT TO authenticated USING ((public.has_role(auth.uid(), 'master'::public.app_role) OR public.has_role(auth.uid(), 'employee'::public.app_role)));
+
+
+--
+-- Name: tint_staging_bases Staff can view staging; Type: POLICY; Schema: public; Owner: -
+--
+
+CREATE POLICY "Staff can view staging" ON public.tint_staging_bases FOR SELECT TO authenticated USING ((public.has_role(auth.uid(), 'master'::public.app_role) OR public.has_role(auth.uid(), 'employee'::public.app_role)));
+
+
+--
+-- Name: tint_staging_corantes Staff can view staging; Type: POLICY; Schema: public; Owner: -
+--
+
+CREATE POLICY "Staff can view staging" ON public.tint_staging_corantes FOR SELECT TO authenticated USING ((public.has_role(auth.uid(), 'master'::public.app_role) OR public.has_role(auth.uid(), 'employee'::public.app_role)));
+
+
+--
+-- Name: tint_staging_cores_catalogo Staff can view staging; Type: POLICY; Schema: public; Owner: -
+--
+
+CREATE POLICY "Staff can view staging" ON public.tint_staging_cores_catalogo FOR SELECT TO authenticated USING ((public.has_role(auth.uid(), 'master'::public.app_role) OR public.has_role(auth.uid(), 'employee'::public.app_role)));
+
+
+--
+-- Name: tint_staging_cores_personalizadas Staff can view staging; Type: POLICY; Schema: public; Owner: -
+--
+
+CREATE POLICY "Staff can view staging" ON public.tint_staging_cores_personalizadas FOR SELECT TO authenticated USING ((public.has_role(auth.uid(), 'master'::public.app_role) OR public.has_role(auth.uid(), 'employee'::public.app_role)));
+
+
+--
+-- Name: tint_staging_embalagens Staff can view staging; Type: POLICY; Schema: public; Owner: -
+--
+
+CREATE POLICY "Staff can view staging" ON public.tint_staging_embalagens FOR SELECT TO authenticated USING ((public.has_role(auth.uid(), 'master'::public.app_role) OR public.has_role(auth.uid(), 'employee'::public.app_role)));
+
+
+--
+-- Name: tint_staging_formula_itens Staff can view staging; Type: POLICY; Schema: public; Owner: -
+--
+
+CREATE POLICY "Staff can view staging" ON public.tint_staging_formula_itens FOR SELECT TO authenticated USING ((public.has_role(auth.uid(), 'master'::public.app_role) OR public.has_role(auth.uid(), 'employee'::public.app_role)));
+
+
+--
+-- Name: tint_staging_formulas Staff can view staging; Type: POLICY; Schema: public; Owner: -
+--
+
+CREATE POLICY "Staff can view staging" ON public.tint_staging_formulas FOR SELECT TO authenticated USING ((public.has_role(auth.uid(), 'master'::public.app_role) OR public.has_role(auth.uid(), 'employee'::public.app_role)));
+
+
+--
+-- Name: tint_staging_preparacao_itens Staff can view staging; Type: POLICY; Schema: public; Owner: -
+--
+
+CREATE POLICY "Staff can view staging" ON public.tint_staging_preparacao_itens FOR SELECT TO authenticated USING ((public.has_role(auth.uid(), 'master'::public.app_role) OR public.has_role(auth.uid(), 'employee'::public.app_role)));
+
+
+--
+-- Name: tint_staging_preparacoes Staff can view staging; Type: POLICY; Schema: public; Owner: -
+--
+
+CREATE POLICY "Staff can view staging" ON public.tint_staging_preparacoes FOR SELECT TO authenticated USING ((public.has_role(auth.uid(), 'master'::public.app_role) OR public.has_role(auth.uid(), 'employee'::public.app_role)));
+
+
+--
+-- Name: tint_staging_produtos Staff can view staging; Type: POLICY; Schema: public; Owner: -
+--
+
+CREATE POLICY "Staff can view staging" ON public.tint_staging_produtos FOR SELECT TO authenticated USING ((public.has_role(auth.uid(), 'master'::public.app_role) OR public.has_role(auth.uid(), 'employee'::public.app_role)));
+
+
+--
+-- Name: tint_staging_skus Staff can view staging; Type: POLICY; Schema: public; Owner: -
+--
+
+CREATE POLICY "Staff can view staging" ON public.tint_staging_skus FOR SELECT TO authenticated USING ((public.has_role(auth.uid(), 'master'::public.app_role) OR public.has_role(auth.uid(), 'employee'::public.app_role)));
+
+
+--
+-- Name: farmer_performance_scores Staff can view their own scores; Type: POLICY; Schema: public; Owner: -
+--
+
+CREATE POLICY "Staff can view their own scores" ON public.farmer_performance_scores FOR SELECT USING ((public.has_role(auth.uid(), 'employee'::public.app_role) AND (farmer_id = auth.uid())));
+
+
+--
+-- Name: customer_visit_scores Staff can view their visit scores; Type: POLICY; Schema: public; Owner: -
+--
+
+CREATE POLICY "Staff can view their visit scores" ON public.customer_visit_scores FOR SELECT USING ((public.has_role(auth.uid(), 'master'::public.app_role) OR (public.has_role(auth.uid(), 'employee'::public.app_role) AND (farmer_id = auth.uid()))));
+
+
+--
+-- Name: tint_sync_errors Staff can view tint_sync_errors; Type: POLICY; Schema: public; Owner: -
+--
+
+CREATE POLICY "Staff can view tint_sync_errors" ON public.tint_sync_errors FOR SELECT TO authenticated USING ((public.has_role(auth.uid(), 'master'::public.app_role) OR public.has_role(auth.uid(), 'employee'::public.app_role)));
+
+
+--
+-- Name: tint_sync_runs Staff can view tint_sync_runs; Type: POLICY; Schema: public; Owner: -
+--
+
+CREATE POLICY "Staff can view tint_sync_runs" ON public.tint_sync_runs FOR SELECT TO authenticated USING ((public.has_role(auth.uid(), 'master'::public.app_role) OR public.has_role(auth.uid(), 'employee'::public.app_role)));
+
+
+--
+-- Name: visit_score_recalc_queue Staff can view visit recalc queue; Type: POLICY; Schema: public; Owner: -
+--
+
+CREATE POLICY "Staff can view visit recalc queue" ON public.visit_score_recalc_queue FOR SELECT USING ((public.has_role(auth.uid(), 'master'::public.app_role) OR public.has_role(auth.uid(), 'employee'::public.app_role)));
+
+
+--
+-- Name: categoria_aumento_familia_mapeamento Staff lê categoria_aumento_familia_mapeamento; Type: POLICY; Schema: public; Owner: -
+--
+
+CREATE POLICY "Staff lê categoria_aumento_familia_mapeamento" ON public.categoria_aumento_familia_mapeamento FOR SELECT TO authenticated USING ((public.has_role(auth.uid(), 'master'::public.app_role) OR public.has_role(auth.uid(), 'master'::public.app_role) OR public.has_role(auth.uid(), 'master'::public.app_role) OR public.has_role(auth.uid(), 'employee'::public.app_role)));
+
+
+--
+-- Name: des_checkin_qualitativo Staff lê des_checkin_qualitativo; Type: POLICY; Schema: public; Owner: -
+--
+
+CREATE POLICY "Staff lê des_checkin_qualitativo" ON public.des_checkin_qualitativo FOR SELECT TO authenticated USING ((public.has_role(auth.uid(), 'master'::public.app_role) OR public.has_role(auth.uid(), 'master'::public.app_role) OR public.has_role(auth.uid(), 'master'::public.app_role) OR public.has_role(auth.uid(), 'employee'::public.app_role)));
+
+
+--
+-- Name: des_checkin_qualitativo_resposta Staff lê des_checkin_qualitativo_resposta; Type: POLICY; Schema: public; Owner: -
+--
+
+CREATE POLICY "Staff lê des_checkin_qualitativo_resposta" ON public.des_checkin_qualitativo_resposta FOR SELECT TO authenticated USING ((public.has_role(auth.uid(), 'master'::public.app_role) OR public.has_role(auth.uid(), 'master'::public.app_role) OR public.has_role(auth.uid(), 'master'::public.app_role) OR public.has_role(auth.uid(), 'employee'::public.app_role)));
+
+
+--
+-- Name: des_contrato_versao Staff lê des_contrato_versao; Type: POLICY; Schema: public; Owner: -
+--
+
+CREATE POLICY "Staff lê des_contrato_versao" ON public.des_contrato_versao FOR SELECT TO authenticated USING ((public.has_role(auth.uid(), 'master'::public.app_role) OR public.has_role(auth.uid(), 'master'::public.app_role) OR public.has_role(auth.uid(), 'master'::public.app_role) OR public.has_role(auth.uid(), 'employee'::public.app_role)));
+
+
+--
+-- Name: des_criterio_percentual Staff lê des_criterio_percentual; Type: POLICY; Schema: public; Owner: -
+--
+
+CREATE POLICY "Staff lê des_criterio_percentual" ON public.des_criterio_percentual FOR SELECT TO authenticated USING ((public.has_role(auth.uid(), 'master'::public.app_role) OR public.has_role(auth.uid(), 'master'::public.app_role) OR public.has_role(auth.uid(), 'master'::public.app_role) OR public.has_role(auth.uid(), 'employee'::public.app_role)));
+
+
+--
+-- Name: des_criterio_qualitativo Staff lê des_criterio_qualitativo; Type: POLICY; Schema: public; Owner: -
+--
+
+CREATE POLICY "Staff lê des_criterio_qualitativo" ON public.des_criterio_qualitativo FOR SELECT TO authenticated USING ((public.has_role(auth.uid(), 'master'::public.app_role) OR public.has_role(auth.uid(), 'master'::public.app_role) OR public.has_role(auth.uid(), 'master'::public.app_role) OR public.has_role(auth.uid(), 'employee'::public.app_role)));
+
+
+--
+-- Name: des_faixa_quantitativa Staff lê des_faixa_quantitativa; Type: POLICY; Schema: public; Owner: -
+--
+
+CREATE POLICY "Staff lê des_faixa_quantitativa" ON public.des_faixa_quantitativa FOR SELECT TO authenticated USING ((public.has_role(auth.uid(), 'master'::public.app_role) OR public.has_role(auth.uid(), 'master'::public.app_role) OR public.has_role(auth.uid(), 'master'::public.app_role) OR public.has_role(auth.uid(), 'employee'::public.app_role)));
+
+
+--
+-- Name: des_meta_empresa Staff lê des_meta_empresa; Type: POLICY; Schema: public; Owner: -
+--
+
+CREATE POLICY "Staff lê des_meta_empresa" ON public.des_meta_empresa FOR SELECT TO authenticated USING ((public.has_role(auth.uid(), 'master'::public.app_role) OR public.has_role(auth.uid(), 'master'::public.app_role) OR public.has_role(auth.uid(), 'master'::public.app_role) OR public.has_role(auth.uid(), 'employee'::public.app_role)));
+
+
+--
+-- Name: des_trimestre_snapshot Staff lê des_trimestre_snapshot; Type: POLICY; Schema: public; Owner: -
+--
+
+CREATE POLICY "Staff lê des_trimestre_snapshot" ON public.des_trimestre_snapshot FOR SELECT TO authenticated USING ((public.has_role(auth.uid(), 'master'::public.app_role) OR public.has_role(auth.uid(), 'master'::public.app_role) OR public.has_role(auth.uid(), 'master'::public.app_role) OR public.has_role(auth.uid(), 'employee'::public.app_role)));
+
+
+--
+-- Name: fornecedor_alerta Staff lê fornecedor_alerta; Type: POLICY; Schema: public; Owner: -
+--
+
+CREATE POLICY "Staff lê fornecedor_alerta" ON public.fornecedor_alerta FOR SELECT TO authenticated USING ((public.has_role(auth.uid(), 'master'::public.app_role) OR public.has_role(auth.uid(), 'master'::public.app_role) OR public.has_role(auth.uid(), 'master'::public.app_role) OR public.has_role(auth.uid(), 'employee'::public.app_role)));
+
+
+--
+-- Name: fornecedor_aumento_anunciado Staff lê fornecedor_aumento_anunciado; Type: POLICY; Schema: public; Owner: -
+--
+
+CREATE POLICY "Staff lê fornecedor_aumento_anunciado" ON public.fornecedor_aumento_anunciado FOR SELECT TO authenticated USING ((public.has_role(auth.uid(), 'master'::public.app_role) OR public.has_role(auth.uid(), 'master'::public.app_role) OR public.has_role(auth.uid(), 'master'::public.app_role) OR public.has_role(auth.uid(), 'employee'::public.app_role)));
+
+
+--
+-- Name: fornecedor_aumento_item Staff lê fornecedor_aumento_item; Type: POLICY; Schema: public; Owner: -
+--
+
+CREATE POLICY "Staff lê fornecedor_aumento_item" ON public.fornecedor_aumento_item FOR SELECT TO authenticated USING ((public.has_role(auth.uid(), 'master'::public.app_role) OR public.has_role(auth.uid(), 'master'::public.app_role) OR public.has_role(auth.uid(), 'master'::public.app_role) OR public.has_role(auth.uid(), 'employee'::public.app_role)));
+
+
+--
+-- Name: fornecedor_custo_adicional_config Staff lê fornecedor_custo_adicional_config; Type: POLICY; Schema: public; Owner: -
+--
+
+CREATE POLICY "Staff lê fornecedor_custo_adicional_config" ON public.fornecedor_custo_adicional_config FOR SELECT TO authenticated USING ((public.has_role(auth.uid(), 'master'::public.app_role) OR public.has_role(auth.uid(), 'master'::public.app_role) OR public.has_role(auth.uid(), 'master'::public.app_role) OR public.has_role(auth.uid(), 'employee'::public.app_role)));
+
+
+--
+-- Name: fornecedor_email_polling Staff lê fornecedor_email_polling; Type: POLICY; Schema: public; Owner: -
+--
+
+CREATE POLICY "Staff lê fornecedor_email_polling" ON public.fornecedor_email_polling FOR SELECT TO authenticated USING ((public.has_role(auth.uid(), 'master'::public.app_role) OR public.has_role(auth.uid(), 'master'::public.app_role) OR public.has_role(auth.uid(), 'master'::public.app_role) OR public.has_role(auth.uid(), 'employee'::public.app_role)));
+
+
+--
+-- Name: fornecedor_email_polling_log Staff lê fornecedor_email_polling_log; Type: POLICY; Schema: public; Owner: -
+--
+
+CREATE POLICY "Staff lê fornecedor_email_polling_log" ON public.fornecedor_email_polling_log FOR SELECT TO authenticated USING ((public.has_role(auth.uid(), 'master'::public.app_role) OR public.has_role(auth.uid(), 'master'::public.app_role) OR public.has_role(auth.uid(), 'master'::public.app_role) OR public.has_role(auth.uid(), 'employee'::public.app_role)));
+
+
+--
+-- Name: fornecedor_prazo_pagamento_config Staff lê fornecedor_prazo_pagamento_config; Type: POLICY; Schema: public; Owner: -
+--
+
+CREATE POLICY "Staff lê fornecedor_prazo_pagamento_config" ON public.fornecedor_prazo_pagamento_config FOR SELECT TO authenticated USING ((public.has_role(auth.uid(), 'master'::public.app_role) OR public.has_role(auth.uid(), 'master'::public.app_role) OR public.has_role(auth.uid(), 'master'::public.app_role) OR public.has_role(auth.uid(), 'employee'::public.app_role)));
+
+
+--
+-- Name: gmail_webhook_log Staff lê gmail_webhook_log; Type: POLICY; Schema: public; Owner: -
+--
+
+CREATE POLICY "Staff lê gmail_webhook_log" ON public.gmail_webhook_log FOR SELECT TO authenticated USING ((public.has_role(auth.uid(), 'master'::public.app_role) OR public.has_role(auth.uid(), 'master'::public.app_role) OR public.has_role(auth.uid(), 'master'::public.app_role) OR public.has_role(auth.uid(), 'employee'::public.app_role)));
+
+
+--
+-- Name: sugestao_negociacao_paralela Staff lê sugestões; Type: POLICY; Schema: public; Owner: -
+--
+
+CREATE POLICY "Staff lê sugestões" ON public.sugestao_negociacao_paralela FOR SELECT TO authenticated USING ((public.has_role(auth.uid(), 'master'::public.app_role) OR public.has_role(auth.uid(), 'master'::public.app_role) OR public.has_role(auth.uid(), 'master'::public.app_role) OR public.has_role(auth.uid(), 'employee'::public.app_role)));
+
+
+--
+-- Name: eventos_outlier Staff pode atualizar outliers; Type: POLICY; Schema: public; Owner: -
+--
+
+CREATE POLICY "Staff pode atualizar outliers" ON public.eventos_outlier FOR UPDATE TO authenticated USING ((public.has_role(auth.uid(), 'master'::public.app_role) OR public.has_role(auth.uid(), 'master'::public.app_role) OR public.has_role(auth.uid(), 'employee'::public.app_role)));
+
+
+--
+-- Name: fornecedor_cadeia_logistica_historico Staff pode ler historico cadeia; Type: POLICY; Schema: public; Owner: -
+--
+
+CREATE POLICY "Staff pode ler historico cadeia" ON public.fornecedor_cadeia_logistica_historico FOR SELECT TO authenticated USING ((public.has_role(auth.uid(), 'master'::public.app_role) OR public.has_role(auth.uid(), 'master'::public.app_role) OR public.has_role(auth.uid(), 'employee'::public.app_role)));
+
+
+--
+-- Name: observacoes_excluidas Staff pode ver observacoes excluidas; Type: POLICY; Schema: public; Owner: -
+--
+
+CREATE POLICY "Staff pode ver observacoes excluidas" ON public.observacoes_excluidas FOR SELECT TO authenticated USING ((public.has_role(auth.uid(), 'master'::public.app_role) OR public.has_role(auth.uid(), 'master'::public.app_role) OR public.has_role(auth.uid(), 'employee'::public.app_role)));
+
+
+--
+-- Name: eventos_outlier Staff pode ver outliers; Type: POLICY; Schema: public; Owner: -
+--
+
+CREATE POLICY "Staff pode ver outliers" ON public.eventos_outlier FOR SELECT TO authenticated USING ((public.has_role(auth.uid(), 'master'::public.app_role) OR public.has_role(auth.uid(), 'master'::public.app_role) OR public.has_role(auth.uid(), 'employee'::public.app_role)));
+
+
+--
+-- Name: omie_vendedor_map Staff view vendedor map; Type: POLICY; Schema: public; Owner: -
+--
+
+CREATE POLICY "Staff view vendedor map" ON public.omie_vendedor_map FOR SELECT USING ((public.has_role(auth.uid(), 'master'::public.app_role) OR public.has_role(auth.uid(), 'employee'::public.app_role)));
+
+
+--
+-- Name: promocao_campanha Staff vê campanhas; Type: POLICY; Schema: public; Owner: -
+--
+
+CREATE POLICY "Staff vê campanhas" ON public.promocao_campanha FOR SELECT USING ((public.has_role(auth.uid(), 'master'::public.app_role) OR public.has_role(auth.uid(), 'master'::public.app_role) OR public.has_role(auth.uid(), 'master'::public.app_role) OR public.has_role(auth.uid(), 'employee'::public.app_role)));
+
+
+--
+-- Name: promocao_item Staff vê itens; Type: POLICY; Schema: public; Owner: -
+--
+
+CREATE POLICY "Staff vê itens" ON public.promocao_item FOR SELECT USING ((public.has_role(auth.uid(), 'master'::public.app_role) OR public.has_role(auth.uid(), 'master'::public.app_role) OR public.has_role(auth.uid(), 'master'::public.app_role) OR public.has_role(auth.uid(), 'employee'::public.app_role)));
+
+
+--
+-- Name: promocao_negociacao_evento Staff vê negociacao; Type: POLICY; Schema: public; Owner: -
+--
+
+CREATE POLICY "Staff vê negociacao" ON public.promocao_negociacao_evento FOR SELECT TO authenticated USING ((public.has_role(auth.uid(), 'master'::public.app_role) OR public.has_role(auth.uid(), 'master'::public.app_role) OR public.has_role(auth.uid(), 'employee'::public.app_role)));
+
+
+--
+-- Name: margin_audit_log Strategic+ can view margin audit; Type: POLICY; Schema: public; Owner: -
+--
+
+CREATE POLICY "Strategic+ can view margin audit" ON public.margin_audit_log FOR SELECT TO authenticated USING ((public.is_super_admin(auth.uid()) OR (( SELECT commercial_roles.commercial_role
+   FROM public.commercial_roles
+  WHERE (commercial_roles.user_id = auth.uid())) = 'estrategico'::public.commercial_role)));
+
+
+--
+-- Name: commercial_roles Super admins can manage commercial roles; Type: POLICY; Schema: public; Owner: -
+--
+
+CREATE POLICY "Super admins can manage commercial roles" ON public.commercial_roles TO authenticated USING (public.is_super_admin(auth.uid())) WITH CHECK (public.is_super_admin(auth.uid()));
+
+
+--
+-- Name: margin_audit_log System can insert margin audit; Type: POLICY; Schema: public; Owner: -
+--
+
+CREATE POLICY "System can insert margin audit" ON public.margin_audit_log FOR INSERT TO authenticated WITH CHECK ((public.has_role(auth.uid(), 'master'::public.app_role) OR public.has_role(auth.uid(), 'employee'::public.app_role)));
+
+
+--
+-- Name: order_reviews Users can create reviews for their orders; Type: POLICY; Schema: public; Owner: -
+--
+
+CREATE POLICY "Users can create reviews for their orders" ON public.order_reviews FOR INSERT WITH CHECK (((auth.uid() = user_id) AND (EXISTS ( SELECT 1
+   FROM public.orders
+  WHERE ((orders.id = order_reviews.order_id) AND (orders.user_id = auth.uid()))))));
+
+
+--
+-- Name: addresses Users can create their own addresses; Type: POLICY; Schema: public; Owner: -
+--
+
+CREATE POLICY "Users can create their own addresses" ON public.addresses FOR INSERT WITH CHECK ((auth.uid() = user_id));
+
+
+--
+-- Name: training_completions Users can create their own completions; Type: POLICY; Schema: public; Owner: -
+--
+
+CREATE POLICY "Users can create their own completions" ON public.training_completions FOR INSERT WITH CHECK ((auth.uid() = user_id));
+
+
+--
+-- Name: webauthn_credentials Users can create their own credentials; Type: POLICY; Schema: public; Owner: -
+--
+
+CREATE POLICY "Users can create their own credentials" ON public.webauthn_credentials FOR INSERT WITH CHECK ((auth.uid() = user_id));
+
+
+--
+-- Name: orders Users can create their own orders; Type: POLICY; Schema: public; Owner: -
+--
+
+CREATE POLICY "Users can create their own orders" ON public.orders FOR INSERT WITH CHECK ((auth.uid() = user_id));
+
+
+--
+-- Name: loyalty_redemptions Users can create their own redemptions; Type: POLICY; Schema: public; Owner: -
+--
+
+CREATE POLICY "Users can create their own redemptions" ON public.loyalty_redemptions FOR INSERT TO authenticated WITH CHECK ((auth.uid() = user_id));
+
+
+--
+-- Name: referrals Users can create their own referrals; Type: POLICY; Schema: public; Owner: -
+--
+
+CREATE POLICY "Users can create their own referrals" ON public.referrals FOR INSERT WITH CHECK ((auth.uid() = referrer_id));
+
+
+--
+-- Name: recurring_schedules Users can create their own schedules; Type: POLICY; Schema: public; Owner: -
+--
+
+CREATE POLICY "Users can create their own schedules" ON public.recurring_schedules FOR INSERT WITH CHECK ((auth.uid() = user_id));
+
+
+--
+-- Name: user_tools Users can create their own tools; Type: POLICY; Schema: public; Owner: -
+--
+
+CREATE POLICY "Users can create their own tools" ON public.user_tools FOR INSERT WITH CHECK ((auth.uid() = user_id));
+
+
+--
+-- Name: addresses Users can delete their own addresses; Type: POLICY; Schema: public; Owner: -
+--
+
+CREATE POLICY "Users can delete their own addresses" ON public.addresses FOR DELETE USING ((auth.uid() = user_id));
+
+
+--
+-- Name: webauthn_credentials Users can delete their own credentials; Type: POLICY; Schema: public; Owner: -
+--
+
+CREATE POLICY "Users can delete their own credentials" ON public.webauthn_credentials FOR DELETE USING ((auth.uid() = user_id));
+
+
+--
+-- Name: recurring_schedules Users can delete their own schedules; Type: POLICY; Schema: public; Owner: -
+--
+
+CREATE POLICY "Users can delete their own schedules" ON public.recurring_schedules FOR DELETE USING ((auth.uid() = user_id));
+
+
+--
+-- Name: user_tools Users can delete their own tools; Type: POLICY; Schema: public; Owner: -
+--
+
+CREATE POLICY "Users can delete their own tools" ON public.user_tools FOR DELETE USING ((auth.uid() = user_id));
+
+
+--
+-- Name: loyalty_points Users can earn points; Type: POLICY; Schema: public; Owner: -
+--
+
+CREATE POLICY "Users can earn points" ON public.loyalty_points FOR INSERT WITH CHECK (((auth.uid() = user_id) AND (type = 'earn'::text)));
+
+
+--
+-- Name: tool_events Users can insert events for their tools; Type: POLICY; Schema: public; Owner: -
+--
+
+CREATE POLICY "Users can insert events for their tools" ON public.tool_events FOR INSERT WITH CHECK ((EXISTS ( SELECT 1
+   FROM public.user_tools
+  WHERE ((user_tools.id = tool_events.user_tool_id) AND (user_tools.user_id = auth.uid())))));
+
+
+--
+-- Name: profiles Users can insert own profile; Type: POLICY; Schema: public; Owner: -
+--
+
+CREATE POLICY "Users can insert own profile" ON public.profiles FOR INSERT TO authenticated WITH CHECK (((auth.uid() = user_id) AND (is_employee = false)));
+
+
+--
+-- Name: order_messages Users can send messages on their orders; Type: POLICY; Schema: public; Owner: -
+--
+
+CREATE POLICY "Users can send messages on their orders" ON public.order_messages FOR INSERT WITH CHECK (((auth.uid() = sender_id) AND ((EXISTS ( SELECT 1
+   FROM public.orders
+  WHERE ((orders.id = order_messages.order_id) AND (orders.user_id = auth.uid())))) OR public.has_role(auth.uid(), 'master'::public.app_role) OR public.has_role(auth.uid(), 'employee'::public.app_role))));
+
+
+--
+-- Name: profiles Users can update own profile; Type: POLICY; Schema: public; Owner: -
+--
+
+CREATE POLICY "Users can update own profile" ON public.profiles FOR UPDATE TO authenticated USING ((auth.uid() = user_id)) WITH CHECK (((auth.uid() = user_id) AND (is_employee = false)));
+
+
+--
+-- Name: order_messages Users can update read status; Type: POLICY; Schema: public; Owner: -
+--
+
+CREATE POLICY "Users can update read status" ON public.order_messages FOR UPDATE USING (((EXISTS ( SELECT 1
+   FROM public.orders
+  WHERE ((orders.id = order_messages.order_id) AND (orders.user_id = auth.uid())))) OR public.has_role(auth.uid(), 'master'::public.app_role) OR public.has_role(auth.uid(), 'employee'::public.app_role)));
+
+
+--
+-- Name: addresses Users can update their own addresses; Type: POLICY; Schema: public; Owner: -
+--
+
+CREATE POLICY "Users can update their own addresses" ON public.addresses FOR UPDATE USING ((auth.uid() = user_id));
+
+
+--
+-- Name: webauthn_credentials Users can update their own credentials; Type: POLICY; Schema: public; Owner: -
+--
+
+CREATE POLICY "Users can update their own credentials" ON public.webauthn_credentials FOR UPDATE USING ((auth.uid() = user_id));
+
+
+--
+-- Name: orders Users can update their own orders; Type: POLICY; Schema: public; Owner: -
+--
+
+CREATE POLICY "Users can update their own orders" ON public.orders FOR UPDATE USING ((auth.uid() = user_id));
+
+
+--
+-- Name: recurring_schedules Users can update their own schedules; Type: POLICY; Schema: public; Owner: -
+--
+
+CREATE POLICY "Users can update their own schedules" ON public.recurring_schedules FOR UPDATE USING ((auth.uid() = user_id));
+
+
+--
+-- Name: gamification_scores Users can update their own score; Type: POLICY; Schema: public; Owner: -
+--
+
+CREATE POLICY "Users can update their own score" ON public.gamification_scores FOR UPDATE USING ((auth.uid() = user_id));
+
+
+--
+-- Name: user_tools Users can update their own tools; Type: POLICY; Schema: public; Owner: -
+--
+
+CREATE POLICY "Users can update their own tools" ON public.user_tools FOR UPDATE USING ((auth.uid() = user_id));
+
+
+--
+-- Name: gamification_scores Users can upsert their own score; Type: POLICY; Schema: public; Owner: -
+--
+
+CREATE POLICY "Users can upsert their own score" ON public.gamification_scores FOR INSERT WITH CHECK ((auth.uid() = user_id));
+
+
+--
+-- Name: tool_events Users can view events for their tools; Type: POLICY; Schema: public; Owner: -
+--
+
+CREATE POLICY "Users can view events for their tools" ON public.tool_events FOR SELECT USING ((EXISTS ( SELECT 1
+   FROM public.user_tools
+  WHERE ((user_tools.id = tool_events.user_tool_id) AND (user_tools.user_id = auth.uid())))));
+
+
+--
+-- Name: order_messages Users can view messages on their orders; Type: POLICY; Schema: public; Owner: -
+--
+
+CREATE POLICY "Users can view messages on their orders" ON public.order_messages FOR SELECT USING (((EXISTS ( SELECT 1
+   FROM public.orders
+  WHERE ((orders.id = order_messages.order_id) AND (orders.user_id = auth.uid())))) OR public.has_role(auth.uid(), 'master'::public.app_role) OR public.has_role(auth.uid(), 'employee'::public.app_role)));
+
+
+--
+-- Name: permission_overrides Users can view own overrides; Type: POLICY; Schema: public; Owner: -
+--
+
+CREATE POLICY "Users can view own overrides" ON public.permission_overrides FOR SELECT TO authenticated USING ((auth.uid() = user_id));
+
+
+--
+-- Name: addresses Users can view their own addresses; Type: POLICY; Schema: public; Owner: -
+--
+
+CREATE POLICY "Users can view their own addresses" ON public.addresses FOR SELECT USING ((auth.uid() = user_id));
+
+
+--
+-- Name: training_completions Users can view their own completions; Type: POLICY; Schema: public; Owner: -
+--
+
+CREATE POLICY "Users can view their own completions" ON public.training_completions FOR SELECT USING ((auth.uid() = user_id));
+
+
+--
+-- Name: webauthn_credentials Users can view their own credentials; Type: POLICY; Schema: public; Owner: -
+--
+
+CREATE POLICY "Users can view their own credentials" ON public.webauthn_credentials FOR SELECT USING ((auth.uid() = user_id));
+
+
+--
+-- Name: gamification_scores Users can view their own gamification score; Type: POLICY; Schema: public; Owner: -
+--
+
+CREATE POLICY "Users can view their own gamification score" ON public.gamification_scores FOR SELECT USING ((auth.uid() = user_id));
+
+
+--
+-- Name: omie_clientes Users can view their own omie client mapping; Type: POLICY; Schema: public; Owner: -
+--
+
+CREATE POLICY "Users can view their own omie client mapping" ON public.omie_clientes FOR SELECT USING ((auth.uid() = user_id));
+
+
+--
+-- Name: omie_ordens_servico Users can view their own order sync data; Type: POLICY; Schema: public; Owner: -
+--
+
+CREATE POLICY "Users can view their own order sync data" ON public.omie_ordens_servico FOR SELECT TO authenticated USING ((EXISTS ( SELECT 1
+   FROM public.orders
+  WHERE ((orders.id = omie_ordens_servico.order_id) AND (orders.user_id = auth.uid())))));
+
+
+--
+-- Name: orders Users can view their own orders; Type: POLICY; Schema: public; Owner: -
+--
+
+CREATE POLICY "Users can view their own orders" ON public.orders FOR SELECT USING ((auth.uid() = user_id));
+
+
+--
+-- Name: loyalty_points Users can view their own points; Type: POLICY; Schema: public; Owner: -
+--
+
+CREATE POLICY "Users can view their own points" ON public.loyalty_points FOR SELECT USING ((auth.uid() = user_id));
+
+
+--
+-- Name: order_price_history Users can view their own price history; Type: POLICY; Schema: public; Owner: -
+--
+
+CREATE POLICY "Users can view their own price history" ON public.order_price_history FOR SELECT USING ((auth.uid() = user_id));
+
+
+--
+-- Name: profiles Users can view their own profile; Type: POLICY; Schema: public; Owner: -
+--
+
+CREATE POLICY "Users can view their own profile" ON public.profiles FOR SELECT USING ((auth.uid() = user_id));
+
+
+--
+-- Name: sending_quality_logs Users can view their own quality logs; Type: POLICY; Schema: public; Owner: -
+--
+
+CREATE POLICY "Users can view their own quality logs" ON public.sending_quality_logs FOR SELECT USING ((auth.uid() = user_id));
+
+
+--
+-- Name: loyalty_redemptions Users can view their own redemptions; Type: POLICY; Schema: public; Owner: -
+--
+
+CREATE POLICY "Users can view their own redemptions" ON public.loyalty_redemptions FOR SELECT TO authenticated USING ((auth.uid() = user_id));
+
+
+--
+-- Name: order_reviews Users can view their own reviews; Type: POLICY; Schema: public; Owner: -
+--
+
+CREATE POLICY "Users can view their own reviews" ON public.order_reviews FOR SELECT USING ((auth.uid() = user_id));
+
+
+--
+-- Name: user_roles Users can view their own roles; Type: POLICY; Schema: public; Owner: -
+--
+
+CREATE POLICY "Users can view their own roles" ON public.user_roles FOR SELECT USING ((auth.uid() = user_id));
+
+
+--
+-- Name: recurring_schedules Users can view their own schedules; Type: POLICY; Schema: public; Owner: -
+--
+
+CREATE POLICY "Users can view their own schedules" ON public.recurring_schedules FOR SELECT USING ((auth.uid() = user_id));
+
+
+--
+-- Name: user_tools Users can view their own tools; Type: POLICY; Schema: public; Owner: -
+--
+
+CREATE POLICY "Users can view their own tools" ON public.user_tools FOR SELECT USING ((auth.uid() = user_id));
+
+
+--
+-- Name: carteira_assignments View carteira por visibilidade; Type: POLICY; Schema: public; Owner: -
+--
+
+CREATE POLICY "View carteira por visibilidade" ON public.carteira_assignments FOR SELECT USING (public.carteira_visivel_para(customer_user_id, auth.uid()));
+
+
+--
+-- Name: carteira_coverage View coverage envolvido; Type: POLICY; Schema: public; Owner: -
+--
+
+CREATE POLICY "View coverage envolvido" ON public.carteira_coverage FOR SELECT USING ((public.has_role(auth.uid(), 'master'::public.app_role) OR (covering_user_id = auth.uid()) OR (covered_user_id = auth.uid())));
+
+
+--
+-- Name: abc_xyz_classification; Type: ROW SECURITY; Schema: public; Owner: -
+--
+
+ALTER TABLE public.abc_xyz_classification ENABLE ROW LEVEL SECURITY;
+
+--
+-- Name: addresses; Type: ROW SECURITY; Schema: public; Owner: -
+--
+
+ALTER TABLE public.addresses ENABLE ROW LEVEL SECURITY;
+
+--
+-- Name: roadmap_state admin_roadmap_state_all; Type: POLICY; Schema: public; Owner: -
+--
+
+CREATE POLICY admin_roadmap_state_all ON public.roadmap_state TO authenticated USING (public.has_role(auth.uid(), 'master'::public.app_role)) WITH CHECK (public.has_role(auth.uid(), 'master'::public.app_role));
+
+
+--
+-- Name: ai_decision_audit_log; Type: ROW SECURITY; Schema: public; Owner: -
+--
+
+ALTER TABLE public.ai_decision_audit_log ENABLE ROW LEVEL SECURITY;
+
+--
+-- Name: ai_decisions; Type: ROW SECURITY; Schema: public; Owner: -
+--
+
+ALTER TABLE public.ai_decisions ENABLE ROW LEVEL SECURITY;
+
+--
+-- Name: cache_lotes; Type: ROW SECURITY; Schema: public; Owner: -
+--
+
+ALTER TABLE public.cache_lotes ENABLE ROW LEVEL SECURITY;
+
+--
+-- Name: calendario_feriados; Type: ROW SECURITY; Schema: public; Owner: -
+--
+
+ALTER TABLE public.calendario_feriados ENABLE ROW LEVEL SECURITY;
+
+--
+-- Name: call_log; Type: ROW SECURITY; Schema: public; Owner: -
+--
+
+ALTER TABLE public.call_log ENABLE ROW LEVEL SECURITY;
+
+--
+-- Name: call_log call_log own insert; Type: POLICY; Schema: public; Owner: -
+--
+
+CREATE POLICY "call_log own insert" ON public.call_log FOR INSERT WITH CHECK ((farmer_id = auth.uid()));
+
+
+--
+-- Name: call_log call_log own select; Type: POLICY; Schema: public; Owner: -
+--
+
+CREATE POLICY "call_log own select" ON public.call_log FOR SELECT USING ((farmer_id = auth.uid()));
+
+
+--
+-- Name: call_log call_log own update; Type: POLICY; Schema: public; Owner: -
+--
+
+CREATE POLICY "call_log own update" ON public.call_log FOR UPDATE USING ((farmer_id = auth.uid()));
+
+
+--
+-- Name: call_log call_log team select; Type: POLICY; Schema: public; Owner: -
+--
+
+CREATE POLICY "call_log team select" ON public.call_log FOR SELECT USING ((public.has_role(auth.uid(), 'master'::public.app_role) OR (EXISTS ( SELECT 1
+   FROM public.commercial_roles cr
+  WHERE ((cr.user_id = auth.uid()) AND (cr.commercial_role = ANY (ARRAY['gerencial'::public.commercial_role, 'estrategico'::public.commercial_role, 'super_admin'::public.commercial_role])))))));
+
+
+--
+-- Name: carteira_assignments; Type: ROW SECURITY; Schema: public; Owner: -
+--
+
+ALTER TABLE public.carteira_assignments ENABLE ROW LEVEL SECURITY;
+
+--
+-- Name: carteira_coverage; Type: ROW SECURITY; Schema: public; Owner: -
+--
+
+ALTER TABLE public.carteira_coverage ENABLE ROW LEVEL SECURITY;
+
+--
+-- Name: categoria_aumento_familia_mapeamento; Type: ROW SECURITY; Schema: public; Owner: -
+--
+
+ALTER TABLE public.categoria_aumento_familia_mapeamento ENABLE ROW LEVEL SECURITY;
+
+--
+-- Name: category_mappings; Type: ROW SECURITY; Schema: public; Owner: -
+--
+
+ALTER TABLE public.category_mappings ENABLE ROW LEVEL SECURITY;
+
+--
+-- Name: cockpit_audit_log; Type: ROW SECURITY; Schema: public; Owner: -
+--
+
+ALTER TABLE public.cockpit_audit_log ENABLE ROW LEVEL SECURITY;
+
+--
+-- Name: commercial_roles; Type: ROW SECURITY; Schema: public; Owner: -
+--
+
+ALTER TABLE public.commercial_roles ENABLE ROW LEVEL SECURITY;
+
+--
+-- Name: company_cnpjs; Type: ROW SECURITY; Schema: public; Owner: -
+--
+
+ALTER TABLE public.company_cnpjs ENABLE ROW LEVEL SECURITY;
+
+--
+-- Name: company_cnpjs company_cnpjs_master_write; Type: POLICY; Schema: public; Owner: -
+--
+
+CREATE POLICY company_cnpjs_master_write ON public.company_cnpjs USING ((EXISTS ( SELECT 1
+   FROM public.user_roles
+  WHERE ((user_roles.user_id = auth.uid()) AND (user_roles.role = 'master'::public.app_role))))) WITH CHECK ((EXISTS ( SELECT 1
+   FROM public.user_roles
+  WHERE ((user_roles.user_id = auth.uid()) AND (user_roles.role = 'master'::public.app_role)))));
+
+
+--
+-- Name: company_cnpjs company_cnpjs_select_authenticated; Type: POLICY; Schema: public; Owner: -
+--
+
+CREATE POLICY company_cnpjs_select_authenticated ON public.company_cnpjs FOR SELECT USING ((auth.role() = 'authenticated'::text));
+
+
+--
+-- Name: company_config; Type: ROW SECURITY; Schema: public; Owner: -
+--
+
+ALTER TABLE public.company_config ENABLE ROW LEVEL SECURITY;
+
+--
+-- Name: company_config company_config_staff_select; Type: POLICY; Schema: public; Owner: -
+--
+
+CREATE POLICY company_config_staff_select ON public.company_config FOR SELECT TO authenticated USING ((public.has_role(auth.uid(), 'employee'::public.app_role) OR public.has_role(auth.uid(), 'master'::public.app_role)));
+
+
+--
+-- Name: company_profiles; Type: ROW SECURITY; Schema: public; Owner: -
+--
+
+ALTER TABLE public.company_profiles ENABLE ROW LEVEL SECURITY;
+
+--
+-- Name: conversao_unidades; Type: ROW SECURITY; Schema: public; Owner: -
+--
+
+ALTER TABLE public.conversao_unidades ENABLE ROW LEVEL SECURITY;
+
+--
+-- Name: cte_associados; Type: ROW SECURITY; Schema: public; Owner: -
+--
+
+ALTER TABLE public.cte_associados ENABLE ROW LEVEL SECURITY;
+
+--
+-- Name: customer_contacts; Type: ROW SECURITY; Schema: public; Owner: -
+--
+
+ALTER TABLE public.customer_contacts ENABLE ROW LEVEL SECURITY;
+
+--
+-- Name: customer_contacts customer_contacts_delete_master; Type: POLICY; Schema: public; Owner: -
+--
+
+CREATE POLICY customer_contacts_delete_master ON public.customer_contacts FOR DELETE USING (public.has_role(auth.uid(), 'master'::public.app_role));
+
+
+--
+-- Name: customer_contacts customer_contacts_insert_staff; Type: POLICY; Schema: public; Owner: -
+--
+
+CREATE POLICY customer_contacts_insert_staff ON public.customer_contacts FOR INSERT WITH CHECK ((public.has_role(auth.uid(), 'employee'::public.app_role) OR public.has_role(auth.uid(), 'master'::public.app_role)));
+
+
+--
+-- Name: customer_contacts customer_contacts_select_staff; Type: POLICY; Schema: public; Owner: -
+--
+
+CREATE POLICY customer_contacts_select_staff ON public.customer_contacts FOR SELECT USING ((public.has_role(auth.uid(), 'employee'::public.app_role) OR public.has_role(auth.uid(), 'master'::public.app_role)));
+
+
+--
+-- Name: customer_contacts customer_contacts_update_staff; Type: POLICY; Schema: public; Owner: -
+--
+
+CREATE POLICY customer_contacts_update_staff ON public.customer_contacts FOR UPDATE USING ((public.has_role(auth.uid(), 'employee'::public.app_role) OR public.has_role(auth.uid(), 'master'::public.app_role)));
+
+
+--
+-- Name: customer_preferred_items; Type: ROW SECURITY; Schema: public; Owner: -
+--
+
+ALTER TABLE public.customer_preferred_items ENABLE ROW LEVEL SECURITY;
+
+--
+-- Name: customer_processes; Type: ROW SECURITY; Schema: public; Owner: -
+--
+
+ALTER TABLE public.customer_processes ENABLE ROW LEVEL SECURITY;
+
+--
+-- Name: customer_processes customer_processes_delete_master; Type: POLICY; Schema: public; Owner: -
+--
+
+CREATE POLICY customer_processes_delete_master ON public.customer_processes FOR DELETE USING (public.has_role(auth.uid(), 'master'::public.app_role));
+
+
+--
+-- Name: customer_processes customer_processes_insert_staff; Type: POLICY; Schema: public; Owner: -
+--
+
+CREATE POLICY customer_processes_insert_staff ON public.customer_processes FOR INSERT WITH CHECK ((public.has_role(auth.uid(), 'employee'::public.app_role) OR public.has_role(auth.uid(), 'master'::public.app_role)));
+
+
+--
+-- Name: customer_processes customer_processes_select_staff; Type: POLICY; Schema: public; Owner: -
+--
+
+CREATE POLICY customer_processes_select_staff ON public.customer_processes FOR SELECT USING ((public.has_role(auth.uid(), 'employee'::public.app_role) OR public.has_role(auth.uid(), 'master'::public.app_role)));
+
+
+--
+-- Name: customer_processes customer_processes_update_staff; Type: POLICY; Schema: public; Owner: -
+--
+
+CREATE POLICY customer_processes_update_staff ON public.customer_processes FOR UPDATE USING ((public.has_role(auth.uid(), 'employee'::public.app_role) OR public.has_role(auth.uid(), 'master'::public.app_role)));
+
+
+--
+-- Name: customer_segments; Type: ROW SECURITY; Schema: public; Owner: -
+--
+
+ALTER TABLE public.customer_segments ENABLE ROW LEVEL SECURITY;
+
+--
+-- Name: customer_visit_scores; Type: ROW SECURITY; Schema: public; Owner: -
+--
+
+ALTER TABLE public.customer_visit_scores ENABLE ROW LEVEL SECURITY;
+
+--
+-- Name: dashboard_visits; Type: ROW SECURITY; Schema: public; Owner: -
+--
+
+ALTER TABLE public.dashboard_visits ENABLE ROW LEVEL SECURITY;
+
+--
+-- Name: dashboard_visits dashboard_visits_master_read; Type: POLICY; Schema: public; Owner: -
+--
+
+CREATE POLICY dashboard_visits_master_read ON public.dashboard_visits FOR SELECT USING ((EXISTS ( SELECT 1
+   FROM public.user_roles
+  WHERE ((user_roles.user_id = auth.uid()) AND (user_roles.role = 'master'::public.app_role)))));
+
+
+--
+-- Name: dashboard_visits dashboard_visits_service_all; Type: POLICY; Schema: public; Owner: -
+--
+
+CREATE POLICY dashboard_visits_service_all ON public.dashboard_visits USING ((auth.role() = 'service_role'::text));
+
+
+--
+-- Name: dashboard_visits dashboard_visits_user_insert; Type: POLICY; Schema: public; Owner: -
+--
+
+CREATE POLICY dashboard_visits_user_insert ON public.dashboard_visits FOR INSERT WITH CHECK ((auth.uid() = user_id));
+
+
+--
+-- Name: dashboard_visits dashboard_visits_user_read; Type: POLICY; Schema: public; Owner: -
+--
+
+CREATE POLICY dashboard_visits_user_read ON public.dashboard_visits FOR SELECT USING ((auth.uid() = user_id));
+
+
+--
+-- Name: default_prices; Type: ROW SECURITY; Schema: public; Owner: -
+--
+
+ALTER TABLE public.default_prices ENABLE ROW LEVEL SECURITY;
+
+--
+-- Name: des_checkin_qualitativo; Type: ROW SECURITY; Schema: public; Owner: -
+--
+
+ALTER TABLE public.des_checkin_qualitativo ENABLE ROW LEVEL SECURITY;
+
+--
+-- Name: des_checkin_qualitativo_resposta; Type: ROW SECURITY; Schema: public; Owner: -
+--
+
+ALTER TABLE public.des_checkin_qualitativo_resposta ENABLE ROW LEVEL SECURITY;
+
+--
+-- Name: des_contrato_versao; Type: ROW SECURITY; Schema: public; Owner: -
+--
+
+ALTER TABLE public.des_contrato_versao ENABLE ROW LEVEL SECURITY;
+
+--
+-- Name: des_criterio_percentual; Type: ROW SECURITY; Schema: public; Owner: -
+--
+
+ALTER TABLE public.des_criterio_percentual ENABLE ROW LEVEL SECURITY;
+
+--
+-- Name: des_criterio_qualitativo; Type: ROW SECURITY; Schema: public; Owner: -
+--
+
+ALTER TABLE public.des_criterio_qualitativo ENABLE ROW LEVEL SECURITY;
+
+--
+-- Name: des_faixa_quantitativa; Type: ROW SECURITY; Schema: public; Owner: -
+--
+
+ALTER TABLE public.des_faixa_quantitativa ENABLE ROW LEVEL SECURITY;
+
+--
+-- Name: des_meta_empresa; Type: ROW SECURITY; Schema: public; Owner: -
+--
+
+ALTER TABLE public.des_meta_empresa ENABLE ROW LEVEL SECURITY;
+
+--
+-- Name: des_trimestre_snapshot; Type: ROW SECURITY; Schema: public; Owner: -
+--
+
+ALTER TABLE public.des_trimestre_snapshot ENABLE ROW LEVEL SECURITY;
+
+--
+-- Name: empresa_configuracao_custos; Type: ROW SECURITY; Schema: public; Owner: -
+--
+
+ALTER TABLE public.empresa_configuracao_custos ENABLE ROW LEVEL SECURITY;
+
+--
+-- Name: eventos_outlier; Type: ROW SECURITY; Schema: public; Owner: -
+--
+
+ALTER TABLE public.eventos_outlier ENABLE ROW LEVEL SECURITY;
+
+--
+-- Name: familia_nao_comprada; Type: ROW SECURITY; Schema: public; Owner: -
+--
+
+ALTER TABLE public.familia_nao_comprada ENABLE ROW LEVEL SECURITY;
+
+--
+-- Name: farmer_agenda; Type: ROW SECURITY; Schema: public; Owner: -
+--
+
+ALTER TABLE public.farmer_agenda ENABLE ROW LEVEL SECURITY;
+
+--
+-- Name: farmer_algorithm_config; Type: ROW SECURITY; Schema: public; Owner: -
+--
+
+ALTER TABLE public.farmer_algorithm_config ENABLE ROW LEVEL SECURITY;
+
+--
+-- Name: farmer_association_rules; Type: ROW SECURITY; Schema: public; Owner: -
+--
+
+ALTER TABLE public.farmer_association_rules ENABLE ROW LEVEL SECURITY;
+
+--
+-- Name: farmer_audit_log; Type: ROW SECURITY; Schema: public; Owner: -
+--
+
+ALTER TABLE public.farmer_audit_log ENABLE ROW LEVEL SECURITY;
+
+--
+-- Name: farmer_bundle_recommendations; Type: ROW SECURITY; Schema: public; Owner: -
+--
+
+ALTER TABLE public.farmer_bundle_recommendations ENABLE ROW LEVEL SECURITY;
+
+--
+-- Name: farmer_calls; Type: ROW SECURITY; Schema: public; Owner: -
+--
+
+ALTER TABLE public.farmer_calls ENABLE ROW LEVEL SECURITY;
+
+--
+-- Name: farmer_category_conversion; Type: ROW SECURITY; Schema: public; Owner: -
+--
+
+ALTER TABLE public.farmer_category_conversion ENABLE ROW LEVEL SECURITY;
+
+--
+-- Name: farmer_client_scores; Type: ROW SECURITY; Schema: public; Owner: -
+--
+
+ALTER TABLE public.farmer_client_scores ENABLE ROW LEVEL SECURITY;
+
+--
+-- Name: farmer_config; Type: ROW SECURITY; Schema: public; Owner: -
+--
+
+ALTER TABLE public.farmer_config ENABLE ROW LEVEL SECURITY;
+
+--
+-- Name: farmer_copilot_events; Type: ROW SECURITY; Schema: public; Owner: -
+--
+
+ALTER TABLE public.farmer_copilot_events ENABLE ROW LEVEL SECURITY;
+
+--
+-- Name: farmer_copilot_sessions; Type: ROW SECURITY; Schema: public; Owner: -
+--
+
+ALTER TABLE public.farmer_copilot_sessions ENABLE ROW LEVEL SECURITY;
+
+--
+-- Name: farmer_diagnostic_questions; Type: ROW SECURITY; Schema: public; Owner: -
+--
+
+ALTER TABLE public.farmer_diagnostic_questions ENABLE ROW LEVEL SECURITY;
+
+--
+-- Name: farmer_experiment_clients; Type: ROW SECURITY; Schema: public; Owner: -
+--
+
+ALTER TABLE public.farmer_experiment_clients ENABLE ROW LEVEL SECURITY;
+
+--
+-- Name: farmer_experiments; Type: ROW SECURITY; Schema: public; Owner: -
+--
+
+ALTER TABLE public.farmer_experiments ENABLE ROW LEVEL SECURITY;
+
+--
+-- Name: farmer_governance_proposals; Type: ROW SECURITY; Schema: public; Owner: -
+--
+
+ALTER TABLE public.farmer_governance_proposals ENABLE ROW LEVEL SECURITY;
+
+--
+-- Name: farmer_learning_weights; Type: ROW SECURITY; Schema: public; Owner: -
+--
+
+ALTER TABLE public.farmer_learning_weights ENABLE ROW LEVEL SECURITY;
+
+--
+-- Name: farmer_performance_scores; Type: ROW SECURITY; Schema: public; Owner: -
+--
+
+ALTER TABLE public.farmer_performance_scores ENABLE ROW LEVEL SECURITY;
+
+--
+-- Name: farmer_recommendations; Type: ROW SECURITY; Schema: public; Owner: -
+--
+
+ALTER TABLE public.farmer_recommendations ENABLE ROW LEVEL SECURITY;
+
+--
+-- Name: farmer_tactical_plans; Type: ROW SECURITY; Schema: public; Owner: -
+--
+
+ALTER TABLE public.farmer_tactical_plans ENABLE ROW LEVEL SECURITY;
+
+--
+-- Name: fin_alertas; Type: ROW SECURITY; Schema: public; Owner: -
+--
+
+ALTER TABLE public.fin_alertas ENABLE ROW LEVEL SECURITY;
+
+--
+-- Name: fin_alertas fin_alertas_select_staff; Type: POLICY; Schema: public; Owner: -
+--
+
+CREATE POLICY fin_alertas_select_staff ON public.fin_alertas FOR SELECT USING ((EXISTS ( SELECT 1
+   FROM public.user_roles
+  WHERE ((user_roles.user_id = auth.uid()) AND (user_roles.role = ANY (ARRAY['employee'::public.app_role, 'master'::public.app_role]))))));
+
+
+--
+-- Name: fin_alertas fin_alertas_update_staff; Type: POLICY; Schema: public; Owner: -
+--
+
+CREATE POLICY fin_alertas_update_staff ON public.fin_alertas FOR UPDATE USING ((EXISTS ( SELECT 1
+   FROM public.user_roles
+  WHERE ((user_roles.user_id = auth.uid()) AND (user_roles.role = ANY (ARRAY['employee'::public.app_role, 'master'::public.app_role])))))) WITH CHECK ((EXISTS ( SELECT 1
+   FROM public.user_roles
+  WHERE ((user_roles.user_id = auth.uid()) AND (user_roles.role = ANY (ARRAY['employee'::public.app_role, 'master'::public.app_role]))))));
+
+
+--
+-- Name: fin_audit_log; Type: ROW SECURITY; Schema: public; Owner: -
+--
+
+ALTER TABLE public.fin_audit_log ENABLE ROW LEVEL SECURITY;
+
+--
+-- Name: fin_audit_log fin_audit_log_select_staff; Type: POLICY; Schema: public; Owner: -
+--
+
+CREATE POLICY fin_audit_log_select_staff ON public.fin_audit_log FOR SELECT USING ((EXISTS ( SELECT 1
+   FROM public.user_roles
+  WHERE ((user_roles.user_id = auth.uid()) AND (user_roles.role = ANY (ARRAY['employee'::public.app_role, 'master'::public.app_role]))))));
+
+
+--
+-- Name: fin_categoria_dre_mapping fin_cat_dre_admin_modify; Type: POLICY; Schema: public; Owner: -
+--
+
+CREATE POLICY fin_cat_dre_admin_modify ON public.fin_categoria_dre_mapping USING ((EXISTS ( SELECT 1
+   FROM public.user_roles
+  WHERE ((user_roles.user_id = auth.uid()) AND (user_roles.role = 'master'::public.app_role)))));
+
+
+--
+-- Name: fin_categoria_dre_mapping fin_cat_dre_all_service; Type: POLICY; Schema: public; Owner: -
+--
+
+CREATE POLICY fin_cat_dre_all_service ON public.fin_categoria_dre_mapping USING ((auth.role() = 'service_role'::text));
+
+
+--
+-- Name: fin_categoria_dre_mapping fin_cat_dre_select; Type: POLICY; Schema: public; Owner: -
+--
+
+CREATE POLICY fin_cat_dre_select ON public.fin_categoria_dre_mapping FOR SELECT USING ((EXISTS ( SELECT 1
+   FROM public.user_roles
+  WHERE ((user_roles.user_id = auth.uid()) AND (user_roles.role = ANY (ARRAY['master'::public.app_role, 'master'::public.app_role]))))));
+
+
+--
+-- Name: fin_categoria_dre_mapping; Type: ROW SECURITY; Schema: public; Owner: -
+--
+
+ALTER TABLE public.fin_categoria_dre_mapping ENABLE ROW LEVEL SECURITY;
+
+--
+-- Name: fin_categorias; Type: ROW SECURITY; Schema: public; Owner: -
+--
+
+ALTER TABLE public.fin_categorias ENABLE ROW LEVEL SECURITY;
+
+--
+-- Name: fin_categorias fin_categorias_select; Type: POLICY; Schema: public; Owner: -
+--
+
+CREATE POLICY fin_categorias_select ON public.fin_categorias FOR SELECT USING ((EXISTS ( SELECT 1
+   FROM public.user_roles
+  WHERE ((user_roles.user_id = auth.uid()) AND (user_roles.role = ANY (ARRAY['master'::public.app_role, 'master'::public.app_role]))))));
+
+
+--
+-- Name: fin_categorias fin_categorias_service; Type: POLICY; Schema: public; Owner: -
+--
+
+CREATE POLICY fin_categorias_service ON public.fin_categorias USING ((auth.role() = 'service_role'::text));
+
+
+--
+-- Name: fin_contas_correntes fin_cc_select; Type: POLICY; Schema: public; Owner: -
+--
+
+CREATE POLICY fin_cc_select ON public.fin_contas_correntes FOR SELECT TO authenticated USING (public.fin_user_can_access(company));
+
+
+--
+-- Name: fin_contas_correntes fin_cc_service; Type: POLICY; Schema: public; Owner: -
+--
+
+CREATE POLICY fin_cc_service ON public.fin_contas_correntes USING ((auth.role() = 'service_role'::text));
+
+
+--
+-- Name: fin_conciliacao fin_conc_write; Type: POLICY; Schema: public; Owner: -
+--
+
+CREATE POLICY fin_conc_write ON public.fin_conciliacao USING ((EXISTS ( SELECT 1
+   FROM public.fin_permissoes
+  WHERE ((fin_permissoes.user_id = auth.uid()) AND fin_permissoes.pode_conciliar))));
+
+
+--
+-- Name: fin_conciliacao; Type: ROW SECURITY; Schema: public; Owner: -
+--
+
+ALTER TABLE public.fin_conciliacao ENABLE ROW LEVEL SECURITY;
+
+--
+-- Name: fin_conciliacao fin_conciliacao_service; Type: POLICY; Schema: public; Owner: -
+--
+
+CREATE POLICY fin_conciliacao_service ON public.fin_conciliacao USING ((auth.role() = 'service_role'::text));
+
+
+--
+-- Name: fin_conciliacao fin_conciliacao_user; Type: POLICY; Schema: public; Owner: -
+--
+
+CREATE POLICY fin_conciliacao_user ON public.fin_conciliacao FOR SELECT USING (public.fin_user_can_access(company));
+
+
+--
+-- Name: fin_confiabilidade fin_conf_service; Type: POLICY; Schema: public; Owner: -
+--
+
+CREATE POLICY fin_conf_service ON public.fin_confiabilidade USING ((auth.role() = 'service_role'::text));
+
+
+--
+-- Name: fin_confiabilidade fin_conf_user; Type: POLICY; Schema: public; Owner: -
+--
+
+CREATE POLICY fin_conf_user ON public.fin_confiabilidade FOR SELECT USING (public.fin_user_can_access(company));
+
+
+--
+-- Name: fin_confiabilidade; Type: ROW SECURITY; Schema: public; Owner: -
+--
+
+ALTER TABLE public.fin_confiabilidade ENABLE ROW LEVEL SECURITY;
+
+--
+-- Name: fin_config_cashflow; Type: ROW SECURITY; Schema: public; Owner: -
+--
+
+ALTER TABLE public.fin_config_cashflow ENABLE ROW LEVEL SECURITY;
+
+--
+-- Name: fin_config_cashflow fin_config_select_staff; Type: POLICY; Schema: public; Owner: -
+--
+
+CREATE POLICY fin_config_select_staff ON public.fin_config_cashflow FOR SELECT USING ((EXISTS ( SELECT 1
+   FROM public.user_roles
+  WHERE ((user_roles.user_id = auth.uid()) AND (user_roles.role = ANY (ARRAY['employee'::public.app_role, 'master'::public.app_role]))))));
+
+
+--
+-- Name: fin_config_cashflow fin_config_write_master; Type: POLICY; Schema: public; Owner: -
+--
+
+CREATE POLICY fin_config_write_master ON public.fin_config_cashflow USING ((EXISTS ( SELECT 1
+   FROM public.user_roles
+  WHERE ((user_roles.user_id = auth.uid()) AND (user_roles.role = 'master'::public.app_role))))) WITH CHECK ((EXISTS ( SELECT 1
+   FROM public.user_roles
+  WHERE ((user_roles.user_id = auth.uid()) AND (user_roles.role = 'master'::public.app_role)))));
+
+
+--
+-- Name: fin_contas_correntes; Type: ROW SECURITY; Schema: public; Owner: -
+--
+
+ALTER TABLE public.fin_contas_correntes ENABLE ROW LEVEL SECURITY;
+
+--
+-- Name: fin_contas_pagar; Type: ROW SECURITY; Schema: public; Owner: -
+--
+
+ALTER TABLE public.fin_contas_pagar ENABLE ROW LEVEL SECURITY;
+
+--
+-- Name: fin_contas_receber; Type: ROW SECURITY; Schema: public; Owner: -
+--
+
+ALTER TABLE public.fin_contas_receber ENABLE ROW LEVEL SECURITY;
+
+--
+-- Name: fin_contas_pagar fin_cp_select; Type: POLICY; Schema: public; Owner: -
+--
+
+CREATE POLICY fin_cp_select ON public.fin_contas_pagar FOR SELECT TO authenticated USING (public.fin_user_can_access(company));
+
+
+--
+-- Name: fin_contas_pagar fin_cp_service; Type: POLICY; Schema: public; Owner: -
+--
+
+CREATE POLICY fin_cp_service ON public.fin_contas_pagar USING ((auth.role() = 'service_role'::text));
+
+
+--
+-- Name: fin_contas_receber fin_cr_select; Type: POLICY; Schema: public; Owner: -
+--
+
+CREATE POLICY fin_cr_select ON public.fin_contas_receber FOR SELECT TO authenticated USING (public.fin_user_can_access(company));
+
+
+--
+-- Name: fin_contas_receber fin_cr_service; Type: POLICY; Schema: public; Owner: -
+--
+
+CREATE POLICY fin_cr_service ON public.fin_contas_receber USING ((auth.role() = 'service_role'::text));
+
+
+--
+-- Name: fin_dre_snapshots fin_dre_select; Type: POLICY; Schema: public; Owner: -
+--
+
+CREATE POLICY fin_dre_select ON public.fin_dre_snapshots FOR SELECT TO authenticated USING (public.fin_user_can_access(company));
+
+
+--
+-- Name: fin_dre_snapshots fin_dre_service; Type: POLICY; Schema: public; Owner: -
+--
+
+CREATE POLICY fin_dre_service ON public.fin_dre_snapshots USING ((auth.role() = 'service_role'::text));
+
+
+--
+-- Name: fin_dre_snapshots; Type: ROW SECURITY; Schema: public; Owner: -
+--
+
+ALTER TABLE public.fin_dre_snapshots ENABLE ROW LEVEL SECURITY;
+
+--
+-- Name: fin_eliminacoes_log fin_elim_log_service; Type: POLICY; Schema: public; Owner: -
+--
+
+CREATE POLICY fin_elim_log_service ON public.fin_eliminacoes_log USING ((auth.role() = 'service_role'::text));
+
+
+--
+-- Name: fin_eliminacoes_log fin_elim_log_user; Type: POLICY; Schema: public; Owner: -
+--
+
+CREATE POLICY fin_elim_log_user ON public.fin_eliminacoes_log FOR SELECT USING (public.fin_user_can_access());
+
+
+--
+-- Name: fin_eliminacoes_intercompany fin_elim_service; Type: POLICY; Schema: public; Owner: -
+--
+
+CREATE POLICY fin_elim_service ON public.fin_eliminacoes_intercompany USING ((auth.role() = 'service_role'::text));
+
+
+--
+-- Name: fin_eliminacoes_intercompany fin_elim_user; Type: POLICY; Schema: public; Owner: -
+--
+
+CREATE POLICY fin_elim_user ON public.fin_eliminacoes_intercompany FOR SELECT USING (public.fin_user_can_access());
+
+
+--
+-- Name: fin_eliminacoes_intercompany fin_elim_write; Type: POLICY; Schema: public; Owner: -
+--
+
+CREATE POLICY fin_elim_write ON public.fin_eliminacoes_intercompany USING ((EXISTS ( SELECT 1
+   FROM public.fin_permissoes
+  WHERE ((fin_permissoes.user_id = auth.uid()) AND fin_permissoes.pode_eliminar_intercompany))));
+
+
+--
+-- Name: fin_eliminacoes_intercompany; Type: ROW SECURITY; Schema: public; Owner: -
+--
+
+ALTER TABLE public.fin_eliminacoes_intercompany ENABLE ROW LEVEL SECURITY;
+
+--
+-- Name: fin_eliminacoes_log; Type: ROW SECURITY; Schema: public; Owner: -
+--
+
+ALTER TABLE public.fin_eliminacoes_log ENABLE ROW LEVEL SECURITY;
+
+--
+-- Name: fin_estoque_valor; Type: ROW SECURITY; Schema: public; Owner: -
+--
+
+ALTER TABLE public.fin_estoque_valor ENABLE ROW LEVEL SECURITY;
+
+--
+-- Name: fin_estoque_valor fin_estoque_valor_select_staff; Type: POLICY; Schema: public; Owner: -
+--
+
+CREATE POLICY fin_estoque_valor_select_staff ON public.fin_estoque_valor FOR SELECT USING ((EXISTS ( SELECT 1
+   FROM public.user_roles
+  WHERE ((user_roles.user_id = auth.uid()) AND (user_roles.role = ANY (ARRAY['employee'::public.app_role, 'master'::public.app_role]))))));
+
+
+--
+-- Name: fin_estoque_valor fin_estoque_valor_write_master; Type: POLICY; Schema: public; Owner: -
+--
+
+CREATE POLICY fin_estoque_valor_write_master ON public.fin_estoque_valor USING ((EXISTS ( SELECT 1
+   FROM public.user_roles
+  WHERE ((user_roles.user_id = auth.uid()) AND (user_roles.role = 'master'::public.app_role))))) WITH CHECK ((EXISTS ( SELECT 1
+   FROM public.user_roles
+  WHERE ((user_roles.user_id = auth.uid()) AND (user_roles.role = 'master'::public.app_role)))));
+
+
+--
+-- Name: fin_eventos_eventuais fin_eventos_ev_select_staff; Type: POLICY; Schema: public; Owner: -
+--
+
+CREATE POLICY fin_eventos_ev_select_staff ON public.fin_eventos_eventuais FOR SELECT USING ((EXISTS ( SELECT 1
+   FROM public.user_roles
+  WHERE ((user_roles.user_id = auth.uid()) AND (user_roles.role = ANY (ARRAY['employee'::public.app_role, 'master'::public.app_role]))))));
+
+
+--
+-- Name: fin_eventos_eventuais fin_eventos_ev_write_staff; Type: POLICY; Schema: public; Owner: -
+--
+
+CREATE POLICY fin_eventos_ev_write_staff ON public.fin_eventos_eventuais USING ((EXISTS ( SELECT 1
+   FROM public.user_roles
+  WHERE ((user_roles.user_id = auth.uid()) AND (user_roles.role = ANY (ARRAY['employee'::public.app_role, 'master'::public.app_role])))))) WITH CHECK ((EXISTS ( SELECT 1
+   FROM public.user_roles
+  WHERE ((user_roles.user_id = auth.uid()) AND (user_roles.role = ANY (ARRAY['employee'::public.app_role, 'master'::public.app_role]))))));
+
+
+--
+-- Name: fin_eventos_eventuais; Type: ROW SECURITY; Schema: public; Owner: -
+--
+
+ALTER TABLE public.fin_eventos_eventuais ENABLE ROW LEVEL SECURITY;
+
+--
+-- Name: fin_eventos_recorrentes fin_eventos_rec_select_staff; Type: POLICY; Schema: public; Owner: -
+--
+
+CREATE POLICY fin_eventos_rec_select_staff ON public.fin_eventos_recorrentes FOR SELECT USING ((EXISTS ( SELECT 1
+   FROM public.user_roles
+  WHERE ((user_roles.user_id = auth.uid()) AND (user_roles.role = ANY (ARRAY['employee'::public.app_role, 'master'::public.app_role]))))));
+
+
+--
+-- Name: fin_eventos_recorrentes fin_eventos_rec_write_staff; Type: POLICY; Schema: public; Owner: -
+--
+
+CREATE POLICY fin_eventos_rec_write_staff ON public.fin_eventos_recorrentes USING ((EXISTS ( SELECT 1
+   FROM public.user_roles
+  WHERE ((user_roles.user_id = auth.uid()) AND (user_roles.role = ANY (ARRAY['employee'::public.app_role, 'master'::public.app_role])))))) WITH CHECK ((EXISTS ( SELECT 1
+   FROM public.user_roles
+  WHERE ((user_roles.user_id = auth.uid()) AND (user_roles.role = ANY (ARRAY['employee'::public.app_role, 'master'::public.app_role]))))));
+
+
+--
+-- Name: fin_eventos_recorrentes; Type: ROW SECURITY; Schema: public; Owner: -
+--
+
+ALTER TABLE public.fin_eventos_recorrentes ENABLE ROW LEVEL SECURITY;
+
+--
+-- Name: fin_fechamentos fin_fech_write; Type: POLICY; Schema: public; Owner: -
+--
+
+CREATE POLICY fin_fech_write ON public.fin_fechamentos FOR UPDATE USING ((EXISTS ( SELECT 1
+   FROM public.fin_permissoes
+  WHERE ((fin_permissoes.user_id = auth.uid()) AND (fin_permissoes.pode_fechar_mes OR fin_permissoes.pode_aprovar_fechamento OR fin_permissoes.pode_reabrir_fechamento)))));
+
+
+--
+-- Name: fin_fechamento_log; Type: ROW SECURITY; Schema: public; Owner: -
+--
+
+ALTER TABLE public.fin_fechamento_log ENABLE ROW LEVEL SECURITY;
+
+--
+-- Name: fin_fechamento_log fin_fechamento_log_service; Type: POLICY; Schema: public; Owner: -
+--
+
+CREATE POLICY fin_fechamento_log_service ON public.fin_fechamento_log USING ((auth.role() = 'service_role'::text));
+
+
+--
+-- Name: fin_fechamento_log fin_fechamento_log_user; Type: POLICY; Schema: public; Owner: -
+--
+
+CREATE POLICY fin_fechamento_log_user ON public.fin_fechamento_log FOR SELECT USING ((EXISTS ( SELECT 1
+   FROM public.fin_fechamentos f
+  WHERE ((f.id = fin_fechamento_log.fechamento_id) AND public.fin_user_can_access(f.company)))));
+
+
+--
+-- Name: fin_fechamentos; Type: ROW SECURITY; Schema: public; Owner: -
+--
+
+ALTER TABLE public.fin_fechamentos ENABLE ROW LEVEL SECURITY;
+
+--
+-- Name: fin_fechamentos fin_fechamentos_service; Type: POLICY; Schema: public; Owner: -
+--
+
+CREATE POLICY fin_fechamentos_service ON public.fin_fechamentos USING ((auth.role() = 'service_role'::text));
+
+
+--
+-- Name: fin_fechamentos fin_fechamentos_user; Type: POLICY; Schema: public; Owner: -
+--
+
+CREATE POLICY fin_fechamentos_user ON public.fin_fechamentos FOR SELECT USING (public.fin_user_can_access(company));
+
+
+--
+-- Name: fin_forecast; Type: ROW SECURITY; Schema: public; Owner: -
+--
+
+ALTER TABLE public.fin_forecast ENABLE ROW LEVEL SECURITY;
+
+--
+-- Name: fin_forecast fin_forecast_service; Type: POLICY; Schema: public; Owner: -
+--
+
+CREATE POLICY fin_forecast_service ON public.fin_forecast USING ((auth.role() = 'service_role'::text));
+
+
+--
+-- Name: fin_forecast fin_forecast_user; Type: POLICY; Schema: public; Owner: -
+--
+
+CREATE POLICY fin_forecast_user ON public.fin_forecast FOR SELECT USING (public.fin_user_can_access(company));
+
+
+--
+-- Name: fin_ic_matches; Type: ROW SECURITY; Schema: public; Owner: -
+--
+
+ALTER TABLE public.fin_ic_matches ENABLE ROW LEVEL SECURITY;
+
+--
+-- Name: fin_ic_matches fin_ic_matches_select_staff; Type: POLICY; Schema: public; Owner: -
+--
+
+CREATE POLICY fin_ic_matches_select_staff ON public.fin_ic_matches FOR SELECT USING ((EXISTS ( SELECT 1
+   FROM public.user_roles
+  WHERE ((user_roles.user_id = auth.uid()) AND (user_roles.role = ANY (ARRAY['employee'::public.app_role, 'master'::public.app_role]))))));
+
+
+--
+-- Name: fin_ic_matches fin_ic_matches_update_staff; Type: POLICY; Schema: public; Owner: -
+--
+
+CREATE POLICY fin_ic_matches_update_staff ON public.fin_ic_matches FOR UPDATE USING ((EXISTS ( SELECT 1
+   FROM public.user_roles
+  WHERE ((user_roles.user_id = auth.uid()) AND (user_roles.role = ANY (ARRAY['employee'::public.app_role, 'master'::public.app_role]))))));
+
+
+--
+-- Name: fin_kpi_tributario fin_kpi_trib_service; Type: POLICY; Schema: public; Owner: -
+--
+
+CREATE POLICY fin_kpi_trib_service ON public.fin_kpi_tributario USING ((auth.role() = 'service_role'::text));
+
+
+--
+-- Name: fin_kpi_tributario fin_kpi_trib_user; Type: POLICY; Schema: public; Owner: -
+--
+
+CREATE POLICY fin_kpi_trib_user ON public.fin_kpi_tributario FOR SELECT USING (public.fin_user_can_access(company));
+
+
+--
+-- Name: fin_kpi_tributario; Type: ROW SECURITY; Schema: public; Owner: -
+--
+
+ALTER TABLE public.fin_kpi_tributario ENABLE ROW LEVEL SECURITY;
+
+--
+-- Name: fin_movimentacoes fin_mov_select; Type: POLICY; Schema: public; Owner: -
+--
+
+CREATE POLICY fin_mov_select ON public.fin_movimentacoes FOR SELECT TO authenticated USING (public.fin_user_can_access(company));
+
+
+--
+-- Name: fin_movimentacoes fin_mov_service; Type: POLICY; Schema: public; Owner: -
+--
+
+CREATE POLICY fin_mov_service ON public.fin_movimentacoes USING ((auth.role() = 'service_role'::text));
+
+
+--
+-- Name: fin_movimentacoes; Type: ROW SECURITY; Schema: public; Owner: -
+--
+
+ALTER TABLE public.fin_movimentacoes ENABLE ROW LEVEL SECURITY;
+
+--
+-- Name: fin_orcamento fin_orc_service; Type: POLICY; Schema: public; Owner: -
+--
+
+CREATE POLICY fin_orc_service ON public.fin_orcamento USING ((auth.role() = 'service_role'::text));
+
+
+--
+-- Name: fin_orcamento fin_orc_user; Type: POLICY; Schema: public; Owner: -
+--
+
+CREATE POLICY fin_orc_user ON public.fin_orcamento FOR SELECT USING (public.fin_user_can_access(company));
+
+
+--
+-- Name: fin_orcamento fin_orc_write; Type: POLICY; Schema: public; Owner: -
+--
+
+CREATE POLICY fin_orc_write ON public.fin_orcamento USING ((EXISTS ( SELECT 1
+   FROM public.fin_permissoes
+  WHERE ((fin_permissoes.user_id = auth.uid()) AND fin_permissoes.pode_editar_orcamento))));
+
+
+--
+-- Name: fin_orcamento; Type: ROW SECURITY; Schema: public; Owner: -
+--
+
+ALTER TABLE public.fin_orcamento ENABLE ROW LEVEL SECURITY;
+
+--
+-- Name: fin_period_overrides; Type: ROW SECURITY; Schema: public; Owner: -
+--
+
+ALTER TABLE public.fin_period_overrides ENABLE ROW LEVEL SECURITY;
+
+--
+-- Name: fin_period_overrides fin_period_overrides_insert_master; Type: POLICY; Schema: public; Owner: -
+--
+
+CREATE POLICY fin_period_overrides_insert_master ON public.fin_period_overrides FOR INSERT WITH CHECK ((EXISTS ( SELECT 1
+   FROM public.user_roles
+  WHERE ((user_roles.user_id = auth.uid()) AND (user_roles.role = 'master'::public.app_role)))));
+
+
+--
+-- Name: fin_period_overrides fin_period_overrides_select_staff; Type: POLICY; Schema: public; Owner: -
+--
+
+CREATE POLICY fin_period_overrides_select_staff ON public.fin_period_overrides FOR SELECT USING ((EXISTS ( SELECT 1
+   FROM public.user_roles
+  WHERE ((user_roles.user_id = auth.uid()) AND (user_roles.role = ANY (ARRAY['employee'::public.app_role, 'master'::public.app_role]))))));
+
+
+--
+-- Name: fin_period_overrides fin_period_overrides_update_self; Type: POLICY; Schema: public; Owner: -
+--
+
+CREATE POLICY fin_period_overrides_update_self ON public.fin_period_overrides FOR UPDATE USING ((opened_by = auth.uid())) WITH CHECK ((opened_by = auth.uid()));
+
+
+--
+-- Name: fin_permissoes fin_perm_service; Type: POLICY; Schema: public; Owner: -
+--
+
+CREATE POLICY fin_perm_service ON public.fin_permissoes USING ((auth.role() = 'service_role'::text));
+
+
+--
+-- Name: fin_permissoes fin_perm_user; Type: POLICY; Schema: public; Owner: -
+--
+
+CREATE POLICY fin_perm_user ON public.fin_permissoes FOR SELECT USING (((user_id = auth.uid()) OR public.fin_user_can_access()));
+
+
+--
+-- Name: fin_permissoes; Type: ROW SECURITY; Schema: public; Owner: -
+--
+
+ALTER TABLE public.fin_permissoes ENABLE ROW LEVEL SECURITY;
+
+--
+-- Name: fin_projecao_snapshots fin_proj_select_staff; Type: POLICY; Schema: public; Owner: -
+--
+
+CREATE POLICY fin_proj_select_staff ON public.fin_projecao_snapshots FOR SELECT USING ((EXISTS ( SELECT 1
+   FROM public.user_roles
+  WHERE ((user_roles.user_id = auth.uid()) AND (user_roles.role = ANY (ARRAY['employee'::public.app_role, 'master'::public.app_role]))))));
+
+
+--
+-- Name: fin_projecao_snapshots; Type: ROW SECURITY; Schema: public; Owner: -
+--
+
+ALTER TABLE public.fin_projecao_snapshots ENABLE ROW LEVEL SECURITY;
+
+--
+-- Name: fin_sync_checkpoint; Type: ROW SECURITY; Schema: public; Owner: -
+--
+
+ALTER TABLE public.fin_sync_checkpoint ENABLE ROW LEVEL SECURITY;
+
+--
+-- Name: fin_sync_checkpoint fin_sync_ckpt_service; Type: POLICY; Schema: public; Owner: -
+--
+
+CREATE POLICY fin_sync_ckpt_service ON public.fin_sync_checkpoint USING ((auth.role() = 'service_role'::text));
+
+
+--
+-- Name: fin_sync_checkpoint fin_sync_ckpt_user; Type: POLICY; Schema: public; Owner: -
+--
+
+CREATE POLICY fin_sync_ckpt_user ON public.fin_sync_checkpoint FOR SELECT USING (public.fin_user_can_access(company));
+
+
+--
+-- Name: fin_sync_log; Type: ROW SECURITY; Schema: public; Owner: -
+--
+
+ALTER TABLE public.fin_sync_log ENABLE ROW LEVEL SECURITY;
+
+--
+-- Name: fin_sync_log fin_sync_log_select; Type: POLICY; Schema: public; Owner: -
+--
+
+CREATE POLICY fin_sync_log_select ON public.fin_sync_log FOR SELECT USING ((EXISTS ( SELECT 1
+   FROM public.user_roles
+  WHERE ((user_roles.user_id = auth.uid()) AND (user_roles.role = ANY (ARRAY['master'::public.app_role, 'master'::public.app_role]))))));
+
+
+--
+-- Name: fin_sync_log fin_sync_log_service; Type: POLICY; Schema: public; Owner: -
+--
+
+CREATE POLICY fin_sync_log_service ON public.fin_sync_log USING ((auth.role() = 'service_role'::text)) WITH CHECK ((auth.role() = 'service_role'::text));
+
+
+--
+-- Name: fin_valor_inputs; Type: ROW SECURITY; Schema: public; Owner: -
+--
+
+ALTER TABLE public.fin_valor_inputs ENABLE ROW LEVEL SECURITY;
+
+--
+-- Name: fin_valor_inputs fin_valor_inputs_select_master; Type: POLICY; Schema: public; Owner: -
+--
+
+CREATE POLICY fin_valor_inputs_select_master ON public.fin_valor_inputs FOR SELECT USING ((EXISTS ( SELECT 1
+   FROM public.user_roles
+  WHERE ((user_roles.user_id = auth.uid()) AND (user_roles.role = 'master'::public.app_role)))));
+
+
+--
+-- Name: fin_valor_inputs fin_valor_inputs_write_master; Type: POLICY; Schema: public; Owner: -
+--
+
+CREATE POLICY fin_valor_inputs_write_master ON public.fin_valor_inputs USING ((EXISTS ( SELECT 1
+   FROM public.user_roles
+  WHERE ((user_roles.user_id = auth.uid()) AND (user_roles.role = 'master'::public.app_role))))) WITH CHECK ((EXISTS ( SELECT 1
+   FROM public.user_roles
+  WHERE ((user_roles.user_id = auth.uid()) AND (user_roles.role = 'master'::public.app_role)))));
+
+
+--
+-- Name: fornecedor_alerta; Type: ROW SECURITY; Schema: public; Owner: -
+--
+
+ALTER TABLE public.fornecedor_alerta ENABLE ROW LEVEL SECURITY;
+
+--
+-- Name: fornecedor_aumento_anunciado; Type: ROW SECURITY; Schema: public; Owner: -
+--
+
+ALTER TABLE public.fornecedor_aumento_anunciado ENABLE ROW LEVEL SECURITY;
+
+--
+-- Name: fornecedor_aumento_item; Type: ROW SECURITY; Schema: public; Owner: -
+--
+
+ALTER TABLE public.fornecedor_aumento_item ENABLE ROW LEVEL SECURITY;
+
+--
+-- Name: fornecedor_cadeia_logistica; Type: ROW SECURITY; Schema: public; Owner: -
+--
+
+ALTER TABLE public.fornecedor_cadeia_logistica ENABLE ROW LEVEL SECURITY;
+
+--
+-- Name: fornecedor_cadeia_logistica_historico; Type: ROW SECURITY; Schema: public; Owner: -
+--
+
+ALTER TABLE public.fornecedor_cadeia_logistica_historico ENABLE ROW LEVEL SECURITY;
+
+--
+-- Name: fornecedor_calendario_operacao; Type: ROW SECURITY; Schema: public; Owner: -
+--
+
+ALTER TABLE public.fornecedor_calendario_operacao ENABLE ROW LEVEL SECURITY;
+
+--
+-- Name: fornecedor_condicao_pagamento_padrao; Type: ROW SECURITY; Schema: public; Owner: -
+--
+
+ALTER TABLE public.fornecedor_condicao_pagamento_padrao ENABLE ROW LEVEL SECURITY;
+
+--
+-- Name: fornecedor_custo_adicional_config; Type: ROW SECURITY; Schema: public; Owner: -
+--
+
+ALTER TABLE public.fornecedor_custo_adicional_config ENABLE ROW LEVEL SECURITY;
+
+--
+-- Name: fornecedor_email_polling; Type: ROW SECURITY; Schema: public; Owner: -
+--
+
+ALTER TABLE public.fornecedor_email_polling ENABLE ROW LEVEL SECURITY;
+
+--
+-- Name: fornecedor_email_polling_log; Type: ROW SECURITY; Schema: public; Owner: -
+--
+
+ALTER TABLE public.fornecedor_email_polling_log ENABLE ROW LEVEL SECURITY;
+
+--
+-- Name: fornecedor_grupo_producao; Type: ROW SECURITY; Schema: public; Owner: -
+--
+
+ALTER TABLE public.fornecedor_grupo_producao ENABLE ROW LEVEL SECURITY;
+
+--
+-- Name: fornecedor_habilitado_reposicao; Type: ROW SECURITY; Schema: public; Owner: -
+--
+
+ALTER TABLE public.fornecedor_habilitado_reposicao ENABLE ROW LEVEL SECURITY;
+
+--
+-- Name: fornecedor_mapeamento_extracao; Type: ROW SECURITY; Schema: public; Owner: -
+--
+
+ALTER TABLE public.fornecedor_mapeamento_extracao ENABLE ROW LEVEL SECURITY;
+
+--
+-- Name: fornecedor_omie_cache; Type: ROW SECURITY; Schema: public; Owner: -
+--
+
+ALTER TABLE public.fornecedor_omie_cache ENABLE ROW LEVEL SECURITY;
+
+--
+-- Name: fornecedor_prazo_pagamento_config; Type: ROW SECURITY; Schema: public; Owner: -
+--
+
+ALTER TABLE public.fornecedor_prazo_pagamento_config ENABLE ROW LEVEL SECURITY;
+
+--
+-- Name: fornecedor_promocao; Type: ROW SECURITY; Schema: public; Owner: -
+--
+
+ALTER TABLE public.fornecedor_promocao ENABLE ROW LEVEL SECURITY;
+
+--
+-- Name: gamification_scores; Type: ROW SECURITY; Schema: public; Owner: -
+--
+
+ALTER TABLE public.gamification_scores ENABLE ROW LEVEL SECURITY;
+
+--
+-- Name: gmail_webhook_log; Type: ROW SECURITY; Schema: public; Owner: -
+--
+
+ALTER TABLE public.gmail_webhook_log ENABLE ROW LEVEL SECURITY;
+
+--
+-- Name: health_score_history; Type: ROW SECURITY; Schema: public; Owner: -
+--
+
+ALTER TABLE public.health_score_history ENABLE ROW LEVEL SECURITY;
+
+--
+-- Name: inventory_position; Type: ROW SECURITY; Schema: public; Owner: -
+--
+
+ALTER TABLE public.inventory_position ENABLE ROW LEVEL SECURITY;
+
+--
+-- Name: kb_chunks; Type: ROW SECURITY; Schema: public; Owner: -
+--
+
+ALTER TABLE public.kb_chunks ENABLE ROW LEVEL SECURITY;
+
+--
+-- Name: kb_chunks kb_chunks_select_staff; Type: POLICY; Schema: public; Owner: -
+--
+
+CREATE POLICY kb_chunks_select_staff ON public.kb_chunks FOR SELECT USING ((public.has_role(auth.uid(), 'employee'::public.app_role) OR public.has_role(auth.uid(), 'master'::public.app_role)));
+
+
+--
+-- Name: kb_competitor_products; Type: ROW SECURITY; Schema: public; Owner: -
+--
+
+ALTER TABLE public.kb_competitor_products ENABLE ROW LEVEL SECURITY;
+
+--
+-- Name: kb_competitor_products kb_competitor_products_delete_master; Type: POLICY; Schema: public; Owner: -
+--
+
+CREATE POLICY kb_competitor_products_delete_master ON public.kb_competitor_products FOR DELETE USING (public.has_role(auth.uid(), 'master'::public.app_role));
+
+
+--
+-- Name: kb_competitor_products kb_competitor_products_insert_staff; Type: POLICY; Schema: public; Owner: -
+--
+
+CREATE POLICY kb_competitor_products_insert_staff ON public.kb_competitor_products FOR INSERT WITH CHECK ((public.has_role(auth.uid(), 'employee'::public.app_role) OR public.has_role(auth.uid(), 'master'::public.app_role)));
+
+
+--
+-- Name: kb_competitor_products kb_competitor_products_select_staff; Type: POLICY; Schema: public; Owner: -
+--
+
+CREATE POLICY kb_competitor_products_select_staff ON public.kb_competitor_products FOR SELECT USING ((public.has_role(auth.uid(), 'employee'::public.app_role) OR public.has_role(auth.uid(), 'master'::public.app_role)));
+
+
+--
+-- Name: kb_competitor_products kb_competitor_products_update_staff; Type: POLICY; Schema: public; Owner: -
+--
+
+CREATE POLICY kb_competitor_products_update_staff ON public.kb_competitor_products FOR UPDATE USING ((public.has_role(auth.uid(), 'employee'::public.app_role) OR public.has_role(auth.uid(), 'master'::public.app_role)));
+
+
+--
+-- Name: kb_competitors; Type: ROW SECURITY; Schema: public; Owner: -
+--
+
+ALTER TABLE public.kb_competitors ENABLE ROW LEVEL SECURITY;
+
+--
+-- Name: kb_competitors kb_competitors_delete_master; Type: POLICY; Schema: public; Owner: -
+--
+
+CREATE POLICY kb_competitors_delete_master ON public.kb_competitors FOR DELETE USING (public.has_role(auth.uid(), 'master'::public.app_role));
+
+
+--
+-- Name: kb_competitors kb_competitors_insert_staff; Type: POLICY; Schema: public; Owner: -
+--
+
+CREATE POLICY kb_competitors_insert_staff ON public.kb_competitors FOR INSERT WITH CHECK ((public.has_role(auth.uid(), 'employee'::public.app_role) OR public.has_role(auth.uid(), 'master'::public.app_role)));
+
+
+--
+-- Name: kb_competitors kb_competitors_select_staff; Type: POLICY; Schema: public; Owner: -
+--
+
+CREATE POLICY kb_competitors_select_staff ON public.kb_competitors FOR SELECT USING ((public.has_role(auth.uid(), 'employee'::public.app_role) OR public.has_role(auth.uid(), 'master'::public.app_role)));
+
+
+--
+-- Name: kb_competitors kb_competitors_update_staff; Type: POLICY; Schema: public; Owner: -
+--
+
+CREATE POLICY kb_competitors_update_staff ON public.kb_competitors FOR UPDATE USING ((public.has_role(auth.uid(), 'employee'::public.app_role) OR public.has_role(auth.uid(), 'master'::public.app_role)));
+
+
+--
+-- Name: kb_documents; Type: ROW SECURITY; Schema: public; Owner: -
+--
+
+ALTER TABLE public.kb_documents ENABLE ROW LEVEL SECURITY;
+
+--
+-- Name: kb_documents kb_documents_delete_master; Type: POLICY; Schema: public; Owner: -
+--
+
+CREATE POLICY kb_documents_delete_master ON public.kb_documents FOR DELETE USING (public.has_role(auth.uid(), 'master'::public.app_role));
+
+
+--
+-- Name: kb_documents kb_documents_insert_staff; Type: POLICY; Schema: public; Owner: -
+--
+
+CREATE POLICY kb_documents_insert_staff ON public.kb_documents FOR INSERT WITH CHECK ((public.has_role(auth.uid(), 'employee'::public.app_role) OR public.has_role(auth.uid(), 'master'::public.app_role)));
+
+
+--
+-- Name: kb_documents kb_documents_select_staff; Type: POLICY; Schema: public; Owner: -
+--
+
+CREATE POLICY kb_documents_select_staff ON public.kb_documents FOR SELECT USING ((public.has_role(auth.uid(), 'employee'::public.app_role) OR public.has_role(auth.uid(), 'master'::public.app_role)));
+
+
+--
+-- Name: kb_documents kb_documents_update_master; Type: POLICY; Schema: public; Owner: -
+--
+
+CREATE POLICY kb_documents_update_master ON public.kb_documents FOR UPDATE USING ((public.has_role(auth.uid(), 'master'::public.app_role) OR (created_by = auth.uid())));
+
+
+--
+-- Name: kb_product_specs; Type: ROW SECURITY; Schema: public; Owner: -
+--
+
+ALTER TABLE public.kb_product_specs ENABLE ROW LEVEL SECURITY;
+
+--
+-- Name: kb_product_specs kb_product_specs_delete_master; Type: POLICY; Schema: public; Owner: -
+--
+
+CREATE POLICY kb_product_specs_delete_master ON public.kb_product_specs FOR DELETE USING (public.has_role(auth.uid(), 'master'::public.app_role));
+
+
+--
+-- Name: kb_product_specs kb_product_specs_insert_staff; Type: POLICY; Schema: public; Owner: -
+--
+
+CREATE POLICY kb_product_specs_insert_staff ON public.kb_product_specs FOR INSERT WITH CHECK ((public.has_role(auth.uid(), 'employee'::public.app_role) OR public.has_role(auth.uid(), 'master'::public.app_role)));
+
+
+--
+-- Name: kb_product_specs kb_product_specs_select_staff; Type: POLICY; Schema: public; Owner: -
+--
+
+CREATE POLICY kb_product_specs_select_staff ON public.kb_product_specs FOR SELECT USING ((public.has_role(auth.uid(), 'employee'::public.app_role) OR public.has_role(auth.uid(), 'master'::public.app_role)));
+
+
+--
+-- Name: kb_product_specs kb_product_specs_update_master; Type: POLICY; Schema: public; Owner: -
+--
+
+CREATE POLICY kb_product_specs_update_master ON public.kb_product_specs FOR UPDATE USING ((public.has_role(auth.uid(), 'master'::public.app_role) OR (extracted_by = auth.uid())));
+
+
+--
+-- Name: loyalty_points; Type: ROW SECURITY; Schema: public; Owner: -
+--
+
+ALTER TABLE public.loyalty_points ENABLE ROW LEVEL SECURITY;
+
+--
+-- Name: loyalty_redemptions; Type: ROW SECURITY; Schema: public; Owner: -
+--
+
+ALTER TABLE public.loyalty_redemptions ENABLE ROW LEVEL SECURITY;
+
+--
+-- Name: margin_audit_log; Type: ROW SECURITY; Schema: public; Owner: -
+--
+
+ALTER TABLE public.margin_audit_log ENABLE ROW LEVEL SECURITY;
+
+--
+-- Name: nfe_lotes_escaneados; Type: ROW SECURITY; Schema: public; Owner: -
+--
+
+ALTER TABLE public.nfe_lotes_escaneados ENABLE ROW LEVEL SECURITY;
+
+--
+-- Name: nfe_recebimento_itens; Type: ROW SECURITY; Schema: public; Owner: -
+--
+
+ALTER TABLE public.nfe_recebimento_itens ENABLE ROW LEVEL SECURITY;
+
+--
+-- Name: nfe_recebimentos; Type: ROW SECURITY; Schema: public; Owner: -
+--
+
+ALTER TABLE public.nfe_recebimentos ENABLE ROW LEVEL SECURITY;
+
+--
+-- Name: observacoes_excluidas; Type: ROW SECURITY; Schema: public; Owner: -
+--
+
+ALTER TABLE public.observacoes_excluidas ENABLE ROW LEVEL SECURITY;
+
+--
+-- Name: omie_clientes; Type: ROW SECURITY; Schema: public; Owner: -
+--
+
+ALTER TABLE public.omie_clientes ENABLE ROW LEVEL SECURITY;
+
+--
+-- Name: omie_condicao_pagamento_catalogo; Type: ROW SECURITY; Schema: public; Owner: -
+--
+
+ALTER TABLE public.omie_condicao_pagamento_catalogo ENABLE ROW LEVEL SECURITY;
+
+--
+-- Name: omie_ordens_servico; Type: ROW SECURITY; Schema: public; Owner: -
+--
+
+ALTER TABLE public.omie_ordens_servico ENABLE ROW LEVEL SECURITY;
+
+--
+-- Name: omie_products; Type: ROW SECURITY; Schema: public; Owner: -
+--
+
+ALTER TABLE public.omie_products ENABLE ROW LEVEL SECURITY;
+
+--
+-- Name: omie_servicos; Type: ROW SECURITY; Schema: public; Owner: -
+--
+
+ALTER TABLE public.omie_servicos ENABLE ROW LEVEL SECURITY;
+
+--
+-- Name: omie_vendedor_map; Type: ROW SECURITY; Schema: public; Owner: -
+--
+
+ALTER TABLE public.omie_vendedor_map ENABLE ROW LEVEL SECURITY;
+
+--
+-- Name: omie_webhook_events; Type: ROW SECURITY; Schema: public; Owner: -
+--
+
+ALTER TABLE public.omie_webhook_events ENABLE ROW LEVEL SECURITY;
+
+--
+-- Name: order_items; Type: ROW SECURITY; Schema: public; Owner: -
+--
+
+ALTER TABLE public.order_items ENABLE ROW LEVEL SECURITY;
+
+--
+-- Name: order_messages; Type: ROW SECURITY; Schema: public; Owner: -
+--
+
+ALTER TABLE public.order_messages ENABLE ROW LEVEL SECURITY;
+
+--
+-- Name: order_price_history; Type: ROW SECURITY; Schema: public; Owner: -
+--
+
+ALTER TABLE public.order_price_history ENABLE ROW LEVEL SECURITY;
+
+--
+-- Name: order_reviews; Type: ROW SECURITY; Schema: public; Owner: -
+--
+
+ALTER TABLE public.order_reviews ENABLE ROW LEVEL SECURITY;
+
+--
+-- Name: orders; Type: ROW SECURITY; Schema: public; Owner: -
+--
+
+ALTER TABLE public.orders ENABLE ROW LEVEL SECURITY;
+
+--
+-- Name: pedido_compra_item; Type: ROW SECURITY; Schema: public; Owner: -
+--
+
+ALTER TABLE public.pedido_compra_item ENABLE ROW LEVEL SECURITY;
+
+--
+-- Name: pedido_compra_sugerido; Type: ROW SECURITY; Schema: public; Owner: -
+--
+
+ALTER TABLE public.pedido_compra_sugerido ENABLE ROW LEVEL SECURITY;
+
+--
+-- Name: pedidos_portal_tentativas; Type: ROW SECURITY; Schema: public; Owner: -
+--
+
+ALTER TABLE public.pedidos_portal_tentativas ENABLE ROW LEVEL SECURITY;
+
+--
+-- Name: pedidos_portal_tentativas pedidos_portal_tentativas_select_staff; Type: POLICY; Schema: public; Owner: -
+--
+
+CREATE POLICY pedidos_portal_tentativas_select_staff ON public.pedidos_portal_tentativas FOR SELECT TO authenticated USING ((public.has_role(auth.uid(), 'employee'::public.app_role) OR public.has_role(auth.uid(), 'master'::public.app_role)));
+
+
+--
+-- Name: permission_change_log; Type: ROW SECURITY; Schema: public; Owner: -
+--
+
+ALTER TABLE public.permission_change_log ENABLE ROW LEVEL SECURITY;
+
+--
+-- Name: permission_overrides; Type: ROW SECURITY; Schema: public; Owner: -
+--
+
+ALTER TABLE public.permission_overrides ENABLE ROW LEVEL SECURITY;
+
+--
+-- Name: picking_events; Type: ROW SECURITY; Schema: public; Owner: -
+--
+
+ALTER TABLE public.picking_events ENABLE ROW LEVEL SECURITY;
+
+--
+-- Name: picking_task_items; Type: ROW SECURITY; Schema: public; Owner: -
+--
+
+ALTER TABLE public.picking_task_items ENABLE ROW LEVEL SECURITY;
+
+--
+-- Name: picking_tasks; Type: ROW SECURITY; Schema: public; Owner: -
+--
+
+ALTER TABLE public.picking_tasks ENABLE ROW LEVEL SECURITY;
+
+--
+-- Name: priority_score_log; Type: ROW SECURITY; Schema: public; Owner: -
+--
+
+ALTER TABLE public.priority_score_log ENABLE ROW LEVEL SECURITY;
+
+--
+-- Name: product_costs; Type: ROW SECURITY; Schema: public; Owner: -
+--
+
+ALTER TABLE public.product_costs ENABLE ROW LEVEL SECURITY;
+
+--
+-- Name: production_orders; Type: ROW SECURITY; Schema: public; Owner: -
+--
+
+ALTER TABLE public.production_orders ENABLE ROW LEVEL SECURITY;
+
+--
+-- Name: profiles; Type: ROW SECURITY; Schema: public; Owner: -
+--
+
+ALTER TABLE public.profiles ENABLE ROW LEVEL SECURITY;
+
+--
+-- Name: promocao_campanha; Type: ROW SECURITY; Schema: public; Owner: -
+--
+
+ALTER TABLE public.promocao_campanha ENABLE ROW LEVEL SECURITY;
+
+--
+-- Name: promocao_item; Type: ROW SECURITY; Schema: public; Owner: -
+--
+
+ALTER TABLE public.promocao_item ENABLE ROW LEVEL SECURITY;
+
+--
+-- Name: promocao_negociacao_evento; Type: ROW SECURITY; Schema: public; Owner: -
+--
+
+ALTER TABLE public.promocao_negociacao_evento ENABLE ROW LEVEL SECURITY;
+
+--
+-- Name: purchase_orders_tracking; Type: ROW SECURITY; Schema: public; Owner: -
+--
+
+ALTER TABLE public.purchase_orders_tracking ENABLE ROW LEVEL SECURITY;
+
+--
+-- Name: rag_chunks; Type: ROW SECURITY; Schema: public; Owner: -
+--
+
+ALTER TABLE public.rag_chunks ENABLE ROW LEVEL SECURITY;
+
+--
+-- Name: rag_chunks rag_chunks_select_staff; Type: POLICY; Schema: public; Owner: -
+--
+
+CREATE POLICY rag_chunks_select_staff ON public.rag_chunks FOR SELECT USING ((public.has_role(auth.uid(), 'employee'::public.app_role) OR public.has_role(auth.uid(), 'master'::public.app_role)));
+
+
+--
+-- Name: recommendation_config; Type: ROW SECURITY; Schema: public; Owner: -
+--
+
+ALTER TABLE public.recommendation_config ENABLE ROW LEVEL SECURITY;
+
+--
+-- Name: recommendation_log; Type: ROW SECURITY; Schema: public; Owner: -
+--
+
+ALTER TABLE public.recommendation_log ENABLE ROW LEVEL SECURITY;
+
+--
+-- Name: recurring_schedules; Type: ROW SECURITY; Schema: public; Owner: -
+--
+
+ALTER TABLE public.recurring_schedules ENABLE ROW LEVEL SECURITY;
+
+--
+-- Name: referrals; Type: ROW SECURITY; Schema: public; Owner: -
+--
+
+ALTER TABLE public.referrals ENABLE ROW LEVEL SECURITY;
+
+--
+-- Name: reposition_parameters; Type: ROW SECURITY; Schema: public; Owner: -
+--
+
+ALTER TABLE public.reposition_parameters ENABLE ROW LEVEL SECURITY;
+
+--
+-- Name: roadmap_state; Type: ROW SECURITY; Schema: public; Owner: -
+--
+
+ALTER TABLE public.roadmap_state ENABLE ROW LEVEL SECURITY;
+
+--
+-- Name: route_visits; Type: ROW SECURITY; Schema: public; Owner: -
+--
+
+ALTER TABLE public.route_visits ENABLE ROW LEVEL SECURITY;
+
+--
+-- Name: sales_orders; Type: ROW SECURITY; Schema: public; Owner: -
+--
+
+ALTER TABLE public.sales_orders ENABLE ROW LEVEL SECURITY;
+
+--
+-- Name: sales_price_history; Type: ROW SECURITY; Schema: public; Owner: -
+--
+
+ALTER TABLE public.sales_price_history ENABLE ROW LEVEL SECURITY;
+
+--
+-- Name: score_recalc_queue; Type: ROW SECURITY; Schema: public; Owner: -
+--
+
+ALTER TABLE public.score_recalc_queue ENABLE ROW LEVEL SECURITY;
+
+--
+-- Name: sending_quality_logs; Type: ROW SECURITY; Schema: public; Owner: -
+--
+
+ALTER TABLE public.sending_quality_logs ENABLE ROW LEVEL SECURITY;
+
+--
+-- Name: abc_xyz_classification service_all_abc_xyz_classification; Type: POLICY; Schema: public; Owner: -
+--
+
+CREATE POLICY service_all_abc_xyz_classification ON public.abc_xyz_classification TO service_role USING (true) WITH CHECK (true);
+
+
+--
+-- Name: omie_webhook_events service_all_omie_webhook_events; Type: POLICY; Schema: public; Owner: -
+--
+
+CREATE POLICY service_all_omie_webhook_events ON public.omie_webhook_events TO service_role USING (true) WITH CHECK (true);
+
+
+--
+-- Name: purchase_orders_tracking service_all_purchase_orders_tracking; Type: POLICY; Schema: public; Owner: -
+--
+
+CREATE POLICY service_all_purchase_orders_tracking ON public.purchase_orders_tracking TO service_role USING (true) WITH CHECK (true);
+
+
+--
+-- Name: reposition_parameters service_all_reposition_parameters; Type: POLICY; Schema: public; Owner: -
+--
+
+CREATE POLICY service_all_reposition_parameters ON public.reposition_parameters TO service_role USING (true) WITH CHECK (true);
+
+
+--
+-- Name: roadmap_state service_all_roadmap_state; Type: POLICY; Schema: public; Owner: -
+--
+
+CREATE POLICY service_all_roadmap_state ON public.roadmap_state TO service_role USING (true) WITH CHECK (true);
+
+
+--
+-- Name: sku_leadtime_history service_all_sku_leadtime_history; Type: POLICY; Schema: public; Owner: -
+--
+
+CREATE POLICY service_all_sku_leadtime_history ON public.sku_leadtime_history TO service_role USING (true) WITH CHECK (true);
+
+
+--
+-- Name: simulacao_estoque_resultados; Type: ROW SECURITY; Schema: public; Owner: -
+--
+
+ALTER TABLE public.simulacao_estoque_resultados ENABLE ROW LEVEL SECURITY;
+
+--
+-- Name: sku_estoque_atual; Type: ROW SECURITY; Schema: public; Owner: -
+--
+
+ALTER TABLE public.sku_estoque_atual ENABLE ROW LEVEL SECURITY;
+
+--
+-- Name: sku_fornecedor_externo; Type: ROW SECURITY; Schema: public; Owner: -
+--
+
+ALTER TABLE public.sku_fornecedor_externo ENABLE ROW LEVEL SECURITY;
+
+--
+-- Name: sku_grupo_producao; Type: ROW SECURITY; Schema: public; Owner: -
+--
+
+ALTER TABLE public.sku_grupo_producao ENABLE ROW LEVEL SECURITY;
+
+--
+-- Name: sku_leadtime_history; Type: ROW SECURITY; Schema: public; Owner: -
+--
+
+ALTER TABLE public.sku_leadtime_history ENABLE ROW LEVEL SECURITY;
+
+--
+-- Name: sku_parametros; Type: ROW SECURITY; Schema: public; Owner: -
+--
+
+ALTER TABLE public.sku_parametros ENABLE ROW LEVEL SECURITY;
+
+--
+-- Name: sku_parametros_historico; Type: ROW SECURITY; Schema: public; Owner: -
+--
+
+ALTER TABLE public.sku_parametros_historico ENABLE ROW LEVEL SECURITY;
+
+--
+-- Name: sku_status_omie; Type: ROW SECURITY; Schema: public; Owner: -
+--
+
+ALTER TABLE public.sku_status_omie ENABLE ROW LEVEL SECURITY;
+
+--
+-- Name: sku_substituicao; Type: ROW SECURITY; Schema: public; Owner: -
+--
+
+ALTER TABLE public.sku_substituicao ENABLE ROW LEVEL SECURITY;
+
+--
+-- Name: sku_parametros staff can update sku_parametros; Type: POLICY; Schema: public; Owner: -
+--
+
+CREATE POLICY "staff can update sku_parametros" ON public.sku_parametros FOR UPDATE TO authenticated USING ((EXISTS ( SELECT 1
+   FROM public.user_roles
+  WHERE ((user_roles.user_id = auth.uid()) AND (user_roles.role = ANY (ARRAY['master'::public.app_role, 'employee'::public.app_role, 'master'::public.app_role])))))) WITH CHECK ((EXISTS ( SELECT 1
+   FROM public.user_roles
+  WHERE ((user_roles.user_id = auth.uid()) AND (user_roles.role = ANY (ARRAY['master'::public.app_role, 'employee'::public.app_role, 'master'::public.app_role]))))));
+
+
+--
+-- Name: abc_xyz_classification staff_abc_xyz_classification_all; Type: POLICY; Schema: public; Owner: -
+--
+
+CREATE POLICY staff_abc_xyz_classification_all ON public.abc_xyz_classification TO authenticated USING ((public.has_role(auth.uid(), 'master'::public.app_role) OR public.has_role(auth.uid(), 'employee'::public.app_role) OR public.has_role(auth.uid(), 'master'::public.app_role) OR public.has_role(auth.uid(), 'master'::public.app_role))) WITH CHECK ((public.has_role(auth.uid(), 'master'::public.app_role) OR public.has_role(auth.uid(), 'employee'::public.app_role) OR public.has_role(auth.uid(), 'master'::public.app_role) OR public.has_role(auth.uid(), 'master'::public.app_role)));
+
+
+--
+-- Name: cache_lotes staff_cache_lotes_all; Type: POLICY; Schema: public; Owner: -
+--
+
+CREATE POLICY staff_cache_lotes_all ON public.cache_lotes TO authenticated USING ((public.has_role(auth.uid(), 'master'::public.app_role) OR public.has_role(auth.uid(), 'employee'::public.app_role) OR public.has_role(auth.uid(), 'master'::public.app_role) OR public.has_role(auth.uid(), 'master'::public.app_role))) WITH CHECK ((public.has_role(auth.uid(), 'master'::public.app_role) OR public.has_role(auth.uid(), 'employee'::public.app_role) OR public.has_role(auth.uid(), 'master'::public.app_role) OR public.has_role(auth.uid(), 'master'::public.app_role)));
+
+
+--
+-- Name: calendario_feriados staff_calendario_feriados_select; Type: POLICY; Schema: public; Owner: -
+--
+
+CREATE POLICY staff_calendario_feriados_select ON public.calendario_feriados FOR SELECT TO authenticated USING ((public.has_role(auth.uid(), 'master'::public.app_role) OR public.has_role(auth.uid(), 'master'::public.app_role) OR public.has_role(auth.uid(), 'master'::public.app_role) OR public.has_role(auth.uid(), 'employee'::public.app_role)));
+
+
+--
+-- Name: conversao_unidades staff_conversao_unidades_all; Type: POLICY; Schema: public; Owner: -
+--
+
+CREATE POLICY staff_conversao_unidades_all ON public.conversao_unidades TO authenticated USING ((public.has_role(auth.uid(), 'master'::public.app_role) OR public.has_role(auth.uid(), 'employee'::public.app_role) OR public.has_role(auth.uid(), 'master'::public.app_role) OR public.has_role(auth.uid(), 'master'::public.app_role))) WITH CHECK ((public.has_role(auth.uid(), 'master'::public.app_role) OR public.has_role(auth.uid(), 'employee'::public.app_role) OR public.has_role(auth.uid(), 'master'::public.app_role) OR public.has_role(auth.uid(), 'master'::public.app_role)));
+
+
+--
+-- Name: cte_associados staff_cte_associados_all; Type: POLICY; Schema: public; Owner: -
+--
+
+CREATE POLICY staff_cte_associados_all ON public.cte_associados TO authenticated USING ((public.has_role(auth.uid(), 'master'::public.app_role) OR public.has_role(auth.uid(), 'employee'::public.app_role) OR public.has_role(auth.uid(), 'master'::public.app_role) OR public.has_role(auth.uid(), 'master'::public.app_role))) WITH CHECK ((public.has_role(auth.uid(), 'master'::public.app_role) OR public.has_role(auth.uid(), 'employee'::public.app_role) OR public.has_role(auth.uid(), 'master'::public.app_role) OR public.has_role(auth.uid(), 'master'::public.app_role)));
+
+
+--
+-- Name: empresa_configuracao_custos staff_empresa_configuracao_custos_delete; Type: POLICY; Schema: public; Owner: -
+--
+
+CREATE POLICY staff_empresa_configuracao_custos_delete ON public.empresa_configuracao_custos FOR DELETE TO authenticated USING ((public.has_role(auth.uid(), 'master'::public.app_role) OR public.has_role(auth.uid(), 'employee'::public.app_role)));
+
+
+--
+-- Name: empresa_configuracao_custos staff_empresa_configuracao_custos_insert; Type: POLICY; Schema: public; Owner: -
+--
+
+CREATE POLICY staff_empresa_configuracao_custos_insert ON public.empresa_configuracao_custos FOR INSERT TO authenticated WITH CHECK ((public.has_role(auth.uid(), 'master'::public.app_role) OR public.has_role(auth.uid(), 'employee'::public.app_role)));
+
+
+--
+-- Name: empresa_configuracao_custos staff_empresa_configuracao_custos_select; Type: POLICY; Schema: public; Owner: -
+--
+
+CREATE POLICY staff_empresa_configuracao_custos_select ON public.empresa_configuracao_custos FOR SELECT TO authenticated USING ((public.has_role(auth.uid(), 'master'::public.app_role) OR public.has_role(auth.uid(), 'employee'::public.app_role)));
+
+
+--
+-- Name: empresa_configuracao_custos staff_empresa_configuracao_custos_update; Type: POLICY; Schema: public; Owner: -
+--
+
+CREATE POLICY staff_empresa_configuracao_custos_update ON public.empresa_configuracao_custos FOR UPDATE TO authenticated USING ((public.has_role(auth.uid(), 'master'::public.app_role) OR public.has_role(auth.uid(), 'employee'::public.app_role))) WITH CHECK ((public.has_role(auth.uid(), 'master'::public.app_role) OR public.has_role(auth.uid(), 'employee'::public.app_role)));
+
+
+--
+-- Name: familia_nao_comprada staff_familia_nao_comprada_delete; Type: POLICY; Schema: public; Owner: -
+--
+
+CREATE POLICY staff_familia_nao_comprada_delete ON public.familia_nao_comprada FOR DELETE TO authenticated USING ((public.has_role(auth.uid(), 'master'::public.app_role) OR public.has_role(auth.uid(), 'employee'::public.app_role)));
+
+
+--
+-- Name: familia_nao_comprada staff_familia_nao_comprada_insert; Type: POLICY; Schema: public; Owner: -
+--
+
+CREATE POLICY staff_familia_nao_comprada_insert ON public.familia_nao_comprada FOR INSERT TO authenticated WITH CHECK ((public.has_role(auth.uid(), 'master'::public.app_role) OR public.has_role(auth.uid(), 'employee'::public.app_role)));
+
+
+--
+-- Name: familia_nao_comprada staff_familia_nao_comprada_select; Type: POLICY; Schema: public; Owner: -
+--
+
+CREATE POLICY staff_familia_nao_comprada_select ON public.familia_nao_comprada FOR SELECT TO authenticated USING ((public.has_role(auth.uid(), 'master'::public.app_role) OR public.has_role(auth.uid(), 'employee'::public.app_role)));
+
+
+--
+-- Name: familia_nao_comprada staff_familia_nao_comprada_update; Type: POLICY; Schema: public; Owner: -
+--
+
+CREATE POLICY staff_familia_nao_comprada_update ON public.familia_nao_comprada FOR UPDATE TO authenticated USING ((public.has_role(auth.uid(), 'master'::public.app_role) OR public.has_role(auth.uid(), 'employee'::public.app_role))) WITH CHECK ((public.has_role(auth.uid(), 'master'::public.app_role) OR public.has_role(auth.uid(), 'employee'::public.app_role)));
+
+
+--
+-- Name: fornecedor_cadeia_logistica staff_fornecedor_cadeia_logistica_delete; Type: POLICY; Schema: public; Owner: -
+--
+
+CREATE POLICY staff_fornecedor_cadeia_logistica_delete ON public.fornecedor_cadeia_logistica FOR DELETE TO authenticated USING ((public.has_role(auth.uid(), 'master'::public.app_role) OR public.has_role(auth.uid(), 'employee'::public.app_role)));
+
+
+--
+-- Name: fornecedor_cadeia_logistica staff_fornecedor_cadeia_logistica_insert; Type: POLICY; Schema: public; Owner: -
+--
+
+CREATE POLICY staff_fornecedor_cadeia_logistica_insert ON public.fornecedor_cadeia_logistica FOR INSERT TO authenticated WITH CHECK ((public.has_role(auth.uid(), 'master'::public.app_role) OR public.has_role(auth.uid(), 'employee'::public.app_role)));
+
+
+--
+-- Name: fornecedor_cadeia_logistica staff_fornecedor_cadeia_logistica_select; Type: POLICY; Schema: public; Owner: -
+--
+
+CREATE POLICY staff_fornecedor_cadeia_logistica_select ON public.fornecedor_cadeia_logistica FOR SELECT TO authenticated USING ((public.has_role(auth.uid(), 'master'::public.app_role) OR public.has_role(auth.uid(), 'employee'::public.app_role)));
+
+
+--
+-- Name: fornecedor_cadeia_logistica staff_fornecedor_cadeia_logistica_update; Type: POLICY; Schema: public; Owner: -
+--
+
+CREATE POLICY staff_fornecedor_cadeia_logistica_update ON public.fornecedor_cadeia_logistica FOR UPDATE TO authenticated USING ((public.has_role(auth.uid(), 'master'::public.app_role) OR public.has_role(auth.uid(), 'employee'::public.app_role))) WITH CHECK ((public.has_role(auth.uid(), 'master'::public.app_role) OR public.has_role(auth.uid(), 'employee'::public.app_role)));
+
+
+--
+-- Name: fornecedor_calendario_operacao staff_fornecedor_calendario_operacao_delete; Type: POLICY; Schema: public; Owner: -
+--
+
+CREATE POLICY staff_fornecedor_calendario_operacao_delete ON public.fornecedor_calendario_operacao FOR DELETE TO authenticated USING ((public.has_role(auth.uid(), 'master'::public.app_role) OR public.has_role(auth.uid(), 'employee'::public.app_role)));
+
+
+--
+-- Name: fornecedor_calendario_operacao staff_fornecedor_calendario_operacao_insert; Type: POLICY; Schema: public; Owner: -
+--
+
+CREATE POLICY staff_fornecedor_calendario_operacao_insert ON public.fornecedor_calendario_operacao FOR INSERT TO authenticated WITH CHECK ((public.has_role(auth.uid(), 'master'::public.app_role) OR public.has_role(auth.uid(), 'employee'::public.app_role)));
+
+
+--
+-- Name: fornecedor_calendario_operacao staff_fornecedor_calendario_operacao_select; Type: POLICY; Schema: public; Owner: -
+--
+
+CREATE POLICY staff_fornecedor_calendario_operacao_select ON public.fornecedor_calendario_operacao FOR SELECT TO authenticated USING ((public.has_role(auth.uid(), 'master'::public.app_role) OR public.has_role(auth.uid(), 'employee'::public.app_role)));
+
+
+--
+-- Name: fornecedor_calendario_operacao staff_fornecedor_calendario_operacao_update; Type: POLICY; Schema: public; Owner: -
+--
+
+CREATE POLICY staff_fornecedor_calendario_operacao_update ON public.fornecedor_calendario_operacao FOR UPDATE TO authenticated USING ((public.has_role(auth.uid(), 'master'::public.app_role) OR public.has_role(auth.uid(), 'employee'::public.app_role))) WITH CHECK ((public.has_role(auth.uid(), 'master'::public.app_role) OR public.has_role(auth.uid(), 'employee'::public.app_role)));
+
+
+--
+-- Name: fornecedor_condicao_pagamento_padrao staff_fornecedor_condicao_pagamento_padrao_delete; Type: POLICY; Schema: public; Owner: -
+--
+
+CREATE POLICY staff_fornecedor_condicao_pagamento_padrao_delete ON public.fornecedor_condicao_pagamento_padrao FOR DELETE TO authenticated USING ((public.has_role(auth.uid(), 'master'::public.app_role) OR public.has_role(auth.uid(), 'employee'::public.app_role)));
+
+
+--
+-- Name: fornecedor_condicao_pagamento_padrao staff_fornecedor_condicao_pagamento_padrao_insert; Type: POLICY; Schema: public; Owner: -
+--
+
+CREATE POLICY staff_fornecedor_condicao_pagamento_padrao_insert ON public.fornecedor_condicao_pagamento_padrao FOR INSERT TO authenticated WITH CHECK ((public.has_role(auth.uid(), 'master'::public.app_role) OR public.has_role(auth.uid(), 'employee'::public.app_role)));
+
+
+--
+-- Name: fornecedor_condicao_pagamento_padrao staff_fornecedor_condicao_pagamento_padrao_select; Type: POLICY; Schema: public; Owner: -
+--
+
+CREATE POLICY staff_fornecedor_condicao_pagamento_padrao_select ON public.fornecedor_condicao_pagamento_padrao FOR SELECT TO authenticated USING ((public.has_role(auth.uid(), 'master'::public.app_role) OR public.has_role(auth.uid(), 'employee'::public.app_role)));
+
+
+--
+-- Name: fornecedor_condicao_pagamento_padrao staff_fornecedor_condicao_pagamento_padrao_update; Type: POLICY; Schema: public; Owner: -
+--
+
+CREATE POLICY staff_fornecedor_condicao_pagamento_padrao_update ON public.fornecedor_condicao_pagamento_padrao FOR UPDATE TO authenticated USING ((public.has_role(auth.uid(), 'master'::public.app_role) OR public.has_role(auth.uid(), 'employee'::public.app_role))) WITH CHECK ((public.has_role(auth.uid(), 'master'::public.app_role) OR public.has_role(auth.uid(), 'employee'::public.app_role)));
+
+
+--
+-- Name: fornecedor_grupo_producao staff_fornecedor_grupo_producao_delete; Type: POLICY; Schema: public; Owner: -
+--
+
+CREATE POLICY staff_fornecedor_grupo_producao_delete ON public.fornecedor_grupo_producao FOR DELETE TO authenticated USING ((public.has_role(auth.uid(), 'master'::public.app_role) OR public.has_role(auth.uid(), 'employee'::public.app_role)));
+
+
+--
+-- Name: fornecedor_grupo_producao staff_fornecedor_grupo_producao_insert; Type: POLICY; Schema: public; Owner: -
+--
+
+CREATE POLICY staff_fornecedor_grupo_producao_insert ON public.fornecedor_grupo_producao FOR INSERT TO authenticated WITH CHECK ((public.has_role(auth.uid(), 'master'::public.app_role) OR public.has_role(auth.uid(), 'employee'::public.app_role)));
+
+
+--
+-- Name: fornecedor_grupo_producao staff_fornecedor_grupo_producao_select; Type: POLICY; Schema: public; Owner: -
+--
+
+CREATE POLICY staff_fornecedor_grupo_producao_select ON public.fornecedor_grupo_producao FOR SELECT TO authenticated USING ((public.has_role(auth.uid(), 'master'::public.app_role) OR public.has_role(auth.uid(), 'employee'::public.app_role)));
+
+
+--
+-- Name: fornecedor_grupo_producao staff_fornecedor_grupo_producao_update; Type: POLICY; Schema: public; Owner: -
+--
+
+CREATE POLICY staff_fornecedor_grupo_producao_update ON public.fornecedor_grupo_producao FOR UPDATE TO authenticated USING ((public.has_role(auth.uid(), 'master'::public.app_role) OR public.has_role(auth.uid(), 'employee'::public.app_role))) WITH CHECK ((public.has_role(auth.uid(), 'master'::public.app_role) OR public.has_role(auth.uid(), 'employee'::public.app_role)));
+
+
+--
+-- Name: fornecedor_habilitado_reposicao staff_fornecedor_habilitado_reposicao_delete; Type: POLICY; Schema: public; Owner: -
+--
+
+CREATE POLICY staff_fornecedor_habilitado_reposicao_delete ON public.fornecedor_habilitado_reposicao FOR DELETE TO authenticated USING ((public.has_role(auth.uid(), 'master'::public.app_role) OR public.has_role(auth.uid(), 'employee'::public.app_role)));
+
+
+--
+-- Name: fornecedor_habilitado_reposicao staff_fornecedor_habilitado_reposicao_insert; Type: POLICY; Schema: public; Owner: -
+--
+
+CREATE POLICY staff_fornecedor_habilitado_reposicao_insert ON public.fornecedor_habilitado_reposicao FOR INSERT TO authenticated WITH CHECK ((public.has_role(auth.uid(), 'master'::public.app_role) OR public.has_role(auth.uid(), 'employee'::public.app_role)));
+
+
+--
+-- Name: fornecedor_habilitado_reposicao staff_fornecedor_habilitado_reposicao_select; Type: POLICY; Schema: public; Owner: -
+--
+
+CREATE POLICY staff_fornecedor_habilitado_reposicao_select ON public.fornecedor_habilitado_reposicao FOR SELECT TO authenticated USING ((public.has_role(auth.uid(), 'master'::public.app_role) OR public.has_role(auth.uid(), 'employee'::public.app_role)));
+
+
+--
+-- Name: fornecedor_habilitado_reposicao staff_fornecedor_habilitado_reposicao_update; Type: POLICY; Schema: public; Owner: -
+--
+
+CREATE POLICY staff_fornecedor_habilitado_reposicao_update ON public.fornecedor_habilitado_reposicao FOR UPDATE TO authenticated USING ((public.has_role(auth.uid(), 'master'::public.app_role) OR public.has_role(auth.uid(), 'employee'::public.app_role))) WITH CHECK ((public.has_role(auth.uid(), 'master'::public.app_role) OR public.has_role(auth.uid(), 'employee'::public.app_role)));
+
+
+--
+-- Name: fornecedor_promocao staff_fornecedor_promocao_delete; Type: POLICY; Schema: public; Owner: -
+--
+
+CREATE POLICY staff_fornecedor_promocao_delete ON public.fornecedor_promocao FOR DELETE TO authenticated USING ((public.has_role(auth.uid(), 'master'::public.app_role) OR public.has_role(auth.uid(), 'employee'::public.app_role)));
+
+
+--
+-- Name: fornecedor_promocao staff_fornecedor_promocao_insert; Type: POLICY; Schema: public; Owner: -
+--
+
+CREATE POLICY staff_fornecedor_promocao_insert ON public.fornecedor_promocao FOR INSERT TO authenticated WITH CHECK ((public.has_role(auth.uid(), 'master'::public.app_role) OR public.has_role(auth.uid(), 'employee'::public.app_role)));
+
+
+--
+-- Name: fornecedor_promocao staff_fornecedor_promocao_select; Type: POLICY; Schema: public; Owner: -
+--
+
+CREATE POLICY staff_fornecedor_promocao_select ON public.fornecedor_promocao FOR SELECT TO authenticated USING ((public.has_role(auth.uid(), 'master'::public.app_role) OR public.has_role(auth.uid(), 'employee'::public.app_role)));
+
+
+--
+-- Name: fornecedor_promocao staff_fornecedor_promocao_update; Type: POLICY; Schema: public; Owner: -
+--
+
+CREATE POLICY staff_fornecedor_promocao_update ON public.fornecedor_promocao FOR UPDATE TO authenticated USING ((public.has_role(auth.uid(), 'master'::public.app_role) OR public.has_role(auth.uid(), 'employee'::public.app_role))) WITH CHECK ((public.has_role(auth.uid(), 'master'::public.app_role) OR public.has_role(auth.uid(), 'employee'::public.app_role)));
+
+
+--
+-- Name: inventory_position staff_inventory_position_select; Type: POLICY; Schema: public; Owner: -
+--
+
+CREATE POLICY staff_inventory_position_select ON public.inventory_position FOR SELECT TO authenticated USING ((public.has_role(auth.uid(), 'master'::public.app_role) OR public.has_role(auth.uid(), 'employee'::public.app_role) OR public.has_role(auth.uid(), 'master'::public.app_role) OR public.has_role(auth.uid(), 'master'::public.app_role)));
+
+
+--
+-- Name: omie_condicao_pagamento_catalogo staff_omie_condicao_pagamento_catalogo_delete; Type: POLICY; Schema: public; Owner: -
+--
+
+CREATE POLICY staff_omie_condicao_pagamento_catalogo_delete ON public.omie_condicao_pagamento_catalogo FOR DELETE TO authenticated USING ((public.has_role(auth.uid(), 'master'::public.app_role) OR public.has_role(auth.uid(), 'employee'::public.app_role)));
+
+
+--
+-- Name: omie_condicao_pagamento_catalogo staff_omie_condicao_pagamento_catalogo_insert; Type: POLICY; Schema: public; Owner: -
+--
+
+CREATE POLICY staff_omie_condicao_pagamento_catalogo_insert ON public.omie_condicao_pagamento_catalogo FOR INSERT TO authenticated WITH CHECK ((public.has_role(auth.uid(), 'master'::public.app_role) OR public.has_role(auth.uid(), 'employee'::public.app_role)));
+
+
+--
+-- Name: omie_condicao_pagamento_catalogo staff_omie_condicao_pagamento_catalogo_select; Type: POLICY; Schema: public; Owner: -
+--
+
+CREATE POLICY staff_omie_condicao_pagamento_catalogo_select ON public.omie_condicao_pagamento_catalogo FOR SELECT TO authenticated USING ((public.has_role(auth.uid(), 'master'::public.app_role) OR public.has_role(auth.uid(), 'employee'::public.app_role)));
+
+
+--
+-- Name: omie_condicao_pagamento_catalogo staff_omie_condicao_pagamento_catalogo_update; Type: POLICY; Schema: public; Owner: -
+--
+
+CREATE POLICY staff_omie_condicao_pagamento_catalogo_update ON public.omie_condicao_pagamento_catalogo FOR UPDATE TO authenticated USING ((public.has_role(auth.uid(), 'master'::public.app_role) OR public.has_role(auth.uid(), 'employee'::public.app_role))) WITH CHECK ((public.has_role(auth.uid(), 'master'::public.app_role) OR public.has_role(auth.uid(), 'employee'::public.app_role)));
+
+
+--
+-- Name: omie_webhook_events staff_omie_webhook_events_delete; Type: POLICY; Schema: public; Owner: -
+--
+
+CREATE POLICY staff_omie_webhook_events_delete ON public.omie_webhook_events FOR DELETE TO authenticated USING ((public.has_role(auth.uid(), 'master'::public.app_role) OR public.has_role(auth.uid(), 'employee'::public.app_role)));
+
+
+--
+-- Name: omie_webhook_events staff_omie_webhook_events_insert; Type: POLICY; Schema: public; Owner: -
+--
+
+CREATE POLICY staff_omie_webhook_events_insert ON public.omie_webhook_events FOR INSERT TO authenticated WITH CHECK ((public.has_role(auth.uid(), 'master'::public.app_role) OR public.has_role(auth.uid(), 'employee'::public.app_role)));
+
+
+--
+-- Name: omie_webhook_events staff_omie_webhook_events_select; Type: POLICY; Schema: public; Owner: -
+--
+
+CREATE POLICY staff_omie_webhook_events_select ON public.omie_webhook_events FOR SELECT TO authenticated USING ((public.has_role(auth.uid(), 'master'::public.app_role) OR public.has_role(auth.uid(), 'employee'::public.app_role)));
+
+
+--
+-- Name: omie_webhook_events staff_omie_webhook_events_update; Type: POLICY; Schema: public; Owner: -
+--
+
+CREATE POLICY staff_omie_webhook_events_update ON public.omie_webhook_events FOR UPDATE TO authenticated USING ((public.has_role(auth.uid(), 'master'::public.app_role) OR public.has_role(auth.uid(), 'employee'::public.app_role))) WITH CHECK ((public.has_role(auth.uid(), 'master'::public.app_role) OR public.has_role(auth.uid(), 'employee'::public.app_role)));
+
+
+--
+-- Name: pedido_compra_item staff_pedido_compra_item_delete; Type: POLICY; Schema: public; Owner: -
+--
+
+CREATE POLICY staff_pedido_compra_item_delete ON public.pedido_compra_item FOR DELETE TO authenticated USING ((public.has_role(auth.uid(), 'master'::public.app_role) OR public.has_role(auth.uid(), 'employee'::public.app_role)));
+
+
+--
+-- Name: pedido_compra_item staff_pedido_compra_item_insert; Type: POLICY; Schema: public; Owner: -
+--
+
+CREATE POLICY staff_pedido_compra_item_insert ON public.pedido_compra_item FOR INSERT TO authenticated WITH CHECK ((public.has_role(auth.uid(), 'master'::public.app_role) OR public.has_role(auth.uid(), 'employee'::public.app_role)));
+
+
+--
+-- Name: pedido_compra_item staff_pedido_compra_item_select; Type: POLICY; Schema: public; Owner: -
+--
+
+CREATE POLICY staff_pedido_compra_item_select ON public.pedido_compra_item FOR SELECT TO authenticated USING ((public.has_role(auth.uid(), 'master'::public.app_role) OR public.has_role(auth.uid(), 'employee'::public.app_role)));
+
+
+--
+-- Name: pedido_compra_item staff_pedido_compra_item_update; Type: POLICY; Schema: public; Owner: -
+--
+
+CREATE POLICY staff_pedido_compra_item_update ON public.pedido_compra_item FOR UPDATE TO authenticated USING ((public.has_role(auth.uid(), 'master'::public.app_role) OR public.has_role(auth.uid(), 'employee'::public.app_role))) WITH CHECK ((public.has_role(auth.uid(), 'master'::public.app_role) OR public.has_role(auth.uid(), 'employee'::public.app_role)));
+
+
+--
+-- Name: pedido_compra_sugerido staff_pedido_compra_sugerido_delete; Type: POLICY; Schema: public; Owner: -
+--
+
+CREATE POLICY staff_pedido_compra_sugerido_delete ON public.pedido_compra_sugerido FOR DELETE TO authenticated USING ((public.has_role(auth.uid(), 'master'::public.app_role) OR public.has_role(auth.uid(), 'employee'::public.app_role)));
+
+
+--
+-- Name: pedido_compra_sugerido staff_pedido_compra_sugerido_insert; Type: POLICY; Schema: public; Owner: -
+--
+
+CREATE POLICY staff_pedido_compra_sugerido_insert ON public.pedido_compra_sugerido FOR INSERT TO authenticated WITH CHECK ((public.has_role(auth.uid(), 'master'::public.app_role) OR public.has_role(auth.uid(), 'employee'::public.app_role)));
+
+
+--
+-- Name: pedido_compra_sugerido staff_pedido_compra_sugerido_select; Type: POLICY; Schema: public; Owner: -
+--
+
+CREATE POLICY staff_pedido_compra_sugerido_select ON public.pedido_compra_sugerido FOR SELECT TO authenticated USING ((public.has_role(auth.uid(), 'master'::public.app_role) OR public.has_role(auth.uid(), 'employee'::public.app_role)));
+
+
+--
+-- Name: pedido_compra_sugerido staff_pedido_compra_sugerido_update; Type: POLICY; Schema: public; Owner: -
+--
+
+CREATE POLICY staff_pedido_compra_sugerido_update ON public.pedido_compra_sugerido FOR UPDATE TO authenticated USING ((public.has_role(auth.uid(), 'master'::public.app_role) OR public.has_role(auth.uid(), 'employee'::public.app_role))) WITH CHECK ((public.has_role(auth.uid(), 'master'::public.app_role) OR public.has_role(auth.uid(), 'employee'::public.app_role)));
+
+
+--
+-- Name: picking_events staff_picking_events_all; Type: POLICY; Schema: public; Owner: -
+--
+
+CREATE POLICY staff_picking_events_all ON public.picking_events TO authenticated USING ((public.has_role(auth.uid(), 'master'::public.app_role) OR public.has_role(auth.uid(), 'employee'::public.app_role) OR public.has_role(auth.uid(), 'master'::public.app_role) OR public.has_role(auth.uid(), 'master'::public.app_role))) WITH CHECK ((public.has_role(auth.uid(), 'master'::public.app_role) OR public.has_role(auth.uid(), 'employee'::public.app_role) OR public.has_role(auth.uid(), 'master'::public.app_role) OR public.has_role(auth.uid(), 'master'::public.app_role)));
+
+
+--
+-- Name: picking_task_items staff_picking_task_items_all; Type: POLICY; Schema: public; Owner: -
+--
+
+CREATE POLICY staff_picking_task_items_all ON public.picking_task_items TO authenticated USING ((public.has_role(auth.uid(), 'master'::public.app_role) OR public.has_role(auth.uid(), 'employee'::public.app_role) OR public.has_role(auth.uid(), 'master'::public.app_role) OR public.has_role(auth.uid(), 'master'::public.app_role))) WITH CHECK ((public.has_role(auth.uid(), 'master'::public.app_role) OR public.has_role(auth.uid(), 'employee'::public.app_role) OR public.has_role(auth.uid(), 'master'::public.app_role) OR public.has_role(auth.uid(), 'master'::public.app_role)));
+
+
+--
+-- Name: picking_tasks staff_picking_tasks_all; Type: POLICY; Schema: public; Owner: -
+--
+
+CREATE POLICY staff_picking_tasks_all ON public.picking_tasks TO authenticated USING ((public.has_role(auth.uid(), 'master'::public.app_role) OR public.has_role(auth.uid(), 'employee'::public.app_role) OR public.has_role(auth.uid(), 'master'::public.app_role) OR public.has_role(auth.uid(), 'master'::public.app_role))) WITH CHECK ((public.has_role(auth.uid(), 'master'::public.app_role) OR public.has_role(auth.uid(), 'employee'::public.app_role) OR public.has_role(auth.uid(), 'master'::public.app_role) OR public.has_role(auth.uid(), 'master'::public.app_role)));
+
+
+--
+-- Name: purchase_orders_tracking staff_purchase_orders_tracking_all; Type: POLICY; Schema: public; Owner: -
+--
+
+CREATE POLICY staff_purchase_orders_tracking_all ON public.purchase_orders_tracking TO authenticated USING ((public.has_role(auth.uid(), 'master'::public.app_role) OR public.has_role(auth.uid(), 'employee'::public.app_role) OR public.has_role(auth.uid(), 'master'::public.app_role) OR public.has_role(auth.uid(), 'master'::public.app_role))) WITH CHECK ((public.has_role(auth.uid(), 'master'::public.app_role) OR public.has_role(auth.uid(), 'employee'::public.app_role) OR public.has_role(auth.uid(), 'master'::public.app_role) OR public.has_role(auth.uid(), 'master'::public.app_role)));
+
+
+--
+-- Name: reposition_parameters staff_reposition_parameters_all; Type: POLICY; Schema: public; Owner: -
+--
+
+CREATE POLICY staff_reposition_parameters_all ON public.reposition_parameters TO authenticated USING ((public.has_role(auth.uid(), 'master'::public.app_role) OR public.has_role(auth.uid(), 'employee'::public.app_role) OR public.has_role(auth.uid(), 'master'::public.app_role) OR public.has_role(auth.uid(), 'master'::public.app_role))) WITH CHECK ((public.has_role(auth.uid(), 'master'::public.app_role) OR public.has_role(auth.uid(), 'employee'::public.app_role) OR public.has_role(auth.uid(), 'master'::public.app_role) OR public.has_role(auth.uid(), 'master'::public.app_role)));
+
+
+--
+-- Name: simulacao_estoque_resultados staff_simulacao_estoque_resultados_delete; Type: POLICY; Schema: public; Owner: -
+--
+
+CREATE POLICY staff_simulacao_estoque_resultados_delete ON public.simulacao_estoque_resultados FOR DELETE TO authenticated USING ((public.has_role(auth.uid(), 'master'::public.app_role) OR public.has_role(auth.uid(), 'employee'::public.app_role)));
+
+
+--
+-- Name: simulacao_estoque_resultados staff_simulacao_estoque_resultados_insert; Type: POLICY; Schema: public; Owner: -
+--
+
+CREATE POLICY staff_simulacao_estoque_resultados_insert ON public.simulacao_estoque_resultados FOR INSERT TO authenticated WITH CHECK ((public.has_role(auth.uid(), 'master'::public.app_role) OR public.has_role(auth.uid(), 'employee'::public.app_role)));
+
+
+--
+-- Name: simulacao_estoque_resultados staff_simulacao_estoque_resultados_select; Type: POLICY; Schema: public; Owner: -
+--
+
+CREATE POLICY staff_simulacao_estoque_resultados_select ON public.simulacao_estoque_resultados FOR SELECT TO authenticated USING ((public.has_role(auth.uid(), 'master'::public.app_role) OR public.has_role(auth.uid(), 'employee'::public.app_role)));
+
+
+--
+-- Name: simulacao_estoque_resultados staff_simulacao_estoque_resultados_update; Type: POLICY; Schema: public; Owner: -
+--
+
+CREATE POLICY staff_simulacao_estoque_resultados_update ON public.simulacao_estoque_resultados FOR UPDATE TO authenticated USING ((public.has_role(auth.uid(), 'master'::public.app_role) OR public.has_role(auth.uid(), 'employee'::public.app_role))) WITH CHECK ((public.has_role(auth.uid(), 'master'::public.app_role) OR public.has_role(auth.uid(), 'employee'::public.app_role)));
+
+
+--
+-- Name: sku_estoque_atual staff_sku_estoque_atual_delete; Type: POLICY; Schema: public; Owner: -
+--
+
+CREATE POLICY staff_sku_estoque_atual_delete ON public.sku_estoque_atual FOR DELETE TO authenticated USING ((public.has_role(auth.uid(), 'master'::public.app_role) OR public.has_role(auth.uid(), 'employee'::public.app_role)));
+
+
+--
+-- Name: sku_estoque_atual staff_sku_estoque_atual_insert; Type: POLICY; Schema: public; Owner: -
+--
+
+CREATE POLICY staff_sku_estoque_atual_insert ON public.sku_estoque_atual FOR INSERT TO authenticated WITH CHECK ((public.has_role(auth.uid(), 'master'::public.app_role) OR public.has_role(auth.uid(), 'employee'::public.app_role)));
+
+
+--
+-- Name: sku_estoque_atual staff_sku_estoque_atual_select; Type: POLICY; Schema: public; Owner: -
+--
+
+CREATE POLICY staff_sku_estoque_atual_select ON public.sku_estoque_atual FOR SELECT TO authenticated USING ((public.has_role(auth.uid(), 'master'::public.app_role) OR public.has_role(auth.uid(), 'employee'::public.app_role)));
+
+
+--
+-- Name: sku_estoque_atual staff_sku_estoque_atual_update; Type: POLICY; Schema: public; Owner: -
+--
+
+CREATE POLICY staff_sku_estoque_atual_update ON public.sku_estoque_atual FOR UPDATE TO authenticated USING ((public.has_role(auth.uid(), 'master'::public.app_role) OR public.has_role(auth.uid(), 'employee'::public.app_role))) WITH CHECK ((public.has_role(auth.uid(), 'master'::public.app_role) OR public.has_role(auth.uid(), 'employee'::public.app_role)));
+
+
+--
+-- Name: sku_grupo_producao staff_sku_grupo_producao_delete; Type: POLICY; Schema: public; Owner: -
+--
+
+CREATE POLICY staff_sku_grupo_producao_delete ON public.sku_grupo_producao FOR DELETE TO authenticated USING ((public.has_role(auth.uid(), 'master'::public.app_role) OR public.has_role(auth.uid(), 'employee'::public.app_role)));
+
+
+--
+-- Name: sku_grupo_producao staff_sku_grupo_producao_insert; Type: POLICY; Schema: public; Owner: -
+--
+
+CREATE POLICY staff_sku_grupo_producao_insert ON public.sku_grupo_producao FOR INSERT TO authenticated WITH CHECK ((public.has_role(auth.uid(), 'master'::public.app_role) OR public.has_role(auth.uid(), 'employee'::public.app_role)));
+
+
+--
+-- Name: sku_grupo_producao staff_sku_grupo_producao_select; Type: POLICY; Schema: public; Owner: -
+--
+
+CREATE POLICY staff_sku_grupo_producao_select ON public.sku_grupo_producao FOR SELECT TO authenticated USING ((public.has_role(auth.uid(), 'master'::public.app_role) OR public.has_role(auth.uid(), 'employee'::public.app_role)));
+
+
+--
+-- Name: sku_grupo_producao staff_sku_grupo_producao_update; Type: POLICY; Schema: public; Owner: -
+--
+
+CREATE POLICY staff_sku_grupo_producao_update ON public.sku_grupo_producao FOR UPDATE TO authenticated USING ((public.has_role(auth.uid(), 'master'::public.app_role) OR public.has_role(auth.uid(), 'employee'::public.app_role))) WITH CHECK ((public.has_role(auth.uid(), 'master'::public.app_role) OR public.has_role(auth.uid(), 'employee'::public.app_role)));
+
+
+--
+-- Name: sku_leadtime_history staff_sku_leadtime_history_all; Type: POLICY; Schema: public; Owner: -
+--
+
+CREATE POLICY staff_sku_leadtime_history_all ON public.sku_leadtime_history TO authenticated USING ((public.has_role(auth.uid(), 'master'::public.app_role) OR public.has_role(auth.uid(), 'employee'::public.app_role) OR public.has_role(auth.uid(), 'master'::public.app_role) OR public.has_role(auth.uid(), 'master'::public.app_role))) WITH CHECK ((public.has_role(auth.uid(), 'master'::public.app_role) OR public.has_role(auth.uid(), 'employee'::public.app_role) OR public.has_role(auth.uid(), 'master'::public.app_role) OR public.has_role(auth.uid(), 'master'::public.app_role)));
+
+
+--
+-- Name: sku_parametros_historico staff_sku_parametros_historico_select; Type: POLICY; Schema: public; Owner: -
+--
+
+CREATE POLICY staff_sku_parametros_historico_select ON public.sku_parametros_historico FOR SELECT TO authenticated USING ((public.has_role(auth.uid(), 'master'::public.app_role) OR public.has_role(auth.uid(), 'employee'::public.app_role) OR public.has_role(auth.uid(), 'master'::public.app_role) OR public.has_role(auth.uid(), 'master'::public.app_role)));
+
+
+--
+-- Name: sku_parametros staff_sku_parametros_select; Type: POLICY; Schema: public; Owner: -
+--
+
+CREATE POLICY staff_sku_parametros_select ON public.sku_parametros FOR SELECT TO authenticated USING ((public.has_role(auth.uid(), 'master'::public.app_role) OR public.has_role(auth.uid(), 'employee'::public.app_role) OR public.has_role(auth.uid(), 'master'::public.app_role) OR public.has_role(auth.uid(), 'master'::public.app_role)));
+
+
+--
+-- Name: sku_status_omie staff_sku_status_omie_delete; Type: POLICY; Schema: public; Owner: -
+--
+
+CREATE POLICY staff_sku_status_omie_delete ON public.sku_status_omie FOR DELETE TO authenticated USING ((public.has_role(auth.uid(), 'master'::public.app_role) OR public.has_role(auth.uid(), 'employee'::public.app_role)));
+
+
+--
+-- Name: sku_status_omie staff_sku_status_omie_insert; Type: POLICY; Schema: public; Owner: -
+--
+
+CREATE POLICY staff_sku_status_omie_insert ON public.sku_status_omie FOR INSERT TO authenticated WITH CHECK ((public.has_role(auth.uid(), 'master'::public.app_role) OR public.has_role(auth.uid(), 'employee'::public.app_role)));
+
+
+--
+-- Name: sku_status_omie staff_sku_status_omie_select; Type: POLICY; Schema: public; Owner: -
+--
+
+CREATE POLICY staff_sku_status_omie_select ON public.sku_status_omie FOR SELECT TO authenticated USING ((public.has_role(auth.uid(), 'master'::public.app_role) OR public.has_role(auth.uid(), 'employee'::public.app_role)));
+
+
+--
+-- Name: sku_status_omie staff_sku_status_omie_update; Type: POLICY; Schema: public; Owner: -
+--
+
+CREATE POLICY staff_sku_status_omie_update ON public.sku_status_omie FOR UPDATE TO authenticated USING ((public.has_role(auth.uid(), 'master'::public.app_role) OR public.has_role(auth.uid(), 'employee'::public.app_role))) WITH CHECK ((public.has_role(auth.uid(), 'master'::public.app_role) OR public.has_role(auth.uid(), 'employee'::public.app_role)));
+
+
+--
+-- Name: sku_substituicao staff_sku_substituicao_delete; Type: POLICY; Schema: public; Owner: -
+--
+
+CREATE POLICY staff_sku_substituicao_delete ON public.sku_substituicao FOR DELETE TO authenticated USING ((public.has_role(auth.uid(), 'master'::public.app_role) OR public.has_role(auth.uid(), 'employee'::public.app_role)));
+
+
+--
+-- Name: sku_substituicao staff_sku_substituicao_insert; Type: POLICY; Schema: public; Owner: -
+--
+
+CREATE POLICY staff_sku_substituicao_insert ON public.sku_substituicao FOR INSERT TO authenticated WITH CHECK ((public.has_role(auth.uid(), 'master'::public.app_role) OR public.has_role(auth.uid(), 'employee'::public.app_role)));
+
+
+--
+-- Name: sku_substituicao staff_sku_substituicao_select; Type: POLICY; Schema: public; Owner: -
+--
+
+CREATE POLICY staff_sku_substituicao_select ON public.sku_substituicao FOR SELECT TO authenticated USING ((public.has_role(auth.uid(), 'master'::public.app_role) OR public.has_role(auth.uid(), 'employee'::public.app_role)));
+
+
+--
+-- Name: sku_substituicao staff_sku_substituicao_update; Type: POLICY; Schema: public; Owner: -
+--
+
+CREATE POLICY staff_sku_substituicao_update ON public.sku_substituicao FOR UPDATE TO authenticated USING ((public.has_role(auth.uid(), 'master'::public.app_role) OR public.has_role(auth.uid(), 'employee'::public.app_role))) WITH CHECK ((public.has_role(auth.uid(), 'master'::public.app_role) OR public.has_role(auth.uid(), 'employee'::public.app_role)));
+
+
+--
+-- Name: venda_items_history staff_venda_items_history_select; Type: POLICY; Schema: public; Owner: -
+--
+
+CREATE POLICY staff_venda_items_history_select ON public.venda_items_history FOR SELECT TO authenticated USING ((public.has_role(auth.uid(), 'master'::public.app_role) OR public.has_role(auth.uid(), 'employee'::public.app_role)));
+
+
+--
+-- Name: warehouses staff_warehouses_insert; Type: POLICY; Schema: public; Owner: -
+--
+
+CREATE POLICY staff_warehouses_insert ON public.warehouses FOR INSERT TO authenticated WITH CHECK ((public.has_role(auth.uid(), 'master'::public.app_role) OR public.has_role(auth.uid(), 'employee'::public.app_role) OR public.has_role(auth.uid(), 'master'::public.app_role) OR public.has_role(auth.uid(), 'master'::public.app_role)));
+
+
+--
+-- Name: warehouses staff_warehouses_update; Type: POLICY; Schema: public; Owner: -
+--
+
+CREATE POLICY staff_warehouses_update ON public.warehouses FOR UPDATE TO authenticated USING ((public.has_role(auth.uid(), 'master'::public.app_role) OR public.has_role(auth.uid(), 'employee'::public.app_role) OR public.has_role(auth.uid(), 'master'::public.app_role) OR public.has_role(auth.uid(), 'master'::public.app_role))) WITH CHECK ((public.has_role(auth.uid(), 'master'::public.app_role) OR public.has_role(auth.uid(), 'employee'::public.app_role) OR public.has_role(auth.uid(), 'master'::public.app_role) OR public.has_role(auth.uid(), 'master'::public.app_role)));
+
+
+--
+-- Name: standard_processes; Type: ROW SECURITY; Schema: public; Owner: -
+--
+
+ALTER TABLE public.standard_processes ENABLE ROW LEVEL SECURITY;
+
+--
+-- Name: standard_processes standard_processes_delete_master; Type: POLICY; Schema: public; Owner: -
+--
+
+CREATE POLICY standard_processes_delete_master ON public.standard_processes FOR DELETE USING (public.has_role(auth.uid(), 'master'::public.app_role));
+
+
+--
+-- Name: standard_processes standard_processes_insert_staff; Type: POLICY; Schema: public; Owner: -
+--
+
+CREATE POLICY standard_processes_insert_staff ON public.standard_processes FOR INSERT WITH CHECK ((public.has_role(auth.uid(), 'employee'::public.app_role) OR public.has_role(auth.uid(), 'master'::public.app_role)));
+
+
+--
+-- Name: standard_processes standard_processes_select_visible; Type: POLICY; Schema: public; Owner: -
+--
+
+CREATE POLICY standard_processes_select_visible ON public.standard_processes FOR SELECT USING (((status = 'published'::text) OR (created_by = auth.uid()) OR public.has_role(auth.uid(), 'master'::public.app_role)));
+
+
+--
+-- Name: standard_processes standard_processes_update_owner_or_master; Type: POLICY; Schema: public; Owner: -
+--
+
+CREATE POLICY standard_processes_update_owner_or_master ON public.standard_processes FOR UPDATE USING ((((created_by = auth.uid()) AND (status = ANY (ARRAY['draft'::text, 'in_review'::text]))) OR public.has_role(auth.uid(), 'master'::public.app_role)));
+
+
+--
+-- Name: sugestao_negociacao_paralela; Type: ROW SECURITY; Schema: public; Owner: -
+--
+
+ALTER TABLE public.sugestao_negociacao_paralela ENABLE ROW LEVEL SECURITY;
+
+--
+-- Name: sync_reprocess_config; Type: ROW SECURITY; Schema: public; Owner: -
+--
+
+ALTER TABLE public.sync_reprocess_config ENABLE ROW LEVEL SECURITY;
+
+--
+-- Name: sync_reprocess_log; Type: ROW SECURITY; Schema: public; Owner: -
+--
+
+ALTER TABLE public.sync_reprocess_log ENABLE ROW LEVEL SECURITY;
+
+--
+-- Name: sync_state; Type: ROW SECURITY; Schema: public; Owner: -
+--
+
+ALTER TABLE public.sync_state ENABLE ROW LEVEL SECURITY;
+
+--
+-- Name: tint_bases; Type: ROW SECURITY; Schema: public; Owner: -
+--
+
+ALTER TABLE public.tint_bases ENABLE ROW LEVEL SECURITY;
+
+--
+-- Name: tint_colecoes; Type: ROW SECURITY; Schema: public; Owner: -
+--
+
+ALTER TABLE public.tint_colecoes ENABLE ROW LEVEL SECURITY;
+
+--
+-- Name: tint_corantes; Type: ROW SECURITY; Schema: public; Owner: -
+--
+
+ALTER TABLE public.tint_corantes ENABLE ROW LEVEL SECURITY;
+
+--
+-- Name: tint_embalagens; Type: ROW SECURITY; Schema: public; Owner: -
+--
+
+ALTER TABLE public.tint_embalagens ENABLE ROW LEVEL SECURITY;
+
+--
+-- Name: tint_formula_itens; Type: ROW SECURITY; Schema: public; Owner: -
+--
+
+ALTER TABLE public.tint_formula_itens ENABLE ROW LEVEL SECURITY;
+
+--
+-- Name: tint_formulas; Type: ROW SECURITY; Schema: public; Owner: -
+--
+
+ALTER TABLE public.tint_formulas ENABLE ROW LEVEL SECURITY;
+
+--
+-- Name: tint_importacoes; Type: ROW SECURITY; Schema: public; Owner: -
+--
+
+ALTER TABLE public.tint_importacoes ENABLE ROW LEVEL SECURITY;
+
+--
+-- Name: tint_integration_settings; Type: ROW SECURITY; Schema: public; Owner: -
+--
+
+ALTER TABLE public.tint_integration_settings ENABLE ROW LEVEL SECURITY;
+
+--
+-- Name: tint_produtos; Type: ROW SECURITY; Schema: public; Owner: -
+--
+
+ALTER TABLE public.tint_produtos ENABLE ROW LEVEL SECURITY;
+
+--
+-- Name: tint_reconciliation_items; Type: ROW SECURITY; Schema: public; Owner: -
+--
+
+ALTER TABLE public.tint_reconciliation_items ENABLE ROW LEVEL SECURITY;
+
+--
+-- Name: tint_reconciliation_runs; Type: ROW SECURITY; Schema: public; Owner: -
+--
+
+ALTER TABLE public.tint_reconciliation_runs ENABLE ROW LEVEL SECURITY;
+
+--
+-- Name: tint_skus; Type: ROW SECURITY; Schema: public; Owner: -
+--
+
+ALTER TABLE public.tint_skus ENABLE ROW LEVEL SECURITY;
+
+--
+-- Name: tint_staging_bases; Type: ROW SECURITY; Schema: public; Owner: -
+--
+
+ALTER TABLE public.tint_staging_bases ENABLE ROW LEVEL SECURITY;
+
+--
+-- Name: tint_staging_corantes; Type: ROW SECURITY; Schema: public; Owner: -
+--
+
+ALTER TABLE public.tint_staging_corantes ENABLE ROW LEVEL SECURITY;
+
+--
+-- Name: tint_staging_cores_catalogo; Type: ROW SECURITY; Schema: public; Owner: -
+--
+
+ALTER TABLE public.tint_staging_cores_catalogo ENABLE ROW LEVEL SECURITY;
+
+--
+-- Name: tint_staging_cores_personalizadas; Type: ROW SECURITY; Schema: public; Owner: -
+--
+
+ALTER TABLE public.tint_staging_cores_personalizadas ENABLE ROW LEVEL SECURITY;
+
+--
+-- Name: tint_staging_embalagens; Type: ROW SECURITY; Schema: public; Owner: -
+--
+
+ALTER TABLE public.tint_staging_embalagens ENABLE ROW LEVEL SECURITY;
+
+--
+-- Name: tint_staging_formula_itens; Type: ROW SECURITY; Schema: public; Owner: -
+--
+
+ALTER TABLE public.tint_staging_formula_itens ENABLE ROW LEVEL SECURITY;
+
+--
+-- Name: tint_staging_formulas; Type: ROW SECURITY; Schema: public; Owner: -
+--
+
+ALTER TABLE public.tint_staging_formulas ENABLE ROW LEVEL SECURITY;
+
+--
+-- Name: tint_staging_preparacao_itens; Type: ROW SECURITY; Schema: public; Owner: -
+--
+
+ALTER TABLE public.tint_staging_preparacao_itens ENABLE ROW LEVEL SECURITY;
+
+--
+-- Name: tint_staging_preparacoes; Type: ROW SECURITY; Schema: public; Owner: -
+--
+
+ALTER TABLE public.tint_staging_preparacoes ENABLE ROW LEVEL SECURITY;
+
+--
+-- Name: tint_staging_produtos; Type: ROW SECURITY; Schema: public; Owner: -
+--
+
+ALTER TABLE public.tint_staging_produtos ENABLE ROW LEVEL SECURITY;
+
+--
+-- Name: tint_staging_skus; Type: ROW SECURITY; Schema: public; Owner: -
+--
+
+ALTER TABLE public.tint_staging_skus ENABLE ROW LEVEL SECURITY;
+
+--
+-- Name: tint_subcolecoes; Type: ROW SECURITY; Schema: public; Owner: -
+--
+
+ALTER TABLE public.tint_subcolecoes ENABLE ROW LEVEL SECURITY;
+
+--
+-- Name: tint_sync_errors; Type: ROW SECURITY; Schema: public; Owner: -
+--
+
+ALTER TABLE public.tint_sync_errors ENABLE ROW LEVEL SECURITY;
+
+--
+-- Name: tint_sync_runs; Type: ROW SECURITY; Schema: public; Owner: -
+--
+
+ALTER TABLE public.tint_sync_runs ENABLE ROW LEVEL SECURITY;
+
+--
+-- Name: tint_vendas; Type: ROW SECURITY; Schema: public; Owner: -
+--
+
+ALTER TABLE public.tint_vendas ENABLE ROW LEVEL SECURITY;
+
+--
+-- Name: tint_vendas_itens; Type: ROW SECURITY; Schema: public; Owner: -
+--
+
+ALTER TABLE public.tint_vendas_itens ENABLE ROW LEVEL SECURITY;
+
+--
+-- Name: tool_categories; Type: ROW SECURITY; Schema: public; Owner: -
+--
+
+ALTER TABLE public.tool_categories ENABLE ROW LEVEL SECURITY;
+
+--
+-- Name: tool_events; Type: ROW SECURITY; Schema: public; Owner: -
+--
+
+ALTER TABLE public.tool_events ENABLE ROW LEVEL SECURITY;
+
+--
+-- Name: tool_specifications; Type: ROW SECURITY; Schema: public; Owner: -
+--
+
+ALTER TABLE public.tool_specifications ENABLE ROW LEVEL SECURITY;
+
+--
+-- Name: training_completions; Type: ROW SECURITY; Schema: public; Owner: -
+--
+
+ALTER TABLE public.training_completions ENABLE ROW LEVEL SECURITY;
+
+--
+-- Name: training_modules; Type: ROW SECURITY; Schema: public; Owner: -
+--
+
+ALTER TABLE public.training_modules ENABLE ROW LEVEL SECURITY;
+
+--
+-- Name: user_departments; Type: ROW SECURITY; Schema: public; Owner: -
+--
+
+ALTER TABLE public.user_departments ENABLE ROW LEVEL SECURITY;
+
+--
+-- Name: user_departments user_departments_master_all; Type: POLICY; Schema: public; Owner: -
+--
+
+CREATE POLICY user_departments_master_all ON public.user_departments USING ((EXISTS ( SELECT 1
+   FROM public.user_roles
+  WHERE ((user_roles.user_id = auth.uid()) AND (user_roles.role = 'master'::public.app_role))))) WITH CHECK ((EXISTS ( SELECT 1
+   FROM public.user_roles
+  WHERE ((user_roles.user_id = auth.uid()) AND (user_roles.role = 'master'::public.app_role)))));
+
+
+--
+-- Name: user_departments user_departments_read_own; Type: POLICY; Schema: public; Owner: -
+--
+
+CREATE POLICY user_departments_read_own ON public.user_departments FOR SELECT USING ((auth.uid() = user_id));
+
+
+--
+-- Name: user_departments user_departments_service_all; Type: POLICY; Schema: public; Owner: -
+--
+
+CREATE POLICY user_departments_service_all ON public.user_departments USING ((auth.role() = 'service_role'::text));
+
+
+--
+-- Name: user_roles; Type: ROW SECURITY; Schema: public; Owner: -
+--
+
+ALTER TABLE public.user_roles ENABLE ROW LEVEL SECURITY;
+
+--
+-- Name: user_tools; Type: ROW SECURITY; Schema: public; Owner: -
+--
+
+ALTER TABLE public.user_tools ENABLE ROW LEVEL SECURITY;
+
+--
+-- Name: venda_items_history; Type: ROW SECURITY; Schema: public; Owner: -
+--
+
+ALTER TABLE public.venda_items_history ENABLE ROW LEVEL SECURITY;
+
+--
+-- Name: vendor_sip_credentials; Type: ROW SECURITY; Schema: public; Owner: -
+--
+
+ALTER TABLE public.vendor_sip_credentials ENABLE ROW LEVEL SECURITY;
+
+--
+-- Name: visit_score_recalc_queue; Type: ROW SECURITY; Schema: public; Owner: -
+--
+
+ALTER TABLE public.visit_score_recalc_queue ENABLE ROW LEVEL SECURITY;
+
+--
+-- Name: warehouses; Type: ROW SECURITY; Schema: public; Owner: -
+--
+
+ALTER TABLE public.warehouses ENABLE ROW LEVEL SECURITY;
+
+--
+-- Name: webauthn_challenges; Type: ROW SECURITY; Schema: public; Owner: -
+--
+
+ALTER TABLE public.webauthn_challenges ENABLE ROW LEVEL SECURITY;
+
+--
+-- Name: webauthn_credentials; Type: ROW SECURITY; Schema: public; Owner: -
+--
+
+ALTER TABLE public.webauthn_credentials ENABLE ROW LEVEL SECURITY;
+
+--
+-- PostgreSQL database dump complete
+--
+
+\unrestrict Mmifr0ebMfQH6xtRdrBiXi2dSHbUaJRfeUKX6XDsxHgeFSafukZhhmDCHIupkAC
+
