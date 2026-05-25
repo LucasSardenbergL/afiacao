@@ -81,7 +81,6 @@ const IRPJ_ADIC_LIMITE_TRIM = PRESUMIDO.irpj_adicional_limite_trimestral; // 600
 const ADIC = PRESUMIDO.irpj_adicional_aliquota; // 0.10
 const IRPJ = PRESUMIDO.irpj_aliquota;           // 0.15
 const CSLL = PRESUMIDO.csll_aliquota;           // 0.09
-const PIS_COFINS_CUMULATIVO = PRESUMIDO.pis_aliquota + PRESUMIDO.cofins_aliquota; // 0.0365
 const PIS_COFINS_NAO_CUMULATIVO = 0.0925;       // 1,65% + 7,6%
 const PIS_COFINS_FINANCEIRO = 0.0465;           // 0,65% + 4% (Decreto 8.426/2015) — só no não-cumulativo
 
@@ -103,10 +102,10 @@ export function impostoAnualPresumido(input: {
     irpj += baseIrpj * IRPJ + Math.max(0, baseIrpj - IRPJ_ADIC_LIMITE_TRIM) * ADIC;
     csll += (recTrim * input.presuncaoCsll + recFinPorTrim) * CSLL;
   }
-  const pisCofins = receitaAno * PIS_COFINS_CUMULATIVO; // financeiras: alíquota-zero no cumulativo
+  // PIS/COFINS cumulativo: receita operacional (excluídas receitas financeiras), alíquota-zero no cumulativo (Decreto 8.426/2015)
   const pis = receitaAno * PRESUMIDO.pis_aliquota, cofins = receitaAno * PRESUMIDO.cofins_aliquota;
   const cpp = encargoPatronal(input.folhaCppAnual, input.encargoPct) ?? 0;
-  return { irpj, csll, pis, cofins, cpp, total_federal_cpp: irpj + csll + pisCofins + cpp };
+  return { irpj, csll, pis, cofins, cpp, total_federal_cpp: irpj + csll + pis + cofins + cpp };
 }
 
 export type ImpostoReal = { irpj: number; csll: number; pis_cofins: number; cpp: number; total_federal_cpp: number; credito_aplicado: number; lucro_usado: number };
