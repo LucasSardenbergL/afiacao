@@ -4,7 +4,7 @@
 //
 // Tabelas de partilha (repartição) conferidas (2026-05) contra LC 123/2006 c/ LC 155/2016
 // (Anexos I, II, III, V — Planalto + CDM Contabilidade). Cada faixa soma 1.0 (invariante testada).
-import { ANEXOS_SIMPLES, type AnexoSimples } from './dre-tabelas-tributarias';
+import { ANEXOS_SIMPLES, type AnexoSimples, PRESUMIDO, FATOR_R_LIMIAR } from './dre-tabelas-tributarias';
 import { aliquotaEfetivaSimples } from './dre-helpers';
 
 export type PartilhaFaixa = { irpj: number; csll: number; cofins: number; pis: number; cpp: number; icms: number; iss: number; ipi: number };
@@ -75,4 +75,64 @@ export function elegibilidadeSimples(rba: number): Elegibilidade {
   if (rba > TETO_RBA) return { status_elegibilidade: 'inelegivel', motivo_inelegivel: `RBA R$ ${(rba / 1e6).toFixed(2)}M > teto R$ 4,8M do Simples.` };
   if (rba > SUBLIMITE_RBA) return { status_elegibilidade: 'sublimite_excedido', motivo_inelegivel: null };
   return { status_elegibilidade: 'elegivel', motivo_inelegivel: null };
+}
+
+const IRPJ_ADIC_LIMITE_TRIM = PRESUMIDO.irpj_adicional_limite_trimestral; // 60000
+const ADIC = PRESUMIDO.irpj_adicional_aliquota; // 0.10
+const IRPJ = PRESUMIDO.irpj_aliquota;           // 0.15
+const CSLL = PRESUMIDO.csll_aliquota;           // 0.09
+const PIS_COFINS_CUMULATIVO = PRESUMIDO.pis_aliquota + PRESUMIDO.cofins_aliquota; // 0.0365
+const PIS_COFINS_NAO_CUMULATIVO = 0.0925;       // 1,65% + 7,6%
+const PIS_COFINS_FINANCEIRO = 0.0465;           // 0,65% + 4% (Decreto 8.426/2015) — só no não-cumulativo
+
+export function encargoPatronal(folhaCppAnual: number | null, pct: number): number | null {
+  if (folhaCppAnual == null) return null;
+  return folhaCppAnual * pct;
+}
+
+export type ImpostoPresumido = { irpj: number; csll: number; pis: number; cofins: number; cpp: number; total_federal_cpp: number };
+export function impostoAnualPresumido(input: {
+  trimestres: number[]; presuncaoIrpj: number; presuncaoCsll: number;
+  receitasFinanceiras: number; folhaCppAnual: number | null; encargoPct: number;
+}): ImpostoPresumido {
+  let irpj = 0, csll = 0;
+  const receitaAno = input.trimestres.reduce((s, t) => s + t, 0);
+  const recFinPorTrim = input.receitasFinanceiras / 4; // receita financeira entra integral na base
+  for (const recTrim of input.trimestres) {
+    const baseIrpj = recTrim * input.presuncaoIrpj + recFinPorTrim;
+    irpj += baseIrpj * IRPJ + Math.max(0, baseIrpj - IRPJ_ADIC_LIMITE_TRIM) * ADIC;
+    csll += (recTrim * input.presuncaoCsll + recFinPorTrim) * CSLL;
+  }
+  const pisCofins = receitaAno * PIS_COFINS_CUMULATIVO; // financeiras: alíquota-zero no cumulativo
+  const pis = receitaAno * PRESUMIDO.pis_aliquota, cofins = receitaAno * PRESUMIDO.cofins_aliquota;
+  const cpp = encargoPatronal(input.folhaCppAnual, input.encargoPct) ?? 0;
+  return { irpj, csll, pis, cofins, cpp, total_federal_cpp: irpj + csll + pisCofins + cpp };
+}
+
+export type ImpostoReal = { irpj: number; csll: number; pis_cofins: number; cpp: number; total_federal_cpp: number; credito_aplicado: number; lucro_usado: number };
+export function impostoAnualReal(input: {
+  lucroAnual: number; lucroTrimestres: number[]; receitaTributavel: number; receitasFinanceiras: number;
+  creditoPct: number; folhaCppAnual: number | null; encargoPct: number;
+}): ImpostoReal {
+  let irpj = 0, csll = 0;
+  for (const lt of input.lucroTrimestres) {
+    if (lt <= 0) continue;
+    irpj += lt * IRPJ + Math.max(0, lt - IRPJ_ADIC_LIMITE_TRIM) * ADIC;
+    csll += lt * CSLL;
+  }
+  const credito = input.receitaTributavel * PIS_COFINS_NAO_CUMULATIVO * input.creditoPct;
+  const pis_cofins = input.receitaTributavel * PIS_COFINS_NAO_CUMULATIVO - credito + input.receitasFinanceiras * PIS_COFINS_FINANCEIRO;
+  const cpp = encargoPatronal(input.folhaCppAnual, input.encargoPct) ?? 0;
+  return { irpj, csll, pis_cofins, cpp, total_federal_cpp: irpj + csll + pis_cofins + cpp, credito_aplicado: credito, lucro_usado: input.lucroAnual };
+}
+
+export function anexoEfetivoFatorR(massaFatorR: number | null, receita: number): { anexo: 'III' | 'V'; fator_r: number | null; banda: boolean } {
+  if (massaFatorR == null || receita <= 0) return { anexo: 'V', fator_r: null, banda: true };
+  const fr = massaFatorR / receita;
+  return { anexo: fr >= FATOR_R_LIMIAR ? 'III' : 'V', fator_r: fr, banda: false };
+}
+
+// Margem líquida (lucro/receita) abaixo da qual o IRPJ/CSLL do Real fica menor que o do Presumido (direcional).
+export function breakEvenMargemReal(input: { presuncaoIrpj: number; presuncaoCsll: number }): number {
+  return (input.presuncaoIrpj * IRPJ + input.presuncaoCsll * CSLL) / (IRPJ + CSLL);
 }
