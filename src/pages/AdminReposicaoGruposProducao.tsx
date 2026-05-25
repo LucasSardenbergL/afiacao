@@ -1,6 +1,7 @@
 import { useState, useMemo } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
+import { sanitizeForPostgrestOr } from "@/lib/postgrest";
 import { toast } from "sonner";
 import { Plus, Factory } from "lucide-react";
 import { Button } from "@/components/ui/button";
@@ -72,7 +73,9 @@ export default function AdminReposicaoGruposProducao() {
       if (filtroFornecedor !== ALL) q = q.eq("fornecedor_nome", filtroFornecedor);
       if (busca.trim()) {
         const t = busca.trim();
-        q = q.or(`sku_descricao.ilike.%${t}%,sku_codigo_omie.eq.${/^\d+$/.test(t) ? t : 0}`);
+        // Só a parte ilike é texto livre; o .eq só usa `t` quando é puramente numérico.
+        const descSafe = sanitizeForPostgrestOr(t);
+        q = q.or(`sku_descricao.ilike.%${descSafe}%,sku_codigo_omie.eq.${/^\d+$/.test(t) ? t : 0}`);
       }
 
       const { data, error, count } = await q

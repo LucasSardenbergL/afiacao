@@ -2,17 +2,7 @@ import { useEffect, useMemo, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { supabase } from '@/integrations/supabase/client';
 import { useAuth } from '@/contexts/AuthContext';
-
-/**
- * Sanitiza input pra uso em `.or()` do PostgREST.
- * Além dos wildcards do ILIKE (% _), remove caracteres que quebram o parser
- * do PostgREST e permitem injetar cláusulas extras: vírgula (separador),
- * parênteses (agrupamento), barra invertida (escape), aspas duplas (delimitador).
- * Sem isso, input tipo `foo,role.eq.master` quebra de uma .ilike e injeta filtro.
- */
-function sanitizeForPostgrestOr(input: string): string {
-  return input.replace(/[%_,()\\"]/g, '');
-}
+import { sanitizeForPostgrestOr } from '@/lib/postgrest';
 
 /**
  * Busca global pra Cmd-K — pesquisa simultânea em 3 entidades:
