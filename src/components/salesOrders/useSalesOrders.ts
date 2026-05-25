@@ -19,6 +19,7 @@ import {
   type AfiacaoItemRaw,
   type SalesOrdersInfiniteCache,
 } from './types';
+import { softDeleteOrder } from './soft-delete';
 
 export function useSalesOrders() {
   const navigate = useNavigate();
@@ -144,12 +145,9 @@ export function useSalesOrders() {
 
   const loading = salesQuery.isLoading || afiacaoQuery.isLoading;
 
-  // Soft-delete + Omie exclude. Fluxo:
-  // 1. Optimistic remove do cache (UI atualiza instantaneamente)
-  // 2. UPDATE sales_orders SET deleted_at = now() (audit trail compliance)
-  // 3. Call Omie excluir_pedido
-  // 4. Se Omie falhar: rollback do soft-delete + restaura cache
-  // 5. Se Supabase update falhar: rollback do cache, NÃO chama Omie
+  // Soft-delete + Omie exclude. Cache/toast aqui; orquestração no helper softDeleteOrder.
+  // 1. Optimistic remove do cache. 2. softDeleteOrder (deleted_at + Omie + rollback).
+  // 3. Em falha, restaura o cache (o helper já reverteu deleted_at quando o Omie falha).
   const deleteOrder = async (order: SalesOrder) => {
     const snapshot = queryClient.getQueryData<SalesOrdersInfiniteCache>(['sales-orders-paginated']);
     queryClient.setQueryData<SalesOrdersInfiniteCache>(['sales-orders-paginated'], (old) => {
@@ -165,43 +163,13 @@ export function useSalesOrders() {
       return next;
     });
 
-    // 1. Soft-delete local primeiro (audit trail antes do Omie)
-    // `deleted_at` existe no DB mas ainda não no generated Database type — cast as never
-    const { error: softErr } = await supabase
-      .from('sales_orders')
-      .update({ deleted_at: new Date().toISOString() } as never)
-      .eq('id', order.id);
-
-    if (softErr) {
-      console.error(softErr);
-      queryClient.setQueryData(['sales-orders-paginated'], snapshot);
-      toast.error('Erro ao excluir pedido', { description: softErr.message });
+    const result = await softDeleteOrder(order);
+    if (result.ok) {
+      toast.success('Pedido excluído');
       return;
     }
-
-    // 2. Omie exclude — se falhar, rollback do soft-delete
-    try {
-      const { error } = await supabase.functions.invoke('omie-vendas-sync', {
-        body: {
-          action: 'excluir_pedido',
-          sales_order_id: order.id,
-          omie_pedido_id: order.omie_pedido_id,
-        },
-      });
-      if (error) throw error;
-      toast.success('Pedido excluído');
-    } catch (e) {
-      console.error(e);
-      // Rollback do soft-delete (deleted_at = null) — pedido volta a ser ativo
-      await supabase
-        .from('sales_orders')
-        .update({ deleted_at: null } as never)
-        .eq('id', order.id);
-      queryClient.setQueryData(['sales-orders-paginated'], snapshot);
-      toast.error('Erro ao excluir pedido', {
-        description: e instanceof Error ? e.message : String(e),
-      });
-    }
+    queryClient.setQueryData(['sales-orders-paginated'], snapshot);
+    toast.error('Erro ao excluir pedido', { description: result.message });
   };
 
   // Bulk delete — sequencial pra não floodar o Omie. Mostra progresso.
