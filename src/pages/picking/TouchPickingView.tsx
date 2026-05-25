@@ -1,13 +1,15 @@
 import { useState, useEffect, useMemo } from 'react';
+import { useNavigate } from 'react-router-dom';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { supabase } from '@/integrations/supabase/client';
 import type { Tables } from '@/integrations/supabase/types';
 import { Button } from '@/components/ui/button';
 import { Progress } from '@/components/ui/progress';
 import { ScanBar, type ScanResult } from '@/components/picking/ScanBar';
-import { Loader2, ChevronRight, Package } from 'lucide-react';
+import { Loader2, ChevronRight, Package, Monitor } from 'lucide-react';
 import { toast } from 'sonner';
 import { cn } from '@/lib/utils';
+import { setForceFull } from '@/lib/picking/view-pref';
 import { useAuth } from '@/contexts/AuthContext';
 import { useOfflineMutation } from '@/hooks/useOfflineMutation';
 import { confirmPickItem, type ConfirmPickItemVars } from '@/services/picking-confirm';
@@ -42,6 +44,7 @@ const ACCOUNT_DEFAULT = 'oben'; // TODO(produto): puxar do CompanyContext quando
 
 export default function TouchPickingView() {
   const [activeTaskId, setActiveTaskId] = useState<string | null>(null);
+  const navigate = useNavigate();
 
   const { data: tasks, isLoading } = useQuery({
     queryKey: ['touch-pk-tasks', ACCOUNT_DEFAULT],
@@ -81,6 +84,17 @@ export default function TouchPickingView() {
   return (
     <div className="space-y-3">
       <ScanBar onScan={handleScan} placeholder="Bipe um endereço ou código pra começar" />
+      <div className="flex justify-end px-1">
+        <Button
+          variant="ghost"
+          size="sm"
+          className="gap-1.5 text-xs text-muted-foreground"
+          onClick={() => { setForceFull(true); navigate('/admin/estoque/picking'); }}
+        >
+          <Monitor className="h-3.5 w-3.5" />
+          Ver versão completa
+        </Button>
+      </div>
       <div className="px-1 pt-2">
         <h2 className="text-base font-semibold mb-2">Tasks abertas</h2>
         {(tasks ?? []).length === 0 ? (
