@@ -11,6 +11,7 @@ import { AuthProvider } from "@/contexts/AuthContext";
 import { CompanyProvider } from "@/contexts/CompanyContext";
 import { ConditionalWebRTCProvider } from "@/contexts/ConditionalWebRTCProvider";
 import { ProtectedRoute } from "@/components/ProtectedRoute";
+import { RequireFinanceiroAccess } from "@/components/RequireFinanceiroAccess";
 import { NotificationPrompt } from "@/components/NotificationPrompt";
 import { AppShellLayout } from "@/components/AppShellLayout";
 import { PageSkeleton } from "@/components/ui/page-skeleton";
@@ -274,22 +275,26 @@ const App = () => (
               <Route path="tintometrico/reconciliacao" element={<TintReconciliation />} />
               <Route path="tintometrico/sync-runs" element={<TintSyncRuns />} />
               <Route path="tintometrico/api-contract" element={<TintApiContract />} />
-              <Route path="financeiro" element={<FinanceiroDashboard />} />
-              <Route path="financeiro/sync" element={<FinanceiroSync />} />
-              <Route path="financeiro/mapping" element={<FinanceiroMapping />} />
-              <Route path="financeiro/capital-giro" element={<FinanceiroCapitalGiro />} />
-              <Route path="financeiro/fechamento" element={<FinanceiroFechamento />} />
-              <Route path="financeiro/analytics" element={<FinanceiroAnalytics />} />
-              <Route path="financeiro/cockpit" element={<FinanceiroCockpit />} />
-              <Route path="financeiro/conciliacao" element={<FinanceiroConciliacao />} />
-              <Route path="financeiro/orcamento" element={<FinanceiroOrcamento />} />
-              <Route path="financeiro/intercompany" element={<FinanceiroIntercompany />} />
-              <Route path="financeiro/intercompany/fila" element={<FinanceiroIntercompanyFila />} />
-              <Route path="financeiro/tributario" element={<FinanceiroTributario />} />
-              <Route path="financeiro/valor" element={<FinanceiroValor />} />
-              <Route path="financeiro/valor-cockpit" element={<FinanceiroValorCockpit />} />
-              <Route path="financeiro/proxima-acao" element={<FinanceiroProximaAcao />} />
-              <Route path="financeiro/regime-tributario" element={<FinanceiroRegimeTributario />} />
+              <Route element={<RequireFinanceiroAccess />}>
+                <Route path="financeiro" element={<FinanceiroDashboard />} />
+                <Route path="financeiro/sync" element={<FinanceiroSync />} />
+                <Route path="financeiro/mapping" element={<FinanceiroMapping />} />
+                <Route path="financeiro/capital-giro" element={<FinanceiroCapitalGiro />} />
+                <Route path="financeiro/fechamento" element={<FinanceiroFechamento />} />
+                <Route path="financeiro/analytics" element={<FinanceiroAnalytics />} />
+                <Route path="financeiro/cockpit" element={<FinanceiroCockpit />} />
+                <Route path="financeiro/conciliacao" element={<FinanceiroConciliacao />} />
+                <Route path="financeiro/orcamento" element={<FinanceiroOrcamento />} />
+                <Route path="financeiro/intercompany" element={<FinanceiroIntercompany />} />
+                <Route path="financeiro/intercompany/fila" element={<FinanceiroIntercompanyFila />} />
+                <Route path="financeiro/tributario" element={<FinanceiroTributario />} />
+                <Route path="financeiro/valor" element={<FinanceiroValor />} />
+                <Route path="financeiro/valor-cockpit" element={<FinanceiroValorCockpit />} />
+                <Route path="financeiro/proxima-acao" element={<FinanceiroProximaAcao />} />
+                <Route path="financeiro/regime-tributario" element={<FinanceiroRegimeTributario />} />
+                <Route path="financeiro/gestao" element={<FinanceiroGestao />} />
+                <Route path="financeiro/analise" element={<FinanceiroAnalise />} />
+              </Route>
               <Route path="recebimento" element={<Recebimento />} />
               <Route path="recebimento/:id" element={<RecebimentoConferencia />} />
               <Route path="producao" element={<ProductionOrders />} />
@@ -328,8 +333,6 @@ const App = () => (
               <Route path="admin/estoque/recebimento" element={<AdminEstoqueRecebimento />} />
               <Route path="admin/estoque/picking" element={<AdminEstoquePicking />} />
               <Route path="admin/estoque/picking/mobile" element={<TouchPickingView />} />
-              <Route path="financeiro/gestao" element={<FinanceiroGestao />} />
-              <Route path="financeiro/analise" element={<FinanceiroAnalise />} />
               <Route path="tintometrico/catalogo" element={<TintCatalogo />} />
               <Route path="tintometrico/integracao" element={<TintIntegracao />} />
               <Route path="performance" element={<PerformanceHub />} />
