@@ -11,6 +11,7 @@
 import { useQuery } from '@tanstack/react-query';
 import { supabase } from '@/integrations/supabase/client';
 import { useAuth } from '@/contexts/AuthContext';
+import { useImpersonation } from '@/contexts/ImpersonationContext';
 import { useMyActiveCoverage } from '@/hooks/useCoverage';
 import { pickDailyMix } from '@/lib/visit-scoring/mix-selector';
 import type { MissionType, VisitScore } from '@/lib/visit-scoring/types';
@@ -37,16 +38,19 @@ export function useMyVisitSuggestions(opts: {
   targetCount?: number;
 } = {}) {
   const { user } = useAuth();
+  const { isImpersonating, effectiveUserId } = useImpersonation();
   const userId = user?.id;
   const { data: coverage } = useMyActiveCoverage();
   const coveredIds = (coverage ?? []).map((c) => c.covered_user_id);
+  const baseId = isImpersonating && effectiveUserId ? effectiveUserId : userId;
   // Opção A: farmer_id = dono. Minha lista = minha carteira + carteiras que eu cubro agora.
-  const ownerIds = userId ? [userId, ...coveredIds] : [];
+  // Em impersonação: escopar apenas ao alvo (ignorar cobertura do master).
+  const ownerIds = isImpersonating && effectiveUserId ? [effectiveUserId] : (userId ? [userId, ...coveredIds] : []);
   const coveredKey = coveredIds.slice().sort().join(',');
 
   // Query 1: cidades disponíveis
   const citiesQuery = useQuery({
-    queryKey: ['visit-cities', userId, coveredKey],
+    queryKey: ['visit-cities', baseId, coveredKey],
     enabled: !!userId,
     staleTime: 60_000,
     queryFn: async (): Promise<CityWithCount[]> => {
@@ -74,7 +78,7 @@ export function useMyVisitSuggestions(opts: {
 
   // Query 2: top candidatos da cidade selecionada
   const suggestionsQuery = useQuery({
-    queryKey: ['visit-suggestions', userId, coveredKey, selectedCity, opts.targetCount],
+    queryKey: ['visit-suggestions', baseId, coveredKey, selectedCity, opts.targetCount],
     enabled: !!userId && !!selectedCity,
     staleTime: 60_000,
     queryFn: async (): Promise<VisitSuggestion[]> => {
@@ -106,8 +110,8 @@ export function useMyVisitSuggestions(opts: {
 
       if (scores.length === 0) return [];
 
-      // inclui os donos cobertos (farmer_id ≠ eu) pra resolver o nome do selo de cobertura
-      const coveredOwners = scores.filter(s => s.farmer_id !== userId).map(s => s.farmer_id);
+      // inclui os donos cobertos (farmer_id ≠ baseId) pra resolver o nome do selo de cobertura
+      const coveredOwners = scores.filter(s => s.farmer_id !== baseId).map(s => s.farmer_id);
       const userIds = [...new Set([...scores.map(s => s.customer_user_id), ...coveredOwners])];
 
       const { data: profileData } = await supabase.from('profiles')
@@ -148,8 +152,8 @@ export function useMyVisitSuggestions(opts: {
           customer_phone: profile?.phone ?? null,
           score_breakdown: source?.score_breakdown ?? null,
           last_visit_at: source?.last_visit_at ?? null,
-          coberto_de: source && source.farmer_id !== userId ? source.farmer_id : null,
-          coberto_de_nome: source && source.farmer_id !== userId
+          coberto_de: source && source.farmer_id !== baseId ? source.farmer_id : null,
+          coberto_de_nome: source && source.farmer_id !== baseId
             ? (profileMap.get(source.farmer_id)?.name ?? null)
             : null,
         };
