@@ -3,7 +3,7 @@
 -- ========================================================================
 --
 -- Gerado por: scripts/audit-custom-migrations.ts
--- Total de custom migrations: 50
+-- Total de custom migrations: 56
 --
 -- Como usar:
 --   1. Abra o Supabase SQL Editor (via Lovable Cloud → Backend → SQL Editor)
@@ -66,10 +66,16 @@ WITH expected (version, slug, filename) AS (VALUES
   ('20260523230000', 'fin_a2_valor_inputs', '20260523230000_fin_a2_valor_inputs.sql'),
   ('20260523230835', 'sync_sla_view_stack', '20260523230835_sync_sla_view_stack.sql'),
   ('20260523233000', 'restaura_guardas_sla_view_stack', '20260523233000_restaura_guardas_sla_view_stack.sql'),
+  ('20260524000000', 'fin_a3_cockpit_config', '20260524000000_fin_a3_cockpit_config.sql'),
+  ('20260524095612', 'crons_scoring_visit_lendo_cron_secret_do_vault', '20260524095612_crons_scoring_visit_lendo_cron_secret_do_vault.sql'),
+  ('20260524100500', 'cron_financeiro_e_fix_sayerlack', '20260524100500_cron_financeiro_e_fix_sayerlack.sql'),
+  ('20260524102500', 'fix_fin_triggers_json_field_access', '20260524102500_fix_fin_triggers_json_field_access.sql'),
   ('20260524120000', 'carteira_omie_fase1', '20260524120000_carteira_omie_fase1.sql'),
   ('20260524121531', 'restore_sla_guards', '20260524121531_restore_sla_guards.sql'),
   ('20260524170000', 'scores_unique_por_cliente', '20260524170000_scores_unique_por_cliente.sql'),
-  ('20260524180000', 'carteira_scores_owner_e_filas', '20260524180000_carteira_scores_owner_e_filas.sql')
+  ('20260524180000', 'carteira_scores_owner_e_filas', '20260524180000_carteira_scores_owner_e_filas.sql'),
+  ('20260524202410', 'tuning_crons_estoque_freq_e_timeouts', '20260524202410_tuning_crons_estoque_freq_e_timeouts.sql'),
+  ('20260524203000', 'rpc_staff_guard_permite_cron_backend', '20260524203000_rpc_staff_guard_permite_cron_backend.sql')
 )
 SELECT
   e.version,
@@ -379,6 +385,12 @@ WITH expected_objects (migration, kind, schema_name, object_name, parent_name) A
   ('fin_a2_valor_inputs', 'table', 'public', 'fin_valor_inputs', ''),
   ('fin_a2_valor_inputs', 'rls_policy', 'public', 'fin_valor_inputs_select_master', 'fin_valor_inputs'),
   ('fin_a2_valor_inputs', 'rls_policy', 'public', 'fin_valor_inputs_write_master', 'fin_valor_inputs'),
+  ('crons_scoring_visit_lendo_cron_secret_do_vault', 'cron_job', 'cron', 'scoring-recalc-batch-nightly', ''),
+  ('crons_scoring_visit_lendo_cron_secret_do_vault', 'cron_job', 'cron', 'visit-score-recalc-batch-nightly', ''),
+  ('cron_financeiro_e_fix_sayerlack', 'cron_job', 'cron', 'fin-omie-sync-2x-diario', ''),
+  ('cron_financeiro_e_fix_sayerlack', 'cron_job', 'cron', 'sayerlack-portal-watchdog', ''),
+  ('fix_fin_triggers_json_field_access', 'function', 'public', 'fin_audit_trigger', ''),
+  ('fix_fin_triggers_json_field_access', 'function', 'public', 'fin_period_lock_trigger', ''),
   ('carteira_omie_fase1', 'table', 'public', 'omie_vendedor_map', ''),
   ('carteira_omie_fase1', 'table', 'public', 'carteira_assignments', ''),
   ('carteira_omie_fase1', 'table', 'public', 'carteira_coverage', ''),
@@ -394,7 +406,14 @@ WITH expected_objects (migration, kind, schema_name, object_name, parent_name) A
   ('carteira_scores_owner_e_filas', 'index', 'public', 'uniq_visit_score_queue_pending', 'visit_score_recalc_queue'),
   ('carteira_scores_owner_e_filas', 'function', 'public', 'enqueue_score_recalc_from_call', ''),
   ('carteira_scores_owner_e_filas', 'function', 'public', 'enqueue_visit_score_recalc_from_visit', ''),
-  ('carteira_scores_owner_e_filas', 'function', 'public', 'enqueue_visit_score_recalc_from_client_score', '')
+  ('carteira_scores_owner_e_filas', 'function', 'public', 'enqueue_visit_score_recalc_from_client_score', ''),
+  ('tuning_crons_estoque_freq_e_timeouts', 'cron_job', 'cron', 'omie-sync-estoque-diario', ''),
+  ('tuning_crons_estoque_freq_e_timeouts', 'cron_job', 'cron', 'sync-orders-vendas-2h', ''),
+  ('tuning_crons_estoque_freq_e_timeouts', 'cron_job', 'cron', 'sync-products-customers-daily', ''),
+  ('tuning_crons_estoque_freq_e_timeouts', 'cron_job', 'cron', 'sync-inventory-vendas-30m', ''),
+  ('tuning_crons_estoque_freq_e_timeouts', 'cron_job', 'cron', 'sync-omie-services-hourly', ''),
+  ('rpc_staff_guard_permite_cron_backend', 'function', 'public', 'sugerir_negociacao_paralela_hoje', ''),
+  ('rpc_staff_guard_permite_cron_backend', 'function', 'public', 'refresh_sku_ranking_negociacao', '')
 )
 SELECT
   e.migration,

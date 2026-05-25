@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useMemo } from 'react';
+import React, { useState, useMemo } from 'react';
 import { decodeHtmlEntities } from '@/lib/utils';
 import { useParams, useNavigate } from 'react-router-dom';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
@@ -24,7 +24,6 @@ import {
 } from '@/components/ui/sheet';
 import LoteScannerOCR from '@/components/recebimento/LoteScannerOCR';
 import { useOfflineMutation } from '@/hooks/useOfflineMutation';
-import { registerOfflineHandler } from '@/hooks/useOfflineFlush';
 import { confirmUnit, type ConfirmUnitVars } from '@/services/recebimento-confirm';
 import { reportDivergencia, type ReportDivergenciaVars } from '@/services/recebimento-divergencia';
 import { addCte, type AddCteVars } from '@/services/recebimento-cte';
@@ -178,27 +177,8 @@ export default function RecebimentoConferencia() {
     mutationFn: addCte,
   });
 
-  // Registra handler pra processar items enfileirados quando reconectar
-  useEffect(() => {
-    return registerOfflineHandler<ConfirmUnitVars>('recebimento.confirm-unit', async (vars) => {
-      await confirmUnit(vars);
-      return true;
-    });
-  }, []);
-
-  useEffect(() => {
-    return registerOfflineHandler<ReportDivergenciaVars>('recebimento.report-divergencia', async (vars) => {
-      await reportDivergencia(vars);
-      return true;
-    });
-  }, []);
-
-  useEffect(() => {
-    return registerOfflineHandler<AddCteVars>('recebimento.add-cte', async (vars) => {
-      await addCte(vars);
-      return true;
-    });
-  }, []);
+  // Handlers de flush offline são registrados centralmente no boot (src/lib/offline-handlers.ts),
+  // não por página — assim reconectar em qualquer tela drena a fila (antes ficava preso ao sair daqui).
 
   // Group lotes by item
   const lotesPerItem = useMemo(() => {
@@ -423,7 +403,8 @@ export default function RecebimentoConferencia() {
   const toggleExpand = (itemId: string) => {
     setExpandedItems(prev => {
       const next = new Set(prev);
-      next.has(itemId) ? next.delete(itemId) : next.add(itemId);
+      if (next.has(itemId)) next.delete(itemId);
+      else next.add(itemId);
       return next;
     });
   };

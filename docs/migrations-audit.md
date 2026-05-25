@@ -21,16 +21,16 @@ Este audit valida **quais custom migrations estão de fato aplicadas no banco**.
 
 ## Resumo
 
-- **50** custom migrations totais
-- **307** objetos esperados (criados por estas migrations)
+- **56** custom migrations totais
+- **320** objetos esperados (criados por estas migrations)
 - Quebra por tipo:
   - `rls_policy`: 102
   - `index`: 93
   - `table`: 49
+  - `function`: 31
   - `trigger`: 31
-  - `function`: 27
+  - `cron_job`: 10
   - `enum_value`: 4
-  - `cron_job`: 1
 
 ## Inventário por migration
 
@@ -548,6 +548,31 @@ Lista canônica do que cada migration *deveria* criar (extraído via regex de `C
 
 > _Nenhum objeto extraído via regex._ Migration provavelmente é `ALTER TABLE` / `UPDATE` / `INSERT` / RLS-only. Validar manualmente.
 
+### `20260524000000_fin_a3_cockpit_config.sql`
+
+> _Nenhum objeto extraído via regex._ Migration provavelmente é `ALTER TABLE` / `UPDATE` / `INSERT` / RLS-only. Validar manualmente.
+
+### `20260524095612_crons_scoring_visit_lendo_cron_secret_do_vault.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `cron_job` | `cron.scoring-recalc-batch-nightly` | — |
+| `cron_job` | `cron.visit-score-recalc-batch-nightly` | — |
+
+### `20260524100500_cron_financeiro_e_fix_sayerlack.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `cron_job` | `cron.fin-omie-sync-2x-diario` | — |
+| `cron_job` | `cron.sayerlack-portal-watchdog` | — |
+
+### `20260524102500_fix_fin_triggers_json_field_access.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `function` | `public.fin_audit_trigger` | — |
+| `function` | `public.fin_period_lock_trigger` | — |
+
 ### `20260524120000_carteira_omie_fase1.sql`
 
 | Tipo | Objeto | Parent |
@@ -582,6 +607,23 @@ Lista canônica do que cada migration *deveria* criar (extraído via regex de `C
 | `function` | `public.enqueue_score_recalc_from_call` | — |
 | `function` | `public.enqueue_visit_score_recalc_from_visit` | — |
 | `function` | `public.enqueue_visit_score_recalc_from_client_score` | — |
+
+### `20260524202410_tuning_crons_estoque_freq_e_timeouts.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `cron_job` | `cron.omie-sync-estoque-diario` | — |
+| `cron_job` | `cron.sync-orders-vendas-2h` | — |
+| `cron_job` | `cron.sync-products-customers-daily` | — |
+| `cron_job` | `cron.sync-inventory-vendas-30m` | — |
+| `cron_job` | `cron.sync-omie-services-hourly` | — |
+
+### `20260524203000_rpc_staff_guard_permite_cron_backend.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `function` | `public.sugerir_negociacao_paralela_hoje` | — |
+| `function` | `public.refresh_sku_ranking_negociacao` | — |
 
 ## Próximos passos quando algo der `❌`
 
