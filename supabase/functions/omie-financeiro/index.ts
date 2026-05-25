@@ -415,9 +415,10 @@ async function syncContasPagar(
   company: Company,
   filtroDataDe?: string,
   filtroDataAte?: string,
-  maxPages = 500
+  maxPages = 500,
+  startPage = 1
 ) {
-  let pagina = 1;
+  let pagina = startPage;
   let totalPaginas = 1;
   let totalSynced = 0;
   let pagesProcessed = 0;
@@ -546,9 +547,10 @@ async function syncContasReceber(
   company: Company,
   filtroDataDe?: string,
   filtroDataAte?: string,
-  maxPages = 500
+  maxPages = 500,
+  startPage = 1
 ) {
-  let pagina = 1;
+  let pagina = startPage;
   let totalPaginas = 1;
   let totalSynced = 0;
   let pagesProcessed = 0;
@@ -739,7 +741,8 @@ async function syncMovimentacoes(
   company: Company,
   filtroDataDe?: string,
   filtroDataAte?: string,
-  maxPages = 500
+  maxPages = 500,
+  startPage?: number
 ) {
   const dataInicioIso = parseOmieDate(filtroDataDe) || null;
   const dataFimIso = parseOmieDate(filtroDataAte) || null;
@@ -762,8 +765,9 @@ async function syncMovimentacoes(
   }
 
   totalPaginas = (firstPage.nTotPaginas as number) || 1;
-  // Start from the last page (most recent data) and go backwards
-  pagina = totalPaginas;
+  // Start from the last page (most recent data) and go backwards.
+  // Se startPage veio do cursor (resume), retoma de lá.
+  pagina = startPage ?? totalPaginas;
 
   while (pagina >= 1 && pagesProcessed < maxPages && !isTimeBudgetExhausted()) {
     const result = await callOmie(
@@ -1575,6 +1579,48 @@ async function completeSync(
   }
 }
 
+// ───────── Cursor de paginação resumível (tabela fin_sync_cursor) ─────────
+// Permite que CP/CR/mov retomem de onde pararam entre invocações, pra cobrir
+// empresas grandes (ex: colacor CR ~292 págs) sem estourar o time-budget de
+// 130s. next_page NULL = sem resume pendente (começa do início na próxima).
+async function readCursorStartPage(
+  db: SupabaseClient,
+  company: string,
+  resource: string,
+): Promise<number | undefined> {
+  try {
+    const { data } = await db
+      .from("fin_sync_cursor")
+      .select("next_page")
+      .eq("company", company)
+      .eq("resource", resource)
+      .maybeSingle();
+    const np = (data as { next_page?: number | null } | null)?.next_page;
+    return typeof np === "number" ? np : undefined;
+  } catch {
+    return undefined; // tabela ausente / erro → começa do início
+  }
+}
+
+async function writeCursor(
+  db: SupabaseClient,
+  company: string,
+  resource: string,
+  result: { complete?: boolean; nextPage?: number | null },
+): Promise<void> {
+  const nextPage = result.complete ? null : (result.nextPage ?? null);
+  try {
+    await db
+      .from("fin_sync_cursor")
+      .upsert(
+        { company, resource, next_page: nextPage, updated_at: new Date().toISOString() },
+        { onConflict: "company,resource" },
+      );
+  } catch {
+    /* tabela ausente → ignora (degrada pro comportamento sem cursor) */
+  }
+}
+
 // ═══════════════ HANDLER PRINCIPAL ═══════════════
 serve(async (req) => {
   if (req.method === "OPTIONS") {
@@ -1666,7 +1712,10 @@ serve(async (req) => {
           formatOmieDate(new Date(new Date().setMonth(new Date().getMonth() - 6)));
         const dataFim = filtro_data_ate || formatOmieDate(new Date());
         for (const co of targetCompanies) {
-          result[co] = await syncContasPagar(supabase, co, dataInicio, dataFim, maxPages);
+          const startPage = (await readCursorStartPage(supabase, co, "contas_pagar")) ?? 1;
+          const r = await syncContasPagar(supabase, co, dataInicio, dataFim, maxPages, startPage);
+          await writeCursor(supabase, co, "contas_pagar", r);
+          result[co] = r;
         }
         break;
       }
@@ -1677,7 +1726,10 @@ serve(async (req) => {
           formatOmieDate(new Date(new Date().setMonth(new Date().getMonth() - 6)));
         const dataFim = filtro_data_ate || formatOmieDate(new Date());
         for (const co of targetCompanies) {
-          result[co] = await syncContasReceber(supabase, co, dataInicio, dataFim, maxPages);
+          const startPage = (await readCursorStartPage(supabase, co, "contas_receber")) ?? 1;
+          const r = await syncContasReceber(supabase, co, dataInicio, dataFim, maxPages, startPage);
+          await writeCursor(supabase, co, "contas_receber", r);
+          result[co] = r;
         }
         break;
       }
@@ -1688,7 +1740,11 @@ serve(async (req) => {
           formatOmieDate(new Date(new Date().setMonth(new Date().getMonth() - 3)));
         const dataFim = filtro_data_ate || formatOmieDate(new Date());
         for (const co of targetCompanies) {
-          result[co] = await syncMovimentacoes(supabase, co, dataInicio, dataFim, maxPages);
+          // mov: undefined = fresh (começa da última página/mais recente); int = resume
+          const startPage = await readCursorStartPage(supabase, co, "movimentacoes");
+          const r = await syncMovimentacoes(supabase, co, dataInicio, dataFim, maxPages, startPage);
+          await writeCursor(supabase, co, "movimentacoes", r);
+          result[co] = r;
         }
         break;
       }

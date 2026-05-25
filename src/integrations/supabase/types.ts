@@ -438,6 +438,54 @@ export type Database = {
         }
         Relationships: []
       }
+      carteira_positivacao_snapshot: {
+        Row: {
+          churn_risk_at_month_start: number | null
+          contacted_in_month: boolean
+          created_at: string
+          customer_user_id: string
+          days_since_last_purchase_at_month_start: number | null
+          eligible: boolean
+          first_order_date_in_month: string | null
+          had_order_in_month: boolean
+          id: string
+          mes: string
+          owner_user_id: string
+          revenue_month: number | null
+          visited_in_month: boolean
+        }
+        Insert: {
+          churn_risk_at_month_start?: number | null
+          contacted_in_month?: boolean
+          created_at?: string
+          customer_user_id: string
+          days_since_last_purchase_at_month_start?: number | null
+          eligible: boolean
+          first_order_date_in_month?: string | null
+          had_order_in_month: boolean
+          id?: string
+          mes: string
+          owner_user_id: string
+          revenue_month?: number | null
+          visited_in_month?: boolean
+        }
+        Update: {
+          churn_risk_at_month_start?: number | null
+          contacted_in_month?: boolean
+          created_at?: string
+          customer_user_id?: string
+          days_since_last_purchase_at_month_start?: number | null
+          eligible?: boolean
+          first_order_date_in_month?: string | null
+          had_order_in_month?: boolean
+          id?: string
+          mes?: string
+          owner_user_id?: string
+          revenue_month?: number | null
+          visited_in_month?: boolean
+        }
+        Relationships: []
+      }
       categoria_aumento_familia_mapeamento: {
         Row: {
           aumento_item_id: number
@@ -4260,6 +4308,27 @@ export type Database = {
           total_synced?: number | null
           ultima_pagina?: number | null
           updated_at?: string | null
+        }
+        Relationships: []
+      }
+      fin_sync_cursor: {
+        Row: {
+          company: string
+          next_page: number | null
+          resource: string
+          updated_at: string
+        }
+        Insert: {
+          company: string
+          next_page?: number | null
+          resource: string
+          updated_at?: string
+        }
+        Update: {
+          company?: string
+          next_page?: number | null
+          resource?: string
+          updated_at?: string
         }
         Relationships: []
       }
@@ -8265,6 +8334,7 @@ export type Database = {
           omie_payload: Json | null
           omie_pedido_id: number | null
           omie_response: Json | null
+          order_date_kpi: string | null
           ready_by_date: string | null
           status: string
           subtotal: number
@@ -8288,6 +8358,7 @@ export type Database = {
           omie_payload?: Json | null
           omie_pedido_id?: number | null
           omie_response?: Json | null
+          order_date_kpi?: string | null
           ready_by_date?: string | null
           status?: string
           subtotal?: number
@@ -8311,6 +8382,7 @@ export type Database = {
           omie_payload?: Json | null
           omie_pedido_id?: number | null
           omie_response?: Json | null
+          order_date_kpi?: string | null
           ready_by_date?: string | null
           status?: string
           subtotal?: number
@@ -12581,6 +12653,7 @@ export type Database = {
         }[]
       }
       get_default_production_assignee: { Args: never; Returns: string }
+      get_minha_positivacao: { Args: never; Returns: Json }
       get_user_role: {
         Args: { _user_id: string }
         Returns: Database["public"]["Enums"]["app_role"]

@@ -21,15 +21,15 @@ Este audit valida **quais custom migrations estão de fato aplicadas no banco**.
 
 ## Resumo
 
-- **57** custom migrations totais
-- **323** objetos esperados (criados por estas migrations)
+- **61** custom migrations totais
+- **336** objetos esperados (criados por estas migrations)
 - Quebra por tipo:
-  - `rls_policy`: 104
-  - `index`: 93
-  - `table`: 50
-  - `function`: 31
+  - `rls_policy`: 106
+  - `index`: 95
+  - `table`: 52
+  - `function`: 33
   - `trigger`: 31
-  - `cron_job`: 10
+  - `cron_job`: 15
   - `enum_value`: 4
 
 ## Inventário por migration
@@ -632,6 +632,39 @@ Lista canônica do que cada migration *deveria* criar (extraído via regex de `C
 | --- | --- | --- |
 | `function` | `public.sugerir_negociacao_paralela_hoje` | — |
 | `function` | `public.refresh_sku_ranking_negociacao` | — |
+
+### `20260525000000_fin_crons_por_entidade.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `cron_job` | `cron.fin-sync-base-diario` | — |
+| `cron_job` | `cron.fin-sync-cp-2x` | — |
+| `cron_job` | `cron.fin-sync-cr-2x` | — |
+| `cron_job` | `cron.fin-sync-mov-2x` | — |
+
+### `20260525010000_fin_audit_skip_service_role.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `function` | `public.fin_audit_trigger` | — |
+
+### `20260525020000_fin_sync_cursor.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `table` | `public.fin_sync_cursor` | — |
+| `index` | `public.idx_fin_sync_cursor_pendentes` | `fin_sync_cursor` |
+| `cron_job` | `cron.fin-sync-continuacao-10min` | — |
+| `rls_policy` | `public.fin_sync_cursor_select_staff` | `fin_sync_cursor` |
+| `rls_policy` | `public.fin_sync_cursor_service_all` | `fin_sync_cursor` |
+
+### `20260525120000_positivacao_kpis.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `table` | `public.carteira_positivacao_snapshot` | — |
+| `index` | `public.idx_sales_orders_kpi_date` | `sales_orders` |
+| `function` | `public.get_minha_positivacao` | — |
 
 ## Próximos passos quando algo der `❌`
 
