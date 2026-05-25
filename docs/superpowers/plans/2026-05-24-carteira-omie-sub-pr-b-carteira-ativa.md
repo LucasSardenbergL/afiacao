@@ -9,7 +9,43 @@
 **Tech Stack:** Supabase Postgres (migration manual Lovable), Deno edge functions (deploy via chat Lovable), React + Vitest.
 
 **Spec:** `docs/superpowers/specs/2026-05-23-carteira-omie-fonte-verdade-design.md` (seção "Scores — farmer_id redefinido = dono").
-**Pré-requisito:** PR #236 (Sub-PR A) mergeado no `main`. Branch novo: `feat/carteira-omie-scores-cobertura` a partir do `main`.
+**Pré-requisito:** PR #236 (Sub-PR A) mergeado no `main`. ✅ MERGEADO.
+
+---
+
+## 🟢 STATUS / RETOMAR DAQUI (atualizado 2026-05-24 — Tasks 1-6 FEITAS, em PR #263, rollout pendente)
+
+**Branch:** `feat/carteira-omie-scores-cobertura` (origin tip `2d61f7d`). **PR #263 aberta** (feat→main). **#236 já mergeado** → Sub-PR A (Posse) em produção (6908 clientes: Lucas 3434 / Regina 1890 / Tati 1584; cron `carteira-rebuild-nightly` ativo).
+
+**Código completo (commitado + pushado, test 835✓ / typecheck:strict✓):**
+- ✅ **Task 1** — `20260524170000_scores_unique_por_cliente.sql`: dedupe por **RIQUEZA** (não ctid — codex pegou que linhas do recalc têm colunas ricas nulas) + UNIQUE(customer_user_id).
+- ✅ **Task 2** — `src/lib/carteira/owner-map.ts` + testes (anti-drift).
+- ✅ **Task 3** — `calculate-scores` seeda farmer_id=dono + onConflict por cliente.
+- ✅ **Task 4** — 4 recalc functions: onConflict 'customer_user_id'; visit lê fcs por customer_user_id; **drain concorrente**; batch enumera só ativos (30d) mapeados pro dono. + nova migration `20260524180000_carteira_scores_owner_e_filas.sql` (UPDATE owner set-based + INSERT faltantes + índice de fila (customer_user_id) + 3 triggers resolvendo dono via carteira_assignments).
+- ✅ **Task 5** — `useCoverage` (tipado) + `useMyVisitSuggestions`/`useMyCarteiraScores` (`in('farmer_id', [eu,...cobertos])` + `coberto_de`).
+- ✅ **Task 6** — `CoveragePanel` em /settings + selo no `VisitSuggestionsCard`.
+
+**Decisões-chave (codex consult 2026-05-24, sessão da continuação):**
+- `calculate-scores` só seeda em tabela VAZIA → reconciliação de farmer_id=dono é **SQL set-based** (preserva colunas ricas), não via calculate-scores.
+- Backfill de visit score dos 6908 = **fila como cursor** + **drain concorrente** (não fan-out, não offset). Enfileira tudo via SQL, dreno ~14x.
+- Triggers de fila enfileiravam pelo ATOR → resolvem o dono via `carteira_assignments` (COALESCE).
+- Divergência spec×codex: mantido `signal_modifiers` das ligações DO DONO (spec).
+
+**⏳ FALTA: ROLLOUT MANUAL no Lovable (founder)** — sequência completa + blocos SQL no corpo da PR #263:
+1. SQL Editor: BLOCO A (`20260524170000`) → BLOCO B (`20260524180000`)
+2. Chat Lovable: deploy das 5 functions (calculate-scores + 4 recalc)
+3. Invocar `calculate-scores`
+4. SQL Editor: BLOCO C (enfileira carteira pro backfill)
+5. Invocar `visit-score-recalc-client` `{drain_queue:true,max_drain:500}` ~14x até `drained:0`
+6. Invocar `scoring-recalc-batch` 1x
+7. SQL Editor: BLOCO D (validar: Regina ~1890, fila zerada)
+8. Conferir crons noturnos `scoring-recalc-batch-nightly` / `visit-score-recalc-batch-nightly`
+
+**⚠️ Worktree principal:** o `feat` local lá fica ATRÁS do remoto (push veio da worktree `eloquent-cartwright`). Quando for usar, `git pull --ff-only` na feat (não afeta o ProcessoComprasStepper.tsx não-commitado).
+
+**Frase pra retomar:** "Sub-PR B da carteira está em PR #263, código completo. Conduzir o rollout manual no Lovable (BLOCO A→B→deploy→calculate-scores→BLOCO C→drain→batch→BLOCO D) a partir do corpo da PR."
+
+---
 
 ---
 
@@ -215,6 +251,12 @@ Deploy: entregar o conteúdo final do arquivo pro chat do Lovable (EDIT da funç
 
 > Implementador lê cada arquivo antes de editar. Mudanças descritas com código exato.
 
+> ⚠️ **NUANCE CRÍTICA (parte mais delicada do Sub-PR B — fazer com cuidado):**
+> 1. **Full refresh já é do `calculate-scores`** (Task 3, feito). Pra evitar timeout de 50s, o `scoring-recalc-batch` **NÃO deve** fazer fan-out por cliente sobre os ~6908 da carteira. Decisão recomendada: `scoring-recalc-batch` mantém **só o drain da fila incremental**; o full refresh fica com o `calculate-scores`. (O `visit-score-recalc-batch` pode enumerar a carteira pois é mais leve — medir; se estourar, idem: delegar full refresh e só drenar fila.)
+> 2. **`farmer_id` = DONO, sempre.** Em `scoring-recalc-client`/`visit-score-recalc-client`, ao processar um cliente, resolver o dono via `carteira_assignments` (não confiar no `farmer_id` que veio da fila/atividade). Upsert `onConflict: 'customer_user_id'`.
+> 3. **`signal_modifiers` = ligações DO DONO.** Em `scoring-recalc-client`, o `.eq('farmer_id', X)` em `farmer_calls` deve usar X = **dono** (não quem ligou). Cobertura é visibilidade, não muda atribuição (decisão codex).
+> 4. **Triggers/fila:** os triggers que enfileiram recalc usam o `farmer_id` da atividade (ex.: `enqueue ... from_visit` usa `NEW.visited_by`; o de `farmer_calls` usa o caller). Sob a Opção A, o que importa é o **cliente** (o dono é resolvido no recalc). Avaliar: (a) deixar a fila enfileirar por cliente e o recalc-client resolver o dono (mais simples), ou (b) o trigger já resolver o dono. Preferir (a). **Cuidado** com a unique parcial da fila `(customer_user_id, farmer_id) WHERE processed_at IS NULL` — se a fila virar por-cliente, ajustar pra `(customer_user_id)`. Mapear isso ao editar os triggers (migration adicional pequena pode ser necessária).
+
 - [ ] **Step 1: `scoring-recalc-batch` — enumerar carteira (não farmer_calls)**
 
 Hoje monta pares únicos de `farmer_calls` (últimos 30d). Trocar a enumeração por `carteira_assignments` paginado (mesmo padrão de paginação da Task 3), gerando pares `{ customer_user_id, farmer_id: owner_user_id }`. Manter o drain da fila como está.
@@ -363,7 +405,15 @@ WHERE farmer_id = '700657a1-d75d-4c72-99b1-0a0f2065fa29';  -- esperado ~1890
 - [ ] **Step 5: Testes + build + PR**
 
 Run: `bun run test && bun run typecheck:strict` (esperado verde).
+
+> ⚠️ **Antes de abrir/mergear o PR — regenerar o audit de migrations.** Esta branch
+> adicionou migrations custom (`carteira_omie_fase1`, `restore_sla_guards`) que ainda
+> não estão no inventário. Rode `bun run audit:migrations` e commite os 2 arquivos
+> regenerados (`docs/migrations-audit.md` + `scripts/audit-custom-migrations.sql`)
+> junto deste PR. É o passo 6 obrigatório do ritual `lovable-db-operator` (CLAUDE.md §5).
+
 ```bash
+bun run audit:migrations   # regenera o inventário; commitar os 2 arquivos
 git push -u origin feat/carteira-omie-scores-cobertura
 gh pr create --title "feat(carteira): Sub-PR B — scores por dono + cobertura (Opção A)" --body "..."
 ```

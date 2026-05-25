@@ -426,7 +426,7 @@ async function syncContasPagar(
   while (pagina <= totalPaginas && pagesProcessed < maxPages && !isTimeBudgetExhausted()) {
     const params: Record<string, unknown> = {
       pagina,
-      registros_por_pagina: 100,
+      registros_por_pagina: 500,
     };
     // Omie lcpListarRequest não aceita filtros de data
 
@@ -557,7 +557,7 @@ async function syncContasReceber(
   while (pagina <= totalPaginas && pagesProcessed < maxPages && !isTimeBudgetExhausted()) {
     const params: Record<string, unknown> = {
       pagina,
-      registros_por_pagina: 100,
+      registros_por_pagina: 500,
     };
     // Omie lcrListarRequest não aceita filtros de data
 

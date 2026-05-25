@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
-import { Loader2, ChevronLeft, CheckCircle, Building2, Scissors } from 'lucide-react';
+import { Loader2, ChevronLeft, CheckCircle, Building2, Scissors, Wifi } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
 import { track } from '@/lib/analytics';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
@@ -13,6 +13,9 @@ import { useUnifiedOrder } from '@/hooks/useUnifiedOrder';
 import { useOrderDeepLink } from '@/hooks/useOrderDeepLink';
 import { useOrderDraft } from '@/hooks/useOrderDraft';
 import { useAuth } from '@/contexts/AuthContext';
+import { Button } from '@/components/ui/button';
+import { useNetworkStatus } from '@/hooks/useNetworkStatus';
+import { useOfflineSubmit } from '@/hooks/useOfflineSubmit';
 import { RestoreDraftDialog } from '@/components/unified-order/RestoreDraftDialog';
 import { CustomerSearch } from '@/components/unified-order/CustomerSearch';
 import { ProductItemForm } from '@/components/unified-order/ProductItemForm';
@@ -75,6 +78,15 @@ const UnifiedOrder = () => {
     state: draftPayload,
     shouldSave: h.cart.length > 0,
     clearTrigger: h.orderSuccessOpen, // limpa quando o success dialog abrir = pedido enviado
+  });
+
+  // Gate offline-first do envio: offline salva rascunho (já auto-salvo acima) e expõe
+  // CTA de reconexão; nunca enfileira (submitOrder cria PV cobrado no Omie).
+  const net = useNetworkStatus();
+  const offlineSubmit = useOfflineSubmit({
+    submit: h.submitOrder,
+    online: net.online,
+    hasContent: h.cart.length > 0,
   });
 
   // Oferece restore se houver draft pendente E o cart atual estiver vazio (entrou novo na tela).
@@ -141,6 +153,18 @@ const UnifiedOrder = () => {
       </div>
 
       <OrderStepper step={h.currentStep} isCustomerMode={isCustomerMode} />
+
+      {offlineSubmit.showReconnectCta && (
+        <div className="rounded-md border border-status-info-bold/30 bg-status-info-bg px-4 py-3 mb-4 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+          <div className="flex items-center gap-2 text-sm text-status-info-bold">
+            <Wifi className="w-4 h-4 shrink-0" />
+            Conexão restabelecida. Seu pedido está salvo como rascunho.
+          </div>
+          <Button size="sm" onClick={offlineSubmit.onReconnectSubmit} disabled={h.submitting} className="shrink-0">
+            Enviar pedido agora
+          </Button>
+        </div>
+      )}
 
       <div className={cn('grid gap-4', showProductTabs ? 'grid-cols-1 lg:grid-cols-3' : 'grid-cols-1 lg:grid-cols-3')}>
         <div className={cn(showProductTabs ? 'lg:col-span-2' : 'lg:col-span-2', 'space-y-4')}>
@@ -277,8 +301,9 @@ const UnifiedOrder = () => {
               ordemCompra={h.ordemCompra} setOrdemCompra={h.setOrdemCompra}
               isOrdemCompraCustomer={h.isOrdemCompraCustomer}
               readyByDate={h.readyByDate} setReadyByDate={h.setReadyByDate}
-              onSubmit={h.submitOrder}
+              onSubmit={offlineSubmit.onSubmit}
               onSubmitQuote={h.submitQuote}
+              offline={offlineSubmit.offline}
             />
           )}
         </div>

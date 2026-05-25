@@ -1,0 +1,369 @@
+// Lógica da listagem de pedidos de venda (queries paginadas, merge, optimistic delete).
+// Extraída verbatim de src/pages/SalesOrders.tsx (god-component split).
+import { useState, useEffect, useMemo } from 'react';
+import { useNavigate } from 'react-router-dom';
+import { useInfiniteQuery, useQuery, useQueryClient } from '@tanstack/react-query';
+import { supabase } from '@/integrations/supabase/client';
+import { useAuth } from '@/contexts/AuthContext';
+import { toast } from 'sonner';
+import { shareOrderViaWhatsApp } from '@/utils/whatsappShare';
+import { useInfiniteScroll } from '@/hooks/useInfiniteScroll';
+import {
+  PAGE_SIZE,
+  decodeHtml,
+  type Account,
+  type SalesOrder,
+  type SalesOrderRow,
+  type AfiacaoOrderRow,
+  type ProfileRow,
+  type AfiacaoItemRaw,
+  type SalesOrdersInfiniteCache,
+} from './types';
+
+export function useSalesOrders() {
+  const navigate = useNavigate();
+  const queryClient = useQueryClient();
+  const { isStaff, loading: authLoading, role } = useAuth();
+  const [accountFilter, setAccountFilter] = useState<Account>('all');
+  const [search, setSearch] = useState('');
+  const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
+
+  useEffect(() => {
+    if (!authLoading && role !== null && !isStaff) navigate('/', { replace: true });
+  }, [authLoading, role, isStaff, navigate]);
+
+  /* ─── Sales orders: infinite query (50 por página) ─── */
+  const salesQuery = useInfiniteQuery({
+    queryKey: ['sales-orders-paginated'],
+    enabled: isStaff,
+    initialPageParam: 0,
+    queryFn: async ({ pageParam }) => {
+      const start = (pageParam as number) * PAGE_SIZE;
+      const { data, error } = await supabase
+        .from('sales_orders')
+        .select('*')
+        // Filtra soft-deletes (deleted_at IS NOT NULL = pedido excluído).
+        // Usa partial index idx_sales_orders_active em deleted_at IS NULL.
+        .is('deleted_at', null)
+        .order('created_at', { ascending: false })
+        .range(start, start + PAGE_SIZE - 1);
+      if (error) throw error;
+      return ((data || []) as SalesOrderRow[]).map((o) => ({
+        ...o,
+        _source: 'sales' as const,
+      })) as unknown as SalesOrder[];
+    },
+    getNextPageParam: (lastPage, allPages) =>
+      lastPage.length === PAGE_SIZE ? allPages.length : undefined,
+  });
+
+  /* ─── Afiação orders: infinite query (50 por página) ─── */
+  const afiacaoQuery = useInfiniteQuery({
+    queryKey: ['afiacao-orders-paginated'],
+    enabled: isStaff,
+    initialPageParam: 0,
+    queryFn: async ({ pageParam }) => {
+      const start = (pageParam as number) * PAGE_SIZE;
+      const { data, error } = await supabase
+        .from('orders')
+        .select('*')
+        .order('created_at', { ascending: false })
+        .range(start, start + PAGE_SIZE - 1);
+      if (error) throw error;
+      return ((data || []) as AfiacaoOrderRow[]).map((o) => {
+        const rawItems = Array.isArray(o.items) ? (o.items as unknown as AfiacaoItemRaw[]) : [];
+        return {
+          id: o.id,
+          customer_user_id: o.user_id,
+          items: rawItems.map((i) => ({
+            descricao: i.category || i.name || 'Afiação',
+            quantidade: i.quantity || 1,
+            valor_unitario: i.unitPrice || 0,
+            valor_total: (i.quantity || 1) * (i.unitPrice || 0),
+          })),
+          subtotal: o.subtotal || o.total || 0,
+          total: o.total || 0,
+          status: o.status,
+          omie_numero_pedido: null,
+          omie_pedido_id: null,
+          created_at: o.created_at,
+          notes: o.notes,
+          account: 'afiacao',
+          _source: 'afiacao' as const,
+        };
+      }) as SalesOrder[];
+    },
+    getNextPageParam: (lastPage, allPages) =>
+      lastPage.length === PAGE_SIZE ? allPages.length : undefined,
+  });
+
+  /* ─── Lista mergeada ─── */
+  const orders = useMemo<SalesOrder[]>(() => {
+    const sales = salesQuery.data?.pages.flat() || [];
+    const afiacao = afiacaoQuery.data?.pages.flat() || [];
+    return [...sales, ...afiacao].sort(
+      (a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime(),
+    );
+  }, [salesQuery.data, afiacaoQuery.data]);
+
+  /* ─── Profiles (nomes dos clientes) ─── */
+  const customerIds = useMemo(() => [...new Set(orders.map((o) => o.customer_user_id))], [orders]);
+  const profilesQuery = useQuery({
+    queryKey: ['sales-orders-profiles', customerIds.sort().join(',')],
+    enabled: isStaff && customerIds.length > 0,
+    staleTime: 60_000,
+    queryFn: async () => {
+      const { data } = await supabase
+        .from('profiles')
+        .select('user_id, name')
+        .in('user_id', customerIds);
+      const map: Record<string, string> = {};
+      ((data || []) as Pick<ProfileRow, 'user_id' | 'name'>[]).forEach((p) => {
+        map[p.user_id] = p.name ?? '';
+      });
+      return map;
+    },
+  });
+  const profiles = profilesQuery.data || {};
+
+  /* ─── Infinite scroll: dispara fetchNextPage de quem ainda tem páginas ─── */
+  const hasNext = !!salesQuery.hasNextPage || !!afiacaoQuery.hasNextPage;
+  const isFetching = salesQuery.isFetchingNextPage || afiacaoQuery.isFetchingNextPage;
+  const sentinelRef = useInfiniteScroll(
+    () => {
+      if (salesQuery.hasNextPage && !salesQuery.isFetchingNextPage) salesQuery.fetchNextPage();
+      if (afiacaoQuery.hasNextPage && !afiacaoQuery.isFetchingNextPage) afiacaoQuery.fetchNextPage();
+    },
+    hasNext && !isFetching,
+  );
+
+  const loadMore = () => {
+    if (salesQuery.hasNextPage) salesQuery.fetchNextPage();
+    if (afiacaoQuery.hasNextPage) afiacaoQuery.fetchNextPage();
+  };
+
+  const loading = salesQuery.isLoading || afiacaoQuery.isLoading;
+
+  // Soft-delete + Omie exclude. Fluxo:
+  // 1. Optimistic remove do cache (UI atualiza instantaneamente)
+  // 2. UPDATE sales_orders SET deleted_at = now() (audit trail compliance)
+  // 3. Call Omie excluir_pedido
+  // 4. Se Omie falhar: rollback do soft-delete + restaura cache
+  // 5. Se Supabase update falhar: rollback do cache, NÃO chama Omie
+  const deleteOrder = async (order: SalesOrder) => {
+    const snapshot = queryClient.getQueryData<SalesOrdersInfiniteCache>(['sales-orders-paginated']);
+    queryClient.setQueryData<SalesOrdersInfiniteCache>(['sales-orders-paginated'], (old) => {
+      if (!old) return old;
+      return {
+        ...old,
+        pages: old.pages.map((page) => page.filter((o) => o.id !== order.id)),
+      };
+    });
+    setSelectedIds((prev) => {
+      const next = new Set(prev);
+      next.delete(order.id);
+      return next;
+    });
+
+    // 1. Soft-delete local primeiro (audit trail antes do Omie)
+    // `deleted_at` existe no DB mas ainda não no generated Database type — cast as never
+    const { error: softErr } = await supabase
+      .from('sales_orders')
+      .update({ deleted_at: new Date().toISOString() } as never)
+      .eq('id', order.id);
+
+    if (softErr) {
+      console.error(softErr);
+      queryClient.setQueryData(['sales-orders-paginated'], snapshot);
+      toast.error('Erro ao excluir pedido', { description: softErr.message });
+      return;
+    }
+
+    // 2. Omie exclude — se falhar, rollback do soft-delete
+    try {
+      const { error } = await supabase.functions.invoke('omie-vendas-sync', {
+        body: {
+          action: 'excluir_pedido',
+          sales_order_id: order.id,
+          omie_pedido_id: order.omie_pedido_id,
+        },
+      });
+      if (error) throw error;
+      toast.success('Pedido excluído');
+    } catch (e) {
+      console.error(e);
+      // Rollback do soft-delete (deleted_at = null) — pedido volta a ser ativo
+      await supabase
+        .from('sales_orders')
+        .update({ deleted_at: null } as never)
+        .eq('id', order.id);
+      queryClient.setQueryData(['sales-orders-paginated'], snapshot);
+      toast.error('Erro ao excluir pedido', {
+        description: e instanceof Error ? e.message : String(e),
+      });
+    }
+  };
+
+  // Bulk delete — sequencial pra não floodar o Omie. Mostra progresso.
+  const deleteSelected = async () => {
+    if (selectedIds.size === 0) return;
+    const toDelete = orders.filter((o) => selectedIds.has(o.id) && o._source === 'sales');
+    const snapshot = queryClient.getQueryData<SalesOrdersInfiniteCache>(['sales-orders-paginated']);
+    const deleteIds = new Set(toDelete.map((o) => o.id));
+    queryClient.setQueryData<SalesOrdersInfiniteCache>(['sales-orders-paginated'], (old) => {
+      if (!old) return old;
+      return {
+        ...old,
+        pages: old.pages.map((page) => page.filter((o) => !deleteIds.has(o.id))),
+      };
+    });
+    setSelectedIds(new Set());
+
+    // 1. Soft-delete em batch (1 UPDATE com .in('id', ...))
+    const nowIso = new Date().toISOString();
+    const { error: softErr } = await supabase
+      .from('sales_orders')
+      .update({ deleted_at: nowIso } as never)
+      .in('id', Array.from(deleteIds));
+
+    if (softErr) {
+      console.error(softErr);
+      queryClient.setQueryData(['sales-orders-paginated'], snapshot);
+      toast.error(`Erro ao excluir pedidos`, { description: softErr.message });
+      return;
+    }
+
+    // 2. Omie exclude sequencial (não floodar). Rollback do deleted_at em falhas.
+    const failedIds: string[] = [];
+    let success = 0;
+    for (const o of toDelete) {
+      try {
+        const { error } = await supabase.functions.invoke('omie-vendas-sync', {
+          body: {
+            action: 'excluir_pedido',
+            sales_order_id: o.id,
+            omie_pedido_id: o.omie_pedido_id,
+          },
+        });
+        if (error) throw error;
+        success++;
+      } catch (e) {
+        failedIds.push(o.id);
+        console.error(e);
+      }
+    }
+    const failed = failedIds.length;
+
+    // Rollback do soft-delete só pros que falharam no Omie
+    if (failedIds.length > 0) {
+      await supabase
+        .from('sales_orders')
+        .update({ deleted_at: null } as never)
+        .in('id', failedIds);
+    }
+
+    if (failed === 0) {
+      toast.success(`${success} pedido(s) excluído(s)`);
+    } else if (success === 0) {
+      queryClient.setQueryData(['sales-orders-paginated'], snapshot); // rollback completo
+      toast.error(`Falhou: ${failed} pedido(s) não puderam ser excluídos`);
+    } else {
+      // Parcial — restaura os que falharam no cache (já temos deleted_at=null no DB)
+      const failedSet = new Set(failedIds);
+      queryClient.setQueryData<SalesOrdersInfiniteCache>(['sales-orders-paginated'], (old) => {
+        if (!old || !snapshot) return old;
+        // Pega as rows que falharam do snapshot original e reinjeta na primeira página
+        const failedRows = snapshot.pages
+          .flat()
+          .filter((o) => failedSet.has(o.id));
+        return {
+          ...old,
+          pages: old.pages.map((page, i) =>
+            i === 0 ? [...failedRows, ...page] : page,
+          ),
+        };
+      });
+      toast.warning(`${success} excluído(s), ${failed} falharam`);
+    }
+  };
+
+  const handleShareOrder = (order: SalesOrder, customerName: string) => {
+    const items = (order.items || []).map(item => ({
+      description: item.descricao,
+      quantity: item.quantidade,
+      unitPrice: item.valor_unitario,
+    }));
+
+    const orderNumbers = order.omie_numero_pedido ? [order.omie_numero_pedido.replace(/^0+/, '') || '0'] : [];
+
+    shareOrderViaWhatsApp({
+      customerName,
+      items,
+      total: order.total,
+      orderNumbers,
+      date: new Date(order.created_at),
+    });
+  };
+
+  const filteredOrders = useMemo(() => {
+    // Colacor SC engloba: (a) pedidos comerciais com account='colacor_sc' E
+    // (b) pedidos de afiação (que operam sob a entidade SC). Afiação não é tab
+    // separada, é serviço da Colacor SC.
+    let result = accountFilter === 'all'
+      ? orders
+      : accountFilter === 'colacor_sc'
+        ? orders.filter(o => o._source === 'afiacao' || (o._source === 'sales' && o.account === 'colacor_sc'))
+        : orders.filter(o => o._source === 'sales' && (o.account || 'oben') === accountFilter);
+
+    if (search.trim()) {
+      const q = search.trim().toLowerCase();
+      result = result.filter(o => {
+        const customerName = decodeHtml(profiles[o.customer_user_id] || '');
+        const pvNumber = o.omie_numero_pedido || '';
+        const itemDescs = (o.items || []).map(i => i.descricao).join(' ');
+        return (
+          customerName.toLowerCase().includes(q) ||
+          pvNumber.toLowerCase().includes(q) ||
+          itemDescs.toLowerCase().includes(q) ||
+          o.total.toFixed(2).includes(q)
+        );
+      });
+    }
+
+    return result;
+  }, [orders, accountFilter, search, profiles]);
+
+  const toggleSelect = (id: string, checked: boolean) => {
+    setSelectedIds((prev) => {
+      const next = new Set(prev);
+      if (checked) next.add(id);
+      else next.delete(id);
+      return next;
+    });
+  };
+
+  const clearSelection = () => setSelectedIds(new Set());
+
+  return {
+    navigate,
+    authLoading,
+    loading,
+    accountFilter,
+    setAccountFilter,
+    search,
+    setSearch,
+    selectedIds,
+    toggleSelect,
+    clearSelection,
+    orders,
+    profiles,
+    filteredOrders,
+    hasNext,
+    isFetching,
+    sentinelRef,
+    loadMore,
+    deleteOrder,
+    deleteSelected,
+    handleShareOrder,
+  };
+}
