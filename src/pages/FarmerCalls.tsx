@@ -20,6 +20,7 @@ import { useMyPositivacao } from '@/hooks/useMyPositivacao';
 import { useMyCommercialRole } from '@/hooks/useMyCommercialRole';
 import { PositivacaoHero } from '@/components/farmer/PositivacaoHero';
 import { ClientesAPositivarCard } from '@/components/farmer/ClientesAPositivarCard';
+import { MixGapCard } from '@/components/farmer/MixGapCard';
 
 /* ─── Main Page ─── */
 const FarmerCalls = () => {
@@ -390,6 +391,7 @@ const FarmerCalls = () => {
           <div className="space-y-3">
             <PositivacaoHero kpis={positivacao} isHunter={isHunter} />
             <ClientesAPositivarCard clientes={positivacao.aPositivar} />
+            <MixGapCard />
           </div>
         )}
 
