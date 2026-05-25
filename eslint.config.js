@@ -23,4 +23,24 @@ export default tseslint.config(
       "@typescript-eslint/no-unused-vars": "off",
     },
   },
+  {
+    // Anti-injeção PostgREST (CLAUDE.md §9b): proíbe interpolar input direto
+    // num .or() via template literal. Use os helpers de @/lib/postgrest
+    // (ilikeOr/ilike/eqInt/eqText/orFilter), que sanitizam os metacaracteres.
+    // Escopo: só o frontend (src/). Edge Functions (supabase/functions) rodam em
+    // Deno, não importam o alias @/, e várias usam `and(...)` com datas
+    // computadas (não-input) — fora do alcance deste helper.
+    files: ["src/**/*.{ts,tsx}"],
+    rules: {
+      "no-restricted-syntax": [
+        "error",
+        {
+          selector:
+            "CallExpression[callee.property.name='or'] > TemplateLiteral[expressions.length>0]",
+          message:
+            "Não interpole input em .or() do PostgREST com template literal — use os helpers de @/lib/postgrest (ilikeOr/ilike/eqInt/eqText/orFilter), que sanitizam. Ver CLAUDE.md §9b.",
+        },
+      ],
+    },
+  },
 );
