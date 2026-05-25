@@ -16,12 +16,19 @@ import { TodayStatsCards } from '@/components/farmer/calls/TodayStatsCards';
 import { AgendaQueueCard } from '@/components/farmer/calls/AgendaQueueCard';
 import { CallListPanel } from '@/components/farmer/calls/CallListPanel';
 import { NewCallDialog } from '@/components/farmer/calls/NewCallDialog';
+import { useMyPositivacao } from '@/hooks/useMyPositivacao';
+import { useMyCommercialRole } from '@/hooks/useMyCommercialRole';
+import { PositivacaoHero } from '@/components/farmer/PositivacaoHero';
+import { ClientesAPositivarCard } from '@/components/farmer/ClientesAPositivarCard';
 
 /* ─── Main Page ─── */
 const FarmerCalls = () => {
   const navigate = useNavigate();
   const { user, isStaff, loading: authLoading } = useAuth();
   const { agenda, clientScores, loading: agendaLoading } = useFarmerScoring();
+  const { data: positivacao } = useMyPositivacao();
+  const { data: commercialRole } = useMyCommercialRole();
+  const isHunter = commercialRole === 'hunter';
 
   // Real Nvoip call integration for the dialog timer
   const {
@@ -378,8 +385,19 @@ const FarmerCalls = () => {
           </Button>
         </div>
 
-        {/* Today's stats */}
-        <TodayStatsCards count={todayCalls.length} revenue={todayRevenue} avgDuration={avgDuration} />
+        {/* ─── Positivação da carteira (hero principal) ─── */}
+        {positivacao && (
+          <div className="space-y-3">
+            <PositivacaoHero kpis={positivacao} isHunter={isHunter} />
+            <ClientesAPositivarCard clientes={positivacao.aPositivar} />
+          </div>
+        )}
+
+        {/* Atividade de hoje (secundário) */}
+        <div className="space-y-1.5">
+          <h2 className="text-2xs font-medium uppercase tracking-wide text-muted-foreground">Atividade de hoje</h2>
+          <TodayStatsCards count={todayCalls.length} revenue={todayRevenue} avgDuration={avgDuration} />
+        </div>
 
         {/* ─── Agenda Queue ─── */}
         <AgendaQueueCard
