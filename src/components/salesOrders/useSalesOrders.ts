@@ -164,12 +164,13 @@ export function useSalesOrders() {
     });
 
     const result = await softDeleteOrder(order);
-    if (result.ok === true) {
+    if (result.ok) {
       toast.success('Pedido excluído');
       return;
     }
     queryClient.setQueryData(['sales-orders-paginated'], snapshot);
-    toast.error('Erro ao excluir pedido', { description: result.message });
+    const { message } = result;
+    toast.error('Erro ao excluir pedido', { description: message });
   };
 
   // Bulk delete — sequencial pra não floodar o Omie. Mostra progresso.
