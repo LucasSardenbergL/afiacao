@@ -143,8 +143,10 @@ export function useUnifiedOrder() {
     staleTime: 10 * 60 * 1000,
     queryFn: formasQueryFn('colacor'),
   });
-  const formasPagamentoOben = obenFormasQuery.data || [];
-  const formasPagamentoColacor = colacorFormasQuery.data || [];
+  // useMemo estabiliza a referência: `|| []` criava um array novo a cada render,
+  // invalidando os useMemo/useCallback que dependem destes (sortedFormas*, submit).
+  const formasPagamentoOben = useMemo(() => obenFormasQuery.data || [], [obenFormasQuery.data]);
+  const formasPagamentoColacor = useMemo(() => colacorFormasQuery.data || [], [colacorFormasQuery.data]);
   const loadingFormas = obenFormasQuery.isLoading || colacorFormasQuery.isLoading;
 
   const [ordemCompra, setOrdemCompra] = useState<string>('');
