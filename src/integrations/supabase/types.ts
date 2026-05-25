@@ -12727,6 +12727,7 @@ export type Database = {
         }[]
       }
       get_default_production_assignee: { Args: never; Returns: string }
+      get_meu_mixgap: { Args: never; Returns: Json }
       get_minha_positivacao: { Args: never; Returns: Json }
       get_user_role: {
         Args: { _user_id: string }
