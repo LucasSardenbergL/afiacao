@@ -3,7 +3,7 @@
 -- ========================================================================
 --
 -- Gerado por: scripts/audit-custom-migrations.ts
--- Total de custom migrations: 59
+-- Total de custom migrations: 60
 --
 -- Como usar:
 --   1. Abra o Supabase SQL Editor (via Lovable Cloud → Backend → SQL Editor)
@@ -78,7 +78,8 @@ WITH expected (version, slug, filename) AS (VALUES
   ('20260524203000', 'rpc_staff_guard_permite_cron_backend', '20260524203000_rpc_staff_guard_permite_cron_backend.sql'),
   ('20260525000000', 'fin_crons_por_entidade', '20260525000000_fin_crons_por_entidade.sql'),
   ('20260525010000', 'fin_audit_skip_service_role', '20260525010000_fin_audit_skip_service_role.sql'),
-  ('20260525020000', 'fin_sync_cursor', '20260525020000_fin_sync_cursor.sql')
+  ('20260525020000', 'fin_sync_cursor', '20260525020000_fin_sync_cursor.sql'),
+  ('20260525020001', 'fin_rpc_gate_auth_p1', '20260525020001_fin_rpc_gate_auth_p1.sql')
 )
 SELECT
   e.version,
@@ -426,7 +427,11 @@ WITH expected_objects (migration, kind, schema_name, object_name, parent_name) A
   ('fin_sync_cursor', 'index', 'public', 'idx_fin_sync_cursor_pendentes', 'fin_sync_cursor'),
   ('fin_sync_cursor', 'cron_job', 'cron', 'fin-sync-continuacao-10min', ''),
   ('fin_sync_cursor', 'rls_policy', 'public', 'fin_sync_cursor_select_staff', 'fin_sync_cursor'),
-  ('fin_sync_cursor', 'rls_policy', 'public', 'fin_sync_cursor_service_all', 'fin_sync_cursor')
+  ('fin_sync_cursor', 'rls_policy', 'public', 'fin_sync_cursor_service_all', 'fin_sync_cursor'),
+  ('fin_rpc_gate_auth_p1', 'function', 'public', 'fin_calcular_confiabilidade', ''),
+  ('fin_rpc_gate_auth_p1', 'function', 'public', 'fin_categorias_sem_mapping', ''),
+  ('fin_rpc_gate_auth_p1', 'function', 'public', 'fin_consolidado_intercompany', ''),
+  ('fin_rpc_gate_auth_p1', 'function', 'public', 'fin_estimar_estoque_omie', '')
 )
 SELECT
   e.migration,
