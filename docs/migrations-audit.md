@@ -21,15 +21,15 @@ Este audit valida **quais custom migrations estão de fato aplicadas no banco**.
 
 ## Resumo
 
-- **64** custom migrations totais
-- **342** objetos esperados (criados por estas migrations)
+- **66** custom migrations totais
+- **345** objetos esperados (criados por estas migrations)
 - Quebra por tipo:
   - `rls_policy`: 106
   - `index`: 95
   - `table`: 52
-  - `function`: 39
+  - `function`: 41
   - `trigger`: 31
-  - `cron_job`: 15
+  - `cron_job`: 16
   - `enum_value`: 4
 
 ## Inventário por migration
@@ -674,6 +674,19 @@ Lista canônica do que cada migration *deveria* criar (extraído via regex de `C
 | `table` | `public.carteira_positivacao_snapshot` | — |
 | `index` | `public.idx_sales_orders_kpi_date` | `sales_orders` |
 | `function` | `public.get_minha_positivacao` | — |
+
+### `20260525130000_fin_analise_dimensoes_rpc.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `function` | `public.fin_analise_cr_dimensoes_rpc` | — |
+| `function` | `public.fin_analise_cp_dimensoes_rpc` | — |
+
+### `20260525140000_fin_refresh_analise_dimensoes_cron.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `cron_job` | `cron.fin-refresh-analise-dimensoes` | — |
 
 ### `20260525160000_carteira_saude_rpc.sql`
 

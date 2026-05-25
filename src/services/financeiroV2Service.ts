@@ -492,23 +492,28 @@ export async function getAnaliseDimensional(
     fornecedor: 'nome_fornecedor',
   };
 
+  // Matviews têm REVOKE SELECT de `authenticated`; lemos via RPC SECURITY DEFINER
+  // gated (fin_analise_c{r,p}_dimensoes_rpc), que retorna SETOF a matview (mesmo shape).
+  const rpcParams = {
+    p_company: company === 'all' ? null : company,
+    p_ano: ano ?? null,
+    p_mes: mes ?? null,
+  };
   let rows: DimRow[];
   if (tipo === 'cr') {
-    let q = supabase.from("fin_analise_cr_dimensoes").select("*");
-    if (company !== 'all') q = q.eq("company", company);
-    if (ano) q = q.eq("ano", ano);
-    if (mes) q = q.eq("mes", mes);
-    const { data, error } = await q;
+    const { data, error } = await supabase.rpc(
+      'fin_analise_cr_dimensoes_rpc' as never,
+      rpcParams as never,
+    );
     if (error) throw error;
-    rows = data ?? [];
+    rows = (data as unknown as FinAnaliseCrDimensoesView[]) ?? [];
   } else {
-    let q = supabase.from("fin_analise_cp_dimensoes").select("*");
-    if (company !== 'all') q = q.eq("company", company);
-    if (ano) q = q.eq("ano", ano);
-    if (mes) q = q.eq("mes", mes);
-    const { data, error } = await q;
+    const { data, error } = await supabase.rpc(
+      'fin_analise_cp_dimensoes_rpc' as never,
+      rpcParams as never,
+    );
     if (error) throw error;
-    rows = data ?? [];
+    rows = (data as unknown as FinAnaliseCpDimensoesView[]) ?? [];
   }
 
   const col = (tipo === 'cr' ? dimColCr[dimensao] : dimColCp[dimensao]) as keyof DimRow;
