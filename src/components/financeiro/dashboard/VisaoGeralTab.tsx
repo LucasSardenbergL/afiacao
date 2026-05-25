@@ -138,7 +138,7 @@ export function VisaoGeralTab({
       {/* Aging */}
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
         <AgingCard title="Aging Recebíveis" data={agingReceber} type="receber" />
-        <AgingCard title="Aging Payables" data={agingPagar} type="pagar" />
+        <AgingCard title="Aging Pagáveis" data={agingPagar} type="pagar" />
       </div>
 
       {/* CFO Indicators */}
