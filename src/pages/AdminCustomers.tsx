@@ -851,12 +851,23 @@ const AdminCustomers = () => {
   const loadScores = async () => {
     if (!user?.id) return;
     try {
-      const { data } = await supabase
-        .from('farmer_client_scores')
-        .select('customer_user_id, health_score, health_class, churn_risk, expansion_score, priority_score, avg_monthly_spend_180d, days_since_last_purchase, category_count, gross_margin_pct, avg_repurchase_interval')
-        .eq('farmer_id', user.id);
-      if (data) {
-        const map = new Map<string, ClientScore>();
+      // farmer_client_scores tem ~1 linha por cliente da carteira (milhares).
+      // PostgREST capa em 1000 linhas/request, então paginamos com .range() até
+      // a página vir incompleta (ou bater um teto de segurança) — sem isso, os
+      // scores de clientes além dos 1000 primeiros ficavam silenciosamente vazios.
+      const SCORES_PAGE_SIZE = 1000;
+      const MAX_PAGES = 50; // teto de segurança = 50.000 scores
+      const map = new Map<string, ClientScore>();
+      for (let page = 0; page < MAX_PAGES; page++) {
+        const from = page * SCORES_PAGE_SIZE;
+        const to = from + SCORES_PAGE_SIZE - 1;
+        const { data, error } = await supabase
+          .from('farmer_client_scores')
+          .select('customer_user_id, health_score, health_class, churn_risk, expansion_score, priority_score, avg_monthly_spend_180d, days_since_last_purchase, category_count, gross_margin_pct, avg_repurchase_interval')
+          .eq('farmer_id', user.id)
+          .range(from, to);
+        if (error) throw error;
+        if (!data || data.length === 0) break;
         // Database row tem fields nullable; normaliza pra non-null com defaults
         data.forEach((s) => map.set(s.customer_user_id, {
           customer_user_id: s.customer_user_id,
@@ -870,8 +881,9 @@ const AdminCustomers = () => {
           category_count: s.category_count ?? 0,
           gross_margin_pct: s.gross_margin_pct ?? 0,
         }));
-        setScores(map);
+        if (data.length < SCORES_PAGE_SIZE) break;
       }
+      setScores(map);
     } catch (e) {
       console.error('Error loading scores:', e);
     }
