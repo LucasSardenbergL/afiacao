@@ -2,8 +2,7 @@ import { lazy, Suspense } from "react";
 import { ThemeProvider } from "next-themes";
 import { ErrorBoundary } from "@/components/ErrorBoundary";
 import { initAnalytics } from "@/lib/analytics";
-// Sistema de toast unificado em Sonner (o Radix Toaster legado foi desligado;
-// o hook `useToast` continua existindo como wrapper que delega para Sonner — ver src/hooks/use-toast.ts).
+// Sistema de toast unificado em Sonner (Radix Toaster legado e wrapper useToast removidos).
 import { Toaster as Sonner } from "@/components/ui/sonner";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
@@ -111,6 +110,7 @@ const FinanceiroTributario = lazy(() => import("./pages/FinanceiroTributario"));
 const FinanceiroValor = lazy(() => import("./pages/FinanceiroValor"));
 const FinanceiroValorCockpit = lazy(() => import("./pages/FinanceiroValorCockpit"));
 const FinanceiroProximaAcao = lazy(() => import("./pages/FinanceiroProximaAcao"));
+const FinanceiroRegimeTributario = lazy(() => import("./pages/FinanceiroRegimeTributario"));
 const Recebimento = lazy(() => import("./pages/Recebimento"));
 const RecebimentoConferencia = lazy(() => import("./pages/RecebimentoConferencia"));
 const ProductionOrders = lazy(() => import("./pages/ProductionOrders"));
@@ -289,6 +289,7 @@ const App = () => (
               <Route path="financeiro/valor" element={<FinanceiroValor />} />
               <Route path="financeiro/valor-cockpit" element={<FinanceiroValorCockpit />} />
               <Route path="financeiro/proxima-acao" element={<FinanceiroProximaAcao />} />
+              <Route path="financeiro/regime-tributario" element={<FinanceiroRegimeTributario />} />
               <Route path="recebimento" element={<Recebimento />} />
               <Route path="recebimento/:id" element={<RecebimentoConferencia />} />
               <Route path="producao" element={<ProductionOrders />} />

@@ -3,7 +3,7 @@ import { useQuery } from '@tanstack/react-query';
 import { supabase } from '@/integrations/supabase/client';
 import { useAuth } from '@/contexts/AuthContext';
 import { useLinkCallToCustomer } from '@/hooks/useLinkCallToCustomer';
-import { sanitizeForPostgrestOr } from '@/lib/postgrest';
+import { ilikeOr } from '@/lib/postgrest';
 import { Card } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import {
@@ -93,13 +93,10 @@ function PendingRow({
     queryKey: ['profiles-search', search],
     enabled: open && search.length >= 2,
     queryFn: async (): Promise<ProfileMatch[]> => {
-      // PostgREST .or() recebe `search` controlado pelo usuário; sanitiza pra não
-      // quebrar a sintaxe do filtro e injetar cláusulas extras.
-      const safe = sanitizeForPostgrestOr(search);
-
+      // `search` é input do usuário — ilikeOr sanitiza (anti-injeção PostgREST)
       const { data } = await supabase.from('profiles')
         .select('user_id, name, phone')
-        .or(`name.ilike.%${safe}%,phone.ilike.%${safe}%`)
+        .or(ilikeOr(['name', 'phone'], search))
         .limit(10);
       return (data ?? []) as ProfileMatch[];
     },

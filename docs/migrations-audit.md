@@ -21,13 +21,13 @@ Este audit valida **quais custom migrations estão de fato aplicadas no banco**.
 
 ## Resumo
 
-- **63** custom migrations totais
-- **340** objetos esperados (criados por estas migrations)
+- **65** custom migrations totais
+- **344** objetos esperados (criados por estas migrations)
 - Quebra por tipo:
-  - `rls_policy`: 104
+  - `rls_policy`: 106
   - `index`: 95
-  - `table`: 51
-  - `function`: 39
+  - `table`: 52
+  - `function`: 40
   - `trigger`: 31
   - `cron_job`: 16
   - `enum_value`: 4
@@ -587,6 +587,14 @@ Lista canônica do que cada migration *deveria* criar (extraído via regex de `C
 | `function` | `public.carteira_visivel_para` | — |
 | `function` | `public.minha_carteira` | — |
 
+### `20260524120000_fin_regime_inputs.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `table` | `public.fin_regime_inputs` | — |
+| `rls_policy` | `public.fin_regime_inputs_select_master` | `fin_regime_inputs` |
+| `rls_policy` | `public.fin_regime_inputs_write_master` | `fin_regime_inputs` |
+
 ### `20260524121531_restore_sla_guards.sql`
 
 > _Nenhum objeto extraído via regex._ Migration provavelmente é `ALTER TABLE` / `UPDATE` / `INSERT` / RLS-only. Validar manualmente.
@@ -679,6 +687,12 @@ Lista canônica do que cada migration *deveria* criar (extraído via regex de `C
 | Tipo | Objeto | Parent |
 | --- | --- | --- |
 | `cron_job` | `cron.fin-refresh-analise-dimensoes` | — |
+
+### `20260525160000_carteira_saude_rpc.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `function` | `public.get_carteira_saude` | — |
 
 ## Próximos passos quando algo der `❌`
 

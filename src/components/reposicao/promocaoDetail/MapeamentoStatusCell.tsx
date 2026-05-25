@@ -3,6 +3,7 @@
 import { useState, useEffect } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
+import { eqInt, ilike, ilikeOr, orFilter } from "@/lib/postgrest";
 import { toast } from "sonner";
 import { Check, Sparkles, Loader2, Search } from "lucide-react";
 import { Button } from "@/components/ui/button";
@@ -58,12 +59,8 @@ export function MapeamentoStatusCell({
         .eq("account", EMPRESA.toLowerCase())
         .eq("ativo", true);
       query = isNumeric
-        ? query.or(
-            `codigo.ilike.%${term}%,omie_codigo_produto.eq.${term}`,
-          )
-        : query.or(
-            `descricao.ilike.%${term}%,codigo.ilike.%${term}%`,
-          );
+        ? query.or(orFilter(ilike("codigo", term), eqInt("omie_codigo_produto", term)))
+        : query.or(ilikeOr(["descricao", "codigo"], term));
       const { data, error } = await query.limit(20);
       setSearching(false);
       if (!error) setSearchResults((data as unknown as OmieSearchRow[]) || []);

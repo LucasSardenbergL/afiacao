@@ -25,10 +25,6 @@ vi.mock('@/lib/invoke-function', () => ({
   invokeFunction: invokeMock,
 }));
 
-vi.mock('@/hooks/use-toast', () => ({
-  useToast: () => ({ toast: vi.fn() }),
-}));
-
 import { useWebRTCCall } from '../useWebRTCCall';
 import { WebRTCCallProvider } from '@/contexts/WebRTCCallContext';
 

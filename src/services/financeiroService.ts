@@ -917,3 +917,51 @@ export interface ProximaAcaoResult {
   confianca: { nivel: 'alta' | 'media' | 'baixa'; motivos: string[] };
   gerado_em: string;
 }
+
+// ═══════════════ Otimizador Tributário — Comparador de Regime (contrato com fin-regime-tributario) ═══════════════
+export type RegimeNome = 'simples' | 'presumido' | 'real';
+export type StatusElegibilidade = 'elegivel' | 'sublimite_excedido' | 'inelegivel';
+export type StatusRecomendacao = 'recomenda' | 'empate_tecnico' | 'manter' | 'incompleto';
+
+export interface RegimeInputs {
+  folha_cpp_anual: number | null;
+  massa_fator_r_anual: number | null;
+  encargo_patronal_pct: number | null;
+  presuncao_irpj: number | null;
+  presuncao_csll: number | null;
+  credito_pis_cofins_estimado: number | null;
+  receita_tributavel_pis_cofins_pct: number | null;
+  anexo_simples: 'I' | 'II' | 'III' | 'IV' | 'V' | null;
+}
+
+export interface RegimeComparado {
+  regime: RegimeNome;
+  elegivel: boolean;
+  status_elegibilidade: StatusElegibilidade;
+  motivo_inelegivel: string | null;
+  total_federal_cpp: number;
+  aliquota_efetiva: number | null;
+  detalhe: Record<string, number>;
+  aproximado: boolean;
+  flags: string[];
+}
+
+export interface RegimeEmpresaResult {
+  empresa: string;
+  regime_atual: RegimeNome;
+  ttm: { ano_mes_fim: string; meses: number };
+  comparados: RegimeComparado[];
+  recomendado: RegimeNome | null;
+  economia_anual: number | null;
+  status: StatusRecomendacao;
+  break_even: { margem_real_vs_presumido: number | null; fator_r: number };
+  eixo_indireto: { icms_iss_ipi_simples: number | null; observacao: string };
+  confianca: { nivel: 'alta' | 'media' | 'baixa'; motivos: string[] };
+  regime_inputs: RegimeInputs;
+}
+
+export interface RegimeTributarioResult {
+  por_empresa: RegimeEmpresaResult[];
+  consolidado: { imposto_atual_total: number; imposto_otimizado_total: number; economia_total: number; confianca: 'alta' | 'media' | 'baixa' };
+  gerado_em: string;
+}
