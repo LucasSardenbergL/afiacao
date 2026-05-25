@@ -249,7 +249,7 @@ serve(async (req) => {
             const { data: profiles } = await supabase
               .from("profiles")
               .select("user_id, name, document, email, phone")
-              .or(`name.ilike.%${term}%`)
+              .or(ilikeOr(term, "name"))
               .limit(20);
             if (profiles) {
               for (const p of profiles) {
@@ -374,7 +374,7 @@ serve(async (req) => {
             .from("omie_products")
             .select("id, codigo, descricao, account, valor_unitario, estoque")
             .eq("ativo", true)
-            .or(`descricao.ilike.%${term}%,codigo.ilike.%${term}%`)
+            .or(ilikeOr(term, "descricao", "codigo"))
             .limit(20);
           if (dbProducts) {
             for (const p of dbProducts) {
@@ -398,7 +398,7 @@ serve(async (req) => {
               .from("omie_products")
               .select("id, codigo, descricao, account, valor_unitario, estoque")
               .eq("ativo", true)
-              .or(`codigo.ilike.%${numericPart}%,descricao.ilike.%${numericPart}%`)
+              .or(ilikeOr(numericPart, "codigo", "descricao"))
               .limit(30);
             if (fuzzyProducts) {
               for (const p of fuzzyProducts) {
@@ -415,7 +415,7 @@ serve(async (req) => {
                 .from("omie_products")
                 .select("id, codigo, descricao, account, valor_unitario, estoque")
                 .eq("ativo", true)
-                .or(`descricao.ilike.%${shortNumeric}%,codigo.ilike.%${shortNumeric}%`)
+                .or(ilikeOr(shortNumeric, "descricao", "codigo"))
                 .limit(30);
               if (shortProducts) {
                 for (const p of shortProducts) {
@@ -439,7 +439,7 @@ serve(async (req) => {
               .from("omie_products")
               .select("id, codigo, descricao, account, valor_unitario, estoque")
               .eq("ativo", true)
-              .or(`descricao.ilike.%${stripped}%,codigo.ilike.%${stripped}%`)
+              .or(ilikeOr(stripped, "descricao", "codigo"))
               .limit(20);
             if (strippedProducts) {
               for (const p of strippedProducts) {
