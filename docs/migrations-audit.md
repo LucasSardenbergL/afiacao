@@ -21,12 +21,12 @@ Este audit valida **quais custom migrations estão de fato aplicadas no banco**.
 
 ## Resumo
 
-- **62** custom migrations totais
-- **338** objetos esperados (criados por estas migrations)
+- **63** custom migrations totais
+- **341** objetos esperados (criados por estas migrations)
 - Quebra por tipo:
-  - `rls_policy`: 104
+  - `rls_policy`: 106
   - `index`: 95
-  - `table`: 51
+  - `table`: 52
   - `function`: 38
   - `trigger`: 31
   - `cron_job`: 15
@@ -586,6 +586,14 @@ Lista canônica do que cada migration *deveria* criar (extraído via regex de `C
 | `index` | `public.idx_coverage_covering_active` | `carteira_coverage` |
 | `function` | `public.carteira_visivel_para` | — |
 | `function` | `public.minha_carteira` | — |
+
+### `20260524120000_fin_regime_inputs.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `table` | `public.fin_regime_inputs` | — |
+| `rls_policy` | `public.fin_regime_inputs_select_master` | `fin_regime_inputs` |
+| `rls_policy` | `public.fin_regime_inputs_write_master` | `fin_regime_inputs` |
 
 ### `20260524121531_restore_sla_guards.sql`
 

@@ -28,10 +28,6 @@ vi.mock('@/lib/invoke-function', () => ({
   invokeFunction: invokeMock,
 }));
 
-vi.mock('@/hooks/use-toast', () => ({
-  useToast: () => ({ toast: vi.fn() }),
-}));
-
 vi.mock('@/hooks/useTranscription', () => ({
   useTranscription: () => ({
     status: 'idle' as const,
