@@ -155,7 +155,7 @@ export function VisaoGeralTab({
               {/* Capital de Giro */}
               <div className="text-center p-3 rounded-lg bg-muted/40">
                 <p className="text-xs text-muted-foreground">Capital de Giro</p>
-                <p className={`text-lg font-bold mt-1 ${
+                <p className={`text-lg kpi-value mt-1 ${
                   (activeResumo.total_a_receber - activeResumo.total_a_pagar) >= 0
                     ? 'text-status-success' : 'text-status-error'
                 }`}>
@@ -166,7 +166,7 @@ export function VisaoGeralTab({
               {/* Inadimplência % */}
               <div className="text-center p-3 rounded-lg bg-muted/40">
                 <p className="text-xs text-muted-foreground">Inadimplência</p>
-                <p className={`text-lg font-bold mt-1 ${
+                <p className={`text-lg kpi-value mt-1 ${
                   activeResumo.total_a_receber > 0 && (activeResumo.total_vencido_receber / activeResumo.total_a_receber) > 0.15
                     ? 'text-status-error' : 'text-status-warning'
                 }`}>
@@ -179,7 +179,7 @@ export function VisaoGeralTab({
               {/* Cobertura de Caixa */}
               <div className="text-center p-3 rounded-lg bg-muted/40">
                 <p className="text-xs text-muted-foreground">Cobertura de Caixa</p>
-                <p className={`text-lg font-bold mt-1 ${
+                <p className={`text-lg kpi-value mt-1 ${
                   activeResumo.total_a_pagar > 0 && (activeResumo.saldo_total_cc / activeResumo.total_a_pagar) >= 0.5
                     ? 'text-status-success' : 'text-status-error'
                 }`}>
@@ -192,7 +192,7 @@ export function VisaoGeralTab({
               {/* Exposure > 90 dias */}
               <div className="text-center p-3 rounded-lg bg-muted/40">
                 <p className="text-xs text-muted-foreground">Risco +90 dias</p>
-                <p className={`text-lg font-bold mt-1 ${
+                <p className={`text-lg kpi-value mt-1 ${
                   agingReceber.vencido_90_plus_valor > 0 ? 'text-status-error' : 'text-status-success'
                 }`}>
                   {fmtCompact(agingReceber.vencido_90_plus_valor)}
