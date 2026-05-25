@@ -13,9 +13,9 @@
 
 ---
 
-## 🟢 STATUS / RETOMAR DAQUI (atualizado 2026-05-24 — Tasks 1-6 FEITAS, em PR #263, rollout pendente)
+## ✅ CONCLUÍDO — Sub-PR B mergeada e rollout VALIDADO em produção (2026-05-25)
 
-**Branch:** `feat/carteira-omie-scores-cobertura` (origin tip `2d61f7d`). **PR #263 aberta** (feat→main). **#236 já mergeado** → Sub-PR A (Posse) em produção (6908 clientes: Lucas 3434 / Regina 1890 / Tati 1584; cron `carteira-rebuild-nightly` ativo).
+**PR #263 mergeada** na `main` (squash, commit `7ac27cc`). Rollout coordenado aplicado e validado no Lovable. **#236** (Sub-PR A, Posse) também em produção.
 
 **Código completo (commitado + pushado, test 835✓ / typecheck:strict✓):**
 - ✅ **Task 1** — `20260524170000_scores_unique_por_cliente.sql`: dedupe por **RIQUEZA** (não ctid — codex pegou que linhas do recalc têm colunas ricas nulas) + UNIQUE(customer_user_id).
@@ -31,19 +31,18 @@
 - Triggers de fila enfileiravam pelo ATOR → resolvem o dono via `carteira_assignments` (COALESCE).
 - Divergência spec×codex: mantido `signal_modifiers` das ligações DO DONO (spec).
 
-**⏳ FALTA: ROLLOUT MANUAL no Lovable (founder)** — sequência completa + blocos SQL no corpo da PR #263:
-1. SQL Editor: BLOCO A (`20260524170000`) → BLOCO B (`20260524180000`)
-2. Chat Lovable: deploy das 5 functions (calculate-scores + 4 recalc)
-3. Invocar `calculate-scores`
-4. SQL Editor: BLOCO C (enfileira carteira pro backfill)
-5. Invocar `visit-score-recalc-client` `{drain_queue:true,max_drain:500}` ~14x até `drained:0`
-6. Invocar `scoring-recalc-batch` 1x
-7. SQL Editor: BLOCO D (validar: Regina ~1890, fila zerada)
-8. Conferir crons noturnos `scoring-recalc-batch-nightly` / `visit-score-recalc-batch-nightly`
+**✅ ROLLOUT EXECUTADO E VALIDADO (2026-05-25, via SQL Editor + chat do Lovable):**
+1. ✅ BLOCO A (`20260524170000`) → `uniques=2`
+2. ✅ BLOCO B (`20260524180000`) → 6908 linhas, 6908 com dono certo, filas_uniq=2
+3. ✅ Re-deploy das 5 functions (Active)
+4. ✅ `calculate-scores` → "Scores calculated for 6908 clients"
+5. ✅ BLOCO C (enfileira) → 6908 pendentes
+6. ✅ Drain concorrente do `visit-score-recalc-client` (`max_drain:1000`, ~7x) → fila 6908→0
+7. ✅ `scoring-recalc-batch` → recalculated:0 (sem atividade nos últimos 30d agora; normal)
+8. ✅ **BLOCO D**: `farmer_client_scores` e `customer_visit_scores` = **6908 linhas / 6908 clientes** cada, **3 donos**, **Regina = 1890**, **fila_pendente = 0**
+9. ✅ Crons `scoring-recalc-batch-nightly` (`0 6 * * *`) e `visit-score-recalc-batch-nightly` (`0 7 * * *`) ativos, rodando o código novo
 
-**⚠️ Worktree principal:** o `feat` local lá fica ATRÁS do remoto (push veio da worktree `eloquent-cartwright`). Quando for usar, `git pull --ff-only` na feat (não afeta o ProcessoComprasStepper.tsx não-commitado).
-
-**Frase pra retomar:** "Sub-PR B da carteira está em PR #263, código completo. Conduzir o rollout manual no Lovable (BLOCO A→B→deploy→calculate-scores→BLOCO C→drain→batch→BLOCO D) a partir do corpo da PR."
+**Pendências não-bloqueantes:** smoke test no app (vendedor vê carteira completa + selo de cobertura); flaky test `ContasPagarTab` (test-pollution da main, tarefa separada); worktree principal com `feat` local atrás do remoto + `ProcessoComprasStepper.tsx` não-commitado.
 
 ---
 
