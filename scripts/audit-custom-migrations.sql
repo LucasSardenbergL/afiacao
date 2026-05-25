@@ -3,7 +3,7 @@
 -- ========================================================================
 --
 -- Gerado por: scripts/audit-custom-migrations.ts
--- Total de custom migrations: 63
+-- Total de custom migrations: 64
 --
 -- Como usar:
 --   1. Abra o Supabase SQL Editor (via Lovable Cloud → Backend → SQL Editor)
@@ -82,7 +82,8 @@ WITH expected (version, slug, filename) AS (VALUES
   ('20260525020000', 'fin_sync_cursor', '20260525020000_fin_sync_cursor.sql'),
   ('20260525020001', 'fin_rpc_gate_auth_p1', '20260525020001_fin_rpc_gate_auth_p1.sql'),
   ('20260525120000', 'positivacao_kpis', '20260525120000_positivacao_kpis.sql'),
-  ('20260525160000', 'carteira_saude_rpc', '20260525160000_carteira_saude_rpc.sql')
+  ('20260525160000', 'carteira_saude_rpc', '20260525160000_carteira_saude_rpc.sql'),
+  ('20260525190000', 'mixgap_rpc', '20260525190000_mixgap_rpc.sql')
 )
 SELECT
   e.version,
@@ -441,7 +442,8 @@ WITH expected_objects (migration, kind, schema_name, object_name, parent_name) A
   ('positivacao_kpis', 'table', 'public', 'carteira_positivacao_snapshot', ''),
   ('positivacao_kpis', 'index', 'public', 'idx_sales_orders_kpi_date', 'sales_orders'),
   ('positivacao_kpis', 'function', 'public', 'get_minha_positivacao', ''),
-  ('carteira_saude_rpc', 'function', 'public', 'get_carteira_saude', '')
+  ('carteira_saude_rpc', 'function', 'public', 'get_carteira_saude', ''),
+  ('mixgap_rpc', 'function', 'public', 'get_meu_mixgap', '')
 )
 SELECT
   e.migration,
