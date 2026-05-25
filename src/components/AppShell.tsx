@@ -34,6 +34,7 @@ import { NetworkStatusIndicator } from '@/components/shell/NetworkStatusIndicato
 import { ThemeToggle } from '@/components/shell/ThemeToggle';
 import { PageViewTracker } from '@/components/shell/PageViewTracker';
 import { AnalyticsIdentify } from '@/components/shell/AnalyticsIdentify';
+import { GlobalBreadcrumbs } from "@/components/shell/GlobalBreadcrumbs";
 import { useFeatureFlagBodyClass } from '@/hooks/useFeatureFlag';
 import { useSidebarFavorites } from '@/hooks/useSidebarFavorites';
 import { useSalesOnlyRestriction } from '@/hooks/useSalesOnlyRestriction';
@@ -768,6 +769,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
               )}
             >
               <div className="p-4 lg:p-6">
+                <GlobalBreadcrumbs />
                 {children}
               </div>
             </main>
