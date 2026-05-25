@@ -47,6 +47,7 @@ const TETO_ISS = 0.05;
 const SUBLIMITE_RBA = 3_600_000;
 const TETO_RBA = 4_800_000;
 
+// Returns the faixa index where rbt12 falls; defensively returns last faixa index when rbt12 exceeds all ceilings.
 function indiceFaixa(anexo: AnexoSimples, rbt12: number): number {
   const faixas = ANEXOS_SIMPLES[anexo];
   for (let i = 0; i < faixas.length; i++) { if (rbt12 <= faixas[i].ate) return i; }
@@ -54,7 +55,7 @@ function indiceFaixa(anexo: AnexoSimples, rbt12: number): number {
 }
 
 export function partilhaIndiretoFrac(anexo: 'I' | 'II' | 'III' | 'V', rbt12: number, efetiva: number): number {
-  const p = PARTILHA_SIMPLES[anexo][indiceFaixa(anexo as AnexoSimples, rbt12)];
+  const p = PARTILHA_SIMPLES[anexo][indiceFaixa(anexo, rbt12)];
   let iss_frac = efetiva * p.iss;
   if (iss_frac > TETO_ISS) iss_frac = TETO_ISS;
   return efetiva * (p.icms + p.ipi) + iss_frac;
@@ -62,7 +63,7 @@ export function partilhaIndiretoFrac(anexo: 'I' | 'II' | 'III' | 'V', rbt12: num
 
 export type ImpostoSimples = { total_federal_cpp: number; das_total: number; icms_iss_ipi: number; aproximado: boolean };
 export function impostoAnualSimples(input: { anexo: 'I' | 'II' | 'III' | 'V'; rbt12: number; receitaAnual: number }): ImpostoSimples {
-  const efetiva = aliquotaEfetivaSimples(input.anexo as AnexoSimples, input.rbt12);
+  const efetiva = aliquotaEfetivaSimples(input.anexo, input.rbt12);
   const das_total = efetiva * input.receitaAnual;
   const indireto_frac = partilhaIndiretoFrac(input.anexo, input.rbt12, efetiva);
   const icms_iss_ipi = indireto_frac * input.receitaAnual;
