@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { supabase } from '@/integrations/supabase/client';
-import { sanitizeForPostgrestOr } from '@/lib/postgrest';
+import { ilikeOr } from '@/lib/postgrest';
 import { Card, CardContent } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Input } from '@/components/ui/input';
@@ -109,10 +109,7 @@ export default function TintFormulas() {
         .order('cor_id')
         .range(page * PAGE_SIZE, (page + 1) * PAGE_SIZE - 1);
 
-      if (search) {
-        const s = sanitizeForPostgrestOr(search);
-        q = q.or(`cor_id.ilike.%${s}%,nome_cor.ilike.%${s}%`);
-      }
+      if (search) q = q.or(ilikeOr(['cor_id', 'nome_cor'], search));
       if (produtoFilter) q = q.eq('produto_id', produtoFilter);
       if (baseFilter) q = q.eq('base_id', baseFilter);
       if (onlyPersonalizada) q = q.eq('personalizada', true);

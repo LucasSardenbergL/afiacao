@@ -3,6 +3,7 @@ import { useNavigate } from 'react-router-dom';
 
 import { Button } from '@/components/ui/button';
 import { supabase } from '@/integrations/supabase/client';
+import { eqText, orFilter } from '@/lib/postgrest';
 import { useAuth } from '@/contexts/AuthContext';
 import { toast } from 'sonner';
 import { useFarmerScoring, type AgendaItem } from '@/hooks/useFarmerScoring';
@@ -269,7 +270,7 @@ const FarmerCalls = () => {
         const { data: profile } = await supabase
           .from('profiles')
           .select('user_id')
-          .or(`document.eq.${docClean},document.eq.${selectedCustomer.document}`)
+          .or(orFilter(eqText('document', docClean), eqText('document', selectedCustomer.document)))
           .limit(1)
           .maybeSingle();
         if (profile?.user_id) customerUserId = profile.user_id;
