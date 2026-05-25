@@ -472,7 +472,7 @@ Trabalho posterior à Fase 4, no mesmo branch. Artefatos em `docs/visual-directi
 - ✅ **Telemetria PostHog** — ver §2. Dashboard "Afiação — Adoção UX" criado (project 423408)
 - 🟡 **Scaffolds pendentes de sprint próprio**: TouchPickingView **auto-detect mobile** (a confirmação offline de item já está integrada; falta só o roteamento automático mobile vs `/admin/estoque/picking/mobile`), segmentos de cliente / histórico NF-e em schema (hoje localStorage). Recebimento + picking + **envio de pedido (mesma-sessão, #261)** offline já **integrados** (ver §6 item 1). `submitOrder` offline cross-sessão foi avaliado e **deliberadamente não feito** (ver §6 item 1 — ganho marginal × risco no caminho do dinheiro). Scaffolds órfãos (`useBulkSelection`, `useOptimisticMutation`, `useKeyboardShortcuts`, `tint-cache`) foram deletados em PR #25 — re-criar quando voltarem a ter consumidor real.
 
-> PR #4 foi mergeado em 2026-05-14. Auditoria pós-merge (PRs #24-33) capturou 4 issues bloqueantes que o PR #4 introduziu (SQL injection em useGlobalSearch, exposição de profiles sem gate, 66 classes Tailwind quebradas, PostHog DEV pollution) — todos corrigidos. **Lição operacional**: `bun lint && bun build` precisa virar required check no GitHub.
+> PR #4 foi mergeado em 2026-05-14. Auditoria pós-merge (PRs #24-33) capturou 4 issues bloqueantes que o PR #4 introduziu (SQL injection em useGlobalSearch, exposição de profiles sem gate, 66 classes Tailwind quebradas, PostHog DEV pollution) — todos corrigidos. **Lição operacional**: `bun lint && bun build` precisa virar required check no GitHub. ✅ **Feito** — CI (`.github/workflows/ci.yml`) + branch protection exigindo o check `validate` (ver §10). Disciplina: não bypassar com `--admin` de rotina.
 
 ---
 
@@ -514,7 +514,8 @@ Ainda pendentes (decisão de produto ou sprint próprio):
 - **41 cores hardcoded** (`text-emerald-600` etc.) — sweep pra `text-status-*`. Top 5: Admin (21×), des/PosicaoAtualTab (12×), des/SimuladorTab (11×), AdminPortalSayerlack (10×), AdminRoutePlanner (9×)
 - **Adoção `useUrlState`** — hoje 5/119 páginas; migrar `useState` de filtros conforme arquivos forem tocados
 - **119 lazy chunks sem agrupação** em App.tsx — agrupar peers (ex: 20 telas de Reposição = 1 chunk via `manualChunks`)
-- **`bun lint && bun build` como required check no GitHub** — operacional; PR #4 provou que sem isso o time mergeia código quebrado (66 classes Tailwind quebradas em prod)
+- ✅ **CI obrigatório no GitHub** — `.github/workflows/ci.yml` (job `validate`: typecheck + typecheck:strict + test + build **bloqueantes**; lint informativo) roda em PR+push pra main, e a branch protection da `main` **exige o check `validate`** (`strict: true`, `enforce_admins: false`, sem review obrigatório). PR #4 não se repete.
+  - ⚠️ **Disciplina de merge (regra, 2026-05-25):** **NÃO usar `gh pr merge --admin` de rotina.** O `--admin` bypassa o CI (permitido porque `enforce_admins=false`) e torna o gate teatro. Fluxo normal: `gh pr merge --squash` e deixar o `validate` passar (CI ~3 min). `--admin` é **só pra emergência do owner** (ex.: hotfix de prod com CI quebrado por causa externa). Como a `main` é `strict`, mantenha o PR atualizado com a main antes do merge (conflito comum: só os auto-gerados `docs/migrations-audit.md` + `scripts/audit-custom-migrations.sql` → resolver com `bun run audit:migrations`).
 
 ---
 
