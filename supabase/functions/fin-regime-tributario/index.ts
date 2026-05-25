@@ -433,8 +433,7 @@ async function calcularEmpresa(db: DbClient, empresa: Company): Promise<RegimeEm
   // 4) Parse inputs + defaults.
   const { data: inputsRow } = await db.from("fin_regime_inputs")
     .select("regime_inputs").eq("company", empresa).maybeSingle();
-  const riStored = ((inputsRow as { regime_inputs?: Record<string, unknown> } | null)?.regime_inputs ?? {}) as Record<string, unknown>;
-  const ri = riStored as RegimeInputsRaw;
+  const ri = ((inputsRow as { regime_inputs?: Record<string, unknown> } | null)?.regime_inputs ?? {}) as RegimeInputsRaw;
 
   const folhaCppAnual = numOrNull(ri.folha_cpp_anual);
   const massaFatorRAnual = numOrNull(ri.massa_fator_r_anual);
@@ -448,8 +447,13 @@ async function calcularEmpresa(db: DbClient, empresa: Company): Promise<RegimeEm
   const creditoPct = creditoIn != null ? creditoIn : CREDITO_DEFAULT;
   const recTribPctIn = numOrNull(ri.receita_tributavel_pis_cofins_pct);
   const receitaTributavelPct = recTribPctIn != null ? recTribPctIn : RECEITA_TRIBUTAVEL_PIS_COFINS_PCT_DEFAULT;
-  const anexoInput = typeof ri.anexo_simples === "string" && ["I", "II", "III", "V"].includes(ri.anexo_simples)
-    ? (ri.anexo_simples as "I" | "II" | "III" | "V") : null;
+  const anexoStored = typeof ri.anexo_simples === "string" ? ri.anexo_simples : null;
+  const anexoInput = anexoStored && ["I", "II", "III", "V"].includes(anexoStored)
+    ? (anexoStored as "I" | "II" | "III" | "V") : null;
+  // Flag honesto quando anexo armazenado não é suportado (ex.: IV recolhe CPP à parte).
+  if (anexoStored && !anexoInput) {
+    engineFlags.push(`Anexo "${anexoStored}" não suportado na comparação (ex.: IV recolhe CPP à parte) — usado o anexo padrão "${defaults.anexo}".`);
+  }
 
   // 5) Determina anexo.
   let anexo: "I" | "II" | "III" | "V";
