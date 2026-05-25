@@ -4,7 +4,7 @@ import { useAuth } from '@/contexts/AuthContext';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
-import { useToast } from '@/hooks/use-toast';
+import { toast } from 'sonner';
 import { Trash2, Plus, Loader2 } from 'lucide-react';
 
 interface VendorSipCred {
@@ -24,7 +24,6 @@ interface ProfileLite {
 
 export default function AdminVendorSipCredentials() {
   const { isMaster } = useAuth();
-  const { toast } = useToast();
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [creds, setCreds] = useState<VendorSipCred[]>([]);
@@ -50,16 +49,14 @@ export default function AdminVendorSipCredentials() {
         setCreds((credsRes.data ?? []) as VendorSipCred[]);
         setProfiles((profilesRes.data ?? []) as ProfileLite[]);
       } catch (err) {
-        toast({
-          title: 'Erro ao carregar',
+        toast.error('Erro ao carregar', {
           description: err instanceof Error ? err.message : String(err),
-          variant: 'destructive',
         });
       } finally {
         setLoading(false);
       }
     })();
-  }, [isMaster, toast]);
+  }, [isMaster]);
 
   if (!isMaster) {
     return (
@@ -73,10 +70,8 @@ export default function AdminVendorSipCredentials() {
 
   async function handleAdd() {
     if (!newUserId || !newSipUser || !newSipPass) {
-      toast({
-        title: 'Campos obrigatórios',
+      toast.error('Campos obrigatórios', {
         description: 'Usuário, SIP user e SIP pass são obrigatórios.',
-        variant: 'destructive',
       });
       return;
     }
@@ -100,12 +95,10 @@ export default function AdminVendorSipCredentials() {
       setNewSipPass('');
       setNewCallerId('');
       setNewNotes('');
-      toast({ title: 'Credencial adicionada' });
+      toast.success('Credencial adicionada');
     } catch (err) {
-      toast({
-        title: 'Erro ao adicionar',
+      toast.error('Erro ao adicionar', {
         description: err instanceof Error ? err.message : String(err),
-        variant: 'destructive',
       });
     } finally {
       setSaving(false);
@@ -118,12 +111,10 @@ export default function AdminVendorSipCredentials() {
       const { error } = await supabase.from('vendor_sip_credentials').delete().eq('id', id);
       if (error) throw error;
       setCreds((prev) => prev.filter((c) => c.id !== id));
-      toast({ title: 'Removido' });
+      toast.success('Removido');
     } catch (err) {
-      toast({
-        title: 'Erro ao remover',
+      toast.error('Erro ao remover', {
         description: err instanceof Error ? err.message : String(err),
-        variant: 'destructive',
       });
     }
   }
