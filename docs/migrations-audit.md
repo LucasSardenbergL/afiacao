@@ -21,13 +21,13 @@ Este audit valida **quais custom migrations estão de fato aplicadas no banco**.
 
 ## Resumo
 
-- **65** custom migrations totais
-- **344** objetos esperados (criados por estas migrations)
+- **66** custom migrations totais
+- **345** objetos esperados (criados por estas migrations)
 - Quebra por tipo:
   - `rls_policy`: 106
   - `index`: 95
   - `table`: 52
-  - `function`: 40
+  - `function`: 41
   - `trigger`: 31
   - `cron_job`: 16
   - `enum_value`: 4
@@ -693,6 +693,12 @@ Lista canônica do que cada migration *deveria* criar (extraído via regex de `C
 | Tipo | Objeto | Parent |
 | --- | --- | --- |
 | `function` | `public.get_carteira_saude` | — |
+
+### `20260525190000_mixgap_rpc.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `function` | `public.get_meu_mixgap` | — |
 
 ## Próximos passos quando algo der `❌`
 

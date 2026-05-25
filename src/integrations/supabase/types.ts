@@ -12556,6 +12556,58 @@ export type Database = {
             Args: { p_item_id: number; p_threshold_similaridade?: number }
             Returns: Json
           }
+      fin_analise_cp_dimensoes_rpc: {
+        Args: { p_ano?: number; p_company?: string; p_mes?: number }
+        Returns: {
+          ano: number | null
+          categoria_codigo: string | null
+          categoria_descricao: string | null
+          centro_custo: string | null
+          cnpj_cpf: string | null
+          company: string | null
+          departamento: string | null
+          mes: number | null
+          nome_fornecedor: string | null
+          qtd_titulos: number | null
+          status_titulo: string | null
+          tipo_documento: string | null
+          total_documento: number | null
+          total_pago: number | null
+          total_saldo: number | null
+        }[]
+        SetofOptions: {
+          from: "*"
+          to: "fin_analise_cp_dimensoes"
+          isOneToOne: false
+          isSetofReturn: true
+        }
+      }
+      fin_analise_cr_dimensoes_rpc: {
+        Args: { p_ano?: number; p_company?: string; p_mes?: number }
+        Returns: {
+          ano: number | null
+          categoria_codigo: string | null
+          categoria_descricao: string | null
+          centro_custo: string | null
+          cnpj_cpf: string | null
+          company: string | null
+          departamento: string | null
+          mes: number | null
+          nome_cliente: string | null
+          qtd_titulos: number | null
+          status_titulo: string | null
+          total_documento: number | null
+          total_recebido: number | null
+          total_saldo: number | null
+          vendedor_id: number | null
+        }[]
+        SetofOptions: {
+          from: "*"
+          to: "fin_analise_cr_dimensoes"
+          isOneToOne: false
+          isSetofReturn: true
+        }
+      }
       fin_calcular_confiabilidade: {
         Args: { p_ano: number; p_company: string; p_mes: number }
         Returns: Json

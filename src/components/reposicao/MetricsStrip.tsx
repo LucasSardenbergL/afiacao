@@ -24,7 +24,7 @@ function MetricCard({
           <I className="h-3.5 w-3.5" />
           {label}
         </div>
-        <div className="text-lg font-semibold">{value}</div>
+        <div className="text-lg kpi-value">{value}</div>
         {extra}
       </CardContent>
     </Card>
