@@ -90,7 +90,8 @@ export function useDirectTintImport() {
 
   // ─── Process dados_corantes ───
   const processDadosCorantes = async (rows: string[][]): Promise<{ imported: number; updated: number; errors: number }> => {
-    let imported = 0, updated = 0, errors = 0;
+    let imported = 0, errors = 0;
+    const updated = 0;
     const totalBatches = Math.ceil(rows.length / BATCH_SIZE);
 
     for (let b = 0; b < totalBatches; b++) {
@@ -138,7 +139,8 @@ export function useDirectTintImport() {
 
   // ─── Process dados_produto_base_embalagem ───
   const processDadosPBE = async (rows: string[][]): Promise<{ imported: number; updated: number; errors: number }> => {
-    let imported = 0, updated = 0, errors = 0;
+    let imported = 0, errors = 0;
+    const updated = 0;
     const totalBatches = Math.ceil(rows.length / BATCH_SIZE);
 
     for (let b = 0; b < totalBatches; b++) {

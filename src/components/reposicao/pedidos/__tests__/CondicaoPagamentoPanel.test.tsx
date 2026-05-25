@@ -36,7 +36,7 @@ describe('CondicaoPagamentoPanel', () => {
   });
 
   it('em modo não editável: mostra a condição definida ou "não definida"', () => {
-    const { } = setup({
+    setup({
       podeEditarCondicao: false,
       pedido: ped({ status: 'disparado', condicao_pagamento_codigo: null, condicao_pagamento_descricao: null }),
     });
