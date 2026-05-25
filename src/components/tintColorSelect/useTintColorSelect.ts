@@ -3,6 +3,7 @@
 import { useState, useEffect, useMemo } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { supabase } from '@/integrations/supabase/client';
+import { sanitizeForPostgrestOr } from '@/lib/postgrest';
 import { useTintPricing } from '@/hooks/useTintPricing';
 import type { Product } from '@/hooks/useUnifiedOrder';
 import type { FormulaResult, AlternativePackaging } from './types';
@@ -80,12 +81,13 @@ export function useTintColorSelect({ product, open, customerUserId }: UseTintCol
     staleTime: 5 * 60 * 1000,
     enabled: !!skuId && debouncedSearch.length >= 2,
     queryFn: async () => {
+      const q = sanitizeForPostgrestOr(debouncedSearch);
       const { data } = await supabase
         .from('tint_formulas')
         .select('id, cor_id, nome_cor, preco_final_sayersystem')
         .eq('account', 'oben')
         .eq('sku_id', skuId!)
-        .or(`cor_id.ilike.%${debouncedSearch}%,nome_cor.ilike.%${debouncedSearch}%`)
+        .or(`cor_id.ilike.%${q}%,nome_cor.ilike.%${q}%`)
         .limit(20);
       return (data || []) as FormulaResult[];
     },
@@ -99,12 +101,13 @@ export function useTintColorSelect({ product, open, customerUserId }: UseTintCol
     staleTime: 5 * 60 * 1000,
     enabled: !!colorNotFoundInBase && !!currentBaseSuffix,
     queryFn: async (): Promise<AlternativePackaging[]> => {
+      const q = sanitizeForPostgrestOr(debouncedSearch);
       // Search formulas across all SKUs
       const { data: globalFormulas } = await supabase
         .from('tint_formulas')
         .select('id, cor_id, nome_cor, sku_id, preco_final_sayersystem')
         .eq('account', 'oben')
-        .or(`cor_id.ilike.%${debouncedSearch}%,nome_cor.ilike.%${debouncedSearch}%`)
+        .or(`cor_id.ilike.%${q}%,nome_cor.ilike.%${q}%`)
         .not('sku_id', 'is', null)
         .limit(50);
 

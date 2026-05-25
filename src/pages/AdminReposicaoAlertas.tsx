@@ -1,6 +1,7 @@
 import { useState, useMemo } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
+import { sanitizeForPostgrestOr } from "@/lib/postgrest";
 import { useAuth } from "@/contexts/AuthContext";
 import { useReposicaoEmpresa } from "@/contexts/ReposicaoEmpresaContext";
 import { toast } from "sonner";
@@ -68,7 +69,8 @@ export default function AdminReposicaoAlertas() {
       if (filtroSev !== "__all__") q = q.eq("severidade", filtroSev);
       if (filtroStatus !== "__all__") q = q.eq("status", filtroStatus);
       if (busca.trim()) {
-        q = q.or(`sku_codigo_omie.ilike.%${busca.trim()}%,sku_descricao.ilike.%${busca.trim()}%`);
+        const b = sanitizeForPostgrestOr(busca.trim());
+        q = q.or(`sku_codigo_omie.ilike.%${b}%,sku_descricao.ilike.%${b}%`);
       }
 
       const { data, error, count } = await q;
