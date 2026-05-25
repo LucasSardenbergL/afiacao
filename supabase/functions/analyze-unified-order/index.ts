@@ -6,6 +6,21 @@ function stripAccents(str: string): string {
   return str.normalize("NFD").replace(/[\u0300-\u036f]/g, "");
 }
 
+/**
+ * Sanitiza input para interpolar com segurança numa string de `.or()` do PostgREST.
+ * Remove caracteres especiais do parser PostgREST: vírgula, parênteses, barra
+ * invertida, aspas duplas e wildcards do ILIKE (% _).
+ */
+function sanitizeForPostgrestOr(input: string): string {
+  return input.replace(/[%_,()\\"]/g, "");
+}
+
+/** Constrói cláusula .or() segura para múltiplas colunas ILIKE. */
+function ilikeOr(term: string, ...cols: string[]): string {
+  const safe = sanitizeForPostgrestOr(term);
+  return cols.map((c) => `${c}.ilike.%${safe}%`).join(",");
+}
+
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
   "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type, x-supabase-client-platform, x-supabase-client-platform-version, x-supabase-client-runtime, x-supabase-client-runtime-version",
