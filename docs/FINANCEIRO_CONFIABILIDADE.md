@@ -148,6 +148,22 @@ Para de olhar faturamento e olha **lucro econômico** por cliente/SKU: margem de
 
 ---
 
+## 🔧 A4 — Próxima Melhor Ação (next-best-action) (2026-05-24)
+
+Fila priorizada de ações concretas que o dono deve aprovar/recusar, sob a restrição de caixa de cada empresa. **Compõe** A1 (caixa) + A2 (hurdle/spread) + A3 (cockpit Oben) — não recomputa nada. Gate gestor comercial + master.
+
+| Item | Como funciona |
+|---|---|
+| **Fila** | Ações ordenadas por tipo: consertar valor (A3 preço/prazo) → liberar caixa → crescer (A2 spread+) → benchmark. Dentro do tipo: sem-caixa primeiro, depois EVA/caixa, payback. |
+| **Status** | Financiar já / Financiar condicional / Consertar antes / Falta dado / Não financiar. Hurdle (WACC A2) é o corte. |
+| **Caixa** | Por empresa (NÃO fungível): saldo de tesouraria − reserva (dias de cobertura mínimos). Confiança baixa → haircut. |
+| **Hurdle** | WACC da A2; fallback honesto (retorno do dono / custo de dívida / mediana) + flag se ausente. |
+| **Benchmark** | "Não fazer nada / pagar dívida / distribuir" sempre presente — o piso quando nada supera o hurdle. |
+
+**Regra de ouro:** consertar preço/prazo ANTES de crescer (não recomenda crescer quando a resposta é "parar de vender mal"). Caixa não-fungível entre PJs. Degrada honesto: function interna falha → ações daquela empresa viram "Falta dado". **Deferido:** otimização matemática; cockpit granular p/ Colacor/SC (só sleeve company-level até lá); execução automática (A4 recomenda, o dono decide).
+
+**Onde:** helper `next-best-action-helpers.ts` (vitest); engine `fin-next-best-action` (gestor+master, chama A1/A2/A3 via service_role); página `/financeiro/proxima-acao`.
+
 ## ✅ MVP Operacional (pode usar agora para gestão diária)
 
 Estes dados vêm direto do Omie sem transformação opinativa.
