@@ -29,7 +29,10 @@ export function classifyPath(pathname: string): TrackedPrefix | null {
 }
 
 function readStorage(): RouteCounts {
-  if (typeof window === 'undefined') return {};
+  // Guarda na dependência real (localStorage), não em `window`. São equivalentes
+  // no browser/SSR, mas divergem em runtimes onde `localStorage` existe sem `window`
+  // (ex: runner nativo do bun nos testes). Ver §5 / bun-setup.ts.
+  if (typeof localStorage === 'undefined') return {};
   try {
     const raw = localStorage.getItem(STORAGE_KEY);
     return raw ? (JSON.parse(raw) as RouteCounts) : {};
@@ -49,7 +52,7 @@ function pruneExpired(counts: RouteCounts): RouteCounts {
 }
 
 function writeStorage(counts: RouteCounts): void {
-  if (typeof window === 'undefined') return;
+  if (typeof localStorage === 'undefined') return;
   try {
     localStorage.setItem(STORAGE_KEY, JSON.stringify(counts));
   } catch {
@@ -74,7 +77,7 @@ export function incrementRouteVisit(pathname: string): void {
 }
 
 export function clearRouteCounts(): void {
-  if (typeof window === 'undefined') return;
+  if (typeof localStorage === 'undefined') return;
   localStorage.removeItem(STORAGE_KEY);
 }
 
