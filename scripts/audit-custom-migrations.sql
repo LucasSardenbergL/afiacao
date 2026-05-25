@@ -3,7 +3,7 @@
 -- ========================================================================
 --
 -- Gerado por: scripts/audit-custom-migrations.ts
--- Total de custom migrations: 57
+-- Total de custom migrations: 58
 --
 -- Como usar:
 --   1. Abra o Supabase SQL Editor (via Lovable Cloud → Backend → SQL Editor)
@@ -76,7 +76,8 @@ WITH expected (version, slug, filename) AS (VALUES
   ('20260524180000', 'carteira_scores_owner_e_filas', '20260524180000_carteira_scores_owner_e_filas.sql'),
   ('20260524202410', 'tuning_crons_estoque_freq_e_timeouts', '20260524202410_tuning_crons_estoque_freq_e_timeouts.sql'),
   ('20260524203000', 'rpc_staff_guard_permite_cron_backend', '20260524203000_rpc_staff_guard_permite_cron_backend.sql'),
-  ('20260525000000', 'fin_crons_por_entidade', '20260525000000_fin_crons_por_entidade.sql')
+  ('20260525000000', 'fin_crons_por_entidade', '20260525000000_fin_crons_por_entidade.sql'),
+  ('20260525120000', 'positivacao_kpis', '20260525120000_positivacao_kpis.sql')
 )
 SELECT
   e.version,
@@ -418,7 +419,10 @@ WITH expected_objects (migration, kind, schema_name, object_name, parent_name) A
   ('fin_crons_por_entidade', 'cron_job', 'cron', 'fin-sync-base-diario', ''),
   ('fin_crons_por_entidade', 'cron_job', 'cron', 'fin-sync-cp-2x', ''),
   ('fin_crons_por_entidade', 'cron_job', 'cron', 'fin-sync-cr-2x', ''),
-  ('fin_crons_por_entidade', 'cron_job', 'cron', 'fin-sync-mov-2x', '')
+  ('fin_crons_por_entidade', 'cron_job', 'cron', 'fin-sync-mov-2x', ''),
+  ('positivacao_kpis', 'table', 'public', 'carteira_positivacao_snapshot', ''),
+  ('positivacao_kpis', 'index', 'public', 'idx_sales_orders_kpi_date', 'sales_orders'),
+  ('positivacao_kpis', 'function', 'public', 'get_minha_positivacao', '')
 )
 SELECT
   e.migration,
