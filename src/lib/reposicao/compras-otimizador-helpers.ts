@@ -43,3 +43,35 @@ export function gerarCandidatos(input: {
   }
   return [...set].sort((a, b) => a - b);
 }
+
+export function capitalExtra(input: { valor_extra: number; cm_anual: number; demanda_diaria: number | null; q_base: number; q_extra: number }): number {
+  const d = input.demanda_diaria ?? 0;
+  if (d <= 0) return 0;
+  const diasEfetivos = (input.q_base / d) + 0.5 * (input.q_extra / d);
+  return input.valor_extra * input.cm_anual * (diasEfetivos / 365);
+}
+
+export function aumentoEvitadoRs(input: { q_cand: number; q_base: number; demanda_diaria: number | null; dias_ate_aumento: number | null; aumento_perc: number | null; preco_unit: number }): number {
+  const d = input.demanda_diaria ?? 0;
+  if (!input.aumento_perc || input.dias_ate_aumento == null || input.dias_ate_aumento < 0) return 0;
+  const consumoAteVigencia = d * input.dias_ate_aumento;
+  const qElegivel = Math.max(0, input.q_cand - Math.max(input.q_base, consumoAteVigencia));
+  return qElegivel * input.preco_unit * (input.aumento_perc / 100);
+}
+
+export function impactoPrazoRs(input: { prazo_cand_perc: number | null; prazo_padrao_perc: number | null; valor_candidato: number }): number {
+  const cand = input.prazo_cand_perc ?? input.prazo_padrao_perc ?? 0;
+  const padrao = input.prazo_padrao_perc ?? 0;
+  return (cand - padrao) / 100 * input.valor_candidato; // + = encargo (custo); − = desconto (benefício)
+}
+
+export function freteIncrementalRs(input: { valor_extra: number; frete_perc_valor: number | null; frete_fixo: number | null; frete_taxa_pedido: number | null }): number {
+  const perc = (input.frete_perc_valor ?? 0) / 100 * input.valor_extra;
+  return perc + (input.frete_fixo ?? 0) + (input.frete_taxa_pedido ?? 0);
+}
+
+export function descontoIncrementalRs(input: { curva: FaixaDesconto[]; q_cand: number; q_base: number; preco_unit: number }): number {
+  const dCand = descontoAplicavel(input.curva, input.q_cand) / 100;
+  const dBase = descontoAplicavel(input.curva, input.q_base) / 100;
+  return input.q_cand * input.preco_unit * dCand - input.q_base * input.preco_unit * dBase;
+}
