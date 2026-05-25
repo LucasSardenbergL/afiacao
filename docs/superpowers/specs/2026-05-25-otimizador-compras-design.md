@@ -26,43 +26,65 @@ dados que já existem. Sem página nova. Reaproveita a UI (tabela/KPIs/drawer).
 recálculo de EOQ com o preço já descontado (efeito de 2ª ordem); recomendação **forte** para promo
 de grupo/fornecedor-total (fase 1 marca como "simulação parcial").
 
-## 2. Metodologia — net-R$ MARGINAL (revisão Codex, 1º passe)
+## 2. Metodologia — net-R$ MARGINAL (revisões Codex 1º + 2º passe)
 
-A análise é **incremental contra um baseline**, nunca sobre a média.
+A análise é **incremental contra um baseline**, nunca sobre a média. **Cada componente usa a janela
+temporal certa** pra não inflar (correções do 2º passe).
 
 **Baseline e candidatos:**
 - `qtd_minima_efetiva = max(lote_minimo_fornecedor, minimo_forcado_manual ?? 0)` — ver §3.
-- `q_base = max(EOQ, qtd_minima_efetiva)` (arredondado a múltiplo do lote quando o lote for embalagem real).
-- `q_candidato` = para cada threshold da **curva de desconto por volume** (`fornecedor_promocao`:
-  `volume_minimo`, `volume_progressivo`), a menor quantidade ≥ `q_base` que ativa o threshold.
-- Gera um candidato por threshold; **escolhe o de maior `beneficio_liquido`** (não o primeiro desconto).
+- `q_base = max(EOQ, qtd_minima_efetiva)`, arredondado a múltiplo do lote. **Se o `q_base` já ativa um
+  threshold de desconto, o baseline já recebe esse desconto** (e é o candidato `manter_base`).
+- **Candidatos não são só os thresholds** (o ótimo pode estar ENTRE eles). Gerar em cada ponto
+  relevante e escolher o de **maior `beneficio_liquido`**:
+  1. `q_base`;
+  2. cada `volume_minimo` da **curva de desconto** (`fornecedor_promocao`, `volume_progressivo`);
+  3. **limite do aumento** = qtd cujo consumo baseline cobre até a vigência do aumento;
+  4. **limite da ruptura** = qtd que cobre exatamente o período com ruptura simulada;
+  todos arredondados a múltiplo do lote.
 
-**Fórmula (por candidato, tudo incremental vs baseline):**
+**Fórmula (por candidato, incremental vs `q_base`):**
+`valor_extra = (q_cand − q_base) × preço_líquido`; `q_extra = q_cand − q_base`.
 ```
 beneficio_liquido =
-    desconto_incremental            // (preço_cheio − preço_desc) × q_candidato − desconto já no baseline
-  + aumento_evitado_incremental     // compra antes da vigência do aumento × qtd extra (de v_oportunidade_economica_hoje)
-  + ruptura_evitada_incremental     // só quando o extra cobre período COM ruptura simulada (senão = 0)
-  − capital_extra                   // = valor_extra × Cm_anual × (dias_cobertura_extra / 365) × 0,5
-  − impacto_prazo                   // encargo/desconto do prazo vs o prazo PADRÃO do fornecedor
-  − frete_incremental               // frete adicional do volume extra (fornecedor_custo_adicional_config)
+    desconto_incremental    // SÓ desconto promocional atômico: desc_promo(q_cand) − desc_promo(q_base)
+  + aumento_evitado         // só a qtd consumida APÓS a vigência do aumento (janela temporal)
+  + ruptura_evitada         // marginal e capada; fase 1 default = 0 + flag (ver abaixo)
+  − capital_extra           // tranche que fica parada DURANTE toda a cobertura do q_base + metade da sua
+  − impacto_prazo           // (prazo_cand% − prazo_padrão%) × valor_CANDIDATO (pedido inteiro), sinal normalizado
+  − frete_incremental       // % valor + fixo + taxa de pedido (modela os 3)
 ```
-onde `valor_extra = (q_candidato − q_base) × preço_unitário` e `dias_cobertura_extra = (q_candidato −
-q_base) / demanda_diaria`.
 
-**Armadilhas (cravadas pelo Codex) — todas tratadas:**
-- **Não double-count de capital:** o EOQ já embute `Cm`. Aqui cobra-se capital **só sobre o estoque
-  acima do `q_base`**, pelos **dias extras**, e com fator **0,5** (o estoque extra é consumido ao
-  longo do tempo, não fica inteiro parado). `1,0` só num modo "conservador" opcional.
-- **MOQ / mínimo é restrição, não desconto** — entra no `q_base`, não no benefício.
-- **Desconto progressivo = curva**, avaliada nos thresholds; pega o melhor net.
-- **Ruptura evitada** só conta quando o candidato aumenta cobertura num período que **tinha ruptura
-  simulada** (`simular_formula_estoque` recente) — senão vira prêmio artificial pra comprar demais.
-- **Prazo de pagamento** é benefício OU custo, sempre **comparado ao prazo padrão** do fornecedor.
-- **Desconto muda preço e EOQ:** fase 1 **ignora** o recálculo do EOQ com preço descontado (2ª ordem)
-  e marca `eoq_recalculo_ignorado: true`. Fase 2 recalcula.
-- **Escopo da promo:** `escopo ∈ {sku, grupo, fornecedor_total}`. Recomendação **forte** só p/ `sku`;
-  `grupo`/`fornecedor_total` → status "simulação parcial" (o avaliador por-SKU isolado pode mentir).
+**Componentes (cada um com a correção do 2º passe):**
+- **`desconto_incremental`** — usa **campos atômicos** (`desconto_promo_perc`), **NUNCA** o
+  `desconto_total_perc`/`economia_bruta_estimada` da view (que já somam desconto+aumento → double-count).
+  = `(desconto_promo(q_cand) − desconto_promo(q_base))` aplicado ao volume, em R$.
+- **`aumento_evitado`** — campo atômico `aumento_evitado_perc`, **separado** do desconto. Só conta a
+  quantidade cujo **consumo/recompra baseline cairia APÓS a vigência** do aumento:
+  `q_extra_elegivel_aumento = max(0, q_cand − max(q_base, demanda_diaria × dias_ate_aumento))`.
+- **`ruptura_evitada`** — `valor_ruptura_estimado` é **agregado do cenário base, não marginal**. Sem as
+  datas/quantidade marginais da ruptura, **fase 1 usa `ruptura_evitada = 0` + flag "benefício de ruptura
+  não estimado (conservador)"**. (Quando houver o delta marginal: `min(valor_ruptura_na_janela_incremental,
+  q_extra_elegivel_ruptura × preço)`.) Evita prêmio artificial pra comprar demais.
+- **`capital_extra`** — o extra é a **última tranche consumida**: fica parado durante **toda a cobertura
+  do `q_base`** + **metade** da sua própria cobertura (não começa a contar só depois do q_base):
+  `valor_extra × Cm_anual × ((q_base/demanda_diaria) + 0,5 × (q_extra/demanda_diaria)) / 365`.
+  (O fator 0,5 é só sobre a parcela própria — o triângulo de consumo do extra.)
+- **`impacto_prazo`** — se o prazo promocional troca a condição do **pedido inteiro**, incide sobre
+  `valor_candidato` (não só o extra): `(prazo_cand% − prazo_padrão%) × valor_candidato`. Sinal
+  **normalizado no helper** (desconto de prazo = benefício; encargo = custo). Sempre vs o prazo PADRÃO.
+- **`frete_incremental`** — modela as 3 formas de `fornecedor_custo_adicional_config` (`% valor`, `fixo`,
+  `taxa de pedido`); flag de confiança se a config estiver incompleta.
+
+**Outras armadilhas tratadas:**
+- **Não double-count de capital** — o EOQ já embute `Cm`; aqui cobra-se só o **extra acima do q_base**
+  (com o tempo correto acima).
+- **MOQ / mínimo é restrição**, entra no `q_base`, não no benefício.
+- **EOQ com preço descontado** — fase 1 ignora o recálculo (2ª ordem), marca `eoq_recalculo_ignorado:
+  true` **+ flag de baixa confiança se o desconto for alto (>20%)** ou se `q_base` estiver muito perto
+  de um threshold. Fase 2 recalcula.
+- **Escopo da promo** — `escopo ∈ {sku, grupo, fornecedor_total}`. Recomendação **forte** só p/ `sku`;
+  `grupo`/`fornecedor_total` → `simulacao_parcial` (avaliador por-SKU isolado pode mentir).
 
 ## 3. Quantidade mínima efetiva — ponto de extensão (requisito do founder)
 
@@ -95,6 +117,10 @@ nem necessidade de service_role/gate master** (≠ frentes financeiras). Então:
   (estoque/preço). 1 linha por SKU/empresa.
 - A **curva de desconto** (`fornecedor_promocao`, 1-para-muitos) é uma **query separada** pequena; o
   helper recebe a curva como array.
+- ⚠️ **Campos atômicos obrigatórios (2º passe Codex):** a view deve expor `desconto_promo_perc` e
+  `aumento_evitado_perc` **separados** — NUNCA o `desconto_total_perc`/`economia_bruta_estimada` da
+  `v_oportunidade_economica_hoje` (que já somam os dois). Se o helper usar o total e ainda somar o
+  aumento, dá **double-count**. O frete vem nas 3 colunas (`% valor`, `fixo`, `taxa de pedido`).
 - A página lê a view + as curvas (React Query, como já faz) e chama o helper **client-side**. **Sem
   edge function nova** (menos cerimônia de deploy; dado operacional já client-readable).
 
@@ -104,20 +130,29 @@ nem necessidade de service_role/gate master** (≠ frentes financeiras). Então:
 export type EscopoPromo = 'sku' | 'grupo' | 'fornecedor_total';
 export type RecomendacaoCompra = 'comprar_mais' | 'manter_base' | 'simulacao_parcial' | 'falta_dado';
 
-export interface InsumoSku {            // 1 linha da view + curva injetada
+export interface InsumoSku {              // 1 linha da view + curva injetada
   empresa: string; sku: string; fornecedor: string;
-  preco_unitario: number;
+  preco_cheio: number;                     // preço de tabela (sem desconto promocional)
+  preco_liquido: number;                   // preço já líquido do desconto-base aplicável ao q_base
   demanda_diaria: number | null;
   eoq: number | null;
   lote_minimo_fornecedor: number | null;
-  minimo_forcado_manual: number | null;   // extension point (§3); default null
-  cm_anual: number;                        // custo de capital (empresa_configuracao_custos)
-  prazo_padrao_encargo_perc: number | null;// encargo/desconto do prazo padrão
-  frete_incremental_unit: number | null;   // frete por unidade extra (ou 0)
-  ruptura_valor_estimado: number | null;   // simular_formula_estoque recente (ou null)
+  minimo_forcado_manual: number | null;    // extension point (§3); default null
+  cm_anual: number;                         // custo de capital (empresa_configuracao_custos)
+  // prazo: SEMPRE comparado ao padrão; % positivo = encargo (custo), negativo = desconto (benefício)
+  prazo_padrao_perc: number | null;
+  // frete: as 3 formas (modeladas; flag se incompleto)
+  frete_perc_valor: number | null;          // % sobre o valor
+  frete_fixo: number | null;                // R$ fixo por pedido
+  frete_taxa_pedido: number | null;         // taxa de pedido R$
+  // ruptura: agregado base (não marginal) — fase 1 só usa pra DETECTAR período com ruptura; benefício = 0
+  ruptura_valor_estimado: number | null;
   ruptura_dias: number | null;
-  aumento_evitado_unit: number | null;     // de v_oportunidade_economica_hoje (ou 0)
-  curva_desconto: Array<{ volume_minimo: number; desconto_perc: number; prazo_encargo_perc?: number }>;
+  // aumento anunciado (campo ATÔMICO, separado do desconto promocional)
+  aumento_evitado_perc: number | null;      // % do aumento futuro
+  dias_ate_aumento: number | null;          // dias até a vigência (janela temporal do aumento_evitado)
+  // curva de desconto promocional (campo ATÔMICO desconto_promo_perc, NUNCA o total somado da view)
+  curva_desconto: Array<{ volume_minimo: number; desconto_promo_perc: number; prazo_perc?: number }>;
   escopo: EscopoPromo;
 }
 
@@ -146,20 +181,38 @@ export interface DecisaoCompra {
 
 ## 7. Degradação honesta / confiança
 - Falta `demanda_diaria`/`eoq` → não dá pra dimensionar → `falta_dado` (sem recomendação).
-- Falta ruptura simulada recente → `ruptura_evitada = 0` + flag "sem simulação de ruptura — benefício
-  pode estar subestimado".
+- **Ruptura: fase 1 usa `ruptura_evitada = 0` por padrão** (o `valor_ruptura_estimado` é agregado, não
+  marginal) + flag "benefício de ruptura não estimado (conservador)". Não infla o net.
+- Desconto alto (>20%) ou `q_base` perto de um threshold → flag "EOQ não recalculado com preço
+  descontado — confiança reduzida".
+- Frete config incompleta (faltam as 3 formas) → flag "frete parcial".
 - `escopo ∈ {grupo, fornecedor_total}` → `simulacao_parcial` (recomendação fraca).
 - `minimo_forcado_manual` ausente → usa só o lote do fornecedor (esperado, não é degradação).
+- **Fatores materiais fora do modelo (fase 1) — sinalizados como flag, não bloqueiam:** validade/
+  perecibilidade, obsolescência, espaço de armazém, caixa/limite de crédito, pedidos em aberto +
+  estoque atual, câmbio (importados), impostos/créditos, e desconto condicionado a cesta/mix. O
+  produto deve deixar explícito que a recomendação ignora esses fatores (o comprador decide com eles em mente).
 - `scoreConfianca` agrega o pior sinal.
 
-## 8. Invariantes e testes (~25–30, TDD)
-- `qtd_minima_efetiva = max(lote, forcado)`; `q_base ≥ qtd_minima_efetiva` e `≥ EOQ`.
-- `q_extra = q_candidata − q_base ≥ 0`; candidato sempre ativa um threshold da curva.
-- `capital_extra = valor_extra × Cm × dias_extra/365 × 0,5` (testar fator 0,5; não cobra o pedido inteiro).
-- Ruptura evitada = 0 quando não há ruptura simulada no período (não fabrica prêmio).
-- Prazo: encargo vs padrão (benefício quando prazo melhor sem encargo; custo quando há encargo).
-- Curva progressiva: escolhe o candidato de **maior** net, não o primeiro desconto.
-- `recomendacao = comprar_mais` só quando `beneficio_liquido_rs > 0` e `escopo = sku`.
+## 8. Invariantes e testes (~28–32, TDD)
+- `qtd_minima_efetiva = max(lote, forcado)`; `q_base = max(EOQ, qtd_minima_efetiva)` arredondado ao lote.
+- `q_extra = q_candidata − q_base ≥ 0`.
+- **Capital (correção 2º passe):** `capital_extra = valor_extra × Cm × ((q_base/demanda) + 0,5×(q_extra/
+  demanda))/365` — testar que o extra carrega DESDE o dia zero (paga a cobertura do q_base + metade da
+  própria), não só os dias próprios; testar que NÃO cobra o pedido inteiro (só o extra).
+- **Desconto atômico:** `desconto_incremental = (desc_promo(q_cand) − desc_promo(q_base))` — testar que
+  NÃO usa o total somado (sem double-count com aumento).
+- **Aumento com janela:** `q_extra_elegivel_aumento = max(0, q_cand − max(q_base, demanda×dias_ate_aumento))`
+  — testar que qtd consumida ANTES da vigência não recebe o aumento_evitado.
+- **Ruptura fase 1 = 0** por padrão + flag (não infla); testar.
+- **Candidatos entre thresholds:** com aumento/ruptura, o ótimo pode não estar num `volume_minimo` —
+  testar que candidatos de aumento/ruptura-limit entram e podem vencer.
+- **Curva progressiva:** escolhe o candidato de **maior** net, não o primeiro desconto.
+- **Prazo:** `(prazo_cand% − prazo_padrão%) × valor_candidato`; sinal normalizado (desconto=benefício,
+  encargo=custo).
+- **Frete:** modela `% valor` + `fixo` + `taxa de pedido`.
+- `recomendacao = comprar_mais` só quando `beneficio_liquido_rs > 0` e `escopo = sku`; `manter_base`
+  quando nenhum candidato supera o baseline.
 - Degradação: input ausente → `falta_dado`/flag, nunca número fabricado.
 
 ## 9. Segurança / acesso
@@ -180,5 +233,11 @@ export interface DecisaoCompra {
 - **Curva de desconto real** — `fornecedor_promocao.volume_progressivo` é dado, mas a cobertura/qualidade
   do cadastro varia; sem curva → só avalia o desconto flat disponível (ou nada). Flag de confiança.
 - **Promo de grupo/fornecedor-total** — fase 1 só sinaliza ("simulação parcial"); generalização real é fase 2.
-- **PME/capital por SKU** — usa `Cm × valor_extra × dias_extra` (marginal direto), não o PME company-level.
-- **View é migration manual** (Lovable) — sem ela a página cai num fallback de "dados insuficientes".
+- **PME/capital por SKU** — usa `Cm × valor_extra × dias` (marginal direto, com o tempo do 2º passe), não o
+  PME company-level. `valor_extra` usa **preço líquido** do candidato (não o cheio).
+- **Ruptura marginal** (P2 → fase 2): hoje `ruptura_evitada = 0` conservador; a versão marginal exige
+  datas/quantidade da ruptura por janela (não só o agregado `valor_ruptura_estimado`).
+- **Fatores materiais fora do modelo** (validade, obsolescência, armazém, caixa/crédito, câmbio, impostos,
+  cesta/mix) — sinalizados como flag na fase 1 (§7); modelagem é fase 2+.
+- **View é migration manual** (Lovable, via `lovable-db-operator`) — sem ela a página cai num fallback de
+  "dados insuficientes".
