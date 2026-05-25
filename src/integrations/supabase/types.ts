@@ -4263,6 +4263,27 @@ export type Database = {
         }
         Relationships: []
       }
+      fin_sync_cursor: {
+        Row: {
+          company: string
+          next_page: number | null
+          resource: string
+          updated_at: string
+        }
+        Insert: {
+          company: string
+          next_page?: number | null
+          resource: string
+          updated_at?: string
+        }
+        Update: {
+          company?: string
+          next_page?: number | null
+          resource?: string
+          updated_at?: string
+        }
+        Relationships: []
+      }
       fin_sync_log: {
         Row: {
           action: string

@@ -1,6 +1,8 @@
-import { useState, useMemo, Fragment } from "react";
-import { useSearchParams } from "react-router-dom";
+import { useState, useMemo, Fragment, useEffect } from "react";
+import { useSearchParams, useNavigate } from "react-router-dom";
 import { useQuery } from "@tanstack/react-query";
+import { useIsTouchDevice } from "@/hooks/useIsTouchDevice";
+import { shouldRedirectToMobile, getForceFullPref, setForceFull } from "@/lib/picking/view-pref";
 import { supabase } from "@/integrations/supabase/client";
 import {
   Boxes,
@@ -13,6 +15,7 @@ import {
   ChevronDown,
   ChevronRight,
   Search,
+  Smartphone,
 } from "lucide-react";
 import { Card, CardContent } from "@/components/ui/card";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
@@ -581,8 +584,17 @@ function AuditoriaTab({ account }: { account: string }) {
 
 export default function AdminEstoquePicking() {
   const [params, setParams] = useSearchParams();
+  const navigate = useNavigate();
+  const isTouch = useIsTouchDevice();
   const tab = params.get("tab") ?? "picking";
   const [account, setAccount] = useState("OBEN");
+
+  // Separador touch cai direto na visão de chão (salvo override "ver versão completa").
+  useEffect(() => {
+    if (shouldRedirectToMobile({ isTouch, forceFull: getForceFullPref() })) {
+      navigate('/admin/estoque/picking/mobile', { replace: true });
+    }
+  }, [isTouch, navigate]);
 
   const handleTab = (v: string) => {
     const next = new URLSearchParams(params);
@@ -603,6 +615,15 @@ export default function AdminEstoquePicking() {
           </div>
         </div>
         <div className="flex items-center gap-2">
+          <Button
+            variant="ghost"
+            size="sm"
+            className="gap-1.5 text-muted-foreground"
+            onClick={() => { setForceFull(false); navigate('/admin/estoque/picking/mobile'); }}
+          >
+            <Smartphone className="h-4 w-4" />
+            <span className="hidden sm:inline">Versão de chão</span>
+          </Button>
           <Building2 className="h-4 w-4 text-muted-foreground" />
           <Select value={account} onValueChange={setAccount}>
             <SelectTrigger className="w-[140px]">
