@@ -3,7 +3,7 @@
 -- ========================================================================
 --
 -- Gerado por: scripts/audit-custom-migrations.ts
--- Total de custom migrations: 56
+-- Total de custom migrations: 57
 --
 -- Como usar:
 --   1. Abra o Supabase SQL Editor (via Lovable Cloud → Backend → SQL Editor)
@@ -75,7 +75,8 @@ WITH expected (version, slug, filename) AS (VALUES
   ('20260524170000', 'scores_unique_por_cliente', '20260524170000_scores_unique_por_cliente.sql'),
   ('20260524180000', 'carteira_scores_owner_e_filas', '20260524180000_carteira_scores_owner_e_filas.sql'),
   ('20260524202410', 'tuning_crons_estoque_freq_e_timeouts', '20260524202410_tuning_crons_estoque_freq_e_timeouts.sql'),
-  ('20260524203000', 'rpc_staff_guard_permite_cron_backend', '20260524203000_rpc_staff_guard_permite_cron_backend.sql')
+  ('20260524203000', 'rpc_staff_guard_permite_cron_backend', '20260524203000_rpc_staff_guard_permite_cron_backend.sql'),
+  ('20260525000000', 'fin_crons_por_entidade', '20260525000000_fin_crons_por_entidade.sql')
 )
 SELECT
   e.version,
@@ -413,7 +414,11 @@ WITH expected_objects (migration, kind, schema_name, object_name, parent_name) A
   ('tuning_crons_estoque_freq_e_timeouts', 'cron_job', 'cron', 'sync-inventory-vendas-30m', ''),
   ('tuning_crons_estoque_freq_e_timeouts', 'cron_job', 'cron', 'sync-omie-services-hourly', ''),
   ('rpc_staff_guard_permite_cron_backend', 'function', 'public', 'sugerir_negociacao_paralela_hoje', ''),
-  ('rpc_staff_guard_permite_cron_backend', 'function', 'public', 'refresh_sku_ranking_negociacao', '')
+  ('rpc_staff_guard_permite_cron_backend', 'function', 'public', 'refresh_sku_ranking_negociacao', ''),
+  ('fin_crons_por_entidade', 'cron_job', 'cron', 'fin-sync-base-diario', ''),
+  ('fin_crons_por_entidade', 'cron_job', 'cron', 'fin-sync-cp-2x', ''),
+  ('fin_crons_por_entidade', 'cron_job', 'cron', 'fin-sync-cr-2x', ''),
+  ('fin_crons_por_entidade', 'cron_job', 'cron', 'fin-sync-mov-2x', '')
 )
 SELECT
   e.migration,
