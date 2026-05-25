@@ -11,7 +11,8 @@
     "preview": "vite preview",
     "test": "vitest run",
     "typecheck:strict": "tsc --noEmit -p tsconfig.strict.json",
-    "audit:migrations": "bun scripts/audit-custom-migrations.ts"
+    "audit:migrations": "bun scripts/audit-custom-migrations.ts",
+    "wt": "bash scripts/new-worktree.sh"
   },
   "dependencies": {
     "@elevenlabs/react": "^0.14.0",
