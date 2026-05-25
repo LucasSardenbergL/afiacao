@@ -45,11 +45,13 @@ export function classificarStatus(input: {
   if (input.tipo === 'benchmark') return 'nao_financiar';
   // consertar valor / liberar caixa: fazer primeiro (custo de caixa ~0, gera valor/solta caixa)
   if (input.tipo === 'consertar_valor' || input.tipo === 'liberar_caixa') return 'consertar_antes';
-  // crescer: precisa bater o hurdle (spread positivo)
+  // crescer: precisa bater o hurdle (spread positivo) E ter custo de caixa estimado.
   if (input.tipo === 'crescer') {
     if (input.spread_positivo !== true) return 'nao_financiar';
-    const custo = input.caixa_consumido ?? 0;
-    return custo <= input.caixa_disponivel ? 'financiar_ja' : 'financiar_condicional';
+    // Sem custo estimado (ex.: sleeve company-level ou "crescer" do cockpit sem ticket) → precisa
+    // dimensionar antes de financiar. NÃO assume custo 0 (crescer consome caixa via NCG).
+    if (input.caixa_consumido == null) return 'falta_dado';
+    return input.caixa_consumido <= input.caixa_disponivel ? 'financiar_ja' : 'financiar_condicional';
   }
   return 'falta_dado';
 }

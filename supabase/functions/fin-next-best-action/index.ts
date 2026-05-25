@@ -51,8 +51,8 @@ function classificarStatus(input: { tipo: TipoAcao; impacto_eva: number | null; 
   if (input.tipo === "consertar_valor" || input.tipo === "liberar_caixa") return "consertar_antes";
   if (input.tipo === "crescer") {
     if (input.spread_positivo !== true) return "nao_financiar";
-    const custo = input.caixa_consumido ?? 0;
-    return custo <= input.caixa_disponivel ? "financiar_ja" : "financiar_condicional";
+    if (input.caixa_consumido == null) return "falta_dado"; // sem custo estimado → precisa dimensionar o ticket
+    return input.caixa_consumido <= input.caixa_disponivel ? "financiar_ja" : "financiar_condicional";
   }
   return "falta_dado";
 }
@@ -82,7 +82,7 @@ function montarFilaAcoes(input: { candidatos: AcaoCandidata[]; caixaPorEmpresa: 
   const rebaixa = (n: "media" | "baixa", m: string) => { if (n === "baixa" || nivel === "alta") nivel = n; motivos.push(m); };
   if (fila.some((a) => a.status === "falta_dado")) rebaixa("media", "Algumas ações sem hurdle/cockpit (Falta dado).");
   if (Object.values(input.caixaPorEmpresa).some((c) => c.confianca === "baixa")) rebaixa("baixa", "Projeção de caixa de alguma empresa com confiança baixa.");
-  return { fila, caixa_por_empresa: input.caixaPorEmpresa, confianca: { nivel, motivos }, gerado_em: new Date().toISOString() };
+  return { fila, caixa_por_empresa: input.caixaPorEmpresa, confianca: { nivel: nivel as "alta" | "media" | "baixa", motivos }, gerado_em: new Date().toISOString() };
 }
 
 // ===== Orquestração: chama A1/A2/A3 via service_role =====
@@ -90,15 +90,18 @@ const EMPRESAS = ["oben", "colacor", "colacor_sc"];
 const RESERVA_DIAS_MIN = 21; // ~3 semanas de cobertura como piso
 
 async function invoke<T>(fn: string, body: unknown): Promise<T | null> {
+  const ctrl = new AbortController();
+  const timer = setTimeout(() => ctrl.abort(), 20000); // 20s por function — não trava a fila inteira
   try {
     const res = await fetch(`${SUPABASE_URL}/functions/v1/${fn}`, {
       method: "POST",
       headers: { Authorization: `Bearer ${SERVICE_ROLE}`, apikey: SERVICE_ROLE, "Content-Type": "application/json" },
       body: JSON.stringify(body),
+      signal: ctrl.signal,
     });
     if (!res.ok) return null;
     return await res.json() as T;
-  } catch { return null; }
+  } catch { return null; } finally { clearTimeout(timer); }
 }
 
 serve(async (req: Request) => {
@@ -109,23 +112,31 @@ serve(async (req: Request) => {
   const caixaPorEmpresa: Record<string, { disponivel: number; confianca: "alta" | "media" | "baixa" }> = {};
   const hurdlePorEmpresa: Record<string, number> = {};
   const candidatos: AcaoCandidata[] = [];
+  const falhas: string[] = [];
 
-  // A1 (caixa) + A2 (hurdle/spread) por empresa
-  for (const empresa of EMPRESAS) {
-    const cash = await invoke<{ indicadores?: { dias_cobertura?: number; saldo_tesouraria?: number } }>("fin-cashflow-engine", { company: empresa });
+  // Paralelo: A1+A2 das 3 empresas + A3 (cockpit Oben) ao mesmo tempo (uma function lenta não trava as outras).
+  const [cashResults, valorResults, cockpit] = await Promise.all([
+    Promise.all(EMPRESAS.map((e) => invoke<{ indicadores?: { dias_cobertura?: number; saldo_tesouraria?: number } }>("fin-cashflow-engine", { company: e }))),
+    Promise.all(EMPRESAS.map((e) => invoke<{ reportado?: { wacc?: number | null; spread?: number | null } }>("fin-valor-engine", { company: e }))),
+    invoke<{ recomendacoesCliente?: Array<{ cliente: string; recomendacoes: Array<{ acao: string; motivo: string; impacto_rs: number | null }> }> }>("fin-valor-cockpit", {}),
+  ]);
+
+  EMPRESAS.forEach((empresa, i) => {
+    const cash = cashResults[i];
+    if (cash == null) falhas.push(`caixa (${empresa})`);
     const dias = cash?.indicadores?.dias_cobertura ?? 0;
     const saldo = cash?.indicadores?.saldo_tesouraria ?? 0;
-    const cashConfBaixa = cash == null; // engine falhou → trata como incerto
+    const cashConfBaixa = cash == null;
     caixaPorEmpresa[empresa] = {
       disponivel: caixaDisponivel({ saldo_tesouraria: saldo, dias_cobertura: dias, reserva_dias_min: RESERVA_DIAS_MIN, confianca_baixa: cashConfBaixa }),
       confianca: cashConfBaixa ? "baixa" : "alta",
     };
-
-    const valor = await invoke<{ reportado?: { wacc?: number | null; spread?: number | null; roic_incremental?: number | null } }>("fin-valor-engine", { company: empresa });
+    const valor = valorResults[i];
+    if (valor == null) falhas.push(`valor/hurdle (${empresa})`);
     const wacc = valor?.reportado?.wacc ?? null;
     if (wacc != null) hurdlePorEmpresa[empresa] = wacc;
-    // Sleeve company-level: cresce se spread positivo (A2). Confiança baixa (sem cockpit granular, exceto Oben).
     const spread = valor?.reportado?.spread ?? null;
+    // Sleeve company-level (sem cockpit granular): crescer sem custo estimado → cai em 'falta_dado'.
     if (empresa !== "oben") {
       candidatos.push({
         empresa, descricao: `${empresa} — sleeve de crescimento (definir ação concreta: margem/NCG/payback)`,
@@ -133,24 +144,32 @@ serve(async (req: Request) => {
         spread_positivo: spread != null ? spread > 0 : null, confianca: "baixa",
       });
     }
-  }
+  });
 
-  // A3 (Oben): recomendações de cliente viram ações concretas.
-  const cockpit = await invoke<{ recomendacoesCliente?: Array<{ cliente: string; recomendacoes: Array<{ acao: string; motivo: string; impacto_rs: number | null }> }> }>("fin-valor-cockpit", {});
+  // A3 (Oben): recomendações de cliente viram ações. Vocabulário CONTROLADO da A3 (5 ações fixas).
+  if (cockpit == null) falhas.push("cockpit Oben (A3)");
   for (const rc of cockpit?.recomendacoesCliente ?? []) {
     for (const rec of rc.recomendacoes) {
       const acaoLower = rec.acao.toLowerCase();
       const tipo: TipoAcao = acaoLower.includes("prazo") || acaoLower.includes("antecip") ? "liberar_caixa"
         : acaoLower.includes("crescer") ? "crescer"
-        : "consertar_valor"; // cortar desconto / subir preço / despriorizar = consertar valor
+        : "consertar_valor"; // cortar desconto / subir preço / despriorizar = consertar valor (custo de caixa ~0)
       candidatos.push({
         empresa: "oben", descricao: `Oben — ${rec.acao} (cliente ${rc.cliente})`,
-        tipo, impacto_eva: rec.impacto_rs, caixa_consumido: 0, payback_meses: null,
+        // crescer consome caixa via NCG mas A3 não estima o ticket → null → 'falta_dado' (dimensionar antes).
+        tipo, impacto_eva: rec.impacto_rs, caixa_consumido: tipo === "crescer" ? null : 0, payback_meses: null,
         spread_positivo: tipo === "crescer" ? true : null, confianca: "alta",
       });
     }
   }
 
   const result = montarFilaAcoes({ candidatos, caixaPorEmpresa, hurdlePorEmpresa });
+  // Degradação honesta: insumo interno falhou → rebaixa a confiança (pior dos dois) e diz o quê.
+  if (falhas.length > 0) {
+    const rank = { alta: 3, media: 2, baixa: 1 } as const;
+    const piso: "media" | "baixa" = falhas.length >= 3 ? "baixa" : "media";
+    const nivel = rank[result.confianca.nivel] <= rank[piso] ? result.confianca.nivel : piso;
+    result.confianca = { nivel, motivos: [...result.confianca.motivos, `Insumos indisponíveis (function falhou): ${falhas.join(", ")} — fila parcial.`] };
+  }
   return jsonResponse(result, 200);
 });

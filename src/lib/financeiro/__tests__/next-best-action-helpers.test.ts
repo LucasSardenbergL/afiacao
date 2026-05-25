@@ -56,6 +56,9 @@ describe('classificarStatus', () => {
   it('crescer spread NEGATIVO → nao_financiar', () => {
     expect(classificarStatus({ tipo: 'crescer', impacto_eva: -1, spread_positivo: false, caixa_consumido: 10000, caixa_disponivel: 99999, hurdle: 0.2, tem_dado: true })).toBe('nao_financiar');
   });
+  it('crescer spread+ MAS sem custo estimado (caixa_consumido null) → falta_dado (precisa dimensionar o ticket)', () => {
+    expect(classificarStatus({ tipo: 'crescer', impacto_eva: 8000, spread_positivo: true, caixa_consumido: null, caixa_disponivel: 999999, hurdle: 0.2, tem_dado: true })).toBe('falta_dado');
+  });
   it('sem dado (hurdle/sinal ausente) → falta_dado', () => {
     expect(classificarStatus({ tipo: 'crescer', impacto_eva: null, spread_positivo: null, caixa_consumido: null, caixa_disponivel: 0, hurdle: null, tem_dado: false })).toBe('falta_dado');
   });
