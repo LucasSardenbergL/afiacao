@@ -34,6 +34,7 @@ function makePlan(overrides: Partial<TacticalPlan> = {}): TacticalPlan {
     operationalRisks: [],
     estimatedProfitPerHour: 0,
     status: "ativo",
+    generatedAt: new Date().toISOString(),
     ...overrides,
   };
 }
