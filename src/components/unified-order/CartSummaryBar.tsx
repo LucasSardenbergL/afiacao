@@ -8,7 +8,7 @@ import { Card, CardContent } from '@/components/ui/card';
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
 import { Command, CommandEmpty, CommandGroup, CommandInput, CommandItem, CommandList } from '@/components/ui/command';
 import {
-  Send, Loader2, AlertCircle, Check, ChevronsUpDown, FileText, Calendar,
+  Send, Loader2, AlertCircle, Check, ChevronsUpDown, FileText, Calendar, CloudOff,
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { format, addDays, startOfWeek, isWeekend } from 'date-fns';
@@ -51,6 +51,8 @@ interface CartSummaryBarProps {
   // Actions
   onSubmit: () => void;
   onSubmitQuote?: () => void;
+  /** Quando true, o botão vira "salvar rascunho" (vendedor offline). */
+  offline?: boolean;
 }
 
 function PaymentCombobox({
@@ -154,7 +156,7 @@ export function CartSummaryBar({
   volumesOben, volumesColacor,
   ordemCompra, setOrdemCompra, isOrdemCompraCustomer,
   readyByDate, setReadyByDate,
-  onSubmit, onSubmitQuote,
+  onSubmit, onSubmitQuote, offline = false,
 }: CartSummaryBarProps) {
   const hasOnlyProducts = (obenProductItems.length > 0 || colacorProductItems.length > 0) && serviceItems.length === 0;
   const disableSubmit = submitting || serviceItems.some(s => !s.servico) || vendedorDivergencias.length > 0;
@@ -238,9 +240,15 @@ export function CartSummaryBar({
             </p>
           )}
           <Button className="w-full gap-2" onClick={onSubmit} disabled={disableSubmit}>
-            {submitting ? <Loader2 className="w-4 h-4 animate-spin" /> : <Send className="w-4 h-4" />}
-            Enviar pedido
-            {(() => {
+            {submitting ? (
+              <Loader2 className="w-4 h-4 animate-spin" />
+            ) : offline ? (
+              <CloudOff className="w-4 h-4" />
+            ) : (
+              <Send className="w-4 h-4" />
+            )}
+            {offline ? 'Sem conexão — salvar rascunho' : 'Enviar pedido'}
+            {!offline && (() => {
               const count = (obenProductItems.length > 0 ? 1 : 0) + (colacorProductItems.length > 0 ? 1 : 0) + (serviceItems.length > 0 ? 1 : 0);
               return count > 1 ? <span className="text-[10px] opacity-70">({count} pedidos)</span> : null;
             })()}

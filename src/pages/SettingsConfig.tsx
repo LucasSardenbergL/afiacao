@@ -17,6 +17,7 @@ import {
 import { cn } from '@/lib/utils';
 import { useFeatureFlag } from '@/hooks/useFeatureFlag';
 import { Sparkles, Undo2 } from 'lucide-react';
+import { CoveragePanel } from '@/components/carteira/CoveragePanel';
 
 /* ─── Types ─── */
 interface WeightConfig {
@@ -435,6 +436,8 @@ const SettingsConfig = () => {
                 </div>
               </CardContent>
             </Card>
+
+            <CoveragePanel />
           </TabsContent>
 
           {/* ─── INTEGRATIONS ─── */}
