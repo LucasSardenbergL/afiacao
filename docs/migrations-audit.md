@@ -21,14 +21,14 @@ Este audit valida **quais custom migrations estão de fato aplicadas no banco**.
 
 ## Resumo
 
-- **54** custom migrations totais
-- **313** objetos esperados (criados por estas migrations)
+- **56** custom migrations totais
+- **320** objetos esperados (criados por estas migrations)
 - Quebra por tipo:
   - `rls_policy`: 102
-  - `index`: 89
+  - `index`: 93
   - `table`: 49
+  - `function`: 31
   - `trigger`: 31
-  - `function`: 28
   - `cron_job`: 10
   - `enum_value`: 4
 
@@ -590,6 +590,23 @@ Lista canônica do que cada migration *deveria* criar (extraído via regex de `C
 ### `20260524121531_restore_sla_guards.sql`
 
 > _Nenhum objeto extraído via regex._ Migration provavelmente é `ALTER TABLE` / `UPDATE` / `INSERT` / RLS-only. Validar manualmente.
+
+### `20260524170000_scores_unique_por_cliente.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `index` | `public.idx_fcs_customer` | `farmer_client_scores` |
+| `index` | `public.idx_cvs_customer` | `customer_visit_scores` |
+
+### `20260524180000_carteira_scores_owner_e_filas.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `index` | `public.uniq_score_recalc_queue_pending` | `score_recalc_queue` |
+| `index` | `public.uniq_visit_score_queue_pending` | `visit_score_recalc_queue` |
+| `function` | `public.enqueue_score_recalc_from_call` | — |
+| `function` | `public.enqueue_visit_score_recalc_from_visit` | — |
+| `function` | `public.enqueue_visit_score_recalc_from_client_score` | — |
 
 ### `20260524202410_tuning_crons_estoque_freq_e_timeouts.sql`
 

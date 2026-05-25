@@ -3,7 +3,7 @@
 -- ========================================================================
 --
 -- Gerado por: scripts/audit-custom-migrations.ts
--- Total de custom migrations: 54
+-- Total de custom migrations: 56
 --
 -- Como usar:
 --   1. Abra o Supabase SQL Editor (via Lovable Cloud → Backend → SQL Editor)
@@ -72,6 +72,8 @@ WITH expected (version, slug, filename) AS (VALUES
   ('20260524102500', 'fix_fin_triggers_json_field_access', '20260524102500_fix_fin_triggers_json_field_access.sql'),
   ('20260524120000', 'carteira_omie_fase1', '20260524120000_carteira_omie_fase1.sql'),
   ('20260524121531', 'restore_sla_guards', '20260524121531_restore_sla_guards.sql'),
+  ('20260524170000', 'scores_unique_por_cliente', '20260524170000_scores_unique_por_cliente.sql'),
+  ('20260524180000', 'carteira_scores_owner_e_filas', '20260524180000_carteira_scores_owner_e_filas.sql'),
   ('20260524202410', 'tuning_crons_estoque_freq_e_timeouts', '20260524202410_tuning_crons_estoque_freq_e_timeouts.sql'),
   ('20260524203000', 'rpc_staff_guard_permite_cron_backend', '20260524203000_rpc_staff_guard_permite_cron_backend.sql')
 )
@@ -398,6 +400,13 @@ WITH expected_objects (migration, kind, schema_name, object_name, parent_name) A
   ('carteira_omie_fase1', 'index', 'public', 'idx_coverage_covering_active', 'carteira_coverage'),
   ('carteira_omie_fase1', 'function', 'public', 'carteira_visivel_para', ''),
   ('carteira_omie_fase1', 'function', 'public', 'minha_carteira', ''),
+  ('scores_unique_por_cliente', 'index', 'public', 'idx_fcs_customer', 'farmer_client_scores'),
+  ('scores_unique_por_cliente', 'index', 'public', 'idx_cvs_customer', 'customer_visit_scores'),
+  ('carteira_scores_owner_e_filas', 'index', 'public', 'uniq_score_recalc_queue_pending', 'score_recalc_queue'),
+  ('carteira_scores_owner_e_filas', 'index', 'public', 'uniq_visit_score_queue_pending', 'visit_score_recalc_queue'),
+  ('carteira_scores_owner_e_filas', 'function', 'public', 'enqueue_score_recalc_from_call', ''),
+  ('carteira_scores_owner_e_filas', 'function', 'public', 'enqueue_visit_score_recalc_from_visit', ''),
+  ('carteira_scores_owner_e_filas', 'function', 'public', 'enqueue_visit_score_recalc_from_client_score', ''),
   ('tuning_crons_estoque_freq_e_timeouts', 'cron_job', 'cron', 'omie-sync-estoque-diario', ''),
   ('tuning_crons_estoque_freq_e_timeouts', 'cron_job', 'cron', 'sync-orders-vendas-2h', ''),
   ('tuning_crons_estoque_freq_e_timeouts', 'cron_job', 'cron', 'sync-products-customers-daily', ''),
