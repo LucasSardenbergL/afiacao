@@ -6,16 +6,19 @@ function stripAccents(str: string): string {
   return str.normalize("NFD").replace(/[\u0300-\u036f]/g, "");
 }
 
-// Anti-inje\u00e7\u00e3o PostgREST: o `.or()` recebe um predicado em texto; input cru
-// permite injetar cl\u00e1usulas extras via v\u00edrgula/par\u00eanteses/escape/aspas. Strippa
-// esses metacaracteres + wildcards do ILIKE. Espelha src/lib/postgrest.ts
-// (inline porque Edge Functions em Deno n\u00e3o importam o alias @/ do frontend).
+/**
+ * Sanitiza input para interpolar com segurança numa string de `.or()` do PostgREST.
+ * Remove caracteres especiais do parser PostgREST: vírgula, parênteses, barra
+ * invertida, aspas duplas e wildcards do ILIKE (% _).
+ */
 function sanitizeForPostgrestOr(input: string): string {
   return input.replace(/[%_,()\\"]/g, "");
 }
-function ilikeOr(columns: string[], term: string): string {
+
+/** Constrói cláusula .or() segura para múltiplas colunas ILIKE. */
+function ilikeOr(term: string, ...cols: string[]): string {
   const safe = sanitizeForPostgrestOr(term);
-  return columns.map((c) => `${c}.ilike.%${safe}%`).join(",");
+  return cols.map((c) => `${c}.ilike.%${safe}%`).join(",");
 }
 
 const corsHeaders = {
@@ -246,7 +249,7 @@ serve(async (req) => {
             const { data: profiles } = await supabase
               .from("profiles")
               .select("user_id, name, document, email, phone")
-              .or(ilikeOr(["name"], term))
+              .or(ilikeOr(term, "name"))
               .limit(20);
             if (profiles) {
               for (const p of profiles) {
@@ -371,7 +374,7 @@ serve(async (req) => {
             .from("omie_products")
             .select("id, codigo, descricao, account, valor_unitario, estoque")
             .eq("ativo", true)
-            .or(ilikeOr(["descricao", "codigo"], term))
+            .or(ilikeOr(term, "descricao", "codigo"))
             .limit(20);
           if (dbProducts) {
             for (const p of dbProducts) {
@@ -395,7 +398,7 @@ serve(async (req) => {
               .from("omie_products")
               .select("id, codigo, descricao, account, valor_unitario, estoque")
               .eq("ativo", true)
-              .or(ilikeOr(["codigo", "descricao"], numericPart))
+              .or(ilikeOr(numericPart, "codigo", "descricao"))
               .limit(30);
             if (fuzzyProducts) {
               for (const p of fuzzyProducts) {
@@ -412,7 +415,7 @@ serve(async (req) => {
                 .from("omie_products")
                 .select("id, codigo, descricao, account, valor_unitario, estoque")
                 .eq("ativo", true)
-                .or(ilikeOr(["descricao", "codigo"], shortNumeric))
+                .or(ilikeOr(shortNumeric, "descricao", "codigo"))
                 .limit(30);
               if (shortProducts) {
                 for (const p of shortProducts) {
@@ -436,7 +439,7 @@ serve(async (req) => {
               .from("omie_products")
               .select("id, codigo, descricao, account, valor_unitario, estoque")
               .eq("ativo", true)
-              .or(ilikeOr(["descricao", "codigo"], stripped))
+              .or(ilikeOr(stripped, "descricao", "codigo"))
               .limit(20);
             if (strippedProducts) {
               for (const p of strippedProducts) {
