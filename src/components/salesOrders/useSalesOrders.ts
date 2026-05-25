@@ -169,8 +169,7 @@ export function useSalesOrders() {
       return;
     }
     queryClient.setQueryData(['sales-orders-paginated'], snapshot);
-    const { message } = result;
-    toast.error('Erro ao excluir pedido', { description: message });
+    toast.error('Erro ao excluir pedido', { description: (result as { message: string }).message });
   };
 
   // Bulk delete — sequencial pra não floodar o Omie. Mostra progresso.
