@@ -11,6 +11,7 @@
 import { useQuery } from '@tanstack/react-query';
 import { supabase } from '@/integrations/supabase/client';
 import { useAuth } from '@/contexts/AuthContext';
+import { useMyActiveCoverage } from '@/hooks/useCoverage';
 import { pickDailyMix } from '@/lib/visit-scoring/mix-selector';
 import type { MissionType, VisitScore } from '@/lib/visit-scoring/types';
 
@@ -19,6 +20,10 @@ export interface VisitSuggestion extends VisitScore {
   customer_phone: string | null;
   score_breakdown: Record<string, unknown> | null;
   last_visit_at: string | null;
+  /** dono original quando a sugestão vem de cobertura (farmer_id ≠ eu); null se for minha. */
+  coberto_de: string | null;
+  /** nome do dono coberto (pra o selo "Cobertura — {nome}"); null se for minha. */
+  coberto_de_nome: string | null;
 }
 
 export interface CityWithCount {
@@ -33,17 +38,22 @@ export function useMyVisitSuggestions(opts: {
 } = {}) {
   const { user } = useAuth();
   const userId = user?.id;
+  const { data: coverage } = useMyActiveCoverage();
+  const coveredIds = (coverage ?? []).map((c) => c.covered_user_id);
+  // Opção A: farmer_id = dono. Minha lista = minha carteira + carteiras que eu cubro agora.
+  const ownerIds = userId ? [userId, ...coveredIds] : [];
+  const coveredKey = coveredIds.slice().sort().join(',');
 
   // Query 1: cidades disponíveis
   const citiesQuery = useQuery({
-    queryKey: ['visit-cities', userId],
+    queryKey: ['visit-cities', userId, coveredKey],
     enabled: !!userId,
     staleTime: 60_000,
     queryFn: async (): Promise<CityWithCount[]> => {
-       
+
       const { data, error } = await supabase.from('customer_visit_scores')
         .select('city, visit_score')
-        .eq('farmer_id', userId!)
+        .in('farmer_id', ownerIds)
         .gt('visit_score', 30)
         .not('city', 'is', null);
       if (error) throw error;
@@ -64,16 +74,15 @@ export function useMyVisitSuggestions(opts: {
 
   // Query 2: top candidatos da cidade selecionada
   const suggestionsQuery = useQuery({
-    queryKey: ['visit-suggestions', userId, selectedCity, opts.targetCount],
+    queryKey: ['visit-suggestions', userId, coveredKey, selectedCity, opts.targetCount],
     enabled: !!userId && !!selectedCity,
     staleTime: 60_000,
     queryFn: async (): Promise<VisitSuggestion[]> => {
       if (!selectedCity || !userId) return [];
 
-       
       const { data: scoresData, error: scoresErr } = await supabase.from('customer_visit_scores')
-        .select('customer_user_id, recuperacao_score, expansao_score, relacionamento_score, prospeccao_score, visit_score, primary_mission, city, neighborhood, days_since_last_visit, last_visit_at, score_breakdown')
-        .eq('farmer_id', userId!)
+        .select('customer_user_id, farmer_id, recuperacao_score, expansao_score, relacionamento_score, prospeccao_score, visit_score, primary_mission, city, neighborhood, days_since_last_visit, last_visit_at, score_breakdown')
+        .in('farmer_id', ownerIds)
         .eq('city', selectedCity)
         .order('visit_score', { ascending: false })
         .limit(30);
@@ -81,6 +90,7 @@ export function useMyVisitSuggestions(opts: {
 
       const scores = (scoresData ?? []) as Array<{
         customer_user_id: string;
+        farmer_id: string;
         recuperacao_score: number;
         expansao_score: number;
         relacionamento_score: number;
@@ -96,8 +106,10 @@ export function useMyVisitSuggestions(opts: {
 
       if (scores.length === 0) return [];
 
-      const userIds = scores.map(s => s.customer_user_id);
-       
+      // inclui os donos cobertos (farmer_id ≠ eu) pra resolver o nome do selo de cobertura
+      const coveredOwners = scores.filter(s => s.farmer_id !== userId).map(s => s.farmer_id);
+      const userIds = [...new Set([...scores.map(s => s.customer_user_id), ...coveredOwners])];
+
       const { data: profileData } = await supabase.from('profiles')
         .select('user_id, name, razao_social, phone')
         .in('user_id', userIds);
@@ -136,6 +148,10 @@ export function useMyVisitSuggestions(opts: {
           customer_phone: profile?.phone ?? null,
           score_breakdown: source?.score_breakdown ?? null,
           last_visit_at: source?.last_visit_at ?? null,
+          coberto_de: source && source.farmer_id !== userId ? source.farmer_id : null,
+          coberto_de_nome: source && source.farmer_id !== userId
+            ? (profileMap.get(source.farmer_id)?.name ?? null)
+            : null,
         };
       });
     },
