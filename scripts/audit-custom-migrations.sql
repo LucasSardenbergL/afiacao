@@ -3,7 +3,7 @@
 -- ========================================================================
 --
 -- Gerado por: scripts/audit-custom-migrations.ts
--- Total de custom migrations: 46
+-- Total de custom migrations: 50
 --
 -- Como usar:
 --   1. Abra o Supabase SQL Editor (via Lovable Cloud → Backend → SQL Editor)
@@ -65,7 +65,11 @@ WITH expected (version, slug, filename) AS (VALUES
   ('20260523210000', 'drop_audit_trigger_fin_config_cashflow', '20260523210000_drop_audit_trigger_fin_config_cashflow.sql'),
   ('20260523230000', 'fin_a2_valor_inputs', '20260523230000_fin_a2_valor_inputs.sql'),
   ('20260523230835', 'sync_sla_view_stack', '20260523230835_sync_sla_view_stack.sql'),
-  ('20260523233000', 'restaura_guardas_sla_view_stack', '20260523233000_restaura_guardas_sla_view_stack.sql')
+  ('20260523233000', 'restaura_guardas_sla_view_stack', '20260523233000_restaura_guardas_sla_view_stack.sql'),
+  ('20260524120000', 'carteira_omie_fase1', '20260524120000_carteira_omie_fase1.sql'),
+  ('20260524121531', 'restore_sla_guards', '20260524121531_restore_sla_guards.sql'),
+  ('20260524170000', 'scores_unique_por_cliente', '20260524170000_scores_unique_por_cliente.sql'),
+  ('20260524180000', 'carteira_scores_owner_e_filas', '20260524180000_carteira_scores_owner_e_filas.sql')
 )
 SELECT
   e.version,
@@ -374,7 +378,23 @@ WITH expected_objects (migration, kind, schema_name, object_name, parent_name) A
   ('call_log', 'cron_job', 'cron', 'call-log-missed-backstop', ''),
   ('fin_a2_valor_inputs', 'table', 'public', 'fin_valor_inputs', ''),
   ('fin_a2_valor_inputs', 'rls_policy', 'public', 'fin_valor_inputs_select_master', 'fin_valor_inputs'),
-  ('fin_a2_valor_inputs', 'rls_policy', 'public', 'fin_valor_inputs_write_master', 'fin_valor_inputs')
+  ('fin_a2_valor_inputs', 'rls_policy', 'public', 'fin_valor_inputs_write_master', 'fin_valor_inputs'),
+  ('carteira_omie_fase1', 'table', 'public', 'omie_vendedor_map', ''),
+  ('carteira_omie_fase1', 'table', 'public', 'carteira_assignments', ''),
+  ('carteira_omie_fase1', 'table', 'public', 'carteira_coverage', ''),
+  ('carteira_omie_fase1', 'index', 'public', 'idx_omie_vendedor_map_codigo', 'omie_vendedor_map'),
+  ('carteira_omie_fase1', 'index', 'public', 'idx_carteira_owner', 'carteira_assignments'),
+  ('carteira_omie_fase1', 'index', 'public', 'idx_carteira_owner_eligible', 'carteira_assignments'),
+  ('carteira_omie_fase1', 'index', 'public', 'idx_coverage_covering_active', 'carteira_coverage'),
+  ('carteira_omie_fase1', 'function', 'public', 'carteira_visivel_para', ''),
+  ('carteira_omie_fase1', 'function', 'public', 'minha_carteira', ''),
+  ('scores_unique_por_cliente', 'index', 'public', 'idx_fcs_customer', 'farmer_client_scores'),
+  ('scores_unique_por_cliente', 'index', 'public', 'idx_cvs_customer', 'customer_visit_scores'),
+  ('carteira_scores_owner_e_filas', 'index', 'public', 'uniq_score_recalc_queue_pending', 'score_recalc_queue'),
+  ('carteira_scores_owner_e_filas', 'index', 'public', 'uniq_visit_score_queue_pending', 'visit_score_recalc_queue'),
+  ('carteira_scores_owner_e_filas', 'function', 'public', 'enqueue_score_recalc_from_call', ''),
+  ('carteira_scores_owner_e_filas', 'function', 'public', 'enqueue_visit_score_recalc_from_visit', ''),
+  ('carteira_scores_owner_e_filas', 'function', 'public', 'enqueue_visit_score_recalc_from_client_score', '')
 )
 SELECT
   e.migration,

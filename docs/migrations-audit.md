@@ -21,14 +21,14 @@ Este audit valida **quais custom migrations estão de fato aplicadas no banco**.
 
 ## Resumo
 
-- **46** custom migrations totais
-- **291** objetos esperados (criados por estas migrations)
+- **50** custom migrations totais
+- **307** objetos esperados (criados por estas migrations)
 - Quebra por tipo:
   - `rls_policy`: 102
-  - `index`: 85
-  - `table`: 46
+  - `index`: 93
+  - `table`: 49
   - `trigger`: 31
-  - `function`: 22
+  - `function`: 27
   - `enum_value`: 4
   - `cron_job`: 1
 
@@ -547,6 +547,41 @@ Lista canônica do que cada migration *deveria* criar (extraído via regex de `C
 ### `20260523233000_restaura_guardas_sla_view_stack.sql`
 
 > _Nenhum objeto extraído via regex._ Migration provavelmente é `ALTER TABLE` / `UPDATE` / `INSERT` / RLS-only. Validar manualmente.
+
+### `20260524120000_carteira_omie_fase1.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `table` | `public.omie_vendedor_map` | — |
+| `table` | `public.carteira_assignments` | — |
+| `table` | `public.carteira_coverage` | — |
+| `index` | `public.idx_omie_vendedor_map_codigo` | `omie_vendedor_map` |
+| `index` | `public.idx_carteira_owner` | `carteira_assignments` |
+| `index` | `public.idx_carteira_owner_eligible` | `carteira_assignments` |
+| `index` | `public.idx_coverage_covering_active` | `carteira_coverage` |
+| `function` | `public.carteira_visivel_para` | — |
+| `function` | `public.minha_carteira` | — |
+
+### `20260524121531_restore_sla_guards.sql`
+
+> _Nenhum objeto extraído via regex._ Migration provavelmente é `ALTER TABLE` / `UPDATE` / `INSERT` / RLS-only. Validar manualmente.
+
+### `20260524170000_scores_unique_por_cliente.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `index` | `public.idx_fcs_customer` | `farmer_client_scores` |
+| `index` | `public.idx_cvs_customer` | `customer_visit_scores` |
+
+### `20260524180000_carteira_scores_owner_e_filas.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `index` | `public.uniq_score_recalc_queue_pending` | `score_recalc_queue` |
+| `index` | `public.uniq_visit_score_queue_pending` | `visit_score_recalc_queue` |
+| `function` | `public.enqueue_score_recalc_from_call` | — |
+| `function` | `public.enqueue_visit_score_recalc_from_visit` | — |
+| `function` | `public.enqueue_visit_score_recalc_from_client_score` | — |
 
 ## Próximos passos quando algo der `❌`
 
