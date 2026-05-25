@@ -21,13 +21,13 @@ Este audit valida **quais custom migrations estão de fato aplicadas no banco**.
 
 ## Resumo
 
-- **57** custom migrations totais
-- **324** objetos esperados (criados por estas migrations)
+- **58** custom migrations totais
+- **325** objetos esperados (criados por estas migrations)
 - Quebra por tipo:
   - `rls_policy`: 102
   - `index`: 93
   - `table`: 49
-  - `function`: 31
+  - `function`: 32
   - `trigger`: 31
   - `cron_job`: 14
   - `enum_value`: 4
@@ -633,6 +633,12 @@ Lista canônica do que cada migration *deveria* criar (extraído via regex de `C
 | `cron_job` | `cron.fin-sync-cp-2x` | — |
 | `cron_job` | `cron.fin-sync-cr-2x` | — |
 | `cron_job` | `cron.fin-sync-mov-2x` | — |
+
+### `20260525010000_fin_audit_skip_service_role.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `function` | `public.fin_audit_trigger` | — |
 
 ## Próximos passos quando algo der `❌`
 
