@@ -106,7 +106,12 @@ const FinanceiroDashboard = () => {
       {/* Header */}
       <div className="flex items-center justify-between flex-wrap gap-3">
         <div>
-          <h1 className="text-2xl font-bold tracking-tight">Financeiro</h1>
+          <h1
+            className="font-display"
+            style={{ fontSize: "2rem", fontWeight: 500, letterSpacing: "-0.04em", lineHeight: 1.1 }}
+          >
+            Financeiro
+          </h1>
           <p className="text-sm text-muted-foreground mt-1">
             Controle financeiro integrado — Omie
             {lastSync && (
