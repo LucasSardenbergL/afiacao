@@ -125,6 +125,7 @@ const unifiedNavSections: { title: string; items: NavItem[] }[] = [
       { icon: DollarSign, label: 'Gestão Financeira', path: '/financeiro/gestao', managerOnly: true },
       { icon: BarChart3, label: 'Análise e Config', path: '/financeiro/analise', managerOnly: true },
       { icon: TrendingUp, label: 'Retorno & Valor', path: '/financeiro/valor', masterOnly: true },
+      { icon: Percent, label: 'Regime Tributário', path: '/financeiro/regime-tributario', masterOnly: true },
       { icon: Crosshair, label: 'Cockpit de Valor', path: '/financeiro/valor-cockpit', gestorComercialOuMaster: true },
       { icon: ListChecks, label: 'Próxima Ação', path: '/financeiro/proxima-acao', gestorComercialOuMaster: true },
     ],

@@ -164,6 +164,29 @@ Fila priorizada de ações concretas que o dono deve aprovar/recusar, sob a rest
 
 **Onde:** helper `next-best-action-helpers.ts` (vitest); engine `fin-next-best-action` (gestor+master, chama A1/A2/A3 via service_role); página `/financeiro/proxima-acao`.
 
+---
+
+## 🔧 Otimizador Tributário — Comparador de Regime (Simples × Presumido × Real) (2026-05-24)
+
+A escolha de regime é o **lever fiscal nº 1** de uma PME — decisão única que move dezenas de milhares de R$/ano. Por CNPJ, compara a **carga federal + CPP** nos 3 regimes sobre 12 meses móveis (TTM), aponta o ótimo, quantifica a **economia anual em R$** vs o regime atual e degrada honestamente quando falta dado. Compõe a DRE v2 (regime-aware) e RBT12 já calculados — não recomputa o realizado. Gate **master-only** (estratégia tributária sensível, igual A2). Lógica testada em `regime-tributario-helpers.ts` (vitest, ~26 testes) e espelhada no engine `fin-regime-tributario` (master-only). Revisão de metodologia feita com **Codex (2 passes, effort alto)**.
+
+| Item | Como é calculado |
+|---|---|
+| **Base de comparação** | Eixo **federal + CPP** (mesma cesta de tributos entre regimes). O DAS "cheio" do Simples é decomposto pela **partilha da LC 123** (`PARTILHA_SIMPLES`): `federal+CPP = DAS − indireto_no_DAS` (ICMS/ISS/IPI já com teto/redistribuição). CPP **embutido** no DAS dos anexos I/II/III/V (só o IV recolhe à parte). ICMS/ISS/IPI vão pro **eixo indireto separado** (§2.6). |
+| **Simples** | Alíquota efetiva sobre **RBT12** (`(RBT12×nominal − deduzir)/RBT12`); DAS anual ≈ efetiva × receita TTM (flag de aproximação). **Elegibilidade por RBA** (receita bruta acumulada do ano-calendário, **não** RBT12): teto R$4,8M, sublimite R$3,6M → `elegivel`/`sublimite_excedido`/`inelegivel`. **fator-r** (serviços III×V): massa/receita ≥ 0,28 → III, senão V; sem massa → banda de sensibilidade + break-even. |
+| **Presumido** | IRPJ/CSLL **anualizados somando 4 trimestres**, cada um com seu **próprio limite de R$60k** para o adicional de 10% (nunca o teto anual de uma vez). Trimestres reais do histórico quando disponíveis; TTM/4 com flag (sazonalidade infla/esconde adicional). **Receitas financeiras integrais na base IRPJ/CSLL** (não via presunção). PIS/COFINS cumulativo 3,65% sobre receita tributável (receita financeira = alíquota zero). |
+| **Real (TRIAGEM, baixa confiança)** | Lucro ≈ `resultado_antes_impostos` da DRE TTM, **sem LALUR** (adições/exclusões/compensação 30% não modelados) → confiança **sempre ≤ media** por construção. IRPJ 15% + adicional 10%>R$60k/tri, CSLL 9%; lucro ≤ 0 → IRPJ/CSLL = 0. **PIS/COFINS não-cumulativo 9,25% − crédito** (crédito = 0 default, pior caso — falta NCM/CFOP/CST; override `credito_pis_cofins_estimado`) **+ 4,65% sobre receitas financeiras** (Decreto 8.426/2015, sem crédito — omitir pode inverter Real × Presumido). |
+| **Encargo patronal** | CPP no Presumido/Real recolhido à parte: `folha_cpp_anual × encargo_patronal_pct` (default **0,20** = CPP estrita; flag de que RAT/FAP/terceiros ~25,8–26,8% não inclusos → viés pró-Presumido/Real). |
+| **Inputs** (`fin_regime_inputs`, **master-only**) | `folha_cpp_anual`, `massa_fator_r_anual` (salários+pró-labore+CPP+FGTS, distinta da base CPP), `encargo_patronal_pct` (default 0,20), `presuncao_irpj/csll`, `credito_pis_cofins_estimado`, `receita_tributavel_pis_cofins_pct` (1 − monofásico/ST/alíquota-zero), `anexo_simples`. RLS master-only. |
+| **Confiança** | `scoreConfiancaRegime` agrega o pior sinal; 'alta' exige folha conhecida + dentro dos limites + sem flags fortes. Real nunca passa de media. |
+
+### Regra de ouro do Otimizador
+**Recomenda, não declara** — troca de regime exige **contador + substância econômica**. Caveat fixo na UI. Degradação honesta: Real é **sempre ≤ media** (LALUR não modelado); sem `folha_cpp_anual` → comparação Simples×outros **incompleta** + banda; perfil de revenda (Oben) sem `receita_tributavel_pis_cofins_pct` → monofásico/ST/alíquota-zero pode superestimar PIS/COFINS → status **"estimativa incompleta"**; economia < banda de erro → status **`empate_tecnico`** ("exige validação do contador"); RBA aproximada por TTM (sem acumulado do ano corrente) → flag. Nunca fabrica: input ausente = `null` + motivo. **Deferido (fase 2):** realocação de receita entre CNPJs, efeito do crédito do cliente no preço, simulação NCM/CFOP/CST por item.
+
+**Segurança:** página `/financeiro/regime-tributario`, hook `useRegimeTributario`, engine `fin-regime-tributario` e tabela `fin_regime_inputs` (RLS) **todos master-only**; engine aceita `service_role` Bearer p/ composição interna.
+
+**Onde:** helper `src/lib/financeiro/regime-tributario-helpers.ts` (vitest); engine `fin-regime-tributario` (master-only, espelha o helper); migration `20260524120000_fin_regime_inputs.sql`; hook `src/hooks/useRegimeTributario.ts`; dialog `src/components/financeiro/RegimeInputsDialog.tsx`; página `src/pages/FinanceiroRegimeTributario.tsx`.
+
 ## ✅ MVP Operacional (pode usar agora para gestão diária)
 
 Estes dados vêm direto do Omie sem transformação opinativa.
