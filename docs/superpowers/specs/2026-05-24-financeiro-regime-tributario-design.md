@@ -46,8 +46,8 @@ Base de comparação: **carga anual no eixo federal + CPP (INSS patronal)** sobr
   refinar mês-a-mês se o histórico permitir).
 - **Decomposição (§2.5):** federal+CPP = DAS × (1 − %ICMS/ISS/IPI da faixa/anexo). Só o naco federal+CPP
   entra na comparação; ICMS/ISS/IPI vão pro eixo indireto (§2.6).
-- **CPP embutido** no DAS dos anexos I/II/III (não some à parte). ⚠️ Anexo IV **não** embute CPP — guard
-  documentado (não aplicável às 3 empresas, mas a função deve tratar).
+- **CPP embutido** no DAS dos anexos **I/II/III/V** (não some à parte — Codex 2º passe). ⚠️ Só o **Anexo IV**
+  recolhe CPP **à parte** (fora do DAS) — guard documentado (não aplicável às 3 empresas, mas a função deve tratar).
 - **Elegibilidade por RBA (receita bruta acumulada do ano-calendário), NÃO RBT12** (achado Codex #5):
   teto R$4,8M, sublimite R$3,6M (valor 2026 confirmado p/ todos os estados). Excesso >20% → exclusão /
   ICMS-ISS fora **no mês seguinte**; ≤20% → **ano seguinte**. Fase 1 expõe o status (`elegivel` /
@@ -81,13 +81,17 @@ Base de comparação: **carga anual no eixo federal + CPP (INSS patronal)** sobr
   Crédito precisa de NCM/CFOP/CST que **não temos** → calcula com **crédito = 0 (pior caso pro Real)** +
   flag *"Real pode ser ainda melhor — créditos não estimados (faltam NCM/CFOP)."* Override opcional
   `credito_pis_cofins_estimado` (% de insumos creditáveis) destrava quando o contador fornecer.
+- **PIS/COFINS sobre receitas financeiras** (Codex 2º passe — Decreto 8.426/2015): no não-cumulativo,
+  `receitas_financeiras × 4,65%` (0,65% + 4%), **sem crédito**. ⚠️ Omitir isso pode **inverter Real × Presumido**
+  se a receita financeira for material (no presumido cumulativo a receita financeira é alíquota-zero — §2.2).
 - CPP = encargo patronal sobre a folha (igual presumido) — §2.4.
 - **Empate técnico** (Codex #2): quando a economia estimada cair dentro da banda de erro do Real (driven
   pela aproximação do LALUR + crédito ausente), o status vira `empate_tecnico` ("exige validação do
   contador") em vez de recomendação confiante.
 
 ### 2.4 Encargo patronal sobre a folha (CPP + RAT/FAP + terceiros)
-- No Simples (anexos I/II/III) o CPP está **dentro do DAS**. No Presumido/Real é recolhido **à parte**.
+- No Simples (anexos I/II/III/V) o CPP está **dentro do DAS**; só o anexo IV recolhe à parte. No
+  Presumido/Real é recolhido **à parte**.
 - **CPP básica = 20% da folha**, mas RAT/FAP (1–3% × FAP) e terceiros/Sistema S (~5,8%) são custo
   patronal material (achado Codex #4). Fase 1: `encargo_patronal_pct` configurável (default **20%** =
   CPP estrita) com flag quando usar o default; o contador pode subir p/ ~25,8–26,8% (carga cheia).
@@ -98,9 +102,19 @@ Base de comparação: **carga anual no eixo federal + CPP (INSS patronal)** sobr
 Para comparar a **mesma cesta** (federal+CPP) entre Simples e Presumido/Real (Codex #3), decompor o DAS
 pelas tabelas de **repartição (partilha)** da LC 123 — % de cada faixa/anexo alocado a IRPJ/CSLL/PIS/
 COFINS/CPP/ICMS/ISS/IPI. Necessárias para as 3 empresas: anexos **I** (comércio), **II** (indústria, com
-IPI), **III** e **V** (serviços, com ISS). Federal+CPP = DAS × (1 − %ICMS/ISS/IPI da faixa). Adicionar a
-constante `PARTILHA_SIMPLES` (espelho do `dre-tabelas-tributarias`). Faixas superiores capam ICMS/ISS e
-jogam o excedente pro federal — capturar na tabela.
+IPI), **III** e **V** (serviços, com ISS). Adicionar a constante `PARTILHA_SIMPLES` (espelho do
+`dre-tabelas-tributarias`).
+
+⚠️ **Algoritmo correto (Codex 2º passe) — não é só `% estático da faixa`:**
+1. Calcular o **indireto efetivo dentro do DAS** (ICMS/ISS/IPI) já com **teto e redistribuição**.
+2. `federal+CPP = DAS − indireto_no_DAS` (o excedente do teto vai pros federais, não some).
+
+**Armadilhas a capturar na tabela/algoritmo:**
+- **Anexo III:** o teto de **ISS** ocorre já na **5ª faixa** quando a alíquota efetiva passa de **14,92537%**
+  (não só na "faixa superior") — a diferença é redistribuída pros tributos federais. Modelar a faixa onde o ISS
+  satura.
+- **Anexo II:** regra específica para incidência **simultânea de IPI e ISS** — capturar.
+- A soma das frações (federal+CPP + indireto pós-teto) = 1 por faixa.
 
 ### 2.6 Eixo indireto (ICMS/ISS/IPI) — separado e sinalizado (Codex #3, #7)
 - **ICMS/ISS/IPI** são **iguais entre Presumido e Real** (cancelam no delta entre os dois) → excluídos do
@@ -202,10 +216,13 @@ Sensibilidade: break-even de margem (Real × Presumido) e de fator-r (III × V).
 - `recomendado` = menor total_federal_cpp entre os elegíveis; `economia_anual` = atual − recomendado ≥ 0.
 - **Adicional IRPJ por trimestre** (Codex #1): testar receita sazonal (1 trimestre alto + 3 baixos) que
   gera adicional real mas a média TTM/4 esconde → confirmar que trimestres reais capturam e TTM/4 sinaliza.
-- **Partilha (§2.5):** federal+CPP = DAS × fração; soma das frações (federal+CPP + indireto) = 1 por faixa;
-  faixa superior capa ICMS/ISS e joga excedente pro federal.
-- **Presumido:** receitas financeiras entram integrais na base IRPJ/CSLL (não via presunção).
-- **Real:** lucro ≤ 0 → IRPJ/CSLL = 0; confiança sempre ≤ media; crédito=0 default reduz vantagem (flag).
+- **Partilha (§2.5):** `federal+CPP = DAS − indireto_no_DAS`; soma das frações (federal+CPP + indireto pós-teto)
+  = 1 por faixa. **Testar o teto de ISS no Anexo III na 5ª faixa** (alíquota efetiva > 14,92537% → excedente
+  redistribuído pros federais) e CPP embutido no Anexo V.
+- **Presumido:** receitas financeiras entram integrais na base IRPJ/CSLL (não via presunção); receita
+  financeira no PIS/COFINS cumulativo = alíquota zero.
+- **Real:** lucro ≤ 0 → IRPJ/CSLL = 0; confiança sempre ≤ media; crédito=0 default reduz vantagem (flag);
+  **PIS/COFINS sobre receitas financeiras = 4,65% sem crédito** (testar que não-omissão muda Real × Presumido).
 - **Empate técnico:** economia < banda → status `empate_tecnico`.
 - **fator-r:** massa/receita ≥ 0,28 → anexo III; < 0,28 → V; massa null → banda (III e V).
 - Degradação: input ausente → `null`/flag, nunca número fabricado.
