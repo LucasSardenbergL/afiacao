@@ -164,7 +164,7 @@ const FinanceiroOrcamento = () => {
               </TableHeader>
               <TableBody>
                 {ytdSummary.filter(s => s.orcYtd > 0 || s.realYtd > 0).map(s => {
-                  const isGood = s.linha.includes('receita') || s.linha.includes('lucro') || s.linha === 'resultado_operacional'
+                  const isGood = s.linha.includes('receita') || s.linha.includes('lucro')
                     ? s.variacao >= 0 : s.variacao <= 0;
                   return (
                     <TableRow key={s.linha}>
