@@ -21,13 +21,13 @@ Este audit valida **quais custom migrations estão de fato aplicadas no banco**.
 
 ## Resumo
 
-- **60** custom migrations totais
-- **333** objetos esperados (criados por estas migrations)
+- **62** custom migrations totais
+- **338** objetos esperados (criados por estas migrations)
 - Quebra por tipo:
   - `rls_policy`: 104
   - `index`: 95
   - `table`: 51
-  - `function`: 33
+  - `function`: 38
   - `trigger`: 31
   - `cron_job`: 15
   - `enum_value`: 4
@@ -650,6 +650,15 @@ Lista canônica do que cada migration *deveria* criar (extraído via regex de `C
 | `rls_policy` | `public.fin_sync_cursor_select_staff` | `fin_sync_cursor` |
 | `rls_policy` | `public.fin_sync_cursor_service_all` | `fin_sync_cursor` |
 
+### `20260525020001_fin_rpc_gate_auth_p1.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `function` | `public.fin_calcular_confiabilidade` | — |
+| `function` | `public.fin_categorias_sem_mapping` | — |
+| `function` | `public.fin_consolidado_intercompany` | — |
+| `function` | `public.fin_estimar_estoque_omie` | — |
+
 ### `20260525120000_positivacao_kpis.sql`
 
 | Tipo | Objeto | Parent |
@@ -657,6 +666,12 @@ Lista canônica do que cada migration *deveria* criar (extraído via regex de `C
 | `table` | `public.carteira_positivacao_snapshot` | — |
 | `index` | `public.idx_sales_orders_kpi_date` | `sales_orders` |
 | `function` | `public.get_minha_positivacao` | — |
+
+### `20260525160000_carteira_saude_rpc.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `function` | `public.get_carteira_saude` | — |
 
 ## Próximos passos quando algo der `❌`
 

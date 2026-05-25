@@ -3,6 +3,7 @@
 import { useState } from "react";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
+import { sanitizeForPostgrestOr } from "@/lib/postgrest";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -42,11 +43,13 @@ export function SubstituicaoModal({
     queryKey: ["sku-busca", busca],
     queryFn: async () => {
       if (!busca || busca.length < 2) return [];
+      // Só a parte ilike vem de texto livre; o .eq é coagido a número (seguro).
+      const descSafe = sanitizeForPostgrestOr(busca);
       const { data } = await supabase
         .from("sku_parametros")
         .select("sku_codigo_omie, sku_descricao")
         .eq("empresa", EMPRESA)
-        .or(`sku_codigo_omie.eq.${Number(busca) || 0},sku_descricao.ilike.%${busca}%`)
+        .or(`sku_codigo_omie.eq.${Number(busca) || 0},sku_descricao.ilike.%${descSafe}%`)
         .limit(20);
       return data ?? [];
     },

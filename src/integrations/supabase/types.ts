@@ -4257,6 +4257,27 @@ export type Database = {
         }
         Relationships: []
       }
+      fin_regime_inputs: {
+        Row: {
+          company: string
+          regime_inputs: Json
+          updated_at: string
+          updated_by: string | null
+        }
+        Insert: {
+          company: string
+          regime_inputs?: Json
+          updated_at?: string
+          updated_by?: string | null
+        }
+        Update: {
+          company?: string
+          regime_inputs?: Json
+          updated_at?: string
+          updated_by?: string | null
+        }
+        Relationships: []
+      }
       fin_sync_checkpoint: {
         Row: {
           company: string
@@ -12630,6 +12651,7 @@ export type Database = {
           valor_total_ciclo: number
         }[]
       }
+      get_carteira_saude: { Args: never; Returns: Json }
       get_commercial_role: {
         Args: { _user_id: string }
         Returns: Database["public"]["Enums"]["commercial_role"]
