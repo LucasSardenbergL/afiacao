@@ -713,7 +713,7 @@ function MobileNav({ open, onClose }: { open: boolean; onClose: () => void }) {
                       key={item.path}
                       onClick={() => { navigate(item.path); onClose(); }}
                       className={cn(
-                        'flex items-center gap-2.5 w-full px-3 py-1.5 mx-2 rounded-md text-sm font-medium transition-colors',
+                        'flex min-h-11 items-center gap-2.5 w-full px-3 py-2.5 mx-2 rounded-md text-sm font-medium transition-colors',
                         active
                           ? 'bg-sidebar-accent text-sidebar-accent-foreground'
                           : 'text-sidebar-foreground hover:bg-sidebar-accent/60'
