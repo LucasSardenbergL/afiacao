@@ -3,7 +3,7 @@
 -- ========================================================================
 --
 -- Gerado por: scripts/audit-custom-migrations.ts
--- Total de custom migrations: 58
+-- Total de custom migrations: 59
 --
 -- Como usar:
 --   1. Abra o Supabase SQL Editor (via Lovable Cloud → Backend → SQL Editor)
@@ -77,6 +77,7 @@ WITH expected (version, slug, filename) AS (VALUES
   ('20260524202410', 'tuning_crons_estoque_freq_e_timeouts', '20260524202410_tuning_crons_estoque_freq_e_timeouts.sql'),
   ('20260524203000', 'rpc_staff_guard_permite_cron_backend', '20260524203000_rpc_staff_guard_permite_cron_backend.sql'),
   ('20260525000000', 'fin_crons_por_entidade', '20260525000000_fin_crons_por_entidade.sql'),
+  ('20260525010000', 'fin_audit_skip_service_role', '20260525010000_fin_audit_skip_service_role.sql'),
   ('20260525020000', 'fin_sync_cursor', '20260525020000_fin_sync_cursor.sql')
 )
 SELECT
@@ -420,6 +421,7 @@ WITH expected_objects (migration, kind, schema_name, object_name, parent_name) A
   ('fin_crons_por_entidade', 'cron_job', 'cron', 'fin-sync-cp-2x', ''),
   ('fin_crons_por_entidade', 'cron_job', 'cron', 'fin-sync-cr-2x', ''),
   ('fin_crons_por_entidade', 'cron_job', 'cron', 'fin-sync-mov-2x', ''),
+  ('fin_audit_skip_service_role', 'function', 'public', 'fin_audit_trigger', ''),
   ('fin_sync_cursor', 'table', 'public', 'fin_sync_cursor', ''),
   ('fin_sync_cursor', 'index', 'public', 'idx_fin_sync_cursor_pendentes', 'fin_sync_cursor'),
   ('fin_sync_cursor', 'cron_job', 'cron', 'fin-sync-continuacao-10min', ''),
