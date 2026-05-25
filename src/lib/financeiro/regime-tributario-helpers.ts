@@ -135,3 +135,68 @@ export function anexoEfetivoFatorR(massaFatorR: number | null, receita: number):
 export function breakEvenMargemReal(input: { presuncaoIrpj: number; presuncaoCsll: number }): number {
   return (input.presuncaoIrpj * IRPJ + input.presuncaoCsll * CSLL) / (IRPJ + CSLL);
 }
+
+export type RegimeNome = 'simples' | 'presumido' | 'real';
+export type StatusElegibilidade = 'elegivel' | 'sublimite_excedido' | 'inelegivel';
+export type StatusRecomendacao = 'recomenda' | 'empate_tecnico' | 'manter' | 'incompleto';
+export type RegimeComparado = {
+  regime: RegimeNome; elegivel: boolean; status_elegibilidade: StatusElegibilidade; motivo_inelegivel: string | null;
+  total_federal_cpp: number; aliquota_efetiva: number | null; detalhe: Record<string, number>; aproximado: boolean; flags: string[];
+};
+
+export function compararRegimes(input: {
+  simples: ImpostoSimples; elegSimples: Elegibilidade;
+  presumido: ImpostoPresumido; real: ImpostoReal; receitaAnual?: number;
+}): RegimeComparado[] {
+  const rec = input.receitaAnual && input.receitaAnual > 0 ? input.receitaAnual : null;
+  const simplesElegivel = input.elegSimples.status_elegibilidade !== 'inelegivel';
+  const lista: RegimeComparado[] = [
+    {
+      regime: 'simples', elegivel: simplesElegivel, status_elegibilidade: input.elegSimples.status_elegibilidade,
+      motivo_inelegivel: input.elegSimples.motivo_inelegivel, total_federal_cpp: input.simples.total_federal_cpp,
+      aliquota_efetiva: rec ? input.simples.total_federal_cpp / rec : null,
+      detalhe: { das_total: input.simples.das_total, federal_cpp_do_das: input.simples.total_federal_cpp, icms_iss_ipi: input.simples.icms_iss_ipi },
+      aproximado: input.simples.aproximado, flags: input.elegSimples.status_elegibilidade === 'sublimite_excedido' ? ['Sublimite excedido — ICMS/ISS fora do DAS.'] : [],
+    },
+    {
+      regime: 'presumido', elegivel: true, status_elegibilidade: 'elegivel', motivo_inelegivel: null,
+      total_federal_cpp: input.presumido.total_federal_cpp, aliquota_efetiva: rec ? input.presumido.total_federal_cpp / rec : null,
+      detalhe: { irpj: input.presumido.irpj, csll: input.presumido.csll, pis: input.presumido.pis, cofins: input.presumido.cofins, cpp: input.presumido.cpp }, aproximado: false, flags: [],
+    },
+    {
+      regime: 'real', elegivel: true, status_elegibilidade: 'elegivel', motivo_inelegivel: null,
+      total_federal_cpp: input.real.total_federal_cpp, aliquota_efetiva: rec ? input.real.total_federal_cpp / rec : null,
+      detalhe: { irpj: input.real.irpj, csll: input.real.csll, pis_cofins: input.real.pis_cofins, cpp: input.real.cpp, credito_aplicado: input.real.credito_aplicado },
+      aproximado: true, flags: ['Lucro real ≈ resultado contábil (sem LALUR).', input.real.credito_aplicado === 0 ? 'Crédito PIS/COFINS = 0 (faltam NCM/CFOP) — Real pode ser melhor.' : ''].filter(Boolean),
+    },
+  ];
+  return lista.sort((a, b) => {
+    if (a.elegivel !== b.elegivel) return a.elegivel ? -1 : 1;
+    return a.total_federal_cpp - b.total_federal_cpp;
+  });
+}
+
+export function recomendarRegime(comparados: RegimeComparado[], regimeAtual: RegimeNome, opts: { bandaErro: number }):
+  { recomendado: RegimeNome | null; economia_anual: number | null; status: StatusRecomendacao } {
+  const elegiveis = comparados.filter((c) => c.elegivel);
+  if (elegiveis.length === 0) return { recomendado: null, economia_anual: null, status: 'incompleto' };
+  const melhor = elegiveis[0];
+  const atual = comparados.find((c) => c.regime === regimeAtual);
+  const economia = atual ? atual.total_federal_cpp - melhor.total_federal_cpp : null;
+  if (melhor.regime === regimeAtual) return { recomendado: regimeAtual, economia_anual: 0, status: 'manter' };
+  const segundo = elegiveis[1];
+  const dentroBanda = segundo ? (segundo.total_federal_cpp - melhor.total_federal_cpp) / Math.max(1, segundo.total_federal_cpp) < opts.bandaErro : false;
+  const status: StatusRecomendacao = (melhor.regime === 'real' && dentroBanda) ? 'empate_tecnico' : 'recomenda';
+  return { recomendado: melhor.regime, economia_anual: economia != null ? Math.max(0, economia) : null, status };
+}
+
+export function scoreConfiancaRegime(input: { recomendado: RegimeNome | null; folhaConhecida: boolean; semFlagsFortes: boolean }):
+  { nivel: 'alta' | 'media' | 'baixa'; motivos: string[] } {
+  const motivos: string[] = [];
+  let nivel = 3;
+  const baixar = (p: number, m: string) => { if (p < nivel) nivel = p; motivos.push(m); };
+  if (input.recomendado === 'real') baixar(2, 'Lucro Real é triagem (sem LALUR/adições/exclusões) — confiança limitada.');
+  if (!input.folhaConhecida) baixar(2, 'Folha (CPP) não informada — comparação Simples × outros incompleta.');
+  if (!input.semFlagsFortes) baixar(2, 'Há flags de degradação (monofásico/ST/crédito não estimado).');
+  return { nivel: nivel === 3 ? 'alta' : nivel === 2 ? 'media' : 'baixa', motivos };
+}

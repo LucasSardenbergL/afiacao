@@ -1,6 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import { PARTILHA_SIMPLES, partilhaIndiretoFrac, impostoAnualSimples, elegibilidadeSimples } from '../regime-tributario-helpers';
 import { impostoAnualPresumido, impostoAnualReal, encargoPatronal, anexoEfetivoFatorR, breakEvenMargemReal } from '../regime-tributario-helpers';
+import { compararRegimes, recomendarRegime, scoreConfiancaRegime } from '../regime-tributario-helpers';
 
 describe('PARTILHA_SIMPLES — invariante de soma', () => {
   it('todas as faixas somam 1.0 (±1e-9)', () => {
@@ -97,5 +98,71 @@ describe('breakEvenMargemReal', () => {
   it('retorna a margem de cruzamento direcional entre Real e Presumido', () => {
     const r = breakEvenMargemReal({ presuncaoIrpj: 0.08, presuncaoCsll: 0.12 });
     expect(r).toBeCloseTo((0.08 * 0.15 + 0.12 * 0.09) / (0.15 + 0.09), 9);
+  });
+});
+
+describe('compararRegimes — ordena elegíveis asc por total_federal_cpp', () => {
+  it('regime inelegível (RBA>4,8M) sai do ranking mas aparece marcado', () => {
+    const comp = compararRegimes({
+      simples: { total_federal_cpp: 50000, das_total: 60000, icms_iss_ipi: 10000, aproximado: true },
+      elegSimples: { status_elegibilidade: 'inelegivel', motivo_inelegivel: 'RBA > 4,8M' },
+      presumido: { irpj: 30000, csll: 20000, pis: 0, cofins: 0, cpp: 10000, total_federal_cpp: 60000 },
+      real: { irpj: 10000, csll: 5000, pis_cofins: 40000, cpp: 10000, total_federal_cpp: 65000, credito_aplicado: 0, lucro_usado: 0 },
+    });
+    const elegiveis = comp.filter((c) => c.elegivel);
+    expect(elegiveis[0].regime).toBe('presumido');
+    expect(comp.find((c) => c.regime === 'simples')!.elegivel).toBe(false);
+  });
+});
+
+describe('recomendarRegime', () => {
+  it('recomenda o menor; economia = atual − recomendado ≥ 0', () => {
+    const comparados = compararRegimes({
+      simples: { total_federal_cpp: 40000, das_total: 50000, icms_iss_ipi: 10000, aproximado: true },
+      elegSimples: { status_elegibilidade: 'elegivel', motivo_inelegivel: null },
+      presumido: { irpj: 30000, csll: 20000, pis: 0, cofins: 0, cpp: 10000, total_federal_cpp: 60000 },
+      real: { irpj: 10000, csll: 5000, pis_cofins: 40000, cpp: 10000, total_federal_cpp: 65000, credito_aplicado: 0, lucro_usado: 0 },
+    });
+    const r = recomendarRegime(comparados, 'presumido', { bandaErro: 0.05 });
+    expect(r.recomendado).toBe('simples');
+    expect(r.economia_anual).toBeCloseTo(60000 - 40000, 0);
+    expect(r.status).toBe('recomenda');
+  });
+  it('economia dentro da banda de erro + recomendado=real → empate_tecnico', () => {
+    const comparados = compararRegimes({
+      simples: { total_federal_cpp: 100000, das_total: 110000, icms_iss_ipi: 10000, aproximado: true },
+      elegSimples: { status_elegibilidade: 'elegivel', motivo_inelegivel: null },
+      presumido: { irpj: 30000, csll: 20000, pis: 0, cofins: 0, cpp: 10000, total_federal_cpp: 61000 },
+      real: { irpj: 10000, csll: 5000, pis_cofins: 35000, cpp: 10000, total_federal_cpp: 60000, credito_aplicado: 0, lucro_usado: 100000 },
+    });
+    const r = recomendarRegime(comparados, 'presumido', { bandaErro: 0.05 });
+    expect(r.status).toBe('empate_tecnico');
+  });
+  it('regime atual já é o melhor → manter, economia 0', () => {
+    const comparados = compararRegimes({
+      simples: { total_federal_cpp: 40000, das_total: 50000, icms_iss_ipi: 10000, aproximado: true },
+      elegSimples: { status_elegibilidade: 'elegivel', motivo_inelegivel: null },
+      presumido: { irpj: 30000, csll: 20000, pis: 0, cofins: 0, cpp: 10000, total_federal_cpp: 60000 },
+      real: { irpj: 10000, csll: 5000, pis_cofins: 40000, cpp: 10000, total_federal_cpp: 65000, credito_aplicado: 0, lucro_usado: 0 },
+    });
+    const r = recomendarRegime(comparados, 'simples', { bandaErro: 0.05 });
+    expect(r.status).toBe('manter');
+    expect(r.economia_anual).toBe(0);
+  });
+});
+
+describe('scoreConfiancaRegime', () => {
+  it('Real sempre ≤ media (LALUR não modelado)', () => {
+    const c = scoreConfiancaRegime({ recomendado: 'real', folhaConhecida: true, semFlagsFortes: true });
+    expect(c.nivel === 'alta').toBe(false);
+  });
+  it('sem folha → rebaixa + motivo', () => {
+    const c = scoreConfiancaRegime({ recomendado: 'presumido', folhaConhecida: false, semFlagsFortes: true });
+    expect(c.nivel).not.toBe('alta');
+    expect(c.motivos.join(' ')).toMatch(/folha/i);
+  });
+  it('tudo ok + recomendado presumido → alta', () => {
+    const c = scoreConfiancaRegime({ recomendado: 'presumido', folhaConhecida: true, semFlagsFortes: true });
+    expect(c.nivel).toBe('alta');
   });
 });
