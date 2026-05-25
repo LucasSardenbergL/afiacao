@@ -3,7 +3,7 @@
 -- ========================================================================
 --
 -- Gerado por: scripts/audit-custom-migrations.ts
--- Total de custom migrations: 56
+-- Total de custom migrations: 57
 --
 -- Como usar:
 --   1. Abra o Supabase SQL Editor (via Lovable Cloud → Backend → SQL Editor)
@@ -71,6 +71,7 @@ WITH expected (version, slug, filename) AS (VALUES
   ('20260524100500', 'cron_financeiro_e_fix_sayerlack', '20260524100500_cron_financeiro_e_fix_sayerlack.sql'),
   ('20260524102500', 'fix_fin_triggers_json_field_access', '20260524102500_fix_fin_triggers_json_field_access.sql'),
   ('20260524120000', 'carteira_omie_fase1', '20260524120000_carteira_omie_fase1.sql'),
+  ('20260524120000', 'fin_regime_inputs', '20260524120000_fin_regime_inputs.sql'),
   ('20260524121531', 'restore_sla_guards', '20260524121531_restore_sla_guards.sql'),
   ('20260524170000', 'scores_unique_por_cliente', '20260524170000_scores_unique_por_cliente.sql'),
   ('20260524180000', 'carteira_scores_owner_e_filas', '20260524180000_carteira_scores_owner_e_filas.sql'),
@@ -400,6 +401,9 @@ WITH expected_objects (migration, kind, schema_name, object_name, parent_name) A
   ('carteira_omie_fase1', 'index', 'public', 'idx_coverage_covering_active', 'carteira_coverage'),
   ('carteira_omie_fase1', 'function', 'public', 'carteira_visivel_para', ''),
   ('carteira_omie_fase1', 'function', 'public', 'minha_carteira', ''),
+  ('fin_regime_inputs', 'table', 'public', 'fin_regime_inputs', ''),
+  ('fin_regime_inputs', 'rls_policy', 'public', 'fin_regime_inputs_select_master', 'fin_regime_inputs'),
+  ('fin_regime_inputs', 'rls_policy', 'public', 'fin_regime_inputs_write_master', 'fin_regime_inputs'),
   ('scores_unique_por_cliente', 'index', 'public', 'idx_fcs_customer', 'farmer_client_scores'),
   ('scores_unique_por_cliente', 'index', 'public', 'idx_cvs_customer', 'customer_visit_scores'),
   ('carteira_scores_owner_e_filas', 'index', 'public', 'uniq_score_recalc_queue_pending', 'score_recalc_queue'),
