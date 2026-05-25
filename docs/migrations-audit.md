@@ -21,15 +21,15 @@ Este audit valida **quais custom migrations estão de fato aplicadas no banco**.
 
 ## Resumo
 
-- **57** custom migrations totais
-- **324** objetos esperados (criados por estas migrations)
+- **58** custom migrations totais
+- **329** objetos esperados (criados por estas migrations)
 - Quebra por tipo:
-  - `rls_policy`: 102
-  - `index`: 93
-  - `table`: 49
+  - `rls_policy`: 104
+  - `index`: 94
+  - `table`: 50
   - `function`: 31
   - `trigger`: 31
-  - `cron_job`: 14
+  - `cron_job`: 15
   - `enum_value`: 4
 
 ## Inventário por migration
@@ -633,6 +633,16 @@ Lista canônica do que cada migration *deveria* criar (extraído via regex de `C
 | `cron_job` | `cron.fin-sync-cp-2x` | — |
 | `cron_job` | `cron.fin-sync-cr-2x` | — |
 | `cron_job` | `cron.fin-sync-mov-2x` | — |
+
+### `20260525020000_fin_sync_cursor.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `table` | `public.fin_sync_cursor` | — |
+| `index` | `public.idx_fin_sync_cursor_pendentes` | `fin_sync_cursor` |
+| `cron_job` | `cron.fin-sync-continuacao-10min` | — |
+| `rls_policy` | `public.fin_sync_cursor_select_staff` | `fin_sync_cursor` |
+| `rls_policy` | `public.fin_sync_cursor_service_all` | `fin_sync_cursor` |
 
 ## Próximos passos quando algo der `❌`
 
