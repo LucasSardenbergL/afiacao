@@ -6,7 +6,8 @@ import type { Tables } from '@/integrations/supabase/types';
 import { Button } from '@/components/ui/button';
 import { Progress } from '@/components/ui/progress';
 import { ScanBar, type ScanResult } from '@/components/picking/ScanBar';
-import { Loader2, ChevronRight, Package, Monitor } from 'lucide-react';
+import { ChevronRight, Package, Monitor } from 'lucide-react';
+import { PageSkeleton } from '@/components/ui/page-skeleton';
 import { toast } from 'sonner';
 import { cn } from '@/lib/utils';
 import { setForceFull } from '@/lib/picking/view-pref';
@@ -71,9 +72,7 @@ export default function TouchPickingView() {
 
   if (isLoading) {
     return (
-      <div className="flex justify-center py-20 text-muted-foreground">
-        <Loader2 className="h-6 w-6 animate-spin" />
-      </div>
+      <PageSkeleton variant="list" />
     );
   }
 
@@ -222,9 +221,7 @@ function ActiveTaskView({
 
   if (isLoading) {
     return (
-      <div className="flex justify-center py-20 text-muted-foreground">
-        <Loader2 className="h-6 w-6 animate-spin" />
-      </div>
+      <PageSkeleton variant="list" />
     );
   }
 

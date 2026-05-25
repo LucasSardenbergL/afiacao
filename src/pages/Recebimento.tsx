@@ -5,6 +5,7 @@ import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { supabase } from '@/integrations/supabase/client';
 import { FileCheck, Truck, Plus, Loader2, PackageCheck, RefreshCw } from 'lucide-react';
 import { EmptyState } from '@/components/EmptyState';
+import { PageSkeleton } from '@/components/ui/page-skeleton';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { Card, CardContent } from '@/components/ui/card';
@@ -265,9 +266,7 @@ export default function Recebimento({ statusFilter }: { statusFilter?: string[] 
 
       {/* NF-e list */}
       {isLoading ? (
-        <div className="flex justify-center py-12">
-          <Loader2 className="h-8 w-8 animate-spin text-muted-foreground" />
-        </div>
+        <PageSkeleton variant="list" />
       ) : !nfes || nfes.length === 0 ? (
         <Card>
           <CardContent className="p-0">
