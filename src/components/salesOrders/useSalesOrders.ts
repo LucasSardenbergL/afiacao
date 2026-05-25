@@ -164,7 +164,7 @@ export function useSalesOrders() {
     });
 
     const result = await softDeleteOrder(order);
-    if (result.ok) {
+    if (result.ok === true) {
       toast.success('Pedido excluído');
       return;
     }
