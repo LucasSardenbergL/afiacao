@@ -895,3 +895,25 @@ export interface ValorCockpitResult {
   cobertura_receita: number;
   config: CockpitConfig;
 }
+
+// ═══════════════ A4 — Próxima Melhor Ação (contrato com fin-next-best-action) ═══════════════
+export type StatusAcaoFila = 'financiar_ja' | 'financiar_condicional' | 'consertar_antes' | 'falta_dado' | 'nao_financiar';
+export type TipoAcaoFila = 'consertar_valor' | 'liberar_caixa' | 'crescer' | 'benchmark';
+export interface AcaoFila {
+  empresa: string;
+  descricao: string;
+  tipo: TipoAcaoFila;
+  impacto_eva: number | null;
+  caixa_consumido: number | null;
+  payback_meses: number | null;
+  spread_positivo: boolean | null;
+  confianca: 'alta' | 'media' | 'baixa';
+  hurdle: number | null;
+  status: StatusAcaoFila;
+}
+export interface ProximaAcaoResult {
+  fila: AcaoFila[];
+  caixa_por_empresa: Record<string, { disponivel: number; confianca: 'alta' | 'media' | 'baixa' }>;
+  confianca: { nivel: 'alta' | 'media' | 'baixa'; motivos: string[] };
+  gerado_em: string;
+}
