@@ -75,3 +75,103 @@ export function descontoIncrementalRs(input: { curva: FaixaDesconto[]; q_cand: n
   const dBase = descontoAplicavel(input.curva, input.q_base) / 100;
   return input.q_cand * input.preco_unit * dCand - input.q_base * input.preco_unit * dBase;
 }
+
+export interface InsumoSku {
+  empresa: string; sku: string; fornecedor: string;
+  preco_unit: number;
+  demanda_diaria: number | null;
+  qtde_base: number | null;
+  lote_minimo_fornecedor: number | null;
+  minimo_forcado_manual: number | null;
+  cm_anual: number;
+  prazo_padrao_perc: number | null;
+  frete_perc_valor: number | null;
+  frete_fixo: number | null;
+  frete_taxa_pedido: number | null;
+  aumento_evitado_perc: number | null;
+  dias_ate_aumento: number | null;
+  ruptura_valor_estimado: number | null;
+  ruptura_dias: number | null;
+  curva_desconto: FaixaDesconto[];
+  escopo: EscopoPromo;
+}
+
+export interface DecisaoCompra {
+  empresa: string; sku: string; fornecedor: string;
+  q_base: number; q_candidata: number; q_extra: number; dias_cobertura_extra: number;
+  desconto_rs: number; aumento_evitado_rs: number; ruptura_evitada_rs: number;
+  capital_extra_rs: number; impacto_prazo_rs: number; frete_incremental_rs: number;
+  beneficio_liquido_rs: number;
+  recomendacao: RecomendacaoCompra;
+  escopo: EscopoPromo;
+  eoq_recalculo_ignorado: true;
+  flags: string[];
+  confianca: { nivel: 'alta' | 'media' | 'baixa'; motivos: string[] };
+}
+
+const DESCONTO_ALTO = 0.20;
+
+export function scoreConfianca(input: { escopo: EscopoPromo; motivos: string[] }): { nivel: 'alta' | 'media' | 'baixa'; motivos: string[] } {
+  let nivel: 'alta' | 'media' | 'baixa' = 'alta';
+  if (input.escopo !== 'sku') nivel = 'media';
+  if (input.motivos.length > 0 && nivel === 'alta') nivel = 'media';
+  return { nivel, motivos: input.motivos };
+}
+
+export function avaliarComprarMais(ins: InsumoSku): DecisaoCompra {
+  const flags: string[] = ['Ignora validade/obsolescência/armazém/caixa-crédito/câmbio/impostos/cesta (fase 1).'];
+  const motivos: string[] = [];
+  const q_base = qtdBase(ins);
+
+  if ((ins.demanda_diaria ?? 0) <= 0 || (ins.qtde_base ?? 0) <= 0) {
+    return {
+      empresa: ins.empresa, sku: ins.sku, fornecedor: ins.fornecedor, q_base, q_candidata: q_base, q_extra: 0,
+      dias_cobertura_extra: 0, desconto_rs: 0, aumento_evitado_rs: 0, ruptura_evitada_rs: 0, capital_extra_rs: 0,
+      impacto_prazo_rs: 0, frete_incremental_rs: 0, beneficio_liquido_rs: 0, recomendacao: 'falta_dado',
+      escopo: ins.escopo, eoq_recalculo_ignorado: true,
+      flags: [...flags, 'Sem demanda/qtde de ciclo — não dá pra dimensionar.'],
+      confianca: { nivel: 'baixa', motivos: ['Faltam demanda/qtde base.'] },
+    };
+  }
+
+  if (ins.ruptura_valor_estimado != null) motivos.push('Benefício de ruptura não estimado (conservador = 0).');
+  flags.push('Benefício de ruptura não estimado (conservador, fase 1).');
+
+  const candidatos = gerarCandidatos({ q_base, lote: ins.lote_minimo_fornecedor, demanda_diaria: ins.demanda_diaria,
+    curva: ins.curva_desconto, dias_ate_aumento: ins.dias_ate_aumento, ruptura_dias: ins.ruptura_dias });
+
+  let melhor: DecisaoCompra | null = null;
+  for (const q_cand of candidatos) {
+    const q_extra = q_cand - q_base;
+    const valor_extra = q_extra * ins.preco_unit;
+    const valor_candidato = q_cand * ins.preco_unit;
+    const dias_cobertura_extra = q_extra / (ins.demanda_diaria as number);
+    const desconto_rs = descontoIncrementalRs({ curva: ins.curva_desconto, q_cand, q_base, preco_unit: ins.preco_unit });
+    const aumento_evitado_rs = aumentoEvitadoRs({ q_cand, q_base, demanda_diaria: ins.demanda_diaria, dias_ate_aumento: ins.dias_ate_aumento, aumento_perc: ins.aumento_evitado_perc, preco_unit: ins.preco_unit });
+    const ruptura_evitada_rs = 0;
+    const capital_extra_rs = capitalExtra({ valor_extra, cm_anual: ins.cm_anual, demanda_diaria: ins.demanda_diaria, q_base, q_extra });
+    const faixaCand = ins.curva_desconto.find((f) => q_cand >= f.volume_minimo && f.prazo_perc != null);
+    const prazo_cand_perc = faixaCand?.prazo_perc ?? ins.prazo_padrao_perc;
+    const impacto_prazo_rs = impactoPrazoRs({ prazo_cand_perc, prazo_padrao_perc: ins.prazo_padrao_perc, valor_candidato });
+    const frete_incremental_rs = freteIncrementalRs({ valor_extra, frete_perc_valor: ins.frete_perc_valor, frete_fixo: ins.frete_fixo, frete_taxa_pedido: ins.frete_taxa_pedido });
+    const beneficio_liquido_rs = desconto_rs + aumento_evitado_rs + ruptura_evitada_rs - capital_extra_rs - impacto_prazo_rs - frete_incremental_rs;
+    const cand: DecisaoCompra = {
+      empresa: ins.empresa, sku: ins.sku, fornecedor: ins.fornecedor, q_base, q_candidata: q_cand, q_extra,
+      dias_cobertura_extra, desconto_rs, aumento_evitado_rs, ruptura_evitada_rs, capital_extra_rs, impacto_prazo_rs,
+      frete_incremental_rs, beneficio_liquido_rs, recomendacao: 'manter_base', escopo: ins.escopo,
+      eoq_recalculo_ignorado: true, flags, confianca: { nivel: 'alta', motivos },
+    };
+    if (!melhor || cand.beneficio_liquido_rs > melhor.beneficio_liquido_rs) melhor = cand;
+  }
+
+  const r = melhor as DecisaoCompra;
+  if (descontoAplicavel(ins.curva_desconto, r.q_candidata) / 100 > DESCONTO_ALTO) {
+    flags.push('Desconto alto: EOQ não recalculado com preço descontado — confiança reduzida.');
+    motivos.push('Desconto >20% sem recálculo de EOQ.');
+  }
+  r.recomendacao = (r.q_candidata > r.q_base && r.beneficio_liquido_rs > 0)
+    ? (ins.escopo === 'sku' ? 'comprar_mais' : 'simulacao_parcial')
+    : 'manter_base';
+  r.confianca = scoreConfianca({ escopo: ins.escopo, motivos });
+  return r;
+}

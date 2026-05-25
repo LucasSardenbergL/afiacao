@@ -1,6 +1,8 @@
 import { describe, it, expect } from 'vitest';
 import { qtdMinimaEfetiva, qtdBase, descontoAplicavel, gerarCandidatos } from '../compras-otimizador-helpers';
 import { capitalExtra, aumentoEvitadoRs, impactoPrazoRs, freteIncrementalRs, descontoIncrementalRs } from '../compras-otimizador-helpers';
+import { avaliarComprarMais } from '../compras-otimizador-helpers';
+import type { InsumoSku } from '../compras-otimizador-helpers';
 
 describe('qtdMinimaEfetiva', () => {
   it('max(lote, forçado)', () => {
@@ -86,5 +88,41 @@ describe('descontoIncrementalRs — desc(q_cand) − desc(q_base), campo atômic
     // q_base 100 (5%): 100×50×0,05=250; q_cand 300 (8%): 300×50×0,08=1200 → incremental 950
     const r = descontoIncrementalRs({ curva, q_cand: 300, q_base: 100, preco_unit: 50 });
     expect(r).toBeCloseTo(950, 2);
+  });
+});
+
+const base: InsumoSku = {
+  empresa: 'oben', sku: '123', fornecedor: 'F', preco_unit: 50, demanda_diaria: 10,
+  qtde_base: 100, lote_minimo_fornecedor: 50, minimo_forcado_manual: null, cm_anual: 0.18,
+  prazo_padrao_perc: 0, frete_perc_valor: 0, frete_fixo: 0, frete_taxa_pedido: 0,
+  aumento_evitado_perc: null, dias_ate_aumento: null, ruptura_valor_estimado: null, ruptura_dias: null,
+  curva_desconto: [{ volume_minimo: 300, desconto_promo_perc: 8 }], escopo: 'sku',
+};
+
+describe('avaliarComprarMais', () => {
+  it('desconto que supera o capital extra → comprar_mais com net > 0', () => {
+    const r = avaliarComprarMais(base);
+    expect(r.recomendacao).toBe('comprar_mais');
+    expect(r.q_candidata).toBe(300);
+    expect(r.beneficio_liquido_rs).toBeGreaterThan(0);
+    expect(r.desconto_rs).toBeCloseTo(1200, 0); // 300×50×0,08
+  });
+  it('desconto pequeno e capital alto → manter_base', () => {
+    const r = avaliarComprarMais({ ...base, curva_desconto: [{ volume_minimo: 300, desconto_promo_perc: 0.1 }], cm_anual: 2 });
+    expect(r.recomendacao).toBe('manter_base');
+    expect(r.q_candidata).toBe(r.q_base);
+  });
+  it('escopo grupo → simulacao_parcial mesmo com net > 0', () => {
+    const r = avaliarComprarMais({ ...base, escopo: 'grupo' });
+    expect(r.recomendacao).toBe('simulacao_parcial');
+  });
+  it('sem demanda/qtde_base → falta_dado', () => {
+    const r = avaliarComprarMais({ ...base, demanda_diaria: null, qtde_base: null });
+    expect(r.recomendacao).toBe('falta_dado');
+  });
+  it('ruptura sempre 0 na fase 1 + flag', () => {
+    const r = avaliarComprarMais({ ...base, ruptura_valor_estimado: 99999, ruptura_dias: 20 });
+    expect(r.ruptura_evitada_rs).toBe(0);
+    expect(r.flags.join(' ')).toMatch(/ruptura/i);
   });
 });
