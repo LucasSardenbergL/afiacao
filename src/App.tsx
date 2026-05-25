@@ -2,8 +2,7 @@ import { lazy, Suspense } from "react";
 import { ThemeProvider } from "next-themes";
 import { ErrorBoundary } from "@/components/ErrorBoundary";
 import { initAnalytics } from "@/lib/analytics";
-// Sistema de toast unificado em Sonner (o Radix Toaster legado foi desligado;
-// o hook `useToast` continua existindo como wrapper que delega para Sonner — ver src/hooks/use-toast.ts).
+// Sistema de toast unificado em Sonner (Radix Toaster legado e wrapper useToast removidos).
 import { Toaster as Sonner } from "@/components/ui/sonner";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
