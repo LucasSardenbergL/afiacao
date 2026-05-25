@@ -493,6 +493,7 @@
     "src/hooks/useEstoqueValor.ts",
     "src/hooks/useDirectTintImport.ts",
     "src/hooks/unifiedOrder/useCart.ts",
-    "src/hooks/unifiedOrder/useProductCatalog.ts"
+    "src/hooks/unifiedOrder/useProductCatalog.ts",
+    "src/lib/postgrest.ts"
   ]
 }

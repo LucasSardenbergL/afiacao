@@ -3,7 +3,7 @@
 -- ========================================================================
 --
 -- Gerado por: scripts/audit-custom-migrations.ts
--- Total de custom migrations: 60
+-- Total de custom migrations: 61
 --
 -- Como usar:
 --   1. Abra o Supabase SQL Editor (via Lovable Cloud → Backend → SQL Editor)
@@ -79,7 +79,8 @@ WITH expected (version, slug, filename) AS (VALUES
   ('20260525000000', 'fin_crons_por_entidade', '20260525000000_fin_crons_por_entidade.sql'),
   ('20260525010000', 'fin_audit_skip_service_role', '20260525010000_fin_audit_skip_service_role.sql'),
   ('20260525020000', 'fin_sync_cursor', '20260525020000_fin_sync_cursor.sql'),
-  ('20260525020001', 'fin_rpc_gate_auth_p1', '20260525020001_fin_rpc_gate_auth_p1.sql')
+  ('20260525020001', 'fin_rpc_gate_auth_p1', '20260525020001_fin_rpc_gate_auth_p1.sql'),
+  ('20260525120000', 'positivacao_kpis', '20260525120000_positivacao_kpis.sql')
 )
 SELECT
   e.version,
@@ -431,7 +432,10 @@ WITH expected_objects (migration, kind, schema_name, object_name, parent_name) A
   ('fin_rpc_gate_auth_p1', 'function', 'public', 'fin_calcular_confiabilidade', ''),
   ('fin_rpc_gate_auth_p1', 'function', 'public', 'fin_categorias_sem_mapping', ''),
   ('fin_rpc_gate_auth_p1', 'function', 'public', 'fin_consolidado_intercompany', ''),
-  ('fin_rpc_gate_auth_p1', 'function', 'public', 'fin_estimar_estoque_omie', '')
+  ('fin_rpc_gate_auth_p1', 'function', 'public', 'fin_estimar_estoque_omie', ''),
+  ('positivacao_kpis', 'table', 'public', 'carteira_positivacao_snapshot', ''),
+  ('positivacao_kpis', 'index', 'public', 'idx_sales_orders_kpi_date', 'sales_orders'),
+  ('positivacao_kpis', 'function', 'public', 'get_minha_positivacao', '')
 )
 SELECT
   e.migration,

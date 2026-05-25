@@ -1013,6 +1013,17 @@ async function syncPedidos(
         if (parts.length === 3) createdAt = new Date(`${parts[2]}-${parts[1]}-${parts[0]}`).toISOString();
       }
 
+      // order_date_kpi: data do PEDIDO (dInc = inclusão no Omie) p/ KPI de positivação.
+      // dInc > previsão de entrega (data_previsao) > hoje. Previsão de entrega ≠ data do pedido.
+      let orderDateKpi: string = createdAt.slice(0, 10);
+      const dIncParts = pedido.infoCadastro?.dInc?.split('/');
+      const dPrevParts = cab.data_previsao?.split('/');
+      if (dIncParts && dIncParts.length === 3) {
+        orderDateKpi = `${dIncParts[2]}-${dIncParts[1].padStart(2, '0')}-${dIncParts[0].padStart(2, '0')}`;
+      } else if (dPrevParts && dPrevParts.length === 3) {
+        orderDateKpi = `${dPrevParts[2]}-${dPrevParts[1].padStart(2, '0')}-${dPrevParts[0].padStart(2, '0')}`;
+      }
+
       // Get cached address/phone for this client
       const clientInfo = clientAddressCache.get(codigoCliente) || { address: '', phone: '' };
 
@@ -1029,6 +1040,7 @@ async function syncPedidos(
         account,
         hash_payload: hashPayload,
         created_at: createdAt,
+        order_date_kpi: orderDateKpi,
         notes: cab.observacoes_pedido || null,
         customer_address: clientInfo.address || null,
         customer_phone: clientInfo.phone || null,

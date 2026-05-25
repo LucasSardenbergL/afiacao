@@ -21,13 +21,13 @@ Este audit valida **quais custom migrations estão de fato aplicadas no banco**.
 
 ## Resumo
 
-- **60** custom migrations totais
-- **334** objetos esperados (criados por estas migrations)
+- **61** custom migrations totais
+- **337** objetos esperados (criados por estas migrations)
 - Quebra por tipo:
   - `rls_policy`: 104
-  - `index`: 94
-  - `table`: 50
-  - `function`: 36
+  - `index`: 95
+  - `table`: 51
+  - `function`: 37
   - `trigger`: 31
   - `cron_job`: 15
   - `enum_value`: 4
@@ -658,6 +658,14 @@ Lista canônica do que cada migration *deveria* criar (extraído via regex de `C
 | `function` | `public.fin_categorias_sem_mapping` | — |
 | `function` | `public.fin_consolidado_intercompany` | — |
 | `function` | `public.fin_estimar_estoque_omie` | — |
+
+### `20260525120000_positivacao_kpis.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `table` | `public.carteira_positivacao_snapshot` | — |
+| `index` | `public.idx_sales_orders_kpi_date` | `sales_orders` |
+| `function` | `public.get_minha_positivacao` | — |
 
 ## Próximos passos quando algo der `❌`
 
