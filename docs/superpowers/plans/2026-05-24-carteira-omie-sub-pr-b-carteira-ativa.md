@@ -13,25 +13,37 @@
 
 ---
 
-## 🟢 STATUS / RETOMAR DAQUI (atualizado 2026-05-24)
+## 🟢 STATUS / RETOMAR DAQUI (atualizado 2026-05-24 — Tasks 1-6 FEITAS, em PR #263, rollout pendente)
 
-**Branch:** `feat/carteira-omie-scores-cobertura` (pushada no origin, tip `383c479`). **#236 já mergeado** → Sub-PR A (Posse) está no `main` e em produção (6908 clientes na carteira: Lucas 3434 / Regina 1890 / Tati 1584; cron `carteira-rebuild-nightly` ativo).
+**Branch:** `feat/carteira-omie-scores-cobertura` (origin tip `2d61f7d`). **PR #263 aberta** (feat→main). **#236 já mergeado** → Sub-PR A (Posse) em produção (6908 clientes: Lucas 3434 / Regina 1890 / Tati 1584; cron `carteira-rebuild-nightly` ativo).
 
-**Feito (commitado + pushado):**
-- ✅ **Task 1** — `supabase/migrations/20260524170000_scores_unique_por_cliente.sql` (dedupe + UNIQUE(customer_user_id) nas 2 tabelas). **Ainda NÃO aplicada no Lovable** (faz parte do rollout coordenado).
-- ✅ **Task 2** — `src/lib/carteira/owner-map.ts` + testes (TDD verde).
-- ✅ **Task 3** — `supabase/functions/calculate-scores/index.ts` editado: seed usa `ownerMap.get(client.user_id) ?? defaultFarmerId` + `onConflict: 'customer_user_id'` + comentário anti-drift. **Ainda NÃO deployada.**
+**Código completo (commitado + pushado, test 835✓ / typecheck:strict✓):**
+- ✅ **Task 1** — `20260524170000_scores_unique_por_cliente.sql`: dedupe por **RIQUEZA** (não ctid — codex pegou que linhas do recalc têm colunas ricas nulas) + UNIQUE(customer_user_id).
+- ✅ **Task 2** — `src/lib/carteira/owner-map.ts` + testes (anti-drift).
+- ✅ **Task 3** — `calculate-scores` seeda farmer_id=dono + onConflict por cliente.
+- ✅ **Task 4** — 4 recalc functions: onConflict 'customer_user_id'; visit lê fcs por customer_user_id; **drain concorrente**; batch enumera só ativos (30d) mapeados pro dono. + nova migration `20260524180000_carteira_scores_owner_e_filas.sql` (UPDATE owner set-based + INSERT faltantes + índice de fila (customer_user_id) + 3 triggers resolvendo dono via carteira_assignments).
+- ✅ **Task 5** — `useCoverage` (tipado) + `useMyVisitSuggestions`/`useMyCarteiraScores` (`in('farmer_id', [eu,...cobertos])` + `coberto_de`).
+- ✅ **Task 6** — `CoveragePanel` em /settings + selo no `VisitSuggestionsCard`.
 
-**Falta (retomar aqui):**
-- ⏳ **Task 4** — editar 4 edge functions: `scoring-recalc-batch`, `scoring-recalc-client`, `visit-score-recalc-batch`, `visit-score-recalc-client` (enumerar `carteira_assignments`, `farmer_id = owner`, `onConflict: 'customer_user_id'`). Ver Task 4 abaixo.
-- ⏳ **Task 5** — `src/hooks/useCoverage.ts` + expandir `useMyVisitSuggestions`/`useMyCarteiraScores` (`farmer_id IN [eu, ...cobertos]` + selo).
-- ⏳ **Task 6** — `CoveragePanel.tsx` + selo no `VisitSuggestionsCard` + **ROLLOUT COORDENADO** + validação + PR.
+**Decisões-chave (codex consult 2026-05-24, sessão da continuação):**
+- `calculate-scores` só seeda em tabela VAZIA → reconciliação de farmer_id=dono é **SQL set-based** (preserva colunas ricas), não via calculate-scores.
+- Backfill de visit score dos 6908 = **fila como cursor** + **drain concorrente** (não fan-out, não offset). Enfileira tudo via SQL, dreno ~14x.
+- Triggers de fila enfileiravam pelo ATOR → resolvem o dono via `carteira_assignments` (COALESCE).
+- Divergência spec×codex: mantido `signal_modifiers` das ligações DO DONO (spec).
 
-**⚠️ Rollout coordenado (CRÍTICO):** a migration (Task 1) e os deploys das functions (Tasks 3-4) são **acoplados** — o `onConflict` muda de `customer_user_id,farmer_id` pra `customer_user_id` ao mesmo tempo que a UNIQUE muda. NÃO aplicar a migration antes das functions estarem prontas pra deploy. Sequência no fim: **aplicar migration → deployar calculate-scores + as 4 recalc → invocar calculate-scores (recompute) → invocar visit-score-recalc-batch → validar (Regina ~1890, Tati ~1584 com score) → cron.**
+**⏳ FALTA: ROLLOUT MANUAL no Lovable (founder)** — sequência completa + blocos SQL no corpo da PR #263:
+1. SQL Editor: BLOCO A (`20260524170000`) → BLOCO B (`20260524180000`)
+2. Chat Lovable: deploy das 5 functions (calculate-scores + 4 recalc)
+3. Invocar `calculate-scores`
+4. SQL Editor: BLOCO C (enfileira carteira pro backfill)
+5. Invocar `visit-score-recalc-client` `{drain_queue:true,max_drain:500}` ~14x até `drained:0`
+6. Invocar `scoring-recalc-batch` 1x
+7. SQL Editor: BLOCO D (validar: Regina ~1890, fila zerada)
+8. Conferir crons noturnos `scoring-recalc-batch-nightly` / `visit-score-recalc-batch-nightly`
 
-**⚠️ Contenção de diretório:** o diretório principal teve um flip transitório de branch (sessão paralela). **Comece numa worktree isolada** (`git worktree add` a partir de `origin/feat/carteira-omie-scores-cobertura`) pra evitar colisão, OU confirme que o diretório está só pra você. Faça `git fetch` e cheque que está em `383c479` antes de editar.
+**⚠️ Worktree principal:** o `feat` local lá fica ATRÁS do remoto (push veio da worktree `eloquent-cartwright`). Quando for usar, `git pull --ff-only` na feat (não afeta o ProcessoComprasStepper.tsx não-commitado).
 
-**Frase pra abrir a sessão nova:** "Continuar Sub-PR B da carteira (carteira ativa) a partir do plano `docs/superpowers/plans/2026-05-24-carteira-omie-sub-pr-b-carteira-ativa.md` — Tasks 1-3 já feitas/pushadas na branch feat/carteira-omie-scores-cobertura; executar Tasks 4-6 + rollout. Usar worktree isolada."
+**Frase pra retomar:** "Sub-PR B da carteira está em PR #263, código completo. Conduzir o rollout manual no Lovable (BLOCO A→B→deploy→calculate-scores→BLOCO C→drain→batch→BLOCO D) a partir do corpo da PR."
 
 ---
 
