@@ -1,5 +1,7 @@
 # Carteira-Omie — Sub-PR D (Positivação & KPIs, Fase 4 v1) — Implementation Plan
 
+> **✅ CONCLUÍDO (2026-05-25):** Tasks 1-9 implementadas (PR #279 mergeada na main, squash `7ac27cc`→`892a740`). Rollout aplicado e validado em produção no Lovable: BLOCO A (col=1/snap=1/rpc=1) → deploy de `omie-vendas-sync` + `carteira-positivacao-snapshot` → RPC validada (carteira elegível Regina ~1890) → cron `carteira-positivacao-snapshot-mensal` (`0 8 1 * *`) ativo → smoke test ok. 1018 testes verdes + typecheck:strict. **Programa Carteira-Omie (A+B+D) 100% em produção.** Dívida conhecida: pedidos antigos sem payload Omie → `order_date_kpi = created_at`; corrige conforme re-syncs gravam `dInc`.
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) ou superpowers:executing-plans. Steps usam checkbox (`- [ ]`).
 
 **Goal:** A tela `FarmerCalls` passa a liderar com KPIs de progresso comercial da carteira — Positivação MTD e a lista "Clientes a Positivar" como o coração — em vez de KPIs de atividade do dia.
