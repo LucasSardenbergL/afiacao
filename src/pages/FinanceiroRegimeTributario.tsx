@@ -38,9 +38,13 @@ function statusClasses(s: StatusRecomendacao) {
   return 'text-muted-foreground';
 }
 
-function ComparadoRow({ row, atual, recomendado }: { row: RegimeComparado; atual: RegimeNome; recomendado: RegimeNome | null }) {
+function ComparadoRow({ row, atual, recomendado, status }: { row: RegimeComparado; atual: RegimeNome; recomendado: RegimeNome | null; status: StatusRecomendacao }) {
   const isAtual = row.regime === atual;
-  const isRecomendado = recomendado != null && row.regime === recomendado;
+  // "Recomendado" só quando a recomendação é confiável (recomenda/empate). Em 'incompleto' não fabricamos badge.
+  const isRecomendado =
+    recomendado != null && row.regime === recomendado && (status === 'recomenda' || status === 'empate_tecnico');
+  // Em 'manter', o regime atual já é o melhor — sinalizamos como "Atual (melhor)" em vez de "Recomendado".
+  const isAtualMelhor = isAtual && status === 'manter';
   return (
     <tr className={`border-b border-border last:border-0 ${!row.elegivel ? 'text-muted-foreground' : ''} ${isAtual ? 'bg-muted/40' : ''}`}>
       <td className="py-1.5 pr-2">
@@ -48,6 +52,9 @@ function ComparadoRow({ row, atual, recomendado }: { row: RegimeComparado; atual
         {isAtual && <span className="ml-1 text-xs text-muted-foreground">(atual)</span>}
         {isRecomendado && (
           <span className="ml-1 text-xs px-1.5 py-0.5 rounded text-status-success bg-status-success-bg">Recomendado</span>
+        )}
+        {isAtualMelhor && (
+          <span className="ml-1 text-xs px-1.5 py-0.5 rounded text-status-success bg-status-success-bg">Atual (melhor)</span>
         )}
       </td>
       <td className="py-1.5 px-2 text-right font-mono">{row.elegivel ? brl(row.total_federal_cpp) : '—'}</td>
@@ -88,13 +95,18 @@ function EmpresaCard({ emp }: { emp: RegimeEmpresaResult }) {
           </thead>
           <tbody>
             {emp.comparados.map((row) => (
-              <ComparadoRow key={row.regime} row={row} atual={emp.regime_atual} recomendado={emp.recomendado} />
+              <ComparadoRow key={row.regime} row={row} atual={emp.regime_atual} recomendado={emp.recomendado} status={emp.status} />
             ))}
           </tbody>
         </table>
 
         <div className="space-y-1">
           <p className={`font-medium ${statusClasses(emp.status)}`}>{STATUS_LABEL[emp.status]}</p>
+          {emp.status === 'incompleto' && (
+            <p className="text-xs text-status-warning">
+              Estimativa incompleta — informe a folha / 12 meses de DRE para a recomendação.
+            </p>
+          )}
           {emp.economia_anual != null && emp.economia_anual > 0 && (
             <p className="text-status-success">
               Economia anual estimada: <span className="kpi-value">{brl(emp.economia_anual)}</span>

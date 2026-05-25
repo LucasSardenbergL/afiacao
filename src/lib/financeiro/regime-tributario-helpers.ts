@@ -176,11 +176,14 @@ export function compararRegimes(input: {
   });
 }
 
-export function recomendarRegime(comparados: RegimeComparado[], regimeAtual: RegimeNome, opts: { bandaErro: number }):
+export function recomendarRegime(comparados: RegimeComparado[], regimeAtual: RegimeNome, opts: { bandaErro: number; dadosCompletos?: boolean }):
   { recomendado: RegimeNome | null; economia_anual: number | null; status: StatusRecomendacao } {
   const elegiveis = comparados.filter((c) => c.elegivel);
   if (elegiveis.length === 0) return { recomendado: null, economia_anual: null, status: 'incompleto' };
   const melhor = elegiveis[0];
+  if (opts.dadosCompletos === false) {
+    return { recomendado: melhor.regime, economia_anual: null, status: 'incompleto' };
+  }
   const atual = comparados.find((c) => c.regime === regimeAtual);
   const economia = atual ? atual.total_federal_cpp - melhor.total_federal_cpp : null;
   if (melhor.regime === regimeAtual) return { recomendado: regimeAtual, economia_anual: 0, status: 'manter' };
@@ -190,11 +193,12 @@ export function recomendarRegime(comparados: RegimeComparado[], regimeAtual: Reg
   return { recomendado: melhor.regime, economia_anual: economia != null ? Math.max(0, economia) : null, status };
 }
 
-export function scoreConfiancaRegime(input: { recomendado: RegimeNome | null; folhaConhecida: boolean; semFlagsFortes: boolean }):
+export function scoreConfiancaRegime(input: { recomendado: RegimeNome | null; folhaConhecida: boolean; semFlagsFortes: boolean; ttmCompleto?: boolean }):
   { nivel: 'alta' | 'media' | 'baixa'; motivos: string[] } {
   const motivos: string[] = [];
   let nivel = 3;
   const baixar = (p: number, m: string) => { if (p < nivel) nivel = p; motivos.push(m); };
+  if (input.ttmCompleto === false) baixar(1, 'TTM incompleto (<12 meses) — base anual não confiável.');
   if (input.recomendado === 'real') baixar(2, 'Lucro Real é triagem (sem LALUR/adições/exclusões) — confiança limitada.');
   if (!input.folhaConhecida) baixar(2, 'Folha (CPP) não informada — comparação Simples × outros incompleta.');
   if (!input.semFlagsFortes) baixar(2, 'Há flags de degradação (monofásico/ST/crédito não estimado).');

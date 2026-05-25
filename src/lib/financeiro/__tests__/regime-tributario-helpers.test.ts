@@ -166,3 +166,23 @@ describe('scoreConfiancaRegime', () => {
     expect(c.nivel).toBe('alta');
   });
 });
+
+describe('recomendarRegime — degradação por dados incompletos', () => {
+  it('dadosCompletos=false → status incompleto, economia null (não fabrica recomendação confiante)', () => {
+    const comparados = compararRegimes({
+      simples: { total_federal_cpp: 40000, das_total: 50000, icms_iss_ipi: 10000, aproximado: true },
+      elegSimples: { status_elegibilidade: 'elegivel', motivo_inelegivel: null },
+      presumido: { irpj: 30000, csll: 20000, pis: 0, cofins: 0, cpp: 0, total_federal_cpp: 50000 },
+      real: { irpj: 10000, csll: 5000, pis_cofins: 40000, cpp: 0, total_federal_cpp: 55000, credito_aplicado: 0, lucro_usado: 0 },
+    });
+    const r = recomendarRegime(comparados, 'presumido', { bandaErro: 0.05, dadosCompletos: false });
+    expect(r.status).toBe('incompleto');
+    expect(r.economia_anual).toBeNull();
+  });
+});
+describe('scoreConfiancaRegime — TTM incompleto', () => {
+  it('ttmCompleto=false → baixa', () => {
+    const c = scoreConfiancaRegime({ recomendado: 'presumido', folhaConhecida: true, semFlagsFortes: true, ttmCompleto: false });
+    expect(c.nivel).toBe('baixa');
+  });
+});

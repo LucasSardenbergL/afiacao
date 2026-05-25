@@ -297,11 +297,14 @@ function compararRegimes(input: {
   });
 }
 
-function recomendarRegime(comparados: RegimeComparado[], regimeAtual: RegimeNome, opts: { bandaErro: number }):
+function recomendarRegime(comparados: RegimeComparado[], regimeAtual: RegimeNome, opts: { bandaErro: number; dadosCompletos?: boolean }):
   { recomendado: RegimeNome | null; economia_anual: number | null; status: StatusRecomendacao } {
   const elegiveis = comparados.filter((c) => c.elegivel);
   if (elegiveis.length === 0) return { recomendado: null, economia_anual: null, status: "incompleto" };
   const melhor = elegiveis[0];
+  if (opts.dadosCompletos === false) {
+    return { recomendado: melhor.regime, economia_anual: null, status: "incompleto" };
+  }
   const atual = comparados.find((c) => c.regime === regimeAtual);
   const economia = atual ? atual.total_federal_cpp - melhor.total_federal_cpp : null;
   if (melhor.regime === regimeAtual) return { recomendado: regimeAtual, economia_anual: 0, status: "manter" };
@@ -311,11 +314,12 @@ function recomendarRegime(comparados: RegimeComparado[], regimeAtual: RegimeNome
   return { recomendado: melhor.regime, economia_anual: economia != null ? Math.max(0, economia) : null, status };
 }
 
-function scoreConfiancaRegime(input: { recomendado: RegimeNome | null; folhaConhecida: boolean; semFlagsFortes: boolean }):
+function scoreConfiancaRegime(input: { recomendado: RegimeNome | null; folhaConhecida: boolean; semFlagsFortes: boolean; ttmCompleto?: boolean }):
   { nivel: "alta" | "media" | "baixa"; motivos: string[] } {
   const motivos: string[] = [];
   let nivel = 3;
   const baixar = (p: number, m: string) => { if (p < nivel) nivel = p; motivos.push(m); };
+  if (input.ttmCompleto === false) baixar(1, "TTM incompleto (<12 meses) — base anual não confiável.");
   if (input.recomendado === "real") baixar(2, "Lucro Real é triagem (sem LALUR/adições/exclusões) — confiança limitada.");
   if (!input.folhaConhecida) baixar(2, "Folha (CPP) não informada — comparação Simples × outros incompleta.");
   if (!input.semFlagsFortes) baixar(2, "Há flags de degradação (monofásico/ST/crédito não estimado).");
@@ -487,12 +491,30 @@ async function calcularEmpresa(db: DbClient, empresa: Company): Promise<RegimeEm
   // 8) Comparação.
   const comparados = compararRegimes({ simples, elegSimples, presumido, real, receitaAnual: receita_bruta_ttm });
 
+  // 8b) Degradação honesta: sinais de dados essenciais ausentes/defaulted.
+  const folhaConhecida = folhaCppAnual != null;
+  const ttmCompleto = meses >= 12;
+  const dadosCompletos = folhaConhecida && ttmCompleto;
+  const encargoInformado = encargoPctIn != null;
+  const recTribInformado = recTribPctIn != null;
+  // Sem folha, o CPP de Presumido/Real não é estimado (cai a 0 via `?? 0`), subestimando esses regimes.
+  if (!folhaConhecida) {
+    for (const c of comparados) {
+      if (c.regime === "presumido" || c.regime === "real") {
+        c.flags.push("CPP não estimado (folha não informada) — total federal+CPP subestimado.");
+      }
+    }
+  }
+
   // 9) Recomendação.
-  const rec = recomendarRegime(comparados, regime_atual, { bandaErro: 0.05 });
+  const rec = recomendarRegime(comparados, regime_atual, { bandaErro: 0.05, dadosCompletos });
 
   // 10) Confiança.
-  const semFlagsFortes = folhaCppAnual != null && recTribPctIn != null && elegSimples.status_elegibilidade === "elegivel";
-  const conf = scoreConfiancaRegime({ recomendado: rec.recomendado, folhaConhecida: folhaCppAnual != null, semFlagsFortes });
+  const semFlagsFortes = folhaConhecida && recTribInformado && encargoInformado && elegSimples.status_elegibilidade === "elegivel";
+  const conf = scoreConfiancaRegime({ recomendado: rec.recomendado, folhaConhecida, semFlagsFortes, ttmCompleto });
+  // Sinais de inputs no default silencioso (viés pró-Presumido/Real).
+  if (!encargoInformado) conf.motivos.push("Encargo patronal no default 20% (CPP estrita; RAT/FAP/terceiros fora) — pode subestimar Presumido/Real.");
+  if (!recTribInformado) conf.motivos.push("Receita tributável PIS/COFINS assumida 100% (monofásico/ST/alíquota-zero não segregados).");
   // Anexa as flags de nível-engine aos motivos da confiança.
   conf.motivos.push(...engineFlags);
 
