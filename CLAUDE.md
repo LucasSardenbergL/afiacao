@@ -461,6 +461,7 @@ Resultado da Fase 4 — usar nas próximas features:
 - **Não montar novo Toaster** — só Sonner está ativo no AppShell.
 - **Não instrumentar evento via `posthog` direto** — use `track()` de `@/lib/analytics` com convenção `<area>.<action>`.
 - **Não usar `Inter`/fonte genérica em headings novos** — `font-display` (Newsreader) em h1 de telas-hero; `.kpi-value` em valores grandes.
+- **Não interpolar input em `.or()` do PostgREST via template literal** — usa os helpers de `@/lib/postgrest` (`ilikeOr`/`ilike`/`eqInt`/`eqText`/`orFilter`), que sanitizam os metacaracteres (`%_,()\"`) e bloqueiam injeção de cláusula. A regra ESLint `no-restricted-syntax` (escopada a `src/`) falha o lint se alguém montar `.or(\`...${...}...\`)` cru. Edge Functions (Deno) inlineiam o mesmo `sanitizeForPostgrestOr`/`ilikeOr`.
 
 ## 9b. Redesign visual + telemetria (entregue após a auditoria UX)
 

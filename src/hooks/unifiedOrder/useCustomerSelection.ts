@@ -4,6 +4,7 @@ import { supabase } from '@/integrations/supabase/client';
 import { toast } from 'sonner';
 import { logger } from '@/lib/logger';
 import { maskDocument } from '@/lib/format';
+import { eqText, orFilter } from '@/lib/postgrest';
 import type {
   OmieCustomer,
   AddressData,
@@ -248,7 +249,7 @@ export function useCustomerSelection({
         const { data: profile } = await supabase
           .from('profiles')
           .select('user_id, requires_po')
-          .or(`document.eq.${docClean},document.eq.${cust.cnpj_cpf}`)
+          .or(orFilter(eqText('document', docClean), eqText('document', cust.cnpj_cpf)))
           .limit(1)
           .maybeSingle();
         if (profile?.user_id) localUserId = profile.user_id;

@@ -2,7 +2,7 @@ import { useEffect, useMemo, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { supabase } from '@/integrations/supabase/client';
 import { useAuth } from '@/contexts/AuthContext';
-import { sanitizeForPostgrestOr } from '@/lib/postgrest';
+import { ilikeOr } from '@/lib/postgrest';
 
 /**
  * Busca global pra Cmd-K — pesquisa simultânea em 3 entidades:
@@ -66,12 +66,11 @@ export function useGlobalSearch(query: string, enabled = true) {
     enabled: isActive,
     staleTime: 30_000,
     queryFn: async () => {
-      // Busca por nome OU document OU email — sanitiza pra evitar injeção PostgREST
-      const q = sanitizeForPostgrestOr(trimmed);
+      // Busca por nome OU document OU email — ilikeOr sanitiza (anti-injeção)
       const { data } = await supabase
         .from('profiles')
         .select('user_id, name, document, email')
-        .or(`name.ilike.%${q}%,document.ilike.%${q}%,email.ilike.%${q}%`)
+        .or(ilikeOr(['name', 'document', 'email'], trimmed))
         .limit(5);
       return (data ?? []).map((p): SearchResult => ({
         kind: 'customer',
@@ -90,11 +89,10 @@ export function useGlobalSearch(query: string, enabled = true) {
     enabled: isActive,
     staleTime: 60_000,
     queryFn: async () => {
-      const q = sanitizeForPostgrestOr(trimmed);
       const { data } = await supabase
         .from('tint_formulas')
         .select('id, cor_id, nome_cor')
-        .or(`cor_id.ilike.%${q}%,nome_cor.ilike.%${q}%`)
+        .or(ilikeOr(['cor_id', 'nome_cor'], trimmed))
         .limit(5);
       return (data ?? []).map((f): SearchResult => ({
         kind: 'formula',

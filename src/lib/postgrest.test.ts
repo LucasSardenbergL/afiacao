@@ -1,5 +1,12 @@
 import { describe, it, expect } from 'vitest';
-import { sanitizeForPostgrestOr } from '@/lib/postgrest';
+import {
+  sanitizeForPostgrestOr,
+  ilike,
+  ilikeOr,
+  eqInt,
+  eqText,
+  orFilter,
+} from '@/lib/postgrest';
 
 describe('sanitizeForPostgrestOr', () => {
   it('remove a vírgula (separador de filtros do .or())', () => {
@@ -43,5 +50,59 @@ describe('sanitizeForPostgrestOr', () => {
   it('é idempotente (aplicar duas vezes não muda o resultado)', () => {
     const once = sanitizeForPostgrestOr('a,b(c)%_\\"d');
     expect(sanitizeForPostgrestOr(once)).toBe(once);
+  });
+});
+
+describe('ilike', () => {
+  it('monta cláusula ilike sanitizada', () => {
+    expect(ilike('nome', 'azul')).toBe('nome.ilike.%azul%');
+  });
+
+  it('strippa metacaracteres do termo', () => {
+    expect(ilike('nome', 'x,id.gt.0')).toBe('nome.ilike.%xid.gt.0%');
+  });
+});
+
+describe('ilikeOr', () => {
+  it('aplica o mesmo termo sanitizado a várias colunas', () => {
+    expect(ilikeOr(['name', 'email'], 'foo')).toBe('name.ilike.%foo%,email.ilike.%foo%');
+  });
+
+  it('injeção via vírgula não escapa do predicado', () => {
+    expect(ilikeOr(['name'], 'x,role.eq.master')).toBe('name.ilike.%xrole.eq.master%');
+  });
+});
+
+describe('eqInt', () => {
+  it('mantém termo só-dígitos', () => {
+    expect(eqInt('codigo', '123')).toBe('codigo.eq.123');
+  });
+
+  it('vira 0 quando não é só dígitos (texto, float, vazio)', () => {
+    expect(eqInt('codigo', 'abc')).toBe('codigo.eq.0');
+    expect(eqInt('codigo', '12.5')).toBe('codigo.eq.0');
+    expect(eqInt('codigo', '')).toBe('codigo.eq.0');
+  });
+
+  it('não permite injeção via valor numérico forjado', () => {
+    expect(eqInt('codigo', '1,role.eq.master')).toBe('codigo.eq.0');
+  });
+});
+
+describe('eqText', () => {
+  it('match exato sanitizado preservando máscara de documento', () => {
+    expect(eqText('document', '12.345.678/0001-90')).toBe('document.eq.12.345.678/0001-90');
+  });
+
+  it('strippa metacaracteres de injeção', () => {
+    expect(eqText('document', 'x),y')).toBe('document.eq.xy');
+  });
+});
+
+describe('orFilter', () => {
+  it('junta cláusulas com vírgula', () => {
+    expect(orFilter(eqInt('codigo', '7'), ilike('descricao', 'tinta'))).toBe(
+      'codigo.eq.7,descricao.ilike.%tinta%',
+    );
   });
 });
