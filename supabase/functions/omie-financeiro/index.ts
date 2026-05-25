@@ -40,9 +40,10 @@ interface OmieContaCorrente {
   cInativa?: string;
 }
 
-interface OmieResumirContaCorrenteResponse {
-  nSaldo?: number;
-  nSaldoAtual?: number;
+// Resposta de financas/extrato/ ListarExtrato — saldos no top-level.
+interface OmieExtratoResponse {
+  nSaldoAtual?: number;        // saldo realizado disponível hoje
+  nSaldoDisponivel?: number;   // saldo disponível hoje (fallback)
 }
 
 interface OmieContaPagar {
@@ -363,26 +364,39 @@ async function syncContasCorrentes(
       || (result.conta_corrente_lista as OmieContaCorrente[] | undefined)
       || [];
 
+    // Saldo atual vem de financas/extrato/ (ListarExtrato), NÃO de geral/contacorrente/.
+    // dPeriodoInicial/Final são obrigatórios (DD/MM/AAAA); pra saldo "hoje" usamos a data atual nos dois.
+    const hoje = new Date();
+    const dataBR = `${String(hoje.getDate()).padStart(2, "0")}/${String(hoje.getMonth() + 1).padStart(2, "0")}/${hoje.getFullYear()}`;
+
     for (const c of contas) {
-      // Buscar saldo real via ResumirContaCorrente
-      let saldoAtual = 0;
+      // Busca saldo real via ListarExtrato (cExibirApenasSaldo=S => só os saldos, sem movimentos).
+      let saldoAtual: number | null = null;
       let saldoData: string | null = null;
+      let saldoOk = false;
       try {
         const saldoResult = (await callOmie(
           company,
-          "geral/contacorrente/",
-          "ResumirContaCorrente",
-          { nCodCC: c.nCodCC }
-        )) as OmieResumirContaCorrenteResponse | null;
-        if (saldoResult) {
-          saldoAtual = saldoResult.nSaldo ?? saldoResult.nSaldoAtual ?? 0;
+          "financas/extrato/",
+          "ListarExtrato",
+          {
+            nCodCC: c.nCodCC,
+            dPeriodoInicial: dataBR,
+            dPeriodoFinal: dataBR,
+            cExibirApenasSaldo: "S",
+          }
+        )) as OmieExtratoResponse | null;
+        if (saldoResult && (saldoResult.nSaldoAtual != null || saldoResult.nSaldoDisponivel != null)) {
+          saldoAtual = saldoResult.nSaldoAtual ?? saldoResult.nSaldoDisponivel ?? null;
           saldoData = new Date().toISOString().split("T")[0];
+          saldoOk = true;
         }
       } catch (e) {
-        console.log(`[Fin][${company}] Saldo CC ${c.nCodCC} falhou, usando 0: ${e}`);
+        // NÃO zera em falha: preserva o saldo anterior (não inclui saldo_atual no upsert).
+        console.log(`[Fin][${company}] Saldo CC ${c.nCodCC} falhou, preservando saldo anterior: ${e}`);
       }
 
-      const row = {
+      const row: Record<string, unknown> = {
         company,
         omie_ncodcc: c.nCodCC,
         descricao: c.descricao || c.cDescricao,
@@ -390,11 +404,14 @@ async function syncContasCorrentes(
         agencia: c.codigo_agencia || c.cAgencia || c.agencia,
         numero_conta: c.numero_conta_corrente || c.cNumeroConta || c.numero_conta,
         tipo: c.tipo_conta_corrente || c.tipo || c.cTipo || "CC",
-        saldo_atual: saldoAtual,
-        saldo_data: saldoData,
         ativo: c.inativo !== "S" && c.cInativa !== "S",
         updated_at: new Date().toISOString(),
       };
+      // Só grava saldo quando o extrato respondeu; em falha, o upsert não mexe em saldo_atual/saldo_data.
+      if (saldoOk) {
+        row.saldo_atual = saldoAtual;
+        row.saldo_data = saldoData;
+      }
 
       const { error } = await db
         .from("fin_contas_correntes")
@@ -1801,13 +1818,16 @@ serve(async (req) => {
 
       // Debug: retorna JSON raw do Omie sem transformação (para validação Onda 1)
       case "debug_raw": {
+        const _hoje = new Date();
+        const _hojeBR = `${String(_hoje.getDate()).padStart(2, "0")}/${String(_hoje.getMonth() + 1).padStart(2, "0")}/${_hoje.getFullYear()}`;
         const endpoints: Record<string, { endpoint: string; call: string; params: Record<string, unknown> }> = {
           categorias: { endpoint: "geral/categorias/", call: "ListarCategorias", params: { pagina: 1, registros_por_pagina: 2 } },
           contas_correntes: { endpoint: "geral/contacorrente/", call: "ListarContasCorrentes", params: { pagina: 1, registros_por_pagina: 2 } },
           contas_pagar: { endpoint: "financas/contapagar/", call: "ListarContasPagar", params: { pagina: 1, registros_por_pagina: 2 } },
           contas_receber: { endpoint: "financas/contareceber/", call: "ListarContasReceber", params: { pagina: 1, registros_por_pagina: 2 } },
           movimentacoes: { endpoint: "financas/mf/", call: "ListarMovimentos", params: { nPagina: 1, nRegPorPagina: 2 } },
-          resumir_cc: { endpoint: "geral/contacorrente/", call: "ResumirContaCorrente", params: { nCodCC: Number(ncodcc) || 0 } },
+          // Saldo atual real de uma conta (passe ncodcc). Use pra validar o fix de saldo.
+          extrato_cc: { endpoint: "financas/extrato/", call: "ListarExtrato", params: { nCodCC: Number(ncodcc) || 0, dPeriodoInicial: _hojeBR, dPeriodoFinal: _hojeBR, cExibirApenasSaldo: "S" } },
         };
         const ep = endpoints[entidade || "contas_pagar"];
         if (!ep) {
