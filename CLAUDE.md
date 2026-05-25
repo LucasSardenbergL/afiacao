@@ -61,7 +61,7 @@ Total: **119 páginas registradas** em `src/pages/`, com lazy-loading em `App.ts
 - **Comando**: `cmdk` 1.1.1 — **command palette global ativo** (`Cmd+K`), montado em `AppShell` via `src/components/shell/CommandPalette.tsx` com busca global real (clientes/fórmulas/pedidos) + comandos contextuais + recentes
 - **Voz/IA**: `@elevenlabs/react` 0.14 (transcribe)
 - **Drag-and-drop**: `@hello-pangea/dnd` 17 (kanban)
-- **Toasts**: `sonner` 1.7 — sistema único. `useToast` legado continua via wrapper de compat em `src/hooks/use-toast.ts`
+- **Toasts**: `sonner` 1.7 — **sistema único**. O wrapper `useToast` + shim foram removidos (2026-05-25); todo código usa `import { toast } from 'sonner'` (`toast.success/error/info`)
 - **Hospedagem**: Lovable Cloud (componentTagger em dev)
 
 ### Scripts
@@ -265,8 +265,7 @@ Dois backends coexistem; o usuário escolhe via toggle em `/settings`:
 ### Toast / feedback
 
 - **Sonner é o único sistema ativo.** `ui/toaster.tsx` + `ui/toast.tsx` + `@radix-ui/react-toast` foram deletados em PR #25.
-- `use-toast.ts` permanece como **wrapper de compat (@deprecated)** delegando pra Sonner — preserva os ~100 callsites legados sem refactor imediato.
-- Engines IA novos (`useBundleEngine`, `useTacticalPlan`, `useFarmerExperiments`, `useFarmerPerformance`) já migrados pra `import { toast } from 'sonner'` direto (PR #29). Convenção pra código novo: usar sonner direto.
+- O wrapper `use-toast.ts` (@deprecated) + o shim `ui/use-toast.ts` foram **removidos** (2026-05-25) — a migração dos callsites concluiu. **Todo código usa `import { toast } from 'sonner'` direto** (`toast.success/error/info`). Não existe mais `useToast`.
 
 ### Logger
 
@@ -446,7 +445,7 @@ Resultado da Fase 4 — usar nas próximas features:
 - **Empty states**: `<EmptyState tone="operational" />` é o default B2B; `tone="friendly"` para customer-facing.
 - **Skeletons**: `<PageSkeleton variant="cockpit | list | form | detail" />` em vez de spinner.
 - **Status colors**: classes `text-status-success/warning/error/info` em vez de `text-emerald-600` etc.
-- **Toast**: `import { toast } from 'sonner'` é o canônico; `useToast` antigo continua via wrapper (`@deprecated`).
+- **Toast**: `import { toast } from 'sonner'` é o **único** caminho (`toast.success/error/info`); o wrapper `useToast` foi removido (2026-05-25).
 - **Network**: `useNetworkStatus()` e `<NetworkStatusIndicator />` (montado no shell). `lib/offline-queue.ts` expõe `getOfflineQueueDepth`/`subscribeToOfflineQueue` (em uso) + `enqueue`/`flush`/`clearOfflineQueue` (definidos, sem consumidor — aguardam integração).
 - **Bulk**: `<BulkActionsBar count actions />` (em uso em SalesOrders). O hook companion `useBulkSelection` foi removido em PR #25 (zero consumers); estados de seleção atualmente vivem em `useState<Set<string>>` direto na page.
 
@@ -482,7 +481,7 @@ Resolvidos (auditoria 2026-05-13 e auditoria de código 2026-05-16/17):
 
 - ✅ **Logo da sidebar** — `Scissors`+"Central" virou wordmark "Colacor" refinado
 - ✅ **Bell ornamental** — removido; topbar agora tem NetworkStatusIndicator + ThemeToggle + CompanySwitcher + Cmd-K pill
-- ✅ **Dois sistemas de toast** — só Sonner ativo; Toaster Radix infra deletada em PR #25; `use-toast.ts` é wrapper `@deprecated` (PR #29)
+- ✅ **Dois sistemas de toast** — só Sonner ativo; Toaster Radix infra deletada em PR #25; wrapper `use-toast.ts` + shim **removidos** em 2026-05-25 (migração concluída; sonner é a única fonte)
 - ✅ **Touch targets** — variantes `touch`/`balcao` criadas no Button (adoção sistemática ainda pendente)
 - ✅ **Logs silenciosos** — `cockpit_audit_log`, `fin_projecao_13_semanas`, `fin_confiabilidade` agora logam via `logger.warn`
 - ✅ **NfeReceipt** — título "OBEN" hardcoded virou dinâmico por empresa
@@ -512,7 +511,7 @@ Ainda pendentes (decisão de produto ou sprint próprio):
 - ✅ **`SalesOrders.deleteOrder` — soft-delete entregue**: coluna `deleted_at` + partial index `idx_sales_orders_active` (lista filtra `deleted_at IS NULL`), optimistic remove + rollback quando o Omie falha, versão bulk com rollback parcial. Orquestração single extraída em `src/components/salesOrders/soft-delete.ts` (`softDeleteOrder`, testado). Sem UI de ver/restaurar excluídos (recuperação é parcial — o PV no Omie já foi excluído); follow-up se houver demanda.
 - **TypeScript strict mode** — `tsconfig.app.json` tem `strict: false`, `noImplicitAny: false`. Resolve raiz de 1300 lint errors (97% `no-explicit-any`). **Infra incremental pronta**: `tsconfig.strict.json` lista files que passam strict (`strict: true` + `noImplicitAny` + `strictNullChecks` + `noUnusedLocals/Parameters`). Rodar via `bun run typecheck:strict`. CI bloqueia se regressão nos files migrados. Pra migrar mais files: garantir 0 `any` + tipos explícitos + adicionar ao `include` de `tsconfig.strict.json`. Convergência: quando 100% do `src/` estiver em strict, mover flags pra `tsconfig.app.json` e deletar `tsconfig.strict.json`. Progresso (2026-05-23): **`no-explicit-any` no repo = 0** — a eliminação de `any` está **concluída** (src + edge functions + tests; convergência de várias sessões). Fase atual = **PROMOÇÃO** (~409/629 files no `include`, ~65%). ⚠️ **COORDENAÇÃO (obrigatória — trabalho paralelo já causou retrabalho: a #161 decompôs `FinanceiroDashboard` enquanto outra sessão o tipava; e promover god-components quebrou o #180 por cascata transitiva):** antes de QUALQUER migração strict, leia [`docs/strict-migration-lanes.md`](docs/strict-migration-lanes.md) — tem o estado atual + lições (promova **leaf-first**; `typecheck:strict` só é confiável com **CPU calma**, senão dá falso-negativo; promover um arquivo puxa os imports transitivos pro programa strict). Rode `gh pr list --state open` + `git worktree list`, reserve sua fatia no **primeiro commit**, e **só toque sua fatia**. No `tsconfig.strict.json`, adicione paths **no fim do `include`** — **não reordene o array** (reordenar = conflito com todo PR em voo). A reestruturação "um tsconfig por lane" é flag-day (ver claim file).
 - ✅ **N+1 patterns — concluído.** `omie-vendas-sync` + `omie-sync` resolvidos (Promise.all com concurrency, commit `4ef01743`). Frontend `useCrossSellEngine.ts` (profile batching) e `useFarmerExperiments.ts` ✅ resolvidos em PRs anteriores. Não há N+1 conhecido pendente.
-- **~100 callsites de `useToast` legados** — migrar gradualmente pra `import { toast } from 'sonner'`
+- ✅ **`useToast` legado** — migração concluída e o wrapper + shim **removidos** (2026-05-25). Todo código usa `import { toast } from 'sonner'`.
 - **41 cores hardcoded** (`text-emerald-600` etc.) — sweep pra `text-status-*`. Top 5: Admin (21×), des/PosicaoAtualTab (12×), des/SimuladorTab (11×), AdminPortalSayerlack (10×), AdminRoutePlanner (9×)
 - **Adoção `useUrlState`** — hoje 5/119 páginas; migrar `useState` de filtros conforme arquivos forem tocados
 - ✅ **Agrupamento de lazy chunks** — `vite.config.ts` tem `manualChunks` (em `rollupOptions`) agrupando os peers. (Ajustes finos de bucket conforme bundle crescer.)

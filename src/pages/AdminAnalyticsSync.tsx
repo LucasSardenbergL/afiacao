@@ -7,6 +7,7 @@ import { SyncEntitiesGrid } from "@/components/analyticsSync/SyncEntitiesGrid";
 import { ImportClientesCard, ImportEnderecosCard, ImportPedidosCard } from "@/components/analyticsSync/ImportCards";
 import { CostEngineCard, AssociationRulesCard } from "@/components/analyticsSync/EngineCards";
 import { EngineConfigCard } from "@/components/analyticsSync/EngineConfigCard";
+import { CarteiraSaudePanel } from "@/components/carteira/CarteiraSaudePanel";
 
 export default function AdminAnalyticsSync() {
   const {
@@ -60,6 +61,9 @@ export default function AdminAnalyticsSync() {
           </Button>
         </div>
       </div>
+
+      {/* Saúde da carteira (observabilidade — semáforo) */}
+      <CarteiraSaudePanel />
 
       {/* Sync Entities */}
       <SyncEntitiesGrid
