@@ -1,7 +1,9 @@
 // Conteúdo da aba "Visão Geral" do dashboard financeiro.
 // Extraído de src/pages/FinanceiroDashboard.tsx (god-component split).
+import { useState } from 'react';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
+import { Button } from '@/components/ui/button';
 import {
   TrendingUp, TrendingDown, AlertTriangle, Wallet,
   ArrowDownCircle, ArrowUpCircle, BarChart3,
@@ -25,6 +27,15 @@ export function VisaoGeralTab({
   agingPagar: AgingData | null;
   inadimplentes: { nome: string; cnpj: string; total_vencido: number; qtd_titulos: number }[];
 }) {
+  const [showContasZeradas, setShowContasZeradas] = useState(false);
+  // Esconde contas com saldo zerado por padrão (ruído numa lista de ~40 contas).
+  // Se TODAS estiverem zeradas, mostra mesmo assim (senão o card ficaria vazio).
+  const contasCorrentes = activeResumo?.contas_correntes ?? [];
+  const contasComSaldo = contasCorrentes.filter((cc) => cc.saldo_atual !== 0);
+  const qtdZeradas = contasCorrentes.length - contasComSaldo.length;
+  const contasVisiveis =
+    showContasZeradas || contasComSaldo.length === 0 ? contasCorrentes : contasComSaldo;
+
   return (
     <>
       {/* Alerts */}
@@ -263,7 +274,7 @@ export function VisaoGeralTab({
           </CardHeader>
           <CardContent>
             <div className="space-y-2">
-              {activeResumo.contas_correntes.map((cc, idx) => (
+              {contasVisiveis.map((cc, idx) => (
                 <div key={idx} className="flex items-center justify-between py-2 border-b last:border-0">
                   <div>
                     <p className="font-medium text-sm">{cc.descricao}</p>
@@ -275,6 +286,18 @@ export function VisaoGeralTab({
                 </div>
               ))}
             </div>
+            {qtdZeradas > 0 && contasComSaldo.length > 0 && (
+              <Button
+                variant="ghost"
+                size="sm"
+                className="mt-2 h-auto px-1 py-1 text-xs text-muted-foreground hover:text-foreground"
+                onClick={() => setShowContasZeradas((v) => !v)}
+              >
+                {showContasZeradas
+                  ? 'Ocultar contas zeradas'
+                  : `Mostrar ${qtdZeradas} ${qtdZeradas === 1 ? 'conta zerada' : 'contas zeradas'}`}
+              </Button>
+            )}
           </CardContent>
         </Card>
       )}
