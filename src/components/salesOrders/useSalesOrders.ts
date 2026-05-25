@@ -191,7 +191,7 @@ export function useSalesOrders() {
     const nowIso = new Date().toISOString();
     const { error: softErr } = await supabase
       .from('sales_orders')
-      .update({ deleted_at: nowIso } as never)
+      .update({ deleted_at: nowIso })
       .in('id', Array.from(deleteIds));
 
     if (softErr) {
@@ -226,7 +226,7 @@ export function useSalesOrders() {
     if (failedIds.length > 0) {
       await supabase
         .from('sales_orders')
-        .update({ deleted_at: null } as never)
+        .update({ deleted_at: null })
         .in('id', failedIds);
     }
 
