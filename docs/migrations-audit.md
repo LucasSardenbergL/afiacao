@@ -21,15 +21,15 @@ Este audit valida **quais custom migrations estão de fato aplicadas no banco**.
 
 ## Resumo
 
-- **56** custom migrations totais
-- **320** objetos esperados (criados por estas migrations)
+- **57** custom migrations totais
+- **324** objetos esperados (criados por estas migrations)
 - Quebra por tipo:
   - `rls_policy`: 102
   - `index`: 93
   - `table`: 49
   - `function`: 31
   - `trigger`: 31
-  - `cron_job`: 10
+  - `cron_job`: 14
   - `enum_value`: 4
 
 ## Inventário por migration
@@ -624,6 +624,15 @@ Lista canônica do que cada migration *deveria* criar (extraído via regex de `C
 | --- | --- | --- |
 | `function` | `public.sugerir_negociacao_paralela_hoje` | — |
 | `function` | `public.refresh_sku_ranking_negociacao` | — |
+
+### `20260525000000_fin_crons_por_entidade.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `cron_job` | `cron.fin-sync-base-diario` | — |
+| `cron_job` | `cron.fin-sync-cp-2x` | — |
+| `cron_job` | `cron.fin-sync-cr-2x` | — |
+| `cron_job` | `cron.fin-sync-mov-2x` | — |
 
 ## Próximos passos quando algo der `❌`
 
