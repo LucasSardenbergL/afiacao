@@ -3,9 +3,12 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { SheetHeader, SheetTitle, SheetDescription } from "@/components/ui/sheet";
-import { TrendingUp, Sparkles, ExternalLink, ArrowRight } from "lucide-react";
-import { Oportunidade, AumentoRef } from "./types";
-import { cenarioIcon, cenarioLabel, formatBRL, formatNumber, formatDate } from "./shared";
+import { TrendingUp, Sparkles, ExternalLink, ArrowRight, Scale } from "lucide-react";
+import { OportunidadeComDecisao, AumentoRef } from "./types";
+import {
+  cenarioIcon, cenarioLabel, formatBRL, formatNumber, formatDate,
+  recomendacaoBadgeClass, RECOMENDACAO_LABEL,
+} from "./shared";
 
 export function EstadoVazio({ navigate }: { navigate: ReturnType<typeof useNavigate> }) {
   return (
@@ -38,13 +41,14 @@ export function DrawerConteudo({
   o,
   navigate,
 }: {
-  o: Oportunidade;
+  o: OportunidadeComDecisao;
   navigate: ReturnType<typeof useNavigate>;
 }) {
   const incluiPromo = o.cenario.startsWith("promo");
   const incluiAumento =
     o.cenario === "aumento_apenas" || o.cenario === "promo_e_aumento";
   const aumentos = (o.aumentos_json ?? []) as AumentoRef[];
+  const d = o.decisao;
 
   return (
     <>
@@ -199,6 +203,60 @@ export function DrawerConteudo({
           </CardContent>
         </Card>
 
+        {/* Decisão net-R$ marginal */}
+        <Card className="border-status-info/30 bg-status-info/5">
+          <CardHeader className="pb-2">
+            <CardTitle className="text-sm flex items-center gap-2">
+              <Scale className="h-4 w-4 text-status-info" />
+              Decisão: comprar mais?
+            </CardTitle>
+          </CardHeader>
+          <CardContent className="space-y-3 text-sm">
+            <div className="flex items-center justify-between">
+              <Badge
+                variant="outline"
+                className={recomendacaoBadgeClass(d.recomendacao)}
+              >
+                {RECOMENDACAO_LABEL[d.recomendacao]}
+              </Badge>
+              <span className="tabular-nums font-medium">
+                {formatNumber(d.q_base, 0)} → {formatNumber(d.q_candidata, 0)}
+              </span>
+            </div>
+
+            <div className="space-y-1.5 border-t pt-3">
+              <LinhaRs label="+ Desconto" value={d.desconto_rs} />
+              <LinhaRs label="+ Aumento evitado" value={d.aumento_evitado_rs} />
+              <LinhaRs label="+ Ruptura evitada" value={d.ruptura_evitada_rs} />
+              <LinhaRs label="− Capital extra" value={-d.capital_extra_rs} />
+              <LinhaRs label="− Prazo" value={-d.impacto_prazo_rs} />
+              <LinhaRs label="− Frete" value={-d.frete_incremental_rs} />
+              <div className="flex justify-between border-t pt-2 mt-1">
+                <span className="font-semibold">Net R$</span>
+                <span
+                  className={`tabular-nums font-bold ${
+                    d.beneficio_liquido_rs > 0
+                      ? "text-status-success"
+                      : d.beneficio_liquido_rs < 0
+                        ? "text-status-error"
+                        : "text-muted-foreground"
+                  }`}
+                >
+                  {formatBRL(d.beneficio_liquido_rs)}
+                </span>
+              </div>
+            </div>
+
+            {d.flags.length > 0 && (
+              <ul className="border-t pt-3 space-y-1 text-xs text-muted-foreground list-disc pl-4">
+                {d.flags.map((f, i) => (
+                  <li key={i}>{f}</li>
+                ))}
+              </ul>
+            )}
+          </CardContent>
+        </Card>
+
         <Button
           className="w-full"
           onClick={() => navigate(`/admin/reposicao/skus/${o.sku_codigo_omie}`)}
@@ -208,6 +266,25 @@ export function DrawerConteudo({
         </Button>
       </div>
     </>
+  );
+}
+
+function LinhaRs({ label, value }: { label: string; value: number }) {
+  return (
+    <div className="flex justify-between">
+      <span className="text-muted-foreground">{label}</span>
+      <span
+        className={`tabular-nums ${
+          value > 0
+            ? "text-status-success"
+            : value < 0
+              ? "text-status-error"
+              : "text-muted-foreground"
+        }`}
+      >
+        {formatBRL(value)}
+      </span>
+    </div>
   );
 }
 

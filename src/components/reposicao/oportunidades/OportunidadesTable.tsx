@@ -10,17 +10,18 @@ import { Loader2, ChevronRight, MoreVertical, EyeOff, ArrowRight } from "lucide-
 import { EstadoVazio } from "./components";
 import {
   formatBRL, formatNumber, formatDate, cenarioIcon, cenarioLabel, descontoBadgeClass,
+  recomendacaoBadgeClass, RECOMENDACAO_LABEL,
 } from "./shared";
-import type { Oportunidade } from "./types";
+import type { OportunidadeComDecisao } from "./types";
 
 export function OportunidadesTable({
   isLoading, totalCount, rows, navigate, onOpenDrawer, onIgnorar,
 }: {
   isLoading: boolean;
   totalCount: number;
-  rows: Oportunidade[];
+  rows: OportunidadeComDecisao[];
   navigate: ReturnType<typeof useNavigate>;
-  onOpenDrawer: (o: Oportunidade) => void;
+  onOpenDrawer: (o: OportunidadeComDecisao) => void;
   onIgnorar: (sku: number) => void;
 }) {
   if (isLoading) {
@@ -42,8 +43,10 @@ export function OportunidadesTable({
             <TableHead>SKU / Descrição</TableHead>
             <TableHead>Fornecedor</TableHead>
             <TableHead className="text-right">Desconto total</TableHead>
-            <TableHead className="text-right">Qtde sugerida</TableHead>
+            <TableHead className="text-right">Comprar</TableHead>
+            <TableHead>Decisão</TableHead>
             <TableHead>Data limite</TableHead>
+            <TableHead className="text-right">Net R$</TableHead>
             <TableHead className="text-right">Economia bruta</TableHead>
             <TableHead className="w-20 text-right">Ações</TableHead>
           </TableRow>
@@ -51,7 +54,7 @@ export function OportunidadesTable({
         <TableBody>
           {rows.length === 0 && (
             <TableRow>
-              <TableCell colSpan={8} className="text-center text-muted-foreground py-12">
+              <TableCell colSpan={10} className="text-center text-muted-foreground py-12">
                 Nenhum SKU bate os filtros atuais.
               </TableCell>
             </TableRow>
@@ -108,7 +111,8 @@ export function OportunidadesTable({
                 <Tooltip>
                   <TooltipTrigger asChild>
                     <span className="font-medium">
-                      {formatNumber(o.qtde_oportunidade, 0)}
+                      {formatNumber(o.decisao.q_base, 0)} →{" "}
+                      {formatNumber(o.decisao.q_candidata, 0)}
                     </span>
                   </TooltipTrigger>
                   <TooltipContent>
@@ -119,9 +123,24 @@ export function OportunidadesTable({
                       <div>
                         Quantidade base EOQ: {formatNumber(o.qtde_base, 0)}
                       </div>
+                      <div>
+                        Qtde sugerida promo: {formatNumber(o.qtde_oportunidade, 0)}
+                      </div>
+                      <div>
+                        Cobertura extra:{" "}
+                        {formatNumber(o.decisao.dias_cobertura_extra, 1)} dias
+                      </div>
                     </div>
                   </TooltipContent>
                 </Tooltip>
+              </TableCell>
+              <TableCell>
+                <Badge
+                  variant="outline"
+                  className={recomendacaoBadgeClass(o.decisao.recomendacao)}
+                >
+                  {RECOMENDACAO_LABEL[o.decisao.recomendacao]}
+                </Badge>
               </TableCell>
               <TableCell className="text-sm">
                 <div className="tabular-nums">{formatDate(o.data_limite_acao)}</div>
@@ -130,6 +149,17 @@ export function OportunidadesTable({
                     ? `em ${o.dias_ate_limite} ${o.dias_ate_limite === 1 ? "dia" : "dias"}`
                     : ""}
                 </div>
+              </TableCell>
+              <TableCell
+                className={`text-right tabular-nums font-medium ${
+                  o.decisao.beneficio_liquido_rs > 0
+                    ? "text-status-success"
+                    : o.decisao.beneficio_liquido_rs < 0
+                      ? "text-status-error"
+                      : "text-muted-foreground"
+                }`}
+              >
+                {formatBRL(o.decisao.beneficio_liquido_rs)}
               </TableCell>
               <TableCell
                 className={`text-right tabular-nums font-medium ${

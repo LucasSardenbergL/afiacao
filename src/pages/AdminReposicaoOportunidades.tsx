@@ -9,14 +9,51 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { Sheet, SheetContent } from "@/components/ui/sheet";
 
-import { Cenario, Oportunidade, OrdemKey } from "@/components/reposicao/oportunidades/types";
+import { Cenario, Oportunidade, OportunidadeComDecisao, OrdemKey } from "@/components/reposicao/oportunidades/types";
 import { EMPRESA, ALL, CENARIOS, formatBRL, diasEntre } from "@/components/reposicao/oportunidades/shared";
+import { avaliarComprarMais, type InsumoSku } from "@/lib/reposicao/compras-otimizador-helpers";
 import { DrawerConteudo } from "@/components/reposicao/oportunidades/components";
 import { KpiCards } from "@/components/reposicao/oportunidades/KpiCards";
 import { NegociacaoBanner } from "@/components/reposicao/oportunidades/NegociacaoBanner";
 import { OportunidadesFiltros } from "@/components/reposicao/oportunidades/OportunidadesFiltros";
 import { OportunidadesTable } from "@/components/reposicao/oportunidades/OportunidadesTable";
 import { GerarCicloDialog } from "@/components/reposicao/oportunidades/GerarCicloDialog";
+
+// Monta o InsumoSku consumido pelo helper de decisão net-R$ a partir da linha da view.
+function montarInsumo(o: Oportunidade): InsumoSku {
+  const qtdeOportunidade = Number(o.qtde_oportunidade ?? 0);
+  const descPromo = Number(o.desconto_promo_perc ?? 0);
+  // curva fase 1: 1 faixa — o desconto promocional vale a partir de qtde_oportunidade (qtd que o
+  // sistema já sugere pra capturar a oportunidade). Sem desconto/qtd → curva vazia.
+  const curva =
+    descPromo > 0 && qtdeOportunidade > 0
+      ? [{ volume_minimo: qtdeOportunidade, desconto_promo_perc: descPromo }]
+      : [];
+  return {
+    empresa: o.empresa,
+    sku: String(o.sku_codigo_omie),
+    fornecedor: o.fornecedor_nome ?? "—",
+    preco_unit: Number(o.preco_item_eoq ?? 0),
+    demanda_diaria: o.demanda_diaria != null ? Number(o.demanda_diaria) : null,
+    qtde_base: o.qtde_base != null ? Number(o.qtde_base) : null,
+    lote_minimo_fornecedor:
+      o.lote_minimo_fornecedor != null ? Number(o.lote_minimo_fornecedor) : null,
+    minimo_forcado_manual: null, // extension point — origem decidida depois pelo founder
+    cm_anual: Number(o.custo_capital_efetivo_perc ?? 0) / 100, // view expõe em %/ano → fração
+    prazo_padrao_perc: o.prazo_padrao_perc != null ? Number(o.prazo_padrao_perc) : null,
+    frete_perc_valor: o.frete_perc_valor != null ? Number(o.frete_perc_valor) : null,
+    frete_fixo: o.frete_fixo != null ? Number(o.frete_fixo) : null,
+    frete_taxa_pedido: o.frete_taxa_pedido != null ? Number(o.frete_taxa_pedido) : null,
+    aumento_evitado_perc:
+      o.aumento_evitado_perc != null ? Number(o.aumento_evitado_perc) : null,
+    dias_ate_aumento: diasEntre(o.proxima_vigencia_aumento), // helper de shared.tsx (pode ser null)
+    ruptura_valor_estimado: null,
+    ruptura_dias: null,
+    curva_desconto: curva,
+    qtd_oportunidade: o.qtde_oportunidade != null ? Number(o.qtde_oportunidade) : null,
+    escopo: "sku", // fase 1
+  };
+}
 
 export default function AdminReposicaoOportunidades() {
   const navigate = useNavigate();
@@ -26,10 +63,10 @@ export default function AdminReposicaoOportunidades() {
     new Set(CENARIOS.map((c) => c.value)),
   );
   const [filtroFornecedor, setFiltroFornecedor] = useState<string>(ALL);
-  const [ordenacao, setOrdenacao] = useState<OrdemKey>("economia");
+  const [ordenacao, setOrdenacao] = useState<OrdemKey>("net");
   const [apenasComEconomia, setApenasComEconomia] = useState(true);
   const [ignoradosLocal, setIgnoradosLocal] = useState<Set<number>>(new Set());
-  const [drawerSku, setDrawerSku] = useState<Oportunidade | null>(null);
+  const [drawerSku, setDrawerSku] = useState<OportunidadeComDecisao | null>(null);
   const [confirmCicloOpen, setConfirmCicloOpen] = useState(false);
   const [executandoCiclo, setExecutandoCiclo] = useState(false);
   const [bannerNegociacaoFechado, setBannerNegociacaoFechado] = useState(
@@ -55,11 +92,16 @@ export default function AdminReposicaoOportunidades() {
     queryKey: ["oportunidades-hoje", EMPRESA],
     queryFn: async () => {
       const { data, error } = await supabase
-        .from("v_oportunidade_economica_hoje" as never)
+        .from("v_otimizador_compras_insumos" as never)
         .select("*")
         .eq("empresa", EMPRESA);
       if (error) throw error;
-      return ((data || []) as unknown) as Oportunidade[];
+      const base = ((data || []) as unknown) as Oportunidade[];
+      // Decisão net-R$ marginal por SKU via helper puro (compras-otimizador-helpers).
+      return base.map((o): OportunidadeComDecisao => ({
+        ...o,
+        decisao: avaliarComprarMais(montarInsumo(o)),
+      }));
     },
   });
 
@@ -140,6 +182,8 @@ export default function AdminReposicaoOportunidades() {
     }
     arr.sort((a, b) => {
       switch (ordenacao) {
+        case "net":
+          return b.decisao.beneficio_liquido_rs - a.decisao.beneficio_liquido_rs;
         case "economia":
           return Number(b.economia_bruta_estimada ?? 0) - Number(a.economia_bruta_estimada ?? 0);
         case "data_limite":
@@ -158,6 +202,19 @@ export default function AdminReposicaoOportunidades() {
     () =>
       oportunidades.reduce(
         (acc, o) => acc + Number(o.economia_bruta_estimada ?? 0),
+        0,
+      ),
+    [oportunidades],
+  );
+
+  // Ganho líquido potencial = soma do net-R$ apenas dos SKUs com recomendação "comprar_mais".
+  const ganhoLiquidoPotencial = useMemo(
+    () =>
+      oportunidades.reduce(
+        (acc, o) =>
+          o.decisao.recomendacao === "comprar_mais"
+            ? acc + o.decisao.beneficio_liquido_rs
+            : acc,
         0,
       ),
     [oportunidades],
@@ -287,6 +344,7 @@ export default function AdminReposicaoOportunidades() {
         {/* KPI Cards */}
         <KpiCards
           totalEconomia={totalEconomia}
+          ganhoLiquidoPotencial={ganhoLiquidoPotencial}
           oportunidadesCount={oportunidades.length}
           totalSkusAtivos={totalSkusAtivos}
           dataLimiteMaisProxima={dataLimiteMaisProxima}

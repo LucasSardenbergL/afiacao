@@ -187,6 +187,25 @@ A escolha de regime é o **lever fiscal nº 1** de uma PME — decisão única q
 
 **Onde:** helper `src/lib/financeiro/regime-tributario-helpers.ts` (vitest); engine `fin-regime-tributario` (master-only, espelha o helper); migration `20260524120000_fin_regime_inputs.sql`; hook `src/hooks/useRegimeTributario.ts`; dialog `src/components/financeiro/RegimeInputsDialog.tsx`; página `src/pages/FinanceiroRegimeTributario.tsx`.
 
+## 🔧 Otimizador de Compras — Decisão "Comprar Mais?" (net-R$ marginal) (2026-05-25)
+
+Por SKU, **neta o trade-off completo** de comprar acima do baseline pra pegar desconto/forward-buy: soma desconto + aumento-evitado + ruptura-evitada e **subtrai** capital-extra empatado + encargo de prazo + frete incremental → "comprar **quanto**, e vale a pena de verdade?". Sobe a `/admin/reposicao/oportunidades` de "economia bruta" para **decisão net-R$ marginal** — **sem página nova** (reaproveita tabela/KPIs/drawer). Compõe a matemática que já existe no Postgres (EOQ, ponto de pedido, ruptura simulada, custo de capital `Cm`, curva de desconto). Lógica testada em `compras-otimizador-helpers.ts` (vitest, ~19 testes). Metodologia revisada com **Codex (2 passes)**.
+
+| Componente | Como é calculado |
+|---|---|
+| **Baseline e candidatos** | Análise **marginal contra `q_base`** (`max(EOQ, qtd_minima_efetiva)` arredondado ao lote), **nunca** sobre a média. Candidatos **não são só os thresholds** (o ótimo pode estar ENTRE eles): `q_base` + cada `volume_minimo` da curva + limite-do-aumento + limite-da-ruptura. Escolhe o de **maior `beneficio_liquido`**. |
+| **Desconto incremental** | `desc_promo(q_cand) − desc_promo(q_base)` usando **campos ATÔMICOS** (`desconto_promo_perc`) — NUNCA o total somado da view (que já inclui aumento → **double-count**). |
+| **Aumento evitado** | Campo atômico `aumento_evitado_perc`, **separado** do desconto, com **janela temporal**: só a qtd cujo consumo baseline cairia **APÓS** a vigência do aumento (`q_cand − max(q_base, demanda × dias_ate_aumento)`). |
+| **Ruptura evitada** | **Fase 1 = 0 (conservador)** + flag "benefício de ruptura não estimado". O `valor_ruptura_estimado` é agregado do cenário base, não marginal — não infla o net pra comprar demais. Marginal fica pra fase 2. |
+| **Capital extra (−)** | O extra é a **última tranche consumida** → carrega parado **desde o dia 0**: `valor_extra × Cm_anual × ((q_base/demanda) + 0,5 × (q_extra/demanda))/365`. O 0,5 incide só sobre a parcela própria (triângulo de consumo do extra). Cobra só o **extra acima do q_base** (o EOQ já embute `Cm` — anti double-count). |
+| **Impacto de prazo (−)** | `(prazo_cand% − prazo_padrão%) × valor_candidato` (pedido inteiro, não só o extra), **sempre vs o prazo PADRÃO**. Sinal normalizado no helper (desconto de prazo = benefício; encargo = custo). |
+| **Frete incremental (−)** | Modela as **3 formas**: `% valor` + `fixo` + `taxa de pedido` (`fornecedor_custo_adicional_config`); flag de confiança se a config estiver incompleta. |
+
+### Regra de ouro do Otimizador de Compras
+**Recomenda quanto, não declara que vai comprar** — o comprador decide com fatores fora do modelo em mente. Arquitetura deliberadamente leve: **helper TS puro** (`compras-otimizador-helpers.ts`, testável, sem I/O) + **view `v_otimizador_compras_insumos`** (só **junta fatos** por SKU, ZERO regra financeira) + **SEM edge function** (dado operacional já client-readable com RLS de staff — ≠ frentes financeiras master-only). Degradação honesta: sem `demanda_diaria`/`qtde_base` → `falta_dado` (sem recomendação, nunca número fabricado); `escopo ∈ {grupo, fornecedor_total}` → `simulacao_parcial` (avaliador por-SKU isolado pode mentir); desconto alto (>20%) ou `q_base` perto de threshold → flag "EOQ não recalculado com preço descontado"; frete parcial → flag. **Fatores materiais fora do modelo (fase 1), sinalizados como flag, não bloqueiam:** validade/perecibilidade, obsolescência, espaço de armazém, caixa/limite de crédito, câmbio (importados), impostos/créditos, desconto condicionado a cesta/mix. **Ponto de extensão:** `minimo_forcado_manual` — o helper/view já aceitam o campo; **onde** o founder seta (campo em `sku_parametros`, regra, override) é decisão futura.
+
+**Onde:** helper `src/lib/reposicao/compras-otimizador-helpers.ts` (vitest, ~19 testes); view `v_otimizador_compras_insumos` (migration manual `20260525140000_v_otimizador_compras_insumos.sql`); frontend enriquecido em `src/pages/AdminReposicaoOportunidades.tsx` + `src/components/reposicao/oportunidades/*` (coluna/KPI/drawer net-R$). Sem nova rota, sem edge function.
+
 ## ✅ MVP Operacional (pode usar agora para gestão diária)
 
 Estes dados vêm direto do Omie sem transformação opinativa.

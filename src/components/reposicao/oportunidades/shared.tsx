@@ -1,5 +1,6 @@
 import { Sparkles, Package, Zap, TrendingUp } from "lucide-react";
 import type { Cenario } from "./types";
+import type { RecomendacaoCompra } from "@/lib/reposicao/compras-otimizador-helpers";
 
 export const EMPRESA = "OBEN";
 export const ALL = "__all__";
@@ -92,4 +93,24 @@ export function diasBadge(dias: number | null | undefined) {
   if (d < 3) return "bg-destructive/15 text-destructive border-destructive/30";
   if (d < 7) return "bg-status-warning/15 text-status-warning border-status-warning/30";
   return "bg-muted text-muted-foreground border-border";
+}
+
+export const RECOMENDACAO_LABEL: Record<RecomendacaoCompra, string> = {
+  comprar_mais: "Comprar mais",
+  manter_base: "Manter base",
+  simulacao_parcial: "Simulação parcial",
+  falta_dado: "Falta dado",
+};
+
+export function recomendacaoBadgeClass(r: RecomendacaoCompra): string {
+  switch (r) {
+    case "comprar_mais":
+      return "bg-status-success/15 text-status-success border-status-success/30";
+    case "simulacao_parcial":
+      return "bg-status-info/15 text-status-info border-status-info/30";
+    case "falta_dado":
+      return "bg-status-warning/15 text-status-warning border-status-warning/30";
+    case "manter_base":
+      return "bg-muted text-muted-foreground border-border";
+  }
 }

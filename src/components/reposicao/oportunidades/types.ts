@@ -1,3 +1,5 @@
+import type { DecisaoCompra } from "@/lib/reposicao/compras-otimizador-helpers";
+
 export type Cenario = "promo_flat" | "promo_volume" | "promo_e_aumento" | "aumento_apenas";
 
 export type AumentoRef = {
@@ -34,6 +36,14 @@ export type Oportunidade = {
   preco_item_eoq: number | null;
   economia_bruta_estimada: number | null;
   custo_capital_efetivo_perc: number | null;
+  // Colunas novas da view v_otimizador_compras_insumos (Task 5)
+  lote_minimo_fornecedor: number | null;
+  prazo_padrao_perc: number | null;
+  frete_perc_valor: number | null;
+  frete_fixo: number | null;
+  frete_taxa_pedido: number | null;
 };
 
-export type OrdemKey = "economia" | "data_limite" | "desconto" | "sku";
+export type OportunidadeComDecisao = Oportunidade & { decisao: DecisaoCompra };
+
+export type OrdemKey = "net" | "economia" | "data_limite" | "desconto" | "sku";

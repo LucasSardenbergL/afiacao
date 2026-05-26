@@ -3,7 +3,7 @@
 -- ========================================================================
 --
 -- Gerado por: scripts/audit-custom-migrations.ts
--- Total de custom migrations: 70
+-- Total de custom migrations: 71
 --
 -- Como usar:
 --   1. Abra o Supabase SQL Editor (via Lovable Cloud → Backend → SQL Editor)
@@ -84,6 +84,7 @@ WITH expected (version, slug, filename) AS (VALUES
   ('20260525120000', 'positivacao_kpis', '20260525120000_positivacao_kpis.sql'),
   ('20260525130000', 'fin_analise_dimensoes_rpc', '20260525130000_fin_analise_dimensoes_rpc.sql'),
   ('20260525140000', 'fin_refresh_analise_dimensoes_cron', '20260525140000_fin_refresh_analise_dimensoes_cron.sql'),
+  ('20260525140000', 'v_otimizador_compras_insumos', '20260525140000_v_otimizador_compras_insumos.sql'),
   ('20260525160000', 'carteira_saude_rpc', '20260525160000_carteira_saude_rpc.sql'),
   ('20260525190000', 'mixgap_rpc', '20260525190000_mixgap_rpc.sql'),
   ('20260525200000', 'fin_sync_watchdog', '20260525200000_fin_sync_watchdog.sql'),
