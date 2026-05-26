@@ -6,9 +6,10 @@ import { PlayCircle } from "lucide-react";
 import { formatBRL, formatDateLong, diasBadge } from "./shared";
 
 export function KpiCards({
-  totalEconomia, oportunidadesCount, totalSkusAtivos, dataLimiteMaisProxima, diasAteLimite, cicloHoje, onGerarCiclo,
+  totalEconomia, ganhoLiquidoPotencial, oportunidadesCount, totalSkusAtivos, dataLimiteMaisProxima, diasAteLimite, cicloHoje, onGerarCiclo,
 }: {
   totalEconomia: number;
+  ganhoLiquidoPotencial: number;
   oportunidadesCount: number;
   totalSkusAtivos: number;
   dataLimiteMaisProxima: string | null;
@@ -17,7 +18,27 @@ export function KpiCards({
   onGerarCiclo: () => void;
 }) {
   return (
-    <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
+    <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-3">
+      <Card>
+        <CardHeader className="pb-2">
+          <CardTitle className="text-xs font-medium text-muted-foreground">
+            Ganho líquido potencial
+          </CardTitle>
+        </CardHeader>
+        <CardContent>
+          <div
+            className={`text-2xl font-bold tabular-nums ${
+              ganhoLiquidoPotencial > 0 ? "text-status-success" : "text-muted-foreground"
+            }`}
+          >
+            {formatBRL(ganhoLiquidoPotencial)}
+          </div>
+          <p className="text-xs text-muted-foreground mt-1">
+            net-R$ dos SKUs com "comprar mais"
+          </p>
+        </CardContent>
+      </Card>
+
       <Card>
         <CardHeader className="pb-2">
           <CardTitle className="text-xs font-medium text-muted-foreground">
@@ -29,7 +50,7 @@ export function KpiCards({
             {formatBRL(totalEconomia)}
           </div>
           <p className="text-xs text-muted-foreground mt-1">
-            considerando promoções e aumentos vigentes
+            economia bruta (promoções e aumentos vigentes)
           </p>
         </CardContent>
       </Card>

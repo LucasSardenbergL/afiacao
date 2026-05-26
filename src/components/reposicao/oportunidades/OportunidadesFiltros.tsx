@@ -72,7 +72,8 @@ export function OportunidadesFiltros({
           <SelectValue />
         </SelectTrigger>
         <SelectContent>
-          <SelectItem value="economia">Maior economia</SelectItem>
+          <SelectItem value="net">Maior ganho líquido (net R$)</SelectItem>
+          <SelectItem value="economia">Maior economia bruta</SelectItem>
           <SelectItem value="data_limite">Data limite mais próxima</SelectItem>
           <SelectItem value="desconto">Maior % desconto</SelectItem>
           <SelectItem value="sku">SKU alfabético</SelectItem>
