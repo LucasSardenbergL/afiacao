@@ -3,7 +3,7 @@
 -- ========================================================================
 --
 -- Gerado por: scripts/audit-custom-migrations.ts
--- Total de custom migrations: 73
+-- Total de custom migrations: 74
 --
 -- Como usar:
 --   1. Abra o Supabase SQL Editor (via Lovable Cloud → Backend → SQL Editor)
@@ -92,7 +92,8 @@ WITH expected (version, slug, filename) AS (VALUES
   ('20260525220000', 'viewas_access_targets', '20260525220000_viewas_access_targets.sql'),
   ('20260525230000', 'impersonation_audit', '20260525230000_impersonation_audit.sql'),
   ('20260526020000', 'rls_score_carteira_hardening', '20260526020000_rls_score_carteira_hardening.sql'),
-  ('20260526030000', 'fin_sync_watchdog_sweep_orphans', '20260526030000_fin_sync_watchdog_sweep_orphans.sql')
+  ('20260526030000', 'fin_sync_watchdog_sweep_orphans', '20260526030000_fin_sync_watchdog_sweep_orphans.sql'),
+  ('20260526100000', 'fin_funding_inputs', '20260526100000_fin_funding_inputs.sql')
 )
 SELECT
   e.version,
@@ -480,7 +481,10 @@ WITH expected_objects (migration, kind, schema_name, object_name, parent_name) A
   ('rls_score_carteira_hardening', 'rls_policy', 'public', 'cvs_insert_own_or_gestor', 'customer_visit_scores'),
   ('rls_score_carteira_hardening', 'rls_policy', 'public', 'cvs_update_own_or_gestor', 'customer_visit_scores'),
   ('rls_score_carteira_hardening', 'rls_policy', 'public', 'cvs_delete_own_or_gestor', 'customer_visit_scores'),
-  ('fin_sync_watchdog_sweep_orphans', 'function', 'public', 'fin_sync_watchdog_check', '')
+  ('fin_sync_watchdog_sweep_orphans', 'function', 'public', 'fin_sync_watchdog_check', ''),
+  ('fin_funding_inputs', 'table', 'public', 'fin_funding_inputs', ''),
+  ('fin_funding_inputs', 'rls_policy', 'public', 'fin_funding_inputs_select_master', 'fin_funding_inputs'),
+  ('fin_funding_inputs', 'rls_policy', 'public', 'fin_funding_inputs_write_master', 'fin_funding_inputs')
 )
 SELECT
   e.migration,

@@ -21,13 +21,13 @@ Este audit valida **quais custom migrations estão de fato aplicadas no banco**.
 
 ## Resumo
 
-- **73** custom migrations totais
-- **370** objetos esperados (criados por estas migrations)
+- **74** custom migrations totais
+- **373** objetos esperados (criados por estas migrations)
 - Quebra por tipo:
-  - `rls_policy`: 114
+  - `rls_policy`: 116
   - `index`: 95
   - `function`: 55
-  - `table`: 53
+  - `table`: 54
   - `trigger`: 31
   - `cron_job`: 18
   - `enum_value`: 4
@@ -758,6 +758,14 @@ Lista canônica do que cada migration *deveria* criar (extraído via regex de `C
 | Tipo | Objeto | Parent |
 | --- | --- | --- |
 | `function` | `public.fin_sync_watchdog_check` | — |
+
+### `20260526100000_fin_funding_inputs.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `table` | `public.fin_funding_inputs` | — |
+| `rls_policy` | `public.fin_funding_inputs_select_master` | `fin_funding_inputs` |
+| `rls_policy` | `public.fin_funding_inputs_write_master` | `fin_funding_inputs` |
 
 ## Próximos passos quando algo der `❌`
 
