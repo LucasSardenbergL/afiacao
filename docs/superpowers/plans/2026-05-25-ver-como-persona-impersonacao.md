@@ -10,6 +10,8 @@
 
 **Spec:** `docs/superpowers/specs/2026-05-25-ver-como-persona-impersonacao-design.md`
 
+> **⚠️ STATUS (2026-05-25, durante execução):** o PR #221 (controle de acesso por persona) foi **fechado, não mergeado** — `useAccess`/`resolve-access`/`access-matrix` não existem na main. Logo **T0 e T9 NÃO foram feitos** e a **camada de MENU está adiada** (vira follow-up quando houver fundação de acesso-por-persona). **v1 entregue = data-only:** impersonar mostra os DADOS reais do alvo (positivação/cross-sell/visit/scores) + banner + read-only; o menu permanece o do master. Os hooks `useImpersonatedAccessProfile` + RPC `get_user_access_profile_for` ficam construídos e prontos pra quando a camada de menu for ligada.
+
 ---
 
 ## File Structure
