@@ -227,7 +227,7 @@ export function useDirectTintImport() {
   // ─── Process formulas ───
   const processFormulas = async (rows: string[][], personalizada: boolean, importacaoId: string): Promise<{ imported: number; updated: number; errors: number }> => {
     let imported = 0, errors = 0;
-    const updated = 0;
+    let updated = 0;
     const totalBatches = Math.ceil(rows.length / BATCH_SIZE);
     const offset = personalizada ? 0 : 2;
 
@@ -480,7 +480,7 @@ export function useDirectTintImport() {
   // ─── Process formulas via RPC (Postgres-native) ───
   const processFormulasRPC = async (rows: string[][], personalizada: boolean, _importacaoId: string): Promise<{ imported: number; updated: number; errors: number }> => {
     let imported = 0, errors = 0;
-    const updated = 0;
+    let updated = 0;
     const offset = personalizada ? 0 : 2;
     const totalBatches = Math.ceil(rows.length / RPC_BATCH_SIZE);
 
