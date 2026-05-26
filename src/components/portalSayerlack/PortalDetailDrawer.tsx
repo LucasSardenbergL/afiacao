@@ -73,7 +73,7 @@ export function PortalDetailDrawer({ pedidoId, open, onOpenChange, isAdmin }: Pr
       if (error) throw error;
 
       const skus = (rows ?? []).map((r) => r.sku_codigo_omie).filter(Boolean);
-      let mapping: Record<string, string> = {};
+      const mapping: Record<string, string> = {};
       if (skus.length) {
         const { data: maps } = await supabase
           .from('sku_fornecedor_externo')

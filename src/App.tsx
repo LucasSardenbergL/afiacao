@@ -9,6 +9,7 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { BrowserRouter, Routes, Route, Navigate } from "react-router-dom";
 import { AuthProvider } from "@/contexts/AuthContext";
 import { CompanyProvider } from "@/contexts/CompanyContext";
+import { ImpersonationProvider } from "@/contexts/ImpersonationContext";
 import { ConditionalWebRTCProvider } from "@/contexts/ConditionalWebRTCProvider";
 import { ProtectedRoute } from "@/components/ProtectedRoute";
 import { RequireFinanceiroAccess } from "@/components/RequireFinanceiroAccess";
@@ -187,6 +188,7 @@ const App = () => (
       <Sonner />
       <BrowserRouter>
         <AuthProvider>
+          <ImpersonationProvider>
           <CompanyProvider>
           <ConditionalWebRTCProvider>
           <ErrorBoundary>
@@ -360,6 +362,7 @@ const App = () => (
           </ConditionalWebRTCProvider>
           <NotificationPrompt />
           </CompanyProvider>
+          </ImpersonationProvider>
         </AuthProvider>
       </BrowserRouter>
     </TooltipProvider>

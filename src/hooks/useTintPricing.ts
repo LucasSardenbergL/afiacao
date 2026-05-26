@@ -44,7 +44,7 @@ export function useTintPricing(formulaId: string | null) {
 
       // Get omie products for cost
       const omieIds = corantes.filter(c => c.omie_product_id).map(c => c.omie_product_id!);
-      let omieProducts: Record<string, { valor_unitario: number }> = {};
+      const omieProducts: Record<string, { valor_unitario: number }> = {};
       if (omieIds.length > 0) {
         const { data: prods } = await supabase
           .from('omie_products')
