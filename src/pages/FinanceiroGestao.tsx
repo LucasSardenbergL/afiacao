@@ -164,7 +164,12 @@ export default function FinanceiroGestao() {
         <div className="flex items-center gap-3">
           <Wallet className="h-6 w-6 text-primary" />
           <div>
-            <h1 className="text-2xl font-bold">Gestão Financeira</h1>
+            <h1
+              className="font-display"
+              style={{ fontSize: "2rem", fontWeight: 500, letterSpacing: "-0.04em", lineHeight: 1.1 }}
+            >
+              Gestão Financeira
+            </h1>
             <p className="text-sm text-muted-foreground">
               Painel, capital de giro, conciliação, orçamento e fechamento.
             </p>
@@ -197,7 +202,7 @@ export default function FinanceiroGestao() {
 
         <TabsContent value="painel" className="m-0">
           <Suspense fallback={<TabFallback />}>
-            <FinanceiroDashboard />
+            <FinanceiroDashboard embedded />
           </Suspense>
         </TabsContent>
         <TabsContent value="capital" className="m-0">
