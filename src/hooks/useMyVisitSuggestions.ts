@@ -6,6 +6,11 @@
  * 2. Top 30 candidatos da cidade selecionada, depois aplica pickDailyMix.
  *
  * Default city = primeira da lista (cidade com mais candidatos).
+ *
+ * ⚠️ SEGURANÇA: o filtro por farmer_id (ownerIds) é display-only, NÃO é fronteira —
+ * a RLS de customer_visit_scores é ampla (qualquer staff lê tudo). A impersonação
+ * (effectiveUserId ≠ eu) é master-only e o master já lê tudo, então não há vazamento
+ * novo. Endurecer a RLS dessa tabela é follow-up de segurança.
  */
 
 import { useQuery } from '@tanstack/react-query';

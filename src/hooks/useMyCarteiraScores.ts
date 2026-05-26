@@ -25,6 +25,12 @@ export interface CarteiraScoreRow {
 /**
  * Busca farmer_client_scores da MINHA carteira (Opção A: farmer_id = dono).
  * Expande pra cobertura ativa: farmer_id IN [eu, ...donos que eu cubro agora].
+ *
+ * ⚠️ SEGURANÇA: o filtro por farmer_id aqui é display-only, NÃO é fronteira de
+ * segurança — a RLS de farmer_client_scores é ampla (qualquer staff lê tudo).
+ * A impersonação (effectiveUserId ≠ eu) é master-only (gate no ImpersonationContext)
+ * e o master já lê tudo, então isto não abre vazamento novo. Endurecer a RLS dessa
+ * tabela (master OR farmer_id=auth.uid() OR cobertura) é follow-up de segurança.
  */
 export function useMyCarteiraScores() {
   const { user } = useAuth();
