@@ -49,3 +49,44 @@ export function custoOportunidadeCaixa(input: {
   }
   return input.cm_anual;
 }
+
+export type Semana = {
+  inicio: string; fim: string; saldo_final: number; total_saidas: number;
+  entradas: { id_origem: string; data: string; valor: number }[];
+};
+
+export type Contexto = 'gap' | 'sobra' | 'indefinido';
+
+export function classificarContexto(input: {
+  tem_projecao: boolean; menor_saldo_ate_n: number | null; reserva_rs: number;
+}): Contexto {
+  if (!input.tem_projecao || input.menor_saldo_ate_n == null) return 'indefinido';
+  return input.menor_saldo_ate_n < input.reserva_rs ? 'gap' : 'sobra';
+}
+
+// Simulação de 2 cenários: antecipar adiciona v_liq hoje e remove o recebimento (id_origem) na semana k.
+// Delta sobre saldo_final: +v_liq em todas; -valorEntrada de k em diante. Vale criado se algum saldo
+// de k em diante cai < reserva no alternativo mas estava >= reserva no base.
+export function checaValeEmT(input: {
+  semanas: Semana[]; titulo_id: string; v_liq: number; reserva_rs: number;
+}): boolean {
+  const { semanas, titulo_id, v_liq, reserva_rs } = input;
+  const k = semanas.findIndex((s) => s.entradas.some((e) => e.id_origem === titulo_id));
+  if (k < 0) return false;
+  const valorEntrada = semanas[k].entradas
+    .filter((e) => e.id_origem === titulo_id)
+    .reduce((acc, e) => acc + e.valor, 0);
+  for (let i = k; i < semanas.length; i++) {
+    const base = semanas[i].saldo_final;
+    const alt = base + v_liq - valorEntrada;
+    if (alt < reserva_rs && base >= reserva_rs) return true;
+  }
+  return false;
+}
+
+export function classificarEstrutural(input: {
+  semanas: Semana[]; reserva_rs: number; limiar_semanas: number;
+}): boolean {
+  const comGap = input.semanas.filter((s) => s.saldo_final < input.reserva_rs).length;
+  return comGap >= input.limiar_semanas;
+}

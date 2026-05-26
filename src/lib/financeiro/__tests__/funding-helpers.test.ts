@@ -1,5 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import { iofCredito, custoEmReais, custoAntecipacao, custoOportunidadeCaixa } from '../funding-helpers';
+import { classificarContexto, checaValeEmT, classificarEstrutural, type Semana } from '../funding-helpers';
 
 describe('iofCredito', () => {
   it('aplica 0,38% fixo + 0,0082%/dia', () => {
@@ -54,5 +55,49 @@ describe('custoOportunidadeCaixa', () => {
   });
   it('sem retorno A4 informado → cm_anual', () => {
     expect(custoOportunidadeCaixa({ cm_anual: 0.18, retorno_marginal_a4: null, ha_fila_a4_positiva: true, caixa_suficiente: false })).toBe(0.18);
+  });
+});
+
+const semanas = (saldos: number[], entradas: Record<number, {id:string;valor:number}[]> = {}): Semana[] =>
+  saldos.map((s, i) => ({
+    inicio: `2026-W${i}`, fim: `2026-W${i}`, saldo_final: s, total_saidas: 0,
+    entradas: (entradas[i] ?? []).map(e => ({ id_origem: e.id, data: `2026-W${i}`, valor: e.valor })),
+  }));
+
+describe('classificarContexto', () => {
+  it('sem projeção → indefinido', () => {
+    expect(classificarContexto({ tem_projecao: false, menor_saldo_ate_n: null, reserva_rs: 1000 })).toBe('indefinido');
+  });
+  it('menor saldo < reserva → gap', () => {
+    expect(classificarContexto({ tem_projecao: true, menor_saldo_ate_n: 500, reserva_rs: 1000 })).toBe('gap');
+  });
+  it('menor saldo >= reserva → sobra', () => {
+    expect(classificarContexto({ tem_projecao: true, menor_saldo_ate_n: 5000, reserva_rs: 1000 })).toBe('sobra');
+  });
+});
+
+describe('checaValeEmT', () => {
+  it('antecipar cria vale em T quando o recebimento era necessário', () => {
+    const s = semanas([11000, 10500, 10000], { 2: [{ id: 'T1', valor: 10000 }] });
+    expect(checaValeEmT({ semanas: s, titulo_id: 'T1', v_liq: 1000, reserva_rs: 2000 })).toBe(true);
+  });
+  it('não cria vale quando há folga', () => {
+    const s = semanas([11000, 10500, 30000], { 2: [{ id: 'T1', valor: 10000 }] });
+    expect(checaValeEmT({ semanas: s, titulo_id: 'T1', v_liq: 9000, reserva_rs: 2000 })).toBe(false);
+  });
+  it('título fora do horizonte (não está na projeção) → false', () => {
+    const s = semanas([11000, 10500, 10000]);
+    expect(checaValeEmT({ semanas: s, titulo_id: 'X', v_liq: 1000, reserva_rs: 2000 })).toBe(false);
+  });
+});
+
+describe('classificarEstrutural', () => {
+  it('gap em >= limiar semanas → estrutural', () => {
+    const s = semanas([500, 500, 500, 500, 500, 500, 9000]); // 6 semanas < reserva 1000
+    expect(classificarEstrutural({ semanas: s, reserva_rs: 1000, limiar_semanas: 6 })).toBe(true);
+  });
+  it('gap pontual → não estrutural', () => {
+    const s = semanas([9000, 9000, 500, 9000]);
+    expect(classificarEstrutural({ semanas: s, reserva_rs: 1000, limiar_semanas: 6 })).toBe(false);
   });
 });
