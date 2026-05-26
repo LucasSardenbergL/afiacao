@@ -305,7 +305,7 @@ interface MovimentoRow {
   conciliado: boolean;
   omie_codigo_lancamento: number | null;
   natureza: string | null;
-  metadata: { detalhes: OmieMovimentoDetalhes; resumo: OmieMovimentoResumo };
+  metadata: null; // antes {detalhes, resumo} bruto; agora não persistido (peso morto)
   updated_at: string;
 }
 
@@ -345,7 +345,13 @@ async function setAuditOrigem(
 let apiCallCount = 0;
 let rateLimitHits = 0;
 let globalStartTime = Date.now();
-const TIME_BUDGET_MS = 130_000; // stop before 150s edge function timeout
+// 100s (não 130s): folga real antes do kill DURO de 150s da edge fn. Como o
+// budget é checado no TOPO de cada página, um callOmie/upsert lento começando
+// perto do teto pode overshootar os 150s e a plataforma mata a função
+// mid-página → linha fin_sync_log órfã em 'running' (medido: mov p95 129s/max
+// 131s raspava os 130s antigos). Todos os syncs que usam isto têm cursor de
+// continuação + cron */10, então mais ciclos é trade aceitável por zero órfã.
+const TIME_BUDGET_MS = 100_000;
 
 function isTimeBudgetExhausted(): boolean {
   return Date.now() - globalStartTime >= TIME_BUDGET_MS;
@@ -951,10 +957,11 @@ async function syncMovimentacoes(
           conciliado: false,
           omie_codigo_lancamento: codigoLancamento > 0 ? codigoLancamento : null,
           natureza: detalhes.cOrigem || null,
-          metadata: {
-            detalhes,
-            resumo,
-          },
+          // metadata era {detalhes, resumo} = payload Omie BRUTO (85% da linha,
+          // ~1KB) que NINGUÉM lê (todos os campos úteis já estão normalizados
+          // acima). Peso morto que engordava o upsert por página. Null daqui pra
+          // frente; sem backfill (~8MB nas ~8k linhas antigas é irrelevante).
+          metadata: null,
           updated_at: new Date().toISOString(),
         };
       })
