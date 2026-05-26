@@ -50,6 +50,7 @@ function montarInsumo(o: Oportunidade): InsumoSku {
     ruptura_valor_estimado: null,
     ruptura_dias: null,
     curva_desconto: curva,
+    qtd_oportunidade: o.qtde_oportunidade != null ? Number(o.qtde_oportunidade) : null,
     escopo: "sku", // fase 1
   };
 }

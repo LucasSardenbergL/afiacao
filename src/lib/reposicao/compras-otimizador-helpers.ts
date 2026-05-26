@@ -27,10 +27,12 @@ function arredondaLote(q: number, lote: number | null): number {
   return Math.ceil(q / lote) * lote;
 }
 
-// Candidatos: q_base + cada volume_minimo (≥ q_base) + limite do aumento + limite da ruptura, no lote.
+// Candidatos: q_base + cada volume_minimo (≥ q_base) + limite do aumento + limite da ruptura +
+// qtd de oportunidade sugerida pelo sistema, no lote.
 export function gerarCandidatos(input: {
   q_base: number; lote: number | null; demanda_diaria: number | null;
   curva: FaixaDesconto[]; dias_ate_aumento: number | null; ruptura_dias: number | null;
+  qtd_oportunidade?: number | null;
 }): number[] {
   const set = new Set<number>([input.q_base]);
   for (const f of input.curva) { const q = arredondaLote(f.volume_minimo, input.lote); if (q >= input.q_base) set.add(q); }
@@ -40,6 +42,9 @@ export function gerarCandidatos(input: {
   }
   if (d > 0 && input.ruptura_dias != null && input.ruptura_dias > 0) {
     const q = arredondaLote(d * input.ruptura_dias, input.lote); if (q >= input.q_base) set.add(q);
+  }
+  if (input.qtd_oportunidade != null && input.qtd_oportunidade > 0) {
+    const q = arredondaLote(input.qtd_oportunidade, input.lote); if (q >= input.q_base) set.add(q);
   }
   return [...set].sort((a, b) => a - b);
 }
@@ -93,6 +98,7 @@ export interface InsumoSku {
   ruptura_valor_estimado: number | null;
   ruptura_dias: number | null;
   curva_desconto: FaixaDesconto[];
+  qtd_oportunidade?: number | null;
   escopo: EscopoPromo;
 }
 
@@ -138,7 +144,8 @@ export function avaliarComprarMais(ins: InsumoSku): DecisaoCompra {
   flags.push('Benefício de ruptura não estimado (conservador, fase 1).');
 
   const candidatos = gerarCandidatos({ q_base, lote: ins.lote_minimo_fornecedor, demanda_diaria: ins.demanda_diaria,
-    curva: ins.curva_desconto, dias_ate_aumento: ins.dias_ate_aumento, ruptura_dias: ins.ruptura_dias });
+    curva: ins.curva_desconto, dias_ate_aumento: ins.dias_ate_aumento, ruptura_dias: ins.ruptura_dias,
+    qtd_oportunidade: ins.qtd_oportunidade });
 
   let melhor: DecisaoCompra | null = null;
   for (const q_cand of candidatos) {
@@ -165,6 +172,9 @@ export function avaliarComprarMais(ins: InsumoSku): DecisaoCompra {
   }
 
   const r = melhor as DecisaoCompra;
+  if (descontoAplicavel(ins.curva_desconto, r.q_candidata) > 0) {
+    flags.push('Desconto assume que a qtd base não atinge o piso da promo (piso real indisponível na fase 1).');
+  }
   if (descontoAplicavel(ins.curva_desconto, r.q_candidata) / 100 > DESCONTO_ALTO) {
     flags.push('Desconto alto: EOQ não recalculado com preço descontado — confiança reduzida.');
     motivos.push('Desconto >20% sem recálculo de EOQ.');

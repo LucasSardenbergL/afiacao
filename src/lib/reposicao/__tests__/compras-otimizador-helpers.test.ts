@@ -126,3 +126,14 @@ describe('avaliarComprarMais', () => {
     expect(r.flags.join(' ')).toMatch(/ruptura/i);
   });
 });
+
+describe('avaliarComprarMais — oportunidade só de aumento', () => {
+  it('candidato qtd_oportunidade cobre pós-vigência → aumento evitado > 0 e comprar_mais', () => {
+    // q_base = max(qtde_base 100, lote 50) = 100; consumo até vigência = 10×20 = 200;
+    // qtd_oportunidade 400 → elegível = 400 − max(100,200) = 200; aumento 10%, preço 50 → 200×50×0,10 = 1000
+    const r = avaliarComprarMais({ ...base, curva_desconto: [], aumento_evitado_perc: 10, dias_ate_aumento: 20, qtd_oportunidade: 400, cm_anual: 0.18 });
+    expect(r.q_candidata).toBe(400);
+    expect(r.aumento_evitado_rs).toBeGreaterThan(0);
+    expect(r.recomendacao).toBe('comprar_mais');
+  });
+});

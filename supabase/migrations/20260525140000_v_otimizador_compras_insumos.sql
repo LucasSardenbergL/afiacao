@@ -30,21 +30,31 @@ WITH frete AS (
   FROM fornecedor_custo_adicional_config cac
   WHERE cac.ativo = true
   GROUP BY cac.empresa, cac.fornecedor_nome
+),
+-- O join direto em fornecedor_prazo_pagamento_config (padrao=true AND ativo=true) pode devolver >1 linha
+-- por fornecedor → duplicaria SKUs. Pré-agrega pra garantir 1 prazo por (empresa, fornecedor_nome).
+prazo AS (
+  SELECT
+    ppc.empresa,
+    ppc.fornecedor_nome,
+    max(ppc.desconto_ou_encargo_perc) AS prazo_padrao_perc -- 1 linha por fornecedor (determinístico)
+  FROM fornecedor_prazo_pagamento_config ppc
+  WHERE ppc.padrao = true AND ppc.ativo = true
+  GROUP BY ppc.empresa, ppc.fornecedor_nome
 )
 SELECT
   o.*,
   sp.lote_minimo_fornecedor,
   sp.fornecedor_codigo_omie,
-  ppc.desconto_ou_encargo_perc AS prazo_padrao_perc,
+  p.prazo_padrao_perc,
   f.frete_perc_valor,
   f.frete_fixo,
   f.frete_taxa_pedido
 FROM v_oportunidade_economica_hoje o
 LEFT JOIN sku_parametros sp
   ON sp.empresa = o.empresa AND sp.sku_codigo_omie = o.sku_codigo_omie
-LEFT JOIN fornecedor_prazo_pagamento_config ppc
-  ON ppc.empresa = o.empresa AND ppc.fornecedor_nome = o.fornecedor_nome
-  AND ppc.padrao = true AND ppc.ativo = true
+LEFT JOIN prazo p
+  ON p.empresa = o.empresa AND p.fornecedor_nome = o.fornecedor_nome
 LEFT JOIN frete f
   ON f.empresa = o.empresa AND f.fornecedor_nome = o.fornecedor_nome;
 
