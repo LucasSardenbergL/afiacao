@@ -21,13 +21,13 @@ Este audit valida **quais custom migrations estão de fato aplicadas no banco**.
 
 ## Resumo
 
-- **67** custom migrations totais
-- **349** objetos esperados (criados por estas migrations)
+- **70** custom migrations totais
+- **360** objetos esperados (criados por estas migrations)
 - Quebra por tipo:
   - `rls_policy`: 106
   - `index`: 95
-  - `table`: 52
-  - `function`: 43
+  - `table`: 53
+  - `function`: 53
   - `trigger`: 31
   - `cron_job`: 18
   - `enum_value`: 4
@@ -708,6 +708,32 @@ Lista canônica do que cada migration *deveria* criar (extraído via regex de `C
 | `function` | `public.fin_sync_heartbeat` | — |
 | `cron_job` | `cron.fin-sync-watchdog` | — |
 | `cron_job` | `cron.fin-sync-heartbeat` | — |
+
+### `20260525210000_viewas_rpcs_for.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `function` | `public._carteira_mixgap_for_owner` | — |
+| `function` | `public.get_meu_mixgap` | — |
+| `function` | `public.get_meu_mixgap_for` | — |
+| `function` | `public._carteira_positivacao_for_owner` | — |
+| `function` | `public.get_minha_positivacao` | — |
+| `function` | `public.get_minha_positivacao_for` | — |
+
+### `20260525220000_viewas_access_targets.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `function` | `public.get_user_access_profile_for` | — |
+| `function` | `public.list_impersonation_targets` | — |
+
+### `20260525230000_impersonation_audit.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `table` | `public.impersonation_audit` | — |
+| `function` | `public.log_impersonation_start` | — |
+| `function` | `public.end_impersonation` | — |
 
 ## Próximos passos quando algo der `❌`
 
