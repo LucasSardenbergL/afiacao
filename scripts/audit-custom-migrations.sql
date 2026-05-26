@@ -3,7 +3,7 @@
 -- ========================================================================
 --
 -- Gerado por: scripts/audit-custom-migrations.ts
--- Total de custom migrations: 66
+-- Total de custom migrations: 67
 --
 -- Como usar:
 --   1. Abra o Supabase SQL Editor (via Lovable Cloud → Backend → SQL Editor)
@@ -85,7 +85,8 @@ WITH expected (version, slug, filename) AS (VALUES
   ('20260525130000', 'fin_analise_dimensoes_rpc', '20260525130000_fin_analise_dimensoes_rpc.sql'),
   ('20260525140000', 'fin_refresh_analise_dimensoes_cron', '20260525140000_fin_refresh_analise_dimensoes_cron.sql'),
   ('20260525160000', 'carteira_saude_rpc', '20260525160000_carteira_saude_rpc.sql'),
-  ('20260525190000', 'mixgap_rpc', '20260525190000_mixgap_rpc.sql')
+  ('20260525190000', 'mixgap_rpc', '20260525190000_mixgap_rpc.sql'),
+  ('20260525200000', 'fin_sync_watchdog', '20260525200000_fin_sync_watchdog.sql')
 )
 SELECT
   e.version,
@@ -448,7 +449,11 @@ WITH expected_objects (migration, kind, schema_name, object_name, parent_name) A
   ('fin_analise_dimensoes_rpc', 'function', 'public', 'fin_analise_cp_dimensoes_rpc', ''),
   ('fin_refresh_analise_dimensoes_cron', 'cron_job', 'cron', 'fin-refresh-analise-dimensoes', ''),
   ('carteira_saude_rpc', 'function', 'public', 'get_carteira_saude', ''),
-  ('mixgap_rpc', 'function', 'public', 'get_meu_mixgap', '')
+  ('mixgap_rpc', 'function', 'public', 'get_meu_mixgap', ''),
+  ('fin_sync_watchdog', 'function', 'public', 'fin_sync_watchdog_check', ''),
+  ('fin_sync_watchdog', 'function', 'public', 'fin_sync_heartbeat', ''),
+  ('fin_sync_watchdog', 'cron_job', 'cron', 'fin-sync-watchdog', ''),
+  ('fin_sync_watchdog', 'cron_job', 'cron', 'fin-sync-heartbeat', '')
 )
 SELECT
   e.migration,
