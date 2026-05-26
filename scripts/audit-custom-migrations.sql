@@ -3,7 +3,7 @@
 -- ========================================================================
 --
 -- Gerado por: scripts/audit-custom-migrations.ts
--- Total de custom migrations: 71
+-- Total de custom migrations: 72
 --
 -- Como usar:
 --   1. Abra o Supabase SQL Editor (via Lovable Cloud → Backend → SQL Editor)
@@ -90,7 +90,8 @@ WITH expected (version, slug, filename) AS (VALUES
   ('20260525200000', 'fin_sync_watchdog', '20260525200000_fin_sync_watchdog.sql'),
   ('20260525210000', 'viewas_rpcs_for', '20260525210000_viewas_rpcs_for.sql'),
   ('20260525220000', 'viewas_access_targets', '20260525220000_viewas_access_targets.sql'),
-  ('20260525230000', 'impersonation_audit', '20260525230000_impersonation_audit.sql')
+  ('20260525230000', 'impersonation_audit', '20260525230000_impersonation_audit.sql'),
+  ('20260526020000', 'fin_sync_watchdog_sweep_orphans', '20260526020000_fin_sync_watchdog_sweep_orphans.sql')
 )
 SELECT
   e.version,
@@ -468,7 +469,8 @@ WITH expected_objects (migration, kind, schema_name, object_name, parent_name) A
   ('viewas_access_targets', 'function', 'public', 'list_impersonation_targets', ''),
   ('impersonation_audit', 'table', 'public', 'impersonation_audit', ''),
   ('impersonation_audit', 'function', 'public', 'log_impersonation_start', ''),
-  ('impersonation_audit', 'function', 'public', 'end_impersonation', '')
+  ('impersonation_audit', 'function', 'public', 'end_impersonation', ''),
+  ('fin_sync_watchdog_sweep_orphans', 'function', 'public', 'fin_sync_watchdog_check', '')
 )
 SELECT
   e.migration,

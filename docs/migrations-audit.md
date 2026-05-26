@@ -21,13 +21,13 @@ Este audit valida **quais custom migrations estão de fato aplicadas no banco**.
 
 ## Resumo
 
-- **71** custom migrations totais
-- **360** objetos esperados (criados por estas migrations)
+- **72** custom migrations totais
+- **361** objetos esperados (criados por estas migrations)
 - Quebra por tipo:
   - `rls_policy`: 106
   - `index`: 95
+  - `function`: 54
   - `table`: 53
-  - `function`: 53
   - `trigger`: 31
   - `cron_job`: 18
   - `enum_value`: 4
@@ -738,6 +738,12 @@ Lista canônica do que cada migration *deveria* criar (extraído via regex de `C
 | `table` | `public.impersonation_audit` | — |
 | `function` | `public.log_impersonation_start` | — |
 | `function` | `public.end_impersonation` | — |
+
+### `20260526020000_fin_sync_watchdog_sweep_orphans.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `function` | `public.fin_sync_watchdog_check` | — |
 
 ## Próximos passos quando algo der `❌`
 
