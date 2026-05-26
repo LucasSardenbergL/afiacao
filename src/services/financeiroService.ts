@@ -918,6 +918,42 @@ export interface ProximaAcaoResult {
   gerado_em: string;
 }
 
+// ═══════════════ Custo Marginal de Funding (contrato com fin-funding) ═══════════════
+import type { DecisaoTitulo } from '@/lib/financeiro/funding-helpers';
+
+export interface FundingInputs {
+  fontes: {
+    antecipacao: {
+      taxa_desconto_mensal_perc: number;
+      tarifa_fixa: number;
+      tipo: 'desconto' | 'factoring';
+      coobrigacao: boolean;
+      ativo: boolean;
+    };
+    capital_giro: {
+      cet_anual_perc: number;
+      ativo: boolean;
+    };
+    cheque_especial: {
+      cet_anual_perc: number;
+      ativo: boolean;
+    };
+  };
+  reserva_dias_min: number;
+  gap_estrutural_semanas_min: number;
+}
+
+export interface FundingResult {
+  company: string;
+  gerado_em: string;
+  cm_anual: number | null;
+  tem_projecao: boolean;
+  estrutural: boolean;
+  reserva_rs: number;
+  titulos: DecisaoTitulo[];
+  confianca: { nivel: 'alta' | 'media' | 'baixa'; motivos: string[] };
+}
+
 // ═══════════════ Otimizador Tributário — Comparador de Regime (contrato com fin-regime-tributario) ═══════════════
 export type RegimeNome = 'simples' | 'presumido' | 'real';
 export type StatusElegibilidade = 'elegivel' | 'sublimite_excedido' | 'inelegivel';
