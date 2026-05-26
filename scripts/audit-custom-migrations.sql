@@ -3,7 +3,7 @@
 -- ========================================================================
 --
 -- Gerado por: scripts/audit-custom-migrations.ts
--- Total de custom migrations: 67
+-- Total de custom migrations: 70
 --
 -- Como usar:
 --   1. Abra o Supabase SQL Editor (via Lovable Cloud → Backend → SQL Editor)
@@ -86,7 +86,10 @@ WITH expected (version, slug, filename) AS (VALUES
   ('20260525140000', 'fin_refresh_analise_dimensoes_cron', '20260525140000_fin_refresh_analise_dimensoes_cron.sql'),
   ('20260525160000', 'carteira_saude_rpc', '20260525160000_carteira_saude_rpc.sql'),
   ('20260525190000', 'mixgap_rpc', '20260525190000_mixgap_rpc.sql'),
-  ('20260525200000', 'fin_sync_watchdog', '20260525200000_fin_sync_watchdog.sql')
+  ('20260525200000', 'fin_sync_watchdog', '20260525200000_fin_sync_watchdog.sql'),
+  ('20260525210000', 'viewas_rpcs_for', '20260525210000_viewas_rpcs_for.sql'),
+  ('20260525220000', 'viewas_access_targets', '20260525220000_viewas_access_targets.sql'),
+  ('20260525230000', 'impersonation_audit', '20260525230000_impersonation_audit.sql')
 )
 SELECT
   e.version,
@@ -453,7 +456,18 @@ WITH expected_objects (migration, kind, schema_name, object_name, parent_name) A
   ('fin_sync_watchdog', 'function', 'public', 'fin_sync_watchdog_check', ''),
   ('fin_sync_watchdog', 'function', 'public', 'fin_sync_heartbeat', ''),
   ('fin_sync_watchdog', 'cron_job', 'cron', 'fin-sync-watchdog', ''),
-  ('fin_sync_watchdog', 'cron_job', 'cron', 'fin-sync-heartbeat', '')
+  ('fin_sync_watchdog', 'cron_job', 'cron', 'fin-sync-heartbeat', ''),
+  ('viewas_rpcs_for', 'function', 'public', '_carteira_mixgap_for_owner', ''),
+  ('viewas_rpcs_for', 'function', 'public', 'get_meu_mixgap', ''),
+  ('viewas_rpcs_for', 'function', 'public', 'get_meu_mixgap_for', ''),
+  ('viewas_rpcs_for', 'function', 'public', '_carteira_positivacao_for_owner', ''),
+  ('viewas_rpcs_for', 'function', 'public', 'get_minha_positivacao', ''),
+  ('viewas_rpcs_for', 'function', 'public', 'get_minha_positivacao_for', ''),
+  ('viewas_access_targets', 'function', 'public', 'get_user_access_profile_for', ''),
+  ('viewas_access_targets', 'function', 'public', 'list_impersonation_targets', ''),
+  ('impersonation_audit', 'table', 'public', 'impersonation_audit', ''),
+  ('impersonation_audit', 'function', 'public', 'log_impersonation_start', ''),
+  ('impersonation_audit', 'function', 'public', 'end_impersonation', '')
 )
 SELECT
   e.migration,

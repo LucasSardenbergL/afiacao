@@ -2,6 +2,7 @@ import { Card } from '@/components/ui/card';
 import { Construction, BarChart3, Users, Briefcase } from 'lucide-react';
 import { KpisToday } from './KpisToday';
 import { VisitSuggestionsCard } from './VisitSuggestionsCard';
+import { ViewAsPicker } from '@/components/impersonation/ViewAsPicker';
 
 /**
  * Dashboard Master (CEO) — visão consolidada do time + KPIs próprios (você
@@ -21,6 +22,9 @@ export function MasterDashboard() {
       {/* Sugestões de visita — PR-VISIT-INTELLIGENCE Sub-PR A */}
       <VisitSuggestionsCard />
 
+      {/* Ver como — master entra na visão de um vendedor (somente leitura) */}
+      <ViewAsPicker />
+
       <Card className="p-4 border-dashed border-2 border-status-warning/30 bg-status-warning-bg/20">
         <div className="flex items-center gap-2 mb-2">
           <Construction className="w-4 h-4 text-status-warning" />
@@ -31,7 +35,6 @@ export function MasterDashboard() {
           <li>Ranking de vendedores (chamadas/dia, R$ gerado, ticket médio, NRR)</li>
           <li>Carteira agregada por vendedor (health médio, churn risk médio)</li>
           <li>Alertas estratégicos (cliente VIP esfriou, vendedor caiu produção)</li>
-          <li>Toggle &quot;ver como Farmer/Hunter/Closer&quot; pra entrar na visão de cada um</li>
         </ul>
       </Card>
 

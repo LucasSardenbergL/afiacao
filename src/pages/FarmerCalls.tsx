@@ -19,6 +19,7 @@ import { CallListPanel } from '@/components/farmer/calls/CallListPanel';
 import { NewCallDialog } from '@/components/farmer/calls/NewCallDialog';
 import { useMyPositivacao } from '@/hooks/useMyPositivacao';
 import { useMyCommercialRole } from '@/hooks/useMyCommercialRole';
+import { useImpersonation } from '@/contexts/ImpersonationContext';
 import { PositivacaoHero } from '@/components/farmer/PositivacaoHero';
 import { ClientesAPositivarCard } from '@/components/farmer/ClientesAPositivarCard';
 import { MixGapCard } from '@/components/farmer/MixGapCard';
@@ -31,6 +32,7 @@ const FarmerCalls = () => {
   const { data: positivacao } = useMyPositivacao();
   const { data: commercialRole } = useMyCommercialRole();
   const isHunter = commercialRole === 'hunter';
+  const { isImpersonating } = useImpersonation();
 
   // Real Nvoip call integration for the dialog timer
   const {
@@ -382,7 +384,12 @@ const FarmerCalls = () => {
             <h1 className="text-xl font-semibold">Ligações</h1>
             <p className="text-sm text-muted-foreground">Registre e analise suas ligações</p>
           </div>
-          <Button className="gap-1.5" onClick={() => { resetForm(); setShowNewCall(true); }}>
+          <Button
+            className="gap-1.5"
+            onClick={() => { resetForm(); setShowNewCall(true); }}
+            disabled={isImpersonating}
+            title={isImpersonating ? 'Indisponível em modo Ver como' : undefined}
+          >
             <Plus className="w-4 h-4" /> Nova ligação
           </Button>
         </div>
