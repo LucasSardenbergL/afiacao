@@ -209,6 +209,16 @@ export default function Recebimento({ statusFilter }: { statusFilter?: string[] 
           <FileCheck className="h-6 w-6 text-primary" />
           <h1 className="text-xl font-bold text-foreground">Recebimento de NF-e</h1>
         </div>
+        <div className="flex items-center gap-2">
+        <Button
+          variant="outline"
+          size="sm"
+          className="hidden lg:inline-flex"
+          onClick={() => setImportOpen(true)}
+        >
+          <Plus className="h-4 w-4 mr-1" />
+          Importar NF-e
+        </Button>
         <Button
           variant="outline"
           size="sm"
@@ -232,6 +242,7 @@ export default function Recebimento({ statusFilter }: { statusFilter?: string[] 
           <RefreshCw className={cn('h-4 w-4 mr-1', syncing && 'animate-spin')} />
           Sincronizar Omie
         </Button>
+        </div>
       </div>
 
       {/* Warehouse selector */}
@@ -370,7 +381,7 @@ export default function Recebimento({ statusFilter }: { statusFilter?: string[] 
       {/* FAB - Import manual */}
       <button
         onClick={() => setImportOpen(true)}
-        className="fixed bottom-6 right-6 z-40 h-14 w-14 rounded-full bg-primary text-primary-foreground shadow-lg flex items-center justify-center hover:bg-primary/90 transition-colors"
+        className="fixed bottom-6 right-6 z-40 h-14 w-14 rounded-full bg-primary text-primary-foreground shadow-lg flex lg:hidden items-center justify-center hover:bg-primary/90 transition-colors"
         aria-label="Importar NF-e"
       >
         <Plus className="h-6 w-6" />
