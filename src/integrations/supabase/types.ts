@@ -4556,6 +4556,13 @@ export type Database = {
             foreignKeyName: "fornecedor_alerta_campanha_id_fkey"
             columns: ["campanha_id"]
             isOneToOne: false
+            referencedRelation: "v_otimizador_compras_insumos"
+            referencedColumns: ["campanha_id"]
+          },
+          {
+            foreignKeyName: "fornecedor_alerta_campanha_id_fkey"
+            columns: ["campanha_id"]
+            isOneToOne: false
             referencedRelation: "v_promocao_avaliacao_hoje"
             referencedColumns: ["campanha_id"]
           },
@@ -5412,6 +5419,36 @@ export type Database = {
           rf_score?: number | null
           s_score?: number | null
           x_score?: number | null
+        }
+        Relationships: []
+      }
+      impersonation_audit: {
+        Row: {
+          actor_user_id: string
+          ended_at: string | null
+          id: string
+          reason: string | null
+          source: string
+          started_at: string
+          target_user_id: string
+        }
+        Insert: {
+          actor_user_id: string
+          ended_at?: string | null
+          id?: string
+          reason?: string | null
+          source?: string
+          started_at?: string
+          target_user_id: string
+        }
+        Update: {
+          actor_user_id?: string
+          ended_at?: string | null
+          id?: string
+          reason?: string | null
+          source?: string
+          started_at?: string
+          target_user_id?: string
         }
         Relationships: []
       }
@@ -6765,6 +6802,13 @@ export type Database = {
             foreignKeyName: "pedido_compra_item_promocao_item_id_fkey"
             columns: ["promocao_item_id"]
             isOneToOne: false
+            referencedRelation: "v_otimizador_compras_insumos"
+            referencedColumns: ["promo_item_id"]
+          },
+          {
+            foreignKeyName: "pedido_compra_item_promocao_item_id_fkey"
+            columns: ["promocao_item_id"]
+            isOneToOne: false
             referencedRelation: "v_promocao_avaliacao_hoje"
             referencedColumns: ["item_id"]
           },
@@ -7673,6 +7717,13 @@ export type Database = {
             foreignKeyName: "promocao_item_campanha_id_fkey"
             columns: ["campanha_id"]
             isOneToOne: false
+            referencedRelation: "v_otimizador_compras_insumos"
+            referencedColumns: ["campanha_id"]
+          },
+          {
+            foreignKeyName: "promocao_item_campanha_id_fkey"
+            columns: ["campanha_id"]
+            isOneToOne: false
             referencedRelation: "v_promocao_avaliacao_hoje"
             referencedColumns: ["campanha_id"]
           },
@@ -7744,6 +7795,13 @@ export type Database = {
             foreignKeyName: "promocao_negociacao_evento_campanha_id_fkey"
             columns: ["campanha_id"]
             isOneToOne: false
+            referencedRelation: "v_otimizador_compras_insumos"
+            referencedColumns: ["campanha_id"]
+          },
+          {
+            foreignKeyName: "promocao_negociacao_evento_campanha_id_fkey"
+            columns: ["campanha_id"]
+            isOneToOne: false
             referencedRelation: "v_promocao_avaliacao_hoje"
             referencedColumns: ["campanha_id"]
           },
@@ -7759,6 +7817,13 @@ export type Database = {
             columns: ["item_id"]
             isOneToOne: false
             referencedRelation: "v_oportunidade_economica_hoje"
+            referencedColumns: ["promo_item_id"]
+          },
+          {
+            foreignKeyName: "promocao_negociacao_evento_item_id_fkey"
+            columns: ["item_id"]
+            isOneToOne: false
+            referencedRelation: "v_otimizador_compras_insumos"
             referencedColumns: ["promo_item_id"]
           },
           {
@@ -9275,6 +9340,13 @@ export type Database = {
             columns: ["campanha_id_gerada"]
             isOneToOne: false
             referencedRelation: "v_oportunidade_economica_hoje"
+            referencedColumns: ["campanha_id"]
+          },
+          {
+            foreignKeyName: "sugestao_negociacao_paralela_campanha_id_gerada_fkey"
+            columns: ["campanha_id_gerada"]
+            isOneToOne: false
+            referencedRelation: "v_otimizador_compras_insumos"
             referencedColumns: ["campanha_id"]
           },
           {
@@ -11826,6 +11898,42 @@ export type Database = {
         }
         Relationships: []
       }
+      v_otimizador_compras_insumos: {
+        Row: {
+          aumento_evitado_perc: number | null
+          aumentos_json: Json | null
+          campanha_id: number | null
+          campanha_nome: string | null
+          cenario: string | null
+          custo_capital_efetivo_perc: number | null
+          data_limite_acao: string | null
+          demanda_diaria: number | null
+          desconto_promo_perc: number | null
+          desconto_total_perc: number | null
+          dias_ate_limite: number | null
+          economia_bruta_estimada: number | null
+          empresa: string | null
+          fornecedor_codigo_omie: number | null
+          fornecedor_nome: string | null
+          frete_fixo: number | null
+          frete_perc_valor: number | null
+          frete_taxa_pedido: number | null
+          lote_minimo_fornecedor: number | null
+          modo_promo: string | null
+          prazo_padrao_perc: number | null
+          preco_item_eoq: number | null
+          promo_data_corte_faturamento: string | null
+          promo_data_corte_pedido: string | null
+          promo_item_id: number | null
+          proxima_vigencia_aumento: string | null
+          qtde_base: number | null
+          qtde_oportunidade: number | null
+          sku_codigo_omie: number | null
+          sku_descricao: string | null
+          tem_negociacao_extra: boolean | null
+        }
+        Relationships: []
+      }
       v_pedidos_em_aberto: {
         Row: {
           dias_desde_pedido: number | null
@@ -11973,6 +12081,13 @@ export type Database = {
             columns: ["campanha_id"]
             isOneToOne: false
             referencedRelation: "v_oportunidade_economica_hoje"
+            referencedColumns: ["campanha_id"]
+          },
+          {
+            foreignKeyName: "promocao_item_campanha_id_fkey"
+            columns: ["campanha_id"]
+            isOneToOne: false
+            referencedRelation: "v_otimizador_compras_insumos"
             referencedColumns: ["campanha_id"]
           },
           {
@@ -12380,6 +12495,13 @@ export type Database = {
             foreignKeyName: "sugestao_negociacao_paralela_campanha_id_gerada_fkey"
             columns: ["campanha_id_gerada"]
             isOneToOne: false
+            referencedRelation: "v_otimizador_compras_insumos"
+            referencedColumns: ["campanha_id"]
+          },
+          {
+            foreignKeyName: "sugestao_negociacao_paralela_campanha_id_gerada_fkey"
+            columns: ["campanha_id_gerada"]
+            isOneToOne: false
             referencedRelation: "v_promocao_avaliacao_hoje"
             referencedColumns: ["campanha_id"]
           },
@@ -12420,6 +12542,11 @@ export type Database = {
       }
     }
     Functions: {
+      _carteira_mixgap_for_owner: { Args: { p_owner: string }; Returns: Json }
+      _carteira_positivacao_for_owner: {
+        Args: { p_owner: string }
+        Returns: Json
+      }
       aplicar_promocoes_no_ciclo: {
         Args: { p_data_ciclo?: string; p_empresa?: string }
         Returns: {
@@ -12535,6 +12662,7 @@ export type Database = {
         Args: { fim: string; inicio: string }
         Returns: number
       }
+      end_impersonation: { Args: { p_audit_id: string }; Returns: undefined }
       envio_portal_lock_candidatos: {
         Args: { p_max?: number }
         Returns: {
@@ -12730,7 +12858,10 @@ export type Database = {
       }
       get_default_production_assignee: { Args: never; Returns: string }
       get_meu_mixgap: { Args: never; Returns: Json }
+      get_meu_mixgap_for: { Args: { p_target: string }; Returns: Json }
       get_minha_positivacao: { Args: never; Returns: Json }
+      get_minha_positivacao_for: { Args: { p_target: string }; Returns: Json }
+      get_user_access_profile_for: { Args: { p_target: string }; Returns: Json }
       get_user_role: {
         Args: { _user_id: string }
         Returns: Database["public"]["Enums"]["app_role"]
@@ -12754,6 +12885,14 @@ export type Database = {
           expiradas: number
         }[]
       }
+      list_impersonation_targets: {
+        Args: never
+        Returns: {
+          commercial_role: string
+          nome: string
+          user_id: string
+        }[]
+      }
       listar_skus_por_codigo_fornecedor: {
         Args: { p_codigo_fornecedor: string; p_empresa: string }
         Returns: {
@@ -12762,6 +12901,10 @@ export type Database = {
           familia: string
           omie_codigo_produto: number
         }[]
+      }
+      log_impersonation_start: {
+        Args: { p_reason?: string; p_target: string }
+        Returns: string
       }
       marcar_alerta_notificado: {
         Args: {
@@ -12787,6 +12930,7 @@ export type Database = {
           total: number
         }[]
       }
+      pode_ver_carteira_completa: { Args: { _uid: string }; Returns: boolean }
       processar_alertas_pendentes_notificacao: {
         Args: { p_empresa?: string }
         Returns: {
