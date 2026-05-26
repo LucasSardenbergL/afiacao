@@ -70,6 +70,47 @@ function resolveDrePeriod(input: {
   return { ano, meses };
 }
 
+// ═══════════════ VALIDAÇÃO DE EMPRESA (allow-list) ═══════════════
+// ⚠️ ESPELHO VERBATIM de src/lib/financeiro/omie-request.ts (testado em vitest).
+// Valida company/companies do body contra o allow-list (evita resultado vazio /
+// chave-lixo silenciosa). Editou aqui? Edite lá também.
+const ALLOWED_COMPANIES = ["oben", "colacor", "colacor_sc"] as const;
+
+class OmieRequestError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "OmieRequestError";
+  }
+}
+
+function validateCompany(value: unknown, allowed: readonly string[]): string {
+  if (typeof value === "string" && allowed.includes(value)) {
+    return value;
+  }
+  throw new OmieRequestError(`company inválida (recebido: ${JSON.stringify(value)})`);
+}
+
+function resolveCompanies(input: {
+  companies?: unknown;
+  company?: unknown;
+  allowed: readonly string[];
+}): string[] {
+  const { companies, company, allowed } = input;
+  if (companies != null) {
+    if (!Array.isArray(companies)) {
+      throw new OmieRequestError("companies deve ser um array");
+    }
+    if (companies.length === 0) {
+      throw new OmieRequestError("companies não pode ser vazio");
+    }
+    return companies.map((c) => validateCompany(c, allowed));
+  }
+  if (company != null) {
+    return [validateCompany(company, allowed)];
+  }
+  return [...allowed];
+}
+
 type OmieGenericResponse = Record<string, unknown> & { faultstring?: string };
 
 interface OmieListResponse<T> {
@@ -1298,38 +1339,43 @@ async function calcularDRE(
   // vencimento na janela) e bucketiza client-side via resolverDataCaixa.
   async function buscarCR() {
     if (regime === "competencia") {
-      const { data } = await db.from("fin_contas_receber")
+      const { data, error } = await db.from("fin_contas_receber")
         .select("valor_documento, valor_recebido, data_recebimento, data_vencimento, categoria_codigo, categoria_descricao")
         .eq("company", company).neq("status_titulo", "CANCELADO")
         .gte("data_emissao", inicioMes).lt("data_emissao", fimMes);
+      if (error) throw error; // não silenciar falha de DB como DRE vazia
       return data ?? [];
     }
-    const { data } = await db.from("fin_contas_receber")
+    const { data, error } = await db.from("fin_contas_receber")
       .select("valor_documento, valor_recebido, data_recebimento, data_vencimento, categoria_codigo, categoria_descricao")
       .eq("company", company).in("status_titulo", ["RECEBIDO", "PARCIAL", "LIQUIDADO"])
       .or(`and(data_recebimento.gte.${inicioMes},data_recebimento.lt.${fimMes}),and(data_recebimento.is.null,data_vencimento.gte.${inicioMes},data_vencimento.lt.${fimMes})`);
+    if (error) throw error; // não silenciar falha de DB como DRE vazia
     return data ?? [];
   }
   async function buscarCP() {
     if (regime === "competencia") {
-      const { data } = await db.from("fin_contas_pagar")
+      const { data, error } = await db.from("fin_contas_pagar")
         .select("valor_documento, valor_pago, data_pagamento, data_vencimento, categoria_codigo, categoria_descricao")
         .eq("company", company).neq("status_titulo", "CANCELADO")
         .gte("data_emissao", inicioMes).lt("data_emissao", fimMes);
+      if (error) throw error; // não silenciar falha de DB como DRE vazia
       return data ?? [];
     }
-    const { data } = await db.from("fin_contas_pagar")
+    const { data, error } = await db.from("fin_contas_pagar")
       .select("valor_documento, valor_pago, data_pagamento, data_vencimento, categoria_codigo, categoria_descricao")
       .eq("company", company).in("status_titulo", ["PAGO", "PARCIAL", "LIQUIDADO"])
       .or(`and(data_pagamento.gte.${inicioMes},data_pagamento.lt.${fimMes}),and(data_pagamento.is.null,data_vencimento.gte.${inicioMes},data_vencimento.lt.${fimMes})`);
+    if (error) throw error; // não silenciar falha de DB como DRE vazia
     return data ?? [];
   }
   const receitas = await buscarCR();
   const despesas = await buscarCP();
 
   // ── Mapping ──
-  const { data: mappings } = await db.from("fin_categoria_dre_mapping")
+  const { data: mappings, error: mappingsError } = await db.from("fin_categoria_dre_mapping")
     .select("omie_codigo, dre_linha, company").in("company", [company, "_default"]);
+  if (mappingsError) throw mappingsError; // categorização incompleta não deve persistir DRE
   const mapping = new Map<string, string>();
   const sorted = ((mappings ?? []) as Array<{ omie_codigo: string; dre_linha: string; company: string }>)
     .slice().sort((a, b) => (a.company === "_default" ? -1 : 1));
@@ -1339,6 +1385,7 @@ async function calcularDRE(
   const cfgRes = await db.from("fin_config_cashflow").select("dre_tributario").eq("company", company).maybeSingle();
   const configTrib = normalizarConfigTributario(company, (cfgRes.data as { dre_tributario?: Record<string, unknown> } | null)?.dre_tributario ?? null);
   const histRes = await db.from("fin_dre_snapshots").select("ano, mes, receita_bruta").eq("company", company).eq("regime", "competencia");
+  if (histRes.error) throw histRes.error; // histórico p/ RBT12: falha de DB não vira histórico vazio
   const histReceita = ((histRes.data ?? []) as Array<{ ano: number; mes: number; receita_bruta: number }>);
 
   // ── Classificar + bucketizar (caixa por data efetiva) ──
@@ -1740,7 +1787,7 @@ serve(async (req) => {
     const { action, company, companies, filtro_data_de, filtro_data_ate, ano, mes, meses, maxPages, entidade, ncodcc, regime: requestedRegime } =
       await req.json();
 
-    const targetCompanies: Company[] = companies || (company ? [company] : ["oben", "colacor", "colacor_sc"]);
+    const targetCompanies = resolveCompanies({ companies, company, allowed: ALLOWED_COMPANIES }) as Company[];
 
     // Reset global counters per invocation
     globalStartTime = Date.now();
@@ -1955,8 +2002,8 @@ serve(async (req) => {
     });
   } catch (error) {
     console.error("[Fin] Erro:", error);
-    // Período inválido = erro de contrato do cliente → 400 (não 500).
-    const status = error instanceof DrePeriodError ? 400 : 500;
+    // Erro de contrato do cliente (período/empresa inválidos) → 400 (não 500).
+    const status = error instanceof DrePeriodError || error instanceof OmieRequestError ? 400 : 500;
     return new Response(
       JSON.stringify({ success: false, error: String(error) }),
       {
