@@ -166,4 +166,16 @@ describe('decidirTitulo', () => {
     expect(d.flags).toContain('sem_projecao');
     expect(d.benchmark_fonte).toBe('caixa_proprio');
   });
+  it('taxa de antecipação null (fonte não configurada) → falta_dado, NUNCA antecipar grátis', () => {
+    const d = decidirTitulo({
+      titulo: baseTitulo,
+      antecipacao: { taxa_desconto_mensal: null, tipo: 'desconto', coobrigacao: true },
+      alternativas: { cheque_cet: 2.0 }, cm_anual: 0.18, retorno_marginal_a4: null, contexto: 'gap', flags_extra: [],
+    });
+    expect(d.recomendacao).toBe('falta_dado');
+    expect(d.flags).toContain('sem_taxa_antecipacao');
+    expect(d.net_rs).toBeNull();
+    expect(d.custo_rs_antecipacao).toBe(0);
+    expect(d.v_liq).toBe(0);
+  });
 });

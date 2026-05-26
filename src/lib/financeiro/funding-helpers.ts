@@ -109,7 +109,7 @@ export type DecisaoTitulo = {
 
 export function decidirTitulo(input: {
   titulo: { id: string; valor: number; dias: number; nome_cliente?: string | null };
-  antecipacao: { taxa_desconto_mensal: number; tipo: 'desconto' | 'factoring'; tarifa_fixa?: number; coobrigacao: boolean };
+  antecipacao: { taxa_desconto_mensal: number | null; tipo: 'desconto' | 'factoring'; tarifa_fixa?: number; coobrigacao: boolean };
   alternativas: { capital_giro_cet?: number | null; cheque_cet?: number | null };
   cm_anual: number;
   retorno_marginal_a4: number | null;
@@ -117,9 +117,19 @@ export function decidirTitulo(input: {
   flags_extra: string[];
 }): DecisaoTitulo {
   const t = { id: input.titulo.id, valor: input.titulo.valor, dias: input.titulo.dias, nome_cliente: input.titulo.nome_cliente ?? null };
-  const ant = custoAntecipacao({ valor: t.valor, dias: t.dias, taxa_desconto_mensal: input.antecipacao.taxa_desconto_mensal, tipo: input.antecipacao.tipo, tarifa_fixa: input.antecipacao.tarifa_fixa });
   const flags = [...input.flags_extra];
   if (input.antecipacao.coobrigacao) flags.push('coobrigacao');
+
+  // Sem taxa de antecipação configurada/ativa → não há como avaliar a antecipação. Degrada honesto
+  // (NUNCA fabrica "antecipar com custo zero" passando taxa 0).
+  if (input.antecipacao.taxa_desconto_mensal == null) {
+    return {
+      titulo: t, v_liq: 0, custo_rs_antecipacao: 0, taxa_efetiva_aa: null,
+      contexto: input.contexto, benchmark_fonte: null, custo_rs_benchmark: null, net_rs: null,
+      recomendacao: 'falta_dado', flags: [...flags, 'sem_taxa_antecipacao'],
+    };
+  }
+  const ant = custoAntecipacao({ valor: t.valor, dias: t.dias, taxa_desconto_mensal: input.antecipacao.taxa_desconto_mensal, tipo: input.antecipacao.tipo, tarifa_fixa: input.antecipacao.tarifa_fixa });
 
   const base: DecisaoTitulo = {
     titulo: t, v_liq: ant.v_liq, custo_rs_antecipacao: ant.custo_rs, taxa_efetiva_aa: ant.taxa_efetiva_aa,
