@@ -1,0 +1,175 @@
+import { describe, it, expect, vi, beforeEach } from 'vitest';
+import type { User } from '@supabase/supabase-js';
+
+// ─── Mocks de módulo (isolam submitOrder da rede/print) ───
+vi.mock('@/services/omieService', () => ({
+  syncOrderToOmie: vi.fn().mockResolvedValue({ success: true, omie_os: { cNumOS: 'OS1' } }),
+}));
+vi.mock('../buildPrintData', () => ({ buildPrintData: vi.fn().mockReturnValue([]) }));
+vi.mock('../helpers', () => ({
+  formatCustomerAddress: vi.fn().mockReturnValue('Rua X, 1'),
+  resolveCustomerPhone: vi.fn().mockResolvedValue('11999999999'),
+  buildToolInfo: vi.fn().mockReturnValue(''),
+  getToolName: vi.fn().mockReturnValue('Tool'),
+  findParcelaDesc: vi.fn().mockReturnValue(''),
+}));
+vi.mock('@/lib/logger', () => ({
+  logger: { info: vi.fn(), error: vi.fn(), critical: vi.fn(), warn: vi.fn() },
+}));
+
+import { submitOrder } from '../submitOrder';
+import type { SubmitOrderParams, SubmitClient } from '../types';
+import type { OmieCustomer, ProductCartItem } from '@/hooks/unifiedOrder/types';
+
+// ─── Mock supabase (injetado via params) ───
+interface MakeSupabaseOpts {
+  insertError?: unknown;
+  insertId?: string;
+  invokeImpl?: (body: { action?: string }) => { data?: unknown; error?: unknown };
+}
+function makeSupabase(opts: MakeSupabaseOpts = {}) {
+  const single = vi.fn().mockResolvedValue({
+    data: opts.insertError ? null : { id: opts.insertId ?? 'so-1' },
+    error: opts.insertError ?? null,
+  });
+  const select = vi.fn().mockReturnValue({ single });
+  const insert = vi.fn().mockReturnValue({ select });
+  const from = vi.fn().mockReturnValue({ insert });
+  const invoke = vi.fn().mockImplementation(async (_name: string, arg: { body: { action?: string } }) =>
+    opts.invokeImpl ? opts.invokeImpl(arg.body) : { data: { omie_numero_pedido: '999' }, error: null },
+  );
+  const client = { from, functions: { invoke } } as unknown as SubmitClient;
+  return { client, from, insert, invoke };
+}
+
+const customer = {
+  codigo_cliente: 100,
+  codigo_cliente_colacor: 200,
+  codigo_vendedor: 5,
+  codigo_vendedor_colacor: 6,
+  razao_social: 'ACME LTDA',
+  nome_fantasia: 'ACME',
+  cnpj_cpf: '12345678000199',
+} as OmieCustomer;
+
+const user = { id: 'user-1' } as User;
+
+function obenItem(): ProductCartItem {
+  return {
+    type: 'product', account: 'oben', quantity: 2, unit_price: 10,
+    product: { id: 'p1', omie_codigo_produto: 'OBEN1', codigo: 'C1', descricao: 'Lixa', unidade: 'UN' },
+  } as unknown as ProductCartItem;
+}
+function colacorAcabado(): ProductCartItem {
+  return {
+    type: 'product', account: 'colacor', quantity: 1, unit_price: 50,
+    product: { id: 'p2', omie_codigo_produto: 'COL1', codigo: 'C2', descricao: 'Disco acabado', unidade: 'UN', metadata: { tipo_produto: '04' } },
+  } as unknown as ProductCartItem;
+}
+
+function makeParams(over: Partial<SubmitOrderParams> & { supabase: SubmitClient }): SubmitOrderParams {
+  return {
+    customer, customerUserId: 'cu-1', user,
+    cart: { obenProductItems: [], colacorProductItems: [], serviceItems: [] },
+    subtotals: { oben: 0, colacor: 0, service: 0 },
+    volumes: { oben: 0, colacor: 0 },
+    payment: { parcelaOben: '1', parcelaColacor: '1', afiacaoMethod: 'pix', formasPagamentoOben: [], formasPagamentoColacor: [] },
+    delivery: { option: 'balcao', selectedAddress: undefined },
+    meta: { notes: '', readyByDate: '', ordemCompra: '' },
+    companyProfiles: {},
+    defaultProductionAssigneeId: null,
+    getServicePrice: () => 0,
+    ...over,
+  } as SubmitOrderParams;
+}
+
+beforeEach(() => vi.clearAllMocks());
+
+describe('submitOrder', () => {
+  it('carrinho vazio → erro de validação, sem insert', async () => {
+    const { client, insert } = makeSupabase();
+    const r = await submitOrder(makeParams({ supabase: client }));
+    expect(r.success).toBe(false);
+    expect(r.errors[0]).toEqual({ step: 'validate', message: 'Carrinho vazio' });
+    expect(insert).not.toHaveBeenCalled();
+  });
+
+  it('Oben: insert ok + Omie ok → success + PV no results', async () => {
+    const { client, insert, invoke } = makeSupabase({ insertId: 'so-oben' });
+    const r = await submitOrder(makeParams({
+      supabase: client,
+      cart: { obenProductItems: [obenItem()], colacorProductItems: [], serviceItems: [] },
+      subtotals: { oben: 20, colacor: 0, service: 0 },
+    }));
+    expect(r.success).toBe(true);
+    expect(insert).toHaveBeenCalledWith(expect.objectContaining({ account: 'oben', status: 'rascunho' }));
+    expect(invoke).toHaveBeenCalledWith('omie-vendas-sync', expect.objectContaining({
+      body: expect.objectContaining({ action: 'criar_pedido', account: 'oben' }),
+    }));
+    expect(r.results.some((s) => s.includes('PV Oben'))).toBe(true);
+  });
+
+  it('Oben: insert FALHA → aborta e NÃO chama o Omie', async () => {
+    const { client, invoke } = makeSupabase({ insertError: { message: 'rls denied' } });
+    const r = await submitOrder(makeParams({
+      supabase: client,
+      cart: { obenProductItems: [obenItem()], colacorProductItems: [], serviceItems: [] },
+      subtotals: { oben: 20, colacor: 0, service: 0 },
+    }));
+    expect(r.success).toBe(false);
+    expect(r.errors.some((e) => e.step === 'insert_oben')).toBe(true);
+    expect(invoke).not.toHaveBeenCalled(); // invariante: sem registro local, não cria PV no ERP
+  });
+
+  it('Oben: insert ok + Omie FALHA → não aborta, marca pendente ERP', async () => {
+    const { client } = makeSupabase({
+      insertId: 'so-oben',
+      invokeImpl: () => ({ data: null, error: { message: 'omie timeout' } }),
+    });
+    const r = await submitOrder(makeParams({
+      supabase: client,
+      cart: { obenProductItems: [obenItem()], colacorProductItems: [], serviceItems: [] },
+      subtotals: { oben: 20, colacor: 0, service: 0 },
+    }));
+    expect(r.success).toBe(true);
+    expect(r.results.some((s) => s.includes('pendente ERP'))).toBe(true);
+    expect(r.errors.some((e) => e.step === 'sync_oben_omie')).toBe(true);
+  });
+
+  it('Colacor produto acabado + responsável setado → cria ordem de produção', async () => {
+    const { client, invoke } = makeSupabase({
+      insertId: 'so-col',
+      invokeImpl: (body) => body.action === 'criar_pedido'
+        ? { data: { omie_numero_pedido: '777' }, error: null }
+        : { data: { ok: true }, error: null },
+    });
+    const r = await submitOrder(makeParams({
+      supabase: client,
+      cart: { obenProductItems: [], colacorProductItems: [colacorAcabado()], serviceItems: [] },
+      subtotals: { oben: 0, colacor: 50, service: 0 },
+      defaultProductionAssigneeId: 'assignee-1',
+    }));
+    expect(r.success).toBe(true);
+    expect(invoke).toHaveBeenCalledWith('omie-vendas-sync', expect.objectContaining({
+      body: expect.objectContaining({ action: 'criar_ordem_producao', account: 'colacor' }),
+    }));
+  });
+
+  it('Colacor produto acabado SEM responsável → não cria OP, erro registrado, success ainda true', async () => {
+    const { client, invoke } = makeSupabase({
+      insertId: 'so-col',
+      invokeImpl: (body) => ({ data: { omie_numero_pedido: '888' }, error: body.action === 'criar_ordem_producao' ? { message: 'x' } : null }),
+    });
+    const r = await submitOrder(makeParams({
+      supabase: client,
+      cart: { obenProductItems: [], colacorProductItems: [colacorAcabado()], serviceItems: [] },
+      subtotals: { oben: 0, colacor: 50, service: 0 },
+      defaultProductionAssigneeId: null,
+    }));
+    expect(r.success).toBe(true);
+    expect(r.errors.some((e) => e.step === 'create_production_order')).toBe(true);
+    // nunca chamou criar_ordem_producao (sem responsável)
+    const opCalls = invoke.mock.calls.filter((c) => (c[1] as { body: { action?: string } }).body.action === 'criar_ordem_producao');
+    expect(opCalls).toHaveLength(0);
+  });
+});

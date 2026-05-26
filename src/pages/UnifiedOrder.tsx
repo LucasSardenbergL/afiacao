@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
-import { Loader2, ChevronLeft, CheckCircle, Building2, Scissors, Wifi } from 'lucide-react';
+import { Loader2, CheckCircle, Building2, Scissors, Wifi } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
 import { track } from '@/lib/analytics';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
@@ -137,9 +137,6 @@ const UnifiedOrder = () => {
   return (
     <div className="max-w-5xl mx-auto space-y-4 pb-6">
       <div className="flex items-center gap-3">
-        <button onClick={() => h.navigate(-1)} className="flex items-center gap-1 text-sm text-muted-foreground hover:text-foreground">
-          <ChevronLeft className="w-4 h-4" />
-        </button>
         <div>
           <h1 className="text-lg font-semibold">
             {isCustomerMode ? 'Nova Ordem de Serviço' : 'Novo Pedido'}
