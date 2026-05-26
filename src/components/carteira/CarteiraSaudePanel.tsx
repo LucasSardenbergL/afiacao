@@ -1,7 +1,9 @@
+import { useEffect, useRef } from 'react';
 import { Card, CardHeader, CardTitle } from '@/components/ui/card';
 import { Loader2 } from 'lucide-react';
 import { useCarteiraSaude } from '@/hooks/useCarteiraSaude';
 import { statusCron, statusSync, statusCoverage, nivelAgregado } from '@/lib/carteira-saude/status';
+import { track } from '@/lib/analytics';
 import type { SaudeNivel } from '@/lib/carteira-saude/types';
 
 const DOT: Record<SaudeNivel, string> = {
@@ -29,6 +31,18 @@ function Row({ nivel, label, detail, acao }: { nivel: SaudeNivel; label: string;
 
 export function CarteiraSaudePanel() {
   const { data, isLoading } = useCarteiraSaude();
+
+  const tracked = useRef(false);
+  useEffect(() => {
+    if (!data || tracked.current) return;
+    tracked.current = true;
+    const niveis = [
+      ...data.crons.map((c) => statusCron(c, c.jobname === MENSAL ? null : NIGHTLY_MAX_AGE).nivel),
+      statusSync(data.sync).nivel,
+      statusCoverage(data.score_coverage).nivel,
+    ];
+    track('carteira.saude_vista', { nivel: nivelAgregado(niveis) });
+  }, [data]);
 
   if (isLoading) {
     return (

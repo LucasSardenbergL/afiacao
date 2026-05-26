@@ -2,6 +2,7 @@ import { createContext, useContext, useState, useEffect, useCallback, useMemo, t
 import { useAuth } from '@/contexts/AuthContext';
 import { supabase } from '@/integrations/supabase/client';
 import { resolveEffectiveUserId, loadPersistedTarget, persistTarget } from '@/lib/impersonation/effective-user';
+import { track } from '@/lib/analytics';
 import type { ImpersonationTarget } from '@/lib/impersonation/types';
 
 interface ImpersonationContextType {
@@ -43,6 +44,7 @@ export function ImpersonationProvider({ children }: { children: ReactNode }) {
     setAuditId(typeof data === 'string' ? data : null);
     setTarget(t);
     persistTarget(t);
+    track('carteira.ver_como_iniciado', { grupo: t.grupo });
   }, [isMaster]);
 
   const stopImpersonation = useCallback(async () => {

@@ -1,11 +1,21 @@
+import { useEffect, useRef } from 'react';
 import { Link } from 'react-router-dom';
 import { Card, CardHeader } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { useMyMixGap } from '@/hooks/useMyMixGap';
 import { buildPorQue } from '@/lib/mixgap/format';
+import { track } from '@/lib/analytics';
 
 export function MixGapCard() {
   const { data } = useMyMixGap();
+  const totalComGap = data?.totalComGap ?? 0;
+  const tracked = useRef(false);
+  useEffect(() => {
+    if (totalComGap > 0 && !tracked.current) {
+      tracked.current = true;
+      track('carteira.mixgap_visto', { total_com_gap: totalComGap });
+    }
+  }, [totalComGap]);
   if (!data || data.totalComGap === 0) return null;
   return (
     <Card>
@@ -20,6 +30,7 @@ export function MixGapCard() {
           <Link
             key={g.customer_user_id}
             to={`/admin/customers/${g.customer_user_id}/360`}
+            onClick={() => track('carteira.mixgap_cliente_aberto', { familia: g.familia_faltante })}
             className="p-3 flex items-center justify-between gap-3 hover:bg-muted/30"
           >
             <div className="min-w-0">
