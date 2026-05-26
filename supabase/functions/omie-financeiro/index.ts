@@ -111,6 +111,25 @@ function resolveCompanies(input: {
   return [...allowed];
 }
 
+// ═══════════════ GATE DE ACESSO FINANCEIRO ═══════════════
+// ⚠️ ESPELHO VERBATIM de src/lib/financeiro/omie-request.ts (testado em vitest).
+// Autoriza master (user_roles) OU gestor comercial (commercial_roles em
+// GESTOR_COMMERCIAL_ROLES). Espelha o gate do fin-valor-cockpit. Editou aqui?
+// Edite lá também.
+const GESTOR_COMMERCIAL_ROLES = ["gerencial", "estrategico", "super_admin"] as const;
+
+function hasFinanceiroAccess(input: {
+  userRoles: ReadonlyArray<{ role?: string | null }> | null | undefined;
+  commercialRoles: ReadonlyArray<{ commercial_role?: string | null }> | null | undefined;
+}): boolean {
+  const isMaster = (input.userRoles ?? []).some((r) => r?.role === "master");
+  if (isMaster) return true;
+  const gestor = new Set<string>(GESTOR_COMMERCIAL_ROLES);
+  return (input.commercialRoles ?? []).some(
+    (c) => c?.commercial_role != null && gestor.has(c.commercial_role),
+  );
+}
+
 type OmieGenericResponse = Record<string, unknown> & { faultstring?: string };
 
 interface OmieListResponse<T> {
@@ -1643,16 +1662,21 @@ async function validateCaller(
     return { authorized: false, error: "Token inválido" };
   }
 
-  // Check staff role (admin, manager, employee, master)
-  const { data: roles } = await db
+  // Gate financeiro: master (user_roles) OU gestor comercial (commercial_roles).
+  // omie-financeiro expõe DRE/saldos/CP-CR + sync ERP — não é p/ employee comum.
+  // Matriz decidida pelo founder (2026-05-25); espelha o gate do fin-valor-cockpit.
+  // `db` é service_role → lê as roles sem esbarrar em RLS.
+  const { data: userRoles } = await db
     .from("user_roles")
     .select("role")
-    .eq("user_id", user.id)
-    .in("role", ["employee", "master"])
-    .limit(1);
+    .eq("user_id", user.id);
+  const { data: commercialRoles } = await db
+    .from("commercial_roles")
+    .select("commercial_role")
+    .eq("user_id", user.id);
 
-  if (!roles || roles.length === 0) {
-    return { authorized: false, error: "Permissão negada: requer perfil de funcionário" };
+  if (!hasFinanceiroAccess({ userRoles, commercialRoles })) {
+    return { authorized: false, error: "Permissão negada: requer master ou gestor comercial" };
   }
 
   return { authorized: true, userId: user.id };

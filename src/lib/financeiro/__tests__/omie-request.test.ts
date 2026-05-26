@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { resolveCompanies, OmieRequestError } from '../omie-request';
+import { resolveCompanies, hasFinanceiroAccess, OmieRequestError } from '../omie-request';
 
 const ALLOWED = ['oben', 'colacor', 'colacor_sc'] as const;
 
@@ -38,5 +38,35 @@ describe('resolveCompanies', () => {
   it('company de tipo inválido → throw', () => {
     expect(() => resolveCompanies({ company: 123, allowed: ALLOWED })).toThrow(OmieRequestError);
     expect(() => resolveCompanies({ companies: [1, 2], allowed: ALLOWED })).toThrow(OmieRequestError);
+  });
+});
+
+describe('hasFinanceiroAccess', () => {
+  it('master (user_roles) → true', () => {
+    expect(hasFinanceiroAccess({ userRoles: [{ role: 'master' }], commercialRoles: [] })).toBe(true);
+  });
+
+  it('gestor comercial (gerencial/estrategico/super_admin) → true', () => {
+    expect(hasFinanceiroAccess({ userRoles: [], commercialRoles: [{ commercial_role: 'gerencial' }] })).toBe(true);
+    expect(hasFinanceiroAccess({ userRoles: [], commercialRoles: [{ commercial_role: 'estrategico' }] })).toBe(true);
+    expect(hasFinanceiroAccess({ userRoles: [], commercialRoles: [{ commercial_role: 'super_admin' }] })).toBe(true);
+  });
+
+  it('master vence mesmo com commercial_role não-gestor', () => {
+    expect(hasFinanceiroAccess({ userRoles: [{ role: 'master' }], commercialRoles: [{ commercial_role: 'vendedor' }] })).toBe(true);
+  });
+
+  it('employee comum (sem master, sem gestor) → false', () => {
+    expect(hasFinanceiroAccess({ userRoles: [{ role: 'employee' }], commercialRoles: [] })).toBe(false);
+  });
+
+  it('vendedor (commercial_role não-gestor) → false', () => {
+    expect(hasFinanceiroAccess({ userRoles: [{ role: 'employee' }], commercialRoles: [{ commercial_role: 'vendedor' }] })).toBe(false);
+  });
+
+  it('null/undefined/vazio → false (deny by default)', () => {
+    expect(hasFinanceiroAccess({ userRoles: null, commercialRoles: null })).toBe(false);
+    expect(hasFinanceiroAccess({ userRoles: undefined, commercialRoles: undefined })).toBe(false);
+    expect(hasFinanceiroAccess({ userRoles: [], commercialRoles: [] })).toBe(false);
   });
 });

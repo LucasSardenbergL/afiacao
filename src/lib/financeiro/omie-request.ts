@@ -60,3 +60,30 @@ export function resolveCompanies(input: ResolveCompaniesInput): string[] {
 
   return [...allowed];
 }
+
+/**
+ * Conjunto de `commercial_role` que contam como "gestor comercial" pra acesso
+ * financeiro. Espelha o gate canônico do `fin-valor-cockpit`/`fin-next-best-action`.
+ */
+export const GESTOR_COMMERCIAL_ROLES = ['gerencial', 'estrategico', 'super_admin'] as const;
+
+/**
+ * Gate de acesso ao engine financeiro (`omie-financeiro`): expõe DRE/saldos/CP-CR
+ * + sync com o ERP, então NÃO é pra employee comum. Autoriza se o usuário é
+ * `master` (user_roles) OU gestor comercial (commercial_roles em
+ * GESTOR_COMMERCIAL_ROLES). Deny-by-default (null/vazio → false).
+ *
+ * Decisão de matriz: founder (2026-05-25). Não confere RLS/tenant — a verdade do
+ * dado vem das queries `.eq("company", ...)`; isto é só o gate de quem-pode-chamar.
+ */
+export function hasFinanceiroAccess(input: {
+  userRoles: ReadonlyArray<{ role?: string | null }> | null | undefined;
+  commercialRoles: ReadonlyArray<{ commercial_role?: string | null }> | null | undefined;
+}): boolean {
+  const isMaster = (input.userRoles ?? []).some((r) => r?.role === 'master');
+  if (isMaster) return true;
+  const gestor = new Set<string>(GESTOR_COMMERCIAL_ROLES);
+  return (input.commercialRoles ?? []).some(
+    (c) => c?.commercial_role != null && gestor.has(c.commercial_role),
+  );
+}
