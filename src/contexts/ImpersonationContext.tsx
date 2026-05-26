@@ -1,4 +1,4 @@
-import { createContext, useContext, useState, useCallback, useMemo, type ReactNode } from 'react';
+import { createContext, useContext, useState, useEffect, useCallback, useMemo, type ReactNode } from 'react';
 import { useAuth } from '@/contexts/AuthContext';
 import { supabase } from '@/integrations/supabase/client';
 import { resolveEffectiveUserId, loadPersistedTarget, persistTarget } from '@/lib/impersonation/effective-user';
@@ -22,6 +22,18 @@ export function ImpersonationProvider({ children }: { children: ReactNode }) {
 
   const realUserId = user?.id ?? null;
   const effectiveUserId = resolveEffectiveUserId(realUserId, target);
+
+  // Hard reload: no mount o `isMaster` ainda é false (auth assíncrono), então o
+  // init do useState acima cai pra null e a impersonação se perderia. Quando o
+  // master é confirmado, restaura do sessionStorage (continuidade entre reloads).
+  // stopImpersonation limpa o sessionStorage antes deste efeito rodar, então não
+  // re-restaura após "Sair".
+  useEffect(() => {
+    if (isMaster && !target) {
+      const persisted = loadPersistedTarget();
+      if (persisted) setTarget(persisted);
+    }
+  }, [isMaster, target]);
 
   const startImpersonation = useCallback(async (t: ImpersonationTarget, reason?: string) => {
     if (!isMaster) return;
