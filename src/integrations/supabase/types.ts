@@ -12651,6 +12651,8 @@ export type Database = {
         }[]
       }
       fin_refresh_analise_dimensoes: { Args: never; Returns: undefined }
+      fin_sync_heartbeat: { Args: never; Returns: undefined }
+      fin_sync_watchdog_check: { Args: never; Returns: undefined }
       fin_user_can_access: {
         Args: { check_company?: string }
         Returns: boolean
