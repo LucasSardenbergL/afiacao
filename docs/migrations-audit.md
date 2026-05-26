@@ -21,15 +21,15 @@ Este audit valida **quais custom migrations estão de fato aplicadas no banco**.
 
 ## Resumo
 
-- **66** custom migrations totais
-- **345** objetos esperados (criados por estas migrations)
+- **67** custom migrations totais
+- **349** objetos esperados (criados por estas migrations)
 - Quebra por tipo:
   - `rls_policy`: 106
   - `index`: 95
   - `table`: 52
-  - `function`: 41
+  - `function`: 43
   - `trigger`: 31
-  - `cron_job`: 16
+  - `cron_job`: 18
   - `enum_value`: 4
 
 ## Inventário por migration
@@ -699,6 +699,15 @@ Lista canônica do que cada migration *deveria* criar (extraído via regex de `C
 | Tipo | Objeto | Parent |
 | --- | --- | --- |
 | `function` | `public.get_meu_mixgap` | — |
+
+### `20260525200000_fin_sync_watchdog.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `function` | `public.fin_sync_watchdog_check` | — |
+| `function` | `public.fin_sync_heartbeat` | — |
+| `cron_job` | `cron.fin-sync-watchdog` | — |
+| `cron_job` | `cron.fin-sync-heartbeat` | — |
 
 ## Próximos passos quando algo der `❌`
 
