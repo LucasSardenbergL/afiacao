@@ -26,7 +26,7 @@ const threeMonthsAhead = new Date(today.getFullYear(), today.getMonth() + 3, 0);
 
 // ═══════════════ MAIN COMPONENT ═══════════════
 
-const FinanceiroDashboard = () => {
+const FinanceiroDashboard = ({ embedded = false }: { embedded?: boolean } = {}) => {
   const {
     view, setView, loading, syncing, error, lastSync,
     activeResumo, resumo,
@@ -105,22 +105,25 @@ const FinanceiroDashboard = () => {
     <div className="space-y-4 pb-24">
       {/* Header */}
       <div className="flex items-center justify-between flex-wrap gap-3">
-        <div>
-          <h1
-            className="font-display"
-            style={{ fontSize: "2rem", fontWeight: 500, letterSpacing: "-0.04em", lineHeight: 1.1 }}
-          >
-            Financeiro
-          </h1>
-          <p className="text-sm text-muted-foreground mt-1">
-            Controle financeiro integrado — Omie
-            {lastSync && (
-              <span className="ml-2 text-xs font-normal opacity-60">
-                · Sync {new Date(lastSync).toLocaleString('pt-BR', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' })}
-              </span>
-            )}
-          </p>
-        </div>
+        {/* Título omitido quando embutido (ex: dentro de FinanceiroGestao, que já tem h1) */}
+        {!embedded && (
+          <div>
+            <h1
+              className="font-display"
+              style={{ fontSize: "2rem", fontWeight: 500, letterSpacing: "-0.04em", lineHeight: 1.1 }}
+            >
+              Financeiro
+            </h1>
+            <p className="text-sm text-muted-foreground mt-1">
+              Controle financeiro integrado — Omie
+              {lastSync && (
+                <span className="ml-2 text-xs font-normal opacity-60">
+                  · Sync {new Date(lastSync).toLocaleString('pt-BR', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' })}
+                </span>
+              )}
+            </p>
+          </div>
+        )}
         <div className="flex items-center gap-2 flex-wrap">
           <RegimeToggle />
           <Select value={view} onValueChange={(v) => setView(v as FinanceiroView)}>
