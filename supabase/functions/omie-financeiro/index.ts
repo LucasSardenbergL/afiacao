@@ -1,6 +1,75 @@
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { createClient, type SupabaseClient } from "npm:@supabase/supabase-js@2";
 
+// ═══════════════ VALIDAÇÃO DE PERÍODO DO DRE (anti-injeção) ═══════════════
+// ⚠️ ESPELHO VERBATIM de src/lib/financeiro/dre-period.ts (testado em vitest).
+// Fecha injeção PostgREST via ano/mes crus no .or() do calcularDRE + evita
+// persistir DRE de período inválido. Editou aqui? Edite lá também.
+class DrePeriodError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "DrePeriodError";
+  }
+}
+
+function asInteger(value: unknown, field: string): number {
+  if (typeof value === "number") {
+    if (!Number.isInteger(value)) {
+      throw new DrePeriodError(`${field} deve ser inteiro (recebido: ${value})`);
+    }
+    return value;
+  }
+  if (typeof value === "string") {
+    const t = value.trim();
+    if (!/^\d+$/.test(t)) {
+      throw new DrePeriodError(`${field} inválido (recebido: "${value}")`);
+    }
+    return Number(t);
+  }
+  throw new DrePeriodError(`${field} inválido (recebido: ${String(value)})`);
+}
+
+function validateAno(ano: unknown): number {
+  const n = asInteger(ano, "ano");
+  if (n < 2000 || n > 2100) {
+    throw new DrePeriodError(`ano fora do intervalo 2000-2100 (recebido: ${n})`);
+  }
+  return n;
+}
+
+function validateMes(mes: unknown): number {
+  const n = asInteger(mes, "mes");
+  if (n < 1 || n > 12) {
+    throw new DrePeriodError(`mes fora do intervalo 1-12 (recebido: ${n})`);
+  }
+  return n;
+}
+
+function resolveDrePeriod(input: {
+  ano?: unknown;
+  mes?: unknown;
+  meses?: unknown;
+  defaultAno: number;
+  defaultMes: number;
+}): { ano: number; meses: number[] } {
+  const ano = input.ano == null ? input.defaultAno : validateAno(input.ano);
+  let meses: number[];
+  if (input.meses != null) {
+    if (!Array.isArray(input.meses)) {
+      throw new DrePeriodError("meses deve ser um array de inteiros");
+    }
+    if (input.meses.length === 0) {
+      throw new DrePeriodError("meses não pode ser vazio");
+    }
+    meses = input.meses.map((m) => validateMes(m));
+  } else if (input.mes != null) {
+    meses = [validateMes(input.mes)];
+  } else {
+    meses = [input.defaultMes];
+  }
+  return { ano, meses };
+}
+
 type OmieGenericResponse = Record<string, unknown> & { faultstring?: string };
 
 interface OmieListResponse<T> {
@@ -1210,6 +1279,12 @@ async function calcularDRE(
   mes: number,
   regime: Regime = "caixa"
 ) {
+  // Defense-in-depth: este é o ponto money-path que compõe o filtro .or() cru
+  // (1235/1249) e faz upsert em fin_dre_snapshots. Re-valida mesmo que o boundary
+  // já valide — qualquer caller futuro fica protegido. Reatribui pra normalizar
+  // o tipo (boundary pode entregar string "2026") e fechar o bug de dezembro.
+  ano = validateAno(ano);
+  mes = validateMes(mes);
   const inicioMes = `${ano}-${String(mes).padStart(2, "0")}-01`;
   const fimMes =
     mes === 12
@@ -1770,12 +1845,14 @@ serve(async (req) => {
       // Phase 3 (Fundação): calcula ambos regimes (caixa + competência) por padrão.
       // Aceita `regime` opcional ('caixa' | 'competencia' | 'ambos'). Default 'ambos'.
       case "calcular_dre": {
-        const targetAno = ano || new Date().getFullYear();
-        const targetMeses: number[] = meses
-          ? meses
-          : mes
-            ? [mes]
-            : [new Date().getMonth() + 1];
+        const nowDre = new Date();
+        const { ano: targetAno, meses: targetMeses } = resolveDrePeriod({
+          ano,
+          mes,
+          meses,
+          defaultAno: nowDre.getFullYear(),
+          defaultMes: nowDre.getMonth() + 1,
+        });
         const regimesToRun: Regime[] = requestedRegime === "caixa"
           ? ["caixa"]
           : requestedRegime === "competencia"
@@ -1796,7 +1873,7 @@ serve(async (req) => {
 
       // Ponto 8: calcular_dre_year = todos os meses até o mês atual
       case "calcular_dre_year": {
-        const targetAno = ano || new Date().getFullYear();
+        const targetAno = ano == null ? new Date().getFullYear() : validateAno(ano);
         const currentMonth = new Date().getFullYear() === targetAno ? new Date().getMonth() + 1 : 12;
         const regimesYear: Regime[] = ["caixa", "competencia"];
         for (const co of targetCompanies) {
@@ -1878,10 +1955,12 @@ serve(async (req) => {
     });
   } catch (error) {
     console.error("[Fin] Erro:", error);
+    // Período inválido = erro de contrato do cliente → 400 (não 500).
+    const status = error instanceof DrePeriodError ? 400 : 500;
     return new Response(
       JSON.stringify({ success: false, error: String(error) }),
       {
-        status: 500,
+        status,
         headers: { ...corsHeaders, "Content-Type": "application/json" },
       }
     );
