@@ -90,3 +90,58 @@ export function classificarEstrutural(input: {
   const comGap = input.semanas.filter((s) => s.saldo_final < input.reserva_rs).length;
   return comGap >= input.limiar_semanas;
 }
+
+export type FonteBenchmark = TipoFonte | 'melhor_uso_a4';
+export type Recomendacao = 'antecipar' | 'nao_antecipar' | 'falta_dado';
+
+export type DecisaoTitulo = {
+  titulo: { id: string; valor: number; dias: number; nome_cliente: string | null };
+  v_liq: number;
+  custo_rs_antecipacao: number;
+  taxa_efetiva_aa: number | null;
+  contexto: Contexto;
+  benchmark_fonte: FonteBenchmark | null;
+  custo_rs_benchmark: number | null;
+  net_rs: number | null;
+  recomendacao: Recomendacao;
+  flags: string[];
+};
+
+export function decidirTitulo(input: {
+  titulo: { id: string; valor: number; dias: number; nome_cliente?: string | null };
+  antecipacao: { taxa_desconto_mensal: number; tipo: 'desconto' | 'factoring'; tarifa_fixa?: number; coobrigacao: boolean };
+  alternativas: { capital_giro_cet?: number | null; cheque_cet?: number | null };
+  cm_anual: number;
+  retorno_marginal_a4: number | null;
+  contexto: Contexto;
+  flags_extra: string[];
+}): DecisaoTitulo {
+  const t = { id: input.titulo.id, valor: input.titulo.valor, dias: input.titulo.dias, nome_cliente: input.titulo.nome_cliente ?? null };
+  const ant = custoAntecipacao({ valor: t.valor, dias: t.dias, taxa_desconto_mensal: input.antecipacao.taxa_desconto_mensal, tipo: input.antecipacao.tipo, tarifa_fixa: input.antecipacao.tarifa_fixa });
+  const flags = [...input.flags_extra];
+  if (input.antecipacao.coobrigacao) flags.push('coobrigacao');
+
+  const base: DecisaoTitulo = {
+    titulo: t, v_liq: ant.v_liq, custo_rs_antecipacao: ant.custo_rs, taxa_efetiva_aa: ant.taxa_efetiva_aa,
+    contexto: input.contexto, benchmark_fonte: null, custo_rs_benchmark: null, net_rs: null, recomendacao: 'falta_dado', flags,
+  };
+  if (ant.v_liq <= 0) return base;
+
+  if (input.contexto === 'gap') {
+    const cands: { fonte: FonteBenchmark; custo: number }[] = [];
+    if (input.alternativas.capital_giro_cet != null) cands.push({ fonte: 'capital_giro', custo: custoEmReais(ant.v_liq, t.dias, input.alternativas.capital_giro_cet) });
+    if (input.alternativas.cheque_cet != null) cands.push({ fonte: 'cheque_especial', custo: custoEmReais(ant.v_liq, t.dias, input.alternativas.cheque_cet) });
+    if (cands.length === 0) return base;
+    const melhor = cands.reduce((a, b) => (b.custo < a.custo ? b : a));
+    const net = melhor.custo - ant.custo_rs;
+    return { ...base, benchmark_fonte: melhor.fonte, custo_rs_benchmark: melhor.custo, net_rs: net, recomendacao: net > 0 ? 'antecipar' : 'nao_antecipar' };
+  }
+
+  // sobra | indefinido: o caixa liberado renderia rBench; antecipar vale se ganho > custo.
+  const rBench = input.retorno_marginal_a4 != null ? Math.max(input.cm_anual, input.retorno_marginal_a4) : input.cm_anual;
+  const ganho = custoEmReais(ant.v_liq, t.dias, rBench);
+  const net = ganho - ant.custo_rs;
+  const benchmark_fonte: FonteBenchmark = input.retorno_marginal_a4 != null ? 'melhor_uso_a4' : 'caixa_proprio';
+  if (input.contexto === 'indefinido') flags.push('sem_projecao');
+  return { ...base, benchmark_fonte, custo_rs_benchmark: ganho, net_rs: net, recomendacao: net > 0 ? 'antecipar' : 'nao_antecipar' };
+}

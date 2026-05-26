@@ -1,6 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import { iofCredito, custoEmReais, custoAntecipacao, custoOportunidadeCaixa } from '../funding-helpers';
 import { classificarContexto, checaValeEmT, classificarEstrutural, type Semana } from '../funding-helpers';
+import { decidirTitulo } from '../funding-helpers';
 
 describe('iofCredito', () => {
   it('aplica 0,38% fixo + 0,0082%/dia', () => {
@@ -99,5 +100,70 @@ describe('classificarEstrutural', () => {
   it('gap pontual → não estrutural', () => {
     const s = semanas([9000, 9000, 500, 9000]);
     expect(classificarEstrutural({ semanas: s, reserva_rs: 1000, limiar_semanas: 6 })).toBe(false);
+  });
+});
+
+const baseTitulo = { id: 'T1', valor: 10000, dias: 30, nome_cliente: 'ACME' };
+const baseAnt = { taxa_desconto_mensal: 0.022, tipo: 'desconto' as const, coobrigacao: true };
+
+describe('decidirTitulo', () => {
+  it('GAP: antecipação mais barata que a alternativa → antecipar (net>0)', () => {
+    const d = decidirTitulo({
+      titulo: baseTitulo, antecipacao: baseAnt,
+      alternativas: { capital_giro_cet: null, cheque_cet: 2.0 },
+      cm_anual: 0.18, retorno_marginal_a4: null, contexto: 'gap', flags_extra: [],
+    });
+    expect(d.recomendacao).toBe('antecipar');
+    expect(d.net_rs!).toBeGreaterThan(0);
+    expect(d.benchmark_fonte).toBe('cheque_especial');
+    expect(d.flags).toContain('coobrigacao');
+  });
+  it('GAP: antecipação mais cara que dívida barata → não antecipar', () => {
+    const d = decidirTitulo({
+      titulo: baseTitulo, antecipacao: baseAnt,
+      alternativas: { capital_giro_cet: 0.10, cheque_cet: null },
+      cm_anual: 0.18, retorno_marginal_a4: null, contexto: 'gap', flags_extra: [],
+    });
+    expect(d.recomendacao).toBe('nao_antecipar');
+    expect(d.net_rs!).toBeLessThan(0);
+  });
+  it('SOBRA: deságio > cm_anual e sem uso A4 → não antecipar', () => {
+    const d = decidirTitulo({
+      titulo: baseTitulo, antecipacao: baseAnt, alternativas: {},
+      cm_anual: 0.18, retorno_marginal_a4: null, contexto: 'sobra', flags_extra: [],
+    });
+    expect(d.recomendacao).toBe('nao_antecipar');
+    expect(d.benchmark_fonte).toBe('caixa_proprio');
+  });
+  it('SOBRA com uso A4 de altíssimo retorno → antecipar', () => {
+    const d = decidirTitulo({
+      titulo: baseTitulo, antecipacao: baseAnt, alternativas: {},
+      cm_anual: 0.18, retorno_marginal_a4: 5.0, contexto: 'sobra', flags_extra: [],
+    });
+    expect(d.recomendacao).toBe('antecipar');
+    expect(d.benchmark_fonte).toBe('melhor_uso_a4');
+  });
+  it('GAP sem nenhuma alternativa informada → falta_dado', () => {
+    const d = decidirTitulo({
+      titulo: baseTitulo, antecipacao: baseAnt, alternativas: {},
+      cm_anual: 0.18, retorno_marginal_a4: null, contexto: 'gap', flags_extra: [],
+    });
+    expect(d.recomendacao).toBe('falta_dado');
+  });
+  it('v_liq<=0 → falta_dado', () => {
+    const d = decidirTitulo({
+      titulo: { id: 'T', valor: 100, dias: 30, nome_cliente: null },
+      antecipacao: { taxa_desconto_mensal: 2, tipo: 'desconto', coobrigacao: false },
+      alternativas: { cheque_cet: 2.0 }, cm_anual: 0.18, retorno_marginal_a4: null, contexto: 'gap', flags_extra: [],
+    });
+    expect(d.recomendacao).toBe('falta_dado');
+  });
+  it('indefinido (sem projeção) propaga flag sem_projecao', () => {
+    const d = decidirTitulo({
+      titulo: baseTitulo, antecipacao: baseAnt, alternativas: {},
+      cm_anual: 0.18, retorno_marginal_a4: null, contexto: 'indefinido', flags_extra: [],
+    });
+    expect(d.flags).toContain('sem_projecao');
+    expect(d.benchmark_fonte).toBe('caixa_proprio');
   });
 });
