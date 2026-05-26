@@ -1795,6 +1795,12 @@ serve(async (req) => {
     Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!
   );
 
+  // Içados pra fora do try: o catch precisa finalizar o log órfão (sem isto a
+  // linha fica 'running' pra sempre — nunca vira 'error' — e a falha some).
+  let logId = "";
+  let startTime = Date.now();
+  let syncFinalized = false;
+
   try {
     // Auth check (Ponto 6)
     const auth = await validateCaller(req, supabase);
@@ -1815,10 +1821,10 @@ serve(async (req) => {
 
     // Reset global counters per invocation
     globalStartTime = Date.now();
-    const startTime = globalStartTime;
+    startTime = globalStartTime;
     apiCallCount = 0;
     rateLimitHits = 0;
-    const logId = await logSync(supabase, action, targetCompanies, auth.userId || "unknown");
+    logId = await logSync(supabase, action, targetCompanies, auth.userId || "unknown");
 
     let result: Record<string, unknown> = {};
 
@@ -2005,6 +2011,7 @@ serve(async (req) => {
 
       default:
         await completeSync(supabase, logId, null, `Ação desconhecida: ${action}`, startTime);
+        syncFinalized = true;
         return new Response(
           JSON.stringify({
             error: `Ação desconhecida: ${action}`,
@@ -2020,12 +2027,24 @@ serve(async (req) => {
 
     // Log sucesso (Ponto 11)
     await completeSync(supabase, logId, result, undefined, startTime);
+    syncFinalized = true;
 
     return new Response(JSON.stringify({ success: true, action, ...result }), {
       headers: { ...corsHeaders, "Content-Type": "application/json" },
     });
   } catch (error) {
     console.error("[Fin] Erro:", error);
+    // Finaliza o log órfão: marca 'error' em vez de deixar 'running' pra sempre.
+    // Guarda syncFinalized → não sobrescreve um completeSync('complete') já feito
+    // se a exceção vier depois dele. Update do log em try/catch interno pra NUNCA
+    // mascarar a resposta original (se o próprio update falhar, ainda responde).
+    if (logId && !syncFinalized) {
+      try {
+        await completeSync(supabase, logId, null, String(error), startTime);
+      } catch (logErr) {
+        console.error("[Fin] Falha ao finalizar log órfão:", logErr);
+      }
+    }
     // Erro de contrato do cliente (período/empresa inválidos) → 400 (não 500).
     const status = error instanceof DrePeriodError || error instanceof OmieRequestError ? 400 : 500;
     return new Response(

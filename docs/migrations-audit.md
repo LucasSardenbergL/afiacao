@@ -21,12 +21,12 @@ Este audit valida **quais custom migrations estão de fato aplicadas no banco**.
 
 ## Resumo
 
-- **72** custom migrations totais
-- **369** objetos esperados (criados por estas migrations)
+- **73** custom migrations totais
+- **370** objetos esperados (criados por estas migrations)
 - Quebra por tipo:
   - `rls_policy`: 114
   - `index`: 95
-  - `function`: 54
+  - `function`: 55
   - `table`: 53
   - `trigger`: 31
   - `cron_job`: 18
@@ -752,6 +752,12 @@ Lista canônica do que cada migration *deveria* criar (extraído via regex de `C
 | `rls_policy` | `public.cvs_insert_own_or_gestor` | `customer_visit_scores` |
 | `rls_policy` | `public.cvs_update_own_or_gestor` | `customer_visit_scores` |
 | `rls_policy` | `public.cvs_delete_own_or_gestor` | `customer_visit_scores` |
+
+### `20260526030000_fin_sync_watchdog_sweep_orphans.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `function` | `public.fin_sync_watchdog_check` | — |
 
 ## Próximos passos quando algo der `❌`
 
