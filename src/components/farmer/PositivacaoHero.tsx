@@ -1,4 +1,6 @@
+import { useEffect, useRef } from 'react';
 import { Card } from '@/components/ui/card';
+import { track } from '@/lib/analytics';
 import type { PositivacaoKpis } from '@/hooks/useMyPositivacao';
 
 function KpiCard({ label, value, sub }: { label: string; value: string; sub?: string }) {
@@ -12,6 +14,19 @@ function KpiCard({ label, value, sub }: { label: string; value: string; sub?: st
 }
 
 export function PositivacaoHero({ kpis, isHunter }: { kpis: PositivacaoKpis; isHunter: boolean }) {
+  const tracked = useRef(false);
+  useEffect(() => {
+    if (tracked.current) return;
+    tracked.current = true;
+    track('carteira.positivacao_vista', {
+      pct: kpis.pctPositivacao,
+      positivados: kpis.positivados,
+      total_eligible: kpis.totalEligible,
+      a_positivar: kpis.aPositivar.length,
+      is_hunter: isHunter,
+    });
+  }, [kpis, isHunter]);
+
   const ticket = `R$ ${kpis.ticketMedio.toLocaleString('pt-BR', { maximumFractionDigits: 0 })}`;
   return (
     <div className="space-y-3">

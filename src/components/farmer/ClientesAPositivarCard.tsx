@@ -1,6 +1,7 @@
 import { Link } from 'react-router-dom';
 import { Card, CardHeader } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
+import { track } from '@/lib/analytics';
 import type { ClienteAPositivar } from '@/lib/positivacao/types';
 
 export function ClientesAPositivarCard({ clientes }: { clientes: ClienteAPositivar[] }) {
@@ -24,6 +25,10 @@ export function ClientesAPositivarCard({ clientes }: { clientes: ClienteAPositiv
           <Link
             key={c.customer_user_id}
             to={`/admin/customers/${c.customer_user_id}/360`}
+            onClick={() => track('carteira.a_positivar_cliente_aberto', {
+              dias_sem_comprar: c.days_since_last_purchase,
+              churn_alto: (c.churn_risk ?? 0) >= 60,
+            })}
             className="p-3 flex items-center justify-between gap-3 hover:bg-muted/30"
           >
             <div className="min-w-0">
