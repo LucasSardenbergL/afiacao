@@ -21,12 +21,12 @@ Este audit valida **quais custom migrations estão de fato aplicadas no banco**.
 
 ## Resumo
 
-- **72** custom migrations totais
-- **361** objetos esperados (criados por estas migrations)
+- **73** custom migrations totais
+- **370** objetos esperados (criados por estas migrations)
 - Quebra por tipo:
-  - `rls_policy`: 106
+  - `rls_policy`: 114
   - `index`: 95
-  - `function`: 54
+  - `function`: 55
   - `table`: 53
   - `trigger`: 31
   - `cron_job`: 18
@@ -739,7 +739,21 @@ Lista canônica do que cada migration *deveria* criar (extraído via regex de `C
 | `function` | `public.log_impersonation_start` | — |
 | `function` | `public.end_impersonation` | — |
 
-### `20260526020000_fin_sync_watchdog_sweep_orphans.sql`
+### `20260526020000_rls_score_carteira_hardening.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `function` | `public.pode_ver_carteira_completa` | — |
+| `rls_policy` | `public.fcs_select_carteira` | `farmer_client_scores` |
+| `rls_policy` | `public.fcs_insert_own_or_gestor` | `farmer_client_scores` |
+| `rls_policy` | `public.fcs_update_own_or_gestor` | `farmer_client_scores` |
+| `rls_policy` | `public.fcs_delete_own_or_gestor` | `farmer_client_scores` |
+| `rls_policy` | `public.cvs_select_carteira` | `customer_visit_scores` |
+| `rls_policy` | `public.cvs_insert_own_or_gestor` | `customer_visit_scores` |
+| `rls_policy` | `public.cvs_update_own_or_gestor` | `customer_visit_scores` |
+| `rls_policy` | `public.cvs_delete_own_or_gestor` | `customer_visit_scores` |
+
+### `20260526030000_fin_sync_watchdog_sweep_orphans.sql`
 
 | Tipo | Objeto | Parent |
 | --- | --- | --- |
