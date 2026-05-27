@@ -6,7 +6,9 @@
 # garante que isso não repita.
 #
 # Decisões de bloqueio:
-# - typecheck (tsc --noEmit): blocking — qualquer regressão de tipos quebra o PR
+# - typecheck (tsc -p tsconfig.app.json): blocking — checa TODO o src (strict:false).
+#   O root tsconfig.json é references-only (files:[]), então `tsc --noEmit` cru é
+#   no-op; o -p força a checagem do app (pega TS2741/prop faltando etc.).
 # - test (vitest run): blocking — regressão de comportamento documentado
 # - build (vite build): blocking — pega Tailwind quebrado + import errors + PWA setup
 # - lint (eslint): informational — main hoje tem 1300 errors herdados (97%
@@ -38,8 +40,8 @@ jobs:
         run: bun install --frozen-lockfile
 
       # ─── Blocking checks ────────────────────────────────────────────
-      - name: Type check
-        run: bunx tsc --noEmit
+      - name: Type check (app — todo o src, ver tsconfig.app.json)
+        run: bunx tsc --noEmit -p tsconfig.app.json
 
       - name: Type check (strict mode — files migrados, ver tsconfig.strict.json)
         run: bun run typecheck:strict
