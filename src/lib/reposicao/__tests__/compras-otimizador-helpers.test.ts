@@ -66,6 +66,9 @@ describe('aumentoEvitadoRs — só a qtd consumida APÓS a vigência', () => {
   it('sem aumento/dias → 0', () => {
     expect(aumentoEvitadoRs({ q_cand: 400, q_base: 100, demanda_diaria: 10, dias_ate_aumento: null, aumento_perc: null, preco_unit: 50 })).toBe(0);
   });
+  it('aumento vigente HOJE (dias_ate_aumento = 0) → 0 (sem janela pra antecipar, não credita fictício)', () => {
+    expect(aumentoEvitadoRs({ q_cand: 400, q_base: 100, demanda_diaria: 10, dias_ate_aumento: 0, aumento_perc: 10, preco_unit: 50 })).toBe(0);
+  });
 });
 
 describe('impactoPrazoRs — (prazo_cand% − prazo_padrão%) × valor_candidato; +encargo=custo', () => {
