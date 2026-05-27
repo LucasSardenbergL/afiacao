@@ -43,13 +43,13 @@ export default function ClientesNaoVinculados() {
   const nuncaSync = !state?.last_complete_synced_at;
 
   return (
-    <div className="p-4 space-y-4 max-w-5xl mx-auto">
-      <div className="flex items-start justify-between gap-4">
+    <div className="p-6 space-y-6 max-w-5xl mx-auto">
+      <header className="flex items-start justify-between gap-4">
         <div className="min-w-0">
-          <h1 className="text-xl font-display font-medium flex items-center gap-2">
-            <UserX className="w-5 h-5 text-muted-foreground" /> Clientes não-vinculados (Oben)
+          <h1 className="text-2xl font-display font-medium">
+            Clientes não-vinculados (Oben)
           </h1>
-          <p className="text-2xs text-muted-foreground mt-1">
+          <p className="text-sm text-muted-foreground mt-1">
             Clientes no Omie sem conta no app — alvos pra convidar/criar conta. {formatFrescor(state?.last_complete_synced_at ?? null)}.
           </p>
         </div>
@@ -62,7 +62,7 @@ export default function ClientesNaoVinculados() {
           <RefreshCw className={`w-4 h-4 mr-2 ${running ? 'animate-spin' : ''}`} />
           {running ? 'Atualizando…' : 'Atualizar'}
         </Button>
-      </div>
+      </header>
 
       {erro && (
         <Card className="border-status-error">
