@@ -12907,6 +12907,22 @@ export type Database = {
           ultima_compra_data: string
         }[]
       }
+      get_data_health: {
+        Args: never
+        Returns: {
+          age_seconds: number
+          domain: string
+          expected_max_age_seconds: number
+          freshness_basis: string
+          how_to_fix: string
+          last_error: string
+          message: string
+          probable_cause: string
+          severity: string
+          source: string
+          status: string
+        }[]
+      }
       get_default_production_assignee: { Args: never; Returns: string }
       get_meu_mixgap: { Args: never; Returns: Json }
       get_meu_mixgap_for: { Args: { p_target: string }; Returns: Json }
