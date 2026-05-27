@@ -3,7 +3,9 @@ import { readFileSync } from 'node:fs';
 import { resolve, relative } from 'node:path';
 import fg from 'fast-glob';
 
-const CWD = resolve(__dirname, '../../../../..'); // repo root (src/../..)
+// repo root: __tests__ → impersonation → lib → src → repo (4 níveis).
+// (era '../../../../..' = 5 níveis = PAI do repo → fast-glob não achava nada e o guard passava vazio.)
+const CWD = resolve(__dirname, '../../../..');
 
 const ALLOWED = new Set([
   'src/contexts/ImpersonationContext.tsx',
@@ -13,6 +15,9 @@ const ALLOWED = new Set([
   'src/hooks/useMyVisitSuggestions.ts',
   'src/hooks/useMyCarteiraScores.ts',
   'src/hooks/useImpersonatedAccessProfile.ts',
+  // useMarkMixGapFeedback usa effectiveUserId SÓ na queryKey de leitura/cache;
+  // o write (mark_mixgap_feedback) é seller=auth.uid() server-side, sem effectiveUserId.
+  'src/hooks/useMarkMixGapFeedback.ts',
 ]);
 
 describe('anti write-leak: effectiveUserId só em leitura', () => {
@@ -26,6 +31,9 @@ describe('anti write-leak: effectiveUserId só em leitura', () => {
     const normalized = files.map((f) =>
       f.startsWith('/') ? relative(CWD, f).replace(/\\/g, '/') : f
     );
+
+    // Sentinela: prova que o glob varreu o src REAL (pega CWD errado que passaria vazio).
+    expect(normalized).toContain('src/contexts/ImpersonationContext.tsx');
 
     const offenders = normalized.filter(
       (f) => !ALLOWED.has(f) && readFileSync(resolve(CWD, f), 'utf8').includes('effectiveUserId')
