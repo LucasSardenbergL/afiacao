@@ -12,11 +12,59 @@ const OMIE_API_URL = "https://app.omie.com.br/api/v1";
 
 type OmieAccount = "vendas" | "servicos" | "colacor_vendas";
 
+// ======== NÃO-VINCULADOS: helpers espelhados de src/lib/clientes-nao-vinculados/snapshot.ts ========
+type Empresa = "oben" | "colacor" | "colacor_sc";
+
+interface NaoVinculadoRow {
+  empresa: Empresa;
+  omie_codigo_cliente: number;
+  cnpj_cpf: string;
+  razao_social: string | null;
+  nome_fantasia: string | null;
+  cidade: string | null;
+  uf: string | null;
+  codigo_vendedor: number | null;
+  synced_at: string;
+}
+
+function accountToEmpresa(account: OmieAccount): Empresa {
+  switch (account) {
+    case "vendas":
+      return "oben";
+    case "colacor_vendas":
+      return "colacor";
+    case "servicos":
+      return "colacor_sc";
+  }
+}
+
+function buildNaoVinculadoRow(
+  c: OmieClienteCadastro,
+  empresa: Empresa,
+  syncedAtIso: string,
+): NaoVinculadoRow {
+  return {
+    empresa,
+    omie_codigo_cliente: c.codigo_cliente_omie ?? 0,
+    cnpj_cpf: (c.cnpj_cpf ?? "").replace(/\D/g, ""),
+    razao_social: c.razao_social?.trim() || null,
+    nome_fantasia: c.nome_fantasia?.trim() || null,
+    cidade: c.cidade?.trim() || null,
+    uf: c.estado?.trim() || null,
+    codigo_vendedor: c.codigo_vendedor ?? null,
+    synced_at: syncedAtIso,
+  };
+}
+
 interface OmieClienteCadastro {
   codigo_cliente_omie?: number;
   codigo_cliente_integracao?: string | null;
   codigo_vendedor?: number | null;
   cnpj_cpf?: string;
+  razao_social?: string;
+  nome_fantasia?: string;
+  cidade?: string;
+  estado?: string;
 }
 
 interface OmieListarClientesResponse {
@@ -176,6 +224,20 @@ async function updateSyncState(
 
 async function syncCustomers(db: SupabaseClient, account: OmieAccount) {
   await updateSyncState(db, "customers", account, { status: "running", error_message: null });
+  const empresa = accountToEmpresa(account);
+  const runTs = new Date().toISOString();
+  const naoVinculados: NaoVinculadoRow[] = [];
+  await db.from("omie_nao_vinculados_state").upsert(
+    {
+      empresa,
+      status: "running",
+      current_run_ts: runTs,
+      started_at: runTs,
+      error_message: null,
+      updated_at: runTs,
+    },
+    { onConflict: "empresa" },
+  );
   let pagina = 1;
   let totalPaginas = 1;
   let totalSynced = 0;
@@ -220,6 +282,9 @@ async function syncCustomers(db: SupabaseClient, account: OmieAccount) {
               omie_codigo_vendedor: c.codigo_vendedor || null,
             }, { onConflict: "user_id" });
             totalSynced++;
+          } else {
+            // Sem mapping E sem profile → cliente Omie sem conta no app.
+            naoVinculados.push(buildNaoVinculadoRow(c, empresa, runTs));
           }
         } else {
           // Update vendedor if changed
@@ -240,9 +305,32 @@ async function syncCustomers(db: SupabaseClient, account: OmieAccount) {
       last_sync_at: new Date().toISOString(),
       last_page: totalPaginas,
     });
+
+    // Snapshot de não-vinculados: dedup por código, insere em chunks com o run_ts,
+    // e finaliza atômico (delete-stale + state complete). Run vazio é válido (total=0).
+    const dedup = Array.from(
+      new Map(naoVinculados.map((r) => [r.omie_codigo_cliente, r])).values(),
+    );
+    for (let i = 0; i < dedup.length; i += 1000) {
+      const chunk = dedup.slice(i, i + 1000);
+      const { error: insErr } = await db.from("omie_clientes_nao_vinculados").insert(chunk);
+      if (insErr) throw new Error(`insert nao_vinculados: ${insErr.message}`);
+    }
+    const { error: finErr } = await db.rpc("finalize_nao_vinculados_snapshot", {
+      p_empresa: empresa,
+      p_run_ts: runTs,
+      p_total: dedup.length,
+    });
+    if (finErr) throw new Error(`finalize nao_vinculados: ${finErr.message}`);
+    console.log(`[Sync ${account}] Não-vinculados: ${dedup.length}`);
     return { totalSynced };
   } catch (error) {
     await updateSyncState(db, "customers", account, { status: "error", error_message: String(error) });
+    await db.from("omie_nao_vinculados_state").update({
+      status: "error",
+      error_message: String(error),
+      updated_at: new Date().toISOString(),
+    }).eq("empresa", accountToEmpresa(account));
     throw error;
   }
 }
