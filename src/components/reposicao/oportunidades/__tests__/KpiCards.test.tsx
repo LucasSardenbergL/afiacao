@@ -22,6 +22,8 @@ describe("KpiCards", () => {
     expect(screen.getByText("SKUs com oportunidade")).toBeTruthy();
     expect(screen.getByText("5")).toBeTruthy();
     expect(screen.getByText("de 50 SKUs ativos")).toBeTruthy();
+    expect(screen.getByText("Ganho líquido potencial")).toBeTruthy();
+    expect(screen.getByText(/600,00/)).toBeTruthy();
     expect(screen.getByText(/1\.000,00/)).toBeTruthy();
     expect(screen.getByText(/em 3 dias/)).toBeTruthy();
     expect(screen.getByText(/2 eventos encerra/)).toBeTruthy();
