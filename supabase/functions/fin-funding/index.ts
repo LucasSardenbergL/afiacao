@@ -218,7 +218,7 @@ type FonteCobertura = {
 type ItemStack = { fonte: TipoFonte; montante_rs: number; custo_rs: number; flag?: string };
 type PlanoCobertura = {
   gap_rs: number; horizonte_dias: number; stack: ItemStack[];
-  custo_total_rs: number; custo_inercia_rs: number; motivos: string[];
+  custo_total_rs: number; custo_inercia_rs: number | null; motivos: string[];
 };
 
 // Encontra a semana de pior saldo e calcula o gap em R$ (quanto falta para atingir a reserva).
@@ -227,10 +227,15 @@ function identificarGap(input: {
   semanas: Semana[]; reserva_rs: number;
 }): { gap_rs: number; semana_idx: number; horizonte_dias: number } | null {
   if (input.semanas.length === 0) return null;
-  let piorIdx = -1; let piorSaldo = Infinity;
-  input.semanas.forEach((s, i) => { if (s.saldo_final < piorSaldo) { piorSaldo = s.saldo_final; piorIdx = i; } });
-  if (piorSaldo >= input.reserva_rs) return null; // nunca fura a reserva → sem gap
-  return { gap_rs: input.reserva_rs - piorSaldo, semana_idx: piorIdx, horizonte_dias: (piorIdx + 1) * 7 };
+  let piorIdx = -1; let piorSaldo = Infinity; let ultimoAbaixo = -1;
+  input.semanas.forEach((s, i) => {
+    if (s.saldo_final < piorSaldo) { piorSaldo = s.saldo_final; piorIdx = i; }
+    if (s.saldo_final < input.reserva_rs) ultimoAbaixo = i; // última semana ABAIXO da reserva
+  });
+  if (ultimoAbaixo < 0) return null; // nunca fura a reserva → sem gap
+  // horizonte = até a RECUPERAÇÃO (última semana abaixo da reserva), NÃO a semana do vale — senão um
+  // déficit plano/estrutural daria 7 dias e subestimaria brutalmente o custo da cobertura.
+  return { gap_rs: input.reserva_rs - piorSaldo, semana_idx: piorIdx, horizonte_dias: (ultimoAbaixo + 1) * 7 };
 }
 
 // Monta o stack de fontes mais baratas para cobrir o gap (ordena por custo em R$, não por % a.a.).
@@ -261,7 +266,8 @@ function montarPlanoCobertura(input: {
   }
   if (restante > 0.01) motivos.push(`Capacidade das fontes insuficiente — R$ ${restante.toFixed(2)} descoberto.`);
   const custo_total_rs = stack.reduce((s, x) => s + x.custo_rs, 0);
-  const custo_inercia_rs = input.cheque_rate_aa != null ? custoEmReais(gap_rs, horizonte_dias, input.cheque_rate_aa) : 0;
+  // Sem taxa de cheque → custo da inércia DESCONHECIDO (null), NUNCA 0 (degrada honesto).
+  const custo_inercia_rs = input.cheque_rate_aa != null ? custoEmReais(gap_rs, horizonte_dias, input.cheque_rate_aa) : null;
   return { gap_rs, horizonte_dias, stack, custo_total_rs, custo_inercia_rs, motivos };
 }
 
@@ -474,16 +480,15 @@ serve(async (req: Request) => {
   // sobre o hurdle flui corretamente — o CFO vê que o custo de oportunidade real é maior que o WACC.
   let retorno_marginal: number | null = null;
   if (a4?.fila) {
+    // Só usos DIMENSIONADOS contam como "melhor uso do caixa": exige caixa_consumido > 0 (ticket
+    // dimensionado). Uso "crescer" sem ticket vira 'falta_dado' no A4 — não pode virar um
+    // retorno_marginal = hurdle que faria a decisão de sobra recomendar antecipar indevidamente.
     const candidatos = a4.fila.filter(
-      (a) => a.empresa === company && a.tipo === "crescer" && a.spread_positivo === true && a.hurdle != null,
+      (a) => a.empresa === company && a.tipo === "crescer" && a.spread_positivo === true
+        && a.hurdle != null && a.impacto_eva != null && a.caixa_consumido != null && a.caixa_consumido > 0,
     );
     if (candidatos.length > 0) {
-      const rets = candidatos.map((a) => {
-        const excess = (a.impacto_eva != null && a.caixa_consumido != null && a.caixa_consumido > 0)
-          ? Math.max(0, a.impacto_eva / a.caixa_consumido)
-          : 0;
-        return a.hurdle! + excess;
-      });
+      const rets = candidatos.map((a) => a.hurdle! + Math.max(0, a.impacto_eva! / a.caixa_consumido!));
       retorno_marginal = Math.max(...rets);
     }
   }
@@ -619,15 +624,17 @@ serve(async (req: Request) => {
   if (temProjecao) {
     const gap = identificarGap({ semanas, reserva_rs });
     if (gap != null) {
-      // Monta as fontes disponíveis para cobrir o gap (em ordem de preferência de governança).
+      // Monta as fontes EXTERNAS para cobrir o gap (em ordem de preferência de governança).
+      // ⚠️ CAIXA PRÓPRIO NÃO É FONTE DO PLANEJADOR: o gap vem da projeção 13s, que JÁ parte do saldo
+      // de tesouraria atual — ou seja, o caixa próprio (caixa_livre) já está embutido na trajetória que
+      // PRODUZIU o gap. Injetá-lo como fonte contaria o mesmo dinheiro 2× (double-count) e subfinanciaria
+      // o déficit. O gap, por definição, é o que falta DEPOIS do caixa próprio → só fontes externas
+      // (capital de giro, cheque; antecipação = v2) o cobrem. Usar a reserva é decisão de POLÍTICA
+      // (baixar reserva_dias_min), não uma fonte. (caixa_livre/retorno_marginal seguem no retorno só
+      // como contexto e pra alimentar a decisão de antecipação em sobra.)
       // NOTA v1: antecipação NÃO entra como fonte aqui — a decisão por título já está em `titulos`;
-      // incluir antecipação exigiria calcular capacidade+taxa ponderada do portfólio → v2.
+      // incluir exigiria capacidade+taxa ponderada do portfólio → v2.
       const fontes: FonteCobertura[] = [];
-
-      // Caixa próprio: custo de oportunidade = cm_anual (só se tiver caixa_livre disponível).
-      if (cm_anual != null && caixa_livre != null && caixa_livre > 0) {
-        fontes.push({ fonte: "caixa_proprio", rate_aa: cm_anual, capacidade_rs: caixa_livre, governanca_ordem: 0 });
-      }
 
       // Capital de giro bancário (linha rotativa, capacidade ilimitada no modelo v1).
       if (capital_giro_cet != null) {

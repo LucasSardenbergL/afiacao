@@ -168,10 +168,16 @@ export function identificarGap(input: {
   semanas: Semana[]; reserva_rs: number;
 }): { gap_rs: number; semana_idx: number; horizonte_dias: number } | null {
   if (input.semanas.length === 0) return null;
-  let piorIdx = -1; let piorSaldo = Infinity;
-  input.semanas.forEach((s, i) => { if (s.saldo_final < piorSaldo) { piorSaldo = s.saldo_final; piorIdx = i; } });
-  if (piorSaldo >= input.reserva_rs) return null; // nunca fura a reserva → sem gap
-  return { gap_rs: input.reserva_rs - piorSaldo, semana_idx: piorIdx, horizonte_dias: (piorIdx + 1) * 7 };
+  let piorIdx = -1; let piorSaldo = Infinity; let ultimoAbaixo = -1;
+  input.semanas.forEach((s, i) => {
+    if (s.saldo_final < piorSaldo) { piorSaldo = s.saldo_final; piorIdx = i; }
+    if (s.saldo_final < input.reserva_rs) ultimoAbaixo = i; // última semana ABAIXO da reserva
+  });
+  if (ultimoAbaixo < 0) return null; // nunca fura a reserva → sem gap
+  // gap_rs = pico da necessidade (vale mais profundo). horizonte = até a RECUPERAÇÃO (última semana
+  // abaixo da reserva), NÃO a semana do vale — senão um déficit plano/estrutural daria 7 dias e
+  // subestimaria brutalmente o custo (a cobertura fica imobilizada até o caixa voltar acima da reserva).
+  return { gap_rs: input.reserva_rs - piorSaldo, semana_idx: piorIdx, horizonte_dias: (ultimoAbaixo + 1) * 7 };
 }
 
 export type FonteCobertura = {
@@ -180,7 +186,7 @@ export type FonteCobertura = {
 export type ItemStack = { fonte: TipoFonte; montante_rs: number; custo_rs: number; flag?: string };
 export type PlanoCobertura = {
   gap_rs: number; horizonte_dias: number; stack: ItemStack[];
-  custo_total_rs: number; custo_inercia_rs: number; motivos: string[];
+  custo_total_rs: number; custo_inercia_rs: number | null; motivos: string[];
 };
 
 export function montarPlanoCobertura(input: {
@@ -208,6 +214,8 @@ export function montarPlanoCobertura(input: {
   }
   if (restante > 0.01) motivos.push(`Capacidade das fontes insuficiente — R$ ${restante.toFixed(2)} descoberto.`);
   const custo_total_rs = stack.reduce((s, x) => s + x.custo_rs, 0);
-  const custo_inercia_rs = input.cheque_rate_aa != null ? custoEmReais(gap_rs, horizonte_dias, input.cheque_rate_aa) : 0;
+  // Sem taxa de cheque → custo da inércia é DESCONHECIDO (null), NUNCA 0 (0 faria "cobrir agora"
+  // parecer pior que não fazer nada). Degrada honesto.
+  const custo_inercia_rs = input.cheque_rate_aa != null ? custoEmReais(gap_rs, horizonte_dias, input.cheque_rate_aa) : null;
   return { gap_rs, horizonte_dias, stack, custo_total_rs, custo_inercia_rs, motivos };
 }

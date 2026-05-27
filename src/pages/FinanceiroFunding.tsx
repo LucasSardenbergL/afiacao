@@ -113,22 +113,22 @@ const FONTE_LABEL: Record<TipoFonte, string> = {
 
 interface PlanejadorProps {
   plano: PlanoCobertura;
-  caixa_livre: number | null;
   retorno_marginal: number | null;
 }
 
-function PlanejadorCobertura({ plano, caixa_livre, retorno_marginal }: PlanejadorProps) {
-  const inerciaEhPior = plano.custo_inercia_rs > plano.custo_total_rs;
+function PlanejadorCobertura({ plano, retorno_marginal }: PlanejadorProps) {
+  // null-safe: custo_inercia_rs pode ser null (sem taxa de cheque → inércia desconhecida, não 0).
+  const inerciaEhPior = plano.custo_inercia_rs != null && plano.custo_inercia_rs > plano.custo_total_rs;
 
   return (
     <Card>
       <CardHeader className="flex flex-row items-start justify-between space-y-0 pb-2">
         <CardTitle className="text-base">Planejador de cobertura de gap</CardTitle>
-        {(caixa_livre != null || retorno_marginal != null) && (
+        {/* Só o "melhor uso do caixa" (A4) como contexto. NÃO mostra "caixa livre": ele NÃO é fonte do
+            plano (já está embutido na projeção que gerou o gap) — exibi-lo aqui sugeriria que cobre o gap. */}
+        {retorno_marginal != null && (
           <span className="text-xs text-muted-foreground shrink-0">
-            {caixa_livre != null && `Caixa livre: ${brl(caixa_livre)}`}
-            {caixa_livre != null && retorno_marginal != null && ' · '}
-            {retorno_marginal != null && `Melhor uso do caixa: ${pctAA(retorno_marginal)}`}
+            Melhor uso do caixa: {pctAA(retorno_marginal)}
           </span>
         )}
       </CardHeader>
@@ -416,7 +416,6 @@ export default function FinanceiroFunding() {
           {data.tem_projecao && data.plano_cobertura != null && (
             <PlanejadorCobertura
               plano={data.plano_cobertura}
-              caixa_livre={data.caixa_livre}
               retorno_marginal={data.retorno_marginal}
             />
           )}

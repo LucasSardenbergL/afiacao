@@ -203,6 +203,19 @@ describe('identificarGap', () => {
     expect(g!.semana_idx).toBe(2);
     expect(g!.horizonte_dias).toBe(21);
   });
+  it('déficit plano/estrutural → horizonte vai até a RECUPERAÇÃO, não a semana do vale', () => {
+    // todas abaixo da reserva (vale "empata" no idx 0); horizonte = última abaixo (idx 2) → 21 dias, não 7.
+    const g = identificarGap({ semanas: wk([500, 500, 500]), reserva_rs: 1000 });
+    expect(g!.gap_rs).toBe(500);
+    expect(g!.semana_idx).toBe(0);
+    expect(g!.horizonte_dias).toBe(21);
+  });
+  it('vale no meio mas recupera depois → horizonte até a última semana abaixo', () => {
+    // abaixo de 2000 em idx 1 (1500) e idx 2 (800, o vale); idx 3 recupera (3000). horizonte = (2+1)*7=21.
+    const g = identificarGap({ semanas: wk([3000, 1500, 800, 3000]), reserva_rs: 2000 });
+    expect(g!.semana_idx).toBe(2);
+    expect(g!.horizonte_dias).toBe(21);
+  });
 });
 
 describe('montarPlanoCobertura', () => {
@@ -234,5 +247,6 @@ describe('montarPlanoCobertura', () => {
     ], cheque_rate_aa: null });
     expect(p.stack.reduce((s, x) => s + x.montante_rs, 0)).toBe(1000);
     expect(p.motivos.join(' ')).toMatch(/descoberto/i);
+    expect(p.custo_inercia_rs).toBeNull(); // sem taxa de cheque → inércia desconhecida (não 0)
   });
 });
