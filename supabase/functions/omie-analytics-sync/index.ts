@@ -224,24 +224,6 @@ async function updateSyncState(
 
 async function syncCustomers(db: SupabaseClient, account: OmieAccount) {
   await updateSyncState(db, "customers", account, { status: "running", error_message: null });
-  const empresa = accountToEmpresa(account);
-  const runTs = new Date().toISOString();
-  const naoVinculados: NaoVinculadoRow[] = [];
-    // NOTA: este snapshot é produzido tanto pelo trigger manual (start_nao_vinculados, via
-    // waitUntil) quanto, de carona, pelas crons que chamam sync_customers/sync_all — refresh
-    // diário "de graça". Um kick manual durante um run de cron pode receber already_running
-    // (auto-cura pela janela de 15 min do guard).
-  await db.from("omie_nao_vinculados_state").upsert(
-    {
-      empresa,
-      status: "running",
-      current_run_ts: runTs,
-      started_at: runTs,
-      error_message: null,
-      updated_at: runTs,
-    },
-    { onConflict: "empresa" },
-  );
   let pagina = 1;
   let totalPaginas = 1;
   let totalSynced = 0;
@@ -286,10 +268,6 @@ async function syncCustomers(db: SupabaseClient, account: OmieAccount) {
               omie_codigo_vendedor: c.codigo_vendedor || null,
             }, { onConflict: "user_id" });
             totalSynced++;
-          } else if (c.codigo_cliente_omie) {
-            // Sem mapping E sem profile → cliente Omie sem conta no app.
-            // (exige código Omie; sem ele não há o que reportar nem chave de dedup)
-            naoVinculados.push(buildNaoVinculadoRow(c, empresa, runTs));
           }
         } else {
           // Update vendedor if changed
@@ -310,37 +288,133 @@ async function syncCustomers(db: SupabaseClient, account: OmieAccount) {
       last_sync_at: new Date().toISOString(),
       last_page: totalPaginas,
     });
+    return { totalSynced };
+  } catch (error) {
+    await updateSyncState(db, "customers", account, { status: "error", error_message: String(error) });
+    throw error;
+  }
+}
 
-    // Snapshot de não-vinculados: dedup por código, insere em chunks com o run_ts,
-    // e finaliza atômico (delete-stale + state complete). Run vazio é válido (total=0).
-    const dedup = Array.from(
-      new Map(naoVinculados.map((r) => [r.omie_codigo_cliente, r])).values(),
-    );
+// ======== CLIENTES NÃO-VINCULADOS (rotina dedicada e eficiente) ========
+// Desacoplada do linking: NÃO toca em omie_clientes. Faz 2 leituras em massa
+// (conjuntos) + enumera o Omie + classifica em memória. Sem N+1.
+
+// Espelhado VERBATIM de src/lib/clientes-nao-vinculados/snapshot.ts
+type SnapshotClassification = "skip" | "linked" | "has_profile" | "unlinked";
+function classifyClienteForSnapshot(
+  c: OmieClienteCadastro,
+  codigosVinculados: Set<number>,
+  docsComProfile: Set<string>,
+): SnapshotClassification {
+  const doc = (c.cnpj_cpf ?? "").replace(/\D/g, "");
+  if (!doc || c.codigo_cliente_omie == null) return "skip";
+  if (codigosVinculados.has(Number(c.codigo_cliente_omie))) return "linked";
+  if (docsComProfile.has(doc)) return "has_profile";
+  return "unlinked";
+}
+
+// Lê TODOS os omie_codigo_cliente de omie_clientes (paginado p/ furar o cap de 1000 do PostgREST).
+async function fetchAllOmieClienteCodigos(db: SupabaseClient): Promise<Set<number>> {
+  const set = new Set<number>();
+  const pageSize = 1000;
+  let from = 0;
+  while (true) {
+    const { data, error } = await db
+      .from("omie_clientes")
+      .select("omie_codigo_cliente")
+      .range(from, from + pageSize - 1);
+    if (error) throw new Error(`fetch omie_clientes codigos: ${error.message}`);
+    const rows = (data ?? []) as { omie_codigo_cliente: number | null }[];
+    for (const r of rows) if (r.omie_codigo_cliente != null) set.add(Number(r.omie_codigo_cliente));
+    if (rows.length < pageSize) break;
+    from += pageSize;
+  }
+  return set;
+}
+
+// Lê TODOS os documentos de profiles (normalizados em memória — defensivo contra formatados).
+async function fetchAllProfileDocs(db: SupabaseClient): Promise<Set<string>> {
+  const set = new Set<string>();
+  const pageSize = 1000;
+  let from = 0;
+  while (true) {
+    const { data, error } = await db
+      .from("profiles")
+      .select("document")
+      .not("document", "is", null)
+      .range(from, from + pageSize - 1);
+    if (error) throw new Error(`fetch profiles docs: ${error.message}`);
+    const rows = (data ?? []) as { document: string | null }[];
+    for (const r of rows) {
+      const d = (r.document ?? "").replace(/\D/g, "");
+      if (d) set.add(d);
+    }
+    if (rows.length < pageSize) break;
+    from += pageSize;
+  }
+  return set;
+}
+
+async function syncNaoVinculados(db: SupabaseClient, account: OmieAccount) {
+  const empresa = accountToEmpresa(account);
+  const runTs = new Date().toISOString();
+  await db.from("omie_nao_vinculados_state").upsert(
+    { empresa, status: "running", current_run_ts: runTs, started_at: runTs, error_message: null, updated_at: runTs },
+    { onConflict: "empresa" },
+  );
+
+  try {
+    // 2 leituras em massa (sets) — substitui ~2 queries POR cliente do laço de linking.
+    const codigosVinculados = await fetchAllOmieClienteCodigos(db);
+    const docsComProfile = await fetchAllProfileDocs(db);
+
+    const naoVinculados: NaoVinculadoRow[] = [];
+    let pagina = 1;
+    let totalPaginas = 1;
+    let totalOmie = 0;
+
+    while (pagina <= totalPaginas) {
+      const result = (await callOmie(account, "geral/clientes/", "ListarClientes", {
+        pagina,
+        registros_por_pagina: 100,
+        apenas_importado_api: "N",
+      })) as unknown as OmieListarClientesResponse;
+
+      totalPaginas = result.total_de_paginas || 1;
+      const clientes = result.clientes_cadastro || [];
+      for (const c of clientes) {
+        totalOmie++;
+        if (classifyClienteForSnapshot(c, codigosVinculados, docsComProfile) === "unlinked") {
+          naoVinculados.push(buildNaoVinculadoRow(c, empresa, runTs));
+        }
+      }
+      console.log(`[NaoVinc ${account}] página ${pagina}/${totalPaginas}`);
+      pagina++;
+    }
+
+    // dedup por código, insere em chunks com o run_ts, finaliza atômico.
+    const dedup = Array.from(new Map(naoVinculados.map((r) => [r.omie_codigo_cliente, r])).values());
     for (let i = 0; i < dedup.length; i += 1000) {
-      const chunk = dedup.slice(i, i + 1000);
-      const { error: insErr } = await db.from("omie_clientes_nao_vinculados").insert(chunk);
+      const { error: insErr } = await db.from("omie_clientes_nao_vinculados").insert(dedup.slice(i, i + 1000));
       if (insErr) throw new Error(`insert nao_vinculados: ${insErr.message}`);
     }
-    // INVARIANTE DE SEGURANÇA: o finalize SÓ pode rodar depois que o conjunto COMPLETO
-    // do runTs foi inserido. Nunca chamar com dados parciais — é isso que faz um run
-    // morto (timeout/crash) ficar INVISÍVEL na UI em vez de virar relatório enganoso.
-    // (finalize está estritamente após o loop de insert, no mesmo try: um throw no meio
-    //  do insert pula o finalize, então o snapshot anterior completo é preservado.)
+    // INVARIANTE DE SEGURANÇA: finalize só após inserir o conjunto COMPLETO do runTs.
+    // Um throw antes daqui (timeout/erro) pula o finalize → o run morto fica INVISÍVEL
+    // na UI (que lê só last_complete_synced_at) em vez de virar relatório enganoso.
     const { error: finErr } = await db.rpc("finalize_nao_vinculados_snapshot", {
       p_empresa: empresa,
       p_run_ts: runTs,
       p_total: dedup.length,
     });
     if (finErr) throw new Error(`finalize nao_vinculados: ${finErr.message}`);
-    console.log(`[Sync ${account}] Não-vinculados: ${dedup.length}`);
-    return { totalSynced };
+    console.log(`[NaoVinc ${account}] total_omie=${totalOmie} nao_vinculados=${dedup.length}`);
+    return { totalOmie, naoVinculados: dedup.length };
   } catch (error) {
-    await updateSyncState(db, "customers", account, { status: "error", error_message: String(error) });
     await db.from("omie_nao_vinculados_state").update({
       status: "error",
       error_message: String(error),
       updated_at: new Date().toISOString(),
-    }).eq("empresa", accountToEmpresa(account));
+    }).eq("empresa", empresa);
     throw error;
   }
 }
@@ -969,8 +1043,8 @@ serve(async (req) => {
             status: 202, headers: { ...corsHeaders, "Content-Type": "application/json" },
           });
         }
-        // Dispara o run completo (linking + snapshot) em background; responde 202 na hora.
-        const bgTask = syncCustomers(supabaseAdmin, "vendas").catch((e) => {
+        // Dispara a rotina dedicada de não-vinculados em background; responde 202 na hora.
+        const bgTask = syncNaoVinculados(supabaseAdmin, "vendas").catch((e) => {
           console.error("[nao-vinculados][async]", e instanceof Error ? e.message : e);
         });
         // eslint-disable-next-line @typescript-eslint/ban-ts-comment -- @ts-ignore intencional: EdgeRuntime é global do Deno/Supabase Edge (pode não estar tipado); @ts-expect-error quebraria o deploy se estivesse tipado
