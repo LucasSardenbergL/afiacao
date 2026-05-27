@@ -104,27 +104,27 @@ subgrafos sujos (`noUnusedLocals`/`strictNullChecks`) → cascata. **Promova lea
   segurança #322/#324/#327), pure-leaf, strict-clean por construção — `lib/financeiro/dre-period`,
   `lib/financeiro/omie-request`. Append-only no `include`. **NÃO toco** mais nada de financeiro
   (engines/services em churn por outras sessões); fatia disjunta da `cranky-driscoll` (que não tem `lib/financeiro/*`).
-- 🔵 **`claude/strict-promote-leaf-tint-picking`** (sessão strange-hellman, 2026-05-27): lote leaf puro das lanes
+- ✅ **`claude/strict-promote-leaf-tint-picking`** (#392 MERGEADO): lote leaf puro das lanes
   **tint/picking/offline/time** (disjunto de hooks=loving-nash, lib-leaf=cranky-driscoll, farmer/scoring, financeiro):
   `lib/tint/compute-price` (novo, tested), `lib/picking/view-pref`, `lib/picking/optimistic-merge`,
   `lib/offline-handlers`, `lib/time/sp-day`, `lib/routeCrumbs`. Append-only; `typecheck:strict` verde com os 6
   (transitivos de optimistic-merge/offline-handlers — picking-confirm/recebimento-* services + useOfflineFlush —
   já strict-clean). Tsconfig-only, zero edição de source. **NÃO toco** scoring/visit-scoring/farmer/financeiro/hooks.
-- 🔵 **`claude/strict-promote-leaf-datahealth-impersonation`** (sessão strange-hellman, 2026-05-27): segundo lote leaf —
+- ✅ **`claude/strict-promote-leaf-datahealth-impersonation`** (#393 MERGEADO): segundo lote leaf —
   `lib/dataHealth/{types,health-helpers}` + `lib/impersonation/{types,effective-user}`. Self-contained (types + helper
   que importa só os próprios types); nenhum PR aberto toca essas áreas. `typecheck:strict` verde com os 4. Tsconfig-only.
   **NÃO toco** carteira/mixgap/positivacao (farmer-adjacent) nem clientes-nao-vinculados (churn recente do #383).
-- 🔵 **`claude/strict-promote-leaf-components`** (sessão strange-hellman, 2026-05-27): terceiro lote leaf — **`.ts` puros**
+- ✅ **`claude/strict-promote-leaf-components`** (#395 MERGEADO): terceiro lote leaf — **`.ts` puros**
   (types/config/format/priority, **sem JSX**) de `components/{adminCustomers,aiOps,analyticsSync,customerDashboard}` +
   `components/des/{simulador,checkinQualitativo,historico}`. 14 arquivos; imports só de `lucide-react` (pacote tipado) ou
   os próprios `./types`. `typecheck:strict` verde. Tsconfig-only. **NÃO toco** os `useX.ts` (puxam queries/deps, não-leaf),
   nem `components/{farmer,financeiro,customer360}` (lanes quentes / reserva cranky-driscoll).
-- 🔵 **`claude/strict-promote-leaf-components2`** (sessão strange-hellman, 2026-05-27): quarto lote leaf — 31 `.ts` puros
+- ✅ **`claude/strict-promote-leaf-components2`** (#397 MERGEADO): quarto lote leaf — 31 `.ts` puros
   (types/config/format/shared/helpers/queries) de `components/{loyalty,notificacoes,reposicao/*,salesOrders,salesOrderEdit,
   skuMapeamento,tintColorSelect,tintImport,unifiedAI}`. Reposição já saiu do mutirão de decomposição (encerrado 2026-05-25,
   §10) → types estáveis. Imports: próprios `./types`, `date-fns`/`react-query`/supabase-client (deps tipadas já no programa).
   `typecheck:strict` verde com os 31. Tsconfig-only. **NÃO toco** farmer/financeiro/customer360 nem os `useX.ts`.
-- 🔵 **`claude/strict-promote-leaf-tsx`** (sessão strange-hellman, 2026-05-27): primeiro lote de `.tsx` presentacionais
+- ✅ **`claude/strict-promote-leaf-tsx`** (#400 MERGEADO): primeiro lote de `.tsx` presentacionais
   leaf (6, hand-verificados): `aiOps/{EvidenceItem,StatsCards,AiOpsHeader}`, `notificacoes/badges`,
   `des/historico/StarsRow`, `customerDashboard/PriorityCard`. Imports só de `lucide`/`react-router-dom`/`@/components/ui/*`
   (38 ui já no strict)/`@/lib/utils`/próprios `./types`. `typecheck:strict` verde. **NÃO toco** `reposicao/alertas/*`
