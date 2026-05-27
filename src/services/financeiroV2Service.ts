@@ -1,6 +1,7 @@
 import { supabase } from "@/integrations/supabase/client";
 import type { Company } from "@/contexts/CompanyContext";
 import type { Json } from "@/integrations/supabase/types";
+import type { DimRowRaw } from "@/lib/financeiro/orcamento-drill-helpers";
 import type {
   FinFechamentoRow,
   FinFechamentoInsert,
@@ -545,6 +546,37 @@ export async function getAnaliseDimensional(
   }
 
   return Array.from(map.values()).sort((a, b) => b.total_documento - a.total_documento);
+}
+
+/**
+ * Linhas dimensionais CRUAS por (categoria_codigo, mês) de um ano — sem agregar nem
+ * colapsar o mês (≠ getAnaliseDimensional, que agrega por descrição). Usado pelo drill
+ * de variância por categoria (`drillLinha`), que filtra os meses fechados client-side.
+ * `p_mes: null` retorna o ano inteiro (mesmo comportamento já usado por getAnaliseDimensional).
+ */
+export async function getCategoriasDimensaoRaw(
+  tipo: 'cr' | 'cp',
+  company: Company,
+  ano: number,
+): Promise<DimRowRaw[]> {
+  const rpc = tipo === 'cr' ? 'fin_analise_cr_dimensoes_rpc' : 'fin_analise_cp_dimensoes_rpc';
+  const { data, error } = await supabase.rpc(
+    rpc as never,
+    { p_company: company, p_ano: ano, p_mes: null } as never,
+  );
+  if (error) throw error;
+  const rows = (data as unknown as Array<{
+    categoria_codigo: string | null;
+    categoria_descricao: string | null;
+    mes: number | null;
+    total_documento: number | null;
+  }>) ?? [];
+  return rows.map((r) => ({
+    categoria_codigo: r.categoria_codigo,
+    categoria_descricao: r.categoria_descricao,
+    mes: r.mes,
+    valor: r.total_documento ?? 0,
+  }));
 }
 
 // ═══════════════ 6. PERMISSÕES ═══════════════
