@@ -31,10 +31,10 @@ function isSyntheticRecord(item: Pick<ReconciliationItem, "entity_key" | "sync_v
 }
 
 const diffTypeLabels: Record<string, { label: string; color: string; icon: typeof AlertTriangle }> = {
-  match: { label: "Igual", color: "bg-green-100 text-green-800 dark:bg-green-900/30 dark:text-green-300", icon: CheckCircle },
-  divergence: { label: "Divergência", color: "bg-yellow-100 text-yellow-800 dark:bg-yellow-900/30 dark:text-yellow-300", icon: AlertTriangle },
-  only_csv: { label: "Só CSV", color: "bg-blue-100 text-blue-800 dark:bg-blue-900/30 dark:text-blue-300", icon: MinusCircle },
-  only_sync: { label: "Só Sync", color: "bg-purple-100 text-purple-800 dark:bg-purple-900/30 dark:text-purple-300", icon: MinusCircle },
+  match: { label: "Igual", color: "bg-status-success-bg text-status-success", icon: CheckCircle },
+  divergence: { label: "Divergência", color: "bg-status-warning-bg text-status-warning", icon: AlertTriangle },
+  only_csv: { label: "Só CSV", color: "bg-status-info-bg text-status-info", icon: MinusCircle },
+  only_sync: { label: "Só Sync", color: "bg-status-purple-bg text-status-purple", icon: MinusCircle },
 };
 
 function ValueDisplay({ label, value }: { label: string; value: unknown }) {
@@ -142,10 +142,10 @@ export default function TintReconciliation() {
 
           <div className="grid grid-cols-2 md:grid-cols-5 gap-3">
             <Card><CardContent className="p-4 text-center"><p className="text-2xl font-bold">{visibleItems.length}</p><p className="text-xs text-muted-foreground">Comparados</p></CardContent></Card>
-            <Card><CardContent className="p-4 text-center"><p className="text-2xl font-bold text-green-600">{counts.match || 0}</p><p className="text-xs text-muted-foreground">Iguais</p></CardContent></Card>
-            <Card><CardContent className="p-4 text-center"><p className="text-2xl font-bold text-yellow-600">{counts.divergence || 0}</p><p className="text-xs text-muted-foreground">Divergências</p></CardContent></Card>
-            <Card><CardContent className="p-4 text-center"><p className="text-2xl font-bold text-blue-600">{counts.only_csv || 0}</p><p className="text-xs text-muted-foreground">Só CSV</p></CardContent></Card>
-            <Card><CardContent className="p-4 text-center"><p className="text-2xl font-bold text-purple-600">{counts.only_sync || 0}</p><p className="text-xs text-muted-foreground">Só Sync</p></CardContent></Card>
+            <Card><CardContent className="p-4 text-center"><p className="text-2xl font-bold text-status-success">{counts.match || 0}</p><p className="text-xs text-muted-foreground">Iguais</p></CardContent></Card>
+            <Card><CardContent className="p-4 text-center"><p className="text-2xl font-bold text-status-warning">{counts.divergence || 0}</p><p className="text-xs text-muted-foreground">Divergências</p></CardContent></Card>
+            <Card><CardContent className="p-4 text-center"><p className="text-2xl font-bold text-status-info">{counts.only_csv || 0}</p><p className="text-xs text-muted-foreground">Só CSV</p></CardContent></Card>
+            <Card><CardContent className="p-4 text-center"><p className="text-2xl font-bold text-status-purple">{counts.only_sync || 0}</p><p className="text-xs text-muted-foreground">Só Sync</p></CardContent></Card>
           </div>
         </>
       )}
@@ -263,14 +263,14 @@ export default function TintReconciliation() {
                   <Badge className={dt.color}>{dt.label}</Badge>
                   <Badge variant="outline">{detailItem.entity_type}</Badge>
                   {synthetic && (
-                    <Badge variant="outline" className="gap-1 border-dashed border-yellow-500 text-yellow-700 dark:text-yellow-400">
+                    <Badge variant="outline" className="gap-1 border-dashed border-status-warning text-status-warning">
                       <FlaskConical className="h-3 w-3" /> Dado Sintético / Mock
                     </Badge>
                   )}
                 </div>
 
                 {synthetic && (
-                  <div className="bg-yellow-50 dark:bg-yellow-900/20 border border-yellow-200 dark:border-yellow-800 rounded-lg p-3 text-xs text-yellow-800 dark:text-yellow-300">
+                  <div className="bg-status-warning-bg border border-status-warning/40 rounded-lg p-3 text-xs text-status-warning">
                     ⚠️ Este registro foi gerado pela simulação e não representa um dado operacional real. 
                     Ele serve apenas para validar o fluxo de sincronização e reconciliação.
                   </div>
