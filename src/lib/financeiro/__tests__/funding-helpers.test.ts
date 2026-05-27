@@ -178,4 +178,13 @@ describe('decidirTitulo', () => {
     expect(d.custo_rs_antecipacao).toBe(0);
     expect(d.v_liq).toBe(0);
   });
+  it('SOBRA sem cm_anual nem A4 → falta_dado (não fabrica nao_antecipar com benchmark zero)', () => {
+    const d = decidirTitulo({
+      titulo: baseTitulo, antecipacao: baseAnt, alternativas: {},
+      cm_anual: null, retorno_marginal_a4: null, contexto: 'sobra', flags_extra: [],
+    });
+    expect(d.recomendacao).toBe('falta_dado');
+    expect(d.flags).toContain('sem_custo_capital');
+    expect(d.net_rs).toBeNull();
+  });
 });

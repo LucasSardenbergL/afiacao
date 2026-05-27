@@ -157,7 +157,7 @@ function decidirTitulo(input: {
   titulo: { id: string; valor: number; dias: number; nome_cliente?: string | null };
   antecipacao: { taxa_desconto_mensal: number | null; tipo: "desconto" | "factoring"; tarifa_fixa?: number; coobrigacao: boolean };
   alternativas: { capital_giro_cet?: number | null; cheque_cet?: number | null };
-  cm_anual: number;
+  cm_anual: number | null;
   retorno_marginal_a4: number | null;
   contexto: Contexto;
   flags_extra: string[];
@@ -194,11 +194,19 @@ function decidirTitulo(input: {
   }
 
   // sobra | indefinido: o caixa liberado renderia rBench; antecipar vale se ganho > custo.
-  const rBench = input.retorno_marginal_a4 != null ? Math.max(input.cm_anual, input.retorno_marginal_a4) : input.cm_anual;
+  if (input.contexto === "indefinido") flags.push("sem_projecao");
+  const benchmarks: number[] = [];
+  if (input.cm_anual != null) benchmarks.push(input.cm_anual);
+  if (input.retorno_marginal_a4 != null) benchmarks.push(input.retorno_marginal_a4);
+  if (benchmarks.length === 0) {
+    // Sem custo de oportunidade do caixa (cm_anual) nem retorno de uso (A4) → não há benchmark pra
+    // avaliar a sobra. Degrada honesto (NUNCA fabrica recomendação com benchmark zero).
+    return { ...base, recomendacao: "falta_dado", flags: [...flags, "sem_custo_capital"] };
+  }
+  const rBench = Math.max(...benchmarks);
   const ganho = custoEmReais(ant.v_liq, t.dias, rBench);
   const net = ganho - ant.custo_rs;
   const benchmark_fonte: FonteBenchmark = input.retorno_marginal_a4 != null ? "melhor_uso_a4" : "caixa_proprio";
-  if (input.contexto === "indefinido") flags.push("sem_projecao");
   return { ...base, benchmark_fonte, custo_rs_benchmark: ganho, net_rs: net, recomendacao: net > 0 ? "antecipar" : "nao_antecipar" };
 }
 
@@ -267,6 +275,13 @@ function numOrNull(x: unknown): number | null {
   return Number.isFinite(n) ? n : null;
 }
 
+// Taxas/CET/tarifa/reserva NÃO podem ser negativas. Valor negativo é erro de config e fabricaria
+// "lucro" artificial (v_liq > V → custo_rs < 0 → antecipar). Negativo → null (= fonte não configurada).
+function numNonNeg(x: unknown): number | null {
+  const n = numOrNull(x);
+  return n != null && n >= 0 ? n : null;
+}
+
 type CashflowProjecao = {
   semanas?: Semana[];
   indicadores?: { dias_cobertura?: number; saldo_tesouraria?: number };
@@ -311,19 +326,19 @@ serve(async (req: Request) => {
   const ceInput = fi.fontes?.cheque_especial;
 
   const antAtivo = antInput?.ativo === true;
-  const taxa_desconto_mensal_perc = numOrNull(antInput?.taxa_desconto_mensal_perc);
+  const taxa_desconto_mensal_perc = numNonNeg(antInput?.taxa_desconto_mensal_perc);
   const taxa_desconto_mensal = antAtivo && taxa_desconto_mensal_perc != null ? taxa_desconto_mensal_perc / 100 : null;
-  const tarifa_fixa_raw = numOrNull(antInput?.tarifa_fixa);
+  const tarifa_fixa_raw = numNonNeg(antInput?.tarifa_fixa);
   const tarifa_fixa = tarifa_fixa_raw ?? 0;
   const tipo_antecipacao: "desconto" | "factoring" = antInput?.tipo === "factoring" ? "factoring" : "desconto";
   const coobrigacao = antInput?.coobrigacao === true;
 
   const cgAtivo = cgInput?.ativo === true;
-  const cg_cet_perc = numOrNull(cgInput?.cet_anual_perc);
+  const cg_cet_perc = numNonNeg(cgInput?.cet_anual_perc);
   const capital_giro_cet = cgAtivo && cg_cet_perc != null ? cg_cet_perc / 100 : null;
 
   const ceAtivo = ceInput?.ativo === true;
-  const ce_cet_perc = numOrNull(ceInput?.cet_anual_perc);
+  const ce_cet_perc = numNonNeg(ceInput?.cet_anual_perc);
   const cheque_cet = ceAtivo && ce_cet_perc != null ? ce_cet_perc / 100 : null;
 
   // Se não há fonte de antecipação configurada e ativa, a engine não consegue decidir.
@@ -331,8 +346,8 @@ serve(async (req: Request) => {
     motivos_confianca.push("Fonte de antecipação não configurada ou inativa — todos os títulos retornam 'falta_dado'.");
   }
 
-  const reserva_dias_min = numOrNull(fi.reserva_dias_min) ?? 15;
-  const gap_estrutural_semanas_min = numOrNull(fi.gap_estrutural_semanas_min) ?? 6;
+  const reserva_dias_min = numNonNeg(fi.reserva_dias_min) ?? 15;
+  const gap_estrutural_semanas_min = numNonNeg(fi.gap_estrutural_semanas_min) ?? 6;
 
   // ── 2. Lê empresa_configuracao_custos → cm_anual ───────────────────────────
   const { data: custosRow } = await db
@@ -351,7 +366,7 @@ serve(async (req: Request) => {
     }
   }
   if (cm_anual == null) {
-    motivos_confianca.push("sem_custo_capital: empresa_configuracao_custos ausente ou incompleto — cm_anual indisponível; benchmark de sobra/indefinido usa 0.");
+    motivos_confianca.push("cm_anual indisponível (empresa_configuracao_custos ausente/incompleto) — em sobra/indefinido sem A4 a decisão degrada pra 'falta_dado' (não fabrica recomendação).");
   }
 
   // ── 3. Lê concentracao_top1_max_pct de fin_config_cashflow ────────────────
@@ -441,16 +456,16 @@ serve(async (req: Request) => {
   for (const t of titulos) {
     const dias = Math.max(1, Math.round((new Date(t.data_vencimento + "T00:00:00Z").getTime() - hoje.getTime()) / 86400000));
 
-    // menor_saldo_ate_n: min(saldo_final) das semanas com fim <= data_vencimento.
+    // menor_saldo_ate_n: min(saldo_final) das semanas que começam até o vencimento (inicio <= venc),
+    // INCLUINDO a semana onde o título vence (senão um vencimento no meio da semana excluiria a própria
+    // semana do vencimento e poderia mascarar o gap → classificar errado como sobra). Granularidade é
+    // SEMANAL (saldo_final): vales intra-semana não são capturados no v1 — limitação documentada.
     let menor_saldo_ate_n: number | null = null;
-    if (temProjecao) {
-      const semanasAteN = semanas.filter((s) => s.fim <= t.data_vencimento);
-      if (semanasAteN.length > 0) {
-        menor_saldo_ate_n = Math.min(...semanasAteN.map((s) => s.saldo_final));
-      } else {
-        // Título vence antes do fim da 1ª semana → usa saldo_final da 1ª semana como proxy.
-        menor_saldo_ate_n = semanas[0].saldo_final;
-      }
+    if (temProjecao && semanas.length > 0) {
+      const semanasAteN = semanas.filter((s) => s.inicio <= t.data_vencimento);
+      menor_saldo_ate_n = semanasAteN.length > 0
+        ? Math.min(...semanasAteN.map((s) => s.saldo_final))
+        : semanas[0].saldo_final;
     }
 
     const contexto = classificarContexto({ tem_projecao: temProjecao, menor_saldo_ate_n, reserva_rs });
@@ -473,22 +488,20 @@ serve(async (req: Request) => {
         coobrigacao,
       },
       alternativas: { capital_giro_cet, cheque_cet },
-      cm_anual: cm_anual ?? 0,
+      cm_anual, // nullable: em sobra/indefinido sem cm_anual nem A4, decidirTitulo degrada pra falta_dado (não fabrica nao_antecipar com benchmark zero)
       retorno_marginal_a4: null,
       contexto,
       flags_extra,
     });
 
     // Adiciona flag "cria_vale_em_T" se a antecipação criaria vale no fluxo.
+    // (v1: só sinaliza; o re-custo completo do vale é sub-PR B — ver spec.)
     if (temProjecao && decisao.v_liq > 0) {
       const valeEmT = checaValeEmT({ semanas, titulo_id: t.id, v_liq: decisao.v_liq, reserva_rs });
       if (valeEmT) decisao.flags.push("cria_vale_em_T");
     }
-
-    // Se cm_anual for null, sinaliza que o benchmark de sobra/indefinido é conservador (usou 0).
-    if (cm_anual == null && (contexto === "sobra" || contexto === "indefinido")) {
-      decisao.flags.push("sem_custo_capital");
-    }
+    // (A flag "sem_custo_capital" + degradação pra falta_dado quando falta cm_anual já são tratadas
+    // dentro de decidirTitulo — não duplicar aqui.)
 
     decisoes.push(decisao);
   }

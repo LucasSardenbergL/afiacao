@@ -111,7 +111,7 @@ export function decidirTitulo(input: {
   titulo: { id: string; valor: number; dias: number; nome_cliente?: string | null };
   antecipacao: { taxa_desconto_mensal: number | null; tipo: 'desconto' | 'factoring'; tarifa_fixa?: number; coobrigacao: boolean };
   alternativas: { capital_giro_cet?: number | null; cheque_cet?: number | null };
-  cm_anual: number;
+  cm_anual: number | null;
   retorno_marginal_a4: number | null;
   contexto: Contexto;
   flags_extra: string[];
@@ -148,10 +148,18 @@ export function decidirTitulo(input: {
   }
 
   // sobra | indefinido: o caixa liberado renderia rBench; antecipar vale se ganho > custo.
-  const rBench = input.retorno_marginal_a4 != null ? Math.max(input.cm_anual, input.retorno_marginal_a4) : input.cm_anual;
+  if (input.contexto === 'indefinido') flags.push('sem_projecao');
+  const benchmarks: number[] = [];
+  if (input.cm_anual != null) benchmarks.push(input.cm_anual);
+  if (input.retorno_marginal_a4 != null) benchmarks.push(input.retorno_marginal_a4);
+  if (benchmarks.length === 0) {
+    // Sem custo de oportunidade do caixa (cm_anual) nem retorno de uso (A4) → não há benchmark pra
+    // avaliar a sobra. Degrada honesto (NUNCA fabrica recomendação com benchmark zero).
+    return { ...base, recomendacao: 'falta_dado', flags: [...flags, 'sem_custo_capital'] };
+  }
+  const rBench = Math.max(...benchmarks);
   const ganho = custoEmReais(ant.v_liq, t.dias, rBench);
   const net = ganho - ant.custo_rs;
   const benchmark_fonte: FonteBenchmark = input.retorno_marginal_a4 != null ? 'melhor_uso_a4' : 'caixa_proprio';
-  if (input.contexto === 'indefinido') flags.push('sem_projecao');
   return { ...base, benchmark_fonte, custo_rs_benchmark: ganho, net_rs: net, recomendacao: net > 0 ? 'antecipar' : 'nao_antecipar' };
 }
