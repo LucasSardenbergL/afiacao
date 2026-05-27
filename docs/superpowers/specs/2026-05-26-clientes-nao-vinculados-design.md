@@ -1,6 +1,21 @@
 # Clientes não-vinculados — design (v1 sob demanda)
 
-> **Status: DESIGN PRONTO — DEFERIDO pra uma sessão nova.** Decisão Claude + Codex (2026-05-26): não construir no fim de uma sessão-maratona. É o **primeiro batch job de ERP de verdade** do programa (enumeração paginada do Omie + snapshot persistido + trigger privilegiado + deploy de edge function) — merece cabeça descansada. O brainstorm já está fechado; uma sessão nova começa direto no `writing-plans`.
+> **Status: DEFERIDO — DESIGN CORRIGIDO** (2026-05-26). O build começou (founder pediu seguir), mas a leitura do código revelou que a **abordagem standalone specada dava relatório ERRADO**. Parado por decisão do founder; design correto documentado abaixo pra uma sessão fresca. Plano `docs/superpowers/plans/2026-05-26-clientes-nao-vinculados.md` está **SUPERSEDED** (era da abordagem standalone).
+
+## ⚠️ Correção de design (descoberta no build, 2026-05-26)
+
+Lendo `supabase/functions/omie-analytics-sync/index.ts` (linhas ~180-235):
+
+1. **`omie-analytics-sync` JÁ enumera a lista completa de clientes de TODAS as contas Omie** (Oben/Colacor/Colacor SC), paginado (`ListarClientes`, `registros_por_pagina:100`, `apenas_importado_api:"N"`), num cron. Já resolve paginação + multi-conta + o padrão de chamada.
+2. **Definição CORRETA de "não-vinculado":** o cliente Omie **não tem linha em `omie_clientes`** (lookup por `omie_codigo_cliente`) **E não tem `profile` com aquele `document` (CNPJ/CPF)**. O analytics-sync, quando acha um `profile` por documento, **cria** a linha em `omie_clientes` (linka); só quando NÃO acha profile é que o cliente é de fato não-vinculado — e hoje ele **pula** (não grava). É esse `else` que falta.
+3. **Por que o standalone specado estava ERRADO:** diffar só contra `omie_clientes` contaria como "não-vinculado" todo cliente que **tem profile** mas ainda não ganhou a linha de `omie_clientes` → **relatório enganoso** (exatamente o risco do Codex). Além disso, `empresa_omie` **não é setado** nesses upserts → filtro por empresa era frágil.
+
+**Design correto (pra sessão fresca) = pegar carona no `omie-analytics-sync`:** no laço que já enumera os clientes, no ramo `if (!mapping)` → `if (profile) {…linka…} else {…GRAVA como não-vinculado no snapshot…}`. Reusa a enumeração provada + a definição certa de vinculado. Trade-offs: (a) edita um sync grande/quente (zona de colisão — coordenar), (b) refresh passa a ser **no cron do analytics-sync** (não sob demanda — a premissa "sob demanda" cai; aceitável, ou expor um trigger manual que chama a mesma rotina). Bem menos código novo de ERP que o standalone.
+
+**Reusável do que foi feito:** a ideia da tabela snapshot (master/gestor read via `pode_ver_carteira_completa`). **NÃO reusável:** o helper `computeNaoVinculados` standalone (definição incompleta de "vinculado") e a tabela de `runs`/cursor (o analytics-sync tem o próprio laço) — removidos desta branch.
+
+---
+### (Design standalone original — ABANDONADO, mantido só como histórico)
 
 ## Problema
 
