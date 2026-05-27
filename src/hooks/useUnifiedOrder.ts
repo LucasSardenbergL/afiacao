@@ -320,7 +320,7 @@ export function useUnifiedOrder() {
     if (isStaff) {
       loadDefaultPrices();
     }
-  }, [isStaff]);
+  }, [isStaff, loadDefaultPrices]);
 
   // Customer: auto-setup own context (skip customer search)
   useEffect(() => {
@@ -355,6 +355,10 @@ export function useUnifiedOrder() {
         });
       }
     })();
+    // Setup run-once ao entrar em modo cliente: o guard (selectedCustomer) + a natureza
+    // mount-on-condition tornam intencional a omissão de loadDefaultPrices/loadPriceHistory/
+    // selectedCustomer/setters. Incluí-los re-dispararia o fetch assíncrono de perfil até assentar.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isCustomerMode, user]);
 
   // Customer search & selection now live in useCustomerSelection hook
@@ -479,7 +483,7 @@ export function useUnifiedOrder() {
       newCartItems.push({ type: 'service', userTool: tool, servico, quantity: aiSvc.quantity, notes: aiSvc.notes, photos: [] });
     }
     if (newCartItems.length > 0) setCart(prev => [...prev, ...newCartItems]);
-  }, [obenProducts, colacorProducts, userTools, servicos, cart, getProductPrice]);
+  }, [obenProducts, colacorProducts, userTools, servicos, cart, getProductPrice, setCart]);
 
   // Generic cart actions and subtotals (updateQuantity, updateProductPrice,
   // removeFromCart, obenSubtotal, colacorProdSubtotal, serviceSubtotal,
@@ -499,7 +503,7 @@ export function useUnifiedOrder() {
     const allProducts = [...obenProducts, ...colacorProducts];
     const product = allProducts.find(p => p.id === item.product_id);
     if (product) addProductToCart(product);
-  }, [obenProducts, colacorProducts]);
+  }, [obenProducts, colacorProducts, addProductToCart]);
 
   // Create local profile
   const handleStaffAddTool = async () => {

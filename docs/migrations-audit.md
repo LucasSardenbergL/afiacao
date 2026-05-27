@@ -21,12 +21,12 @@ Este audit valida **quais custom migrations estão de fato aplicadas no banco**.
 
 ## Resumo
 
-- **74** custom migrations totais
-- **373** objetos esperados (criados por estas migrations)
+- **75** custom migrations totais
+- **394** objetos esperados (criados por estas migrations)
 - Quebra por tipo:
-  - `rls_policy`: 116
+  - `rls_policy`: 136
   - `index`: 95
-  - `function`: 55
+  - `function`: 56
   - `table`: 54
   - `trigger`: 31
   - `cron_job`: 18
@@ -758,6 +758,32 @@ Lista canônica do que cada migration *deveria* criar (extraído via regex de `C
 | Tipo | Objeto | Parent |
 | --- | --- | --- |
 | `function` | `public.fin_sync_watchdog_check` | — |
+
+### `20260526040000_rls_carteira_relacionamento_hardening.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `function` | `public.pode_ver_carteira_completa` | — |
+| `rls_policy` | `public.frec_select_carteira` | `farmer_recommendations` |
+| `rls_policy` | `public.frec_insert_own_or_gestor` | `farmer_recommendations` |
+| `rls_policy` | `public.frec_update_own_or_gestor` | `farmer_recommendations` |
+| `rls_policy` | `public.frec_delete_own_or_gestor` | `farmer_recommendations` |
+| `rls_policy` | `public.fbrec_select_carteira` | `farmer_bundle_recommendations` |
+| `rls_policy` | `public.fbrec_insert_own_or_gestor` | `farmer_bundle_recommendations` |
+| `rls_policy` | `public.fbrec_update_own_or_gestor` | `farmer_bundle_recommendations` |
+| `rls_policy` | `public.fbrec_delete_own_or_gestor` | `farmer_bundle_recommendations` |
+| `rls_policy` | `public.fcall_select_carteira` | `farmer_calls` |
+| `rls_policy` | `public.fcall_insert_own_or_gestor` | `farmer_calls` |
+| `rls_policy` | `public.fcall_update_own_or_gestor` | `farmer_calls` |
+| `rls_policy` | `public.fcall_delete_own_or_gestor` | `farmer_calls` |
+| `rls_policy` | `public.rvis_select_carteira` | `route_visits` |
+| `rls_policy` | `public.rvis_insert_own_or_gestor` | `route_visits` |
+| `rls_policy` | `public.rvis_update_own_or_gestor` | `route_visits` |
+| `rls_policy` | `public.rvis_delete_own_or_gestor` | `route_visits` |
+| `rls_policy` | `public.fcop_select_carteira` | `farmer_copilot_sessions` |
+| `rls_policy` | `public.fcop_insert_own_or_gestor` | `farmer_copilot_sessions` |
+| `rls_policy` | `public.fcop_update_own_or_gestor` | `farmer_copilot_sessions` |
+| `rls_policy` | `public.fcop_delete_own_or_gestor` | `farmer_copilot_sessions` |
 
 ### `20260526100000_fin_funding_inputs.sql`
 
