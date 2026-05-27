@@ -68,3 +68,31 @@ Reescrever as linhas realizadas: `entradas_realizadas` = Σ `fin_movimentacoes.v
 - Fase 1: `FluxoCaixaTab` mostra realizado > 0 coerente; teste do helper de agregação E/S por dia.
 - Fase 2: testes vitest do aging (`taxa_recebimento` deixa de ser 0; settled fora do projetado futuro) e do valor-cockpit (saldo médio deixa de inflar).
 - Fase 3: testes do helper de derivação (parcial → ponderado; estorno → não vira baixa; só `dDtPagamento`); identidade de cobertura; PMR derivado recente plausível (CR ~32d batia na amostra).
+
+---
+
+## Atualização 2026-05-27 (pós-codex + Fase 1 entregue)
+
+### O que JÁ foi a produção
+- **Fase 1 — fluxo realizado das movimentações (PR #396, mergeado):** `getFluxoCaixa` parou de ler a baixa-NULL e passa a somar `fin_movimentacoes` por dia (E/S, exclui transferência sem título), com paginação anti-truncamento. Helper testável `src/lib/financeiro/fluxo-realizado-helpers.ts`. **Caveat:** só melhora de verdade pra janela recente até o backfill da Fase 0 rodar (hoje só ~5 meses de movimentos).
+
+### Fato empírico medido (decisivo)
+- Todos os movimentos das 3 empresas começam em **2025-12-29** (cursor `movimentacoes` = NULL/completo). Causa: o sync chama `ListarMovimentos` **sem filtro de data** e o default no código é "últimos 3 meses". Cobertura de baixa derivável (all-history) = **17% CR / 23% CP** na oben; CR derivado 97% são (PMR ~32d), CP 38% anômalo (ruído de fallback/parcial).
+- **Confirmado em código real (várias integrações):** `financas/mf/ListarMovimentos` aceita `dDtPagtoDe`/`dDtPagtoAte` (DD/MM/YYYY). Request real: `{ nPagina, nRegPorPagina, dDtPagtoDe, dDtPagtoAte }`.
+
+### Decisão de sequenciamento (founder delegou; eu+codex)
+1. **Derivação na janela recente PRIMEIRO** (Fase 3 sobre os ~5 meses que já temos — cobertura alta lá, e é o que importa pro view atual/futuro do CFO). Honest-degrade pra títulos antigos. A `fin_titulo_baixas` é recomputável idempotente → **derivação-agora é forward-compatible com backfill-depois** (re-rodar só preenche mais títulos, sem rework).
+2. **Backfill histórico (Fase 0) ADIADO** pra esforço próprio, com cabeça fresca no money-path.
+
+### Desenho do backfill (Fase 0) — escolhido pelo codex: **opção A (janela no cursor)**
+Codex rejeitou o "deploy amplo→reverter" (B) como atalho frágil em money-path recém-blindado. Mecanismo correto:
+- `fin_sync_cursor` ganha `filtro_data_de date`, `filtro_data_ate date`, `mode text` (`incremental`|`backfill`). Colunas **neutras pra CR/CP** (cujo endpoint não aceita filtro de data → page-number já é consistente; só movimentos precisam disso).
+- Regra: se há cursor `next_page IS NOT NULL`, a função **ignora o body/default e usa a janela gravada no cursor** (a continuação `*/10` passa só `{action, company}` → lê a janela do cursor). Sem cursor pendente: body com filtro → inicia backfill e grava a janela; sem filtro → default incremental. Ao completar (página 1), limpa janela+mode. Kickoff incremental **nunca** sobrescreve backfill pendente.
+- **`filtro_data_ate` CONGELADO no kickoff** (ex: ontem) — senão `total_de_paginas` muda a cada resume e o cursor aponta pra outro universo.
+- **Guard de concorrência** (codex, P1): manual+cron ou kickoff+continuação podem ler o mesmo cursor → race que pula/retrocede página. Checar `running` recente em `fin_sync_log` p/ `company/resource` (ou advisory lock) antes de processar.
+- **Medir 1 empresa / 1 ano antes** (páginas/min, erros). Backfill por janelas menores (ano a ano) reduz risco de paginação instável.
+- Persistir datas como `date`; formatar DD/MM/YYYY só na chamada.
+- Depois do backfill, rodar 1 passada incremental pra cobrir o delta entre `filtro_data_ate` congelado e hoje.
+
+### Dependência aberta pra retomar
+- **`debug_raw` de um movimento** (`{action:'debug_raw', entidade:'movimentacoes', company:'oben'}` no chat do Lovable — travou em 403; precisa preview logado). Define o filtro limpo da derivação: confirmar `dDtPagamento` no payload cru e se previsões (sem pagamento) poluem — é o que explica os 38% de CP anômalos.
