@@ -113,3 +113,9 @@ verify_jwt = false
 
 [functions.omie-nfe-webhook]
 verify_jwt = false
+
+# Gateado por x-cron-secret (Vault) via authorizeCronOrStaff — não precisa do
+# JWT no gateway. verify_jwt=false permite o cron sayerlack-portal-watchdog
+# rodar sem JWT anon hardcoded (ver migration 20260526080000).
+[functions.enviar-pedido-portal-sayerlack]
+verify_jwt = false
