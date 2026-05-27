@@ -10,6 +10,7 @@ describe("KpiCards", () => {
     render(
       <KpiCards
         totalEconomia={1000}
+        ganhoLiquidoPotencial={750}
         oportunidadesCount={5}
         totalSkusAtivos={50}
         dataLimiteMaisProxima="2026-01-20"
@@ -18,6 +19,8 @@ describe("KpiCards", () => {
         onGerarCiclo={onGerarCiclo}
       />
     );
+    expect(screen.getByText("Ganho líquido potencial")).toBeTruthy();
+    expect(screen.getByText(/750,00/)).toBeTruthy();
     expect(screen.getByText("SKUs com oportunidade")).toBeTruthy();
     expect(screen.getByText("5")).toBeTruthy();
     expect(screen.getByText("de 50 SKUs ativos")).toBeTruthy();
@@ -32,6 +35,7 @@ describe("KpiCards", () => {
     render(
       <KpiCards
         totalEconomia={0}
+        ganhoLiquidoPotencial={0}
         oportunidadesCount={0}
         totalSkusAtivos={0}
         dataLimiteMaisProxima={null}
