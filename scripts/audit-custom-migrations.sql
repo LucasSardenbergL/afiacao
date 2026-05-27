@@ -3,7 +3,7 @@
 -- ========================================================================
 --
 -- Gerado por: scripts/audit-custom-migrations.ts
--- Total de custom migrations: 82
+-- Total de custom migrations: 83
 --
 -- Como usar:
 --   1. Abra o Supabase SQL Editor (via Lovable Cloud → Backend → SQL Editor)
@@ -100,6 +100,7 @@ WITH expected (version, slug, filename) AS (VALUES
   ('20260526160000', 'data_health_rpc', '20260526160000_data_health_rpc.sql'),
   ('20260526230000', 'mixgap_feedback', '20260526230000_mixgap_feedback.sql'),
   ('20260527010000', 'rls_copilot_sessions_select_own_only', '20260527010000_rls_copilot_sessions_select_own_only.sql'),
+  ('20260527120000', 'clientes_nao_vinculados', '20260527120000_clientes_nao_vinculados.sql'),
   ('20260527120000', 'data_health_rpc_fix', '20260527120000_data_health_rpc_fix.sql'),
   ('20260527140000', 'revoke_carteira_internals_anon', '20260527140000_revoke_carteira_internals_anon.sql')
 )
@@ -520,6 +521,12 @@ WITH expected_objects (migration, kind, schema_name, object_name, parent_name) A
   ('mixgap_feedback', 'function', 'public', 'mark_mixgap_feedback', ''),
   ('mixgap_feedback', 'function', 'public', '_carteira_mixgap_for_owner', ''),
   ('rls_copilot_sessions_select_own_only', 'rls_policy', 'public', 'fcop_select_carteira', 'farmer_copilot_sessions'),
+  ('clientes_nao_vinculados', 'table', 'public', 'omie_clientes_nao_vinculados', ''),
+  ('clientes_nao_vinculados', 'table', 'public', 'omie_nao_vinculados_state', ''),
+  ('clientes_nao_vinculados', 'index', 'public', 'idx_nv_empresa_synced', 'omie_clientes_nao_vinculados'),
+  ('clientes_nao_vinculados', 'function', 'public', 'finalize_nao_vinculados_snapshot', ''),
+  ('clientes_nao_vinculados', 'rls_policy', 'public', 'nv_select', 'omie_clientes_nao_vinculados'),
+  ('clientes_nao_vinculados', 'rls_policy', 'public', 'nv_state_select', 'omie_nao_vinculados_state'),
   ('data_health_rpc_fix', 'function', 'public', 'get_data_health', '')
 )
 SELECT

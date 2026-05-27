@@ -21,13 +21,13 @@ Este audit valida **quais custom migrations estão de fato aplicadas no banco**.
 
 ## Resumo
 
-- **82** custom migrations totais
-- **401** objetos esperados (criados por estas migrations)
+- **83** custom migrations totais
+- **407** objetos esperados (criados por estas migrations)
 - Quebra por tipo:
-  - `rls_policy`: 137
-  - `index`: 95
-  - `function`: 60
-  - `table`: 55
+  - `rls_policy`: 139
+  - `index`: 96
+  - `function`: 61
+  - `table`: 57
   - `trigger`: 31
   - `cron_job`: 19
   - `enum_value`: 4
@@ -822,6 +822,17 @@ Lista canônica do que cada migration *deveria* criar (extraído via regex de `C
 | Tipo | Objeto | Parent |
 | --- | --- | --- |
 | `rls_policy` | `public.fcop_select_carteira` | `farmer_copilot_sessions` |
+
+### `20260527120000_clientes_nao_vinculados.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `table` | `public.omie_clientes_nao_vinculados` | — |
+| `table` | `public.omie_nao_vinculados_state` | — |
+| `index` | `public.idx_nv_empresa_synced` | `omie_clientes_nao_vinculados` |
+| `function` | `public.finalize_nao_vinculados_snapshot` | — |
+| `rls_policy` | `public.nv_select` | `omie_clientes_nao_vinculados` |
+| `rls_policy` | `public.nv_state_select` | `omie_nao_vinculados_state` |
 
 ### `20260527120000_data_health_rpc_fix.sql`
 

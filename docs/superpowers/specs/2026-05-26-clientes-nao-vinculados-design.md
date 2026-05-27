@@ -1,6 +1,6 @@
 # Clientes não-vinculados — design (v1 sob demanda)
 
-> **Status: DEFERIDO — DESIGN CORRIGIDO** (2026-05-26). O build começou (founder pediu seguir), mas a leitura do código revelou que a **abordagem standalone specada dava relatório ERRADO**. Parado por decisão do founder; design correto documentado abaixo pra uma sessão fresca. Plano `docs/superpowers/plans/2026-05-26-clientes-nao-vinculados.md` está **SUPERSEDED** (era da abordagem standalone).
+> **Status: EM IMPLEMENTAÇÃO** (2026-05-27). O design corrigido (carona no `omie-analytics-sync`) virou plano de implementação em **`docs/superpowers/plans/2026-05-27-clientes-nao-vinculados-carona.md`** (incorpora 1 consult ao Codex sobre integridade de run, finalize transacional, trigger assíncrono e gate server-side) e está sendo construído na branch `feat/clientes-nao-vinculados`. O plano antigo `docs/superpowers/plans/2026-05-26-clientes-nao-vinculados.md` segue **SUPERSEDED** (era da abordagem standalone errada).
 
 ## ⚠️ Correção de design (descoberta no build, 2026-05-26)
 
