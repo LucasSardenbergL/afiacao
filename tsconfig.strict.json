@@ -506,6 +506,20 @@
     "src/lib/dataHealth/types.ts",
     "src/lib/dataHealth/health-helpers.ts",
     "src/lib/impersonation/types.ts",
-    "src/lib/impersonation/effective-user.ts"
+    "src/lib/impersonation/effective-user.ts",
+    "src/components/adminCustomers/config.ts",
+    "src/components/adminCustomers/types.ts",
+    "src/components/aiOps/config.ts",
+    "src/components/aiOps/types.ts",
+    "src/components/analyticsSync/types.ts",
+    "src/components/customerDashboard/config.ts",
+    "src/components/customerDashboard/types.ts",
+    "src/components/customerDashboard/priority.ts",
+    "src/components/des/simulador/format.ts",
+    "src/components/des/simulador/types.ts",
+    "src/components/des/checkinQualitativo/format.ts",
+    "src/components/des/checkinQualitativo/types.ts",
+    "src/components/des/historico/format.ts",
+    "src/components/des/historico/types.ts"
   ]
 }

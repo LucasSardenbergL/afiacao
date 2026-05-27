@@ -114,6 +114,11 @@ subgrafos sujos (`noUnusedLocals`/`strictNullChecks`) → cascata. **Promova lea
   `lib/dataHealth/{types,health-helpers}` + `lib/impersonation/{types,effective-user}`. Self-contained (types + helper
   que importa só os próprios types); nenhum PR aberto toca essas áreas. `typecheck:strict` verde com os 4. Tsconfig-only.
   **NÃO toco** carteira/mixgap/positivacao (farmer-adjacent) nem clientes-nao-vinculados (churn recente do #383).
+- 🔵 **`claude/strict-promote-leaf-components`** (sessão strange-hellman, 2026-05-27): terceiro lote leaf — **`.ts` puros**
+  (types/config/format/priority, **sem JSX**) de `components/{adminCustomers,aiOps,analyticsSync,customerDashboard}` +
+  `components/des/{simulador,checkinQualitativo,historico}`. 14 arquivos; imports só de `lucide-react` (pacote tipado) ou
+  os próprios `./types`. `typecheck:strict` verde. Tsconfig-only. **NÃO toco** os `useX.ts` (puxam queries/deps, não-leaf),
+  nem `components/{farmer,financeiro,customer360}` (lanes quentes / reserva cranky-driscoll).
 
 ## Follow-up registrado
 
