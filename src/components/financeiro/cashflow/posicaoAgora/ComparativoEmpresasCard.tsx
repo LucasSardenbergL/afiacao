@@ -54,12 +54,13 @@ export function ComparativoEmpresasCard({ data }: { data: CapitalDeGiro[] }) {
                     {line.label}
                   </TableCell>
                   {data.map(d => {
-                    const val = (d as unknown as Record<string, unknown>)[line.field] as number || 0;
+                    const raw = (d as unknown as Record<string, unknown>)[line.field] as number | null;
+                    const val = raw ?? 0;
                     const isResult = ['capital_giro', 'capital_giro_liquido', 'saldo_projetado_30d'].includes(line.field);
                     const color = isResult ? (val >= 0 ? 'text-status-success' : 'text-status-error') : '';
                     let display = '';
                     if (line.fmt === 'currency') display = fmtCompact(val);
-                    else if (line.fmt === 'days') display = `${val}d`;
+                    else if (line.fmt === 'days') display = raw == null ? '—' : `${raw}d`; // null = prazo sem dado de baixa
                     else if (line.fmt === 'pct') display = `${val.toFixed(0)}%`;
                     return (
                       <TableCell key={d.company} className={`text-right text-sm font-medium ${color}`}>

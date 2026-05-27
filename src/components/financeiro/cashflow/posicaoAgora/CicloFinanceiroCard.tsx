@@ -14,6 +14,17 @@ export function CicloFinanceiroCard({ active }: { active: CapitalDeGiro }) {
         </CardTitle>
       </CardHeader>
       <CardContent className="space-y-6">
+        {(active.pmr === null || active.pmp === null || active.ciclo_financeiro === null) ? (
+          <div className="p-4 rounded-lg bg-muted/40 border text-sm text-muted-foreground">
+            <p className="font-medium text-foreground">Prazos indisponíveis</p>
+            <p className="mt-1">
+              PMR/PMP/ciclo dependem da data de baixa dos títulos, que ainda não é sincronizada
+              do Omie. Os demais indicadores desta tela (capital de giro, concentração, projeção)
+              estão corretos.
+            </p>
+          </div>
+        ) : (
+        <>
         <div className="space-y-3">
           {/* PMR Bar */}
           <div>
@@ -58,6 +69,8 @@ export function CicloFinanceiroCard({ active }: { active: CapitalDeGiro }) {
             </p>
           )}
         </div>
+        </>
+        )}
       </CardContent>
     </Card>
   );

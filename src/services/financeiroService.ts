@@ -478,10 +478,12 @@ export interface CapitalDeGiro {
   saldo_cc: number;             // Saldo bancário
   capital_giro: number;         // CR - CP
   capital_giro_liquido: number; // CR + CC - CP
-  // Prazos médios (dias)
-  pmr: number;                  // Prazo Médio de Recebimento
-  pmp: number;                  // Prazo Médio de Pagamento
-  ciclo_financeiro: number;     // PMR - PMP (positivo = necessidade de capital)
+  // Prazos médios (dias). NULL = sem dado de baixa (data_recebimento/pagamento NULL no
+  // sync → não dá pra calcular). Antes era 0, que parecia "conversão instantânea" e
+  // enganava o CFO. UI mostra "—/sem dados" quando null. Ver §10 (auditoria 2026-05-27).
+  pmr: number | null;           // Prazo Médio de Recebimento
+  pmp: number | null;           // Prazo Médio de Pagamento
+  ciclo_financeiro: number | null; // PMR - PMP (positivo = necessidade de capital)
   // Concentração
   top5_cr_pct: number;          // % do CR nos 5 maiores clientes
   top5_cp_pct: number;          // % do CP nos 5 maiores fornecedores
@@ -563,7 +565,9 @@ export async function getCapitalDeGiro(company: Company | 'all'): Promise<Capita
         pmrDenominator += valor;
       }
     }
-    const pmr = pmrDenominator > 0 ? Math.round(pmrNumerator / pmrDenominator) : 0;
+    // null (não 0) quando não há baixas datadas: mostrar 0 dias parece "recebimento
+    // instantâneo" e engana. Hoje o sync não popula data_recebimento → cai aqui.
+    const pmr = pmrDenominator > 0 ? Math.round(pmrNumerator / pmrDenominator) : null;
 
     // PMP: média ponderada de dias entre emissão e pagamento
     let pmpNumerator = 0, pmpDenominator = 0;
@@ -575,7 +579,7 @@ export async function getCapitalDeGiro(company: Company | 'all'): Promise<Capita
         pmpDenominator += valor;
       }
     }
-    const pmp = pmpDenominator > 0 ? Math.round(pmpNumerator / pmpDenominator) : 0;
+    const pmp = pmpDenominator > 0 ? Math.round(pmpNumerator / pmpDenominator) : null;
 
     // Concentração top 5
     const crByClient = new Map<string, number>();
@@ -611,7 +615,7 @@ export async function getCapitalDeGiro(company: Company | 'all'): Promise<Capita
       capital_giro_liquido: totalCR + totalCC - totalCP,
       pmr,
       pmp,
-      ciclo_financeiro: pmr - pmp,
+      ciclo_financeiro: pmr !== null && pmp !== null ? pmr - pmp : null,
       top5_cr_pct: totalCR > 0 ? (top5CRSum / totalCR) * 100 : 0,
       top5_cp_pct: totalCP > 0 ? (top5CPSum / totalCP) * 100 : 0,
       entradas_30d: entradas30,
