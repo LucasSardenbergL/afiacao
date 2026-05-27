@@ -929,6 +929,49 @@ serve(async (req) => {
         result = data;
         break;
       }
+      case "start_nao_vinculados": {
+        // v1: só Oben.
+        if (account !== "vendas") {
+          return new Response(JSON.stringify({ error: "v1 suporta apenas account=vendas (Oben)" }), {
+            status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" },
+          });
+        }
+        // Gate master/gestor server-side (authorizeCronOrStaff só garante staff).
+        // Cron/service_role são confiáveis e passam direto.
+        if (auth.via === "staff") {
+          const { data: pode } = await supabaseAdmin.rpc("pode_ver_carteira_completa", { _uid: auth.userId });
+          if (!pode) {
+            return new Response(JSON.stringify({ error: "Forbidden: requer master ou gestor comercial" }), {
+              status: 403, headers: { ...corsHeaders, "Content-Type": "application/json" },
+            });
+          }
+        }
+        // Guard de UX "já em andamento" (correção não depende disso; é só pra não duplicar trabalho).
+        const { data: st } = await supabaseAdmin
+          .from("omie_nao_vinculados_state")
+          .select("status, started_at")
+          .eq("empresa", "oben")
+          .maybeSingle();
+        const running = st?.status === "running" && st?.started_at &&
+          (Date.now() - new Date(st.started_at as string).getTime() < 15 * 60 * 1000);
+        if (running) {
+          return new Response(JSON.stringify({ accepted: false, already_running: true }), {
+            status: 202, headers: { ...corsHeaders, "Content-Type": "application/json" },
+          });
+        }
+        // Dispara o run completo (linking + snapshot) em background; responde 202 na hora.
+        const bgTask = syncCustomers(supabaseAdmin, "vendas").catch((e) => {
+          console.error("[nao-vinculados][async]", e instanceof Error ? e.message : e);
+        });
+        // @ts-ignore EdgeRuntime é global do Supabase Edge (pode não estar tipado)
+        if (typeof EdgeRuntime !== "undefined" && typeof EdgeRuntime.waitUntil === "function") {
+          // @ts-ignore
+          EdgeRuntime.waitUntil(bgTask);
+        }
+        return new Response(JSON.stringify({ accepted: true }), {
+          status: 202, headers: { ...corsHeaders, "Content-Type": "application/json" },
+        });
+      }
       default:
         return new Response(JSON.stringify({ error: "Ação desconhecida" }), {
           status: 400,
