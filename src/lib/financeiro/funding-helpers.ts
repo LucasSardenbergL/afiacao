@@ -163,3 +163,51 @@ export function decidirTitulo(input: {
   const benchmark_fonte: FonteBenchmark = input.retorno_marginal_a4 != null ? 'melhor_uso_a4' : 'caixa_proprio';
   return { ...base, benchmark_fonte, custo_rs_benchmark: ganho, net_rs: net, recomendacao: net > 0 ? 'antecipar' : 'nao_antecipar' };
 }
+
+export function identificarGap(input: {
+  semanas: Semana[]; reserva_rs: number;
+}): { gap_rs: number; semana_idx: number; horizonte_dias: number } | null {
+  if (input.semanas.length === 0) return null;
+  let piorIdx = -1; let piorSaldo = Infinity;
+  input.semanas.forEach((s, i) => { if (s.saldo_final < piorSaldo) { piorSaldo = s.saldo_final; piorIdx = i; } });
+  if (piorSaldo >= input.reserva_rs) return null; // nunca fura a reserva → sem gap
+  return { gap_rs: input.reserva_rs - piorSaldo, semana_idx: piorIdx, horizonte_dias: (piorIdx + 1) * 7 };
+}
+
+export type FonteCobertura = {
+  fonte: TipoFonte; rate_aa: number; capacidade_rs: number; governanca_ordem: number;
+};
+export type ItemStack = { fonte: TipoFonte; montante_rs: number; custo_rs: number; flag?: string };
+export type PlanoCobertura = {
+  gap_rs: number; horizonte_dias: number; stack: ItemStack[];
+  custo_total_rs: number; custo_inercia_rs: number; motivos: string[];
+};
+
+export function montarPlanoCobertura(input: {
+  gap_rs: number; horizonte_dias: number; fontes: FonteCobertura[]; cheque_rate_aa: number | null;
+}): PlanoCobertura {
+  const { gap_rs, horizonte_dias } = input;
+  const motivos: string[] = [];
+  // Ordena por CUSTO EM R$ de prover 1 real pelo horizonte (não por % a.a.); desempate por governança.
+  const ordenadas = [...input.fontes].sort((a, b) => {
+    const ca = custoEmReais(1, horizonte_dias, a.rate_aa);
+    const cb = custoEmReais(1, horizonte_dias, b.rate_aa);
+    if (ca !== cb) return ca - cb;
+    return a.governanca_ordem - b.governanca_ordem;
+  });
+  const stack: ItemStack[] = [];
+  let restante = gap_rs;
+  for (const f of ordenadas) {
+    if (restante <= 0) break;
+    const usa = Math.min(restante, f.capacidade_rs);
+    if (usa <= 0) continue;
+    const item: ItemStack = { fonte: f.fonte, montante_rs: usa, custo_rs: custoEmReais(usa, horizonte_dias, f.rate_aa) };
+    if (f.fonte === 'cheque_especial' && f.governanca_ordem >= 3) item.flag = 'emergencia';
+    stack.push(item);
+    restante -= usa;
+  }
+  if (restante > 0.01) motivos.push(`Capacidade das fontes insuficiente — R$ ${restante.toFixed(2)} descoberto.`);
+  const custo_total_rs = stack.reduce((s, x) => s + x.custo_rs, 0);
+  const custo_inercia_rs = input.cheque_rate_aa != null ? custoEmReais(gap_rs, horizonte_dias, input.cheque_rate_aa) : 0;
+  return { gap_rs, horizonte_dias, stack, custo_total_rs, custo_inercia_rs, motivos };
+}

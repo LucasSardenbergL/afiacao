@@ -2,6 +2,7 @@ import { describe, it, expect } from 'vitest';
 import { iofCredito, custoEmReais, custoAntecipacao, custoOportunidadeCaixa } from '../funding-helpers';
 import { classificarContexto, checaValeEmT, classificarEstrutural, type Semana } from '../funding-helpers';
 import { decidirTitulo } from '../funding-helpers';
+import { identificarGap, montarPlanoCobertura, type FonteCobertura } from '../funding-helpers';
 
 describe('iofCredito', () => {
   it('aplica 0,38% fixo + 0,0082%/dia', () => {
@@ -186,5 +187,52 @@ describe('decidirTitulo', () => {
     expect(d.recomendacao).toBe('falta_dado');
     expect(d.flags).toContain('sem_custo_capital');
     expect(d.net_rs).toBeNull();
+  });
+});
+
+describe('identificarGap', () => {
+  const wk = (saldos: number[]): import('../funding-helpers').Semana[] =>
+    saldos.map((s, i) => ({ inicio: `2026-W${i}`, fim: `2026-W${i}`, saldo_final: s, total_saidas: 0, entradas: [] }));
+  it('sem semana abaixo da reserva → sem gap', () => {
+    expect(identificarGap({ semanas: wk([5000, 6000, 7000]), reserva_rs: 1000 })).toBeNull();
+  });
+  it('acha o vale mais profundo + gap_rs + horizonte', () => {
+    const g = identificarGap({ semanas: wk([3000, 2500, 500, 4000]), reserva_rs: 2000 });
+    expect(g).not.toBeNull();
+    expect(g!.gap_rs).toBe(1500);
+    expect(g!.semana_idx).toBe(2);
+    expect(g!.horizonte_dias).toBe(21);
+  });
+});
+
+describe('montarPlanoCobertura', () => {
+  const fontes = (): FonteCobertura[] => [
+    { fonte: 'caixa_proprio', rate_aa: 0.18, capacidade_rs: 1000, governanca_ordem: 0 },
+    { fonte: 'capital_giro', rate_aa: 0.30, capacidade_rs: Infinity, governanca_ordem: 1 },
+    { fonte: 'cheque_especial', rate_aa: 1.50, capacidade_rs: Infinity, governanca_ordem: 3 },
+  ];
+  it('preenche o gap do mais barato (R$) pro mais caro, respeitando capacidade', () => {
+    const p = montarPlanoCobertura({ gap_rs: 3000, horizonte_dias: 30, fontes: fontes(), cheque_rate_aa: 1.50 });
+    expect(p.stack[0].fonte).toBe('caixa_proprio');
+    expect(p.stack[0].montante_rs).toBe(1000);
+    expect(p.stack.reduce((s, x) => s + x.montante_rs, 0)).toBeCloseTo(3000, 2);
+    expect(p.custo_total_rs).toBeGreaterThan(0);
+    expect(p.custo_inercia_rs).toBeCloseTo(3000 * (Math.pow(1 + 1.50, 30/365) - 1), 2);
+  });
+  it('cheque pode vencer gap CURTÍSSIMO em R$ (flag emergência)', () => {
+    const p = montarPlanoCobertura({ gap_rs: 5000, horizonte_dias: 2, fontes: [
+      { fonte: 'capital_giro', rate_aa: 0.30, capacidade_rs: 0, governanca_ordem: 1 },
+      { fonte: 'cheque_especial', rate_aa: 1.50, capacidade_rs: Infinity, governanca_ordem: 3 },
+    ], cheque_rate_aa: 1.50 });
+    const cheque = p.stack.find((s) => s.fonte === 'cheque_especial');
+    expect(cheque).toBeTruthy();
+    expect(cheque!.flag).toBe('emergencia');
+  });
+  it('capacidade insuficiente de todas as fontes → cobre o que dá + flag descoberto', () => {
+    const p = montarPlanoCobertura({ gap_rs: 5000, horizonte_dias: 30, fontes: [
+      { fonte: 'caixa_proprio', rate_aa: 0.18, capacidade_rs: 1000, governanca_ordem: 0 },
+    ], cheque_rate_aa: null });
+    expect(p.stack.reduce((s, x) => s + x.montante_rs, 0)).toBe(1000);
+    expect(p.motivos.join(' ')).toMatch(/descoberto/i);
   });
 });
