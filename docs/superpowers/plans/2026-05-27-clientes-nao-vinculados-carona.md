@@ -10,6 +10,19 @@
 
 ---
 
+## ⚠️ Atualização de rollout (2026-05-27) — pivô carona → rotina dedicada
+
+A abordagem "carona no `syncCustomers`" foi implementada, mergeada (PR #372) e deployada — mas **no smoke de produção o run travou em `status=running` sem finalizar**: o `syncCustomers` do Oben faz ~2 queries PostgREST **por cliente** (~10k clientes) + ~6900 updates de vendedor = round-trips sequenciais demais → o edge **mata a função por timeout** antes do finalize. Isso é o risco de N+1 que o Codex e o review de qualidade já tinham sinalizado; a degradação foi honesta (a UI nunca mostrou run incompleto, ficou "não-sincronizado").
+
+**Fix (PR seguinte):** rotina **dedicada e desacoplada** `syncNaoVinculados` que NÃO toca no linking:
+- 2 leituras em massa (`fetchAllOmieClienteCodigos` + `fetchAllProfileDocs`, paginadas via `.range` p/ furar o cap de 1000 do PostgREST) → ~13 reads no total, não ~20k;
+- enumera o Omie e classifica em memória via `classifyClienteForSnapshot` (helper puro TDD): não-vinculado = código ∉ set de omie_clientes **E** doc ∉ set de profiles (mesma definição correta);
+- dedup → bulk insert → `finalize_nao_vinculados_snapshot` (igual). O `syncCustomers` voltou ao **original** (zero risco no money-path do linking). A action `start_nao_vinculados` chama a rotina nova.
+
+As Tasks abaixo descrevem a versão original (carona); a migration (Task 2), os hooks/UI (Tasks 5-6) e o gate/async da action (Task 4) **seguem válidos** — só a mecânica de enumeração (Task 3) foi substituída pela rotina dedicada.
+
+---
+
 ## Por que este plano difere do spec `2026-05-26-clientes-nao-vinculados-design.md`
 
 O spec #360 cravou a **direção** (carona no analytics-sync; definição correta de "não-vinculado"; leitura master/gestor via `pode_ver_carteira_completa`). Este plano incorpora os ajustes de **uma consulta ao Codex** (2026-05-27, registrada no CLAUDE.md como preferência) sobre o *shape* da implementação numa função quente (zona de colisão):
