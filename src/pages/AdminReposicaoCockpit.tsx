@@ -26,6 +26,7 @@ import { EtapasGrid } from "@/components/reposicao/EtapasGrid";
 import { SmartAlertsSection } from "@/components/reposicao/SmartAlertsSection";
 import { MetricsStrip } from "@/components/reposicao/MetricsStrip";
 import { AuditLogSection } from "@/components/reposicao/AuditLogSection";
+import { DataHealthBanner } from "@/components/dataHealth/DataHealthBanner";
 
 export default function AdminReposicaoCockpit() {
   const navigate = useNavigate();
@@ -308,6 +309,9 @@ export default function AdminReposicaoCockpit() {
       </header>
 
       <ContinuarBanner currentStep={currentStep} />
+
+      <DataHealthBanner source="reposicao_sugestoes" />
+      <DataHealthBanner source="estoque_inventario" />
 
       <SmartAlertsSection />
 
