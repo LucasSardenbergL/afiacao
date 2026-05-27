@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { ImpersonationBanner } from '@/components/impersonation/ImpersonationBanner';
 import { useLocation, useNavigate } from 'react-router-dom';
-import { BookOpen, Lock, Calculator, FileText, Palette, Beaker, FileUp, Droplets, LayoutDashboard, Users, ShoppingCart, ShoppingBag, Phone, GraduationCap, BarChart3, Settings, ChevronLeft, ChevronRight, Search, Bell, User, LogOut, Package, TrendingUp, Headphones, Target, Menu, X, ClipboardList, PlusCircle, Shield, Wrench, Award, Scissors, DollarSign, Layers, Printer, UserCheck, FileCheck, Boxes, AlertTriangle, PlayCircle, Factory, Truck, Percent, Sparkles, Handshake, Link2, Globe2, Database, Library, Crosshair, ListChecks, ShieldCheck } from 'lucide-react';
+import { BookOpen, Lock, Calculator, FileText, Palette, Beaker, FileUp, Droplets, LayoutDashboard, Users, ShoppingCart, ShoppingBag, Phone, GraduationCap, BarChart3, Settings, ChevronLeft, ChevronRight, Search, Bell, User, LogOut, Package, TrendingUp, Headphones, Target, Menu, X, ClipboardList, PlusCircle, Shield, Wrench, Award, Scissors, DollarSign, Layers, Printer, UserCheck, FileCheck, Boxes, AlertTriangle, PlayCircle, Factory, Truck, Percent, Sparkles, Handshake, Link2, Globe2, Database, Library, Crosshair, ListChecks, Landmark, ShieldCheck } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { useAuth } from '@/contexts/AuthContext';
 import { AppShellProvider } from '@/contexts/AppShellContext';
@@ -128,6 +128,7 @@ const unifiedNavSections: { title: string; items: NavItem[] }[] = [
       { icon: BarChart3, label: 'Análise e Config', path: '/financeiro/analise', managerOnly: true },
       { icon: TrendingUp, label: 'Retorno & Valor', path: '/financeiro/valor', masterOnly: true },
       { icon: Percent, label: 'Regime Tributário', path: '/financeiro/regime-tributario', masterOnly: true },
+      { icon: Landmark, label: 'Custo de Funding', path: '/financeiro/funding', masterOnly: true },
       { icon: Crosshair, label: 'Cockpit de Valor', path: '/financeiro/valor-cockpit', gestorComercialOuMaster: true },
       { icon: ListChecks, label: 'Próxima Ação', path: '/financeiro/proxima-acao', gestorComercialOuMaster: true },
     ],

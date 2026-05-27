@@ -2514,6 +2514,36 @@ export type Database = {
         }
         Relationships: []
       }
+      farmer_mixgap_feedback: {
+        Row: {
+          created_at: string
+          customer_user_id: string
+          familia: string
+          id: string
+          seller_user_id: string
+          status: string
+          updated_at: string
+        }
+        Insert: {
+          created_at?: string
+          customer_user_id: string
+          familia: string
+          id?: string
+          seller_user_id: string
+          status: string
+          updated_at?: string
+        }
+        Update: {
+          created_at?: string
+          customer_user_id?: string
+          familia?: string
+          id?: string
+          seller_user_id?: string
+          status?: string
+          updated_at?: string
+        }
+        Relationships: []
+      }
       farmer_performance_scores: {
         Row: {
           calculated_at: string
@@ -3879,6 +3909,27 @@ export type Database = {
           tipo?: string
           updated_at?: string | null
           valor_forecast?: number
+        }
+        Relationships: []
+      }
+      fin_funding_inputs: {
+        Row: {
+          company: string
+          funding_inputs: Json
+          updated_at: string
+          updated_by: string | null
+        }
+        Insert: {
+          company: string
+          funding_inputs?: Json
+          updated_at?: string
+          updated_by?: string | null
+        }
+        Update: {
+          company?: string
+          funding_inputs?: Json
+          updated_at?: string
+          updated_by?: string | null
         }
         Relationships: []
       }
@@ -12913,6 +12964,10 @@ export type Database = {
           p_email_enviado?: boolean
         }
         Returns: boolean
+      }
+      mark_mixgap_feedback: {
+        Args: { p_customer: string; p_familia: string; p_status: string }
+        Returns: undefined
       }
       minha_carteira: {
         Args: never

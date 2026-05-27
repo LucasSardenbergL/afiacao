@@ -5,6 +5,7 @@ export interface GapCliente {
   confidence: number;
   lift: number;
   evidence_count: number;
+  feedback_status?: 'ofertado' | null;
 }
 
 export interface MixGapResumo {

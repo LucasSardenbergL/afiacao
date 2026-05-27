@@ -21,15 +21,15 @@ Este audit valida **quais custom migrations estão de fato aplicadas no banco**.
 
 ## Resumo
 
-- **74** custom migrations totais
-- **391** objetos esperados (criados por estas migrations)
+- **78** custom migrations totais
+- **398** objetos esperados (criados por estas migrations)
 - Quebra por tipo:
-  - `rls_policy`: 134
+  - `rls_policy`: 136
   - `index`: 95
-  - `function`: 56
-  - `table`: 53
+  - `function`: 58
+  - `table`: 55
   - `trigger`: 31
-  - `cron_job`: 18
+  - `cron_job`: 19
   - `enum_value`: 4
 
 ## Inventário por migration
@@ -784,6 +784,32 @@ Lista canônica do que cada migration *deveria* criar (extraído via regex de `C
 | `rls_policy` | `public.fcop_insert_own_or_gestor` | `farmer_copilot_sessions` |
 | `rls_policy` | `public.fcop_update_own_or_gestor` | `farmer_copilot_sessions` |
 | `rls_policy` | `public.fcop_delete_own_or_gestor` | `farmer_copilot_sessions` |
+
+### `20260526060000_views_security_invoker_hardening.sql`
+
+> _Nenhum objeto extraído via regex._ Migration provavelmente é `ALTER TABLE` / `UPDATE` / `INSERT` / RLS-only. Validar manualmente.
+
+### `20260526080000_fix_sayerlack_cron_vault.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `cron_job` | `cron.sayerlack-portal-watchdog` | — |
+
+### `20260526100000_fin_funding_inputs.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `table` | `public.fin_funding_inputs` | — |
+| `rls_policy` | `public.fin_funding_inputs_select_master` | `fin_funding_inputs` |
+| `rls_policy` | `public.fin_funding_inputs_write_master` | `fin_funding_inputs` |
+
+### `20260526230000_mixgap_feedback.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `table` | `public.farmer_mixgap_feedback` | — |
+| `function` | `public.mark_mixgap_feedback` | — |
+| `function` | `public._carteira_mixgap_for_owner` | — |
 
 ## Próximos passos quando algo der `❌`
 
