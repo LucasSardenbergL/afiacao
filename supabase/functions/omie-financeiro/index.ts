@@ -894,7 +894,11 @@ async function syncMovimentacoes(
   filtroDataDe?: string,
   filtroDataAte?: string,
   maxPages = 500,
-  startPage?: number
+  startPage?: number,
+  // Páginas vazias consecutivas que disparam o early-exit. 30 no incremental
+  // (para logo após a janela de 3 meses). No backfill (janela ampla) sobe pra
+  // 300 — senão buracos longos no histórico encerrariam o backfill cedo.
+  maxEmptyPages = 30,
 ) {
   const dataInicioIso = parseOmieDate(filtroDataDe) || null;
   const dataFimIso = parseOmieDate(filtroDataAte) || null;
@@ -995,9 +999,9 @@ async function syncMovimentacoes(
       `[Fin][${company}] Mov p${pagina}/${totalPaginas} (+${uniqueRows.length}) empty_streak=${consecutiveEmptyPages}`
     );
 
-    // Early exit after 30 consecutive empty pages
-    if (consecutiveEmptyPages >= 30) {
-      console.log(`[Fin][${company}] Mov early exit: 30 páginas vazias consecutivas`);
+    // Early exit after N consecutive empty pages (N=30 incremental, 300 backfill)
+    if (consecutiveEmptyPages >= maxEmptyPages) {
+      console.log(`[Fin][${company}] Mov early exit: ${maxEmptyPages} páginas vazias consecutivas`);
       break;
     }
 
@@ -1772,18 +1776,44 @@ async function readCursorStartPage(
   }
 }
 
+// Janela de backfill persistida no cursor (só movimentações usam). Faz a
+// continuação `*/10` herdar a janela ampla durante o backfill. undefined =
+// incremental normal. Ver migration 20260527220001.
+async function readCursorBackfillDesde(
+  db: SupabaseClient,
+  company: string,
+  resource: string,
+): Promise<string | undefined> {
+  try {
+    const { data } = await db
+      .from("fin_sync_cursor")
+      .select("backfill_desde")
+      .eq("company", company)
+      .eq("resource", resource)
+      .maybeSingle();
+    const bf = (data as { backfill_desde?: string | null } | null)?.backfill_desde;
+    return bf ?? undefined;
+  } catch {
+    return undefined;
+  }
+}
+
 async function writeCursor(
   db: SupabaseClient,
   company: string,
   resource: string,
   result: { complete?: boolean; nextPage?: number | null },
+  backfillDesde?: string | null,
 ): Promise<void> {
   const nextPage = result.complete ? null : (result.nextPage ?? null);
+  // Ao completar (página 1), limpa a janela de backfill → volta ao incremental.
+  // Enquanto pendente, preserva a janela pra a continuação herdar.
+  const bf = result.complete ? null : (backfillDesde ?? null);
   try {
     await db
       .from("fin_sync_cursor")
       .upsert(
-        { company, resource, next_page: nextPage, updated_at: new Date().toISOString() },
+        { company, resource, next_page: nextPage, backfill_desde: bf, updated_at: new Date().toISOString() },
         { onConflict: "company,resource" },
       );
   } catch {
@@ -1911,15 +1941,21 @@ serve(async (req) => {
       }
 
       case "sync_movimentacoes": {
-        const dataInicio =
-          filtro_data_de ||
-          formatOmieDate(new Date(new Date().setMonth(new Date().getMonth() - 3)));
         const dataFim = filtro_data_ate || formatOmieDate(new Date());
+        const incrementalDe = formatOmieDate(new Date(new Date().setMonth(new Date().getMonth() - 3)));
         for (const co of targetCompanies) {
           // mov: undefined = fresh (começa da última página/mais recente); int = resume
           const startPage = await readCursorStartPage(supabase, co, "movimentacoes");
-          const r = await syncMovimentacoes(supabase, co, dataInicio, dataFim, maxPages, startPage);
-          await writeCursor(supabase, co, "movimentacoes", r);
+          const cursorBackfill = await readCursorBackfillDesde(supabase, co, "movimentacoes");
+          // Backfill = janela ampla client-side. Inicia via body.filtro_data_de (só
+          // quando NÃO há resume pendente, pra não reiniciar no meio); resume herda a
+          // janela persistida no cursor. NULL = incremental (3 meses, early-exit 30).
+          const backfillDesde =
+            startPage !== undefined ? (cursorBackfill ?? null) : (filtro_data_de ?? null);
+          const dataInicio = backfillDesde || incrementalDe;
+          const maxEmpty = backfillDesde ? 300 : 30;
+          const r = await syncMovimentacoes(supabase, co, dataInicio, dataFim, maxPages, startPage, maxEmpty);
+          await writeCursor(supabase, co, "movimentacoes", r, backfillDesde);
           result[co] = r;
         }
         break;

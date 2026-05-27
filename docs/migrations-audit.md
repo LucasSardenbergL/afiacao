@@ -21,14 +21,14 @@ Este audit valida **quais custom migrations estão de fato aplicadas no banco**.
 
 ## Resumo
 
-- **89** custom migrations totais
-- **426** objetos esperados (criados por estas migrations)
+- **94** custom migrations totais
+- **432** objetos esperados (criados por estas migrations)
 - Quebra por tipo:
   - `rls_policy`: 139
   - `index`: 96
-  - `function`: 65
+  - `function`: 70
   - `table`: 57
-  - `cron_job`: 34
+  - `cron_job`: 35
   - `trigger`: 31
   - `enum_value`: 4
 
@@ -888,7 +888,36 @@ Lista canônica do que cada migration *deveria* criar (extraído via regex de `C
 | --- | --- | --- |
 | `function` | `public.get_tint_price` | — |
 
+### `20260527190000_drop_redundant_sync_orders_cron.sql`
+
+> _Nenhum objeto extraído via regex._ Migration provavelmente é `ALTER TABLE` / `UPDATE` / `INSERT` / RLS-only. Validar manualmente.
+
 ### `20260527190000_drop_tint_formula_itens_public_select.sql`
+
+> _Nenhum objeto extraído via regex._ Migration provavelmente é `ALTER TABLE` / `UPDATE` / `INSERT` / RLS-only. Validar manualmente.
+
+### `20260527200000_data_health_add_estoque_reposicao.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `function` | `public.get_data_health` | — |
+
+### `20260527210000_data_health_compute_internal.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `function` | `public._data_health_compute` | — |
+| `function` | `public.get_data_health` | — |
+
+### `20260527220000_data_health_watchdog.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `function` | `public.data_health_watchdog` | — |
+| `function` | `public.fin_sync_heartbeat` | — |
+| `cron_job` | `cron.data-health-watchdog` | — |
+
+### `20260527220001_fin_sync_cursor_backfill_desde.sql`
 
 > _Nenhum objeto extraído via regex._ Migration provavelmente é `ALTER TABLE` / `UPDATE` / `INSERT` / RLS-only. Validar manualmente.
 
