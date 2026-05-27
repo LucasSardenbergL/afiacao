@@ -3,7 +3,7 @@
 -- ========================================================================
 --
 -- Gerado por: scripts/audit-custom-migrations.ts
--- Total de custom migrations: 79
+-- Total de custom migrations: 80
 --
 -- Como usar:
 --   1. Abra o Supabase SQL Editor (via Lovable Cloud → Backend → SQL Editor)
@@ -98,7 +98,8 @@ WITH expected (version, slug, filename) AS (VALUES
   ('20260526080000', 'fix_sayerlack_cron_vault', '20260526080000_fix_sayerlack_cron_vault.sql'),
   ('20260526100000', 'fin_funding_inputs', '20260526100000_fin_funding_inputs.sql'),
   ('20260526230000', 'mixgap_feedback', '20260526230000_mixgap_feedback.sql'),
-  ('20260527010000', 'rls_copilot_sessions_select_own_only', '20260527010000_rls_copilot_sessions_select_own_only.sql')
+  ('20260527010000', 'rls_copilot_sessions_select_own_only', '20260527010000_rls_copilot_sessions_select_own_only.sql'),
+  ('20260527120000', 'clientes_nao_vinculados', '20260527120000_clientes_nao_vinculados.sql')
 )
 SELECT
   e.version,
@@ -515,7 +516,13 @@ WITH expected_objects (migration, kind, schema_name, object_name, parent_name) A
   ('mixgap_feedback', 'table', 'public', 'farmer_mixgap_feedback', ''),
   ('mixgap_feedback', 'function', 'public', 'mark_mixgap_feedback', ''),
   ('mixgap_feedback', 'function', 'public', '_carteira_mixgap_for_owner', ''),
-  ('rls_copilot_sessions_select_own_only', 'rls_policy', 'public', 'fcop_select_carteira', 'farmer_copilot_sessions')
+  ('rls_copilot_sessions_select_own_only', 'rls_policy', 'public', 'fcop_select_carteira', 'farmer_copilot_sessions'),
+  ('clientes_nao_vinculados', 'table', 'public', 'omie_clientes_nao_vinculados', ''),
+  ('clientes_nao_vinculados', 'table', 'public', 'omie_nao_vinculados_state', ''),
+  ('clientes_nao_vinculados', 'index', 'public', 'idx_nv_empresa_synced', 'omie_clientes_nao_vinculados'),
+  ('clientes_nao_vinculados', 'function', 'public', 'finalize_nao_vinculados_snapshot', ''),
+  ('clientes_nao_vinculados', 'rls_policy', 'public', 'nv_select', 'omie_clientes_nao_vinculados'),
+  ('clientes_nao_vinculados', 'rls_policy', 'public', 'nv_state_select', 'omie_nao_vinculados_state')
 )
 SELECT
   e.migration,
