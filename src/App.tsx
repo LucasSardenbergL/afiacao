@@ -77,6 +77,7 @@ const CoachingSPIN = lazy(() => import("./pages/CoachingSPIN"));
 const SettingsConfig = lazy(() => import("./pages/SettingsConfig"));
 const UXRules = lazy(() => import("./pages/UXRules"));
 const AdminAnalyticsSync = lazy(() => import("./pages/AdminAnalyticsSync"));
+const ClientesNaoVinculados = lazy(() => import("./pages/ClientesNaoVinculados"));
 const TechnicalDocs = lazy(() => import("./pages/TechnicalDocs"));
 const IntelligenceDashboard = lazy(() => import("./pages/IntelligenceDashboard"));
 const GovernanceUsers = lazy(() => import("./pages/GovernanceUsers"));
@@ -229,6 +230,7 @@ const App = () => (
               <Route path="admin/training" element={<AdminTraining />} />
               <Route path="admin/price-table" element={<AdminPriceTable />} />
               <Route path="admin/analytics-sync" element={<AdminAnalyticsSync />} />
+              <Route path="admin/clientes-nao-vinculados" element={<ClientesNaoVinculados />} />
               <Route path="recurring-schedules" element={<RecurringSchedules />} />
               <Route path="savings" element={<SavingsDashboard />} />
               <Route path="loyalty" element={<Loyalty />} />
