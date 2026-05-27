@@ -10,6 +10,7 @@ describe("KpiCards", () => {
     render(
       <KpiCards
         totalEconomia={1000}
+        ganhoLiquidoPotencial={600}
         oportunidadesCount={5}
         totalSkusAtivos={50}
         dataLimiteMaisProxima="2026-01-20"
@@ -32,6 +33,7 @@ describe("KpiCards", () => {
     render(
       <KpiCards
         totalEconomia={0}
+        ganhoLiquidoPotencial={0}
         oportunidadesCount={0}
         totalSkusAtivos={0}
         dataLimiteMaisProxima={null}
