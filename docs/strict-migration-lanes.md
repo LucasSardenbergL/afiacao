@@ -110,6 +110,10 @@ subgrafos sujos (`noUnusedLocals`/`strictNullChecks`) → cascata. **Promova lea
   `lib/offline-handlers`, `lib/time/sp-day`, `lib/routeCrumbs`. Append-only; `typecheck:strict` verde com os 6
   (transitivos de optimistic-merge/offline-handlers — picking-confirm/recebimento-* services + useOfflineFlush —
   já strict-clean). Tsconfig-only, zero edição de source. **NÃO toco** scoring/visit-scoring/farmer/financeiro/hooks.
+- 🔵 **`claude/strict-promote-leaf-datahealth-impersonation`** (sessão strange-hellman, 2026-05-27): segundo lote leaf —
+  `lib/dataHealth/{types,health-helpers}` + `lib/impersonation/{types,effective-user}`. Self-contained (types + helper
+  que importa só os próprios types); nenhum PR aberto toca essas áreas. `typecheck:strict` verde com os 4. Tsconfig-only.
+  **NÃO toco** carteira/mixgap/positivacao (farmer-adjacent) nem clientes-nao-vinculados (churn recente do #383).
 
 ## Follow-up registrado
 

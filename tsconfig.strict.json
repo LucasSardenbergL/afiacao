@@ -502,6 +502,10 @@
     "src/lib/time/sp-day.ts",
     "src/lib/routeCrumbs.ts",
     "src/lib/picking/optimistic-merge.ts",
-    "src/lib/offline-handlers.ts"
+    "src/lib/offline-handlers.ts",
+    "src/lib/dataHealth/types.ts",
+    "src/lib/dataHealth/health-helpers.ts",
+    "src/lib/impersonation/types.ts",
+    "src/lib/impersonation/effective-user.ts"
   ]
 }
