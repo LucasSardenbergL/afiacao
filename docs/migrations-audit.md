@@ -21,15 +21,15 @@ Este audit valida **quais custom migrations estão de fato aplicadas no banco**.
 
 ## Resumo
 
-- **75** custom migrations totais
-- **391** objetos esperados (criados por estas migrations)
+- **76** custom migrations totais
+- **392** objetos esperados (criados por estas migrations)
 - Quebra por tipo:
   - `rls_policy`: 134
   - `index`: 95
   - `function`: 56
   - `table`: 53
   - `trigger`: 31
-  - `cron_job`: 18
+  - `cron_job`: 19
   - `enum_value`: 4
 
 ## Inventário por migration
@@ -788,6 +788,12 @@ Lista canônica do que cada migration *deveria* criar (extraído via regex de `C
 ### `20260526060000_views_security_invoker_hardening.sql`
 
 > _Nenhum objeto extraído via regex._ Migration provavelmente é `ALTER TABLE` / `UPDATE` / `INSERT` / RLS-only. Validar manualmente.
+
+### `20260526080000_fix_sayerlack_cron_vault.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `cron_job` | `cron.sayerlack-portal-watchdog` | — |
 
 ## Próximos passos quando algo der `❌`
 

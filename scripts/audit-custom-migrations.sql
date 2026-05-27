@@ -3,7 +3,7 @@
 -- ========================================================================
 --
 -- Gerado por: scripts/audit-custom-migrations.ts
--- Total de custom migrations: 75
+-- Total de custom migrations: 76
 --
 -- Como usar:
 --   1. Abra o Supabase SQL Editor (via Lovable Cloud → Backend → SQL Editor)
@@ -94,7 +94,8 @@ WITH expected (version, slug, filename) AS (VALUES
   ('20260526020000', 'rls_score_carteira_hardening', '20260526020000_rls_score_carteira_hardening.sql'),
   ('20260526030000', 'fin_sync_watchdog_sweep_orphans', '20260526030000_fin_sync_watchdog_sweep_orphans.sql'),
   ('20260526040000', 'rls_carteira_relacionamento_hardening', '20260526040000_rls_carteira_relacionamento_hardening.sql'),
-  ('20260526060000', 'views_security_invoker_hardening', '20260526060000_views_security_invoker_hardening.sql')
+  ('20260526060000', 'views_security_invoker_hardening', '20260526060000_views_security_invoker_hardening.sql'),
+  ('20260526080000', 'fix_sayerlack_cron_vault', '20260526080000_fix_sayerlack_cron_vault.sql')
 )
 SELECT
   e.version,
@@ -503,7 +504,8 @@ WITH expected_objects (migration, kind, schema_name, object_name, parent_name) A
   ('rls_carteira_relacionamento_hardening', 'rls_policy', 'public', 'fcop_select_carteira', 'farmer_copilot_sessions'),
   ('rls_carteira_relacionamento_hardening', 'rls_policy', 'public', 'fcop_insert_own_or_gestor', 'farmer_copilot_sessions'),
   ('rls_carteira_relacionamento_hardening', 'rls_policy', 'public', 'fcop_update_own_or_gestor', 'farmer_copilot_sessions'),
-  ('rls_carteira_relacionamento_hardening', 'rls_policy', 'public', 'fcop_delete_own_or_gestor', 'farmer_copilot_sessions')
+  ('rls_carteira_relacionamento_hardening', 'rls_policy', 'public', 'fcop_delete_own_or_gestor', 'farmer_copilot_sessions'),
+  ('fix_sayerlack_cron_vault', 'cron_job', 'cron', 'sayerlack-portal-watchdog', '')
 )
 SELECT
   e.migration,
