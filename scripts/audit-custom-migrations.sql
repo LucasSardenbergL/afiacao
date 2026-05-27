@@ -3,7 +3,7 @@
 -- ========================================================================
 --
 -- Gerado por: scripts/audit-custom-migrations.ts
--- Total de custom migrations: 84
+-- Total de custom migrations: 88
 --
 -- Como usar:
 --   1. Abra o Supabase SQL Editor (via Lovable Cloud → Backend → SQL Editor)
@@ -103,7 +103,11 @@ WITH expected (version, slug, filename) AS (VALUES
   ('20260527120000', 'clientes_nao_vinculados', '20260527120000_clientes_nao_vinculados.sql'),
   ('20260527120000', 'data_health_rpc_fix', '20260527120000_data_health_rpc_fix.sql'),
   ('20260527140000', 'revoke_carteira_internals_anon', '20260527140000_revoke_carteira_internals_anon.sql'),
-  ('20260527160000', 'matview_ranking_negociacao_private', '20260527160000_matview_ranking_negociacao_private.sql')
+  ('20260527160000', 'cron_vendas_sync_pedidos', '20260527160000_cron_vendas_sync_pedidos.sql'),
+  ('20260527160000', 'matview_ranking_negociacao_private', '20260527160000_matview_ranking_negociacao_private.sql'),
+  ('20260527170000', 'crons_timeout_fix', '20260527170000_crons_timeout_fix.sql'),
+  ('20260527180000', 'data_health_add_vendas', '20260527180000_data_health_add_vendas.sql'),
+  ('20260527180000', 'get_tint_price_rpc', '20260527180000_get_tint_price_rpc.sql')
 )
 SELECT
   e.version,
@@ -529,8 +533,25 @@ WITH expected_objects (migration, kind, schema_name, object_name, parent_name) A
   ('clientes_nao_vinculados', 'rls_policy', 'public', 'nv_select', 'omie_clientes_nao_vinculados'),
   ('clientes_nao_vinculados', 'rls_policy', 'public', 'nv_state_select', 'omie_nao_vinculados_state'),
   ('data_health_rpc_fix', 'function', 'public', 'get_data_health', ''),
+  ('cron_vendas_sync_pedidos', 'cron_job', 'cron', 'vendas-sync-pedidos-oben-2h', ''),
+  ('cron_vendas_sync_pedidos', 'cron_job', 'cron', 'vendas-sync-pedidos-colacor-2h', ''),
   ('matview_ranking_negociacao_private', 'function', 'public', 'refresh_sku_ranking_negociacao', ''),
-  ('matview_ranking_negociacao_private', 'function', 'public', 'get_sku_ranking_negociacao_paralela', '')
+  ('matview_ranking_negociacao_private', 'function', 'public', 'get_sku_ranking_negociacao_paralela', ''),
+  ('crons_timeout_fix', 'cron_job', 'cron', 'carteira-positivacao-snapshot-mensal', ''),
+  ('crons_timeout_fix', 'cron_job', 'cron', 'carteira-rebuild-nightly', ''),
+  ('crons_timeout_fix', 'cron_job', 'cron', 'compute-association-rules-daily', ''),
+  ('crons_timeout_fix', 'cron_job', 'cron', 'compute-costs-daily', ''),
+  ('crons_timeout_fix', 'cron_job', 'cron', 'monthly-tool-report', ''),
+  ('crons_timeout_fix', 'cron_job', 'cron', 'omie-sync-metadados-daily', ''),
+  ('crons_timeout_fix', 'cron_job', 'cron', 'omie-sync-status-produtos-diario', ''),
+  ('crons_timeout_fix', 'cron_job', 'cron', 'process-recurring-orders-daily', ''),
+  ('crons_timeout_fix', 'cron_job', 'cron', 'sayerlack-portal-watchdog', ''),
+  ('crons_timeout_fix', 'cron_job', 'cron', 'sync-colacor-vendas-products', ''),
+  ('crons_timeout_fix', 'cron_job', 'cron', 'sync-reprocess-operational', ''),
+  ('crons_timeout_fix', 'cron_job', 'cron', 'sync-reprocess-strategic', ''),
+  ('crons_timeout_fix', 'cron_job', 'cron', 'weekly-algorithm-a-audit', ''),
+  ('data_health_add_vendas', 'function', 'public', 'get_data_health', ''),
+  ('get_tint_price_rpc', 'function', 'public', 'get_tint_price', '')
 )
 SELECT
   e.migration,

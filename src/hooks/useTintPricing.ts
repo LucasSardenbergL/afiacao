@@ -1,9 +1,14 @@
 import { useQuery } from '@tanstack/react-query';
 import { supabase } from '@/integrations/supabase/client';
-import { computeTintPrice, type TintCoranteInput, type TintOmiePriceMap } from '@/lib/tint/compute-price';
+import type { TintPriceBreakdown } from '@/lib/tint/compute-price';
 
-// O cálculo puro vive em @/lib/tint/compute-price (testado; money-path). Os tipos
-// são re-exportados aqui para manter a API pública do hook estável.
+// O preço vem da RPC SECURITY DEFINER `get_tint_price` (hardening da receita:
+// `tint_formula_itens` deixou de ser legível diretamente por cliente). A RPC
+// computa o custo server-side e devolve só o agregado (`custoCorantes`/
+// `precoFinal`) ao cliente; a receita (`itensCorantes`) só volta preenchida para
+// staff. O cálculo puro de referência — oráculo de paridade do SQL — vive em
+// @/lib/tint/compute-price (testado), e os tipos são re-exportados aqui para
+// manter a API pública do hook estável.
 export type { TintCoranteItem, TintPriceBreakdown } from '@/lib/tint/compute-price';
 
 export function useTintPricing(formulaId: string | null) {
@@ -11,39 +16,14 @@ export function useTintPricing(formulaId: string | null) {
     queryKey: ['tint-pricing', formulaId],
     staleTime: 5 * 60 * 1000,
     enabled: !!formulaId,
-    queryFn: async () => {
+    queryFn: async (): Promise<TintPriceBreakdown | null> => {
       if (!formulaId) return null;
 
-      // Itens da fórmula (a "receita") + corantes + custo Omie.
-      const { data: items, error } = await supabase
-        .from('tint_formula_itens')
-        .select('qtd_ml, ordem, corante_id')
-        .eq('formula_id', formulaId)
-        .order('ordem');
+      const { data, error } = await supabase
+        .rpc('get_tint_price' as never, { p_formula_id: formulaId } as never);
 
-      if (error || !items) return null;
-
-      const coranteIds = items.map(i => i.corante_id);
-      const { data: corantes } = await supabase
-        .from('tint_corantes')
-        .select('id, descricao, volume_total_ml, omie_product_id')
-        .in('id', coranteIds);
-
-      if (!corantes) return null;
-
-      const omieIds = corantes.filter(c => c.omie_product_id).map(c => c.omie_product_id!);
-      const omieProducts: TintOmiePriceMap = {};
-      if (omieIds.length > 0) {
-        const { data: prods } = await supabase
-          .from('omie_products')
-          .select('id, valor_unitario')
-          .in('id', omieIds);
-        if (prods) {
-          for (const p of prods) omieProducts[p.id] = { valor_unitario: p.valor_unitario };
-        }
-      }
-
-      return computeTintPrice(items, corantes as TintCoranteInput[], omieProducts);
+      if (error || !data) return null;
+      return data as unknown as TintPriceBreakdown;
     },
   });
 }
