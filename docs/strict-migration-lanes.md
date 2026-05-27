@@ -124,6 +124,15 @@ subgrafos sujos (`noUnusedLocals`/`strictNullChecks`) → cascata. **Promova lea
   skuMapeamento,tintColorSelect,tintImport,unifiedAI}`. Reposição já saiu do mutirão de decomposição (encerrado 2026-05-25,
   §10) → types estáveis. Imports: próprios `./types`, `date-fns`/`react-query`/supabase-client (deps tipadas já no programa).
   `typecheck:strict` verde com os 31. Tsconfig-only. **NÃO toco** farmer/financeiro/customer360 nem os `useX.ts`.
+- 🔵 **`claude/strict-promote-leaf-tsx`** (sessão strange-hellman, 2026-05-27): primeiro lote de `.tsx` presentacionais
+  leaf (6, hand-verificados): `aiOps/{EvidenceItem,StatsCards,AiOpsHeader}`, `notificacoes/badges`,
+  `des/historico/StarsRow`, `customerDashboard/PriorityCard`. Imports só de `lucide`/`react-router-dom`/`@/components/ui/*`
+  (38 ui já no strict)/`@/lib/utils`/próprios `./types`. `typecheck:strict` verde. **NÃO toco** `reposicao/alertas/*`
+  (reserva cranky-driscoll). ⚠️ **2 LIÇÕES de triagem `.tsx` (custaram um lote refeito):** (1) o filtro de imports
+  TEM que casar **aspas duplas E simples** (`from "..."` e `from '...'`) — só-simples gera falso-leaf (deixa passar
+  `import { supabase } from "..."`); (2) `lazy(() => import('...'))` e `import()` dinâmico **contam como import pro tsc**
+  e puxam o subgrafo (ex.: um "leaf" que `lazy`-carrega `CiclosAnteriores.tsx` quebrou com `string|null`). Filtrar
+  `grep -qE 'lazy\(|import\('` e **excluir** quem usa. ~100 `.tsx` candidatos restantes (re-filtrar com o filtro correto).
 
 ## Follow-up registrado
 

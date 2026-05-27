@@ -551,6 +551,12 @@
     "src/components/tintImport/queries.ts",
     "src/components/tintImport/types.ts",
     "src/components/unifiedAI/helpers.ts",
-    "src/components/unifiedAI/types.ts"
+    "src/components/unifiedAI/types.ts",
+    "src/components/aiOps/EvidenceItem.tsx",
+    "src/components/aiOps/StatsCards.tsx",
+    "src/components/aiOps/AiOpsHeader.tsx",
+    "src/components/notificacoes/badges.tsx",
+    "src/components/des/historico/StarsRow.tsx",
+    "src/components/customerDashboard/PriorityCard.tsx"
   ]
 }
