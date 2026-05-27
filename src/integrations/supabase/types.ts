@@ -13008,6 +13008,7 @@ export type Database = {
           isSetofReturn: true
         }
       }
+      get_tint_price: { Args: { p_formula_id: string }; Returns: Json }
       get_user_access_profile_for: { Args: { p_target: string }; Returns: Json }
       get_user_role: {
         Args: { _user_id: string }
