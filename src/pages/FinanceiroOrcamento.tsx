@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback, useMemo } from 'react';
+import { Fragment, useState, useEffect, useCallback, useMemo } from 'react';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
@@ -6,11 +6,14 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import { Input } from '@/components/ui/input';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { COMPANIES, ALL_COMPANIES, type Company } from '@/contexts/CompanyContext';
-import { getDRE, DRE_LINHAS, type FinDRE } from '@/services/financeiroService';
-import { getOrcamento, upsertOrcamento, type OrcamentoLinha } from '@/services/financeiroV2Service';
-import { projetarDRE, seedOrcamento, LINHAS_INPUT, type MesDRE, type LinhaInput } from '@/lib/financeiro/orcamento-forecast-helpers';
+import { useQuery } from '@tanstack/react-query';
+import { getDRE, DRE_LINHAS, getCategoryMappings, type FinDRE } from '@/services/financeiroService';
+import { getOrcamento, upsertOrcamento, getCategoriasCompetenciaRaw, type OrcamentoLinha } from '@/services/financeiroV2Service';
+import { projetarDRE, seedOrcamento, mesesFechados, LINHAS_INPUT, type MesDRE, type LinhaInput } from '@/lib/financeiro/orcamento-forecast-helpers';
+import { drillLinha, fontesDaLinha } from '@/lib/financeiro/orcamento-drill-helpers';
+import { DrillVarianciaPanel } from '@/components/financeiro/DrillVarianciaPanel';
 import { toast } from 'sonner';
-import { Loader2, Save, Building2, Calendar, TrendingUp, TrendingDown, Target, History, Plane } from 'lucide-react';
+import { Loader2, Save, Building2, Calendar, TrendingUp, TrendingDown, Target, History, Plane, ChevronDown, ChevronRight } from 'lucide-react';
 import { AuditTrailDrawer } from '@/components/financeiro/AuditTrailDrawer';
 
 const fmt = (v: number) => v.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' });
@@ -20,6 +23,14 @@ const fmtCompact = (v: number) => {
   return fmt(v);
 };
 const mesesNome = ['Jan','Fev','Mar','Abr','Mai','Jun','Jul','Ago','Set','Out','Nov','Dez'];
+
+// Regime por empresa (espelho de REGIME_POR_EMPRESA do calcularDRE) — usado pelo drill
+// para resolver os aliases fiscais (deducoes/impostos) regime-aware.
+const REGIME_ORCAMENTO: Record<Company, 'simples' | 'presumido'> = {
+  colacor: 'presumido',
+  oben: 'presumido',
+  colacor_sc: 'simples',
+};
 
 const dreLinhas = DRE_LINHAS.map(l => l.value);
 const dreLabelMap = Object.fromEntries(DRE_LINHAS.map(l => [l.value, l.label]));
@@ -73,6 +84,10 @@ const FinanceiroOrcamento = () => {
   const [draft, setDraft] = useState<Record<string, number>>({});
   const [auditTarget, setAuditTarget] = useState<{ table: string; id: string; title: string } | null>(null);
   const [crescimentoPerc, setCrescimentoPerc] = useState(10);
+  const [expandedLinha, setExpandedLinha] = useState<string | null>(null);
+
+  // Fecha o drill ao trocar de empresa/ano (evita mostrar drill de outro contexto).
+  useEffect(() => { setExpandedLinha(null); }, [company, ano]);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -183,6 +198,42 @@ const FinanceiroOrcamento = () => {
     }),
     [company, ano, dreAtualMesDRE, dreAnoAnteriorMesDRE, orcadoForecast],
   );
+
+  // ── Drill de variância por categoria (lazy, só ao expandir uma linha) ──
+  // Fonte: fin_dre_competencia_base (competência, MESMA base do snapshot → reconcilia).
+  // A query é chaveada só por company/ano (base bruta cacheável entre linhas); o drill da
+  // linha expandida é calculado num useMemo a partir do forecast (que já reage a draft).
+  const mesesFechadosArr = useMemo(() => mesesFechados(ano), [ano]);
+
+  const drillBaseQuery = useQuery({
+    queryKey: ['orcamento-drill-base', company, ano, mesesFechadosArr.join(',')],
+    enabled: !!expandedLinha,
+    queryFn: async () => {
+      const [rowsAno, rowsAnoAnterior, mapping] = await Promise.all([
+        getCategoriasCompetenciaRaw(company, ano, mesesFechadosArr),
+        getCategoriasCompetenciaRaw(company, ano - 1, mesesFechadosArr),
+        getCategoryMappings(company),
+      ]);
+      return { rowsAno, rowsAnoAnterior, mapping };
+    },
+  });
+
+  const drillResult = useMemo(() => {
+    if (!expandedLinha || !drillBaseQuery.data) return null;
+    const fl = forecast.linhas.find(l => l.dre_linha === expandedLinha);
+    if (!fl || fontesDaLinha(expandedLinha).length === 0) return null;
+    return drillLinha({
+      dreLinha: expandedLinha,
+      regime: REGIME_ORCAMENTO[company],
+      rowsAno: drillBaseQuery.data.rowsAno,
+      rowsAnoAnterior: drillBaseQuery.data.rowsAnoAnterior,
+      mesesFechados: mesesFechadosArr,
+      mapping: drillBaseQuery.data.mapping,
+      realizadoSnapshot: fl.realizado_fechado,
+      forecastRestante: fl.forecast_restante,
+      varianciaAnual: fl.variancia,
+    });
+  }, [expandedLinha, drillBaseQuery.data, forecast.linhas, company, mesesFechadosArr]);
 
   const handleSugerir = () => {
     if (dreAnoAnteriorMesDRE.length === 0) {
@@ -384,18 +435,26 @@ const FinanceiroOrcamento = () => {
                         : linha.favoravel === false
                         ? 'text-status-error'
                         : 'text-muted-foreground';
+                    const isDrillable = linha.fura_meta && fontesDaLinha(linha.dre_linha).length > 0;
+                    const isExpanded = expandedLinha === linha.dre_linha;
 
                     return (
+                      <Fragment key={linha.dre_linha}>
                       <TableRow
-                        key={linha.dre_linha}
-                        className={isDerivada ? 'bg-muted/30' : undefined}
+                        className={`${isDerivada ? 'bg-muted/30' : ''} ${isDrillable ? 'cursor-pointer hover:bg-muted/40' : ''}`}
+                        onClick={isDrillable ? () => setExpandedLinha(isExpanded ? null : linha.dre_linha) : undefined}
                       >
                         <TableCell
                           className={`sticky left-0 bg-background text-xs ${
                             isDerivada ? 'font-medium bg-muted/30' : ''
                           }`}
                         >
-                          {forecastLabel(linha.dre_linha)}
+                          <span className="inline-flex items-center gap-1">
+                            {isDrillable && (isExpanded
+                              ? <ChevronDown className="h-3 w-3 text-muted-foreground" />
+                              : <ChevronRight className="h-3 w-3 text-muted-foreground" />)}
+                            {forecastLabel(linha.dre_linha)}
+                          </span>
                         </TableCell>
                         <TableCell className={`text-right text-sm ${isDerivada ? 'font-medium' : ''}`}>
                           {fmtCompact(linha.landing)}
@@ -436,6 +495,19 @@ const FinanceiroOrcamento = () => {
                           )}
                         </TableCell>
                       </TableRow>
+                      {isExpanded && (
+                        <TableRow className="bg-muted/10 hover:bg-muted/10">
+                          <TableCell colSpan={7} className="px-4">
+                            <DrillVarianciaPanel
+                              result={drillResult}
+                              isLoading={drillBaseQuery.isLoading}
+                              isError={drillBaseQuery.isError}
+                              ano={ano}
+                            />
+                          </TableCell>
+                        </TableRow>
+                      )}
+                      </Fragment>
                     );
                   })}
                 </TableBody>

@@ -1,6 +1,7 @@
 import { supabase } from "@/integrations/supabase/client";
 import type { Company } from "@/contexts/CompanyContext";
 import type { Json } from "@/integrations/supabase/types";
+import type { DimRowRaw } from "@/lib/financeiro/orcamento-drill-helpers";
 import type {
   FinFechamentoRow,
   FinFechamentoInsert,
@@ -545,6 +546,53 @@ export async function getAnaliseDimensional(
   }
 
   return Array.from(map.values()).sort((a, b) => b.total_documento - a.total_documento);
+}
+
+/**
+ * Linhas CRUAS por (categoria_codigo, mês) em regime de COMPETÊNCIA (data_emissão) de
+ * um ano — fonte do drill de variância por categoria (`drillLinha`).
+ *
+ * Lê `fin_dre_competencia_base` (CR+CP por data_emissão, status≠CANCELADO, soma
+ * valor_documento) — a MESMA base que o `calcularDRE` competência usa para montar o
+ * `fin_dre_snapshots`. Por isso reconcilia: drillar contra a matview dimensional (que
+ * é por data_VENCIMENTO) acusaria resíduo falso por diferença de base temporal.
+ *
+ * Retorna linhas de AMBAS as origens (CR e CP): o `calcularDRE` classifica por CÓDIGO
+ * independentemente do razão, então o drill soma por código sobre os dois (o helper
+ * agrega). Filtra os meses fechados server-side e PAGINA (a view passa de 1000 linhas
+ * fácil: categorias × meses × 2 origens).
+ */
+export async function getCategoriasCompetenciaRaw(
+  company: Company,
+  ano: number,
+  meses: number[],
+): Promise<DimRowRaw[]> {
+  if (meses.length === 0) return [];
+  const PAGE = 1000;
+  const out: DimRowRaw[] = [];
+  let from = 0;
+  for (;;) {
+    const { data, error } = await supabase
+      .from('fin_dre_competencia_base')
+      .select('categoria_codigo, categoria_descricao, mes, valor_total')
+      .eq('company', company)
+      .eq('ano', ano)
+      .in('mes', meses)
+      .range(from, from + PAGE - 1);
+    if (error) throw error;
+    const rows = data ?? [];
+    for (const r of rows) {
+      out.push({
+        categoria_codigo: r.categoria_codigo,
+        categoria_descricao: r.categoria_descricao,
+        mes: r.mes,
+        valor: r.valor_total ?? 0,
+      });
+    }
+    if (rows.length < PAGE) break;
+    from += PAGE;
+  }
+  return out;
 }
 
 // ═══════════════ 6. PERMISSÕES ═══════════════
