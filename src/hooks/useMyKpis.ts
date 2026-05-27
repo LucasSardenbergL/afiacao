@@ -1,6 +1,7 @@
 import { useQuery } from '@tanstack/react-query';
 import { supabase } from '@/integrations/supabase/client';
 import { useAuth } from '@/contexts/AuthContext';
+import { spDayRangeUtc } from '@/lib/time/sp-day';
 
 export interface FarmerKpis {
   calls_today: number;
@@ -23,13 +24,15 @@ export function useMyKpis() {
       if (!user) {
         return { calls_today: 0, revenue_today: 0, margin_today: 0, avg_ticket_today: 0, pending_link_count: 0 };
       }
-      const todayIso = new Date().toISOString().slice(0, 10);
+      // Janela do dia no fuso de São Paulo, como instantes UTC. Sem isto, a data UTC
+      // (toISOString) vira "amanhã" das 21h-24h locais → KPIs do dia zeram à noite.
+      const { startUtc, endUtc } = spDayRangeUtc();
 
-       
       const { data: calls } = await supabase.from('farmer_calls')
         .select('revenue_generated, margin_generated')
         .eq('farmer_id', user.id)
-        .gte('started_at', todayIso);
+        .gte('started_at', startUtc)
+        .lt('started_at', endUtc);
 
       const callsArr = (calls ?? []) as Array<{ revenue_generated: number | null; margin_generated: number | null }>;
       const revenue = callsArr.reduce((s, c) => s + Number(c.revenue_generated ?? 0), 0);
