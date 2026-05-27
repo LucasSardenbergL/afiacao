@@ -48,10 +48,10 @@ function useLastErrors() {
 }
 
 const statusColor: Record<string, string> = {
-  concluido: 'bg-green-500/10 text-green-700 border-green-200',
-  parcial: 'bg-yellow-500/10 text-yellow-700 border-yellow-200',
-  erro: 'bg-red-500/10 text-red-700 border-red-200',
-  processando: 'bg-blue-500/10 text-blue-700 border-blue-200',
+  concluido: 'bg-status-success-bg text-status-success border-status-success/40',
+  parcial: 'bg-status-warning-bg text-status-warning border-status-warning/40',
+  erro: 'bg-status-error-bg text-status-error border-status-error/40',
+  processando: 'bg-status-info-bg text-status-info border-status-info/40',
 };
 
 export default function TintDashboard() {
@@ -125,7 +125,7 @@ export default function TintDashboard() {
         <Card>
           <CardHeader>
             <CardTitle className="text-base flex items-center gap-2">
-              <AlertTriangle className="w-4 h-4 text-yellow-500" />
+              <AlertTriangle className="w-4 h-4 text-status-warning" />
               Últimos Erros de Importação
             </CardTitle>
           </CardHeader>

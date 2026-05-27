@@ -174,7 +174,7 @@ const ProductionOrders = () => {
                   )}
 
                   {order.completed_at && (
-                    <p className="text-xs text-green-600">
+                    <p className="text-xs text-status-success">
                       Finalizado: {format(new Date(order.completed_at), "dd/MM/yy HH:mm", { locale: ptBR })}
                     </p>
                   )}

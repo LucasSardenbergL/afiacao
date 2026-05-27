@@ -34,8 +34,8 @@ describe('constantes', () => {
     expect(TIPO_OPTIONS.map(o => o.value)).toEqual([
       'dados_corantes', 'dados_produto_base_embalagem', 'formulas_padrao', 'formulas_personalizadas',
     ]);
-    expect(statusColor.concluido).toContain('green');
-    expect(statusColor.erro).toContain('red');
+    expect(statusColor.concluido).toContain('status-success');
+    expect(statusColor.erro).toContain('status-error');
   });
 });
 
