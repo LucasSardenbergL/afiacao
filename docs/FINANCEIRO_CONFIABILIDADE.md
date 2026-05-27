@@ -206,6 +206,22 @@ Por SKU, **neta o trade-off completo** de comprar acima do baseline pra pegar de
 
 **Onde:** helper `src/lib/reposicao/compras-otimizador-helpers.ts` (vitest, ~19 testes); view `v_otimizador_compras_insumos` (migration manual `20260525140000_v_otimizador_compras_insumos.sql`); frontend enriquecido em `src/pages/AdminReposicaoOportunidades.tsx` + `src/components/reposicao/oportunidades/*` (coluna/KPI/drawer net-R$). Sem nova rota, sem edge function.
 
+## 🔧 Custo Marginal de Funding — Decisão de Antecipação (sub-PR A) (2026-05-26)
+
+Por título de `fin_contas_receber`, responde **"vale antecipar este recebível?"** comparando 4 fontes de funding (caixa próprio, antecipação/desconto, capital de giro, cheque especial) **em R$ no horizonte relevante** — a taxa anualizada é só exibição, NUNCA o critério de ranking (horizontes diferentes; % a.a. de um cheque caro sobre poucos dias engana). Master-only (tesouraria/CFO), padrão A2/regime. Helper testado `funding-helpers.ts` (vitest, 28 testes) espelhado verbatim na edge `fin-funding`. Metodologia revisada por **Codex** (1 passe consult na metodologia + 1 adversária no código — pegou 2 P1 que invertiam recomendação).
+
+| Componente | Como é calculado |
+|---|---|
+| **Custo da antecipação (R$)** | `V − v_liq`, onde `v_liq = V − deságio − IOF − tarifa`. Deságio comercial "por fora" (`V × taxa_mensal × N/30`). **IOF** de crédito PJ (`0,38% + 0,0082%/dia`, teto 365d) só pra `desconto`; **factoring = IOF 0**. Taxa efetiva a.a. `(V/v_liq)^(365/N)−1` só pra exibir. |
+| **Benchmark contextual** | `gap` (há déficit até o vencimento) → compara contra a fonte alternativa mais barata (capital de giro / cheque) pra prover `v_liq` por N dias; `net_rs = custo_alt − custo_antecip`. `sobra` → compara contra o ganho de aplicar o caixa liberado ao melhor uso (A4 — sub-PR B) ou `cm_anual`. Em sobra, o deságio quase sempre supera o `cm_anual` → recomenda **não antecipar**, com o número. |
+| **Custo do caixa próprio** | `cm_anual` (SELIC+spread+armazenagem, de `empresa_configuracao_custos`) quando ocioso; sobe ao **retorno marginal do projeto deslocado** (A4) quando há fila positiva e caixa insuficiente — **sub-PR B**. |
+| **gap × sobra** | Pelo **menor `saldo_final` projetado** (projeção 13s) das semanas que começam **até o vencimento** (inclui a semana do vencimento). `checaValeEmT` (simulação 2-cenários) sinaliza se antecipar criaria um vale futuro abaixo da reserva. **Estrutural × calendário:** gap em ≥`gap_estrutural_semanas_min` (default 6) semanas → flag `estrutural` + banner "antecipar é rolagem; renegocie prazo/preço/estoque". |
+
+### Regra de ouro do Funding
+**Por-CNPJ** (caixa de uma empresa NUNCA cobre gap de outra — sem mútuo intercompany implícito). **CET pra dívida** (input já all-in: TAC/tarifas/seguro/reciprocidade — taxa nominal pura escolheria dívida "barata" que não existe). **Coobrigação é campo obrigatório** (com = dívida disfarçada; sem = transfere risco). Degradação honesta (todas NUNCA fabricam recomendação): sem taxa de antecipação → `falta_dado` (não antecipa "grátis"); sem `cm_anual` nem A4 em sobra → `falta_dado`; sem projeção 13s → contexto `indefinido` (benchmark `cm_anual`, sem detecção de vale); taxa/CET/tarifa negativa → tratada como não configurada. **Limitações v1 (sub-PR A):** granularidade da projeção é **semanal** (`saldo_final`) — vales intra-semana não capturados; `cria_vale_em_T` só **sinaliza** (re-custo completo = sub-PR B); concentração por sacado é **aviso**, não constraint dura; risco de crédito/sem-coobrigação não valorado (v2). **sub-PR B (planejador de cobertura de gap):** merit-order em R$ + composição do A4 (`caixa_livre` + retorno marginal) + custo da inércia em R$.
+
+**Onde:** helper `src/lib/financeiro/funding-helpers.ts` (vitest, 28 testes); edge `supabase/functions/fin-funding/index.ts` (master-only, compõe `fin-cashflow-engine` + `empresa_configuracao_custos` + `fin_contas_receber`); tabela `fin_funding_inputs` (migration manual `20260526100000_fin_funding_inputs.sql`, RLS master-only); hook `useFunding` + `FundingInputsDialog` + página `/financeiro/funding`.
+
 ## ✅ MVP Operacional (pode usar agora para gestão diária)
 
 Estes dados vêm direto do Omie sem transformação opinativa.
