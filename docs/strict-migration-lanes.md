@@ -104,6 +104,12 @@ subgrafos sujos (`noUnusedLocals`/`strictNullChecks`) → cascata. **Promova lea
   segurança #322/#324/#327), pure-leaf, strict-clean por construção — `lib/financeiro/dre-period`,
   `lib/financeiro/omie-request`. Append-only no `include`. **NÃO toco** mais nada de financeiro
   (engines/services em churn por outras sessões); fatia disjunta da `cranky-driscoll` (que não tem `lib/financeiro/*`).
+- 🔵 **`claude/strict-promote-leaf-tint-picking`** (sessão strange-hellman, 2026-05-27): lote leaf puro das lanes
+  **tint/picking/offline/time** (disjunto de hooks=loving-nash, lib-leaf=cranky-driscoll, farmer/scoring, financeiro):
+  `lib/tint/compute-price` (novo, tested), `lib/picking/view-pref`, `lib/picking/optimistic-merge`,
+  `lib/offline-handlers`, `lib/time/sp-day`, `lib/routeCrumbs`. Append-only; `typecheck:strict` verde com os 6
+  (transitivos de optimistic-merge/offline-handlers — picking-confirm/recebimento-* services + useOfflineFlush —
+  já strict-clean). Tsconfig-only, zero edição de source. **NÃO toco** scoring/visit-scoring/farmer/financeiro/hooks.
 
 ## Follow-up registrado
 
