@@ -58,7 +58,11 @@ export function capitalExtra(input: { valor_extra: number; cm_anual: number; dem
 
 export function aumentoEvitadoRs(input: { q_cand: number; q_base: number; demanda_diaria: number | null; dias_ate_aumento: number | null; aumento_perc: number | null; preco_unit: number }): number {
   const d = input.demanda_diaria ?? 0;
-  if (!input.aumento_perc || input.dias_ate_aumento == null || input.dias_ate_aumento < 0) return 0;
+  // dias_ate_aumento <= 0 (não < 0): com 0 o aumento vigora HOJE → não há janela
+  // pra antecipar a compra; creditar "aumento evitado" seria ganho fictício
+  // (consumoAteVigencia=0 deixaria toda a qtd extra elegível). Alinha com a geração
+  // de candidato, que já exige dias_ate_aumento > 0.
+  if (!input.aumento_perc || input.dias_ate_aumento == null || input.dias_ate_aumento <= 0) return 0;
   const consumoAteVigencia = d * input.dias_ate_aumento;
   const qElegivel = Math.max(0, input.q_cand - Math.max(input.q_base, consumoAteVigencia));
   return qElegivel * input.preco_unit * (input.aumento_perc / 100);
