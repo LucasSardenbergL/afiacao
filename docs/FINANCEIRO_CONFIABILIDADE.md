@@ -223,6 +223,27 @@ Por título de `fin_contas_receber`, responde **"vale antecipar este recebível?
 
 **Onde:** helper `src/lib/financeiro/funding-helpers.ts` (vitest, 33 testes); edge `supabase/functions/fin-funding/index.ts` (master-only, compõe `fin-cashflow-engine` + `fin-next-best-action` (A4) + `empresa_configuracao_custos` + `fin_contas_receber`); tabela `fin_funding_inputs` (migration manual `20260526100000_fin_funding_inputs.sql`, RLS master-only); hook `useFunding` + `FundingInputsDialog` + página `/financeiro/funding` (decisão por título + planejador de cobertura). ⚠️ **Re-deploy da `fin-funding` necessário após o merge do sub-PR B** (compõe o A4 agora).
 
+## 🔧 Orçamento Rolling — Forecast de Aterrissagem (sub-PR A) (2026-05-27)
+
+Constrói SOBRE o "Orçado × Realizado" que já existia (`/financeiro/orcamento`): projeta **onde o ano FECHA** (`landing = realizado dos meses FECHADOS + forecast dos restantes`) e a **variância projetada** vs orçado anual. **Client-side** (helper puro testado + estende a página; **sem edge function, sem migration**). Metodologia revisada por **Codex em 2 etapas** (metodologia + spec) + 1 no plano.
+
+**Princípio (Codex): método POR LINHA, não média global** — pipeline ORDENADO `projetarDRE` (drivers usam a base *forecasted* da etapa anterior): `receita_bruta → deducoes → receita_liquida → cmv → demais → impostos → derivadas`.
+
+| Linha | Forecast |
+|---|---|
+| receita_bruta | sazonal ajustado (`receita_ano-1[mes] × fator_tendência_YTD`, cap [0,5;2,0]) → run-rate → orçado |
+| deduções / cmv | **driver razão-YTD** (% da receita_bruta / receita_líquida **forecasted**) |
+| despesas fixas / outras | run-rate dos meses fechados |
+| financeiras | média dos últimos 3 fechados |
+| **impostos** | **razão YTD** (Σimp/Σreceita fechados × receita FC) — **nunca média cega**; flag <3 fechados/<1 trimestre |
+| derivadas | **calculadas** (fórmulas FinDRE); orçado das derivadas **calculado das 11 linhas orçadas** |
+
+**Variância sign-aware** por conjunto literal (receita/derivadas-de-resultado acima=favorável; deduções/cmv/despesas/impostos acima=desfavorável) + `fura_meta` = `|var| > max(10%×orçado, piso)` (orçado≤0 → só piso). **Mês corrente parcial NÃO entra na base nem no realizado** (só meses fechados). **Degradação honesta:** 0 fechados→sem forecast; <3→confiança baixa; denominador de driver ≤0 → run-rate + flag (sem NaN); orçado AUSENTE (≠ zero) → variância não computável. **Por empresa.**
+
+**Limitações v1 / o que ficou pro sub-PR B + v2:** versionamento/snapshot histórico do forecast = v2; impostos regime-aware (compõe `fin-regime-tributario`) = v2; decomposição de variância volume/preço/mix = v2; consolidado cross-CNPJ = v2. **sub-PR B (plano à parte):** drill de variância por categoria (reusa `getAnaliseDimensional`) + seed de baixa fricção (`seedOrcamento` winsorizado). ⚠️ **Follow-up de regime:** a página exibe badge "Regime de Caixa" mas chama `getDRE` no default `competencia` — v1 manteve consistência (competência explícita nos dois); confirmar com o founder qual é o correto e alinhar as duas telas.
+
+**Onde:** helper `src/lib/financeiro/orcamento-forecast-helpers.ts` (vitest, 20 testes; `projetarDRE` + primitivas); página `src/pages/FinanceiroOrcamento.tsx` (seção "Forecast de aterrissagem"); item na sidebar (`/financeiro/orcamento`, antes órfã). **Sem migration, sem edge function, sem deploy** (client-side puro).
+
 ## ✅ MVP Operacional (pode usar agora para gestão diária)
 
 Estes dados vêm direto do Omie sem transformação opinativa.
