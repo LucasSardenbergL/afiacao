@@ -1,30 +1,20 @@
 import { useQuery } from '@tanstack/react-query';
 import { supabase } from '@/integrations/supabase/client';
+import { computeTintPrice, type TintCoranteInput, type TintOmiePriceMap } from '@/lib/tint/compute-price';
 
-export interface TintCoranteItem {
-  coranteDescricao: string;
-  qtdMl: number;
-  custoPorMl: number;
-  custoItem: number;
-  custoDisponivel: boolean;
-}
-
-export interface TintPriceBreakdown {
-  custoBase: number;
-  itensCorantes: TintCoranteItem[];
-  custoCorantes: number;
-  precoFinal: number;
-}
+// O cálculo puro vive em @/lib/tint/compute-price (testado; money-path). Os tipos
+// são re-exportados aqui para manter a API pública do hook estável.
+export type { TintCoranteItem, TintPriceBreakdown } from '@/lib/tint/compute-price';
 
 export function useTintPricing(formulaId: string | null) {
   return useQuery({
     queryKey: ['tint-pricing', formulaId],
     staleTime: 5 * 60 * 1000,
     enabled: !!formulaId,
-    queryFn: async (): Promise<TintPriceBreakdown | null> => {
+    queryFn: async () => {
       if (!formulaId) return null;
 
-      // Get formula items with corante details
+      // Itens da fórmula (a "receita") + corantes + custo Omie.
       const { data: items, error } = await supabase
         .from('tint_formula_itens')
         .select('qtd_ml, ordem, corante_id')
@@ -33,7 +23,6 @@ export function useTintPricing(formulaId: string | null) {
 
       if (error || !items) return null;
 
-      // Get all corante ids
       const coranteIds = items.map(i => i.corante_id);
       const { data: corantes } = await supabase
         .from('tint_corantes')
@@ -42,9 +31,8 @@ export function useTintPricing(formulaId: string | null) {
 
       if (!corantes) return null;
 
-      // Get omie products for cost
       const omieIds = corantes.filter(c => c.omie_product_id).map(c => c.omie_product_id!);
-      const omieProducts: Record<string, { valor_unitario: number }> = {};
+      const omieProducts: TintOmiePriceMap = {};
       if (omieIds.length > 0) {
         const { data: prods } = await supabase
           .from('omie_products')
@@ -55,27 +43,7 @@ export function useTintPricing(formulaId: string | null) {
         }
       }
 
-      const itensCorantes: TintCoranteItem[] = items.map(item => {
-        const corante = corantes.find(c => c.id === item.corante_id);
-        if (!corante) return { coranteDescricao: '?', qtdMl: item.qtd_ml, custoPorMl: 0, custoItem: 0, custoDisponivel: false };
-
-        const omie = corante.omie_product_id ? omieProducts[corante.omie_product_id] : null;
-        const custoDisponivel = !!omie && !!corante.volume_total_ml && corante.volume_total_ml > 0;
-        const custoPorMl = custoDisponivel ? omie!.valor_unitario / corante.volume_total_ml : 0;
-        const custoItem = item.qtd_ml * custoPorMl;
-
-        return {
-          coranteDescricao: corante.descricao,
-          qtdMl: item.qtd_ml,
-          custoPorMl,
-          custoItem,
-          custoDisponivel,
-        };
-      });
-
-      const custoCorantes = itensCorantes.reduce((sum, i) => sum + i.custoItem, 0);
-
-      return { custoBase: 0, itensCorantes, custoCorantes, precoFinal: custoCorantes };
+      return computeTintPrice(items, corantes as TintCoranteInput[], omieProducts);
     },
   });
 }

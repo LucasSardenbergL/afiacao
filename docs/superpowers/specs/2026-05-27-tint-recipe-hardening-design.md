@@ -8,7 +8,16 @@
 
 ---
 
-## ⚠️ PASSO 0 (gating — fazer ANTES de qualquer RLS): a UI mostra a receita ao cliente?
+## ✅ PASSO 0 — RESOLVIDO (2026-05-27): a UI **NÃO** mostra a receita ao cliente
+
+Verificado: `useTintPricing` tem **um único consumidor** (`useTintColorSelect.ts:185`), que usa **só** `pricing.custoCorantes` (agregado, linha 298) + `precoFinal`. **`itensCorantes`/`coranteDescricao`/`qtdMl` não são renderizados em lugar nenhum do `src/`** (grep global vazio fora do hook e dos testes). Logo: **caso "cliente só precisa do preço"** → seguir o design abaixo, sem pré-requisito de UX.
+
+### Passo 1 FEITO (PR helper-tdd): cálculo extraído + testado (oráculo do SQL)
+`computeTintPrice` em **`src/lib/tint/compute-price.ts`** (puro, espelha verbatim a lógica que estava inline; 7 testes em `__tests__/compute-price.test.ts` cobrindo paridade + edge: sem omie_product_id, volume null/0, omie ausente, corante fantasma, fórmula vazia, mix). `useTintPricing` refatorado pra chamá-lo (comportamento idêntico, agora testado). **Este helper é o oráculo de paridade que o SQL da RPC do Passo 2 deve reproduzir.** Falta: Passo 2 (RPC + RLS, rollout faseado).
+
+---
+
+## ⚠️ PASSO 0 (original — gating): a UI mostra a receita ao cliente?
 
 `useTintPricing` (`src/hooks/useTintPricing.ts`) retorna `TintPriceBreakdown` com **`itensCorantes`** (cada corante: `coranteDescricao` + `qtdMl`) — isto É a receita. É consumido em `src/components/tintColorSelect/useTintColorSelect.ts:185` (`useTintPricing(selectedFormula?.id)`), usado no wizard de pedido (`UnifiedOrder.tsx`, `SalesOrderEdit.tsx`) via `TintColorSelectDialog`.
 
