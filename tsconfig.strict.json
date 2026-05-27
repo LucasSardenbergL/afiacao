@@ -494,6 +494,8 @@
     "src/hooks/useDirectTintImport.ts",
     "src/hooks/unifiedOrder/useCart.ts",
     "src/hooks/unifiedOrder/useProductCatalog.ts",
-    "src/lib/postgrest.ts"
+    "src/lib/postgrest.ts",
+    "src/lib/financeiro/dre-period.ts",
+    "src/lib/financeiro/omie-request.ts"
   ]
 }
