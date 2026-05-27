@@ -129,6 +129,9 @@ BEGIN
   RETURN result;
 END;
 $$;
+-- Self-contained: re-revoga o internal de authenticated (espelha 20260525210000;
+-- CREATE OR REPLACE preserva grants no caminho ordenado, mas garante mesmo se aplicado avulso).
+REVOKE ALL ON FUNCTION public._carteira_mixgap_for_owner(uuid) FROM PUBLIC, authenticated;
 
 SELECT 'BLOCO MIXGAP-FEEDBACK OK' AS status,
   (SELECT count(*) FROM information_schema.tables WHERE table_name='farmer_mixgap_feedback') AS tbl,
