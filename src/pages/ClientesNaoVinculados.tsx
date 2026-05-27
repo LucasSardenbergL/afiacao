@@ -36,6 +36,8 @@ export default function ClientesNaoVinculados() {
 
   const state = data?.state ?? null;
   const lista = data?.lista ?? [];
+  // total real vem do estado do run; a lista é capada (PostgREST ~1000 linhas).
+  const total = state?.total ?? lista.length;
   const running = state?.status === 'running';
   const erro = state?.status === 'error';
   const nuncaSync = !state?.last_complete_synced_at;
@@ -92,7 +94,7 @@ export default function ClientesNaoVinculados() {
           title="Ainda não sincronizado"
           description="Clique em Atualizar pra enumerar os clientes do Omie e montar o relatório."
         />
-      ) : lista.length === 0 && !running ? (
+      ) : total === 0 && !running ? (
         <EmptyState
           icon={UserX}
           tone="operational"
@@ -102,7 +104,10 @@ export default function ClientesNaoVinculados() {
       ) : (
         <Card>
           <CardHeader className="pb-2">
-            <h2 className="text-base font-medium">{lista.length} clientes sem conta</h2>
+            <h2 className="text-base font-medium">{total.toLocaleString('pt-BR')} clientes sem conta</h2>
+            {lista.length < total && (
+              <p className="text-2xs text-muted-foreground">mostrando os primeiros {lista.length.toLocaleString('pt-BR')}</p>
+            )}
           </CardHeader>
           <div className="divide-y divide-border">
             {lista.map((c) => (
