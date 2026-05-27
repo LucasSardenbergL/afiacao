@@ -8,7 +8,7 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@
 import { COMPANIES, ALL_COMPANIES, type Company } from '@/contexts/CompanyContext';
 import { getDRE, DRE_LINHAS, type FinDRE } from '@/services/financeiroService';
 import { getOrcamento, upsertOrcamento, type OrcamentoLinha } from '@/services/financeiroV2Service';
-import { projetarDRE, LINHAS_INPUT, type MesDRE, type LinhaInput } from '@/lib/financeiro/orcamento-forecast-helpers';
+import { projetarDRE, seedOrcamento, LINHAS_INPUT, type MesDRE, type LinhaInput } from '@/lib/financeiro/orcamento-forecast-helpers';
 import { toast } from 'sonner';
 import { Loader2, Save, Building2, Calendar, TrendingUp, TrendingDown, Target, History, Plane } from 'lucide-react';
 import { AuditTrailDrawer } from '@/components/financeiro/AuditTrailDrawer';
@@ -72,6 +72,7 @@ const FinanceiroOrcamento = () => {
   const [editMode, setEditMode] = useState(false);
   const [draft, setDraft] = useState<Record<string, number>>({});
   const [auditTarget, setAuditTarget] = useState<{ table: string; id: string; title: string } | null>(null);
+  const [crescimentoPerc, setCrescimentoPerc] = useState(10);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -183,6 +184,42 @@ const FinanceiroOrcamento = () => {
     [company, ano, dreAtualMesDRE, dreAnoAnteriorMesDRE, orcadoForecast],
   );
 
+  const handleSugerir = () => {
+    if (dreAnoAnteriorMesDRE.length === 0) {
+      toast.warning(`Sem realizado de ${ano - 1} para sugerir.`);
+      return;
+    }
+
+    const seed = seedOrcamento({ dreBase: dreAnoAnteriorMesDRE, crescimentoPerc });
+
+    const novo = { ...draft };
+    for (const s of seed) {
+      if (s.valor_sugerido !== null) {
+        novo[`${s.mes}_${s.dre_linha}`] = s.valor_sugerido;
+      }
+    }
+    setDraft(novo);
+
+    const nMesAusente = new Set(
+      seed.filter(s => s.flag === 'mes_ausente_media').map(s => `${s.dre_linha}_${s.mes}`)
+    ).size;
+    const nWinsorizado = new Set(
+      seed.filter(s => s.flag === 'winsorizado').map(s => `${s.dre_linha}_${s.mes}`)
+    ).size;
+    const nAmostraCurta = new Set(
+      seed.filter(s => s.flag === 'amostra_curta_sem_sugestao').map(s => s.dre_linha)
+    ).size;
+
+    const partes: string[] = [];
+    if (nMesAusente > 0) partes.push(`${nMesAusente} mês${nMesAusente > 1 ? 'es' : ''} preenchido${nMesAusente > 1 ? 's' : ''} pela média`);
+    if (nWinsorizado > 0) partes.push(`${nWinsorizado} ajustado${nWinsorizado > 1 ? 's' : ''} por outlier`);
+    if (nAmostraCurta > 0) partes.push(`${nAmostraCurta} linha${nAmostraCurta > 1 ? 's' : ''} sem histórico (em branco)`);
+
+    toast.success(`Orçamento sugerido a partir de ${ano - 1} (+${crescimentoPerc}%). Revise e salve.`, {
+      description: partes.length > 0 ? partes.join(', ') + '.' : undefined,
+    });
+  };
+
   if (loading) {
     return <div className="flex items-center justify-center py-24"><Loader2 className="w-8 h-8 animate-spin" /></div>;
   }
@@ -209,6 +246,19 @@ const FinanceiroOrcamento = () => {
           </Select>
           {editMode ? (
             <>
+              <div className="flex items-center gap-1">
+                <Input
+                  type="number"
+                  value={crescimentoPerc}
+                  onChange={e => setCrescimentoPerc(Number(e.target.value))}
+                  className="h-9 text-sm text-right w-[70px]"
+                  aria-label="Crescimento percentual"
+                />
+                <span className="text-sm text-muted-foreground">%</span>
+              </div>
+              <Button variant="outline" onClick={handleSugerir}>
+                Sugerir de {ano - 1}
+              </Button>
               <Button onClick={handleSave} disabled={saving}>
                 {saving ? <Loader2 className="w-4 h-4 animate-spin mr-1" /> : <Save className="w-4 h-4 mr-1" />}
                 Salvar
