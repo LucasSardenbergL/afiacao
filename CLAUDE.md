@@ -649,7 +649,7 @@ Esta tabela é viva — ao instalar/remover skill, atualizar aqui.
 
 Persistido em 2026-05-17 após primeira run completa do skill com sucesso.
 
-- **typecheck**: `bun run typecheck:strict` (incremental strict em `tsconfig.strict.json`) + `bunx tsc --noEmit` (baseline com `strict: false`)
+- **typecheck**: `bun run typecheck:strict` (incremental strict em `tsconfig.strict.json`) + `bunx tsc --noEmit -p tsconfig.app.json` (baseline com `strict: false`, checa todo o `src/`+testes). ⚠️ **NÃO usar `bunx tsc --noEmit` cru** como baseline: o `tsconfig.json` root tem `"files": []` + `"references"` e, em modo não-build, o tsc ignora as references e checa só o `files` (vazio) → no-op silencioso (não type-checa o `src/`). Foi assim que 2 TS2741 reais (#325 `KpiCards.test.tsx`, #345 `FinanceiroFunding.tsx`) passaram pelo CI e só foram pegos pelo Lovable. O passo de typecheck do CI (`.github/workflows/ci.yml`) já usa `-p tsconfig.app.json` desde 2026-05-26.
 - **lint**: `bun lint` (eslint flat config)
 - **test**: `bun run test` (vitest run) — canônico, é o que CI executa. `bun test` (runner nativo) cobre só parte por causa de jsdom incompleto + `vi.hoisted/mocked/importActual` não suportados; bunfig.toml + src/test/bun-setup.ts polifillam localStorage/MediaStream/matchMedia mas alguns testes ainda falham. Sempre `bun run test` pra resultado oficial. Ver §2 pro detalhe.
 - **deadcode**: `bunx knip --reporter compact`. ⚠️ Ignorar a seção "Unlisted dependencies (38)" — são imports `npm:` das Edge Functions Deno, false-positive pro runtime Node.
