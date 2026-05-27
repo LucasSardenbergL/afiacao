@@ -154,15 +154,16 @@ Lógica de `drillLinha` (Codex P1.1/P1.4/P1.5, P2.6/P2.7/P2.8):
 
 ### Service `src/services/financeiroV2Service.ts`
 
-Nova função (a `getAnaliseDimensional` agrega por descrição e colapsa o mês — não serve):
+> ⚠️ **Revisado após Codex adversarial no código (P1):** a matview dimensional (`fin_analise_*_dimensoes`) é por **`data_vencimento`**, mas o snapshot do forecast é **competência (`data_emissao`)** → reconciliar contra ela acusaria resíduo FALSO por base temporal. Fonte correta = **`fin_dre_competencia_base`** (CR+CP por `data_emissao`, `status≠CANCELADO`, soma `valor_documento`) — a MESMA base que o `calcularDRE` competência usa. Retorna `origem` (CR/CP), mas o drill soma por código sobre ambas (o `calcularDRE` classifica por código independente do razão).
+
 ```ts
-export async function getCategoriasDimensaoRaw(
-  tipo: 'cr' | 'cp',
+export async function getCategoriasCompetenciaRaw(
   company: Company,
-  ano: number
+  ano: number,
+  meses: number[],          // meses fechados (filtra server-side)
 ): Promise<DimRowRaw[]>;
 ```
-Chama a RPC existente (`fin_analise_cr_dimensoes_rpc` / `fin_analise_cp_dimensoes_rpc`) com `p_mes=null` (todos os meses do ano), mapeia cada row para `DimRowRaw` (`valor = total_documento ?? 0`). **Cache react-query chaveado por `[tipo, company, ano]` (P2.11)** — nunca reusar CR como CP nem ano errado.
+Lê `fin_dre_competencia_base` filtrando `company`/`ano`/`mes IN meses`, **paginando** (`.range()` em loop — a view passa de 1000 linhas: categorias × meses × 2 origens). Cache react-query chaveado por `[company, ano, meses]` (base bruta compartilhada entre linhas); o `drillLinha` da linha expandida é calculado num `useMemo` a partir do `forecast` (que reage ao draft) — assim os valores do `ForecastLinha` (realizado_fechado/forecast_restante/variancia) não precisam entrar na queryKey (P2.3).
 
 ### Página `src/pages/FinanceiroOrcamento.tsx`
 

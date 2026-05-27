@@ -549,34 +549,50 @@ export async function getAnaliseDimensional(
 }
 
 /**
- * Linhas dimensionais CRUAS por (categoria_codigo, mês) de um ano — sem agregar nem
- * colapsar o mês (≠ getAnaliseDimensional, que agrega por descrição). Usado pelo drill
- * de variância por categoria (`drillLinha`), que filtra os meses fechados client-side.
- * `p_mes: null` retorna o ano inteiro (mesmo comportamento já usado por getAnaliseDimensional).
+ * Linhas CRUAS por (categoria_codigo, mês) em regime de COMPETÊNCIA (data_emissão) de
+ * um ano — fonte do drill de variância por categoria (`drillLinha`).
+ *
+ * Lê `fin_dre_competencia_base` (CR+CP por data_emissão, status≠CANCELADO, soma
+ * valor_documento) — a MESMA base que o `calcularDRE` competência usa para montar o
+ * `fin_dre_snapshots`. Por isso reconcilia: drillar contra a matview dimensional (que
+ * é por data_VENCIMENTO) acusaria resíduo falso por diferença de base temporal.
+ *
+ * Retorna linhas de AMBAS as origens (CR e CP): o `calcularDRE` classifica por CÓDIGO
+ * independentemente do razão, então o drill soma por código sobre os dois (o helper
+ * agrega). Filtra os meses fechados server-side e PAGINA (a view passa de 1000 linhas
+ * fácil: categorias × meses × 2 origens).
  */
-export async function getCategoriasDimensaoRaw(
-  tipo: 'cr' | 'cp',
+export async function getCategoriasCompetenciaRaw(
   company: Company,
   ano: number,
+  meses: number[],
 ): Promise<DimRowRaw[]> {
-  const rpc = tipo === 'cr' ? 'fin_analise_cr_dimensoes_rpc' : 'fin_analise_cp_dimensoes_rpc';
-  const { data, error } = await supabase.rpc(
-    rpc as never,
-    { p_company: company, p_ano: ano, p_mes: null } as never,
-  );
-  if (error) throw error;
-  const rows = (data as unknown as Array<{
-    categoria_codigo: string | null;
-    categoria_descricao: string | null;
-    mes: number | null;
-    total_documento: number | null;
-  }>) ?? [];
-  return rows.map((r) => ({
-    categoria_codigo: r.categoria_codigo,
-    categoria_descricao: r.categoria_descricao,
-    mes: r.mes,
-    valor: r.total_documento ?? 0,
-  }));
+  if (meses.length === 0) return [];
+  const PAGE = 1000;
+  const out: DimRowRaw[] = [];
+  let from = 0;
+  for (;;) {
+    const { data, error } = await supabase
+      .from('fin_dre_competencia_base')
+      .select('categoria_codigo, categoria_descricao, mes, valor_total')
+      .eq('company', company)
+      .eq('ano', ano)
+      .in('mes', meses)
+      .range(from, from + PAGE - 1);
+    if (error) throw error;
+    const rows = data ?? [];
+    for (const r of rows) {
+      out.push({
+        categoria_codigo: r.categoria_codigo,
+        categoria_descricao: r.categoria_descricao,
+        mes: r.mes,
+        valor: r.valor_total ?? 0,
+      });
+    }
+    if (rows.length < PAGE) break;
+    from += PAGE;
+  }
+  return out;
 }
 
 // ═══════════════ 6. PERMISSÕES ═══════════════

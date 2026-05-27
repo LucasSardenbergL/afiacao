@@ -8,7 +8,7 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@
 import { COMPANIES, ALL_COMPANIES, type Company } from '@/contexts/CompanyContext';
 import { useQuery } from '@tanstack/react-query';
 import { getDRE, DRE_LINHAS, getCategoryMappings, type FinDRE } from '@/services/financeiroService';
-import { getOrcamento, upsertOrcamento, getCategoriasDimensaoRaw, type OrcamentoLinha } from '@/services/financeiroV2Service';
+import { getOrcamento, upsertOrcamento, getCategoriasCompetenciaRaw, type OrcamentoLinha } from '@/services/financeiroV2Service';
 import { projetarDRE, seedOrcamento, mesesFechados, LINHAS_INPUT, type MesDRE, type LinhaInput } from '@/lib/financeiro/orcamento-forecast-helpers';
 import { drillLinha, fontesDaLinha } from '@/lib/financeiro/orcamento-drill-helpers';
 import { DrillVarianciaPanel } from '@/components/financeiro/DrillVarianciaPanel';
@@ -200,34 +200,40 @@ const FinanceiroOrcamento = () => {
   );
 
   // ── Drill de variância por categoria (lazy, só ao expandir uma linha) ──
-  // Único useQuery enabled-gated; o queryFn orquestra todo o fetch (sem hooks em loop).
-  // Explica o REALIZADO YTD da linha (não o landing); reconcilia vs snapshot.
-  const drillQuery = useQuery({
-    queryKey: ['orcamento-drill', company, ano, expandedLinha],
+  // Fonte: fin_dre_competencia_base (competência, MESMA base do snapshot → reconcilia).
+  // A query é chaveada só por company/ano (base bruta cacheável entre linhas); o drill da
+  // linha expandida é calculado num useMemo a partir do forecast (que já reage a draft).
+  const mesesFechadosArr = useMemo(() => mesesFechados(ano), [ano]);
+
+  const drillBaseQuery = useQuery({
+    queryKey: ['orcamento-drill-base', company, ano, mesesFechadosArr.join(',')],
     enabled: !!expandedLinha,
     queryFn: async () => {
-      const linha = expandedLinha!;
-      const fontes = fontesDaLinha(linha);
-      const fl = forecast.linhas.find(l => l.dre_linha === linha);
-      if (!fl || fontes.length === 0) return null;
-      const [rawAno, rawAnt, mapping] = await Promise.all([
-        Promise.all(fontes.map(f => getCategoriasDimensaoRaw(f, company, ano))),
-        Promise.all(fontes.map(f => getCategoriasDimensaoRaw(f, company, ano - 1))),
+      const [rowsAno, rowsAnoAnterior, mapping] = await Promise.all([
+        getCategoriasCompetenciaRaw(company, ano, mesesFechadosArr),
+        getCategoriasCompetenciaRaw(company, ano - 1, mesesFechadosArr),
         getCategoryMappings(company),
       ]);
-      return drillLinha({
-        dreLinha: linha,
-        regime: REGIME_ORCAMENTO[company],
-        rowsAno: rawAno.flat(),
-        rowsAnoAnterior: rawAnt.flat(),
-        mesesFechados: mesesFechados(ano),
-        mapping,
-        realizadoSnapshot: fl.realizado_fechado,
-        forecastRestante: fl.forecast_restante,
-        varianciaAnual: fl.variancia,
-      });
+      return { rowsAno, rowsAnoAnterior, mapping };
     },
   });
+
+  const drillResult = useMemo(() => {
+    if (!expandedLinha || !drillBaseQuery.data) return null;
+    const fl = forecast.linhas.find(l => l.dre_linha === expandedLinha);
+    if (!fl || fontesDaLinha(expandedLinha).length === 0) return null;
+    return drillLinha({
+      dreLinha: expandedLinha,
+      regime: REGIME_ORCAMENTO[company],
+      rowsAno: drillBaseQuery.data.rowsAno,
+      rowsAnoAnterior: drillBaseQuery.data.rowsAnoAnterior,
+      mesesFechados: mesesFechadosArr,
+      mapping: drillBaseQuery.data.mapping,
+      realizadoSnapshot: fl.realizado_fechado,
+      forecastRestante: fl.forecast_restante,
+      varianciaAnual: fl.variancia,
+    });
+  }, [expandedLinha, drillBaseQuery.data, forecast.linhas, company, mesesFechadosArr]);
 
   const handleSugerir = () => {
     if (dreAnoAnteriorMesDRE.length === 0) {
@@ -493,9 +499,9 @@ const FinanceiroOrcamento = () => {
                         <TableRow className="bg-muted/10 hover:bg-muted/10">
                           <TableCell colSpan={7} className="px-4">
                             <DrillVarianciaPanel
-                              result={drillQuery.data}
-                              isLoading={drillQuery.isLoading}
-                              isError={drillQuery.isError}
+                              result={drillResult}
+                              isLoading={drillBaseQuery.isLoading}
+                              isError={drillBaseQuery.isError}
                               ano={ano}
                             />
                           </TableCell>
