@@ -267,7 +267,7 @@ export default function TintPricing() {
                       <div className="font-medium"><span className="text-muted-foreground">Final Calc:</span> R$ {precoFinal.toFixed(2)}</div>
                       <div className="flex items-center gap-1">
                         <span className="text-muted-foreground">CSV:</span> R$ {precoCsv.toFixed(2)}
-                        {divergence > 5 && <AlertTriangle className="w-3.5 h-3.5 text-yellow-500" />}
+                        {divergence > 5 && <AlertTriangle className="w-3.5 h-3.5 text-status-warning" />}
                       </div>
                     </div>
                     {itens.length > 0 && (
