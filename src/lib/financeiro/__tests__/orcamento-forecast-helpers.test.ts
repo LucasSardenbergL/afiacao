@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { mesesFechados, razaoYTD, fatorTendenciaYTD, derivarLinhas, projetarDRE, LINHAS_INPUT } from '../orcamento-forecast-helpers';
+import { mesesFechados, razaoYTD, fatorTendenciaYTD, derivarLinhas, projetarDRE, LINHAS_INPUT, seedOrcamento, type MesDRE } from '../orcamento-forecast-helpers';
 
 describe('mesesFechados', () => {
   it('ano corrente exclui o mês corrente e futuros', () => { expect(mesesFechados(2026, new Date('2026-05-15'))).toEqual([1,2,3,4]); });
@@ -131,4 +131,64 @@ it('derivadas: landing E orcado_ano calculados das 11 linhas (não null)', () =>
   expect(rl.landing).toBeCloseTo(12*(100-10-40-8),0); // 42×12=504
   expect(rl.orcado_ano).toBeCloseTo(12*(90-9-36-7),0); // 38×12=456 (NÃO null)
   expect(rl.variancia).toBeCloseTo(504-456,0);
+});
+
+describe('seedOrcamento', () => {
+  const base = (linha: string, vals: number[]): MesDRE[] => vals.map((v, i) => ({ mes: i + 1, [linha]: v }));
+  const linhaSeed = (seed: ReturnType<typeof seedOrcamento>, l: string) => seed.filter(s => s.dre_linha === l);
+
+  it('amostra curta (<3 meses com valor; zero NÃO conta) → null + flag', () => {
+    const seed = seedOrcamento({ dreBase: base('receita_bruta', [100, 100, 0,0,0,0,0,0,0,0,0,0]), crescimentoPerc: 10 });
+    const rb = linhaSeed(seed, 'receita_bruta');
+    expect(rb).toHaveLength(12);
+    expect(rb.every(s => s.valor_sugerido === null && s.flag === 'amostra_curta_sem_sugestao')).toBe(true);
+  });
+
+  it('bordas sem NaN: vazio / 1 valor / todos zero → null; 12 iguais → finito sem winsorizado', () => {
+    expect(linhaSeed(seedOrcamento({ dreBase: [], crescimentoPerc: 10 }), 'cmv').every(s => s.valor_sugerido === null)).toBe(true);
+    expect(linhaSeed(seedOrcamento({ dreBase: base('cmv', [500,0,0,0,0,0,0,0,0,0,0,0]), crescimentoPerc: 10 }), 'cmv').every(s => s.valor_sugerido === null)).toBe(true);
+    expect(linhaSeed(seedOrcamento({ dreBase: base('cmv', Array(12).fill(0)), crescimentoPerc: 10 }), 'cmv').every(s => s.valor_sugerido === null)).toBe(true);
+    const iguais = linhaSeed(seedOrcamento({ dreBase: base('cmv', Array(12).fill(100)), crescimentoPerc: 0 }), 'cmv');
+    expect(iguais.every(s => Number.isFinite(s.valor_sugerido!) && s.flag === undefined)).toBe(true);
+  });
+
+  it('crescimento mês a mês (12 iguais)', () => {
+    const da = linhaSeed(seedOrcamento({ dreBase: base('despesas_administrativas', Array(12).fill(100)), crescimentoPerc: 10 }), 'despesas_administrativas');
+    expect(da.every(s => s.valor_sugerido === 110)).toBe(true);
+  });
+
+  it('winsorize por múltiplo da mediana: cap EXATO = mediana×fator (g=0)', () => {
+    const vals = Array(12).fill(100); vals[5] = 10000;
+    const dc = linhaSeed(seedOrcamento({ dreBase: base('despesas_comerciais', vals), crescimentoPerc: 0, fatorOutlier: 3 }), 'despesas_comerciais');
+    const mesOutlier = dc.find(s => s.mes === 6)!;
+    expect(mesOutlier.flag).toBe('winsorizado');
+    expect(mesOutlier.valor_sugerido).toBe(300);
+    expect(dc.find(s => s.mes === 1)!.valor_sugerido).toBe(100);
+  });
+
+  it('mês ausente → mediaCap (com winsorize) + flag mes_ausente_media', () => {
+    const dreBase = [100,100,100,100,100,10000].map((v,i)=>({ mes:i+1, cmv:v }));
+    const cmv = linhaSeed(seedOrcamento({ dreBase, crescimentoPerc: 0, fatorOutlier: 3 }), 'cmv');
+    expect(cmv).toHaveLength(12);
+    const ausente = cmv.find(s => s.mes === 11)!;
+    expect(ausente.flag).toBe('mes_ausente_media');
+    expect(ausente.valor_sugerido!).toBeCloseTo(133.33, 2);
+  });
+
+  it('round2 + crescimento negativo (sem inverter sinal)', () => {
+    const dc = linhaSeed(seedOrcamento({ dreBase: base('despesas_operacionais', Array(12).fill(1000)), crescimentoPerc: -10 }), 'despesas_operacionais');
+    expect(dc.every(s => s.valor_sugerido === 900)).toBe(true);
+  });
+
+  it('materialidade: centavos residuais NÃO contam como amostra (não arrastam a mediana)', () => {
+    // [100000, 0.01, 0.01] → mat=1% de 100000=1000 → só 1 mês material → amostra curta, sem sugestão
+    const seed = seedOrcamento({ dreBase: base('receita_bruta', [100000, 0.01, 0.01, 0,0,0,0,0,0,0,0,0]), crescimentoPerc: 0 });
+    const rb = linhaSeed(seed, 'receita_bruta');
+    expect(rb.every(s => s.valor_sugerido === null && s.flag === 'amostra_curta_sem_sugestao')).toBe(true);
+  });
+
+  it('crescimento < -100 → orçamento não-negativo (clamp em -100 → 0)', () => {
+    const dc = linhaSeed(seedOrcamento({ dreBase: base('cmv', Array(12).fill(100)), crescimentoPerc: -150 }), 'cmv');
+    expect(dc.every(s => s.valor_sugerido === 0)).toBe(true);
+  });
 });

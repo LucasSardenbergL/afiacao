@@ -3,7 +3,7 @@
 -- ========================================================================
 --
 -- Gerado por: scripts/audit-custom-migrations.ts
--- Total de custom migrations: 87
+-- Total de custom migrations: 88
 --
 -- Como usar:
 --   1. Abra o Supabase SQL Editor (via Lovable Cloud → Backend → SQL Editor)
@@ -106,7 +106,8 @@ WITH expected (version, slug, filename) AS (VALUES
   ('20260527160000', 'cron_vendas_sync_pedidos', '20260527160000_cron_vendas_sync_pedidos.sql'),
   ('20260527160000', 'matview_ranking_negociacao_private', '20260527160000_matview_ranking_negociacao_private.sql'),
   ('20260527170000', 'crons_timeout_fix', '20260527170000_crons_timeout_fix.sql'),
-  ('20260527180000', 'data_health_add_vendas', '20260527180000_data_health_add_vendas.sql')
+  ('20260527180000', 'data_health_add_vendas', '20260527180000_data_health_add_vendas.sql'),
+  ('20260527180000', 'get_tint_price_rpc', '20260527180000_get_tint_price_rpc.sql')
 )
 SELECT
   e.version,
@@ -549,7 +550,8 @@ WITH expected_objects (migration, kind, schema_name, object_name, parent_name) A
   ('crons_timeout_fix', 'cron_job', 'cron', 'sync-reprocess-operational', ''),
   ('crons_timeout_fix', 'cron_job', 'cron', 'sync-reprocess-strategic', ''),
   ('crons_timeout_fix', 'cron_job', 'cron', 'weekly-algorithm-a-audit', ''),
-  ('data_health_add_vendas', 'function', 'public', 'get_data_health', '')
+  ('data_health_add_vendas', 'function', 'public', 'get_data_health', ''),
+  ('get_tint_price_rpc', 'function', 'public', 'get_tint_price', '')
 )
 SELECT
   e.migration,
