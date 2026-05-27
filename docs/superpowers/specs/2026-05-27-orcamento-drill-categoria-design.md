@@ -35,13 +35,42 @@ Na seção "Forecast de aterrissagem" (`/financeiro/orcamento`), quando uma linh
 - Junta ao `fin_categoria_dre_mapping (company, omie_codigo, dre_linha)` com fallback `_default`: resolve cada código pela regra **company sobrescreve `_default`** (`getCategoryMappings` já traz `[company, _default]`). Filtra só os códigos cuja `dre_linha` resolvida == linha-alvo.
 - Códigos sem mapping para a linha-alvo são **excluídos** da decomposição (pertencem a outra linha / não mapeados) — o resíduo os captura honestamente.
 
-## Fonte CR×CP por regra LITERAL da linha (Codex P1.5)
+## Aliases fiscais regime-aware + fonte CR/CP multi-source (Codex P1.2, P1.3 — VERIFICADO no `calcularDRE`/`montarDRE`)
 
-Decisão por `dre_linha` (não "onde o código aparece" — mesmo código pode estar em CR e CP com semânticas diferentes):
+O snapshot NÃO usa as 11 linhas literais — o mapping (`fin_categoria_dre_mapping.dre_linha` é `string` livre) usa **sublinhas fiscais** que o `montarDRE` agrega (verificado em `supabase/functions/omie-financeiro/index.ts:1135-1166`):
 
-- **CR** (`fin_analise_cr_dimensoes`): `receita_bruta`, `deducoes` (contra-receita ligada à receita), `receitas_financeiras`, `outras_receitas`.
-- **CP** (`fin_analise_cp_dimensoes`): `cmv`, `despesas_operacionais`, `despesas_administrativas`, `despesas_comerciais`, `despesas_financeiras`, `impostos`, `outras_despesas`.
-- **Derivadas** (`receita_liquida`, `lucro_bruto`, `resultado_operacional`, `resultado_antes_impostos`, `resultado_liquido`): **NÃO drilláveis** (são calculadas, não têm categoria).
+- **`deducoes` (snapshot)** = `deducoes + ded_icms + ded_iss + ded_pis + ded_cofins + ded_ipi + das` (linha 1140, **incondicional de regime**). Em Simples o **DAS cai aqui**.
+- **`impostos` (snapshot)** = `impostoLucro` = `regime === 'simples' ? 0 : (irpj + csll)` (linha 1139).
+- `'impostos'` legado normaliza (`normalizarImpostoLegado`) → `das` (simples) / `ded_icms` (presumido) → **ambos rolam para `deducoes`**.
+
+Logo o drill precisa de **conjunto de aliases por linha**, regime-aware, senão as categorias fiscais somem da decomposição e viram resíduo gigante:
+
+```ts
+// regime por empresa (espelho de REGIME_POR_EMPRESA): colacor/oben = presumido; colacor_sc = simples
+export function aliasesDaLinha(dreLinha: string, regime: 'simples' | 'presumido'): string[] {
+  if (dreLinha === 'deducoes')
+    return ['deducoes','ded_icms','ded_iss','ded_pis','ded_cofins','ded_ipi','das','impostos'];
+  if (dreLinha === 'impostos')
+    return regime === 'simples' ? [] : ['irpj','csll'];
+  return [dreLinha]; // demais linhas: alias literal
+}
+```
+
+**Fonte CR/CP por linha** (decisão por `dre_linha`, não "onde o código aparece"); deduções misturam CR (contra-receita) + CP (imposto a recolher) → **multi-source**:
+
+```ts
+export function fontesDaLinha(dreLinha: string): ('cr'|'cp')[] {
+  if (['receita_bruta','receitas_financeiras','outras_receitas'].includes(dreLinha)) return ['cr'];
+  if (dreLinha === 'deducoes') return ['cr','cp'];          // contra-receita + impostos indiretos
+  if (['cmv','despesas_operacionais','despesas_administrativas','despesas_comerciais',
+       'despesas_financeiras','outras_despesas','impostos'].includes(dreLinha)) return ['cp'];
+  return []; // derivadas → não drilláveis
+}
+```
+
+- **Derivadas** (`receita_liquida`, `lucro_bruto`, `resultado_operacional`, `resultado_antes_impostos`, `resultado_liquido`): `fontesDaLinha` retorna `[]` → **NÃO drilláveis**.
+- **Multi-source sem dedup**: ao agregar por código sobre CR+CP, um mesmo código em ambos os razões soma (são títulos distintos) — consistente com o snapshot.
+- **Bordas regime:** Simples → `impostos` alias `[]` → drill vazio (snapshot=0, decomposto=0 → `ok`). Em Simples o DAS aparece corretamente no drill de **`deducoes`**.
 
 ## Campo de valor
 
@@ -79,7 +108,7 @@ export type DrillQualidade = 'ok' | 'parcial' | 'diagnostico';
 
 export type DrillResult = {
   dre_linha: string;
-  fonte: 'cr' | 'cp';
+  fontes: ('cr'|'cp')[];                 // derivado de fontesDaLinha
   meses_fechados: number[];
   componentes: DrillComponente[];        // ordenado por |realizado_ytd| desc
   total_decomposto: number;
@@ -91,15 +120,15 @@ export type DrillResult = {
   variancia_anual: number | null;        // passthrough (landing − orçado)
 };
 
-export function fonteDaLinha(dreLinha: string): 'cr' | 'cp' | null; // null = não drillável (derivada)
+export const EPSILON_MONETARIO = 0.01;   // "≈ 0" (Codex P1.5)
 
 export function drillLinha(input: {
   dreLinha: string;
-  fonte: 'cr' | 'cp';
-  rowsAno: DimRowRaw[];
+  regime: 'simples' | 'presumido';       // página deriva da empresa (REGIME_POR_EMPRESA)
+  rowsAno: DimRowRaw[];                   // CR+CP já concatenados pelo service conforme fontesDaLinha
   rowsAnoAnterior: DimRowRaw[];
   mesesFechados: number[];
-  mapping: { omie_codigo: string; dre_linha: string }[];  // já mesclado company+_default no service
+  mapping: { omie_codigo: string; dre_linha: string; company: string }[];  // bruto; helper resolve company>_default
   realizadoSnapshot: number;             // forecastLinha.realizado_fechado
   forecastRestante: number;              // forecastLinha.forecast_restante
   varianciaAnual: number | null;
@@ -109,15 +138,19 @@ export function drillLinha(input: {
 }): DrillResult;
 ```
 
-Lógica de `drillLinha`:
-1. `fechadosSet = new Set(mesesFechados)`.
-2. Constrói `codToLinha: Map<string,string>` do `mapping` (o service já mesclou company sobre `_default`; em empate, o último vence — service garante ordem `_default` antes de company). Filtra `codigosAlvo = códigos cuja linha == dreLinha`.
-3. `agg(rows)`: filtra `mes ∈ fechadosSet` E `categoria_codigo ∈ codigosAlvo`; soma `valor` por código; guarda a descrição do maior `mes` por código (label recente).
+Lógica de `drillLinha` (Codex P1.1/P1.4/P1.5, P2.6/P2.7/P2.8):
+1. `fontes = fontesDaLinha(dreLinha)`; `aliases = new Set(aliasesDaLinha(dreLinha, regime))`. Se `fontes` vazio (derivada) → resultado vazio defensivo.
+2. **Resolução determinística do mapping (P1.1):** `codToLinha = Map`; processa **`_default` primeiro, depois as linhas da company** (company sobrescreve `_default` para o mesmo `omie_codigo`). `codigosAlvo = { código | codToLinha.get(código) ∈ aliases }`.
+3. `agg(rows)`: filtra `mes ∈ fechadosSet` E `categoria_codigo ∈ codigosAlvo`; soma `valor` **bruto** (sem round) por código; guarda a descrição do maior `mes` por código.
 4. `aggAno = agg(rowsAno)`, `aggAnt = agg(rowsAnoAnterior)`.
-5. Componentes = união de códigos de `aggAno` ∪ `aggAnt`; cada um: `realizado_ytd` (ano, 0 se ausente), `realizado_ytd_ano_anterior` (ant, 0 se ausente), `delta`, `delta_perc` (`null` se ant==0), `peso_perc`. `round2` em valores monetários.
-6. `total_decomposto = Σ realizado_ytd`; `peso_perc = realizado_ytd / total_decomposto` (0 se total 0).
-7. Reconciliação + `qualidade` pelas regras acima (bordas snapshot≈0).
-8. Ordena `componentes` por `|realizado_ytd|` desc.
+5. **`total_decomposto = round2(Σ valor bruto de aggAno)`; `residuo = round2(realizadoSnapshot − Σ valor bruto)`** — calcula em bruto, arredonda só no fim (não fabrica resíduo de centavo, P2.8).
+6. Componentes = união `aggAno ∪ aggAnt`; cada um:
+   - `categoria_descricao = descAno ?? descAnt ?? categoria_codigo` (**P1.4**: código que só existiu no ano-1).
+   - `realizado_ytd = round2(ano)`, `realizado_ytd_ano_anterior = round2(ant)`, `delta = round2(ano − ant)`.
+   - `delta_perc = |ant| < EPSILON ? null : (ano − ant) / Math.abs(ant)` (**denominador absoluto**, P2.6).
+   - `peso_perc = Σbruto > EPSILON ? ano / Σbruto : 0` (magnitudes não-negativas; P2.7).
+7. **Qualidade (bordas P1.5):** `|realizadoSnapshot| < EPSILON` → `residuo_perc = null`; se `|Σbruto| < EPSILON` também → `ok` (nada a reconciliar); senão → `diagnostico`. Caso geral: `residuo_perc = |residuo| / |realizadoSnapshot|`; `ok` se `residuo_perc ≤ 0.05 E |residuo| ≤ 10000`; `diagnostico` se `residuo_perc > 0.20`; senão `parcial`.
+8. Ordena `componentes` por `|realizado_ytd|` desc. (UI pode reordenar por `|delta|` — P2.10.)
 
 ### Service `src/services/financeiroV2Service.ts`
 
@@ -129,12 +162,14 @@ export async function getCategoriasDimensaoRaw(
   ano: number
 ): Promise<DimRowRaw[]>;
 ```
-Chama a RPC existente (`fin_analise_cr_dimensoes_rpc` / `fin_analise_cp_dimensoes_rpc`) com `p_mes=null` (todos os meses do ano), mapeia cada row para `DimRowRaw` (`valor = total_documento`). Uma chamada por ano (ano + ano-1 no consumidor).
+Chama a RPC existente (`fin_analise_cr_dimensoes_rpc` / `fin_analise_cp_dimensoes_rpc`) com `p_mes=null` (todos os meses do ano), mapeia cada row para `DimRowRaw` (`valor = total_documento ?? 0`). **Cache react-query chaveado por `[tipo, company, ano]` (P2.11)** — nunca reusar CR como CP nem ano errado.
 
 ### Página `src/pages/FinanceiroOrcamento.tsx`
 
-- Cada `ForecastLinha` com `fura_meta === true` E `fonteDaLinha(linha) != null` ganha affordance de expandir (chevron / linha clicável).
-- Ao expandir (lazy): busca `getCategoriasDimensaoRaw(fonte, company, ano)` + `(…, ano-1)` + `getCategoryMappings(company)` (cacheáveis via react-query), roda `drillLinha`, renderiza os 3 blocos + faixa de reconciliação (qualidade colorida via `text-status-*`).
+- Cada `ForecastLinha` com `fura_meta === true` E `fontesDaLinha(linha).length > 0` ganha affordance de expandir (chevron / linha clicável).
+- `regime = REGIME_POR_EMPRESA[company]` (`colacor/oben → presumido`, `colacor_sc → simples`) — mapa pequeno inlinado na página (ou exportado do helper).
+- Ao expandir (lazy): para cada fonte em `fontesDaLinha(linha)`, busca `getCategoriasDimensaoRaw(fonte, company, ano)` + `(…, ano-1)`, **concatena** os `DimRowRaw[]` por ano; busca `getCategoryMappings(company)` (traz `[company, '_default']`). Roda `drillLinha({ dreLinha, regime, rowsAno, rowsAnoAnterior, mesesFechados, mapping, realizadoSnapshot: linha.realizado_fechado, forecastRestante: linha.forecast_restante, varianciaAnual: linha.variancia })` (**P3.12**: o campo no `ForecastLinha` é `variancia`, mapeia para `varianciaAnual`).
+- Renderiza os 3 blocos + faixa de reconciliação (qualidade colorida via `text-status-*`, tokens já existem — §4 do CLAUDE.md).
 - Estado de loading: skeleton pequeno na linha expandida.
 
 ## Limitações documentadas (v1)
