@@ -919,7 +919,7 @@ export interface ProximaAcaoResult {
 }
 
 // ═══════════════ Custo Marginal de Funding (contrato com fin-funding) ═══════════════
-import type { DecisaoTitulo } from '@/lib/financeiro/funding-helpers';
+import type { DecisaoTitulo, PlanoCobertura } from '@/lib/financeiro/funding-helpers';
 
 export interface FundingInputs {
   fontes: {
@@ -952,6 +952,10 @@ export interface FundingResult {
   reserva_rs: number;
   titulos: DecisaoTitulo[];
   confianca: { nivel: 'alta' | 'media' | 'baixa'; motivos: string[] };
+  // sub-PR B: planejador de cobertura de gap + composição A4.
+  caixa_livre: number | null;
+  retorno_marginal: number | null;
+  plano_cobertura: PlanoCobertura | null;
 }
 
 // ═══════════════ Otimizador Tributário — Comparador de Regime (contrato com fin-regime-tributario) ═══════════════
