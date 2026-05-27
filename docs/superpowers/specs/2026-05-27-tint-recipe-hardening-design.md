@@ -1,6 +1,6 @@
 # Spec — Proteger a receita de tinta (`tint_formula_itens`) de cliente logado
 
-**Status:** backlog (pronto pra executar a frio). **Decisão de produto (Lucas, 2026-05-27): a receita É segredo a proteger — um cliente logado nunca deve conseguir extrair as proporções de corante.**
+**Status:** ✅ **CONCLUÍDO (2026-05-27)** — 3 fases entregues e em produção (RPC `get_tint_price` validada por paridade; helper testado `src/lib/tint/compute-price.ts` #384; cutover `useTintPricing`→RPC #387; `DROP POLICY` permissiva em `tint_formula_itens` migration `20260527190000`). Cliente logado não baixa mais a receita via REST; preço e telas de staff intactos. **Decisão de produto (Lucas, 2026-05-27): a receita É segredo a proteger — um cliente logado nunca deve conseguir extrair as proporções de corante.**
 
 **Origem:** grant/RLS audit de 2026-05-27 (ver `supabase/schema-security-report.md` item "A aprofundar"). `tint_formula_itens` tem policy `SELECT USING(true) TO authenticated` → **qualquer logado, incluindo `customer`, pode `GET /rest/v1/tint_formula_itens` e baixar a base inteira de receitas** (corante_id + qtd_ml = a "receita" de matiz). É o IP central de um sistema tintométrico.
 

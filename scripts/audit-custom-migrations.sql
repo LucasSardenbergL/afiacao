@@ -3,7 +3,7 @@
 -- ========================================================================
 --
 -- Gerado por: scripts/audit-custom-migrations.ts
--- Total de custom migrations: 88
+-- Total de custom migrations: 89
 --
 -- Como usar:
 --   1. Abra o Supabase SQL Editor (via Lovable Cloud → Backend → SQL Editor)
@@ -107,7 +107,8 @@ WITH expected (version, slug, filename) AS (VALUES
   ('20260527160000', 'matview_ranking_negociacao_private', '20260527160000_matview_ranking_negociacao_private.sql'),
   ('20260527170000', 'crons_timeout_fix', '20260527170000_crons_timeout_fix.sql'),
   ('20260527180000', 'data_health_add_vendas', '20260527180000_data_health_add_vendas.sql'),
-  ('20260527180000', 'get_tint_price_rpc', '20260527180000_get_tint_price_rpc.sql')
+  ('20260527180000', 'get_tint_price_rpc', '20260527180000_get_tint_price_rpc.sql'),
+  ('20260527190000', 'drop_tint_formula_itens_public_select', '20260527190000_drop_tint_formula_itens_public_select.sql')
 )
 SELECT
   e.version,
