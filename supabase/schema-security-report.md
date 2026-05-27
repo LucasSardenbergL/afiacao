@@ -23,7 +23,7 @@ O cron `sayerlack-portal-watchdog` embute um **JWT anon** literal nos headers `A
 
 **✅ RESOLVIDO (2026-05-27, PR #350 — migration `20260526080000_fix_sayerlack_cron_vault.sql`).** Dump real do `cron.job` (2026-05-26) mostrou que o `x-cron-secret` **já vinha do Vault** (a parte do GUC já tinha sido consertada antes); restava só o JWT anon nos headers, que existia pra passar o `verify_jwt` do gateway. Fix em 2 partes: (1) `verify_jwt = false` declarado em `supabase/config.toml` + redeploy no Lovable (a função se gateia via `x-cron-secret` no `authorizeCronOrStaff`, não precisa do JWT no gateway); (2) `cron.schedule` recolado sem `Authorization`/`apikey`. Validado em prod: cron limpo (sem JWT, x-cron-secret do Vault) + `net._http_response` com **200** nos ciclos `*/5`, sem 401.
 
-## A aprofundar — ✅ AUDITADO 2026-05-27 (RLS limpo; resta 1 query de grants EXECUTE)
+## A aprofundar — ✅ AUDITADO 2026-05-27 (RLS limpo; grant audit achou+corrigiu 1 IDOR anon)
 
 **Policies `USING (true)` — auditado, sem vulnerabilidade de RLS.** 28 `USING(true)` + 11 `WITH CHECK(true)` no dump:
 - Os 11 `WITH CHECK(true)` são **todos** `FOR ALL TO service_role` (redundante — service_role já bypassa RLS) → **zero furo de escrita** pra anon/authenticated.
@@ -34,7 +34,9 @@ O cron `sayerlack-portal-watchdog` embute um **JWT anon** literal nos headers `A
 - `default_prices` legível por anon → **DEIXAR** (catálogo público intencional; preço default já observável por UI/orçamento). Não apertar (quebraria storefront pré-login).
 - `tint_formula_itens` (proporções de corante = receita/IP) legível por qualquer logado → **ACEITAR + documentar**. Threat model real (concorrente/scraper cria conta de cliente → lê a tabela → reconstrói a base de receitas), mas classe menor que cross-tenant/write/privesc. **Backlog de hardening futuro** (se a base de receitas for ativo estratégico): RPC `SECURITY DEFINER` devolvendo só o preço + restringir o SELECT da tabela a staff. NÃO feito agora (toca o money-path do pedido por ganho incerto).
 
-**Pendente — 1 query read-only em prod** (única coisa que o dump `--no-privileges` não mostra): EXECUTE em funções `SECURITY DEFINER` por `anon`/`authenticated`. Uma SECDEF executável amplamente que bypassa RLS seria furo real. Roda no SQL Editor; fecha 100% quando vier limpo (nenhuma SECDEF perigosa executável por anon/authenticated):
+**✅ RODADO (2026-05-27) — ACHOU + CORRIGIU 1 furo real (PR fix `20260527140000`).** A query de EXECUTE por role (o dump é `--no-privileges`, não mostra grants) revelou que **`_carteira_mixgap_for_owner(uuid)`** e **`_carteira_positivacao_for_owner(uuid)`** estavam **executáveis por `anon`**. São internals SECDEF do view-as que usam `p_owner` DIRETO, sem gate (o gate vive nos wrappers `get_meu_*_for`, master-only). A migration de criação (`20260525210000`) fez `REVOKE ... FROM PUBLIC, authenticated` mas **não de `anon`** (no Supabase `anon` tem grant EXPLÍCITO que `FROM PUBLIC` não remove). **IDOR não-autenticado:** um anônimo podia `POST /rest/v1/rpc/_carteira_mixgap_for_owner {"p_owner":"<uuid>"}` e puxar a carteira de qualquer dono. **Fix:** `20260527140000_revoke_carteira_internals_anon.sql` (`REVOKE ... FROM anon, authenticated, PUBLIC`; wrappers seguem OK pois SECDEF executa como owner). Resto do resultado = esperado: os wrappers SECDEF de carteira/financeiro (`*_for`, `get_minha_*`, `fin_*`) têm anon+authenticated por default do Supabase mas **se auto-gateiam** por `auth.uid()`/master no corpo (anon → null → rejeita); triggers/aggregates pgvector são inofensivos.
+
+Query usada (re-rodável p/ re-auditar):
 
 ```sql
 SELECT n.nspname AS schema, p.proname AS function, p.prosecdef AS security_definer,
