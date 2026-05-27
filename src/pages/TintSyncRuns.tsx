@@ -15,10 +15,10 @@ type TintSyncRun = Tables<"tint_sync_runs">;
 type TintSyncError = Tables<"tint_sync_errors">;
 
 const statusConfig: Record<string, { label: string; color: string; icon: typeof CheckCircle }> = {
-  complete: { label: "Completo", color: "bg-green-100 text-green-800", icon: CheckCircle },
+  complete: { label: "Completo", color: "bg-status-success-bg text-status-success", icon: CheckCircle },
   error: { label: "Erro", color: "bg-destructive/10 text-destructive", icon: XCircle },
-  running: { label: "Executando", color: "bg-blue-100 text-blue-800", icon: Loader2 },
-  partial: { label: "Parcial", color: "bg-yellow-100 text-yellow-800", icon: Clock },
+  running: { label: "Executando", color: "bg-status-info-bg text-status-info", icon: Loader2 },
+  partial: { label: "Parcial", color: "bg-status-warning-bg text-status-warning", icon: Clock },
 };
 
 export default function TintSyncRuns() {
@@ -73,7 +73,7 @@ export default function TintSyncRuns() {
       {/* Summary */}
       <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
         <Card><CardContent className="p-4 text-center"><p className="text-2xl font-bold">{runs.length}</p><p className="text-xs text-muted-foreground">Total</p></CardContent></Card>
-        <Card><CardContent className="p-4 text-center"><p className="text-2xl font-bold text-green-600">{runs.filter((r: TintSyncRun) => r.status === "complete").length}</p><p className="text-xs text-muted-foreground">Completos</p></CardContent></Card>
+        <Card><CardContent className="p-4 text-center"><p className="text-2xl font-bold text-status-success">{runs.filter((r: TintSyncRun) => r.status === "complete").length}</p><p className="text-xs text-muted-foreground">Completos</p></CardContent></Card>
         <Card><CardContent className="p-4 text-center"><p className="text-2xl font-bold text-destructive">{runs.filter((r: TintSyncRun) => r.status === "error").length}</p><p className="text-xs text-muted-foreground">Erros</p></CardContent></Card>
         <Card><CardContent className="p-4 text-center"><p className="text-2xl font-bold">{stores.length}</p><p className="text-xs text-muted-foreground">Lojas</p></CardContent></Card>
       </div>

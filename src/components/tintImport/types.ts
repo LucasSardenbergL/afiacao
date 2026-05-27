@@ -68,12 +68,12 @@ export const TIPO_OPTIONS = [
 ];
 
 export const statusColor: Record<string, string> = {
-  concluido: 'bg-green-500/10 text-green-700',
-  concluido_parcial: 'bg-yellow-500/10 text-yellow-700',
-  parcial: 'bg-yellow-500/10 text-yellow-700',
-  erro: 'bg-red-500/10 text-red-700',
-  processando: 'bg-blue-500/10 text-blue-700',
-  duplicado: 'bg-gray-500/10 text-gray-700',
+  concluido: 'bg-status-success-bg text-status-success',
+  concluido_parcial: 'bg-status-warning-bg text-status-warning',
+  parcial: 'bg-status-warning-bg text-status-warning',
+  erro: 'bg-status-error-bg text-status-error',
+  processando: 'bg-status-info-bg text-status-info',
+  duplicado: 'bg-muted text-muted-foreground',
 };
 
 export async function sha256(content: string): Promise<string> {
