@@ -15,9 +15,15 @@
 #   pelo Lovable. `-p tsconfig.app.json` checa src+testes de verdade (~27s).
 # - test (vitest run): blocking — regressão de comportamento documentado
 # - build (vite build): blocking — pega Tailwind quebrado + import errors + PWA setup
-# - lint (eslint): informational — main hoje tem 1300 errors herdados (97%
-#   no-explicit-any). Bloqueá-lo pararia todo PR. Quando TypeScript strict mode
-#   roadmap zerar a dívida, virar blocking.
+# - lint (eslint): blocking em ERRORS — a dívida de `no-explicit-any` foi zerada
+#   (era ~1300 errors, hoje 0; ver CLAUDE.md §10/§13), então o lint virou gate
+#   real (2026-05-26). O que importa: a regra de segurança `no-restricted-syntax`
+#   (anti-injeção PostgREST `.or()`, nível error, escopo src/ — eslint.config.js)
+#   agora BLOQUEIA o PR de verdade; antes, com `continue-on-error`, um `.or()` cru
+#   reintroduzido passava silencioso. WARNINGS (hoje 82, todos
+#   react-hooks/exhaustive-deps) seguem NÃO-bloqueantes de propósito (eslint só
+#   falha em error) — evita fricção no repo multi-sessão. Ratchet de warnings
+#   (--max-warnings N) fica como follow-up se a contagem começar a crescer.
 
 name: CI
 
@@ -60,7 +66,6 @@ jobs:
           # Se algum VITE_* for required no futuro, adicionar aqui.
           NODE_ENV: production
 
-      # ─── Informational (não bloqueia merge) ─────────────────────────
-      - name: Lint (informational)
+      # Bloqueia em errors (0 hoje); warnings não falham (eslint default).
+      - name: Lint
         run: bun lint
-        continue-on-error: true

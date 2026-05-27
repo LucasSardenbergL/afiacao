@@ -21,12 +21,12 @@ Este audit valida **quais custom migrations estão de fato aplicadas no banco**.
 
 ## Resumo
 
-- **80** custom migrations totais
-- **405** objetos esperados (criados por estas migrations)
+- **83** custom migrations totais
+- **407** objetos esperados (criados por estas migrations)
 - Quebra por tipo:
   - `rls_policy`: 139
   - `index`: 96
-  - `function`: 59
+  - `function`: 61
   - `table`: 57
   - `trigger`: 31
   - `cron_job`: 19
@@ -803,6 +803,12 @@ Lista canônica do que cada migration *deveria* criar (extraído via regex de `C
 | `rls_policy` | `public.fin_funding_inputs_select_master` | `fin_funding_inputs` |
 | `rls_policy` | `public.fin_funding_inputs_write_master` | `fin_funding_inputs` |
 
+### `20260526160000_data_health_rpc.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `function` | `public.get_data_health` | — |
+
 ### `20260526230000_mixgap_feedback.sql`
 
 | Tipo | Objeto | Parent |
@@ -827,6 +833,16 @@ Lista canônica do que cada migration *deveria* criar (extraído via regex de `C
 | `function` | `public.finalize_nao_vinculados_snapshot` | — |
 | `rls_policy` | `public.nv_select` | `omie_clientes_nao_vinculados` |
 | `rls_policy` | `public.nv_state_select` | `omie_nao_vinculados_state` |
+
+### `20260527120000_data_health_rpc_fix.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `function` | `public.get_data_health` | — |
+
+### `20260527140000_revoke_carteira_internals_anon.sql`
+
+> _Nenhum objeto extraído via regex._ Migration provavelmente é `ALTER TABLE` / `UPDATE` / `INSERT` / RLS-only. Validar manualmente.
 
 ## Próximos passos quando algo der `❌`
 

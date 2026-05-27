@@ -18,7 +18,7 @@ import {
   TableHeader,
   TableRow,
 } from '@/components/ui/table';
-import type { DecisaoTitulo } from '@/lib/financeiro/funding-helpers';
+import type { DecisaoTitulo, TipoFonte, PlanoCobertura } from '@/lib/financeiro/funding-helpers';
 
 // ─── Helpers de formatação ────────────────────────────────────────────────────
 
@@ -99,6 +99,113 @@ function FlagChips({ flags }: { flags: string[] }) {
         </span>
       ))}
     </div>
+  );
+}
+
+// ─── Planejador de cobertura de gap ──────────────────────────────────────────
+
+const FONTE_LABEL: Record<TipoFonte, string> = {
+  caixa_proprio: 'Caixa próprio',
+  antecipacao: 'Antecipação',
+  capital_giro: 'Capital de giro',
+  cheque_especial: 'Cheque especial',
+};
+
+interface PlanejadorProps {
+  plano: PlanoCobertura;
+  retorno_marginal: number | null;
+}
+
+function PlanejadorCobertura({ plano, retorno_marginal }: PlanejadorProps) {
+  // null-safe: custo_inercia_rs pode ser null (sem taxa de cheque → inércia desconhecida, não 0).
+  const inerciaEhPior = plano.custo_inercia_rs != null && plano.custo_inercia_rs > plano.custo_total_rs;
+
+  return (
+    <Card>
+      <CardHeader className="flex flex-row items-start justify-between space-y-0 pb-2">
+        <CardTitle className="text-base">Planejador de cobertura de gap</CardTitle>
+        {/* Só o "melhor uso do caixa" (A4) como contexto. NÃO mostra "caixa livre": ele NÃO é fonte do
+            plano (já está embutido na projeção que gerou o gap) — exibi-lo aqui sugeriria que cobre o gap. */}
+        {retorno_marginal != null && (
+          <span className="text-xs text-muted-foreground shrink-0">
+            Melhor uso do caixa: {pctAA(retorno_marginal)}
+          </span>
+        )}
+      </CardHeader>
+      <CardContent className="space-y-4">
+        {/* Linha de resumo */}
+        <p className="text-sm">
+          Gap de{' '}
+          <span className="font-medium text-status-error">{brl(plano.gap_rs)}</span>
+          {' '}a cobrir · horizonte{' '}
+          <span className="font-medium">{plano.horizonte_dias} dias</span>
+          {' '}(semana do vale)
+        </p>
+
+        {/* Stack de fontes */}
+        {plano.stack.length > 0 && (
+          <div className="space-y-1.5">
+            {plano.stack.map((item, idx) => (
+              <div
+                key={item.fonte}
+                className={`flex items-center justify-between rounded px-3 py-2 text-sm ${
+                  idx === 0
+                    ? 'bg-muted/60 border border-border font-medium'
+                    : 'bg-muted/30'
+                }`}
+              >
+                <div className="flex items-center gap-2">
+                  <span>{FONTE_LABEL[item.fonte] ?? item.fonte}</span>
+                  {item.flag === 'emergencia' && (
+                    <span className="text-[10px] px-1.5 py-0.5 rounded text-status-warning bg-status-warning-bg font-normal">
+                      emergência
+                    </span>
+                  )}
+                </div>
+                <div className="flex items-center gap-4 font-tabular text-xs text-muted-foreground">
+                  <span>{brl(item.montante_rs)}</span>
+                  <span className="text-status-error">custo {brl(item.custo_rs)}</span>
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
+
+        {/* Custo total vs inércia */}
+        <div className="flex flex-wrap gap-4 pt-1 border-t border-border text-sm">
+          <div>
+            <span className="text-muted-foreground text-xs">Cobrir agora</span>
+            <p className="font-medium font-tabular">{brl(plano.custo_total_rs)}</p>
+          </div>
+          <div>
+            <span className="text-muted-foreground text-xs">Não fazer nada (conta garantida)</span>
+            <p
+              className={`font-medium font-tabular ${
+                inerciaEhPior ? 'text-status-error' : ''
+              }`}
+            >
+              {brl(plano.custo_inercia_rs)}
+              {inerciaEhPior && (
+                <span className="ml-1 text-[10px] font-normal text-status-error">
+                  mais caro
+                </span>
+              )}
+            </p>
+          </div>
+        </div>
+
+        {/* Motivos / alertas */}
+        {plano.motivos.length > 0 && (
+          <ul className="list-disc pl-4 space-y-0.5">
+            {plano.motivos.map((m, i) => (
+              <li key={i} className="text-xs text-status-warning">
+                {m}
+              </li>
+            ))}
+          </ul>
+        )}
+      </CardContent>
+    </Card>
   );
 }
 
@@ -303,6 +410,19 @@ export default function FinanceiroFunding() {
                 ))}
               </ul>
             </details>
+          )}
+
+          {/* Planejador de cobertura de gap */}
+          {data.tem_projecao && data.plano_cobertura != null && (
+            <PlanejadorCobertura
+              plano={data.plano_cobertura}
+              retorno_marginal={data.retorno_marginal}
+            />
+          )}
+          {data.tem_projecao && data.plano_cobertura == null && (
+            <p className="text-sm text-muted-foreground">
+              Sem gap de caixa previsto nas próximas 13 semanas — nenhuma cobertura necessária.
+            </p>
           )}
 
           {/* Tabela de títulos */}

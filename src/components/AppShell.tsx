@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { ImpersonationBanner } from '@/components/impersonation/ImpersonationBanner';
 import { useLocation, useNavigate } from 'react-router-dom';
-import { BookOpen, Lock, Calculator, FileText, Palette, Beaker, FileUp, Droplets, LayoutDashboard, Users, ShoppingCart, ShoppingBag, Phone, GraduationCap, BarChart3, Settings, ChevronLeft, ChevronRight, Search, Bell, User, LogOut, Package, TrendingUp, Headphones, Target, Menu, X, ClipboardList, PlusCircle, Shield, Wrench, Award, Scissors, DollarSign, Layers, Printer, UserCheck, FileCheck, Boxes, AlertTriangle, PlayCircle, Factory, Truck, Percent, Sparkles, Handshake, Link2, Globe2, Database, Library, Crosshair, ListChecks, Landmark, UserX } from 'lucide-react';
+import { BookOpen, Lock, Calculator, FileText, Palette, Beaker, FileUp, Droplets, LayoutDashboard, Users, ShoppingCart, ShoppingBag, Phone, GraduationCap, BarChart3, Settings, ChevronLeft, ChevronRight, Search, Bell, User, LogOut, Package, TrendingUp, Headphones, Target, Menu, X, ClipboardList, PlusCircle, Shield, Wrench, Award, Scissors, DollarSign, Layers, Printer, UserCheck, FileCheck, Boxes, AlertTriangle, PlayCircle, Factory, Truck, Percent, Sparkles, Handshake, Link2, Globe2, Database, Library, Crosshair, ListChecks, Landmark, UserX, ShieldCheck } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { useAuth } from '@/contexts/AuthContext';
 import { AppShellProvider } from '@/contexts/AppShellContext';
@@ -32,6 +32,7 @@ import { CommandPaletteTrigger } from '@/components/shell/CommandPaletteTrigger'
 import { CompanySwitcher } from '@/components/shell/CompanySwitcher';
 import { ActiveOverrideBadge } from '@/components/financeiro/ActiveOverrideBadge';
 import { NetworkStatusIndicator } from '@/components/shell/NetworkStatusIndicator';
+import { DataHealthBadge } from '@/components/shell/DataHealthBadge';
 import { ThemeToggle } from '@/components/shell/ThemeToggle';
 import { PageViewTracker } from '@/components/shell/PageViewTracker';
 import { AnalyticsIdentify } from '@/components/shell/AnalyticsIdentify';
@@ -158,6 +159,7 @@ const unifiedNavSections: { title: string; items: NavItem[] }[] = [
       { icon: Factory, label: 'Processos padrão', path: '/admin/standard-processes' },
       { icon: Shield, label: 'Admin & Relatórios', path: '/gestao/admin', managerOnly: true },
       { icon: Lock, label: 'Governança', path: '/gestao/governanca', managerOnly: true },
+      { icon: ShieldCheck, label: 'Saúde de Dados', path: '/gestao/saude-dados', managerOnly: true },
     ],
   },
 ];
@@ -643,6 +645,7 @@ function AppTopbar({ sidebarCollapsed, onMobileMenuToggle }: { sidebarCollapsed:
         <ActiveOverrideBadge />
         <CompanySwitcher />
         <NetworkStatusIndicator />
+        <DataHealthBadge />
         <ThemeToggle />
         <HelpDrawer />
 

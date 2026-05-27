@@ -3,7 +3,7 @@
 -- ========================================================================
 --
 -- Gerado por: scripts/audit-custom-migrations.ts
--- Total de custom migrations: 80
+-- Total de custom migrations: 83
 --
 -- Como usar:
 --   1. Abra o Supabase SQL Editor (via Lovable Cloud → Backend → SQL Editor)
@@ -97,9 +97,12 @@ WITH expected (version, slug, filename) AS (VALUES
   ('20260526060000', 'views_security_invoker_hardening', '20260526060000_views_security_invoker_hardening.sql'),
   ('20260526080000', 'fix_sayerlack_cron_vault', '20260526080000_fix_sayerlack_cron_vault.sql'),
   ('20260526100000', 'fin_funding_inputs', '20260526100000_fin_funding_inputs.sql'),
+  ('20260526160000', 'data_health_rpc', '20260526160000_data_health_rpc.sql'),
   ('20260526230000', 'mixgap_feedback', '20260526230000_mixgap_feedback.sql'),
   ('20260527010000', 'rls_copilot_sessions_select_own_only', '20260527010000_rls_copilot_sessions_select_own_only.sql'),
-  ('20260527120000', 'clientes_nao_vinculados', '20260527120000_clientes_nao_vinculados.sql')
+  ('20260527120000', 'clientes_nao_vinculados', '20260527120000_clientes_nao_vinculados.sql'),
+  ('20260527120000', 'data_health_rpc_fix', '20260527120000_data_health_rpc_fix.sql'),
+  ('20260527140000', 'revoke_carteira_internals_anon', '20260527140000_revoke_carteira_internals_anon.sql')
 )
 SELECT
   e.version,
@@ -513,6 +516,7 @@ WITH expected_objects (migration, kind, schema_name, object_name, parent_name) A
   ('fin_funding_inputs', 'table', 'public', 'fin_funding_inputs', ''),
   ('fin_funding_inputs', 'rls_policy', 'public', 'fin_funding_inputs_select_master', 'fin_funding_inputs'),
   ('fin_funding_inputs', 'rls_policy', 'public', 'fin_funding_inputs_write_master', 'fin_funding_inputs'),
+  ('data_health_rpc', 'function', 'public', 'get_data_health', ''),
   ('mixgap_feedback', 'table', 'public', 'farmer_mixgap_feedback', ''),
   ('mixgap_feedback', 'function', 'public', 'mark_mixgap_feedback', ''),
   ('mixgap_feedback', 'function', 'public', '_carteira_mixgap_for_owner', ''),
@@ -522,7 +526,8 @@ WITH expected_objects (migration, kind, schema_name, object_name, parent_name) A
   ('clientes_nao_vinculados', 'index', 'public', 'idx_nv_empresa_synced', 'omie_clientes_nao_vinculados'),
   ('clientes_nao_vinculados', 'function', 'public', 'finalize_nao_vinculados_snapshot', ''),
   ('clientes_nao_vinculados', 'rls_policy', 'public', 'nv_select', 'omie_clientes_nao_vinculados'),
-  ('clientes_nao_vinculados', 'rls_policy', 'public', 'nv_state_select', 'omie_nao_vinculados_state')
+  ('clientes_nao_vinculados', 'rls_policy', 'public', 'nv_state_select', 'omie_nao_vinculados_state'),
+  ('data_health_rpc_fix', 'function', 'public', 'get_data_health', '')
 )
 SELECT
   e.migration,

@@ -1,9 +1,17 @@
 import { describe, it, expect } from 'vitest';
+import type { ReactElement } from 'react';
 import { render, screen } from '@testing-library/react';
+import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { AlertTriangle } from 'lucide-react';
 import { VisaoGeralTab } from '../VisaoGeralTab';
 import type { FinResumo, AgingData } from '@/services/financeiroService';
 import type { FinAlert } from '@/utils/financeiroAlerts';
+
+// VisaoGeralTab usa <DataHealthBanner> (react-query) → precisa de QueryClientProvider.
+const renderWithClient = (ui: ReactElement) => {
+  const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+  return render(<QueryClientProvider client={qc}>{ui}</QueryClientProvider>);
+};
 
 const resumoCo: FinResumo = {
   contas_correntes: [{ descricao: 'Conta BB', saldo_atual: 5000, banco: 'Banco do Brasil' }],
@@ -27,7 +35,7 @@ const inadimplentes = [{ nome: 'Cliente XPTO', cnpj: '12345678000190', total_ven
 
 describe('VisaoGeralTab', () => {
   it('renderiza os 4 KPIs sempre, sem cards de consolidado quando view != all', () => {
-    render(
+    renderWithClient(
       <VisaoGeralTab
         alerts={[]}
         activeResumo={null}
@@ -47,7 +55,7 @@ describe('VisaoGeralTab', () => {
   });
 
   it('view=all com dados → cards de empresa, indicadores, regime, inadimplentes e contas correntes', () => {
-    render(
+    renderWithClient(
       <VisaoGeralTab
         alerts={[]}
         activeResumo={resumoCo}
@@ -71,7 +79,7 @@ describe('VisaoGeralTab', () => {
     const alerts: FinAlert[] = [
       { severity: 'critical', company: 'colacor', message: 'Alerta teste', metric: 'metric x', icon: AlertTriangle },
     ];
-    render(
+    renderWithClient(
       <VisaoGeralTab
         alerts={alerts}
         activeResumo={null}

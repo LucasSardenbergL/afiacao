@@ -210,6 +210,67 @@ function decidirTitulo(input: {
   return { ...base, benchmark_fonte, custo_rs_benchmark: ganho, net_rs: net, recomendacao: net > 0 ? "antecipar" : "nao_antecipar" };
 }
 
+// ── Planejador de cobertura de gap (verbatim de funding-helpers.ts, sub-PR B) ──────────────
+
+type FonteCobertura = {
+  fonte: TipoFonte; rate_aa: number; capacidade_rs: number; governanca_ordem: number;
+};
+type ItemStack = { fonte: TipoFonte; montante_rs: number; custo_rs: number; flag?: string };
+type PlanoCobertura = {
+  gap_rs: number; horizonte_dias: number; stack: ItemStack[];
+  custo_total_rs: number; custo_inercia_rs: number | null; motivos: string[];
+};
+
+// Encontra a semana de pior saldo e calcula o gap em R$ (quanto falta para atingir a reserva).
+// Retorna null se o saldo nunca fura a reserva (sem gap → planejador não é necessário).
+function identificarGap(input: {
+  semanas: Semana[]; reserva_rs: number;
+}): { gap_rs: number; semana_idx: number; horizonte_dias: number } | null {
+  if (input.semanas.length === 0) return null;
+  let piorIdx = -1; let piorSaldo = Infinity; let ultimoAbaixo = -1;
+  input.semanas.forEach((s, i) => {
+    if (s.saldo_final < piorSaldo) { piorSaldo = s.saldo_final; piorIdx = i; }
+    if (s.saldo_final < input.reserva_rs) ultimoAbaixo = i; // última semana ABAIXO da reserva
+  });
+  if (ultimoAbaixo < 0) return null; // nunca fura a reserva → sem gap
+  // horizonte = até a RECUPERAÇÃO (última semana abaixo da reserva), NÃO a semana do vale — senão um
+  // déficit plano/estrutural daria 7 dias e subestimaria brutalmente o custo da cobertura.
+  return { gap_rs: input.reserva_rs - piorSaldo, semana_idx: piorIdx, horizonte_dias: (ultimoAbaixo + 1) * 7 };
+}
+
+// Monta o stack de fontes mais baratas para cobrir o gap (ordena por custo em R$, não por % a.a.).
+// NOTA v1: antecipação NÃO é fonte do planejador — a decisão por título já está na tabela de títulos;
+// incluir aqui exigiria capacidade+taxa ponderada do portfólio antecipável → reservado ao v2.
+function montarPlanoCobertura(input: {
+  gap_rs: number; horizonte_dias: number; fontes: FonteCobertura[]; cheque_rate_aa: number | null;
+}): PlanoCobertura {
+  const { gap_rs, horizonte_dias } = input;
+  const motivos: string[] = [];
+  // Ordena por CUSTO EM R$ de prover 1 real pelo horizonte (não por % a.a.); desempate por governança.
+  const ordenadas = [...input.fontes].sort((a, b) => {
+    const ca = custoEmReais(1, horizonte_dias, a.rate_aa);
+    const cb = custoEmReais(1, horizonte_dias, b.rate_aa);
+    if (ca !== cb) return ca - cb;
+    return a.governanca_ordem - b.governanca_ordem;
+  });
+  const stack: ItemStack[] = [];
+  let restante = gap_rs;
+  for (const f of ordenadas) {
+    if (restante <= 0) break;
+    const usa = Math.min(restante, f.capacidade_rs);
+    if (usa <= 0) continue;
+    const item: ItemStack = { fonte: f.fonte, montante_rs: usa, custo_rs: custoEmReais(usa, horizonte_dias, f.rate_aa) };
+    if (f.fonte === "cheque_especial" && f.governanca_ordem >= 3) item.flag = "emergencia";
+    stack.push(item);
+    restante -= usa;
+  }
+  if (restante > 0.01) motivos.push(`Capacidade das fontes insuficiente — R$ ${restante.toFixed(2)} descoberto.`);
+  const custo_total_rs = stack.reduce((s, x) => s + x.custo_rs, 0);
+  // Sem taxa de cheque → custo da inércia DESCONHECIDO (null), NUNCA 0 (degrada honesto).
+  const custo_inercia_rs = input.cheque_rate_aa != null ? custoEmReais(gap_rs, horizonte_dias, input.cheque_rate_aa) : null;
+  return { gap_rs, horizonte_dias, stack, custo_total_rs, custo_inercia_rs, motivos };
+}
+
 // ===================== Utilitários =====================
 
 // Paginação robusta: evita truncamento silencioso do PostgREST (default ~1000 linhas).
@@ -285,6 +346,23 @@ function numNonNeg(x: unknown): number | null {
 type CashflowProjecao = {
   semanas?: Semana[];
   indicadores?: { dias_cobertura?: number; saldo_tesouraria?: number };
+};
+
+// Shape da resposta do A4 (fin-next-best-action). Itera as 3 empresas internamente → aceita body vazio.
+type A4AcaoFila = {
+  empresa: string;
+  tipo: "consertar_valor" | "liberar_caixa" | "crescer" | "benchmark";
+  impacto_eva: number | null;
+  caixa_consumido: number | null;
+  spread_positivo: boolean | null;
+  hurdle: number | null;
+  status: "financiar_ja" | "financiar_condicional" | "consertar_antes" | "falta_dado" | "nao_financiar";
+};
+type A4Response = {
+  fila?: A4AcaoFila[];
+  caixa_por_empresa?: Record<string, { disponivel: number; confianca: "alta" | "media" | "baixa" }>;
+  confianca?: { nivel: string; motivos: string[] };
+  gerado_em?: string;
 };
 
 // ===================== Handler principal =====================
@@ -379,13 +457,47 @@ serve(async (req: Request) => {
   const thresholds = ((cfgRow as { thresholds?: Record<string, unknown> } | null)?.thresholds ?? {}) as Record<string, unknown>;
   const concentracao_top1_max_pct = numOrNull(thresholds.concentracao_top1_max_pct) ?? 20;
 
-  // ── 4. Compõe projeção de 13 semanas via fin-cashflow-engine ───────────────
-  // TODO sub-PR B: compor fin-next-best-action → retorno_marginal_melhor_uso
-  const projecao = await invoke<CashflowProjecao>("fin-cashflow-engine", {
-    company,
-    cenario: "realista",
-    horizon_weeks: 13,
-  });
+  // ── 4. Compõe projeção de 13 semanas + A4 em paralelo ────────────────────
+  // O A4 aceita body vazio (itera as 3 empresas internamente). Timeout 20s via invoke().
+  // Degradação honesta: se o A4 falhar/timeout, caixa_livre e retorno_marginal ficam null
+  // e o loop de títulos usa apenas cm_anual como benchmark (comportamento do sub-PR A).
+  const [projecao, a4] = await Promise.all([
+    invoke<CashflowProjecao>("fin-cashflow-engine", {
+      company,
+      cenario: "realista",
+      horizon_weeks: 13,
+    }),
+    invoke<A4Response>("fin-next-best-action", {}),
+  ]);
+
+  // Extrai caixa_livre desta empresa a partir do A4.
+  let caixa_livre: number | null = a4?.caixa_por_empresa?.[company]?.disponivel ?? null;
+
+  // Deriva retorno_marginal: melhor uso de capital do A4 para ESTA empresa.
+  // APROXIMAÇÃO v1: o A4 nem sempre quantifica o EVA de "crescer" (impacto_eva / caixa_consumido
+  // pode ser null), então na prática cai no hurdle/wacc quando o cockpit não estimou o ticket.
+  // Quando o A4 quantificar um uso de alto retorno (impacto_eva + caixa_consumido > 0), o excesso
+  // sobre o hurdle flui corretamente — o CFO vê que o custo de oportunidade real é maior que o WACC.
+  let retorno_marginal: number | null = null;
+  if (a4?.fila) {
+    // Só usos DIMENSIONADOS contam como "melhor uso do caixa": exige caixa_consumido > 0 (ticket
+    // dimensionado). Uso "crescer" sem ticket vira 'falta_dado' no A4 — não pode virar um
+    // retorno_marginal = hurdle que faria a decisão de sobra recomendar antecipar indevidamente.
+    const candidatos = a4.fila.filter(
+      (a) => a.empresa === company && a.tipo === "crescer" && a.spread_positivo === true
+        && a.hurdle != null && a.impacto_eva != null && a.caixa_consumido != null && a.caixa_consumido > 0,
+    );
+    if (candidatos.length > 0) {
+      const rets = candidatos.map((a) => a.hurdle! + Math.max(0, a.impacto_eva! / a.caixa_consumido!));
+      retorno_marginal = Math.max(...rets);
+    }
+  }
+
+  if (a4 == null) {
+    motivos_confianca.push("A4 (fin-next-best-action) indisponível (falha ou timeout) — retorno_marginal e caixa_livre não disponíveis; decisões de títulos em sobra/indefinido usam apenas cm_anual.");
+    caixa_livre = null;
+    retorno_marginal = null;
+  }
 
   const temProjecao = projecao != null && Array.isArray(projecao.semanas) && projecao.semanas.length > 0;
   const semanas: Semana[] = temProjecao ? (projecao!.semanas as Semana[]) : [];
@@ -477,8 +589,8 @@ serve(async (req: Request) => {
     const cliente = t.nome_cliente ?? "__sem_cliente__";
     if (clientesConcentrados.has(cliente)) flags_extra.push("concentracao_sacado");
 
-    // Monta a decisão (retorno_marginal_a4 = null no sub-PR A).
-    // TODO sub-PR B: compor fin-next-best-action → retorno_marginal_melhor_uso
+    // Monta a decisão com retorno_marginal_a4 derivado do A4 (null quando A4 indisponível → degrada
+    // graciosamente para apenas cm_anual, comportamento idêntico ao sub-PR A).
     const decisao = decidirTitulo({
       titulo: { id: t.id, valor: t.saldo, dias, nome_cliente: t.nome_cliente },
       antecipacao: {
@@ -489,7 +601,7 @@ serve(async (req: Request) => {
       },
       alternativas: { capital_giro_cet, cheque_cet },
       cm_anual, // nullable: em sobra/indefinido sem cm_anual nem A4, decidirTitulo degrada pra falta_dado (não fabrica nao_antecipar com benchmark zero)
-      retorno_marginal_a4: null,
+      retorno_marginal_a4: retorno_marginal,
       contexto,
       flags_extra,
     });
@@ -506,7 +618,44 @@ serve(async (req: Request) => {
     decisoes.push(decisao);
   }
 
-  // ── 9. Ordena: antecipar (net_rs desc) → nao_antecipar → falta_dado ────────
+  // ── 9. Planejador de cobertura de gap ─────────────────────────────────────
+  // Só roda se há projeção; caso contrário gap = null (sem dado suficiente para planejar).
+  let plano_cobertura: PlanoCobertura | null = null;
+  if (temProjecao) {
+    const gap = identificarGap({ semanas, reserva_rs });
+    if (gap != null) {
+      // Monta as fontes EXTERNAS para cobrir o gap (em ordem de preferência de governança).
+      // ⚠️ CAIXA PRÓPRIO NÃO É FONTE DO PLANEJADOR: o gap vem da projeção 13s, que JÁ parte do saldo
+      // de tesouraria atual — ou seja, o caixa próprio (caixa_livre) já está embutido na trajetória que
+      // PRODUZIU o gap. Injetá-lo como fonte contaria o mesmo dinheiro 2× (double-count) e subfinanciaria
+      // o déficit. O gap, por definição, é o que falta DEPOIS do caixa próprio → só fontes externas
+      // (capital de giro, cheque; antecipação = v2) o cobrem. Usar a reserva é decisão de POLÍTICA
+      // (baixar reserva_dias_min), não uma fonte. (caixa_livre/retorno_marginal seguem no retorno só
+      // como contexto e pra alimentar a decisão de antecipação em sobra.)
+      // NOTA v1: antecipação NÃO entra como fonte aqui — a decisão por título já está em `titulos`;
+      // incluir exigiria capacidade+taxa ponderada do portfólio → v2.
+      const fontes: FonteCobertura[] = [];
+
+      // Capital de giro bancário (linha rotativa, capacidade ilimitada no modelo v1).
+      if (capital_giro_cet != null) {
+        fontes.push({ fonte: "capital_giro", rate_aa: capital_giro_cet, capacidade_rs: Infinity, governanca_ordem: 1 });
+      }
+
+      // Cheque especial: último recurso / emergência (governança_ordem 3).
+      if (cheque_cet != null) {
+        fontes.push({ fonte: "cheque_especial", rate_aa: cheque_cet, capacidade_rs: Infinity, governanca_ordem: 3 });
+      }
+
+      plano_cobertura = montarPlanoCobertura({
+        gap_rs: gap.gap_rs,
+        horizonte_dias: gap.horizonte_dias,
+        fontes,
+        cheque_rate_aa: cheque_cet,
+      });
+    }
+  }
+
+  // ── 10. Ordena: antecipar (net_rs desc) → nao_antecipar → falta_dado ───────
   const ORDEM_REC: Record<Recomendacao, number> = { antecipar: 0, nao_antecipar: 1, falta_dado: 2 };
   decisoes.sort((a, b) => {
     const oa = ORDEM_REC[a.recomendacao], ob = ORDEM_REC[b.recomendacao];
@@ -515,7 +664,7 @@ serve(async (req: Request) => {
     return 0;
   });
 
-  // ── 10. Score de confiança ─────────────────────────────────────────────────
+  // ── 11. Score de confiança ─────────────────────────────────────────────────
   const nAntecipar = decisoes.filter((d) => d.recomendacao === "antecipar").length;
   const nFaltaDado = decisoes.filter((d) => d.recomendacao === "falta_dado").length;
   const nComFlagEstrutural = decisoes.filter((d) => d.flags.includes("estrutural")).length;
@@ -542,9 +691,12 @@ serve(async (req: Request) => {
     company,
     gerado_em: new Date().toISOString(),
     cm_anual,
+    caixa_livre,
+    retorno_marginal,
     tem_projecao: temProjecao,
     estrutural,
     reserva_rs,
+    plano_cobertura,
     titulos: decisoes,
     confianca: {
       nivel: nivelConfianca,
