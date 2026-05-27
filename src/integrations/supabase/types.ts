@@ -3882,6 +3882,27 @@ export type Database = {
         }
         Relationships: []
       }
+      fin_funding_inputs: {
+        Row: {
+          company: string
+          funding_inputs: Json
+          updated_at: string
+          updated_by: string | null
+        }
+        Insert: {
+          company: string
+          funding_inputs?: Json
+          updated_at?: string
+          updated_by?: string | null
+        }
+        Update: {
+          company?: string
+          funding_inputs?: Json
+          updated_at?: string
+          updated_by?: string | null
+        }
+        Relationships: []
+      }
       fin_ic_matches: {
         Row: {
           cp_id: string | null
