@@ -22,12 +22,12 @@ Este audit valida **quais custom migrations estão de fato aplicadas no banco**.
 ## Resumo
 
 - **75** custom migrations totais
-- **394** objetos esperados (criados por estas migrations)
+- **391** objetos esperados (criados por estas migrations)
 - Quebra por tipo:
-  - `rls_policy`: 136
+  - `rls_policy`: 134
   - `index`: 95
   - `function`: 56
-  - `table`: 54
+  - `table`: 53
   - `trigger`: 31
   - `cron_job`: 18
   - `enum_value`: 4
@@ -785,13 +785,9 @@ Lista canônica do que cada migration *deveria* criar (extraído via regex de `C
 | `rls_policy` | `public.fcop_update_own_or_gestor` | `farmer_copilot_sessions` |
 | `rls_policy` | `public.fcop_delete_own_or_gestor` | `farmer_copilot_sessions` |
 
-### `20260526100000_fin_funding_inputs.sql`
+### `20260526060000_views_security_invoker_hardening.sql`
 
-| Tipo | Objeto | Parent |
-| --- | --- | --- |
-| `table` | `public.fin_funding_inputs` | — |
-| `rls_policy` | `public.fin_funding_inputs_select_master` | `fin_funding_inputs` |
-| `rls_policy` | `public.fin_funding_inputs_write_master` | `fin_funding_inputs` |
+> _Nenhum objeto extraído via regex._ Migration provavelmente é `ALTER TABLE` / `UPDATE` / `INSERT` / RLS-only. Validar manualmente.
 
 ## Próximos passos quando algo der `❌`
 

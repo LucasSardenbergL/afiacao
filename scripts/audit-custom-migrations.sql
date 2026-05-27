@@ -94,7 +94,7 @@ WITH expected (version, slug, filename) AS (VALUES
   ('20260526020000', 'rls_score_carteira_hardening', '20260526020000_rls_score_carteira_hardening.sql'),
   ('20260526030000', 'fin_sync_watchdog_sweep_orphans', '20260526030000_fin_sync_watchdog_sweep_orphans.sql'),
   ('20260526040000', 'rls_carteira_relacionamento_hardening', '20260526040000_rls_carteira_relacionamento_hardening.sql'),
-  ('20260526100000', 'fin_funding_inputs', '20260526100000_fin_funding_inputs.sql')
+  ('20260526060000', 'views_security_invoker_hardening', '20260526060000_views_security_invoker_hardening.sql')
 )
 SELECT
   e.version,
@@ -503,10 +503,7 @@ WITH expected_objects (migration, kind, schema_name, object_name, parent_name) A
   ('rls_carteira_relacionamento_hardening', 'rls_policy', 'public', 'fcop_select_carteira', 'farmer_copilot_sessions'),
   ('rls_carteira_relacionamento_hardening', 'rls_policy', 'public', 'fcop_insert_own_or_gestor', 'farmer_copilot_sessions'),
   ('rls_carteira_relacionamento_hardening', 'rls_policy', 'public', 'fcop_update_own_or_gestor', 'farmer_copilot_sessions'),
-  ('rls_carteira_relacionamento_hardening', 'rls_policy', 'public', 'fcop_delete_own_or_gestor', 'farmer_copilot_sessions'),
-  ('fin_funding_inputs', 'table', 'public', 'fin_funding_inputs', ''),
-  ('fin_funding_inputs', 'rls_policy', 'public', 'fin_funding_inputs_select_master', 'fin_funding_inputs'),
-  ('fin_funding_inputs', 'rls_policy', 'public', 'fin_funding_inputs_write_master', 'fin_funding_inputs')
+  ('rls_carteira_relacionamento_hardening', 'rls_policy', 'public', 'fcop_delete_own_or_gestor', 'farmer_copilot_sessions')
 )
 SELECT
   e.migration,
