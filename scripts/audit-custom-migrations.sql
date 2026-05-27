@@ -3,7 +3,7 @@
 -- ========================================================================
 --
 -- Gerado por: scripts/audit-custom-migrations.ts
--- Total de custom migrations: 89
+-- Total de custom migrations: 94
 --
 -- Como usar:
 --   1. Abra o Supabase SQL Editor (via Lovable Cloud → Backend → SQL Editor)
@@ -108,7 +108,12 @@ WITH expected (version, slug, filename) AS (VALUES
   ('20260527170000', 'crons_timeout_fix', '20260527170000_crons_timeout_fix.sql'),
   ('20260527180000', 'data_health_add_vendas', '20260527180000_data_health_add_vendas.sql'),
   ('20260527180000', 'get_tint_price_rpc', '20260527180000_get_tint_price_rpc.sql'),
-  ('20260527190000', 'drop_tint_formula_itens_public_select', '20260527190000_drop_tint_formula_itens_public_select.sql')
+  ('20260527190000', 'drop_redundant_sync_orders_cron', '20260527190000_drop_redundant_sync_orders_cron.sql'),
+  ('20260527190000', 'drop_tint_formula_itens_public_select', '20260527190000_drop_tint_formula_itens_public_select.sql'),
+  ('20260527200000', 'data_health_add_estoque_reposicao', '20260527200000_data_health_add_estoque_reposicao.sql'),
+  ('20260527210000', 'data_health_compute_internal', '20260527210000_data_health_compute_internal.sql'),
+  ('20260527220000', 'data_health_watchdog', '20260527220000_data_health_watchdog.sql'),
+  ('20260527220001', 'fin_sync_cursor_backfill_desde', '20260527220001_fin_sync_cursor_backfill_desde.sql')
 )
 SELECT
   e.version,
@@ -552,7 +557,13 @@ WITH expected_objects (migration, kind, schema_name, object_name, parent_name) A
   ('crons_timeout_fix', 'cron_job', 'cron', 'sync-reprocess-strategic', ''),
   ('crons_timeout_fix', 'cron_job', 'cron', 'weekly-algorithm-a-audit', ''),
   ('data_health_add_vendas', 'function', 'public', 'get_data_health', ''),
-  ('get_tint_price_rpc', 'function', 'public', 'get_tint_price', '')
+  ('get_tint_price_rpc', 'function', 'public', 'get_tint_price', ''),
+  ('data_health_add_estoque_reposicao', 'function', 'public', 'get_data_health', ''),
+  ('data_health_compute_internal', 'function', 'public', '_data_health_compute', ''),
+  ('data_health_compute_internal', 'function', 'public', 'get_data_health', ''),
+  ('data_health_watchdog', 'function', 'public', 'data_health_watchdog', ''),
+  ('data_health_watchdog', 'function', 'public', 'fin_sync_heartbeat', ''),
+  ('data_health_watchdog', 'cron_job', 'cron', 'data-health-watchdog', '')
 )
 SELECT
   e.migration,
