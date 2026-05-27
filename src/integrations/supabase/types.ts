@@ -11635,30 +11635,6 @@ export type Database = {
         }
         Relationships: []
       }
-      mv_sku_ranking_negociacao_paralela: {
-        Row: {
-          atualizado_em: string | null
-          categoria: string | null
-          coef_variacao: number | null
-          empresa: string | null
-          fornecedor_nome: string | null
-          meses_com_compra: number | null
-          num_compras_12m: number | null
-          perc_meses_com_promo: number | null
-          preco_medio_unitario: number | null
-          promocoes_12m: number | null
-          score_ausencia_promo: number | null
-          score_consistencia: number | null
-          score_final: number | null
-          score_preco: number | null
-          score_volume: number | null
-          sku_codigo_omie: string | null
-          sku_descricao: string | null
-          ultima_compra: string | null
-          volume_financeiro_12m: number | null
-        }
-        Relationships: []
-      }
       referrals_for_referrer: {
         Row: {
           converted_at: string | null
@@ -13022,6 +12998,16 @@ export type Database = {
       get_meu_mixgap_for: { Args: { p_target: string }; Returns: Json }
       get_minha_positivacao: { Args: never; Returns: Json }
       get_minha_positivacao_for: { Args: { p_target: string }; Returns: Json }
+      get_sku_ranking_negociacao_paralela: {
+        Args: { p_empresa?: string }
+        Returns: unknown[]
+        SetofOptions: {
+          from: "*"
+          to: "mv_sku_ranking_negociacao_paralela"
+          isOneToOne: false
+          isSetofReturn: true
+        }
+      }
       get_user_access_profile_for: { Args: { p_target: string }; Returns: Json }
       get_user_role: {
         Args: { _user_id: string }
