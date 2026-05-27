@@ -1,6 +1,6 @@
 # Clientes não-vinculados — design (v1 sob demanda)
 
-> **Status: DESIGN PRONTO — DEFERIDO pra uma sessão nova.** Decisão Claude + Codex (2026-05-26): não construir no fim de uma sessão-maratona. É o **primeiro batch job de ERP de verdade** do programa (enumeração paginada do Omie + snapshot persistido + trigger privilegiado + deploy de edge function) — merece cabeça descansada. O brainstorm já está fechado; uma sessão nova começa direto no `writing-plans`.
+> **Status: EM CONSTRUÇÃO** (2026-05-26). Claude + Codex recomendaram deferir (1º batch job de ERP no fim da maratona); o founder pediu pra seguir. Construído **com todos os must-gets do Codex embutidos** (cursor resumável, run_id, backoff, auth server-side, observabilidade, UX honesta) — e o passo arriscado (1º run real contra o Omie de produção) fica gated no deploy/trigger do founder. Plano: `docs/superpowers/plans/2026-05-26-clientes-nao-vinculados.md`.
 
 ## Problema
 
