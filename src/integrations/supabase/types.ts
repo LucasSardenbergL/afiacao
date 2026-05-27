@@ -12763,6 +12763,7 @@ export type Database = {
         }
         Returns: number
       }
+      data_health_watchdog: { Args: never; Returns: undefined }
       des_data_faturamento_prevista: {
         Args: {
           p_data_emissao: string
