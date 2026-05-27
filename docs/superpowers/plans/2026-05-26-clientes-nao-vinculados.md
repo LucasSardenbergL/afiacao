@@ -1,5 +1,10 @@
 # Clientes não-vinculados (v1 sob demanda) · Implementation Plan
 
+> **⚠️ SUPERSEDED (2026-05-26).** Este plano é da abordagem **standalone** (edge function nova diffando só contra `omie_clientes`), que o build revelou ser **incorreta** (contaria clientes com profile como não-vinculados = relatório enganoso). O design CORRETO (carona no `omie-analytics-sync`, que já enumera + define "vinculado" certo) está no spec `docs/superpowers/specs/2026-05-26-clientes-nao-vinculados-design.md` → seção "Correção de design". Uma sessão fresca **re-planeja** a partir do spec corrigido. Não executar este plano.
+
+---
+
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** Relatório sob demanda (master/gestor) dos clientes Omie da Oben que NÃO têm conta no app, via edge function que enumera o Omie (paginado, resumável) e diffa contra `omie_clientes`.
