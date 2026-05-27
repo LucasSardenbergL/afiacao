@@ -175,7 +175,7 @@ export function ImportCard({
             <h3 className="text-sm font-semibold">Resultado</h3>
             {results.map((r, i) => (
               <div key={i} className="border rounded-md p-3 flex items-start gap-3">
-                {r.status === 'concluido' ? <CheckCircle className="w-4 h-4 text-green-500 mt-0.5" /> : <AlertTriangle className="w-4 h-4 text-yellow-500 mt-0.5" />}
+                {r.status === 'concluido' ? <CheckCircle className="w-4 h-4 text-status-success mt-0.5" /> : <AlertTriangle className="w-4 h-4 text-status-warning mt-0.5" />}
                 <div className="text-sm">
                   <p className="font-medium">{r.name}</p>
                   <p className="text-muted-foreground">
