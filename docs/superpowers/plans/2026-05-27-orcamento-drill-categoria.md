@@ -90,16 +90,77 @@ describe('drillLinha', () => {
     expect(r.variancia_anual).toBe(-500);
   });
 
-  it('mapping: company sobrescreve _default (código sai da linha-alvo)', () => {
+  it('mapping: company sobrescreve _default — INDEPENDENTE DA ORDEM do array (P1)', () => {
     const rowsAno = [row('2.01.01', 1, 100)];
+    const ordemA = [map('2.01.01','despesas_comerciais','_default'), map('2.01.01','cmv','oben')];
+    const ordemB = [map('2.01.01','cmv','oben'), map('2.01.01','despesas_comerciais','_default')];
+    for (const mapping of [ordemA, ordemB]) {
+      const r = drillLinha({ dreLinha: 'despesas_comerciais', regime: 'presumido', rowsAno, rowsAnoAnterior: [], mapping, ...base, realizadoSnapshot: 0 });
+      expect(r.componentes).toHaveLength(0); // company(oben)→cmv vence _default→despesas_comerciais
+      expect(r.total_decomposto).toBe(0);
+    }
+    // E o inverso: company manda p/ a linha-alvo, _default mandaria p/ outra
+    const rInv = drillLinha({ dreLinha: 'cmv', regime: 'presumido', rowsAno, rowsAnoAnterior: [], mapping: ordemA, ...base, realizadoSnapshot: 100 });
+    expect(rInv.componentes).toHaveLength(1);
+    expect(rInv.componentes[0].realizado_ytd).toBe(100);
+  });
+
+  it('multi-source: mesmo código em CR e CP soma (deducoes; consistente c/ snapshot, P1)', () => {
+    // service concatena CR+CP em rowsAno; mesmo código em ambos os razões → soma
+    const rowsAno = [row('1.05.01', 1, 100, 'ICMS'), row('1.05.01', 2, 50, 'ICMS')];
     const r = drillLinha({
-      dreLinha: 'despesas_comerciais', regime: 'presumido',
-      rowsAno, rowsAnoAnterior: [],
-      mapping: [map('2.01.01','despesas_comerciais','_default'), map('2.01.01','cmv','oben')],
+      dreLinha: 'deducoes', regime: 'presumido',
+      rowsAno, rowsAnoAnterior: [], mapping: [map('1.05.01','ded_icms')],
+      ...base, realizadoSnapshot: 150,
+    });
+    expect(r.componentes).toHaveLength(1);
+    expect(r.componentes[0].realizado_ytd).toBe(150); // soma das duas ocorrências
+    expect(r.qualidade).toBe('ok');
+  });
+
+  it('presumido: código mapeado p/ literal "impostos" cai em DEDUCOES, não impostos (normalização legado, P2)', () => {
+    const rowsAno = [row('9.99', 1, 300, 'Imposto legado')];
+    const mapping = [map('9.99','impostos')];
+    const rDed = drillLinha({ dreLinha: 'deducoes', regime: 'presumido', rowsAno, rowsAnoAnterior: [], mapping, ...base, realizadoSnapshot: 300 });
+    expect(rDed.componentes).toHaveLength(1); // "impostos" legado → deducoes
+    const rImp = drillLinha({ dreLinha: 'impostos', regime: 'presumido', rowsAno, rowsAnoAnterior: [], mapping, ...base, realizadoSnapshot: 0 });
+    expect(rImp.componentes).toHaveLength(0); // NÃO entra em impostos (só irpj/csll)
+  });
+
+  it('mês: mes null não entra e não gera NaN; mesesFechados vazio → tudo fora', () => {
+    const rowsAno = [row('4.01', 1, 100), { categoria_codigo: '4.01', categoria_descricao: '4.01', mes: null, valor: 999 }];
+    const r1 = drillLinha({ dreLinha: 'cmv', regime: 'presumido', rowsAno, rowsAnoAnterior: [], mapping: [map('4.01','cmv')], ...base, mesesFechados: [1], realizadoSnapshot: 100 });
+    expect(r1.componentes[0].realizado_ytd).toBe(100); // mes null ignorado
+    expect(Number.isFinite(r1.total_decomposto)).toBe(true);
+    const r2 = drillLinha({ dreLinha: 'cmv', regime: 'presumido', rowsAno, rowsAnoAnterior: [], mapping: [map('4.01','cmv')], ...base, mesesFechados: [], realizadoSnapshot: 0 });
+    expect(r2.componentes).toHaveLength(0);
+    expect(r2.total_decomposto).toBe(0);
+  });
+
+  it('valores negativos (estorno): ordenação por |realizado|, peso e reconciliação sem NaN', () => {
+    const rowsAno = [row('5.01', 1, -200, 'Estorno'), row('5.02', 1, 100, 'Normal')];
+    const r = drillLinha({
+      dreLinha: 'outras_despesas', regime: 'presumido',
+      rowsAno, rowsAnoAnterior: [], mapping: [map('5.01','outras_despesas'), map('5.02','outras_despesas')],
+      ...base, realizadoSnapshot: -100,
+    });
+    expect(r.componentes[0].categoria_codigo).toBe('5.01'); // |−200| > |100|
+    expect(r.total_decomposto).toBe(-100);
+    expect(r.componentes.every(c => Number.isFinite(c.peso_perc))).toBe(true);
+    expect(r.qualidade).toBe('ok'); // residuo 0
+  });
+
+  it('peso_perc com total decomposto zero (compensação) → 0, sem Infinity/NaN', () => {
+    const rowsAno = [row('6.01', 1, 100), row('6.02', 1, -100)];
+    const r = drillLinha({
+      dreLinha: 'outras_despesas', regime: 'presumido',
+      rowsAno, rowsAnoAnterior: [], mapping: [map('6.01','outras_despesas'), map('6.02','outras_despesas')],
       ...base, realizadoSnapshot: 0,
     });
-    expect(r.componentes).toHaveLength(0); // resolveu p/ cmv → não entra em despesas_comerciais
     expect(r.total_decomposto).toBe(0);
+    expect(r.componentes.every(c => c.peso_perc === 0)).toBe(true);
+    expect(r.residuo_perc).toBeNull(); // snapshot≈0 e decomposto≈0
+    expect(r.qualidade).toBe('ok');
   });
 
   it('deducoes (simples) captura DAS lançado em CP', () => {
@@ -141,15 +202,21 @@ describe('drillLinha', () => {
     expect(r.componentes[0].delta_perc).toBeCloseTo(-1, 5); // -200/abs(200)
   });
 
-  it('reconciliação: parcial (5-20%) e diagnostico (>20%)', () => {
+  it('reconciliação ok = (≤5% E ≤R$10k); parcial (5-20%); diagnostico (>20%)', () => {
     const mk = (snapshot: number) => drillLinha({
       dreLinha: 'cmv', regime: 'presumido',
       rowsAno: [row('4.01', 1, 100)], rowsAnoAnterior: [], mapping: [map('4.01','cmv')],
       mesesFechados: [1], forecastRestante: 0, varianciaAnual: 0, realizadoSnapshot: snapshot,
     });
-    expect(mk(110).qualidade).toBe('parcial');     // residuo 10/110 ≈ 9%
+    expect(mk(110).qualidade).toBe('parcial');     // residuo 10/110 ≈ 9% (>5%, ainda que R$10≤10k)
     expect(mk(200).qualidade).toBe('diagnostico');  // residuo 100/200 = 50%
-    expect(mk(101).qualidade).toBe('ok');           // residuo 1/101 ≈ 1% e ≤R$10k
+    expect(mk(101).qualidade).toBe('ok');           // residuo 1/101 ≈ 1% E R$1≤10k
+  });
+  it('reconciliação: resíduo % pequeno mas absoluto grande (>R$10k) → parcial, não ok (AND)', () => {
+    // linha grande: decomposto 5.000.000, snapshot 5.040.000 → residuo 40k (0,79%) mas >R$10k
+    const rowsAno = [row('4.01', 1, 5_000_000)];
+    const r = drillLinha({ dreLinha: 'cmv', regime: 'presumido', rowsAno, rowsAnoAnterior: [], mapping: [map('4.01','cmv')], mesesFechados: [1], forecastRestante: 0, varianciaAnual: 0, realizadoSnapshot: 5_040_000 });
+    expect(r.qualidade).toBe('parcial'); // 0,79% passa no %, mas R$40k > R$10k → NÃO ok
   });
 
   it('snapshot≈0 mas decomposto≠0 → diagnostico', () => {
@@ -165,7 +232,7 @@ describe('drillLinha', () => {
 ```
 
 - [ ] **Step 2: ver falhar** — `bunx vitest run src/lib/financeiro/__tests__/orcamento-drill-helpers.test.ts` (módulo não existe).
-- [ ] **Step 3: implementar** `orcamento-drill-helpers.ts` conforme a "Lógica de drillLinha" do spec (resolução company>_default determinística; aggregação bruta; round só no fim; qualidade com bordas epsilon).
+- [ ] **Step 3: implementar** `orcamento-drill-helpers.ts` conforme a "Lógica de drillLinha" do spec. **Resolução do mapping ORDER-INDEPENDENT (P1):** particiona as linhas em `_default` (`company === '_default'`) e específicas; popula o Map com `_default` primeiro, depois sobrescreve com as específicas — independe da ordem do array. `getCategoryMappings(company)` só traz `[company, '_default']`, então qualquer `company !== '_default'` é a empresa-alvo. Aggregação **bruta** (sem round); `round2` só no retorno; `mes` `null`/fora de `mesesFechados` excluído; `peso_perc`/`delta_perc` com guarda de divisão por ~0 (epsilon) → `0`/`null`; qualidade `ok` = `(residuo_perc ≤ 0.05 **E** |residuo| ≤ 10000)`.
 - [ ] **Step 4: ver passar** — suíte verde.
 - [ ] **Step 5: commit** — `feat(orcamento): helper drill de variância por categoria (aliases fiscais, reconciliação) + testes`.
 
@@ -191,9 +258,11 @@ export async function getCategoriasDimensaoRaw(
 }
 ```
 
-- [ ] **Step 2:** Na seção Forecast da página, tornar expansível cada linha com `fura_meta === true && fontesDaLinha(linha.dre_linha).length > 0`. Estado `expandedLinha: string | null`. `regime` via mapa `{ colacor:'presumido', oben:'presumido', colacor_sc:'simples' }`.
-- [ ] **Step 3:** Ao expandir (lazy, `useQuery` chaveado `['drill-dim', tipo, company, ano]` por fonte+ano): buscar `getCategoriasDimensaoRaw` para cada fonte de `fontesDaLinha` (ano + ano-1), concatenar, buscar `getCategoryMappings(company)`, rodar `drillLinha`. Render: (a) faixa de contexto (variância anual + fura_meta); (b) tabela de componentes (descrição, realizado YTD, YoY ano-1, delta, peso); (c) bloco "forecast restante (não decomposto)"; (d) faixa de reconciliação (snapshot vs decomposto vs resíduo + badge de qualidade via `text-status-*`: ok=success, parcial=warning, diagnostico=error). Skeleton no loading.
-- [ ] **Step 4:** Copy honesto (P2.10): "Principais componentes do realizado YTD" / "Maiores variações vs {ano-1}" — NUNCA "explicam o furo". Aviso quando `parcial`/`diagnostico`.
+> **`p_mes: null` é comportamento PROVADO em produção** (Codex P1): `getAnaliseDimensional` já chama as mesmas RPCs com `p_mes: null` (FinanceiroAnalytics, mês default null) e recebe o ano inteiro. Sem risco de retorno vazio.
+
+- [ ] **Step 2:** Na seção Forecast da página, tornar expansível cada linha com `fura_meta === true && fontesDaLinha(linha.dre_linha).length > 0`. Estado `expandedLinha: string | null`. `regime` via mapa `{ colacor:'presumido', oben:'presumido', colacor_sc:'simples' }`. **`useEffect` reseta `expandedLinha = null` quando `company` ou `ano` muda** (P2). Linhas derivadas (sem fonte) NÃO recebem affordance nem fetch.
+- [ ] **Step 3:** **Padrão de hooks correto (P2 — sem hook em loop/condicional):** um único `useQuery` chaveado `['drill', company, ano, expandedLinha]` com `enabled: !!expandedLinha`. O `queryFn` orquestra TODO o fetch (sem hooks): para cada fonte de `fontesDaLinha(expandedLinha)`, `getCategoriasDimensaoRaw(fonte, company, ano)` + `(…, ano-1)` em paralelo (`Promise.all`), concatena por ano; `getCategoryMappings(company)`; roda `drillLinha({ ..., varianciaAnual: linha.variancia })` e retorna `DrillResult`. Render do painel: (a) faixa de contexto (variância anual + fura_meta); (b) tabela de componentes (descrição, realizado YTD, YoY ano-1, delta, peso); (c) bloco "forecast restante (não decomposto)"; (d) faixa de reconciliação (snapshot vs decomposto vs resíduo + badge `text-status-*`: ok=success, parcial=warning, diagnostico=error). **Estados: loading (skeleton), erro (RPC/mapping falhou → mensagem + retry), vazio (componentes=[] → "Sem categorias mapeadas neste período" + a faixa de reconciliação ainda aparece).**
+- [ ] **Step 4:** Copy honesto (P2.10): "Principais componentes do realizado YTD" / "Maiores variações vs {ano-1}" — NUNCA "explicam o furo". Aviso explícito quando `parcial` ("drill parcial; fontes não reconciliadas") / `diagnostico` ("não reconcilia com o DRE — modo diagnóstico").
 - [ ] **Step 5:** `bunx tsc --noEmit -p tsconfig.app.json` + `bun lint` limpos.
 - [ ] **Step 6: commit** — `feat(orcamento): drill inline de variância por categoria na seção Forecast`.
 
