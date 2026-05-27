@@ -12664,6 +12664,22 @@ export type Database = {
         Args: { p_owner: string }
         Returns: Json
       }
+      _data_health_compute: {
+        Args: never
+        Returns: {
+          age_seconds: number
+          domain: string
+          expected_max_age_seconds: number
+          freshness_basis: string
+          how_to_fix: string
+          last_error: string
+          message: string
+          probable_cause: string
+          severity: string
+          source: string
+          status: string
+        }[]
+      }
       aplicar_promocoes_no_ciclo: {
         Args: { p_data_ciclo?: string; p_empresa?: string }
         Returns: {
