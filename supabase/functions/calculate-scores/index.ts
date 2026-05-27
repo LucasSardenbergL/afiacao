@@ -75,6 +75,13 @@ interface FarmerClientScoreSeed {
 
 interface ScoreUpdate {
   id: string;
+  // customer_user_id + farmer_id são NOT NULL em farmer_client_scores. O upsert
+  // onConflict:'id' gera INSERT...ON CONFLICT, e o INSERT valida NOT NULL ANTES de
+  // detectar o conflito → sem estas colunas o batch inteiro estoura (erro só logado,
+  // não lançado) e nada persiste, mesmo a função retornando 200. Por isso o
+  // calculated_at ficava congelado. (incidente 2026-05-27)
+  customer_user_id: string;
+  farmer_id: string;
   health_score: number;
   health_class: string;
   churn_risk: number;
@@ -439,6 +446,9 @@ Deno.serve(async (req) => {
 
       updates.push({
         id: client.id,
+        // NOT NULL — obrigatórias no INSERT do upsert onConflict:'id' (ver ScoreUpdate)
+        customer_user_id: client.customer_user_id,
+        farmer_id: client.farmer_id,
         health_score: healthScore,
         health_class: healthClass,
         churn_risk: churnRisk,

@@ -21,15 +21,15 @@ Este audit valida **quais custom migrations estão de fato aplicadas no banco**.
 
 ## Resumo
 
-- **83** custom migrations totais
-- **407** objetos esperados (criados por estas migrations)
+- **87** custom migrations totais
+- **425** objetos esperados (criados por estas migrations)
 - Quebra por tipo:
   - `rls_policy`: 139
   - `index`: 96
-  - `function`: 61
+  - `function`: 64
   - `table`: 57
+  - `cron_job`: 34
   - `trigger`: 31
-  - `cron_job`: 19
   - `enum_value`: 4
 
 ## Inventário por migration
@@ -843,6 +843,44 @@ Lista canônica do que cada migration *deveria* criar (extraído via regex de `C
 ### `20260527140000_revoke_carteira_internals_anon.sql`
 
 > _Nenhum objeto extraído via regex._ Migration provavelmente é `ALTER TABLE` / `UPDATE` / `INSERT` / RLS-only. Validar manualmente.
+
+### `20260527160000_cron_vendas_sync_pedidos.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `cron_job` | `cron.vendas-sync-pedidos-oben-2h` | — |
+| `cron_job` | `cron.vendas-sync-pedidos-colacor-2h` | — |
+
+### `20260527160000_matview_ranking_negociacao_private.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `function` | `public.refresh_sku_ranking_negociacao` | — |
+| `function` | `public.get_sku_ranking_negociacao_paralela` | — |
+
+### `20260527170000_crons_timeout_fix.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `cron_job` | `cron.carteira-positivacao-snapshot-mensal` | — |
+| `cron_job` | `cron.carteira-rebuild-nightly` | — |
+| `cron_job` | `cron.compute-association-rules-daily` | — |
+| `cron_job` | `cron.compute-costs-daily` | — |
+| `cron_job` | `cron.monthly-tool-report` | — |
+| `cron_job` | `cron.omie-sync-metadados-daily` | — |
+| `cron_job` | `cron.omie-sync-status-produtos-diario` | — |
+| `cron_job` | `cron.process-recurring-orders-daily` | — |
+| `cron_job` | `cron.sayerlack-portal-watchdog` | — |
+| `cron_job` | `cron.sync-colacor-vendas-products` | — |
+| `cron_job` | `cron.sync-reprocess-operational` | — |
+| `cron_job` | `cron.sync-reprocess-strategic` | — |
+| `cron_job` | `cron.weekly-algorithm-a-audit` | — |
+
+### `20260527180000_data_health_add_vendas.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `function` | `public.get_data_health` | — |
 
 ## Próximos passos quando algo der `❌`
 

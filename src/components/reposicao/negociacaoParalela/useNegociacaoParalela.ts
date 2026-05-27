@@ -77,11 +77,11 @@ export function useNegociacaoParalela() {
   const { data: ranking = [], isLoading: loadingRanking } = useQuery({
     queryKey: ["negociacao-paralela-ranking", EMPRESA],
     queryFn: async () => {
+      // A matview foi movida p/ schema `private` (não exposto via REST direto);
+      // o ranking vem por RPC SECURITY DEFINER staff-guard, que já filtra a
+      // empresa e ordena por score_final desc no servidor.
       const { data, error } = await supabase
-        .from("mv_sku_ranking_negociacao_paralela" as never)
-        .select("*")
-        .eq("empresa", EMPRESA)
-        .order("score_final", { ascending: false });
+        .rpc("get_sku_ranking_negociacao_paralela" as never, { p_empresa: EMPRESA } as never);
       if (error) throw error;
       return (data ?? []) as unknown as RankingRow[];
     },

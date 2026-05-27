@@ -126,6 +126,7 @@ const unifiedNavSections: { title: string; items: NavItem[] }[] = [
       { icon: Shield, label: 'Cockpit CFO', path: '/financeiro/cockpit', managerOnly: true },
       { icon: DollarSign, label: 'Gestão Financeira', path: '/financeiro/gestao', managerOnly: true },
       { icon: BarChart3, label: 'Análise e Config', path: '/financeiro/analise', managerOnly: true },
+      { icon: Target, label: 'Orçamento', path: '/financeiro/orcamento', managerOnly: true },
       { icon: TrendingUp, label: 'Retorno & Valor', path: '/financeiro/valor', masterOnly: true },
       { icon: Percent, label: 'Regime Tributário', path: '/financeiro/regime-tributario', masterOnly: true },
       { icon: Landmark, label: 'Custo de Funding', path: '/financeiro/funding', masterOnly: true },

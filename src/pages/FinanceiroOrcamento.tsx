@@ -8,8 +8,9 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@
 import { COMPANIES, ALL_COMPANIES, type Company } from '@/contexts/CompanyContext';
 import { getDRE, DRE_LINHAS, type FinDRE } from '@/services/financeiroService';
 import { getOrcamento, upsertOrcamento, type OrcamentoLinha } from '@/services/financeiroV2Service';
+import { projetarDRE, LINHAS_INPUT, type MesDRE, type LinhaInput } from '@/lib/financeiro/orcamento-forecast-helpers';
 import { toast } from 'sonner';
-import { Loader2, Save, Building2, Calendar, TrendingUp, TrendingDown, Target, History } from 'lucide-react';
+import { Loader2, Save, Building2, Calendar, TrendingUp, TrendingDown, Target, History, Plane } from 'lucide-react';
 import { AuditTrailDrawer } from '@/components/financeiro/AuditTrailDrawer';
 
 const fmt = (v: number) => v.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' });
@@ -23,11 +24,49 @@ const mesesNome = ['Jan','Fev','Mar','Abr','Mai','Jun','Jul','Ago','Set','Out','
 const dreLinhas = DRE_LINHAS.map(l => l.value);
 const dreLabelMap = Object.fromEntries(DRE_LINHAS.map(l => [l.value, l.label]));
 
+const DERIVADAS_LABEL: Record<string, string> = {
+  receita_liquida: 'Receita Líquida',
+  lucro_bruto: 'Lucro Bruto',
+  resultado_operacional: 'Resultado Operacional',
+  resultado_antes_impostos: 'Result. antes Impostos',
+  resultado_liquido: 'Resultado Líquido',
+};
+
+function forecastLabel(linha: string): string {
+  return dreLabelMap[linha] ?? DERIVADAS_LABEL[linha] ?? linha;
+}
+
+/**
+ * Constrói o mapa orcado para projetarDRE.
+ * Regra CRÍTICA: chave ausente = não orçado (orcado_ano null).
+ * Chave presente com array = ao menos uma entrada existe → preenche os 12 meses (ausente → 0).
+ */
+function buildOrcadoForecast(
+  draft: Record<string, number>,
+): Partial<Record<LinhaInput, (number | null)[]>> {
+  const result: Partial<Record<LinhaInput, (number | null)[]>> = {};
+  for (const l of LINHAS_INPUT) {
+    // Verifica se existe ao menos um valor salvo para essa linha
+    const temEntrada = Array.from({ length: 12 }, (_, i) => i + 1).some(
+      mes => `${mes}_${l}` in draft,
+    );
+    if (!temEntrada) continue; // ausente: não inclui a chave
+    // Inclui a linha com 12 posições; meses sem entrada viram 0
+    const arr: (number | null)[] = Array.from({ length: 12 }, (_, i) => {
+      const key = `${i + 1}_${l}`;
+      return key in draft ? (draft[key] ?? 0) : 0;
+    });
+    result[l] = arr;
+  }
+  return result;
+}
+
 const FinanceiroOrcamento = () => {
   const [company, setCompany] = useState<Company>('oben');
   const [ano, setAno] = useState(new Date().getFullYear());
   const [orcamento, setOrcamento] = useState<OrcamentoLinha[]>([]);
   const [dre, setDre] = useState<FinDRE[]>([]);
+  const [dreAnoAnterior, setDreAnoAnterior] = useState<FinDRE[]>([]);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [editMode, setEditMode] = useState(false);
@@ -37,12 +76,14 @@ const FinanceiroOrcamento = () => {
   const load = useCallback(async () => {
     setLoading(true);
     try {
-      const [orc, dreData] = await Promise.all([
+      const [orc, dreData, dreAntData] = await Promise.all([
         getOrcamento(company, ano),
-        getDRE(company, ano),
+        getDRE(company, ano, undefined, 'competencia'),
+        getDRE(company, ano - 1, undefined, 'competencia'),
       ]);
       setOrcamento(orc);
       setDre(dreData);
+      setDreAnoAnterior(dreAntData);
 
       // Init draft from existing orcamento
       const d: Record<string, number> = {};
@@ -102,6 +143,45 @@ const FinanceiroOrcamento = () => {
       return { linha, label: dreLabelMap[linha], orcYtd, realYtd, variacao };
     });
   }, [draft, dre, currentMonth]);
+
+  // Adapter: constrói orcado para o forecast (ausente ≠ zero)
+  const orcadoForecast = useMemo((): ReturnType<typeof buildOrcadoForecast> => {
+    return buildOrcadoForecast(draft);
+  }, [draft]);
+
+  // Forecast de aterrissagem
+  const dreAtualMesDRE = useMemo((): MesDRE[] => {
+    return dre.map(d => {
+      const row: MesDRE = { mes: d.mes };
+      for (const l of LINHAS_INPUT) {
+        const v = (d as unknown as Record<string, number | undefined>)[l];
+        if (typeof v === 'number') row[l] = v;
+      }
+      return row;
+    });
+  }, [dre]);
+
+  const dreAnoAnteriorMesDRE = useMemo((): MesDRE[] => {
+    return dreAnoAnterior.map(d => {
+      const row: MesDRE = { mes: d.mes };
+      for (const l of LINHAS_INPUT) {
+        const v = (d as unknown as Record<string, number | undefined>)[l];
+        if (typeof v === 'number') row[l] = v;
+      }
+      return row;
+    });
+  }, [dreAnoAnterior]);
+
+  const forecast = useMemo(
+    () => projetarDRE({
+      company,
+      ano,
+      dreAtual: dreAtualMesDRE,
+      dreAnoAnterior: dreAnoAnteriorMesDRE,
+      orcado: orcadoForecast,
+    }),
+    [company, ano, dreAtualMesDRE, dreAnoAnteriorMesDRE, orcadoForecast],
+  );
 
   if (loading) {
     return <div className="flex items-center justify-center py-24"><Loader2 className="w-8 h-8 animate-spin" /></div>;
@@ -194,6 +274,119 @@ const FinanceiroOrcamento = () => {
               </TableBody>
             </Table>
           </div>
+        </CardContent>
+      </Card>
+
+      {/* Forecast de aterrissagem */}
+      <Card>
+        <CardHeader className="pb-3">
+          <CardTitle className="text-base flex items-center gap-2">
+            <Plane className="w-4 h-4" />
+            Forecast de aterrissagem {ano}
+            <Badge
+              variant="outline"
+              className={`text-[10px] ${
+                forecast.confianca_geral === 'alta'
+                  ? 'text-status-success'
+                  : forecast.confianca_geral === 'media'
+                  ? 'text-muted-foreground'
+                  : 'text-status-warning'
+              }`}
+            >
+              Confiança {forecast.confianca_geral}
+            </Badge>
+          </CardTitle>
+        </CardHeader>
+        <CardContent className="p-0">
+          {forecast.meses_fechados === 0 ? (
+            <p className="px-4 pb-4 text-sm text-muted-foreground">
+              Aguardando o 1º mês fechado de {ano} para projetar a aterrissagem.
+            </p>
+          ) : (
+            <div className="overflow-x-auto">
+              <Table>
+                <TableHeader>
+                  <TableRow>
+                    <TableHead className="sticky left-0 bg-background min-w-[200px]">Linha DRE</TableHead>
+                    <TableHead className="text-right w-28">Landing</TableHead>
+                    <TableHead className="text-right w-28">Orçado</TableHead>
+                    <TableHead className="text-right w-28">Variância</TableHead>
+                    <TableHead className="text-right w-24">% vs Orç.</TableHead>
+                    <TableHead className="w-32">Status</TableHead>
+                    <TableHead className="w-36">Método / Conf.</TableHead>
+                  </TableRow>
+                </TableHeader>
+                <TableBody>
+                  {forecast.linhas.map((linha, idx) => {
+                    const isDerivada = idx >= LINHAS_INPUT.length;
+                    const pctVsOrc =
+                      linha.orcado_ano !== null && linha.orcado_ano > 0 && linha.variancia !== null
+                        ? ((linha.variancia / linha.orcado_ano) * 100).toFixed(1) + '%'
+                        : '—';
+                    const varianciaCor =
+                      linha.favoravel === true
+                        ? 'text-status-success'
+                        : linha.favoravel === false
+                        ? 'text-status-error'
+                        : 'text-muted-foreground';
+
+                    return (
+                      <TableRow
+                        key={linha.dre_linha}
+                        className={isDerivada ? 'bg-muted/30' : undefined}
+                      >
+                        <TableCell
+                          className={`sticky left-0 bg-background text-xs ${
+                            isDerivada ? 'font-medium bg-muted/30' : ''
+                          }`}
+                        >
+                          {forecastLabel(linha.dre_linha)}
+                        </TableCell>
+                        <TableCell className={`text-right text-sm ${isDerivada ? 'font-medium' : ''}`}>
+                          {fmtCompact(linha.landing)}
+                        </TableCell>
+                        <TableCell className="text-right text-sm text-muted-foreground">
+                          {linha.orcado_ano !== null ? fmtCompact(linha.orcado_ano) : '—'}
+                        </TableCell>
+                        <TableCell className={`text-right text-sm font-medium ${varianciaCor}`}>
+                          {linha.variancia !== null ? fmtCompact(linha.variancia) : '—'}
+                        </TableCell>
+                        <TableCell className={`text-right text-xs ${varianciaCor}`}>
+                          {pctVsOrc}
+                        </TableCell>
+                        <TableCell>
+                          <div className="flex flex-wrap gap-1">
+                            {linha.fura_meta && (
+                              <Badge variant="outline" className="text-[10px] text-status-warning border-status-warning/50">
+                                Vai furar a meta
+                              </Badge>
+                            )}
+                          </div>
+                        </TableCell>
+                        <TableCell>
+                          {!isDerivada && (
+                            <div className="flex flex-wrap gap-1">
+                              <Badge variant="secondary" className="text-[10px]">
+                                {linha.metodo.replace(/_/g, ' ')}
+                              </Badge>
+                              <Badge
+                                variant="outline"
+                                className={`text-[10px] ${
+                                  linha.confianca === 'baixa' ? 'text-status-warning' : 'text-muted-foreground'
+                                }`}
+                              >
+                                {linha.confianca}
+                              </Badge>
+                            </div>
+                          )}
+                        </TableCell>
+                      </TableRow>
+                    );
+                  })}
+                </TableBody>
+              </Table>
+            </div>
+          )}
         </CardContent>
       </Card>
 

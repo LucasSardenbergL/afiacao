@@ -155,7 +155,7 @@ const AdminProductivity = () => {
         <div className="grid grid-cols-2 gap-3 mb-6">
           <Card>
             <CardContent className="p-4 text-center">
-              <CheckCircle2 className="w-6 h-6 text-emerald-500 mx-auto mb-1" />
+              <CheckCircle2 className="w-6 h-6 text-status-success mx-auto mb-1" />
               <p className="text-2xl font-bold">{totalCompleted}</p>
               <p className="text-xs text-muted-foreground">Pedidos concluídos</p>
             </CardContent>

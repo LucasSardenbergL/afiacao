@@ -229,7 +229,7 @@ function SkuTab() {
                       {isInactive ? (
                         <Badge variant="outline" className="bg-muted text-muted-foreground">Oculto</Badge>
                       ) : (
-                        <Badge variant="outline" className={sku.omie_product_id ? 'bg-green-500/10 text-green-700' : 'bg-yellow-500/10 text-yellow-700'}>
+                        <Badge variant="outline" className={sku.omie_product_id ? 'bg-status-success-bg text-status-success' : 'bg-status-warning-bg text-status-warning'}>
                           {sku.omie_product_id ? 'Mapeado' : 'Pendente'}
                         </Badge>
                       )}
@@ -321,7 +321,7 @@ function CoranteTab() {
                 <TableCell className="text-sm">{c.volume_total_ml}ml</TableCell>
                 <TableCell className="text-sm">{custoMl ? `R$ ${custoMl.toFixed(4)}` : '—'}</TableCell>
                 <TableCell>
-                  <Badge variant="outline" className={c.omie_product_id ? 'bg-green-500/10 text-green-700' : 'bg-yellow-500/10 text-yellow-700'}>
+                  <Badge variant="outline" className={c.omie_product_id ? 'bg-status-success-bg text-status-success' : 'bg-status-warning-bg text-status-warning'}>
                     {c.omie_product_id ? 'Mapeado' : 'Pendente'}
                   </Badge>
                 </TableCell>
