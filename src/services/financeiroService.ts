@@ -1,5 +1,6 @@
 import { supabase } from "@/integrations/supabase/client";
 import type { Company } from "@/contexts/CompanyContext";
+import { agregarRealizadoPorDia } from "@/lib/financeiro/fluxo-realizado-helpers";
 import type {
   FinAgingPagarView,
   FinAgingReceberView,
@@ -385,10 +386,6 @@ export async function getFluxoCaixa(
         day.entradas_previstas += cr.valor_documento || 0;
       }
     }
-    if (cr.data_recebimento) {
-      const day = ensureDay(cr.data_recebimento);
-      day.entradas_realizadas += cr.valor_recebido || 0;
-    }
   }
 
   for (const cp of cpData || []) {
@@ -398,10 +395,34 @@ export async function getFluxoCaixa(
         day.saidas_previstas += cp.valor_documento || 0;
       }
     }
-    if (cp.data_pagamento) {
-      const day = ensureDay(cp.data_pagamento);
-      day.saidas_realizadas += cp.valor_pago || 0;
-    }
+  }
+
+  // Realizado: caixa que de fato entrou/saiu por dia (fin_movimentacoes).
+  // A baixa-do-título (data_recebimento/data_pagamento) está sempre NULL — o
+  // Omie não manda no endpoint LIST. Paginação manual: PostgREST capa em 1000
+  // linhas e a janela pode passar disso.
+  const movimentos: Array<{ data_movimento: string; tipo: string | null; valor: number; omie_codigo_lancamento: number | null }> = [];
+  const PAGE = 1000;
+  for (let from = 0; ; from += PAGE) {
+    let movQuery = supabase
+      .from('fin_movimentacoes')
+      .select('data_movimento, tipo, valor, omie_codigo_lancamento')
+      .gte('data_movimento', dataInicio)
+      .lte('data_movimento', dataFim)
+      .order('data_movimento', { ascending: true })
+      .range(from, from + PAGE - 1);
+    if (company !== 'all') movQuery = movQuery.eq('company', company);
+    const { data: page } = await movQuery;
+    if (!page || page.length === 0) break;
+    movimentos.push(...page);
+    if (page.length < PAGE) break;
+  }
+
+  const realizadoPorDia = agregarRealizadoPorDia(movimentos);
+  for (const [dia, r] of realizadoPorDia) {
+    const day = ensureDay(dia);
+    day.entradas_realizadas += r.entradas;
+    day.saidas_realizadas += r.saidas;
   }
 
   // Calcular saldos
