@@ -21,12 +21,12 @@ Este audit valida **quais custom migrations estão de fato aplicadas no banco**.
 
 ## Resumo
 
-- **83** custom migrations totais
-- **407** objetos esperados (criados por estas migrations)
+- **84** custom migrations totais
+- **409** objetos esperados (criados por estas migrations)
 - Quebra por tipo:
   - `rls_policy`: 139
   - `index`: 96
-  - `function`: 61
+  - `function`: 63
   - `table`: 57
   - `trigger`: 31
   - `cron_job`: 19
@@ -843,6 +843,13 @@ Lista canônica do que cada migration *deveria* criar (extraído via regex de `C
 ### `20260527140000_revoke_carteira_internals_anon.sql`
 
 > _Nenhum objeto extraído via regex._ Migration provavelmente é `ALTER TABLE` / `UPDATE` / `INSERT` / RLS-only. Validar manualmente.
+
+### `20260527160000_matview_ranking_negociacao_private.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `function` | `public.refresh_sku_ranking_negociacao` | — |
+| `function` | `public.get_sku_ranking_negociacao_paralela` | — |
 
 ## Próximos passos quando algo der `❌`
 

@@ -3,7 +3,7 @@
 -- ========================================================================
 --
 -- Gerado por: scripts/audit-custom-migrations.ts
--- Total de custom migrations: 83
+-- Total de custom migrations: 84
 --
 -- Como usar:
 --   1. Abra o Supabase SQL Editor (via Lovable Cloud → Backend → SQL Editor)
@@ -102,7 +102,8 @@ WITH expected (version, slug, filename) AS (VALUES
   ('20260527010000', 'rls_copilot_sessions_select_own_only', '20260527010000_rls_copilot_sessions_select_own_only.sql'),
   ('20260527120000', 'clientes_nao_vinculados', '20260527120000_clientes_nao_vinculados.sql'),
   ('20260527120000', 'data_health_rpc_fix', '20260527120000_data_health_rpc_fix.sql'),
-  ('20260527140000', 'revoke_carteira_internals_anon', '20260527140000_revoke_carteira_internals_anon.sql')
+  ('20260527140000', 'revoke_carteira_internals_anon', '20260527140000_revoke_carteira_internals_anon.sql'),
+  ('20260527160000', 'matview_ranking_negociacao_private', '20260527160000_matview_ranking_negociacao_private.sql')
 )
 SELECT
   e.version,
@@ -527,7 +528,9 @@ WITH expected_objects (migration, kind, schema_name, object_name, parent_name) A
   ('clientes_nao_vinculados', 'function', 'public', 'finalize_nao_vinculados_snapshot', ''),
   ('clientes_nao_vinculados', 'rls_policy', 'public', 'nv_select', 'omie_clientes_nao_vinculados'),
   ('clientes_nao_vinculados', 'rls_policy', 'public', 'nv_state_select', 'omie_nao_vinculados_state'),
-  ('data_health_rpc_fix', 'function', 'public', 'get_data_health', '')
+  ('data_health_rpc_fix', 'function', 'public', 'get_data_health', ''),
+  ('matview_ranking_negociacao_private', 'function', 'public', 'refresh_sku_ranking_negociacao', ''),
+  ('matview_ranking_negociacao_private', 'function', 'public', 'get_sku_ranking_negociacao_paralela', '')
 )
 SELECT
   e.migration,
