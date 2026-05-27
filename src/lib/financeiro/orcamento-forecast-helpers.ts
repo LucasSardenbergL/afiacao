@@ -120,26 +120,6 @@ function orcadoAno(
   return arr.reduce<number>((acc, v) => acc + (v ?? 0), 0);
 }
 
-/** Helper interno: calcula orcado_ano para derivada (null→0; flag se algum input for null) */
-function orcadoAnoDerivada(
-  orcado: Partial<Record<LinhaInput, (number | null)[]>>,
-  linhasUsadas: LinhaInput[]
-): { valor: number; incompleto: boolean } {
-  let incompleto = false;
-  const vals: Partial<Record<LinhaInput, number>> = {};
-  for (const l of linhasUsadas) {
-    const v = orcadoAno(orcado, l);
-    if (v === null) incompleto = true;
-    vals[l] = v ?? 0;
-  }
-  return { valor: 0, incompleto }; // valor calculado por derivarLinhas depois
-}
-
-/** Constrói objeto de inputs para derivarLinhas a partir de um mapa parcial */
-function toInputs(m: Partial<Record<LinhaInput, number>>): Partial<Record<LinhaInput, number>> {
-  return m;
-}
-
 export function projetarDRE(input: {
   company: string;
   ano: number;
@@ -238,8 +218,6 @@ export function projetarDRE(input: {
   let metodoRecBruta: MetodoForecast = 'run_rate';
 
   if (fator !== null) {
-    // tentativa sazonal: verificamos se há ano anterior com receita em pelo menos um mês restante
-    const temAnoAnt = restantes.some(m => (dreAntPorMes.get(m)?.receita_bruta ?? 0) > 0 || dreAntPorMes.has(m));
     if (dreAnoAnterior.length > 0) {
       // sazonal: usa ano-1 × fator (mesmo para meses sem dados → 0 × fator = 0)
       for (const m of restantes) {
