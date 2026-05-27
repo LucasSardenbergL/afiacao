@@ -192,11 +192,15 @@ const FinanceiroOrcamento = () => {
 
     const seed = seedOrcamento({ dreBase: dreAnoAnteriorMesDRE, crescimentoPerc });
 
+    // Não-destrutivo (Codex): preenche SÓ células vazias; mantém o que já foi digitado/salvo.
     const novo = { ...draft };
+    let preenchidas = 0, mantidas = 0;
     for (const s of seed) {
-      if (s.valor_sugerido !== null) {
-        novo[`${s.mes}_${s.dre_linha}`] = s.valor_sugerido;
-      }
+      if (s.valor_sugerido === null) continue;
+      const key = `${s.mes}_${s.dre_linha}`;
+      const atual = novo[key];
+      if (atual == null || atual === 0) { novo[key] = s.valor_sugerido; preenchidas++; }
+      else mantidas++;
     }
     setDraft(novo);
 
@@ -210,8 +214,9 @@ const FinanceiroOrcamento = () => {
       seed.filter(s => s.flag === 'amostra_curta_sem_sugestao').map(s => s.dre_linha)
     ).size;
 
-    const partes: string[] = [];
-    if (nMesAusente > 0) partes.push(`${nMesAusente} mês${nMesAusente > 1 ? 'es' : ''} preenchido${nMesAusente > 1 ? 's' : ''} pela média`);
+    const partes: string[] = [`${preenchidas} célula${preenchidas !== 1 ? 's' : ''} preenchida${preenchidas !== 1 ? 's' : ''}`];
+    if (mantidas > 0) partes.push(`${mantidas} já preenchida${mantidas > 1 ? 's' : ''} mantida${mantidas > 1 ? 's' : ''}`);
+    if (nMesAusente > 0) partes.push(`${nMesAusente} mês${nMesAusente > 1 ? 'es' : ''} pela média`);
     if (nWinsorizado > 0) partes.push(`${nWinsorizado} ajustado${nWinsorizado > 1 ? 's' : ''} por outlier`);
     if (nAmostraCurta > 0) partes.push(`${nAmostraCurta} linha${nAmostraCurta > 1 ? 's' : ''} sem histórico (em branco)`);
 

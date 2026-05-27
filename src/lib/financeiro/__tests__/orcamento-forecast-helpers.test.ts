@@ -179,4 +179,16 @@ describe('seedOrcamento', () => {
     const dc = linhaSeed(seedOrcamento({ dreBase: base('despesas_operacionais', Array(12).fill(1000)), crescimentoPerc: -10 }), 'despesas_operacionais');
     expect(dc.every(s => s.valor_sugerido === 900)).toBe(true);
   });
+
+  it('materialidade: centavos residuais NÃO contam como amostra (não arrastam a mediana)', () => {
+    // [100000, 0.01, 0.01] → mat=1% de 100000=1000 → só 1 mês material → amostra curta, sem sugestão
+    const seed = seedOrcamento({ dreBase: base('receita_bruta', [100000, 0.01, 0.01, 0,0,0,0,0,0,0,0,0]), crescimentoPerc: 0 });
+    const rb = linhaSeed(seed, 'receita_bruta');
+    expect(rb.every(s => s.valor_sugerido === null && s.flag === 'amostra_curta_sem_sugestao')).toBe(true);
+  });
+
+  it('crescimento < -100 → orçamento não-negativo (clamp em -100 → 0)', () => {
+    const dc = linhaSeed(seedOrcamento({ dreBase: base('cmv', Array(12).fill(100)), crescimentoPerc: -150 }), 'cmv');
+    expect(dc.every(s => s.valor_sugerido === 0)).toBe(true);
+  });
 });

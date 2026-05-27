@@ -489,7 +489,10 @@ export function seedOrcamento(input: {
   crescimentoPerc: number;
   fatorOutlier?: number;
 }): SeedLinha[] {
-  const { dreBase, crescimentoPerc, fatorOutlier = 3 } = input;
+  const { dreBase } = input;
+  // Guardas (Codex): crescimento NaN→0, piso -100 (orçamento nunca negativo); fatorOutlier ≥1 finito senão 3.
+  const crescimentoPerc = Number.isFinite(input.crescimentoPerc) ? Math.max(-100, input.crescimentoPerc) : 0;
+  const fatorOutlier = (Number.isFinite(input.fatorOutlier) && (input.fatorOutlier as number) >= 1) ? (input.fatorOutlier as number) : 3;
   const g = 1 + crescimentoPerc / 100;
   const resultado: SeedLinha[] = [];
 
@@ -500,8 +503,13 @@ export function seedOrcamento(input: {
       v[mes] = dreBase.find(d => d.mes === mes)?.[linha] ?? 0;
     }
 
-    // Passo 2: meses com valor ≠ 0
-    const mesesComValor = [1,2,3,4,5,6,7,8,9,10,11,12].filter(m => v[m] !== 0);
+    // Passo 2: meses com valor MATERIAL (Codex): v≠0 E ≥ 1% do pico da linha. Sem o corte de
+    // materialidade, centavos residuais (ex.: [100000, 0,01, 0,01]) contam como amostra e arrastam a
+    // mediana p/ ~0, capando o mês real de 100k pra ~0,03 (orçamento absurdamente subestimado).
+    const mesesNaoZero = [1,2,3,4,5,6,7,8,9,10,11,12].filter(m => v[m] !== 0);
+    const maxAbs = mesesNaoZero.length ? Math.max(...mesesNaoZero.map(m => Math.abs(v[m]))) : 0;
+    const materialidade = maxAbs * 0.01;
+    const mesesComValor = mesesNaoZero.filter(m => Math.abs(v[m]) >= materialidade);
 
     if (mesesComValor.length < 3) {
       // Amostra curta — sem sugestão
