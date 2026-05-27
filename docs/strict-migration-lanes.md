@@ -100,6 +100,10 @@ subgrafos sujos (`noUnusedLocals`/`strictNullChecks`) → cascata. **Promova lea
   `importacaoId` não usado + 2 chaves de cache `string|null` guardadas em useDirectTintImport). **NÃO toco**
   `useMyAgendaToday` (puxa `lib/scoring/agenda`, lane farmer) nem `useAdminOrderDetail`/`useCallLog` (PR #228) nem
   `useValor` (financeiro-a2) nem `useRoutePlanner` (reposição).
+- ✅ **`claude/strict-promote-fin-helpers`** (2026-05-26): 2 helpers **novos** (criados hoje nos PRs de
+  segurança #322/#324/#327), pure-leaf, strict-clean por construção — `lib/financeiro/dre-period`,
+  `lib/financeiro/omie-request`. Append-only no `include`. **NÃO toco** mais nada de financeiro
+  (engines/services em churn por outras sessões); fatia disjunta da `cranky-driscoll` (que não tem `lib/financeiro/*`).
 
 ## Follow-up registrado
 
