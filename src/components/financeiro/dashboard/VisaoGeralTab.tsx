@@ -15,6 +15,7 @@ import type { FinAlert } from '@/utils/financeiroAlerts';
 import { fmt, fmtCompact, formatCnpj } from '@/components/financeiro/dashboard/format';
 import { KpiCard } from '@/components/financeiro/dashboard/KpiCard';
 import { AgingCard } from '@/components/financeiro/dashboard/AgingCard';
+import { DataHealthBanner } from '@/components/dataHealth/DataHealthBanner';
 
 export function VisaoGeralTab({
   alerts, activeResumo, resumo, view, agingReceber, agingPagar, inadimplentes,
@@ -264,6 +265,7 @@ export function VisaoGeralTab({
       )}
 
       {/* Contas Correntes */}
+      <DataHealthBanner source="saldo_bancario" />
       {activeResumo && activeResumo.contas_correntes.length > 0 && (
         <Card>
           <CardHeader className="pb-3">
