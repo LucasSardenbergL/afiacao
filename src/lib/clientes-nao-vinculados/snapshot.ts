@@ -42,6 +42,24 @@ export function normalizeDoc(raw: string | undefined | null): string {
   return (raw ?? '').replace(/\D/g, '');
 }
 
+// Classificação de um cliente Omie contra os conjuntos em massa:
+//  - codigosVinculados: todos os omie_codigo_cliente já em omie_clientes (vínculo)
+//  - docsComProfile: todos os documentos (normalizados) que têm profile no app
+// "não-vinculado" = tem código + doc, mas o código NÃO está vinculado E o doc NÃO tem profile.
+export type SnapshotClassification = 'skip' | 'linked' | 'has_profile' | 'unlinked';
+
+export function classifyClienteForSnapshot(
+  c: OmieClienteCadastroLite,
+  codigosVinculados: Set<number>,
+  docsComProfile: Set<string>,
+): SnapshotClassification {
+  const doc = normalizeDoc(c.cnpj_cpf);
+  if (!doc || c.codigo_cliente_omie == null) return 'skip';
+  if (codigosVinculados.has(Number(c.codigo_cliente_omie))) return 'linked';
+  if (docsComProfile.has(doc)) return 'has_profile';
+  return 'unlinked';
+}
+
 export function buildNaoVinculadoRow(
   c: OmieClienteCadastroLite,
   empresa: Empresa,

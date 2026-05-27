@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { accountToEmpresa, normalizeDoc, buildNaoVinculadoRow } from '../snapshot';
+import { accountToEmpresa, normalizeDoc, buildNaoVinculadoRow, classifyClienteForSnapshot } from '../snapshot';
 
 describe('accountToEmpresa', () => {
   it('mapeia as 3 contas Omie pras empresas', () => {
@@ -66,5 +66,33 @@ describe('buildNaoVinculadoRow', () => {
     expect(row.empresa).toBe('colacor');
     expect(row.omie_codigo_cliente).toBe(1);
     expect(row.synced_at).toBe(ts);
+  });
+});
+
+describe('classifyClienteForSnapshot', () => {
+  const codigos = new Set<number>([10, 20]);
+  const docs = new Set<string>(['12345678000199']);
+
+  it('linked quando o código está em omie_clientes (mesmo sem profile)', () => {
+    expect(classifyClienteForSnapshot({ codigo_cliente_omie: 10, cnpj_cpf: '99999999999' }, codigos, docs)).toBe('linked');
+  });
+
+  it('has_profile quando o doc tem profile mas o código não está vinculado (NÃO é não-vinculado)', () => {
+    // cenário do bug do design antigo: tem profile mas ainda sem linha em omie_clientes
+    expect(classifyClienteForSnapshot({ codigo_cliente_omie: 777, cnpj_cpf: '12.345.678/0001-99' }, codigos, docs)).toBe('has_profile');
+  });
+
+  it('unlinked quando não tem vínculo E não tem profile', () => {
+    expect(classifyClienteForSnapshot({ codigo_cliente_omie: 777, cnpj_cpf: '55.555.555/5555-55' }, codigos, docs)).toBe('unlinked');
+  });
+
+  it('skip quando falta doc ou código Omie', () => {
+    expect(classifyClienteForSnapshot({ codigo_cliente_omie: 777, cnpj_cpf: '' }, codigos, docs)).toBe('skip');
+    expect(classifyClienteForSnapshot({ cnpj_cpf: '55555555555555' }, codigos, docs)).toBe('skip');
+  });
+
+  it('código vem como string do Omie ainda casa o set numérico', () => {
+    const c = { codigo_cliente_omie: '20' as unknown as number, cnpj_cpf: '55555555555555' };
+    expect(classifyClienteForSnapshot(c, codigos, docs)).toBe('linked');
   });
 });
