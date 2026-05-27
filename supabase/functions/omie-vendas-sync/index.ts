@@ -1368,6 +1368,52 @@ async function criarPedidoVenda(
   return { omie_pedido_id, omie_numero_pedido };
 }
 
+// ─── Observabilidade do sync em fin_sync_log (best-effort) ───
+// Só as actions de SYNC logam (não as interativas de PV). Com action LIKE 'sync_%'
+// + companies=[account], a varredura de órfãs (>30min) e o sinal sync_error do
+// watchdog (#330) passam a cobrir vendas SEM mudar o watchdog. BEST-EFFORT: uma
+// falha de log NUNCA pode derrubar o sync (indisponibilidade por observabilidade).
+async function logVendaSync(
+  db: SupabaseClient,
+  action: string,
+  companies: string[],
+  triggeredBy: string,
+): Promise<string> {
+  try {
+    const { data } = await db
+      .from("fin_sync_log")
+      .insert({ action, companies, status: "running", triggered_by: triggeredBy, started_at: new Date().toISOString() })
+      .select("id")
+      .single();
+    return (data as { id?: string } | null)?.id || "";
+  } catch (e) {
+    console.error("[Omie Vendas] logVendaSync falhou (segue sem log):", e);
+    return "";
+  }
+}
+
+async function completeVendaSync(
+  db: SupabaseClient,
+  logId: string,
+  results: unknown,
+  errorMsg?: string,
+): Promise<void> {
+  if (!logId) return;
+  try {
+    await db
+      .from("fin_sync_log")
+      .update({
+        status: errorMsg ? "error" : "complete",
+        results: (results as Record<string, unknown>) ?? {},
+        error_message: errorMsg ?? null,
+        completed_at: new Date().toISOString(),
+      })
+      .eq("id", logId);
+  } catch (e) {
+    console.error("[Omie Vendas] completeVendaSync falhou (best-effort):", e);
+  }
+}
+
 serve(async (req) => {
   if (req.method === "OPTIONS") {
     return new Response(null, { headers: corsHeaders });
@@ -1375,14 +1421,19 @@ serve(async (req) => {
   const __auth = await authorizeCronOrStaff(req);
   if (!__auth.ok) return __auth.response;
 
+  // Admin client (service_role, bypassa RLS) + estado do log órfão-safe içados
+  // pra fora do try: o catch precisa finalizar o log de sync como 'error' em vez
+  // de deixar 'running' (senão o watchdog veria órfã eterna).
+  const supabaseAdmin = createClient(
+    Deno.env.get("SUPABASE_URL")!,
+    Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!
+  );
+  const SYNC_ACTIONS = ["sync_products", "sync_estoque", "sync_pedidos"];
+  let vendaLogId = "";
+  let vendaSyncFinalized = false;
+
   try {
     const authHeader = req.headers.get("Authorization");
-
-    // Admin client (bypasses RLS) for DB operations
-    const supabaseAdmin = createClient(
-      Deno.env.get("SUPABASE_URL")!,
-      Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!
-    );
 
     // Resolve userId quando vier JWT staff; cron/service_role passam sem user.
     let userId: string | null = null;
@@ -1400,6 +1451,16 @@ serve(async (req) => {
 
     const { action, account: rawAccount, ...params } = await req.json();
     const account: Account = (rawAccount === "colacor") ? "colacor" : "oben";
+
+    // Loga só as actions de SYNC (não as interativas de PV) — best-effort.
+    if (SYNC_ACTIONS.includes(action)) {
+      vendaLogId = await logVendaSync(
+        supabaseAdmin,
+        action,
+        [account],
+        __auth.via === "cron" ? "cron" : (userId || "staff"),
+      );
+    }
 
     let result: unknown;
 
@@ -2029,11 +2090,27 @@ serve(async (req) => {
         throw new Error(`Ação desconhecida: ${action}`);
     }
 
+    if (vendaLogId && !vendaSyncFinalized) {
+      await completeVendaSync(supabaseAdmin, vendaLogId, result);
+      vendaSyncFinalized = true;
+    }
+
     return new Response(JSON.stringify(result), {
       headers: { ...corsHeaders, "Content-Type": "application/json" },
     });
   } catch (error) {
     console.error("[Omie Vendas] Erro:", error);
+    // Finaliza o log de sync órfão como 'error' (best-effort interno → não
+    // mascara nem altera a resposta 500 original).
+    if (vendaLogId && !vendaSyncFinalized) {
+      await completeVendaSync(
+        supabaseAdmin,
+        vendaLogId,
+        null,
+        error instanceof Error ? error.message : String(error),
+      );
+      vendaSyncFinalized = true;
+    }
     return new Response(
       JSON.stringify({
         error: error instanceof Error ? error.message : "Erro desconhecido",
