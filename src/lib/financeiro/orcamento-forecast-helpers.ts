@@ -457,6 +457,101 @@ export function projetarDRE(input: {
   };
 }
 
+// ─── Task 1 (sub-PR B): seedOrcamento ────────────────────────────────────────
+
+/** Arredonda para 2 casas decimais (half-up, neutralizando erro de ponto flutuante). */
+function round2(n: number): number {
+  return Math.round((n + Number.EPSILON) * 100) / 100;
+}
+
+/** Calcula a mediana de um array de números não-vazios. */
+function mediana(vals: number[]): number {
+  const sorted = [...vals].sort((a, b) => a - b);
+  const mid = Math.floor(sorted.length / 2);
+  return sorted.length % 2 === 1
+    ? sorted[mid]
+    : (sorted[mid - 1] + sorted[mid]) / 2;
+}
+
+export type SeedFlag = 'winsorizado' | 'amostra_curta_sem_sugestao' | 'mes_ausente_media';
+export type SeedLinha = { dre_linha: string; mes: number; valor_sugerido: number | null; flag?: SeedFlag };
+
+/**
+ * Sugere o orçamento do próximo ano: realizado do ano anterior × (1 + crescimento),
+ * winsorizando outliers por múltiplo da mediana.
+ * Emite 12 SeedLinha (mes 1..12) para cada linha de LINHAS_INPUT.
+ * - amostra_curta_sem_sugestao: menos de 3 meses com valor ≠ 0 → valor_sugerido null.
+ * - winsorizado: o valor foi capado pelo múltiplo da mediana.
+ * - mes_ausente_media: mês sem dado → usa mediaCap ponderada.
+ */
+export function seedOrcamento(input: {
+  dreBase: MesDRE[];
+  crescimentoPerc: number;
+  fatorOutlier?: number;
+}): SeedLinha[] {
+  const { dreBase } = input;
+  // Guardas (Codex): crescimento NaN→0, piso -100 (orçamento nunca negativo); fatorOutlier ≥1 finito senão 3.
+  const crescimentoPerc = Number.isFinite(input.crescimentoPerc) ? Math.max(-100, input.crescimentoPerc) : 0;
+  const fatorOutlier = (Number.isFinite(input.fatorOutlier) && (input.fatorOutlier as number) >= 1) ? (input.fatorOutlier as number) : 3;
+  const g = 1 + crescimentoPerc / 100;
+  const resultado: SeedLinha[] = [];
+
+  for (const linha of LINHAS_INPUT) {
+    // Passo 1: valor de cada mês 1..12
+    const v: Record<number, number> = {};
+    for (let mes = 1; mes <= 12; mes++) {
+      v[mes] = dreBase.find(d => d.mes === mes)?.[linha] ?? 0;
+    }
+
+    // Passo 2: meses com valor MATERIAL (Codex): v≠0 E ≥ 1% do pico da linha. Sem o corte de
+    // materialidade, centavos residuais (ex.: [100000, 0,01, 0,01]) contam como amostra e arrastam a
+    // mediana p/ ~0, capando o mês real de 100k pra ~0,03 (orçamento absurdamente subestimado).
+    const mesesNaoZero = [1,2,3,4,5,6,7,8,9,10,11,12].filter(m => v[m] !== 0);
+    const maxAbs = mesesNaoZero.length ? Math.max(...mesesNaoZero.map(m => Math.abs(v[m]))) : 0;
+    const materialidade = maxAbs * 0.01;
+    const mesesComValor = mesesNaoZero.filter(m => Math.abs(v[m]) >= materialidade);
+
+    if (mesesComValor.length < 3) {
+      // Amostra curta — sem sugestão
+      for (let mes = 1; mes <= 12; mes++) {
+        resultado.push({ dre_linha: linha, mes, valor_sugerido: null, flag: 'amostra_curta_sem_sugestao' });
+      }
+      continue;
+    }
+
+    // Passo 3: Winsorize por múltiplo da mediana
+    const med = mediana(mesesComValor.map(m => v[m]));
+    const capSup = med * fatorOutlier;
+    const capInf = med / fatorOutlier;
+
+    const vCap: Record<number, number> = {};
+    const capou: Record<number, boolean> = {};
+    for (const mes of mesesComValor) {
+      const capped = Math.min(capSup, Math.max(capInf, v[mes]));
+      vCap[mes] = capped;
+      capou[mes] = capped !== v[mes];
+    }
+
+    // Passo 4: mediaCap (média dos vCap dos mesesComValor)
+    const mediaCap = mesesComValor.reduce((acc, m) => acc + vCap[m], 0) / mesesComValor.length;
+
+    // Passo 5: emite 12 SeedLinha
+    const mesesComValorSet = new Set(mesesComValor);
+    for (let mes = 1; mes <= 12; mes++) {
+      if (mesesComValorSet.has(mes)) {
+        const sugestao = round2(vCap[mes] * g);
+        const entry: SeedLinha = { dre_linha: linha, mes, valor_sugerido: sugestao };
+        if (capou[mes]) entry.flag = 'winsorizado';
+        resultado.push(entry);
+      } else {
+        resultado.push({ dre_linha: linha, mes, valor_sugerido: round2(mediaCap * g), flag: 'mes_ausente_media' });
+      }
+    }
+  }
+
+  return resultado;
+}
+
 /**
  * Deriva as linhas calculadas do DRE a partir das linhas de input.
  * Campos omitidos são tratados como 0.
