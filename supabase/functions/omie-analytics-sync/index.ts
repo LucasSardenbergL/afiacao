@@ -227,6 +227,10 @@ async function syncCustomers(db: SupabaseClient, account: OmieAccount) {
   const empresa = accountToEmpresa(account);
   const runTs = new Date().toISOString();
   const naoVinculados: NaoVinculadoRow[] = [];
+    // NOTA: este snapshot é produzido tanto pelo trigger manual (start_nao_vinculados, via
+    // waitUntil) quanto, de carona, pelas crons que chamam sync_customers/sync_all — refresh
+    // diário "de graça". Um kick manual durante um run de cron pode receber already_running
+    // (auto-cura pela janela de 15 min do guard).
   await db.from("omie_nao_vinculados_state").upsert(
     {
       empresa,
@@ -282,8 +286,9 @@ async function syncCustomers(db: SupabaseClient, account: OmieAccount) {
               omie_codigo_vendedor: c.codigo_vendedor || null,
             }, { onConflict: "user_id" });
             totalSynced++;
-          } else {
+          } else if (c.codigo_cliente_omie) {
             // Sem mapping E sem profile → cliente Omie sem conta no app.
+            // (exige código Omie; sem ele não há o que reportar nem chave de dedup)
             naoVinculados.push(buildNaoVinculadoRow(c, empresa, runTs));
           }
         } else {
@@ -316,6 +321,11 @@ async function syncCustomers(db: SupabaseClient, account: OmieAccount) {
       const { error: insErr } = await db.from("omie_clientes_nao_vinculados").insert(chunk);
       if (insErr) throw new Error(`insert nao_vinculados: ${insErr.message}`);
     }
+    // INVARIANTE DE SEGURANÇA: o finalize SÓ pode rodar depois que o conjunto COMPLETO
+    // do runTs foi inserido. Nunca chamar com dados parciais — é isso que faz um run
+    // morto (timeout/crash) ficar INVISÍVEL na UI em vez de virar relatório enganoso.
+    // (finalize está estritamente após o loop de insert, no mesmo try: um throw no meio
+    //  do insert pula o finalize, então o snapshot anterior completo é preservado.)
     const { error: finErr } = await db.rpc("finalize_nao_vinculados_snapshot", {
       p_empresa: empresa,
       p_run_ts: runTs,
