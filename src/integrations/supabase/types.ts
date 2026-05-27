@@ -6306,6 +6306,48 @@ export type Database = {
         }
         Relationships: []
       }
+      omie_clientes_nao_vinculados: {
+        Row: {
+          cidade: string | null
+          cnpj_cpf: string | null
+          codigo_vendedor: number | null
+          created_at: string
+          empresa: string
+          id: string
+          nome_fantasia: string | null
+          omie_codigo_cliente: number
+          razao_social: string | null
+          synced_at: string
+          uf: string | null
+        }
+        Insert: {
+          cidade?: string | null
+          cnpj_cpf?: string | null
+          codigo_vendedor?: number | null
+          created_at?: string
+          empresa: string
+          id?: string
+          nome_fantasia?: string | null
+          omie_codigo_cliente: number
+          razao_social?: string | null
+          synced_at: string
+          uf?: string | null
+        }
+        Update: {
+          cidade?: string | null
+          cnpj_cpf?: string | null
+          codigo_vendedor?: number | null
+          created_at?: string
+          empresa?: string
+          id?: string
+          nome_fantasia?: string | null
+          omie_codigo_cliente?: number
+          razao_social?: string | null
+          synced_at?: string
+          uf?: string | null
+        }
+        Relationships: []
+      }
       omie_condicao_pagamento_catalogo: {
         Row: {
           ativo: boolean | null
@@ -6333,6 +6375,39 @@ export type Database = {
           empresa?: string
           num_parcelas?: number | null
           ultima_sincronizacao?: string | null
+        }
+        Relationships: []
+      }
+      omie_nao_vinculados_state: {
+        Row: {
+          current_run_ts: string | null
+          empresa: string
+          error_message: string | null
+          last_complete_synced_at: string | null
+          started_at: string | null
+          status: string
+          total: number | null
+          updated_at: string
+        }
+        Insert: {
+          current_run_ts?: string | null
+          empresa: string
+          error_message?: string | null
+          last_complete_synced_at?: string | null
+          started_at?: string | null
+          status?: string
+          total?: number | null
+          updated_at?: string
+        }
+        Update: {
+          current_run_ts?: string | null
+          empresa?: string
+          error_message?: string | null
+          last_complete_synced_at?: string | null
+          started_at?: string | null
+          status?: string
+          total?: number | null
+          updated_at?: string
         }
         Relationships: []
       }
@@ -11655,6 +11730,21 @@ export type Database = {
           },
         ]
       }
+      v_clientes_nao_vinculados_atual: {
+        Row: {
+          cidade: string | null
+          cnpj_cpf: string | null
+          codigo_vendedor: number | null
+          empresa: string | null
+          id: string | null
+          nome_fantasia: string | null
+          omie_codigo_cliente: number | null
+          razao_social: string | null
+          synced_at: string | null
+          uf: string | null
+        }
+        Relationships: []
+      }
       v_cron_jobs_falhas: {
         Row: {
           duracao_segundos: number | null
@@ -12835,6 +12925,10 @@ export type Database = {
       fin_user_can_access: {
         Args: { check_company?: string }
         Returns: boolean
+      }
+      finalize_nao_vinculados_snapshot: {
+        Args: { p_empresa: string; p_run_ts: string; p_total: number }
+        Returns: undefined
       }
       fornecedor_operacional: {
         Args: { p_empresa: string; p_fornecedor: string; p_timestamp?: string }
