@@ -21,10 +21,10 @@ Este audit valida **quais custom migrations estão de fato aplicadas no banco**.
 
 ## Resumo
 
-- **78** custom migrations totais
-- **398** objetos esperados (criados por estas migrations)
+- **79** custom migrations totais
+- **399** objetos esperados (criados por estas migrations)
 - Quebra por tipo:
-  - `rls_policy`: 136
+  - `rls_policy`: 137
   - `index`: 95
   - `function`: 58
   - `table`: 55
@@ -810,6 +810,12 @@ Lista canônica do que cada migration *deveria* criar (extraído via regex de `C
 | `table` | `public.farmer_mixgap_feedback` | — |
 | `function` | `public.mark_mixgap_feedback` | — |
 | `function` | `public._carteira_mixgap_for_owner` | — |
+
+### `20260527010000_rls_copilot_sessions_select_own_only.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `rls_policy` | `public.fcop_select_carteira` | `farmer_copilot_sessions` |
 
 ## Próximos passos quando algo der `❌`
 
