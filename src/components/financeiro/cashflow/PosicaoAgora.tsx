@@ -84,7 +84,7 @@ export function PosicaoAgora() {
               entradas30={active.entradas_30d}
               saidas30={active.saidas_30d}
               totalCR={active.total_cr_aberto}
-              pmr={active.pmr}
+              pmr={active.pmr ?? 0}
             />
           )}
         </>

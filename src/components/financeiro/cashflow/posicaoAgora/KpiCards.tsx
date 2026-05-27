@@ -31,12 +31,21 @@ export function KpiCards({ active }: { active: CapitalDeGiro }) {
       />
       <div className="p-4 rounded-lg border bg-card">
         <p className="text-xs text-muted-foreground font-medium">Ciclo Financeiro</p>
-        <p className={`text-2xl font-bold mt-1 ${active.ciclo_financeiro > 0 ? 'text-status-warning' : 'text-status-success'}`}>
-          {active.ciclo_financeiro} dias
-        </p>
-        <p className="text-xs text-muted-foreground mt-1">
-          PMR {active.pmr}d − PMP {active.pmp}d
-        </p>
+        {active.ciclo_financeiro === null ? (
+          <>
+            <p className="text-2xl font-bold mt-1 text-muted-foreground">—</p>
+            <p className="text-xs text-muted-foreground mt-1">sem dados de prazo</p>
+          </>
+        ) : (
+          <>
+            <p className={`text-2xl font-bold mt-1 ${active.ciclo_financeiro > 0 ? 'text-status-warning' : 'text-status-success'}`}>
+              {active.ciclo_financeiro} dias
+            </p>
+            <p className="text-xs text-muted-foreground mt-1">
+              PMR {active.pmr ?? '—'}d − PMP {active.pmp ?? '—'}d
+            </p>
+          </>
+        )}
       </div>
     </div>
   );

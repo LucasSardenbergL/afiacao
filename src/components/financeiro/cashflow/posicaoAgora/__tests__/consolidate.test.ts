@@ -43,9 +43,31 @@ describe("buildConsolidated", () => {
     expect(c.top5_cr_pct).toBe(0); // concentração não consolida
   });
 
-  it("PMR/PMP = 0 quando volume zero (evita divisão por zero)", () => {
+  it("PMR/PMP = null quando volume zero (sem base pra ponderar)", () => {
     const c = buildConsolidated([mk({ total_cr_aberto: 0, pmr: 99, total_cp_aberto: 0, pmp: 99 })])!;
-    expect(c.pmr).toBe(0);
-    expect(c.pmp).toBe(0);
+    expect(c.pmr).toBeNull();
+    expect(c.pmp).toBeNull();
+    expect(c.ciclo_financeiro).toBeNull();
+  });
+
+  it("PMR/PMP = null quando nenhuma empresa tem prazo (degradação honesta, não 0 falso)", () => {
+    const c = buildConsolidated([
+      mk({ total_cr_aberto: 100, pmr: null, total_cp_aberto: 50, pmp: null }),
+      mk({ total_cr_aberto: 300, pmr: null, total_cp_aberto: 150, pmp: null }),
+    ])!;
+    expect(c.pmr).toBeNull();
+    expect(c.pmp).toBeNull();
+    expect(c.ciclo_financeiro).toBeNull();
+    expect(c.total_cr_aberto).toBe(400); // o resto continua somando
+  });
+
+  it("pondera só as empresas COM prazo, ignorando as null", () => {
+    const c = buildConsolidated([
+      mk({ total_cr_aberto: 100, pmr: 10, total_cp_aberto: 50, pmp: 20 }),
+      mk({ total_cr_aberto: 300, pmr: null, total_cp_aberto: 150, pmp: null }), // sem dado → não dilui
+    ])!;
+    expect(c.pmr).toBe(10); // só a 1ª empresa pondera (a 2ª é null)
+    expect(c.pmp).toBe(20);
+    expect(c.ciclo_financeiro).toBe(-10);
   });
 });
