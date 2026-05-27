@@ -23,9 +23,9 @@ describe('derivarLinhas', () => {
     const d = derivarLinhas({ receita_bruta:1000, deducoes:100, cmv:400, despesas_operacionais:50, despesas_administrativas:30, despesas_comerciais:20, receitas_financeiras:10, despesas_financeiras:5, outras_receitas:0, outras_despesas:0, impostos:40 });
     expect(d.receita_liquida).toBe(900);
     expect(d.lucro_bruto).toBe(500);
-    expect(d.resultado_operacional).toBe(400);
-    expect(d.resultado_antes_impostos).toBe(405);
-    expect(d.resultado_liquido).toBe(365);
+    expect(d.resultado_operacional).toBe(405); // 500 -50 -30 -20 +10 -5 (financeiras no operacional, = DRE v2)
+    expect(d.resultado_antes_impostos).toBe(405); // 405 + 0 - 0 (só outras)
+    expect(d.resultado_liquido).toBe(365); // 405 - 40
   });
   it('campos omitidos = 0, sem NaN', () => {
     const d = derivarLinhas({ receita_bruta:500 });

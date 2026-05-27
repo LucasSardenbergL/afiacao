@@ -219,9 +219,11 @@ export function projetarDRE(input: {
 
   if (fator !== null) {
     if (dreAnoAnterior.length > 0) {
-      // sazonal: usa ano-1 × fator (mesmo para meses sem dados → 0 × fator = 0)
+      // sazonal: ano-1[mes] × fator. ⚠️ Se o ano anterior é ESPARSO (mês ausente/zero), NÃO zera o
+      // forecast — cai pra run-rate naquele mês (Codex P1.3); senão receita/ded/cmv/imposto zerariam.
       for (const m of restantes) {
-        recBrutaFC.push(valAnt(m, 'receita_bruta') * fator);
+        const baseAnt = dreAntPorMes.get(m)?.receita_bruta;
+        recBrutaFC.push(baseAnt != null && baseAnt > 0 ? baseAnt * fator : rrReceita);
       }
       metodoRecBruta = 'sazonal_ajustado';
     } else {
@@ -385,12 +387,16 @@ export function projetarDRE(input: {
     Object.fromEntries(LINHAS_INPUT.map(l => [l, landingInput[l] ?? 0])) as Record<LinhaInput, number>
   );
 
-  // orcado_ano das derivadas via derivarLinhas sobre os orcado_ano (null→0)
+  // orcado_ano das derivadas via derivarLinhas sobre os orcado_ano (null→0).
+  // algumInputNullOrcado: algum input sem orçado (→ flag orcado_incompleto, mas computa com 0).
+  // algumInputComOrcado: ao menos um input orçado (→ vale derivar; se NENHUM, o orçado derivado é null).
   const inputsOrcado: Partial<Record<LinhaInput, number>> = {};
   let algumInputNullOrcado = false;
+  let algumInputComOrcado = false;
   for (const l of LINHAS_INPUT) {
     const v = orcadoAno(orcado, l);
     if (v === null) algumInputNullOrcado = true;
+    else algumInputComOrcado = true;
     inputsOrcado[l] = v ?? 0;
   }
   const derivOrcado = derivarLinhas(inputsOrcado as Record<LinhaInput, number>);
@@ -411,13 +417,11 @@ export function projetarDRE(input: {
 
   const linhasDerivadas: ForecastLinha[] = DERIVADAS_KEYS.map(l => {
     const landing = derivLanding[l];
-    // orcado_ano da derivada: se ALGUM input for null → null; senão usa derivado
-    // Mas: se algumInputNullOrcado=true, o orcado_ano é null pra derivada?
-    // Interpretação do contrato: "se ALGUM input usado for null, adicione flag 'orcado_incompleto'"
-    // Mas orcado_ano da derivada ainda é calculado (com 0 no lugar do null)
-    // Isso é consistente com o teste que espera orcado_ano não-null quando todos têm orçado
-    const oAno = algumInputNullOrcado ? null : derivOrcado[l];
-    const flags: string[] = algumInputNullOrcado ? ['orcado_incompleto'] : [];
+    // orcado_ano da derivada: só null se NENHUM input tiver orçado (nada a comparar). Se ao menos um
+    // input tem orçado, calcula (inputs ausentes = 0) e FLAG 'orcado_incompleto' — não some a variância
+    // só porque uma linha não-relacionada ficou sem orçar (Codex P1.2).
+    const oAno = algumInputComOrcado ? derivOrcado[l] : null;
+    const flags: string[] = (algumInputComOrcado && algumInputNullOrcado) ? ['orcado_incompleto'] : [];
     const variancia = calcVariancia(l, landing, oAno);
     const favoravel = calcFavoravel(l, variancia);
     return {
@@ -473,8 +477,10 @@ export function derivarLinhas(i: Partial<Record<LinhaInput, number>>): Derivadas
 
   const receita_liquida           = receita_bruta - deducoes;
   const lucro_bruto               = receita_liquida - cmv;
-  const resultado_operacional     = lucro_bruto - despesas_operacionais - despesas_administrativas - despesas_comerciais;
-  const resultado_antes_impostos  = resultado_operacional + receitas_financeiras - despesas_financeiras + outras_receitas - outras_despesas;
+  // Fórmula IDÊNTICA ao DRE v2 oficial (dre-helpers.ts): financeiras entram no RESULTADO OPERACIONAL;
+  // resultado_antes_impostos só soma outras_receitas/despesas (Codex P1.1 — manter consistente com o realizado).
+  const resultado_operacional     = lucro_bruto - despesas_operacionais - despesas_administrativas - despesas_comerciais + receitas_financeiras - despesas_financeiras;
+  const resultado_antes_impostos  = resultado_operacional + outras_receitas - outras_despesas;
   const resultado_liquido         = resultado_antes_impostos - impostos;
 
   return {
