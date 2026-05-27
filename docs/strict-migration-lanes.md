@@ -119,6 +119,11 @@ subgrafos sujos (`noUnusedLocals`/`strictNullChecks`) → cascata. **Promova lea
   `components/des/{simulador,checkinQualitativo,historico}`. 14 arquivos; imports só de `lucide-react` (pacote tipado) ou
   os próprios `./types`. `typecheck:strict` verde. Tsconfig-only. **NÃO toco** os `useX.ts` (puxam queries/deps, não-leaf),
   nem `components/{farmer,financeiro,customer360}` (lanes quentes / reserva cranky-driscoll).
+- 🔵 **`claude/strict-promote-leaf-components2`** (sessão strange-hellman, 2026-05-27): quarto lote leaf — 31 `.ts` puros
+  (types/config/format/shared/helpers/queries) de `components/{loyalty,notificacoes,reposicao/*,salesOrders,salesOrderEdit,
+  skuMapeamento,tintColorSelect,tintImport,unifiedAI}`. Reposição já saiu do mutirão de decomposição (encerrado 2026-05-25,
+  §10) → types estáveis. Imports: próprios `./types`, `date-fns`/`react-query`/supabase-client (deps tipadas já no programa).
+  `typecheck:strict` verde com os 31. Tsconfig-only. **NÃO toco** farmer/financeiro/customer360 nem os `useX.ts`.
 
 ## Follow-up registrado
 
