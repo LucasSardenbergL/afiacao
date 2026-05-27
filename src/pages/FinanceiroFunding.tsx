@@ -9,6 +9,7 @@ import { FundingInputsDialog } from '@/components/financeiro/FundingInputsDialog
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { PageSkeleton } from '@/components/ui/page-skeleton';
 import { EmptyState } from '@/components/EmptyState';
+import { Banknote } from 'lucide-react';
 import {
   Table,
   TableBody,
@@ -307,6 +308,7 @@ export default function FinanceiroFunding() {
           {/* Tabela de títulos */}
           {data.titulos.length === 0 ? (
             <EmptyState
+              icon={Banknote}
               tone="operational"
               title="Nenhum recebível disponível"
               description={`Nenhum recebível em aberto com vencimento futuro para ${selectedCompany}.`}

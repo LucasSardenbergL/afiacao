@@ -6,7 +6,13 @@
 # garante que isso não repita.
 #
 # Decisões de bloqueio:
-# - typecheck (tsc --noEmit): blocking — qualquer regressão de tipos quebra o PR
+# - typecheck (tsc --noEmit -p tsconfig.app.json): blocking — qualquer regressão
+#   de tipos no src/ quebra o PR. ⚠️ Tem que ser `-p tsconfig.app.json`, NÃO o
+#   `tsc --noEmit` cru: o tsconfig.json root usa `"files": []` + `"references"`,
+#   e em modo não-build o tsc ignora as references e checa só o `files` (vazio)
+#   → no-op que não type-checava o src de jeito nenhum. Isso deixou passar 2
+#   TS2741 reais (#325 KpiCards.test.tsx, #345 FinanceiroFunding.tsx), só pegos
+#   pelo Lovable. `-p tsconfig.app.json` checa src+testes de verdade (~27s).
 # - test (vitest run): blocking — regressão de comportamento documentado
 # - build (vite build): blocking — pega Tailwind quebrado + import errors + PWA setup
 # - lint (eslint): informational — main hoje tem 1300 errors herdados (97%
@@ -39,7 +45,7 @@ jobs:
 
       # ─── Blocking checks ────────────────────────────────────────────
       - name: Type check
-        run: bunx tsc --noEmit
+        run: bunx tsc --noEmit -p tsconfig.app.json
 
       - name: Type check (strict mode — files migrados, ver tsconfig.strict.json)
         run: bun run typecheck:strict

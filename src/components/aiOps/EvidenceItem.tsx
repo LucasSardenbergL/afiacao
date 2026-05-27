@@ -6,7 +6,7 @@ import type { Evidence } from './types';
 export function EvidenceItem({ evidence }: { evidence: Evidence }) {
   const colorMap = {
     critical: 'text-destructive',
-    warning: 'text-amber-600 dark:text-amber-400',
+    warning: 'text-status-warning',
     info: 'text-muted-foreground',
   };
   const iconMap = {
