@@ -188,7 +188,6 @@ export function projetarDRE(input: {
 
   /** Valor de uma linha num mês do DRE atual (0 se ausente) */
   const valAtual = (mes: number, l: LinhaInput): number => dreAtualPorMes.get(mes)?.[l] ?? 0;
-  const valAnt = (mes: number, l: LinhaInput): number => dreAntPorMes.get(mes)?.[l] ?? 0;
 
   /** Array de valores de uma linha nos meses fechados */
   const valoresFechados = (l: LinhaInput): number[] => fechados.map(m => valAtual(m, l));
@@ -341,7 +340,7 @@ export function projetarDRE(input: {
   }
 
   // ── Variância e fura_meta ────────────────────────────────────────────────
-  function calcVariancia(l: string, landing: number, oAno: number | null): number | null {
+  function calcVariancia(landing: number, oAno: number | null): number | null {
     if (oAno === null) return null;
     return landing - oAno;
   }
@@ -364,7 +363,7 @@ export function projetarDRE(input: {
     const fc = forecastRestante[l] ?? 0;
     const landing = real + fc;
     const oAno = orcadoAno(orcado, l);
-    const variancia = calcVariancia(l, landing, oAno);
+    const variancia = calcVariancia(landing, oAno);
     const favoravel = calcFavoravel(l, variancia);
     return {
       dre_linha: l,
@@ -422,7 +421,7 @@ export function projetarDRE(input: {
     // só porque uma linha não-relacionada ficou sem orçar (Codex P1.2).
     const oAno = algumInputComOrcado ? derivOrcado[l] : null;
     const flags: string[] = (algumInputComOrcado && algumInputNullOrcado) ? ['orcado_incompleto'] : [];
-    const variancia = calcVariancia(l, landing, oAno);
+    const variancia = calcVariancia(landing, oAno);
     const favoravel = calcFavoravel(l, variancia);
     return {
       dre_linha: l,
