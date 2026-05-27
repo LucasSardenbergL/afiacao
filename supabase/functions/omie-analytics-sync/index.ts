@@ -973,8 +973,10 @@ serve(async (req) => {
         const bgTask = syncCustomers(supabaseAdmin, "vendas").catch((e) => {
           console.error("[nao-vinculados][async]", e instanceof Error ? e.message : e);
         });
-        // @ts-ignore EdgeRuntime é global do Supabase Edge (pode não estar tipado)
+        // eslint-disable-next-line @typescript-eslint/ban-ts-comment -- @ts-ignore intencional: EdgeRuntime é global do Deno/Supabase Edge (pode não estar tipado); @ts-expect-error quebraria o deploy se estivesse tipado
+        // @ts-ignore - EdgeRuntime existe no runtime do Supabase Edge
         if (typeof EdgeRuntime !== "undefined" && typeof EdgeRuntime.waitUntil === "function") {
+          // eslint-disable-next-line @typescript-eslint/ban-ts-comment -- idem acima
           // @ts-ignore
           EdgeRuntime.waitUntil(bgTask);
         }
