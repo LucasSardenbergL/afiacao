@@ -5,7 +5,7 @@
 
 export type MovimentoRealizado = {
   data_movimento: string;
-  tipo: string; // 'E' = entrada, 'S' = saída
+  tipo: string | null; // 'E' = entrada, 'S' = saída; null/outro = ignorado
   valor: number;
   omie_codigo_lancamento: number | null;
 };
