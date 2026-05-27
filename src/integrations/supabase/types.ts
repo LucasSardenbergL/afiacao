@@ -4385,18 +4385,21 @@ export type Database = {
       }
       fin_sync_cursor: {
         Row: {
+          backfill_desde: string | null
           company: string
           next_page: number | null
           resource: string
           updated_at: string
         }
         Insert: {
+          backfill_desde?: string | null
           company: string
           next_page?: number | null
           resource: string
           updated_at?: string
         }
         Update: {
+          backfill_desde?: string | null
           company?: string
           next_page?: number | null
           resource?: string
