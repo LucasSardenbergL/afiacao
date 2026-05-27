@@ -113,3 +113,6 @@ verify_jwt = false
 
 [functions.omie-nfe-webhook]
 verify_jwt = false
+
+[functions.enviar-pedido-portal-sayerlack]
+verify_jwt = false
