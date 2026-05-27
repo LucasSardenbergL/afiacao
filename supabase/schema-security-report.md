@@ -23,5 +23,30 @@ O cron `sayerlack-portal-watchdog` embute um **JWT anon** literal nos headers `A
 
 **✅ RESOLVIDO (2026-05-27, PR #350 — migration `20260526080000_fix_sayerlack_cron_vault.sql`).** Dump real do `cron.job` (2026-05-26) mostrou que o `x-cron-secret` **já vinha do Vault** (a parte do GUC já tinha sido consertada antes); restava só o JWT anon nos headers, que existia pra passar o `verify_jwt` do gateway. Fix em 2 partes: (1) `verify_jwt = false` declarado em `supabase/config.toml` + redeploy no Lovable (a função se gateia via `x-cron-secret` no `authorizeCronOrStaff`, não precisa do JWT no gateway); (2) `cron.schedule` recolado sem `Authorization`/`apikey`. Validado em prod: cron limpo (sem JWT, x-cron-secret do Vault) + `net._http_response` com **200** nos ciclos `*/5`, sem 401.
 
-## A aprofundar (não escaneado nesta passada)
-- Policies permissivas (`USING (true)`) e grants `EXECUTE` pra `PUBLIC` — auditoria mais profunda fica como follow-up se desejado.
+## A aprofundar — ✅ AUDITADO 2026-05-27 (RLS limpo; resta 1 query de grants EXECUTE)
+
+**Policies `USING (true)` — auditado, sem vulnerabilidade de RLS.** 28 `USING(true)` + 11 `WITH CHECK(true)` no dump:
+- Os 11 `WITH CHECK(true)` são **todos** `FOR ALL TO service_role` (redundante — service_role já bypassa RLS) → **zero furo de escrita** pra anon/authenticated.
+- 6 SELECT público (anon): catálogo de storefront (`tool_categories`, `default_prices`, `category_mappings`, `omie_servicos`, `training_modules`, `tool_specifications`) — público por design.
+- 11 SELECT `authenticated`: referência (`omie_products`, `warehouses`, `tint_*`) que o wizard de pedido (`UnifiedOrder`/`SalesOrderEdit` via `useTintColorSelect`/`useTintPricing`) precisa ler. Consumidores verificados — justificado.
+
+**Decisões (eu + codex consult, 2026-05-27):**
+- `default_prices` legível por anon → **DEIXAR** (catálogo público intencional; preço default já observável por UI/orçamento). Não apertar (quebraria storefront pré-login).
+- `tint_formula_itens` (proporções de corante = receita/IP) legível por qualquer logado → **ACEITAR + documentar**. Threat model real (concorrente/scraper cria conta de cliente → lê a tabela → reconstrói a base de receitas), mas classe menor que cross-tenant/write/privesc. **Backlog de hardening futuro** (se a base de receitas for ativo estratégico): RPC `SECURITY DEFINER` devolvendo só o preço + restringir o SELECT da tabela a staff. NÃO feito agora (toca o money-path do pedido por ganho incerto).
+
+**Pendente — 1 query read-only em prod** (única coisa que o dump `--no-privileges` não mostra): EXECUTE em funções `SECURITY DEFINER` por `anon`/`authenticated`. Uma SECDEF executável amplamente que bypassa RLS seria furo real. Roda no SQL Editor; fecha 100% quando vier limpo (nenhuma SECDEF perigosa executável por anon/authenticated):
+
+```sql
+SELECT n.nspname AS schema, p.proname AS function, p.prosecdef AS security_definer,
+       pg_get_function_identity_arguments(p.oid) AS args,
+       array_agg(DISTINCT r.rolname ORDER BY r.rolname) AS executable_by
+FROM pg_proc p
+JOIN pg_namespace n ON n.oid = p.pronamespace
+LEFT JOIN aclexplode(coalesce(p.proacl, acldefault('f', p.proowner))) a ON true
+LEFT JOIN pg_roles r ON r.oid = a.grantee
+WHERE n.nspname NOT IN ('pg_catalog','information_schema')
+  AND a.privilege_type = 'EXECUTE'
+GROUP BY n.nspname, p.proname, p.prosecdef, p.oid
+ORDER BY p.prosecdef DESC, n.nspname, p.proname;
+```
+Olhar as linhas com `security_definer = true` cujo `executable_by` inclua `anon`/`authenticated` e que façam algo privilegiado (mutação ampla, acesso a dados de outros tenants). As RPCs SECDEF de carteira (`*_for`, `get_minha_*`) já são gated por `auth.uid()`/master no corpo — essas são esperadas.
