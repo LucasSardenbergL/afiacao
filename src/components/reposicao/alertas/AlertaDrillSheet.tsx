@@ -121,7 +121,7 @@ export function AlertaDrillSheet({
                       <>
                         <div>σ atual: <span className="font-mono">{fmt(impacto.sigma_atual)}</span> → sem outlier: <span className="font-mono">{fmt(impacto.sigma_sem)}</span></div>
                         <div>Média atual: <span className="font-mono">{fmt(impacto.media_atual)}</span> → sem: <span className="font-mono">{fmt(impacto.media_sem)}</span></div>
-                        {impacto.em_atual !== undefined && (
+                        {impacto.em_atual !== undefined && impacto.delta_em !== undefined && (
                           <div className="pt-2 p-2 bg-muted/50 rounded">
                             Estoque mínimo sugerido: <span className="font-mono">{impacto.em_atual}</span> → <span className="font-mono">{impacto.em_sem}</span>{" "}
                             <Badge variant={impacto.delta_em < 0 ? "success" : "warning"}>
