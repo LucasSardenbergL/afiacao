@@ -165,12 +165,15 @@ export default defineConfig(({ mode }) => ({
   build: {
     rollupOptions: {
       output: {
-        // Function-form pra agrupar lazy pages por módulo + manter vendors split.
-        // Antes: 119 chunks separados (1 por lazy page) → TTFB extra por navegação.
-        // Agora: peers de um mesmo módulo no mesmo chunk (ex: 22 pages de Reposição = 1 chunk).
-        // Vendors continuam separados (cacheable, raramente mudam).
+        // Só agrupa VENDORS (node_modules) em buckets cacheáveis. NÃO agrupar
+        // páginas por feature: o agrupamento anterior (feature-admin/financeiro/...)
+        // criava chunks com dependência circular (páginas se importam entre si),
+        // e o Rollup avisava "Circular chunk: feature-admin -> feature-financeiro".
+        // Em produção isso virava um TDZ em runtime ("Cannot access 'X' before
+        // initialization") que crashava o boot ANTES do React montar → tela
+        // travada. Deixar o Rollup auto-splitar as páginas (1 chunk por rota lazy)
+        // é circular-safe e era o comportamento que funcionava.
         manualChunks(id) {
-          // ─── Vendors ──────────────────────────────────────────────────
           if (id.includes('node_modules')) {
             if (/[\\/](react|react-dom|react-router-dom|scheduler)[\\/]/.test(id)) return 'vendor-react';
             if (id.includes('@tanstack/react-query')) return 'vendor-query';
@@ -182,31 +185,7 @@ export default defineConfig(({ mode }) => ({
             if (id.includes('date-fns')) return 'vendor-dates';
             return; // resto: deixar Rollup decidir
           }
-
-          // ─── Feature chunks (agrupa lazy pages do mesmo módulo) ──────
-          // ORDEM IMPORTA: AdminReposicao deve vir ANTES de Admin (catchall)
-          if (id.includes('/src/pages/')) {
-            if (id.includes('/AdminReposicao')) return 'feature-reposicao';
-            if (id.includes('/Farmer')) return 'feature-farmer';
-            if (id.includes('/Financeiro')) return 'feature-financeiro';
-            if (id.includes('/Tint') || id.includes('/AdminTint')) return 'feature-tintometrico';
-            if (id.includes('/Governance')) return 'feature-governance';
-            if (id.includes('/Sales')) return 'feature-sales';
-            if (id.includes('/Recebimento')) return 'feature-estoque';
-            if (id.includes('/picking/')) return 'feature-estoque';
-            // Docs internos: baixo uso, cabe num bundle único
-            if (
-              id.includes('/DesignSystem') ||
-              id.includes('/DesignPreview') ||
-              id.includes('/UXRules') ||
-              id.includes('/TechnicalDocs') ||
-              id.includes('/TintApiContract')
-            ) return 'feature-docs';
-            // Admin (catchall depois de AdminReposicao + AdminTint)
-            if (id.includes('/Admin')) return 'feature-admin';
-            // Restantes (~15 pages cliente: Orders, Tools, Profile, etc.) ficam
-            // no chunk principal pra navegação inicial rápida do customer
-          }
+          // App code: sem agrupamento manual → Rollup decide (circular-safe).
         },
       },
     },
