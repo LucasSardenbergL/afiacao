@@ -705,6 +705,22 @@
     "src/components/reposicao/oportunidades/KpiCards.tsx",
     "src/components/reposicao/oportunidades/OportunidadesFiltros.tsx",
     "src/components/reposicao/oportunidades/GerarCicloDialog.tsx",
-    "src/components/reposicao/oportunidades/OportunidadesTable.tsx"
+    "src/components/reposicao/oportunidades/OportunidadesTable.tsx",
+    "src/components/analyticsSync/useAnalyticsSync.ts",
+    "src/components/analyticsSync/EngineCards.tsx",
+    "src/components/analyticsSync/EngineConfigCard.tsx",
+    "src/components/reposicao/pedidos/useDetalhesModal.ts",
+    "src/components/reposicao/pedidos/ItensTable.tsx",
+    "src/components/reposicao/pedidos/DetalhesModal.tsx",
+    "src/components/reposicao/aumentoDetail/MapeamentoDialog.tsx",
+    "src/components/reposicao/aumentoDetail/ItemRow.tsx",
+    "src/hooks/useBreadcrumbs.ts",
+    "src/components/shell/GlobalBreadcrumbs.tsx",
+    "src/hooks/useCallLog.ts",
+    "src/components/telefonia/CallHistoryTabs.tsx",
+    "src/components/skuMapeamento/useSkuMapeamento.ts",
+    "src/pages/AdminSkuMapeamento.tsx",
+    "src/components/notificacoes/useNotificacoes.ts",
+    "src/pages/AdminNotificacoes.tsx"
   ]
 }
