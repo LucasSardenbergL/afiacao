@@ -689,6 +689,20 @@
     "src/pages/FarmerRecommendations.tsx",
     "src/pages/UXRules.tsx",
     "src/components/standard-process/StandardProcessForm.tsx",
-    "src/pages/AdminStandardProcessNew.tsx"
+    "src/pages/AdminStandardProcessNew.tsx",
+    "src/components/aiOps/DecisionList.tsx",
+    "src/components/customer/CustomerProcessTab.tsx",
+    "src/components/customerDashboard/PedidosAndamento.tsx",
+    "src/components/des/simulador/SimulationResult.tsx",
+    "src/components/reposicao/alertas/AlertaDrillSheet.tsx",
+    "src/components/reposicao/alertas/AlertasTable.tsx",
+    "src/components/reposicao/aplicacao/ProntosTab.tsx",
+    "src/components/reposicao/pedidos/PedidoRow.tsx",
+    "src/components/reposicao/promocoes/CampanhasTable.tsx",
+    "src/components/reposicao/revisao/RevisaoTable.tsx",
+    "src/components/reposicao/slaFornecedor/SkuComplianceTable.tsx",
+    "src/components/unifiedAI/AIResultPanel.tsx",
+    "src/pages/AdminStandardProcessDetail.tsx",
+    "src/pages/TintImport.tsx"
   ]
 }
