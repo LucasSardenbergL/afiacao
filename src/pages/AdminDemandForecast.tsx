@@ -15,12 +15,9 @@ import {
   Phone, 
   User, 
   Wrench,
-  ChevronRight,
   TrendingUp,
   ShoppingCart
 } from 'lucide-react';
-import { format, formatDistanceToNow } from 'date-fns';
-import { ptBR } from 'date-fns/locale';
 import { cn } from '@/lib/utils';
 
 interface CustomerToolForecast {

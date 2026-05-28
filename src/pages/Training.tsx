@@ -8,7 +8,7 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/u
 import { supabase } from '@/integrations/supabase/client';
 import { useAuth } from '@/contexts/AuthContext';
 import { toast } from 'sonner';
-import { Loader2, BookOpen, CheckCircle2, XCircle, PlayCircle, Award, Sparkles, ArrowRight, Trophy, Target } from 'lucide-react';
+import { Loader2, BookOpen, CheckCircle2, XCircle, Award, Sparkles, ArrowRight, Trophy, Target } from 'lucide-react';
 
 interface QuizQuestion {
   question: string;

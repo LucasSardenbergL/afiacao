@@ -3,7 +3,7 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Accordion, AccordionContent, AccordionItem, AccordionTrigger } from '@/components/ui/accordion';
-import { Shield, Key, RefreshCw, AlertTriangle, CheckCircle, Copy, ArrowRight, Trash2, Clock, Database, Fingerprint, ListChecks } from 'lucide-react';
+import { Shield, Key, RefreshCw, AlertTriangle, CheckCircle, Copy, Trash2, Clock, Database, Fingerprint, ListChecks } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Checkbox } from '@/components/ui/checkbox';
 import { toast } from 'sonner';
@@ -56,11 +56,6 @@ function FieldTable({ fields }: { fields: { name: string; type: string; required
 }
 
 // ─── ENDPOINT DATA ───
-
-const COMMON_HEADERS = `Content-Type: application/json
-x-sync-token: <TOKEN_DA_LOJA>        (obrigatório)
-x-store-code: <CODIGO_DA_LOJA>       (obrigatório)
-x-idempotency-key: <UUID_DO_LOTE>    (opcional, recomendado em sync)`;
 
 const RESPONSE_SCHEMA = `{
   "ok": true,                    // boolean — operação processada

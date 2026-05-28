@@ -850,7 +850,7 @@ export function useRoutePlanner() {
 
   // Stats
   const stopCounts = useMemo(() => {
-    const counts = { pickup_tools: 0, deliver_tools: 0, sales_visit: 0, hybrid_visit: 0 };
+    const counts: Record<string, number> = { pickup_tools: 0, deliver_tools: 0, sales_visit: 0, hybrid_visit: 0 };
     optimizedRoute.forEach(s => counts[s.stopType]++);
     return counts;
   }, [optimizedRoute]);

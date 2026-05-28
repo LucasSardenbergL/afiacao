@@ -1,6 +1,6 @@
 import { useRef } from 'react';
 import { Button } from '@/components/ui/button';
-import { FileDown, Printer } from 'lucide-react';
+import { FileDown } from 'lucide-react';
 import { Section, TableRow } from '@/components/docs/primitives';
 import { SecaoFuncionalidades } from '@/components/docs/SecaoFuncionalidades';
 import { SecaoAlgoritmos } from '@/components/docs/SecaoAlgoritmos';

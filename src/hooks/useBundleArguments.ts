@@ -51,13 +51,13 @@ export const useBundleArguments = () => {
     },
     customer: {
       name: string;
-      cnae?: string;
-      customerType?: string;
+      cnae?: string | null;
+      customerType?: string | null;
       healthScore: number;
-      daysSinceLastPurchase?: number;
-      avgMonthlySpend?: number;
-      categoryCount?: number;
-      recentProducts?: string[];
+      daysSinceLastPurchase?: number | null;
+      avgMonthlySpend?: number | null;
+      categoryCount?: number | null;
+      recentProducts?: string[] | null;
     },
     customerProfile: CustomerProfile
   ) => {

@@ -219,7 +219,7 @@ function PickingTab({ account }: { account: string }) {
         .select(
           "id, product_descricao, quantidade, quantidade_separada, status, lote_fefo, lote_separado",
         )
-        .eq("picking_task_id", expanded);
+        .eq("picking_task_id", expanded ?? "");
       return data ?? [];
     },
   });
