@@ -178,6 +178,7 @@ type CR = {
   cliente_id: string | null;
   nome_cliente: string | null;
   categoria_codigo: string | null;
+  omie_codigo_lancamento: number | null; // join com v_titulo_baixas (baixa derivada)
 };
 
 type CP = {
@@ -253,9 +254,28 @@ type TituloHist = {
   valor_recebido: number;
   saldo: number;
   data_vencimento: string | null;
-  data_recebimento: string | null;
+  // Baixa REAL derivada das movimentações (v_titulo_baixas) — NÃO a coluna base
+  // data_recebimento (sempre NULL no LIST do Omie). null = sem movimento joinável.
+  data_baixa_derivada: string | null;
   status_titulo: string;
 };
+
+// Espelho VERBATIM de aging-helpers.ts: liquidação por STATUS + valorPagoEfetivo robusto.
+// STATUS_LIQUIDADO = mesmo conjunto que SETTLED_TITLE_STATUSES acima (mantido verbatim
+// do helper p/ o mirror ser fiel). valor_recebido=0 + saldo cheio nos liquidados (#396)
+// → o fallback de valorPagoEfetivo cai em valor_documento (face) = recuperação correta.
+const STATUS_LIQUIDADO = ['RECEBIDO', 'LIQUIDADO', 'PAGO'];
+function statusLiquidado(status: string | null | undefined): boolean {
+  return !!status && STATUS_LIQUIDADO.includes(status);
+}
+function valorPagoEfetivo(t: { valor_recebido: number; valor_documento: number; saldo: number }): number {
+  if (t.valor_recebido > 0) return t.valor_recebido;
+  const liq = t.valor_documento - t.saldo;
+  if (liq > 0) return liq;
+  return t.valor_documento;
+}
+const COBERTURA_MIN_EMPRESA = 0.4;
+const MIN_LIQUIDADOS_COM_DATA = 5;
 
 const FAIXAS: Faixa[] = ['a_vencer', '1-30', '31-60', '61-90', '+90'];
 
@@ -290,16 +310,25 @@ async function carregarDados(
 ): Promise<DadosBase> {
   // CR/CP paginados (anti-truncamento, ver fetchAllRows); o resto cabe em <1000 e vai
   // em Promise.all. Tudo em paralelo.
-  const [crsData, cpsData, [ccRes, recRes, evRes, configRes, estoqueRes, dreRes, folhaCatRes]] = await Promise.all([
+  const [crsData, cpsData, baixaCrData, [ccRes, recRes, evRes, configRes, estoqueRes, dreRes, folhaCatRes]] = await Promise.all([
     fetchAllRows<Record<string, unknown>>((from, to) =>
       // @ts-expect-error - fin_contas_receber may not be in generated supabase types yet
-      supabase.from('fin_contas_receber').select('id, saldo, valor_documento, valor_recebido, data_emissao, data_vencimento, data_recebimento, status_titulo, omie_codigo_cliente, nome_cliente, categoria_codigo')
+      supabase.from('fin_contas_receber').select('id, saldo, valor_documento, valor_recebido, data_emissao, data_vencimento, data_recebimento, status_titulo, omie_codigo_cliente, omie_codigo_lancamento, nome_cliente, categoria_codigo')
         .eq('company', company).neq('status_titulo', 'CANCELADO').order('id', { ascending: true }).range(from, to)
     ),
     fetchAllRows<Record<string, unknown>>((from, to) =>
       // @ts-expect-error - fin_contas_pagar may not be in generated supabase types yet
       supabase.from('fin_contas_pagar').select('id, saldo, valor_documento, valor_pago, data_emissao, data_vencimento, data_pagamento, status_titulo, categoria_codigo')
         .eq('company', company).neq('status_titulo', 'CANCELADO').order('id', { ascending: true }).range(from, to)
+    ),
+    // Fase 3: baixa REAL derivada (v_titulo_baixas, tipo CR) p/ calibrar o TIMING do
+    // aging. Paginado (oben CR ~11k linhas > cap 1000 do PostgREST — sem isso a
+    // cobertura cairia falsa). order estável; usado SÓ na calibração, PMR/PMP/dias_
+    // cobertura do engine ficam intactos (sem regressão, sem novo viés do colacor).
+    fetchAllRows<Record<string, unknown>>((from, to) =>
+      // @ts-expect-error - v_titulo_baixas (view nova) não está nos types gerados
+      supabase.from('v_titulo_baixas').select('omie_codigo_lancamento, data_baixa_final')
+        .eq('company', company).eq('tipo', 'CR').order('omie_codigo_lancamento', { ascending: true }).range(from, to)
     ),
     Promise.all([
       // @ts-expect-error - fin_contas_correntes may not be in generated supabase types yet
@@ -357,7 +386,17 @@ async function carregarDados(
     cliente_id: c.omie_codigo_cliente ? String(c.omie_codigo_cliente) : null,
     nome_cliente: (c.nome_cliente as string | null) ?? null,
     categoria_codigo: (c.categoria_codigo as string | null) ?? null,
+    omie_codigo_lancamento: c.omie_codigo_lancamento != null ? Number(c.omie_codigo_lancamento) : null,
   }));
+
+  // Fase 3: mapa da baixa derivada por omie_codigo_lancamento (CR), pra calibrar as
+  // curvas de aging com o TIMING real do recebimento (não a coluna base sempre-NULL).
+  const baixaCrPorCod = new Map<number, string>();
+  for (const b of (baixaCrData as Array<{ omie_codigo_lancamento?: number | null; data_baixa_final?: string | null }>)) {
+    if (b.omie_codigo_lancamento != null && b.data_baixa_final) {
+      baixaCrPorCod.set(Number(b.omie_codigo_lancamento), b.data_baixa_final);
+    }
+  }
 
   const cps: CP[] = (cpsData as Array<Record<string, unknown>>).map((c) => ({
     id: c.id as string,
@@ -402,7 +441,10 @@ async function carregarDados(
       valor_recebido: c.valor_recebido,
       saldo: c.saldo,
       data_vencimento: c.data_vencimento,
-      data_recebimento: c.data_recebimento,
+      // baixa derivada das movimentações (NÃO a coluna base data_recebimento, sempre NULL)
+      data_baixa_derivada: c.omie_codigo_lancamento != null
+        ? (baixaCrPorCod.get(c.omie_codigo_lancamento) ?? null)
+        : null,
       status_titulo: c.status_titulo,
     })),
     hojeIso,
@@ -577,36 +619,55 @@ function calibrarCurvas(
   hoje: string,
   minTitulos = 20,
   minVolume = 50000,
+  minLiquidadosComData = MIN_LIQUIDADOS_COM_DATA,
+  coberturaMinEmpresa = COBERTURA_MIN_EMPRESA,
 ): Record<Faixa, CurvaFaixa> {
+  // Cobertura da empresa: fração dos liquidados-por-status que têm baixa derivada.
+  let liqTotal = 0, liqComData = 0;
+  for (const t of titulos) {
+    if (statusLiquidado(t.status_titulo)) {
+      liqTotal += 1;
+      if (t.data_baixa_derivada) liqComData += 1;
+    }
+  }
+  const coberturaEmpresa = liqTotal > 0 ? liqComData / liqTotal : 0;
+  const empresaCalibravel = coberturaEmpresa >= coberturaMinEmpresa;
+
   const acc: Record<Faixa, {
-    exposicao: number; pago: number; aberto: number; count: number;
+    exposicao: number; pago: number; aberto: number; count: number; countLiqData: number;
     topValor: number; lags: Array<{ valor: number; peso: number }>; lagsRaw: number[];
   }> = Object.fromEntries(
-    FAIXAS.map((f) => [f, { exposicao: 0, pago: 0, aberto: 0, count: 0, topValor: 0, lags: [], lagsRaw: [] }]),
+    FAIXAS.map((f) => [f, { exposicao: 0, pago: 0, aberto: 0, count: 0, countLiqData: 0, topValor: 0, lags: [], lagsRaw: [] }]),
   ) as unknown as Record<Faixa, {
-    exposicao: number; pago: number; aberto: number; count: number;
+    exposicao: number; pago: number; aberto: number; count: number; countLiqData: number;
     topValor: number; lags: Array<{ valor: number; peso: number }>; lagsRaw: number[];
   }>;
 
   for (const t of titulos) {
     if (!t.data_vencimento) continue;
-    const liquidado = !!t.data_recebimento;
-    const diasAtraso = liquidado
-      ? daysBetween(t.data_recebimento!, t.data_vencimento)
-      : daysBetween(hoje, t.data_vencimento);
-    const faixa = faixaAging(diasAtraso);
-    const a = acc[faixa];
-    a.exposicao += t.valor_documento;
-    a.count += 1;
-    a.topValor = Math.max(a.topValor, t.valor_documento);
-    if (liquidado) {
-      a.pago += t.valor_recebido;
-      const lag = Math.max(0, daysBetween(t.data_recebimento!, t.data_vencimento));
-      a.lags.push({ valor: lag, peso: t.valor_recebido });
+    const liquidado = statusLiquidado(t.status_titulo);
+    const temData = !!t.data_baixa_derivada;
+    if (liquidado && temData) {
+      const faixa = faixaAging(daysBetween(t.data_baixa_derivada!, t.data_vencimento));
+      const a = acc[faixa];
+      const pago = valorPagoEfetivo(t);
+      a.exposicao += t.valor_documento;
+      a.count += 1;
+      a.countLiqData += 1;
+      a.topValor = Math.max(a.topValor, t.valor_documento);
+      a.pago += pago;
+      const lag = Math.max(0, daysBetween(t.data_baixa_derivada!, t.data_vencimento));
+      a.lags.push({ valor: lag, peso: pago });
       a.lagsRaw.push(lag);
-    } else {
+    } else if (!liquidado) {
+      const faixa = faixaAging(daysBetween(hoje, t.data_vencimento));
+      const a = acc[faixa];
+      a.exposicao += t.valor_documento;
+      a.count += 1;
+      a.topValor = Math.max(a.topValor, t.valor_documento);
       a.aberto += t.saldo;
     }
+    // liquidado && !temData → EXCLUÍDO (sabemos QUE pagou, não QUANDO)
   }
 
   const out = {} as Record<Faixa, CurvaFaixa>;
@@ -615,7 +676,8 @@ function calibrarCurvas(
     const volOk = a.exposicao >= minVolume;
     const countOk = a.count >= minTitulos;
     const concentracaoOk = a.exposicao > 0 ? (a.topValor / a.exposicao) <= 0.6 : false;
-    const confiavel = countOk && volOk && concentracaoOk;
+    const liqDataOk = a.countLiqData >= minLiquidadosComData && a.pago > 0;
+    const confiavel = empresaCalibravel && countOk && volOk && concentracaoOk && liqDataOk;
     if (confiavel) {
       out[f] = {
         taxa_recebimento: Math.min(1, Math.max(0, a.exposicao > 0 ? a.pago / a.exposicao : 0)),
