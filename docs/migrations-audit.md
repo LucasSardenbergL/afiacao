@@ -21,13 +21,13 @@ Este audit valida **quais custom migrations estão de fato aplicadas no banco**.
 
 ## Resumo
 
-- **105** custom migrations totais
-- **488** objetos esperados (criados por estas migrations)
+- **106** custom migrations totais
+- **489** objetos esperados (criados por estas migrations)
 - Quebra por tipo:
   - `rls_policy`: 139
   - `index`: 96
   - `cron_job`: 83
-  - `function`: 78
+  - `function`: 79
   - `table`: 57
   - `trigger`: 31
   - `enum_value`: 4
@@ -1029,6 +1029,12 @@ Lista canônica do que cada migration *deveria* criar (extraído via regex de `C
 ### `20260528120002_v_capital_giro_prazos.sql`
 
 > _Nenhum objeto extraído via regex._ Migration provavelmente é `ALTER TABLE` / `UPDATE` / `INSERT` / RLS-only. Validar manualmente.
+
+### `20260528130000_fin_sync_heartbeat_tz_fix.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `function` | `public.fin_sync_heartbeat` | — |
 
 ## Próximos passos quando algo der `❌`
 
