@@ -3,7 +3,7 @@ import { Skeleton } from '@/components/ui/skeleton';
 import { Button } from '@/components/ui/button';
 import { TrendingUp, TrendingDown } from 'lucide-react';
 import type { DrillResult } from '@/lib/financeiro/orcamento-drill-helpers';
-import type { EntidadeConcentracaoResult } from '@/lib/financeiro/orcamento-entidade-helpers';
+import { classificarReconciliacaoEntidade, type EntidadeConcentracaoResult } from '@/lib/financeiro/orcamento-entidade-helpers';
 
 const fmt = (n: number) =>
   n.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL', maximumFractionDigits: 0 });
@@ -130,7 +130,8 @@ function EntidadeView({
   realizadoSnapshot: number | null;
 }) {
   const plural = rotulo === 'fornecedor' ? 'fornecedores' : 'clientes';
-  const diff = totalCategoriaV1 != null ? totalCategoriaV1 - data.total_ano : null;
+  const recon = classificarReconciliacaoEntidade(data.total_ano, totalCategoriaV1, data.truncado);
+  const reconMeta = QUALIDADE_META[recon.qualidade];
   return (
     <div className="space-y-3 text-sm">
       <p className="text-xs text-muted-foreground">
@@ -163,6 +164,7 @@ function EntidadeView({
 
       {/* Reconciliação contra o total-por-categoria do v1 (mesma base viva) */}
       <div className="flex flex-wrap items-center gap-x-4 gap-y-1 rounded-md border bg-muted/30 px-3 py-2 text-xs">
+        <Badge variant="outline" className={`text-[10px] ${reconMeta.cls}`}>{reconMeta.label}</Badge>
         <span className="text-muted-foreground">
           Σ {plural}: <span className="font-medium text-foreground">{fmt(data.total_ano)}</span>
         </span>
@@ -171,9 +173,10 @@ function EntidadeView({
             Σ categorias (v1): <span className="font-medium text-foreground">{fmt(totalCategoriaV1)}</span>
           </span>
         )}
-        {diff != null && (
+        {recon.diff != null && (
           <span className="text-muted-foreground">
-            Diferença: <span className="font-medium text-foreground">{fmt(diff)}</span>
+            Diferença: <span className="font-medium text-foreground">{fmt(recon.diff)}</span>
+            {recon.diff_perc !== null && ` (${(recon.diff_perc * 100).toFixed(1)}%)`}
           </span>
         )}
         {realizadoSnapshot != null && (
@@ -182,6 +185,11 @@ function EntidadeView({
           </span>
         )}
       </div>
+      {recon.qualidade !== 'ok' && !data.truncado && (
+        <p className="text-xs text-status-warning">
+          A diferença vs as categorias (v1) pode incluir lançamentos no razão oposto (ex.: estorno/ajuste) — leia com cautela.
+        </p>
+      )}
 
       {data.componentes.length === 0 ? (
         <p className="text-xs text-muted-foreground">Sem títulos para esta linha neste período.</p>

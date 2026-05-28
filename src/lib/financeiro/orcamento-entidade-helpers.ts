@@ -162,7 +162,8 @@ export function concentrarPorEntidade(input: {
       realizado_ytd_ano_anterior: round2(ant),
       delta: round2(ano - ant),
       delta_perc: Math.abs(ant) < EPSILON_MONETARIO ? null : (ano - ant) / Math.abs(ant),
-      peso_perc: Math.abs(totalAnoBruto) < EPSILON_MONETARIO ? 0 : ano / totalAnoBruto,
+      // denominador ABSOLUTO (coerente com o Pareto de nível) — evita % negativo/absurdo com estorno
+      peso_perc: Math.abs(totalAnoBruto) < EPSILON_MONETARIO ? 0 : ano / Math.abs(totalAnoBruto),
       classe,
     });
   }
@@ -216,6 +217,40 @@ export function concentrarPorEntidade(input: {
     sem_aumento_bruto,
     truncado: input.truncado ?? false,
   };
+}
+
+export type EntidadeReconciliacao = {
+  qualidade: 'ok' | 'parcial' | 'diagnostico';
+  diff: number | null;        // total-categoria(v1) − Σ entidades(v2); null se sem alvo
+  diff_perc: number | null;   // |diff| / |total-categoria|; null se alvo ~0 ou ausente
+};
+
+/**
+ * Classifica a reconciliação do v2 (Σ entidades) contra o total-por-categoria do v1
+ * (mesma base viva). A diferença esperada é ~0; quando material, sinaliza honestamente
+ * (pode incluir lançamentos no razão oposto — Codex P1 — ou truncamento). Mesmos
+ * limiares do drill v1: `ok` ≤5% E ≤R$10k; `diagnostico` >20% ou truncado; senão `parcial`.
+ */
+export function classificarReconciliacaoEntidade(
+  totalEntidades: number,
+  totalCategoriaV1: number | null,
+  truncado: boolean,
+  limiteAbs = 10000,
+  limitePercOk = 0.05,
+  limitePercDiag = 0.2,
+): EntidadeReconciliacao {
+  if (truncado) return { qualidade: 'diagnostico', diff: null, diff_perc: null };
+  if (totalCategoriaV1 == null) return { qualidade: 'ok', diff: null, diff_perc: null };
+  const diff = round2(totalCategoriaV1 - totalEntidades);
+  if (Math.abs(totalCategoriaV1) < EPSILON_MONETARIO) {
+    return { qualidade: Math.abs(diff) < EPSILON_MONETARIO ? 'ok' : 'diagnostico', diff, diff_perc: null };
+  }
+  const diff_perc = Math.abs(diff) / Math.abs(totalCategoriaV1);
+  let qualidade: EntidadeReconciliacao['qualidade'];
+  if (diff_perc <= limitePercOk && Math.abs(diff) <= limiteAbs) qualidade = 'ok';
+  else if (diff_perc > limitePercDiag) qualidade = 'diagnostico';
+  else qualidade = 'parcial';
+  return { qualidade, diff, diff_perc };
 }
 
 export async function coletarTitulosEntidade(input: {

@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { entidadeDaLinha, concentrarPorEntidade, coletarTitulosEntidade, parseMesDataEmissao, type EntidadeRowRaw } from '../orcamento-entidade-helpers';
+import { entidadeDaLinha, concentrarPorEntidade, coletarTitulosEntidade, classificarReconciliacaoEntidade, parseMesDataEmissao, type EntidadeRowRaw } from '../orcamento-entidade-helpers';
 
 const r = (id: string | null, nome: string | null, mes: number, valor: number): EntidadeRowRaw =>
   ({ entidade_id: id, entidade_nome: nome, mes, valor });
@@ -120,5 +120,36 @@ describe('coletarTitulosEntidade', () => {
     let chamou = false;
     const res = await coletarTitulosEntidade({ codigos: [], fetchPagina: async () => { chamou = true; return []; }, chunkCodigos: 1, pageSize: 1000, max: 20000 });
     expect(res.rows).toHaveLength(0); expect(chamou).toBe(false);
+  });
+});
+
+describe('classificarReconciliacaoEntidade (Codex P1: v2 pode divergir do v1)', () => {
+  it('truncado → diagnostico; alvo ausente → ok sem diff', () => {
+    expect(classificarReconciliacaoEntidade(100, 100, true).qualidade).toBe('diagnostico');
+    expect(classificarReconciliacaoEntidade(100, null, false)).toEqual({ qualidade: 'ok', diff: null, diff_perc: null });
+  });
+  it('ok = (≤5% E ≤R$10k); parcial 5-20%; diagnostico >20%', () => {
+    expect(classificarReconciliacaoEntidade(100, 101, false).qualidade).toBe('ok');      // 1%
+    expect(classificarReconciliacaoEntidade(100, 110, false).qualidade).toBe('parcial'); // 9%
+    expect(classificarReconciliacaoEntidade(100, 200, false).qualidade).toBe('diagnostico'); // 50%
+    // % pequeno mas absoluto grande → parcial (AND)
+    expect(classificarReconciliacaoEntidade(5_000_000, 5_040_000, false).qualidade).toBe('parcial');
+  });
+  it('alvo ~0: diff ~0 → ok; diff ≠0 → diagnostico; diff_perc null', () => {
+    expect(classificarReconciliacaoEntidade(0, 0, false)).toEqual({ qualidade: 'ok', diff: 0, diff_perc: null });
+    expect(classificarReconciliacaoEntidade(50, 0, false).qualidade).toBe('diagnostico');
+  });
+});
+
+describe('peso_perc com total negativo (estorno dominante) usa denominador absoluto', () => {
+  it('não gera % absurdo: total bruto −100, entidade −80 → peso 0.8 (abs)', () => {
+    const res = concentrarPorEntidade({
+      rowsAno: [r(A, 'A', 1, -80), r(B, 'B', 1, -20)],
+      rowsAnoAnterior: [], mesesFechados: [1], topN: 2,
+    });
+    expect(res.total_ano).toBe(-100);
+    const compA = res.componentes.find(c => c.entidade_chave === A)!;
+    expect(compA.peso_perc).toBeCloseTo(-80 / 100, 5); // ano/abs(total) = −80/100
+    expect(res.componentes.every(c => Number.isFinite(c.peso_perc))).toBe(true);
   });
 });
