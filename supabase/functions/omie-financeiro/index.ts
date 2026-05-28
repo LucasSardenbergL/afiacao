@@ -570,24 +570,21 @@ async function syncContasPagar(
   maxPages = 500,
   startPage = 1
 ) {
+  // Ver nota em syncContasReceber: 100 = limite real do Omie; paginação data-driven
+  // (pára em página parcial/vazia), não confia no total_de_paginas sub-reportado.
+  const PAGE_SIZE = 100;
   let pagina = startPage;
   let totalPaginas = 1;
   let totalSynced = 0;
   let pagesProcessed = 0;
-  let consecutiveEmpty = 0;
+  let reachedEnd = false;
 
-  while (pagina <= totalPaginas && pagesProcessed < maxPages && !isTimeBudgetExhausted()) {
-    const params: Record<string, unknown> = {
-      pagina,
-      registros_por_pagina: 500,
-    };
-    // Omie lcpListarRequest não aceita filtros de data
-
+  while (pagesProcessed < maxPages && !isTimeBudgetExhausted()) {
     const result = await callOmie(
       company,
       "financas/contapagar/",
       "ListarContasPagar",
-      params
+      { pagina, registros_por_pagina: PAGE_SIZE }
     );
     if (!result) break;
 
@@ -596,6 +593,7 @@ async function syncContasPagar(
       (result.conta_pagar_cadastro as OmieContaPagar[] | undefined)
       || (result.titulosEncontrados as OmieContaPagar[] | undefined)
       || [];
+    if (titulos.length === 0) { reachedEnd = true; break; } // página vazia = fim real
 
     const rows = titulos.map((t) => {
       const statusMap: Record<string, string> = {
@@ -676,19 +674,19 @@ async function syncContasPagar(
       else totalSynced += validRows.length;
     }
 
-    if (validRows.length === 0) { consecutiveEmpty++; } else { consecutiveEmpty = 0; }
     console.log(`[Fin][${company}] CP p${pagina}/${totalPaginas} (+${validRows.length})`);
-    if (consecutiveEmpty >= 10) { console.log(`[Fin][${company}] CP early exit: 10 empty pages`); break; }
     pagina++;
     pagesProcessed++;
+    // Fim real = página parcial (< PAGE_SIZE). Data-driven, não confia só em total_de_paginas.
+    if (titulos.length < PAGE_SIZE) { reachedEnd = true; break; }
   }
 
   const timedOut = isTimeBudgetExhausted();
   if (timedOut) console.log(`[Fin][${company}] CP stopped: time budget exhausted`);
   return {
     totalSynced,
-    complete: pagina > totalPaginas,
-    nextPage: pagina > totalPaginas ? null : pagina,
+    complete: reachedEnd,
+    nextPage: reachedEnd ? null : pagina,
     timedOut,
   };
 }
@@ -702,24 +700,23 @@ async function syncContasReceber(
   maxPages = 500,
   startPage = 1
 ) {
+  // 100 = limite real do Omie p/ contareceber. O 500 antigo era IGNORADO pelo Omie
+  // (retornava 100/pág) mas o total_de_paginas vinha sub-reportado p/ listas grandes →
+  // a paginação parava cedo e perdia os títulos recentes (colacor: ~29k no Omie, só
+  // ~12.8k sincronizados, faltando 3,5 anos de recebíveis). Paginação agora é data-driven.
+  const PAGE_SIZE = 100;
   let pagina = startPage;
   let totalPaginas = 1;
   let totalSynced = 0;
   let pagesProcessed = 0;
-  let consecutiveEmpty = 0;
+  let reachedEnd = false;
 
-  while (pagina <= totalPaginas && pagesProcessed < maxPages && !isTimeBudgetExhausted()) {
-    const params: Record<string, unknown> = {
-      pagina,
-      registros_por_pagina: 500,
-    };
-    // Omie lcrListarRequest não aceita filtros de data
-
+  while (pagesProcessed < maxPages && !isTimeBudgetExhausted()) {
     const result = await callOmie(
       company,
       "financas/contareceber/",
       "ListarContasReceber",
-      params
+      { pagina, registros_por_pagina: PAGE_SIZE }
     );
     if (!result) break;
 
@@ -728,6 +725,7 @@ async function syncContasReceber(
       (result.conta_receber_cadastro as OmieContaReceber[] | undefined)
       || (result.titulosEncontrados as OmieContaReceber[] | undefined)
       || [];
+    if (titulos.length === 0) { reachedEnd = true; break; } // página vazia = fim real
 
     const rows = titulos.map((t) => {
       let status = t.status_titulo || "ABERTO";
@@ -796,19 +794,21 @@ async function syncContasReceber(
       else totalSynced += validRows.length;
     }
 
-    if (validRows.length === 0) { consecutiveEmpty++; } else { consecutiveEmpty = 0; }
     console.log(`[Fin][${company}] CR p${pagina}/${totalPaginas} (+${validRows.length})`);
-    if (consecutiveEmpty >= 10) { console.log(`[Fin][${company}] CR early exit: 10 empty pages`); break; }
     pagina++;
     pagesProcessed++;
+    // Fim real = página parcial (o Omie só devolve < PAGE_SIZE na última página).
+    // Data-driven de propósito: NÃO confia só em total_de_paginas, que o Omie
+    // sub-reporta em listas grandes (era a causa do truncamento do CR do colacor).
+    if (titulos.length < PAGE_SIZE) { reachedEnd = true; break; }
   }
 
   const timedOut = isTimeBudgetExhausted();
   if (timedOut) console.log(`[Fin][${company}] CR stopped: time budget exhausted`);
   return {
     totalSynced,
-    complete: pagina > totalPaginas,
-    nextPage: pagina > totalPaginas ? null : pagina,
+    complete: reachedEnd,
+    nextPage: reachedEnd ? null : pagina,
     timedOut,
   };
 }
