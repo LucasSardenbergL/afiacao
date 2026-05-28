@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { MapPin, Phone, Mail, ChevronRight, LogOut, HelpCircle, Loader2, Wrench, Camera, Pencil, Fingerprint, Scan, Check, X, Plus, Clock } from 'lucide-react';
+import { MapPin, Phone, Mail, ChevronRight, LogOut, HelpCircle, Loader2, Wrench, Camera, Pencil, Check, X, Plus, Clock } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
@@ -39,7 +39,7 @@ const Profile = () => {
   const [editDeliveryTime, setEditDeliveryTime] = useState('');
   const [saving, setSaving] = useState(false);
   
-  const { isSupported: biometricSupported, isRegistered: biometricRegistered, isLoading: biometricLoading, register: registerBiometric, removeCredential: removeBiometric, checkRegistration } = useBiometricAuth();
+  const { checkRegistration } = useBiometricAuth();
   
 
   useEffect(() => {
@@ -47,15 +47,6 @@ const Profile = () => {
       checkRegistration(user.id);
     }
   }, [user, checkRegistration]);
-
-  // Fallback profile for display when no DB profile exists
-  const displayProfile = profile ?? {
-    name: user?.email?.split('@')[0] || 'Usuário',
-    email: user?.email || null,
-    phone: null, document: null, customer_type: null, avatar_url: null,
-    business_hours_open: null, business_hours_close: null,
-    lunch_start: null, lunch_end: null, preferred_delivery_time: null,
-  };
 
   const handleAvatarClick = () => {
     fileInputRef.current?.click();

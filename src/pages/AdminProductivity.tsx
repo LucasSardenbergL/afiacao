@@ -5,8 +5,7 @@ import { supabase } from '@/integrations/supabase/client';
 import { useAuth } from '@/contexts/AuthContext';
 import { Loader2, BarChart3, Clock, Wrench, Star, TrendingUp, CheckCircle2 } from 'lucide-react';
 import { BarChart, Bar, XAxis, YAxis, ResponsiveContainer, Tooltip, CartesianGrid, PieChart, Pie, Cell } from 'recharts';
-import { format, subDays, startOfDay, endOfDay, differenceInHours } from 'date-fns';
-import { ptBR } from 'date-fns/locale';
+import { format, subDays, differenceInHours } from 'date-fns';
 
 interface DailyStats {
   date: string;
@@ -22,7 +21,7 @@ const CHART_COLORS = [
 ];
 
 const AdminProductivity = () => {
-  const { user, isStaff } = useAuth();
+  const { isStaff } = useAuth();
   const [loading, setLoading] = useState(true);
   const [period, setPeriod] = useState('7');
 

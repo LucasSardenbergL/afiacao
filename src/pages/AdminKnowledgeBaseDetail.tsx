@@ -35,7 +35,7 @@ export default function AdminKnowledgeBaseDetail() {
     queryFn: async () => {
       const { count } = await supabase.from('kb_chunks')
         .select('*', { count: 'exact', head: true })
-        .eq('document_id', id);
+        .eq('document_id', id!);
       return count ?? 0;
     },
   });

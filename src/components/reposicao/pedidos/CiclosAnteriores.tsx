@@ -27,7 +27,7 @@ export function CiclosAnteriores({ data, onChange }: { data: string; onChange: (
         const k = r.data_ciclo as string;
         if (!grupos.has(k)) grupos.set(k, { fornecedores: new Set(), pedidos: 0, valor: 0, disparados: 0, cancelados: 0 });
         const g = grupos.get(k)!;
-        g.fornecedores.add(r.fornecedor_nome);
+        g.fornecedores.add(r.fornecedor_nome ?? '');
         g.pedidos += 1;
         g.valor += Number(r.valor_total ?? 0);
         if (r.status === 'disparado') g.disparados += 1;

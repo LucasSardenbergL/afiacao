@@ -10,7 +10,7 @@ import { useAuth } from '@/contexts/AuthContext';
 import { useNavigate } from 'react-router-dom';
 import { 
   Trophy, Search, Target, Shield, Award, Star, 
-  Heart, ChevronRight, Users, Loader2, Eye,
+  Heart, Users, Loader2, Eye,
   BookOpen, Zap
 } from 'lucide-react';
 
@@ -54,7 +54,7 @@ const AdminGamification = () => {
   const [users, setUsers] = useState<RankedUser[]>([]);
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState('');
-  const [selectedUser, setSelectedUser] = useState<RankedUser | null>(null);
+  const [, setSelectedUser] = useState<RankedUser | null>(null);
 
   useEffect(() => {
     if (!authLoading && userRole !== null && !isStaff) navigate('/', { replace: true });
@@ -181,7 +181,7 @@ const AdminGamification = () => {
 
         {/* Ranking List */}
         <div className="space-y-2">
-          {filtered.map((user, index) => {
+          {filtered.map((user) => {
             const Icon = LEVEL_ICONS[user.level] || Target;
             const colorClasses = LEVEL_COLORS[user.level] || LEVEL_COLORS[1];
             const position = users.findIndex(u => u.user_id === user.user_id) + 1;

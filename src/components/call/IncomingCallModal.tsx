@@ -93,14 +93,14 @@ export function IncomingCallModal() {
   const handleAccept = async () => {
     setAccepting(true);
     try {
-      await acceptIncoming();
+      await acceptIncoming?.();
     } finally {
       setAccepting(false);
     }
   };
 
   return (
-    <Dialog open={true} onOpenChange={(open) => !open && rejectIncoming()}>
+    <Dialog open={true} onOpenChange={(open) => !open && rejectIncoming?.()}>
       <DialogContent
         className="max-w-md text-center"
         onPointerDownOutside={(e) => e.preventDefault()}

@@ -198,9 +198,9 @@ export default function AdminPortalSayerlack() {
         }
         if (ehFalha && r.portal_erro) {
           const key = r.portal_erro.slice(0, 100);
-          const cur = erros.get(key) ?? { erro: key, count: 0, ultimo: r.criado_em };
+          const cur = erros.get(key) ?? { erro: key, count: 0, ultimo: r.criado_em ?? '' };
           cur.count++;
-          if (new Date(r.criado_em) > new Date(cur.ultimo)) cur.ultimo = r.criado_em;
+          if (new Date(r.criado_em ?? '') > new Date(cur.ultimo)) cur.ultimo = r.criado_em ?? '';
           erros.set(key, cur);
         }
       }
