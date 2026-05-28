@@ -235,8 +235,7 @@ export async function coletarTitulosEntidade(input: {
     const lote = codigos.slice(i, i + chunkCodigos);
     let offset = 0;
     // loop de páginas dentro do lote
-    // eslint-disable-next-line no-constant-condition
-    while (true) {
+    for (;;) {
       const rows = await fetchPagina(lote, offset, pageSize);
       for (const row of rows) {
         out.push(row);

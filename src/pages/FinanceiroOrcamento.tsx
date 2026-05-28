@@ -8,9 +8,10 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@
 import { COMPANIES, ALL_COMPANIES, type Company } from '@/contexts/CompanyContext';
 import { useQuery } from '@tanstack/react-query';
 import { getDRE, DRE_LINHAS, getCategoryMappings, type FinDRE } from '@/services/financeiroService';
-import { getOrcamento, upsertOrcamento, getCategoriasCompetenciaRaw, type OrcamentoLinha } from '@/services/financeiroV2Service';
+import { getOrcamento, upsertOrcamento, getCategoriasCompetenciaRaw, getTitulosEntidadeRaw, type OrcamentoLinha } from '@/services/financeiroV2Service';
 import { projetarDRE, seedOrcamento, mesesFechados, LINHAS_INPUT, type MesDRE, type LinhaInput } from '@/lib/financeiro/orcamento-forecast-helpers';
-import { drillLinha, fontesDaLinha } from '@/lib/financeiro/orcamento-drill-helpers';
+import { drillLinha, fontesDaLinha, codigosDaLinha } from '@/lib/financeiro/orcamento-drill-helpers';
+import { entidadeDaLinha, concentrarPorEntidade } from '@/lib/financeiro/orcamento-entidade-helpers';
 import { DrillVarianciaPanel } from '@/components/financeiro/DrillVarianciaPanel';
 import { toast } from 'sonner';
 import { Loader2, Save, Building2, Calendar, TrendingUp, TrendingDown, Target, History, Plane, ChevronDown, ChevronRight } from 'lucide-react';
@@ -234,6 +235,39 @@ const FinanceiroOrcamento = () => {
       varianciaAnual: fl.variancia,
     });
   }, [expandedLinha, drillBaseQuery.data, forecast.linhas, company, mesesFechadosArr]);
+
+  // ── Drill v2: lente "Por fornecedor·cliente" (só em linhas puras) ──
+  const [drillLente, setDrillLente] = useState<'categoria' | 'entidade'>('categoria');
+  useEffect(() => { setDrillLente('categoria'); }, [expandedLinha]);
+
+  const entidadeInfo = useMemo(
+    () => (expandedLinha ? entidadeDaLinha(expandedLinha) : null),
+    [expandedLinha],
+  );
+
+  const drillCodigos = useMemo(() => {
+    if (!expandedLinha || !drillBaseQuery.data) return [];
+    return codigosDaLinha(drillBaseQuery.data.mapping, expandedLinha, REGIME_ORCAMENTO[company]);
+  }, [expandedLinha, drillBaseQuery.data, company]);
+
+  const entidadeQuery = useQuery({
+    queryKey: ['orcamento-drill-entidade', company, ano, mesesFechadosArr.join(','), expandedLinha, drillCodigos.join(',')],
+    enabled: !!expandedLinha && drillLente === 'entidade' && !!entidadeInfo && drillCodigos.length > 0,
+    queryFn: async () => {
+      const info = entidadeInfo!;
+      const [ya, yb] = await Promise.all([
+        getTitulosEntidadeRaw(info.fonte, company, ano, mesesFechadosArr, drillCodigos),
+        getTitulosEntidadeRaw(info.fonte, company, ano - 1, mesesFechadosArr, drillCodigos),
+      ]);
+      return concentrarPorEntidade({
+        rowsAno: ya.rows,
+        rowsAnoAnterior: yb.rows,
+        mesesFechados: mesesFechadosArr,
+        topN: 3,
+        truncado: ya.truncado || yb.truncado,
+      });
+    },
+  });
 
   const handleSugerir = () => {
     if (dreAnoAnteriorMesDRE.length === 0) {
@@ -503,6 +537,14 @@ const FinanceiroOrcamento = () => {
                               isLoading={drillBaseQuery.isLoading}
                               isError={drillBaseQuery.isError}
                               ano={ano}
+                              lente={drillLente}
+                              onLente={entidadeInfo ? setDrillLente : undefined}
+                              entidadeRotulo={entidadeInfo?.rotulo ?? null}
+                              entidadeData={entidadeQuery.data ?? null}
+                              entidadeLoading={entidadeQuery.isLoading}
+                              entidadeError={entidadeQuery.isError}
+                              totalCategoriaV1={drillResult?.total_decomposto ?? null}
+                              realizadoSnapshot={drillResult?.realizado_snapshot ?? null}
                             />
                           </TableCell>
                         </TableRow>
