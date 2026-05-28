@@ -733,6 +733,12 @@
     "src/components/aiOps/useAiOps.ts",
     "src/pages/AIops.tsx",
     "src/components/reposicao/cadeiaLogistica/useCadeiaLogistica.ts",
-    "src/pages/AdminReposicaoCadeiaLogistica.tsx"
+    "src/pages/AdminReposicaoCadeiaLogistica.tsx",
+    "src/components/adminCustomers/RequiresPoToggle.tsx",
+    "src/components/adminCustomers/Customer360View.tsx",
+    "src/contexts/ImpersonationContext.tsx",
+    "src/components/impersonation/ImpersonationBanner.tsx",
+    "src/hooks/useImpersonationTargets.ts",
+    "src/components/impersonation/ViewAsPicker.tsx"
   ]
 }
