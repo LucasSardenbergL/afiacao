@@ -703,6 +703,13 @@
     "src/components/reposicao/slaFornecedor/SkuComplianceTable.tsx",
     "src/components/unifiedAI/AIResultPanel.tsx",
     "src/pages/AdminStandardProcessDetail.tsx",
-    "src/pages/TintImport.tsx"
+    "src/pages/TintImport.tsx",
+    "src/lib/reposicao/compras-otimizador-helpers.ts",
+    "src/components/reposicao/oportunidades/shared.tsx",
+    "src/components/reposicao/oportunidades/components.tsx",
+    "src/components/reposicao/oportunidades/KpiCards.tsx",
+    "src/components/reposicao/oportunidades/OportunidadesFiltros.tsx",
+    "src/components/reposicao/oportunidades/GerarCicloDialog.tsx",
+    "src/components/reposicao/oportunidades/OportunidadesTable.tsx"
   ]
 }
