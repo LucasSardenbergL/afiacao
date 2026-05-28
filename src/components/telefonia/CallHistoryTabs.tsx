@@ -17,7 +17,7 @@ export function CallHistoryTabs({
   userId, tab, onTabChange, onCallBack, isManager,
 }: {
   userId: string | undefined; tab: CallLogTab; onTabChange: (t: CallLogTab) => void;
-  onCallBack: (phone: string) => void; isManager: boolean;
+  onCallBack: (phone: string, name?: string) => void; isManager: boolean;
 }) {
   const { data: rows = [], isLoading } = useCallLog(tab, userId);
   const ack = useAcknowledgeMissed(userId);
