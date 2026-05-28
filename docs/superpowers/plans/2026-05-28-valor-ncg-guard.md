@@ -157,8 +157,55 @@ if (input.giro_indisponivel) rebaixar(1, 'Sem snapshot de NCG — capital de gir
 else if (input.giro_stale) rebaixar(2, 'NCG desatualizado (snapshot antigo) — capital de giro pode estar defasado.');
 ```
 
+**Composta `resolverCapitalParaValor` (Codex plano P1.1 — defeita o "inline 0"):** encapsula TODO o bloco de capital (hoje inline no edge L244-298), pra ser testável ponta-a-ponta e espelhada verbatim — o edge NÃO pode mais ter `capital_giro = latestNcg ? ... : 0` inline:
+```ts
+export function resolverCapitalParaValor(input: {
+  snaps: SnapNcg[]; ativo_fixo: AtivoFixoInput; ajustes?: number; hojeMs: number; limiarStaleDias?: number;
+}): {
+  capital: CapitalInvestidoResult;        // capital_investido/capital_giro number|null + giro_indisponivel
+  capital_anterior: number | null;        // capital investido do ponto −12m (null se giro atual indisponível)
+  giro_snapshot_at: string | null; giro_dias: number | null; giro_stale: boolean;
+} {
+  const giro = resolverCapitalGiro(input.snaps);
+  const frescor = frescorGiro(giro.snapshot_at, input.hojeMs, input.limiarStaleDias);
+  const capital = capitalInvestido({ capital_giro: giro.capital_giro, ativo_fixo: input.ativo_fixo, ajustes: input.ajustes });
+  const capital_giro_anterior = giro.disponivel && giro.snapshot_at ? acharCapitalGiroAnterior(input.snaps, giro.snapshot_at) : null;
+  const capital_anterior = capital_giro_anterior != null
+    ? capitalInvestido({ capital_giro: capital_giro_anterior, ativo_fixo: input.ativo_fixo, ajustes: input.ajustes }).capital_investido
+    : null;
+  return { capital, capital_anterior, giro_snapshot_at: giro.snapshot_at, giro_dias: frescor.dias, giro_stale: frescor.stale };
+}
+```
+
+**Testes de orquestração da composta (Codex P1.1 + P1.3 — asserts EXATOS):**
+```ts
+describe('resolverCapitalParaValor', () => {
+  const hoje = Date.parse('2026-05-28T00:00:00Z');
+  const af = null; // sem ativo fixo
+  it('NCG ausente (todos null) → capital_investido/capital_giro null, giro_indisponivel, sem anterior', () => {
+    const r = resolverCapitalParaValor({ snaps: [{ ncg: null, snapshot_at: '2026-05-28T00:00:00Z' }], ativo_fixo: af, hojeMs: hoje });
+    expect(r.capital.capital_investido).toBeNull();
+    expect(r.capital.capital_giro).toBeNull();
+    expect(r.capital.giro_indisponivel).toBe(true);
+    expect(r.capital_anterior).toBeNull();
+  });
+  it('NCG negativo grande + sem ativo fixo → giro DISPONÍVEL mas capital_investido ≤ 0 (roic null por capital, NÃO por ausência)', () => {
+    const r = resolverCapitalParaValor({ snaps: [{ ncg: -50000, snapshot_at: '2026-05-27T00:00:00Z' }], ativo_fixo: af, hojeMs: hoje });
+    expect(r.capital.giro_indisponivel).toBe(false);
+    expect(r.capital.capital_investido).toBe(-50000);
+    expect(roic({ nopat: 1000, capital_investido: r.capital.capital_investido })).toBeNull(); // capital≤0
+  });
+  it('NCG válido recente → capital_giro = ncg (happy-path idêntico), não stale', () => {
+    const r = resolverCapitalParaValor({ snaps: [{ ncg: 300000, snapshot_at: '2026-05-25T00:00:00Z' }], ativo_fixo: af, hojeMs: hoje });
+    expect(r.capital.capital_giro).toBe(300000);
+    expect(r.giro_stale).toBe(false);
+  });
+});
+```
+Confiança: `scoreConfiancaValor({giro_indisponivel:true,...}).nivel === 'baixa'` (exato); `{giro_stale:true,...}.nivel === 'media'`; capital≤0 conhecido (`roic_null:true, giro_indisponivel:false`) → `'media'` (distinção P1.3). Normalização: `normalizarComingling({capital_reportado:null, intercompany_giro:-500,...}).capital_normalizado === null` (NÃO −500) e `.ebit_normalizado` calculado.
+
 - [ ] **Step 4 — Rodar, ver passar.** `heavy bun run test src/lib/financeiro/__tests__/valor-helpers.test.ts`
-- [ ] **Step 5 — Commit:** `feat(valor): helpers resolverCapitalGiro/frescorGiro + capital/comingling/confiança null-aware (TDD)`
+- [ ] **Step 5 — Commit:** `feat(valor): helpers resolverCapitalGiro/frescorGiro/resolverCapitalParaValor + capital/comingling/confiança null-aware (TDD)`
 
 ---
 
@@ -168,18 +215,17 @@ else if (input.giro_stale) rebaixar(2, 'NCG desatualizado (snapshot antigo) — 
 - Modify: `supabase/functions/fin-valor-engine/index.ts` (L244-340)
 - Modify: `src/services/financeiroService.ts` (L831-854)
 
-- [ ] **Step 1 — Edge:** copiar verbatim os helpers novos/alterados (`resolverCapitalGiro`, `frescorGiro`, `acharCapitalGiroAnterior`, `capitalInvestido`, `normalizarComingling`, `scoreConfiancaValor`) para a seção de helpers do `index.ts`. Substituir L244-263 por:
+- [ ] **Step 1 — Edge:** copiar verbatim TODOS os helpers novos/alterados (`resolverCapitalGiro`, `frescorGiro`, `acharCapitalGiroAnterior`, **`resolverCapitalParaValor`**, `capitalInvestido`, `normalizarComingling`, `scoreConfiancaValor`) para a seção de helpers do `index.ts`. Substituir L244-298 (bloco de capital inteiro) por **uma** chamada à composta:
 ```ts
 const { data: snaps } = await db.from("fin_projecao_snapshots")
   .select("ncg, snapshot_at").eq("company", company).order("snapshot_at", { ascending: false }).limit(400);
 const snapRows = (snaps ?? []) as Array<{ ncg: number | null; snapshot_at: string }>;
-const giro = resolverCapitalGiro(snapRows);
-const capital_giro = giro.capital_giro;                       // number | null
-const frescor = frescorGiro(giro.snapshot_at, Date.now());    // staleness honesto
-const capital_giro_anterior = giro.disponivel && giro.snapshot_at
-  ? acharCapitalGiroAnterior(snapRows, giro.snapshot_at) : null;
+const cap = resolverCapitalParaValor({ snaps: snapRows, ativo_fixo, ajustes, hojeMs: Date.now() });
+const capRep = cap.capital;            // {capital_investido, capital_giro, ..., giro_indisponivel}
+const capAnterior = cap.capital_anterior;
 ```
-- [ ] **Step 2 — Edge wire:** `capRep = capitalInvestido({ capital_giro, ativo_fixo, ajustes })` (já aceita null). `capAnterior` só quando `capital_giro_anterior != null` (inalterado). `normalizarComingling({ ebit_reportado: nopatAtual.ebit, capital_reportado: capRep.capital_investido, ... })` (agora aceita null). `scoreConfiancaValor({ ..., giro_indisponivel: capRep.giro_indisponivel, giro_stale: frescor.stale })`. **Remover** o motivo enterrado da L340 (`if (giro_indisponivel) motivos.push(...)`) — agora vem estruturado de `capRep.motivos`. Expor no result: `giro_indisponivel: capRep.giro_indisponivel`, `giro_snapshot_at: giro.snapshot_at`, `giro_dias: frescor.dias`.
+**NÃO** deixar nenhum `capital_giro = latestNcg ? ... : 0` inline (Codex P1.1 — defeitado pela composta).
+- [ ] **Step 2 — Edge wire:** `normalizarComingling({ ebit_reportado: nopatAtual.ebit, capital_reportado: capRep.capital_investido, ... })` (agora aceita null). `scoreConfiancaValor({ ..., giro_indisponivel: capRep.giro_indisponivel, giro_stale: cap.giro_stale })`. **Remover** o motivo enterrado da L340. Expor no result: `giro_indisponivel: capRep.giro_indisponivel`, `giro_snapshot_at: cap.giro_snapshot_at`, `giro_dias: cap.giro_dias`. **Auditar coerção null (Codex P1.2)** em todos os sites: `roic/eva/incremental` (já null-safe), `cg/roicNorm/evaNorm` (guard na composta/comingling), `result` (`normalizado.capital_investido = cg.capital_normalizado` pode ser null — contrato nullable).
 - [ ] **Step 3 — `deno check`:** `cd supabase/functions/fin-valor-engine && deno check index.ts` (erro-set inalterado).
 - [ ] **Step 4 — Contrato** `ValorEmpresaResult`: `reportado.capital_investido: number | null; capital_giro: number | null; giro_indisponivel: boolean; giro_snapshot_at: string | null; giro_dias: number | null;` e `normalizado.capital_investido: number | null;`.
 - [ ] **Step 5 — Commit:** `feat(valor): fin-valor-engine usa guard de NCG (espelho) + contrato nullable`
