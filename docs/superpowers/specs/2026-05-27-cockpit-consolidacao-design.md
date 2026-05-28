@@ -46,31 +46,33 @@ export type SemanaConsolidada = {
 };
 
 export type CockpitConsolidado = {
-  projecao13: SemanaConsolidada[];      // ordenada por inicio
-  ncg_total: number;                    // Σ ncg não-null
-  ncg_por_empresa: { company: string; ncg: number | null }[];
-  ncg_parcial: boolean;                 // algum ncg null
+  projecao13: SemanaConsolidada[];      // coorte, ordenada por inicio, no MÁXIMO 13
+  ncg_total: number;                    // Σ ncg não-null da COORTE (mínimo conhecido se parcial)
+  ncg_por_empresa: { company: string; ncg: number | null; presente: boolean }[]; // ordem = esperadas
+  ncg_parcial: boolean;
   saldo_tesouraria_total: number;
-  empresas_presentes: string[];
-  empresas_ausentes: string[];
-  parcial: boolean;                     // empresas_ausentes.length > 0
+  saldo_tesouraria_parcial: boolean;
+  empresas_presentes: string[];         // na coorte (data de referência), ordem = esperadas
+  empresas_ausentes: string[];          // sem nenhum snapshot
+  empresas_stale: string[];             // têm snapshot, mas mais antigo que a data de referência (fora da coorte)
+  parcial: boolean;                     // (ausentes ∪ stale).length > 0
+  data_referencia: string | null;       // data (YYYY-MM-DD) da coorte usada
   snapshot_at_mais_antigo: string | null;
 };
 
 export function consolidarCockpit(input: {
-  esperadas: string[];                  // ['oben','colacor','colacor_sc']
+  esperadas: string[];                  // ['oben','colacor','colacor_sc'] (ordem preservada)
   snapshots: SnapshotEmpresa[];
 }): CockpitConsolidado;
 ```
 
-Lógica:
-1. `empresas_presentes = snapshots.map(s=>s.company)` (únicas); `empresas_ausentes = esperadas − presentes`; `parcial = ausentes.length>0`.
-2. `snapshot_at_mais_antigo = min(snapshot_at)` (ISO compare) ou null se vazio.
-3. **NCG:** `ncg_por_empresa` = cada `{company, ncg}`; `ncg_total = Σ ncg dos não-null`; `ncg_parcial = parcial || algum ncg==null`. `saldo_tesouraria_total = Σ saldo_tesouraria não-null`.
-4. **Projeção:** `inicios = união ordenada (asc) de todos os s.semanas[].inicio`. Para cada `inicio`: empresas que têm essa semana → soma `total_entradas/total_saidas/saldo_final`; `por_empresa` = `{company, saldo_final}` das que têm; `completa = (nº de empresas com a semana == empresas_presentes.length)`; `semana_label` = `dd/mm` de `inicio`. **Não zera ausência**: a soma só inclui quem tem a semana; `completa=false` sinaliza. `round2` nos valores.
-5. Retorna ordenado por `inicio`.
-
-`round2(n)=Math.round((n+Number.EPSILON)*100)/100`.
+Lógica (incorpora Codex no spec — P1.1/P1.2/P1.3/P2):
+1. **Dedupe por empresa (P1.2):** `Map<company, snapshot>` mantendo o de maior `snapshot_at` (parse `Date`, não string — P2.2). Evita somar a mesma empresa 2×.
+2. **Coorte por data de referência (P1.3, o crítico):** `dataRef = max(date(snapshot_at))` (YYYY-MM-DD, via slice da string ISO — sem `new Date`/timezone). **Coorte = empresas cujo snapshot é da `dataRef`** (mesma rodada diária → mesmas âncoras de semana). Empresa com snapshot mais antigo → `empresas_stale` (NÃO entra na soma); sem snapshot → `empresas_ausentes`. `parcial = (ausentes ∪ stale).length > 0`. `empresas_presentes` = coorte, **na ordem de `esperadas`** (P3.2).
+3. **NCG:** `ncg_por_empresa` = `esperadas.map(c => {company, ncg: coorte? : null, presente})`; `ncg_total = Σ ncg da coorte (não-null)`; `ncg_parcial = parcial || algum ncg da coorte == null`.
+4. **Saldo:** `saldo_tesouraria_total = Σ saldo_tesouraria da coorte (não-null)`; `saldo_tesouraria_parcial = parcial || algum == null`.
+5. **Projeção (só a coorte):** `inicios = união ordenada asc de todos os semanas[].inicio da coorte`; valida `Array.isArray` no service (P1.4). Para cada `inicio`: soma `total_entradas/total_saidas/saldo_final` das empresas da coorte que têm a semana; `por_empresa` = `{company, saldo_final}` (coorte); **`completa = (nº empresas com a semana === esperadas.length)`** (P1.1 — relativo a TODAS as esperadas, não só presentes); `semana_label` = `dd/mm` por **split de `inicio.slice(8,10)+'/'+inicio.slice(5,7)`** (sem `new Date` — P2.3). Soma só quem tem a semana (ausente ≠ zero). **Cap em 13** semanas a partir da menor âncora (P2.5).
+6. `snapshot_at_mais_antigo` = min da coorte (parse Date). Valores monetários: somados em **bruto**, `round2` só na saída (P2.4).
 
 ## Service `src/services/financeiroV2Service.ts`
 
@@ -79,7 +81,7 @@ export async function getProjecaoSnapshotsCockpit(
   companies: Company[], cenario = 'realista'
 ): Promise<SnapshotEmpresa[]>;
 ```
-Para cada company: `SELECT company, snapshot_at, ncg, saldo_tesouraria, dados FROM fin_projecao_snapshots WHERE company=? AND cenario=? ORDER BY snapshot_at DESC LIMIT 1`. Mapeia `dados` (Json) → `semanas` (extrai `{inicio, total_entradas, total_saidas, saldo_final}` de cada). Empresa sem linha → não entra (o helper marca ausente). Uma query por empresa (`Promise.all`) ou `.in('company',...)` + dedup do mais recente por empresa client-side.
+Para cada company: `SELECT company, snapshot_at, ncg, saldo_tesouraria, dados FROM fin_projecao_snapshots WHERE company=? AND cenario=? ORDER BY snapshot_at DESC LIMIT 1`. **Valida `Array.isArray(dados)` (P1.4)** → mapeia cada item para `{inicio, total_entradas, total_saidas, saldo_final}` (coage números, ignora item sem `inicio`); `dados` não-array → `semanas: []` (empresa entra no NCG mas sem projeção; helper trata). Empresa sem linha → não retorna (helper marca ausente). Uma query por empresa (`Promise.all`). Tipo do param = `Company[]` (os 3 códigos).
 
 ## Hook `useFinanceiroCockpit.ts`
 
@@ -89,10 +91,11 @@ Para cada company: `SELECT company, snapshot_at, ncg, saldo_tesouraria, dados FR
 
 ## UI
 
-- **`Projecao13Card`:** consome o novo shape (já tem `semana_label/entradas_previstas/saidas_previstas/saldo_projetado`) + header "Cenário: realista · dados de {snapshot_at}" + (opcional) expandir por-empresa por semana. Banner se `parcial`.
-- **Card de NCG:** mostra `ncg_total` + breakdown por empresa + aviso "não elimina intercompany". Substitui o número CR−CP.
+- **Bloco consolidado (header):** "Consolidado 3 CNPJ · Cenário: realista · dados de {data_referencia}" + **aviso de intercompany no bloco INTEIRO** (P2.6 — o double-count afeta projeção E NCG, não só NCG) + **banner de parcialidade** se `parcial` ("N de 3 empresas — ausentes/stale: …; números são mínimo conhecido").
+- **`Projecao13Card`:** consome o novo shape (`semana_label/entradas_previstas/saidas_previstas/saldo_projetado`); marca visualmente semanas com `completa=false`; não hardcoda "13" (usa `.length`).
+- **Card de NCG:** `ncg_total` **com badge "N/3" quando `ncg_parcial`** (P1.5 — total parcial não pode parecer definitivo) + breakdown `ncg_por_empresa` (presente/ausente). Substitui o número CR−CP.
 - **`DataBasisFooter`:** texto dinâmico pelo `regime` ativo (não "regime de caixa" fixo).
-- **"Caixa Projetado 30d":** renomear para "Posição líquida (abertos)" OU aplicar janela 30d real (decidir no plano — provável rename, trivial).
+- **"Caixa Projetado 30d":** **renomear** para "Posição líquida (CR+CC−CP abertos)" (P3.4 — rename é o seguro; o número atual não é janela de 30d).
 - **Labels (A-class):** "caixa disponível" (saldo bancário) vs A4/Funding (alocável pós-reserva) — rótulos; badge de regime ativo perto dos KPIs do Cockpit; "receita (vendas no app, cobertura X%)" no Cockpit de Valor; escopo "Consolidado 3 CNPJ" no título.
 
 ## Não-objetivos (v1)
