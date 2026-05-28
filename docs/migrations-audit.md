@@ -21,13 +21,13 @@ Este audit valida **quais custom migrations estão de fato aplicadas no banco**.
 
 ## Resumo
 
-- **100** custom migrations totais
-- **485** objetos esperados (criados por estas migrations)
+- **103** custom migrations totais
+- **487** objetos esperados (criados por estas migrations)
 - Quebra por tipo:
   - `rls_policy`: 139
   - `index`: 96
   - `cron_job`: 82
-  - `function`: 76
+  - `function`: 78
   - `table`: 57
   - `trigger`: 31
   - `enum_value`: 4
@@ -998,11 +998,27 @@ Lista canônica do que cada migration *deveria* criar (extraído via regex de `C
 | --- | --- | --- |
 | `cron_job` | `cron.nao-vinculados-refresh-diario` | — |
 
+### `20260527260000_data_health_vendas_cadastros_dado.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `function` | `public._data_health_compute` | — |
+
 ### `20260528000000_fin_sync_watchdog_tail_failing.sql`
 
 | Tipo | Objeto | Parent |
 | --- | --- | --- |
 | `function` | `public.fin_sync_watchdog_check` | — |
+
+### `20260528120000_reposicao_custo_cmc_em_transito.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `function` | `public.gerar_pedidos_sugeridos_ciclo` | — |
+
+### `20260528120001_v_titulo_baixas.sql`
+
+> _Nenhum objeto extraído via regex._ Migration provavelmente é `ALTER TABLE` / `UPDATE` / `INSERT` / RLS-only. Validar manualmente.
 
 ## Próximos passos quando algo der `❌`
 

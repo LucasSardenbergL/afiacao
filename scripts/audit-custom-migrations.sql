@@ -3,7 +3,7 @@
 -- ========================================================================
 --
 -- Gerado por: scripts/audit-custom-migrations.ts
--- Total de custom migrations: 100
+-- Total de custom migrations: 103
 --
 -- Como usar:
 --   1. Abra o Supabase SQL Editor (via Lovable Cloud → Backend → SQL Editor)
@@ -119,7 +119,10 @@ WITH expected (version, slug, filename) AS (VALUES
   ('20260527240000', 'data_health_alert_channel', '20260527240000_data_health_alert_channel.sql'),
   ('20260527250000', 'data_health_checks_high', '20260527250000_data_health_checks_high.sql'),
   ('20260527250000', 'nao_vinculados_cron', '20260527250000_nao_vinculados_cron.sql'),
-  ('20260528000000', 'fin_sync_watchdog_tail_failing', '20260528000000_fin_sync_watchdog_tail_failing.sql')
+  ('20260527260000', 'data_health_vendas_cadastros_dado', '20260527260000_data_health_vendas_cadastros_dado.sql'),
+  ('20260528000000', 'fin_sync_watchdog_tail_failing', '20260528000000_fin_sync_watchdog_tail_failing.sql'),
+  ('20260528120000', 'reposicao_custo_cmc_em_transito', '20260528120000_reposicao_custo_cmc_em_transito.sql'),
+  ('20260528120001', 'v_titulo_baixas', '20260528120001_v_titulo_baixas.sql')
 )
 SELECT
   e.version,
@@ -622,7 +625,9 @@ WITH expected_objects (migration, kind, schema_name, object_name, parent_name) A
   ('data_health_checks_high', 'function', 'public', 'data_health_watchdog', ''),
   ('data_health_checks_high', 'function', 'public', 'fin_sync_heartbeat', ''),
   ('nao_vinculados_cron', 'cron_job', 'cron', 'nao-vinculados-refresh-diario', ''),
-  ('fin_sync_watchdog_tail_failing', 'function', 'public', 'fin_sync_watchdog_check', '')
+  ('data_health_vendas_cadastros_dado', 'function', 'public', '_data_health_compute', ''),
+  ('fin_sync_watchdog_tail_failing', 'function', 'public', 'fin_sync_watchdog_check', ''),
+  ('reposicao_custo_cmc_em_transito', 'function', 'public', 'gerar_pedidos_sugeridos_ciclo', '')
 )
 SELECT
   e.migration,
