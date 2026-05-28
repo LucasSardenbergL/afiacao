@@ -6,7 +6,7 @@ import { useDataHealth } from '@/hooks/useDataHealth';
 import { rollupDomain, formatAge, badgeLevel } from '@/lib/dataHealth/health-helpers';
 
 const DOMAIN_LABEL: Record<string, string> = {
-  financeiro: 'Financeiro', omie_sync: 'Syncs Omie', carteira: 'Carteira / Scoring', estoque: 'Estoque / Reposição', vendas: 'Vendas / Pedidos',
+  financeiro: 'Financeiro', omie_sync: 'Syncs Omie', carteira: 'Carteira / Scoring', estoque: 'Estoque / Reposição', vendas: 'Vendas / Pedidos', alertas: 'Canal de alerta',
 };
 const STATUS_CLS: Record<string, string> = {
   ok: 'text-status-success', stale: 'text-status-warning', broken: 'text-status-error', unknown: 'text-status-error',
