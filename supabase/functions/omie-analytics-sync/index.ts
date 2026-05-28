@@ -186,14 +186,38 @@ async function callOmie(account: OmieAccount, endpoint: string, call: string, pa
   if (!creds.key || !creds.secret) throw new Error(`Credenciais Omie (${account}) não configuradas`);
 
   const body = { call, app_key: creds.key, app_secret: creds.secret, param: [params] };
-  const res = await fetch(`${OMIE_API_URL}/${endpoint}`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(body),
-  });
-  const result = (await res.json()) as OmieApiResponseBase;
-  if (result.faultstring) throw new Error(`Omie (${account}): ${result.faultstring}`);
-  return result;
+
+  // Retry com backoff p/ erros TRANSITÓRIOS do Omie/rede (ex.: "SOAP-ERROR: Broken response from
+  // Application Server" — flakiness intermitente do servidor do Omie que matava a enumeração de ~105
+  // páginas). ListarClientes/ListarProdutos são leitura idempotente → seguro re-tentar. Erro PERMANENTE
+  // (credencial/validação) falha rápido (não casa os marcadores transitórios). Backoff: 0.8s, 1.6s, 3.2s.
+  const maxAttempts = 4;
+  let lastErr: Error | null = null;
+  for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+    try {
+      const res = await fetch(`${OMIE_API_URL}/${endpoint}`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(body),
+      });
+      const result = (await res.json()) as OmieApiResponseBase;
+      if (result.faultstring) throw new Error(`Omie (${account}): ${result.faultstring}`);
+      return result;
+    } catch (e) {
+      lastErr = e instanceof Error ? e : new Error(String(e));
+      const msg = lastErr.message.toLowerCase();
+      const transient = msg.includes("broken response") || msg.includes("soap-error") ||
+        msg.includes("timeout") || msg.includes("timed out") || msg.includes("network") ||
+        msg.includes("connection") || msg.includes("fetch failed") ||
+        msg.includes("502") || msg.includes("503") || msg.includes("504") || msg.includes("500");
+      if (transient && attempt < maxAttempts) {
+        await new Promise((r) => setTimeout(r, 800 * Math.pow(2, attempt - 1)));
+        continue;
+      }
+      throw lastErr;
+    }
+  }
+  throw lastErr ?? new Error(`Omie (${account}): falha após ${maxAttempts} tentativas`);
 }
 
 // ======== SYNC STATE HELPERS ========
