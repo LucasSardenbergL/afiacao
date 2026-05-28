@@ -6,6 +6,30 @@
 > tipava → trabalho jogado fora) ou conflitam no `tsconfig.strict.json`.
 > Este é o **registro de reserva (claim)**: quem mexe no quê, agora.
 
+## Estado atual (2026-05-27) — fase leaf/baixo-risco CONCLUÍDA (~81%)
+
+- **Progresso: ~692 / 853 (~81%)** no `include` do `tsconfig.strict.json`.
+- A **fase leaf/baixo-risco está concluída** (não é pausa passiva — é marco). Esgotou-se o
+  trabalho de **append mecânico** (READY) e de **fix trivial** (dead-code/guard/zodResolver).
+  Última leva: triagem validada (`scripts/strict-tsx-triage.mjs` + `docs/strict-tsx-ready-candidates.md`),
+  119 `.tsx` mecânicos, Lote B (12), 14 NEAR frios, cluster `reposicao/oportunidades`.
+- **O tail restante (~19%) NÃO é mais incremental barato** — exige **sessão dedicada por lane/hook
+  com coordenação explícita**, por isso foi pausado de propósito (decisão eu+Codex):
+  - **NEAR bloqueados por HOOKS** (`useAnalyticsSync`, `useDataHealth`, `useCustomerDashboard`,
+    `useRoutePlanner`, `useCadeiaLogistica`, `useSkuMapeamento`, `useNotificacoes`…) — hooks puxam
+    supabase/react-query, **não são leaf**; promover exige validar hook-a-hook + trazer o hook junto.
+  - **Blocker barrel** `src/lib/reposicao` (index) — puxa muito de uma vez.
+  - **Services** `financeiroService`/`financeiroV2Service` — grandes, **lane financeiro quente**.
+  - **Lanes quentes** farmer/scoring/financeiro/customer360 — sessões paralelas ativas → **coordenar**.
+  - **Hubs com `lazy()`** e **pages** — não-leaf, cascata transitiva (método bottom-up).
+- **Critério de retomada:** janela com poucos PRs em voo + CPU calma; pegar **uma lane por vez**;
+  para NEAR, promover o **blocker leaf no MESMO PR** (padrão do cluster `oportunidades`); para hooks,
+  **um hook frio por PR** validando isolado; **não tocar** farmer/financeiro sem coordenar a lane.
+- **Próximos alvos seguros sugeridos** (re-rode o script p/ confirmar): hooks frios isolados
+  (`useDataHealth` → destrava `DataHealthBanner`/`DataHealthBadge`/`SaudeDados`; `useAnalyticsSync` →
+  `EngineCards`/`EngineConfigCard`); cluster `reposicao/cicloHoje` (root `useCicloHoje`); `shell`
+  (`CommandsRegistry`→`CommandPalette`, `useBreadcrumbs`→`GlobalBreadcrumbs`).
+
 ## Estado atual (2026-05-23, fim do dia)
 
 - **`no-explicit-any` no repo: 0.** A fase de eliminação de `any` está **concluída**
