@@ -8,22 +8,31 @@
 -- Esta view DERIVA a baixa dos movimentos — NUNCA grava na coluna base (o sync
 -- re-zeraria; decisão codex). Fonte única p/ front (TS) e edges (Deno).
 --
--- Type-match: CR casa só movimento de ENTRADA ('E'); CP só de SAÍDA ('S') →
--- exclui estornos (sinal oposto). data_baixa_final = MAX (quitação final).
--- prazo_ponderado_dias = média do prazo (emissão→baixa) PONDERADA por valor
--- (pagamento parcial: cada baixa pesa pelo seu valor). NULL se sem emissão.
--- Cobertura é implícita: título com linha aqui = baixa derivável; ausência =
--- degradação honesta (o consumidor cai no fallback). Recomputável/idempotente.
+-- SÓ TÍTULOS LIQUIDADOS (status RECEBIDO/LIQUIDADO p/ CR, PAGO/LIQUIDADO p/ CP):
+-- a view significa "baixa final do título quitado". Título aberto com pagamento
+-- PARCIAL fica de fora (senão aging/DRE/PMR o tratariam como liquidado — P1 codex).
+-- Caixa parcial por dia já vem direto de fin_movimentacoes no getFluxoCaixa.
+-- O filtro de status também mitiga estorno: título estornado volta a ABERTO → sai.
+-- Type-match: CR casa só movimento de ENTRADA ('E'); CP só de SAÍDA ('S').
+-- data_baixa_final = MAX (quitação final). prazo_ponderado_dias = média do prazo
+-- (emissão→baixa) PONDERADA por valor (parcial: cada baixa pesa pelo seu valor).
+-- NULL se sem emissão. Cobertura implícita: título com linha = baixa derivável;
+-- ausência = degradação honesta (consumidor cai no fallback). Idempotente.
+-- código é 1:1 (UNIQUE company,omie_codigo_lancamento) → GROUP BY seguro.
+-- ⚠️ Limitação: o sync grava valor=abs(); o sinal do estorno se perde no banco.
+-- Estorno DENTRO de um título ainda-liquidado (raro) pode inflar valor_baixado/
+-- atrasar a data. Refino futuro = analisar natureza dos movimentos casados.
 
 CREATE OR REPLACE VIEW public.v_titulo_baixas
 WITH (security_invoker = on) AS
 WITH mov AS (
   SELECT company, omie_codigo_lancamento AS cod, tipo,
-         data_movimento, abs(valor) AS valor
+         data_movimento, valor
   FROM public.fin_movimentacoes
   WHERE omie_codigo_lancamento IS NOT NULL
     AND data_movimento IS NOT NULL
     AND tipo IN ('E', 'S')
+    AND valor > 0
 )
 SELECT
   cr.company,
@@ -41,6 +50,7 @@ JOIN mov m
  AND m.cod = cr.omie_codigo_lancamento
  AND m.tipo = 'E'
 WHERE cr.omie_codigo_lancamento IS NOT NULL
+  AND cr.status_titulo IN ('RECEBIDO', 'LIQUIDADO')
 GROUP BY cr.company, cr.omie_codigo_lancamento, cr.data_emissao
 UNION ALL
 SELECT
@@ -59,6 +69,7 @@ JOIN mov m
  AND m.cod = cp.omie_codigo_lancamento
  AND m.tipo = 'S'
 WHERE cp.omie_codigo_lancamento IS NOT NULL
+  AND cp.status_titulo IN ('PAGO', 'LIQUIDADO')
 GROUP BY cp.company, cp.omie_codigo_lancamento, cp.data_emissao;
 
 GRANT SELECT ON public.v_titulo_baixas TO authenticated, service_role;
