@@ -89,6 +89,29 @@ export function aliasesDaLinha(dreLinha: string, regime: 'simples' | 'presumido'
   return [dreLinha];
 }
 
+/**
+ * Resolve quais códigos Omie pertencem a uma linha de DRE, regime-aware.
+ *
+ * Mapping ORDER-INDEPENDENT: processa `company === '_default'` primeiro, depois
+ * `company !== '_default'` (estas sobrescrevem). Filtra os códigos cuja linha
+ * resolvida ∈ aliases da linha. Deduplicado por construção (Map por código).
+ *
+ * Reusado pelo drill (v1) e pela concentração por entidade (v2).
+ */
+export function codigosDaLinha(
+  mapping: { omie_codigo: string; dre_linha: string; company: string }[],
+  dreLinha: string,
+  regime: 'simples' | 'presumido',
+): string[] {
+  const aliases = new Set(aliasesDaLinha(dreLinha, regime));
+  const codToLinha = new Map<string, string>();
+  for (const m of mapping) if (m.company === '_default') codToLinha.set(m.omie_codigo, m.dre_linha);
+  for (const m of mapping) if (m.company !== '_default') codToLinha.set(m.omie_codigo, m.dre_linha);
+  const out: string[] = [];
+  for (const [cod, linha] of codToLinha) if (aliases.has(linha)) out.push(cod);
+  return out; // deduplicado por construção (Map por código)
+}
+
 type AggEntry = { soma: number; descMaxMes: string | null; maxMes: number };
 
 function agg(
@@ -185,21 +208,7 @@ export function drillLinha(input: {
     };
   }
 
-  const aliases = new Set(aliasesDaLinha(dreLinha, regime));
-
-  // Resolução do mapping ORDER-INDEPENDENT: _default primeiro, company sobrescreve.
-  const codToLinha = new Map<string, string>();
-  for (const m of mapping) {
-    if (m.company === '_default') codToLinha.set(m.omie_codigo, m.dre_linha);
-  }
-  for (const m of mapping) {
-    if (m.company !== '_default') codToLinha.set(m.omie_codigo, m.dre_linha);
-  }
-
-  const codigosAlvo = new Set<string>();
-  for (const [cod, linha] of codToLinha) {
-    if (aliases.has(linha)) codigosAlvo.add(cod);
-  }
+  const codigosAlvo = new Set(codigosDaLinha(mapping, dreLinha, regime));
 
   const fechadosSet = new Set(mesesFechados);
   const aggAno = agg(rowsAno, fechadosSet, codigosAlvo);
