@@ -256,9 +256,9 @@ Dois backends coexistem; o usuário escolhe via toggle em `/settings`:
 
 ### Touch targets
 
-- `index.css:228-230`: `button, a, [role="button"] { min-height: 32px; }` aplicado globalmente
-- `button.tsx`: `default h-9 (36px)`, `sm h-8 (32px)`, `lg h-10 (40px)`, `icon h-9 w-9 (36px)`
-- **Nenhuma variante atinge 44px**, o que viola o mínimo WCAG AA para uso com luva em chão de fábrica (briefing pede 44px+)
+- `index.css`: `button, a, [role="button"] { min-height: 32px; }` aplicado globalmente no desktop
+- ✅ **WCAG 44px resolvido globalmente em touch (2026-05-28)**: `index.css` tem `@media (pointer: coarse) { button,a,[role=button]{min-height:44px} button{min-width:44px} }` — celular do separador/vendedor e kiosk touchscreen do operador tintométrico ganham 44px+ automaticamente; desktop fino (conferente/comprador/gestão) fica nos 32px densos (intencional). `min-height` em `<a>` inline é no-op (não quebra links de texto). Abordagem decidida eu+Codex (media query > espalhar `size=touch` por dezenas de telas). ⚠️ QA visual mobile pendente (o `/browse` headless não renderiza a SPA) — conferir no device. Follow-up: 56px (`size="balcao"`) explícito nos CTAs do balcão tintométrico quando houver tela de kiosk/atendimento dedicada (hoje só o scanner OCR usa `balcao`).
+- `button.tsx`: `default h-9 (36px)`, `sm h-8 (32px)`, `lg h-10 (40px)`, `icon h-9 w-9 (36px)` — em `pointer:coarse` todos sobem pra ≥44px via a media query. Variantes explícitas `touch` (44px) / `balcao` (56px) seguem disponíveis pra forçar alvo grande independente do device.
 
 ### Toast / feedback
 
@@ -414,7 +414,7 @@ Solução adotada (híbrido em fases, PR #244):
 1. **Offline-first em picking e recebimento** — ✅ **entregue** (Workbox `NetworkFirst` em PRs #40; recebimento via `useOfflineMutation` em #51/#54; **picking** em PR offline-picking-optimistic 2026-05-24). Hoje: `useOfflineMutation` (online-try → `enqueue` no erro de rede), `useOfflineFlush` + `registerAllOfflineHandlers` (registro **central no boot** do AppShell — reconectar em qualquer tela drena a fila), `confirmPickItem` idempotente (evento `id=eventId` anti-replay + update absoluto), e optimistic via **fila-como-overlay** (`applyQueuedPickConfirms` mescla a fila sobre o servidor; sobrevive a refetch `NetworkFirst` e reload). ⚠️ **Guard de re-entrância no `useOfflineFlush`** (`flushing` flag): sem ele, item que falha sempre re-disparava flush em loop (o `writeQueue` re-emite). Referência de optimistic com rollback: `SalesOrders.deleteOrder`. **`submitOrder` offline entregue** (#261, mesma-sessão): `useOfflineSubmit` (offline → salva rascunho + toast "salvo como rascunho", **não** envia; online → envia) + banner de reconexão com CTA manual "Enviar agora" no `UnifiedOrder` + label "Sem conexão — salvar rascunho" no `CartSummaryBar`. **NÃO enfileira** (`omie-vendas-sync` cria PV cobrado com `codigo_pedido_integracao = ..._${Date.now()}`, replay duplicaria). **Cross-sessão (enviar após fechar/reabrir o app offline) avaliado e deliberadamente NÃO feito (2026-05-25):** cart/notes/ordemCompra já restauram; o que falta (cliente/endereço/pagamento) é acoplado ao `selectCustomer` (multi-call online) → alto risco no caminho do dinheiro por ganho marginal num caso raro, ainda mais que o envio é sempre online (quem reabre pra enviar está online e re-seleciona em poucos toques). Não re-litigar sem dado de uso mostrando perda real de pedidos. Specs/plans: `docs/superpowers/{specs,plans}/2026-05-24-offline-*`.
 2. **Latência percebida <100ms em scan** — 🟡 `ScanBar` com detecção wedge HID. Optimistic UI pattern aplicado em `SalesOrders.deleteOrder` (cache de `useInfiniteQuery` + rollback). BarcodeDetector API ainda não implementada.
 3. **Densidade alta em telas operacionais** — ✅ `density-compact` global
-4. **WCAG AA mínimo, AAA em críticas** — 🟡 focus-visible OK; variantes `touch` (44px)/`balcao` (56px) criadas no Button; contraste dos tokens validado em `docs/visual-direction/03-validacao.md`; falta adoção sistemática das variantes touch
+4. **WCAG AA mínimo, AAA em críticas** — 🟡→✅ focus-visible OK; **alvo de toque 44px resolvido globalmente em `pointer:coarse`** (media query no `index.css`, 2026-05-28 — cobre separador/vendedor/operador touchscreen sem tocar o desktop denso); variantes `touch`/`balcao` seguem pra casos explícitos; contraste dos tokens validado em `docs/visual-direction/03-validacao.md`
 5. **Mobile-first em chão de fábrica, desktop-first em analítico** — 🟡 `TouchPickingView` (`/admin/estoque/picking/mobile`) existe como scaffold; falta auto-detect mobile
 6. **Cmd-k global, atalhos consistentes** — ✅ `Cmd+K` montado com busca global real; `useRegisterShortcuts` + dialog `?`; atalhos do Cockpit migrados pro registry
 
@@ -509,7 +509,7 @@ Resolvidos (auditoria 2026-05-13 e auditoria de código 2026-05-16/17):
 - ✅ **Logo da sidebar** — `Scissors`+"Central" virou wordmark "Colacor" refinado
 - ✅ **Bell ornamental** — removido; topbar agora tem NetworkStatusIndicator + ThemeToggle + CompanySwitcher + Cmd-K pill
 - ✅ **Dois sistemas de toast** — só Sonner ativo; Toaster Radix infra deletada em PR #25; wrapper `use-toast.ts` + shim **removidos** em 2026-05-25 (migração concluída; sonner é a única fonte)
-- ✅ **Touch targets** — variantes `touch`/`balcao` criadas no Button (adoção sistemática ainda pendente)
+- ✅ **Touch targets** — variantes `touch`/`balcao` criadas no Button + **WCAG 44px global em `pointer:coarse`** (media query no `index.css`, 2026-05-28: celular/kiosk ganham 44px, desktop denso intacto). Follow-up: 56px nos CTAs de balcão tintométrico se/quando houver tela de kiosk dedicada. QA visual mobile pendente (device real).
 - ✅ **Logs silenciosos** — `cockpit_audit_log`, `fin_projecao_13_semanas`, `fin_confiabilidade` agora logam via `logger.warn`
 - ✅ **NfeReceipt** — título "OBEN" hardcoded virou dinâmico por empresa
 - ✅ **Rename `Afiação Colacor` → `Colacor`** — PR #27 (CompanyContext + index.html + manifest PWA)
