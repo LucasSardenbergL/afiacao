@@ -7,20 +7,14 @@ import { getRouteCounts } from '@/lib/dashboard/route-tracker';
 import { inferPersona, type InferPersonaResult } from '@/lib/dashboard/persona-detect';
 import type { Persona } from '@/lib/dashboard/persona-config';
 
-const STORAGE_KEY = 'dashboardPersonaOverride';
-
-function readOverride(): Persona | null {
-  if (typeof window === 'undefined') return null;
-  const raw = localStorage.getItem(STORAGE_KEY);
-  return raw ? (raw as Persona) : null;
-}
-
 /**
- * Resolve persona combinando todos os sinais. Lê override do localStorage diretamente
- * pra evitar dependência circular com DashboardPersonaContext (que envolve em volta).
- * O Context expõe setOverride/clearOverride pra UI.
+ * Resolve persona combinando todos os sinais. O override manual é a única fonte
+ * de verdade do DashboardPersonaContext e entra como argumento — listá-lo nas
+ * deps do useMemo garante que trocar de persona recomputa a resolução na hora.
+ * Por isso o hook é chamado dentro do provider (abaixo do estado de override),
+ * não acima dele.
  */
-export function usePersona(): InferPersonaResult {
+export function usePersona(override: Persona | null): InferPersonaResult {
   const { role } = useAuth();
   const { commercialRole } = useCommercialRole();
   const isSalesOnly = useSalesOnlyRestriction();
@@ -28,12 +22,12 @@ export function usePersona(): InferPersonaResult {
 
   return useMemo(() => {
     return inferPersona({
-      override: readOverride(),
+      override,
       role,
       commercialRole,
       isSalesOnly,
       routeCounts: getRouteCounts(),
       userDepartment: department,
     });
-  }, [role, commercialRole, isSalesOnly, department]);
+  }, [override, role, commercialRole, isSalesOnly, department]);
 }
