@@ -1,5 +1,19 @@
 # Candidatos `.tsx` à promoção strict — triagem validada (2026-05-27)
 
+> ## ✅ Status de execução (2026-05-27) — Lote A + B ENTREGUES
+>
+> - **Lote A (119 mecânicos)** → promovidos no PR **#410** (539→658).
+> - **Lote B (12 com fix)** → PRs **#414** (11: dead-code + 1 guard, 658→669) + **#417**
+>   (o 12º, zodResolver do `StandardProcessForm` + irmão `AdminStandardProcessNew`, 669→671).
+> - **Strict agora ~671/853 (~79%).**
+>
+> **O que resta** (re-rode `bun scripts/strict-tsx-triage.mjs` p/ números frescos): os **NEAR (~83)**
+> e **RISKY (~51)**. Vários NEAR estão em **lanes quentes farmer/scoring/financeiro** — promover ali
+> exige **coordenar com sessões paralelas ativas** (decisão eu+Codex: parar antes de entrar nelas).
+> O caminho dos NEAR é promover o blocker (`./types.ts`/`./config.ts`/`useX.ts` leaf) **no mesmo lote**.
+>
+> ---
+
 > Artefato **read-only** para ser consumido numa **janela calma** (sem PRs em voo / CPU calma),
 > conforme a disciplina do `docs/strict-migration-lanes.md` e o handoff do CLAUDE.md §10
 > ("strict-mode: só em janela sem PRs em voo, leaf-first, sem reordenar o include").
