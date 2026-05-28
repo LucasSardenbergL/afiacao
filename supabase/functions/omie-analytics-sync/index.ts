@@ -1026,9 +1026,26 @@ serve(async (req) => {
     let result: unknown;
 
     switch (action) {
-      case "sync_customers":
-        result = await syncCustomers(supabaseAdmin, account);
-        break;
+      case "sync_customers": {
+        // syncCustomers enumera ~10k clientes do Omie — pesado demais p/ o budget SÍNCRONO do request
+        // (dava WORKER_RESOURCE_LIMIT e prendia sync_state.customers em 'running' indefinidamente).
+        // Roda em BACKGROUND via EdgeRuntime.waitUntil (mesmo padrão do start_nao_vinculados, que
+        // completa o MESMO volume): responde 202 na hora; o sync_state (running→complete) é a fonte
+        // de progresso/verdade. O worker dedicado tem budget estendido p/ background.
+        const bgTask = syncCustomers(supabaseAdmin, account as OmieAccount).catch((e) => {
+          console.error("[sync_customers][bg]", e instanceof Error ? e.message : e);
+        });
+        // eslint-disable-next-line @typescript-eslint/ban-ts-comment
+        // @ts-ignore - EdgeRuntime existe no runtime do Supabase Edge
+        if (typeof EdgeRuntime !== "undefined" && typeof EdgeRuntime.waitUntil === "function") {
+          // eslint-disable-next-line @typescript-eslint/ban-ts-comment
+          // @ts-ignore
+          EdgeRuntime.waitUntil(bgTask);
+        }
+        return new Response(JSON.stringify({ accepted: true, background: true }), {
+          status: 202, headers: { ...corsHeaders, "Content-Type": "application/json" },
+        });
+      }
       case "sync_products":
         result = await syncProducts(supabaseAdmin, account, start_page || 1, max_pages || 10);
         break;
@@ -1045,14 +1062,16 @@ serve(async (req) => {
         result = await computeAssociationRules(supabaseAdmin);
         break;
       case "sync_all": {
+        // customers SAIU do sync_all: agora tem cron dedicado (sync-customers-vendas-daily) que chama
+        // a action sync_customers em BACKGROUND. Rodar customers síncrono aqui dava WORKER_RESOURCE_LIMIT
+        // e RE-prendia sync_state.customers em 'running' a cada passada — clobberava o estado curado.
         const acct = account as OmieAccount;
-        const customers = await syncCustomers(supabaseAdmin, acct);
         const products = await syncProducts(supabaseAdmin, acct);
         const orders = await syncOrdersIncremental(supabaseAdmin, acct);
         const inventory = await syncInventory(supabaseAdmin, acct);
         const costs = await computeCosts(supabaseAdmin);
         const assocRules = await computeAssociationRules(supabaseAdmin);
-        result = { customers, products, orders, inventory, costs, assocRules };
+        result = { products, orders, inventory, costs, assocRules };
         break;
       }
       case "get_sync_state": {
