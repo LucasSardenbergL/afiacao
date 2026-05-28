@@ -500,6 +500,22 @@ async function processarPedido(
       throw new Error("Pedido sem itens");
     }
 
+    // a.1 Guard de custo (money-path): nunca enviar nValUnit <= 0 ao Omie.
+    // Roda ANTES do portal Sayerlack — senão o fornecedor recebe o pedido e o
+    // Omie falha depois (pedido fica em falha_envio sem registro, e a engine
+    // re-sugere os mesmos SKUs no ciclo seguinte). Falha cedo, com motivo claro.
+    const itensSemCusto = (items as ItemRow[]).filter(
+      (it) => !(Number(it.preco_unitario) > 0),
+    );
+    if (itensSemCusto.length > 0) {
+      const lista = itensSemCusto
+        .map((it) => `${it.sku_codigo_omie} (${it.sku_descricao ?? "sem descrição"})`)
+        .join("; ");
+      throw new Error(
+        `SKU(s) sem custo (preço unitário 0): ${lista}. Defina o custo antes de disparar.`,
+      );
+    }
+
     // b. Resolver código do fornecedor
     const fornecedor = await resolveCodigoFornecedor(
       db,
