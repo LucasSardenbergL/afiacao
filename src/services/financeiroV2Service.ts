@@ -3,6 +3,7 @@ import type { Company } from "@/contexts/CompanyContext";
 import type { Json } from "@/integrations/supabase/types";
 import type { DimRowRaw } from "@/lib/financeiro/orcamento-drill-helpers";
 import { coletarTitulosEntidade, parseMesDataEmissao, type EntidadeRowRaw } from "@/lib/financeiro/orcamento-entidade-helpers";
+import type { SnapshotEmpresa, SnapshotSemana } from "@/lib/financeiro/cockpit-consolida-helpers";
 import type {
   FinFechamentoRow,
   FinFechamentoInsert,
@@ -644,6 +645,59 @@ export async function getTitulosEntidadeRaw(
       }));
     },
   });
+}
+
+/**
+ * Último snapshot de projeção 13s (cenário `realista`) por empresa, de `fin_projecao_snapshots`
+ * (gravado pelo cron diário via fin-cashflow-engine). Fonte do Cockpit consolidado: a projeção
+ * e o NCG vêm da engine A1 calibrada (não da RPC ingênua). `dados` (Json) = semanas[] — valida
+ * `Array.isArray` e extrai {inicio,total_entradas,total_saidas,saldo_final}. Uma query por empresa.
+ */
+export async function getProjecaoSnapshotsCockpit(
+  companies: Company[],
+  cenario = 'realista',
+): Promise<SnapshotEmpresa[]> {
+  const results = await Promise.all(
+    companies.map(async (company): Promise<SnapshotEmpresa | null> => {
+      const { data, error } = await supabase
+        .from('fin_projecao_snapshots')
+        .select('company, snapshot_at, ncg, saldo_tesouraria, dados, id')
+        .eq('company', company)
+        .eq('cenario', cenario)
+        .order('snapshot_at', { ascending: false })
+        .order('id', { ascending: false }) // desempate determinístico (Codex P2)
+        .limit(1)
+        .maybeSingle();
+      if (error) throw error;
+      if (!data) return null;
+      const dadosRaw = (data as { dados: unknown }).dados;
+      // ausente ≠ zero (Codex P1): campo numérico inválido descarta a semana (não vira 0 mentiroso).
+      const semanas: SnapshotSemana[] = Array.isArray(dadosRaw)
+        ? (dadosRaw as Array<Record<string, unknown>>)
+            .map((w) => ({
+              inicio: w && typeof w.inicio === 'string' ? w.inicio : '',
+              total_entradas: Number(w?.total_entradas),
+              total_saidas: Number(w?.total_saidas),
+              saldo_final: Number(w?.saldo_final),
+            }))
+            .filter(
+              (w): w is SnapshotSemana =>
+                w.inicio !== '' &&
+                Number.isFinite(w.total_entradas) &&
+                Number.isFinite(w.total_saidas) &&
+                Number.isFinite(w.saldo_final),
+            )
+        : [];
+      return {
+        company: (data.company as string) ?? company,
+        snapshot_at: data.snapshot_at as string,
+        ncg: (data.ncg as number | null) ?? null,
+        saldo_tesouraria: (data.saldo_tesouraria as number | null) ?? null,
+        semanas,
+      };
+    }),
+  );
+  return results.filter((r): r is SnapshotEmpresa => r !== null);
 }
 
 // ═══════════════ 6. PERMISSÕES ═══════════════

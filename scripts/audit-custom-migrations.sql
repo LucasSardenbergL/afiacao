@@ -3,7 +3,7 @@
 -- ========================================================================
 --
 -- Gerado por: scripts/audit-custom-migrations.ts
--- Total de custom migrations: 105
+-- Total de custom migrations: 106
 --
 -- Como usar:
 --   1. Abra o Supabase SQL Editor (via Lovable Cloud → Backend → SQL Editor)
@@ -124,6 +124,7 @@ WITH expected (version, slug, filename) AS (VALUES
   ('20260528010000', 'cron_sync_customers_dedicated', '20260528010000_cron_sync_customers_dedicated.sql'),
   ('20260528120000', 'reposicao_custo_cmc_em_transito', '20260528120000_reposicao_custo_cmc_em_transito.sql'),
   ('20260528120001', 'v_titulo_baixas', '20260528120001_v_titulo_baixas.sql'),
+  ('20260528120002', 'v_capital_giro_prazos', '20260528120002_v_capital_giro_prazos.sql'),
   ('20260528130000', 'fin_sync_heartbeat_tz_fix', '20260528130000_fin_sync_heartbeat_tz_fix.sql')
 )
 SELECT

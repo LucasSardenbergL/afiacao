@@ -250,6 +250,16 @@ Constrói SOBRE o "Orçado × Realizado" que já existia (`/financeiro/orcamento
 
 **Onde:** helper `src/lib/financeiro/orcamento-forecast-helpers.ts` (vitest, 26 testes; `projetarDRE` + `seedOrcamento` + primitivas); página `src/pages/FinanceiroOrcamento.tsx` (seção "Forecast de aterrissagem" + botão "Sugerir orçamento"); item na sidebar (`/financeiro/orcamento`, antes órfã). **Sem migration, sem edge function, sem deploy** (client-side puro).
 
+## 🔧 Consolidação do Cockpit — religado às engines (2026-05-28)
+
+Uma auditoria de consistência achou que o **Cockpit** (`/financeiro/cockpit`, consolidado das 3 empresas) mostrava números ERRADOS porque foi construído com atalhos antes das engines A1 existirem: **projeção 13s** via RPC ingênua `fin_projecao_13_semanas` (joga CR/CP no vencimento; sem curva de cobrança/inadimplência/eventos/folha) e **NCG** = `CR−CP` (só abertos). Religado:
+
+- **Projeção 13s + NCG agora vêm da engine A1** via `fin_projecao_snapshots` (snapshot diário; curvas calibradas, inadimplência, eventos, folha; NCG = ACO−PCO real). **Snapshot-first** (não 3 invocações live — tela executiva semanal): mostra "dados de {data}".
+- **Consolidado COM decomposição por empresa** (Codex P1 — caixa NÃO é fungível entre 3 CNPJs distintos; somar pode esconder insolvência local). **Coorte por data de referência:** só snapshots do dia mais recente entram; empresa com snapshot mais antigo = `stale` (fora da soma, sinalizado); dedupe por empresa (latest-wins). **Cenário explícito** ("realista"). **Intercompany NÃO eliminado** (premissa documentada — CR de uma empresa pode ser CP de outra → aviso no bloco). **Falha parcial honesta** (banner "N de 3", números = mínimo conhecido; ausente ≠ zero).
+- **Rótulos honestos:** "Caixa Projetado 30d" (que não era 30d) → "Posição líquida (abertos)"; `DataBasisFooter` com regime dinâmico (não "caixa" fixo); badge "ACO−PCO (engine)" no NCG.
+- Helper `src/lib/financeiro/cockpit-consolida-helpers.ts` (13 testes; `consolidarCockpit`) + `getProjecaoSnapshotsCockpit`. **Codex em todas as etapas** (metodologia + spec [3 P1] + plano [3 P1 anti-impl-preguiçosa] + adversarial). **CLIENT-SIDE — sem migration/deploy** (o snapshot já é gravado pelo cron `fin-cashflow-snapshot-diario`).
+- **Limitações:** snapshot até 1 dia stale (data visível); intercompany não eliminado; caixa consolidado não-fungível (por isso a quebra por empresa). A decomposição ACO/PCO detalhada e os cenários ficam na tela **Capital de Giro** (live).
+
 ## ✅ MVP Operacional (pode usar agora para gestão diária)
 
 Estes dados vêm direto do Omie sem transformação opinativa.
