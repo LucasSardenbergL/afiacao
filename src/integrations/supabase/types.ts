@@ -11709,6 +11709,16 @@ export type Database = {
           },
         ]
       }
+      v_capital_giro_prazos: {
+        Row: {
+          company: string | null
+          pmp: number | null
+          pmp_cobertura: number | null
+          pmr: number | null
+          pmr_cobertura: number | null
+        }
+        Relationships: []
+      }
       v_clientes_nao_vinculados_atual: {
         Row: {
           cidade: string | null
