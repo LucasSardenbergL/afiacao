@@ -97,6 +97,28 @@ function classifyTituloStatus(status: string | null | undefined): TituloStatusCl
   if (status === 'CANCELADO') return 'cancelled';
   return 'unknown';
 }
+
+// Anti-truncamento do PostgREST (cap default de 1000 linhas): a colacor tem ~11k CP
+// e ~29k CR não-cancelados; um .select() simples carregaria só as 1000 primeiras
+// (quase tudo PAGO/RECEBIDO antigo) e PERDERIA a maioria dos títulos em aberto →
+// NCG/projeção subcontados. Pagina via .range() com .order('id') estável (sem order,
+// páginas podem repetir/pular linhas). Lança no primeiro erro (não engole truncado).
+async function fetchAllRows<T>(
+  build: (from: number, to: number) => PromiseLike<{ data: T[] | null; error: { message?: string } | null }>,
+): Promise<T[]> {
+  const PAGE = 1000;
+  const all: T[] = [];
+  let from = 0;
+  for (;;) {
+    const { data, error } = await build(from, from + PAGE - 1);
+    if (error) throw new Error(`fetchAllRows: ${error.message ?? 'erro de query'}`);
+    const batch = data ?? [];
+    all.push(...batch);
+    if (batch.length < PAGE) break;
+    from += PAGE;
+  }
+  return all;
+}
 type Cenario = 'realista' | 'otimista' | 'pessimista';
 
 type Input = {
@@ -266,38 +288,44 @@ async function carregarDados(
   supabase: ReturnType<typeof createClient>,
   company: Company,
 ): Promise<DadosBase> {
-  const [crsRes, cpsRes, ccRes, recRes, evRes, configRes, estoqueRes, dreRes, folhaCatRes] = await Promise.all([
-    // @ts-expect-error - fin_contas_receber may not be in generated supabase types yet
-    supabase.from('fin_contas_receber').select('id, saldo, valor_documento, valor_recebido, data_emissao, data_vencimento, data_recebimento, status_titulo, omie_codigo_cliente, nome_cliente, categoria_codigo')
-      .eq('company', company)
-      .neq('status_titulo', 'CANCELADO'),
-    // @ts-expect-error - fin_contas_pagar may not be in generated supabase types yet
-    supabase.from('fin_contas_pagar').select('id, saldo, valor_documento, valor_pago, data_emissao, data_vencimento, data_pagamento, status_titulo, categoria_codigo')
-      .eq('company', company)
-      .neq('status_titulo', 'CANCELADO'),
-    // @ts-expect-error - fin_contas_correntes may not be in generated supabase types yet
-    supabase.from('fin_contas_correntes').select('saldo_atual')
-      .eq('company', company).eq('ativo', true),
-    // @ts-expect-error - fin_eventos_recorrentes not in generated supabase types yet (A1 table)
-    supabase.from('fin_eventos_recorrentes').select('id, descricao, valor, tipo, categoria_dre, is_folha, dia_do_mes, inicio, fim')
-      .eq('company', company).eq('ativo', true),
-    // @ts-expect-error - fin_eventos_eventuais not in generated supabase types yet (A1 table)
-    supabase.from('fin_eventos_eventuais').select('id, descricao, valor, tipo, categoria_dre, data_prevista, status')
-      .eq('company', company).in('status', ['previsto', 'confirmado']),
-    // @ts-expect-error - fin_config_cashflow not in generated supabase types yet (A1 table)
-    supabase.from('fin_config_cashflow').select('overrides_cenario, thresholds, adiantamento_categorias_codigos')
-      .eq('company', company).maybeSingle(),
-    // @ts-expect-error - fin_estoque_valor (Onda 1) não está nos types gerados
-    supabase.from('fin_estoque_valor').select('valor, data_ref')
-      .eq('company', company).order('data_ref', { ascending: false }).limit(1).maybeSingle(),
-    // @ts-expect-error - fin_dre_snapshots não está nos types gerados
-    supabase.from('fin_dre_snapshots').select('cmv, ano, mes')
-      .eq('company', company).eq('regime', 'competencia'),
-    // @ts-expect-error - folha_categorias_codigos é coluna OPCIONAL (Onda 2). Se não
-    // existir, PostgREST devolve { data: null, error } — não rejeita; cai em [] e o
-    // guard de folha fica inerte (comportamento atual preservado, sem migration obrigatória).
-    supabase.from('fin_config_cashflow').select('folha_categorias_codigos')
-      .eq('company', company).maybeSingle(),
+  // CR/CP paginados (anti-truncamento, ver fetchAllRows); o resto cabe em <1000 e vai
+  // em Promise.all. Tudo em paralelo.
+  const [crsData, cpsData, [ccRes, recRes, evRes, configRes, estoqueRes, dreRes, folhaCatRes]] = await Promise.all([
+    fetchAllRows<Record<string, unknown>>((from, to) =>
+      // @ts-expect-error - fin_contas_receber may not be in generated supabase types yet
+      supabase.from('fin_contas_receber').select('id, saldo, valor_documento, valor_recebido, data_emissao, data_vencimento, data_recebimento, status_titulo, omie_codigo_cliente, nome_cliente, categoria_codigo')
+        .eq('company', company).neq('status_titulo', 'CANCELADO').order('id', { ascending: true }).range(from, to)
+    ),
+    fetchAllRows<Record<string, unknown>>((from, to) =>
+      // @ts-expect-error - fin_contas_pagar may not be in generated supabase types yet
+      supabase.from('fin_contas_pagar').select('id, saldo, valor_documento, valor_pago, data_emissao, data_vencimento, data_pagamento, status_titulo, categoria_codigo')
+        .eq('company', company).neq('status_titulo', 'CANCELADO').order('id', { ascending: true }).range(from, to)
+    ),
+    Promise.all([
+      // @ts-expect-error - fin_contas_correntes may not be in generated supabase types yet
+      supabase.from('fin_contas_correntes').select('saldo_atual')
+        .eq('company', company).eq('ativo', true),
+      // @ts-expect-error - fin_eventos_recorrentes not in generated supabase types yet (A1 table)
+      supabase.from('fin_eventos_recorrentes').select('id, descricao, valor, tipo, categoria_dre, is_folha, dia_do_mes, inicio, fim')
+        .eq('company', company).eq('ativo', true),
+      // @ts-expect-error - fin_eventos_eventuais not in generated supabase types yet (A1 table)
+      supabase.from('fin_eventos_eventuais').select('id, descricao, valor, tipo, categoria_dre, data_prevista, status')
+        .eq('company', company).in('status', ['previsto', 'confirmado']),
+      // @ts-expect-error - fin_config_cashflow not in generated supabase types yet (A1 table)
+      supabase.from('fin_config_cashflow').select('overrides_cenario, thresholds, adiantamento_categorias_codigos')
+        .eq('company', company).maybeSingle(),
+      // @ts-expect-error - fin_estoque_valor (Onda 1) não está nos types gerados
+      supabase.from('fin_estoque_valor').select('valor, data_ref')
+        .eq('company', company).order('data_ref', { ascending: false }).limit(1).maybeSingle(),
+      // @ts-expect-error - fin_dre_snapshots não está nos types gerados
+      supabase.from('fin_dre_snapshots').select('cmv, ano, mes')
+        .eq('company', company).eq('regime', 'competencia'),
+      // @ts-expect-error - folha_categorias_codigos é coluna OPCIONAL (Onda 2). Se não
+      // existir, PostgREST devolve { data: null, error } — não rejeita; cai em [] e o
+      // guard de folha fica inerte (comportamento atual preservado, sem migration obrigatória).
+      supabase.from('fin_config_cashflow').select('folha_categorias_codigos')
+        .eq('company', company).maybeSingle(),
+    ]),
   ]);
 
   const saldo_cc = ((ccRes.data ?? []) as Array<{ saldo_atual?: number | null }>)
@@ -317,7 +345,7 @@ async function carregarDados(
     throw new Error(`Config ausente pra ${company}. Aplique seed em fin_config_cashflow.`);
   }
 
-  const crs: CR[] = ((crsRes.data ?? []) as Array<Record<string, unknown>>).map((c) => ({
+  const crs: CR[] = (crsData as Array<Record<string, unknown>>).map((c) => ({
     id: c.id as string,
     saldo: Number(c.saldo ?? 0),
     valor_documento: Number(c.valor_documento ?? 0),
@@ -331,7 +359,7 @@ async function carregarDados(
     categoria_codigo: (c.categoria_codigo as string | null) ?? null,
   }));
 
-  const cps: CP[] = ((cpsRes.data ?? []) as Array<Record<string, unknown>>).map((c) => ({
+  const cps: CP[] = (cpsData as Array<Record<string, unknown>>).map((c) => ({
     id: c.id as string,
     saldo: Number(c.saldo ?? 0),
     valor_documento: Number(c.valor_documento ?? 0),
