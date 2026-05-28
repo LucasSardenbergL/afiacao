@@ -21,14 +21,14 @@ Este audit valida **quais custom migrations estão de fato aplicadas no banco**.
 
 ## Resumo
 
-- **94** custom migrations totais
-- **432** objetos esperados (criados por estas migrations)
+- **98** custom migrations totais
+- **481** objetos esperados (criados por estas migrations)
 - Quebra por tipo:
   - `rls_policy`: 139
   - `index`: 96
-  - `function`: 70
+  - `cron_job`: 82
+  - `function`: 72
   - `table`: 57
-  - `cron_job`: 35
   - `trigger`: 31
   - `enum_value`: 4
 
@@ -920,6 +920,75 @@ Lista canônica do que cada migration *deveria* criar (extraído via regex de `C
 ### `20260527220001_fin_sync_cursor_backfill_desde.sql`
 
 > _Nenhum objeto extraído via regex._ Migration provavelmente é `ALTER TABLE` / `UPDATE` / `INSERT` / RLS-only. Validar manualmente.
+
+### `20260527230000_cron_baseline.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `cron_job` | `cron.afiacao_ciclo_oportunidade_diario` | — |
+| `cron_job` | `cron.afiacao_dispatch_notificacoes_diario` | — |
+| `cron_job` | `cron.afiacao_estados_eventos_diarios` | — |
+| `cron_job` | `cron.afiacao_limpeza_sugestoes_mensal` | — |
+| `cron_job` | `cron.afiacao_omie_oben_sku_items_history_daily` | — |
+| `cron_job` | `cron.afiacao_omie_oben_sync_incremental_2h` | — |
+| `cron_job` | `cron.afiacao_ranking_refresh_semanal` | — |
+| `cron_job` | `cron.afiacao_sugestoes_diarias` | — |
+| `cron_job` | `cron.call-log-missed-backstop` | — |
+| `cron_job` | `cron.carteira-positivacao-snapshot-mensal` | — |
+| `cron_job` | `cron.carteira-rebuild-nightly` | — |
+| `cron_job` | `cron.compute-association-rules-daily` | — |
+| `cron_job` | `cron.compute-costs-daily` | — |
+| `cron_job` | `cron.daily-calculate-scores` | — |
+| `cron_job` | `cron.data-health-watchdog` | — |
+| `cron_job` | `cron.detectar-outliers-diario` | — |
+| `cron_job` | `cron.disparar-pedidos-aprovados-oben` | — |
+| `cron_job` | `cron.fin-cashflow-snapshot-diario` | — |
+| `cron_job` | `cron.fin-ic-reconcile-daily` | — |
+| `cron_job` | `cron.fin-refresh-analise-dimensoes` | — |
+| `cron_job` | `cron.fin-sync-base-diario` | — |
+| `cron_job` | `cron.fin-sync-continuacao-10min` | — |
+| `cron_job` | `cron.fin-sync-cp-2x` | — |
+| `cron_job` | `cron.fin-sync-cr-2x` | — |
+| `cron_job` | `cron.fin-sync-heartbeat` | — |
+| `cron_job` | `cron.fin-sync-mov-2x` | — |
+| `cron_job` | `cron.fin-sync-watchdog` | — |
+| `cron_job` | `cron.gerar-pedidos-diario-oben` | — |
+| `cron_job` | `cron.monthly-tool-report` | — |
+| `cron_job` | `cron.omie-sync-estoque-diario` | — |
+| `cron_job` | `cron.omie-sync-metadados-daily` | — |
+| `cron_job` | `cron.omie-sync-status-produtos-diario` | — |
+| `cron_job` | `cron.process-recurring-orders-daily` | — |
+| `cron_job` | `cron.sayerlack-portal-watchdog` | — |
+| `cron_job` | `cron.scoring-recalc-batch-nightly` | — |
+| `cron_job` | `cron.sync-colacor-vendas-products` | — |
+| `cron_job` | `cron.sync-inventory-vendas-30m` | — |
+| `cron_job` | `cron.sync-omie-services-hourly` | — |
+| `cron_job` | `cron.sync-products-customers-daily` | — |
+| `cron_job` | `cron.sync-reprocess-operational` | — |
+| `cron_job` | `cron.sync-reprocess-strategic` | — |
+| `cron_job` | `cron.vendas-sync-pedidos-colacor-2h` | — |
+| `cron_job` | `cron.vendas-sync-pedidos-oben-2h` | — |
+| `cron_job` | `cron.visit-score-recalc-batch-nightly` | — |
+| `cron_job` | `cron.weekly-algorithm-a-audit` | — |
+
+### `20260527235000_dispatch_notifications_frequente.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `cron_job` | `cron.afiacao_dispatch_notificacoes_30min` | — |
+
+### `20260527240000_data_health_alert_channel.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `function` | `public._data_health_compute` | — |
+| `function` | `public.fin_sync_heartbeat` | — |
+
+### `20260527250000_nao_vinculados_cron.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `cron_job` | `cron.nao-vinculados-refresh-diario` | — |
 
 ## Próximos passos quando algo der `❌`
 

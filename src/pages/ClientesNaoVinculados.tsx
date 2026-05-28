@@ -1,4 +1,4 @@
-import { RefreshCw, UserX } from 'lucide-react';
+import { RefreshCw, UserX, Download } from 'lucide-react';
 import { Card, CardHeader } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
@@ -7,6 +7,7 @@ import { PageSkeleton } from '@/components/ui/page-skeleton';
 import { useAuth } from '@/contexts/AuthContext';
 import { useClientesNaoVinculados } from '@/hooks/useClientesNaoVinculados';
 import { useRefreshClientesNaoVinculados } from '@/hooks/useRefreshClientesNaoVinculados';
+import { useExportNaoVinculados } from '@/hooks/useExportNaoVinculados';
 
 function formatFrescor(iso: string | null): string {
   if (!iso) return 'nunca sincronizado';
@@ -18,6 +19,7 @@ export default function ClientesNaoVinculados() {
   const podeVer = isMaster || isGestorComercial;
   const { data, isLoading } = useClientesNaoVinculados();
   const refresh = useRefreshClientesNaoVinculados();
+  const exportar = useExportNaoVinculados();
 
   if (!podeVer) {
     return (
@@ -53,15 +55,26 @@ export default function ClientesNaoVinculados() {
             Clientes no Omie sem conta no app — alvos pra convidar/criar conta. {formatFrescor(state?.last_complete_synced_at ?? null)}.
           </p>
         </div>
-        <Button
-          size="sm"
-          variant="outline"
-          onClick={() => refresh.mutate()}
-          disabled={running || refresh.isPending}
-        >
-          <RefreshCw className={`w-4 h-4 mr-2 ${running ? 'animate-spin' : ''}`} />
-          {running ? 'Atualizando…' : 'Atualizar'}
-        </Button>
+        <div className="flex items-center gap-2 shrink-0">
+          <Button
+            size="sm"
+            variant="outline"
+            onClick={() => exportar.mutate()}
+            disabled={total === 0 || exportar.isPending}
+          >
+            <Download className="w-4 h-4 mr-2" />
+            {exportar.isPending ? 'Exportando…' : 'Exportar CSV'}
+          </Button>
+          <Button
+            size="sm"
+            variant="outline"
+            onClick={() => refresh.mutate()}
+            disabled={running || refresh.isPending}
+          >
+            <RefreshCw className={`w-4 h-4 mr-2 ${running ? 'animate-spin' : ''}`} />
+            {running ? 'Atualizando…' : 'Atualizar'}
+          </Button>
+        </div>
       </header>
 
       {erro && (
