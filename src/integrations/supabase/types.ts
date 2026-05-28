@@ -12627,6 +12627,18 @@ export type Database = {
           },
         ]
       }
+      v_titulo_baixas: {
+        Row: {
+          company: string | null
+          data_baixa_final: string | null
+          n_movimentos: number | null
+          omie_codigo_lancamento: number | null
+          prazo_ponderado_dias: number | null
+          tipo: string | null
+          valor_baixado: number | null
+        }
+        Relationships: []
+      }
       visit_score_recalc_pending: {
         Row: {
           customer_user_id: string | null
