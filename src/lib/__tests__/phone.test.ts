@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { normalizeBrPhone, formatBrPhone } from '../phone';
+import { normalizeBrPhone, formatBrPhone, whatsappLink } from '../phone';
 
 describe('normalizeBrPhone', () => {
   it('falsy → string vazia', () => {
@@ -61,5 +61,36 @@ describe('formatBrPhone', () => {
 
   it('não bate 10/11 dígitos → devolve o input original', () => {
     expect(formatBrPhone('123')).toBe('123');
+  });
+});
+
+describe('whatsappLink', () => {
+  it('fixo sem DDD (8 díg) → aplica DDD 37 + prefixa 55', () => {
+    expect(whatsappLink('35213493')).toBe('https://wa.me/553735213493');
+  });
+
+  it('celular com DDD formatado → só dígitos + 55', () => {
+    expect(whatsappLink('(37) 99999-8888')).toBe('https://wa.me/5537999998888');
+  });
+
+  it('já com +55 → não duplica o 55', () => {
+    expect(whatsappLink('5537999998888')).toBe('https://wa.me/5537999998888');
+  });
+
+  it('número curto / lixo / falsy → null (call-site esconde o botão)', () => {
+    expect(whatsappLink('123')).toBeNull();
+    expect(whatsappLink(null)).toBeNull();
+    expect(whatsappLink(undefined)).toBeNull();
+    expect(whatsappLink('')).toBeNull();
+  });
+
+  it('mensagem opcional vira ?text= URL-encoded', () => {
+    expect(whatsappLink('37999998888', 'Olá, tudo bem?')).toBe(
+      'https://wa.me/5537999998888?text=Ol%C3%A1%2C%20tudo%20bem%3F',
+    );
+  });
+
+  it('sem mensagem não adiciona ?text=', () => {
+    expect(whatsappLink('37999998888')).toBe('https://wa.me/5537999998888');
   });
 });
