@@ -221,14 +221,75 @@ async function updateSyncState(
 }
 
 // ======== SYNC CUSTOMERS ========
+// Mapas bulk (substituem o N+1 de ~2-3 queries POR cliente que estourava o budget e deixava o
+// sync_state preso em 'running'). Mesmo padrão provado do syncNaoVinculados (#383): paginado p/
+// furar o cap de 1000 do PostgREST.
+
+// Map<omie_codigo_cliente, user_id> de omie_clientes (quem JÁ está vinculado).
+async function fetchOmieClienteUserMap(db: SupabaseClient): Promise<Map<number, string>> {
+  const map = new Map<number, string>();
+  const pageSize = 1000;
+  let from = 0;
+  while (true) {
+    const { data, error } = await db
+      .from("omie_clientes")
+      .select("omie_codigo_cliente, user_id")
+      .range(from, from + pageSize - 1);
+    if (error) throw new Error(`fetch omie_clientes map: ${error.message}`);
+    const rows = (data ?? []) as { omie_codigo_cliente: number | null; user_id: string | null }[];
+    for (const r of rows) {
+      if (r.omie_codigo_cliente != null && r.user_id) map.set(Number(r.omie_codigo_cliente), r.user_id);
+    }
+    if (rows.length < pageSize) break;
+    from += pageSize;
+  }
+  return map;
+}
+
+// Map<documento_normalizado, user_id> de profiles (p/ vincular cliente novo via documento).
+async function fetchProfileDocUserMap(db: SupabaseClient): Promise<Map<string, string>> {
+  const map = new Map<string, string>();
+  const pageSize = 1000;
+  let from = 0;
+  while (true) {
+    const { data, error } = await db
+      .from("profiles")
+      .select("document, user_id")
+      .not("document", "is", null)
+      .range(from, from + pageSize - 1);
+    if (error) throw new Error(`fetch profiles map: ${error.message}`);
+    const rows = (data ?? []) as { document: string | null; user_id: string | null }[];
+    for (const r of rows) {
+      const d = (r.document ?? "").replace(/\D/g, "");
+      if (d && r.user_id && !map.has(d)) map.set(d, r.user_id); // 1º documento vence (defensivo contra duplicado)
+    }
+    if (rows.length < pageSize) break;
+    from += pageSize;
+  }
+  return map;
+}
 
 async function syncCustomers(db: SupabaseClient, account: OmieAccount) {
   await updateSyncState(db, "customers", account, { status: "running", error_message: null });
-  let pagina = 1;
-  let totalPaginas = 1;
-  let totalSynced = 0;
 
   try {
+    // 2 leituras em massa ANTES do laço (substitui o N+1: ~2-3 round-trips POR cliente × ~10k).
+    const userByCodigo = await fetchOmieClienteUserMap(db);
+    const userByDoc = await fetchProfileDocUserMap(db);
+
+    // Enumera o Omie e resolve o user_id em MEMÓRIA. Dedup por user_id (last-wins) — a constraint
+    // unique_user_omie é UNIQUE(user_id), então 2 linhas com o mesmo user_id no mesmo upsert dariam
+    // "ON CONFLICT cannot affect row a second time".
+    const upsertByUser = new Map<string, {
+      user_id: string;
+      omie_codigo_cliente: number;
+      omie_codigo_cliente_integracao: string | null;
+      omie_codigo_vendedor: number | null;
+      updated_at: string;
+    }>();
+    let pagina = 1;
+    let totalPaginas = 1;
+
     while (pagina <= totalPaginas) {
       const result = (await callOmie(account, "geral/clientes/", "ListarClientes", {
         pagina,
@@ -237,49 +298,35 @@ async function syncCustomers(db: SupabaseClient, account: OmieAccount) {
       })) as unknown as OmieListarClientesResponse;
 
       totalPaginas = result.total_de_paginas || 1;
-      const clientes = result.clientes_cadastro || [];
-
-      // We don't create a separate customers table - we enrich omie_clientes
-      // and profiles where possible. Log the sync progress.
-      for (const c of clientes) {
+      for (const c of result.clientes_cadastro || []) {
         const doc = (c.cnpj_cpf || "").replace(/\D/g, "");
-        if (!doc) continue;
-
-        // Check if this client is mapped to a user
-        const { data: mapping } = await db
-          .from("omie_clientes")
-          .select("id, user_id")
-          .eq("omie_codigo_cliente", c.codigo_cliente_omie)
-          .maybeSingle();
-
-        if (!mapping) {
-          // Try to find by document in profiles
-          const { data: profile } = await db
-            .from("profiles")
-            .select("user_id")
-            .eq("document", doc)
-            .maybeSingle();
-
-          if (profile) {
-            await db.from("omie_clientes").upsert({
-              user_id: profile.user_id,
-              omie_codigo_cliente: c.codigo_cliente_omie,
-              omie_codigo_cliente_integracao: c.codigo_cliente_integracao || null,
-              omie_codigo_vendedor: c.codigo_vendedor || null,
-            }, { onConflict: "user_id" });
-            totalSynced++;
-          }
-        } else {
-          // Update vendedor if changed
-          await db.from("omie_clientes")
-            .update({ omie_codigo_vendedor: c.codigo_vendedor || null, updated_at: new Date().toISOString() })
-            .eq("id", mapping.id);
-          totalSynced++;
-        }
+        if (!doc || c.codigo_cliente_omie == null) continue;
+        // mapeado por código (atualiza vendedor) OU vinculável por documento (cria vínculo).
+        // Não-vinculado (sem código nem profile) é fora de escopo — é o syncNaoVinculados.
+        const userId = userByCodigo.get(Number(c.codigo_cliente_omie)) ?? userByDoc.get(doc);
+        if (!userId) continue;
+        upsertByUser.set(userId, {
+          user_id: userId,
+          omie_codigo_cliente: c.codigo_cliente_omie,
+          omie_codigo_cliente_integracao: c.codigo_cliente_integracao || null,
+          omie_codigo_vendedor: c.codigo_vendedor || null,
+          updated_at: new Date().toISOString(),
+        });
       }
 
       console.log(`[Sync ${account}] Clientes página ${pagina}/${totalPaginas}`);
       pagina++;
+    }
+
+    // Bulk upsert em chunks (onConflict user_id = unique_user_omie). empresa_omie NÃO é setado
+    // (preserva o default 'colacor' do comportamento anterior — fora do escopo deste fix).
+    const rows = Array.from(upsertByUser.values());
+    let totalSynced = 0;
+    for (let i = 0; i < rows.length; i += 500) {
+      const chunk = rows.slice(i, i + 500);
+      const { error: upErr } = await db.from("omie_clientes").upsert(chunk, { onConflict: "user_id" });
+      if (upErr) throw new Error(`upsert omie_clientes: ${upErr.message}`);
+      totalSynced += chunk.length;
     }
 
     await updateSyncState(db, "customers", account, {
