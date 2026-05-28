@@ -367,7 +367,7 @@ const FinanceiroOrcamento = () => {
           <CardTitle className="text-base flex items-center gap-2">
             <Target className="w-4 h-4" />
             Acumulado {ano} (Jan–{mesesNome[currentMonth - 1]})
-            <Badge variant="outline" className="text-[10px]">Regime de Caixa</Badge>
+            <Badge variant="outline" className="text-[10px]">Regime de Competência</Badge>
           </CardTitle>
         </CardHeader>
         <CardContent className="p-0">
