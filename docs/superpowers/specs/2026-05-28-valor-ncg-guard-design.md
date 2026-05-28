@@ -26,21 +26,31 @@ Isso **viola "ausente ≠ zero"** e **diverge do Cockpit**, que já trata NCG au
 ## Mudanças (superfície fechada no A2)
 
 ### Helper puro `src/lib/financeiro/valor-helpers.ts` (espelhado verbatim no Deno)
-- **Novo** `resolverCapitalGiro(snaps)`: encapsula "último snapshot com `ncg` não-nulo" → `{ capital_giro: number | null; snapshot_at: string | null; disponivel: boolean }`. (Hoje inline no edge L245-251.)
-- **Novo** `acharCapitalGiroAnterior(snaps, refSnapshotAt, opts?)`: o lookup ~365d antes com tolerância ≤60d (hoje inline L252-263) → `number | null`.
+- **Novo** `resolverCapitalGiro(snaps)`: encapsula "último snapshot com `ncg` não-nulo" → `{ capital_giro: number | null; snapshot_at: string | null; disponivel: boolean }`. (Hoje inline no edge L245-251.) Usa `s.ncg != null` (truthiness NÃO — `0` e negativo são valores REAIS; só `null`/sem snapshot falha).
+- **Novo** `frescorGiro(snapshot_at, hojeMs, limiarStaleDias = 45)` → `{ dias: number | null; stale: boolean }` (**Codex P1.3**): puro/determinístico (`hojeMs` injetado p/ testar). `dias = round((hojeMs − Date.parse(snapshot_at))/86400000)`; `stale = dias != null && dias > limiar`. O cron de snapshot é diário → um NCG com 45+ dias indica pipeline quebrado / NCG potencialmente desatualizado. **Stale NÃO vira indisponível** (não esconde um NCG real) — só rebaixa a confiança e fica visível na UI.
+- **Novo** `acharCapitalGiroAnterior(snaps, refSnapshotAt, opts?)`: o lookup ~365d antes com tolerância ≤60d (hoje inline L252-263) → `number | null`. **Só é chamado quando o giro atual está disponível** (sem ponto atual, incremental não existe — Codex resposta 3).
 - **`capitalInvestido`**: `capital_giro: number | null`. Quando `null` → `capital_investido: null`, `capital_giro: null`, **novo** `giro_indisponivel: true`, `parcial: true`, motivo "Sem snapshot de NCG — capital de giro indisponível; ROIC/EVA não calculáveis." Tipo de retorno: `capital_investido: number | null`, `capital_giro: number | null`, `giro_indisponivel: boolean`.
-- **`normalizarComingling`**: `capital_reportado: number | null` → `capital_normalizado: number | null` (null quando reportado null). Normalização de EBIT (pró-labore/aluguel) **inalterada** (independe do capital).
-- **`scoreConfiancaValor`**: novo input `giro_indisponivel: boolean` → `rebaixar(1, …)` (baixa: a métrica central de capital está ausente, mais severo que o `roic_null` por capital ≤0).
+- **`normalizarComingling`**: `capital_reportado: number | null` → `capital_normalizado: number | null`. **Guard explícito anti-coerção (Codex P1.1):** `capital_normalizado = capital_reportado == null ? null : capital_reportado + ajuste_intercompany_capital` (nunca `null + (−X)` → 0). A normalização de **EBIT** (pró-labore/aluguel) é **inalterada** (independe do capital) — EBIT/NOPAT normalizado seguem calculáveis e exibidos; só `capital_normalizado`/ROIC/EVA normalizados ficam null.
+- **`scoreConfiancaValor`**: dois novos inputs (**Codex P1.2**): `giro_indisponivel: boolean` → `rebaixar(1, …)` (**baixa** — métrica central de capital ausente, mais severo); `giro_stale: boolean` → `rebaixar(2, 'NCG de DD/MM/YYYY (Nd atrás) — capital de giro pode estar desatualizado.')` (**media**). O `roic_null` por capital ≤0 **conhecido** segue `media` (não confundir com indisponível).
 - `roic`/`spread`/`eva`/`roicIncremental`: **já são null-safe** (`capital_investido: number | null`) — sem mudança.
 
 ### Edge `supabase/functions/fin-valor-engine/index.ts`
 - Substitui L245-263 pelas chamadas dos helpers; passa `capital_giro: number | null` ao `capitalInvestido`; `normalizarComingling` null-safe; passa `giro_indisponivel` ao `scoreConfiancaValor`; remove o motivo enterrado L340 (agora estruturado). **Espelho verbatim** do helper.
 
 ### Contrato `src/services/financeiroService.ts`
-- `ValorEmpresaResult.reportado.capital_investido: number | null`, `.capital_giro: number | null`, **novo** `.giro_indisponivel: boolean`; `normalizado.capital_investido: number | null`.
+- `ValorEmpresaResult.reportado.capital_investido: number | null`, `.capital_giro: number | null`, **novos** `.giro_indisponivel: boolean`, `.giro_snapshot_at: string | null`, `.giro_dias: number | null`; `normalizado.capital_investido: number | null`.
 
 ### UI `src/pages/FinanceiroValor.tsx`
-- `brl()`/`pct()` **já** renderizam `—` para null (sem mudança no número). **Novo**: quando `reportado.giro_indisponivel`, exibir "Sem snapshot de NCG — capital de giro indisponível (rode a projeção de caixa). ROIC/EVA não calculáveis." e **não** mostrar o "* capital parcial (sem ativo fixo)" enganoso nesse caso.
+- `brl()`/`pct()` **já** renderizam `—` para null (sem mudança no número).
+- **Mensagem giro-específica:** quando `reportado.giro_indisponivel`, exibir "Sem snapshot de NCG — capital de giro indisponível (rode a projeção de caixa). ROIC/EVA não calculáveis." e **gate** o "* capital parcial (sem ativo fixo)" (L48) para `capital_parcial && !giro_indisponivel` (não mostrar o motivo errado quando o parcial vem do NCG — **Codex resposta 7**).
+- **Frescor visível:** quando há giro, exibir "NCG de DD/MM/YYYY" e, se `giro_dias != null && giro_dias > 1`, "(Nd atrás)" com aviso quando stale — espelha o padrão do Cockpit (`Projecao13Card`).
+
+## Matriz de testes (vitest, Codex resposta 7)
+`resolverCapitalGiro`: (a) snapshots com ncg negativo → retorna o negativo, disponível; (b) ncg **zero** real → retorna 0, disponível (truthiness NÃO); (c) todos `ncg==null` → `{capital_giro:null, disponivel:false}`; (d) sem snapshots → indisponível; (e) mistura → pega o mais recente com ncg não-nulo + `snapshot_at`.
+`frescorGiro`: fresco (<limiar) → `stale:false`; velho (>limiar) → `stale:true` + `dias`; `snapshot_at` null → `{dias:null, stale:false}`.
+`capitalInvestido`: giro null → `capital_investido:null`, `giro_indisponivel:true`, `parcial:true`; giro 0 real + ativo fixo → capital = ativo fixo (válido, `giro_indisponivel:false`); giro negativo → capital pode ser ≤0 → ROIC null por capital (motivo distinto).
+`normalizarComingling`: `capital_reportado:null` + `intercompany_giro:-X` → `capital_normalizado:null` (NÃO `−X`); EBIT normalizado segue calculado.
+`scoreConfiancaValor`: `giro_indisponivel:true` → `baixa`; `giro_stale:true` (sem indisponível) → `media`; `roic_null` por capital≤0 → `media`.
 
 ## Entrega / risco
 - **Sem migration.** **Com deploy** do `fin-valor-engine` via chat do Lovable (ROIC/EVA são calculados no edge — client-side só avisaria depois do número nascer errado, como o Codex apontou).
