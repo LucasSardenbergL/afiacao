@@ -8648,6 +8648,36 @@ export type Database = {
           },
         ]
       }
+      sayerlack_retry_motor_log: {
+        Row: {
+          aprovado_em: string | null
+          criado_em: string
+          id: number
+          pedido_id: number
+          request_id: number | null
+          status_envio_portal_no_disparo: string | null
+          tentativa_no_disparo: number | null
+        }
+        Insert: {
+          aprovado_em?: string | null
+          criado_em?: string
+          id?: never
+          pedido_id: number
+          request_id?: number | null
+          status_envio_portal_no_disparo?: string | null
+          tentativa_no_disparo?: number | null
+        }
+        Update: {
+          aprovado_em?: string | null
+          criado_em?: string
+          id?: never
+          pedido_id?: number
+          request_id?: number | null
+          status_envio_portal_no_disparo?: string | null
+          tentativa_no_disparo?: number | null
+        }
+        Relationships: []
+      }
       score_recalc_queue: {
         Row: {
           customer_user_id: string
@@ -13233,6 +13263,7 @@ export type Database = {
           valor_coberto_rs: number
         }[]
       }
+      sayerlack_retry_orfaos: { Args: never; Returns: Json }
       set_config: {
         Args: { is_local?: boolean; parameter: string; value: string }
         Returns: string
