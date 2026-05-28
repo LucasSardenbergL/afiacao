@@ -68,6 +68,35 @@ async function authorizeCronOrStaff(req: Request): Promise<AuthResult> {
 // Edge function: motor de Inteligência de Caixa (A1)
 // =============================================================
 type Company = 'oben' | 'colacor' | 'colacor_sc';
+
+// ⚠️ ESPELHO VERBATIM de src/lib/financeiro/titulo-status.ts (testado em vitest).
+// VOCABULÁRIO REAL do banco = valores NATIVOS do Omie ('A VENCER'/'ATRASADO'/
+// 'VENCE HOJE' = aberto; 'RECEBIDO'/'PAGO' = liquidado). O filtro legado
+// ['ABERTO','PARCIAL','VENCIDO'] NUNCA casava → NCG=0 e projeção vazia.
+// NÃO incluir liquidados em "aberto": saldo é coluna gerada e valor_recebido=0
+// (#396) → liquidado tem saldo cheio → contá-lo infla o NCG em dezenas de milhões.
+// Editou aqui? Edite lá também.
+const OPEN_TITLE_STATUSES = ['A VENCER', 'ATRASADO', 'VENCE HOJE'] as const;
+const OPEN_NOT_OVERDUE_TITLE_STATUSES = ['A VENCER', 'VENCE HOJE'] as const;
+const SETTLED_TITLE_STATUSES = ['RECEBIDO', 'PAGO', 'LIQUIDADO'] as const;
+const OPEN_SET = new Set<string>(OPEN_TITLE_STATUSES);
+const OPEN_NOT_OVERDUE_SET = new Set<string>(OPEN_NOT_OVERDUE_TITLE_STATUSES);
+const SETTLED_SET = new Set<string>(SETTLED_TITLE_STATUSES);
+
+function isOpenTitleStatus(status: string | null | undefined): boolean {
+  return status != null && OPEN_SET.has(status);
+}
+function isOpenNotOverdueTitleStatus(status: string | null | undefined): boolean {
+  return status != null && OPEN_NOT_OVERDUE_SET.has(status);
+}
+type TituloStatusClass = 'open' | 'settled' | 'cancelled' | 'unknown';
+function classifyTituloStatus(status: string | null | undefined): TituloStatusClass {
+  if (status == null) return 'unknown';
+  if (OPEN_SET.has(status)) return 'open';
+  if (SETTLED_SET.has(status)) return 'settled';
+  if (status === 'CANCELADO') return 'cancelled';
+  return 'unknown';
+}
 type Cenario = 'realista' | 'otimista' | 'pessimista';
 
 type Input = {
@@ -313,6 +342,22 @@ async function carregarDados(
     status_titulo: c.status_titulo as string,
     categoria_codigo: (c.categoria_codigo as string | null) ?? null,
   }));
+
+  // Telemetria de qualidade de dado (codex): se o Omie introduzir um status_titulo
+  // novo, ele cai em 'unknown' e NÃO conta como aberto (fail-safe) — mas precisamos
+  // SABER, senão um título aberto desconhecido somia silenciosamente do NCG/projeção.
+  // Log com os valores distintos pra diagnóstico nos logs da edge.
+  const statusDesconhecidos = new Map<string, number>();
+  for (const s of [...crs.map((c) => c.status_titulo), ...cps.map((c) => c.status_titulo)]) {
+    if (classifyTituloStatus(s) === 'unknown') {
+      const k = s ?? '(null)';
+      statusDesconhecidos.set(k, (statusDesconhecidos.get(k) ?? 0) + 1);
+    }
+  }
+  if (statusDesconhecidos.size > 0) {
+    const resumo = [...statusDesconhecidos.entries()].map(([k, n]) => `${k}=${n}`).join(', ');
+    console.warn(`[Cashflow][${company}] status_titulo DESCONHECIDO (não conta como aberto): ${resumo}`);
+  }
 
   // Onda 2: folha categorias (coluna opcional). Leitura defensiva — se a coluna não
   // existe, folhaCatRes.data é null e cai em []; o guard de folha fica inerte.
@@ -657,7 +702,7 @@ function gerarSemanas(
   const crPorSemana: LinhaCashflow[][] = Array.from({ length: horizon }, () => []);
   for (const cr of dados.crs) {
     if (!cr.data_vencimento || cr.saldo <= 0) continue;
-    if (!['ABERTO', 'PARCIAL', 'VENCIDO'].includes(cr.status_titulo)) continue;
+    if (!isOpenTitleStatus(cr.status_titulo)) continue;
     const diasAtraso = daysBetween(hoje, cr.data_vencimento);
     const faixa = faixaAging(diasAtraso);
     const curva = premissas.curvas[faixa];
@@ -696,6 +741,10 @@ function gerarSemanas(
 
     for (const cp of dados.cps) {
       if (!cp.data_vencimento || cp.saldo <= 0) continue;
+      // P1 (codex): SÓ CP em aberto projeta saída. Sem isto, um título PAGO com
+      // vencimento futuro entraria como saída fantasma — seu `saldo` é cheio porque
+      // valor_pago=0 (#396). Simétrico ao filtro do loop de CR acima.
+      if (!isOpenTitleStatus(cp.status_titulo)) continue;
       if (cp.data_vencimento < inicio || cp.data_vencimento > fim) continue;
       saidas.push({
         origem: 'cp_omie',
@@ -761,13 +810,13 @@ type NCG = {
 
 function calcularNCG(dados: DadosBase): NCG {
   const cr_aberto = dados.crs
-    .filter(c => ['ABERTO', 'PARCIAL', 'VENCIDO'].includes(c.status_titulo) && c.saldo > 0)
+    .filter(c => isOpenTitleStatus(c.status_titulo) && c.saldo > 0)
     .reduce((s, c) => s + c.saldo, 0);
   const adiantamentos = dados.cps
     .filter(c =>
       c.categoria_codigo &&
       dados.config.adiantamento_categorias_codigos.includes(c.categoria_codigo) &&
-      ['ABERTO', 'PARCIAL'].includes(c.status_titulo) &&
+      isOpenNotOverdueTitleStatus(c.status_titulo) &&
       c.saldo > 0
     )
     .reduce((s, c) => s + c.saldo, 0);
@@ -794,7 +843,7 @@ function calcularNCG(dados: DadosBase): NCG {
 
   const cp_fornecedor = dados.cps
     .filter(c =>
-      ['ABERTO', 'PARCIAL', 'VENCIDO'].includes(c.status_titulo) &&
+      isOpenTitleStatus(c.status_titulo) &&
       c.saldo > 0 &&
       (!c.categoria_codigo || !dados.config.adiantamento_categorias_codigos.includes(c.categoria_codigo)) &&
       !(c.categoria_codigo && c.categoria_codigo.startsWith('3.99')) &&
@@ -806,13 +855,13 @@ function calcularNCG(dados: DadosBase): NCG {
     .filter(e => e.is_folha && e.tipo === 'saida')
     .reduce((s, e) => s + e.valor, 0);
   const folhaCP30d = dados.cps
-    .filter(c => isFolhaCPJanela(c) && ['ABERTO', 'PARCIAL', 'VENCIDO'].includes(c.status_titulo) && c.saldo > 0)
+    .filter(c => isFolhaCPJanela(c) && isOpenTitleStatus(c.status_titulo) && c.saldo > 0)
     .reduce((s, c) => s + c.saldo, 0);
   const folha_30d = folhaCP30d > 0 ? Math.max(folhaCP30d, folhaRecorrente) : folhaRecorrente;
 
   const tributos_a_pagar = dados.cps
     .filter(c =>
-      ['ABERTO', 'PARCIAL', 'VENCIDO'].includes(c.status_titulo) &&
+      isOpenTitleStatus(c.status_titulo) &&
       c.saldo > 0 &&
       c.categoria_codigo && c.categoria_codigo.startsWith('3.99')
     )
@@ -885,7 +934,7 @@ function calcularIndicadores(
   // Onda 2: inadimplência = média ponderada por R$ de (1 − taxa_recebimento[faixa]) sobre
   // o CR aberto. Taxa de perda limpa — não mistura mais estoque (saldo >90) com fluxo (12m).
   const crsAbertos = dados.crs.filter(c =>
-    ['ABERTO', 'PARCIAL', 'VENCIDO'].includes(c.status_titulo) && c.saldo > 0 && c.data_vencimento,
+    isOpenTitleStatus(c.status_titulo) && c.saldo > 0 && c.data_vencimento,
   );
   const inadimplencia_pct = inadimplenciaPonderada(
     crsAbertos.map(c => ({ saldo: c.saldo, faixa: faixaAging(daysBetween(hoje, c.data_vencimento!)) })),
@@ -1044,18 +1093,48 @@ async function calcular(
     ar_impaired,
   };
 
-  // Persistir alertas: insere novos (UNIQUE constraint evita duplicados ativos do mesmo tipo)
-  for (const a of alertas) {
-    // @ts-expect-error - fin_alertas not in supabase types yet
-    await supabase.from('fin_alertas').insert({
-      company,
-      tipo: a.tipo,
-      severidade: a.severidade,
-      mensagem: a.mensagem,
-      valor: a.valor,
-      threshold: a.threshold,
-      contexto: a.contexto,
-    }).select().maybeSingle();
+  // Persistência de alertas (codex): SÓ no cenário canônico 'realista' do snapshot
+  // autoritativo (save). Antes a engine só INSERIA → alerta resolvido ficava preso
+  // pra sempre (ex.: o ncg_deficit=0 do bug histórico de status). Agora:
+  //   - condição persiste → ATUALIZA o ativo (valores frescos; corrige mensagem stale)
+  //   - condição nova → INSERE
+  //   - condição resolvida → DISMISSA
+  // ⚠️ TIPOS_AVALIADOS escopa o dismiss SÓ aos tipos DESTA engine — a tabela
+  // fin_alertas também guarda sync_*/data_health_* (watchdog/sentinela); dismissar
+  // por exclusão sem esse escopo apagaria alertas de outros sistemas. Manter 1:1
+  // com avaliarAlertas().
+  if (save && cenario === 'realista') {
+    const TIPOS_AVALIADOS = [
+      'caixa_negativo', 'ncg_deficit', 'cobertura_baixa',
+      'inadimplencia_alta', 'concentracao_top1', 'saida_spike',
+    ];
+    const tiposAtivos = new Set(alertas.map((a) => a.tipo));
+    const nowIso = new Date().toISOString();
+
+    for (const a of alertas) {
+      const { data: existente } = await supabase.from('fin_alertas')
+        .select('id').eq('company', company).eq('tipo', a.tipo).is('dismissed_at', null).maybeSingle();
+      if (existente) {
+        // @ts-expect-error - fin_alertas not in supabase types yet
+        await supabase.from('fin_alertas').update({
+          severidade: a.severidade, mensagem: a.mensagem,
+          valor: a.valor, threshold: a.threshold, contexto: a.contexto,
+        }).eq('id', (existente as { id: string }).id);
+      } else {
+        // @ts-expect-error - fin_alertas not in supabase types yet
+        await supabase.from('fin_alertas').insert({
+          company, tipo: a.tipo, severidade: a.severidade, mensagem: a.mensagem,
+          valor: a.valor, threshold: a.threshold, contexto: a.contexto,
+        });
+      }
+    }
+
+    const tiposParaDismiss = TIPOS_AVALIADOS.filter((t) => !tiposAtivos.has(t));
+    if (tiposParaDismiss.length > 0) {
+      // @ts-expect-error - fin_alertas not in supabase types yet
+      await supabase.from('fin_alertas').update({ dismissed_at: nowIso })
+        .eq('company', company).in('tipo', tiposParaDismiss).is('dismissed_at', null);
+    }
   }
 
   if (save) {
