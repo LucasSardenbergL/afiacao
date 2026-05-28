@@ -3,7 +3,7 @@
 -- ========================================================================
 --
 -- Gerado por: scripts/audit-custom-migrations.ts
--- Total de custom migrations: 94
+-- Total de custom migrations: 98
 --
 -- Como usar:
 --   1. Abra o Supabase SQL Editor (via Lovable Cloud → Backend → SQL Editor)
@@ -113,7 +113,11 @@ WITH expected (version, slug, filename) AS (VALUES
   ('20260527200000', 'data_health_add_estoque_reposicao', '20260527200000_data_health_add_estoque_reposicao.sql'),
   ('20260527210000', 'data_health_compute_internal', '20260527210000_data_health_compute_internal.sql'),
   ('20260527220000', 'data_health_watchdog', '20260527220000_data_health_watchdog.sql'),
-  ('20260527220001', 'fin_sync_cursor_backfill_desde', '20260527220001_fin_sync_cursor_backfill_desde.sql')
+  ('20260527220001', 'fin_sync_cursor_backfill_desde', '20260527220001_fin_sync_cursor_backfill_desde.sql'),
+  ('20260527230000', 'cron_baseline', '20260527230000_cron_baseline.sql'),
+  ('20260527235000', 'dispatch_notifications_frequente', '20260527235000_dispatch_notifications_frequente.sql'),
+  ('20260527240000', 'data_health_alert_channel', '20260527240000_data_health_alert_channel.sql'),
+  ('20260528000000', 'fin_sync_watchdog_tail_failing', '20260528000000_fin_sync_watchdog_tail_failing.sql')
 )
 SELECT
   e.version,
@@ -563,7 +567,56 @@ WITH expected_objects (migration, kind, schema_name, object_name, parent_name) A
   ('data_health_compute_internal', 'function', 'public', 'get_data_health', ''),
   ('data_health_watchdog', 'function', 'public', 'data_health_watchdog', ''),
   ('data_health_watchdog', 'function', 'public', 'fin_sync_heartbeat', ''),
-  ('data_health_watchdog', 'cron_job', 'cron', 'data-health-watchdog', '')
+  ('data_health_watchdog', 'cron_job', 'cron', 'data-health-watchdog', ''),
+  ('cron_baseline', 'cron_job', 'cron', 'afiacao_ciclo_oportunidade_diario', ''),
+  ('cron_baseline', 'cron_job', 'cron', 'afiacao_dispatch_notificacoes_diario', ''),
+  ('cron_baseline', 'cron_job', 'cron', 'afiacao_estados_eventos_diarios', ''),
+  ('cron_baseline', 'cron_job', 'cron', 'afiacao_limpeza_sugestoes_mensal', ''),
+  ('cron_baseline', 'cron_job', 'cron', 'afiacao_omie_oben_sku_items_history_daily', ''),
+  ('cron_baseline', 'cron_job', 'cron', 'afiacao_omie_oben_sync_incremental_2h', ''),
+  ('cron_baseline', 'cron_job', 'cron', 'afiacao_ranking_refresh_semanal', ''),
+  ('cron_baseline', 'cron_job', 'cron', 'afiacao_sugestoes_diarias', ''),
+  ('cron_baseline', 'cron_job', 'cron', 'call-log-missed-backstop', ''),
+  ('cron_baseline', 'cron_job', 'cron', 'carteira-positivacao-snapshot-mensal', ''),
+  ('cron_baseline', 'cron_job', 'cron', 'carteira-rebuild-nightly', ''),
+  ('cron_baseline', 'cron_job', 'cron', 'compute-association-rules-daily', ''),
+  ('cron_baseline', 'cron_job', 'cron', 'compute-costs-daily', ''),
+  ('cron_baseline', 'cron_job', 'cron', 'daily-calculate-scores', ''),
+  ('cron_baseline', 'cron_job', 'cron', 'data-health-watchdog', ''),
+  ('cron_baseline', 'cron_job', 'cron', 'detectar-outliers-diario', ''),
+  ('cron_baseline', 'cron_job', 'cron', 'disparar-pedidos-aprovados-oben', ''),
+  ('cron_baseline', 'cron_job', 'cron', 'fin-cashflow-snapshot-diario', ''),
+  ('cron_baseline', 'cron_job', 'cron', 'fin-ic-reconcile-daily', ''),
+  ('cron_baseline', 'cron_job', 'cron', 'fin-refresh-analise-dimensoes', ''),
+  ('cron_baseline', 'cron_job', 'cron', 'fin-sync-base-diario', ''),
+  ('cron_baseline', 'cron_job', 'cron', 'fin-sync-continuacao-10min', ''),
+  ('cron_baseline', 'cron_job', 'cron', 'fin-sync-cp-2x', ''),
+  ('cron_baseline', 'cron_job', 'cron', 'fin-sync-cr-2x', ''),
+  ('cron_baseline', 'cron_job', 'cron', 'fin-sync-heartbeat', ''),
+  ('cron_baseline', 'cron_job', 'cron', 'fin-sync-mov-2x', ''),
+  ('cron_baseline', 'cron_job', 'cron', 'fin-sync-watchdog', ''),
+  ('cron_baseline', 'cron_job', 'cron', 'gerar-pedidos-diario-oben', ''),
+  ('cron_baseline', 'cron_job', 'cron', 'monthly-tool-report', ''),
+  ('cron_baseline', 'cron_job', 'cron', 'omie-sync-estoque-diario', ''),
+  ('cron_baseline', 'cron_job', 'cron', 'omie-sync-metadados-daily', ''),
+  ('cron_baseline', 'cron_job', 'cron', 'omie-sync-status-produtos-diario', ''),
+  ('cron_baseline', 'cron_job', 'cron', 'process-recurring-orders-daily', ''),
+  ('cron_baseline', 'cron_job', 'cron', 'sayerlack-portal-watchdog', ''),
+  ('cron_baseline', 'cron_job', 'cron', 'scoring-recalc-batch-nightly', ''),
+  ('cron_baseline', 'cron_job', 'cron', 'sync-colacor-vendas-products', ''),
+  ('cron_baseline', 'cron_job', 'cron', 'sync-inventory-vendas-30m', ''),
+  ('cron_baseline', 'cron_job', 'cron', 'sync-omie-services-hourly', ''),
+  ('cron_baseline', 'cron_job', 'cron', 'sync-products-customers-daily', ''),
+  ('cron_baseline', 'cron_job', 'cron', 'sync-reprocess-operational', ''),
+  ('cron_baseline', 'cron_job', 'cron', 'sync-reprocess-strategic', ''),
+  ('cron_baseline', 'cron_job', 'cron', 'vendas-sync-pedidos-colacor-2h', ''),
+  ('cron_baseline', 'cron_job', 'cron', 'vendas-sync-pedidos-oben-2h', ''),
+  ('cron_baseline', 'cron_job', 'cron', 'visit-score-recalc-batch-nightly', ''),
+  ('cron_baseline', 'cron_job', 'cron', 'weekly-algorithm-a-audit', ''),
+  ('dispatch_notifications_frequente', 'cron_job', 'cron', 'afiacao_dispatch_notificacoes_30min', ''),
+  ('data_health_alert_channel', 'function', 'public', '_data_health_compute', ''),
+  ('data_health_alert_channel', 'function', 'public', 'fin_sync_heartbeat', ''),
+  ('fin_sync_watchdog_tail_failing', 'function', 'public', 'fin_sync_watchdog_check', '')
 )
 SELECT
   e.migration,
