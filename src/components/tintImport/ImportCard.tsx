@@ -180,7 +180,7 @@ export function ImportCard({
                   <p className="font-medium">{r.name}</p>
                   <p className="text-muted-foreground">
                     {r.registros_importados ?? r.imported ?? 0} importados, {r.registros_atualizados ?? r.updated ?? 0} atualizados, {r.registros_erro ?? r.errors ?? 0} erros
-                    {r.failed_chunks > 0 && <span className="text-destructive"> ({r.failed_chunks} chunks falharam)</span>}
+                    {(r.failed_chunks ?? 0) > 0 && <span className="text-destructive"> ({r.failed_chunks} chunks falharam)</span>}
                   </p>
                   {r.erros && r.erros.length > 0 && (
                     <ul className="text-xs text-destructive mt-1">

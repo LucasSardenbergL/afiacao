@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import {
-  fontesDaLinha, aliasesDaLinha, drillLinha,
+  fontesDaLinha, aliasesDaLinha, drillLinha, codigosDaLinha,
   type DimRowRaw,
 } from '../orcamento-drill-helpers';
 
@@ -181,5 +181,22 @@ describe('drillLinha', () => {
     });
     expect(r.residuo_perc).toBeNull();
     expect(r.qualidade).toBe('diagnostico');
+  });
+});
+
+describe('codigosDaLinha', () => {
+  const map = (c: string, l: string, company = '_default') => ({ omie_codigo: c, dre_linha: l, company });
+  it('resolve company>_default order-independent; filtra por alias; dedup', () => {
+    const ordemA = [map('1','despesas_comerciais','_default'), map('1','cmv','oben'), map('2','despesas_comerciais')];
+    const ordemB = [...ordemA].reverse();
+    expect(codigosDaLinha(ordemA,'cmv','presumido').sort()).toEqual(['1']);
+    expect(codigosDaLinha(ordemB,'cmv','presumido').sort()).toEqual(['1']);
+    expect(codigosDaLinha(ordemA,'despesas_comerciais','presumido').sort()).toEqual(['2']);
+  });
+  it('aliases fiscais regime-aware: deducoes pega ded_*/das; impostos simples vazio', () => {
+    const m = [map('a','ded_icms'), map('b','das'), map('c','irpj')];
+    expect(codigosDaLinha(m,'deducoes','presumido').sort()).toEqual(['a','b']);
+    expect(codigosDaLinha(m,'impostos','simples')).toEqual([]);
+    expect(codigosDaLinha(m,'impostos','presumido')).toEqual(['c']);
   });
 });

@@ -18,8 +18,8 @@ import { cn } from '@/lib/utils';
 import {
   AlertCircle, CheckCircle, Info, AlertTriangle, Plus, Search,
   ArrowRight, Trash2, Edit, Phone, ShoppingCart, TrendingUp,
-  Copy, ChevronRight, Loader2, X, Eye, EyeOff, MessageSquare,
-  Star, Zap, Package, Users, BarChart3
+  Copy, Loader2, MessageSquare,
+  Star, Zap, Users, BarChart3
 } from 'lucide-react';
 
 /* ─── Helpers ─── */

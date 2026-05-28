@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
@@ -7,7 +7,7 @@ import { Progress } from '@/components/ui/progress';
 import { useAuth } from '@/contexts/AuthContext';
 import { useFarmerPerformance } from '@/hooks/useFarmerPerformance';
 import {
-  Loader2, TrendingUp, DollarSign, BarChart3, Users, ShieldCheck,
+  Loader2, TrendingUp, DollarSign, BarChart3, ShieldCheck,
   RefreshCw, Layers, Target, type LucideIcon
 } from 'lucide-react';
 
