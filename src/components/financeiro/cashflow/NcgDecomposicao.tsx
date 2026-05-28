@@ -56,7 +56,13 @@ export function NcgDecomposicao() {
         <Card>
           <CardHeader><CardTitle className="text-xs">NCG (ACO − PCO)</CardTitle></CardHeader>
           <CardContent>
-            <div className={`text-2xl font-mono ${data.ncg.valor < 0 ? 'text-status-error' : 'text-status-success'}`}>
+            <div className={`text-2xl font-mono ${
+              data.ncg.valor <= 0
+                ? 'text-status-success'
+                : data.ncg.valor > data.indicadores.liquidez_operacional_liquida
+                ? 'text-status-warning'
+                : 'text-foreground'
+            }`}>
               {formatBRL(data.ncg.valor)}
             </div>
             <div className="text-xs text-muted-foreground mt-1">
