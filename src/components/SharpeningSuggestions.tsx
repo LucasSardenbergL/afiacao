@@ -1,17 +1,16 @@
 import React from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Bell, Calendar, ChevronRight, AlertTriangle, Clock, Wrench } from 'lucide-react';
+import { Bell, Calendar, AlertTriangle, Clock, Wrench } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { useSharpeningSuggestions, SharpeningTool } from '@/hooks/useSharpeningSuggestions';
-import { format, formatDistanceToNow } from 'date-fns';
-import { ptBR } from 'date-fns/locale';
+import { format } from 'date-fns';
 import { cn } from '@/lib/utils';
 
 interface SharpeningSuggestionsProps {
   compact?: boolean;
 }
 
-export const SharpeningSuggestions = React.forwardRef<HTMLDivElement, SharpeningSuggestionsProps>(function SharpeningSuggestions({ compact = false }, ref) {
+export const SharpeningSuggestions = React.forwardRef<HTMLDivElement, SharpeningSuggestionsProps>(function SharpeningSuggestions({ compact = false }, _ref) {
   const navigate = useNavigate();
   const { overdueTools, dueSoonTools, upcomingTools, loading } = useSharpeningSuggestions();
 
