@@ -127,6 +127,20 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
   useEffect(() => {
     let isMounted = true;
 
+    // Failsafe: nunca deixar o app preso num spinner pra sempre. Se o bootstrap
+    // de auth do Supabase travar (lock do navigator.locks preso por outra aba,
+    // token corrompido, ou query de role sem timeout), força loading=false pra
+    // que o ProtectedRoute redirecione pro /auth (login) em vez de spinner
+    // infinito. 10s é folgado: o caminho normal resolve em <1s.
+    const loadingFailsafe = setTimeout(() => {
+      if (isMounted) {
+        logger.error('Auth bootstrap timed out — forcing loading=false (failsafe)', {
+          stage: 'auth_failsafe',
+        });
+        setLoading(false);
+      }
+    }, 10_000);
+
     // Set up auth state listener FIRST
     const { data: { subscription } } = supabase.auth.onAuthStateChange(
       (event, session) => {
@@ -176,6 +190,7 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
 
     return () => {
       isMounted = false;
+      clearTimeout(loadingFailsafe);
       subscription.unsubscribe();
     };
   }, []);
