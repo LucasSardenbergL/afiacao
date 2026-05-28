@@ -35,7 +35,7 @@ Um sistema **unificado** de Tarefas. A Fase 1 entrega **tarefas de cliente atrib
 - **`interacao`**: sem data; o prazo é a **próxima interação** com o cliente (`interacao_tipo` ∈ ligacao/visita/entrega, escolhido conforme o caso — hunter→ligação, farmer→visita/entrega). Pra nada apodrecer, há um **backstop**: `created_at + backstop_days` (padrão 7, **ajustável por tarefa**). Se a interação não rolar até o backstop, a tarefa vence e escala. O backstop é **fixo na criação** (não rola dia a dia); a interação **satisfaz/avalia** a tarefa, não a reagenda. **Adiar com motivo (3.6) é o único jeito de empurrar o vencimento.**
 
 ### 3.2 Tolerância (cobrança baseada em tolerância)
-A vendedora é lembrada **primeiro** (in-app). O e-mail ao founder só dispara depois de `vencimento + tolerancia_dias`. A tolerância tem um **padrão global** (config), mas é **gravada em cada tarefa na criação** — mudar o padrão depois **não reescreve** o passado.
+A vendedora é lembrada **primeiro** (in-app). O e-mail ao founder só dispara depois de `vencimento + tolerancia_dias`. A tolerância tem um **padrão global** (config; **1 dia**, aprovado pelo founder), mas é **gravada em cada tarefa na criação** — mudar o padrão depois **não reescreve** o passado.
 
 ### 3.3 Escada de certeza (auto-baixa) — decisão central
 Detectar uma menção na transcrição **≠** tarefa cumprida (o cliente pode ter perguntado, ela pode ter recusado). Fechar tarefa com base nisso fura a cobrança. Regra (validada com codex):
@@ -223,7 +223,7 @@ Tudo aplicado **manualmente** via SQL Editor do Lovable (sem CLI). Blocos espera
 - **BLOCO B**: `tarefa_satisfacao_candidatos` (+ UNIQUE) + `tarefa_eventos`.
 - **BLOCO C**: view `v_tarefas_estado` + RLS de todas as tabelas.
 - **BLOCO D**: funções `tarefas_matcher_tick` / `tarefas_escalonamento_tick` + `cron.schedule` (idempotente por nome) + extensão do CHECK de `fornecedor_alerta`.
-- **BLOCO E**: seed do default global de tolerância/backstop em `company_config`.
+- **BLOCO E**: seed do default global em `company_config` — **tolerância = 1 dia, backstop = 7 dias** (aprovados pelo founder).
 Cada bloco com query de validação. Nota no PR: **"ATENÇÃO: migration manual necessária"**. **Sem edge function nova** na Fase 1 (matcher e escalonamento são SQL puro).
 
 ## 12. Registro de revisão com o codex
