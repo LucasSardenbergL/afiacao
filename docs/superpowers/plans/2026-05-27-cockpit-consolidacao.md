@@ -62,17 +62,64 @@ describe('consolidarCockpit', () => {
     expect(r.projecao13[0].completa).toBe(false);       // 2 de 3 esperadas
   });
 
-  it('DEDUPE por empresa: 2 linhas de oben → fica a de snapshot_at maior, não soma 2× (P1.2)', () => {
+  it('DEDUPE latest-wins por snapshot_at, NÃO ordem do array (P1.2): mais novo vem ANTES', () => {
     const snaps = [
-      snap('oben', '2026-05-27T08:00:00Z', 100, [sem('2026-05-26', 10, 0, 110)]),
-      snap('oben', '2026-05-27T12:00:00Z', 150, [sem('2026-05-26', 15, 0, 165)]), // mais recente
+      snap('oben', '2026-05-27T12:00:00Z', 150, [sem('2026-05-26', 15, 0, 165)]), // mais recente, mas 1º no array
+      snap('oben', '2026-05-27T08:00:00Z', 100, [sem('2026-05-26', 10, 0, 110)]), // mais antigo, depois
       snap('colacor', '2026-05-27T10:00:00Z', 200, [sem('2026-05-26', 20, 0, 220)]),
       snap('colacor_sc', '2026-05-27T10:00:00Z', 50, [sem('2026-05-26', 5, 0, 55)]),
     ];
     const r = consolidarCockpit({ esperadas: ESP, snapshots: snaps });
-    expect(r.ncg_total).toBe(400);   // 150(recente)+200+50 — NÃO 100+150+...
+    expect(r.ncg_total).toBe(400);   // 150(12:00)+200+50 — falha se "última no array vence" (daria 100)
     expect(r.projecao13[0].saldo_projetado).toBe(440); // 165+220+55
     expect(r.empresas_presentes).toEqual(ESP);
+  });
+
+  it('coorte: 3 empresas no MESMO DIA com horas diferentes → todas na coorte, não parcial (P1.1)', () => {
+    const snaps = [
+      snap('oben', '2026-05-27T06:00:00Z', 100, [sem('2026-05-26', 10, 0, 110)]),
+      snap('colacor', '2026-05-27T13:30:00Z', 200, [sem('2026-05-26', 20, 0, 220)]),
+      snap('colacor_sc', '2026-05-27T23:59:00Z', 50, [sem('2026-05-26', 5, 0, 55)]),
+    ];
+    const r = consolidarCockpit({ esperadas: ESP, snapshots: snaps });
+    expect(r.parcial).toBe(false);
+    expect(r.empresas_presentes).toEqual(ESP);
+    expect(r.data_referencia).toBe('2026-05-27');
+    expect(r.ncg_total).toBe(350);
+    expect(r.projecao13[0].completa).toBe(true);
+  });
+
+  it('coorte por DATA via slice (não new Date local): snapshot_at de madrugada Z não muda o dia (P2)', () => {
+    // 2026-05-27T01:00:00Z em America/Sao_Paulo (UTC-3) seria 2026-05-26 com new Date local — deve ficar 2026-05-27
+    const snaps = [snap('oben', '2026-05-27T01:00:00Z', 0, [sem('2026-05-01', 10, 0, 10)])];
+    const r = consolidarCockpit({ esperadas: ['oben'], snapshots: snaps });
+    expect(r.data_referencia).toBe('2026-05-27');
+    expect(r.projecao13[0].semana_label).toBe('01/05'); // não '30/04' (timezone)
+  });
+
+  it('saldo_tesouraria: 0 conta, null aciona parcial (simétrico ao ncg)', () => {
+    const snaps = [
+      snap('oben', '2026-05-27T10:00:00Z', 0, [sem('2026-05-26', 0, 0, 0)], 0),
+      snap('colacor', '2026-05-27T10:00:00Z', 0, [sem('2026-05-26', 0, 0, 0)], null),
+      snap('colacor_sc', '2026-05-27T10:00:00Z', 0, [sem('2026-05-26', 0, 0, 0)], 30),
+    ];
+    const r = consolidarCockpit({ esperadas: ESP, snapshots: snaps });
+    expect(r.saldo_tesouraria_total).toBe(30); // 0 + (null fora) + 30
+    expect(r.saldo_tesouraria_parcial).toBe(true); // colacor null
+    expect(r.projecao13[0].saldo_projetado).toBe(0); // saldo 0 real não some por filtro truthy
+  });
+
+  it('stale com a MESMA semana inicio que a coorte → ainda excluído (por data, não coincidência)', () => {
+    const snaps = [
+      snap('oben', '2026-05-27T10:00:00Z', 100, [sem('2026-05-26', 10, 0, 110)]),
+      snap('colacor', '2026-05-27T10:00:00Z', 200, [sem('2026-05-26', 20, 0, 220)]),
+      snap('colacor_sc', '2026-05-20T10:00:00Z', 999, [sem('2026-05-26', 99, 0, 999)]), // stale, mesma inicio
+    ];
+    const r = consolidarCockpit({ esperadas: ESP, snapshots: snaps });
+    expect(r.empresas_stale).toEqual(['colacor_sc']);
+    expect(r.ncg_total).toBe(300);                       // 999 não entra
+    expect(r.projecao13[0].saldo_projetado).toBe(330);   // 110+220, sem o 999
+    expect(r.projecao13[0].por_empresa).toHaveLength(2);
   });
 
   it('empresa ausente (sem snapshot) → ausente + parcial; completa=false', () => {
@@ -132,10 +179,13 @@ describe('consolidarCockpit', () => {
     expect(r.data_referencia).toBeNull();
   });
 
-  it('cap em 13 semanas a partir da menor âncora', () => {
-    const semanas = Array.from({ length: 16 }, (_, i) => sem(`2026-${String(1 + Math.floor(i / 4)).padStart(2,'0')}-0${(i % 4) + 1}`, 1, 0, 1));
+  it('cap nas 13 PRIMEIRAS semanas por menor inicio (não 13 quaisquer)', () => {
+    // 16 semanas sequenciais 2026-01-01..2026-01-16
+    const semanas = Array.from({ length: 16 }, (_, i) => sem(`2026-01-${String(i + 1).padStart(2, '0')}`, 1, 0, 1));
     const r = consolidarCockpit({ esperadas: ['oben'], snapshots: [snap('oben', '2026-05-27T10:00:00Z', 0, semanas)] });
-    expect(r.projecao13.length).toBeLessThanOrEqual(13);
+    expect(r.projecao13).toHaveLength(13);
+    expect(r.projecao13[0].inicio).toBe('2026-01-01');
+    expect(r.projecao13[12].inicio).toBe('2026-01-13'); // as 13 PRIMEIRAS, não 14/15/16
   });
 });
 ```
