@@ -379,6 +379,49 @@ function getCredentials(company: Company) {
   }
 }
 
+// ── Classificação de faults do Omie (decide política de retry) ──────────────
+// ⚠️ ESPELHADO VERBATIM de src/lib/omie/omie-fault.ts (testado em vitest).
+// Qualquer mudança aqui deve refletir lá e vice-versa.
+type OmieFaultClass = 'rate_limit' | 'transient' | 'fatal';
+
+function classifyOmieFault(faultstring: string | null | undefined): OmieFaultClass {
+  const fs = faultstring ?? '';
+
+  if (
+    fs.includes('Já existe uma requisição desse método') ||
+    fs.includes('Consumo redundante') ||
+    fs.includes('consumo redundante') ||
+    fs.includes('REDUNDANT')
+  ) {
+    return 'rate_limit';
+  }
+
+  // Transitório: instabilidade de infra do servidor do Omie. NÃO inclui o
+  // "SOAP-ERROR" genérico (SOAP fault também cobre erro de contrato/cliente).
+  if (
+    fs.includes('Broken response') ||
+    fs.includes('Application Server') ||
+    fs.includes('ERROR_INTERNAL') ||
+    fs.includes('Internal Server Error') ||
+    fs.includes('Service Unavailable') ||
+    fs.includes('Service Temporarily Unavailable')
+  ) {
+    return 'transient';
+  }
+
+  return 'fatal';
+}
+
+// Backoff curto com jitter pra faults transitórios (1s, 2s, 4s + jitter, cap 4s).
+// Curto de propósito: o budget de invocação é 100s; o cursor de continuação */10
+// retoma o que faltar. Jitter evita sincronizar as 3 empresas e piorar rate-limit.
+async function transientBackoff(attempt: number, company: string, reason: string): Promise<void> {
+  const base = Math.min(1000 * 2 ** attempt, 4000);
+  const delay = base + Math.floor(Math.random() * 500);
+  console.log(`[Fin][${company}] Omie transitório, retry em ${(delay / 1000).toFixed(1)}s: ${reason}`);
+  await new Promise((r) => setTimeout(r, delay));
+}
+
 async function callOmie(
   company: Company,
   endpoint: string,
@@ -398,28 +441,65 @@ async function callOmie(
 
   const maxRetries = 3;
   for (let attempt = 0; attempt <= maxRetries; attempt++) {
-    const res = await fetch(`${OMIE_API_URL}/${endpoint}`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(body),
-    });
+    // 1) fetch — erro de REDE (DNS/conexão/timeout) é transitório.
+    let res: Response;
+    try {
+      res = await fetch(`${OMIE_API_URL}/${endpoint}`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(body),
+      });
+    } catch (netErr) {
+      if (attempt < maxRetries && !isTimeBudgetExhausted()) {
+        await transientBackoff(attempt, company, `rede: ${String(netErr).slice(0, 50)}`);
+        continue;
+      }
+      throw netErr instanceof Error ? netErr : new Error(`Omie (${company}): ${String(netErr)}`);
+    }
     apiCallCount++;
-    const result = (await res.json()) as OmieGenericResponse;
 
+    // 2) HTTP status ANTES de parsear: 429 = rate-limit, 5xx = transitório, demais 4xx = fatal.
+    if (!res.ok) {
+      if (res.status === 429 && attempt < maxRetries && !isTimeBudgetExhausted()) {
+        rateLimitHits++;
+        console.log(`[Fin][${company}] HTTP 429, waiting 5s`);
+        await new Promise((r) => setTimeout(r, 5000));
+        continue;
+      }
+      if (res.status >= 500 && attempt < maxRetries && !isTimeBudgetExhausted()) {
+        await transientBackoff(attempt, company, `HTTP ${res.status}`);
+        continue;
+      }
+      throw new Error(`Omie (${company}): HTTP ${res.status}`);
+    }
+
+    // 3) parse — corpo 200 não-JSON / quebrado é transitório.
+    let result: OmieGenericResponse;
+    try {
+      result = (await res.json()) as OmieGenericResponse;
+    } catch (parseErr) {
+      if (attempt < maxRetries && !isTimeBudgetExhausted()) {
+        await transientBackoff(attempt, company, `corpo não-JSON`);
+        continue;
+      }
+      throw new Error(`Omie (${company}): resposta não-JSON (${String(parseErr).slice(0, 50)})`);
+    }
+
+    // 4) faultstring — classifica e aplica política por classe.
     if (result.faultstring) {
       const fs = String(result.faultstring);
-      const isRateLimit =
-        fs.includes("Já existe uma requisição desse método") ||
-        fs.includes("Consumo redundante") ||
-        fs.includes("REDUNDANT") ||
-        fs.includes("consumo redundante");
-      if (isRateLimit && attempt < maxRetries) {
+      const klass = classifyOmieFault(fs);
+      if (klass === "rate_limit" && attempt < maxRetries) {
         rateLimitHits++;
         const waitMatch = fs.match(/Aguarde (\d+) segundos/);
         const requestedDelay = waitMatch ? parseInt(waitMatch[1]) : (attempt + 1) * 5;
         const delay = Math.min(requestedDelay + 2, 15) * 1000;
         console.log(`[Fin][${company}] Rate limit, waiting ${delay / 1000}s`);
         await new Promise((r) => setTimeout(r, delay));
+        continue;
+      }
+      if (klass === "transient" && attempt < maxRetries && !isTimeBudgetExhausted()) {
+        await transientBackoff(attempt, company, fs.slice(0, 70));
         continue;
       }
       throw new Error(`Omie (${company}): ${fs}`);
