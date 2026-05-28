@@ -1,5 +1,5 @@
 export type HealthStatus = 'ok' | 'stale' | 'broken' | 'unknown';
-export type HealthDomain = 'financeiro' | 'omie_sync' | 'carteira' | 'estoque' | 'vendas';
+export type HealthDomain = 'financeiro' | 'omie_sync' | 'carteira' | 'estoque' | 'vendas' | 'alertas';
 export type HealthLevel = 'green' | 'amber' | 'red';
 
 /** Um check individual retornado pela RPC get_data_health. */
