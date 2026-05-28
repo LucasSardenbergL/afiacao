@@ -139,3 +139,8 @@ subgrafos sujos (`noUnusedLocals`/`strictNullChecks`) → cascata. **Promova lea
 - **Reestruturar `tsconfig.strict.json` por lane** (fragmento por lane + include
   gerado, ou project references) pra eliminar de vez o conflito de append. **Flag-day**:
   só numa janela sem PRs strict em voo. Por ora a convenção de append basta. Ver CLAUDE.md §10.
+- **Lote `.tsx` pré-triado e VALIDADO** (2026-05-27) em [`docs/strict-tsx-ready-candidates.md`]:
+  **119 `.tsx` leaf compilam strict-clean** (promoção mecânica, append-only, zero edição de source)
+  + 12 com fix conhecido (10 dead-code trivial, 1 guard, 1 zodResolver). Triagem reprodutível via
+  `bun scripts/strict-tsx-triage.mjs` (encoda o filtro correto — aspas duplas+simples, exclui
+  `lazy()`/`import()`). Consumir numa **janela calma**; re-rodar o script (números mudam com o strict).
