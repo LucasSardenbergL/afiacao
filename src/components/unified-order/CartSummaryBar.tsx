@@ -1,6 +1,5 @@
 import { useState, useMemo } from 'react';
 import { Button } from '@/components/ui/button';
-import { Badge } from '@/components/ui/badge';
 import { Label } from '@/components/ui/label';
 import { Input } from '@/components/ui/input';
 
@@ -11,12 +10,11 @@ import {
   Send, Loader2, AlertCircle, Check, ChevronsUpDown, FileText, Calendar, CloudOff,
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
-import { format, addDays, startOfWeek, isWeekend } from 'date-fns';
+import { format, addDays, startOfWeek } from 'date-fns';
 import { ptBR } from 'date-fns/locale';
 import type {
   ProductCartItem, ServiceCartItem, FormaPagamento,
 } from '@/hooks/useUnifiedOrder';
-import { fmt } from '@/hooks/useUnifiedOrder';
 
 interface CartSummaryBarProps {
   cart: { length: number };
@@ -146,14 +144,12 @@ function PaymentCombobox({
 }
 
 export function CartSummaryBar({
-  cart, obenProductItems, colacorProductItems, serviceItems, totalEstimated,
+  obenProductItems, colacorProductItems, serviceItems,
   submitting, vendedorDivergencias,
   sortedFormasPagamentoOben, sortedFormasPagamentoColacor,
   selectedParcelaOben, setSelectedParcelaOben,
   selectedParcelaColacor, setSelectedParcelaColacor,
   loadingFormas, customerParcelaRankingOben, customerParcelaRankingColacor,
-  notes, setNotes,
-  volumesOben, volumesColacor,
   ordemCompra, setOrdemCompra, isOrdemCompraCustomer,
   readyByDate, setReadyByDate,
   onSubmit, onSubmitQuote, offline = false,

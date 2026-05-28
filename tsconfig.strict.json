@@ -676,6 +676,17 @@
     "src/components/unifiedAI/SuggestionsList.tsx",
     "src/pages/DesignPreview.tsx",
     "src/pages/FinanceiroIntercompanyFila.tsx",
-    "src/test/render-throws.tsx"
+    "src/test/render-throws.tsx",
+    "src/components/SharpeningSuggestions.tsx",
+    "src/components/aiOps/DecisionCard.tsx",
+    "src/components/recebimento/LoteScannerOCR.tsx",
+    "src/components/tintImport/ImportCard.tsx",
+    "src/components/unified-order/CartSummaryBar.tsx",
+    "src/components/unified-order/ProductItemForm.tsx",
+    "src/pages/CoachingSPIN.tsx",
+    "src/pages/DesignSystem.tsx",
+    "src/pages/FarmerIPFDashboard.tsx",
+    "src/pages/FarmerRecommendations.tsx",
+    "src/pages/UXRules.tsx"
   ]
 }

@@ -12,7 +12,6 @@ import type { AIDecision, Evidence } from './types';
 export function DecisionCard({
   decision,
   customerName,
-  customerPhone,
   onAccept,
   onDismiss,
 }: {
