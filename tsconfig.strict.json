@@ -721,6 +721,18 @@
     "src/components/skuMapeamento/useSkuMapeamento.ts",
     "src/pages/AdminSkuMapeamento.tsx",
     "src/components/notificacoes/useNotificacoes.ts",
-    "src/pages/AdminNotificacoes.tsx"
+    "src/pages/AdminNotificacoes.tsx",
+    "src/components/customerDashboard/useCustomerDashboard.ts",
+    "src/components/CustomerDashboard.tsx",
+    "src/components/tintColorSelect/useTintColorSelect.ts",
+    "src/components/TintColorSelectDialog.tsx",
+    "src/components/reposicao/promocoes/useUploadPromocoes.ts",
+    "src/components/reposicao/promocoes/UploadDialog.tsx",
+    "src/components/reposicao/cicloHoje/useCicloHoje.ts",
+    "src/components/reposicao/cicloHoje/AutoApproveDialog.tsx",
+    "src/components/aiOps/useAiOps.ts",
+    "src/pages/AIops.tsx",
+    "src/components/reposicao/cadeiaLogistica/useCadeiaLogistica.ts",
+    "src/pages/AdminReposicaoCadeiaLogistica.tsx"
   ]
 }
