@@ -3,7 +3,7 @@
 -- ========================================================================
 --
 -- Gerado por: scripts/audit-custom-migrations.ts
--- Total de custom migrations: 105
+-- Total de custom migrations: 107
 --
 -- Como usar:
 --   1. Abra o Supabase SQL Editor (via Lovable Cloud → Backend → SQL Editor)
@@ -124,6 +124,8 @@ WITH expected (version, slug, filename) AS (VALUES
   ('20260528010000', 'cron_sync_customers_dedicated', '20260528010000_cron_sync_customers_dedicated.sql'),
   ('20260528120000', 'reposicao_custo_cmc_em_transito', '20260528120000_reposicao_custo_cmc_em_transito.sql'),
   ('20260528120001', 'v_titulo_baixas', '20260528120001_v_titulo_baixas.sql'),
+  ('20260528120002', 'v_capital_giro_prazos', '20260528120002_v_capital_giro_prazos.sql'),
+  ('20260528130000', 'fin_sync_heartbeat_tz_fix', '20260528130000_fin_sync_heartbeat_tz_fix.sql'),
   ('20260528140000', 'data_health_compute_msg_tz', '20260528140000_data_health_compute_msg_tz.sql')
 )
 SELECT
@@ -631,6 +633,7 @@ WITH expected_objects (migration, kind, schema_name, object_name, parent_name) A
   ('fin_sync_watchdog_tail_failing', 'function', 'public', 'fin_sync_watchdog_check', ''),
   ('cron_sync_customers_dedicated', 'cron_job', 'cron', 'sync-customers-vendas-daily', ''),
   ('reposicao_custo_cmc_em_transito', 'function', 'public', 'gerar_pedidos_sugeridos_ciclo', ''),
+  ('fin_sync_heartbeat_tz_fix', 'function', 'public', 'fin_sync_heartbeat', ''),
   ('data_health_compute_msg_tz', 'function', 'public', '_data_health_compute', '')
 )
 SELECT
