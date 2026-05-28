@@ -1,7 +1,7 @@
 # Tarefas — Cobrança de Atividades das Vendedoras (Fase 1) — Design
 
 > Status: **desenho aprovado pelo founder** (seção a seção, 2026-05-28). Próximo passo: plano de implementação (`writing-plans`).
-> Validado em 2 consults adversariais com o codex (auto-baixa por transcrição + adições de alto valor) — registro no fim do doc.
+> Validado em 3 consults adversariais com o codex (auto-baixa por transcrição + adições de alto valor + pré-mortem) — registro no fim do doc.
 
 ## 1. Contexto e problema
 
@@ -14,10 +14,11 @@ O app já tem ~70% da infra reaproveitável: registro de ligações (`farmer_cal
 Um sistema **unificado** de Tarefas. A Fase 1 entrega **tarefas de cliente atribuídas às vendedoras + cobrança por e-mail ao founder**:
 
 1. O founder cria tarefas tied a um cliente, atribuídas a uma vendedora, com prazo por **data fixa** ou por **próxima interação** (ligação/visita/entrega).
-2. A vendedora é lembrada **in-app** na Meu Dia.
+2. A vendedora é lembrada **in-app de forma saliente** (badge na sidebar + hoje/atrasadas no topo da Meu Dia) — não num card passivo que ela precisa procurar.
 3. O app dá **baixa automática** quando há prova determinística; **propõe** baixa (1 toque pra confirmar) quando só detecta menção na transcrição.
 4. Se a tarefa vence e passa a **tolerância** sem ser cumprida nem confirmada, o **founder recebe e-mail** de cobrança.
 5. **Limite automático** (backstop ~7d) no modo interação — nada apodrece.
+6. O **founder acompanha proativamente** numa lista enxuta "tarefas que criei + status" (não depende só do e-mail negativo).
 
 ### Não-objetivos (Fase 2, mas schema preparado)
 
@@ -31,7 +32,7 @@ Um sistema **unificado** de Tarefas. A Fase 1 entrega **tarefas de cliente atrib
 
 ### 3.1 Dois modos de prazo + backstop automático
 - **`data`**: o founder define uma data explícita (`due_date`).
-- **`interacao`**: sem data; o prazo é a **próxima interação** com o cliente (`interacao_tipo` ∈ ligacao/visita/entrega, escolhido conforme o caso — hunter→ligação, farmer→visita/entrega). Pra nada apodrecer, há um **backstop**: `created_at + backstop_days` (padrão 7, **ajustável por tarefa**). Se a interação não rolar até o backstop, a tarefa vence e escala.
+- **`interacao`**: sem data; o prazo é a **próxima interação** com o cliente (`interacao_tipo` ∈ ligacao/visita/entrega, escolhido conforme o caso — hunter→ligação, farmer→visita/entrega). Pra nada apodrecer, há um **backstop**: `created_at + backstop_days` (padrão 7, **ajustável por tarefa**). Se a interação não rolar até o backstop, a tarefa vence e escala. O backstop é **fixo na criação** (não rola dia a dia); a interação **satisfaz/avalia** a tarefa, não a reagenda. **Adiar com motivo (3.6) é o único jeito de empurrar o vencimento.**
 
 ### 3.2 Tolerância (cobrança baseada em tolerância)
 A vendedora é lembrada **primeiro** (in-app). O e-mail ao founder só dispara depois de `vencimento + tolerancia_dias`. A tolerância tem um **padrão global** (config), mas é **gravada em cada tarefa na criação** — mudar o padrão depois **não reescreve** o passado.
@@ -60,6 +61,7 @@ Saída: a **tarefa de WhatsApp carrega o botão de enviar**. O founder cola os d
   1. **Sem sinal nenhum** — ela não tocou e o app não detectou nada (negligência clara).
   2. **App detectou possível cumprimento, não confirmado** — ex: "na ligação de 12/05 o app percebeu menção a [item X], mas a tarefa segue aberta" (zona cinza — o founder julga).
 - Carrega o **motivo do último adiamento** (se houver) e a **contagem de adiamentos** (de `tarefa_eventos`) — pra o founder enxergar adiamento legítimo vs. enrolação.
+- **Cópia cuidadosa**: a categoria 2 é redigida como "possível cumprimento **não confirmado**", **nunca** "não fez" — a evidência é fraca e acusação errada destrói a confiança do founder no sinal (e o faz voltar pro WhatsApp paralelo).
 
 ### 3.6 Adiar com motivo (snooze)
 A vendedora pode **remarcar** a tarefa com um motivo ("cliente pediu pra ligar semana que vem"): grava `adiada_para` + `motivo_adiamento`, registra evento. Enquanto adiada pro futuro, a tarefa **não fica "atrasada"** e **não escala**. Sem isso, o founder recebe alerta de "atraso" que era adiamento legítimo → e para de confiar no e-mail (mesmo problema de confiança da auto-baixa).
@@ -71,6 +73,11 @@ Não cobrar quem está **de férias**. `carteira_coverage` define quem cobre que
 
 ### 3.8 Criação rápida (founder)
 A criação de tarefa é a metade founder-facing da Fase 1: **formulário rápido no celular**, podendo lançar **várias tarefas pro mesmo cliente numa visita** (como ele faz no papel hoje). Voz→tarefa fica pra depois.
+
+### 3.9 Ciclo de vida (cancelar / editar) — correção básica, não task-manager
+- **Cancelar** (criador/founder ou gestor/master), com motivo → `status='cancelada'`, registra evento. Cancelada **não** é atrasada nem escalável (some da pressão operacional).
+- **Editar** enquanto `aberta` (criador/founder): prazo, tolerância, responsável, categoria, alvo. Cada mudança vira evento em `tarefa_eventos`.
+- Editar/cancelar **depois de escalada** é permitido e **preserva o histórico** (o evento `escalada` fica; o e-mail já saiu).
 
 ## 4. Modelo de dados
 
@@ -146,13 +153,15 @@ Calcula por tarefa:
 
 `security_invoker=on`.
 
+> **Fuso pinado em `America/Sao_Paulo`**: todo `::date` e comparação de "hoje"/vencimento usa o **dia local** (ex.: `(now() AT TIME ZONE 'America/Sao_Paulo')::date`), nunca UTC — senão "vence hoje" erra perto da meia-noite. A tolerância conta a partir do **fim do dia local** do vencimento.
+
 ## 5. Motor (pg_cron + SQL puro — sem trigger em tabela quente, sem edge function nova)
 
-Padrão dos watchdogs que já rodam (`fin_sync_watchdog_check`). **Sem `net.http_post`** nos crons locais (sem armadilha do timeout de 5s); o e-mail sai pelo cron já existente `dispatch-notifications`.
+Padrão dos watchdogs que já rodam (`fin_sync_watchdog_check`). **Sem `net.http_post`** nos crons locais (sem armadilha do timeout de 5s); o e-mail sai pelo cron já existente `dispatch-notifications`. **Fuso:** o escalonamento das "18h" é **18h de Brasília** — `cron.schedule` em UTC precisa do offset (ou TZ explícita), e a janela de tolerância usa o dia local (ver 4.4).
 
 ### 5.1 Matcher (`tarefas_matcher_tick`, ~15 min)
 Varre `farmer_calls`/`route_visits` desde o último tick (cursor por `created_at`/`check_in_at`). Casa interação com tarefas `aberta` por (`customer_user_id`, `interacao_tipo` ↔ tipo do evento) **cujo autor** (`farmer_calls.farmer_id` / `route_visits.visited_by`) seja a `assigned_to` **ou** seu cobridor ativo (a ligação da cobridora durante férias satisfaz a tarefa). Para cada match:
-1. Se `auto_satisfy_mode='interacao'` → **fecha** (`status='concluida'`, `conclusao_origem='auto_interacao'`, `concluida_em=now()`), loga evento.
+1. Se `auto_satisfy_mode='interacao'` → **fecha** (`status='concluida'`, `conclusao_origem='auto_interacao'`, `concluida_em=now()`), loga evento gravando no payload o `responsavel_efetivo` **vigente no momento do match** (anti-drift: se a cobertura mudar depois, o histórico explica quem era responsável quando). **Ligação só conta como atendida**: `interacao_tipo='ligacao'` exige `farmer_calls.call_result` de contato — **exclui** `sem_resposta`/`ocupado`/`caixa_postal`/`numero_errado` (senão ela disca, desliga e a tarefa fecha sozinha). Visita/entrega: o `check_in_at` já é presença.
 2. Se `auto_satisfy_mode='conteudo'` → cria **candidato** (`mode='conteudo'`, `status='pending'`) — nunca fecha. Matching de alvo via `target_produto_id` (determinístico) ou `target_texto` vs. `entities_extracted` (type product/price) com `pg_trgm`/ILIKE normalizado como **score de candidato** (não autoridade de fechamento). Sem menção, ainda cria candidato "a interação aconteceu — confirmar?" (sinal fraco).
 3. `auto_satisfy_mode='off'` → o matcher ignora (fechamento é pelo botão/manual).
 4. Expira candidatos `pending` antigos (> N dias, tunável) → `expired`.
@@ -163,16 +172,24 @@ Varre `farmer_calls`/`route_visits` desde o último tick (cursor por `created_at
 3. INSERT `fornecedor_alerta` (1 por grupo) com `metadata` = lista de tarefas separada em "sem sinal" vs "detectado-não-confirmado" + motivo/contagem de adiamento.
 4. `UPDATE tarefas SET escalado_em = now()` (fire-once), loga evento `escalada`.
 
-## 6. Surfacing (Meu Dia)
+## 6. Surfacing
 
-Card de tarefas no dashboard da vendedora (read-time):
-- **Hoje / atrasadas** (atrasada = vermelha), do `responsavel_efetivo` (inclui as cobertas durante férias de outra).
-- **Sugestões pra confirmar** (candidatos `pending`): "detectei [X] na ligação de hoje — confirma?" → 1 toque (`accepted` → tarefa `concluida` `sugestao_confirmada`; `rejected` → segue aberta).
-- Tarefa de **WhatsApp**: botão "Mandar no WhatsApp" (toque = baixa).
-- Ação **Adiar** (com campo de motivo).
-- **Nudge contextual** (client-side, opcional): ao registrar ligação/visita pra cliente X, mostra tarefas abertas de X.
+### 6.1 Vendedora (Meu Dia) — saliência é o ponto
+O risco nº 1 (codex) é a tarefa ser **passiva**: se ela só vê quando abre a tela, vira log de auditoria, não muda comportamento. Mitigação Fase 1 reusando infra existente (**sem** canal de mensagem novo):
+- **Badge na sidebar** (o app já tem badges numéricos em tempo real) com a contagem de hoje/atrasadas/sugestões pendentes.
+- **Hoje / atrasadas fixadas no TOPO** da Meu Dia — nunca enterradas abaixo de rota/positivação. Regra: havendo tarefa due/atrasada, ela é o primeiro bloco. Atrasada = vermelha.
+- **Sugestões pra confirmar** (candidatos `pending`) com estilo visual mais forte: "detectei [X] na ligação de hoje — confirma?" → 1 toque (`accepted` → `concluida`/`sugestao_confirmada`; `rejected` → segue aberta).
+- Tarefa de **WhatsApp**: botão "Mandar no WhatsApp" (ver 3.4 + nota de evidência abaixo).
+- Ação **Adiar** (com motivo).
+- **Nudge contextual** (client-side): ao registrar ligação/visita pra cliente X, mostra tarefas abertas de X.
+- Mostra as tarefas do `responsavel_efetivo` (inclui as cobertas durante férias de outra).
 
-Criação (founder): formulário rápido mobile, multi-tarefa por cliente.
+> **Nota de evidência do WhatsApp**: o `wa.me` só **abre** o WhatsApp com a mensagem pronta — o app não vê o "enviado". O toque fecha com `conclusao_origem='whatsapp'` = "ela disparou o envio pelos dados da tarefa", **não** prova de entrega. O founder vê esse origem (transparência > falsa certeza). Detecção real de envio / push pra ela = Fase 2.
+
+### 6.2 Founder — visibilidade antes do e-mail (enxuta, não dashboard)
+Lista read-only **"Tarefas que criei"** (`created_by = auth.uid()` + filtros básicos de status/prazo). Por tarefa: responsável efetivo, prazo/`effective_due`, atrasada, sugestão pendente, **se já foi escalada** (resolve o cego do fire-once — tarefa escalada-mas-ainda-aberta segue visível aqui mesmo o e-mail tendo saído 1x), e `conclusao_origem` (manual/auto/whatsapp) pro founder ler o nível de evidência. **Sem** analytics/kanban/comentários/prioridade.
+
+Criação (founder): formulário rápido mobile, **multi-tarefa por cliente** numa visita.
 
 ## 7. RLS / segurança
 
@@ -213,3 +230,4 @@ Cada bloco com query de validação. Nota no PR: **"ATENÇÃO: migration manual 
 
 - **Consult 1 (auto-baixa por transcrição)**: P1 — não fechar conteúdo silenciosamente (menção = evidência, não cumprimento; "citar o item" não é sinal válido). Adotado: escada de certeza (determinístico fecha, inferido propõe); tabela de candidatos separada das colunas da tarefa; alvo estruturado; matcher SQL só gera candidato, fechamento exige 1 toque.
 - **Consult 2 (adições de alto valor)**: rule-in Fase 1 — **adiar com motivo** (melhor adição: protege a confiança na cobrança), **férias/cobertura-aware** (correção), **criação rápida mobile** (form, não voz). Rule-out/depois — sugerir tarefa a partir de compromisso na ligação (ruidoso; só sugerir, nunca criar), "gerou pedido?" (ROI secundário), voz→tarefa. Trap: virar task manager completo.
+- **Consult 3 (pré-mortem do spec)**: risco mais fundo = **saliência** (passivo vira só log de auditoria, não muda comportamento) → incorporado: badge na sidebar + fixar hoje/atrasadas no topo + sugestões mais fortes. P1 incorporados: **lista do founder** "tarefas que criei" (visibilidade antes do e-mail + resolve o cego do fire-once), **"ligar" só em ligação atendida** (anti-loophole), **ciclo de vida** (cancelar/editar auditado), **fuso America/Sao_Paulo**, **backstop fixo na criação**, **anti-drift de cobertura** (grava responsável no match), **cópia cuidadosa** do e-mail. Confirmado fora de escopo: push pra vendedora (sem canal de mensagem novo na Fase 1), cap de adiamento, cadência de re-escalação.
