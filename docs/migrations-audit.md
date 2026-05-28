@@ -21,12 +21,12 @@ Este audit valida **quais custom migrations estão de fato aplicadas no banco**.
 
 ## Resumo
 
-- **103** custom migrations totais
-- **487** objetos esperados (criados por estas migrations)
+- **105** custom migrations totais
+- **488** objetos esperados (criados por estas migrations)
 - Quebra por tipo:
   - `rls_policy`: 139
   - `index`: 96
-  - `cron_job`: 82
+  - `cron_job`: 83
   - `function`: 78
   - `table`: 57
   - `trigger`: 31
@@ -1010,6 +1010,12 @@ Lista canônica do que cada migration *deveria* criar (extraído via regex de `C
 | --- | --- | --- |
 | `function` | `public.fin_sync_watchdog_check` | — |
 
+### `20260528010000_cron_sync_customers_dedicated.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `cron_job` | `cron.sync-customers-vendas-daily` | — |
+
 ### `20260528120000_reposicao_custo_cmc_em_transito.sql`
 
 | Tipo | Objeto | Parent |
@@ -1017,6 +1023,10 @@ Lista canônica do que cada migration *deveria* criar (extraído via regex de `C
 | `function` | `public.gerar_pedidos_sugeridos_ciclo` | — |
 
 ### `20260528120001_v_titulo_baixas.sql`
+
+> _Nenhum objeto extraído via regex._ Migration provavelmente é `ALTER TABLE` / `UPDATE` / `INSERT` / RLS-only. Validar manualmente.
+
+### `20260528120002_v_capital_giro_prazos.sql`
 
 > _Nenhum objeto extraído via regex._ Migration provavelmente é `ALTER TABLE` / `UPDATE` / `INSERT` / RLS-only. Validar manualmente.
 

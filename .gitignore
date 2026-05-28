@@ -27,6 +27,8 @@ dist-ssr
 # Agent tooling artifacts (per-developer, never commit)
 .codex/
 AGENTS.md
+.context/
+deno.lock
 
 
 # Serena MCP local project cache
