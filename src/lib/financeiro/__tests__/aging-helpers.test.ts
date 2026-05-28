@@ -5,7 +5,7 @@ import {
   calibrarCurvas, CURVA_DEFAULT,
   dataRecebimentoEsperada, aplicarCenarioCurva,
   inadimplenciaPonderada, prazoMedioPonderado,
-  statusLiquidado, valorPagoEfetivo,
+  statusLiquidado, valorPagoEfetivo, prazoComGate,
 } from '../aging-helpers';
 
 describe('faixaAging', () => {
@@ -74,6 +74,24 @@ describe('valorPagoEfetivo (robusto a valor_recebido NULL/0)', () => {
   });
   it('fallback face quando recebido 0 e saldo cheio (sem info de valor)', () => {
     expect(valorPagoEfetivo({ valor_recebido: 0, valor_documento: 100, saldo: 100 })).toBe(100);
+  });
+});
+
+describe('prazoComGate (PMR/PMP por cobertura)', () => {
+  it('cobertura >= min e valor presente → valor', () => {
+    expect(prazoComGate(30, 1.0)).toBe(30);
+    expect(prazoComGate(30, 0.4)).toBe(30);
+  });
+  it('cobertura < min → null (amostra não-representativa)', () => {
+    expect(prazoComGate(30, 0.1)).toBe(null);
+  });
+  it('valor null/undefined → null', () => {
+    expect(prazoComGate(null, 1.0)).toBe(null);
+    expect(prazoComGate(undefined, 1.0)).toBe(null);
+  });
+  it('cobertura null/undefined → null', () => {
+    expect(prazoComGate(30, null)).toBe(null);
+    expect(prazoComGate(30, undefined)).toBe(null);
   });
 });
 

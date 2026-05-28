@@ -276,6 +276,15 @@ function valorPagoEfetivo(t: { valor_recebido: number; valor_documento: number; 
 }
 const COBERTURA_MIN_EMPRESA = 0.4;
 const MIN_LIQUIDADOS_COM_DATA = 5;
+// Gate de confiança do prazo (PMR/PMP) pela cobertura de baixa derivada (espelho de
+// aging-helpers.ts). Abaixo de COBERTURA_MIN_EMPRESA → null ("—", amostra não-representativa).
+function prazoComGate(
+  valor: number | null | undefined,
+  cobertura: number | null | undefined,
+  min = COBERTURA_MIN_EMPRESA,
+): number | null {
+  return (cobertura ?? 0) >= min && valor != null ? Number(valor) : null;
+}
 
 const FAIXAS: Faixa[] = ['a_vencer', '1-30', '31-60', '61-90', '+90'];
 
@@ -301,6 +310,9 @@ type DadosBase = {
   eventos_rec: EventoRecorrente[];
   eventos_ev: EventoEventual[];
   curvas_aging: Record<Faixa, CurvaFaixa>;
+  // PMR/PMP + cobertura da baixa derivada (view v_capital_giro_prazos, 1 linha/empresa).
+  // Fonte ÚNICA do prazo (mesma do card client-side getCapitalDeGiro) → consistência.
+  prazos: { pmr: number | null; pmp: number | null; pmr_cobertura: number | null; pmp_cobertura: number | null } | null;
   config: Config;
 };
 
@@ -310,7 +322,7 @@ async function carregarDados(
 ): Promise<DadosBase> {
   // CR/CP paginados (anti-truncamento, ver fetchAllRows); o resto cabe em <1000 e vai
   // em Promise.all. Tudo em paralelo.
-  const [crsData, cpsData, baixaCrData, [ccRes, recRes, evRes, configRes, estoqueRes, dreRes, folhaCatRes]] = await Promise.all([
+  const [crsData, cpsData, baixaCrData, [ccRes, recRes, evRes, configRes, estoqueRes, dreRes, folhaCatRes, prazosRes]] = await Promise.all([
     fetchAllRows<Record<string, unknown>>((from, to) =>
       // @ts-expect-error - fin_contas_receber may not be in generated supabase types yet
       supabase.from('fin_contas_receber').select('id, saldo, valor_documento, valor_recebido, data_emissao, data_vencimento, data_recebimento, status_titulo, omie_codigo_cliente, omie_codigo_lancamento, nome_cliente, categoria_codigo')
@@ -353,6 +365,10 @@ async function carregarDados(
       // existir, PostgREST devolve { data: null, error } — não rejeita; cai em [] e o
       // guard de folha fica inerte (comportamento atual preservado, sem migration obrigatória).
       supabase.from('fin_config_cashflow').select('folha_categorias_codigos')
+        .eq('company', company).maybeSingle(),
+      // Fase 3 (B): PMR/PMP + cobertura da baixa derivada (view v_capital_giro_prazos).
+      // @ts-expect-error - v_capital_giro_prazos (view nova) não está nos types gerados
+      supabase.from('v_capital_giro_prazos').select('pmr, pmp, pmr_cobertura, pmp_cobertura')
         .eq('company', company).maybeSingle(),
     ]),
   ]);
@@ -432,6 +448,13 @@ async function carregarDados(
     ((folhaCatRes.data as { folha_categorias_codigos?: string[] } | null)?.folha_categorias_codigos) ?? [];
   const config: Config = { ...(configRes.data as unknown as Config), folha_categorias_codigos };
 
+  // Fase 3 (B): PMR/PMP + cobertura da baixa derivada. Degrada p/ null (+ log) se a
+  // view não tiver linha pra empresa → calcularIndicadores mostra "—" honesto.
+  const prazos = (prazosRes.data as DadosBase['prazos']) ?? null;
+  if (!prazos) {
+    console.warn(`[Cashflow][${company}] v_capital_giro_prazos sem linha → PMR/PMP/CCC = null`);
+  }
+
   // Onda 2: curvas de cobrança por aging, calibradas POR EXPOSIÇÃO sobre todos os
   // títulos (não só liquidados — corrige o viés otimista). Uma vez por empresa.
   const hojeIso = new Date().toISOString().slice(0, 10);
@@ -460,6 +483,7 @@ async function carregarDados(
     eventos_rec: (recRes.data ?? []) as unknown as EventoRecorrente[],
     eventos_ev: (evRes.data ?? []) as unknown as EventoEventual[],
     curvas_aging,
+    prazos,
     config,
   };
 }
@@ -985,10 +1009,12 @@ type Indicadores = {
   saldo_tesouraria: number;
   inadimplencia_pct: number;
   concentracao_top5_clientes: Array<{ cliente: string; pct: number; valor: number }>;
-  prazo_medio_recebimento: number;
-  prazo_medio_pagamento: number;
+  // null quando a cobertura de baixa derivada é baixa (< COBERTURA_MIN_EMPRESA) → "—".
+  // PME é independente da baixa (estoque/cmv) → sempre number.
+  prazo_medio_recebimento: number | null;
+  prazo_medio_pagamento: number | null;
   prazo_medio_estoque: number;
-  cash_conversion_cycle: number;
+  cash_conversion_cycle: number | null;
 };
 
 function calcularIndicadores(
@@ -1006,20 +1032,16 @@ function calcularIndicadores(
   const liquidez_operacional_liquida = dados.saldo_cc + ncg.aco.cr_aberto + ncg.aco.estoque - ncg.pco.total;
   const saldo_tesouraria = dados.saldo_cc - ncg.pco.folha_30d;
 
-  // Onda 2: PMR/PMP ponderados por R$ (não média simples por título — um título grande
-  // lento pesa mais que N pequenos rápidos).
-  const crsLiquidados = dados.crs.filter(c => c.data_recebimento && c.data_emissao);
-  const pmr = prazoMedioPonderado(
-    crsLiquidados.map(c => ({ dias: daysBetween(c.data_recebimento!, c.data_emissao!), valor: c.valor_recebido })),
-  );
-
-  const cpsLiquidados = dados.cps.filter(c => c.data_pagamento && c.data_emissao);
-  const pmp = prazoMedioPonderado(
-    cpsLiquidados.map(c => ({ dias: daysBetween(c.data_pagamento!, c.data_emissao!), valor: c.valor_pago })),
-  );
+  // Fase 3 (B): PMR/PMP da baixa DERIVADA (view v_capital_giro_prazos), com gate de
+  // cobertura — mesma fonte e mesmo gate do card client-side (getCapitalDeGiro). A
+  // coluna base data_recebimento/data_pagamento é sempre NULL no LIST do Omie; usá-la
+  // dava PMR=PMP=0d (mostrado em NcgDecomposicao). null = "—" (cobertura < 40%).
+  const pmr = prazoComGate(dados.prazos?.pmr, dados.prazos?.pmr_cobertura);
+  const pmp = prazoComGate(dados.prazos?.pmp, dados.prazos?.pmp_cobertura);
 
   const pme = dados.cmv_ttm > 0 ? (dados.estoque_valor / dados.cmv_ttm) * 365 : 0;
-  const ccc = pmr + pme - pmp;
+  // CCC só faz sentido com PMR E PMP (sem um dos dois, ciclo parcial engana). PME mostra à parte.
+  const ccc = (pmr !== null && pmp !== null) ? pmr + pme - pmp : null;
 
   // Onda 2: inadimplência = média ponderada por R$ de (1 − taxa_recebimento[faixa]) sobre
   // o CR aberto. Taxa de perda limpa — não mistura mais estoque (saldo >90) com fluxo (12m).

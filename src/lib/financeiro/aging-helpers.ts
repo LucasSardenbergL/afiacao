@@ -51,6 +51,17 @@ export const COBERTURA_MIN_EMPRESA = 0.4;
 // que o gate de empresa cobre; este cobre amostra pequena na faixa).
 export const MIN_LIQUIDADOS_COM_DATA = 5;
 
+// Gate de confiança do prazo (PMR/PMP) pela cobertura de baixa derivada: abaixo de
+// COBERTURA_MIN_EMPRESA o prazo vem de amostra não-representativa → null ("—").
+// Mesma regra do getCapitalDeGiro client-side; espelhado no fin-cashflow-engine.
+export function prazoComGate(
+  valor: number | null | undefined,
+  cobertura: number | null | undefined,
+  min = COBERTURA_MIN_EMPRESA,
+): number | null {
+  return (cobertura ?? 0) >= min && valor != null ? Number(valor) : null;
+}
+
 export const FAIXAS: Faixa[] = ['a_vencer', '1-30', '31-60', '61-90', '+90'];
 
 export const LAG_MAX: Record<Faixa, number> = {
