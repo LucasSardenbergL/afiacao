@@ -570,14 +570,15 @@ async function syncContasPagar(
   maxPages = 500,
   startPage = 1
 ) {
-  // Ver nota em syncContasReceber: 100 = limite real do Omie; paginação data-driven
-  // (pára em página parcial/vazia), não confia no total_de_paginas sub-reportado.
+  // Ver nota em syncContasReceber: 100 = limite real do Omie; paginação data-driven —
+  // pagina até a página VAZIA (fim real), não confia no total_de_paginas sub-reportado.
   const PAGE_SIZE = 100;
   let pagina = startPage;
   let totalPaginas = 1;
   let totalSynced = 0;
   let pagesProcessed = 0;
   let reachedEnd = false;
+  let lastFingerprint = "";
 
   while (pagesProcessed < maxPages && !isTimeBudgetExhausted()) {
     const result = await callOmie(
@@ -588,12 +589,15 @@ async function syncContasPagar(
     );
     if (!result) break;
 
-    totalPaginas = (result.total_de_paginas as number) || 1;
+    totalPaginas = (result.total_de_paginas as number) || 1; // só p/ log/sanity
     const titulos: OmieContaPagar[] =
       (result.conta_pagar_cadastro as OmieContaPagar[] | undefined)
       || (result.titulosEncontrados as OmieContaPagar[] | undefined)
       || [];
     if (titulos.length === 0) { reachedEnd = true; break; } // página vazia = fim real
+    const fp = `${(titulos[0] as { codigo_lancamento_omie?: number })?.codigo_lancamento_omie ?? ""}:${titulos.length}`;
+    if (fp === lastFingerprint) { console.error(`[Fin][${company}] CP p${pagina}: página repetida (anomalia Omie) — parando`); reachedEnd = true; break; }
+    lastFingerprint = fp;
 
     const rows = titulos.map((t) => {
       const statusMap: Record<string, string> = {
@@ -677,8 +681,6 @@ async function syncContasPagar(
     console.log(`[Fin][${company}] CP p${pagina}/${totalPaginas} (+${validRows.length})`);
     pagina++;
     pagesProcessed++;
-    // Fim real = página parcial (< PAGE_SIZE). Data-driven, não confia só em total_de_paginas.
-    if (titulos.length < PAGE_SIZE) { reachedEnd = true; break; }
   }
 
   const timedOut = isTimeBudgetExhausted();
@@ -703,13 +705,15 @@ async function syncContasReceber(
   // 100 = limite real do Omie p/ contareceber. O 500 antigo era IGNORADO pelo Omie
   // (retornava 100/pág) mas o total_de_paginas vinha sub-reportado p/ listas grandes →
   // a paginação parava cedo e perdia os títulos recentes (colacor: ~29k no Omie, só
-  // ~12.8k sincronizados, faltando 3,5 anos de recebíveis). Paginação agora é data-driven.
+  // ~12.8k sincronizados, faltando 3,5 anos de recebíveis). Paginação agora é data-driven:
+  // pagina até a página VAZIA (fim real). Página parcial no meio NÃO trunca.
   const PAGE_SIZE = 100;
   let pagina = startPage;
   let totalPaginas = 1;
   let totalSynced = 0;
   let pagesProcessed = 0;
   let reachedEnd = false;
+  let lastFingerprint = "";
 
   while (pagesProcessed < maxPages && !isTimeBudgetExhausted()) {
     const result = await callOmie(
@@ -720,12 +724,18 @@ async function syncContasReceber(
     );
     if (!result) break;
 
-    totalPaginas = (result.total_de_paginas as number) || 1;
+    totalPaginas = (result.total_de_paginas as number) || 1; // só p/ log/sanity
     const titulos: OmieContaReceber[] =
       (result.conta_receber_cadastro as OmieContaReceber[] | undefined)
       || (result.titulosEncontrados as OmieContaReceber[] | undefined)
       || [];
     if (titulos.length === 0) { reachedEnd = true; break; } // página vazia = fim real
+    // Guard anti-loop: se o Omie repetir a mesma página (em vez de vazia além do fim),
+    // pararíamos só no maxPages e o cursor resumiria pra sempre. Fingerprint = 1º código
+    // + count; página repetida = fim (anômalo, logado).
+    const fp = `${(titulos[0] as { codigo_lancamento_omie?: number })?.codigo_lancamento_omie ?? ""}:${titulos.length}`;
+    if (fp === lastFingerprint) { console.error(`[Fin][${company}] CR p${pagina}: página repetida (anomalia Omie) — parando`); reachedEnd = true; break; }
+    lastFingerprint = fp;
 
     const rows = titulos.map((t) => {
       let status = t.status_titulo || "ABERTO";
@@ -797,10 +807,6 @@ async function syncContasReceber(
     console.log(`[Fin][${company}] CR p${pagina}/${totalPaginas} (+${validRows.length})`);
     pagina++;
     pagesProcessed++;
-    // Fim real = página parcial (o Omie só devolve < PAGE_SIZE na última página).
-    // Data-driven de propósito: NÃO confia só em total_de_paginas, que o Omie
-    // sub-reporta em listas grandes (era a causa do truncamento do CR do colacor).
-    if (titulos.length < PAGE_SIZE) { reachedEnd = true; break; }
   }
 
   const timedOut = isTimeBudgetExhausted();
