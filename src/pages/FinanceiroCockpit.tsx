@@ -115,6 +115,7 @@ const FinanceiroCockpit = () => {
           projecao13={cockpit.projecao13}
           dataReferencia={cockpit.data_referencia}
           parcial={cockpit.parcial}
+          empresasPresentes={cockpit.empresas_presentes}
           empresasAusentes={cockpit.empresas_ausentes}
           empresasStale={cockpit.empresas_stale}
         />

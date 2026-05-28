@@ -16,7 +16,7 @@ function makeWeek(o: Partial<SemanaConsolidada> = {}): SemanaConsolidada {
   };
 }
 
-const baseProps = { dataReferencia: "2026-05-27", parcial: false, empresasAusentes: [], empresasStale: [] };
+const baseProps = { dataReferencia: "2026-05-27", parcial: false, empresasPresentes: ["oben", "colacor", "colacor_sc"], empresasAusentes: [], empresasStale: [] };
 
 describe("Projecao13Card", () => {
   it("renderiza semanas", () => {
@@ -41,6 +41,7 @@ describe("Projecao13Card", () => {
         projecao13={[makeWeek({ completa: false })]}
         dataReferencia="2026-05-27"
         parcial
+        empresasPresentes={["oben", "colacor"]}
         empresasAusentes={["colacor_sc"]}
         empresasStale={[]}
       />,

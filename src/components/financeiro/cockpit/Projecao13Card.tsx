@@ -10,13 +10,23 @@ interface Projecao13CardProps {
   projecao13: SemanaConsolidada[];
   dataReferencia: string | null;
   parcial: boolean;
+  empresasPresentes: string[];
   empresasAusentes: string[];
   empresasStale: string[];
 }
 
 const labelData = (iso: string | null) => (iso ? `${iso.slice(8, 10)}/${iso.slice(5, 7)}/${iso.slice(0, 4)}` : '—');
+// Defasagem honesta (Codex P3): snapshot mais velho que ontem.
+const diasAtras = (iso: string | null): number | null => {
+  if (!iso) return null;
+  const hoje = new Date();
+  const hojeStr = `${hoje.getFullYear()}-${String(hoje.getMonth() + 1).padStart(2, '0')}-${String(hoje.getDate()).padStart(2, '0')}`;
+  const diff = (Date.parse(hojeStr) - Date.parse(iso)) / 86400000;
+  return Number.isFinite(diff) ? Math.round(diff) : null;
+};
 
-export function Projecao13Card({ projecao13, dataReferencia, parcial, empresasAusentes, empresasStale }: Projecao13CardProps) {
+export function Projecao13Card({ projecao13, dataReferencia, parcial, empresasPresentes, empresasAusentes, empresasStale }: Projecao13CardProps) {
+  const defasagem = diasAtras(dataReferencia);
   const negativas = projecao13.filter((w) => w.saldo_projetado < 0);
   const foraDaCoorte = [...empresasAusentes, ...empresasStale];
   return (
@@ -26,7 +36,9 @@ export function Projecao13Card({ projecao13, dataReferencia, parcial, empresasAu
           <Target className="w-4 h-4" />
           Projeção de Caixa — {projecao13.length} Semanas
           <Badge variant="outline" className="text-[10px]">Consolidado 3 CNPJ · Cenário: realista</Badge>
-          <Badge variant="outline" className="text-[10px] text-muted-foreground">dados de {labelData(dataReferencia)}</Badge>
+          <Badge variant="outline" className={`text-[10px] ${defasagem != null && defasagem > 1 ? 'text-status-warning border-status-warning/50' : 'text-muted-foreground'}`}>
+            dados de {labelData(dataReferencia)}{defasagem != null && defasagem > 1 ? ` · ${defasagem}d atrás` : ''}
+          </Badge>
         </CardTitle>
         <p className="text-[11px] text-muted-foreground">
           Caixa somado das 3 empresas (engine A1: curvas de cobrança, inadimplência, eventos). Não é caixa fungível
@@ -34,7 +46,7 @@ export function Projecao13Card({ projecao13, dataReferencia, parcial, empresasAu
         </p>
         {parcial && (
           <p className="text-[11px] text-status-warning">
-            Parcial: {projecao13[0]?.por_empresa.length ?? 0} de 3 empresas na coorte. Fora: {foraDaCoorte.join(', ') || '—'}
+            Parcial: {empresasPresentes.length} de 3 empresas na coorte. Fora: {foraDaCoorte.join(', ') || '—'}
             {empresasStale.length > 0 && ' (stale = snapshot mais antigo)'}. Números são mínimo conhecido.
           </p>
         )}

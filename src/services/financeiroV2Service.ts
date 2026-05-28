@@ -661,24 +661,32 @@ export async function getProjecaoSnapshotsCockpit(
     companies.map(async (company): Promise<SnapshotEmpresa | null> => {
       const { data, error } = await supabase
         .from('fin_projecao_snapshots')
-        .select('company, snapshot_at, ncg, saldo_tesouraria, dados')
+        .select('company, snapshot_at, ncg, saldo_tesouraria, dados, id')
         .eq('company', company)
         .eq('cenario', cenario)
         .order('snapshot_at', { ascending: false })
+        .order('id', { ascending: false }) // desempate determinístico (Codex P2)
         .limit(1)
         .maybeSingle();
       if (error) throw error;
       if (!data) return null;
       const dadosRaw = (data as { dados: unknown }).dados;
+      // ausente ≠ zero (Codex P1): campo numérico inválido descarta a semana (não vira 0 mentiroso).
       const semanas: SnapshotSemana[] = Array.isArray(dadosRaw)
         ? (dadosRaw as Array<Record<string, unknown>>)
-            .filter((w) => w && typeof w.inicio === 'string')
             .map((w) => ({
-              inicio: w.inicio as string,
-              total_entradas: Number(w.total_entradas) || 0,
-              total_saidas: Number(w.total_saidas) || 0,
-              saldo_final: Number(w.saldo_final) || 0,
+              inicio: w && typeof w.inicio === 'string' ? w.inicio : '',
+              total_entradas: Number(w?.total_entradas),
+              total_saidas: Number(w?.total_saidas),
+              saldo_final: Number(w?.saldo_final),
             }))
+            .filter(
+              (w): w is SnapshotSemana =>
+                w.inicio !== '' &&
+                Number.isFinite(w.total_entradas) &&
+                Number.isFinite(w.total_saidas) &&
+                Number.isFinite(w.saldo_final),
+            )
         : [];
       return {
         company: (data.company as string) ?? company,

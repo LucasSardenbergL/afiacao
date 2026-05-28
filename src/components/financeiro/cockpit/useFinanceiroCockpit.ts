@@ -2,7 +2,7 @@
 // Extraído verbatim de src/pages/FinanceiroCockpit.tsx (god-component split):
 // state, loadAll (resumo/aging/DRE/inadimplentes/projeção 13s/confiabilidade) e
 // todos os derivados consolidados.
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { type Company } from '@/contexts/CompanyContext';
 import { supabase } from '@/integrations/supabase/client';
 import { getResumoFinanceiro, getAgingReceber, getDRE, getTopInadimplentes, type FinResumo, type AgingData, type FinDRE } from '@/services/financeiroService';
@@ -14,9 +14,10 @@ import type { DrillDownType } from '@/components/financeiro/CockpitDrillDown';
 import type { FinConfiabilidadeRow, InadimplenteRow } from './types';
 
 const EMPRESAS_COCKPIT: Company[] = ['oben', 'colacor', 'colacor_sc'];
+// Default = indisponível/parcial (Codex P1): em falha de carga, NCG não pode aparecer como R$0 "saudável".
 const COCKPIT_VAZIO: CockpitConsolidado = {
-  projecao13: [], ncg_total: 0, ncg_por_empresa: [], ncg_parcial: false,
-  saldo_tesouraria_total: 0, saldo_tesouraria_parcial: false,
+  projecao13: [], ncg_total: 0, ncg_por_empresa: [], ncg_parcial: true,
+  saldo_tesouraria_total: 0, saldo_tesouraria_parcial: true,
   empresas_presentes: [], empresas_ausentes: [...EMPRESAS_COCKPIT], empresas_stale: [],
   parcial: true, data_referencia: null, snapshot_at_mais_antigo: null,
 };
@@ -34,10 +35,14 @@ export function useFinanceiroCockpit() {
   const { regime } = useFinanceiroRegime();
   const ano = new Date().getFullYear();
   const mes = new Date().getMonth() + 1;
+  // Guard de race (Codex P2): toggle rápido de regime pode resolver fora de ordem;
+  // só o último loadAll aplica os setters.
+  const loadIdRef = useRef(0);
 
   useEffect(() => { loadAll(); }, [regime]);
 
   const loadAll = async () => {
+    const loadId = ++loadIdRef.current;
     setLoading(true);
     try {
       const [res, ag, dr, inad, snaps] = await Promise.all([
@@ -51,6 +56,7 @@ export function useFinanceiroCockpit() {
           return [];
         }),
       ]);
+      if (loadId !== loadIdRef.current) return; // resposta obsoleta — descarta
       setResumo(res);
       setAging(ag);
       setDre(dr);
