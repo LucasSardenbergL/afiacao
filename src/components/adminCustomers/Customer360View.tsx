@@ -19,6 +19,8 @@ import { format } from 'date-fns';
 import { ptBR } from 'date-fns/locale';
 import { cn } from '@/lib/utils';
 import { decodeHtmlEntities } from '@/lib/format';
+import { formatBrPhone, whatsappLink } from '@/lib/phone';
+import { CallButton } from '@/components/call/CallButton';
 import { RecommendationsPanel } from '@/components/RecommendationsPanel';
 import { CustomerProfile360Summary } from '@/components/customer/CustomerProfile360Summary';
 import { CustomerCallsTab } from '@/components/customer/CustomerCallsTab';
@@ -54,6 +56,7 @@ export function Customer360View({
 }) {
   const navigate = useNavigate();
   const healthInfo = HEALTH_CLASSES[score?.health_class || 'critico'];
+  const waHref = customer.phone ? whatsappLink(customer.phone) : null;
 
   return (
     <div className="space-y-4">
@@ -104,9 +107,10 @@ export function Customer360View({
               </Button>
             </DropdownMenuTrigger>
             <DropdownMenuContent align="end">
-              <DropdownMenuItem><Phone className="w-3.5 h-3.5 mr-2" /> Ligar</DropdownMenuItem>
-              <DropdownMenuItem><MessageSquare className="w-3.5 h-3.5 mr-2" /> WhatsApp</DropdownMenuItem>
-              <DropdownMenuItem><Calendar className="w-3.5 h-3.5 mr-2" /> Agendar visita</DropdownMenuItem>
+              <DropdownMenuItem disabled>
+                <Calendar className="w-3.5 h-3.5 mr-2" /> Agendar visita
+                <span className="ml-2 text-[10px] text-muted-foreground">em breve</span>
+              </DropdownMenuItem>
             </DropdownMenuContent>
           </DropdownMenu>
         </div>
@@ -143,8 +147,20 @@ export function Customer360View({
             )}
             {customer.phone && (
               <div className="flex items-center gap-2 text-sm">
-                <Phone className="w-3.5 h-3.5 text-muted-foreground" />
-                <span>{customer.phone}</span>
+                <Phone className="w-3.5 h-3.5 text-muted-foreground shrink-0" />
+                <span className="flex-1">{formatBrPhone(customer.phone)}</span>
+                <CallButton phone={customer.phone} customerName={customer.name} variant="icon" />
+                {waHref && (
+                  <a
+                    href={waHref}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="text-muted-foreground hover:text-status-success-bold transition-colors"
+                    aria-label="Enviar WhatsApp"
+                  >
+                    <MessageSquare className="w-3.5 h-3.5" />
+                  </a>
+                )}
               </div>
             )}
             {customer.document && (
