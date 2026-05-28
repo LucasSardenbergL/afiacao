@@ -2,6 +2,7 @@ import { supabase } from "@/integrations/supabase/client";
 import type { Company } from "@/contexts/CompanyContext";
 import type { Json } from "@/integrations/supabase/types";
 import type { DimRowRaw } from "@/lib/financeiro/orcamento-drill-helpers";
+import { coletarTitulosEntidade, parseMesDataEmissao, type EntidadeRowRaw } from "@/lib/financeiro/orcamento-entidade-helpers";
 import type {
   FinFechamentoRow,
   FinFechamentoInsert,
@@ -593,6 +594,56 @@ export async function getCategoriasCompetenciaRaw(
     from += PAGE;
   }
   return out;
+}
+
+/**
+ * Títulos CRUS (por entidade) de uma linha de DRE em COMPETÊNCIA — fonte do drill v2
+ * (concentração por fornecedor/cliente). Lê `fin_contas_pagar` (cp) / `fin_contas_receber`
+ * (cr) com os MESMOS filtros da `fin_dre_competencia_base` → reconcilia com o total-por-
+ * categoria do v1. Limita server-side ao horizonte FECHADO (senão o ano-1 buscaria 12
+ * meses e truncaria perdendo o YTD). Chunked `.in()` (URL) + paginação estável (`.order id`)
+ * + teto de coleta — toda a orquestração no helper testável `coletarTitulosEntidade`.
+ */
+export async function getTitulosEntidadeRaw(
+  fonte: 'cp' | 'cr',
+  company: Company,
+  ano: number,
+  meses: number[],
+  codigos: string[],
+): Promise<{ rows: EntidadeRowRaw[]; truncado: boolean }> {
+  if (codigos.length === 0 || meses.length === 0) return { rows: [], truncado: false };
+  const tabela = fonte === 'cp' ? 'fin_contas_pagar' : 'fin_contas_receber';
+  const nomeCol = fonte === 'cp' ? 'nome_fornecedor' : 'nome_cliente';
+  const maxMes = Math.max(...meses);
+  const fimExcl =
+    maxMes >= 12 ? `${ano + 1}-01-01` : `${ano}-${String(maxMes + 1).padStart(2, '0')}-01`;
+  return coletarTitulosEntidade({
+    codigos,
+    chunkCodigos: 100,
+    pageSize: 1000,
+    max: 20000,
+    fetchPagina: async (lote, offset, limit) => {
+      const { data, error } = await supabase
+        .from(tabela)
+        .select(`id, cnpj_cpf, ${nomeCol}, data_emissao, valor_documento`)
+        .eq('company', company)
+        .not('data_emissao', 'is', null)
+        .gte('data_emissao', `${ano}-01-01`)
+        .lt('data_emissao', fimExcl)
+        .neq('status_titulo', 'CANCELADO')
+        .in('categoria_codigo', lote)
+        .order('id', { ascending: true })
+        .range(offset, offset + limit - 1);
+      if (error) throw error;
+      const rows = (data ?? []) as unknown as Array<Record<string, unknown>>;
+      return rows.map((row) => ({
+        entidade_id: (row.cnpj_cpf as string | null) ?? null,
+        entidade_nome: (row[nomeCol] as string | null) ?? null,
+        mes: parseMesDataEmissao((row.data_emissao as string | null) ?? null),
+        valor: (row.valor_documento as number | null) ?? 0,
+      }));
+    },
+  });
 }
 
 // ═══════════════ 6. PERMISSÕES ═══════════════
