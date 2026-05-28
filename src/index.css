@@ -298,6 +298,24 @@
     transition-timing-function: cubic-bezier(0.16, 1, 0.3, 1);
   }
 
+  /* ── WCAG 2.5.5 — alvo de toque 44px só em PONTEIRO GROSSO ──
+     Celular/handheld do separador e vendedor externo, e o kiosk touchscreen
+     do operador tintométrico reportam `pointer: coarse` → ganham 44px+.
+     Desktop com mouse/trackpad (conferente/comprador/gestão, e laptops
+     híbridos cujo ponteiro primário é fino) fica nos 32px densos — a
+     densidade alta ali é INTENCIONAL (Linear/Retool), 44px pioraria.
+     min-height em <a> inline é no-op (só afeta a display block/inline-block),
+     então links de texto não quebram; botões h-9 (36px) sobem pra max(36,44).
+     min-width só em <button> cobre os icon-buttons (36→44, alvo quadrado). */
+  @media (pointer: coarse) {
+    button, a, [role="button"] {
+      min-height: 44px;
+    }
+    button {
+      min-width: 44px;
+    }
+  }
+
   /* ── Tabelas shadcn: tabular-nums automático em todas as células
      (números alinham, valores R$ ficam comparáveis lendo verticalmente) ── */
   table {
