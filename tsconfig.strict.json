@@ -687,6 +687,8 @@
     "src/pages/DesignSystem.tsx",
     "src/pages/FarmerIPFDashboard.tsx",
     "src/pages/FarmerRecommendations.tsx",
-    "src/pages/UXRules.tsx"
+    "src/pages/UXRules.tsx",
+    "src/components/standard-process/StandardProcessForm.tsx",
+    "src/pages/AdminStandardProcessNew.tsx"
   ]
 }
