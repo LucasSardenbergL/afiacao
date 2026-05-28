@@ -22,12 +22,14 @@ export function entidadeDaLinha(dreLinha: string):
   | null;   // null = sem lente de entidade (deducoes/impostos/derivadas)
 ```
 
-## Fonte e reconciliação (Codex P7, P8)
+## Fonte e reconciliação (Codex adversarial no spec — P1.1, P1.3; P3.8)
 
-- **Fonte:** `fin_contas_pagar` (CP) / `fin_contas_receber` (CR) **diretas**, filtrando `company` + `data_emissao` nos meses fechados + `status_titulo ≠ 'CANCELADO'` + `categoria_codigo IN (códigos da linha)`. Como a `fin_dre_competencia_base` (que o v1 usa) é construída DESSAS tabelas com os MESMOS filtros, a Σ por entidade **reconcilia por construção** com o total da linha do v1. RLS staff-gated (`fin_user_can_access`); índice `(company, categoria_codigo)`.
-- **Códigos da linha:** reusa o mapping resolvido (company>`_default`) + `aliasesDaLinha(linha, regime)` do v1 (linha pura → alias literal `[linha]`).
-- **Reconciliação SEMPRE exibida (P7):** `total da linha (v1)` vs `Σ entidades (v2)` vs `diferença`. Mesmo reconciliando por construção, expõe bugs de alias/status/sinal/mês.
-- **Sinais (P8):** `valor_documento` é magnitude positiva → concentração usa valor positivo; **delta YoY assinado**.
+- **Fonte:** `fin_contas_pagar` (CP) / `fin_contas_receber` (CR) **diretas**, com filtros que **espelham EXATAMENTE** a `fin_dre_competencia_base`: `company` + `data_emissao IS NOT NULL` + `data_emissao >= '{ano}-01-01' AND < '{ano+1}-01-01'` + `status_titulo ≠ 'CANCELADO'` + soma de `valor_documento`. RLS staff-gated (`fin_user_can_access`).
+- **Códigos da linha:** reusa o mapping resolvido (company>`_default`) + `aliasesDaLinha(linha, regime)` do v1 (linha pura → alias literal `[linha]`). Filtro por código via **chunked `.in()`** (lotes de ~100 — P1.2: `.in` cru estoura URL em linha grande); o helper re-filtra os códigos defensivamente.
+- ⚠️ **Reconciliação — alvo correto (Codex P1.1, o nó):** o v1 reconcilia o decomposto-por-categoria contra `realizado_fechado` (que vem de `fin_dre_snapshots`, um SNAPSHOT que pode estar stale / usar fallback heurístico / mapping antigo). O v2 soma a **base viva**. Portanto o v2 **NÃO promete "bate com o snapshot"** — ele reconcilia contra o **total-por-categoria do v1** (`drillResult.total_decomposto`), que vem da MESMA base viva (`fin_dre_competencia_base`, mesmos filtros) → **Σ entidades (v2) == Σ categorias (v1) por construção** (mesmas linhas, GROUP BY diferente). O `realizado_fechado` (snapshot) aparece como **terceiro número de contexto** (a divergência snapshot×base-viva já é o resíduo do v1, não responsabilidade do v2).
+  - Painel exibe: `Σ entidades (v2)` · `Σ categorias (v1)` · `diferença` (deve ser ~0) · e, como contexto, `realizado contábil (snapshot)`.
+- **Sinais (P3.8):** CP e CR são analisados SEPARADAMENTE (a linha é pura — nunca mistura) → `valor_documento` magnitude positiva; **delta YoY assinado**.
+- **Truncamento invalida o Pareto (P1.3):** se o fetch bater o teto (`MAX=20000`), `truncado=true` → o painel **NÃO mostra os percentuais de concentração** (seriam mentira); mostra "amostra truncada — análise não confiável (diagnóstico)". Ordenar por valor não resolve (o delta YoY precisa dos dois anos). Caminho futuro: RPC agregada server-side.
 
 ## Helper puro `src/lib/financeiro/orcamento-entidade-helpers.ts` (TDD)
 
@@ -57,11 +59,12 @@ export type EntidadeConcentracaoResult = {
   componentes: EntidadeComponente[];   // ordenado por delta desc (default)
   total_ano: number;
   total_ano_anterior: number;
-  aumento_bruto: number;               // Σ deltas POSITIVOS (novos entram inteiros; sumiu fica fora)
+  aumento_bruto: number;               // Σ max(delta,0) de TODAS as entidades
   top_n: number;
-  top_n_peso_nivel_perc: number;       // Σ peso dos top-N por nível / total_ano
-  top_n_peso_aumento_perc: number;     // Σ delta+ dos top-N por delta / aumento_bruto
-  truncado: boolean;                   // amostra cortada pelo teto (aviso de imprecisão)
+  top_n_peso_nivel_perc: number;       // Σ |realizado| dos top-N por |nível| / Σ|nível| (0..1)
+  top_n_peso_aumento_perc: number | null;  // null se aumento_bruto<=0 (flag sem_aumento_bruto)
+  sem_aumento_bruto: boolean;          // aumento_bruto <= EPSILON
+  truncado: boolean;                   // amostra cortada pelo teto → análise diagnóstica
 };
 
 export function concentrarPorEntidade(input: {
@@ -74,15 +77,15 @@ export function concentrarPorEntidade(input: {
 ```
 
 Lógica (espelha as decisões do Codex):
-1. `fechadosSet = new Set(mesesFechados)`. `agg(rows)`: filtra `mes ∈ fechadosSet`; chave = `entidade_id ?? normalizarNome(entidade_nome) ?? 'sem_id'`; soma `valor` BRUTO por chave; guarda `entidade_label` (nome do maior mês) + `sem_id` (`entidade_id == null`).
+1. `fechadosSet = new Set(mesesFechados)`. **Chave de identidade (P2.5):** `cnpjValido(entidade_id)` (limpa não-dígitos; rejeita vazio, `< 11 dígitos`, todos-iguais tipo `00000000000`) → usa o cnpj limpo; senão `normalizarNome(entidade_nome)` se não-vazio; senão bucket `'sem_identificacao'`. `agg(rows)`: filtra `mes ∈ fechadosSet`; soma `valor` BRUTO por chave; guarda `entidade_label` (nome do maior mês) + `sem_id` (caiu em nome ou sem_identificacao = sem cnpj válido).
 2. `aggAno`, `aggAnt`. `total_ano = Σ bruto aggAno` (round só no fim), `total_ano_anterior = Σ bruto aggAnt`.
-3. Componentes = união de chaves; cada um: `realizado_ytd` (ano), `ano_anterior` (ant), `delta = ano − ant` (assinado), `delta_perc` (null se |ant|<EPSILON senão delta/abs(ant)), `peso_perc` (`total_ano>EPSILON ? ano/total_ano : 0`), `classe` (`novo`: ant≈0 & ano>0; `sumiu`: ano≈0 & ant>0; senão `recorrente`), `entidade_label` (fallback ano-1, fallback chave).
-4. `aumento_bruto = Σ delta dos componentes com delta>0` (novos entram inteiros; `sumiu` tem delta<0 → fora da soma).
-5. `top_n_peso_nivel_perc`: pega os top-N por `realizado_ytd` desc, soma seus `realizado_ytd`, divide por `total_ano` (0 se total~0).
-6. `top_n_peso_aumento_perc`: pega os top-N por `delta` desc (só delta>0), soma seus deltas, divide por `aumento_bruto` (0 se aumento~0). **Não estoura 100%** (numerador ⊆ denominador).
-7. Ordena `componentes` por `delta` desc (default — o "aumento" é o contexto do furo). `round2` nos monetários no retorno.
+3. Componentes = união de chaves; cada um: `realizado_ytd` (ano), `ano_anterior` (ant), `delta = ano − ant` (assinado), `delta_perc` (null se |ant|<EPSILON senão delta/abs(ant)), `peso_perc` (`total_ano>EPSILON ? ano/total_ano : 0`), `classe` (`novo`: |ant|<EPSILON & ano>EPSILON; `sumiu`: |ano|<EPSILON & ant>EPSILON; senão `recorrente`), `entidade_label` (fallback ano-1, fallback chave).
+4. **`aumento_bruto = Σ max(delta, 0)`** de TODAS as entidades (novos entram inteiros; `sumiu` tem delta<0 → `max(·,0)=0`, fora).
+5. `top_n_peso_nivel_perc`: top-N por **`abs(realizado_ytd)` desc** (P3.7 — estorno não esconde fornecedor material), soma `abs(realizado_ytd)` deles / `Σ abs(realizado_ytd)` de todos (0 se ~0).
+6. `top_n_peso_aumento_perc`: zera negativos (`max(delta,0)`), ordena por isso desc, soma os top-N / `aumento_bruto`. **Se `aumento_bruto ≤ EPSILON` → `null` + `sem_aumento_bruto=true`** (não divide). Clamp `min(1, ·)` defensivo (nunca >100%).
+7. Ordena `componentes` por `delta` desc (default — "aumento" é o contexto do furo). `round2` nos monetários no retorno. `truncado` repassado.
 
-`normalizarNome(n)`: trim + collapse spaces + uppercase (mitiga grafia divergente; não resolve filiais — limitação documentada).
+`normalizarNome(n)`: trim + collapse spaces + uppercase (mitiga grafia; não resolve filiais — limitação documentada). `cnpjValido(s)`: `d=s.replace(/\D/g,'')`; válido se `d.length ∈ {11,14}` E não-todos-iguais.
 
 ## Service `src/services/financeiroV2Service.ts`
 
@@ -95,15 +98,17 @@ export async function getTitulosEntidadeRaw(
   codigos: string[],
 ): Promise<{ rows: EntidadeRowRaw[]; truncado: boolean }>;
 ```
-- `fin_contas_pagar` (cp) / `fin_contas_receber` (cr); `.eq(company)`, `.eq` ano via `data_emissao` range (ou `.gte/.lt` no ano), `.in('mes'...)` — **mas as tabelas não têm coluna `mes`**; filtrar por `data_emissao` no range do ano e derivar o mês client-side, OU filtrar `data_emissao >= ${ano}-01-01 AND < ${ano+1}-01-01` e mapear `mes = Number(data_emissao.slice(5,7))`, filtrando os meses fechados no helper. `.neq('status_titulo','CANCELADO')`, `.in('categoria_codigo', codigos)`. Seleciona `cnpj_cpf, nome_fornecedor|nome_cliente, data_emissao, valor_documento`.
-- **Paginação** `.range()` em loop; **teto duro** `MAX = 20000` linhas → para e marca `truncado: true` (aviso de imprecisão na UI). `codigos` vazio → retorna `{rows:[], truncado:false}`.
-- Deriva `mes` de `data_emissao`; `entidade_id = cnpj_cpf`, `entidade_nome = nome_fornecedor|nome_cliente`, `valor = valor_documento`.
+- `fin_contas_pagar` (cp) / `fin_contas_receber` (cr); seleciona `cnpj_cpf, nome_fornecedor|nome_cliente, data_emissao, valor_documento, categoria_codigo`.
+- **Filtros espelhando a `competencia_base` (P1.1):** `.eq('company', …)`, `.not('data_emissao','is',null)`, `.gte('data_emissao','{ano}-01-01')`, `.lt('data_emissao','{ano+1}-01-01')`, `.neq('status_titulo','CANCELADO')`. **Mês derivado de `data_emissao.slice(5,7)`** (date string `YYYY-MM-DD`, sem `new Date` — P2.6); o helper filtra os meses fechados.
+- **Filtro de códigos por chunked `.in()` (P1.2):** parte `codigos` em lotes de ~100 e faz uma query por lote (evita estouro de URL em linhas grandes), une os resultados. `codigos` vazio → `{rows:[], truncado:false}`.
+- **Paginação** `.range()` em loop por lote; **teto duro `MAX=20000`** linhas no total → para e marca `truncado: true` (→ painel entra em modo diagnóstico, esconde percentuais — P1.3).
+- Mapeia: `entidade_id = cnpj_cpf`, `entidade_nome = nome_fornecedor|nome_cliente`, `mes = Number(data_emissao.slice(5,7))` (NaN/ malformado → o helper ignora), `valor = valor_documento`.
 
 ## Página / painel `DrillVarianciaPanel.tsx`
 
 - **Toggle** "Por categoria | Por fornecedor·cliente" — só renderiza a aba de entidade quando `entidadeDaLinha(linha) != null`.
 - Lazy: ao trocar pra aba entidade, query `['orcamento-drill-entidade', company, ano, linha]` (enabled quando a aba ativa) → `getTitulosEntidadeRaw(fonte, company, ano, mesesFechados, codigos)` (ano + ano-1) → `concentrarPorEntidade`.
-- Render: **2 cards** ("Maior concentração YTD: top 3 = X%" · "Maior aumento YoY: top 3 explicam Y% do aumento") + tabela (entidade + badge `Novo`/`Sumiu`/`Sem ID`, realizado YTD, ano-1, delta assinado, % do total). Ordena por delta desc; alterna por realizado YTD. **Faixa de reconciliação** (total linha vs Σ entidades vs diff). Aviso se `truncado`.
+- Render: **2 cards** ("Maior concentração YTD: top 3 = X%" · "Maior aumento YoY: top 3 explicam Y% do aumento" — **se `sem_aumento_bruto`, esconde o 2º card** e mostra "linha não cresceu vs {ano-1}") + tabela (entidade + badge `Novo`/`Sumiu`/`Sem ID`, realizado YTD, ano-1, delta assinado, % do total). Ordena por delta desc; alterna por realizado YTD. **Faixa de reconciliação:** `Σ entidades (v2)` vs `Σ categorias (v1, drillResult.total_decomposto)` vs `diferença (~0)` + contexto `realizado contábil (snapshot, realizado_fechado)`. **Se `truncado` → modo diagnóstico: esconde os percentuais** ("amostra truncada, análise não confiável").
 - Tooltip "categorias incluídas" (P10): lista os `codigos`/aliases que entram na linha.
 - Copy honesto (P2.6): "Concentração do realizado YTD e variação YoY (mesmos meses fechados)".
 
