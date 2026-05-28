@@ -368,6 +368,15 @@ describe('resolverCapitalGiro', () => {
     ]);
     expect(r.capital_giro).toBe(200);
   });
+  it('ncg string vazia/whitespace (cast runtime) → ausência, NÃO 0 (Number("")===0 seria fabricação)', () => {
+    expect(resolverCapitalGiro([{ ncg: '' as unknown as number, snapshot_at: '2026-05-28T00:00:00Z' }]).disponivel).toBe(false);
+    expect(resolverCapitalGiro([{ ncg: '   ' as unknown as number, snapshot_at: '2026-05-28T00:00:00Z' }]).disponivel).toBe(false);
+  });
+  it('ncg string numérica (PostgREST numeric) → valor real', () => {
+    const r = resolverCapitalGiro([{ ncg: '300000' as unknown as number, snapshot_at: '2026-05-28T00:00:00Z' }]);
+    expect(r.capital_giro).toBe(300000);
+    expect(r.disponivel).toBe(true);
+  });
 });
 
 describe('frescorGiro', () => {

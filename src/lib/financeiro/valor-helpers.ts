@@ -96,16 +96,25 @@ export function capitalInvestido(input: {
 // ===================== Resolução de capital de giro a partir dos snapshots da engine A1 =====================
 export type SnapNcg = { ncg: number | null; snapshot_at: string };
 
-// Último snapshot com ncg NÃO-nulo. `s.ncg != null` (NÃO truthiness): 0 e negativo são valores REAIS;
-// só null/sem snapshot conta como ausência. Não confia na ordem do array — pega o mais recente por data.
+// ncg pode chegar como número OU string numérica (PostgREST devolve `numeric` como string p/ preservar precisão).
+// null / '' / whitespace / NaN / Infinity → AUSÊNCIA (NÃO vira 0 — `Number('')===0` seria fabricação). 0 e negativo são REAIS.
+function ncgFinito(ncg: unknown): number | null {
+  if (ncg == null) return null;
+  if (typeof ncg === 'string' && ncg.trim() === '') return null;
+  const n = Number(ncg);
+  return Number.isFinite(n) ? n : null;
+}
+
+// Último snapshot com ncg válido. Não confia na ordem do array — pega o mais recente por data.
 export function resolverCapitalGiro(snaps: SnapNcg[]): { capital_giro: number | null; snapshot_at: string | null; disponivel: boolean } {
-  let melhor: SnapNcg | null = null;
+  let melhor: { ncg: number; snapshot_at: string } | null = null;
   for (const s of snaps) {
-    if (s.ncg == null) continue;
-    if (melhor == null || Date.parse(s.snapshot_at) > Date.parse(melhor.snapshot_at)) melhor = s;
+    const n = ncgFinito(s.ncg);
+    if (n == null) continue;
+    if (melhor == null || Date.parse(s.snapshot_at) > Date.parse(melhor.snapshot_at)) melhor = { ncg: n, snapshot_at: s.snapshot_at };
   }
   if (melhor == null) return { capital_giro: null, snapshot_at: null, disponivel: false };
-  return { capital_giro: Number(melhor.ncg), snapshot_at: melhor.snapshot_at, disponivel: true };
+  return { capital_giro: melhor.ncg, snapshot_at: melhor.snapshot_at, disponivel: true };
 }
 
 // Frescor do NCG: cron de snapshot é diário → 45+ dias indica pipeline defasado. Stale NÃO vira
@@ -125,9 +134,10 @@ export function acharCapitalGiroAnterior(snaps: SnapNcg[], refSnapshotAt: string
   const alvo = Date.parse(refSnapshotAt) - janela * 86400000;
   let melhor: { ncg: number; dist: number } | null = null;
   for (const s of snaps) {
-    if (s.ncg == null) continue;
+    const n = ncgFinito(s.ncg);
+    if (n == null) continue;
     const dist = Math.abs(Date.parse(s.snapshot_at) - alvo);
-    if (melhor == null || dist < melhor.dist) melhor = { ncg: Number(s.ncg), dist };
+    if (melhor == null || dist < melhor.dist) melhor = { ncg: n, dist };
   }
   return melhor && melhor.dist <= tol * 86400000 ? melhor.ncg : null;
 }

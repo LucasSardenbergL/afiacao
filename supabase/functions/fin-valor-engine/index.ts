@@ -81,11 +81,17 @@ function capitalInvestido(input: { capital_giro: number | null; ativo_fixo: Ativ
   return { capital_investido, capital_giro: input.capital_giro, ativo_fixo, ajustes, parcial, giro_indisponivel: false, motivos };
 }
 type SnapNcg = { ncg: number | null; snapshot_at: string };
+function ncgFinito(ncg: unknown): number | null {
+  if (ncg == null) return null;
+  if (typeof ncg === "string" && ncg.trim() === "") return null;
+  const n = Number(ncg);
+  return Number.isFinite(n) ? n : null;
+}
 function resolverCapitalGiro(snaps: SnapNcg[]): { capital_giro: number | null; snapshot_at: string | null; disponivel: boolean } {
-  let melhor: SnapNcg | null = null;
-  for (const s of snaps) { if (s.ncg == null) continue; if (melhor == null || Date.parse(s.snapshot_at) > Date.parse(melhor.snapshot_at)) melhor = s; }
+  let melhor: { ncg: number; snapshot_at: string } | null = null;
+  for (const s of snaps) { const n = ncgFinito(s.ncg); if (n == null) continue; if (melhor == null || Date.parse(s.snapshot_at) > Date.parse(melhor.snapshot_at)) melhor = { ncg: n, snapshot_at: s.snapshot_at }; }
   if (melhor == null) return { capital_giro: null, snapshot_at: null, disponivel: false };
-  return { capital_giro: Number(melhor.ncg), snapshot_at: melhor.snapshot_at, disponivel: true };
+  return { capital_giro: melhor.ncg, snapshot_at: melhor.snapshot_at, disponivel: true };
 }
 function frescorGiro(snapshot_at: string | null, hojeMs: number, limiarStaleDias = 45): { dias: number | null; stale: boolean } {
   if (!snapshot_at) return { dias: null, stale: false };
@@ -98,7 +104,7 @@ function acharCapitalGiroAnterior(snaps: SnapNcg[], refSnapshotAt: string, opts?
   const janela = opts?.janelaDias ?? 365; const tol = opts?.toleranciaDias ?? 60;
   const alvo = Date.parse(refSnapshotAt) - janela * 86400000;
   let melhor: { ncg: number; dist: number } | null = null;
-  for (const s of snaps) { if (s.ncg == null) continue; const dist = Math.abs(Date.parse(s.snapshot_at) - alvo); if (melhor == null || dist < melhor.dist) melhor = { ncg: Number(s.ncg), dist }; }
+  for (const s of snaps) { const n = ncgFinito(s.ncg); if (n == null) continue; const dist = Math.abs(Date.parse(s.snapshot_at) - alvo); if (melhor == null || dist < melhor.dist) melhor = { ncg: n, dist }; }
   return melhor && melhor.dist <= tol * 86400000 ? melhor.ncg : null;
 }
 function resolverCapitalParaValor(input: { snaps: SnapNcg[]; ativo_fixo: AtivoFixoInput; ajustes?: number; hojeMs: number; limiarStaleDias?: number }): { capital: CapitalInvestidoResult; capital_anterior: number | null; giro_snapshot_at: string | null; giro_dias: number | null; giro_stale: boolean } {
