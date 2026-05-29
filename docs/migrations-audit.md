@@ -21,13 +21,13 @@ Este audit valida **quais custom migrations estão de fato aplicadas no banco**.
 
 ## Resumo
 
-- **110** custom migrations totais
-- **495** objetos esperados (criados por estas migrations)
+- **111** custom migrations totais
+- **498** objetos esperados (criados por estas migrations)
 - Quebra por tipo:
   - `rls_policy`: 139
   - `index`: 96
-  - `function`: 84
-  - `cron_job`: 84
+  - `cron_job`: 86
+  - `function`: 85
   - `table`: 57
   - `trigger`: 31
   - `enum_value`: 4
@@ -1054,6 +1054,14 @@ Lista canônica do que cada migration *deveria* criar (extraído via regex de `C
 | Tipo | Objeto | Parent |
 | --- | --- | --- |
 | `function` | `public._data_health_compute` | — |
+
+### `20260528150000_fin_estoque_omie_feed.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `function` | `public.fin_estimar_estoque_omie` | — |
+| `cron_job` | `cron.sync-inventory-colacor-vendas-1h` | — |
+| `cron_job` | `cron.sync-inventory-servicos-1h` | — |
 
 ### `20260528194751_data_health_consolida_last_error_e_reposicao_checks.sql`
 
