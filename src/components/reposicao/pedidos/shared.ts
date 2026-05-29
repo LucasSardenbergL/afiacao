@@ -34,6 +34,36 @@ export function formatTime(iso: string | null) {
   }
 }
 
+/* ─── Feedback do disparo (compartilhado entre o botão "Disparar" e o "Aprovar e disparar") ─── */
+export interface RespostaDisparo {
+  disparados?: number | null;
+  falhas?: number | null;
+  aguardando_portal_sayerlack?: number | null;
+}
+
+// Traduz a resposta da edge disparar-pedidos-aprovados num toast.
+// O disparo do portal Sayerlack é assíncrono (202 + processamento em background):
+// nesse caso a mensagem diz "iniciado", NUNCA "enviado" — o terminal (sucesso/falha)
+// aparece na linha do pedido, que atualiza sozinha.
+export function interpretarRespostaDisparo(
+  data: RespostaDisparo | null | undefined,
+  pedidoId: number,
+): { tone: 'success' | 'error' | 'info'; message: string } {
+  const ok = data?.disparados ?? 0;
+  const fail = data?.falhas ?? 0;
+  const aguardandoPortal = data?.aguardando_portal_sayerlack ?? 0;
+  if (ok > 0) {
+    return { tone: 'success', message: `Pedido #${pedidoId} disparado e registrado no Omie` };
+  }
+  if (aguardandoPortal > 0) {
+    return { tone: 'success', message: `Pedido #${pedidoId}: envio ao portal Sayerlack iniciado — acompanhe o status na lista (atualiza sozinho)` };
+  }
+  if (fail > 0) {
+    return { tone: 'error', message: `Pedido #${pedidoId}: falha ao disparar` };
+  }
+  return { tone: 'info', message: `Pedido #${pedidoId}: nada a disparar` };
+}
+
 /* ─── Portal B2B status meta ─── */
 export const portalStatusMeta: Record<StatusEnvioPortal, { label: string; className: string }> = {
   nao_aplicavel: { label: '—', className: 'bg-muted text-muted-foreground border-border' },
