@@ -835,7 +835,8 @@ export interface ValorEmpresaResult {
   reportado: {
     ebit: number; nopat: number; imposto_operacional_nopat: number; carga_tributaria_regime_total: number;
     margem_operacional_pre_imposto: number; receita_liquida_ttm: number;
-    capital_investido: number; capital_giro: number; ativo_fixo: number; ajustes: number; capital_parcial: boolean;
+    capital_investido: number | null; capital_giro: number | null; ativo_fixo: number; ajustes: number; capital_parcial: boolean;
+    giro_indisponivel: boolean; giro_snapshot_at: string | null; giro_dias: number | null;
     roic: number | null; wacc: number | null; spread: number | null; eva: number | null;
     roic_incremental: number | null;
     incremental: { delta_nopat: number | null; delta_capital: number | null; aviso: string | null };
@@ -843,7 +844,7 @@ export interface ValorEmpresaResult {
     peso_divida: number | null; peso_equity: number | null;
   };
   normalizado: {
-    ebit: number; nopat: number; capital_investido: number;
+    ebit: number; nopat: number; capital_investido: number | null;
     roic: number | null; spread: number | null; eva: number | null;
     ajuste_prolabore: number; ajuste_aluguel: number; ajuste_intercompany_capital: number; aplicado: boolean;
     nopat_aproximado: boolean;
