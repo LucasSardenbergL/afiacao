@@ -18,6 +18,16 @@ export function isHealthy(checks: DataHealthCheck[]): boolean {
   return checks.length > 0 && checks.every(c => c.status === 'ok');
 }
 
+/**
+ * Diagnóstico (último erro, causa provável, como resolver) só vale para check
+ * NÃO-ok. Um check saudável não pode exibir falha transitória já recuperada — ex:
+ * a órfã `orphaned_running_timeout` que o fin-sync-watchdog marca e que o `last_error`
+ * da RPC carrega indefinidamente — como se fosse problema atual.
+ */
+export function shouldShowDiagnostics(check: DataHealthCheck): boolean {
+  return check.status !== 'ok';
+}
+
 export interface DomainRollup { domain: HealthDomain; status: HealthStatus; checks: DataHealthCheck[]; }
 
 export function rollupDomain(checks: DataHealthCheck[]): DomainRollup[] {
