@@ -7,6 +7,8 @@ import { CallHistoryTabs } from '@/components/telefonia/CallHistoryTabs';
 import { CallDialerView } from '@/components/call/CallDialerView';
 import { useCallBackend } from '@/hooks/useCallBackend';
 import { useIsTelefoniaManager } from '@/hooks/useIsTelefoniaManager';
+import { useFeatureFlag } from '@/hooks/useFeatureFlag';
+import { Switch } from '@/components/ui/switch';
 import { normalizeBrPhone, formatBrPhone } from '@/lib/phone';
 import type { CallLogTab } from '@/hooks/useCallLog';
 
@@ -20,6 +22,10 @@ export default function Telefonia() {
   const [callSeq, setCallSeq] = useState(0);
   const call = useCallBackend();
   const isManager = useIsTelefoniaManager();
+  // Controle de transporte NA PRÓPRIA tela (sem depender do /settings escondido,
+  // cujo flag em localStorage é frágil no Safari iOS). Liga aqui → o backend muda
+  // na hora (useCallBackend escuta o mesmo flag via storage event).
+  const [useWebRTC, setUseWebRTC] = useFeatureFlag('useWebRTCCall', false);
 
   // Sessão de chamada ÚNICA: a página é dona; DialPad e o histórico só disparam.
   const startCall = useCallback(
@@ -63,6 +69,22 @@ export default function Telefonia() {
       <h1 className="text-xl font-semibold mb-4">Central de Telefonia</h1>
       <div className="flex flex-col md:flex-row gap-4">
         <div className="flex flex-col gap-3">
+          <div className="w-full max-w-[260px] rounded-lg border border-border bg-card p-3 flex items-center justify-between gap-2">
+            <div className="min-w-0">
+              <p className="text-sm font-medium">Ligar pelo navegador</p>
+              <p className="text-[11px] text-muted-foreground mt-0.5">
+                {useWebRTC
+                  ? 'WebRTC — grava + copiloto ao vivo'
+                  : 'Operadora (Nvoip) — sem copiloto ao vivo'}
+              </p>
+            </div>
+            <Switch
+              checked={useWebRTC}
+              onCheckedChange={setUseWebRTC}
+              disabled={busy}
+              aria-label="Ligar pelo navegador (WebRTC)"
+            />
+          </div>
           <DialPad
             key={dialPrefill}
             initialPhone={dialPrefill}

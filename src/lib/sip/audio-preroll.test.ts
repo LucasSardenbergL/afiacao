@@ -20,6 +20,7 @@ describe('mixPrerollWithMic', () => {
       })),
       decodeAudioData: vi.fn().mockResolvedValue({ duration: 5 }),
       destination: {},
+      resume: vi.fn().mockResolvedValue(undefined),
       close: vi.fn().mockResolvedValue(undefined),
     };
     vi.stubGlobal('AudioContext', vi.fn(() => audioContextMock));
@@ -47,8 +48,10 @@ describe('mixPrerollWithMic', () => {
     // Antes de play(): source NÃO foi iniciado
     expect(source.start).not.toHaveBeenCalled();
 
-    // Após play(): source inicia
+    // Após play(): retoma o AudioContext (hardening iOS — pode ter suspendido entre
+    // o gesto e o 'established') e inicia o source.
     result.play();
+    expect(audioContextMock.resume).toHaveBeenCalledTimes(1);
     expect(source.start).toHaveBeenCalledTimes(1);
   });
 

@@ -97,6 +97,28 @@ function classifyTituloStatus(status: string | null | undefined): TituloStatusCl
   if (status === 'CANCELADO') return 'cancelled';
   return 'unknown';
 }
+
+// Anti-truncamento do PostgREST (cap default de 1000 linhas): a colacor tem ~11k CP
+// e ~29k CR não-cancelados; um .select() simples carregaria só as 1000 primeiras
+// (quase tudo PAGO/RECEBIDO antigo) e PERDERIA a maioria dos títulos em aberto →
+// NCG/projeção subcontados. Pagina via .range() com .order('id') estável (sem order,
+// páginas podem repetir/pular linhas). Lança no primeiro erro (não engole truncado).
+async function fetchAllRows<T>(
+  build: (from: number, to: number) => PromiseLike<{ data: T[] | null; error: { message?: string } | null }>,
+): Promise<T[]> {
+  const PAGE = 1000;
+  const all: T[] = [];
+  let from = 0;
+  for (;;) {
+    const { data, error } = await build(from, from + PAGE - 1);
+    if (error) throw new Error(`fetchAllRows: ${error.message ?? 'erro de query'}`);
+    const batch = data ?? [];
+    all.push(...batch);
+    if (batch.length < PAGE) break;
+    from += PAGE;
+  }
+  return all;
+}
 type Cenario = 'realista' | 'otimista' | 'pessimista';
 
 type Input = {
@@ -156,6 +178,7 @@ type CR = {
   cliente_id: string | null;
   nome_cliente: string | null;
   categoria_codigo: string | null;
+  omie_codigo_lancamento: number | null; // join com v_titulo_baixas (baixa derivada)
 };
 
 type CP = {
@@ -231,9 +254,37 @@ type TituloHist = {
   valor_recebido: number;
   saldo: number;
   data_vencimento: string | null;
-  data_recebimento: string | null;
+  // Baixa REAL derivada das movimentações (v_titulo_baixas) — NÃO a coluna base
+  // data_recebimento (sempre NULL no LIST do Omie). null = sem movimento joinável.
+  data_baixa_derivada: string | null;
   status_titulo: string;
 };
+
+// Espelho VERBATIM de aging-helpers.ts: liquidação por STATUS + valorPagoEfetivo robusto.
+// STATUS_LIQUIDADO = mesmo conjunto que SETTLED_TITLE_STATUSES acima (mantido verbatim
+// do helper p/ o mirror ser fiel). valor_recebido=0 + saldo cheio nos liquidados (#396)
+// → o fallback de valorPagoEfetivo cai em valor_documento (face) = recuperação correta.
+const STATUS_LIQUIDADO = ['RECEBIDO', 'LIQUIDADO', 'PAGO'];
+function statusLiquidado(status: string | null | undefined): boolean {
+  return !!status && STATUS_LIQUIDADO.includes(status);
+}
+function valorPagoEfetivo(t: { valor_recebido: number; valor_documento: number; saldo: number }): number {
+  if (t.valor_recebido > 0) return t.valor_recebido;
+  const liq = t.valor_documento - t.saldo;
+  if (liq > 0) return liq;
+  return t.valor_documento;
+}
+const COBERTURA_MIN_EMPRESA = 0.4;
+const MIN_LIQUIDADOS_COM_DATA = 5;
+// Gate de confiança do prazo (PMR/PMP) pela cobertura de baixa derivada (espelho de
+// aging-helpers.ts). Abaixo de COBERTURA_MIN_EMPRESA → null ("—", amostra não-representativa).
+function prazoComGate(
+  valor: number | null | undefined,
+  cobertura: number | null | undefined,
+  min = COBERTURA_MIN_EMPRESA,
+): number | null {
+  return (cobertura ?? 0) >= min && valor != null ? Number(valor) : null;
+}
 
 const FAIXAS: Faixa[] = ['a_vencer', '1-30', '31-60', '61-90', '+90'];
 
@@ -259,6 +310,9 @@ type DadosBase = {
   eventos_rec: EventoRecorrente[];
   eventos_ev: EventoEventual[];
   curvas_aging: Record<Faixa, CurvaFaixa>;
+  // PMR/PMP + cobertura da baixa derivada (view v_capital_giro_prazos, 1 linha/empresa).
+  // Fonte ÚNICA do prazo (mesma do card client-side getCapitalDeGiro) → consistência.
+  prazos: { pmr: number | null; pmp: number | null; pmr_cobertura: number | null; pmp_cobertura: number | null } | null;
   config: Config;
 };
 
@@ -266,38 +320,57 @@ async function carregarDados(
   supabase: ReturnType<typeof createClient>,
   company: Company,
 ): Promise<DadosBase> {
-  const [crsRes, cpsRes, ccRes, recRes, evRes, configRes, estoqueRes, dreRes, folhaCatRes] = await Promise.all([
-    // @ts-expect-error - fin_contas_receber may not be in generated supabase types yet
-    supabase.from('fin_contas_receber').select('id, saldo, valor_documento, valor_recebido, data_emissao, data_vencimento, data_recebimento, status_titulo, omie_codigo_cliente, nome_cliente, categoria_codigo')
-      .eq('company', company)
-      .neq('status_titulo', 'CANCELADO'),
-    // @ts-expect-error - fin_contas_pagar may not be in generated supabase types yet
-    supabase.from('fin_contas_pagar').select('id, saldo, valor_documento, valor_pago, data_emissao, data_vencimento, data_pagamento, status_titulo, categoria_codigo')
-      .eq('company', company)
-      .neq('status_titulo', 'CANCELADO'),
-    // @ts-expect-error - fin_contas_correntes may not be in generated supabase types yet
-    supabase.from('fin_contas_correntes').select('saldo_atual')
-      .eq('company', company).eq('ativo', true),
-    // @ts-expect-error - fin_eventos_recorrentes not in generated supabase types yet (A1 table)
-    supabase.from('fin_eventos_recorrentes').select('id, descricao, valor, tipo, categoria_dre, is_folha, dia_do_mes, inicio, fim')
-      .eq('company', company).eq('ativo', true),
-    // @ts-expect-error - fin_eventos_eventuais not in generated supabase types yet (A1 table)
-    supabase.from('fin_eventos_eventuais').select('id, descricao, valor, tipo, categoria_dre, data_prevista, status')
-      .eq('company', company).in('status', ['previsto', 'confirmado']),
-    // @ts-expect-error - fin_config_cashflow not in generated supabase types yet (A1 table)
-    supabase.from('fin_config_cashflow').select('overrides_cenario, thresholds, adiantamento_categorias_codigos')
-      .eq('company', company).maybeSingle(),
-    // @ts-expect-error - fin_estoque_valor (Onda 1) não está nos types gerados
-    supabase.from('fin_estoque_valor').select('valor, data_ref')
-      .eq('company', company).order('data_ref', { ascending: false }).limit(1).maybeSingle(),
-    // @ts-expect-error - fin_dre_snapshots não está nos types gerados
-    supabase.from('fin_dre_snapshots').select('cmv, ano, mes')
-      .eq('company', company).eq('regime', 'competencia'),
-    // @ts-expect-error - folha_categorias_codigos é coluna OPCIONAL (Onda 2). Se não
-    // existir, PostgREST devolve { data: null, error } — não rejeita; cai em [] e o
-    // guard de folha fica inerte (comportamento atual preservado, sem migration obrigatória).
-    supabase.from('fin_config_cashflow').select('folha_categorias_codigos')
-      .eq('company', company).maybeSingle(),
+  // CR/CP paginados (anti-truncamento, ver fetchAllRows); o resto cabe em <1000 e vai
+  // em Promise.all. Tudo em paralelo.
+  const [crsData, cpsData, baixaCrData, [ccRes, recRes, evRes, configRes, estoqueRes, dreRes, folhaCatRes, prazosRes]] = await Promise.all([
+    fetchAllRows<Record<string, unknown>>((from, to) =>
+      // @ts-expect-error - fin_contas_receber may not be in generated supabase types yet
+      supabase.from('fin_contas_receber').select('id, saldo, valor_documento, valor_recebido, data_emissao, data_vencimento, data_recebimento, status_titulo, omie_codigo_cliente, omie_codigo_lancamento, nome_cliente, categoria_codigo')
+        .eq('company', company).neq('status_titulo', 'CANCELADO').order('id', { ascending: true }).range(from, to)
+    ),
+    fetchAllRows<Record<string, unknown>>((from, to) =>
+      // @ts-expect-error - fin_contas_pagar may not be in generated supabase types yet
+      supabase.from('fin_contas_pagar').select('id, saldo, valor_documento, valor_pago, data_emissao, data_vencimento, data_pagamento, status_titulo, categoria_codigo')
+        .eq('company', company).neq('status_titulo', 'CANCELADO').order('id', { ascending: true }).range(from, to)
+    ),
+    // Fase 3: baixa REAL derivada (v_titulo_baixas, tipo CR) p/ calibrar o TIMING do
+    // aging. Paginado (oben CR ~11k linhas > cap 1000 do PostgREST — sem isso a
+    // cobertura cairia falsa). order estável; usado SÓ na calibração, PMR/PMP/dias_
+    // cobertura do engine ficam intactos (sem regressão, sem novo viés do colacor).
+    fetchAllRows<Record<string, unknown>>((from, to) =>
+      // @ts-expect-error - v_titulo_baixas (view nova) não está nos types gerados
+      supabase.from('v_titulo_baixas').select('omie_codigo_lancamento, data_baixa_final')
+        .eq('company', company).eq('tipo', 'CR').order('omie_codigo_lancamento', { ascending: true }).range(from, to)
+    ),
+    Promise.all([
+      // @ts-expect-error - fin_contas_correntes may not be in generated supabase types yet
+      supabase.from('fin_contas_correntes').select('saldo_atual')
+        .eq('company', company).eq('ativo', true),
+      // @ts-expect-error - fin_eventos_recorrentes not in generated supabase types yet (A1 table)
+      supabase.from('fin_eventos_recorrentes').select('id, descricao, valor, tipo, categoria_dre, is_folha, dia_do_mes, inicio, fim')
+        .eq('company', company).eq('ativo', true),
+      // @ts-expect-error - fin_eventos_eventuais not in generated supabase types yet (A1 table)
+      supabase.from('fin_eventos_eventuais').select('id, descricao, valor, tipo, categoria_dre, data_prevista, status')
+        .eq('company', company).in('status', ['previsto', 'confirmado']),
+      // @ts-expect-error - fin_config_cashflow not in generated supabase types yet (A1 table)
+      supabase.from('fin_config_cashflow').select('overrides_cenario, thresholds, adiantamento_categorias_codigos')
+        .eq('company', company).maybeSingle(),
+      // @ts-expect-error - fin_estoque_valor (Onda 1) não está nos types gerados
+      supabase.from('fin_estoque_valor').select('valor, data_ref')
+        .eq('company', company).order('data_ref', { ascending: false }).limit(1).maybeSingle(),
+      // @ts-expect-error - fin_dre_snapshots não está nos types gerados
+      supabase.from('fin_dre_snapshots').select('cmv, ano, mes')
+        .eq('company', company).eq('regime', 'competencia'),
+      // @ts-expect-error - folha_categorias_codigos é coluna OPCIONAL (Onda 2). Se não
+      // existir, PostgREST devolve { data: null, error } — não rejeita; cai em [] e o
+      // guard de folha fica inerte (comportamento atual preservado, sem migration obrigatória).
+      supabase.from('fin_config_cashflow').select('folha_categorias_codigos')
+        .eq('company', company).maybeSingle(),
+      // Fase 3 (B): PMR/PMP + cobertura da baixa derivada (view v_capital_giro_prazos).
+      // @ts-expect-error - v_capital_giro_prazos (view nova) não está nos types gerados
+      supabase.from('v_capital_giro_prazos').select('pmr, pmp, pmr_cobertura, pmp_cobertura')
+        .eq('company', company).maybeSingle(),
+    ]),
   ]);
 
   const saldo_cc = ((ccRes.data ?? []) as Array<{ saldo_atual?: number | null }>)
@@ -317,7 +390,7 @@ async function carregarDados(
     throw new Error(`Config ausente pra ${company}. Aplique seed em fin_config_cashflow.`);
   }
 
-  const crs: CR[] = ((crsRes.data ?? []) as Array<Record<string, unknown>>).map((c) => ({
+  const crs: CR[] = (crsData as Array<Record<string, unknown>>).map((c) => ({
     id: c.id as string,
     saldo: Number(c.saldo ?? 0),
     valor_documento: Number(c.valor_documento ?? 0),
@@ -329,9 +402,19 @@ async function carregarDados(
     cliente_id: c.omie_codigo_cliente ? String(c.omie_codigo_cliente) : null,
     nome_cliente: (c.nome_cliente as string | null) ?? null,
     categoria_codigo: (c.categoria_codigo as string | null) ?? null,
+    omie_codigo_lancamento: c.omie_codigo_lancamento != null ? Number(c.omie_codigo_lancamento) : null,
   }));
 
-  const cps: CP[] = ((cpsRes.data ?? []) as Array<Record<string, unknown>>).map((c) => ({
+  // Fase 3: mapa da baixa derivada por omie_codigo_lancamento (CR), pra calibrar as
+  // curvas de aging com o TIMING real do recebimento (não a coluna base sempre-NULL).
+  const baixaCrPorCod = new Map<number, string>();
+  for (const b of (baixaCrData as Array<{ omie_codigo_lancamento?: number | null; data_baixa_final?: string | null }>)) {
+    if (b.omie_codigo_lancamento != null && b.data_baixa_final) {
+      baixaCrPorCod.set(Number(b.omie_codigo_lancamento), b.data_baixa_final);
+    }
+  }
+
+  const cps: CP[] = (cpsData as Array<Record<string, unknown>>).map((c) => ({
     id: c.id as string,
     saldo: Number(c.saldo ?? 0),
     valor_documento: Number(c.valor_documento ?? 0),
@@ -365,6 +448,13 @@ async function carregarDados(
     ((folhaCatRes.data as { folha_categorias_codigos?: string[] } | null)?.folha_categorias_codigos) ?? [];
   const config: Config = { ...(configRes.data as unknown as Config), folha_categorias_codigos };
 
+  // Fase 3 (B): PMR/PMP + cobertura da baixa derivada. Degrada p/ null (+ log) se a
+  // view não tiver linha pra empresa → calcularIndicadores mostra "—" honesto.
+  const prazos = (prazosRes.data as DadosBase['prazos']) ?? null;
+  if (!prazos) {
+    console.warn(`[Cashflow][${company}] v_capital_giro_prazos sem linha → PMR/PMP/CCC = null`);
+  }
+
   // Onda 2: curvas de cobrança por aging, calibradas POR EXPOSIÇÃO sobre todos os
   // títulos (não só liquidados — corrige o viés otimista). Uma vez por empresa.
   const hojeIso = new Date().toISOString().slice(0, 10);
@@ -374,7 +464,10 @@ async function carregarDados(
       valor_recebido: c.valor_recebido,
       saldo: c.saldo,
       data_vencimento: c.data_vencimento,
-      data_recebimento: c.data_recebimento,
+      // baixa derivada das movimentações (NÃO a coluna base data_recebimento, sempre NULL)
+      data_baixa_derivada: c.omie_codigo_lancamento != null
+        ? (baixaCrPorCod.get(c.omie_codigo_lancamento) ?? null)
+        : null,
       status_titulo: c.status_titulo,
     })),
     hojeIso,
@@ -390,6 +483,7 @@ async function carregarDados(
     eventos_rec: (recRes.data ?? []) as unknown as EventoRecorrente[],
     eventos_ev: (evRes.data ?? []) as unknown as EventoEventual[],
     curvas_aging,
+    prazos,
     config,
   };
 }
@@ -549,36 +643,55 @@ function calibrarCurvas(
   hoje: string,
   minTitulos = 20,
   minVolume = 50000,
+  minLiquidadosComData = MIN_LIQUIDADOS_COM_DATA,
+  coberturaMinEmpresa = COBERTURA_MIN_EMPRESA,
 ): Record<Faixa, CurvaFaixa> {
+  // Cobertura da empresa: fração dos liquidados-por-status que têm baixa derivada.
+  let liqTotal = 0, liqComData = 0;
+  for (const t of titulos) {
+    if (statusLiquidado(t.status_titulo)) {
+      liqTotal += 1;
+      if (t.data_baixa_derivada) liqComData += 1;
+    }
+  }
+  const coberturaEmpresa = liqTotal > 0 ? liqComData / liqTotal : 0;
+  const empresaCalibravel = coberturaEmpresa >= coberturaMinEmpresa;
+
   const acc: Record<Faixa, {
-    exposicao: number; pago: number; aberto: number; count: number;
+    exposicao: number; pago: number; aberto: number; count: number; countLiqData: number;
     topValor: number; lags: Array<{ valor: number; peso: number }>; lagsRaw: number[];
   }> = Object.fromEntries(
-    FAIXAS.map((f) => [f, { exposicao: 0, pago: 0, aberto: 0, count: 0, topValor: 0, lags: [], lagsRaw: [] }]),
+    FAIXAS.map((f) => [f, { exposicao: 0, pago: 0, aberto: 0, count: 0, countLiqData: 0, topValor: 0, lags: [], lagsRaw: [] }]),
   ) as unknown as Record<Faixa, {
-    exposicao: number; pago: number; aberto: number; count: number;
+    exposicao: number; pago: number; aberto: number; count: number; countLiqData: number;
     topValor: number; lags: Array<{ valor: number; peso: number }>; lagsRaw: number[];
   }>;
 
   for (const t of titulos) {
     if (!t.data_vencimento) continue;
-    const liquidado = !!t.data_recebimento;
-    const diasAtraso = liquidado
-      ? daysBetween(t.data_recebimento!, t.data_vencimento)
-      : daysBetween(hoje, t.data_vencimento);
-    const faixa = faixaAging(diasAtraso);
-    const a = acc[faixa];
-    a.exposicao += t.valor_documento;
-    a.count += 1;
-    a.topValor = Math.max(a.topValor, t.valor_documento);
-    if (liquidado) {
-      a.pago += t.valor_recebido;
-      const lag = Math.max(0, daysBetween(t.data_recebimento!, t.data_vencimento));
-      a.lags.push({ valor: lag, peso: t.valor_recebido });
+    const liquidado = statusLiquidado(t.status_titulo);
+    const temData = !!t.data_baixa_derivada;
+    if (liquidado && temData) {
+      const faixa = faixaAging(daysBetween(t.data_baixa_derivada!, t.data_vencimento));
+      const a = acc[faixa];
+      const pago = valorPagoEfetivo(t);
+      a.exposicao += t.valor_documento;
+      a.count += 1;
+      a.countLiqData += 1;
+      a.topValor = Math.max(a.topValor, t.valor_documento);
+      a.pago += pago;
+      const lag = Math.max(0, daysBetween(t.data_baixa_derivada!, t.data_vencimento));
+      a.lags.push({ valor: lag, peso: pago });
       a.lagsRaw.push(lag);
-    } else {
+    } else if (!liquidado) {
+      const faixa = faixaAging(daysBetween(hoje, t.data_vencimento));
+      const a = acc[faixa];
+      a.exposicao += t.valor_documento;
+      a.count += 1;
+      a.topValor = Math.max(a.topValor, t.valor_documento);
       a.aberto += t.saldo;
     }
+    // liquidado && !temData → EXCLUÍDO (sabemos QUE pagou, não QUANDO)
   }
 
   const out = {} as Record<Faixa, CurvaFaixa>;
@@ -587,7 +700,8 @@ function calibrarCurvas(
     const volOk = a.exposicao >= minVolume;
     const countOk = a.count >= minTitulos;
     const concentracaoOk = a.exposicao > 0 ? (a.topValor / a.exposicao) <= 0.6 : false;
-    const confiavel = countOk && volOk && concentracaoOk;
+    const liqDataOk = a.countLiqData >= minLiquidadosComData && a.pago > 0;
+    const confiavel = empresaCalibravel && countOk && volOk && concentracaoOk && liqDataOk;
     if (confiavel) {
       out[f] = {
         taxa_recebimento: Math.min(1, Math.max(0, a.exposicao > 0 ? a.pago / a.exposicao : 0)),
@@ -895,10 +1009,12 @@ type Indicadores = {
   saldo_tesouraria: number;
   inadimplencia_pct: number;
   concentracao_top5_clientes: Array<{ cliente: string; pct: number; valor: number }>;
-  prazo_medio_recebimento: number;
-  prazo_medio_pagamento: number;
+  // null quando a cobertura de baixa derivada é baixa (< COBERTURA_MIN_EMPRESA) → "—".
+  // PME é independente da baixa (estoque/cmv) → sempre number.
+  prazo_medio_recebimento: number | null;
+  prazo_medio_pagamento: number | null;
   prazo_medio_estoque: number;
-  cash_conversion_cycle: number;
+  cash_conversion_cycle: number | null;
 };
 
 function calcularIndicadores(
@@ -916,20 +1032,16 @@ function calcularIndicadores(
   const liquidez_operacional_liquida = dados.saldo_cc + ncg.aco.cr_aberto + ncg.aco.estoque - ncg.pco.total;
   const saldo_tesouraria = dados.saldo_cc - ncg.pco.folha_30d;
 
-  // Onda 2: PMR/PMP ponderados por R$ (não média simples por título — um título grande
-  // lento pesa mais que N pequenos rápidos).
-  const crsLiquidados = dados.crs.filter(c => c.data_recebimento && c.data_emissao);
-  const pmr = prazoMedioPonderado(
-    crsLiquidados.map(c => ({ dias: daysBetween(c.data_recebimento!, c.data_emissao!), valor: c.valor_recebido })),
-  );
-
-  const cpsLiquidados = dados.cps.filter(c => c.data_pagamento && c.data_emissao);
-  const pmp = prazoMedioPonderado(
-    cpsLiquidados.map(c => ({ dias: daysBetween(c.data_pagamento!, c.data_emissao!), valor: c.valor_pago })),
-  );
+  // Fase 3 (B): PMR/PMP da baixa DERIVADA (view v_capital_giro_prazos), com gate de
+  // cobertura — mesma fonte e mesmo gate do card client-side (getCapitalDeGiro). A
+  // coluna base data_recebimento/data_pagamento é sempre NULL no LIST do Omie; usá-la
+  // dava PMR=PMP=0d (mostrado em NcgDecomposicao). null = "—" (cobertura < 40%).
+  const pmr = prazoComGate(dados.prazos?.pmr, dados.prazos?.pmr_cobertura);
+  const pmp = prazoComGate(dados.prazos?.pmp, dados.prazos?.pmp_cobertura);
 
   const pme = dados.cmv_ttm > 0 ? (dados.estoque_valor / dados.cmv_ttm) * 365 : 0;
-  const ccc = pmr + pme - pmp;
+  // CCC só faz sentido com PMR E PMP (sem um dos dois, ciclo parcial engana). PME mostra à parte.
+  const ccc = (pmr !== null && pmp !== null) ? pmr + pme - pmp : null;
 
   // Onda 2: inadimplência = média ponderada por R$ de (1 − taxa_recebimento[faixa]) sobre
   // o CR aberto. Taxa de perda limpa — não mistura mais estoque (saldo >90) com fluxo (12m).

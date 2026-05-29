@@ -206,7 +206,7 @@ export default function AdminReposicaoAlertas() {
         p_evento_id: drillEvento.id,
         p_decisao: "aceitar",
         p_justificativa: `Atribuído ao grupo ${grupo.codigo_grupo} — ${grupo.descricao}`,
-        p_usuario_email: user?.email || null,
+        p_usuario_email: user?.email || undefined,
       });
       if (resErr) throw resErr;
       // Recalcula parâmetros (LT mudou)
@@ -234,8 +234,8 @@ export default function AdminReposicaoAlertas() {
         const { data, error } = await supabase.rpc("resolver_outlier", {
           p_evento_id: id,
           p_decisao: decisao,
-          p_justificativa: just || null,
-          p_usuario_email: user?.email || null,
+          p_justificativa: just || undefined,
+          p_usuario_email: user?.email || undefined,
         });
         if (error) throw error;
         results.push(data);

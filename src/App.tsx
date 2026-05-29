@@ -121,7 +121,6 @@ const ProductionOrders = lazy(() => import("./pages/ProductionOrders"));
 const AdminReposicaoRevisao = lazy(() => import("./pages/AdminReposicaoRevisao"));
 const AdminReposicaoHistorico = lazy(() => import("./pages/AdminReposicaoHistorico"));
 const AdminReposicaoAlertas = lazy(() => import("./pages/AdminReposicaoAlertas"));
-const AdminReposicaoAplicacao = lazy(() => import("./pages/AdminReposicaoAplicacao"));
 const AdminReposicaoGruposProducao = lazy(() => import("./pages/AdminReposicaoGruposProducao"));
 const AdminReposicaoSlaFornecedor = lazy(() => import("./pages/AdminReposicaoSlaFornecedor"));
 const AdminReposicaoCadeiaLogistica = lazy(() => import("./pages/AdminReposicaoCadeiaLogistica"));
