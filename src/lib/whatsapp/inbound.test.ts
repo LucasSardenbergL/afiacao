@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { waPhoneCandidates, parseInboundWebhook } from './inbound';
+import { waPhoneCandidates, parseInboundWebhook, is24hWindowOpen } from './inbound';
 
 describe('waPhoneCandidates', () => {
   it('normaliza E.164 do WhatsApp (móvel 13 dígitos) e gera variante sem o 9', () => {
@@ -48,5 +48,21 @@ describe('parseInboundWebhook', () => {
     expect(parseInboundWebhook(null)).toEqual([]);
     expect(parseInboundWebhook({})).toEqual([]);
     expect(parseInboundWebhook({ entry: [{}] })).toEqual([]);
+  });
+});
+
+describe('is24hWindowOpen', () => {
+  const now = new Date('2026-05-28T15:00:00Z');
+  it('aberta se última entrada do cliente < 24h', () => {
+    expect(is24hWindowOpen(new Date('2026-05-28T10:00:00Z'), now)).toBe(true);
+  });
+  it('fechada se >= 24h', () => {
+    expect(is24hWindowOpen(new Date('2026-05-27T14:59:00Z'), now)).toBe(false);
+  });
+  it('fechada se nunca houve entrada', () => {
+    expect(is24hWindowOpen(null, now)).toBe(false);
+  });
+  it('aceita string ISO', () => {
+    expect(is24hWindowOpen('2026-05-28T14:00:00Z', now)).toBe(true);
   });
 });

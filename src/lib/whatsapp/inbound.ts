@@ -58,3 +58,10 @@ export function waPhoneCandidates(input: string | null | undefined): string[] {
   }
   return [...out];
 }
+
+export function is24hWindowOpen(lastInboundAt: Date | string | null | undefined, now: Date = new Date()): boolean {
+  if (!lastInboundAt) return false;
+  const t = lastInboundAt instanceof Date ? lastInboundAt.getTime() : new Date(lastInboundAt).getTime();
+  if (!Number.isFinite(t)) return false;
+  return now.getTime() - t < 24 * 60 * 60 * 1000;
+}
