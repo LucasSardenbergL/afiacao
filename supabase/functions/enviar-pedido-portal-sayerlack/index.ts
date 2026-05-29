@@ -2207,8 +2207,27 @@ Deno.serve(async (req) => {
     );
   }
 
-  // === MODO SÍNCRONO (legado, usado pelo cron disparar-pedidos-aprovados) ===
-  const { detalhes, sucesso, falhasDef, falhasTmp, indeterminados } = await processCandidatos(supabase, candidatos);
+  // === MODO SÍNCRONO (legado) ===
+  // Mesmo CLAIM ATÔMICO do async (ver acima). Hoje não-exercido (todos os callers
+  // reais — disparar-pedidos-aprovados e o botão — usam async_mode; o lote cron é
+  // no-op), mas fecha a rota: sem isso o processarPedido marcaria enviando_portal de
+  // forma incondicional → duplo-envio se 2 síncronos concorressem no mesmo pedido.
+  const idsSync = candidatos.map((c) => c.id);
+  const { data: claimedSync, error: claimErrSync } = await supabase
+    .from("pedido_compra_sugerido")
+    .update({ status_envio_portal: "enviando_portal", portal_erro: null })
+    .in("id", idsSync)
+    .or("status_envio_portal.is.null,status_envio_portal.neq.enviando_portal")
+    .select("id");
+  if (claimErrSync) {
+    return new Response(
+      JSON.stringify({ error: `Falha ao reservar pedidos: ${claimErrSync.message}` }),
+      { headers: { ...corsHeaders, "Content-Type": "application/json" }, status: 500 },
+    );
+  }
+  const claimedSyncIds = new Set((claimedSync ?? []).map((r) => (r as { id: number }).id));
+  const candidatosSync = candidatos.filter((c) => claimedSyncIds.has(c.id));
+  const { detalhes, sucesso, falhasDef, falhasTmp, indeterminados } = await processCandidatos(supabase, candidatosSync);
 
   // Se algum erro foi BROWSERLESS_TOKEN invalido, devolve 500
   const tokenInvalid = detalhes.find((d) => (d.erro ?? "").includes("BROWSERLESS_TOKEN invalido"));
