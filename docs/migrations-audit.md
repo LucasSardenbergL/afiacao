@@ -21,14 +21,14 @@ Este audit valida **quais custom migrations estão de fato aplicadas no banco**.
 
 ## Resumo
 
-- **103** custom migrations totais
-- **487** objetos esperados (criados por estas migrations)
+- **105** custom migrations totais
+- **498** objetos esperados (criados por estas migrations)
 - Quebra por tipo:
-  - `rls_policy`: 139
-  - `index`: 96
-  - `cron_job`: 82
+  - `rls_policy`: 142
+  - `index`: 100
+  - `cron_job`: 83
   - `function`: 78
-  - `table`: 57
+  - `table`: 60
   - `trigger`: 31
   - `enum_value`: 4
 
@@ -1010,6 +1010,12 @@ Lista canônica do que cada migration *deveria* criar (extraído via regex de `C
 | --- | --- | --- |
 | `function` | `public.fin_sync_watchdog_check` | — |
 
+### `20260528010000_cron_sync_customers_dedicated.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `cron_job` | `cron.sync-customers-vendas-daily` | — |
+
 ### `20260528120000_reposicao_custo_cmc_em_transito.sql`
 
 | Tipo | Objeto | Parent |
@@ -1019,6 +1025,21 @@ Lista canônica do que cada migration *deveria* criar (extraído via regex de `C
 ### `20260528120001_v_titulo_baixas.sql`
 
 > _Nenhum objeto extraído via regex._ Migration provavelmente é `ALTER TABLE` / `UPDATE` / `INSERT` / RLS-only. Validar manualmente.
+
+### `20260528140000_whatsapp_fundacao.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `table` | `public.whatsapp_webhook_events` | — |
+| `table` | `public.whatsapp_conversations` | — |
+| `table` | `public.whatsapp_messages` | — |
+| `index` | `public.idx_wa_conv_customer` | `whatsapp_conversations` |
+| `index` | `public.idx_wa_conv_operator` | `whatsapp_conversations` |
+| `index` | `public.idx_wa_conv_last_msg` | `whatsapp_conversations` |
+| `index` | `public.idx_wa_msg_conv` | `whatsapp_messages` |
+| `rls_policy` | `public.wa_events_staff_select` | `whatsapp_webhook_events` |
+| `rls_policy` | `public.wa_conv_staff_all` | `whatsapp_conversations` |
+| `rls_policy` | `public.wa_msg_staff_all` | `whatsapp_messages` |
 
 ## Próximos passos quando algo der `❌`
 
