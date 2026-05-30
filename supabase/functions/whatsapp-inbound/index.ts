@@ -73,29 +73,47 @@ async function matchCustomer(supabase: ReturnType<typeof createClient>, fromPhon
 
 async function processMessage(supabase: ReturnType<typeof createClient>, msg: ParsedInbound) {
   const phoneKey = waPhoneCandidates(msg.fromPhone)[0] ?? msg.fromPhone.replace(/\D/g, "");
-  const customerUserId = await matchCustomer(supabase, msg.fromPhone);
-  let operatorId: string | null = null;
-  if (customerUserId) {
-    const { data: ca } = await supabase.from("carteira_assignments")
-      .select("owner_user_id").eq("customer_user_id", customerUserId).limit(1).maybeSingle();
-    operatorId = (ca as { owner_user_id?: string } | null)?.owner_user_id ?? null;
+
+  // 1) find-or-create da conversa SEM resetar estado (estado só muda se uma msg NOVA entrar).
+  let conversationId: string | null = null;
+  const { data: existing } = await supabase.from("whatsapp_conversations")
+    .select("id").eq("phone_key", phoneKey).maybeSingle();
+  if (existing) {
+    conversationId = (existing as { id: string }).id;
+  } else {
+    const customerUserId = await matchCustomer(supabase, msg.fromPhone);
+    let operatorId: string | null = null;
+    if (customerUserId) {
+      const { data: ca } = await supabase.from("carteira_assignments")
+        .select("owner_user_id").eq("customer_user_id", customerUserId).limit(1).maybeSingle();
+      operatorId = (ca as { owner_user_id?: string } | null)?.owner_user_id ?? null;
+    }
+    const { data: created } = await supabase.from("whatsapp_conversations").insert({
+      phone_key: phoneKey, phone_e164: msg.fromPhone, contact_name: msg.contactName,
+      customer_user_id: customerUserId, assigned_operator_id: operatorId, status: "aberta",
+    }).select("id").single();
+    conversationId = (created as { id: string } | null)?.id ?? null;
   }
-  const nowIso = new Date().toISOString();
-  const { data: conv } = await supabase.from("whatsapp_conversations").upsert({
-    phone_key: phoneKey, phone_e164: msg.fromPhone, contact_name: msg.contactName,
-    customer_user_id: customerUserId, assigned_operator_id: operatorId,
-    status: "aberta", last_inbound_at: nowIso, last_message_at: nowIso,
-  }, { onConflict: "phone_key" }).select("id").single();
-  const conversationId = (conv as { id: string }).id;
-  await supabase.from("whatsapp_messages").insert({
+  if (!conversationId) return;
+
+  // 2) insere a msg idempotente (ON CONFLICT DO NOTHING); só atualiza a conversa se for NOVA.
+  const { data: inserted } = await supabase.from("whatsapp_messages").upsert({
     conversation_id: conversationId, wa_message_id: msg.waMessageId, direction: "in",
     type: msg.type, body: msg.body, media_id: msg.mediaId,
     wa_timestamp: msg.waTimestamp?.toISOString() ?? null,
-  });
+  }, { onConflict: "wa_message_id", ignoreDuplicates: true }).select("id");
+  const isNew = Array.isArray(inserted) && inserted.length > 0;
+  if (isNew) {
+    const nowIso = new Date().toISOString();
+    await supabase.from("whatsapp_conversations")
+      .update({ status: "aberta", last_inbound_at: nowIso, last_message_at: nowIso }).eq("id", conversationId);
+  }
 }
 
 Deno.serve(async (req) => {
   const expected = Deno.env.get("WHATSAPP_WEBHOOK_SECRET");
+  // Trade-off de piloto: aceitamos o segredo via header OU ?token= porque a 360dialog pode não
+  // permitir header custom no webhook. O segredo é o WHATSAPP_WEBHOOK_SECRET (rotacionável), não credencial de usuário. Revisitar (header-only) no PR2.
   const provided = req.headers.get("x-whatsapp-secret") ?? new URL(req.url).searchParams.get("token") ?? "";
   if (!expected || !timingSafeEq(expected, provided)) {
     return new Response(JSON.stringify({ error: "Unauthorized" }), { status: 401 });

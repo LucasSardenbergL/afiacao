@@ -50,7 +50,7 @@ export default function WhatsappInbox() {
               ))}
             </div>
             <form className="p-3 border-t flex gap-2"
-              onSubmit={(e) => { e.preventDefault(); if (draft.trim()) { send.mutate(draft.trim()); setDraft(''); } }}>
+              onSubmit={(e) => { e.preventDefault(); const t = draft.trim(); if (t) send.mutate(t, { onSuccess: () => setDraft('') }); }}>
               <Input value={draft} onChange={(e) => setDraft(e.target.value)} placeholder="Responder…" />
               <Button type="submit" disabled={send.isPending}>Enviar</Button>
             </form>
