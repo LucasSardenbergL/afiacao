@@ -52,8 +52,9 @@ export default function AdminReposicaoRevisao() {
           </p>
           {statusFilter === "primeira_compra" && (
             <p className="text-sm text-status-info mt-1">
-              Itens que vendem com recorrência mas nunca foram comprados. Revise a recorrência e clique
-              em <strong>Promover</strong> — entram no fluxo normal de compra com uma quantidade-teste capada.
+              Itens que vendem com recorrência mas estão fora da reposição automática. Revise a recorrência
+              e clique em <strong>Promover</strong> — entram no fluxo normal de compra com uma quantidade-teste
+              capada (o motor só compra se o estoque estiver baixo).
             </p>
           )}
         </div>

@@ -92,14 +92,15 @@ export function useRevisaoParametros() {
         return { rows: priced, total: count ?? 0 };
       }
 
-      // Cold-start: candidatos a PRIMEIRA COMPRA (venda recorrente, nunca comprados). Lê da view por
-      // status_sugestao='CANDIDATO_PRIMEIRA_COMPRA'; exibe os parâmetros CAPADOS da primeira compra.
+      // Cold-start: candidatos a PRIMEIRA COMPRA (venda recorrente, nunca comprados). Lê de uma VIEW
+      // DERIVADA dedicada (v_sku_candidatos_primeira_compra) — não toca a view-mãe money-path. A view
+      // só contém candidatos, então não precisa filtrar por status. Não está nos types gerados até a
+      // migration A1 + regen → cast `as never` no .from (resultado tipado por SkuSugeridoView).
       if (statusFilter === "primeira_compra") {
         let q = supabase
-          .from("v_sku_parametros_sugeridos")
+          .from("v_sku_candidatos_primeira_compra" as never)
           .select("*", { count: "exact" })
-          .eq("empresa", empresa)
-          .eq("status_sugestao", "CANDIDATO_PRIMEIRA_COMPRA");
+          .eq("empresa", empresa);
 
         if (classes.length > 0) q = q.in("classe_consolidada", classes);
         if (search.trim()) {

@@ -91,7 +91,7 @@ export function SkuRow({ row: r, checked, onToggleSelect, onOpenDetail, onPromov
           <Badge
             variant="secondary"
             className="bg-status-info-bg text-status-info border-status-info/20"
-            title="Vende com recorrência mas nunca foi comprado. Revise e promova: entra no fluxo normal de compra (qtde-teste capada)."
+            title="Vende com recorrência mas está fora da reposição automática. Revise e promova: entra no fluxo normal de compra (qtde-teste capada)."
           >
             Candidato 1ª compra
           </Badge>
