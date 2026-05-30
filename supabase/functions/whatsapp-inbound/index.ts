@@ -126,8 +126,8 @@ Deno.serve(async (req) => {
 
   const messages = parseInboundWebhook(payload);
   const work = (async () => { for (const m of messages) { try { await processMessage(supabase, m); } catch (e) { console.error("[whatsapp-inbound] processMessage", e); } } })();
-  // @ts-ignore EdgeRuntime
-  if (typeof EdgeRuntime !== "undefined" && EdgeRuntime.waitUntil) EdgeRuntime.waitUntil(work); else await work;
+  const edgeRuntime = (globalThis as { EdgeRuntime?: { waitUntil?: (p: Promise<unknown>) => void } }).EdgeRuntime;
+  if (edgeRuntime?.waitUntil) edgeRuntime.waitUntil(work); else await work;
 
   return new Response(JSON.stringify({ ok: true, received: messages.length }), { status: 200, headers: { "Content-Type": "application/json" } });
 });
