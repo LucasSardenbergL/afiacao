@@ -2,11 +2,12 @@
 // Extraído de src/pages/Customer360.tsx (god-component split).
 import { Link } from 'react-router-dom';
 import {
-  ArrowLeft, Building2, MessageSquare, ShoppingBag, AlertCircle, Activity,
+  ArrowLeft, Building2, Calendar, MessageSquare, ShoppingBag, AlertCircle, Activity,
 } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { CallButton } from '@/components/call/CallButton';
+import { AgendarVisitaDialog } from '@/components/visitas/AgendarVisitaDialog';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
 import { cn } from '@/lib/utils';
 import { whatsappLink } from '@/lib/phone';
@@ -167,6 +168,16 @@ export function CustomerHero({
                 Novo pedido
               </Link>
             </Button>
+            <AgendarVisitaDialog
+              customerUserId={customer.user_id}
+              customerName={customer.name}
+              trigger={
+                <Button variant="outline" size="sm">
+                  <Calendar className="w-3.5 h-3.5 mr-1.5" />
+                  Agendar visita
+                </Button>
+              }
+            />
           </div>
         </div>
       </header>

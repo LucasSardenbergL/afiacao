@@ -29,6 +29,7 @@ import { CustomerContactsTab } from '@/components/customer/CustomerContactsTab';
 import { fmt, HEALTH_CLASSES, formatDocument } from './config';
 import { MetricCard, ScoreItem } from './cards';
 import { RequiresPoToggle } from './RequiresPoToggle';
+import { AgendarVisitaDialog } from '@/components/visitas/AgendarVisitaDialog';
 import type { Customer, ClientScore, ToolCategory, UserTool, SalesOrder } from './types';
 
 export function Customer360View({
@@ -107,10 +108,15 @@ export function Customer360View({
               </Button>
             </DropdownMenuTrigger>
             <DropdownMenuContent align="end">
-              <DropdownMenuItem disabled>
-                <Calendar className="w-3.5 h-3.5 mr-2" /> Agendar visita
-                <span className="ml-2 text-[10px] text-muted-foreground">em breve</span>
-              </DropdownMenuItem>
+              <AgendarVisitaDialog
+                customerUserId={customer.user_id}
+                customerName={customer.name}
+                trigger={
+                  <DropdownMenuItem onSelect={(e) => e.preventDefault()}>
+                    <Calendar className="w-3.5 h-3.5 mr-2" /> Agendar visita
+                  </DropdownMenuItem>
+                }
+              />
             </DropdownMenuContent>
           </DropdownMenu>
         </div>

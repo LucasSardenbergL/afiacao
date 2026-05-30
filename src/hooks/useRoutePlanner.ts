@@ -10,6 +10,7 @@ import { supabase } from '@/integrations/supabase/client';
 import { useAuth } from '@/contexts/AuthContext';
 import { useFarmerScoring } from '@/hooks/useFarmerScoring';
 import { toast } from 'sonner';
+import { navLink } from '@/lib/maps/nav-link';
 import type {
   StopType,
   PlanningMode,
@@ -782,12 +783,9 @@ export function useRoutePlanner() {
   }, [filteredStops, filterPeriod]);
 
   const openInWaze = (stop: RouteStop) => {
-    if (stop.lat && stop.lng) {
-      window.open(`https://waze.com/ul?ll=${stop.lat},${stop.lng}&navigate=yes`, '_blank');
-    } else {
-      const q = `${stop.address.street}, ${stop.address.number}, ${stop.address.city}, ${stop.address.state}`;
-      window.open(`https://waze.com/ul?q=${encodeURIComponent(q)}&navigate=yes`, '_blank');
-    }
+    const q = `${stop.address.street}, ${stop.address.number}, ${stop.address.city}, ${stop.address.state}`;
+    const href = navLink(q, stop.lat ?? null, stop.lng ?? null);
+    if (href) window.open(href, '_blank');
   };
 
   const openInGoogleMaps = (stop: RouteStop) => {
