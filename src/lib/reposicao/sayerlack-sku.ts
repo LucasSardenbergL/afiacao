@@ -20,21 +20,37 @@
 // Token do código: começa em fronteira de palavra, letras+díg opcionais, .díg, [.díg]?, sufixo.
 const CODIGO_RE = /\b[A-Z]{2,4}\d{0,2}\.\d{3,4}(?:\.\d{2,4})?[A-Z]{1,3}\d?\b/g;
 
+// Variante separador-ESPAÇO: os TINGIDORES trazem o código com ESPAÇO no lugar do 1º ponto
+// na descrição Omie ("TEH 3505.211FG") em vez do formato pontuado ("TEH.3505.211FG").
+// extrairCodigosSayerlack normaliza a saída (espaço→ponto) — o gabarito provou que o
+// sku_portal correto é PONTUADO (formato que o portal busca).
+// DUPLAMENTE ESTREITA (money-path — catch do codex 2026-05-30):
+//   (a) EXIGE a 2ª parte pontuada (\.\d{2,4}) → rejeita "PU 6611A" (sem 2ª parte);
+//   (b) o PREFIXO é restrito à família de tingidor/mordente/acquacolor (TEH|TE|TM|TY) → sem
+//       isso, "PU 6611.22BH" ou "COR RAL 9010.20BR" (palavra comum + núm.núm) virariam
+//       de-para inventado (PO errado). Só o ponto colado ao prefixo é sinal forte de código;
+//       o espaço é ambíguo, então o prefixo precisa ser de uma família conhecida.
+// TEH antes de TE na alternância (match guloso do prefixo mais longo).
+const CODIGO_ESPACO_RE = /\b(?:TEH|TE|TM|TY)\d{0,2} \d{3,4}\.\d{2,4}[A-Z]{1,3}\d?\b/g;
+
 // O sufixo = trecho final de letras (+ 1 dígito opcional, ex L5) do código.
 const SUFIXO_RE = /([A-Z]{1,3}\d?)$/;
 
-const PARSER_VERSION = 1;
+const PARSER_VERSION = 2; // v2: + variante separador-espaço (tingidores), saída normalizada pra ponto
 export { PARSER_VERSION };
 
 function norm(s: string | null | undefined): string {
   return (s ?? '').normalize('NFKC').trim().toUpperCase();
 }
 
-/** Todos os códigos Sayerlack distintos encontrados na descrição (ordem de aparição). */
+/** Todos os códigos Sayerlack distintos encontrados na descrição (ordem de aparição).
+ *  Casa o formato pontuado e a variante separador-espaço (esta normalizada espaço→ponto). */
 export function extrairCodigosSayerlack(descricao: string | null | undefined): string[] {
   if (!descricao) return [];
-  const matches = norm(descricao).match(CODIGO_RE) ?? [];
-  return [...new Set(matches)];
+  const d = norm(descricao);
+  const pontuados = d.match(CODIGO_RE) ?? [];
+  const espacados = (d.match(CODIGO_ESPACO_RE) ?? []).map((m) => m.replace(' ', '.'));
+  return [...new Set([...pontuados, ...espacados])];
 }
 
 /** O sufixo/embalagem do código (ex.: "QT", "GL", "L5", "CGL"). NÃO é unidade comercial. */

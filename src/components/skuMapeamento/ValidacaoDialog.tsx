@@ -75,10 +75,19 @@ export function ValidacaoDialog({ open, onOpenChange, validando, validacao, grav
                         <div key={s.sku_omie}>{s.sku_omie} → <b>{s.sku_portal}</b> <span className="text-muted-foreground">({s.sufixo})</span></div>
                       ))}
                     </div>
-                    <Button size="sm" onClick={() => gravarSeguros(validacao.sugestoes!.seguros)} disabled={gravandoSeguros}>
-                      {gravandoSeguros ? <Loader2 className="h-4 w-4 mr-1 animate-spin" /> : <Wand2 className="h-4 w-4 mr-1" />}
-                      Gravar {validacao.sugestoes.seguros.length} automaticamente (fator 1 · revise)
-                    </Button>
+                    {(validacao.gabarito?.divergem.length ?? 0) > 0 ? (
+                      // GATE money-path: se o parser DIVERGE de algum mapeamento manual, não auto-gravar
+                      // em lote — gravar agora arriscaria de-para errado (PO errado no fornecedor).
+                      <div className="text-xs text-status-warning border-t pt-2">
+                        Auto-gravação bloqueada: resolva as {validacao.gabarito!.divergem.length} divergência(s) do gabarito
+                        acima antes de gravar em lote (o parser discorda de um mapeamento manual existente).
+                      </div>
+                    ) : (
+                      <Button size="sm" onClick={() => gravarSeguros(validacao.sugestoes!.seguros)} disabled={gravandoSeguros}>
+                        {gravandoSeguros ? <Loader2 className="h-4 w-4 mr-1 animate-spin" /> : <Wand2 className="h-4 w-4 mr-1" />}
+                        Gravar {validacao.sugestoes.seguros.length} automaticamente (fator 1 · revise)
+                      </Button>
+                    )}
                   </>
                 ) : (
                   <div className="text-xs text-muted-foreground border-t pt-2">Nenhum código novo extraível dos faltantes.</div>
@@ -91,13 +100,17 @@ export function ValidacaoDialog({ open, onOpenChange, validando, validacao, grav
               </div>
             )}
 
-            {validacao.faltantes.length > 0 ? (
+            {validacao.faltantesMotor.length > 0 ? (
               <Alert variant="destructive">
                 <AlertTriangle className="h-4 w-4" />
-                <AlertTitle>{validacao.faltantes.length} SKU(s) sem mapeamento</AlertTitle>
+                <AlertTitle>{validacao.faltantesMotor.length} SKU(s) que o motor pode pedir sem de-para no portal</AlertTitle>
                 <AlertDescription>
-                  <div className="max-h-48 overflow-y-auto mt-2 space-y-1 text-xs">
-                    {validacao.faltantes.map((f) => (
+                  <div className="text-xs mt-1 mb-2">
+                    Compráveis pela reposição automática e sem mapeamento ativo — o disparo falharia
+                    com "erro_nao_retentavel". {validacao.faltantes.length} também aparecem no histórico de pedidos.
+                  </div>
+                  <div className="max-h-48 overflow-y-auto space-y-1 text-xs">
+                    {validacao.faltantesMotor.map((f) => (
                       <div key={f.sku_codigo_omie} className="font-mono">
                         {f.sku_codigo_omie} — {f.sku_descricao}
                       </div>
@@ -108,7 +121,7 @@ export function ValidacaoDialog({ open, onOpenChange, validando, validacao, grav
             ) : (
               <Alert>
                 <CheckCircle2 className="h-4 w-4" />
-                <AlertTitle>Todos os SKUs do histórico estão mapeados</AlertTitle>
+                <AlertTitle>Nenhum SKU comprável pelo motor está sem mapeamento</AlertTitle>
               </Alert>
             )}
 
