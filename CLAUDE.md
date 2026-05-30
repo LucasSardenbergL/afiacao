@@ -4,6 +4,8 @@
 
 > **🗣️ Idioma das sessões (preferência do Lucas, 2026-05-20):** responda SEMPRE em **português brasileiro** — nesta sessão e em **qualquer sessão nova ou subagente/sessão spawnada a partir de outra que tenhamos**. Toda comunicação com o usuário (texto, resumos, perguntas, descrição de PR) em pt-BR. Código, rotas, commits e PRs já são pt-BR (ver §5).
 
+> **🪟 Gestão de contexto (preferência do Lucas, 2026-05-30):** em sessões longas, **sugira `/compact` proativamente** quando perceber sinais de contexto cheio (é lembrete, não automação — não tenho leitura contínua da % da janela). ⚠️ **Auto-compactar em 60% NÃO é viável e não deve ser re-tentado:** não existe setting de threshold (o auto-compact nativo só dispara perto do *limite*), nenhum hook dispara por % de contexto, e hook não invoca slash command (`/compact` não é programaticamente acionável — nem por hook, nem por mim). Quem quer "compactar cedo" usa: `/compact <foco>` manual + `/context` pra medir + subagentes (janela própria, não incham a sessão principal).
+
 ---
 
 ## 1. Produto
