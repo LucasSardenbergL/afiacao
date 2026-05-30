@@ -21,13 +21,13 @@ Este audit valida **quais custom migrations estão de fato aplicadas no banco**.
 
 ## Resumo
 
-- **118** custom migrations totais
-- **518** objetos esperados (criados por estas migrations)
+- **120** custom migrations totais
+- **521** objetos esperados (criados por estas migrations)
 - Quebra por tipo:
   - `rls_policy`: 142
   - `index`: 100
-  - `function`: 92
-  - `cron_job`: 87
+  - `function`: 94
+  - `cron_job`: 88
   - `table`: 61
   - `trigger`: 32
   - `enum_value`: 4
@@ -1105,6 +1105,12 @@ Lista canônica do que cada migration *deveria* criar (extraído via regex de `C
 | --- | --- | --- |
 | `function` | `public.gerar_pedidos_sugeridos_ciclo` | — |
 
+### `20260530160000_data_health_diagnostico_gate_status.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `function` | `public._data_health_compute` | — |
+
 ### `20260530170000_unschedule_sayerlack_lote_retry.sql`
 
 > _Nenhum objeto extraído via regex._ Migration provavelmente é `ALTER TABLE` / `UPDATE` / `INSERT` / RLS-only. Validar manualmente.
@@ -1123,6 +1129,13 @@ Lista canônica do que cada migration *deveria* criar (extraído via regex de `C
 | `function` | `public._data_health_compute` | — |
 | `function` | `public.data_health_watchdog` | — |
 | `function` | `public.fin_sync_heartbeat` | — |
+
+### `20260530190000_reposicao_preencher_parametros_faltantes.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `function` | `public.preencher_parametros_faltantes_skus` | — |
+| `cron_job` | `cron.reposicao-preencher-parametros-faltantes` | — |
 
 ## Próximos passos quando algo der `❌`
 
