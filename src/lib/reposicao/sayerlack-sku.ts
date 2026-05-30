@@ -42,6 +42,17 @@ export function sufixoSayerlack(codigo: string): string {
   return norm(codigo).match(SUFIXO_RE)?.[1] ?? '';
 }
 
+/**
+ * Produto FRACIONADO (descrição termina em 450ML/405ML): no Omie é o item-pai (QT)
+ * transformado em unidades menores — só VENDIDO, nunca COMPRADO pelo portal Sayerlack.
+ * Espelha a exclusão da RPC gerar_pedidos_sugeridos_ciclo (NOT ILIKE '%450ML'/'%405ML'),
+ * pra tirar esses fantasmas históricos da validação de mapeamento.
+ */
+export function ehProdutoFracionado(descricao: string | null | undefined): boolean {
+  const d = norm(descricao);
+  return d.endsWith('450ML') || d.endsWith('405ML');
+}
+
 export type ResolucaoSayerlack =
   | { status: 'ok'; codigo: string; sufixo: string; candidatos: string[] }
   | { status: 'sem_codigo'; candidatos: [] }
