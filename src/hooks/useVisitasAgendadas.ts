@@ -43,6 +43,7 @@ export function useVisitasAgendadas() {
       scheduledDate: string;
       notes?: string;
     }) => {
+      if (!uid) throw new Error('Sessão não autenticada');
       const { error } = await visitasAgendadasTable().insert({
         customer_user_id: input.customerUserId,
         scheduled_by: uid!,
@@ -106,6 +107,7 @@ export function useVisitasAgendadas() {
 
   const checkIn = useMutation({
     mutationFn: async (input: { customerUserId: string }) => {
+      if (!uid) throw new Error('Sessão não autenticada');
       const coords = await new Promise<{ lat: number; lng: number } | null>((resolve) => {
         if (!navigator.geolocation) return resolve(null);
         navigator.geolocation.getCurrentPosition(

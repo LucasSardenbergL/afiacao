@@ -22,7 +22,7 @@ export function ScheduledVisitsPanel() {
   const { proximas, cancelar, checkIn } = useVisitasAgendadas();
 
   const visits = proximas.data ?? [];
-  const customerIds = [...new Set(visits.map((v) => v.customer_user_id))];
+  const customerIds = [...new Set(visits.map((v) => v.customer_user_id))].sort();
 
   // Resolve nomes dos clientes
   const namesQuery = useQuery({
