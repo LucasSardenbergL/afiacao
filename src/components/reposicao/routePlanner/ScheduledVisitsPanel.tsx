@@ -12,11 +12,7 @@ import { supabase } from '@/integrations/supabase/client';
 import { useVisitasAgendadas } from '@/hooks/useVisitasAgendadas';
 import { deriveVisitaStatus } from '@/lib/visitas/visita-status';
 import { navLink } from '@/lib/maps/nav-link';
-
-// hoje em ISO 'YYYY-MM-DD' — convencão UTC usada no restante do route planner
-function hojeISO(): string {
-  return new Date().toISOString().split('T')[0];
-}
+import { hojeISO } from '@/lib/visitas/today';
 
 export function ScheduledVisitsPanel() {
   const { proximas, cancelar, checkIn } = useVisitasAgendadas();

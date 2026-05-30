@@ -7,10 +7,7 @@ import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Textarea } from '@/components/ui/textarea';
 import { useVisitasAgendadas } from '@/hooks/useVisitasAgendadas';
-
-function hojeISO(): string {
-  return new Date().toISOString().split('T')[0];
-}
+import { hojeISO } from '@/lib/visitas/today';
 
 export function AgendarVisitaDialog({
   customerUserId,

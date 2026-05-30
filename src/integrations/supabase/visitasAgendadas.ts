@@ -15,14 +15,6 @@ export interface VisitaAgendadaRow {
   updated_at: string;
 }
 
-export interface NovaVisitaAgendada {
-  customer_user_id: string;
-  scheduled_by: string;
-  scheduled_date: string;
-  notes?: string | null;
-  visit_type?: string;
-}
-
 // ---------------------------------------------------------------------------
 // Builder estreito — `visitas_agendadas` ainda não está no types.ts gerado.
 // Declarar só os métodos usados evita a instanciação "excessively deep" (TS2589)
