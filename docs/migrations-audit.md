@@ -21,14 +21,14 @@ Este audit valida **quais custom migrations estão de fato aplicadas no banco**.
 
 ## Resumo
 
-- **115** custom migrations totais
-- **503** objetos esperados (criados por estas migrations)
+- **116** custom migrations totais
+- **513** objetos esperados (criados por estas migrations)
 - Quebra por tipo:
-  - `rls_policy`: 139
-  - `index`: 96
+  - `rls_policy`: 142
+  - `index`: 100
   - `function`: 88
   - `cron_job`: 87
-  - `table`: 58
+  - `table`: 61
   - `trigger`: 31
   - `enum_value`: 4
 
@@ -1062,6 +1062,21 @@ Lista canônica do que cada migration *deveria* criar (extraído via regex de `C
 | Tipo | Objeto | Parent |
 | --- | --- | --- |
 | `function` | `public._data_health_compute` | — |
+
+### `20260528140000_whatsapp_fundacao.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `table` | `public.whatsapp_webhook_events` | — |
+| `table` | `public.whatsapp_conversations` | — |
+| `table` | `public.whatsapp_messages` | — |
+| `index` | `public.idx_wa_conv_customer` | `whatsapp_conversations` |
+| `index` | `public.idx_wa_conv_operator` | `whatsapp_conversations` |
+| `index` | `public.idx_wa_conv_last_msg` | `whatsapp_conversations` |
+| `index` | `public.idx_wa_msg_conv` | `whatsapp_messages` |
+| `rls_policy` | `public.wa_events_staff_select` | `whatsapp_webhook_events` |
+| `rls_policy` | `public.wa_conv_staff_all` | `whatsapp_conversations` |
+| `rls_policy` | `public.wa_msg_staff_all` | `whatsapp_messages` |
 
 ### `20260528150000_fin_estoque_omie_feed.sql`
 

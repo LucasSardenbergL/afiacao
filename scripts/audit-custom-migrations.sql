@@ -3,7 +3,7 @@
 -- ========================================================================
 --
 -- Gerado por: scripts/audit-custom-migrations.ts
--- Total de custom migrations: 115
+-- Total de custom migrations: 116
 --
 -- Como usar:
 --   1. Abra o Supabase SQL Editor (via Lovable Cloud → Backend → SQL Editor)
@@ -130,6 +130,7 @@ WITH expected (version, slug, filename) AS (VALUES
   ('20260528120002', 'v_capital_giro_prazos', '20260528120002_v_capital_giro_prazos.sql'),
   ('20260528130000', 'fin_sync_heartbeat_tz_fix', '20260528130000_fin_sync_heartbeat_tz_fix.sql'),
   ('20260528140000', 'data_health_compute_msg_tz', '20260528140000_data_health_compute_msg_tz.sql'),
+  ('20260528140000', 'whatsapp_fundacao', '20260528140000_whatsapp_fundacao.sql'),
   ('20260528150000', 'fin_estoque_omie_feed', '20260528150000_fin_estoque_omie_feed.sql'),
   ('20260528194751', 'data_health_consolida_last_error_e_reposicao_checks', '20260528194751_data_health_consolida_last_error_e_reposicao_checks.sql'),
   ('20260530140000', 'fin_watchdog_sync_stale_grace_email', '20260530140000_fin_watchdog_sync_stale_grace_email.sql'),
@@ -649,6 +650,16 @@ WITH expected_objects (migration, kind, schema_name, object_name, parent_name) A
   ('reposicao_custo_cmc_em_transito', 'function', 'public', 'gerar_pedidos_sugeridos_ciclo', ''),
   ('fin_sync_heartbeat_tz_fix', 'function', 'public', 'fin_sync_heartbeat', ''),
   ('data_health_compute_msg_tz', 'function', 'public', '_data_health_compute', ''),
+  ('whatsapp_fundacao', 'table', 'public', 'whatsapp_webhook_events', ''),
+  ('whatsapp_fundacao', 'table', 'public', 'whatsapp_conversations', ''),
+  ('whatsapp_fundacao', 'table', 'public', 'whatsapp_messages', ''),
+  ('whatsapp_fundacao', 'index', 'public', 'idx_wa_conv_customer', 'whatsapp_conversations'),
+  ('whatsapp_fundacao', 'index', 'public', 'idx_wa_conv_operator', 'whatsapp_conversations'),
+  ('whatsapp_fundacao', 'index', 'public', 'idx_wa_conv_last_msg', 'whatsapp_conversations'),
+  ('whatsapp_fundacao', 'index', 'public', 'idx_wa_msg_conv', 'whatsapp_messages'),
+  ('whatsapp_fundacao', 'rls_policy', 'public', 'wa_events_staff_select', 'whatsapp_webhook_events'),
+  ('whatsapp_fundacao', 'rls_policy', 'public', 'wa_conv_staff_all', 'whatsapp_conversations'),
+  ('whatsapp_fundacao', 'rls_policy', 'public', 'wa_msg_staff_all', 'whatsapp_messages'),
   ('fin_estoque_omie_feed', 'function', 'public', 'fin_estimar_estoque_omie', ''),
   ('fin_estoque_omie_feed', 'cron_job', 'cron', 'sync-inventory-colacor-vendas-1h', ''),
   ('fin_estoque_omie_feed', 'cron_job', 'cron', 'sync-inventory-servicos-1h', ''),
