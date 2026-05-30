@@ -3,7 +3,7 @@
 -- ========================================================================
 --
 -- Gerado por: scripts/audit-custom-migrations.ts
--- Total de custom migrations: 118
+-- Total de custom migrations: 120
 --
 -- Como usar:
 --   1. Abra o Supabase SQL Editor (via Lovable Cloud → Backend → SQL Editor)
@@ -137,7 +137,9 @@ WITH expected (version, slug, filename) AS (VALUES
   ('20260530143818', 'reposicao_excluir_405ml', '20260530143818_reposicao_excluir_405ml.sql'),
   ('20260530160000', 'data_health_diagnostico_gate_status', '20260530160000_data_health_diagnostico_gate_status.sql'),
   ('20260530170000', 'unschedule_sayerlack_lote_retry', '20260530170000_unschedule_sayerlack_lote_retry.sql'),
-  ('20260530180000', 'fix_sku_fornecedor_externo_atualizado_em_trigger', '20260530180000_fix_sku_fornecedor_externo_atualizado_em_trigger.sql')
+  ('20260530180000', 'fix_sku_fornecedor_externo_atualizado_em_trigger', '20260530180000_fix_sku_fornecedor_externo_atualizado_em_trigger.sql'),
+  ('20260530190000', 'reposicao_preencher_parametros_faltantes', '20260530190000_reposicao_preencher_parametros_faltantes.sql'),
+  ('20260530200000', 'data_health_checks_acionaveis', '20260530200000_data_health_checks_acionaveis.sql')
 )
 SELECT
   e.version,
@@ -671,7 +673,10 @@ WITH expected_objects (migration, kind, schema_name, object_name, parent_name) A
   ('reposicao_excluir_405ml', 'function', 'public', 'gerar_pedidos_sugeridos_ciclo', ''),
   ('data_health_diagnostico_gate_status', 'function', 'public', '_data_health_compute', ''),
   ('fix_sku_fornecedor_externo_atualizado_em_trigger', 'function', 'public', 'set_atualizado_em_column', ''),
-  ('fix_sku_fornecedor_externo_atualizado_em_trigger', 'trigger', 'public', 'sku_fornecedor_externo_set_atualizado_em', 'sku_fornecedor_externo')
+  ('fix_sku_fornecedor_externo_atualizado_em_trigger', 'trigger', 'public', 'sku_fornecedor_externo_set_atualizado_em', 'sku_fornecedor_externo'),
+  ('reposicao_preencher_parametros_faltantes', 'function', 'public', 'preencher_parametros_faltantes_skus', ''),
+  ('reposicao_preencher_parametros_faltantes', 'cron_job', 'cron', 'reposicao-preencher-parametros-faltantes', ''),
+  ('data_health_checks_acionaveis', 'function', 'public', '_data_health_compute', '')
 )
 SELECT
   e.migration,
