@@ -21,14 +21,14 @@ Este audit valida **quais custom migrations estão de fato aplicadas no banco**.
 
 ## Resumo
 
-- **111** custom migrations totais
-- **498** objetos esperados (criados por estas migrations)
+- **113** custom migrations totais
+- **502** objetos esperados (criados por estas migrations)
 - Quebra por tipo:
   - `rls_policy`: 139
   - `index`: 96
-  - `cron_job`: 86
-  - `function`: 85
-  - `table`: 57
+  - `function`: 87
+  - `cron_job`: 87
+  - `table`: 58
   - `trigger`: 31
   - `enum_value`: 4
 
@@ -1029,6 +1029,14 @@ Lista canônica do que cada migration *deveria* criar (extraído via regex de `C
 | --- | --- | --- |
 | `cron_job` | `cron.sayerlack-portal-lote-retry` | — |
 
+### `20260528040000_sayerlack_retry_motor.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `table` | `public.sayerlack_retry_motor_log` | — |
+| `function` | `public.sayerlack_retry_orfaos` | — |
+| `cron_job` | `cron.sayerlack-retry-orfaos` | — |
+
 ### `20260528120000_reposicao_custo_cmc_em_transito.sql`
 
 | Tipo | Objeto | Parent |
@@ -1069,6 +1077,12 @@ Lista canônica do que cada migration *deveria* criar (extraído via regex de `C
 | --- | --- | --- |
 | `function` | `public._data_health_compute` | — |
 | `function` | `public.fin_sync_heartbeat` | — |
+
+### `20260530140000_fin_watchdog_sync_stale_grace_email.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `function` | `public.fin_sync_watchdog_check` | — |
 
 ## Próximos passos quando algo der `❌`
 
