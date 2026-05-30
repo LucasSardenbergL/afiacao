@@ -7,7 +7,7 @@ import { supabase } from '@/integrations/supabase/client';
 import { toast } from 'sonner';
 import { EMPTY_FORM } from './config';
 import type { Mapeamento, DescricaoLookup, ValidacaoResult } from './types';
-import { validarGabarito, sugerirMapeamentos, PARSER_VERSION, type SugestaoSegura } from '@/lib/reposicao/sayerlack-sku';
+import { validarGabarito, sugerirMapeamentos, ehProdutoFracionado, PARSER_VERSION, type SugestaoSegura } from '@/lib/reposicao/sayerlack-sku';
 
 export function useSkuMapeamento() {
   const qc = useQueryClient();
@@ -182,16 +182,28 @@ export function useSkuMapeamento() {
           .map((m) => m.sku_omie),
       );
 
+      // SKUs com reposição automática DESLIGADA: o motor não pede → não são "faltantes" reais.
+      // (ex.: produtos não-comprados pelo portal, como os 8:1 e o selante base água)
+      const { data: spDesligados } = await supabase
+        .from('sku_parametros')
+        .select('sku_codigo_omie')
+        .eq('empresa', 'OBEN')
+        .eq('habilitado_reposicao_automatica', false);
+      const skusDesligados = new Set(
+        (spDesligados ?? []).map((r) => String((r as { sku_codigo_omie: unknown }).sku_codigo_omie)),
+      );
+
       const faltantes: ValidacaoResult['faltantes'] = [];
       skusUnicos.forEach((desc, sku) => {
-        if (!mapAtivos.has(sku)) {
-          faltantes.push({
-            empresa: 'OBEN',
-            fornecedor_nome: 'RENNER SAYERLACK S/A',
-            sku_codigo_omie: sku,
-            sku_descricao: desc,
-          });
-        }
+        // só conta como faltante o que o motor REALMENTE vai pedir: não-mapeado, não-fracionado
+        // (450/405ml), e com reposição ligada. O resto é fantasma histórico (não-comprado).
+        if (mapAtivos.has(sku) || ehProdutoFracionado(desc) || skusDesligados.has(String(sku))) return;
+        faltantes.push({
+          empresa: 'OBEN',
+          fornecedor_nome: 'RENNER SAYERLACK S/A',
+          sku_codigo_omie: sku,
+          sku_descricao: desc,
+        });
       });
 
       const suspeitos = (mapeamentos ?? []).filter(

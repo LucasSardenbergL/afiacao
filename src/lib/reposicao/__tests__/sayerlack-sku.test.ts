@@ -6,6 +6,7 @@ import {
   compararComGabarito,
   validarGabarito,
   sugerirMapeamentos,
+  ehProdutoFracionado,
 } from '../sayerlack-sku';
 
 // GABARITO REAL — mapeamentos que o founder já fez na mão (descricao Omie → sku_portal salvo).
@@ -155,5 +156,20 @@ describe('sugerirMapeamentos (auto-preenchimento dos faltantes)', () => {
     const r = sugerirMapeamentos([{ sku_codigo_omie: '1', sku_descricao: 'WP12.3900QT CONCENTRADO PRETO' }]);
     expect(r.seguros[0].sku_portal).toBe('WP12.3900QT');
     expect(r.seguros[0].sufixo).toBe('QT');
+  });
+});
+
+describe('ehProdutoFracionado (não-comprado pelo portal)', () => {
+  it('true pra descrição terminando em 450ML / 405ML (case/espaço-insensível)', () => {
+    expect(ehProdutoFracionado('BASE PU METALLIC PEARL MULT INTER WFOI.6736 450ML')).toBe(true);
+    expect(ehProdutoFracionado('BASE PU ACRI FOSCO INTER WJOI.7585 405ML')).toBe(true);
+    expect(ehProdutoFracionado('  base microtex transp wfot.6861 450ml  ')).toBe(true);
+  });
+
+  it('false pra produto comprado normal (sufixo de embalagem como GL/QT)', () => {
+    expect(ehProdutoFracionado('POLIULACK BRILHANTE SB.2300.00GL')).toBe(false);
+    expect(ehProdutoFracionado('CATALISADOR FC.6902QT')).toBe(false);
+    expect(ehProdutoFracionado(null)).toBe(false);
+    expect(ehProdutoFracionado('')).toBe(false);
   });
 });
