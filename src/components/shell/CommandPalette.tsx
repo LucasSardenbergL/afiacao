@@ -185,7 +185,6 @@ export function CommandPalette() {
           <>
             <CommandGroup heading="Recentes">
               {recents.map((r) => {
-                const Icon = iconForKind(r.kind);
                 return (
                   <CommandItem
                     key={`recent-${r.kind}-${r.id}`}

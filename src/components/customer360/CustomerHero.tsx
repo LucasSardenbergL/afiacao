@@ -9,6 +9,7 @@ import { Button } from '@/components/ui/button';
 import { CallButton } from '@/components/call/CallButton';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
 import { cn } from '@/lib/utils';
+import { whatsappLink } from '@/lib/phone';
 import {
   formatPctMaybe, formatDateOrDash, initials, healthTone, churnTone, formatDocument,
 } from './format';
@@ -24,6 +25,7 @@ export function CustomerHero({
 }) {
   const health = healthTone(s?.health_class ?? null);
   const churn = churnTone(s?.churn_risk ?? null);
+  const waHref = whatsappLink(customer.phone);
 
   return (
     <>
@@ -151,13 +153,9 @@ export function CustomerHero({
             {customer.phone && (
               <CallButton phone={customer.phone} customerName={customer.name} />
             )}
-            {customer.phone && (
+            {waHref && (
               <Button asChild variant="outline" size="sm">
-                <a
-                  href={`https://wa.me/${customer.phone.replace(/\D/g, '')}`}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                >
+                <a href={waHref} target="_blank" rel="noopener noreferrer">
                   <MessageSquare className="w-3.5 h-3.5 mr-1.5" />
                   WhatsApp
                 </a>

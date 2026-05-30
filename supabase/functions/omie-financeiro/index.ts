@@ -1212,6 +1212,63 @@ function resolverDataCaixa(input: {
   return { data_efetiva: null, usou_fallback: false };
 }
 
+// Espelho VERBATIM de dre-helpers.ts (Fase 3 baixa derivada no DRE-caixa).
+function valorCaixaEfetivo(valorReal: number | null | undefined, valorDocumento: number | null | undefined): number {
+  const real = Number(valorReal ?? 0);
+  if (real > 0) return real;
+  return Number(valorDocumento ?? 0);
+}
+function dedupePorCodigo<T extends { omie_codigo_lancamento?: number | null }>(rows: T[]): T[] {
+  const byCode = new Map<number, T>();
+  const semCodigo: T[] = [];
+  for (const r of rows) {
+    const c = r.omie_codigo_lancamento;
+    if (c == null) semCodigo.push(r);
+    else if (!byCode.has(Number(c))) byCode.set(Number(c), r);
+  }
+  return [...byCode.values(), ...semCodigo];
+}
+
+// Fase 3: baixa REAL derivada (v_titulo_baixas) por título, paginada. THROW em erro —
+// baixaMap parcial reintroduziria double-count/perda no DRE-caixa (codex). NUNCA degradar
+// silenciosamente pra vencimento aqui.
+async function carregarBaixaMapDRE(db: SupabaseClient, company: string, tipo: "CR" | "CP"): Promise<Map<number, string>> {
+  const map = new Map<number, string>();
+  const PAGE = 1000;
+  let from = 0;
+  for (;;) {
+    const { data, error } = await db.from("v_titulo_baixas")
+      .select("omie_codigo_lancamento, data_baixa_final")
+      .eq("company", company).eq("tipo", tipo)
+      .order("omie_codigo_lancamento", { ascending: true })
+      .range(from, from + PAGE - 1);
+    if (error) throw error;
+    const rows = (data ?? []) as Array<{ omie_codigo_lancamento: number | null; data_baixa_final: string | null }>;
+    for (const r of rows) {
+      if (r.omie_codigo_lancamento != null && r.data_baixa_final) map.set(Number(r.omie_codigo_lancamento), r.data_baixa_final);
+    }
+    if (rows.length < PAGE) break;
+    from += PAGE;
+  }
+  return map;
+}
+
+// Carrega títulos por lista de códigos, em chunks (PostgREST .in() estoura se a lista for grande).
+async function fetchTitulosPorCodigos(
+  db: SupabaseClient, table: string, select: string, company: string, statuses: string[], codes: number[],
+): Promise<Array<Record<string, unknown>>> {
+  const out: Array<Record<string, unknown>> = [];
+  const CHUNK = 200;
+  for (let i = 0; i < codes.length; i += CHUNK) {
+    const chunk = codes.slice(i, i + CHUNK);
+    const { data, error } = await db.from(table)
+      .select(select).eq("company", company).in("status_titulo", statuses).in("omie_codigo_lancamento", chunk);
+    if (error) throw error;
+    out.push(...((data ?? []) as unknown as Array<Record<string, unknown>>));
+  }
+  return out;
+}
+
 type DRECalculada = {
   receita_bruta: number; deducoes: number; receita_liquida: number;
   cmv: number; lucro_bruto: number;
@@ -1449,10 +1506,24 @@ async function calcularDRE(
       : `${ano}-${String(mes + 1).padStart(2, "0")}-01`;
   const regimeTrib: RegimeTributario = REGIME_POR_EMPRESA[company] ?? "presumido";
 
+  // ── Fase 3: baixa REAL derivada (só no regime caixa) ──
+  // No caixa, a data de baixa derivada (v_titulo_baixas) é a data EFETIVA do título;
+  // fallback p/ vencimento ("estimado") onde não houver. baixaMap throw em erro (parcial
+  // reintroduz double-count). Competência não usa (bucketiza por emissão).
+  const baixaMapCR = regime === "caixa" ? await carregarBaixaMapDRE(db, company, "CR") : new Map<number, string>();
+  const baixaMapCP = regime === "caixa" ? await carregarBaixaMapDRE(db, company, "CP") : new Map<number, string>();
+  const codigosNoMes = (map: Map<number, string>) =>
+    [...map.entries()].filter(([, d]) => d >= inicioMes && d < fimMes).map(([c]) => c);
+
   // ── Buscar títulos ──
-  // Competência: bucketiza por data_emissao (server-side). Caixa: precisa da data EFETIVA
-  // (recebimento/pagamento) com fallback p/ vencimento → busca um superset (data real OU
-  // vencimento na janela) e bucketiza client-side via resolverDataCaixa.
+  // Competência: bucketiza por data_emissao (server-side). Caixa: a data efetiva é a BAIXA
+  // derivada (ou vencimento, fallback). Carrega (venc-no-mês) ∪ (baixa-no-mês), dedupe por
+  // código → cada título cai no mês da baixa quando há baixa, senão no mês do vencimento.
+  // Sem o ramo baixa-no-mês, título pago atrasado (venc anterior, baixa neste mês) sumiria.
+  const SEL_CR = "valor_documento, valor_recebido, data_recebimento, data_vencimento, categoria_codigo, categoria_descricao, omie_codigo_lancamento";
+  const SEL_CP = "valor_documento, valor_pago, data_pagamento, data_vencimento, categoria_codigo, categoria_descricao, omie_codigo_lancamento";
+  const ST_CR = ["RECEBIDO", "PARCIAL", "LIQUIDADO"];
+  const ST_CP = ["PAGO", "PARCIAL", "LIQUIDADO"];
   async function buscarCR() {
     if (regime === "competencia") {
       const { data, error } = await db.from("fin_contas_receber")
@@ -1462,12 +1533,12 @@ async function calcularDRE(
       if (error) throw error; // não silenciar falha de DB como DRE vazia
       return data ?? [];
     }
-    const { data, error } = await db.from("fin_contas_receber")
-      .select("valor_documento, valor_recebido, data_recebimento, data_vencimento, categoria_codigo, categoria_descricao")
-      .eq("company", company).in("status_titulo", ["RECEBIDO", "PARCIAL", "LIQUIDADO"])
+    const { data, error } = await db.from("fin_contas_receber").select(SEL_CR)
+      .eq("company", company).in("status_titulo", ST_CR)
       .or(`and(data_recebimento.gte.${inicioMes},data_recebimento.lt.${fimMes}),and(data_recebimento.is.null,data_vencimento.gte.${inicioMes},data_vencimento.lt.${fimMes})`);
     if (error) throw error; // não silenciar falha de DB como DRE vazia
-    return data ?? [];
+    const porBaixa = await fetchTitulosPorCodigos(db, "fin_contas_receber", SEL_CR, company, ST_CR, codigosNoMes(baixaMapCR));
+    return dedupePorCodigo([...(data ?? []) as Array<Record<string, unknown>>, ...porBaixa]);
   }
   async function buscarCP() {
     if (regime === "competencia") {
@@ -1478,12 +1549,12 @@ async function calcularDRE(
       if (error) throw error; // não silenciar falha de DB como DRE vazia
       return data ?? [];
     }
-    const { data, error } = await db.from("fin_contas_pagar")
-      .select("valor_documento, valor_pago, data_pagamento, data_vencimento, categoria_codigo, categoria_descricao")
-      .eq("company", company).in("status_titulo", ["PAGO", "PARCIAL", "LIQUIDADO"])
+    const { data, error } = await db.from("fin_contas_pagar").select(SEL_CP)
+      .eq("company", company).in("status_titulo", ST_CP)
       .or(`and(data_pagamento.gte.${inicioMes},data_pagamento.lt.${fimMes}),and(data_pagamento.is.null,data_vencimento.gte.${inicioMes},data_vencimento.lt.${fimMes})`);
     if (error) throw error; // não silenciar falha de DB como DRE vazia
-    return data ?? [];
+    const porBaixa = await fetchTitulosPorCodigos(db, "fin_contas_pagar", SEL_CP, company, ST_CP, codigosNoMes(baixaMapCP));
+    return dedupePorCodigo([...(data ?? []) as Array<Record<string, unknown>>, ...porBaixa]);
   }
   const receitas = await buscarCR();
   const despesas = await buscarCP();
@@ -1523,12 +1594,19 @@ async function calcularDRE(
       if (regime === "competencia") {
         val = Number(row.valor_documento ?? 0);
       } else {
-        const dataReal = isReceita ? (row.data_recebimento as string | null) : (row.data_pagamento as string | null);
+        // data EFETIVA = baixa DERIVADA (v_titulo_baixas) onde houver; senão vencimento (fallback "estimado").
+        // A coluna base data_recebimento/data_pagamento é sempre NULL no LIST do Omie → não serve.
+        const codLanc = row.omie_codigo_lancamento as number | null;
+        const baixaMap = isReceita ? baixaMapCR : baixaMapCP;
+        const dataReal = codLanc != null ? (baixaMap.get(Number(codLanc)) ?? null) : null;
         const venc = row.data_vencimento as string | null;
         const { data_efetiva, usou_fallback } = resolverDataCaixa({ data_real: dataReal, data_vencimento: venc });
         if (!data_efetiva || data_efetiva < inicioMes || data_efetiva >= fimMes) continue;
         usouFallback = usou_fallback;
-        val = isReceita ? Number(row.valor_recebido ?? row.valor_documento ?? 0) : Number(row.valor_pago ?? row.valor_documento ?? 0);
+        // valorCaixaEfetivo: liquidado tem valor_recebido=0 (#396) → cai no valor_documento (face),
+        // senão alocaria ZERO. Parcial real (valor_recebido>0) usa o valor recebido.
+        val = isReceita ? valorCaixaEfetivo(row.valor_recebido as number | null, row.valor_documento as number | null)
+                        : valorCaixaEfetivo(row.valor_pago as number | null, row.valor_documento as number | null);
         caixaValor += val;
         if (usouFallback) fallbackValor += val;
       }

@@ -250,6 +250,27 @@ Constrói SOBRE o "Orçado × Realizado" que já existia (`/financeiro/orcamento
 
 **Onde:** helper `src/lib/financeiro/orcamento-forecast-helpers.ts` (vitest, 26 testes; `projetarDRE` + `seedOrcamento` + primitivas); página `src/pages/FinanceiroOrcamento.tsx` (seção "Forecast de aterrissagem" + botão "Sugerir orçamento"); item na sidebar (`/financeiro/orcamento`, antes órfã). **Sem migration, sem edge function, sem deploy** (client-side puro).
 
+## 🔧 Consolidação do Cockpit — religado às engines (2026-05-28)
+
+Uma auditoria de consistência achou que o **Cockpit** (`/financeiro/cockpit`, consolidado das 3 empresas) mostrava números ERRADOS porque foi construído com atalhos antes das engines A1 existirem: **projeção 13s** via RPC ingênua `fin_projecao_13_semanas` (joga CR/CP no vencimento; sem curva de cobrança/inadimplência/eventos/folha) e **NCG** = `CR−CP` (só abertos). Religado:
+
+- **Projeção 13s + NCG agora vêm da engine A1** via `fin_projecao_snapshots` (snapshot diário; curvas calibradas, inadimplência, eventos, folha; NCG = ACO−PCO real). **Snapshot-first** (não 3 invocações live — tela executiva semanal): mostra "dados de {data}".
+- **Consolidado COM decomposição por empresa** (Codex P1 — caixa NÃO é fungível entre 3 CNPJs distintos; somar pode esconder insolvência local). **Coorte por data de referência:** só snapshots do dia mais recente entram; empresa com snapshot mais antigo = `stale` (fora da soma, sinalizado); dedupe por empresa (latest-wins). **Cenário explícito** ("realista"). **Intercompany NÃO eliminado** (premissa documentada — CR de uma empresa pode ser CP de outra → aviso no bloco). **Falha parcial honesta** (banner "N de 3", números = mínimo conhecido; ausente ≠ zero).
+- **Rótulos honestos:** "Caixa Projetado 30d" (que não era 30d) → "Posição líquida (abertos)"; `DataBasisFooter` com regime dinâmico (não "caixa" fixo); badge "ACO−PCO (engine)" no NCG.
+- Helper `src/lib/financeiro/cockpit-consolida-helpers.ts` (13 testes; `consolidarCockpit`) + `getProjecaoSnapshotsCockpit`. **Codex em todas as etapas** (metodologia + spec [3 P1] + plano [3 P1 anti-impl-preguiçosa] + adversarial). **CLIENT-SIDE — sem migration/deploy** (o snapshot já é gravado pelo cron `fin-cashflow-snapshot-diario`).
+- **Limitações:** snapshot até 1 dia stale (data visível); intercompany não eliminado; caixa consolidado não-fungível (por isso a quebra por empresa). A decomposição ACO/PCO detalhada e os cenários ficam na tela **Capital de Giro** (live).
+
+## 🔧 Valor A2 — Guard de NCG indisponível (ausente ≠ R$0) (2026-05-28)
+
+Seguindo a consolidação do Cockpit, a mesma auditoria achou um furo no **Valor A2** (`/financeiro/valor`, ROIC/EVA): o engine lê o **NCG da engine A1** (`fin_projecao_snapshots.ncg`) como capital de giro — mesma fonte do Cockpit — mas, quando **não havia snapshot de NCG**, assumia `capital_giro = 0` silenciosamente. Com ativo fixo informado, o capital investido virava só o ativo fixo (subestimado) → **ROIC superestimado**, confiança **não** rebaixada (o "parcial" só olhava ativo fixo), e o aviso ficava enterrado num motivo. Violava "ausente ≠ zero" e divergia do Cockpit (que já trata NCG ausente como parcial). Corrigido:
+
+- **NCG ausente → capital de giro e capital investido `null` (indisponível), não R$0**; ROIC/spread/EVA viram `null` (não fabricados) e a confiança cai pra **baixa**. UI diz "Sem snapshot de NCG — capital de giro indisponível (rode a projeção)", e **não** mais "* capital parcial (sem ativo fixo)" (mensagem errada nesse caso).
+- **NCG negativo (folga) e zero são valores REAIS** (não ausência — `s.ncg != null`, sem truthiness). Capital investido ≤0 por folga grande continua dando `roic=null` **por capital conhecido** → confiança **media** (distinto de NCG ausente = baixa).
+- **Frescor honesto (Codex P1):** snapshot de NCG com 45+ dias (cron é diário) → confiança **media** + "NCG de {data} (Nd atrás)" visível na tela. Stale NÃO vira indisponível (o NCG é real; pipeline morto já é vigiado pelo Sentinela).
+- **Guard anti-coerção (Codex P1):** `capital_normalizado` null não vira `null + ajuste = número`. EBIT/NOPAT normalizado seguem calculados e exibidos; só as métricas que dependem de capital ficam null.
+- Toda a resolução de capital (resolver + frescor + −12m + capitalInvestido) numa **função pura composta `resolverCapitalParaValor`** (testada ponta-a-ponta) espelhada verbatim no edge — não sobra `capital_giro = ncg ? ncg : 0` inline (Codex P1). **Reconciliação:** com snapshot válido, `A2.capital_giro` = último `fin_projecao_snapshots.ncg` da empresa = o mesmo NCG que o Cockpit usa.
+- Helper `valor-helpers.ts` (+novos `resolverCapitalGiro`/`frescorGiro`/`acharCapitalGiroAnterior`/`resolverCapitalParaValor`; 56 testes) espelhado no engine `fin-valor-engine`. **Codex em todas as etapas** (spec [3 P1] + plano [3 P1: composta anti-inline + asserts exatos + distinção NCG-ausente×capital≤0] + adversarial). **Sem migration; requer deploy do `fin-valor-engine` via Lovable** (ROIC/EVA são calculados no edge). A4 (`fin-next-best-action`) lê só `wacc`/`spread` (já nullable) → não quebra.
+
 ## ✅ MVP Operacional (pode usar agora para gestão diária)
 
 Estes dados vêm direto do Omie sem transformação opinativa.

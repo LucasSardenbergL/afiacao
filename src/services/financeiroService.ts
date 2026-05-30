@@ -547,23 +547,17 @@ export async function getCapitalDeGiro(company: Company | 'all'): Promise<Capita
       .eq("company", co)
       .eq("ativo", true);
 
-    // CR recebidos últimos 90 dias (para calcular PMR)
-    const d90ago = new Date();
-    d90ago.setDate(d90ago.getDate() - 90);
-    const { data: crRecebidos } = await supabase
-      .from("fin_contas_receber")
-      .select("data_emissao, data_recebimento, valor_recebido")
+    // PMR/PMP: baixa derivada das movimentações (view v_capital_giro_prazos), porque
+    // o Omie NÃO traz data de baixa no LIST de títulos (data_recebimento/pagamento
+    // sempre NULL — ver v_titulo_baixas). A view agrega PMR/PMP ponderado por valor +
+    // a cobertura (fração dos liquidados com baixa derivável) por empresa.
+    const COBERTURA_MIN = 0.4;
+    // view nova ainda não nos tipos gerados → `as never` (padrão do repo p/ views)
+    const { data: prazos } = await supabase
+      .from("v_capital_giro_prazos" as never)
+      .select("pmr, pmp, pmr_cobertura, pmp_cobertura")
       .eq("company", co)
-      .in("status_titulo", ["RECEBIDO", "LIQUIDADO"])
-      .gte("data_recebimento", d90ago.toISOString().slice(0, 10));
-
-    // CP pagos últimos 90 dias (para calcular PMP)
-    const { data: cpPagos } = await supabase
-      .from("fin_contas_pagar")
-      .select("data_emissao, data_pagamento, valor_pago")
-      .eq("company", co)
-      .in("status_titulo", ["PAGO", "LIQUIDADO"])
-      .gte("data_pagamento", d90ago.toISOString().slice(0, 10));
+      .maybeSingle();
 
     type CrRow = { valor_documento: number | null; valor_recebido: number | null };
     type CpRow = { valor_documento: number | null; valor_pago: number | null };
@@ -576,31 +570,14 @@ export async function getCapitalDeGiro(company: Company | 'all'): Promise<Capita
     const totalCP = calcSaldoCP(cpAberto as CpRow[] | null);
     const totalCC = (ccs || []).reduce((s, c) => s + (c.saldo_atual || 0), 0);
 
-    // PMR: média ponderada de dias entre emissão e recebimento
-    let pmrNumerator = 0, pmrDenominator = 0;
-    for (const r of crRecebidos || []) {
-      const valor = r.valor_recebido ?? 0;
-      if (r.data_emissao && r.data_recebimento && valor > 0) {
-        const dias = Math.max(0, (new Date(r.data_recebimento).getTime() - new Date(r.data_emissao).getTime()) / 86400000);
-        pmrNumerator += dias * valor;
-        pmrDenominator += valor;
-      }
-    }
-    // null (não 0) quando não há baixas datadas: mostrar 0 dias parece "recebimento
-    // instantâneo" e engana. Hoje o sync não popula data_recebimento → cai aqui.
-    const pmr = pmrDenominator > 0 ? Math.round(pmrNumerator / pmrDenominator) : null;
-
-    // PMP: média ponderada de dias entre emissão e pagamento
-    let pmpNumerator = 0, pmpDenominator = 0;
-    for (const p of cpPagos || []) {
-      const valor = p.valor_pago ?? 0;
-      if (p.data_emissao && p.data_pagamento && valor > 0) {
-        const dias = Math.max(0, (new Date(p.data_pagamento).getTime() - new Date(p.data_emissao).getTime()) / 86400000);
-        pmpNumerator += dias * valor;
-        pmpDenominator += valor;
-      }
-    }
-    const pmp = pmpDenominator > 0 ? Math.round(pmpNumerator / pmpDenominator) : null;
+    // Gate de confiança por empresa: prazo só quando a cobertura é suficiente.
+    // Cobertura baixa → NULL (= "—", degradação honesta) pra não mostrar o prazo de
+    // uma amostra não-representativa (ex: colacor ~9% — liquida sem movimento `mf`).
+    // oben/sc têm ~100% → mostram PMR/PMP reais. NULL (não 0) evita o falso
+    // "recebimento instantâneo".
+    const p = (prazos ?? {}) as { pmr?: number | null; pmp?: number | null; pmr_cobertura?: number | null; pmp_cobertura?: number | null };
+    const pmr = Number(p.pmr_cobertura ?? 0) >= COBERTURA_MIN && p.pmr != null ? Number(p.pmr) : null;
+    const pmp = Number(p.pmp_cobertura ?? 0) >= COBERTURA_MIN && p.pmp != null ? Number(p.pmp) : null;
 
     // Concentração top 5
     const crByClient = new Map<string, number>();
@@ -858,7 +835,8 @@ export interface ValorEmpresaResult {
   reportado: {
     ebit: number; nopat: number; imposto_operacional_nopat: number; carga_tributaria_regime_total: number;
     margem_operacional_pre_imposto: number; receita_liquida_ttm: number;
-    capital_investido: number; capital_giro: number; ativo_fixo: number; ajustes: number; capital_parcial: boolean;
+    capital_investido: number | null; capital_giro: number | null; ativo_fixo: number; ajustes: number; capital_parcial: boolean;
+    giro_indisponivel: boolean; giro_snapshot_at: string | null; giro_dias: number | null;
     roic: number | null; wacc: number | null; spread: number | null; eva: number | null;
     roic_incremental: number | null;
     incremental: { delta_nopat: number | null; delta_capital: number | null; aviso: string | null };
@@ -866,7 +844,7 @@ export interface ValorEmpresaResult {
     peso_divida: number | null; peso_equity: number | null;
   };
   normalizado: {
-    ebit: number; nopat: number; capital_investido: number;
+    ebit: number; nopat: number; capital_investido: number | null;
     roic: number | null; spread: number | null; eva: number | null;
     ajuste_prolabore: number; ajuste_aluguel: number; ajuste_intercompany_capital: number; aplicado: boolean;
     nopat_aproximado: boolean;

@@ -3,7 +3,7 @@
 -- ========================================================================
 --
 -- Gerado por: scripts/audit-custom-migrations.ts
--- Total de custom migrations: 105
+-- Total de custom migrations: 115
 --
 -- Como usar:
 --   1. Abra o Supabase SQL Editor (via Lovable Cloud → Backend → SQL Editor)
@@ -122,9 +122,19 @@ WITH expected (version, slug, filename) AS (VALUES
   ('20260527260000', 'data_health_vendas_cadastros_dado', '20260527260000_data_health_vendas_cadastros_dado.sql'),
   ('20260528000000', 'fin_sync_watchdog_tail_failing', '20260528000000_fin_sync_watchdog_tail_failing.sql'),
   ('20260528010000', 'cron_sync_customers_dedicated', '20260528010000_cron_sync_customers_dedicated.sql'),
+  ('20260528020000', 'data_health_reposicao_acoes', '20260528020000_data_health_reposicao_acoes.sql'),
+  ('20260528030000', 'cron_sayerlack_lote_retry', '20260528030000_cron_sayerlack_lote_retry.sql'),
+  ('20260528040000', 'sayerlack_retry_motor', '20260528040000_sayerlack_retry_motor.sql'),
   ('20260528120000', 'reposicao_custo_cmc_em_transito', '20260528120000_reposicao_custo_cmc_em_transito.sql'),
   ('20260528120001', 'v_titulo_baixas', '20260528120001_v_titulo_baixas.sql'),
-  ('20260528140000', 'whatsapp_fundacao', '20260528140000_whatsapp_fundacao.sql')
+  ('20260528120002', 'v_capital_giro_prazos', '20260528120002_v_capital_giro_prazos.sql'),
+  ('20260528130000', 'fin_sync_heartbeat_tz_fix', '20260528130000_fin_sync_heartbeat_tz_fix.sql'),
+  ('20260528140000', 'data_health_compute_msg_tz', '20260528140000_data_health_compute_msg_tz.sql'),
+  ('20260528140000', 'whatsapp_fundacao', '20260528140000_whatsapp_fundacao.sql'),
+  ('20260528150000', 'fin_estoque_omie_feed', '20260528150000_fin_estoque_omie_feed.sql'),
+  ('20260528194751', 'data_health_consolida_last_error_e_reposicao_checks', '20260528194751_data_health_consolida_last_error_e_reposicao_checks.sql'),
+  ('20260530143818', 'reposicao_excluir_405ml', '20260530143818_reposicao_excluir_405ml.sql'),
+  ('20260530170000', 'unschedule_sayerlack_lote_retry', '20260530170000_unschedule_sayerlack_lote_retry.sql')
 )
 SELECT
   e.version,
@@ -630,7 +640,15 @@ WITH expected_objects (migration, kind, schema_name, object_name, parent_name) A
   ('data_health_vendas_cadastros_dado', 'function', 'public', '_data_health_compute', ''),
   ('fin_sync_watchdog_tail_failing', 'function', 'public', 'fin_sync_watchdog_check', ''),
   ('cron_sync_customers_dedicated', 'cron_job', 'cron', 'sync-customers-vendas-daily', ''),
+  ('data_health_reposicao_acoes', 'function', 'public', '_data_health_compute', ''),
+  ('data_health_reposicao_acoes', 'function', 'public', 'fin_sync_heartbeat', ''),
+  ('cron_sayerlack_lote_retry', 'cron_job', 'cron', 'sayerlack-portal-lote-retry', ''),
+  ('sayerlack_retry_motor', 'table', 'public', 'sayerlack_retry_motor_log', ''),
+  ('sayerlack_retry_motor', 'function', 'public', 'sayerlack_retry_orfaos', ''),
+  ('sayerlack_retry_motor', 'cron_job', 'cron', 'sayerlack-retry-orfaos', ''),
   ('reposicao_custo_cmc_em_transito', 'function', 'public', 'gerar_pedidos_sugeridos_ciclo', ''),
+  ('fin_sync_heartbeat_tz_fix', 'function', 'public', 'fin_sync_heartbeat', ''),
+  ('data_health_compute_msg_tz', 'function', 'public', '_data_health_compute', ''),
   ('whatsapp_fundacao', 'table', 'public', 'whatsapp_webhook_events', ''),
   ('whatsapp_fundacao', 'table', 'public', 'whatsapp_conversations', ''),
   ('whatsapp_fundacao', 'table', 'public', 'whatsapp_messages', ''),
@@ -640,7 +658,13 @@ WITH expected_objects (migration, kind, schema_name, object_name, parent_name) A
   ('whatsapp_fundacao', 'index', 'public', 'idx_wa_msg_conv', 'whatsapp_messages'),
   ('whatsapp_fundacao', 'rls_policy', 'public', 'wa_events_staff_select', 'whatsapp_webhook_events'),
   ('whatsapp_fundacao', 'rls_policy', 'public', 'wa_conv_staff_all', 'whatsapp_conversations'),
-  ('whatsapp_fundacao', 'rls_policy', 'public', 'wa_msg_staff_all', 'whatsapp_messages')
+  ('whatsapp_fundacao', 'rls_policy', 'public', 'wa_msg_staff_all', 'whatsapp_messages'),
+  ('fin_estoque_omie_feed', 'function', 'public', 'fin_estimar_estoque_omie', ''),
+  ('fin_estoque_omie_feed', 'cron_job', 'cron', 'sync-inventory-colacor-vendas-1h', ''),
+  ('fin_estoque_omie_feed', 'cron_job', 'cron', 'sync-inventory-servicos-1h', ''),
+  ('data_health_consolida_last_error_e_reposicao_checks', 'function', 'public', '_data_health_compute', ''),
+  ('data_health_consolida_last_error_e_reposicao_checks', 'function', 'public', 'fin_sync_heartbeat', ''),
+  ('reposicao_excluir_405ml', 'function', 'public', 'gerar_pedidos_sugeridos_ciclo', '')
 )
 SELECT
   e.migration,

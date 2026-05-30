@@ -5,7 +5,7 @@ import { useNavigate } from 'react-router-dom';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import {
-  Loader2, Zap, Phone, Send, FileText, Sparkles, Copy, Check,
+  Loader2, Phone, Send, FileText, Sparkles, Copy, Check,
   HelpCircle, Save, ShoppingCart,
 } from 'lucide-react';
 import { toast } from 'sonner';
@@ -36,7 +36,7 @@ interface BundleCardFullProps {
 }
 
 export const BundleCardFull = ({
-  bundle, rank, bundleKey, customerId, argument, isArgGenerating, onGenerateArg,
+  bundle, rank, customerId, argument, isArgGenerating, onGenerateArg,
   questions, isQuestionsGenerating, onGenerateQuestions, onSetResponse, onToggleAlt, onSaveQuestions,
 }: BundleCardFullProps) => {
   const navigate = useNavigate();

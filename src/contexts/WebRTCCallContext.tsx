@@ -139,7 +139,12 @@ export function WebRTCCallProvider({ children }: ProviderProps) {
   const prerollPlayRef = useRef<(() => void) | null>(null);
   const prerollDurationRef = useRef<number | null>(null);
   const prerollFinishTimerRef = useRef<number | null>(null);
-  const prerollUrl = (import.meta.env.VITE_NVOIP_SIP_PREROLL_URL as string | undefined);
+  // Default pro MP3 servido em public/ — o aviso LGPD NÃO pode depender de uma env
+  // estar setada no build (não estava em produção → o pre-roll era pulado e a gravação
+  // saía sem aviso). A env fica como override opcional (CDN/arquivo custom).
+  const prerollUrl =
+    (import.meta.env.VITE_NVOIP_SIP_PREROLL_URL as string | undefined) ||
+    '/preroll/aviso-gravacao-lgpd.mp3';
 
   // PR4 — Refs pra persistência da sessão de chamada
   const analysisHistoryRef = useRef<SpinAnalysis[]>([]);

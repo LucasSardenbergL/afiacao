@@ -21,14 +21,14 @@ Este audit valida **quais custom migrations estão de fato aplicadas no banco**.
 
 ## Resumo
 
-- **105** custom migrations totais
-- **498** objetos esperados (criados por estas migrations)
+- **115** custom migrations totais
+- **512** objetos esperados (criados por estas migrations)
 - Quebra por tipo:
   - `rls_policy`: 142
   - `index`: 100
-  - `cron_job`: 83
-  - `function`: 78
-  - `table`: 60
+  - `function`: 87
+  - `cron_job`: 87
+  - `table`: 61
   - `trigger`: 31
   - `enum_value`: 4
 
@@ -1016,6 +1016,27 @@ Lista canônica do que cada migration *deveria* criar (extraído via regex de `C
 | --- | --- | --- |
 | `cron_job` | `cron.sync-customers-vendas-daily` | — |
 
+### `20260528020000_data_health_reposicao_acoes.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `function` | `public._data_health_compute` | — |
+| `function` | `public.fin_sync_heartbeat` | — |
+
+### `20260528030000_cron_sayerlack_lote_retry.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `cron_job` | `cron.sayerlack-portal-lote-retry` | — |
+
+### `20260528040000_sayerlack_retry_motor.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `table` | `public.sayerlack_retry_motor_log` | — |
+| `function` | `public.sayerlack_retry_orfaos` | — |
+| `cron_job` | `cron.sayerlack-retry-orfaos` | — |
+
 ### `20260528120000_reposicao_custo_cmc_em_transito.sql`
 
 | Tipo | Objeto | Parent |
@@ -1025,6 +1046,22 @@ Lista canônica do que cada migration *deveria* criar (extraído via regex de `C
 ### `20260528120001_v_titulo_baixas.sql`
 
 > _Nenhum objeto extraído via regex._ Migration provavelmente é `ALTER TABLE` / `UPDATE` / `INSERT` / RLS-only. Validar manualmente.
+
+### `20260528120002_v_capital_giro_prazos.sql`
+
+> _Nenhum objeto extraído via regex._ Migration provavelmente é `ALTER TABLE` / `UPDATE` / `INSERT` / RLS-only. Validar manualmente.
+
+### `20260528130000_fin_sync_heartbeat_tz_fix.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `function` | `public.fin_sync_heartbeat` | — |
+
+### `20260528140000_data_health_compute_msg_tz.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `function` | `public._data_health_compute` | — |
 
 ### `20260528140000_whatsapp_fundacao.sql`
 
@@ -1040,6 +1077,31 @@ Lista canônica do que cada migration *deveria* criar (extraído via regex de `C
 | `rls_policy` | `public.wa_events_staff_select` | `whatsapp_webhook_events` |
 | `rls_policy` | `public.wa_conv_staff_all` | `whatsapp_conversations` |
 | `rls_policy` | `public.wa_msg_staff_all` | `whatsapp_messages` |
+
+### `20260528150000_fin_estoque_omie_feed.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `function` | `public.fin_estimar_estoque_omie` | — |
+| `cron_job` | `cron.sync-inventory-colacor-vendas-1h` | — |
+| `cron_job` | `cron.sync-inventory-servicos-1h` | — |
+
+### `20260528194751_data_health_consolida_last_error_e_reposicao_checks.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `function` | `public._data_health_compute` | — |
+| `function` | `public.fin_sync_heartbeat` | — |
+
+### `20260530143818_reposicao_excluir_405ml.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `function` | `public.gerar_pedidos_sugeridos_ciclo` | — |
+
+### `20260530170000_unschedule_sayerlack_lote_retry.sql`
+
+> _Nenhum objeto extraído via regex._ Migration provavelmente é `ALTER TABLE` / `UPDATE` / `INSERT` / RLS-only. Validar manualmente.
 
 ## Próximos passos quando algo der `❌`
 

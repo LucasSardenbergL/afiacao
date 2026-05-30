@@ -3,6 +3,11 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=5.0" />
+    <!-- iOS/Safari auto-linka números de telefone em texto (vira <a href="tel:">),
+         inclusive o número dentro do botão "Ligar 37 9..." da Central de Telefonia →
+         o toque abria o app Telefone do SO em vez de chamar via NVOIP. Desliga só a
+         auto-detecção; links tel: explícitos (CallButton em celular) seguem ativos. -->
+    <meta name="format-detection" content="telephone=no" />
     <title>Colacor</title>
     <meta name="description" content="Colacor - Serviço profissional de afiação de ferramentas. Agende sua coleta!">
     <link rel="preconnect" href="https://fonts.googleapis.com" />

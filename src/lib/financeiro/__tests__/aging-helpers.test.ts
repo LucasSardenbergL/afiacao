@@ -5,6 +5,7 @@ import {
   calibrarCurvas, CURVA_DEFAULT,
   dataRecebimentoEsperada, aplicarCenarioCurva,
   inadimplenciaPonderada, prazoMedioPonderado,
+  statusLiquidado, valorPagoEfetivo, prazoComGate, diasCoberturaProjetado,
 } from '../aging-helpers';
 
 describe('faixaAging', () => {
@@ -50,26 +51,151 @@ describe('mediana', () => {
 
 const hoje = '2026-05-19';
 
-describe('calibrarCurvas (por exposição)', () => {
+describe('statusLiquidado', () => {
+  it('RECEBIDO/LIQUIDADO/PAGO → true', () => {
+    expect(statusLiquidado('RECEBIDO')).toBe(true);
+    expect(statusLiquidado('LIQUIDADO')).toBe(true);
+    expect(statusLiquidado('PAGO')).toBe(true);
+  });
+  it('ABERTO/VENCIDO/PARCIAL/null → false', () => {
+    expect(statusLiquidado('ABERTO')).toBe(false);
+    expect(statusLiquidado('VENCIDO')).toBe(false);
+    expect(statusLiquidado('PARCIAL')).toBe(false);
+    expect(statusLiquidado(null)).toBe(false);
+  });
+});
+
+describe('valorPagoEfetivo (robusto a valor_recebido NULL/0)', () => {
+  it('usa valor_recebido quando > 0', () => {
+    expect(valorPagoEfetivo({ valor_recebido: 80, valor_documento: 100, saldo: 0 })).toBe(80);
+  });
+  it('fallback valor_documento − saldo quando recebido 0', () => {
+    expect(valorPagoEfetivo({ valor_recebido: 0, valor_documento: 100, saldo: 30 })).toBe(70);
+  });
+  it('fallback face quando recebido 0 e saldo cheio (sem info de valor)', () => {
+    expect(valorPagoEfetivo({ valor_recebido: 0, valor_documento: 100, saldo: 100 })).toBe(100);
+  });
+});
+
+describe('prazoComGate (PMR/PMP por cobertura)', () => {
+  it('cobertura >= min e valor presente → valor', () => {
+    expect(prazoComGate(30, 1.0)).toBe(30);
+    expect(prazoComGate(30, 0.4)).toBe(30);
+  });
+  it('cobertura < min → null (amostra não-representativa)', () => {
+    expect(prazoComGate(30, 0.1)).toBe(null);
+  });
+  it('valor null/undefined → null', () => {
+    expect(prazoComGate(null, 1.0)).toBe(null);
+    expect(prazoComGate(undefined, 1.0)).toBe(null);
+  });
+  it('cobertura null/undefined → null', () => {
+    expect(prazoComGate(30, null)).toBe(null);
+    expect(prazoComGate(30, undefined)).toBe(null);
+  });
+});
+
+describe('diasCoberturaProjetado (caixa operacional projetado)', () => {
+  it('saldo / saída diária média do horizonte', () => {
+    // 91000 de saída em 13 sem (91 dias) → 1000/dia; saldo 30000 → 30 dias
+    expect(diasCoberturaProjetado(30000, 91000, 13)).toBeCloseTo(30, 5);
+  });
+  it('saldo <= 0 → 0 (crítico)', () => {
+    expect(diasCoberturaProjetado(0, 91000, 13)).toBe(0);
+    expect(diasCoberturaProjetado(-500, 91000, 13)).toBe(0);
+  });
+  it('sem base de saída → null (não 999/infinito)', () => {
+    expect(diasCoberturaProjetado(30000, 0, 13)).toBe(null);
+  });
+  it('horizon 0 não divide por zero (clamp do divisor em 1)', () => {
+    // saidaDiaria = 7000 / max(1, 0) = 7000; dias = 7000/7000 = 1 (finito, sem NaN/Infinity)
+    const r = diasCoberturaProjetado(7000, 7000, 0);
+    expect(r).toBe(1);
+    expect(Number.isFinite(r as number)).toBe(true);
+  });
+});
+
+describe('calibrarCurvas (por exposição, baixa derivada + status)', () => {
   it('aberto não-pago na faixa puxa a taxa pra baixo (sem viés)', () => {
     const titulos = [
-      { valor_documento: 100000, valor_recebido: 100000, saldo: 0, data_vencimento: '2026-03-20', data_recebimento: '2026-04-24', status_titulo: 'RECEBIDO' }, // 35d → 31-60
-      { valor_documento: 100000, valor_recebido: 0, saldo: 100000, data_vencimento: '2026-04-04', data_recebimento: null, status_titulo: 'VENCIDO' }, // 45d hoje → 31-60
+      // liquidado COM baixa derivada → bucketiza por atraso no pagamento (35d → 31-60)
+      { valor_documento: 100000, valor_recebido: 100000, saldo: 0, data_vencimento: '2026-03-20', data_baixa_derivada: '2026-04-24', status_titulo: 'RECEBIDO' },
+      // aberto (45d hoje → 31-60)
+      { valor_documento: 100000, valor_recebido: 0, saldo: 100000, data_vencimento: '2026-04-04', data_baixa_derivada: null, status_titulo: 'VENCIDO' },
     ];
-    // minTitulos/minVolume baixos pra exercitar o cálculo (o gate de confiança é testado à parte)
-    const curvas = calibrarCurvas(titulos, hoje, 1, 1);
+    // gates baixos (minTitulos/minVolume/minLiq=1) pra exercitar o cálculo; cobertura = 1/1 = 1.0
+    const curvas = calibrarCurvas(titulos, hoje, 1, 1, 1);
+    expect(curvas['31-60'].confianca).toBe('alta');
     expect(curvas['31-60'].taxa_recebimento).toBeCloseTo(0.5, 5);
     expect(curvas['31-60'].exposicao).toBe(200000);
     expect(curvas['31-60'].pago).toBe(100000);
     expect(curvas['31-60'].aberto).toBe(100000);
   });
-  it('amostra fraca (poucos títulos) → confiança baixa + default', () => {
+
+  it('liquidado por STATUS sem valor_recebido ainda conta como pago (valorPagoEfetivo)', () => {
+    // 5 títulos (concentração 0.2 ≤ 0.6) com status liquidado mas valor_recebido 0 e
+    // saldo 0 → pago = valor_documento (face) via fallback, NÃO pago 0
+    const titulos = Array.from({ length: 5 }, () => ({
+      valor_documento: 100000, valor_recebido: 0, saldo: 0,
+      data_vencimento: '2026-03-20', data_baixa_derivada: '2026-04-24', status_titulo: 'LIQUIDADO',
+    }));
+    const curvas = calibrarCurvas(titulos, hoje, 1, 1, 1);
+    expect(curvas['31-60'].pago).toBe(500000);
+    expect(curvas['31-60'].taxa_recebimento).toBeCloseTo(1, 5);
+  });
+
+  it('REGRESSÃO: faixa só com abertos não vira taxa 0 com confiança alta', () => {
+    // o bug antigo: data sempre NULL → todos abertos → pago=0, mas gate passava → taxa 0 'alta'
+    const titulos = Array.from({ length: 30 }, () => ({
+      valor_documento: 100000, valor_recebido: 0, saldo: 100000,
+      data_vencimento: '2026-04-04', data_baixa_derivada: null, status_titulo: 'VENCIDO',
+    }));
+    const curvas = calibrarCurvas(titulos, hoje); // gates default (20, 50k, 5, 0.4)
+    expect(curvas['31-60'].confianca).toBe('baixa');
+    expect(curvas['31-60'].taxa_recebimento).toBe(CURVA_DEFAULT['31-60'].taxa_recebimento);
+  });
+
+  it('GATE EMPRESA: cobertura < 40% → nenhuma faixa alta (default)', () => {
     const titulos = [
-      { valor_documento: 1000, valor_recebido: 1000, saldo: 0, data_vencimento: '2026-05-10', data_recebimento: '2026-05-14', status_titulo: 'RECEBIDO' },
+      // 1 liquidado COM data (entra na calibração de 31-60)
+      { valor_documento: 100000, valor_recebido: 100000, saldo: 0, data_vencimento: '2026-03-20', data_baixa_derivada: '2026-04-24', status_titulo: 'RECEBIDO' },
+      // 2 liquidados SEM data → puxam a cobertura pra 1/3 = 0.33 (< 0.4)
+      { valor_documento: 100000, valor_recebido: 100000, saldo: 0, data_vencimento: '2026-03-20', data_baixa_derivada: null, status_titulo: 'RECEBIDO' },
+      { valor_documento: 100000, valor_recebido: 100000, saldo: 0, data_vencimento: '2026-03-20', data_baixa_derivada: null, status_titulo: 'LIQUIDADO' },
     ];
-    const curvas = calibrarCurvas(titulos, hoje, 20, 50000);
-    expect(curvas['1-30'].confianca).toBe('baixa');
-    expect(curvas['1-30'].taxa_recebimento).toBe(CURVA_DEFAULT['1-30'].taxa_recebimento);
+    // gates de faixa frouxos (1,1,1) → só a cobertura da empresa segura
+    const curvas = calibrarCurvas(titulos, hoje, 1, 1, 1);
+    expect(curvas['31-60'].confianca).toBe('baixa');
+    expect(curvas['31-60'].taxa_recebimento).toBe(CURVA_DEFAULT['31-60'].taxa_recebimento);
+  });
+
+  it('GATE FAIXA: com empresa calibrável, faixa sem liquidado-datado cai no default', () => {
+    const titulos = [
+      // 10 liquidados-com-data em a_vencer (pagos 1d antes do venc) → calibra a_vencer
+      ...Array.from({ length: 10 }, () => ({
+        valor_documento: 100000, valor_recebido: 100000, saldo: 0,
+        data_vencimento: '2026-05-25', data_baixa_derivada: '2026-05-24', status_titulo: 'RECEBIDO',
+      })),
+      // 5 abertos em +90 (sem liquidado-datado nessa faixa)
+      ...Array.from({ length: 5 }, () => ({
+        valor_documento: 100000, valor_recebido: 0, saldo: 100000,
+        data_vencimento: '2026-01-01', data_baixa_derivada: null, status_titulo: 'VENCIDO',
+      })),
+    ];
+    // cobertura = 10/10 = 1.0 (VENCIDO não é liquidado); minTitulos 5, minVol 1, minLiq default 5
+    const curvas = calibrarCurvas(titulos, hoje, 5, 1);
+    expect(curvas['a_vencer'].confianca).toBe('alta');
+    expect(curvas['+90'].confianca).toBe('baixa');
+    expect(curvas['+90'].taxa_recebimento).toBe(CURVA_DEFAULT['+90'].taxa_recebimento);
+  });
+
+  it('liquidado sem baixa derivada é EXCLUÍDO da calibração (não entra em exposicao/pago)', () => {
+    const titulos = [
+      { valor_documento: 100000, valor_recebido: 100000, saldo: 0, data_vencimento: '2026-03-20', data_baixa_derivada: null, status_titulo: 'RECEBIDO' },
+    ];
+    const curvas = calibrarCurvas(titulos, hoje, 1, 1, 1);
+    expect(curvas['31-60'].exposicao).toBe(0);
+    expect(curvas['31-60'].confianca).toBe('baixa');
   });
 });
 

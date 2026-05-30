@@ -45,20 +45,44 @@ function margemContribuicao(input: { receita_liquida: number; custo_unitario: nu
 function diasEntre(a: string, b: string): number { return Math.round((new Date(b + "T00:00:00Z").getTime() - new Date(a + "T00:00:00Z").getTime()) / 86400000); }
 function maxData(a: string, b: string): string { return a >= b ? a : b; }
 function minData(a: string, b: string): string { return a <= b ? a : b; }
-type TituloAR = { valor_documento: number; saldo: number; data_emissao: string | null; data_recebimento: string | null; status: string };
-function arMedioTTM(input: { titulos: TituloAR[]; ttm_inicio: string; ttm_fim: string }): number {
+// Espelho VERBATIM de valor-cockpit-helpers.ts (Fase 3 baixa derivada).
+const STATUS_LIQUIDADO_AR = ['RECEBIDO', 'LIQUIDADO', 'PAGO'];
+function statusLiquidadoAR(status: string | null | undefined): boolean {
+  return !!status && STATUS_LIQUIDADO_AR.includes(status);
+}
+type TituloAR = {
+  valor_documento: number; saldo: number; valor_recebido: number;
+  data_emissao: string | null; data_vencimento: string | null;
+  data_baixa_derivada: string | null; status: string;
+};
+type ARMedioResult = { ar_medio: number; v_real: number; v_proxy: number; v_sem_fecho: number };
+function arMedioTTM(input: { titulos: TituloAR[]; ttm_inicio: string; ttm_fim: string }): ARMedioResult {
   const janelaDias = diasEntre(input.ttm_inicio, input.ttm_fim);
-  if (janelaDias <= 0) return 0;
-  let soma = 0;
+  if (janelaDias <= 0) return { ar_medio: 0, v_real: 0, v_proxy: 0, v_sem_fecho: 0 };
+  let soma = 0, v_real = 0, v_proxy = 0, v_sem_fecho = 0;
   for (const t of input.titulos) {
     if (!t.data_emissao) continue;
+    const liquidado = statusLiquidadoAR(t.status);
     const inicioOpen = maxData(t.data_emissao, input.ttm_inicio);
-    const fimOpen = t.data_recebimento ? minData(t.data_recebimento, input.ttm_fim) : input.ttm_fim;
-    const dias = diasEntre(inicioOpen, fimOpen);
+    let fimOpen: string;
+    let valor: number;
+    let real = false;
+    if (liquidado) {
+      const fecho = t.data_baixa_derivada ?? t.data_vencimento ?? null;
+      if (fecho == null) { v_sem_fecho += t.valor_documento; continue; }
+      fimOpen = minData(fecho, input.ttm_fim);
+      valor = t.valor_documento;
+      real = !!t.data_baixa_derivada;
+    } else {
+      fimOpen = input.ttm_fim;
+      valor = (Number.isFinite(t.saldo) && t.saldo > 0) ? t.saldo : Math.max(0, t.valor_documento - (t.valor_recebido || 0));
+    }
+    const dias = Math.max(0, diasEntre(inicioOpen, fimOpen));
     if (dias <= 0) continue;
-    soma += (t.data_recebimento ? t.valor_documento : t.saldo) * dias;
+    soma += valor * dias;
+    if (liquidado) { if (real) v_real += t.valor_documento; else v_proxy += t.valor_documento; }
   }
-  return soma / janelaDias;
+  return { ar_medio: soma / janelaDias, v_real, v_proxy, v_sem_fecho };
 }
 type ComboInput = { cliente: string; sku: string; receita_liquida: number; quantidade: number; custo_unitario: number | null };
 type CapitalCliente = { cliente: string; ar_medio: number | null };
@@ -165,6 +189,12 @@ serve(async (req: Request) => {
   const now = new Date();
   const ttm_fim = now.toISOString().slice(0, 10);
   const ttm_inicio = new Date(now.getTime() - 365 * 86400000).toISOString().slice(0, 10);
+  // Guard de formato p/ as datas que entram em .or()/.gte() (defesa anti-injeção: só ISO
+  // YYYY-MM-DD; aqui vêm de toISOString, mas o guard documenta e blinda contra regressão).
+  const ISO_DATE = /^\d{4}-\d{2}-\d{2}$/;
+  if (!ISO_DATE.test(ttm_inicio) || !ISO_DATE.test(ttm_fim)) {
+    return jsonResponse({ error: "janela TTM inválida" }, 500);
+  }
 
   try {
     // WACC (A2) — reusa fin_valor_inputs.ke.base; fallback default se ausente.
@@ -220,19 +250,47 @@ serve(async (req: Request) => {
     const combos: ComboInput[] = [...comboMap.values()].map((c) => ({ cliente: c.cliente, sku: c.sku, receita_liquida: c.receita, quantidade: c.qtd, custo_unitario: c.product_id ? (custoPorProduto.get(c.product_id) ?? null) : null }));
 
     // AR da Oben relevante à janela (emitido na janela OU ainda em aberto) — serve p/ AR por cliente e cobertura.
-    type CR = { omie_codigo_cliente: number | null; valor_documento: number; saldo: number; data_emissao: string | null; data_recebimento: string | null; status_titulo: string };
-    const crsAll = await fetchAll<CR>((f, t) => db.from("fin_contas_receber").select("omie_codigo_cliente, valor_documento, saldo, data_emissao, data_recebimento, status_titulo").eq("company", COMPANY).or(`data_recebimento.is.null,data_recebimento.gte.${ttm_inicio},data_emissao.gte.${ttm_inicio}`).range(f, t), "fin_contas_receber");
+    type CR = { omie_codigo_cliente: number | null; omie_codigo_lancamento: number | null; valor_documento: number; saldo: number; valor_recebido: number; data_emissao: string | null; data_vencimento: string | null; status_titulo: string };
+    const crsAll = await fetchAll<CR>((f, t) => db.from("fin_contas_receber").select("omie_codigo_cliente, omie_codigo_lancamento, valor_documento, saldo, valor_recebido, data_emissao, data_vencimento, status_titulo").eq("company", COMPANY).or(`data_recebimento.is.null,data_recebimento.gte.${ttm_inicio},data_emissao.gte.${ttm_inicio}`).range(f, t), "fin_contas_receber");
+    // Fase 3: baixa REAL derivada (v_titulo_baixas, tipo CR) por omie_codigo_lancamento.
+    type Baixa = { omie_codigo_lancamento: number | null; data_baixa_final: string | null };
+    const baixasAll = await fetchAll<Baixa>((f, t) => db.from("v_titulo_baixas").select("omie_codigo_lancamento, data_baixa_final").eq("company", COMPANY).eq("tipo", "CR").range(f, t), "v_titulo_baixas");
+    const baixaPorCod = new Map<number, string>();
+    for (const b of baixasAll) { if (b.omie_codigo_lancamento != null && b.data_baixa_final) baixaPorCod.set(Number(b.omie_codigo_lancamento), b.data_baixa_final); }
     const titulosPorCliente = new Map<string, TituloAR[]>();
     for (const cr of crsAll) {
       if (cr.omie_codigo_cliente == null) continue;
       const key = String(cr.omie_codigo_cliente);
       const arr = titulosPorCliente.get(key) ?? [];
-      arr.push({ valor_documento: cr.valor_documento, saldo: cr.saldo, data_emissao: cr.data_emissao, data_recebimento: cr.data_recebimento, status: cr.status_titulo });
+      arr.push({
+        valor_documento: cr.valor_documento, saldo: cr.saldo, valor_recebido: cr.valor_recebido,
+        data_emissao: cr.data_emissao, data_vencimento: cr.data_vencimento,
+        data_baixa_derivada: cr.omie_codigo_lancamento != null ? (baixaPorCod.get(Number(cr.omie_codigo_lancamento)) ?? null) : null,
+        status: cr.status_titulo,
+      });
       titulosPorCliente.set(key, arr);
     }
+    // AR por cliente + cobertura GLOBAL da baixa derivada real (gate defensivo, codex).
+    let gReal = 0, gProxy = 0, gSem = 0;
+    const arPorClienteRaw = new Map<string, number>();
+    for (const cliente of new Set(combos.map((c) => c.cliente))) {
+      const tts = titulosPorCliente.get(cliente);
+      if (!tts) continue;
+      const r = arMedioTTM({ titulos: tts, ttm_inicio, ttm_fim });
+      arPorClienteRaw.set(cliente, r.ar_medio);
+      gReal += r.v_real; gProxy += r.v_proxy; gSem += r.v_sem_fecho;
+    }
+    const baseCob = gReal + gProxy + gSem;
+    const coberturaBaixaAR = baseCob > 0 ? gReal / baseCob : 1; // sem liquidado na janela → não penaliza
+    // Gate global: cobertura de baixa derivada real < 80% → AR não-confiável → null (vira
+    // ar_indisponivel → scoreConfiancaCockpit rebaixa). Oben ~100% → não dispara; protege
+    // expansão futura de escopo (codex: global sozinho pode esconder cliente, mas aqui o
+    // escopo é fixo oben; per-cliente fica como v2 — o proxy de vencimento já é exposto).
+    const arConfiavel = coberturaBaixaAR >= 0.8;
+    if (!arConfiavel) console.warn(`[ValorCockpit][${COMPANY}] cobertura baixa derivada ${(coberturaBaixaAR * 100).toFixed(0)}% < 80% → AR rebaixado a indisponível`);
     const capitalClientes: CapitalCliente[] = [...new Set(combos.map((c) => c.cliente))].map((cliente) => ({
       cliente,
-      ar_medio: titulosPorCliente.has(cliente) ? arMedioTTM({ titulos: titulosPorCliente.get(cliente)!, ttm_inicio, ttm_fim }) : null,
+      ar_medio: arConfiavel && arPorClienteRaw.has(cliente) ? arPorClienteRaw.get(cliente)! : null,
     }));
     const capitalSKUs: CapitalSKU[] = [...new Set(combos.map((c) => c.sku))].map((sku) => {
       const e = estoquePorSKU.get(sku);
@@ -262,7 +320,9 @@ serve(async (req: Request) => {
     return jsonResponse({
       company: COMPANY, k, ttm: { inicio: ttm_inicio, fim: ttm_fim },
       porCliente: res.porCliente, porSKU: res.porSKU, empresa: res.empresa,
-      recomendacoesCliente, confianca, cobertura_receita, config,
+      recomendacoesCliente, confianca, cobertura_receita,
+      cobertura_baixa_ar: coberturaBaixaAR, // Fase 3: fração da AR liquidada com baixa derivada REAL (vs vencimento-proxy)
+      config,
     }, 200);
   } catch (e) {
     return jsonResponse({ error: e instanceof Error ? e.message : String(e) }, 500);

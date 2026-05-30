@@ -2135,16 +2135,50 @@ Deno.serve(async (req) => {
   // ao timeout do edge function caller.
   const asyncMode = body?.async_mode === true || body?.async === true;
   if (asyncMode) {
-    // Marca todos os candidatos como enviando_portal IMEDIATAMENTE para a UI já
-    // refletir o estado correto antes do background pegar.
+    // CLAIM ATÔMICO: transiciona p/ enviando_portal SÓ os candidatos que NÃO estão
+    // já em voo. Um UPDATE ... RETURNING é atômico (lock de linha + re-avaliação do
+    // WHERE após o commit concorrente): se 2 requests competem pelo MESMO pedido
+    // (ex.: "aprovar e disparar" + cron de corte no mesmo instante), só um claима;
+    // o outro vê enviando_portal e é EXCLUÍDO do RETURNING. Fecha o duplo-envio ao
+    // portal (2ª sessão no Browserless → PO duplicado no fornecedor). O `is.null`
+    // cobre o pedido fresco (status_envio_portal NULL), que o `neq` sozinho perderia.
     const ids = candidatos.map((c) => c.id);
-    await supabase
+    const { data: claimedRows, error: claimErr } = await supabase
       .from("pedido_compra_sugerido")
       .update({ status_envio_portal: "enviando_portal", portal_erro: null })
-      .in("id", ids);
+      .in("id", ids)
+      .or("status_envio_portal.is.null,status_envio_portal.neq.enviando_portal")
+      .select("id");
+    if (claimErr) {
+      console.error("[envio-portal][async] Erro no claim atomico:", claimErr.message);
+      return new Response(
+        JSON.stringify({ error: `Falha ao reservar pedidos: ${claimErr.message}` }),
+        { headers: { ...corsHeaders, "Content-Type": "application/json" }, status: 500 },
+      );
+    }
+    const claimedIds = new Set((claimedRows ?? []).map((r) => (r as { id: number }).id));
+    const candidatosClaimed = candidatos.filter((c) => claimedIds.has(c.id));
+    const jaEmVoo = candidatos.length - candidatosClaimed.length;
+    if (jaEmVoo > 0) {
+      console.log(`[envio-portal][async] ${jaEmVoo} pedido(s) ja em voo (enviando_portal) — pulados pelo claim atomico`);
+    }
+    if (candidatosClaimed.length === 0) {
+      return new Response(
+        JSON.stringify({
+          modo,
+          async: true,
+          accepted: true,
+          pedido_ids: [],
+          ja_em_voo: jaEmVoo,
+          candidatos_encontrados: candidatos.length,
+          duracao_total_ms: Date.now() - tStart,
+        }),
+        { headers: { ...corsHeaders, "Content-Type": "application/json" }, status: 202 },
+      );
+    }
 
-    // Dispara em background. Erros vão para o log e o watchdog libera depois.
-    const bgTask = processCandidatos(supabase, candidatos)
+    // Dispara em background SÓ os reservados. Erros vão para o log e o watchdog libera depois.
+    const bgTask = processCandidatos(supabase, candidatosClaimed)
       .then((r) => {
         console.log(`[envio-portal][async] OK processados=${r.detalhes.length} sucesso=${r.sucesso} falhas=${r.falhasDef + r.falhasTmp} indeterminados=${r.indeterminados}`);
       })
@@ -2164,7 +2198,8 @@ Deno.serve(async (req) => {
         modo,
         async: true,
         accepted: true,
-        pedido_ids: ids,
+        pedido_ids: candidatosClaimed.map((c) => c.id),
+        ja_em_voo: jaEmVoo,
         candidatos_encontrados: candidatos.length,
         duracao_total_ms: Date.now() - tStart,
       }),
@@ -2172,8 +2207,27 @@ Deno.serve(async (req) => {
     );
   }
 
-  // === MODO SÍNCRONO (legado, usado pelo cron disparar-pedidos-aprovados) ===
-  const { detalhes, sucesso, falhasDef, falhasTmp, indeterminados } = await processCandidatos(supabase, candidatos);
+  // === MODO SÍNCRONO (legado) ===
+  // Mesmo CLAIM ATÔMICO do async (ver acima). Hoje não-exercido (todos os callers
+  // reais — disparar-pedidos-aprovados e o botão — usam async_mode; o lote cron é
+  // no-op), mas fecha a rota: sem isso o processarPedido marcaria enviando_portal de
+  // forma incondicional → duplo-envio se 2 síncronos concorressem no mesmo pedido.
+  const idsSync = candidatos.map((c) => c.id);
+  const { data: claimedSync, error: claimErrSync } = await supabase
+    .from("pedido_compra_sugerido")
+    .update({ status_envio_portal: "enviando_portal", portal_erro: null })
+    .in("id", idsSync)
+    .or("status_envio_portal.is.null,status_envio_portal.neq.enviando_portal")
+    .select("id");
+  if (claimErrSync) {
+    return new Response(
+      JSON.stringify({ error: `Falha ao reservar pedidos: ${claimErrSync.message}` }),
+      { headers: { ...corsHeaders, "Content-Type": "application/json" }, status: 500 },
+    );
+  }
+  const claimedSyncIds = new Set((claimedSync ?? []).map((r) => (r as { id: number }).id));
+  const candidatosSync = candidatos.filter((c) => claimedSyncIds.has(c.id));
+  const { detalhes, sucesso, falhasDef, falhasTmp, indeterminados } = await processCandidatos(supabase, candidatosSync);
 
   // Se algum erro foi BROWSERLESS_TOKEN invalido, devolve 500
   const tokenInvalid = detalhes.find((d) => (d.erro ?? "").includes("BROWSERLESS_TOKEN invalido"));

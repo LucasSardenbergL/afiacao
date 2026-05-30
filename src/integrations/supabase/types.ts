@@ -2848,6 +2848,7 @@ export type Database = {
           dismissed_at: string | null
           dismissed_by: string | null
           dismissed_until: string | null
+          email_enfileirado_em: string | null
           id: string
           mensagem: string
           severidade: string
@@ -2862,6 +2863,7 @@ export type Database = {
           dismissed_at?: string | null
           dismissed_by?: string | null
           dismissed_until?: string | null
+          email_enfileirado_em?: string | null
           id?: string
           mensagem: string
           severidade: string
@@ -2876,6 +2878,7 @@ export type Database = {
           dismissed_at?: string | null
           dismissed_by?: string | null
           dismissed_until?: string | null
+          email_enfileirado_em?: string | null
           id?: string
           mensagem?: string
           severidade?: string
@@ -8648,6 +8651,36 @@ export type Database = {
           },
         ]
       }
+      sayerlack_retry_motor_log: {
+        Row: {
+          aprovado_em: string | null
+          criado_em: string
+          id: number
+          pedido_id: number
+          request_id: number | null
+          status_envio_portal_no_disparo: string | null
+          tentativa_no_disparo: number | null
+        }
+        Insert: {
+          aprovado_em?: string | null
+          criado_em?: string
+          id?: never
+          pedido_id: number
+          request_id?: number | null
+          status_envio_portal_no_disparo?: string | null
+          tentativa_no_disparo?: number | null
+        }
+        Update: {
+          aprovado_em?: string | null
+          criado_em?: string
+          id?: never
+          pedido_id?: number
+          request_id?: number | null
+          status_envio_portal_no_disparo?: string | null
+          tentativa_no_disparo?: number | null
+        }
+        Relationships: []
+      }
       score_recalc_queue: {
         Row: {
           customer_user_id: string
@@ -11522,6 +11555,125 @@ export type Database = {
         }
         Relationships: []
       }
+      whatsapp_conversations: {
+        Row: {
+          assigned_operator_id: string | null
+          contact_name: string | null
+          created_at: string
+          customer_user_id: string | null
+          id: string
+          last_inbound_at: string | null
+          last_message_at: string | null
+          opt_in_status: string
+          phone_e164: string | null
+          phone_key: string
+          status: string
+        }
+        Insert: {
+          assigned_operator_id?: string | null
+          contact_name?: string | null
+          created_at?: string
+          customer_user_id?: string | null
+          id?: string
+          last_inbound_at?: string | null
+          last_message_at?: string | null
+          opt_in_status?: string
+          phone_e164?: string | null
+          phone_key: string
+          status?: string
+        }
+        Update: {
+          assigned_operator_id?: string | null
+          contact_name?: string | null
+          created_at?: string
+          customer_user_id?: string | null
+          id?: string
+          last_inbound_at?: string | null
+          last_message_at?: string | null
+          opt_in_status?: string
+          phone_e164?: string | null
+          phone_key?: string
+          status?: string
+        }
+        Relationships: []
+      }
+      whatsapp_messages: {
+        Row: {
+          body: string | null
+          conversation_id: string
+          created_at: string
+          direction: string
+          id: string
+          media_id: string | null
+          media_url: string | null
+          sender_user_id: string | null
+          status: string | null
+          transcript: string | null
+          type: string
+          wa_message_id: string | null
+          wa_timestamp: string | null
+        }
+        Insert: {
+          body?: string | null
+          conversation_id: string
+          created_at?: string
+          direction: string
+          id?: string
+          media_id?: string | null
+          media_url?: string | null
+          sender_user_id?: string | null
+          status?: string | null
+          transcript?: string | null
+          type?: string
+          wa_message_id?: string | null
+          wa_timestamp?: string | null
+        }
+        Update: {
+          body?: string | null
+          conversation_id?: string
+          created_at?: string
+          direction?: string
+          id?: string
+          media_id?: string | null
+          media_url?: string | null
+          sender_user_id?: string | null
+          status?: string | null
+          transcript?: string | null
+          type?: string
+          wa_message_id?: string | null
+          wa_timestamp?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "whatsapp_messages_conversation_id_fkey"
+            columns: ["conversation_id"]
+            isOneToOne: false
+            referencedRelation: "whatsapp_conversations"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      whatsapp_webhook_events: {
+        Row: {
+          id: string
+          payload: Json
+          processed_at: string | null
+          received_at: string
+        }
+        Insert: {
+          id?: string
+          payload: Json
+          processed_at?: string | null
+          received_at?: string
+        }
+        Update: {
+          id?: string
+          payload?: Json
+          processed_at?: string | null
+          received_at?: string
+        }
+        Relationships: []
+      }
     }
     Views: {
       customer_metrics_mv: {
@@ -11708,6 +11860,16 @@ export type Database = {
             referencedColumns: ["id"]
           },
         ]
+      }
+      v_capital_giro_prazos: {
+        Row: {
+          company: string | null
+          pmp: number | null
+          pmp_cobertura: number | null
+          pmr: number | null
+          pmr_cobertura: number | null
+        }
+        Relationships: []
       }
       v_clientes_nao_vinculados_atual: {
         Row: {
@@ -13223,6 +13385,7 @@ export type Database = {
           valor_coberto_rs: number
         }[]
       }
+      sayerlack_retry_orfaos: { Args: never; Returns: Json }
       set_config: {
         Args: { is_local?: boolean; parameter: string; value: string }
         Returns: string

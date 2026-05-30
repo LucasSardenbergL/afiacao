@@ -1,6 +1,5 @@
 import { useEffect, useMemo, useRef } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
-import { usePersona } from '@/hooks/usePersona';
 import { DashboardPersonaProvider, useDashboardPersonaContext } from '@/contexts/DashboardPersonaContext';
 import { DashboardEditModeProvider } from '@/contexts/DashboardEditModeContext';
 import { useRegisterShortcuts } from '@/components/shell/ShortcutsRegistry';
@@ -22,9 +21,8 @@ import { PERSONA_CONFIG, type ZoneId } from '@/lib/dashboard/persona-config';
 import type { PriorityCandidate } from '@/lib/dashboard/priority-rules';
 
 export function DashboardShell() {
-  const resolved = usePersona();
   return (
-    <DashboardPersonaProvider resolved={resolved}>
+    <DashboardPersonaProvider>
       <DashboardEditModeProvider>
         <DashboardBody />
       </DashboardEditModeProvider>
