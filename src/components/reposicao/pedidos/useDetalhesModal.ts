@@ -251,6 +251,10 @@ export function useDetalhesModal({ pedido, open, onOpenChange, onApproved }: Use
       updates.cancelado_por = user?.email ?? 'sistema';
       updates.cancelado_em = new Date().toISOString();
       updates.justificativa_cancelamento = 'Todos os itens foram removidos manualmente';
+      // Higiene de estado: cancelar limpa o sub-fluxo do portal (espelha cancelar_pedido_sugerido)
+      // — senão um cancelado fica com status_envio_portal sujo e o check reposicao_portal_pipeline o conta.
+      updates.status_envio_portal = 'nao_aplicavel';
+      updates.portal_proximo_retry_em = null;
     }
     const { error: errPed } = await supabase
       .from('pedido_compra_sugerido')

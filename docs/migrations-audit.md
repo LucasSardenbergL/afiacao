@@ -21,15 +21,15 @@ Este audit valida **quais custom migrations estão de fato aplicadas no banco**.
 
 ## Resumo
 
-- **121** custom migrations totais
-- **522** objetos esperados (criados por estas migrations)
+- **125** custom migrations totais
+- **541** objetos esperados (criados por estas migrations)
 - Quebra por tipo:
-  - `rls_policy`: 142
-  - `index`: 100
-  - `function`: 95
-  - `cron_job`: 88
-  - `table`: 61
-  - `trigger`: 32
+  - `rls_policy`: 146
+  - `index`: 104
+  - `function`: 102
+  - `cron_job`: 89
+  - `table`: 62
+  - `trigger`: 34
   - `enum_value`: 4
 
 ## Inventário por migration
@@ -1093,6 +1093,24 @@ Lista canônica do que cada migration *deveria* criar (extraído via regex de `C
 | `function` | `public._data_health_compute` | — |
 | `function` | `public.fin_sync_heartbeat` | — |
 
+### `20260530120000_visitas_agendadas.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `table` | `public.visitas_agendadas` | — |
+| `index` | `public.uq_vag_pendente_cliente_vendedor_data` | `visitas_agendadas` |
+| `index` | `public.uq_vag_route_visit_id` | `visitas_agendadas` |
+| `index` | `public.idx_vag_scheduled_by_date` | `visitas_agendadas` |
+| `index` | `public.idx_vag_pending_by_seller` | `visitas_agendadas` |
+| `function` | `public.set_updated_at_visitas_agendadas` | — |
+| `function` | `public.reconcile_visita_agendada` | — |
+| `trigger` | `public.trg_vag_updated_at` | `visitas_agendadas` |
+| `trigger` | `public.trg_reconcile_visita_agendada` | `route_visits` |
+| `rls_policy` | `public.vag_select_own` | `visitas_agendadas` |
+| `rls_policy` | `public.vag_insert_own_carteira` | `visitas_agendadas` |
+| `rls_policy` | `public.vag_update_own_pending` | `visitas_agendadas` |
+| `rls_policy` | `public.vag_delete_gestor` | `visitas_agendadas` |
+
 ### `20260530140000_fin_watchdog_sync_stale_grace_email.sql`
 
 | Tipo | Objeto | Parent |
@@ -1142,6 +1160,27 @@ Lista canônica do que cada migration *deveria* criar (extraído via regex de `C
 | Tipo | Objeto | Parent |
 | --- | --- | --- |
 | `function` | `public._data_health_compute` | — |
+
+### `20260530200000_reposicao_classificar_sayerlack_grupo_default.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `function` | `public.classificar_sayerlack_grupo_default` | — |
+| `cron_job` | `cron.reposicao-classificar-sayerlack-grupo` | — |
+
+### `20260530210000_data_health_restaura_portal_split.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `function` | `public._data_health_compute` | — |
+| `function` | `public.data_health_watchdog` | — |
+| `function` | `public.fin_sync_heartbeat` | — |
+
+### `20260530210001_cancelar_pedido_limpa_portal.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `function` | `public.cancelar_pedido_sugerido` | — |
 
 ## Próximos passos quando algo der `❌`
 
