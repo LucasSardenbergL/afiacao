@@ -1,6 +1,7 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { toast } from 'sonner';
 import { useAuth } from '@/contexts/AuthContext';
+import { supabase } from '@/integrations/supabase/client';
 import { visitasAgendadasTable, type VisitaAgendadaRow } from '@/integrations/supabase/visitasAgendadas';
 
 // ---------------------------------------------------------------------------
@@ -103,5 +104,31 @@ export function useVisitasAgendadas() {
     onSettled: () => void qc.invalidateQueries({ queryKey: key }),
   });
 
-  return { proximas, agendar, remarcar, cancelar };
+  const checkIn = useMutation({
+    mutationFn: async (input: { customerUserId: string }) => {
+      const coords = await new Promise<{ lat: number; lng: number } | null>((resolve) => {
+        if (!navigator.geolocation) return resolve(null);
+        navigator.geolocation.getCurrentPosition(
+          (p) => resolve({ lat: p.coords.latitude, lng: p.coords.longitude }),
+          () => resolve(null),
+          { timeout: 5000 },
+        );
+      });
+      const { error } = await supabase.from('route_visits').insert({
+        customer_user_id: input.customerUserId,
+        visited_by: uid!,
+        visit_type: 'comercial',
+        check_in_at: new Date().toISOString(),
+        ...(coords ? { lat: coords.lat, lng: coords.lng } : {}),
+      });
+      if (error) throw error;
+    },
+    onError: () => toast.error('Não foi possível fazer check-in'),
+    onSuccess: () => {
+      toast.success('Check-in feito');
+      void qc.invalidateQueries({ queryKey: key });
+    },
+  });
+
+  return { proximas, agendar, remarcar, cancelar, checkIn };
 }
