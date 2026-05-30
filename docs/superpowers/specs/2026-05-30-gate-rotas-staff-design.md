@@ -176,9 +176,9 @@ Todo o restante do bloco. Agrupado para referência do plano:
 
 ## 8. Estratégia de teste
 
-O repo testa majoritariamente **lógica pura** (138 testes; só `EmptyState.test.tsx` e `salesOrders/__tests__/SalesOrderRow.test.tsx` renderizam componente). Coerente com isso:
+Existe um template direto a espelhar: **`src/components/__tests__/RequireFinanceiroAccess.test.tsx`** — testa o guard gêmeo com vitest + `@testing-library/react`, `useAuth` mockado via `vi.mock('@/contexts/AuthContext')`, renderizando dentro de `<MemoryRouter>`. O `RequireStaff.test.tsx` segue o mesmo padrão (mais simples, pois `RequireStaff` não tem a query `fin_permissoes`).
 
-- **Teste de unidade do `RequireStaff`** (`src/components/__tests__/RequireStaff.test.tsx`), espelhando o setup dos 2 testes de render existentes (vitest + `@testing-library/react`, `useAuth` mockado via `vi.mock('@/contexts/AuthContext')`):
+- **Teste de unidade do `RequireStaff`** (`src/components/__tests__/RequireStaff.test.tsx`), espelhando `RequireFinanceiroAccess.test.tsx`:
   1. `loading: true` → renderiza spinner (não o Card de bloqueio).
   2. `loading: false, isStaff: false` (customer) → renderiza o Card "Área restrita à equipe" e **não** o conteúdo filho.
   3. `loading: false, isStaff: true` → renderiza o `<Outlet/>` (conteúdo filho).
