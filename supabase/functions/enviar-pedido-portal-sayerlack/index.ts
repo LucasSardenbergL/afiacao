@@ -1606,9 +1606,10 @@ async function processarPedido(
     sku_descricao: i.sku_descricao,
   }));
 
-  // 4. Marcar como enviando
+  // 4. Marcar como enviando (atualizado_em = relógio do watchdog: reinicia ao iniciar o envio)
   await supabase.from("pedido_compra_sugerido").update({
     status_envio_portal: "enviando_portal",
+    atualizado_em: new Date().toISOString(),
   }).eq("id", pedido.id);
   console.log(`[envio-portal] Pedido #${pedido.id}: ${result.status_inicial} -> enviando_portal (locked)`);
   console.log(`[envio-portal] Pedido #${pedido.id}: chamando Browserless... (${itemsPortal.length} SKUs)`);
@@ -2030,7 +2031,8 @@ Deno.serve(async (req) => {
     const { count } = await supabase
       .from("pedido_compra_sugerido")
       .select("id", { count: "exact", head: true })
-      .eq("status", "disparado")
+      // retry blind-spot fix: pedido em retry de portal fica em aprovado_aguardando_disparo (não disparado)
+      .in("status", ["aprovado_aguardando_disparo", "disparado"])
       .in("status_envio_portal", ["pendente_envio_portal", "erro_retentavel"])
       .lt("portal_tentativas", MAX_TENTATIVAS)
       .ilike("fornecedor_nome", "%SAYERLACK%")
@@ -2095,7 +2097,11 @@ Deno.serve(async (req) => {
       const { data: fb } = await supabase
         .from("pedido_compra_sugerido")
         .select("id, empresa, fornecedor_nome, status_envio_portal, portal_tentativas, portal_protocolo")
-        .eq("status", "disparado")
+        // retry blind-spot fix (espelha a RPC envio_portal_lock_candidatos): pedido em retry de portal
+        // fica em status='aprovado_aguardando_disparo' (só vira 'disparado' após criar o Omie). Ambos os
+        // estados são gated pelo relógio estável portal_proximo_retry_em (o .or abaixo) — pendente novo
+        // grava +15min em iniciarEnvioPortalSayerlack, evitando corrida com o envio async inicial.
+        .in("status", ["aprovado_aguardando_disparo", "disparado"])
         .in("status_envio_portal", ["pendente_envio_portal", "erro_retentavel"])
         .lt("portal_tentativas", MAX_TENTATIVAS)
         .ilike("fornecedor_nome", "%SAYERLACK%")
@@ -2140,7 +2146,8 @@ Deno.serve(async (req) => {
     const ids = candidatos.map((c) => c.id);
     await supabase
       .from("pedido_compra_sugerido")
-      .update({ status_envio_portal: "enviando_portal", portal_erro: null })
+      // atualizado_em = relógio do watchdog (idade do enviando_portal); reinicia ao reivindicar em lote
+      .update({ status_envio_portal: "enviando_portal", portal_erro: null, atualizado_em: new Date().toISOString() })
       .in("id", ids);
 
     // Dispara em background. Erros vão para o log e o watchdog libera depois.

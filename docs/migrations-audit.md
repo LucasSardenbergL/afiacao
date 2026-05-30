@@ -21,13 +21,13 @@ Este audit valida **quais custom migrations estão de fato aplicadas no banco**.
 
 ## Resumo
 
-- **107** custom migrations totais
-- **490** objetos esperados (criados por estas migrations)
+- **110** custom migrations totais
+- **494** objetos esperados (criados por estas migrations)
 - Quebra por tipo:
   - `rls_policy`: 139
   - `index`: 96
-  - `cron_job`: 83
-  - `function`: 80
+  - `cron_job`: 84
+  - `function`: 83
   - `table`: 57
   - `trigger`: 31
   - `enum_value`: 4
@@ -1016,6 +1016,19 @@ Lista canônica do que cada migration *deveria* criar (extraído via regex de `C
 | --- | --- | --- |
 | `cron_job` | `cron.sync-customers-vendas-daily` | — |
 
+### `20260528020000_data_health_reposicao_acoes.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `function` | `public._data_health_compute` | — |
+| `function` | `public.fin_sync_heartbeat` | — |
+
+### `20260528030000_cron_sayerlack_lote_retry.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `cron_job` | `cron.sayerlack-portal-lote-retry` | — |
+
 ### `20260528120000_reposicao_custo_cmc_em_transito.sql`
 
 | Tipo | Objeto | Parent |
@@ -1041,6 +1054,12 @@ Lista canônica do que cada migration *deveria* criar (extraído via regex de `C
 | Tipo | Objeto | Parent |
 | --- | --- | --- |
 | `function` | `public._data_health_compute` | — |
+
+### `20260530230000_fix_portal_lock_retry_blindspot.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `function` | `public.envio_portal_lock_candidatos` | — |
 
 ## Próximos passos quando algo der `❌`
 
