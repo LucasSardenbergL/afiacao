@@ -8,9 +8,31 @@
 > (`erro_nao_retentavel→falha_envio`) viraram **cleanup futuro de higiene** (o motor já ignora cancelados; a
 > Fase 2 tira o falso-positivo sem mexer na máquina de estados recém-estabilizada).
 > **Fase 0 (reset) e Fase 2 (filtros acionáveis nos checks) é o que entreguei.** Migration
-> `20260530200000_data_health_checks_acionaveis.sql`. **Follow-up de higiene pendente:** Fix 1.1 (cancelar limpa
-> portal) + filtro de cancelados na aba Pendentes do `AdminPortalSayerlack` (artefatos guardados em `/tmp/fase1-ref/`).
-> **LIÇÃO:** re-checar `gh pr list`/main ANTES de cada fase, não só no início (§14). Esta saga foi um caso-escola.
+> `20260530200000_data_health_checks_acionaveis.sql` (#493).
+>
+> ⚠️ **ATUALIZAÇÃO 2026-05-30 (2) — minha Fase 2 REGREDIU o #490 (cascata multi-sessão), CORRIGIDA:**
+> Enquanto eu fazia a Fase 2 (#493), OUTRA sessão entregou o **#490** (`20260530190000_data_health_portal_push.sql`):
+> **promoveu disparo/portal ao push E dividiu `reposicao_portal` em dois** — `reposicao_portal_pipeline`
+> (automático DEVERIA drenar) × `reposicao_portal_humano` (precisa de gente) — recriando `data_health_watchdog`
+> + `fin_sync_heartbeat` com o IN-list ampliado (6→9 fontes no push). Minha #493 partiu do corpo do #460/#194751
+> (sem o split), então **reverteu o `_data_health_compute` pro `reposicao_portal` único** e **NÃO** recriou
+> watchdog/heartbeat → o watchdog do #490 ficou procurando `reposicao_portal_pipeline`/`_humano` que o compute
+> não produzia mais = **push de portal quebrado**. **Fix-forward:** `20260530210000_data_health_restaura_portal_split.sql`
+> = **#490 VERBATIM** (SQL idêntico, só cabeçalho anti-cascata) — supersede a #493 por timestamp + CREATE OR REPLACE.
+> O split pipeline/humano é estritamente MAIS acionável que o filtro de check-único da #493 (que o split já subsume),
+> e o `reposicao_disparo` é idêntico nas duas → restaurar #490 não perde nada. Validado em Postgres 17 efêmero
+> (14 checks, watchdog/heartbeat OK).
+>
+> ✅ **Fix 1.1 (higiene de cancelamento) ENTREGUE nesta PR:** `20260530210001_cancelar_pedido_limpa_portal.sql`
+> (RPC `cancelar_pedido_sugerido` agora zera `status_envio_portal='nao_aplicavel'` + `portal_proximo_retry_em=NULL`,
+> guard `disparado/concluido_recebido` preservado, corpo verbatim do schema-snapshot 843-866 + 2 linhas) +
+> espelho no frontend (`useDetalhesModal.ts`, bloco de cancelamento por remoção de todos os itens). Artefatos
+> antigos guardados em `/tmp/fase1-ref/`.
+>
+> **LIÇÃO (reforçada):** re-checar `gh pr list`/main ANTES de cada fase, não só no início (§14). Esta saga foi
+> um caso-escola DUPLO: o `_data_health_compute` é arquivo quente multi-sessão; 3 sessões o tocaram em paralelo
+> (#460, #490, #493) e a regressão por CREATE OR REPLACE de corpo velho é silenciosa. Mitigação: cabeçalho que
+> manda a próxima sessão "partir DESTA migração (maior timestamp)".
 
 > **For agentic workers:** Use superpowers:executing-plans para executar fase a fase, com checkpoint de revisão entre fases. Cada fase que toca banco/edge **não** roda no merge — vira bloco SQL pro SQL Editor do Lovable (ritual `lovable-db-operator`) e/ou deploy manual de edge via chat do Lovable. Steps usam checkbox (`- [ ]`).
 

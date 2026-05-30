@@ -3,7 +3,7 @@
 -- ========================================================================
 --
 -- Gerado por: scripts/audit-custom-migrations.ts
--- Total de custom migrations: 121
+-- Total de custom migrations: 127
 --
 -- Como usar:
 --   1. Abra o Supabase SQL Editor (via Lovable Cloud → Backend → SQL Editor)
@@ -132,7 +132,9 @@ WITH expected (version, slug, filename) AS (VALUES
   ('20260528140000', 'data_health_compute_msg_tz', '20260528140000_data_health_compute_msg_tz.sql'),
   ('20260528140000', 'whatsapp_fundacao', '20260528140000_whatsapp_fundacao.sql'),
   ('20260528150000', 'fin_estoque_omie_feed', '20260528150000_fin_estoque_omie_feed.sql'),
+  ('20260528160000', 'route_fundacao', '20260528160000_route_fundacao.sql'),
   ('20260528194751', 'data_health_consolida_last_error_e_reposicao_checks', '20260528194751_data_health_consolida_last_error_e_reposicao_checks.sql'),
+  ('20260530120000', 'visitas_agendadas', '20260530120000_visitas_agendadas.sql'),
   ('20260530140000', 'fin_watchdog_sync_stale_grace_email', '20260530140000_fin_watchdog_sync_stale_grace_email.sql'),
   ('20260530143818', 'reposicao_excluir_405ml', '20260530143818_reposicao_excluir_405ml.sql'),
   ('20260530160000', 'data_health_diagnostico_gate_status', '20260530160000_data_health_diagnostico_gate_status.sql'),
@@ -140,7 +142,11 @@ WITH expected (version, slug, filename) AS (VALUES
   ('20260530180000', 'fix_sku_fornecedor_externo_atualizado_em_trigger', '20260530180000_fix_sku_fornecedor_externo_atualizado_em_trigger.sql'),
   ('20260530190000', 'data_health_portal_push', '20260530190000_data_health_portal_push.sql'),
   ('20260530190000', 'reposicao_preencher_parametros_faltantes', '20260530190000_reposicao_preencher_parametros_faltantes.sql'),
-  ('20260530200000', 'data_health_checks_acionaveis', '20260530200000_data_health_checks_acionaveis.sql')
+  ('20260530200000', 'data_health_checks_acionaveis', '20260530200000_data_health_checks_acionaveis.sql'),
+  ('20260530200000', 'reposicao_classificar_sayerlack_grupo_default', '20260530200000_reposicao_classificar_sayerlack_grupo_default.sql'),
+  ('20260530210000', 'data_health_restaura_portal_split', '20260530210000_data_health_restaura_portal_split.sql'),
+  ('20260530210001', 'cancelar_pedido_limpa_portal', '20260530210001_cancelar_pedido_limpa_portal.sql'),
+  ('20260530230000', 'fix_portal_lock_retry_blindspot', '20260530230000_fix_portal_lock_retry_blindspot.sql')
 )
 SELECT
   e.version,
@@ -668,8 +674,35 @@ WITH expected_objects (migration, kind, schema_name, object_name, parent_name) A
   ('fin_estoque_omie_feed', 'function', 'public', 'fin_estimar_estoque_omie', ''),
   ('fin_estoque_omie_feed', 'cron_job', 'cron', 'sync-inventory-colacor-vendas-1h', ''),
   ('fin_estoque_omie_feed', 'cron_job', 'cron', 'sync-inventory-servicos-1h', ''),
+  ('route_fundacao', 'table', 'public', 'route_schedule', ''),
+  ('route_fundacao', 'table', 'public', 'route_calendar_override', ''),
+  ('route_fundacao', 'table', 'public', 'route_disparo_config', ''),
+  ('route_fundacao', 'table', 'public', 'route_contact_log', ''),
+  ('route_fundacao', 'index', 'public', 'idx_route_schedule_weekday', 'route_schedule'),
+  ('route_fundacao', 'index', 'public', 'idx_route_contact_log_customer', 'route_contact_log'),
+  ('route_fundacao', 'index', 'public', 'idx_route_contact_log_data', 'route_contact_log'),
+  ('route_fundacao', 'rls_policy', 'public', 'route_sched_staff_read', 'route_schedule'),
+  ('route_fundacao', 'rls_policy', 'public', 'route_sched_master_write', 'route_schedule'),
+  ('route_fundacao', 'rls_policy', 'public', 'route_override_staff_read', 'route_calendar_override'),
+  ('route_fundacao', 'rls_policy', 'public', 'route_override_master_write', 'route_calendar_override'),
+  ('route_fundacao', 'rls_policy', 'public', 'route_config_staff_read', 'route_disparo_config'),
+  ('route_fundacao', 'rls_policy', 'public', 'route_config_master_write', 'route_disparo_config'),
+  ('route_fundacao', 'rls_policy', 'public', 'route_log_staff_read', 'route_contact_log'),
   ('data_health_consolida_last_error_e_reposicao_checks', 'function', 'public', '_data_health_compute', ''),
   ('data_health_consolida_last_error_e_reposicao_checks', 'function', 'public', 'fin_sync_heartbeat', ''),
+  ('visitas_agendadas', 'table', 'public', 'visitas_agendadas', ''),
+  ('visitas_agendadas', 'index', 'public', 'uq_vag_pendente_cliente_vendedor_data', 'visitas_agendadas'),
+  ('visitas_agendadas', 'index', 'public', 'uq_vag_route_visit_id', 'visitas_agendadas'),
+  ('visitas_agendadas', 'index', 'public', 'idx_vag_scheduled_by_date', 'visitas_agendadas'),
+  ('visitas_agendadas', 'index', 'public', 'idx_vag_pending_by_seller', 'visitas_agendadas'),
+  ('visitas_agendadas', 'function', 'public', 'set_updated_at_visitas_agendadas', ''),
+  ('visitas_agendadas', 'function', 'public', 'reconcile_visita_agendada', ''),
+  ('visitas_agendadas', 'trigger', 'public', 'trg_vag_updated_at', 'visitas_agendadas'),
+  ('visitas_agendadas', 'trigger', 'public', 'trg_reconcile_visita_agendada', 'route_visits'),
+  ('visitas_agendadas', 'rls_policy', 'public', 'vag_select_own', 'visitas_agendadas'),
+  ('visitas_agendadas', 'rls_policy', 'public', 'vag_insert_own_carteira', 'visitas_agendadas'),
+  ('visitas_agendadas', 'rls_policy', 'public', 'vag_update_own_pending', 'visitas_agendadas'),
+  ('visitas_agendadas', 'rls_policy', 'public', 'vag_delete_gestor', 'visitas_agendadas'),
   ('fin_watchdog_sync_stale_grace_email', 'function', 'public', 'fin_sync_watchdog_check', ''),
   ('reposicao_excluir_405ml', 'function', 'public', 'gerar_pedidos_sugeridos_ciclo', ''),
   ('data_health_diagnostico_gate_status', 'function', 'public', '_data_health_compute', ''),
@@ -680,7 +713,14 @@ WITH expected_objects (migration, kind, schema_name, object_name, parent_name) A
   ('data_health_portal_push', 'function', 'public', 'fin_sync_heartbeat', ''),
   ('reposicao_preencher_parametros_faltantes', 'function', 'public', 'preencher_parametros_faltantes_skus', ''),
   ('reposicao_preencher_parametros_faltantes', 'cron_job', 'cron', 'reposicao-preencher-parametros-faltantes', ''),
-  ('data_health_checks_acionaveis', 'function', 'public', '_data_health_compute', '')
+  ('data_health_checks_acionaveis', 'function', 'public', '_data_health_compute', ''),
+  ('reposicao_classificar_sayerlack_grupo_default', 'function', 'public', 'classificar_sayerlack_grupo_default', ''),
+  ('reposicao_classificar_sayerlack_grupo_default', 'cron_job', 'cron', 'reposicao-classificar-sayerlack-grupo', ''),
+  ('data_health_restaura_portal_split', 'function', 'public', '_data_health_compute', ''),
+  ('data_health_restaura_portal_split', 'function', 'public', 'data_health_watchdog', ''),
+  ('data_health_restaura_portal_split', 'function', 'public', 'fin_sync_heartbeat', ''),
+  ('cancelar_pedido_limpa_portal', 'function', 'public', 'cancelar_pedido_sugerido', ''),
+  ('fix_portal_lock_retry_blindspot', 'function', 'public', 'envio_portal_lock_candidatos', '')
 )
 SELECT
   e.migration,

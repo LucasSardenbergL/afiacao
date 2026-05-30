@@ -10,7 +10,7 @@
     "lint": "eslint .",
     "preview": "vite preview",
     "test": "vitest run",
-    "typecheck:strict": "tsc --noEmit -p tsconfig.strict.json",
+    "typecheck": "tsc --noEmit -p tsconfig.app.json",
     "audit:migrations": "bun scripts/audit-custom-migrations.ts",
     "wt": "bash scripts/new-worktree.sh"
   },

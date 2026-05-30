@@ -5,6 +5,14 @@ import { TooltipProvider } from '@/components/ui/tooltip';
 import { CustomerHero } from '../CustomerHero';
 import type { Customer, CustomerScore } from '../viewTypes';
 
+// AgendarVisitaDialog (renderizado pelo CustomerHero) usa useVisitasAgendadas →
+// useAuth/useQueryClient. Mockamos o hook: este é um teste unitário do hero, não do dialog.
+vi.mock('@/hooks/useVisitasAgendadas', () => ({
+  useVisitasAgendadas: () => ({
+    agendar: { mutate: vi.fn(), isPending: false },
+  }),
+}));
+
 const customer = {
   name: 'Acme Ltda',
   document: '12345678000190',

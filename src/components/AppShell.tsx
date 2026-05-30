@@ -84,6 +84,7 @@ const unifiedNavSections: { title: string; items: NavItem[] }[] = [
       { icon: Link2, label: 'Chamadas pendentes', path: '/farmer/calls/pending-link' },
       { icon: Phone, label: 'Telefonia', path: '/telefonia' },
       { icon: MessageCircle, label: 'WhatsApp', path: '/whatsapp', managerOnly: true },
+      { icon: ListChecks, label: 'Lista de ligação', path: '/rota/ligacoes', managerOnly: true },
     ],
   },
   {
