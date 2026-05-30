@@ -7,6 +7,7 @@ import { supabase } from '@/integrations/supabase/client';
 import { toast } from 'sonner';
 import { EMPTY_FORM } from './config';
 import type { Mapeamento, DescricaoLookup, ValidacaoResult } from './types';
+import { validarGabarito, sugerirMapeamentos, PARSER_VERSION, type SugestaoSegura } from '@/lib/reposicao/sayerlack-sku';
 
 export function useSkuMapeamento() {
   const qc = useQueryClient();
@@ -109,6 +110,34 @@ export function useSkuMapeamento() {
     onError: (e: Error) => toast.error(e.message ?? 'Erro ao salvar'),
   });
 
+  // Grava em lote os mapeamentos "seguros" (1 código extraído da descrição).
+  // fator_conversao=1 (default do EMPTY_FORM = regra do negócio; founder revisa antes);
+  // unidade_portal = sufixo do código; observacoes marca como auto pro contador `automaticos`.
+  const gravarSegurosMut = useMutation({
+    mutationFn: async (seguros: SugestaoSegura[]) => {
+      if (seguros.length === 0) return 0;
+      const rows = seguros.map((s) => ({
+        empresa: 'OBEN',
+        fornecedor_nome: 'RENNER SAYERLACK S/A',
+        sku_omie: s.sku_omie,
+        sku_portal: s.sku_portal,
+        unidade_portal: s.sufixo || 'UN',
+        fator_conversao: 1,
+        ativo: true,
+        observacoes: `extraído automaticamente (parser v${PARSER_VERSION})`,
+      }));
+      const { error } = await supabase.from('sku_fornecedor_externo').insert(rows);
+      if (error) throw error;
+      return rows.length;
+    },
+    onSuccess: (n) => {
+      qc.invalidateQueries({ queryKey: ['sku-mapeamento'] });
+      toast.success(`${n} mapeamento(s) criado(s) automaticamente`);
+      setOpenValidar(false);
+    },
+    onError: (e: Error) => toast.error(e.message ?? 'Erro ao gravar mapeamentos'),
+  });
+
   const handleEdit = (m: Mapeamento) => {
     setEditing(m);
     setForm({
@@ -177,12 +206,25 @@ export function useSkuMapeamento() {
       ).length;
       const manuais = (mapeamentos ?? []).length - automaticos;
 
+      // GATE: o parser reproduz os mapeamentos manuais (Sayerlack OBEN ativos)?
+      const gabaritoRows = (mapeamentos ?? [])
+        .filter((m) => m.ativo && m.empresa === 'OBEN' && /SAYERLACK/i.test(m.fornecedor_nome))
+        .map((m) => ({ sku_omie: m.sku_omie, sku_portal: m.sku_portal, descricao: descricoes?.get(m.sku_omie) ?? null }));
+      const gabarito = validarGabarito(gabaritoRows);
+
+      // SUGESTÕES: extrai o código da descrição dos faltantes
+      const sugestoes = sugerirMapeamentos(
+        faltantes.map((f) => ({ sku_codigo_omie: f.sku_codigo_omie, sku_descricao: f.sku_descricao })),
+      );
+
       setValidacao({
         faltantes,
         suspeitos,
         total: mapeamentos?.length ?? 0,
         automaticos,
         manuais,
+        gabarito,
+        sugestoes,
       });
     } catch (e) {
       toast.error(e instanceof Error ? e.message : 'Erro ao validar');
@@ -222,5 +264,7 @@ export function useSkuMapeamento() {
     openValidar, setOpenValidar,
     validando, validacao,
     handleValidar,
+    gravarSeguros: (seguros: SugestaoSegura[]) => gravarSegurosMut.mutate(seguros),
+    gravandoSeguros: gravarSegurosMut.isPending,
   };
 }
