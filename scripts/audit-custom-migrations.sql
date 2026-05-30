@@ -3,7 +3,7 @@
 -- ========================================================================
 --
 -- Gerado por: scripts/audit-custom-migrations.ts
--- Total de custom migrations: 126
+-- Total de custom migrations: 127
 --
 -- Como usar:
 --   1. Abra o Supabase SQL Editor (via Lovable Cloud → Backend → SQL Editor)
@@ -145,7 +145,8 @@ WITH expected (version, slug, filename) AS (VALUES
   ('20260530200000', 'data_health_checks_acionaveis', '20260530200000_data_health_checks_acionaveis.sql'),
   ('20260530200000', 'reposicao_classificar_sayerlack_grupo_default', '20260530200000_reposicao_classificar_sayerlack_grupo_default.sql'),
   ('20260530210000', 'data_health_restaura_portal_split', '20260530210000_data_health_restaura_portal_split.sql'),
-  ('20260530210001', 'cancelar_pedido_limpa_portal', '20260530210001_cancelar_pedido_limpa_portal.sql')
+  ('20260530210001', 'cancelar_pedido_limpa_portal', '20260530210001_cancelar_pedido_limpa_portal.sql'),
+  ('20260530230000', 'fix_portal_lock_retry_blindspot', '20260530230000_fix_portal_lock_retry_blindspot.sql')
 )
 SELECT
   e.version,
@@ -718,7 +719,8 @@ WITH expected_objects (migration, kind, schema_name, object_name, parent_name) A
   ('data_health_restaura_portal_split', 'function', 'public', '_data_health_compute', ''),
   ('data_health_restaura_portal_split', 'function', 'public', 'data_health_watchdog', ''),
   ('data_health_restaura_portal_split', 'function', 'public', 'fin_sync_heartbeat', ''),
-  ('cancelar_pedido_limpa_portal', 'function', 'public', 'cancelar_pedido_sugerido', '')
+  ('cancelar_pedido_limpa_portal', 'function', 'public', 'cancelar_pedido_sugerido', ''),
+  ('fix_portal_lock_retry_blindspot', 'function', 'public', 'envio_portal_lock_candidatos', '')
 )
 SELECT
   e.migration,

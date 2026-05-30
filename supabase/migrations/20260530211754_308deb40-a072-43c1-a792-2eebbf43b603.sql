@@ -1,0 +1,1 @@
+COMMENT ON TABLE public.visitas_agendadas IS 'Visitas agendadas pelo vendedor para clientes da carteira (pendente/realizada/cancelada).';

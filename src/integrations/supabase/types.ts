@@ -11468,6 +11468,53 @@ export type Database = {
         }
         Relationships: []
       }
+      visitas_agendadas: {
+        Row: {
+          created_at: string
+          customer_user_id: string
+          id: string
+          notes: string | null
+          route_visit_id: string | null
+          scheduled_by: string
+          scheduled_date: string
+          status: string
+          updated_at: string
+          visit_type: string
+        }
+        Insert: {
+          created_at?: string
+          customer_user_id: string
+          id?: string
+          notes?: string | null
+          route_visit_id?: string | null
+          scheduled_by: string
+          scheduled_date: string
+          status?: string
+          updated_at?: string
+          visit_type?: string
+        }
+        Update: {
+          created_at?: string
+          customer_user_id?: string
+          id?: string
+          notes?: string | null
+          route_visit_id?: string | null
+          scheduled_by?: string
+          scheduled_date?: string
+          status?: string
+          updated_at?: string
+          visit_type?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "visitas_agendadas_route_visit_id_fkey"
+            columns: ["route_visit_id"]
+            isOneToOne: false
+            referencedRelation: "route_visits"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       warehouses: {
         Row: {
           cnpj: string | null
@@ -12927,6 +12974,7 @@ export type Database = {
           skus_incluidos: number
         }[]
       }
+      classificar_sayerlack_grupo_default: { Args: never; Returns: number }
       converter_sugestao_em_campanha_flat: {
         Args: {
           p_canal?: string
@@ -13277,6 +13325,10 @@ export type Database = {
         }[]
       }
       pode_ver_carteira_completa: { Args: { _uid: string }; Returns: boolean }
+      preencher_parametros_faltantes_skus: {
+        Args: { p_empresa: string }
+        Returns: number
+      }
       processar_alertas_pendentes_notificacao: {
         Args: { p_empresa?: string }
         Returns: {
