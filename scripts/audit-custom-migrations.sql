@@ -3,7 +3,7 @@
 -- ========================================================================
 --
 -- Gerado por: scripts/audit-custom-migrations.ts
--- Total de custom migrations: 116
+-- Total de custom migrations: 118
 --
 -- Como usar:
 --   1. Abra o Supabase SQL Editor (via Lovable Cloud → Backend → SQL Editor)
@@ -135,7 +135,9 @@ WITH expected (version, slug, filename) AS (VALUES
   ('20260528194751', 'data_health_consolida_last_error_e_reposicao_checks', '20260528194751_data_health_consolida_last_error_e_reposicao_checks.sql'),
   ('20260530140000', 'fin_watchdog_sync_stale_grace_email', '20260530140000_fin_watchdog_sync_stale_grace_email.sql'),
   ('20260530143818', 'reposicao_excluir_405ml', '20260530143818_reposicao_excluir_405ml.sql'),
-  ('20260530170000', 'unschedule_sayerlack_lote_retry', '20260530170000_unschedule_sayerlack_lote_retry.sql')
+  ('20260530160000', 'data_health_diagnostico_gate_status', '20260530160000_data_health_diagnostico_gate_status.sql'),
+  ('20260530170000', 'unschedule_sayerlack_lote_retry', '20260530170000_unschedule_sayerlack_lote_retry.sql'),
+  ('20260530180000', 'fix_sku_fornecedor_externo_atualizado_em_trigger', '20260530180000_fix_sku_fornecedor_externo_atualizado_em_trigger.sql')
 )
 SELECT
   e.version,
@@ -666,7 +668,10 @@ WITH expected_objects (migration, kind, schema_name, object_name, parent_name) A
   ('data_health_consolida_last_error_e_reposicao_checks', 'function', 'public', '_data_health_compute', ''),
   ('data_health_consolida_last_error_e_reposicao_checks', 'function', 'public', 'fin_sync_heartbeat', ''),
   ('fin_watchdog_sync_stale_grace_email', 'function', 'public', 'fin_sync_watchdog_check', ''),
-  ('reposicao_excluir_405ml', 'function', 'public', 'gerar_pedidos_sugeridos_ciclo', '')
+  ('reposicao_excluir_405ml', 'function', 'public', 'gerar_pedidos_sugeridos_ciclo', ''),
+  ('data_health_diagnostico_gate_status', 'function', 'public', '_data_health_compute', ''),
+  ('fix_sku_fornecedor_externo_atualizado_em_trigger', 'function', 'public', 'set_atualizado_em_column', ''),
+  ('fix_sku_fornecedor_externo_atualizado_em_trigger', 'trigger', 'public', 'sku_fornecedor_externo_set_atualizado_em', 'sku_fornecedor_externo')
 )
 SELECT
   e.migration,
