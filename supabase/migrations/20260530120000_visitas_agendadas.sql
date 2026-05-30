@@ -1,5 +1,6 @@
 -- visitas_agendadas: fila persistente de visitas datadas, owner-scoped.
-CREATE TABLE public.visitas_agendadas (
+-- Idempotente: pode rerodar (IF NOT EXISTS / DROP ... IF EXISTS / CREATE OR REPLACE).
+CREATE TABLE IF NOT EXISTS public.visitas_agendadas (
   id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
   customer_user_id uuid NOT NULL,
   scheduled_by uuid NOT NULL,
@@ -14,17 +15,17 @@ CREATE TABLE public.visitas_agendadas (
 );
 
 -- Anti-duplicata: 1 pendente por (cliente, vendedor, data).
-CREATE UNIQUE INDEX uq_vag_pendente_cliente_vendedor_data
+CREATE UNIQUE INDEX IF NOT EXISTS uq_vag_pendente_cliente_vendedor_data
   ON public.visitas_agendadas (customer_user_id, scheduled_by, scheduled_date)
   WHERE status = 'pendente';
 -- Uma visita realizada fecha no máximo uma agenda.
-CREATE UNIQUE INDEX uq_vag_route_visit_id
+CREATE UNIQUE INDEX IF NOT EXISTS uq_vag_route_visit_id
   ON public.visitas_agendadas (route_visit_id)
   WHERE route_visit_id IS NOT NULL;
 -- Calendário do vendedor.
-CREATE INDEX idx_vag_scheduled_by_date
+CREATE INDEX IF NOT EXISTS idx_vag_scheduled_by_date
   ON public.visitas_agendadas (scheduled_by, scheduled_date);
-CREATE INDEX idx_vag_pending_by_seller
+CREATE INDEX IF NOT EXISTS idx_vag_pending_by_seller
   ON public.visitas_agendadas (scheduled_by, scheduled_date)
   WHERE status = 'pendente';
 
@@ -33,6 +34,7 @@ CREATE OR REPLACE FUNCTION public.set_updated_at_visitas_agendadas()
 RETURNS trigger LANGUAGE plpgsql AS $$
 BEGIN NEW.updated_at = now(); RETURN NEW; END;
 $$;
+DROP TRIGGER IF EXISTS trg_vag_updated_at ON public.visitas_agendadas;
 CREATE TRIGGER trg_vag_updated_at
   BEFORE UPDATE ON public.visitas_agendadas
   FOR EACH ROW EXECUTE FUNCTION public.set_updated_at_visitas_agendadas();
@@ -48,6 +50,7 @@ GRANT SELECT, INSERT ON public.visitas_agendadas TO authenticated;
 GRANT UPDATE (scheduled_date, visit_type, notes, status) ON public.visitas_agendadas TO authenticated;
 -- (sem UPDATE em scheduled_by/customer_user_id/route_visit_id → imutáveis; sem DELETE; anon sem nada)
 
+DROP POLICY IF EXISTS "vag_select_own" ON public.visitas_agendadas;
 CREATE POLICY "vag_select_own" ON public.visitas_agendadas
   FOR SELECT TO authenticated
   USING (
@@ -55,6 +58,7 @@ CREATE POLICY "vag_select_own" ON public.visitas_agendadas
     OR (SELECT public.pode_ver_carteira_completa((SELECT auth.uid())))
   );
 
+DROP POLICY IF EXISTS "vag_insert_own_carteira" ON public.visitas_agendadas;
 CREATE POLICY "vag_insert_own_carteira" ON public.visitas_agendadas
   FOR INSERT TO authenticated
   WITH CHECK (
@@ -64,6 +68,7 @@ CREATE POLICY "vag_insert_own_carteira" ON public.visitas_agendadas
     AND route_visit_id IS NULL
   );
 
+DROP POLICY IF EXISTS "vag_update_own_pending" ON public.visitas_agendadas;
 CREATE POLICY "vag_update_own_pending" ON public.visitas_agendadas
   FOR UPDATE TO authenticated
   USING (
@@ -76,6 +81,7 @@ CREATE POLICY "vag_update_own_pending" ON public.visitas_agendadas
     AND route_visit_id IS NULL
   );
 
+DROP POLICY IF EXISTS "vag_delete_gestor" ON public.visitas_agendadas;
 CREATE POLICY "vag_delete_gestor" ON public.visitas_agendadas
   FOR DELETE TO authenticated
   USING ((SELECT public.pode_ver_carteira_completa((SELECT auth.uid()))));
@@ -101,6 +107,7 @@ BEGIN
 END;
 $$;
 
+DROP TRIGGER IF EXISTS trg_reconcile_visita_agendada ON public.route_visits;
 CREATE TRIGGER trg_reconcile_visita_agendada
   AFTER INSERT OR UPDATE OF check_in_at ON public.route_visits
   FOR EACH ROW
