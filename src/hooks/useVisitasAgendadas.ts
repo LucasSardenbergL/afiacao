@@ -1,47 +1,7 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { toast } from 'sonner';
 import { useAuth } from '@/contexts/AuthContext';
-import { supabase } from '@/integrations/supabase/client';
-import type { VisitaAgendadaRow } from '@/integrations/supabase/visitasAgendadas';
-
-// ---------------------------------------------------------------------------
-// Typed builder (shape mínimo) — `visitas_agendadas` não está no types.ts gerado.
-// Evita a instanciação de tipo "excessively deep" do builder genérico do Supabase.
-// ---------------------------------------------------------------------------
-type DbError = { code?: string; message: string } | null;
-type DbResult<T = unknown> = Promise<{ data: T; error: DbError }>;
-
-interface VisitaInsert {
-  customer_user_id: string;
-  scheduled_by: string;
-  scheduled_date: string;
-  notes: string | null;
-  visit_type: string;
-  status: string;
-}
-
-interface VisitaUpdate {
-  scheduled_date?: string;
-  status?: string;
-}
-
-interface VisitaFilter {
-  select: (cols: string) => VisitaFilter;
-  insert: (row: VisitaInsert) => DbResult;
-  update: (patch: VisitaUpdate) => VisitaFilter;
-  eq: (col: string, val: string) => VisitaFilter;
-  in: (col: string, vals: string[]) => VisitaFilter;
-  order: (col: string, opts: { ascending: boolean }) => VisitaFilter;
-  then: <T>(
-    onFulfilled: (value: { data: unknown; error: DbError }) => T
-  ) => Promise<T>;
-}
-
-type VisitasClient = { from: (table: 'visitas_agendadas') => VisitaFilter };
-
-function visitasTable(): VisitaFilter {
-  return (supabase as unknown as VisitasClient).from('visitas_agendadas');
-}
+import { visitasAgendadasTable, type VisitaAgendadaRow } from '@/integrations/supabase/visitasAgendadas';
 
 // ---------------------------------------------------------------------------
 // Hook
@@ -66,7 +26,7 @@ export function useVisitasAgendadas() {
     queryKey: key,
     enabled: !!uid,
     queryFn: async (): Promise<VisitaAgendadaRow[]> => {
-      const { data, error } = await visitasTable()
+      const { data, error } = await visitasAgendadasTable()
         .select('*')
         .eq('scheduled_by', uid!)
         .in('status', ['pendente'])
@@ -82,7 +42,7 @@ export function useVisitasAgendadas() {
       scheduledDate: string;
       notes?: string;
     }) => {
-      const { error } = await visitasTable().insert({
+      const { error } = await visitasAgendadasTable().insert({
         customer_user_id: input.customerUserId,
         scheduled_by: uid!,
         scheduled_date: input.scheduledDate,
@@ -107,7 +67,7 @@ export function useVisitasAgendadas() {
 
   const remarcar = useMutation({
     mutationFn: async (input: { id: string; scheduledDate: string }) => {
-      const { error } = await visitasTable()
+      const { error } = await visitasAgendadasTable()
         .update({ scheduled_date: input.scheduledDate })
         .eq('id', input.id);
       if (error) throw Object.assign(new Error(error.message), { code: error.code });
@@ -123,7 +83,7 @@ export function useVisitasAgendadas() {
 
   const cancelar = useMutation({
     mutationFn: async (id: string) => {
-      const { error } = await visitasTable()
+      const { error } = await visitasAgendadasTable()
         .update({ status: 'cancelada' })
         .eq('id', id);
       if (error) throw new Error(error.message);

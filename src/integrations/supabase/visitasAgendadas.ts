@@ -23,16 +23,46 @@ export interface NovaVisitaAgendada {
   visit_type?: string;
 }
 
+// ---------------------------------------------------------------------------
+// Builder estreito — `visitas_agendadas` ainda não está no types.ts gerado.
+// Declarar só os métodos usados evita a instanciação "excessively deep" (TS2589)
+// do builder genérico do Supabase. Este é o ÚNICO ponto de cast (via unknown,
+// nunca any). Pós type-regen via Lovable: trocar por supabase.from('visitas_agendadas').
+// ---------------------------------------------------------------------------
+type DbError = { code?: string; message: string } | null;
+type DbResult<T = unknown> = Promise<{ data: T; error: DbError }>;
+
+export interface VisitaInsert {
+  customer_user_id: string;
+  scheduled_by: string;
+  scheduled_date: string;
+  notes: string | null;
+  visit_type: string;
+  status: string;
+}
+
+export interface VisitaUpdate {
+  scheduled_date?: string;
+  status?: string;
+}
+
+export interface VisitaFilter {
+  select: (cols: string) => VisitaFilter;
+  insert: (row: VisitaInsert) => DbResult;
+  update: (patch: VisitaUpdate) => VisitaFilter;
+  eq: (col: string, val: string) => VisitaFilter;
+  in: (col: string, vals: string[]) => VisitaFilter;
+  order: (col: string, opts: { ascending: boolean }) => VisitaFilter;
+  then: <T>(
+    onFulfilled: (value: { data: unknown; error: DbError }) => T,
+  ) => Promise<T>;
+}
+
+type VisitasClient = { from: (table: 'visitas_agendadas') => VisitaFilter };
+
 /**
- * Acesso à tabela `visitas_agendadas` antes dela existir nos tipos gerados do
- * Supabase. Único ponto com cast (via `unknown`, nunca `any`). Depois do regen
- * de tipos via Lovable, trocar por `supabase.from('visitas_agendadas')` direto.
- *
- * Forma (a): cast do supabase para objeto com `from(table: string)` retornando
- * o tipo que o próprio `from` nativo retorna quando chamado com string genérica.
+ * Builder tipado e estreito para a tabela `visitas_agendadas`. Único ponto de cast.
  */
-export function visitasAgendadasTable() {
-  return (supabase as unknown as {
-    from: (table: string) => ReturnType<typeof supabase.from>;
-  }).from('visitas_agendadas');
+export function visitasAgendadasTable(): VisitaFilter {
+  return (supabase as unknown as VisitasClient).from('visitas_agendadas');
 }
