@@ -4,6 +4,21 @@
 > Desenho revisado com codex. **Money-path, raio de explosão alto** (mexe na view que
 > alimenta TODA sugestão de compra) → construir report-first, escopado, sem rush.
 
+## STATUS (atualizado 2026-05-30, fim da sessão)
+- ✅ **Gargalo de GRUPO resolvido** (PR #494, em prod): `classificar_sayerlack_grupo_default()`
+  + cron `reposicao-classificar-sayerlack-grupo` (7h30) classificou **83** SKUs sem-grupo no
+  `sayerlack_normal` (default conservador; marca `atualizado_por='auto_default_sayerlack'` p/
+  revisão). **0 válidos restando**; o cron mantém os novos. Os ~17 não-classificados eram
+  desabilitados/fracionados (corretamente fora).
+- ✅ **+28 SKUs Sayerlack viraram sugeridos** na hora (os com ≥2 compras): `com_param` 148→176,
+  via `preencher_parametros_faltantes_skus` + cron 8h (PR #487) aplicando os sugeridos assim que
+  a view destrava.
+- ✅ **A "Parte 1" abaixo (SLA/lead time) estava na verdade CONCLUÍDA** — o SLA já estava
+  cadastrado (logística 124/124, LT de grupo 24/24); o que faltava era a CLASSIFICAÇÃO de grupo
+  (feita acima). Não há SLA a cadastrar.
+- ⏸️ **RESTA só a Parte 2 (cold-start / approach A)** pros ~55-74 SKUs com `num_ordens<2` (vendem
+  mas <2 compras → gate `AGUARDANDO_SEGUNDA_ORDEM`). Esse é o trabalho de uma passada dedicada.
+
 ## Problema
 
 Dos **272** SKUs do fornecedor `RENNER SAYERLACK S/A` (empresa OBEN), **124 (46%)** estão
