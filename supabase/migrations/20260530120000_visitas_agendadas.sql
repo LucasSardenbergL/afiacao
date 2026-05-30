@@ -94,15 +94,28 @@ SECURITY DEFINER
 SET search_path = public
 AS $$
 BEGIN
+  -- Fecha a agenda pendente DEVIDA (scheduled_date <= data do check-in) MAIS ANTIGA
+  -- deste cliente+vendedor. O `<=` cobre visitas ATRASADAS (scheduled_date < hoje),
+  -- não só as do dia exato. Futuras (scheduled_date > visit_date) NÃO são fechadas.
+  -- Idempotente: o NOT EXISTS impede um mesmo route_visit fechar uma 2ª agenda num
+  -- eventual re-disparo (a unique em route_visit_id também barraria).
   UPDATE public.visitas_agendadas va
   SET status = 'realizada',
       route_visit_id = NEW.id,
       updated_at = now()
-  WHERE va.customer_user_id = NEW.customer_user_id
-    AND va.scheduled_by    = NEW.visited_by
-    AND va.scheduled_date  = NEW.visit_date
-    AND va.status = 'pendente'
-    AND va.route_visit_id IS NULL;
+  WHERE va.id = (
+    SELECT v.id FROM public.visitas_agendadas v
+    WHERE v.customer_user_id = NEW.customer_user_id
+      AND v.scheduled_by    = NEW.visited_by
+      AND v.status = 'pendente'
+      AND v.route_visit_id IS NULL
+      AND v.scheduled_date <= NEW.visit_date
+    ORDER BY v.scheduled_date ASC
+    LIMIT 1
+  )
+  AND NOT EXISTS (
+    SELECT 1 FROM public.visitas_agendadas v2 WHERE v2.route_visit_id = NEW.id
+  );
   RETURN NEW;
 END;
 $$;
