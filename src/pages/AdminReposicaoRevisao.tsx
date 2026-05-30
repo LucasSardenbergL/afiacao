@@ -39,6 +39,7 @@ export default function AdminReposicaoRevisao() {
     nextPage,
     approveMutation,
     updateMutation,
+    promoverMutation,
   } = useRevisaoParametros();
 
   return (
@@ -49,6 +50,12 @@ export default function AdminReposicaoRevisao() {
           <p className="text-sm text-muted-foreground">
             Aprove os parâmetros sugeridos por SKU antes da aplicação no Omie.
           </p>
+          {statusFilter === "primeira_compra" && (
+            <p className="text-sm text-status-info mt-1">
+              Itens que vendem com recorrência mas nunca foram comprados. Revise a recorrência e clique
+              em <strong>Promover</strong> — entram no fluxo normal de compra com uma quantidade-teste capada.
+            </p>
+          )}
         </div>
         <Button asChild variant="outline" size="sm">
           <Link to="/admin/reposicao/historico">
@@ -83,6 +90,8 @@ export default function AdminReposicaoRevisao() {
         onAprovarSelecionados={() => setConfirmBatch(true)}
         onPrevPage={prevPage}
         onNextPage={nextPage}
+        onPromover={(sku) => promoverMutation.mutate(sku)}
+        promovendo={promoverMutation.isPending}
       />
 
       <SkuDetailSheet
